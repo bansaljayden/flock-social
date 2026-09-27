@@ -43,6 +43,11 @@ apt-get update
 # thermal camera that comes up on the wrong node or in the wrong mode, on a
 # box nobody is standing next to. `v4l2-ctl --list-devices` is in the README.
 apt-get install -y python3-pip python3-dev v4l-utils
+# The trained people counter. From apt, not pip: Debian builds onnxruntime for
+# the Pi's arm64, and a pip wheel is one more thing to go stale. A unit without
+# them counts with the heat-cluster rule and says so in the log.
+apt-get install -y python3-numpy python3-onnxruntime \
+  || echo "    WARNING: numpy/onnxruntime did not install; counting with the heat-cluster rule." >&2
 
 echo "==> pip install python deps"
 # --break-system-packages: this is a single-purpose appliance, and the Adafruit
@@ -120,6 +125,12 @@ install -m 0755 -o root -g root "${SCRIPT_DIR}/main.py" "${INSTALL_DIR}/main.py"
 if [ -d "${SCRIPT_DIR}/flux-assets" ]; then
   mkdir -p "${INSTALL_DIR}/flux-assets"
   install -m 0644 -o root -g root "${SCRIPT_DIR}"/flux-assets/* "${INSTALL_DIR}/flux-assets/"
+fi
+# The trained people counter. main.py uses it when it is here and numpy and
+# onnxruntime are installed, and the heat-cluster rule otherwise.
+if [ -d "${SCRIPT_DIR}/models" ]; then
+  mkdir -p "${INSTALL_DIR}/models"
+  install -m 0644 -o root -g root "${SCRIPT_DIR}"/models/* "${INSTALL_DIR}/models/"
 fi
 # The doorway counter's firmware, with ST's licence and notice beside it.
 # main.py loads it into the sensor on every start; without it a unit with the

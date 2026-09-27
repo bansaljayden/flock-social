@@ -3687,5 +3687,76 @@ class TrainingRecorder(unittest.TestCase):
         self.assertIn('*.frames', ignore)
 
 
+class PeopleCounterModel(unittest.TestCase):
+    """The trained counter: loaded when it can be, the rule when it cannot."""
+
+    HERE = Path(__file__).resolve().parent
+
+    def test_no_model_file_means_the_rule(self):
+        with mock.patch.object(main, 'PEOPLE_MODEL_PATH', self.HERE / 'no-such.onnx'):
+            self.assertIsNone(main.load_people_model())
+
+    def test_off_means_the_rule_even_with_a_model(self):
+        with mock.patch.object(main, 'THERMAL_MODEL', 'off'):
+            self.assertIsNone(main.load_people_model())
+
+    def test_a_missing_library_means_the_rule_not_a_crash(self):
+        with mock.patch.object(main, 'PEOPLE_MODEL_PATH', Path(__file__)), \
+                mock.patch.object(main, 'PeopleModel', side_effect=ImportError('no onnxruntime')):
+            self.assertIsNone(main.load_people_model())
+
+    def test_the_installer_ships_the_model_and_its_runtime(self):
+        setup = (self.HERE / 'setup.sh').read_text(encoding='utf-8')
+        self.assertIn('python3-onnxruntime', setup)
+        self.assertIn('/models/', setup)
+
+    def _model(self, prob):
+        try:
+            import numpy as np
+        except ImportError:
+            self.skipTest('numpy not installed')
+        m = main.PeopleModel.__new__(main.PeopleModel)
+        m.np = np
+        m.input = 'frame'
+        m.threshold = 0.4
+        m.session = mock.Mock()
+        m.session.run.return_value = [np.asarray(prob, dtype=np.float32)[None, None]]
+        return m, np
+
+    def test_inputs_match_what_training_used(self):
+        m, np = self._model([[0.0] * 40] * 30)
+        sys.path.insert(0, str(self.HERE / 'training'))
+        try:
+            import synth
+        except ImportError:
+            self.skipTest('scipy not installed')
+        finally:
+            sys.path.pop(0)
+        frame = [20.0 + (i % 160) * 0.1 + (i // 160) * 0.05 for i in range(19200)]
+        np.testing.assert_allclose(m.inputs(frame)[0], synth.model_input(frame), atol=1e-6)
+
+    def test_one_peak_per_person_and_bounds_hold(self):
+        np = __import__('numpy')
+        prob = np.zeros((30, 40))
+        prob[10, 10] = 0.9          # a person
+        prob[10, 11] = 0.8          # the same person's shoulder, not a peak
+        prob[20, 30] = 0.9          # something at room temperature
+        prob[5, 35] = 0.2           # not sure enough
+        m, _ = self._model(prob)
+        frame = np.full((120, 160), 21.0)
+        frame[38:46, 38:46] = 33.0  # warm under the first peak only
+        pts = m.points(frame.ravel().tolist())
+        self.assertEqual(pts, [(42.0, 42.0)])
+
+    def test_too_hot_to_be_a_person(self):
+        np = __import__('numpy')
+        prob = np.zeros((30, 40))
+        prob[10, 10] = 0.9
+        m, _ = self._model(prob)
+        frame = np.full((120, 160), 21.0)
+        frame[36:48, 36:48] = 62.0  # a mug the model mistook
+        self.assertEqual(m.points(frame.ravel().tolist()), [])
+
+
 if __name__ == '__main__':
     unittest.main()
