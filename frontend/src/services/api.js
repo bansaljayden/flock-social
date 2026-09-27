@@ -548,9 +548,38 @@ const MAX_REQUEST_MS = 5 * 60 * 1000;
 const RETRYABLE_STATUSES = [502, 503, 504];
 const RETRY_DELAYS_MS = [800, 2000];
 
-function isOffline() {
+// A PROBE THAT GOT AN ANSWER OUTRANKS A STUCK navigator.onLine.
+//
+// App.js's OfflineGate exists partly for a browser or WebView whose onLine
+// reads false while the network works, and its Try again button sends a raw
+// probe to prove it. That proof used to stay inside the gate: the probe
+// succeeded, the gate went away, and every request() here still refused at the
+// first line of its loop with "You're offline", with nothing on screen left to
+// explain why. The gate reports a successful probe here now (markReachable),
+// and the device counts as online until the browser itself reports a change of
+// state, 'online' or 'offline', which is newer evidence than the probe. While
+// it holds, a request that really cannot get out fails as "Couldn't reach
+// Flock", which is the honest sentence for a network the device cannot vouch
+// for either way.
+let reachableDespiteOnLine = false;
+let forgetsReachableOnChange = false;
+
+export function markReachable() {
+  reachableDespiteOnLine = true;
+  if (forgetsReachableOnChange || typeof window === 'undefined') return;
+  forgetsReachableOnChange = true;
+  const forget = () => { reachableDespiteOnLine = false; };
+  window.addEventListener('online', forget);
+  window.addEventListener('offline', forget);
+}
+
+// The one answer to "does this device know it has no network", exported so
+// the gate starts from the same answer request() acts on and the two cannot
+// disagree about it.
+export function isOffline() {
   // Per spec, false means definitely offline; true just means "maybe".
-  return typeof navigator !== 'undefined' && navigator.onLine === false;
+  if (typeof navigator === 'undefined' || navigator.onLine !== false) return false;
+  return !reachableDespiteOnLine;
 }
 
 function connectionError() {
