@@ -1089,12 +1089,13 @@ describe('inviteHandoff: App.js wiring', () => {
     // Ordering is the whole correctness of the handoff: joining after the list
     // has loaded leaves the new flock missing, and navigating before the list
     // lands drops the person in an empty room.
-    const app = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8');
+    const app = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8').replace(/\r\n/g, '\n');
     const start = app.indexOf('redeemPendingInvite()');
     expect(start).toBeGreaterThan(-1);
-    // To the end of loadFlocks's chain, not a fixed number of characters: the
-    // order is the property, and a character count failed the moment the
-    // load grew a filter above the open.
+    // To the end of loadFlocks, not a fixed number of characters: the list
+    // mapping inside it grows a field at a time (i_voted, then i_budget_open
+    // and i_owe), and a fixed window went red over a comment rather than over
+    // the ordering this test is for.
     const end = app.indexOf('.finally(() => setFlocksLoading(false));', start);
     expect(end).toBeGreaterThan(start);
     const block = app.slice(start, end);

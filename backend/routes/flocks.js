@@ -710,7 +710,38 @@ router.get('/', async (req, res) => {
               EXISTS (
                 SELECT 1 FROM venue_votes vv
                  WHERE vv.flock_id = f.id AND vv.user_id = $1
-              ) AS i_voted
+              ) AS i_voted,
+              -- AND THE OTHER TWO THINGS A PLAN CAN BE WAITING ON YOU FOR. The
+              -- Nest flagged a missing vote and nothing else, so an unanswered
+              -- budget reached a person only through the host's manual
+              -- reminder, and a share of a bill only through the one push sent
+              -- when the bill was posted. Both are about the CALLER alone and
+              -- carry no amount: whether you have answered, and whether you
+              -- still owe. Nobody else's budget, share or settle state is in
+              -- either, so the budget privacy rule is untouched.
+              --
+              -- i_budget_open: the budget is on, not settled, the plan is not
+              -- over, and you have no row (an amount or a skip). The same four
+              -- conditions POST /api/budget/:id/submit refuses on, so the Nest
+              -- never asks for an answer the server would not take.
+              (f.budget_enabled IS TRUE AND f.budget_locked IS NOT TRUE
+                AND f.status IN ('planning', 'confirmed')
+                AND NOT EXISTS (
+                  SELECT 1 FROM budget_submissions bsub
+                   WHERE bsub.flock_id = f.id AND bsub.user_id = $1
+                )) AS i_budget_open,
+              -- i_owe: your share of this plan's bill is unsettled, somebody
+              -- other than you paid, and the bill is not quarantined. The same
+              -- rows POST /api/billing/:id/settle would mark paid, so the Nest
+              -- says "you owe" exactly when Settle Up can do something.
+              EXISTS (
+                SELECT 1 FROM bill_split_shares oss
+                  JOIN bill_splits obs ON obs.id = oss.bill_id
+                 WHERE obs.flock_id = f.id AND oss.user_id = $1
+                   AND oss.settled IS NOT TRUE
+                   AND obs.paid_by IS NOT NULL AND obs.paid_by <> $1
+                   AND obs.quarantined IS NOT TRUE
+              ) AS i_owe
        FROM flocks f
        JOIN flock_members fm ON fm.flock_id = f.id AND fm.user_id = $1
        JOIN users u ON u.id = f.creator_id

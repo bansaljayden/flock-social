@@ -74,6 +74,12 @@
 //      number that left the returning guest's $10 out. The change now takes
 //      the plan's row before it reads the answer it replaces, so it lands
 //      wholly before the settle or wholly after it, in either order.
+//  16. THE HOME LIST SAYS WHAT IS WAITING ON THE CALLER, and nothing about
+//      anybody else: i_budget_open while their own answer is missing from a
+//      budget that can still take one, i_owe while their own share of a bill
+//      somebody else paid is unsettled. Neither carries an amount, and a
+//      quarantined bill, a payerless shell, a settled budget and a closed plan
+//      ask nothing, because the routes would refuse the answer.
 // ---------------------------------------------------------------------------
 
 const test = require('node:test');
@@ -1815,4 +1821,99 @@ test('a change is announced against the answer it replaced, read under the lock,
   const told = emits.filter((e) => e.event === 'guest_rsvp' && e.room === `user:${ctx.ann.id}`);
   assert.equal(told.length, 1, 'the members were never told Gus is back in');
   assert.equal(told[0].payload.status, 'in');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 16. What the home list says is waiting on the caller
+// ═══════════════════════════════════════════════════════════════════════════
+
+// The caller's row for one flock off the real GET /api/flocks.
+async function listRow(user, flockId) {
+  const r = await call('GET', '/api/flocks', { token: user.token });
+  assert.equal(r.status, 200, r.text);
+  return r.body.flocks.find((f) => f.id === flockId);
+}
+const asks = (row) => ({ budget: row.i_budget_open, owe: row.i_owe });
+
+test('the home list flags your own unanswered budget and your own unpaid share, and moves when you act', async () => {
+  const ava = await mkUser('Ava');
+  const ben = await mkUser('Ben');
+  const cam = await mkUser('Cam');
+  const flockId = await mkFlock(ava, [ben, cam], { status: 'confirmed' });
+
+  assert.deepEqual(asks(await listRow(ben, flockId)), { budget: true, owe: false });
+  assert.equal((await submit(flockId, ben, 40)).status, 200);
+  assert.deepEqual(asks(await listRow(ben, flockId)), { budget: false, owe: false }, 'an answer clears it');
+  assert.equal((await submit(flockId, cam, 'skip')).status, 200);
+  assert.equal((await listRow(cam, flockId)).i_budget_open, false, 'a skip is an answer too');
+  assert.equal((await listRow(ava, flockId)).i_budget_open, true, 'somebody else answering is not your answer');
+
+  const posted = await call('POST', `/api/billing/${flockId}/create`, { token: ava.token, body: { totalAmount: 90 } });
+  assert.equal(posted.status, 201, posted.text);
+  assert.equal((await listRow(ben, flockId)).i_owe, true);
+  assert.equal((await listRow(ava, flockId)).i_owe, false, 'the payer owes nobody');
+
+  assert.equal((await call('POST', `/api/billing/${flockId}/settle`, { token: ben.token })).status, 200);
+  assert.equal((await listRow(ben, flockId)).i_owe, false, 'settling clears it');
+  assert.equal((await listRow(cam, flockId)).i_owe, true, 'and only for the person who settled');
+  assert.equal((await call('POST', `/api/billing/${flockId}/unsettle`, { token: ben.token })).status, 200);
+  assert.equal((await listRow(ben, flockId)).i_owe, true, 'taking a payment back puts it back');
+
+  // Two booleans about the caller, and no figure of anybody's anywhere near.
+  const row = await listRow(ben, flockId);
+  assert.equal(typeof row.i_budget_open, 'boolean');
+  assert.equal(typeof row.i_owe, 'boolean');
+  const text = JSON.stringify(row);
+  assert.ok(!text.includes('"40') && !text.includes('"30'), `an amount rode on the list row: ${text.slice(0, 300)}`);
+});
+
+test('a settled budget, a closed plan, a payerless shell and a quarantined bill ask nothing', async () => {
+  const ava = await mkUser('Ava');
+  const ben = await mkUser('Ben');
+  const cam = await mkUser('Cam');
+
+  // Settled: the creator locked it, so an answer would be refused.
+  const locked = await mkFlock(ava, [ben, cam]);
+  await pool.query('UPDATE flocks SET budget_locked = true WHERE id = $1', [locked]);
+  assert.equal((await listRow(ben, locked)).i_budget_open, false);
+
+  // Over: POST /submit answers 409 FLOCK_CLOSED on a completed or cancelled plan.
+  for (const status of ['completed', 'cancelled']) {
+    const closed = await mkFlock(ava, [ben], { status });
+    assert.equal((await listRow(ben, closed)).i_budget_open, false, status);
+  }
+
+  // No budget on the plan at all.
+  const noBudget = await mkFlock(ava, [ben], { budget: false });
+  assert.equal((await listRow(ben, noBudget)).i_budget_open, false);
+
+  // A payerless shell: nobody paid, so there is nobody to owe.
+  const shell = await mkFlock(ava, [ben]);
+  const shellBill = await one(
+    'INSERT INTO bill_splits (flock_id, total_amount, paid_by) VALUES ($1, 60, NULL) RETURNING id', [shell]
+  );
+  await pool.query('INSERT INTO bill_split_shares (bill_id, user_id, amount) VALUES ($1, $2, 30)', [shellBill.id, ben.id]);
+  assert.equal((await listRow(ben, shell)).i_owe, false);
+
+  // Quarantined: its settled flags are withheld from everybody, and this is one.
+  const q = await mkFlock(ava, [ben]);
+  const qBill = await one(
+    'INSERT INTO bill_splits (flock_id, total_amount, paid_by, quarantined) VALUES ($1, 60, $2, true) RETURNING id',
+    [q, ava.id]
+  );
+  await pool.query('INSERT INTO bill_split_shares (bill_id, user_id, amount) VALUES ($1, $2, 30)', [qBill.id, ben.id]);
+  assert.equal((await listRow(ben, q)).i_owe, false);
+  const settle = await call('POST', `/api/billing/${q}/settle`, { token: ben.token });
+  assert.equal(settle.status, 409, 'and the route agrees there is nothing to settle');
+});
+
+test('an invite card carries neither flag', async () => {
+  const ava = await mkUser('Ava');
+  const dee = await mkUser('Dee');
+  const flockId = await mkFlock(ava, []);
+  await pool.query("INSERT INTO flock_members (flock_id, user_id, status) VALUES ($1, $2, 'invited')", [flockId, dee.id]);
+  const card = await listRow(dee, flockId);
+  assert.equal(card.invitePreview, true);
+  assert.equal(card.i_budget_open, undefined);
+  assert.equal(card.i_owe, undefined);
 });

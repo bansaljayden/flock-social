@@ -1578,6 +1578,9 @@ export default function ChatDetail({
             shares: prev.shares.map(s => String(s.userId) === String(authUser?.id) ? { ...s, settled: false, settledAt: null, outstanding: owedOn(s) } : s),
           };
         });
+        // Owed again, so the Nest says so again (the route refuses the payer
+        // and a payerless bill, so this is always a share owed to somebody).
+        setFlocks(prev => prev.map(f => f.id === selectedFlockId ? { ...f, iOwe: true } : f));
         showToast('Your share is marked unpaid again');
       } catch (err) { showToast(err.message, 'error'); }
     };
@@ -3793,7 +3796,9 @@ export default function ChatDetail({
                         // can land after the settle it did not cause, and its
                         // null ceiling must not wipe the number (lib/budgetStatus.js).
                         setBudgetStatus(prev => ({ ...mergeBudgetUpdate(prev, data), userSubmitted: true, userAmount: amt, userSkipped: false }));
-                        if (data.ceiling) setFlocks(prev => prev.map(f => f.id === selectedFlockId ? { ...f, budgetCeiling: data.ceiling } : f));
+                        // Answered, so the Nest stops asking (lib/nestAsks.js),
+                        // now rather than on the next list read.
+                        setFlocks(prev => prev.map(f => f.id === selectedFlockId ? { ...f, iBudgetOpen: false, ...(data.ceiling ? { budgetCeiling: data.ceiling } : {}) } : f));
                         // After the server has it. Nothing here was shown
                         // early that a refusal would take back, so the buzz
                         // only ever means the amount went in.
@@ -3810,6 +3815,8 @@ export default function ChatDetail({
                       try {
                         const data = await submitBudget(selectedFlockId, { amount: 0, skipped: true });
                         setBudgetStatus(prev => ({ ...mergeBudgetUpdate(prev, data), userSubmitted: true, userSkipped: true, userAmount: null }));
+                        // A skip is an answer, so the Nest stops asking too.
+                        setFlocks(prev => prev.map(f => f.id === selectedFlockId ? { ...f, iBudgetOpen: false } : f));
                         showToast('Skipped. You will not count toward the group number.');
                         setShowChatPool(false);
                       } catch (err) { showToast(err.message, 'error'); }
@@ -4217,6 +4224,10 @@ export default function ChatDetail({
                               shares: prev.shares.map(s => String(s.userId) === String(authUser?.id) ? { ...s, settled: true, outstanding: 0 } : s),
                             };
                           });
+                          // Paid, so the Nest stops saying you owe. The
+                          // share_settled event does the same on every other
+                          // device; this one should not wait for it.
+                          setFlocks(prev => prev.map(f => f.id === selectedFlockId ? { ...f, iOwe: false } : f));
                           showToast('Marked as settled');
                         } catch (err) { showToast(err.message, 'error'); }
                       }} style={{ width: '100%', padding: '10px', border: 'none', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>
