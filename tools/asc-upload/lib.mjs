@@ -700,3 +700,160 @@ export function neverTouchesChecklist() {
     'Category selection: NOT pushed. Section 6.9 records the recommendation (Social Networking + Lifestyle); it is a human call in the UI.',
   ];
 }
+
+// ---------------------------------------------------------------------------
+// App Review demo login check (--check-review-login)
+//
+// Two Guideline 2.1 rejections came from one cause: the demo password saved in
+// App Store Connect's App Review Information no longer matched the account in
+// production, and nothing compared the two before pressing Submit. This reads
+// the credentials App Store Connect actually holds (not a copy in a doc, which
+// is how one stale password got pasted) and tries them against the live
+// sign-in route, exactly as the reviewer will.
+//
+// Network access is injected (ascGet, postJson) so the logic stays testable
+// offline like the rest of this file. The password is only ever placed in the
+// login request body: it never enters a returned field or a message.
+// ---------------------------------------------------------------------------
+
+export const REVIEW_LOGIN_URL = 'https://api.flockcorp.com/api/auth/login';
+
+// Version states in which the saved demo login is about to be used, or is being
+// used right now. The rejected states are included on purpose: "Update Review"
+// and "Resubmit" are pressed from a rejected version, and that is exactly the
+// moment a stale password went back to Apple.
+export const REVIEW_BOUND_STATES = [
+  'PREPARE_FOR_SUBMISSION',
+  'READY_FOR_REVIEW',
+  'WAITING_FOR_REVIEW',
+  'IN_REVIEW',
+  'REJECTED',
+  'METADATA_REJECTED',
+  'DEVELOPER_REJECTED',
+];
+
+const SEED_FIX =
+  'FIX: reset the review account password with backend/scripts/seed-review-account.js ' +
+  '(npm run seed:review in backend/; it refuses a non-local database unless asked out loud), ' +
+  'or paste the account\'s current password into App Store Connect > App Review Information. ' +
+  'Then run this check again before pressing Submit, Update Review or Resubmit.';
+
+/** A version's state: appVersionState is the current attribute, appStoreState the older one. */
+function versionState(v) {
+  return v?.attributes?.appVersionState ?? v?.attributes?.appStoreState ?? null;
+}
+
+/**
+ * The iOS version App Review will sign in to, from a GET
+ * /v1/apps/{id}/appStoreVersions response. Earlier entries in
+ * REVIEW_BOUND_STATES win, so a version being prepared beats an older
+ * rejected one still sitting in the list.
+ */
+export function pickReviewBoundVersion(versionsResponse) {
+  const candidates = (versionsResponse?.data ?? [])
+    .filter((v) => (v.attributes?.platform ?? 'IOS') === 'IOS')
+    .filter((v) => REVIEW_BOUND_STATES.includes(versionState(v)));
+  if (!candidates.length) return null;
+  candidates.sort((a, b) =>
+    REVIEW_BOUND_STATES.indexOf(versionState(a)) - REVIEW_BOUND_STATES.indexOf(versionState(b)));
+  const v = candidates[0];
+  return { id: v.id, versionString: v.attributes?.versionString ?? null, state: versionState(v) };
+}
+
+/**
+ * Read the demo account from App Store Connect and try it against the live
+ * sign-in route.
+ *
+ *   ascGet(path)          -> parsed JSON; throws an Error carrying .status on non-2xx
+ *   postJson(url, body)   -> { status, json }
+ *
+ * Returns { ok, reason, version, account, status, message }. `account` is the
+ * demo user name (an email address); the password is never returned.
+ */
+export async function checkReviewLogin({ ascGet, postJson, bundleId, loginUrl = REVIEW_LOGIN_URL }) {
+  const apps = await ascGet(`/v1/apps?filter[bundleId]=${encodeURIComponent(bundleId)}`);
+  const appId = apps?.data?.[0]?.id;
+  if (!appId) {
+    throw new Error(
+      `No app with bundle id ${bundleId} is visible to this key. ` +
+      'FIX: check the key belongs to the right team, or pass --bundle-id.'
+    );
+  }
+
+  const versions = await ascGet(`/v1/apps/${appId}/appStoreVersions?filter[platform]=IOS&limit=50`);
+  const version = pickReviewBoundVersion(versions);
+  if (!version) {
+    return {
+      ok: false, reason: 'no-version', version: null, account: null, status: null,
+      message: `No iOS version is in any of ${REVIEW_BOUND_STATES.join(', ')}, so there is no review login to check. ` +
+        'FIX: create or select the version you are about to submit in App Store Connect, then run this again.',
+    };
+  }
+  const label = `${version.versionString ?? version.id} (${version.state})`;
+
+  let detail = null;
+  try {
+    detail = (await ascGet(`/v1/appStoreVersions/${version.id}/appStoreReviewDetail`))?.data ?? null;
+  } catch (e) {
+    if (e.status !== 404) throw e;
+  }
+  const account = detail?.attributes?.demoAccountName?.trim() || null;
+  const password = detail?.attributes?.demoAccountPassword || null;
+  if (!account || !password) {
+    return {
+      ok: false, reason: 'no-demo-account', version, account, status: null,
+      message: `Version ${label} has no demo account ${account ? 'password' : 'user name'} in App Review Information. ` +
+        'Flock cannot be used without signing in, so a reviewer with no working login rejects under Guideline 2.1. ' +
+        'FIX: fill the demo user name and password in App Store Connect > App Review Information.',
+    };
+  }
+
+  let res;
+  try {
+    res = await postJson(loginUrl, { email: account, password });
+  } catch (e) {
+    return {
+      ok: false, reason: 'unreachable', version, account, status: null,
+      message: `Could not reach ${loginUrl}: ${e.message}. Nothing was learned about the password; check the API is up and run this again.`,
+    };
+  }
+
+  const status = res?.status ?? null;
+  if (status === 200 && typeof res.json?.token === 'string' && res.json.token) {
+    return {
+      ok: true, reason: 'pass', version, account, status,
+      message: `PASS: the demo login saved on version ${label} signs in to ${loginUrl}.`,
+    };
+  }
+  if (status === 401) {
+    return {
+      ok: false, reason: 'rejected', version, account, status,
+      message: `FAIL: the demo login saved on version ${label} is refused by ${loginUrl} (401). ` +
+        `App Review would be refused the same way. ${SEED_FIX}`,
+    };
+  }
+  if (status === 429) {
+    return {
+      ok: false, reason: 'throttled', version, account, status,
+      message: 'FAIL: the sign-in route is throttling this account (429), usually after repeated wrong passwords. ' +
+        'A reviewer arriving now would be locked out too. Wait out the lock (up to 15 minutes), then run this again; ' +
+        'if it then answers 401, the saved password is wrong.',
+    };
+  }
+  if (status === 403 && res.json?.needsDob) {
+    return {
+      ok: false, reason: 'needs-dob', version, account, status,
+      message: `FAIL: the demo login on version ${label} has the right password, but the account has no date of birth on file, ` +
+        'so the reviewer is stopped at a date-of-birth question after signing in. ' +
+        'FIX: re-run backend/scripts/seed-review-account.js, which writes one, then run this check again.',
+    };
+  }
+  // Any other 403 is the server refusing this account (the age gate). Its
+  // message is the server's own sentence and carries nothing secret.
+  const serverSaid = typeof res?.json?.error === 'string' ? ` The server said: "${res.json.error}"` : '';
+  return {
+    ok: false, reason: 'unexpected', version, account, status,
+    message: `FAIL: ${loginUrl} answered ${status} for the demo login on version ${label}.${serverSaid} ` +
+      'A reviewer cannot get in while this holds. FIX: sign in with the same account on a test device to see what the reviewer sees.',
+  };
+}

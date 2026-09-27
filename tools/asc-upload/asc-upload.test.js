@@ -19,12 +19,16 @@ import {
   ASC_AUDIENCE,
   MAX_SCREENSHOTS_PER_SET,
   MAX_TOKEN_LIFETIME_SECONDS,
+  REVIEW_BOUND_STATES,
+  REVIEW_LOGIN_URL,
   buildPlan,
   buildScreenshotManifest,
+  checkReviewLogin,
   decodeJwt,
   displayTypeForDimensions,
   mintAscJwt,
   parseSubmissionDoc,
+  pickReviewBoundVersion,
   planScreenshotUploads,
   pngDimensions,
   validateListing,
@@ -357,6 +361,165 @@ test('offline plan (no credentials) marks create-vs-update steps as resolved liv
   const loc = steps.find((s) => s.kind === 'create-version-localization');
   assert.ok(loc.conditional, 'offline steps must be flagged conditional');
   assert.match(loc.note, /resolved live/);
+});
+
+// ---------------------------------------------------------------------------
+// --check-review-login: the demo login App Store Connect holds must sign in.
+// Both sides are mocked: ascGet answers like the ASC API, postJson like
+// POST /api/auth/login.
+// ---------------------------------------------------------------------------
+
+const DEMO_PASSWORD = 'Correct-Horse-7731';
+
+function mockAsc({ versions, detail, detailStatus } = {}) {
+  const calls = [];
+  const ascGet = async (path) => {
+    calls.push(path);
+    if (path.startsWith('/v1/apps?')) return { data: [{ id: 'app1', type: 'apps' }] };
+    if (path.startsWith('/v1/apps/app1/appStoreVersions')) {
+      return {
+        data: versions ?? [
+          { id: 'v-live', attributes: { platform: 'IOS', versionString: '0.9', appVersionState: 'READY_FOR_DISTRIBUTION' } },
+          { id: 'v-review', attributes: { platform: 'IOS', versionString: '1.0', appVersionState: 'IN_REVIEW' } },
+        ],
+      };
+    }
+    if (/^\/v1\/appStoreVersions\/[^/]+\/appStoreReviewDetail$/.test(path)) {
+      if (detailStatus) {
+        const err = new Error(`GET ${path} -> HTTP ${detailStatus}`);
+        err.status = detailStatus;
+        throw err;
+      }
+      return {
+        data: detail === undefined
+          ? { id: 'rd1', type: 'appStoreReviewDetails', attributes: { demoAccountRequired: true, demoAccountName: 'review@flockcorp.com', demoAccountPassword: DEMO_PASSWORD } }
+          : detail,
+      };
+    }
+    throw new Error(`unexpected ASC path ${path}`);
+  };
+  return { ascGet, calls };
+}
+
+function mockLogin(status, json) {
+  const posts = [];
+  const postJson = async (url, body) => {
+    posts.push({ url, body });
+    return { status, json };
+  };
+  return { postJson, posts };
+}
+
+test('review login: a 200 with a token is a PASS, and the saved credentials went to the live sign-in route', async () => {
+  const { ascGet, calls } = mockAsc();
+  const { postJson, posts } = mockLogin(200, { token: 'jwt.fake.token', user: { id: 7 } });
+  const result = await checkReviewLogin({ ascGet, postJson, bundleId: 'com.flockcorp.flock' });
+  assert.equal(result.ok, true);
+  assert.equal(result.reason, 'pass');
+  assert.match(result.message, /^PASS/);
+  assert.equal(result.version.id, 'v-review', 'must check the version in review, not the live one');
+  assert.ok(calls.includes('/v1/appStoreVersions/v-review/appStoreReviewDetail'));
+  assert.equal(posts.length, 1);
+  assert.equal(posts[0].url, REVIEW_LOGIN_URL);
+  assert.equal(REVIEW_LOGIN_URL, 'https://api.flockcorp.com/api/auth/login');
+  assert.deepEqual(posts[0].body, { email: 'review@flockcorp.com', password: DEMO_PASSWORD });
+  assert.ok(!JSON.stringify(result).includes(DEMO_PASSWORD), 'the password must never come back out');
+  assert.ok(!JSON.stringify(result).includes('jwt.fake.token'), 'the session token must never come back out');
+});
+
+test('review login: a 401 FAILS and names the seed script as the fix, without printing the password', async () => {
+  const { ascGet } = mockAsc();
+  const { postJson } = mockLogin(401, { error: 'Invalid email or password' });
+  const result = await checkReviewLogin({ ascGet, postJson, bundleId: 'com.flockcorp.flock' });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'rejected');
+  assert.match(result.message, /^FAIL.*401/s);
+  assert.match(result.message, /backend\/scripts\/seed-review-account\.js/);
+  assert.ok(!JSON.stringify(result).includes(DEMO_PASSWORD));
+});
+
+test('review login: a 200 without a token is not a pass', async () => {
+  const { ascGet } = mockAsc();
+  const { postJson } = mockLogin(200, { error: 'maintenance page' });
+  const result = await checkReviewLogin({ ascGet, postJson, bundleId: 'com.flockcorp.flock' });
+  assert.equal(result.ok, false);
+});
+
+test('review login: throttled (429) and missing date of birth (403 needsDob) each fail with their own fix', async () => {
+  const throttled = await checkReviewLogin({ ...mockAsc(), ...mockLogin(429, { error: 'Too many' }), bundleId: 'b' });
+  assert.equal(throttled.ok, false);
+  assert.equal(throttled.reason, 'throttled');
+  assert.match(throttled.message, /429/);
+
+  const noDob = await checkReviewLogin({ ...mockAsc(), ...mockLogin(403, { error: 'Add your date of birth to continue.', needsDob: true }), bundleId: 'b' });
+  assert.equal(noDob.ok, false);
+  assert.equal(noDob.reason, 'needs-dob');
+  assert.match(noDob.message, /seed-review-account\.js/);
+
+  const refused = await checkReviewLogin({ ...mockAsc(), ...mockLogin(403, { error: 'This account is not available.' }), bundleId: 'b' });
+  assert.equal(refused.ok, false);
+  assert.match(refused.message, /answered 403.*This account is not available/s);
+});
+
+test('review login: no demo account saved in App Review Information fails before any sign-in attempt', async () => {
+  for (const mock of [
+    mockAsc({ detail: { id: 'rd1', attributes: { demoAccountRequired: false, demoAccountName: null, demoAccountPassword: null } } }),
+    mockAsc({ detail: { id: 'rd1', attributes: { demoAccountName: 'review@flockcorp.com', demoAccountPassword: '' } } }),
+    mockAsc({ detail: null }),
+    mockAsc({ detailStatus: 404 }),
+  ]) {
+    const { postJson, posts } = mockLogin(200, { token: 't' });
+    const result = await checkReviewLogin({ ascGet: mock.ascGet, postJson, bundleId: 'b' });
+    assert.equal(result.ok, false);
+    assert.equal(result.reason, 'no-demo-account');
+    assert.match(result.message, /App Review Information/);
+    assert.equal(posts.length, 0, 'nothing to sign in with, so no request');
+  }
+});
+
+test('review login: an ASC error other than 404 on the review detail is not swallowed', async () => {
+  const { ascGet } = mockAsc({ detailStatus: 403 });
+  const { postJson } = mockLogin(200, { token: 't' });
+  await assert.rejects(checkReviewLogin({ ascGet, postJson, bundleId: 'b' }), /HTTP 403/);
+});
+
+test('review login: an unreachable API fails without guessing about the password', async () => {
+  const { ascGet } = mockAsc();
+  const postJson = async () => { throw new Error('ECONNREFUSED'); };
+  const result = await checkReviewLogin({ ascGet, postJson, bundleId: 'b' });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'unreachable');
+  assert.match(result.message, /ECONNREFUSED/);
+});
+
+test('review login: version choice covers resubmission after a rejection, and prefers the version being prepared', () => {
+  assert.ok(REVIEW_BOUND_STATES.includes('PREPARE_FOR_SUBMISSION'));
+  assert.ok(REVIEW_BOUND_STATES.includes('READY_FOR_REVIEW'));
+  assert.ok(REVIEW_BOUND_STATES.includes('WAITING_FOR_REVIEW'));
+  assert.ok(REVIEW_BOUND_STATES.includes('REJECTED'), 'Resubmit is pressed from a rejected version');
+  const v = (id, state, extra = {}) => ({ id, attributes: { platform: 'IOS', versionString: id, appStoreState: state, ...extra } });
+  assert.equal(pickReviewBoundVersion({ data: [v('old', 'REJECTED'), v('new', 'PREPARE_FOR_SUBMISSION')] }).id, 'new');
+  assert.equal(pickReviewBoundVersion({ data: [v('live', 'READY_FOR_SALE'), v('back', 'REJECTED')] }).id, 'back');
+  assert.equal(pickReviewBoundVersion({ data: [v('live', 'READY_FOR_SALE')] }), null);
+  assert.equal(pickReviewBoundVersion({ data: [v('mac', 'PREPARE_FOR_SUBMISSION', { platform: 'MAC_OS' })] }), null);
+  // appVersionState is the current attribute and wins over the older appStoreState.
+  assert.equal(pickReviewBoundVersion({ data: [v('x', 'READY_FOR_SALE', { appVersionState: 'WAITING_FOR_REVIEW' })] }).state, 'WAITING_FOR_REVIEW');
+});
+
+test('review login: no version heading to review fails naming the states it looked for', async () => {
+  const { ascGet } = mockAsc({ versions: [{ id: 'v1', attributes: { platform: 'IOS', versionString: '1.0', appVersionState: 'READY_FOR_DISTRIBUTION' } }] });
+  const { postJson, posts } = mockLogin(200, { token: 't' });
+  const result = await checkReviewLogin({ ascGet, postJson, bundleId: 'b' });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'no-version');
+  assert.match(result.message, /PREPARE_FOR_SUBMISSION/);
+  assert.equal(posts.length, 0);
+});
+
+test('CLI: --check-review-login without an API key exits 1 naming the missing options', () => {
+  const result = spawnSync(process.execPath, [join(HERE, 'upload.mjs'), '--check-review-login'], { encoding: 'utf8' });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /--key, --key-id and --issuer/);
 });
 
 // ---------------------------------------------------------------------------
