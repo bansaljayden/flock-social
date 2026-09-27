@@ -366,8 +366,16 @@ function normalizeGuestName(name) {
 // of somebody who just became a member, and hiding was all they wrote, so the
 // name they had answered under ("Sam") was refused to every other Sam on the
 // plan with this guard's sentence, which reads as a moderation action about
-// somebody who did nothing. They stamp retired_at now (migration 097), and a
+// somebody who did nothing. They stamp retired_at now (migration 098), and a
 // moderator's hide clears it, so only a row a moderator hid counts here.
+//
+// That also frees the name for the person who joined. The old refusal was
+// what stopped a new member answering the link again as "Sam" from another
+// browser, and it stopped every other Sam with it. This route is anonymous and
+// a retired row does not say which account it became, so the two cannot be
+// told apart here: a member can be counted again as a guest, as a member
+// always could under any other name. The browser that answered first is told
+// it joined (JOINED_IN_APP below), so it is not the page that asks for it.
 // ---------------------------------------------------------------------------
 async function nameIsTakenDown(run, flockId, name) {
   const r = await run(

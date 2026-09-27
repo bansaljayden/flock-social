@@ -1590,6 +1590,66 @@ test('096 admits quarterly bills and credits, keeps its refusals, and a replay o
   await pool.query(`DELETE FROM business_expenses WHERE vendor LIKE 'Boot096%'`);
 });
 
+// ---------------------------------------------------------------------------
+// 098: a guest answer retired on a join, told apart from a takedown. The
+// column arrives empty, and the file stamps the rows retired before it: a
+// hidden guest row that no report and no moderation action has ever named,
+// because a join and a moderator's takedown are the only two things that have
+// ever hidden one. A row a moderator could have hidden keeps reading as a
+// takedown, whichever of its report and its audit row survived, and a replay
+// moves nothing.
+// ---------------------------------------------------------------------------
+
+test('098 stamps a guest row a join hid before it, leaves every row a moderator could have hidden, and a replay moves nothing', async () => {
+  const host = await insertUser('host098@example.com', 'Host 098');
+  const reporter = await insertUser('reporter098@example.com', 'Reporter 098');
+  const { rows: [{ id: flockId }] } = await pool.query(
+    `INSERT INTO flocks (name, creator_id) VALUES ('Boot098', $1) RETURNING id`, [host]
+  );
+  const guest = async (name, hidden) => (await pool.query(
+    'INSERT INTO guest_rsvps (flock_id, name, is_hidden) VALUES ($1, $2, $3) RETURNING id', [flockId, name, hidden]
+  )).rows[0].id;
+  await guest('Sam', true);                 // retired on a join before 098: nothing names it
+  const reported = await guest('Rude', true);   // a takedown, its report still there
+  const audited = await guest('Worse', true);   // a takedown whose reporter has since deleted their account
+  const dismissed = await guest('Pat', true);   // reported and dismissed, then retired on a join
+  await guest('Ann', false);                // a live answer
+  await pool.query(
+    `INSERT INTO content_reports (reporter_id, content_type, content_id, reason, status)
+     VALUES ($1, 'guest_rsvp', $2, 'harassment', 'resolved'), ($1, 'guest_rsvp', $3, 'spam', 'dismissed')`,
+    [reporter, reported, dismissed]
+  );
+  await pool.query(
+    `INSERT INTO moderation_actions (moderator_id, action, content_type, content_id)
+     VALUES (NULL, 'content_hidden', 'guest_rsvp', $1)`,
+    [audited]
+  );
+  // The rows as they stood before 098. The column is here already, because
+  // the chain has run, so it is emptied.
+  await pool.query('UPDATE guest_rsvps SET retired_at = NULL WHERE flock_id = $1', [flockId]);
+
+  const stamps = async () => Object.fromEntries((await pool.query(
+    'SELECT name, retired_at FROM guest_rsvps WHERE flock_id = $1 ORDER BY id', [flockId]
+  )).rows.map((r) => [r.name, r.retired_at]));
+
+  await pool.query(`DELETE FROM schema_migrations WHERE name = '098_guest_rsvp_retired_at.sql'`);
+  await migrate(pool);
+  const after = await stamps();
+  assert.ok(after.Sam instanceof Date, 'the join from before 098 reads as a join, so the name is free again');
+  assert.deepEqual(
+    { Rude: after.Rude, Worse: after.Worse, Pat: after.Pat, Ann: after.Ann },
+    { Rude: null, Worse: null, Pat: null, Ann: null },
+    'a row any report or audit row names stays a takedown, and a live row is not touched'
+  );
+
+  await pool.query(`DELETE FROM schema_migrations WHERE name = '098_guest_rsvp_retired_at.sql'`);
+  await migrate(pool);
+  assert.deepEqual(await stamps(), after, 'a replay of 098 moved a row');
+
+  await pool.query(`DELETE FROM moderation_actions WHERE content_type = 'guest_rsvp' AND content_id = $1`, [audited]);
+  await pool.query(`DELETE FROM users WHERE email LIKE '%098@example.com'`);
+});
+
 test('every migration file declares post-conditions the runner can actually parse', async () => {
   // parseRequirements throws on a line that looks like a declaration and is
   // not: mis-cased, schema-mangled, malformed, or buried in a $$ body, a block

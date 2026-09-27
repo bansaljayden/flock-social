@@ -1022,7 +1022,7 @@ const TAKEDOWN_TARGETS = {
   // A guest RSVP has no account behind it, so there is nobody personal to tell;
   // the flock members watching the roster are the whole audience.
   //
-  // `alsoSet` clears retired_at (migration 097) on both the hide and the
+  // `alsoSet` clears retired_at (migration 098) on both the hide and the
   // un-hide. A row retired because its person joined the plan is hidden
   // already, and the name guard reads a hidden row as a takedown only when it
   // was not retired, so a moderator hiding it would otherwise have taken down
