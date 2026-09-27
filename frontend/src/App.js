@@ -10216,23 +10216,33 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         setBudgetStatus(null);
         if (err?.status !== 404) setMoneyError(err?.message || 'The money side of this plan did not load.');
       });
-    // A bill only exists after someone splits one, and the UI only offers
-    // that on a confirmed or completed flock. Asking for one on every open
-    // meant a 404 (and a red line in the console) every single time a plan
-    // was opened. Ask only when there could be an answer; the bill_created
-    // socket event covers one being made while you are sitting here.
-    const flockNow = flocksRef.current.find(f => f.id === flockId);
-    if (flockNow && (flockNow.status === 'confirmed' || flockNow.status === 'completed' || flockNow.status === 'locked')) {
-      getBillSplit(flockId)
-        .then(data => { if (current()) setBillSplit(data.bill); })
-        .catch((err) => {
-          if (!current()) return;
-          setBillSplit(null);
-          if (err?.status !== 404) setMoneyError(err?.message || 'The money side of this plan did not load.');
-        });
-    } else {
-      setBillSplit(null);
-    }
+    /* THE BILL IS ASKED FOR ON EVERY OPEN, WHATEVER STATE THE PLAN IS IN.
+       This used to ask only on a confirmed, completed or locked flock, on the
+       reasoning that the UI offers Split the Bill nowhere else and a 404 on
+       every other open was a wasted red line in the console. The premise was
+       wrong twice. A plan with the budget off offers Split the Bill in any
+       state, and POST /api/billing/:id/create never looks at status, so a
+       bill posted on a plan still being voted on (or one later cancelled) was
+       never loaded again: no card, no pill, no Settle Up, and the sheet
+       offered to create a bill over it. The leave route then refused everyone
+       it named with "settle your share first", and nothing on screen could.
+       And a cold start from a bill push opens this chat before GET /flocks
+       answers, so the flock was not in the list yet and even a confirmed
+       plan's bill was skipped, with nothing to ask again once it arrived.
+
+       A 404 is the honest "no bill" and costs one request. The bill that goes
+       unseen costs a debt nobody can settle. Only another flock's bill is
+       cleared up front, so a chat-to-chat jump does not draw the last plan's
+       bill here while this read is in flight, and a re-read of this plan
+       keeps what it shows until the answer lands. */
+    setBillSplit(prev => (prev && String(prev.flockId) !== String(flockId) ? null : prev));
+    getBillSplit(flockId)
+      .then(data => { if (current()) setBillSplit(data.bill); })
+      .catch((err) => {
+        if (!current()) return;
+        setBillSplit(null);
+        if (err?.status !== 404) setMoneyError(err?.message || 'The money side of this plan did not load.');
+      });
   }, []);
 
   /* The Try again behind a failed money read. Same reason as
