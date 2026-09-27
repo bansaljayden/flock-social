@@ -516,9 +516,31 @@ test('budget: the creator can still lock and still remind (the outsider 403s are
   assert.strictEqual(lock.body.locked, true);
   assert.ok(writes.some((w) => w.sql.includes('UPDATE flocks SET budget_locked')), 'the lock was not written');
   reset();
+  // On a plan that is still on. The modelled flock has finished, and a
+  // finished plan is refused a reminder outright (FLOCK_CLOSED, nobody can
+  // answer one), which is not the authorization this test is about.
+  flocks.get(FLOCK_ID).status = 'confirmed';
   const remind = await call('POST', `/api/budget/${FLOCK_ID}/remind`, 'alice');
   assert.strictEqual(remind.status, 200, JSON.stringify(remind.body));
   assertQueriesUnderstood();
+});
+
+test('budget: a finished plan is refused a reminder before anybody is looked up to be buzzed', async () => {
+  // Finishing a plan leaves its budget open when it never settled, so the
+  // lock check let the creator push "Submit your budget" to every member who
+  // had not answered, and each of them was then refused by /submit with
+  // FLOCK_CLOSED. The route says so itself now, and asks for nobody.
+  for (const status of ['completed', 'cancelled']) {
+    reset();
+    flocks.get(FLOCK_ID).status = status;
+    const r = await call('POST', `/api/budget/${FLOCK_ID}/remind`, 'alice');
+    assert.strictEqual(r.status, 409, `${status}: ${JSON.stringify(r.body)}`);
+    assert.strictEqual(r.body.code, 'FLOCK_CLOSED');
+    assert.ok(!queries.some((q) => q.sql.includes('FROM flock_members fm JOIN users u')),
+      `${status}: the people who had not answered were looked up to be reminded`);
+    assert.deepStrictEqual(writes, []);
+    assertQueriesUnderstood();
+  }
 });
 
 // The membership-first routes in the SAME FILE do not have the problem, which

@@ -903,3 +903,45 @@ describe('the composer\'s Split the bill tile', () => {
     expect(screen.queryByText('Who paid?')).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// 9. A finished plan offers the creator no reminder and no start-over
+// ---------------------------------------------------------------------------
+/* Finishing a plan never closes its budget, so both controls stayed up after
+   the night. Send Reminder buzzed everyone who had not answered to submit a
+   budget /submit refuses on a finished plan, and Start the budget over deleted
+   every answer and the number and then said everyone could answer again. The
+   server refuses both now (FLOCK_CLOSED); the sheet stops offering them. */
+describe('the creator\'s budget controls on a plan that has ended', () => {
+  const hostPlan = (status) => () => ({ ...FLOCK, creatorId: ME.id, budgetEnabled: true, status });
+  const answered = {
+    budgetEnabled: true, budgetLocked: false, ceiling: null, isReady: false, skipCount: null,
+    submissionCount: 1, totalMembers: 4, memberCount: 4, userSubmitted: true, userAmount: 40, userSkipped: false,
+  };
+  const settled = { ...answered, budgetLocked: true, ceiling: 40, isReady: true, submissionCount: 4 };
+
+  test('a live plan still offers both', () => {
+    const { unmount } = mount(null, { getSelectedFlock: hostPlan('confirmed'), budgetStatus: answered });
+    expect(screen.getByRole('button', { name: 'Send Reminder' })).toBeTruthy();
+    unmount();
+    mount(null, { getSelectedFlock: hostPlan('confirmed'), budgetStatus: settled });
+    expect(screen.getByRole('button', { name: 'Start the budget over' })).toBeTruthy();
+  });
+
+  test.each(['completed', 'cancelled'])('a %s plan offers neither', (status) => {
+    // Fails without the fix: both buttons render on a finished plan.
+    const { unmount } = mount(null, { getSelectedFlock: hostPlan(status), budgetStatus: answered });
+    expect(screen.queryByRole('button', { name: 'Send Reminder' })).toBeNull();
+    unmount();
+    mount(null, { getSelectedFlock: hostPlan(status), budgetStatus: settled });
+    expect(screen.queryByRole('button', { name: 'Start the budget over' })).toBeNull();
+    // The number itself is still shown; only the control that would wipe it goes.
+    expect(screen.getByText('Group budget: up to $40 per person')).toBeTruthy();
+  });
+
+  test('Lock Budget stays where the lock can still work, without the reminder beside it', () => {
+    mount(null, { getSelectedFlock: hostPlan('completed'), budgetStatus: { ...answered, isReady: true, submissionCount: 3 } });
+    expect(screen.getByRole('button', { name: 'Lock Budget' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Send Reminder' })).toBeNull();
+  });
+});

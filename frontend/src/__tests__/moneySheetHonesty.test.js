@@ -137,6 +137,8 @@ test('a settled share does not survive being asked for more money', () => {
 
 test('a closed budget cannot be reminded about', () => {
   const budget = backend('budget.js');
-  expect(budget).toMatch(/SELECT creator_id, name, budget_enabled, budget_locked FROM flocks WHERE id = \$1/);
+  // status rides along since a finished plan is refused too (FLOCK_CLOSED).
+  expect(budget).toMatch(/SELECT creator_id, name, budget_enabled, budget_locked, status FROM flocks WHERE id = \$1/);
   expect(budget).toMatch(/The budget is closed, so there is nothing left to remind anyone about/);
+  expect(budget).toMatch(/This plan is finished, so there is nothing to remind anyone about/);
 });

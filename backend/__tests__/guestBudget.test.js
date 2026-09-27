@@ -217,11 +217,13 @@ async function dispatch(sql, params) {
       ? { rows: [{ budget_enabled: f.budget_enabled, budget_locked: f.budget_locked, status: f.status }], rowCount: 1 }
       : { rows: [], rowCount: 0 };
   }
-  // The creator's two doors, /lock and /reset, hold the row with this one.
-  if (/^SELECT creator_id, budget_enabled, budget_locked FROM flocks WHERE id = \$1 FOR UPDATE$/.test(flat)) {
+  // The creator's two doors, /lock and /reset, hold the row with this one;
+  // /reset also reads the status, because a finished plan cannot be started
+  // over.
+  if (/^SELECT creator_id, budget_enabled, budget_locked(, status)? FROM flocks WHERE id = \$1 FOR UPDATE$/.test(flat)) {
     const f = world.flocks.get(Number(p[0]));
     return f
-      ? { rows: [{ creator_id: f.creator_id, budget_enabled: f.budget_enabled, budget_locked: f.budget_locked }], rowCount: 1 }
+      ? { rows: [{ creator_id: f.creator_id, budget_enabled: f.budget_enabled, budget_locked: f.budget_locked, status: f.status }], rowCount: 1 }
       : { rows: [], rowCount: 0 };
   }
   if (/^SELECT budget_locked, budget_ceiling FROM flocks WHERE id = \$1$/.test(flat)) {
@@ -1483,7 +1485,7 @@ test('the creator resets a settled budget: every row deleted and the lock lifted
   // The second DELETE is the ghost-commit shell estimated from the old number
   // (routes/budget.js RESET_SHELL_SQL), in the same transaction.
   assert.deepStrictEqual(tx.statements.map((s) => s.replace(/ AND NOT EXISTS .*$/, ' AND NOT EXISTS ...')), [
-    'SELECT creator_id, budget_enabled, budget_locked FROM flocks WHERE id = $1 FOR UPDATE',
+    'SELECT creator_id, budget_enabled, budget_locked, status FROM flocks WHERE id = $1 FOR UPDATE',
     'DELETE FROM budget_submissions WHERE flock_id = $1',
     'DELETE FROM bill_splits b WHERE b.flock_id = $1 AND b.paid_by IS NULL AND NOT EXISTS ...',
     'UPDATE flocks SET budget_locked = false, budget_ceiling = NULL, updated_at = NOW() WHERE id = $1',
@@ -1530,6 +1532,32 @@ test('an open budget cannot be started over: there is no number to get off, and 
   assertQueriesUnderstood();
 });
 
+test('a finished plan cannot be started over: nobody can answer again, so nothing is deleted', async () => {
+  // Starting over asks everyone again, and a finished plan takes no answer
+  // from a member, a guest or a ghost commit. Finishing a plan leaves its
+  // budget settled, so the lock check alone let this through: every answer
+  // and the published number went, and the room was told it could answer.
+  for (const status of ['completed', 'cancelled']) {
+    world = freshWorld();
+    guest.guestActionLog.clear();
+    guest.newGuestLog.clear();
+    await settleFourWay();
+    world.flocks.get(FLOCK).status = status;
+    log = [];
+    emits = [];
+    const res = await reset(AVA.id);
+    assert.strictEqual(res.status, 409, `${status}: ${res.text}`);
+    assert.strictEqual(res.body.code, 'FLOCK_CLOSED');
+    assert.strictEqual(ran(/DELETE FROM budget_submissions/).length, 0, `${status}: answers were deleted`);
+    assert.strictEqual(ran(/DELETE FROM bill_splits/).length, 0, `${status}: the estimates were deleted`);
+    assert.strictEqual(lastTransaction().closedBy, 'ROLLBACK');
+    assert.strictEqual(world.submissions.length, 4);
+    assert.strictEqual(world.flocks.get(FLOCK).budget_locked, true, 'the settled number stands');
+    assert.strictEqual(emits.filter((e) => e.event === 'budget_updated').length, 0, 'nobody is told to answer again');
+    assertQueriesUnderstood();
+  }
+});
+
 test('a member who is not the creator is 403 and nothing is deleted; a stranger is answered as /lock answers them; a plan not matching budgets is 400', async () => {
   await settleFourWay();
 
@@ -1540,7 +1568,7 @@ test('a member who is not the creator is 403 and nothing is deleted; a stranger 
   assert.strictEqual(ran(/DELETE FROM budget_submissions/).length, 0);
   const tx = lastTransaction();
   assert.strictEqual(tx.closedBy, 'ROLLBACK');
-  assert.deepStrictEqual(tx.statements, ['SELECT creator_id, budget_enabled, budget_locked FROM flocks WHERE id = $1 FOR UPDATE'],
+  assert.deepStrictEqual(tx.statements, ['SELECT creator_id, budget_enabled, budget_locked, status FROM flocks WHERE id = $1 FOR UPDATE'],
     'the creator check runs under the lock and nothing follows it');
   assert.strictEqual(world.submissions.length, 4);
   assert.strictEqual(world.flocks.get(FLOCK).budget_locked, true);
