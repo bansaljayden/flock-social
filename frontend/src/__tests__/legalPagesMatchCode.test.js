@@ -323,6 +323,21 @@ describe('deletion copy matches the deletion path', () => {
     expect(privacy).toMatch(/handed to the person who paid instead of being deleted/);
     expect(read('frontend', 'src', 'screens', 'ProfileSettings.js')).toMatch(/passes to the person who paid/);
 
+    // Not always the payer, though: a banned account is ordered last, and a
+    // payer who is not an accepted member cannot be chosen at all, so the plan
+    // can go to another member. A page that promised the payer every time
+    // would be stricter than the statement that decides.
+    expect(users).toMatch(/ORDER BY bs\.flock_id, \(hu\.is_banned IS TRUE\), \(fm\.user_id = bs\.paid_by\) DESC, fm\.id/);
+    expect(users).toMatch(/fm\.status = 'accepted' AND fm\.user_id <> \$1/);
+    const fallback = /if they have left the plan or\s+been banned, to another member\s+of it/;
+    expect(deletePage).toMatch(fallback);
+    expect(deletePage).toMatch(/or to another\s+member if they have left the plan or been banned/);
+    expect(terms).toMatch(fallback);
+    expect(privacy).toMatch(fallback);
+    expect(read('frontend', 'src', 'screens', 'ProfileSettings.js')).toMatch(/or to another member if they have left the plan or been banned/);
+    const mirror = read('frontend', 'api', 'marketing-page.js');
+    expect(mirror.split(fallback).length - 1).toBe(2);
+
     // A DM row belongs to both people: either account being deleted takes the
     // thread with it, which is why both pages say so.
     expect(schema).toMatch(

@@ -599,20 +599,22 @@ describe('cancelFlockPlan, lifted out of App.js and executed', () => {
 
 const LISTENER_BODY = lift(
   'const unsub = onFlockUpdated((data) => {',
-  '\n    });\n    return unsub;\n  }, [showToast]);'
+  '\n    });\n    return unsub;\n  }, [showToast, refreshFlockRoster]);'
 );
 
 function runListener(data, flocks, over = {}) {
   const scope = {
     flocksRef: { current: flocks },
+    meRef: { current: { id: 5 } },
     showToast: jest.fn(),
     formatEventTime: jest.fn(() => 'Fri 10:00 PM'),
     setFlocks: jest.fn(),
     resolveVenuePhoto: () => null,
     setPendingFlockInvites: jest.fn(),
+    refreshFlockRoster: jest.fn(),
     ...over,
   };
-  const names = ['flocksRef', 'showToast', 'formatEventTime', 'setFlocks', 'resolveVenuePhoto', 'setPendingFlockInvites', 'data'];
+  const names = ['flocksRef', 'meRef', 'showToast', 'formatEventTime', 'setFlocks', 'resolveVenuePhoto', 'setPendingFlockInvites', 'refreshFlockRoster', 'data'];
   // eslint-disable-next-line no-new-func
   const listener = new Function(...names, LISTENER_BODY);
   listener(...names.map((n) => (n === 'data' ? data : scope[n])));
@@ -757,6 +759,50 @@ describe('the venue_selected listener, lifted out of App.js and executed', () =>
   test('an event from a server that sends no block keeps what this app holds', () => {
     const [after] = runSelected({ flockId: 1, venue_name: 'Kome', venue_address: null, venue_id: null, selected_by: by }, [KOME]);
     expect(after).toMatchObject({ venueLat: 40.7, venueLng: -74.0, venueRating: '4.5', venuePhoto: 'kome.jpg' });
+  });
+});
+
+// A plan handed on when its creator deleted their account while one member
+// still owed another (routes/users.js HAND_ON_OWED_PLANS_SQL). The server
+// sends everybody left in it { flockId, creator_id, creator_name }; before,
+// nobody was told, so the new host had no host controls and every open app
+// kept the deleted account as the host until the list was read again.
+describe('a new host from an account deletion, through the same listener', () => {
+  const HANDED = { ...LIVE, host: 'Robin', hostId: 9, creatorId: 9 };
+
+  test('the new host is told the plan is theirs, and their copy gains the host id', () => {
+    const s = runListener({ flockId: 1, creator_id: 5, creator_name: 'Sam' }, [HANDED]);
+    expect(s.showToast).toHaveBeenCalledTimes(1);
+    expect(s.showToast).toHaveBeenCalledWith("You're the host of Friday now.");
+    const after = s.setFlocks.mock.calls[0][0]([HANDED]);
+    expect(after[0]).toMatchObject({ creatorId: 5, hostId: 5, host: 'Sam', status: 'voting', name: 'Friday' });
+  });
+
+  test('every other member follows the new host without a toast', () => {
+    const s = runListener({ flockId: 1, creator_id: 5, creator_name: 'Sam' }, [HANDED], { meRef: { current: { id: 6 } } });
+    expect(s.showToast).not.toHaveBeenCalled();
+    expect(s.setFlocks.mock.calls[0][0]([HANDED])[0]).toMatchObject({ creatorId: 5, hostId: 5, host: 'Sam' });
+  });
+
+  test('across a block the host is unnamed, as the flock list leaves it', () => {
+    const s = runListener({ flockId: 1, creator_id: 5, creator_name: null }, [HANDED], { meRef: { current: { id: 6 } } });
+    expect(s.setFlocks.mock.calls[0][0]([HANDED])[0]).toMatchObject({ creatorId: 5, host: 'Unknown' });
+  });
+
+  test("the roster is read again, since the deleted account's membership went with it", () => {
+    const s = runListener({ flockId: 1, creator_id: 5, creator_name: 'Sam' }, [HANDED]);
+    expect(s.refreshFlockRoster).toHaveBeenCalledWith(1);
+  });
+
+  test('an ordinary update leaves the host alone and reads no roster', () => {
+    const s = runListener({ flockId: 1, name: 'Friday', status: 'planning', event_time: '2026-09-26T22:00:00', updatedBy: 'Jay' }, [HANDED]);
+    expect(s.setFlocks.mock.calls[0][0]([HANDED])[0]).toMatchObject({ creatorId: 9, hostId: 9, host: 'Robin' });
+    expect(s.refreshFlockRoster).not.toHaveBeenCalled();
+  });
+
+  test('a repeat of the notice to the host they already are says nothing', () => {
+    const s = runListener({ flockId: 1, creator_id: 5, creator_name: 'Sam' }, [{ ...HANDED, creatorId: 5 }]);
+    expect(s.showToast).not.toHaveBeenCalled();
   });
 });
 

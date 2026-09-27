@@ -564,8 +564,8 @@ export default function TermsOfService() {
           Deleting your account also deletes every flock you created, including its chat,
           RSVPs, and votes, for everyone who was in it, except a plan whose bill split
           somebody else paid and somebody besides you still owes on, which passes to the
-          person who paid. It
-          also removes your direct message threads from the other person's app. Deletion is
+          person who paid (or, if they have left the plan or been banned, to another member
+          of it). It also removes your direct message threads from the other person's app. Deletion is
           irreversible. Our{' '}
           <a href="/privacy">Privacy Policy</a> lists exactly what is erased and the few
           things that survive.
