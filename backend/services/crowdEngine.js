@@ -1078,13 +1078,18 @@ function estimateCapacity(venue, score) {
 // Wait estimate
 // ---------------------------------------------------------------------------
 
+// Every string this returns is printed on the venue card as "Est. wait: ...",
+// so it is user copy and follows the copy rules: no em dash. Two of them
+// carried one ("45+ min — reserve ahead", "Packed — expect waits") because the
+// em dash audit only read the website. heuristicFallback.test.js now sweeps
+// every branch at every score, and scans this file's string literals.
 function estimateWait(score, types, priceLevel) {
   // Steakhouses — reservation culture, long waits without one
   if (isSteakhouseLike(types)) {
     if (score < 40) return 'Walk-in OK';
     if (score <= 69) return '10-20 min';
     if (score <= 84) return '30-45 min';
-    return '45+ min — reserve ahead';
+    return '45+ min, reserve ahead';
   }
 
   // Fine dining — almost always need reservations at peak.
@@ -1161,7 +1166,7 @@ function estimateWait(score, types, priceLevel) {
     if (score < 40) return 'Equipment open';
     if (score <= 69) return 'Some equipment in use';
     if (score <= 84) return 'Most equipment busy';
-    return 'Packed — expect waits';
+    return 'Packed, expect waits';
   }
 
   // Libraries, museums — space availability
