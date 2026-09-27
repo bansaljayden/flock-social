@@ -608,10 +608,11 @@ async function consumeVerification(rawToken) {
   if (!verifierMatches(parsed.verifier, row.verifier_hash)) return { ok: false, reason: 'invalid' };
 
   if (row.used_at) {
-    // Mailbox providers prefetch links (Outlook Safe Links and friends), so the
-    // scanner can spend the token seconds before the human clicks it. If the
-    // account is already verified, report the state rather than an error: the
-    // outcome the user wanted has happened, and nothing is re-verified here.
+    // A second press of the button, a second tab, or a link mailed before the
+    // GET stopped spending tokens and prefetched by a scanner (see GET
+    // /verify-email). If the account is already verified, report the state
+    // rather than an error: the outcome the user wanted has happened, and
+    // nothing is re-verified here.
     return row.email_verified === true
       ? { ok: true, alreadyVerified: true, userId: row.user_id }
       : { ok: false, reason: 'used' };
@@ -2427,13 +2428,27 @@ router.post('/signup', signupValidation, async (req, res) => {
   }
 });
 
-// POST /api/auth/verify-email  — { token }
-// GET  /api/auth/verify-email?token=...  — the link in the email
+// POST /api/auth/verify-email  — { token }, the only thing that spends one
+// GET  /api/auth/verify-email?token=...  — links mailed before the link moved
 //
-// Both consume the same single-use token. The GET exists because that is what a
-// link in an email can do; it answers with a redirect back to the web app so
-// the user lands somewhere real instead of on a JSON blob. The POST exists for
-// the app, which can hold the token and show its own confirmation.
+// Only the POST consumes the single-use token. It is sent by the web page the
+// email links to (/verify-email, frontend/src/components/auth/VerifyEmailPage.js)
+// when the person presses its button, and by nothing else.
+//
+// The GET used to consume it, and a GET is not a person. School and work mail
+// gateways (Defender Safe Links, Proofpoint, Mimecast) fetch every link in a
+// message as it arrives, so the confirmation of an address was being spent by
+// a scanner with nobody having clicked anything. That is the whole of what an
+// address squat needs: sign up with a password on somebody's school address and
+// the gateway confirms it for you. From there claimDecision hands the verified
+// row, and whatever the squatter seeded on it, to the owner's first Google or
+// Apple sign-in, and a ban of the squat tombstones the owner's address for a
+// year. So the GET now spends nothing. It forwards to the page with the token
+// in the fragment, the same place the reset link carries its token, and the
+// page will not send it until somebody presses the button. HEAD reaches this
+// handler too (Express answers HEAD with the GET route), and spends nothing
+// either. It stays for the links already sitting in inboxes, which point here
+// and are good for another day.
 //
 // Every failure is reported as one generic outcome. There is no "no such token"
 // vs "wrong token" distinction to read off the response.
@@ -2467,19 +2482,19 @@ router.post('/verify-email', [
   }
 });
 
-router.get('/verify-email', async (req, res) => {
-  // The redirect target is built from the PINNED production web URL, never from
+router.get('/verify-email', (req, res) => {
+  // Both targets are built from the PINNED production web URL, never from
   // anything on the request, so this cannot be turned into an open redirect.
-  const land = (status) => res.redirect(302, `${baseWebUrl()}/?email_verified=${status}`);
-  try {
-    const raw = typeof req.query.token === 'string' ? req.query.token : '';
-    const result = await consumeVerification(raw);
-    if (!result.ok) return land(result.reason === 'expired' ? 'expired' : 'invalid');
-    return land('1');
-  } catch (err) {
-    console.error('Verify email (GET) error:', err);
-    return land('error');
+  // A token that is not even the right shape goes straight to the outcome the
+  // page would have reached, rather than carrying junk into a fragment.
+  // no-store: the Location carries a live token, and no cache between here and
+  // the browser has any business keeping it.
+  res.set('Cache-Control', 'no-store');
+  const raw = typeof req.query.token === 'string' ? req.query.token.trim() : '';
+  if (!parseVerificationToken(raw)) {
+    return res.redirect(302, `${baseWebUrl()}/?email_verified=invalid`);
   }
+  return res.redirect(302, verificationLink(raw));
 });
 
 // POST /api/auth/resend-verification — authenticated, because the account that

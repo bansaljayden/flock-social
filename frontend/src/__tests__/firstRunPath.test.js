@@ -20,8 +20,9 @@
  *    covered their own call site and this was the other boot path into the same
  *    dialog.
  *
- * 2. THE CONFIRMATION LINK CAME BACK TO SILENCE. GET /api/auth/verify-email
- *    consumes the token and redirects to PUBLIC_WEB_URL/?email_verified=<outcome>.
+ * 2. THE CONFIRMATION LINK CAME BACK TO SILENCE. The confirmation page
+ *    (components/auth/VerifyEmailPage.js; it used to be the API's GET) spends
+ *    the token and goes to PUBLIC_WEB_URL/?email_verified=<outcome>.
  *    index.js lists email_verified in APP_INTENT_PARAMS so that URL boots the
  *    app, and then nothing read the parameter. All four outcomes rendered the
  *    same screen, so a link that had expired was indistinguishable from one that
@@ -158,25 +159,33 @@ describe('the location prompt waits for a map to be on screen', () => {
 });
 
 describe('the confirmation link says what happened', () => {
-  // Every outcome the backend can redirect with, read off the handler rather
-  // than copied from it.
+  // Every outcome that can arrive in ?email_verified=, read off the two places
+  // that send one rather than copied from them. The confirmation page sends
+  // the answer to its button press; the API's GET, which now only forwards
+  // older links to that page, sends one of its own for a token that is not
+  // even the right shape.
+  const VERIFY_PAGE = fs.readFileSync(path.join(__dirname, '..', 'components', 'auth', 'VerifyEmailPage.js'), 'utf8');
+  const page = codeOnly(VERIFY_PAGE);
   const verifyHandler = codeOnly(region(
     AUTH_ROUTES,
     "router.get('/verify-email'",
     "router.post('/resend-verification'"
   ));
-  const backendOutcomes = [...verifyHandler.matchAll(/land\('([^']+)'\)/g)].map((m) => m[1])
-    .concat([...verifyHandler.matchAll(/\? '([^']+)' : '([^']+)'/g)].flatMap((m) => [m[1], m[2]]));
+  const backendOutcomes = [...page.matchAll(/landOn\('([^']+)'\)/g)].map((m) => m[1])
+    .concat([...page.matchAll(/landOn\([^;]*?\? '([^']+)' : '([^']+)'\)/g)].flatMap((m) => [m[1], m[2]]))
+    .concat([...verifyHandler.matchAll(/email_verified=([A-Za-z0-9_]+)/g)].map((m) => m[1]));
 
   const copyBlock = codeOnly(region(APP, 'const EMAIL_VERIFIED_COPY = {', '};'));
   const frontendOutcomes = [...copyBlock.matchAll(/^\s*([A-Za-z0-9_]+):\s*'/gm)].map((m) => m[1]);
 
   it('the backend really does redirect with a set of outcomes', () => {
-    // Guards the two regexes above: if the handler is rewritten into a shape
-    // they cannot read, this goes red instead of every assertion below passing
-    // over an empty list.
+    // Guards the regexes above: if the page or the handler is rewritten into a
+    // shape they cannot read, this goes red instead of every assertion below
+    // passing over an empty list.
     expect(backendOutcomes.length).toBeGreaterThanOrEqual(4);
     expect(backendOutcomes).toContain('1');
+    expect(backendOutcomes).toContain('expired');
+    expect(backendOutcomes).toContain('invalid');
   });
 
   it('the app has a sentence for every outcome the backend can send', () => {

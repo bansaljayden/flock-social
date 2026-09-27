@@ -194,11 +194,12 @@ function baseWebUrl() {
   return pickBase(process.env.PUBLIC_WEB_URL, PROD_WEB_URL, 'PUBLIC_WEB_URL');
 }
 
-// Where the verification link points. It has to be the API, not the web app:
-// the API is what can actually consume the token, and it redirects the browser
-// back to the web app afterwards. Deliberately NOT derived from req.protocol /
-// req.get('host') — the Host header is attacker-controlled, and building an
-// emailed secret's URL out of it is textbook host-header injection.
+// Where the links that the API itself answers point: the unsubscribe and the
+// venue digest opt-out. (The verification link used to be one of them; see
+// verificationLink below for why it lands on the web app now.) Deliberately
+// NOT derived from req.protocol / req.get('host') — the Host header is
+// attacker-controlled, and building an emailed secret's URL out of it is
+// textbook host-header injection.
 function baseApiUrl() {
   return pickBase(process.env.PUBLIC_API_URL, PROD_API_URL, 'PUBLIC_API_URL');
 }
@@ -770,21 +771,29 @@ function noteSendFailure(message) {
   );
 }
 
+// Where a verification link points: a page on the WEB app, with the token in
+// the fragment, whose button is the only thing that spends it (POST
+// /api/auth/verify-email). It used to point at the API's GET, which spent the
+// token on arrival, and mail gateways fetch every link in a message before
+// anybody reads it (see passwordResetLink below). A scanner confirming an
+// address nobody clicked is exactly what an address squat needs, so the link
+// now asks a person to press something first. The API's GET still exists for
+// links mailed before this, and only forwards here.
 function verificationLink(token) {
-  return `${baseApiUrl()}/api/auth/verify-email?token=${encodeURIComponent(token)}`;
+  return `${baseWebUrl()}/verify-email#token=${encodeURIComponent(token)}`;
 }
 
-// Where a reset link points. The WEB app, not the API: unlike verification,
-// consuming a reset needs the person to type a new password, so the link has to
-// land on a screen. Same pinned base URL, same reasoning as baseApiUrl above.
+// Where a reset link points. The WEB app, not the API: consuming a reset needs
+// the person to type a new password, so the link has to land on a screen. Same
+// pinned base URL, same reasoning as baseApiUrl above.
 //
 // The token rides in the FRAGMENT, not the query string. Three things read a
 // URL that a fragment is invisible to: the server it is requested from (so the
 // token never reaches a Vercel access log), the Referer header sent to anything
 // the page loads, and any mailbox scanner that prefetches links. That last one
-// matters here in a way it did not for verification: Outlook Safe Links and
-// friends GET every link in every message, and a GET can never spend a reset
-// token because consuming one requires an explicit POST from the screen.
+// is the one that bit verification: Outlook Safe Links and friends GET every
+// link in every message, and a GET can never spend a reset token because
+// consuming one requires an explicit POST from the screen.
 function passwordResetLink(token) {
   return `${baseWebUrl()}/reset-password#token=${encodeURIComponent(token)}`;
 }

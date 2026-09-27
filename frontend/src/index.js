@@ -924,6 +924,23 @@ if (page) {
       </ErrorBoundary>
     </React.StrictMode>
   );
+} else if (path === '/verify-email') {
+  // Where the signup confirmation link lands (backend/services/emailService.js
+  // verificationLink). Its own page for the reset page's reason, that it has
+  // to work whether or not this browser holds a session, and for one of its
+  // own: it spends the token only when somebody presses its button, because a
+  // mail scanner fetching a link is not a person confirming an address.
+  const VerifyEmailPage = React.lazy(() => import('./components/auth/VerifyEmailPage'));
+  root.render(
+    <React.StrictMode>
+      {/* The ask, on every surface analytics can run on. Renders nothing
+          once answered, and declining is remembered. */}
+      <ConsentBanner onAnswer={startAnalytics} />
+      <ErrorBoundary label="verify-email" fallback={pageErrorFallback}>
+        <React.Suspense fallback={null}><VerifyEmailPage /></React.Suspense>
+      </ErrorBoundary>
+    </React.StrictMode>
+  );
 } else if (wantsApp) {
   // Nothing about the theme is worth a white screen: everything below this
   // point still renders if the attribute never gets written.

@@ -199,6 +199,14 @@
       ]
     },
     {
+      "source": "/verify-email",
+      "headers": [
+        { "key": "X-Robots-Tag", "value": "noindex, noarchive" },
+        { "key": "Referrer-Policy", "value": "no-referrer" },
+        { "key": "Cache-Control", "value": "private, no-store" }
+      ]
+    },
+    {
       "source": "/checkin/(.*)",
       "headers": [
         { "key": "X-Robots-Tag", "value": "noindex" },

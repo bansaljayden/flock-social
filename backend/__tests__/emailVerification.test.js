@@ -400,7 +400,7 @@ const SIGNUP = { email: 'new@example.com', password: 'Password1', name: 'New Use
 // link, which is exactly the property under test.
 function tokenFromLastMail() {
   const html = sentMail[sentMail.length - 1].html;
-  const m = html.match(/verify-email\?token=([A-Za-z0-9._%-]+)/);
+  const m = html.match(/verify-email#token=([A-Za-z0-9._%-]+)/);
   return m ? decodeURIComponent(m[1]) : null;
 }
 
@@ -619,14 +619,19 @@ test('asking for a new link retires the old one, so only the newest can work', a
 // link that can never work, mailed to a real person, for the one action that
 // unlocks their account.
 // ---------------------------------------------------------------------------
-test('verification links point at the production API, never at localhost', async () => {
+test('verification links point at the production confirmation page, never at localhost', async () => {
   reset();
   await signupUnverified();
-  const html = sentMail[0].html;
+  const { html, text } = sentMail[0];
 
   assert.ok(!/localhost/i.test(html), 'no localhost may reach an inbox');
   assert.ok(!/127\.0\.0\.1/.test(html));
-  assert.ok(html.includes(`${emailService.PROD_API_URL}/api/auth/verify-email?token=`));
+  // The page, with the token in the FRAGMENT. Not the API's GET: a link a mail
+  // scanner can spend by fetching it is a link that confirms addresses nobody
+  // clicked (see the scanner test below).
+  assert.ok(html.includes(`${emailService.PROD_WEB_URL}/verify-email#token=`));
+  assert.ok(text.includes(`${emailService.PROD_WEB_URL}/verify-email#token=`), 'the plain-text part carries the same link');
+  assert.ok(!html.includes('/api/auth/verify-email'), 'the mail must not link at the API route');
   assert.ok(html.includes(emailService.PROD_WEB_URL), 'the logo must come from the production web host too');
 });
 
@@ -642,19 +647,45 @@ test('only a public https base URL is ever used in a link', () => {
   }
 });
 
-test('the GET link redirects to the production web app, and cannot be aimed elsewhere', async () => {
+test('a mail scanner fetching the link confirms nothing; only the page\'s POST does', async () => {
   reset();
+  // The attack: sign up with a password on somebody's school address. Their
+  // mail gateway (Defender Safe Links, Proofpoint, Mimecast) fetches every link
+  // in the confirmation mail as it arrives. When that fetch spent the token,
+  // the squat was confirmed with nobody having clicked anything, and the
+  // owner's first Google or Apple sign-in was handed the squatter's row.
   await signupUnverified();
   const link = tokenFromLastMail();
 
-  const ok = await call('GET', `/api/auth/verify-email?token=${encodeURIComponent(link)}`);
-  assert.strictEqual(ok.status, 302);
-  assert.strictEqual(ok.headers.get('location'), `${emailService.PROD_WEB_URL}/?email_verified=1`);
-  assert.strictEqual(users[0].email_verified, true);
+  // What a scanner does: GET the mailed link (the page, which the API never
+  // sees because the token is in the fragment), and any older link that still
+  // points at the API route, with GET and with HEAD, more than once.
+  for (const method of ['GET', 'HEAD', 'GET']) {
+    const hit = await call(method, `/api/auth/verify-email?token=${encodeURIComponent(link)}`);
+    assert.strictEqual(hit.status, 302, `${method} must forward, not answer`);
+    // Forwarded to the confirmation page, token in the fragment, where it
+    // waits for a person to press the button.
+    assert.strictEqual(hit.headers.get('location'),
+      `${emailService.PROD_WEB_URL}/verify-email#token=${encodeURIComponent(link)}`);
+    assert.strictEqual(hit.headers.get('cache-control'), 'no-store', 'a Location carrying a live token must not be cached');
+    assert.strictEqual(users[0].email_verified, false, `a ${method} of the link confirmed the address with nobody clicking`);
+  }
+  assert.strictEqual(verifications.filter((v) => v.used_at).length, 0, 'a GET spent the single-use token');
 
+  // The button on the page is what spends it, and the token is still good.
+  const pressed = await post('/api/auth/verify-email', { token: link });
+  assert.strictEqual(pressed.status, 200);
+  assert.strictEqual(users[0].email_verified, true);
+});
+
+test('the GET forward cannot be aimed anywhere but the production web app', async () => {
+  reset();
   const bad = await call('GET', '/api/auth/verify-email?token=nonsense');
   assert.strictEqual(bad.status, 302);
   assert.strictEqual(bad.headers.get('location'), `${emailService.PROD_WEB_URL}/?email_verified=invalid`);
+
+  const none = await call('GET', '/api/auth/verify-email');
+  assert.strictEqual(none.headers.get('location'), `${emailService.PROD_WEB_URL}/?email_verified=invalid`);
 });
 
 // ---------------------------------------------------------------------------
