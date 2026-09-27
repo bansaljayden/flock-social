@@ -296,7 +296,7 @@ async function readCorpus(files, { legacyCities = [] } = {}) {
 // sports_events.csv (exportSportsEvents.js) as the rows ml_sports_events
 // returns to mlPredictor.getSportsTable.
 function readSportsCsv(file) {
-  const lines = fs.readFileSync(file, 'utf8').replace(/^﻿/, '').split(/\r?\n/).filter(Boolean);
+  const lines = fs.readFileSync(file, 'utf8').replace(/^\uFEFF/, '').split(/\r?\n/).filter(Boolean);
   const header = parseCsvLine(lines[0]);
   const ix = Object.fromEntries(header.map((h, i) => [h, i]));
   for (const c of ['is_home', 'event_local_date', 'event_local_time', 'venue_lat', 'venue_lon']) {
