@@ -186,6 +186,9 @@ function scriptFlockUpdate(overrides = {}) {
   on(/^SELECT creator_id FROM flocks WHERE id = \$1$/, () => ({ rows: [{ creator_id: 1 }] }));
   on(/SELECT created_at, status FROM flocks WHERE id = \$1/, () => ({ rows: [{ created_at: row.created_at, status: 'planning' }] }));
   on(/UPDATE flocks\s+SET name = COALESCE/, () => ({ rows: [row], rowCount: 1 }));
+  // A moved time carries the plan's share link along with it. No plan here
+  // has one.
+  on(/UPDATE flock_invite_links il\s+SET expires_at = GREATEST/, () => ({ rows: [], rowCount: 0 }));
   on(/SELECT user_id FROM flock_members WHERE flock_id = \$1 AND status = 'accepted' AND user_id != \$2/, () => ({ rows: [{ user_id: 2 }, { user_id: 3 }] }));
   on(/FROM user_blocks/, () => ({ rows: [] }));
   on(/SELECT COUNT\(\*\) AS cnt FROM flock_members/, () => ({ rows: [{ cnt: '2' }] }));

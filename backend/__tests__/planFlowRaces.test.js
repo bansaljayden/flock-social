@@ -29,6 +29,8 @@
 //      so the reliability tally cannot be farmed one past slot per create.
 //   7. A NEW VENUE REPLACES THE OLD ONE WHOLE: no coordinate, photo, rating
 //      or place id of the old venue survives a PUT that names another.
+//   8. THE SHARED LINK FOLLOWS THE PLAN TO ITS NEW TIME, and a reschedule
+//      never revives a link that was revoked or had already lapsed.
 //
 // The fixture suites pin the statements' text; this one runs them.
 
@@ -677,3 +679,69 @@ test('the same name at a different place id is a different venue', async () => {
   const v = await venueOf(flockId);
   assert.deepStrictEqual([v.venue_id, v.venue_latitude, v.venue_photo_url], ['ChIJkome000002', null, null]);
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 8. The shared link follows the plan to its new time
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// The link's deadline was computed once, at minting, from the time the plan
+// had then. A plan moved three weeks out kept a link that closed two weeks
+// before the night. The deadline crosses a naive event_time and a zoned
+// expires_at, so it is run.
+
+const DAY_MS = 86400e3;
+const linkExpiry = async (token) => new Date((await pool.query(
+  'SELECT expires_at FROM flock_invite_links WHERE token = $1', [token]
+)).rows[0].expires_at).getTime();
+
+test('moving a plan weeks out moves the shared link\'s deadline with it', async () => {
+  const host = await mkUser('Host Twenty');
+  const flockId = await mkFlock(host, { hoursFromNow: 48 });
+  const minted = await call('POST', `/api/flocks/${flockId}/invite-link`, { token: host.token });
+  assert.strictEqual(minted.status, 200, JSON.stringify(minted.body));
+  const before = await linkExpiry(minted.body.token);
+  assert.ok(before < Date.now() + 15 * DAY_MS, 'minted for a plan two days out: the fourteen-day floor');
+
+  const newTime = new Date(Date.now() + 30 * DAY_MS);
+  const moved = await call('PUT', `/api/flocks/${flockId}`, { token: host.token, body: { event_time: newTime.toISOString() } });
+  assert.strictEqual(moved.status, 200, JSON.stringify(moved.body));
+  const after = await linkExpiry(minted.body.token);
+  assert.ok(Math.abs(after - (newTime.getTime() + 7 * DAY_MS)) < 5000,
+    `the link now lasts to a week after the new time (off by ${after - (newTime.getTime() + 7 * DAY_MS)}ms)`);
+
+  // And it is the same link: Share hands back the token already in the chat.
+  const again = await call('POST', `/api/flocks/${flockId}/invite-link`, { token: host.token });
+  assert.strictEqual(again.body.token, minted.body.token);
+
+  // Moving it back earlier shortens nothing already promised.
+  const earlier = await call('PUT', `/api/flocks/${flockId}`, {
+    token: host.token, body: { event_time: new Date(Date.now() + 3 * DAY_MS).toISOString() },
+  });
+  assert.strictEqual(earlier.status, 200, JSON.stringify(earlier.body));
+  assert.strictEqual(await linkExpiry(minted.body.token), after);
+});
+
+test('a reschedule never revives a revoked or a lapsed link', async () => {
+  const host = await mkUser('Host TwentyOne');
+  const flockId = await mkFlock(host, { hoursFromNow: 48 });
+  const revoked = await mkLinkRow(flockId, host, { revoked: true, expiresInDays: 10 });
+  const lapsed = await mkLinkRow(flockId, host, { revoked: false, expiresInDays: -1 });
+  const before = [await linkExpiry(revoked), await linkExpiry(lapsed)];
+
+  const moved = await call('PUT', `/api/flocks/${flockId}`, {
+    token: host.token, body: { event_time: new Date(Date.now() + 30 * DAY_MS).toISOString() },
+  });
+  assert.strictEqual(moved.status, 200, JSON.stringify(moved.body));
+  assert.deepStrictEqual([await linkExpiry(revoked), await linkExpiry(lapsed)], before);
+});
+
+async function mkLinkRow(flockId, creator, { revoked, expiresInDays }) {
+  seq += 1;
+  const token = `RaceLink${seq}x${flockId}abcdefgh`;
+  await pool.query(
+    `INSERT INTO flock_invite_links (token, flock_id, created_by, revoked, expires_at)
+     VALUES ($1, $2, $3, $4, NOW() + make_interval(days => $5::int))`,
+    [token, flockId, creator.id, revoked, expiresInDays]
+  );
+  return token;
+}
