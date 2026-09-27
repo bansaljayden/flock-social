@@ -883,6 +883,71 @@ describe('the model: which one is serving, and its served forecasts against the 
     expect(screen.getByText('This window mixes forecasts from 2 model versions: 2.6.0-starling, 2.7.0-swift.')).toBeInTheDocument();
   });
 
+  // How often the model answers at all, from the week's serves.
+  const COVERAGE = {
+    status: 'ok',
+    asOf: '2026-09-25T13:10:00.000Z',
+    cached: true,
+    cachedAgeSeconds: 1020,
+    windowDays: 7,
+    total: 2569,
+    ml: 1310,
+    mlPercent: 51,
+    byMethod: [
+      { method: 'ml', served: 1310, venues: 80 },
+      { method: 'rule_engine_no_baseline', served: 1204, venues: 212 },
+      { method: 'owner_report', served: 40, venues: 3 },
+      { method: 'rule_engine_fallback', served: 12, venues: 9 },
+      { method: 'unknown', served: 3, venues: 2 },
+    ],
+    topFallback: { method: 'rule_engine_no_baseline', served: 1204, venues: 212 },
+  };
+
+  test('beside the share, how often the model answers at all, with its denominator and the most common fallback in words', async () => {
+    await renderHub(withModel({ coverage: COVERAGE }));
+    const card = modelCard();
+    expect(within(card).getByText('How often it answers, last 7 days')).toBeInTheDocument();
+    const share = hubRow('Forecasts people saw from the model');
+    expect(within(share).getByText('51% of 2,569')).toBeInTheDocument();
+    expect(share.textContent).toMatch(/1,310 of 2,569 forecasts served to signed-in people, counted once per card served, from served_predictions\. The Costs tab counts forecast hours since the last deploy instead, so the two differ\./);
+    const fallback = hubRow('Most common fallback');
+    expect(within(fallback).getByText('1,204')).toBeInTheDocument();
+    expect(fallback.textContent).toMatch(/The venue has no baseline yet, across 212 venues\. The model answers for a venue once the collector has read it\./);
+    expect(within(card).getByText("By what answered: the model 1,310; the venue has no baseline yet 1,204; the venue owner's live report 40; the model failed on the request 12; not recorded 3. Held for an hour with the check above.")).toBeInTheDocument();
+    // The accuracy share and the goal are untouched; the split adds one.
+    expect(percentsIn(card)).toEqual(['63.3%', '85%', '51%']);
+    expect(card.textContent).not.toMatch(/rule_engine/);
+  });
+
+  test('a fallback this screen has no words for is shown by its own name, and one from the model alone has no fallback row', async () => {
+    await renderHub(withModel({ coverage: { ...COVERAGE, byMethod: [{ method: 'rule_engine_new_reason', served: 9, venues: 1 }], topFallback: { method: 'rule_engine_new_reason', served: 9, venues: 1 }, total: 9, ml: 0, mlPercent: 0 } }));
+    expect(within(hubRow('Forecasts people saw from the model')).getByText('0% of 9')).toBeInTheDocument();
+    expect(hubRow('Most common fallback').textContent).toMatch(/Rule_engine_new_reason, across 1 venue\./);
+  });
+
+  test('a week with nothing served says so, with no share and no fallback', async () => {
+    await renderHub(withModel({ coverage: { ...COVERAGE, total: 0, ml: 0, mlPercent: null, byMethod: [], topFallback: null } }));
+    const card = modelCard();
+    expect(percentsIn(card)).toEqual(['63.3%', '85%']);
+    expect(within(hubRow('Forecasts people saw from the model')).getByText('None served')).toBeInTheDocument();
+    expect(within(card).queryByText('Most common fallback')).toBeNull();
+    expect(within(card).queryByText(/^By what answered/)).toBeNull();
+  });
+
+  test('a failed count says could not load with the reason, and the share above still stands', async () => {
+    await renderHub(withModel({ coverage: { status: 'error', reason: 'The database did not finish counting what answered each forecast served, so there is no split to show.', cached: false, cachedAgeSeconds: 0 } }));
+    const card = modelCard();
+    expect(within(card).getByText('Could not load')).toBeInTheDocument();
+    expect(within(card).getByText(/did not finish counting what answered each forecast served/)).toBeInTheDocument();
+    expect(within(card).queryByText('Forecasts people saw from the model')).toBeNull();
+    expect(within(card).getByText('63.3%')).toBeInTheDocument();
+  });
+
+  test('a server from before the count draws none of it', async () => {
+    await renderHub(CONNECTED);
+    expect(within(modelCard()).queryByText(/How often it answers/)).toBeNull();
+  });
+
   test('a version that could not be read says why, and a goal already met is not a negative gap', async () => {
     await renderHub(withModel({
       version: { status: 'error', value: null, source: 'artifact', loaded: false, reason: 'No model is loaded, and this server has no model_metadata.json to read a version from.' },

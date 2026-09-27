@@ -1378,11 +1378,29 @@ function HubCrowdData({ h, colors }) {
 // there are not enough observations yet rather than printing a noisy one.
 const hubPct = (n) => `${n.toFixed(1)}%`;
 
+// What answered a forecast, in words, keyed by the prediction_method
+// services/mlPredictor.js and routes/crowd.js write on each serve. A method
+// not listed here is shown by its own name rather than guessed at.
+const HUB_METHOD_WORDS = {
+  ml: 'the model',
+  rule_engine: 'no model was loaded on the server',
+  rule_engine_no_baseline: 'the venue has no baseline yet',
+  rule_engine_baseline_refused: "the person's venue lookups for the moment were used up",
+  rule_engine_baseline_error: "the venue's baseline could not be read",
+  rule_engine_no_weather_norm: 'there was no weather reading and no usual weather to stand in',
+  rule_engine_fallback: 'the model failed on the request',
+  owner_report: "the venue owner's live report",
+  unknown: 'not recorded',
+};
+const hubMethodWords = (m) => HUB_METHOD_WORDS[m] || m;
+
 function HubModel({ h, colors }) {
   const m = h.model;
   if (!m) return null;
   const v = m.version || {};
   const a = m.accuracy || {};
+  // A server from before the coverage read sends none: no rows, not empty ones.
+  const cov = m.coverage || null;
   const goal = m.goal || {};
   const navy = colors.navy;
   const ready = a.status === 'ok';
@@ -1453,6 +1471,38 @@ function HubModel({ h, colors }) {
       <p style={hubStyle.foot}>
         Counts forecasts the model made (served_predictions, prediction_method ml) on the venue card and the vote list. Each is paired with the collector&apos;s live reading of the same venue in the same hour of the same day (ml_training_data), one pair per venue and hour, and scored on the bands the app prints{ladder ? `: ${ladder}` : ''}. Checked on the server and held for {holdMinutes === 60 ? 'an hour' : `${holdMinutes} minutes`}{age}.
       </p>
+      {/* HOW OFTEN IT ANSWERS. The share above scores the model's own
+          forecasts only, so on its own it cannot say whether the model
+          answered most of what people saw or almost none of it. This is that
+          split, from the same table, beside it. */}
+      {cov && (
+        <>
+          <p style={hubStyle.kicker}>How often it answers, last {Number.isFinite(cov.windowDays) ? cov.windowDays : 7} days</p>
+          {cov.status !== 'ok' && <HubNotice status={cov.status} reason={cov.reason} />}
+          {cov.status === 'ok' && cov.total === 0 && (
+            <HubRow navy={navy} label="Forecasts people saw from the model" value="None served" tone="muted" note="No forecast was served to a signed-in person in this window." />
+          )}
+          {cov.status === 'ok' && cov.total > 0 && (
+            <>
+              <HubRow
+                navy={navy}
+                label="Forecasts people saw from the model"
+                value={`${Math.round(cov.mlPercent)}% of ${hubCount(cov.total)}`}
+                note={`${hubCount(cov.ml)} of ${hubPlural(cov.total, 'forecast', 'forecasts')} served to signed-in people, counted once per card served, from served_predictions. The Costs tab counts forecast hours since the last deploy instead, so the two differ.`}
+              />
+              {cov.topFallback && (
+                <HubRow
+                  navy={navy}
+                  label="Most common fallback"
+                  value={hubCount(cov.topFallback.served)}
+                  note={`${hubMethodWords(cov.topFallback.method).replace(/^./, (ch) => ch.toUpperCase())}, across ${hubPlural(cov.topFallback.venues, 'venue', 'venues')}.${cov.topFallback.method === 'rule_engine_no_baseline' ? ' The model answers for a venue once the collector has read it.' : ''}`}
+                />
+              )}
+              <p style={hubStyle.foot}>By what answered: {cov.byMethod.map((x) => `${hubMethodWords(x.method)} ${hubCount(x.served)}`).join('; ')}. Held for an hour with the check above.</p>
+            </>
+          )}
+        </>
+      )}
     </div>
   );
 }
