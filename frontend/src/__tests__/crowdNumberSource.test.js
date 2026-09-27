@@ -164,7 +164,9 @@ test('every surface that credits the crowd model reads the number source first',
   // Each row's label reads what made its peak, not its current hour.
   expect(dashboard).toMatch(/\{stripRowMethod\(v\) && stripRowMethod\(v\) !== 'ml' && \(/);
   expect(dashboard).not.toMatch(/v\.method && v\.method !== 'ml'/);
-  expect(dashboard).toMatch(/\{stripPeaksFrom\s*\? `Projected evening peaks within 1\.5 km, from \$\{stripPeaksFrom\}\.`\s*: "Projected evening peaks within 1\.5 km, from Flock's crowd model\."\}/);
+  // (Which peaks, evening or the whole day, follows the strip's own window;
+  // stripWindowWords.test.js holds that part.)
+  expect(dashboard).toMatch(/\{stripPeaksFrom\s*\? `Projected \$\{stripAllDay \? 'peaks today' : 'evening peaks'\} within 1\.5 km, from \$\{stripPeaksFrom\}\.`\s*: `Projected \$\{stripAllDay \? 'peaks today' : 'evening peaks'\} within 1\.5 km, from Flock's crowd model\.`\}/);
 });
 
 describe('the card\'s line under the dial names the engine that actually scored it', () => {

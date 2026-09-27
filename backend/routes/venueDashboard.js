@@ -2000,13 +2000,20 @@ router.get('/intelligence', requirePro, async (req, res) => {
 const STRIP_NIGHTLIFE_TYPES = ['bar', 'night_club', 'restaurant'];
 // Google's catch-all tags. Nearly every listing carries some of them, they say
 // nothing about what a place competes as, and searchNearby does not take them
-// as a filter.
+// as a filter. That last part is why the list has to be whole and not merely
+// typical: one of these sent as includedTypes is refused as INVALID_ARGUMENT,
+// and the strip records that refusal as a Places failure (utils/placesHealth
+// .js), the same counter a real outage raises, on every visit by that owner,
+// because a failed search is never cached. The numbered
+// families (administrative_area_level_N, sublocality_level_N, postal_code_*)
+// are matched by prefix in stripComparisonTypes.
 const GENERIC_PLACE_TYPES = new Set([
   'establishment', 'point_of_interest', 'food', 'store', 'health', 'finance',
   'place_of_worship', 'general_contractor', 'political', 'geocode', 'premise',
   'subpremise', 'landmark', 'natural_feature', 'plus_code', 'street_address',
-  'route', 'intersection', 'neighborhood', 'locality', 'sublocality', 'postal_code',
-  'country', 'colloquial_area', 'town_square', 'floor', 'room', 'post_box',
+  'street_number', 'route', 'intersection', 'neighborhood', 'locality',
+  'sublocality', 'postal_code', 'postal_town', 'country', 'continent',
+  'archipelago', 'colloquial_area', 'town_square', 'floor', 'room', 'post_box',
 ]);
 function stripComparisonTypes(venue) {
   const types = Array.isArray(venue?.types) ? venue.types : [];
@@ -2018,7 +2025,31 @@ function stripComparisonTypes(venue) {
   return own ? [own] : null;
 }
 
-// GET /api/venue-dashboard/strip — you vs the venues around you, tonight.
+// THE HOURS THE STRIP READS ITS PEAKS FROM, which follow the comparison.
+//
+// Bars, clubs and restaurants are ranked on the evening, 5 PM to midnight, as
+// they always were. Every other kind of place is ranked on its whole day. The
+// comparison set above made a coffee shop's strip a list of coffee shops, and
+// ranking those on 5 PM to midnight scores every row on hours they are shut:
+// the owner is shown a column of near-empty rows and told which closed cafe
+// will be busiest "tonight". A whole day, and not the owner's own opening
+// hours, because each competitor keeps its own hours and one window has to fit
+// every row; over the whole day each row's peak is the busiest hour of its own
+// day, wherever that falls. Same rule services/advisorFacts.js writes down:
+// nothing on Roost may assume an evening. `peakWindow` goes out with the
+// answer so the dashboard says "today" for these, not "tonight".
+const STRIP_PEAK_WINDOWS = Object.freeze({
+  evening: Object.freeze({ startHour: 17, count: 7 }),
+  day: Object.freeze({ startHour: 0, count: 24 }),
+});
+function stripPeakWindow(includedTypes) {
+  const types = Array.isArray(includedTypes) ? includedTypes : [];
+  return types.some((t) => STRIP_NIGHTLIFE_TYPES.includes(t)) ? 'evening' : 'day';
+}
+
+// GET /api/venue-dashboard/strip — you vs the venues around you, tonight for
+// bars, clubs and restaurants and over the whole day for any other kind of
+// place (stripPeakWindow).
 // Google Popular Times cannot do this: it is per-venue, read-only, no API.
 router.get('/strip', requirePro, async (req, res) => {
   try {
@@ -2109,6 +2140,9 @@ router.get('/strip', requirePro, async (req, res) => {
     recordPlacesResult(true);
     const weather = await getWeather(me.location.latitude, me.location.longitude).catch(() => null);
     const now = new Date();
+    // One window for every row, the owner's included (see stripPeakWindow).
+    const peakWindow = stripPeakWindow(includedTypes);
+    const { startHour: peakStart, count: peakHours } = STRIP_PEAK_WINDOWS[peakWindow];
 
     const scoreOne = async (v) => {
       // Each venue is scored on ITS OWN wall clock (same contract as
@@ -2124,11 +2158,11 @@ router.get('/strip', requirePro, async (req, res) => {
       base.setDate(base.getDate() + crowdEngine.weekdayOffset(base.getDay(), localDay));
       const scoreTime = new Date(base);
       scoreTime.setHours(localHour, 0, 0, 0);
-      const [current, evening] = await Promise.all([
+      const [current, hours] = await Promise.all([
         mlPredictor.predictBusyness(v, weather, scoreTime),
-        mlPredictor.predictHourlyForecast(v, weather, 17, 7, base),
+        mlPredictor.predictHourlyForecast(v, weather, peakStart, peakHours, base),
       ]);
-      const peak = evening.reduce((a, b) => (b.score > a.score ? b : a), { score: -1 });
+      const peak = hours.reduce((a, b) => (b.score > a.score ? b : a), { score: -1 });
       return {
         name: v.name,
         score: current.score,
@@ -2141,7 +2175,7 @@ router.get('/strip', requirePro, async (req, res) => {
         // these, and stripOrderingClaim below refuses to rank them at all.
         method: current.predictionMethod || null,
         // WHAT MADE THE PEAK THIS ROW DRAWS, while a serving switch is on.
-        // The bar is the evening's peak hour, not the current score, and the
+        // The bar is the window's peak hour, not the current score, and the
         // strip's caption credited every bar to the crowd model. With
         // CROWD_SERVE_MODE=curve_offset those hours are the venue's weekly
         // pattern with no model run, so the caption is read off these
@@ -2208,6 +2242,9 @@ router.get('/strip', requirePro, async (req, res) => {
       // Published so the dashboard can say WHY two venues are not ranked
       // instead of leaving a gap the owner reads as a bug.
       orderingMinGap: STRIP_ORDERING_MIN_GAP,
+      // 'evening' or 'day': the hours every peak above was read from, so the
+      // dashboard's words ("tonight", "today") match the numbers.
+      peakWindow,
       generatedAt: new Date().toISOString(),
     };
     cacheSet(`strip:${ctx.google_place_id}:${clockKey}`, result);
@@ -2775,6 +2812,9 @@ module.exports.__test = {
   STRIP_ORDERING_MIN_GAP,
   // The live number's one-a-minute wording (__tests__/ownerSurfaceHardening.test.js).
   oneAMinuteRefusal,
-  // What the strip compares a venue against (__tests__/stripComparisonSet.test.js).
+  // What the strip compares a venue against, and over which hours
+  // (__tests__/stripComparisonSet.test.js).
   stripComparisonTypes,
+  stripPeakWindow,
+  STRIP_PEAK_WINDOWS,
 };
