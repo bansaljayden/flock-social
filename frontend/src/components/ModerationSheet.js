@@ -219,6 +219,13 @@ const ModerationSheet = ({ target, onClose, showToast, onBlocked, onReported }) 
       // losing the sheet mid-request left the user with no idea whether it went
       // through, on the one action where that matters most.
       onClick={() => { if (!busy) onClose?.(); }}
+      // `kb-lift` (index.css): the details box and Submit report are at the
+      // bottom of this sheet, and with the WebView's resize off the keyboard
+      // covered both. The lift is the keyboard's height less the home
+      // indicator strip, which is why the sheet below pads by
+      // var(--safe-bottom): without it Submit would end that strip's depth
+      // under the keys.
+      className="kb-lift"
       style={{ position: 'absolute', inset: 0, zIndex: 200, backgroundColor: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
     >
       <div
@@ -231,7 +238,7 @@ const ModerationSheet = ({ target, onClose, showToast, onBlocked, onReported }) 
         // is not there. That is the guest RSVP case.
         aria-label={userId ? `Report or block ${who}` : `Report ${who}`}
         onClick={(e) => e.stopPropagation()}
-        style={{ width: '100%', maxWidth: '440px', backgroundColor: 'var(--bg-card-solid)', borderTopLeftRadius: '20px', borderTopRightRadius: '20px', overflow: 'hidden', boxShadow: '0 -8px 30px rgba(0,0,0,0.25)', animation: 'fadeInUp 0.25s ease-out', fontFamily: FONT }}
+        style={{ width: '100%', maxWidth: '440px', backgroundColor: 'var(--bg-card-solid)', borderTopLeftRadius: '20px', borderTopRightRadius: '20px', overflow: 'hidden', boxShadow: '0 -8px 30px rgba(0,0,0,0.25)', animation: 'fadeInUp 0.25s ease-out', fontFamily: FONT, paddingBottom: 'var(--safe-bottom)' }}
       >
         <div style={{ width: '38px', height: '4px', borderRadius: '2px', backgroundColor: 'var(--border-default)', margin: '10px auto 4px' }} />
 

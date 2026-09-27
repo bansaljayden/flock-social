@@ -54,8 +54,13 @@ const NewDmModal = ({
 }) => {
     const usersToShow = dmSearchText.trim() ? dmModalResults : suggestedUsers;
 
+    /* `kb-lift` (index.css) raises the sheet by the keyboard's height. The
+       search box sits at the top of it, so the box itself stayed visible, but
+       the people it finds were listed under the keys. The list's own bottom
+       padding carries var(--safe-bottom), which is the strip the lift has
+       already taken off. */
     return showNewDmModal && (
-      <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'flex-end', zIndex: 50 }}>
+      <div className="kb-lift" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'flex-end', zIndex: 50 }}>
             <DialogBehavior onClose={() => setShowNewDmModal(false)} label="New message" />
         <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px 24px 0 0', width: '100%', height: '70%', display: 'flex', flexDirection: 'column' }}>
           <div style={{ padding: '16px', borderBottom: '1px solid var(--divider)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -70,7 +75,7 @@ const NewDmModal = ({
           <div style={{ padding: '12px' }}>
             <SearchInputLocal aria-label="Search people by name" type="text" initialValue={dmSearchText} onCommit={handleDmSearch} placeholder="Search by name..." style={{ width: '100%', padding: '12px 16px', borderRadius: '12px', border: `1.5px solid ${dmSearchText ? colors.navy : colors.creamDark}`, fontSize: 'var(--t-body)', outline: 'none', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)', fontWeight: '500', transition: 'opacity 0.2s ease' }} autoComplete="off" />
           </div>
-          <div style={{ flex: 1, overflowY: 'auto', padding: '0 12px 12px' }}>
+          <div style={{ flex: 1, overflowY: 'auto', padding: '0 12px calc(12px + var(--safe-bottom))' }}>
             {!dmSearchText.trim() && usersToShow.length > 0 && (
               <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px', padding: '4px 4px 8px', margin: 0 }}>Suggested</p>
             )}

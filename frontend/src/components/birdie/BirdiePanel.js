@@ -208,7 +208,16 @@ export default function BirdiePanel({
         justifyContent: isAiPanel ? 'flex-start' : 'stretch',
         zIndex: 50,
         pointerEvents: isAiPanel ? 'none' : 'auto',
-        transition: 'background-color 0.3s ease',
+        /* THE KEYBOARD. The WebView does not resize for it (capacitor.config.ts,
+           `resize: 'none'`), so Birdie's box was under the keys in both modes.
+           Full screen, the sheet is a flex-end child of this backdrop, and
+           padding the backdrop by --kb-inset (index.css, written from the
+           plugin by hooks/useKeyboardInset.js) raises it and shrinks its 85%
+           with it; the input row below adds var(--safe-bottom), which
+           --kb-inset has already taken off. The same curve as `.kb-lift`,
+           written out because this element has its own transition. */
+        paddingBottom: isAiFullscreen ? 'var(--kb-inset, 0px)' : undefined,
+        transition: 'background-color 0.3s ease, padding-bottom 250ms cubic-bezier(0.38, 0.7, 0.125, 1)',
       }}>
         <div style={{
           backgroundColor: 'var(--bg-card-solid)',
@@ -216,12 +225,20 @@ export default function BirdiePanel({
           width: isAiFullscreen ? '100%' : 'calc(100% - 24px)',
           maxWidth: isAiPanel ? '360px' : '100%',
           height: isAiFullscreen ? '85%' : '55%',
-          minHeight: isAiPanel ? '380px' : undefined,
-          maxHeight: isAiPanel ? '520px' : undefined,
+          /* The docked panel is absolutely positioned, which a backdrop's
+             padding cannot move, so it takes the keyboard directly. Its bottom
+             edge clears the full --kb-height plus the same 12px gap it keeps
+             over the tab bar, because the panel carries no home indicator
+             padding of its own. Its height gives way so the top stays on the
+             screen: the 72px is the 60px top dock plus that gap. With the
+             keyboard down both min() terms resolve to the old 380 and 520 on
+             any phone taller than 592px. */
+          minHeight: isAiPanel ? 'min(380px, calc(100% - var(--kb-height, 0px) - 72px))' : undefined,
+          maxHeight: isAiPanel ? 'min(520px, calc(100% - var(--kb-height, 0px) - 72px))' : undefined,
           display: 'flex',
           flexDirection: 'column',
           position: isAiPanel ? 'absolute' : 'relative',
-          bottom: isAiPanel ? (birdieCorner.startsWith('bottom') ? fabDockBottom : undefined) : 0,
+          bottom: isAiPanel ? (birdieCorner.startsWith('bottom') ? `max(${fabDockBottom}, calc(var(--kb-height, 0px) + 12px))` : undefined) : 0,
           top: isAiPanel ? (birdieCorner.startsWith('top') ? '60px' : undefined) : undefined,
           left: isAiPanel ? (birdieCorner.includes('left') ? '12px' : undefined) : undefined,
           right: isAiPanel ? (birdieCorner.includes('right') ? '12px' : undefined) : undefined,
@@ -536,8 +553,11 @@ export default function BirdiePanel({
             </div>
           )}
 
-          {/* Input */}
-          <div style={{ padding: '8px 12px 10px', backgroundColor: 'var(--bg-card-solid)' }}>
+          {/* Input. Full screen, this row is the bottom of a sheet that runs to
+              the bottom of the phone, so it carries the home indicator strip
+              (SAFE-AREA rule 1); the docked panel floats above the tab bar and
+              does not touch it. */}
+          <div style={{ padding: isAiFullscreen ? '8px 12px calc(10px + var(--safe-bottom))' : '8px 12px 10px', backgroundColor: 'var(--bg-card-solid)' }}>
             <div style={{ borderRadius: '20px', backgroundColor: 'var(--bg-hover)', border: '1.5px solid var(--border-subtle)', padding: '6px', transition: 'border-color 0.3s ease, box-shadow 0.3s ease', boxShadow: aiInputHasText ? '0 0 0 1px rgba(45,90,135,0.15), 0 4px 16px rgba(0,0,0,0.08)' : '0 2px 8px rgba(0,0,0,0.04)', borderColor: aiInputHasText ? 'rgba(30,58,92,0.25)' : 'var(--border-subtle)' }}>
               {/* Text input row */}
               <div style={{ display: 'flex', alignItems: 'flex-end', gap: '0', padding: '0 2px 0 10px' }}>
