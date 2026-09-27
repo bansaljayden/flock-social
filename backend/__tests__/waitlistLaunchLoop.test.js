@@ -11,9 +11,11 @@
 //
 // What is pinned here:
 //   1. THE ANNOUNCE ROUTE IS ADMIN-ONLY and idempotent by column: a row is
-//      picked only while announced_at IS NULL and unconverted, and stamping
-//      happens exactly when the email's fate is settled (sent, or permanently
-//      unsendable). Transient failures leave the row for the next run.
+//      picked only while announced_at IS NULL and unconverted, and it is
+//      stamped as it is picked, before its email goes, so two runs that
+//      overlap cannot both mail it. The stamp is handed back only when the
+//      email certainly did not leave (a refusal, a keyless deploy); a send
+//      whose outcome is unknown, like the 8 second abort, keeps it.
 //   2. DRY RUN COUNTS AND SENDS NOTHING.
 //   3. SIGNUP LINKS THE ROW. All three account-creation paths (password,
 //      Google, Apple) call linkWaitlistConversion, so an arriving waitlister
@@ -42,11 +44,19 @@ const ADMIN = { id: 9, email: 'admin@example.com', name: 'Admin', role: 'admin',
 const USER = { id: 3, email: 'user@example.com', name: 'User', role: 'user', email_verified: true, is_banned: false, token_version: 0 };
 const CURRENT = { user: ADMIN };
 
-// Scripted pool: answers the auth lookup from CURRENT, and everything else
-// from the per-test script below.
+// Scripted pool: answers the auth lookup from CURRENT, and the waitlist
+// statements against a small table held here. The table is what the tests
+// read back, so they judge which rows end up marked announced and who was
+// mailed, not how the route spells its SQL: a read of the unannounced rows, a
+// claim of the next one, and a stamp or an unstamp by id each act on it.
 let waitlistRows = [];
 let statsRow = { total: 0, converted: 0, announced: 0, pending: 0 };
-let updates = [];
+function unannounced() {
+  return waitlistRows
+    .filter((r) => !r.announced && !r.converted)
+    .sort((a, b) => a.id - b.id);
+}
+const announcedIds = () => waitlistRows.filter((r) => r.announced).map((r) => r.id).sort((a, b) => a - b);
 pool.query = async (text, params = []) => {
   const sql = String(text).replace(/\s+/g, ' ').trim();
   if (sql.includes('FROM users WHERE id = $1') && sql.includes('token_version')) {
@@ -55,12 +65,29 @@ pool.query = async (text, params = []) => {
   if (sql.includes('FROM waitlist') && sql.includes('COUNT(*)')) {
     return { rows: [statsRow], rowCount: 1 };
   }
-  if (sql.startsWith('SELECT id, email FROM waitlist')) {
-    return { rows: waitlistRows, rowCount: waitlistRows.length };
+  // Claim the next unannounced row after an id, marking it as it is taken.
+  // One statement in Postgres, so nothing can run between the read and the
+  // mark here either.
+  if (/^UPDATE waitlist SET announced_at = NOW\(\) WHERE id = \(SELECT id FROM waitlist/.test(sql)) {
+    const after = /id > \$1/.test(sql) ? Number(params[0]) : 0;
+    const row = unannounced().find((r) => r.id > after);
+    if (!row) return { rows: [], rowCount: 0 };
+    row.announced = true;
+    return { rows: [{ id: row.id, email: row.email }], rowCount: 1 };
   }
-  if (sql.startsWith('UPDATE waitlist SET announced_at')) {
-    updates.push(params[0]);
-    return { rows: [], rowCount: 1 };
+  if (sql.startsWith('SELECT id, email FROM waitlist')) {
+    const rows = unannounced().slice(0, 100).map(({ id, email }) => ({ id, email }));
+    return { rows, rowCount: rows.length };
+  }
+  if (/^UPDATE waitlist SET announced_at = NOW\(\) WHERE id = \$1/.test(sql)) {
+    const row = waitlistRows.find((r) => r.id === params[0]);
+    if (row) row.announced = true;
+    return { rows: [], rowCount: row ? 1 : 0 };
+  }
+  if (/^UPDATE waitlist SET announced_at = NULL WHERE id = \$1/.test(sql)) {
+    const row = waitlistRows.find((r) => r.id === params[0]);
+    if (row) row.announced = false;
+    return { rows: [], rowCount: row ? 1 : 0 };
   }
   return { rows: [], rowCount: 0 };
 };
@@ -69,8 +96,12 @@ pool.connect = async () => { throw new Error('pool.connect reached unexpectedly'
 const emailService = require('../services/emailService');
 let outcomes = {};
 let sendsAsked = [];
+// How long each send takes, so two runs can be made to overlap the way two
+// calls do while Resend is slow.
+let sendDelayMs = 0;
 emailService.sendWaitlistLaunchEmail = async ({ to }) => {
   sendsAsked.push(to);
+  if (sendDelayMs) await new Promise((r) => setTimeout(r, sendDelayMs));
   return outcomes[to] || { sent: true };
 };
 
@@ -108,9 +139,9 @@ function call(method, urlPath, body, token) {
 function reset() {
   waitlistRows = [];
   statsRow = { total: 0, converted: 0, announced: 0, pending: 0 };
-  updates = [];
   outcomes = {};
   sendsAsked = [];
+  sendDelayMs = 0;
   CURRENT.user = ADMIN;
 }
 
@@ -150,31 +181,84 @@ test('dry run counts and sends nothing', async () => {
   assert.strictEqual(res.body.dry_run, true);
   assert.strictEqual(res.body.pending, 25);
   assert.strictEqual(sendsAsked.length, 0);
-  assert.strictEqual(updates.length, 0);
+  assert.deepStrictEqual(announcedIds(), []);
 });
 
-test('a sent or permanently unsendable email stamps the row; a transient failure leaves it for the next run', async () => {
+test('only an email that certainly did not leave is handed back to the next run', async () => {
   reset();
-  statsRow = { total: 4, converted: 0, announced: 0, pending: 4 };
+  statsRow = { total: 6, converted: 0, announced: 0, pending: 6 };
   waitlistRows = [
     { id: 1, email: 'ok@example.com' },
     { id: 2, email: 'gone@example.com' },
     { id: 3, email: 'bad@example.com' },
-    { id: 4, email: 'flaky@example.com' },
+    { id: 4, email: 'capped@example.com' },
+    { id: 5, email: 'keyless@example.com' },
+    { id: 6, email: 'aborted@example.com' },
   ];
+  // Each outcome in the shape services/emailService.js sendEmail returns it.
   outcomes = {
     'ok@example.com': { sent: true },
     'gone@example.com': { sent: false, suppressed: true, reason: 'unsubscribed', refused: true },
     'bad@example.com': { sent: false, error: 'invalid recipient', refused: true },
-    'flaky@example.com': { sent: false, error: 'provider 500' },
+    'capped@example.com': { sent: false, error: 'per-recipient daily cap', refused: true },
+    'keyless@example.com': { sent: false, skipped: true },
+    // The 8 second abort, or a 5xx: Resend may already have queued it.
+    'aborted@example.com': { sent: false, error: 'This operation was aborted' },
   };
   const res = await call('POST', '/api/admin/waitlist/announce', {}, signUserToken(ADMIN));
   assert.strictEqual(res.status, 200);
-  assert.strictEqual(res.body.batch, 4);
+  assert.strictEqual(res.body.batch, 6);
   assert.strictEqual(res.body.sent, 1);
   assert.strictEqual(res.body.suppressed, 2, 'do-not-mail and invalid address are both settled fates');
-  assert.strictEqual(res.body.failed, 1);
-  assert.deepStrictEqual(updates.sort(), [1, 2, 3], 'the flaky row is NOT stamped, so the next run retries it');
+  assert.strictEqual(res.body.failed, 2, 'a refusal and a keyless deploy sent nothing');
+  assert.strictEqual(res.body.unknown, 1);
+  assert.strictEqual(res.body.remaining, 2);
+  assert.deepStrictEqual(announcedIds(), [1, 2, 3, 6],
+    'the refused and skipped rows go back for the next run; the aborted one stays marked, because it may have been sent');
+
+  // The next run retries exactly the two that certainly did not go out.
+  sendsAsked = [];
+  outcomes = {};
+  const again = await call('POST', '/api/admin/waitlist/announce', {}, signUserToken(ADMIN));
+  assert.strictEqual(again.status, 200);
+  assert.deepStrictEqual(sendsAsked, ['capped@example.com', 'keyless@example.com'],
+    'an aborted launch email was sent a second time');
+});
+
+test('two runs that overlap mail each waiting person once', async () => {
+  // A slow Resend day: one call runs for minutes, the operator's client gives
+  // up, and they run it again while the first is still sending.
+  reset();
+  statsRow = { total: 5, converted: 0, announced: 0, pending: 5 };
+  waitlistRows = [1, 2, 3, 4, 5].map((id) => ({ id, email: `person${id}@example.com` }));
+  sendDelayMs = 30;
+  const [a, b] = await Promise.all([
+    call('POST', '/api/admin/waitlist/announce', {}, signUserToken(ADMIN)),
+    call('POST', '/api/admin/waitlist/announce', {}, signUserToken(ADMIN)),
+  ]);
+  assert.strictEqual(a.status, 200);
+  assert.strictEqual(b.status, 200);
+  assert.deepStrictEqual([...sendsAsked].sort(), waitlistRows.map((r) => r.email).sort(),
+    'somebody on the waitlist got the launch email twice');
+  assert.strictEqual(a.body.sent + b.body.sent, 5);
+  assert.deepStrictEqual(announcedIds(), [1, 2, 3, 4, 5]);
+});
+
+test('a row given back after a refusal is not taken again by the same run', async () => {
+  // Without a cursor the run would claim the lowest unannounced id again,
+  // which is the row it just released, and mail one refusing address over and
+  // over until the batch ran out.
+  reset();
+  statsRow = { total: 2, converted: 0, announced: 0, pending: 2 };
+  waitlistRows = [
+    { id: 1, email: 'capped@example.com' },
+    { id: 2, email: 'next@example.com' },
+  ];
+  outcomes = { 'capped@example.com': { sent: false, error: 'per-recipient daily cap', refused: true } };
+  const res = await call('POST', '/api/admin/waitlist/announce', {}, signUserToken(ADMIN));
+  assert.strictEqual(res.status, 200);
+  assert.deepStrictEqual(sendsAsked, ['capped@example.com', 'next@example.com']);
+  assert.deepStrictEqual(announcedIds(), [2]);
 });
 
 test('every waiting person is asked about, in list order', async () => {
