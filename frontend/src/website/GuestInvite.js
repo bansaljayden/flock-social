@@ -380,6 +380,12 @@ const failureText = (r, fallback, host) => {
   return serverText || fallback;
 };
 
+// What this page says when the server answers JOINED_IN_APP: the answer this
+// browser holds was retired because its person joined the plan as a member
+// (routes/guest.js retiredOnJoin). The server says it too, but a page that
+// has the code does not need the server's sentence to be kind.
+const JOINED_IN_APP_NOTE = 'You joined this plan in the app, so your answer and the chat are there now.';
+
 // The three answers, in one table, so the icon, the word and the row's weight
 // can never drift apart. Type is carried by an icon AND a word AND the row's
 // own contrast, never by colour alone (DESIGN-STANDARD section N5).
@@ -869,6 +875,13 @@ export default function GuestInvite() {
       if (stale || seq !== stateSeq.current) return;
       if (r.status === 403) {
         dropIdentity();
+        // The answer left because this person joined the plan as a member,
+        // not because it was removed: telling them to answer again would put
+        // them on the plan twice.
+        if (r.body && r.body.code === 'JOINED_IN_APP') {
+          say('rsvp', JOINED_IN_APP_NOTE);
+          return;
+        }
         complain('rsvp', 'Your earlier answer is not on this plan anymore. Answer again if you are coming.');
         return;
       }
@@ -977,6 +990,15 @@ export default function GuestInvite() {
       setPendingRsvp(null);
       claim();
       setPhase('gone');
+      return;
+    }
+    if (r.status === 403 && body && body.code === 'JOINED_IN_APP') {
+      // The answer behind this token left because its person joined the plan
+      // in the app. Nothing was removed and nothing is wrong, so it is a note
+      // and not a complaint, and the identity goes because it is retired.
+      setPendingRsvp(null);
+      dropIdentity();
+      say('rsvp', JOINED_IN_APP_NOTE);
       return;
     }
     if (r.status === 403) {

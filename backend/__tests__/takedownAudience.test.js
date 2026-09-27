@@ -497,7 +497,9 @@ function takedownTargets() {
   assert.ok(start > 0);
   const body = ADMIN_SRC.slice(start, ADMIN_SRC.indexOf('\n};', start));
   const out = new Map();
-  for (const m of body.matchAll(/^ {2}([a-z_]+): \{ table: '([a-z_]+)', audience: '([^']+)' \},$/gm)) {
+  // `alsoSet` is the guest row's extra column on a hide or restore (the
+  // retired stamp, migration 097), so it may follow the audience.
+  for (const m of body.matchAll(/^ {2}([a-z_]+): \{ table: '([a-z_]+)', audience: '([^']+)'(?:, alsoSet: '[^']+')? \},$/gm)) {
     out.set(m[1], { table: m[2], audience: m[3] });
   }
   return out;

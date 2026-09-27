@@ -1237,6 +1237,23 @@ describe('GuestInvite: the budget and the still-in question, from the link', () 
     expect(container.textContent).toMatch(/Answer above first\./);
   });
 
+  test('a /me that says this person joined in the app tells them so, and does not ask them to answer again', async () => {
+    // The joins retire the guest answer of somebody who became a member. That
+    // is not a removal, and "answer again if you are coming" would put a new
+    // member on the plan a second time.
+    window.localStorage.setItem(KEY, JSON.stringify(IDENTITY));
+    const { container } = mount({
+      '': () => reply(200, ASKING),
+      '/me': () => reply(403, { code: 'JOINED_IN_APP', error: 'Joined.' }),
+    });
+    await screen.findByRole('heading', { level: 1, name: /friday night out/i });
+    await waitFor(() => expect(container.textContent).toMatch(/You joined this plan in the app, so your answer and the chat are there now\./));
+    // The retired identity goes, and nothing on the page reads as a problem.
+    expect(window.localStorage.getItem(KEY)).toBeNull();
+    expect(container.querySelector('#gi-problem-rsvp').textContent).toBe('');
+    expect(container.textContent).not.toMatch(/not on this plan anymore/i);
+  });
+
   test('a server that cannot answer /me leaves the page working on what the preview said', async () => {
     window.localStorage.setItem(KEY, JSON.stringify(IDENTITY));
     const { container } = mount({

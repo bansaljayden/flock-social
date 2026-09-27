@@ -361,15 +361,44 @@ function normalizeGuestName(name) {
 // customSanitizer has already fired by the time a handler reads req.body — so
 // `B<b></b>ob` is compared as `bob` and markup cannot split a removed name past
 // the guard the way it once split words past the profanity filter.
+//
+// A ROW RETIRED ON A JOIN IS NOT A TAKEDOWN. The two joins hide the guest row
+// of somebody who just became a member, and hiding was all they wrote, so the
+// name they had answered under ("Sam") was refused to every other Sam on the
+// plan with this guard's sentence, which reads as a moderation action about
+// somebody who did nothing. They stamp retired_at now (migration 097), and a
+// moderator's hide clears it, so only a row a moderator hid counts here.
 // ---------------------------------------------------------------------------
 async function nameIsTakenDown(run, flockId, name) {
   const r = await run(
     `SELECT 1 FROM guest_rsvps
      WHERE flock_id = $1
        AND COALESCE(is_hidden, false) = true
+       AND retired_at IS NULL
        AND lower(regexp_replace(btrim(name), '\\s+', ' ', 'g')) = $2
      LIMIT 1`,
     [flockId, normalizeGuestName(name)]
+  );
+  return r.rows.length > 0;
+}
+
+// Did this identity's answer leave because its person joined the plan as a
+// member? Asked only once the identity is known to be missing from the
+// visible ledger, so the reads that serve the page keep their is_hidden
+// filter in the SQL. A yes is its own answer on the page (JOINED_IN_APP)
+// rather than "your answer is gone, answer again", which is what the person
+// who had just joined used to be told.
+const JOINED_IN_APP = {
+  code: 'JOINED_IN_APP',
+  error: 'You joined this plan in the app, so your answer and the chat are there now.',
+};
+async function retiredOnJoin(flockId, guestToken) {
+  const r = await pool.query(
+    `SELECT 1 FROM guest_rsvps
+      WHERE guest_token = $1 AND flock_id = $2
+        AND is_hidden IS TRUE AND retired_at IS NOT NULL
+      LIMIT 1`,
+    [guestToken, flockId]
   );
   return r.rows.length > 0;
 }
@@ -896,6 +925,11 @@ router.post('/:token/rsvp',
           [guestToken, link.flock_id]
         );
         if (existing.rows.length && existing.rows[0].is_hidden) {
+          // Retired because its person joined, not removed: say which, so the
+          // page does not tell a new member their answer was taken away.
+          if (await retiredOnJoin(link.flock_id, guestToken)) {
+            return res.status(403).json(JOINED_IN_APP);
+          }
           return res.status(403).json({ error: 'This RSVP was removed and cannot be edited' });
         }
 
@@ -1481,7 +1515,14 @@ router.post('/:token/me',
          WHERE guest_token = $1 AND flock_id = $2 AND COALESCE(is_hidden, false) = false`,
         [req.body.guestToken, link.flock_id]
       );
-      if (!guest.rows.length) return res.status(403).json({ error: 'RSVP first' });
+      if (!guest.rows.length) {
+        // Still a 403, so a page from before this answer drops the identity
+        // the way it always has; the code lets a current page say why.
+        if (await retiredOnJoin(link.flock_id, req.body.guestToken)) {
+          return res.status(403).json(JOINED_IN_APP);
+        }
+        return res.status(403).json({ error: 'RSVP first' });
+      }
       const g = guest.rows[0];
       if (!allowGuestRead(g.id)) {
         const ms = guestReadRetryMs(g.id);

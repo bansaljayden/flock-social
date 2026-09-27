@@ -28,7 +28,9 @@ test('a guest who becomes a member disappears from every open client, not only t
   // run against a real database in planFlowLocks.test.js.
   const { RETIRE_ON_LINK_JOIN_SQL } = require('../utils/guestRsvp');
   const hide = RETIRE_ON_LINK_JOIN_SQL.replace(/\s+/g, ' ').trim();
-  assert.match(hide, /^UPDATE guest_rsvps SET is_hidden = TRUE WHERE flock_id = \$1 AND guest_token = \$2 AND COALESCE\(is_hidden, false\) = false /);
+  // Stamped as retired in the same write, so the takedown's name guard can
+  // tell a join from a moderator (migration 097).
+  assert.match(hide, /^UPDATE guest_rsvps SET is_hidden = TRUE, retired_at = NOW\(\) WHERE flock_id = \$1 AND guest_token = \$2 AND COALESCE\(is_hidden, false\) = false /);
   assert.match(hide, / RETURNING id$/);
   assert.strictEqual((src.match(/[cC]lient\.query\(RETIRE_ON_LINK_JOIN_SQL, \[link\.flock_id, guestUuid, req\.user\.id\]\)/g) || []).length, 2,
     'the new-member path and the already-in path retire through the same statement');

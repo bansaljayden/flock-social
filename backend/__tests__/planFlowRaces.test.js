@@ -31,6 +31,8 @@
 //      or place id of the old venue survives a PUT that names another.
 //   8. THE SHARED LINK FOLLOWS THE PLAN TO ITS NEW TIME, and a reschedule
 //      never revives a link that was revoked or had already lapsed.
+//   9. A GUEST ANSWER RETIRED ON A JOIN IS NOT A TAKEDOWN: its name stays
+//      free on the plan, and its own page is told the person joined.
 //
 // The fixture suites pin the statements' text; this one runs them.
 
@@ -745,3 +747,67 @@ async function mkLinkRow(flockId, creator, { revoked, expiresInDays }) {
   );
   return token;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 9. A guest answer retired on a join is not a takedown
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// The joins hide the guest row of somebody who just became a member, and a
+// hidden row was all a moderator's takedown wrote too, so the takedown's name
+// guard refused that name to everybody else on the plan and the new member's
+// own page told them their answer was gone. Both readers ask the database
+// which kind of hidden a row is, so they are run.
+
+async function sayAs(linkToken, body) {
+  return call('POST', `/api/guest/${linkToken}/rsvp`, { body });
+}
+
+test('a first name retired on a join stays free for the next person, and its own page says they joined', async () => {
+  const host = await mkUser('Host TwentyTwo');
+  const sam = await mkUser('Sam Rivera');
+  const flockId = await mkFlock(host, { hoursFromNow: 24 });
+  const link = await mkLinkRow(flockId, host, { revoked: false, expiresInDays: 10 });
+
+  // Sam answers the link by first name, then makes the account and joins.
+  const answered = await sayAs(link, { name: 'Sam', status: 'in' });
+  assert.strictEqual(answered.status, 201, JSON.stringify(answered.body));
+  const joined = await call('POST', `/api/guest/${link}/join`, { token: sam.token, body: { guestToken: answered.body.guestToken } });
+  assert.strictEqual(joined.status, 200, JSON.stringify(joined.body));
+
+  // A different Sam on the same link is an ordinary new answer.
+  const other = await sayAs(link, { name: 'Sam', status: 'in' });
+  assert.strictEqual(other.status, 201, JSON.stringify(other.body));
+
+  const row = (await pool.query(
+    'SELECT is_hidden, retired_at FROM guest_rsvps WHERE guest_token = $1', [answered.body.guestToken]
+  )).rows[0];
+  assert.strictEqual(row.is_hidden, true, 'retired, so counted once');
+  assert.ok(row.retired_at, 'and stamped as retired, not taken down');
+
+  // The first Sam's browser is told they joined, not that the answer is gone.
+  const me = await call('POST', `/api/guest/${link}/me`, { body: { guestToken: answered.body.guestToken } });
+  assert.strictEqual(me.status, 403, JSON.stringify(me.body));
+  assert.strictEqual(me.body.code, 'JOINED_IN_APP');
+  assert.doesNotMatch(me.body.error, /removed|cannot be used/);
+  const edit = await sayAs(link, { name: 'Sam', status: 'out', guestToken: answered.body.guestToken });
+  assert.strictEqual(edit.status, 403, JSON.stringify(edit.body));
+  assert.strictEqual(edit.body.code, 'JOINED_IN_APP');
+});
+
+test('a name a moderator took down is still refused, and a stranger\'s token is still just unknown', async () => {
+  const host = await mkUser('Host TwentyThree');
+  const flockId = await mkFlock(host, { hoursFromNow: 24 });
+  const link = await mkLinkRow(flockId, host, { revoked: false, expiresInDays: 10 });
+  const abusive = await sayAs(link, { name: 'Rude Name', status: 'in' });
+  assert.strictEqual(abusive.status, 201, JSON.stringify(abusive.body));
+  // What the moderator's hide writes for a guest row (routes/admin.js
+  // TAKEDOWN_TARGETS: is_hidden, and the retired stamp cleared).
+  await pool.query('UPDATE guest_rsvps SET is_hidden = TRUE, retired_at = NULL WHERE guest_token = $1', [abusive.body.guestToken]);
+
+  const again = await sayAs(link, { name: 'rude  name', status: 'in' });
+  assert.strictEqual(again.status, 403, JSON.stringify(again.body));
+  assert.match(again.body.error, /cannot be used on this flock/);
+  const me = await call('POST', `/api/guest/${link}/me`, { body: { guestToken: abusive.body.guestToken } });
+  assert.strictEqual(me.status, 403);
+  assert.strictEqual(me.body.code, undefined, 'a takedown is not told it joined anything');
+});

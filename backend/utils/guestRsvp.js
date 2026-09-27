@@ -134,8 +134,15 @@ function combineRsvpCounts(members = [], guests = []) {
 // somebody who is not an accepted member once the join has landed, so a
 // refused join retires nothing. $1 flock, $2 the presented token(s), $3 the
 // joining account.
+//
+// RETIRED, NOT TAKEN DOWN. Both stamp retired_at in the same write that hides
+// the row (migration 097). A hidden row was all a takedown wrote too, so the
+// takedown's replay guard (routes/guest.js nameIsTakenDown) refused the
+// retired row's name to anybody else on the plan with the moderation sentence,
+// and the person who had just joined was told their answer was gone. The
+// stamp is what those two readers ask now.
 // ---------------------------------------------------------------------------
-const RETIRE_ON_INVITE_ACCEPT_SQL = `UPDATE guest_rsvps SET is_hidden = TRUE
+const RETIRE_ON_INVITE_ACCEPT_SQL = `UPDATE guest_rsvps SET is_hidden = TRUE, retired_at = NOW()
   WHERE flock_id = $1 AND guest_token = ANY($2::uuid[]) AND COALESCE(is_hidden, false) = false
     AND EXISTS (SELECT 1 FROM flocks f WHERE f.id = $1 AND f.status NOT IN ('completed', 'cancelled'))
     AND EXISTS (SELECT 1 FROM flock_members fm WHERE fm.flock_id = $1 AND fm.user_id = $3 AND fm.status = 'accepted')
@@ -145,7 +152,7 @@ const RETIRE_ON_INVITE_ACCEPT_SQL = `UPDATE guest_rsvps SET is_hidden = TRUE
                  WHERE u.id = $3 AND strpos(n.account, ' ') > 0 AND n.said = n.account)
   RETURNING id`;
 
-const RETIRE_ON_LINK_JOIN_SQL = `UPDATE guest_rsvps SET is_hidden = TRUE
+const RETIRE_ON_LINK_JOIN_SQL = `UPDATE guest_rsvps SET is_hidden = TRUE, retired_at = NOW()
   WHERE flock_id = $1 AND guest_token = $2 AND COALESCE(is_hidden, false) = false
     AND EXISTS (SELECT 1 FROM flocks f WHERE f.id = $1 AND f.status NOT IN ('completed', 'cancelled'))
     AND EXISTS (SELECT 1 FROM flock_members fm WHERE fm.flock_id = $1 AND fm.user_id = $3 AND fm.status = 'accepted')
