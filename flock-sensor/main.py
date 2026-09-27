@@ -1534,7 +1534,12 @@ class PeopleModel:
             for name in self.CLASSES[1:heat.shape[0]]], dtype=np.float32)[:, None, None]
         ks, ys, xs = np.nonzero((heat >= bars) & (heat >= local))
         t = np.asarray(frame, dtype=np.float32).reshape(THERMAL_ROWS, THERMAL_COLS)
-        ambient = float(np.median(t))
+        # The room, as the cool end of the frame. The median was the room
+        # only while people filled a small part of the view: with somebody
+        # right at the sensor it was that person, so the check below threw
+        # out the very person the model had found. On real side-view
+        # footage that cost 11 points of exact counts.
+        ambient = float(np.percentile(t, 10))
         people, things = [], []
         for k, y, x in zip(ks.tolist(), ys.tolist(), xs.tolist()):
             fx, fy = (x + 0.5) * self.STRIDE, (y + 0.5) * self.STRIDE
