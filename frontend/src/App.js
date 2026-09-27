@@ -8,7 +8,7 @@ import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, reconfirmFlock
 // The address book lives behind one service, so nothing in this file has to
 // know which platform it is on or which API answers. See services/contacts.js.
 import { contactsAvailable, syncContacts } from './services/contacts';
-import { hapticTap, hapticSuccess, hapticAlarm } from './services/haptics';
+import { hapticTap, hapticSuccess, hapticWarning, hapticAlarm } from './services/haptics';
 import { setStatusBarOverDark, screenTopIsNavy } from './services/systemBars';
 // Location goes through this shim, never the browser API directly. Calling the
 // web API inside the iOS shell made WKWebView raise a SECOND permission sheet,
@@ -6815,6 +6815,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const handleAcceptFlockInvite = useCallback(async (flockId) => {
     try {
       await acceptFlockInvite(flockId, storedGuestTokens({ name: meRef.current?.name }));
+      // After the server says yes, not before: the RSVP is the one step here
+      // with no optimistic card to take back, so the buzz means it is done.
+      hapticSuccess();
       const invite = pendingFlockInvites.find(f => f.id === flockId);
       if (invite) {
         setPendingFlockInvites(prev => prev.filter(f => f.id !== flockId));
@@ -6858,6 +6861,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     try {
       // Same accept, so the same retirement of this person's link answer.
       await acceptFlockInvite(flockId, storedGuestTokens({ name: meRef.current?.name }));
+      hapticSuccess();
       const invite = declinedFlockInvites.find(f => f.id === flockId);
       setDeclinedFlockInvites(prev => prev.filter(f => f.id !== flockId));
       if (invite) {
@@ -9405,6 +9409,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       ))))
       .catch((err) => {
         if (previousVotes) setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, votes: previousVotes } : f));
+        // The tap buzzed as the vote landed on screen, so the refusal buzzes
+        // too, in the pattern iOS keeps for "that did not work".
+        hapticWarning();
         // The tile has just moved back on its own, so the sentence has to name
         // the action that did not happen or the movement reads as a bug.
         // api.js words the offline and blocked-network cases; that sentence is
@@ -9458,8 +9465,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     const confirming = venue.status === 'confirmed';
     const previousStatus = before ? before.status : null;
     // Update local state immediately
-    if (confirming && previousStatus !== 'confirmed' && previousStatus !== 'locked') {
+    // The chat's vote sheet locks a plan in through here rather than through
+    // confirmFlockPlan, so the same moment gets the same buzz, and a refused
+    // confirm below gets the same refusal.
+    const lockingIn = confirming && previousStatus !== 'confirmed' && previousStatus !== 'locked';
+    if (lockingIn) {
       setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, status: 'confirmed' } : f));
+      hapticSuccess();
     }
     setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, venue: vName, venueAddress: vAddr, venueId: vId, venueLat: vLat, venueLng: vLng, venuePhoto: vPhoto, venueRating: vRating, venuePriceLevel: vPriceLevel } : f));
     // A flock that exists only in local state (no numeric id) has nothing to
@@ -9491,6 +9503,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       })
       .catch((err) => {
         if (previous) setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, ...previous, status: previousStatus || f.status } : f));
+        if (lockingIn) hapticWarning();
         // A dead session already announced itself through api.js's own toast.
         if (!err?.sessionExpired) showToast(err?.message || (confirming ? "Couldn't lock this in" : "Couldn't save that venue"), 'error');
         return false;
@@ -9516,6 +9529,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     const previousStatus = before ? before.status : null;
     if (previousStatus === 'confirmed' || previousStatus === 'locked') return Promise.resolve(true);
     setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, status: 'confirmed' } : f));
+    // The plan's biggest moment, felt as it lands on screen, on the same beat
+    // the status changes. A refusal below puts it back and buzzes again in the
+    // refusal pattern, so the hand is told as well as the eye.
+    hapticSuccess();
     if (typeof flockId !== 'number') return Promise.resolve(true);
     return setFlockStatus(flockId, 'confirmed')
       .then(() => {
@@ -9526,6 +9543,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       })
       .catch((err) => {
         if (previousStatus) setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, status: previousStatus } : f));
+        hapticWarning();
         if (!err?.sessionExpired) showToast(err?.message || "Couldn't lock this in", 'error');
         return false;
       });

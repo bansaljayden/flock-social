@@ -202,6 +202,7 @@ import { MAX_SEATS, etaMinutes, formatDistance, formatEta } from '../lib/travel'
 import useKeyboardComposer from '../hooks/useKeyboardComposer';
 import { holdStatusBarOverDark } from '../services/systemBars';
 import useEdgeSwipeBack from '../hooks/useEdgeSwipeBack';
+import { hapticSuccess } from '../services/haptics';
 
 /* A half-written message, per flock, for the length of the session.
    Outside this screen because App.js unmounts it on every navigation, and
@@ -3760,6 +3761,10 @@ export default function ChatDetail({
                         // null ceiling must not wipe the number (lib/budgetStatus.js).
                         setBudgetStatus(prev => ({ ...mergeBudgetUpdate(prev, data), userSubmitted: true, userAmount: amt, userSkipped: false }));
                         if (data.ceiling) setFlocks(prev => prev.map(f => f.id === selectedFlockId ? { ...f, budgetCeiling: data.ceiling } : f));
+                        // After the server has it. Nothing here was shown
+                        // early that a refusal would take back, so the buzz
+                        // only ever means the amount went in.
+                        hapticSuccess();
                         showToast('Budget submitted');
                         setShowChatPool(false);
                       } catch (err) { showToast(err.message, 'error'); }
