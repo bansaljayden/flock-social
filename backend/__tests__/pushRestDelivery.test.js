@@ -25,11 +25,16 @@ const express = require('express');
 process.env.JWT_SECRET = 'push-rest-delivery-test-secret';
 
 const pool = require('../config/database');
+const { ROSTER_BLOCK_SQL } = require('../utils/blocks');
 
 let handlers = [];
 let log = [];
 
 function dispatch(sql, params) {
+  // The accept asks whether anybody on the roster has a block with the joiner
+  // (utils/blocks.js). Nobody in this file has one; the blocks these tests
+  // script are about who hears the join, which is asked separately.
+  if (sql === ROSTER_BLOCK_SQL) return Promise.resolve({ rows: [], rowCount: 0 });
   log.push({ sql: String(sql).replace(/\s+/g, ' ').trim(), params });
   for (const [re, fn] of handlers) {
     if (re.test(sql)) {

@@ -192,6 +192,15 @@ async function dispatch(text, params = []) {
   if (has('SELECT 1 FROM user_blocks WHERE (blocker_id = $1 AND blocked_id = $2)')) {
     return { rows: [], rowCount: 0 };
   }
+  // ROSTER_BLOCK_SQL: anybody else on the accepted roster with a block with
+  // the joiner, either way. Answered from the world, so a block in `blocks`
+  // refuses the accept the way Postgres would.
+  if (has('JOIN user_blocks b ON (b.blocker_id = $2 AND b.blocked_id = fm.user_id)')) {
+    const joiner = Number(params[1]);
+    const hit = rowsOf(params[0]).some((m) => m.status === 'accepted' && m.user_id !== joiner
+      && blocks.some(([a, b]) => (a === joiner && b === m.user_id) || (b === joiner && a === m.user_id)));
+    return hit ? { rows: [{ '?column?': 1 }], rowCount: 1 } : { rows: [], rowCount: 0 };
+  }
 
   // ── services/pushHelper.js (post-response; modelled so nothing lands in
   //    `unknown` from a previous test's tail) ──

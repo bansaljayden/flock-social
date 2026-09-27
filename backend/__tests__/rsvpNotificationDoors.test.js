@@ -53,6 +53,7 @@ const express = require('express');
 process.env.JWT_SECRET = 'rsvp-notification-doors-test-secret';
 
 const pool = require('../config/database');
+const { ROSTER_BLOCK_SQL } = require('../utils/blocks');
 
 // ── Fixture plumbing ────────────────────────────────────────────────────────
 let handlers = [];
@@ -69,6 +70,9 @@ function dispatch(sql, params) {
     return Promise.resolve({ rows: [{ id: Number((params || [])[0]), name: 'Dinner', status: 'planning' }], rowCount: 1 });
   }
   if (/status = 'invited' AND user_id != \$2/.test(String(sql))) return Promise.resolve({ rows: [], rowCount: 0 });
+  // The accept asks whether anybody on the roster has a block with the joiner
+  // (utils/blocks.js). Nobody in this file has one.
+  if (sql === ROSTER_BLOCK_SQL) return Promise.resolve({ rows: [], rowCount: 0 });
   // Matched against the COLLAPSED sql: these statements are written across
   // several lines in the routers, so a pattern spanning two of them would
   // otherwise depend on where the source happens to wrap.

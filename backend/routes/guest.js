@@ -24,7 +24,7 @@ const { broadcastGuestRsvp, emitToFlockExcludingBlocked, emitToFlockMembers } = 
 const {
   authenticate, requireVerified, TOKEN_ALGORITHMS, issuedTokenVersion, currentTokenVersion,
 } = require('../middleware/auth');
-const { getInvisibleUserIds, isBlockedBetween } = require('../utils/blocks');
+const { getInvisibleUserIds, isBlockedBetween, ROSTER_BLOCK_SQL } = require('../utils/blocks');
 // The member-facing venue tally has one implementation and it lives with the
 // member vote routes — see broadcastGuestVote there for why a guest vote is
 // announced through it rather than emitted from here. VOTE_PLAN_LOCK_SQL is the
@@ -1819,19 +1819,13 @@ router.post('/:token/join',
       // The refusal names no one. Telling B which member blocked them would
       // hand over exactly the fact the block exists to withhold — that A is on
       // this plan — so the sentence is the same one whoever is on the roster.
+      //
+      // The in-app accept asks the same statement (utils/blocks.js
+      // ROSTER_BLOCK_SQL): the invite rules check a block only between the
+      // inviter and each invitee, so a member inviting somebody another member
+      // had blocked was the same walk-in through the other door.
       if (!(existing.rows.length && existing.rows[0].status === 'accepted')) {
-        const blocked = await pool.query(
-          `SELECT 1
-             FROM flock_members fm
-             JOIN user_blocks b
-               ON (b.blocker_id = $2 AND b.blocked_id = fm.user_id)
-               OR (b.blocked_id = $2 AND b.blocker_id = fm.user_id)
-            WHERE fm.flock_id = $1
-              AND fm.status = 'accepted'
-              AND fm.user_id <> $2
-            LIMIT 1`,
-          [link.flock_id, req.user.id]
-        );
+        const blocked = await pool.query(ROSTER_BLOCK_SQL, [link.flock_id, req.user.id]);
         if (blocked.rows.length > 0) {
           return res.status(403).json({ error: 'You cannot join this plan.' });
         }
