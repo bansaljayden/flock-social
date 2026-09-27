@@ -65,7 +65,7 @@ try:
 except ImportError:  # pragma: no cover
     fcntl = None
 
-VERSION = '1.14.0'
+VERSION = '1.15.0'
 
 # ---------------------------------------------------------------------------
 # Config
@@ -185,6 +185,13 @@ DEFAULTS = {
     # bigger than a head in frame. The floor already exists: nothing under
     # THERMAL_THRESHOLD_C, or the room's own median plus the margin, is warm.
     'THERMAL_MAX_PERSON_C': '45.0',
+    # The people counter. 'auto' counts with the trained model in
+    # models/people.onnx when it and onnxruntime are installed, and with the
+    # heat-cluster rule above when either is missing; 'off' always uses the
+    # rule. The threshold is how sure the model has to be that a point is a
+    # person: higher misses people half out of view, lower counts a pet.
+    'THERMAL_MODEL': 'auto',
+    'THERMAL_MODEL_THRESHOLD': '0.4',
     # Noise calibration. Out of the box these are nominal and the reported
     # figure is a relative loudness index, NOT calibrated dB SPL. See the
     # calibration section of README.md.
@@ -274,6 +281,13 @@ THERMAL_BIN = _cfg_number('THERMAL_BIN', int, 1, 8, 4)
 THERMAL_MIN_CLUSTER = _cfg_number('THERMAL_MIN_CLUSTER', int, 1, 19200, 6)
 THERMAL_VIEW = _cfg_number('THERMAL_VIEW', int, 0, 1, 1)
 THERMAL_MAX_PERSON_C = _cfg_number('THERMAL_MAX_PERSON_C', float, 38.0, 90.0, 45.0)
+THERMAL_MODEL = (CONFIG.get('THERMAL_MODEL') or 'auto').strip().lower()
+if THERMAL_MODEL not in ('auto', 'off'):
+    print(f'Config THERMAL_MODEL={THERMAL_MODEL!r} is not auto or off; using auto',
+          file=sys.stderr)
+    THERMAL_MODEL = 'auto'
+THERMAL_MODEL_THRESHOLD = _cfg_number('THERMAL_MODEL_THRESHOLD', float, 0.1, 0.95, 0.4)
+PEOPLE_MODEL_PATH = Path(__file__).resolve().parent / 'models' / 'people.onnx'
 IR_GPIO_PIN = _cfg_number('IR_GPIO_PIN', int, 2, 27, 17)
 DOOR_SENSOR = (CONFIG.get('DOOR_SENSOR') or 'auto').strip().lower()
 if DOOR_SENSOR not in ('auto', 'tof', 'beam', 'off'):
@@ -484,6 +498,11 @@ _state = {
     # push payload is three integers and cannot carry it.
     'thermal_frame': None,
     'thermal_frame_at': None,
+    # Where the people counter put each person in that frame, in frame pixels,
+    # for the screen to mark. Same rule as the frame: screen units only.
+    'thermal_points': None,
+    # Which counter produced the thermal count: 'model' or 'rule'.
+    'thermal_counter': None,
 }
 _stop = threading.Event()
 
@@ -1365,6 +1384,102 @@ _THERMAL_IDENTICAL_LIMIT = 5
 _THERMAL_WINDOW = 15
 _thermal_window = deque(maxlen=_THERMAL_WINDOW)
 
+class PeopleModel:
+    """The trained people counter: a thermal frame in, a point per person out.
+
+    The rule below counts warm regions, so it has no idea what a person looks
+    like: a hand held up to the lens is a region and counts, spread fingers are
+    several, and two people shoulder to shoulder can be one. This model was
+    trained to put one point on each person's head (training/README.md says
+    how, and on what), and to put none on a hand reaching into view, a pet, a
+    mug, a laptop or a warm seat. Counting is counting the points.
+
+    It runs in memory on one CPU core and keeps nothing: the frame goes in,
+    a list of points comes out, and both are gone by the next frame, exactly
+    like the rule's cells. numpy and onnxruntime are imported here and nowhere
+    else, so a unit without them loses the model and keeps the rule.
+    """
+
+    STRIDE = 4          # model output is a quarter of the frame's resolution
+
+    def __init__(self, path, threshold):
+        import numpy as np
+        import onnxruntime as ort
+        opts = ort.SessionOptions()
+        # One core. The Pi has four and the display, the microphone and the
+        # doorway counter all want theirs.
+        opts.intra_op_num_threads = 1
+        opts.inter_op_num_threads = 1
+        self.np = np
+        self.session = ort.InferenceSession(str(path), opts,
+                                            providers=['CPUExecutionProvider'])
+        self.input = self.session.get_inputs()[0].name
+        self.threshold = threshold
+
+    def inputs(self, frame):
+        """The two channels the model was trained on. Must match
+        training/synth.py model_input exactly."""
+        np = self.np
+        t = np.asarray(frame, dtype=np.float32).reshape(THERMAL_ROWS, THERMAL_COLS)
+        med = np.median(t)
+        absolute = np.clip((t - 30.0) / 8.0, -3.0, 5.0)
+        relative = np.clip((t - med) / 4.0, -3.0, 8.0)
+        return np.stack([absolute, relative])[None].astype(np.float32)
+
+    def points(self, frame):
+        """(x, y) in frame pixels for every person the model finds."""
+        np = self.np
+        prob = self.session.run(None, {self.input: self.inputs(frame)})[0][0, 0]
+        # A peak is a cell at least as sure as all eight neighbours, the same
+        # rule training scored the model with.
+        padded = np.pad(prob, 1, constant_values=-1.0)
+        h, w = prob.shape
+        local = np.max([padded[dy:dy + h, dx:dx + w]
+                        for dy in range(3) for dx in range(3)], axis=0)
+        ys, xs = np.nonzero((prob >= self.threshold) & (prob >= local))
+        t = np.asarray(frame, dtype=np.float32).reshape(THERMAL_ROWS, THERMAL_COLS)
+        ambient = float(np.median(t))
+        found = []
+        for y, x in zip(ys.tolist(), xs.tolist()):
+            fx, fy = (x + 0.5) * self.STRIDE, (y + 0.5) * self.STRIDE
+            # Physical bounds, as a backstop to what the model learned: a
+            # person is warmer than the room around them, and a patch whose
+            # typical temperature is past THERMAL_MAX_PERSON_C is a mug or a
+            # lamp whatever its shape.
+            y0, x0 = max(0, int(fy) - 4), max(0, int(fx) - 4)
+            patch = t[y0:int(fy) + 4, x0:int(fx) + 4]
+            if patch.size == 0:
+                continue
+            if float(patch.max()) < ambient + 1.0:
+                continue
+            if float(np.median(patch)) > THERMAL_MAX_PERSON_C:
+                continue
+            found.append((fx, fy))
+        return found
+
+
+def load_people_model():
+    """The trained counter, or None to count with the rule. Says which."""
+    if THERMAL_MODEL == 'off':
+        logger.info('People counter: heat-cluster rule (THERMAL_MODEL=off)')
+        return None
+    if not PEOPLE_MODEL_PATH.exists():
+        logger.info(f'People counter: heat-cluster rule (no model at {PEOPLE_MODEL_PATH})')
+        return None
+    try:
+        model = PeopleModel(PEOPLE_MODEL_PATH, THERMAL_MODEL_THRESHOLD)
+    except ImportError as e:
+        logger.warning(f'People counter: heat-cluster rule, because {e}. '
+                       'Install it with: sudo apt install python3-numpy python3-onnxruntime')
+        return None
+    except Exception as e:
+        logger.error(f'People counter: heat-cluster rule, the model would not load: {e}')
+        return None
+    logger.info(f'People counter: trained model {PEOPLE_MODEL_PATH.name}, '
+                f'threshold {THERMAL_MODEL_THRESHOLD}')
+    return model
+
+
 def count_people(frame, scene=None):
     """Cluster count for one frame, with the scene background folded in.
 
@@ -1410,6 +1525,7 @@ def thermal_loop():
     identical = 0
     scene = SceneBackground()
     backoff = 0.0
+    people_model = load_people_model()
     while not _stop.is_set():
         if _thermal_camera is None:
             # Either the camera was absent at boot, which used to mean this
@@ -1469,7 +1585,17 @@ def thermal_loop():
                     continue
                 failures = 0
                 backoff = 0.0
-                n = count_people(frame, scene)
+                points, counter = None, 'rule'
+                if people_model is not None:
+                    try:
+                        points = people_model.points(frame)
+                        counter = 'model'
+                    except Exception as e:
+                        # One bad inference falls back for that frame; the
+                        # model stays loaded for the next.
+                        log_throttled('people_model', logging.WARNING,
+                                      f'People counter model failed, using the rule: {e}')
+                n = len(points) if points is not None else count_people(frame, scene)
                 if n is None:
                     # Still learning the room. Not a reading and not a
                     # failure, so the freshness clock is left alone.
@@ -1486,9 +1612,11 @@ def thermal_loop():
                     # Inside the lock with the count it belongs to, so the
                     # display cannot pair one frame with another frame's
                     # timestamp. Only ever set on a unit with a screen.
+                    _state['thermal_counter'] = counter
                     if THERMAL_VIEW_ON:
                         _state['thermal_frame'] = frame
                         _state['thermal_frame_at'] = time.monotonic()
+                        _state['thermal_points'] = points
         except Exception as e:
             failures += 1
             log_throttled('thermal_read', logging.WARNING, f'Thermal read error: {e}')
@@ -4281,7 +4409,7 @@ class Panel:
             self.blit_centred(self.f_body, 'Listening. The trace fills in from here.',
                               BRAND_MUTED, self.w // 2, (gtop + gbot) // 2)
 
-    def thermal(self, frame, count, live):
+    def thermal(self, frame, count, live, points=None):
         m = self.m
         pad = m['pad']
         self.header('What the sensor sees', back=True, live=live)
@@ -4318,6 +4446,15 @@ class Panel:
                 self._thermal_surf = self.pygame.transform.scale(raw, (iw, ih))
             self._thermal_key = key
         self.screen.blit(self._thermal_surf, (pad, top))
+        # A ring on everybody the trained counter found, so what it counted
+        # can be checked against the picture: a hand at the lens should carry
+        # no ring, two people close together should carry two.
+        if points:
+            ring = max(7, iw // 34)
+            for x, y in points:
+                cx = pad + int(x * iw / float(THERMAL_COLS))
+                cy = top + int(y * ih / float(THERMAL_ROWS))
+                self.pygame.draw.circle(self.screen, BRAND_CREAM, (cx, cy), ring, 2)
         self.pygame.draw.rect(self.screen, BRAND_RULE, (pad, top, iw, ih), 1)
 
         if side:
@@ -4492,6 +4629,7 @@ def display_loop():
                 window = _state['noise_window']
                 burst = float(window[-1]) if window else db
                 frame = _state['thermal_frame'] if THERMAL_VIEW_ON else None
+                points = _state['thermal_points'] if THERMAL_VIEW_ON else None
                 history = list(_state['last_push_history'])
                 door_history = list(_state['door_history'])
                 came_in, went_out = _state['door_in'], _state['door_out']
@@ -4536,7 +4674,7 @@ def display_loop():
             if dirty:
                 try:
                     if view == 'thermal':
-                        ui.thermal(frame, therm, therm_live)
+                        ui.thermal(frame, therm, therm_live, points)
                     elif view == 'door':
                         ui.door(ir, door_history, *directions, live=door_live)
                     elif view == 'noise':
@@ -5271,6 +5409,12 @@ def selftest():
             print(f'                     radiometric, room median '
                   f'{_median(frame):.1f}C, {count_thermal_clusters(frame)} '
                   f'cluster(s) in view')
+            model = load_people_model()
+            if model is None:
+                print('    people counter : heat-cluster rule (see the log line above)')
+            else:
+                print(f'    people counter : trained model, '
+                      f'{len(model.points(frame))} person(s) in view')
         _thermal_camera.close()
     # Opening the SPI bus proves a bus, not a converter. This line used to
     # print ok on the strength of that alone, and did so for an entire evening
