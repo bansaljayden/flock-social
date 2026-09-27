@@ -96,6 +96,55 @@ const CATEGORY_TYPES = {
   untyped: [],
 };
 
+// ---------------------------------------------------------------------------
+// Copy. estimateWait's strings are printed on the venue card as "Est. wait:
+// ...", which makes them the most-viewed user copy the rule engine produces.
+// Two of them carried an em dash ("45+ min — reserve ahead", "Packed — expect
+// waits") while DESIGN-STANDARD §A2 read PASS, because that audit only looked at
+// src/website/. This is a copy rule, not a tuned value, so pinning it freezes
+// nothing the header above wants left free.
+// ---------------------------------------------------------------------------
+test('copy: no wait estimate carries an em dash, for any category at any score', () => {
+  const seen = new Set();
+  for (const [name, types] of Object.entries(CATEGORY_TYPES)) {
+    for (const priceLevel of [undefined, 1, 2, 3, 4]) {
+      for (let score = 0; score <= 100; score += 1) {
+        const wait = estimateWait(score, types, priceLevel);
+        seen.add(wait);
+        assert.ok(!wait.includes('—'), `${name} at ${score} (price ${priceLevel}): ${JSON.stringify(wait)}`);
+      }
+    }
+  }
+  // The two that used to carry one, in the words they carry now.
+  assert.ok(seen.has('45+ min, reserve ahead'), 'the steakhouse top band moved');
+  assert.ok(seen.has('Packed, expect waits'), 'the gym top band moved');
+});
+
+test('copy: no string literal in the crowd services carries an em dash', () => {
+  // The behavioural sweep above covers estimateWait. This covers the rest of
+  // what these two files can say to a person, the same way
+  // safetyPathAudit.test.js holds routes/safety.js. Comments are stripped
+  // first: an em dash in a comment is prose for the next reader, which is the
+  // one place the rule does not apply.
+  const fs = require('node:fs');
+  const path = require('node:path');
+  for (const f of ['services/crowdEngine.js', 'services/ownerReports.js']) {
+    // \r first, because `.` does not match a carriage return and a CRLF
+    // checkout would otherwise leave every line comment in place.
+    const src = fs.readFileSync(path.join(__dirname, '..', f), 'utf8').replace(/\r/g, '');
+    const code = src
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .split('\n')
+      // `[^:]` in front so a `https://` inside a string is not read as a comment.
+      .map((line) => line.replace(/(^|[^:])\/\/.*$/, '$1'))
+      .join('\n');
+    const bad = code.split('\n')
+      .map((line, i) => [i + 1, line.trim()])
+      .filter(([, line]) => line.includes('—'));
+    assert.deepEqual(bad, [], `em dash in ${f} outside a comment: ${JSON.stringify(bad)}`);
+  }
+});
+
 const WEATHERS = [
   null,
   { temp: 70, isRaining: false, windSpeed: 5 },
