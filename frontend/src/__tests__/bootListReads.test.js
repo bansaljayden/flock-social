@@ -166,20 +166,21 @@ function callbackFrom(source, marker) {
 
 // loadFlocks, lifted and run against stand-ins for what it closes over.
 function liftedLoadFlocks({ invite, primed }) {
-  const state = { flocks: [], taken: 0, fresh: 0, opened: null };
+  const state = { flocks: [], taken: 0, fresh: 0, opened: null, error: '', readAhead: null };
   // eslint-disable-next-line no-new-func
   const loadFlocks = new Function(
     'useCallback', 'setFlocksLoading', 'setFlocksError', 'redeemPendingInvite', 'takeBootRead', 'getFlocks',
     'formatEventTime', 'resolveVenuePhoto', 'setFlocks', 'setPendingFlockInvites', 'setDeclinedFlockInvites',
-    'setVerifyPrompt', 'setVerifyNote', 'openJoinedFlock',
+    'setVerifyPrompt', 'setVerifyNote', 'openJoinedFlock', 'prefetchUnreadRef',
     `${callbackFrom(app, 'const loadFlocks = useCallback(')}\nreturn loadFlocks;`,
   )(
-    (fn) => fn, () => {}, () => {}, () => Promise.resolve(invite),
+    (fn) => fn, () => {}, (message) => { state.error = message; }, () => Promise.resolve(invite),
     () => { state.taken += 1; return primed ? Promise.resolve(primed) : null; },
     () => { state.fresh += 1; return Promise.resolve({ flocks: [{ id: 2, member_status: 'accepted', status: 'planning' }] }); },
     () => '', () => null,
     (next) => { state.flocks = typeof next === 'function' ? next(state.flocks) : next; },
     () => {}, () => {}, () => {}, () => {}, (inv) => { state.opened = inv; },
+    { current: (order) => { state.readAhead = order; } },
   );
   return { state, loadFlocks };
 }
@@ -193,6 +194,10 @@ describe('the loaders take the primed reads', () => {
     expect(state.taken).toBe(1);
     expect(state.fresh).toBe(0);
     expect(state.flocks.map((f) => f.id)).toEqual([1]);
+    expect(state.error).toBe('');
+    // And the list order goes on to the unread read-ahead
+    // (unreadPlanReadAhead.test.js runs that side).
+    expect(state.readAhead).toEqual([1]);
   });
 
   test('an invite redeemed at boot: the primed list is stale, so it is dropped and read again', async () => {
@@ -203,6 +208,7 @@ describe('the loaders take the primed reads', () => {
     expect(state.fresh).toBe(1);
     expect(state.flocks.map((f) => f.id)).toEqual([2]);
     expect(state.opened).toBe(invite);
+    expect(state.error).toBe('');
   });
 
   test('nothing primed: the loader reads as it always did', async () => {
