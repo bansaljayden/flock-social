@@ -127,6 +127,9 @@ describe('a notification opens the surface it names', () => {
     ['crowd_alert', 'plan'],
     ['flock_updated', 'plan'],
     ['flock_cancelled', 'plan'],
+    // "The votes are in" lands on the vote panel, where the host's Confirm is
+    // on every venue; the plan screen's Lock it in needs a venue already set.
+    ['flock_votes_in', 'votes'],
   ];
 
   test.each(cases)('%s carries the %s surface, not just the flock', (type, view) => {
@@ -160,6 +163,8 @@ describe('a notification opens the surface it names', () => {
   test('App.js opens the cash pool for money and the plan screen for the plan', () => {
     expect(APP).toMatch(/if \(intent\.view === 'plan'\) \{\s*\n\s*setCurrentScreen\('detail'\);/);
     expect(APP).toMatch(/if \(intent\.view === 'bill' \|\| intent\.view === 'budget'\) setShowChatPool\(true\);/);
+    // And the vote panel over the chat for the host's "votes are in".
+    expect(APP).toMatch(/if \(intent\.view === 'votes'\) setShowVotePanel\(true\);/);
   });
 
   test('the client map and the server map name the same surfaces', () => {

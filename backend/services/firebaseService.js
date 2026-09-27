@@ -94,6 +94,14 @@ function isEnabled() {
 //
 // None of the five names a price, a plan, a tier, or an offer, and none of them
 // fires without a person doing something first.
+//
+// Added later on the same terms:
+//
+//   flock_votes_in     every other member of a plan the recipient HOSTS has
+//                      voted, and the plan is not locked in yet. One send per
+//                      plan, to the host only, triggered by the last vote
+//                      (routes/venues.js notifyHostVotesIn). It lands on the
+//                      vote panel, which is where the host's Confirm is.
 const FLOCK_SCOPED_TYPES = new Set([
   'flock_invite',
   'flock_message',
@@ -109,6 +117,7 @@ const FLOCK_SCOPED_TYPES = new Set([
   'crowd_alert',
   'guest_rsvp',
   'attendance_marked',
+  'flock_votes_in',
 ]);
 
 // ---------------------------------------------------------------------------
@@ -137,6 +146,10 @@ const FLOCK_VIEW = {
   flock_updated: 'plan',
   flock_cancelled: 'plan',
   crowd_alert: 'plan',
+  // The chat with its vote panel open: the tally and the host's Confirm on
+  // each venue. The plan screen offers Lock it in only once a venue is set,
+  // and a plan whose group just voted often has none yet.
+  flock_votes_in: 'votes',
 };
 
 function deepLinkPath(data = {}) {

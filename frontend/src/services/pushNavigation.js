@@ -51,6 +51,7 @@ const FLOCK_TYPES = new Set([
   'flock_reconfirm',
   'budget_reminder', 'budget_ready', 'bill_created', 'bill_settled',
   'crowd_alert', 'guest_rsvp', 'attendance_marked',
+  'flock_votes_in',
 ]);
 
 // Which surface inside the flock the notification is about. Kept in step with
@@ -58,7 +59,11 @@ const FLOCK_TYPES = new Set([
 // in the link's `view` parameter. The data payload is the authoritative path
 // (it is what a native tap carries), so the map has to exist on both sides
 // rather than the client trusting a query string it may never see.
-const FLOCK_VIEWS = new Set(['bill', 'budget', 'plan']);
+//
+// 'votes' is the chat with its vote panel open, for the host's "The votes are
+// in": the panel carries a Confirm on every venue, where the plan screen's Lock
+// it in needs a venue already set.
+const FLOCK_VIEWS = new Set(['bill', 'budget', 'plan', 'votes']);
 const VIEW_FOR_TYPE = {
   bill_created: 'bill',
   bill_settled: 'bill',
@@ -67,6 +72,7 @@ const VIEW_FOR_TYPE = {
   flock_updated: 'plan',
   flock_cancelled: 'plan',
   crowd_alert: 'plan',
+  flock_votes_in: 'votes',
 };
 
 const listeners = new Set();

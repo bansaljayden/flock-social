@@ -1,0 +1,26 @@
+-- 099: when the host was told everyone had voted.
+--
+-- ASCII only, like 065, 082 and 091 to 096: the embedded server the
+-- boot-safety suite runs is WIN1252.
+--
+-- WHY. Only the host can lock a plan in, and services/flockSweep.js cancels a
+-- plan still in 'planning' twelve hours after its time. Nothing told the host
+-- the moment the group had finished voting: the vote routes emit `new_vote` to
+-- whoever has the app open, and no push is vote-related. So a host who was not
+-- looking missed the moment, and the plan died without anyone deciding to end
+-- it.
+--
+-- WHAT IT HOLDS. routes/venues.js notifyHostVotesIn pushes the host once, the
+-- first time every accepted member other than the host has a vote in. This
+-- column is the "once": the push is claimed by an UPDATE that sets it only
+-- while it is NULL, so two votes landing together cannot both send it, and a
+-- member switching their vote afterwards cannot send it again. It lives on the
+-- plan rather than in push_debounce because sweepPushMaintenance clears that
+-- table after an hour, and "once per plan" has no hour in it.
+--
+-- ADDITIVE. A nullable column with no default is a catalog change: no rewrite,
+-- no scan, and every existing plan reads NULL, which is the truth for it (no
+-- such push has ever been sent). A replay is a no-op.
+-- @requires column flocks.votes_in_pushed_at
+
+ALTER TABLE flocks ADD COLUMN IF NOT EXISTS votes_in_pushed_at TIMESTAMPTZ;
