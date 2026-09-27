@@ -16,23 +16,30 @@ it).
 
 ## What it learns from
 
-Computer-generated thermal frames, made by `synth.py`, and nothing else. No
-photograph or recording of a real person is used. Each frame is a room at some
-temperature with people at every distance and pose, drawn the way this camera
-sees them: 160 x 120 pixels across 57 degrees, radiometric Celsius, soft edges,
-lens blur, sensor noise and the few degrees of error an uncalibrated Lepton
-has. Mixed in are the things that fool a threshold: a hand held up to the lens,
-fingers spread, a hot mug, a laptop, a radiator, a lamp, a pet, a warm seat
-somebody just left. Every person gets one label point; a hand reaching in from
-outside the frame, a pet or a mug gets none.
+Two sources, mixed in every batch.
 
-Because the frames are generated, the model never sees the same one twice and
-there is nothing on disk to protect.
+**Generated frames** from `synth.py`: a room at some temperature with people
+at every distance and pose, drawn the way this camera sees them (160 x 120
+pixels across 57 degrees, radiometric Celsius, soft edges, lens blur, sensor
+noise, the few degrees of error an uncalibrated Lepton has, real-looking
+texture). Mixed in are the things that fool a threshold: a hand held up to the
+lens, fingers spread, a hot mug, a laptop, a radiator, a lamp, a pet, a warm
+seat, a reflection in glass. Every thing gets a kind and a box; only people are
+counted.
 
-The limit is honest to state: a model trained only on drawn frames can meet
-something in a real room that no drawing had. The screen on a demo unit rings
-every person the model found, so a miss shows up the moment it happens, and
-`record.py` exists for the day real frames are worth adding.
+**Real frames** from public thermal datasets whose licences allow commercial
+use: PUT Thermo Presence (MIT; a ceiling camera, real temperatures, a point
+per person) and OpenThermalPose2 (MIT; side view, 8-bit). They label people
+only, so only the people map is graded on them. Their test splits are never
+trained on; the model is chosen on their validation splits and graded on the
+test splits, which is the only honest measure of how it does on footage it has
+not seen. The frames stay on the development machine and never enter this
+repository. Why both: owl-2, trained on generated frames alone, counted
+perfectly on drawings and badly on real footage, reading the texture of a real
+room as people.
+
+Nothing a Flux sensor saw is ever used; a sensor keeps no frame. The model
+names kinds of things and cannot tell one person from another.
 
 ## What is here
 
