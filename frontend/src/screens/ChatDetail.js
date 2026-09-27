@@ -200,6 +200,7 @@ import { MAX_SEATS, etaMinutes, formatDistance, formatEta } from '../lib/travel'
    purpose: it owns DOM nodes and a native bridge rather than any markup, and
    both screens reach it the same way. See the block at its call below. */
 import useKeyboardComposer from '../hooks/useKeyboardComposer';
+import { holdStatusBarOverDark } from '../services/systemBars';
 
 /* A half-written message, per flock, for the length of the session.
    Outside this screen because App.js unmounts it on every navigation, and
@@ -1027,6 +1028,12 @@ export default function ChatDetail({
     const [plusOpen, setPlusOpen] = React.useState(false);
 
     const [imageViewer, setImageViewer] = React.useState(null);
+    // The viewer is fixed over the whole screen in a near-black scrim, the
+    // status bar strip included, so the clock and battery go light while it
+    // is open whatever the theme. Keyed on open or shut, not on the photo, so
+    // a load that swaps { loading } for { src } does not flicker the bar.
+    const imageViewerOpen = !!imageViewer;
+    React.useEffect(() => (imageViewerOpen ? holdStatusBarOverDark() : undefined), [imageViewerOpen]);
     const openImageViewer = (m) => {
       if (m.image) { setImageViewer({ src: m.image }); return; }
       setImageViewer({ loading: true });

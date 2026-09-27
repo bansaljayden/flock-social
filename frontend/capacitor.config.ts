@@ -47,6 +47,19 @@ const config: CapacitorConfig = {
     backgroundColor: '#0b1a2e',
   },
   plugins: {
+    // THE STATUS BAR STARTS WITH LIGHT GLYPHS.
+    //
+    // SystemBars ships inside @capacitor/core 8, so this is configuration, not
+    // a plugin. 'DARK' is Capacitor's name for "the background is dark": it
+    // draws a white clock and battery. Without it the bar followed the PHONE's
+    // appearance setting, so on a phone in Light mode the launch showed black
+    // glyphs over the navy splash above, and the sign-in screen, which is dark
+    // in both themes, kept them. Once the signed-in app mounts,
+    // services/systemBars.js takes over and matches the bar to the theme and to
+    // whatever is at the top of the screen.
+    SystemBars: {
+      style: 'DARK',
+    },
     // THE KEYBOARD IS OUT OF LAYOUT, APP-WIDE.
     //
     // Capacitor's default is `native`, which resizes the WebView frame every

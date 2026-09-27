@@ -85,6 +85,7 @@ import { VENUE_PHOTO_PLACEHOLDER } from '../lib/venuePhoto';
 /* The keyboard lane, the same hook the flock thread calls. See the block at
    its call below, and the longer version of the reasoning in ChatDetail.js. */
 import useKeyboardComposer from '../hooks/useKeyboardComposer';
+import { holdStatusBarOverDark } from '../services/systemBars';
 import Icons from '../components/ui/Icons';
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
 
@@ -400,6 +401,9 @@ export default function DmDetail({
   // honestly: it counts what arrived while you were reading rather than
   // offering a ride to a bottom that may not have moved.
   const [imageViewer, setImageViewer] = React.useState(null);
+  // Light glyphs over the viewer's near-black scrim, as in ChatDetail.
+  const imageViewerOpen = !!imageViewer;
+  React.useEffect(() => (imageViewerOpen ? holdStatusBarOverDark() : undefined), [imageViewerOpen]);
   const openImageViewer = (m) => {
     if (m.image_url) { setImageViewer({ src: m.image_url }); return; }
     setImageViewer({ loading: true });
