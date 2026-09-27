@@ -801,17 +801,24 @@ export default function ProfileSettings({
                   WITH THE PAYWALL ON, THAT PUSH GOES ONLY TO PRO (the send
                   query requires u.is_premium = true). A free account saw the
                   switch sitting on for alerts it would never get, so the row
-                  says it is a Pro feature and opens the sheet instead. */}
+                  says it is a Pro feature and opens the sheet instead.
+
+                  A REACT_APP_PURCHASES=off build (the App Store one) sells
+                  nothing, so the same account gets a plain line saying the
+                  alerts are not available, and no switch that would sit on
+                  for alerts the backend will not send. */}
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '10px', paddingTop: '10px', borderTop: '1px solid var(--border-light)' }}>
                 <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.users(colors.navy, 18)}</div>
                 <div style={{ flex: 1 }}>
                   <span style={{ fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy, display: 'block' }}>Crowd alerts</span>
-                  <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>A heads up before your flock's venue gets busy</span>
+                  <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>{entitlements?.paywallEnabled && !isPro && process.env.REACT_APP_PURCHASES === 'off' ? "Crowd alerts aren't available on this account" : "A heads up before your flock's venue gets busy"}</span>
                 </div>
-                {(process.env.REACT_APP_PURCHASES !== 'off') && entitlements?.paywallEnabled && !isPro ? (
-                  <button type="button" className="hit44" aria-label="Crowd alerts come with Flock Pro" onClick={() => setPaywallTrigger('settings')} style={{ padding: '4px 10px', borderRadius: '999px', border: '1px solid var(--border-default)', background: 'none', fontSize: 'var(--t-meta)', fontWeight: '700', color: colors.steel, cursor: 'pointer', whiteSpace: 'nowrap' }}>
-                    Pro
-                  </button>
+                {entitlements?.paywallEnabled && !isPro ? (
+                  (process.env.REACT_APP_PURCHASES !== 'off') ? (
+                    <button type="button" className="hit44" aria-label="Crowd alerts come with Flock Pro" onClick={() => setPaywallTrigger('settings')} style={{ padding: '4px 10px', borderRadius: '999px', border: '1px solid var(--border-default)', background: 'none', fontSize: 'var(--t-meta)', fontWeight: '700', color: colors.steel, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                      Pro
+                    </button>
+                  ) : null
                 ) : (
                   <Toggle label="Crowd alerts" on={crowdAlertsOn} onChange={() => setCrowdAlertsEnabled(!crowdAlertsOn)} />
                 )}
@@ -908,10 +915,16 @@ export default function ProfileSettings({
                 <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 8px' }}>Delete your account?</h3>
                 <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>This permanently deletes your account, messages, friends and payment settings. <strong>Any flock you created is deleted for everyone in it</strong>, along with its chat and votes, and they are told it was cancelled. Your direct messages disappear from the other person's app too. A few things are kept, and our Privacy Policy lists them. <strong>This cannot be undone.</strong></p>
                 {/* Only once there is a subscription to speak of; Apple expects
-                    the sheet to say deletion does not cancel one. */}
-                {(process.env.REACT_APP_PURCHASES !== 'off') && (entitlements?.paywallEnabled || isPro) && (
+                    the sheet to say deletion does not cancel one. A
+                    REACT_APP_PURCHASES=off build (the App Store one) sells
+                    nothing, but an account that already has Pro may be paying
+                    Apple for it, so that account still gets the warning and
+                    where to cancel, with no plan name, price or link. */}
+                {(process.env.REACT_APP_PURCHASES !== 'off') ? ((entitlements?.paywallEnabled || isPro) && (
                   <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>Flock Pro bought on flockcorp.com is cancelled when you delete your account. Flock Pro bought in the App Store is not: cancel it first in your Apple ID settings, under Subscriptions.</p>
-                )}
+                )) : (isPro && (
+                  <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>Deleting your account does not cancel a subscription paid through the App Store. Cancel it first in the Settings app: tap your name, then Subscriptions.</p>
+                ))}
                 {/* Both inputs below close the keyboard on Return
                     (enterKeyHint done + blur). In WKWebView a tap on a button
                     does not blur a focused field, so without this the
