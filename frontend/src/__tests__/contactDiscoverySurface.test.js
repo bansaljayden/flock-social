@@ -169,9 +169,21 @@ describe('the half that needs no permission', () => {
     );
   });
 
-  test('there is one invite control and it is not per contact', () => {
+  test('the invite control is never per contact', () => {
+    // Two copies of the button now, and neither is per contact: the card at
+    // the foot of the Contacts tab, and one on the Search tab, which is the
+    // only place a browser without an address book gets one at all
+    // (addFriendsInviteOnSearch.test.js renders it). What this pins is the
+    // thing that matters here: no invite hangs off a person row, and the
+    // handler takes no contact, so nothing can tell it which number matched.
     const invites = both.match(/Invite a friend/g) || [];
-    expect(invites).toHaveLength(1);
+    expect(invites).toHaveLength(2);
+    expect(contactsTab.slice(contactsTab.indexOf('const personRow = '), contactsTab.indexOf('const checkAgainButton = ')))
+      .not.toMatch(/Invite|handleInviteFriend/);
+    expect(app).toMatch(/const handleInviteFriend = useCallback\(async \(\) => \{/);
+    const calls = both.match(/handleInviteFriend\([^)]*\)/g) || [];
+    expect(calls.length).toBeGreaterThan(0);
+    calls.forEach((c) => expect(c).toBe('handleInviteFriend()'));
     expect(app).toMatch(/navigator\.share/);
     expect(app).toMatch(/sms:&body=/);
   });
