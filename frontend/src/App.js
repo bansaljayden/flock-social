@@ -1,5 +1,6 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { useTheme } from './context/ThemeContext';
+import useKeyboardInset from './hooks/useKeyboardInset';
 // The revenue simulator math (lib/finance.js) moved to screens/RevenueScreen.js
 // with the admin console on 2026-08-27 and is imported there now. It was the
 // only reader of it in App.js, so the import went with it.
@@ -4779,6 +4780,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const { toggleTheme, isDark, themeMode, isNightModeActive, setAutoMode } = useTheme();
   // eslint-disable-next-line no-unused-vars
   const colors = useMemo(() => isDark ? colorsDark : colorsLight, [isDark]);
+  // The keyboard's height as --kb-height on <html>, for every sheet with a
+  // field. Mounted once here, for the life of the signed-in app, because with
+  // the WebView's resize off nothing else lifts a sheet over the keys. See
+  // hooks/useKeyboardInset.js and `.kb-lift` in index.css.
+  useKeyboardInset();
   // Full-bleed re-check: the Capacitor bridge can land after module evaluation,
   // so a one-shot check drew the desktop bezel inside real phones. Sticky true.
   const [fullBleed, setFullBleed] = useState(isFullBleedNow);

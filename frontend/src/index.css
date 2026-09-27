@@ -69,6 +69,27 @@
   --safe-right: var(--safe-area-inset-right, env(safe-area-inset-right, 0px));
   --safe-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
   --safe-left: var(--safe-area-inset-left, env(safe-area-inset-left, 0px));
+  /* THE KEYBOARD, as a fifth inset. hooks/useKeyboardInset.js writes
+     --kb-height onto <html> from the native plugin's keyboardWillShow and
+     keyboardWillHide; nothing writes it in a browser, so both of these are 0px
+     there. --kb-inset is what a sheet has to rise by: the keyboard's height
+     from the bottom of the screen already covers the home indicator strip, and
+     rule 1 above already put var(--safe-bottom) under the sheet's content, so
+     the strip is taken off once here rather than counted twice. */
+  --kb-inset: max(0px, calc(var(--kb-height, 0px) - var(--safe-bottom)));
+}
+
+/* A bottom-anchored backdrop (flex, align-items: flex-end) whose sheet has a
+   field in it. The padding shrinks the box the sheet sits in, so the sheet
+   rises to end at the top of the keys and a percentage max-height shrinks with
+   it. The curve and duration are the composer dock's (KEYBOARD_EASE and
+   KEYBOARD_SHOW_MS in useKeyboardComposer.js), so a sheet over the chat moves
+   with the bar behind it. The global reduced-motion rule collapses it.
+   Do not put a `padding` shorthand in the same element's inline style: an
+   inline shorthand beats this class and deletes the lift (rule 4, again). */
+.kb-lift {
+  padding-bottom: var(--kb-inset, 0px);
+  transition: padding-bottom 250ms cubic-bezier(0.38, 0.7, 0.125, 1);
 }
 
 :root {

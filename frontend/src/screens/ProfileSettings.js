@@ -357,7 +357,14 @@ export default function ProfileSettings({
 
                 {/* Add Contact Modal */}
                 {showAddContact && (
-                  <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', zIndex: 1000, paddingBottom: 'var(--cb-height, 0px)', boxSizing: 'border-box' }}>
+                  /* Four fields and Save at the bottom, and with the WebView's
+                     resize off the keyboard covered the lower two and the
+                     button. The sheet sits above whichever is taller, the
+                     analytics bar or the keyboard (--kb-inset, index.css);
+                     the keyboard covers the bar, so they do not add. The
+                     transition is `.kb-lift`'s, written inline because this
+                     element sets its own padding. */
+                  <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', zIndex: 1000, paddingBottom: 'max(var(--cb-height, 0px), var(--kb-inset, 0px))', transition: 'padding-bottom 250ms cubic-bezier(0.38, 0.7, 0.125, 1)', boxSizing: 'border-box' }}>
                     {/* A four-field form sheet over the safety settings, and
                         until now it moved no focus, answered no Escape and
                         let Tab walk out into the settings list behind it. */}
@@ -365,7 +372,10 @@ export default function ProfileSettings({
                       onClose={() => { setShowAddContact(false); setEditingContact(null); setNewContact({ name: '', phone: '', email: '', relationship: '' }); }}
                       label={editingContact ? 'Edit contact' : 'Add trusted contact'}
                     />
-                    <div style={{ background: 'var(--bg-card-solid)', width: '100%', borderRadius: '20px 20px 0 0', padding: '20px', maxHeight: '80vh', overflowY: 'auto', paddingBottom: 'calc(20px + var(--safe-bottom))' }}>
+                    {/* min(80vh, 100%): 80vh does not shrink when the backdrop
+                        pads for the keyboard, and 100% of what is left keeps
+                        the heading on the screen and scrolls the form. */}
+                    <div style={{ background: 'var(--bg-card-solid)', width: '100%', borderRadius: '20px 20px 0 0', padding: '20px', maxHeight: 'min(80vh, 100%)', overflowY: 'auto', paddingBottom: 'calc(20px + var(--safe-bottom))' }}>
                       <h3 style={{ fontWeight: '700', fontSize: 'var(--t-title)', color: colors.navy, margin: '0 0 16px' }}>{editingContact ? 'Edit Contact' : 'Add Trusted Contact'}</h3>
 
                       <div style={{ marginBottom: '10px' }}>

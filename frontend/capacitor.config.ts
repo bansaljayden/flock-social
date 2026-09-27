@@ -66,8 +66,18 @@ const config: CapacitorConfig = {
     //
     // Declaring `none` here means the mode is already right at first paint, so
     // neither race can happen. The composer hook measures the keyboard and
-    // lifts with a transform, which does not touch layout at all; screens that
-    // do not use it pad by the visual viewport instead.
+    // lifts with a transform, which does not touch layout at all.
+    //
+    // WHAT `none` COSTS EVERYWHERE ELSE. The plugin also removes WKWebView's
+    // own keyboard observers in this mode, so WebKit no longer scrolls a
+    // covered field into view. This line used to say that screens without the
+    // composer hook "pad by the visual viewport instead"; only the sign-in
+    // screens did (AuthShell's useKeyboardPad), and Birdie, the budget and bill
+    // sheets, the invite and New Message searches and the report sheet sat
+    // under the keys. hooks/useKeyboardInset.js now writes the plugin's
+    // keyboardWillShow height onto <html>, and each of those sheets rises by
+    // --kb-inset (index.css, `.kb-lift`). A new sheet with a field needs the
+    // same class, or it is covered too.
     Keyboard: {
       resize: 'none',
     },
