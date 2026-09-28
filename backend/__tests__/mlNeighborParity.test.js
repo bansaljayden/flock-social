@@ -122,6 +122,14 @@ function buildGrid() {
   tags.alone = add(41.2, -76.9).id;
   // Live readings and no weekly row: asked about, never anybody's neighbour.
   tags.noCurve = add(round7(40.6023 + 0.001), round7(-75.4714 - 0.002), { noCurve: true }).id;
+  // Harvested venues (besttime_status 'harvested'), dropped among the others:
+  // in the database with curves, absent from the export by default, and so
+  // nobody's neighbour on either side.
+  tags.harvested = [];
+  for (let k = 0; k < 8; k++) {
+    const host = venues[k * 7];
+    tags.harvested.push(add(round7(host.lat + 0.0004), round7(host.lng - 0.0003), { harvested: true }).id);
+  }
 
   for (const v of venues) {
     v.placeId = placeIdOf(v.id);
@@ -136,9 +144,11 @@ function buildGrid() {
 
   // Export rows: every weekly row, then realtime rows at random slots, some
   // where the venue has no weekly row (the exporter's COALESCE gives those 0).
+  // A harvested venue has no export rows at all (export_training_data.js
+  // harvestedClause, on by default).
   const rows = [];
   for (const v of venues) {
-    if (!v.curve) continue;
+    if (!v.curve || v.harvested) continue;
     for (let s = 0; s < 168; s++) {
       if (v.curve[s] < 0) continue;
       rows.push({ venue_id: v.id, day_of_week: Math.floor(s / 24), hour: s % 24,
@@ -146,6 +156,7 @@ function buildGrid() {
     }
   }
   for (const v of venues) {
+    if (v.harvested) continue;
     for (let k = 0; k < 25; k++) {
       const s = Math.floor(r() * 168);
       rows.push({ venue_id: v.id, day_of_week: Math.floor(s / 24), hour: s % 24,
@@ -166,7 +177,7 @@ const realQuery = pool.query;
 pool.query = (text, params = []) => {
   const sql = String(text).replace(/\s+/g, ' ').trim();
   if (/FROM ml_venues v JOIN ml_venue_baselines b ON b\.google_place_id = v\.google_place_id/.test(sql)
-      && /WHERE v\.latitude BETWEEN \$1 - \$3::float AND \$1 \+ \$3::float AND v\.longitude BETWEEN \$2 - \$3::float AND \$2 \+ \$3::float/.test(sql)
+      && /WHERE v\.latitude BETWEEN \$1 - \$3::float AND \$1 \+ \$3::float AND v\.longitude BETWEEN \$2 - \$3::float AND \$2 \+ \$3::float AND v\.besttime_status IS DISTINCT FROM 'harvested' GROUP BY/.test(sql)
       && /GROUP BY b\.day_of_week, b\.hour/.test(sql)) {
     // Postgres evaluates `$1 - $3::float` in float8, which is this arithmetic.
     const [lat, lng, box] = params.map(Number);
@@ -178,6 +189,7 @@ pool.query = (text, params = []) => {
     const sum = new Array(168).fill(0);
     for (const v of GRID.venues) {
       if (!v.curve) continue; // the JOIN: no baseline rows, no row out
+      if (v.harvested) continue; // the besttime_status clause the regex above requires
       if (!(v.lat >= latLo && v.lat <= latHi && v.lng >= lngLo && v.lng <= lngHi)) continue;
       for (let s = 0; s < 168; s++) if (v.curve[s] >= 0) { cnt[s]++; sum[s] += v.curve[s]; }
     }
@@ -189,10 +201,10 @@ pool.query = (text, params = []) => {
     return Promise.resolve({ rows, rowCount: rows.length });
   }
   if (/FROM ml_venues v JOIN ml_venue_baselines b ON b\.google_place_id = v\.google_place_id/.test(sql)
-      && /WHERE v\.google_place_id = \$1$/.test(sql)) {
+      && /WHERE v\.google_place_id = \$1 AND v\.besttime_status IS DISTINCT FROM 'harvested'$/.test(sql)) {
     const v = GRID.byPlace.get(params[0]);
     const rows = [];
-    if (v && v.curve) {
+    if (v && v.curve && !v.harvested) {
       for (let s = 0; s < 168; s++) {
         if (v.curve[s] >= 0) rows.push({ lat: v.lat, lng: v.lng, dow: Math.floor(s / 24), hour: s % 24, baseline: v.curve[s] });
       }
@@ -321,6 +333,34 @@ test('add_neighbor_features gives every row the count and mean getNeighborActivi
     assert.ok(!abs(inside), `the ${e.axis} edge venue ${e.inside} must be one an |x - centre| test would drop`);
     assert.ok(!between(byId.get(e.outside)), `the venue one ulp beyond the ${e.axis} edge is outside`);
   }
+  // The harvested venues sit in boxes the served rows ask about, with a curve
+  // at the slot asked, so leaving them out is a choice the answer depends on.
+  const inBoxOf = (row, v) => {
+    const bLat = Number(Number(row.latitude).toFixed(3));
+    const bLng = Number(Number(row.longitude).toFixed(3));
+    return v.lat >= bLat - BOX && v.lat <= bLat + BOX && v.lng >= bLng - BOX && v.lng <= bLng + BOX;
+  };
+  const harvested = GRID.tags.harvested.map((id) => byId.get(id));
+  const touched = GRID.rows.filter((row) => harvested.some((h) => inBoxOf(row, h)
+    && h.curve[row.day_of_week * 24 + row.hour] >= 0)).length;
+  assert.ok(touched > 100, `only ${touched} served rows have a harvested venue in their box`);
+  // And a harvested venue is served the neighbourhood without harvested rows,
+  // itself included: nothing subtracted from a box it was never counted in.
+  for (const h of harvested) {
+    for (const s of [0, 45, 100, 167]) {
+      const dow = Math.floor(s / 24);
+      const hour = s % 24;
+      const got = await I.getNeighborActivity(h.placeId, h.lat, h.lng, dow, hour);
+      const others = GRID.venues.filter((v) => v.curve && !v.harvested && inBoxOf({ latitude: h.lat, longitude: h.lng }, v)
+        && v.curve[s] >= 0);
+      const want = others.length === 0 ? { count: 0, mean: 0 }
+        : { count: others.length, mean: Math.max(0, Math.min(100, others.reduce((a, v) => a + v.curve[s], 0) / others.length)) };
+      assert.equal(got.count, want.count, `harvested venue ${h.id} slot ${s}: count`);
+      assert.ok(Math.abs(got.mean - want.mean) < 1e-9, `harvested venue ${h.id} slot ${s}: mean`);
+    }
+  }
+  assert.deepEqual(unknown, [], 'the stub pool did not model a statement getNeighborActivity ran');
+
   const tie = byId.get(GRID.tags.tie);
   assert.equal(tie.lat.toFixed(3), '40.563', 'the tie rounds to the larger magnitude');
   assert.equal(tie.lng.toFixed(3), '-75.313');
@@ -332,7 +372,8 @@ test('add_neighbor_features gives every row the count and mean getNeighborActivi
 
   const py = runPython(GRID.rows);
   assert.equal(py.count.length, GRID.rows.length);
-  assert.equal(py.venues_with_curve, GRID.venues.filter((v) => v.curve).length);
+  // The export leaves the harvested venues out, so training never sees them.
+  assert.equal(py.venues_with_curve, GRID.venues.filter((v) => v.curve && !v.harvested).length);
 
   const diff = [];
   const featureDiff = [];
