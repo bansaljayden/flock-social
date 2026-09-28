@@ -7,7 +7,9 @@
  * the server refused a vote or a lock-in, the screen quietly put the old state
  * back with a toast, and the hand that had just felt the vote land was told
  * nothing. services/haptics.js gains warning(), iOS's error notification, for
- * exactly that case.
+ * exactly that case, and hapticRefused(), which the catches call so the buzz
+ * comes only with a rollback the person can see and never for an expired
+ * session.
  *
  * Sections:
  *   1. the service, run against a mocked plugin;
@@ -42,6 +44,7 @@ jest.mock('../services/haptics', () => {
     hapticTap: jest.fn(actual.hapticTap),
     hapticSuccess: jest.fn(actual.hapticSuccess),
     hapticWarning: jest.fn(actual.hapticWarning),
+    hapticRefused: jest.fn(actual.hapticRefused),
     hapticAlarm: jest.fn(actual.hapticAlarm),
   };
 });
@@ -93,6 +96,30 @@ describe('services/haptics, run', () => {
     expect(() => haptics.hapticWarning()).not.toThrow();
     await flush();
     expect(mockPlugin.notification).toHaveBeenCalledTimes(1);
+  });
+
+  test('a refusal that put the screen back buzzes the refusal', async () => {
+    haptics.hapticRefused(new Error('Voting is closed'), true);
+    await flush();
+    expect(mockPlugin.notification).toHaveBeenCalledWith({ type: 'ERROR' });
+  });
+
+  test('a refusal with nothing moved back on screen is silent', async () => {
+    haptics.hapticRefused(new Error('Voting is closed'), false);
+    await flush();
+    expect(mockPlugin.notification).not.toHaveBeenCalled();
+  });
+
+  test('an expired session is a sign-out, not a refusal, and is silent', async () => {
+    const err = new Error('Your session ended. Sign in again.');
+    err.sessionExpired = true;
+    haptics.hapticRefused(err, true);
+    await flush();
+    expect(mockPlugin.notification).not.toHaveBeenCalled();
+  });
+
+  test('the vocabulary comments carry no em dash', () => {
+    expect(read('services', 'haptics.js')).not.toMatch(/—/);
   });
 });
 
@@ -182,7 +209,8 @@ function hapticCallsIn(ast, name) {
       const inCatch = !!p.findParent((q) => q.isCallExpression()
         && q.node.callee.type === 'MemberExpression'
         && q.node.callee.property.name === 'catch');
-      calls.push({ verb: callee.name, inCatch, start: p.node.start });
+      const args = p.node.arguments.map((a) => APP.slice(a.start, a.end));
+      calls.push({ verb: callee.name, inCatch, args, start: p.node.start });
     },
   });
   return { calls, src: APP.slice(fnPath.node.start, fnPath.node.end), start: fnPath.node.start };
@@ -191,7 +219,11 @@ function hapticCallsIn(ast, name) {
 describe('where each verb is called', () => {
   test('locking a plan in buzzes as it lands, and a refusal buzzes the refusal', () => {
     const { calls, src, start } = hapticCallsIn(APP_AST, 'confirmFlockPlan');
-    expect(calls.map((c) => [c.verb, c.inCatch])).toEqual([['hapticSuccess', false], ['hapticWarning', true]]);
+    expect(calls.map((c) => [c.verb, c.inCatch])).toEqual([['hapticSuccess', false], ['hapticRefused', true]]);
+    // Rolled back only when there was a status on screen to put back, the
+    // same test that guards the rollback line.
+    expect(calls[1].args).toEqual(['err', '!!previousStatus']);
+    expect(src).toMatch(/if \(previousStatus\) setFlocks\(/);
     // After the optimistic status write, before the network call.
     const success = calls[0].start - start;
     expect(src.indexOf("status: 'confirmed'")).toBeLessThan(success);
@@ -203,15 +235,26 @@ describe('where each verb is called', () => {
   });
 
   test('the chat\'s vote sheet locks in through the venue save, and gets the same pair', () => {
-    const { calls } = hapticCallsIn(APP_AST, 'updateFlockVenue');
-    expect(calls.map((c) => [c.verb, c.inCatch])).toEqual([['hapticSuccess', false], ['hapticWarning', true]]);
+    const { calls, src } = hapticCallsIn(APP_AST, 'updateFlockVenue');
+    expect(calls.map((c) => [c.verb, c.inCatch])).toEqual([['hapticSuccess', false], ['hapticRefused', true]]);
     expect(APP).toMatch(/if \(lockingIn\) \{\s*setFlocks\(prev => prev\.map\(f => f\.id === flockId \? \{ \.\.\.f, status: 'confirmed' \} : f\)\);\s*hapticSuccess\(\);/);
-    expect(APP).toMatch(/if \(lockingIn\) hapticWarning\(\);/);
+    // A refused venue save that was not a lock-in, or a lock-in on a plan
+    // that was not on screen, puts back no status, so it does not buzz.
+    expect(calls[1].args).toEqual(['err', 'lockingIn && !!previous']);
+    expect(src).toMatch(/if \(previous\) setFlocks\(/);
   });
 
-  test('a refused vote buzzes the refusal as the tallies go back', () => {
-    const { calls } = hapticCallsIn(APP_AST, 'updateFlockVotes');
-    expect(calls.map((c) => [c.verb, c.inCatch])).toEqual([['hapticTap', false], ['hapticWarning', true]]);
+  test('a refused vote buzzes the refusal only when the tallies go back', () => {
+    const { calls, src } = hapticCallsIn(APP_AST, 'updateFlockVotes');
+    expect(calls.map((c) => [c.verb, c.inCatch])).toEqual([['hapticTap', false], ['hapticRefused', true]]);
+    expect(calls[1].args).toEqual(['err', '!!previousVotes']);
+    // The flag is the same test that guards the rollback, so the buzz and the
+    // tiles moving back cannot disagree.
+    expect(src).toMatch(/if \(previousVotes\) setFlocks\(prev => prev\.map\(f => f\.id === flockId \? \{ \.\.\.f, votes: previousVotes \} : f\)\);/);
+  });
+
+  test('App.js never calls the bare refusal buzz, only the guarded one', () => {
+    expect(APP).not.toMatch(/\bhapticWarning\b/);
   });
 
   test.each(['handleAcceptFlockInvite', 'handleRejoinDeclinedFlock'])(

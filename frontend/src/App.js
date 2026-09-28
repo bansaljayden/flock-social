@@ -9,7 +9,7 @@ import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, reconfirmFlock
 // The address book lives behind one service, so nothing in this file has to
 // know which platform it is on or which API answers. See services/contacts.js.
 import { contactsAvailable, syncContacts } from './services/contacts';
-import { hapticTap, hapticSuccess, hapticWarning, hapticAlarm } from './services/haptics';
+import { hapticTap, hapticSuccess, hapticRefused, hapticAlarm } from './services/haptics';
 import { setStatusBarOverDark, screenTopIsNavy } from './services/systemBars';
 // Location goes through this shim, never the browser API directly. Calling the
 // web API inside the iOS shell made WKWebView raise a SECOND permission sheet,
@@ -9410,9 +9410,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       ))))
       .catch((err) => {
         if (previousVotes) setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, votes: previousVotes } : f));
-        // The tap buzzed as the vote landed on screen, so the refusal buzzes
-        // too, in the pattern iOS keeps for "that did not work".
-        hapticWarning();
+        // The tap buzzed as the vote landed on screen, so a refusal that puts
+        // the tallies back buzzes too, in the pattern iOS keeps for "that did
+        // not work". Not when no tally moved, and not for a dead session.
+        hapticRefused(err, !!previousVotes);
         // The tile has just moved back on its own, so the sentence has to name
         // the action that did not happen or the movement reads as a bug.
         // api.js words the offline and blocked-network cases; that sentence is
@@ -9504,7 +9505,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       })
       .catch((err) => {
         if (previous) setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, ...previous, status: previousStatus || f.status } : f));
-        if (lockingIn) hapticWarning();
+        // Only a lock-in that was on screen and has just been taken back.
+        hapticRefused(err, lockingIn && !!previous);
         // A dead session already announced itself through api.js's own toast.
         if (!err?.sessionExpired) showToast(err?.message || (confirming ? "Couldn't lock this in" : "Couldn't save that venue"), 'error');
         return false;
@@ -9544,7 +9546,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       })
       .catch((err) => {
         if (previousStatus) setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, status: previousStatus } : f));
-        hapticWarning();
+        hapticRefused(err, !!previousStatus);
         if (!err?.sessionExpired) showToast(err?.message || "Couldn't lock this in", 'error');
         return false;
       });
