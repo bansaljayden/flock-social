@@ -14119,7 +14119,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // THE OTHER HALF OF RECOVERY, and the half the 2026-08-27 deploy blip
-  // proved missing. The socket retries itself forever and runCatchUp above
+  // proved missing. The socket comes back by itself (socket.io-client redials
+  // a dropped transport, and services/socket.js redials a handshake the server
+  // refused, which the library never retries) and runCatchUp above
   // refetches the OPEN conversation, but nothing ever re-ran a LIST load that
   // had failed: a mount that hit a five-second gap left "Couldn't reach
   // Flock" cards on the home and Messages tabs until a human tapped, while
