@@ -14,9 +14,10 @@ const {
   sweepPushOutbox,
   sweepPushMaintenance,
 } = require('./pushHelper');
-// Each sweep reports to the stalled-job check (utils/serverFault.js). The push
-// outbox rides this sweep, so a sweep that keeps failing also strands every
-// push held for quiet hours or queued for a retry.
+// Each sweep reports to the stalled-job check (utils/serverFault.js). A failed
+// run is the flock scan throwing, so what stops is the pre-plan crowd alert.
+// The push outbox and token upkeep that ride this sweep run before the scan,
+// each under its own catch, so they still run in a sweep that reports failure.
 const { recordJobRun } = require('../utils/serverFault');
 // server.js runs checkCrowdAlerts on this interval.
 const CROWD_ALERTS_INTERVAL_MS = 15 * 60 * 1000;

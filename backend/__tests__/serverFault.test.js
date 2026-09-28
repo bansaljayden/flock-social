@@ -321,6 +321,62 @@ test('a stalled job gets its own alert, with what stops for users', async () => 
   assert.doesNotMatch(a.text, /crowdAlerts/, 'a healthy job is not named');
 });
 
+test('a failing crowd sweep stops the pre-plan crowd alerts, and the alert claims nothing more', async () => {
+  // The outbox of held and retried pushes rides the crowd sweep, but it runs
+  // before the flock scan, each under its own catch. So a run that reports
+  // failure has still swept the outbox, and the alert must not tell the
+  // operator that held pushes are stranded when they are not.
+  const pool = require('../config/database');
+  const pushHelper = require('../services/pushHelper');
+  const saved = {
+    query: pool.query,
+    isPushConfigured: pushHelper.isPushConfigured,
+    sweepPushOutbox: pushHelper.sweepPushOutbox,
+    sweepPushMaintenance: pushHelper.sweepPushMaintenance,
+  };
+  const ran = [];
+  pushHelper.isPushConfigured = () => true;
+  pushHelper.sweepPushOutbox = async () => { ran.push('outbox'); };
+  pushHelper.sweepPushMaintenance = async () => { ran.push('maintenance'); };
+  pool.query = async (sql) => {
+    if (/FROM flocks f/.test(String(sql))) throw new Error('relation "flocks" does not exist');
+    return { rows: [], rowCount: 0 };
+  };
+  // crowdAlerts takes the push helpers at load, so it is loaded after the swap.
+  const modPath = require.resolve('../services/crowdAlerts');
+  delete require.cache[modPath];
+  try {
+    __resetServerFaults();
+    await require('../services/crowdAlerts').checkCrowdAlerts();
+    const job = jobStatus().find((j) => j.name === 'crowdAlerts');
+    assert.ok(job, 'the failed run was not reported');
+    assert.strictEqual(job.failuresSinceOk, 1);
+    assert.strictEqual(job.lastOkAt, null);
+    assert.deepStrictEqual(ran, ['outbox', 'maintenance'], 'the run that failed still swept the outbox');
+
+    alerts.length = 0;
+    const now = 5_000_000_000;
+    await runServerFaultAlert({
+      now,
+      status: burst(0),
+      jobs: [{ name: 'crowdAlerts', everyMs: 15 * 60 * 1000, lastOkAt: now - 2 * 60 * 60 * 1000, failuresSinceOk: 8, lastError: job.lastError, stalled: true }],
+    });
+    assert.strictEqual(alerts.length, 1);
+    assert.match(alerts[0].text, /Pre-plan crowd alerts stop/);
+    assert.doesNotMatch(alerts[0].text, /quiet hours|queued|retr(y|ied)|outbox/i,
+      'the alert says held or retried pushes stop, and they do not');
+  } finally {
+    pool.query = saved.query;
+    Object.assign(pushHelper, {
+      isPushConfigured: saved.isPushConfigured,
+      sweepPushOutbox: saved.sweepPushOutbox,
+      sweepPushMaintenance: saved.sweepPushMaintenance,
+    });
+    delete require.cache[modPath];
+    __resetServerFaults();
+  }
+});
+
 test('a thrown read never escapes the alert', async () => {
   await assert.doesNotReject(() => runServerFaultAlert({ status: { get total() { throw new Error('x'); } } }));
 });

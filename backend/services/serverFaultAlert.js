@@ -22,7 +22,7 @@ const TOP_ROUTES = 5;
 const JOB_CONSEQUENCE = {
   flockSweep: 'Plans whose night is over stay listed as live, and the Past screen stops filling.',
   reconfirmSweep: 'The "Still in?" check before a confirmed plan is not sent.',
-  crowdAlerts: 'Pre-plan crowd alerts stop, and so do pushes held for quiet hours or queued for a retry, which ride the same sweep.',
+  crowdAlerts: 'Pre-plan crowd alerts stop: no confirmed plan starting in the next 3 hours gets its push about how busy the venue usually is then.',
   photoPrune: 'Expired Places photos are not deleted, which the Places terms require.',
   storyPurge: 'Expired stories are not deleted.',
 };
