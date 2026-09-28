@@ -213,6 +213,49 @@ describe('a locked-in plan whose night is over', () => {
   });
 });
 
+describe('a plan called off while its card is open', () => {
+  // The card is drawn from the plan as this screen last loaded it. When the
+  // plan is cancelled in between, POST /api/feedback answers 409 with
+  // PLAN_CANCELLED. Submitting again cannot succeed, so the card is put away
+  // with the server's own sentence instead of staying up behind an error.
+  const { submitVenueFeedback } = require('../services/api');
+  const { fireEvent, waitFor } = require('@testing-library/react');
+  const hoursAgo = (h) => new Date(Date.now() - h * 3600 * 1000).toISOString();
+  const answered = { crowdLevel: 'moderate', priceWorth: null, rating: null };
+
+  function refusal(message, code) {
+    const err = new Error(message);
+    if (code) err.code = code;
+    err.status = 409;
+    return err;
+  }
+
+  test('puts the card away and says why, without an error toast', async () => {
+    submitVenueFeedback.mockReset();
+    submitVenueFeedback.mockRejectedValue(
+      refusal('That plan was called off, so there is no night to report on.', 'PLAN_CANCELLED'));
+    const props = detailProps(endedFlock('confirmed', { eventTime: hoursAgo(2) }), { feedbackState: answered });
+    render(React.createElement(FlockDetail, props));
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    await waitFor(() => expect(props.setFeedbackSubmitting).toHaveBeenLastCalledWith(false));
+    expect(props.rememberFeedbackDone).toHaveBeenCalledWith(41);
+    expect(props.setFeedbackState).toHaveBeenCalledWith({ crowdLevel: null, priceWorth: null, rating: null });
+    expect(props.showToast).toHaveBeenCalledTimes(1);
+    expect(props.showToast.mock.calls[0]).toEqual(['That plan was called off, so there is no night to report on.']);
+  });
+
+  test('any other failure keeps the card up to try again, with an error toast', async () => {
+    submitVenueFeedback.mockReset();
+    submitVenueFeedback.mockRejectedValue(refusal('Too many reports in a short time. Try again later.'));
+    const props = detailProps(endedFlock('confirmed', { eventTime: hoursAgo(2) }), { feedbackState: answered });
+    render(React.createElement(FlockDetail, props));
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
+    await waitFor(() => expect(props.setFeedbackSubmitting).toHaveBeenLastCalledWith(false));
+    expect(props.rememberFeedbackDone).not.toHaveBeenCalled();
+    expect(props.showToast).toHaveBeenCalledWith('Too many reports in a short time. Try again later.', 'error');
+  });
+});
+
 describe('the Nest reads the same hour', () => {
   const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8').replace(/\r\n/g, '\n');
   const i = APP.indexOf('const HomeScreen = () => {');

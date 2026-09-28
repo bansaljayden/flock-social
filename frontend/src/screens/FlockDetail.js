@@ -601,6 +601,19 @@ export default function FlockDetail({
                         ? 'Thanks. Real reports sharpen the forecast for everyone.'
                         : 'Thanks. Reports from a night here with your flock go into the forecast; this one is noted.');
                     } catch (err) {
+                      // The plan was called off after this screen drew the
+                      // card. There is no night to rate and retrying cannot
+                      // change that, so the card goes away with the sentence
+                      // the server sent rather than offering Submit again.
+                      // (No apostrophes in these comments: the icon-button
+                      // scan in accessibilitySweep reads this open tag and
+                      // takes a lone one for the start of a string.)
+                      if (err?.code === 'PLAN_CANCELLED') {
+                        rememberFeedbackDone(flock.id);
+                        setFeedbackState({ crowdLevel: null, priceWorth: null, rating: null });
+                        showToast(err.message);
+                        return;
+                      }
                       console.error('[Feedback] Submit error:', err);
                       showToast(err?.message || "That didn't send. Try again.", 'error');
                     } finally {
