@@ -83,7 +83,7 @@ const { validTimeZone } = require('../utils/venueZone');
 const { graceHours: flockGraceHours } = require('../services/flockSweep');
 // The plans that CASCADE away with the account keep what other people's open
 // reports name in them, as every plan delete does. See deleteAccount. The
-// retention period is what the export's note on a kept message states.
+// retention period is the one the export's note on those copies states.
 const { PRESERVE_REPORTED_HOSTED_CONTENT_SQL, EVIDENCE_RETENTION_DAYS } = require('../utils/reportEvidence');
 // The card answers a question about SOMEBODY ELSE by bare sequential id, which
 // is the exact shape utils/probeBudget.js was written for. See cardProbeBudget.
@@ -2623,11 +2623,14 @@ router.patch('/settings', async (req, res) => {
 // Art. 20(4): the export "shall not adversely affect the rights and freedoms of
 // others". Every query below is keyed on the caller's own user id, so:
 //   * flock messages: sender_id = caller. Other members' messages never appear.
-//   * flock messages kept for a report (content_report_evidence, migration
-//     110): author_id = caller and content_type 'flock_message' only. A copy
-//     of somebody else's message names them, and a guest's saved name has no
-//     author at all, so neither can appear. Nothing about the report itself
-//     (who filed it, its reason or status) is read.
+//     The copy kept of a reported message after its plan is deleted
+//     (content_report_evidence, migration 110) is left out on purpose, even
+//     though the caller wrote it: a copy exists only because a report about
+//     that message was open when the plan went, so finding it in the file
+//     would tell the author they had been reported before a moderator had
+//     judged it, which the report flow keeps from them everywhere else. The
+//     privacy policy names it as an exception, and EXPORT_REPORT_COPY_NOTE
+//     says so in every file, the same words for every account.
 //   * DMs: the caller's SENT half only. The other party's messages are the
 //     other party's data; they can export their own half. read_status and
 //     reply_to_id are omitted too — one describes the other party's behaviour,
@@ -2725,12 +2728,15 @@ const EXPORT_IMAGE_OMITTED_NOTE =
 const EXPORT_OMISSIONS_NOTE =
   'Not in this file: the crowd predictions served to you, the accounts you have blocked, ' +
   "your device's push tokens, and any venue profile. Email social@flockcorp.com for those.";
-// Why a section of messages exists whose plans are gone, and how long each
-// copy lasts, in the period the purge actually runs on.
-const EXPORT_KEPT_MESSAGES_NOTE =
-  'flock_messages_kept_for_a_report lists messages you sent in plans that have since been deleted. ' +
-  'A report about each one was not yet closed when its plan was deleted, so we kept a copy to handle it. ' +
-  `Each copy is deleted once the last report about it has been closed for ${EVIDENCE_RETENTION_DAYS} days.`;
+// The one deliberate gap in "the messages you sent", said in every file and in
+// the same words for every account, so the note itself tells nobody whether a
+// report about them exists. The privacy policy names the same exception, and
+// the period is the one the purge runs on.
+const EXPORT_REPORT_COPY_NOTE =
+  'Also left out on purpose: while a report about a message you sent is being handled, ' +
+  'Flock may keep a copy of that message, including after its plan is deleted, ' +
+  `until the last report about it has been closed for ${EVIDENCE_RETENTION_DAYS} days. ` +
+  'That copy is not in this file, because finding it here would tell you somebody had reported you.';
 
 // Fetches cap+1 and slices, so "exactly cap rows exist" and "the cap cut rows
 // off" are distinguishable and the payload can say so honestly.
@@ -2833,20 +2839,6 @@ router.get('/export', async (req, res) => {
       `SELECT id, flock_id, message_text, message_type, venue_data, image_url, created_at
          FROM messages WHERE sender_id = $1
         ORDER BY created_at ASC, id ASC LIMIT $2`,
-      [userId], EXPORT_MESSAGE_ROW_CAP
-    );
-
-    // A message the caller sent that outlived its plan, because a report about
-    // it was still open when the plan was deleted (utils/reportEvidence.js).
-    // It is still held and it is still their words, and the privacy policy
-    // counts it among the messages you sent, so it is in their copy for as
-    // long as the purge leaves it. author_id is only ever written from a
-    // message's sender_id, so this is the caller's own words and nobody else's.
-    const keptMessages = await exportRows(
-      `SELECT content_id AS id, flock_id, message_text, venue_data, image_url, created_at
-         FROM content_report_evidence
-        WHERE author_id = $1 AND content_type = 'flock_message'
-        ORDER BY created_at ASC, content_id ASC LIMIT $2`,
       [userId], EXPORT_MESSAGE_ROW_CAP
     );
 
@@ -3024,7 +3016,7 @@ router.get('/export', async (req, res) => {
           'This export contains the data you provided to Flock and activity recorded about your account.',
           'Messages other people sent (including their half of your DMs), other members\' budget amounts, group budget results, other members\' bill-split shares, and venue owners\' replies to your reviews are their data and are not included.',
           EXPORT_IMAGE_OMITTED_NOTE,
-          EXPORT_KEPT_MESSAGES_NOTE,
+          EXPORT_REPORT_COPY_NOTE,
           EXPORT_OMISSIONS_NOTE,
         ],
       },
@@ -3088,16 +3080,6 @@ router.get('/export', async (req, res) => {
         flock_id: m.flock_id,
         message_text: m.message_text,
         message_type: m.message_type,
-        venue_data: m.venue_data,
-        created_at: m.created_at,
-        ...exportImage(m.image_url),
-      })),
-      // No message_type: the copy does not keep one, and the live section's
-      // shape is left alone rather than padded with a null.
-      flock_messages_kept_for_a_report: section('flock_messages_kept_for_a_report', keptMessages).map((m) => ({
-        id: m.id,
-        flock_id: m.flock_id,
-        message_text: m.message_text,
         venue_data: m.venue_data,
         created_at: m.created_at,
         ...exportImage(m.image_url),

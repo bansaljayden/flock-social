@@ -18,10 +18,12 @@
 //
 // Only content an open or under-review report names is copied: a report a
 // moderator has already closed is judged, the line the story purge draws too.
-// routes/admin.js reads a copy, falling back to it only when the live row is
-// gone. The one other reader is the author's own data export
-// (GET /api/users/export), which lists the copies of messages they wrote and
-// nothing else: a copy is still their words, held about them.
+// Nothing here is ever read by a member-facing route; routes/admin.js is the
+// only reader, and it falls back to a copy only when the live row is gone.
+// That includes the author's own data export: a copy exists only because a
+// report about the message was open, so handing it to the author would tell
+// them about the report. The privacy policy names that as an exception to
+// "the messages you sent", with the period below.
 //
 // A copy is not kept for ever. It exists so a moderator can judge a report, so
 // it goes EVIDENCE_RETENTION_DAYS after the last report naming it is closed,

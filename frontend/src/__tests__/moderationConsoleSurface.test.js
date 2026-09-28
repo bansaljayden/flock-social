@@ -741,10 +741,9 @@ describe('every action the server can still honour is on the card', () => {
       path.join(__dirname, '..', '..', '..', 'backend', 'utils', 'reportEvidence.js'), 'utf8'
     ).match(/const EVIDENCE_RETENTION_DAYS = (\d+);/)[1]);
     expect(screen.getByText(new RegExp(`It is deleted ${days} days after the last report about it is closed`))).toBeInTheDocument();
-    // Who else can read it: the author of a message, in their own data export
-    // (GET /api/users/export lists their copies), so "nobody else" is not said.
-    expect(screen.getByText(/the person who wrote a message gets it in their own data export/)).toBeInTheDocument();
-    expect(screen.queryByText(/and nobody else can see it\./)).toBeNull();
+    // Nobody outside the console reads a copy, the message's author included:
+    // their data export leaves it out so it cannot tell them about the report.
+    expect(screen.getByText(/This is the copy kept for review, and nobody else can see it\./)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Hide content' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Restore content' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Ban user' })).toBeInTheDocument();
