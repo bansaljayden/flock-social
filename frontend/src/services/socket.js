@@ -1,6 +1,6 @@
 import { io } from 'socket.io-client';
 import { travelFields } from '../lib/travel';
-import { getToken, BASE_URL } from './api';
+import { getToken, BASE_URL, storedSessionIsThisTabs } from './api';
 import { sameSignIn } from '../lib/sessionIdentity';
 
 let socket = null;
@@ -301,6 +301,12 @@ function createSocket(token) {
 export function connectSocket() {
   const token = getToken();
   if (!token) return null;
+  // A token another tab stored for a different account is never dialled from
+  // this one. The rebuild below is for this tab's own sign-in as somebody
+  // else; from a tab still showing the first account it streamed the second
+  // account's messages into the first one's screen (services/api.js, WHOSE
+  // TAB THIS IS). That tab reloads instead.
+  if (!storedSessionIsThisTabs(token)) return null;
 
   if (socket) {
     // Reuse the existing instance whatever its state. The old guard was

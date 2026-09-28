@@ -247,12 +247,78 @@ function setRefreshToken(value) {
   else lsRemove(REFRESH_TOKEN_KEY);
 }
 
+/*
+ * WHOSE TAB THIS IS.
+ *
+ * Every tab of a browser shares one stored session, and getToken() reads it
+ * fresh on every call. So when somebody signed out in one tab and signed in as
+ * a different account, every other open tab kept the first account's screens
+ * (its name, its plans, its bill) and sent its next request with the second
+ * account's token. "Mark as paid" on the first person's share settled the
+ * second person's, and a vote, an RSVP, a budget answer or a settings switch
+ * landed on the wrong account the same way. The socket then re-dialled as the
+ * new account (socket.js treats a new token as an account switch) and the
+ * second person's messages streamed into the first person's screen.
+ *
+ * So each page load is bound to the account it began with: the session stored
+ * when it loaded, or the one it signed in to itself. A request (and a socket
+ * connection, and an upload) whose stored token now names another account, or
+ * none, is refused before anything is sent, and 'flock-account-switched' tells
+ * the app, which reloads so the tab starts over as whoever is signed in now.
+ * The storage listener further down announces the same the moment another tab
+ * writes, so an idle tab does not wait for its next request to find out.
+ *
+ * The account, not the token string and not the sign-in: a renewal changes
+ * the token for the same person (lib/sessionIdentity.js), and the same person
+ * signing in again elsewhere is still the person this tab is showing.
+ */
+function accountOf(token) {
+  const claims = tokenClaims(token);
+  return claims && claims.userId !== undefined && claims.userId !== null ? String(claims.userId) : null;
+}
+let tabAccount = accountOf(getToken());
+let accountSwitchAnnounced = false;
+
+function announceAccountSwitch() {
+  if (accountSwitchAnnounced || typeof window === 'undefined') return;
+  accountSwitchAnnounced = true;
+  window.dispatchEvent(new CustomEvent('flock-account-switched'));
+}
+
+// True while the stored session is still the account this page load serves.
+// A tab that has no account yet (signed out, on the sign-in screen) is bound
+// by its own sign-in, so it has nothing to compare against.
+export function storedSessionIsThisTabs(token = getToken()) {
+  return !tabAccount || accountOf(token) === tabAccount;
+}
+
+function accountSwitchedError() {
+  const err = new Error('This tab was signed in to another account. It is reloading to match.');
+  err.accountSwitched = true;
+  return err;
+}
+
+// The sign-in doors are never refused: they mint a session of their own, and
+// the tab that signs in becomes that account's (storeSession below).
+const SIGN_IN_DOORS = ['/api/auth/login', '/api/auth/signup', '/api/auth/google', '/api/auth/apple'];
+
+// Throws, and tells the app, when another tab has moved the stored session to
+// a different account (or signed it out) under this one.
+function refuseIfAccountMoved(token = getToken()) {
+  if (storedSessionIsThisTabs(token)) return;
+  announceAccountSwitch();
+  throw accountSwitchedError();
+}
+
 // What a sign-in, a sign-up and a password change answer with, stored as one
 // thing: the access token and the refresh credential that renews it.
 function storeSession(data) {
   setToken(data.token);
   setRefreshToken(data && data.refreshToken);
   endedSessionToken = null;
+  // This tab signed in, so this tab is that account's now.
+  tabAccount = accountOf(data.token);
+  accountSwitchAnnounced = false;
   scheduleRenewal();
 }
 
@@ -532,6 +598,9 @@ export function clearLocalSession({ keepInviteHandoff = false } = {}) {
   // server whose it was, so the token's own claim names it.
   holdConsentAtSignOut(signedInUserId || storedTokenClaims()?.userId);
   signedInUserId = null;
+  // Signed out here, so the next sign-in in this tab decides whose it is.
+  tabAccount = null;
+  accountSwitchAnnounced = false;
   const held = keepInviteHandoff ? holdInviteHandoff() : [];
   try { sweepStore(window.localStorage); } catch (_) { /* storage blocked */ }
   try { sweepStore(window.sessionStorage); } catch (_) { /* storage blocked */ }
@@ -883,6 +952,14 @@ function handleSessionExpiry(endpoint, hadToken, data) {
   if (!hadToken) return false;
   if (AUTH_FLOW_PREFIXES.some((p) => endpoint.startsWith(p))) return false;
   if (data && typeof data === 'object' && data.reauthRequired) return false;
+  // Another tab signed in as someone else while this request was out. The
+  // session that died is this tab's; the one in storage now is not, and the
+  // wipe below would sign that tab out. This tab reloads instead (see WHOSE
+  // TAB THIS IS).
+  if (!storedSessionIsThisTabs()) {
+    announceAccountSwitch();
+    return true;
+  }
   // Kept for the sign-out App.js runs on the event below (see
   // endedSessionToken), which the wipe would otherwise leave with no token.
   endedSessionToken = getToken();
@@ -1139,6 +1216,12 @@ if (typeof window !== 'undefined' && typeof document !== 'undefined') {
   // tab's socket re-dials with it too.
   window.addEventListener('storage', (e) => {
     if (e.key !== null && e.key !== 'flockToken') return;
+    // Another account signed in there, or the session was signed out there:
+    // this tab is showing an account that is no longer the stored one.
+    if (!storedSessionIsThisTabs()) {
+      announceAccountSwitch();
+      return;
+    }
     scheduleRenewal();
     if (e.key === 'flockToken' && e.newValue && e.oldValue && e.newValue !== e.oldValue
       && sameSignIn(e.newValue, e.oldValue)) {
@@ -1187,11 +1270,17 @@ function buildHttpError(res, data, endpoint, hadToken) {
 
 async function request(endpoint, options = {}) {
   const { timeout, retry, ...fetchOptions } = options;
+  // Nothing goes out from a tab whose account another tab has replaced, not
+  // even a renewal (see WHOSE TAB THIS IS). Asked again after the renewal,
+  // which awaits.
+  const signingIn = SIGN_IN_DOORS.some((p) => endpoint.startsWith(p));
+  if (!signingIn) refuseIfAccountMoved();
   // Renew first when the token is nearly out (see RENEWING THE SESSION above),
   // so the request goes out on a live one instead of earning a 401.
   const mayRenew = mayRenewBefore(endpoint);
   if (mayRenew && renewalIsDue()) await renewIfDue();
   let token = getToken();
+  if (!signingIn) refuseIfAccountMoved(token);
   const headers = {
     'Content-Type': 'application/json',
     ...fetchOptions.headers,
@@ -1736,6 +1825,14 @@ export function handOverPushTokenForSignOut(token) {
 }
 
 export async function logout() {
+  // A tab whose account another tab has already replaced has nothing of its
+  // own left to sign out of. Carrying on would retire the other account's
+  // refresh credential on the server and wipe its session from this browser,
+  // signing out the tab that just signed in. It reloads instead.
+  if (!storedSessionIsThisTabs()) {
+    announceAccountSwitch();
+    return;
+  }
   const storedToken = getToken();
   const token = storedToken || endedSessionToken;
   endedSessionToken = null;
@@ -2703,8 +2800,12 @@ export async function uploadProfileImage(file) {
   // "Token expired" (see RENEWING THE SESSION). Sending the upload again then
   // is not the retry this function refuses: authenticate turned the first one
   // away before the image was read, let alone stored.
+  refuseIfAccountMoved();
   if (renewalIsDue()) await renewIfDue();
   let token = getToken();
+  // The photo would land on whichever account is stored, so a tab whose
+  // account was replaced sends nothing (see WHOSE TAB THIS IS).
+  refuseIfAccountMoved(token);
   const formData = new FormData();
   formData.append('image', file);
   const send = (bearer) => fetchWithTimeout(`${BASE_URL}/api/users/upload-image`, {

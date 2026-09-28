@@ -86,6 +86,8 @@ jest.mock('../services/api', () => ({
   getToken: () => 'test-token',
   // The console renews an expiring session before each fetch; nothing is due here.
   ensureFreshSession: () => null,
+  // No other tab has signed in as somebody else.
+  storedSessionIsThisTabs: () => true,
   reportContent: () => Promise.resolve({ message: 'ok' }),
   blockUser: () => Promise.resolve({ message: 'ok' }),
 }));
