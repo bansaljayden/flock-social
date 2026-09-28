@@ -231,6 +231,32 @@ describe('the page only sells things that exist', () => {
     expect(surfaces[5][1]).toContain('seeing which flocks have your venue in their vote');
   });
 
+  test('the In Their Vote tile names the window the feed actually keeps', () => {
+    // The tile's line read "flocks, next 7 days", but GET /incoming-flocks
+    // also keeps a plan whose time passed up to INCOMING_PAST_HOURS ago, the
+    // party that may be inside right now, so the count was not only plans to
+    // come. "This week" would have been worse: the This Week card sits just
+    // below the tile and counts the LAST 7 days of votes, so the same screen
+    // would show two numbers under one name.
+    const route = fs.readFileSync(path.join(REPO, 'backend', 'routes', 'venueDashboard.js'), 'utf8');
+    const hours = (name) => Number((route.match(new RegExp(`const ${name} = (\\d+);`)) || [])[1]);
+    expect(hours('INCOMING_PAST_HOURS')).toBeGreaterThan(0);
+    expect(hours('INCOMING_AHEAD_HOURS')).toBe(7 * 24);
+
+    const dashboard = fs.readFileSync(path.join(REPO, 'frontend', 'src', 'screens', 'VenueDashboard.js'), 'utf8')
+      .replace(/\{\s*\/\*[\s\S]*?\*\/\s*\}/g, '')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
+    const start = dashboard.indexOf('>In Their Vote</p>');
+    expect(start).toBeGreaterThan(-1);
+    const tile = dashboard.slice(start, dashboard.indexOf('</div>', start));
+    expect(tile).toContain('>flocks, now and the week ahead</p>');
+    expect(tile).not.toMatch(/next \d+ days|this week/i);
+    // The card it must not be confused with is still there, and still looks back.
+    expect(dashboard).toContain('>This Week</h3>');
+    expect(dashboard).toContain('Last {tw.windowDays} days.');
+  });
+
   test('llms.txt does not sell Roost in the present tense while no venue is charged', () => {
     // It said "Venues are the side Flock charges. Roost ... is $99 a month ...
     // bought on flockcorp.com" ninety lines below its own "no venue is being
