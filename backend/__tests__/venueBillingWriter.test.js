@@ -587,6 +587,26 @@ test('an explicit end date over a live yearly subscription never ends before the
   assert.ok(stands > paidThrough + 150 * DAY_S * 1000, 'a date later than the paid year is the grant\'s own and stands');
 });
 
+test('a past_due subscription is not a paid period: a grant over it keeps its own end', async () => {
+  // past_due is a renewal Stripe could not collect. Its period end is not a
+  // date the venue paid through, so lifting a 30-day grant to it would give a
+  // venue that stopped paying the rest of an unpaid year.
+  const id = await venue({ verified: true });
+  const adminId = await admin();
+  const yearEnds = Math.floor(Date.now() / 1000) + 300 * DAY_S;
+  await venueBilling.syncVenueSubscription(sub('sub_yearly_unpaid', id, 'past_due', period('price_roost_year', yearEnds)));
+  const unpaidEnd = yearEnds * 1000 + venueBilling.__test.GRACE_MS;
+
+  const before = Date.now();
+  const g = await adminCall('POST', `/api/admin/venues/${id}/tier`, {
+    as: adminId, body: { tier: 'pro', grantReason: 'paid', durationDays: 30 },
+  });
+  assert.strictEqual(g.status, 200, g.text);
+  const ends = new Date(g.body.expires_at).getTime();
+  assert.ok(ends < unpaidEnd, 'a grant over a past_due row was lifted to the end of a year nobody paid for');
+  assert.ok(Math.abs(ends - (before + 30 * DAY_S * 1000)) < 5 * 60 * 1000, 'the grant keeps its own 30 days');
+});
+
 test('an explicit date over an admin-written row, or a subscription that has ended, is taken as sent', async () => {
   const id = await venue({ verified: true });
   const adminId = await admin();
