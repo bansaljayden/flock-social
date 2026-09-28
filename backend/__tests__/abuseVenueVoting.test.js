@@ -73,6 +73,9 @@ let closeAfterStatusRead = false;
 // ROLLBACK puts it back, COMMIT drops it. "A refused vote leaves the old one
 // in place" is only testable with real undo.
 let txnVotes = null;
+// The member tally read after a vote commits fails once, the way a pool
+// timeout would. Only that read: the vote's own transaction is untouched.
+let failTally = false;
 function assertQueriesUnderstood() {
   assert.deepStrictEqual(unknown, [], `unmodelled queries: ${JSON.stringify(unknown.slice(0, 3))}`);
 }
@@ -165,6 +168,10 @@ async function dispatch(sql, params) {
   // collectVoteRows — member tally, executed WITH the membership join the
   // round-17 fix added, only when the arriving SQL actually carries it.
   if (/FROM venue_votes vv JOIN users u/.test(flat)) {
+    if (failTally) {
+      failTally = false;
+      throw new Error('timeout exceeded when trying to connect');
+    }
     const joined = /JOIN flock_members fm ON fm\.flock_id = vv\.flock_id AND fm\.user_id = vv\.user_id AND fm\.status = 'accepted'/.test(flat);
     const counted = world.votes.filter((v) =>
       !joined || world.members.some((m) => m.user_id === v.user_id && m.status === 'accepted'));
@@ -217,7 +224,46 @@ test.after(() => new Promise((resolve) => {
 }));
 
 test.beforeEach(() => {
-  world = freshWorld(); log = []; unknown = []; closeAfterStatusRead = false; txnVotes = null;
+  world = freshWorld(); log = []; unknown = []; closeAfterStatusRead = false; txnVotes = null; failTally = false;
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// A SAVED VOTE IS NOT A FAILED ONE. The tally is read after the vote commits,
+// on the pool; when that read failed the route answered 500 "Failed to vote",
+// the app rolled the tile back and said it had not saved, and the next load
+// showed the vote everyone had been told did not count.
+// ═════════════════════════════════════════════════════════════════════════════
+
+test('a vote whose tally read fails after it committed is answered as saved, with no tally', async () => {
+  as(1, 'Ava');
+  world.members.push({ user_id: 1, status: 'accepted' });
+  failTally = true;
+
+  const r = await vote('Ramen');
+  assert.strictEqual(r.status, 201, r.text);
+  assert.strictEqual(failTally, false, 'the fault has to have fired for this to mean anything');
+  assert.strictEqual(r.body.vote.venue_name, 'Ramen');
+  assert.strictEqual(r.body.votes, null);
+  assert.strictEqual(r.body.tallyUnavailable, true);
+  assert.deepStrictEqual(world.votes.map((v) => [v.user_id, v.venue_name]), [[1, 'Ramen']], 'the vote is stored');
+  assert.ok(log.some((q) => /^COMMIT/i.test(q.sql)));
+  assertQueriesUnderstood();
+});
+
+test('an un-vote whose tally read fails after it committed is answered as done, with no tally', async () => {
+  as(1, 'Ava');
+  world.members.push({ user_id: 1, status: 'accepted' });
+  world.votes.push({ user_id: 1, venue_name: 'Taqueria', venue_id: null });
+  failTally = true;
+
+  const r = await call('DELETE', `/api/flocks/${FLOCK}/vote`);
+  assert.strictEqual(r.status, 200, r.text);
+  assert.strictEqual(failTally, false);
+  assert.strictEqual(r.body.removed, 1);
+  assert.strictEqual(r.body.votes, null);
+  assert.strictEqual(r.body.tallyUnavailable, true);
+  assert.deepStrictEqual(world.votes, []);
+  assertQueriesUnderstood();
 });
 
 test('a vote on a plan cancelled between the closure check and the write records nothing', async () => {

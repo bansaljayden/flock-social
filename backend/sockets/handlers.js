@@ -2195,6 +2195,9 @@ function registerHandlers(io, socket) {
   // --- Venue voting ---
 
   socket.on('vote_venue', async (data) => {
+    // Set once the vote has committed: from there on a failure is the tally's,
+    // not the vote's (see the catch below).
+    let committed = false;
     try {
       if (!allowEvent(socket, 'vote_venue', 30, 10_000)) return;
       // Round 16: `new_vote` has two producers — this handler and
@@ -2297,6 +2300,7 @@ function registerHandlers(io, socket) {
           return;
         }
         await voteClient.query('COMMIT');
+        committed = true;
       } catch (txErr) {
         await voteClient.query('ROLLBACK').catch(() => {});
         throw txErr;
@@ -2397,7 +2401,10 @@ function registerHandlers(io, socket) {
       await notifyHostVotesIn(io, flockId, user.id, rows);
     } catch (err) {
       console.error('vote_venue error:', err);
-      socket.emit('error', { message: 'Failed to vote' });
+      // A vote that committed is saved, whatever the tally read after it did;
+      // telling the voter it failed is the lie routes/venues.js
+      // tallyAfterCommit stopped telling on the REST path.
+      if (!committed) socket.emit('error', { message: 'Failed to vote' });
     }
   });
 

@@ -189,8 +189,10 @@ async function collectVoteRows(flockId) {
     // is undefined_table (42P01) and undefined_column (42703), and on such a
     // deploy there are no guest votes to miss. Anything else is a real failure
     // and now reaches the caller's 500 — every call site of collectVoteRows is
-    // inside a try/catch that answers one, and broadcastGuestVote's own catch
-    // keeps a fan-out failure from turning a committed guest vote into an error.
+    // inside a try/catch that answers one. Where the vote has already committed
+    // that answer is not a 500: broadcastGuestVote's own catch, and
+    // tallyAfterCommit's for a member's vote, keep a failed tally from turning a
+    // saved vote into an error.
     if (err?.code === '42P01' || err?.code === '42703') {
       console.warn('[venues] guest vote tally skipped: schema not migrated (' + err.code + ')');
       return { rows: [] };
@@ -440,6 +442,31 @@ async function broadcastVotes(req, flockId, rows, venue_name, notify = true) {
   return sets.get(req.user.id) || new Set();
 }
 
+// THE TALLY AFTER A VOTE HAS COMMITTED: read it, tell the room, and hand the
+// caller their own view. By this point the vote is saved, and the read and the
+// fan-out are separate statements on the pool that a slow or saturated
+// database can fail. Both routes below used to let that failure reach their
+// catch, which answered 500 "Failed to vote" for a vote that was stored: the
+// app rolled the tile back and said it did not save, the room heard nothing,
+// and the next load showed the vote everyone had been told did not count.
+// broadcastGuestVote holds the same line for a guest's vote. A failed tally is
+// `votes: null` with `tallyUnavailable: true`, which the app reads as "keep
+// what you tapped and fetch the tally again", never as a refusal.
+// `onRows`, when given, receives the collected rows for a caller that needs
+// them after answering (the votes-in notice). They are never put in the
+// answer itself: they carry every voter, before any block is applied.
+async function tallyAfterCommit(req, flockId, venueName, notify, onRows) {
+  try {
+    const rows = await collectVoteRows(flockId);
+    if (typeof onRows === 'function') onRows(rows);
+    const myInvisible = await broadcastVotes(req, flockId, rows, venueName, notify);
+    return { votes: tailorVotes(rows, myInvisible, { viewerId: req.user.id }) };
+  } catch (err) {
+    console.error('[venues] vote saved, tally after it failed:', err.message);
+    return { votes: null, tallyUnavailable: true };
+  }
+}
+
 // POST /api/flocks/:id/vote - Vote for a venue
 router.post('/:id/vote',
   [
@@ -556,16 +583,16 @@ router.post('/:id/vote',
         client.release();
       }
 
-      const rows = await collectVoteRows(flockId);
-      const myInvisible = await broadcastVotes(req, flockId, rows, venue_name);
-
       // Re-voting for the venue you already picked is a no-op, not an error:
       // the client re-sends its current pick whenever the vote list changes.
-      res.status(changed ? 201 : 200).json({ vote, votes: tailorVotes(rows, myInvisible, { viewerId: req.user.id }) });
+      let talliedRows = null;
+      const tally = await tallyAfterCommit(req, flockId, venue_name, true, (rows) => { talliedRows = rows; });
+      res.status(changed ? 201 : 200).json({ vote, ...tally });
 
       // After the answer, so the voter never waits on the host's notification.
-      // A re-sent pick changed nothing and cannot be the vote that finished it.
-      if (changed) await notifyHostVotesIn(req.app.get('io'), flockId, req.user.id, rows);
+      // A re-sent pick changed nothing and cannot be the vote that finished it,
+      // and a tally that could not be read gives nothing to judge it by.
+      if (changed && talliedRows) await notifyHostVotesIn(req.app.get('io'), flockId, req.user.id, talliedRows);
     } catch (err) {
       console.error('Vote error:', err);
       res.status(500).json({ error: 'Failed to vote' });
@@ -660,11 +687,9 @@ router.delete('/:id/vote', flockIdParam(), async (req, res) => {
       return res.status(refusal.status).json({ error: refusal.error });
     }
 
-    const rows = await collectVoteRows(flockId);
     // Nothing removed means nothing changed, so peers get no event.
-    const myInvisible = await broadcastVotes(req, flockId, rows, removed.rows[0]?.venue_name || null, removed.rows.length > 0);
-
-    res.json({ removed: removed.rows.length, votes: tailorVotes(rows, myInvisible, { viewerId: req.user.id }) });
+    const tally = await tallyAfterCommit(req, flockId, removed.rows[0]?.venue_name || null, removed.rows.length > 0);
+    res.json({ removed: removed.rows.length, ...tally });
   } catch (err) {
     console.error('Unvote error:', err);
     res.status(500).json({ error: 'Failed to remove vote' });

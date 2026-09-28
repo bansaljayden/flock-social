@@ -146,6 +146,48 @@ describe('a vote that did not save', () => {
   test('nothing in it swallows the failure any more', () => {
     expect(votes()).not.toMatch(/\.catch\(\(\) => \{\}\)/);
   });
+
+  // Lifted and executed. The server saved the vote and could not read the
+  // tally after it (routes/venues.js tallyAfterCommit answers votes: null,
+  // tallyUnavailable: true). It used to answer 500 there, and the tile rolled
+  // back under "Your vote didn't save" for a vote that had.
+  const OPEN = 'const updateFlockVotes = useCallback((flockId, newVotes) => {';
+  const BODY = region(APP, OPEN, '\n  }, [showToast, loadFlockVotes]);').slice(OPEN.length);
+  const runVote = async (answer) => {
+    const tapped = [{ venue: 'Ramen', voters: ['You'], guestCount: 0 }];
+    const scope = {
+      flocksRef: { current: [{ id: 7, votes: [{ venue: 'Kome', voters: ['Ava'], guestCount: 0 }] }] },
+      setFlocks: jest.fn(),
+      hapticTap: () => {},
+      voteForVenue: jest.fn().mockResolvedValue(answer),
+      clearVenueVote: jest.fn(),
+      normalizeVotes: (raw, _me, previous) => (Array.isArray(raw) ? raw : previous),
+      meRef: { current: { id: 1, name: 'Jay' } },
+      showToast: jest.fn(),
+      loadFlockVotes: jest.fn(),
+    };
+    const names = Object.keys(scope);
+    // eslint-disable-next-line no-new-func
+    const run = new Function(...names, 'flockId', 'newVotes', BODY);
+    run(...names.map((n) => scope[n]), 7, tapped);
+    await new Promise((r) => setTimeout(r, 0));
+    const onScreen = scope.setFlocks.mock.calls.reduce((flocks, [update]) => update(flocks), scope.flocksRef.current);
+    return { scope, onScreen };
+  };
+
+  test('a vote saved without a tally keeps the tile as tapped, fetches the tally, and says nothing failed', async () => {
+    const { scope, onScreen } = await runVote({ vote: { venue_name: 'Ramen' }, votes: null, tallyUnavailable: true });
+    expect(scope.voteForVenue).toHaveBeenCalledWith(7, 'Ramen', null);
+    expect(onScreen[0].votes.map((v) => v.venue)).toEqual(['Ramen']);
+    expect(scope.loadFlockVotes).toHaveBeenCalledWith(7);
+    expect(scope.showToast).not.toHaveBeenCalled();
+  });
+
+  test('a vote answered with its tally takes the tally and asks for nothing more', async () => {
+    const { scope, onScreen } = await runVote({ vote: { venue_name: 'Ramen' }, votes: [{ venue: 'Ramen', voters: ['You', 'Ava'], guestCount: 0 }] });
+    expect(onScreen[0].votes[0].voters).toEqual(['You', 'Ava']);
+    expect(scope.loadFlockVotes).not.toHaveBeenCalled();
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
