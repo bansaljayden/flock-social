@@ -1417,7 +1417,7 @@ as a wall clock — and this is a delta model, so the baseline is the answer. A
 # 1. migration 023 must have applied (it runs on server boot; check
 #    schema_migrations). Then, and only then:
 node scripts/ml/buildBaselines.js      # refuses if any weekly row is undeclared
-node scripts/ml/train/export_training_data.js
+node scripts/ml/train/export_training_data.js   # harvested venues left out; see "Venue Filter harvest"
 # 2. usual pipeline from the top of this file
 ```
 
@@ -1793,63 +1793,159 @@ a forecast by name, a venue search or a live endpoint (a guard refuses them
 before the request leaves, pinned in `__tests__/harvestVenueFilter.test.js`),
 so it spends none of the month's 100 admissions. Dry run is the default.
 
+### The commands
+
+One market at a time, and write down the time each `--commit` starts: every
+row it refreshes gets `collected_at` at or after that moment, which is how its
+writes are found afterwards.
+
 ```bash
-# from backend/, one market at a time; read each dry run before its --commit
-node scripts/ml/harvestVenueFilter.js --city=philly            # dry run
-node scripts/ml/harvestVenueFilter.js --city=philly --commit
-node scripts/ml/harvestVenueFilter.js --city=lehigh            # dry run
-node scripts/ml/harvestVenueFilter.js --city=lehigh --commit
+# from backend/. Read each dry run in full before its --commit.
+node scripts/ml/archiveWeeklyWindow.js --suffix=<next free, e.g. w2>   # before the first --commit: keeps the current weekly rows
+node scripts/ml/harvestVenueFilter.js --city=philly                     # dry run
+node scripts/ml/harvestVenueFilter.js --city=philly --commit            # note the start time
+node scripts/ml/harvestVenueFilter.js --city=lehigh                     # dry run
+node scripts/ml/harvestVenueFilter.js --city=lehigh --commit            # note the start time
 ```
 
-`--days=0` asks Monday only, a seventh of the requests, for a first look. Every
-run prints the key's counters before and after; the besttime.app dashboard is
-the authority for the admission count. Requests start four seconds apart (the
-filter is documented at 30 a minute), and a market is at least one request per
-tile per weekday (62 tiles for philly, 60 for lehigh, more where a tile passes
-the 500-result cap and is split), so allow an hour per market per run.
+`--days=0` asks Monday only, for a first look. `--radius-km` is how far from
+the market's centroid it reaches: 20 by default, the circle `discoverVenues.js`
+searches and so the corpus's own footprint; `--radius-km=80` asks for
+everything the market rule (`addDemandVenues.nearestPaCity`, 80 km) accepts. A
+tile's corner reaches past the circle: a known venue found there is refreshed,
+a new one is skipped (`outsideRadius`).
 
-What a `--commit` writes:
+Measured on the first philly dry run (Monday, 20 km): 91 requests over 29 leaf
+tiles, about 756 query credits, 3,933 venues found; 219 known by BestTime id,
+54 by Google place id, 1 near-duplicate, 2,791 new; 73,560 weekly rows for the
+one day. A full week is about seven times the requests and credits (about 45
+minutes at one request every four seconds) and up to seven times the rows.
+Every run prints the key's counters before and after; the besttime.app
+dashboard is the authority for the admission count.
+
+### What every run proves and prints before anything is written
+
+- **The axis.** The curves are read from `day_raw_whole` and mapped through
+  collectWeekly's 6 AM transform. For every venue the corpus holds by BestTime
+  id, the curve the run would write is compared with the weekly rows already
+  stored for it (collectWeekly wrote those from forecasts) at every rotation of
+  the 168-hour week, and the table is printed. The first philly dry run: at
+  rotation 0, 5,184 cells, MAE 0.06, 99.6% exact, 99.7% within five points, r
+  0.999, 189 of 216 venues best at 0 (the rest tied with a whole-day rotation);
+  at +/-6, 42% within five and r 0.19. **`--commit` refuses** unless at least
+  20 venues can be compared, rotation 0 is the best, at least 90% of cells are
+  within five points there, and at least 75% of venues agree best there; a dry
+  run that would be refused exits nonzero. Lehigh's own dry run shows whether
+  it holds 20 comparable venues; if it does not, the gate refuses it, and that
+  is the answer, not a threshold to lower.
+- **The peak hour** of each category on the venue clock (bars peak in the
+  evening, cafes around noon). The first run: restaurants mode 18h, bars 19h,
+  cafes and dessert 12h, fast food 15h, parks 18h.
+- **Place-id agreement** for the venues known by BestTime id (first run: 201 of
+  219 carry the stored id, 18 are stored under a `bt_` pseudo id, none differ),
+  and the heads of any place id refused as not Google-shaped (only `ChIJ...`
+  and `GhIJ...` are accepted).
+- **Near-duplicates**: a venue with no row by either id that sits within 40 m
+  of an existing row with a similar name is filed under that row (no new row,
+  no BestTime id stamped) or skipped when that row holds another BestTime id;
+  two new listings of one venue keep the lower BestTime id (first run: 1 filed,
+  2 skipped, 16 second listings).
+
+### What a `--commit` writes
 
 - Weekly rows through collectWeekly's slot transform and upsert key, labelled
   the way collectWeekly labels them: `collection_mode = 'weekly'`,
   `hour_axis = 'venue_local'`, `label_source` NULL, events_observed false with
-  `'no_observation_date'`, and `besttime_epoch` NULL because the filter does not
-  say which analysis produced the curve. A rerun refreshes in place, newest
-  wins, so run `archiveWeeklyWindow.js --suffix=...` first if the current
-  weekly rows are a window worth keeping.
-- A new `ml_venues` row only for a venue with a real Google place id that the
-  corpus holds under neither its BestTime id nor its place id, placed by
-  addDemandVenues' nearest-centroid rule (80 km). New rows are
-  `is_active = false`, `besttime_status = 'harvested'`: the hourly live sweep
-  reads active rows with a BestTime id and refuses above 2,500 of them, so a
-  harvest of thousands would stop it. They still train (the export reads every
-  row) and get served curves once buildBaselines runs.
-- A known venue matched by place id gets its curves and no BestTime id: a
-  stamped id would put it in the hourly sweep, and whether a live call on a
-  venue first forecast by another account spends an admission is not
-  documented.
+  `'no_observation_date'`. A new row's `besttime_epoch` is NULL (the filter
+  does not name the analysis); a refreshed row keeps the epoch it stores. A
+  rerun refreshes in place, newest wins, which is why the archive comes first.
+- A new `ml_venues` row only for a venue with a Google-shaped place id that the
+  corpus holds under neither id nor as a near-duplicate, inside the radius. New
+  rows are `is_active = false`, `besttime_status = 'harvested'`: the hourly live
+  sweep reads active rows with a BestTime id and refuses above 2,500 of them.
+- A known venue matched by place id or as a near-duplicate gets its curves and
+  no BestTime id: a stamped id would put it in the hourly sweep, and whether a
+  live call on a venue first forecast by another account spends an admission
+  is not documented.
 
-It exits nonzero on an abort, on a dry run with nothing to write, and on a
-`--commit` that wrote nothing or failed a write.
+### What changes once it lands, and what does not
+
+The hourly collectRealtime run ends with `refreshCollectedBaselines`, which
+reads every weekly row, so within the hour each harvested venue has a served
+curve and a model-backed score for its own hours. That is the deploy; the
+first refresh after a full-week commit writes several hundred thousand
+`ml_venue_baselines` rows inside the corpus lock.
+
+What does not change is anybody else's score. `log_neighbor_count` and
+`neighbor_baseline_same_hour` are inputs of the shipped model, and
+`services/mlPredictor.js` leaves `besttime_status = 'harvested'` out of the
+neighbour box (both statements), so no existing venue's features move. The
+training export leaves them out the same way:
+
+```bash
+node scripts/ml/train/export_training_data.js                        # harvested venues EXCLUDED (the default)
+node scripts/ml/train/export_training_data.js --include-harvested    # a retrain that measures them
+```
+
+Each export prints how many harvested venues and rows its choice covered. A
+model trained with `--include-harvested` saw them as neighbours while serving
+does not, so it ships only together with the status change that lets serving
+see them too, in the same deploy window:
+
+```sql
+UPDATE ml_venues SET besttime_status = 'harvest_measured' WHERE besttime_status = 'harvested';
+```
+
+After that the default export includes them as well, and the rollback below
+must name `'harvest_measured'`.
+
+`addDemandVenues.js` lists the harvested rows real users served, voted on or
+checked into as PROMOTION CANDIDATES, apart from the venues it stages.
+Promoting one is a hand-made `UPDATE ml_venues SET is_active = true WHERE id IN
+(...)`, which puts it in the hourly live sweep; do a few on purpose, never the
+list.
+
+### Rollback
+
+```sql
+DELETE FROM ml_venues WHERE besttime_status = 'harvested';
+```
+
+That removes every row the harvest added. Their weekly rows go with them:
+`ml_training_data.venue_id` references `ml_venues(id)` `ON DELETE CASCADE`
+(migration 006), and nothing else holds a foreign key to `ml_venues`. Their
+`ml_venue_baselines` rows are keyed by place id with no foreign key, so they
+stay served until the next baseline refresh removes every `collected` slot left
+without weekly rows: within the hour, or at once with
+`node scripts/ml/buildBaselines.js`. Check first that none was promoted
+(`SELECT id, name FROM ml_venues WHERE besttime_status = 'harvested' AND
+is_active`), because a promoted row goes too. Not undone by the DELETE: the
+weekly rows the harvest refreshed on venues the corpus already held (known by
+BestTime id, by place id or as a near-duplicate). Those are the rows of
+existing venues with `collection_mode = 'weekly' AND collected_at >= <the
+noted start>`, and their previous values are in the archive taken first.
+
+It exits nonzero on an abort, on a dry run with nothing to write or that the
+axis proof would refuse, and on a `--commit` that wrote nothing or failed a
+write.
 
 **Monthly.** BestTime deletes a stored forecast after 31 days, and the filter
 only returns venues whose forecast still exists. Harvest both markets in the
-first week of every calendar month (dry run, then `--commit`). Our own venues'
-forecasts are renewed only by a forecast call by id, `collectWeekly.js
---city=... --only-found` (unlimited on the package); run it inside the same 31
-days or they drop out of the filter too.
+first week of every calendar month (dry run, then `--commit`, one market at a
+time). Our own venues' forecasts are renewed only by a forecast call by id,
+`collectWeekly.js --city=... --only-found` (unlimited on the package); run it
+inside the same 31 days or they drop out of the filter too, and with them the
+venues the axis proof compares against.
 
-**Not settled by the documentation, check on the first dry run:** the place-id
-flag is sent as `place_id=True` and read from `venue_place_id`, `place_id` or
-`google_place_id`, none of which the published filter schema names. If the dry
-run warns that no venue carried a place id, nothing new can be added (known
-venues still refresh); if BestTime answers 400, `--no-place-id` runs without
-the flag and `--all-types` without the types list (the `*_RESTAURANT` names
-are taken from BestTime's venue-types catalog, not from a live answer).
-`own_venues_only=False` is sent in BestTime's True/False spelling.
-The 500 cap is the account's limit, not the documentation's (which allows
-`limit` up to 10,000); `--result-cap` and `--page-size` change it, and
-`venues_n` is read as a box total only when it is larger than the page.
+**Settled by the first dry run:** the filter answers `day_raw_whole` (never
+`day_raw`, which is therefore not read) and a place id under one of the field
+names the script reads, so new venues can be added. `own_venues_only=False` is
+sent in BestTime's True/False spelling. The 500 cap is the account's limit, not
+the documentation's (which allows `limit` up to 10,000); `--result-cap` and
+`--page-size` change it, and `venues_n` is read as a box total only when it is
+larger than the page. If BestTime ever answers 400, `--no-place-id` runs
+without the place-id flag (refresh only) and `--all-types` without the types
+list.
 
 ## The BESTTIME cron service: what it is and how it breaks (audited 2026-09-01)
 
