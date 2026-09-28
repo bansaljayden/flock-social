@@ -14653,15 +14653,30 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // exception is the reconnect edge, handled just below), and the tick stops
   // mattering the moment a load succeeds because the error it is gated on
   // clears.
+  //
+  // ONCE PER RECONNECT. This effect re-runs whenever an error changes, and a
+  // retry that fails sets its error again, so recovering on every run with a
+  // tick on the books retried a failing list back to back, as fast as the
+  // server could refuse it, for the rest of the session after any reconnect.
+  // The reconnect edge now fires only for a tick it has not handled yet, and
+  // the other signals keep their own pace.
+  //
+  // And the return with the socket gone is left to the gap reader below,
+  // which reads both lists on it, the failed one included. Recovering here as
+  // well sent the same request twice on one return.
+  const recoveredTickRef = useRef(0);
   useEffect(() => {
     const recoverLists = () => {
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
       if (flocksError) loadFlocks();
       if (dmsError) loadDmConversations();
     };
-    if (reconnectTick) recoverLists();
+    if (reconnectTick && recoveredTickRef.current !== reconnectTick) {
+      recoveredTickRef.current = reconnectTick;
+      recoverLists();
+    }
     const onOnline = () => recoverLists();
-    const onVisible = () => { if (document.visibilityState === 'visible') recoverLists(); };
+    const onVisible = () => { if (document.visibilityState === 'visible' && getSocket()?.connected) recoverLists(); };
     window.addEventListener('online', onOnline);
     document.addEventListener('visibilitychange', onVisible);
     const tick = setInterval(recoverLists, 20000);

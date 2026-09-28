@@ -54,3 +54,68 @@ test('the error-recovery effect stays gated, so the two do not double-fetch a he
   expect(recover).toMatch(/if \(flocksError\) loadFlocks\(\);/);
   expect(recover).toMatch(/if \(dmsError\) loadDmConversations\(\);/);
 });
+
+// The recovery effect, lifted and re-run the way React re-runs it: once per
+// change to any of its dependencies, the previous run's cleanup first.
+function recovery({ socketConnected = true } = {}) {
+  const marker = 'const recoveredTickRef = useRef(0);';
+  const src = block(marker, '[reconnectTick, flocksError, dmsError, loadFlocks, loadDmConversations]);').slice(marker.length);
+  const reads = [];
+  const recoveredTickRef = { current: 0 };
+  const docListeners = new Set();
+  const doc = {
+    visibilityState: 'visible',
+    addEventListener: (t, fn) => { if (t === 'visibilitychange') docListeners.add(fn); },
+    removeEventListener: (t, fn) => { if (t === 'visibilitychange') docListeners.delete(fn); },
+  };
+  const win = { addEventListener: () => {}, removeEventListener: () => {} };
+  const socket = { connected: socketConnected };
+  let cleanup = null;
+  const render = ({ reconnectTick, flocksError = '', dmsError = '' }) => {
+    if (cleanup) cleanup();
+    // eslint-disable-next-line no-new-func
+    new Function('useEffect', 'recoveredTickRef', 'reconnectTick', 'flocksError', 'dmsError', 'loadFlocks', 'loadDmConversations', 'document', 'window', 'getSocket', 'setInterval', 'clearInterval', src)(
+      (fn) => { cleanup = fn(); },
+      recoveredTickRef, reconnectTick, flocksError, dmsError,
+      () => reads.push('flocks'), () => reads.push('dms'),
+      doc, win, () => socket, () => 1, () => {},
+    );
+  };
+  const show = () => { doc.visibilityState = 'visible'; docListeners.forEach((fn) => fn()); };
+  return { render, reads, socket, show };
+}
+
+test('a failing list is retried once per reconnect, not again every time its error comes back', () => {
+  const r = recovery();
+  r.render({ reconnectTick: 1, flocksError: 'Your flocks are not loading right now.' });
+  expect(r.reads).toEqual(['flocks']);
+  // The retry clears the error, fails, and sets it again, and each change
+  // re-runs the effect on the same tick. Before this every failure fired the
+  // next request straight away.
+  r.render({ reconnectTick: 1, flocksError: '' });
+  r.render({ reconnectTick: 1, flocksError: 'Your flocks are not loading right now.' });
+  r.render({ reconnectTick: 1, flocksError: '' });
+  r.render({ reconnectTick: 1, flocksError: 'Your flocks are not loading right now.' });
+  expect(r.reads).toEqual(['flocks']);
+  // The next reconnect is a new chance.
+  r.render({ reconnectTick: 2, flocksError: 'Your flocks are not loading right now.' });
+  expect(r.reads).toEqual(['flocks', 'flocks']);
+});
+
+test('no reconnect yet, no retry from the reconnect edge', () => {
+  const r = recovery();
+  r.render({ reconnectTick: 0, dmsError: 'Your messages are not loading right now.' });
+  expect(r.reads).toEqual([]);
+});
+
+test('a return with the socket gone leaves the failed list to the gap reader, which reads it anyway', () => {
+  const r = recovery({ socketConnected: false });
+  r.render({ reconnectTick: 0, flocksError: 'x', dmsError: 'y' });
+  r.show();
+  expect(r.reads).toEqual([]);
+  // With the socket up the gap reader reads nothing on the return, so the
+  // retry is this effect's to make.
+  r.socket.connected = true;
+  r.show();
+  expect(r.reads).toEqual(['flocks', 'dms']);
+});
