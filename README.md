@@ -182,15 +182,21 @@ Owl reads the 160 by 120 grid of temperatures from the sensor's thermal camera
 and puts a point on every person and a box and a name on every other warm
 thing: a hand at the lens, a pet, a hot drink, food, a laptop, a screen, a
 heater, a lamp, a seat somebody just left. Only people are counted. Scored on
-the held-out test splits of four public thermal datasets, footage it never
-trained on:
+the held-out test splits of five real thermal datasets, footage it never
+trained on, the first of them from the very camera Flux uses:
 
 | Real test set | the heat-threshold rule | **Owl** |
 |---|---|---|
-| Ceiling camera, 2,347 frames, 8,043 people | 9.2% exact | **94.1% exact, 99.8% within one** |
-| Wall-mounted meeting rooms, 813 frames, 1,061 people | 51.5% exact | **97.9% exact, 100% within one** |
-| Low-resolution rooms with hot laptops, 265 frames | 71.3% exact | **95.5% exact, 100% within one** |
-| Side view, 2,151 frames, 3,872 people | 36.6% exact | **84.1% exact, 97.1% within one** |
+| **Flux's own camera** (FLIR Lepton 3.5, indoor rooms), 2,000 frames | 77.1% exact | **88.8% exact, 100% within one** |
+| Ceiling camera, 2,347 frames, 8,043 people | 9.2% exact | **93.4% exact, 99.7% within one** |
+| Low-resolution rooms with hot laptops, 265 frames | 71.3% exact | **96.6% exact, 100% within one** |
+| Side view, 2,151 frames, 3,872 people | 36.6% exact | **82.9% exact, 97.0% within one** |
+| Wall-mounted meeting rooms, 813 frames, 1,061 people | 51.5% exact | **82.0% exact, 98.6% within one** |
+
+The Lepton 3.5 frames are from the SDT dataset of the Computer Vision Lab at
+TU Wien (C. Pramerdorfer, J. Strohmayer and M. Kampel, "SDT: A Synthetic
+Multi-Modal Dataset for Person Detection and Pose Classification", IEEE ICIP
+2020), used to train and evaluate Owl with the lab's permission.
 
 **It knows what is not a person.** The old rule counted warm regions, so a hand
 held up to the lens was a person and spread fingers were two. A stress test

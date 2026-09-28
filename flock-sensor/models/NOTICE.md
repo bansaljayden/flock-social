@@ -69,3 +69,13 @@ images were resized and converted for training; none are included here.
 zenodo.org/records/5574233, by Zhu, Voigt et al. Licensed under Creative
 Commons Attribution 4.0 (creativecommons.org/licenses/by/4.0). The images were
 converted for training; none are included here.
+
+## SDT (Synthetic Depth & Thermal) dataset
+
+zenodo.org/records/4124309, by the Computer Vision Lab, TU Wien. Used to train
+and evaluate the people counter with the permission of the authors, granted to
+Flock Social LLC on 28 September 2026; the images are not redistributed.
+
+C. Pramerdorfer, J. Strohmayer and M. Kampel, "SDT: A Synthetic Multi-Modal
+Dataset for Person Detection and Pose Classification", 2020 IEEE International
+Conference on Image Processing (ICIP), doi:10.1109/ICIP40778.2020.9191284.
