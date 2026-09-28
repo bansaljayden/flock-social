@@ -79,7 +79,9 @@ import {
 // One reconciled line's save form. Amount, date, and a note that is optional
 // and short. Saving posts through the admin route and then the parent refetches
 // the whole costs payload, so what the card shows afterwards is what the server
-// merged, never what this form thinks it sent.
+// merged, never what this form thinks it sent. There is one form per line the
+// server lists (Google Cloud off its invoice, Railway off its own estimated
+// bill), each dated on its own, and `readFrom` says where the figure is read.
 // The device's own date, not the UTC date: after 8 PM Eastern the UTC day has
 // already rolled, and the picker offered, and defaulted to, tomorrow.
 const localToday = () => {
@@ -113,13 +115,14 @@ function ReconciledLineForm({ line, onSaved, colors }) {
   const input = { padding: '8px 10px', borderRadius: '8px', border: '1px solid var(--border-default)', background: 'var(--bg-primary)', color: 'var(--text-primary)', fontSize: 'var(--t-meta)', minWidth: 0 };
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', padding: '8px 0' }}>
-      <span style={small}>{line.label} <span style={{ color: 'var(--text-tertiary)' }}>({line.source === 'dashboard' ? `saved ${line.asOf}` : 'from code, never recorded here'})</span></span>
+      <span style={small}>{line.label} <span style={{ color: 'var(--text-tertiary)' }}>({line.source === 'dashboard' ? `saved ${line.asOf}` : `from code as of ${line.asOf}, never recorded here`})</span></span>
+      {line.readFrom && <span style={{ ...small, color: 'var(--text-tertiary)' }}>Read it from {line.readFrom}.</span>}
       <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
         <label style={{ ...small, display: 'flex', alignItems: 'center', gap: '6px' }}>
           $
-          <input aria-label={`Paid amount for ${line.label}`} type="number" min="0" step="0.01" inputMode="decimal" value={usd} onChange={(e) => setUsd(e.target.value)} style={{ ...input, width: '110px' }} />
+          <input aria-label={`Monthly amount for ${line.label}`} type="number" min="0" step="0.01" inputMode="decimal" value={usd} onChange={(e) => setUsd(e.target.value)} style={{ ...input, width: '110px' }} />
         </label>
-        <input aria-label={`Invoice date for ${line.label}`} type="date" value={asOf} max={localToday()} onChange={(e) => setAsOf(e.target.value)} style={input} />
+        <input aria-label={`Date read for ${line.label}`} type="date" value={asOf} max={localToday()} onChange={(e) => setAsOf(e.target.value)} style={input} />
         <input aria-label={`Note for ${line.label}`} type="text" maxLength={500} placeholder="Note, optional" value={note} onChange={(e) => setNote(e.target.value)} style={{ ...input, flex: '1 1 160px' }} />
         <button className="hit44" type="button" disabled={busy || usd === ''} onClick={save} style={{ padding: '8px 14px', borderRadius: '8px', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: busy ? 'default' : 'pointer' }}>{busy ? 'Saving' : 'Save'}</button>
       </div>
@@ -774,7 +777,7 @@ function HubCosts({ h, colors }) {
     <div id={HUB_CARD.costs.id} style={hubStyle.card}>
       <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: navy, margin: '0 0 2px' }}>Costs</h3>
       <p style={hubStyle.sub}>
-        The infrastructure bills in backend/services/costModel.js, the reconciled Google invoice, and the expense list below, each bill counted once. The Costs tab has the meters behind them.
+        The infrastructure bills in backend/services/costModel.js, the reconciled Google Cloud and Railway bills, and the expense list below, each bill counted once. The Costs tab has the meters behind them.
       </p>
       {c.status === 'error' && <HubNotice status="error" reason={c.reason} />}
       <p style={{ ...hubStyle.kicker, marginTop: '4px' }}>By kind</p>
@@ -1115,7 +1118,7 @@ function HubExpenses({ h, colors, onChanged }) {
           <button className="hit44" type="button" onClick={() => setEditing('new')} style={{ ...hubStyle.textButton, flexShrink: 0 }}>Add a bill</button>
         )}
       </div>
-      {e.status === 'error' && <HubNotice status="error" reason="The list could not be read. The costs above count the code lines and the reconciled invoice only." />}
+      {e.status === 'error' && <HubNotice status="error" reason="The list could not be read. The costs above count the code lines and the reconciled bills only." />}
       {editing === 'new' && (
         <HubExpenseForm kinds={kinds} cadences={cadences} codeLines={codeLines} colors={colors} onDone={done} onCancel={() => setEditing(null)} />
       )}
@@ -2513,6 +2516,10 @@ export default function RevenueScreen({
             for (const e of (fixed.monthly || [])) fixedById[e.id] = { ...e, period: '/mo' };
             for (const e of (fixed.annual || [])) fixedById[e.id] = { ...e, period: '/yr' };
             for (const e of (fixed.oneTime || [])) fixedById[e.id] = { ...e, period: ', once' };
+            // Railway's row joins the reconciled block rather than the fixed
+            // one: its bill is the plan fee plus usage past the credit, so the
+            // figure is the one recorded on the Reconciled card above.
+            const reconciledById = Object.fromEntries((d.reconciled?.lines || []).map((l) => [l.id, l]));
 
             const depLine = { fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '2px 0 0', lineHeight: 1.4 };
             const groupLabel = { fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', margin: '2px 0 0 2px', textTransform: 'uppercase', letterSpacing: '0.5px' };
@@ -2528,6 +2535,10 @@ export default function RevenueScreen({
               if (e.fixedId && fixedById[e.fixedId]) {
                 const f = fixedById[e.fixedId];
                 return Number.isFinite(f.usd) ? `${money(f.usd, 0)}${f.period}` : 'No figure';
+              }
+              if (e.reconciledId && reconciledById[e.reconciledId]) {
+                const r = reconciledById[e.reconciledId];
+                return Number.isFinite(r.usdPerMonth) ? `${money(r.usdPerMonth)}/mo` : 'No figure';
               }
               if (e.unknownCost) return 'Unknown';
               const o = e.observedLineId ? obsById[e.observedLineId] : null;
@@ -2607,7 +2618,7 @@ export default function RevenueScreen({
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px' }}>
                     <div>
                       <h3 style={h3}>What this actually costs</h3>
-                      <p style={sub}>Fixed bills plus the metered spend a human has reconciled against a vendor invoice.</p>
+                      <p style={sub}>Fixed bills plus the usage bills a human has read off each vendor's own billing page.</p>
                     </div>
                     <button className="hit44" disabled={costsLoading} onClick={() => fetchCosts()}
                       style={{ border: 'none', background: 'transparent', cursor: costsLoading ? 'default' : 'pointer', padding: '4px', flexShrink: 0 }}>
@@ -2620,15 +2631,15 @@ export default function RevenueScreen({
                       <p style={big}>{moneyOr(allInMonthly, 'Not measured', 0)}</p>
                       <p style={{ ...sub, margin: '3px 0 0' }}>
                         {ledger
-                          ? `The code's fixed bills, the reconciled invoice, and ${ledger.activeRows} ${ledger.activeRows === 1 ? 'bill' : 'bills'} from the expense list, each counted once.`
-                          : `${moneyOr(fixed.effectiveMonthlyUsd, 'no fixed total', 0)} of fixed bills, plus ${moneyOr(reconciledTotal, 'nothing', 0)} of metered vendor spend. ${d.expenses && d.expenses.readError ? d.expenses.readError : 'The expense list was not read.'}`}
+                          ? `The code's fixed bills, the reconciled bills, and ${ledger.activeRows} ${ledger.activeRows === 1 ? 'bill' : 'bills'} from the expense list, each counted once.`
+                          : `${moneyOr(fixed.effectiveMonthlyUsd, 'no fixed total', 0)} of fixed bills, plus ${moneyOr(reconciledTotal, 'nothing', 0)} of reconciled usage bills. ${d.expenses && d.expenses.readError ? d.expenses.readError : 'The expense list was not read.'}`}
                       </p>
                     </div>
                     <div>
                       <p style={kicker}>Reconciled</p>
                       <p style={big}>{moneyOr(reconciledTotal, 'None on file', 0)}</p>
                       <p style={{ ...sub, margin: '3px 0 0' }}>
-                        Read off vendor billing pages by hand{d.reconciled?.asOf ? ` on ${d.reconciled.asOf}` : ''}. Nothing in the app can verify it, so it is only as current as that date.
+                        Read off each vendor's own bill by hand{d.reconciled?.oldestAsOf ? `, the oldest figure on ${d.reconciled.oldestAsOf}` : ''}. Nothing in the app can verify it, so the total is only as current as its oldest line.
                       </p>
                     </div>
                   </div>
@@ -2638,10 +2649,12 @@ export default function RevenueScreen({
                       Each line below saves to cost_reconciled through the
                       admin route; the panel, the cost heartbeat and the DECA
                       financial model all read the saved entry. A line marked
-                      "from code" has never been recorded here. */}
+                      "from code" has never been recorded here. Railway joined
+                      Google Cloud here on 2026-09-28, recorded from the
+                      estimated bill `railway usage` prints for the period. */}
                   {d.reconciled && Array.isArray(d.reconciled.lines) && (
                     <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid var(--border-default)' }}>
-                      <p style={kicker}>Record a paid invoice</p>
+                      <p style={kicker}>Record a bill</p>
                       {d.reconciled.lines.map((l) => (
                         <ReconciledLineForm key={l.id} line={l} colors={colors} onSaved={() => fetchCosts()} />
                       ))}
@@ -2674,7 +2687,7 @@ export default function RevenueScreen({
                           <div>
                             <p style={kicker}>Serving venues</p>
                             <p style={big}>{moneyOr(infra, 'Not measured', 0)}</p>
-                            <p style={{ ...sub, margin: '3px 0 0' }}>Hosting, data vendors and the reconciled Google bill. This is the number to quote as what it costs to serve.</p>
+                            <p style={{ ...sub, margin: '3px 0 0' }}>Hosting, data vendors and the reconciled Google Cloud and Railway bills. This is the number to quote as what it costs to serve.</p>
                           </div>
                           <div>
                             <p style={kicker}>Development tooling</p>
@@ -2793,7 +2806,7 @@ export default function RevenueScreen({
                 <div style={card}>
                   <h3 style={h3}>Fixed, whether anyone uses it or not</h3>
                   <p style={sub}>
-                    Maintained by hand in backend/services/costModel.js. Every line below carries the date a human last checked it and whether the figure came off an invoice or a pricing page. Update the file when a bill changes. Bills the code does not carry are on the expense list on the Overview tab.
+                    Maintained by hand in backend/services/costModel.js. Every line below carries the date a human last checked it and whether the figure came off an invoice or a pricing page. Update the file when a bill changes. Railway and Google Cloud bill by usage, so they sit on the reconciled card above rather than here. Bills the code does not carry are on the expense list on the Overview tab.
                   </p>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '4px' }}>
                     <div>
@@ -3451,10 +3464,14 @@ export default function RevenueScreen({
                 const monthlyTotal = fixed.monthlyUsd;
                 const annualTotal = fixed.annualUsd;
                 // The burn is the same figure the Costs tab calls all in: the
-                // code's bills, the reconciled invoice and the expense list,
+                // code's bills, the reconciled bills and the expense list,
                 // each counted once. The list below stays the code's own lines.
+                // Without the list, the fallback still adds the reconciled
+                // lines, the same way the Costs tab's does: Railway and Google
+                // Cloud live there, and leaving them out would drop both.
                 const ledger = costsData.expenses && costsData.expenses.status === 'ok' ? costsData.expenses : null;
-                const effectiveMonthly = ledger ? ledger.burnMonthlyUsd : fixed.effectiveMonthlyUsd;
+                const reconciledMonthly = (costsData.reconciled?.lines || []).reduce((s2, l) => s2 + (Number.isFinite(l.usdPerMonth) ? l.usdPerMonth : 0), 0);
+                const effectiveMonthly = ledger ? ledger.burnMonthlyUsd : fixed.effectiveMonthlyUsd + reconciledMonthly;
                 const subsToBreakEven = effectiveMonthly > 0 ? Math.ceil(effectiveMonthly / PRO_MONTHLY_USD) : 0;
                 const usd0 = (n) => `$${Math.round(n).toLocaleString()}`;
                 const row = (name, amount, sub) => (
@@ -3473,8 +3490,8 @@ export default function RevenueScreen({
                         <p style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: colors.navy, margin: '2px 0 0', lineHeight: 1.1 }}>{usd0(effectiveMonthly)}</p>
                         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '3px 0 0' }}>
                           {ledger
-                            ? 'Every recurring bill at its monthly rate: the code’s fixed bills, the reconciled invoice and the expense list.'
-                            : `${usd0(monthlyTotal)}/mo recurring plus ${usd0(annualTotal)}/yr spread over twelve months. The expense list could not be read, so its bills are not in this.`}
+                            ? 'Every recurring bill at its monthly rate: the code’s fixed bills, the reconciled bills and the expense list.'
+                            : `${usd0(monthlyTotal)}/mo recurring plus ${usd0(annualTotal)}/yr spread over twelve months, plus ${usd0(reconciledMonthly)}/mo of reconciled usage bills. The expense list could not be read, so its bills are not in this.`}
                         </p>
                       </div>
                       <div>
@@ -3512,7 +3529,7 @@ export default function RevenueScreen({
                       </p>
                     )}
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '7px 0 0', lineHeight: 1.4 }}>
-                      Vendors on free tiers, and what each meter has actually spent, are on the Costs tab. Bills the code does not carry, such as the tools the app is built with, are on the Overview tab&apos;s expense list and in the burn above.
+                      Vendors on free tiers, and what each meter has actually spent, are on the Costs tab. Railway and Google Cloud bill by usage, so they are recorded on the Costs tab&apos;s Reconciled card rather than listed here, and are in the burn above. Bills the code does not carry, such as the tools the app is built with, are on the Overview tab&apos;s expense list and in the burn above.
                     </p>
                   </div>
                   </>

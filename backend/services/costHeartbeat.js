@@ -5,10 +5,12 @@
 // expense picture current, constantly. Two things on that picture can go
 // stale or go wrong silently, and each is checked here once a day.
 //
-//   1. The reconciled line in services/costModel.js is hand-entered from an
-//      invoice. It stood at a mid-month snapshot for twelve days before anyone
-//      noticed, and the panel said so only in a date nobody read. If it is
-//      older than RECONCILED_STALE_DAYS, one email asks for the new invoice.
+//   1. The reconciled lines in services/costModel.js (Google Cloud off an
+//      invoice, Railway off its own estimated bill) are hand-entered. The
+//      Google one stood at a mid-month snapshot for twelve days before anyone
+//      noticed, and the panel said so only in a date nobody read. If any line
+//      is older than RECONCILED_STALE_DAYS, one email names every stale line
+//      and where its next figure comes from.
 //
 //   2. The photo budget in services/photoStore.js is the largest line on the
 //      Google bill and it is a hard monthly ceiling. Reaching it does not
@@ -56,24 +58,47 @@ function daysSince(isoDate, now = new Date()) {
 
 // The two checks, split out so a test can drive each with plain inputs and
 // no clock or database.
+//
+// THE RECONCILED CHECK JUDGES EVERY LINE ON ITS OWN DATE (2026-09-28). The
+// block holds two vendors read on different days, and the block's own `asOf`
+// is the NEWEST of their dates. Judging that one date would let a Railway
+// figure recorded this week hide a Google invoice months old, so each line is
+// aged separately. They share one ledger key, so however many lines are stale
+// the owner gets at most one email a day, and it names all of them. A block
+// with no lines, or a line with no readable date, is stale, never current.
 function reconciledFinding(reconciled, now = new Date()) {
-  const asOf = reconciled && reconciled.asOf;
-  const age = daysSince(asOf, now);
-  if (age !== null && age < RECONCILED_STALE_DAYS) return null;
+  const lines = reconciled && Array.isArray(reconciled.lines) ? reconciled.lines : [];
+  const stale = [];
+  for (const l of lines) {
+    const line = l && typeof l === 'object' ? l : {};
+    const age = daysSince(line.asOf, now);
+    if (age === null || age >= RECONCILED_STALE_DAYS) stale.push({ line, age });
+  }
+  if (lines.length > 0 && stale.length === 0) return null;
+
+  const named = [];
+  if (lines.length === 0) {
+    named.push('The reconciled block in services/costModel.js has no lines, so there is no readable date to judge.');
+  }
+  for (const { line, age } of stale) {
+    const name = line.label || line.id || 'unnamed';
+    named.push(age === null
+      ? `The reconciled ${name} line carries no readable date.`
+      : `The reconciled ${name} line was last read ${age} days ago, on ${line.asOf}.`);
+    if (line.readFrom) named.push(`  Its next figure comes from ${line.readFrom}.`);
+  }
   return {
     key: 'cost_reconciled_stale',
-    subject: 'Flock cost panel needs a fresh invoice figure',
+    subject: 'Flock cost panel needs a fresh bill figure',
     lines: [
-      age === null
-        ? 'The reconciled Google Cloud line in services/costModel.js carries no readable date.'
-        : `The reconciled Google Cloud line in services/costModel.js was last read from an invoice ${age} days ago, on ${asOf}.`,
+      ...named,
       '',
-      'Open the Google Cloud billing page, read the latest paid invoice, then open',
-      'the admin dashboard, Revenue, and type the amount and the invoice date into',
-      'the Reconciled card. The cost panel, this heartbeat and the DECA financial',
-      'model all read that entry, so nothing in code needs editing.',
+      'Read each figure from the place named above, then open the admin',
+      'dashboard, Revenue, the Costs tab, and type the amount and the date into',
+      'that line on the Reconciled card. The cost panel, this heartbeat and the',
+      'DECA financial model all read that entry, so nothing in code needs editing.',
       '',
-      `This alert repeats at most once a day while the date is older than ${RECONCILED_STALE_DAYS} days.`,
+      `This alert repeats at most once a day while any line is older than ${RECONCILED_STALE_DAYS} days.`,
     ],
   };
 }

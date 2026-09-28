@@ -4,7 +4,9 @@
  * The reconciled Google line used to be a constant in services/costModel.js,
  * so recording a bill meant editing code; on 2026-09-01 it became a form on
  * the Revenue screen's Reconciled card, saved through the admin route and
- * merged over the code figure. adminCostsRendered.test.js pins the rest of
+ * merged over the code figure. Railway joined it on 2026-09-28, recorded from
+ * the estimated bill `railway usage` prints, so the card holds one form per
+ * line and each line keeps its own date. adminCostsRendered.test.js pins the rest of
  * that panel by reading the source, so this does the same for the form. Three
  * things it must keep true:
  *   1. The form is rendered per reconciled line, and only when the payload
@@ -31,8 +33,36 @@ describe('the paid-invoice form on the Reconciled card', () => {
     expect(screen).toContain('<ReconciledLineForm key={l.id} line={l} colors={colors} onSaved={() => fetchCosts()} />');
   });
 
-  test('says which lines were recorded here and which still come from code', () => {
-    expect(screen).toContain("line.source === 'dashboard' ? `saved ${line.asOf}` : 'from code, never recorded here'");
+  test('says which lines were recorded here and which still come from code, each with its own date', () => {
+    expect(screen).toContain("line.source === 'dashboard' ? `saved ${line.asOf}` : `from code as of ${line.asOf}, never recorded here`");
+  });
+
+  test('each line says where its figure is read, and the labels fit an estimated bill as well as an invoice', () => {
+    const form = screen.slice(screen.indexOf('function ReconciledLineForm('), screen.indexOf('// THE MONEY HUB'));
+    expect(form).toContain('{line.readFrom && <span');
+    expect(form).toContain('Read it from {line.readFrom}.');
+    expect(form).toContain('aria-label={`Monthly amount for ${line.label}`}');
+    expect(form).toContain('aria-label={`Date read for ${line.label}`}');
+    expect(form).not.toContain('Paid amount for');
+    expect(form).not.toContain('Invoice date for');
+  });
+
+  test('the card is only as current as its oldest line, not its newest', () => {
+    // Two vendors read on different days: quoting the newest date would let a
+    // fresh Railway entry vouch for a stale Google figure.
+    expect(screen).toContain('d.reconciled?.oldestAsOf');
+    expect(screen).toContain('so the total is only as current as its oldest line.');
+    expect(screen).not.toContain('d.reconciled?.asOf ?');
+  });
+
+  test('the Railway inventory row resolves against the reconciled block, since it is no longer a fixed line', () => {
+    expect(screen).toContain('const reconciledById = Object.fromEntries((d.reconciled?.lines || []).map((l) => [l.id, l]));');
+    expect(screen).toContain('if (e.reconciledId && reconciledById[e.reconciledId]) {');
+  });
+
+  test('without the expense list, the burn still adds the reconciled lines, so Railway is not dropped', () => {
+    expect(screen).toContain('const effectiveMonthly = ledger ? ledger.burnMonthlyUsd : fixed.effectiveMonthlyUsd + reconciledMonthly;');
+    expect(screen).toContain('? ledger.burnMonthlyUsd\n              : (Number.isFinite(fixed.effectiveMonthlyUsd) ? fixed.effectiveMonthlyUsd + reconciledTotal : null);');
   });
 
   test('a failed read of saved entries is named, not silently shown as the code figure', () => {

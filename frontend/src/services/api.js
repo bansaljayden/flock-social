@@ -2386,8 +2386,9 @@ export async function getAdminCosts() {
   return request('/api/admin/costs');
 }
 
-// Record a paid vendor invoice against one reconciled cost line, from the
-// admin dashboard, so the figure never has to be edited in code again.
+// Record a vendor's bill against one reconciled cost line (Google Cloud's paid
+// invoice, Railway's estimated bill for the period), from the admin dashboard,
+// so the figure never has to be edited in code again.
 // Server validates the id against costModel.RECONCILED, the amount, and the
 // date; the response carries the merged block the panel then re-renders.
 export async function saveAdminReconciled({ id, usdPerMonth, asOf, note }) {

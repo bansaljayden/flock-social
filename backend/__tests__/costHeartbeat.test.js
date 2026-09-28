@@ -3,12 +3,15 @@
 // THE COST HEARTBEAT WATCHES THE EXPENSE PICTURE, NOT A JOB.
 //
 // Two things on the admin cost panel can go stale or go wrong silently. The
-// reconciled Google line is hand-entered from an invoice, and it sat at a
-// mid-month snapshot for twelve days before anybody noticed (2026-09-01). The
-// photo budget is a hard monthly ceiling, and reaching it degrades quietly:
-// new venues lose their picture until the 1st. The contract, pinned here:
-//   1. A reconciled date inside the window means silence. Older than the
-//      window, or unreadable, means a finding.
+// reconciled lines (Google Cloud off an invoice, Railway off its own estimated
+// bill) are hand-entered, and the Google one sat at a mid-month snapshot for
+// twelve days before anybody noticed (2026-09-01). The photo budget is a hard
+// monthly ceiling, and reaching it degrades quietly: new venues lose their
+// picture until the 1st. The contract, pinned here:
+//   1. Every reconciled line is judged on its own date. All inside the window
+//      means silence. Any line older than the window, or unreadable, means one
+//      finding naming each stale line, and a fresh line never hides a stale
+//      one.
 //   2. Photo spend under the warning fraction means silence. At or over it
 //      means a finding, and a spent budget is worded as spent, not nearly.
 //   3. Each finding mails at most ONCE per calendar day, across restarts,
@@ -75,30 +78,89 @@ function reset() {
   sendResult = null;
 }
 
+// The code's own reconciled dates, set per line for a sweep and put back
+// afterwards. The sweep reads the merged block, and with no saved rows in this
+// stubbed database every line reads its code date. A string sets every line;
+// an object sets the lines it names.
+async function withCodeDates(dates, fn) {
+  const saved = costModel.RECONCILED.lines.map((l) => l.asOf);
+  for (const l of costModel.RECONCILED.lines) {
+    if (typeof dates === 'string') l.asOf = dates;
+    else if (Object.prototype.hasOwnProperty.call(dates, l.id)) l.asOf = dates[l.id];
+  }
+  try {
+    return await fn();
+  } finally {
+    costModel.RECONCILED.lines.forEach((l, i) => { l.asOf = saved[i]; });
+  }
+}
+const TODAY = () => new Date().toISOString().slice(0, 10);
+
+// Two lines shaped like readReconciled's, for the pure checks.
+const block = (googleAsOf, railwayAsOf) => ({
+  lines: [
+    { id: 'google-cloud', label: 'Google Cloud', asOf: googleAsOf, readFrom: 'the latest paid invoice on the Google Cloud billing page' },
+    { id: 'railway', label: 'Railway', asOf: railwayAsOf, readFrom: 'the estimated bill `railway usage` prints for the current billing period' },
+  ],
+});
+
 // ---------------------------------------------------------------------------
 // 1. The reconciled-date finding, pure.
 // ---------------------------------------------------------------------------
-test('a reconciled date inside the window is silent', () => {
+test('reconciled lines all inside the window are silent', () => {
   const now = new Date('2026-09-10T12:00:00Z');
-  assert.equal(hb.reconciledFinding({ asOf: '2026-09-01' }, now), null);
-  assert.equal(hb.reconciledFinding({ asOf: '2026-08-07' }, now), null, '34 days is still inside a 35 day window');
+  assert.equal(hb.reconciledFinding(block('2026-09-01', '2026-09-10'), now), null);
+  assert.equal(hb.reconciledFinding(block('2026-08-07', '2026-08-07'), now), null, '34 days is still inside a 35 day window');
 });
 
-test('a reconciled date at or past the window is a finding', () => {
+test('a reconciled line at or past the window is a finding that names it', () => {
   const now = new Date('2026-09-10T12:00:00Z');
-  const f = hb.reconciledFinding({ asOf: '2026-08-06' }, now);
+  const f = hb.reconciledFinding(block('2026-08-06', '2026-09-09'), now);
   assert.ok(f, '35 days must produce a finding');
   assert.equal(f.key, 'cost_reconciled_stale');
-  assert.ok(f.lines.join('\n').includes('35 days ago'), 'the email names the age');
-  assert.ok(f.lines.join('\n').includes('2026-08-06'), 'the email names the date it is judging');
+  const text = f.lines.join('\n');
+  assert.ok(text.includes('Google Cloud line was last read 35 days ago'), 'the email names the line and its age');
+  assert.ok(text.includes('2026-08-06'), 'the email names the date it is judging');
+  assert.ok(text.includes('latest paid invoice on the Google Cloud billing page'), 'and where the next figure comes from');
+  assert.ok(!text.includes('Railway line'), 'a line inside the window is not named');
+});
+
+test('a fresh line never hides a stale one', () => {
+  // The block's own asOf is the newest line date. Judging that one date let a
+  // Railway figure recorded this week vouch for a Google invoice months old.
+  const now = new Date('2026-12-01T12:00:00Z');
+  const b = { asOf: '2026-11-30', ...block('2026-09-01', '2026-11-30') };
+  const f = hb.reconciledFinding(b, now);
+  assert.ok(f, 'the Google line is 91 days old and must be reported');
+  assert.ok(f.lines.join('\n').includes('Google Cloud line was last read 91 days ago, on 2026-09-01'));
+  // And the other way round: an old Railway line under a fresh Google one.
+  const g = hb.reconciledFinding(block('2026-11-30', '2026-09-28'), now);
+  assert.ok(g, 'the Railway line is 64 days old and must be reported');
+  const text = g.lines.join('\n');
+  assert.ok(text.includes('Railway line was last read 64 days ago, on 2026-09-28'));
+  assert.ok(text.includes('`railway usage`'), 'the email says where the Railway figure is read');
+  assert.ok(!text.includes('Google Cloud line'));
+});
+
+test('two stale lines make one finding, under one key, naming both', () => {
+  const now = new Date('2026-12-01T12:00:00Z');
+  const f = hb.reconciledFinding(block('2026-09-01', '2026-09-28'), now);
+  assert.equal(f.key, 'cost_reconciled_stale');
+  const text = f.lines.join('\n');
+  assert.ok(text.includes('Google Cloud line was last read 91 days ago'));
+  assert.ok(text.includes('Railway line was last read 64 days ago'));
 });
 
 test('an unreadable reconciled date is stale, never current', () => {
   const now = new Date('2026-09-10T12:00:00Z');
-  for (const bad of [{}, { asOf: null }, { asOf: 'yesterday' }, null]) {
+  for (const bad of [
+    {}, null, { asOf: '2026-09-09' }, { lines: [] }, { lines: 'x' },
+    block(null, '2026-09-09'), block('yesterday', '2026-09-09'), block('2026-09-09', undefined),
+    { lines: [null] },
+  ]) {
     const f = hb.reconciledFinding(bad, now);
     assert.ok(f, `expected a finding for ${JSON.stringify(bad)}`);
-    assert.ok(f.lines.join('\n').includes('no readable date'));
+    assert.ok(f.lines.join('\n').includes('no readable date'), `no readable date not said for ${JSON.stringify(bad)}`);
   }
 });
 
@@ -107,6 +169,12 @@ test('the shipped RECONCILED block is judged by the same function the sweep uses
   // well-formed finding, never throw. This is the seam the sweep relies on.
   const f = hb.reconciledFinding(costModel.RECONCILED);
   assert.ok(f === null || (f.key === 'cost_reconciled_stale' && Array.isArray(f.lines)));
+  // On the day after the newest code date, a line is judged by its own date:
+  // silent while the oldest is inside the window, a finding once it is not.
+  const dates = costModel.RECONCILED.lines.map((l) => l.asOf).sort();
+  const at = (ymd, days) => new Date(Date.parse(`${ymd}T12:00:00Z`) + days * 86400000);
+  assert.equal(hb.reconciledFinding(costModel.RECONCILED, at(dates[0], hb.RECONCILED_STALE_DAYS - 1)), null);
+  assert.ok(hb.reconciledFinding(costModel.RECONCILED, at(dates[0], hb.RECONCILED_STALE_DAYS)));
 });
 
 // ---------------------------------------------------------------------------
@@ -143,57 +211,70 @@ test('an unreadable photo status is silent rather than a false alarm', () => {
 // ---------------------------------------------------------------------------
 // 3. Once per day per finding, across restarts, with release on failure.
 // ---------------------------------------------------------------------------
-test('a stale invoice mails exactly once per day even across a restart', async () => {
+test('a stale line mails exactly once per day even across a restart', async () => {
   reset();
-  const saved = costModel.RECONCILED.asOf;
-  costModel.RECONCILED.asOf = '2026-01-01';
   photoStore.photoSpendStatus = async () => ({ monthUsed: 0, monthUsd: 0, limits });
-  try {
+  await withCodeDates('2026-01-01', async () => {
     await hb.runCostHeartbeat();
     await hb.runCostHeartbeat();
     // A "restart" forgets nothing here because the ledger is the database,
     // which is the whole point of putting it there.
     await hb.runCostHeartbeat();
-    assert.equal(sent.length, 1, 'one email for one stale day, not one per sweep');
+    assert.equal(sent.length, 1, 'one email for one stale day, not one per sweep, however many lines are stale');
     assert.equal(sent[0].to, 'jayden@example.com');
-    assert.ok(/fresh invoice/.test(sent[0].subject));
-  } finally {
-    costModel.RECONCILED.asOf = saved;
-  }
+    assert.ok(/fresh bill figure/.test(sent[0].subject));
+    for (const l of costModel.RECONCILED.lines) {
+      assert.ok(sent[0].text.includes(`${l.label} line was last read`), `the email does not name ${l.id}`);
+    }
+  });
+});
+
+test('the sweep reports only the stale line when the other is fresh', async () => {
+  // Railway recorded today, Google Cloud left months old: the fresh Railway
+  // date must not vouch for the Google one, and the Railway line is not named.
+  reset();
+  photoStore.photoSpendStatus = async () => ({ monthUsed: 0, monthUsd: 0, limits });
+  await withCodeDates({ 'google-cloud': '2026-01-01', railway: TODAY() }, async () => {
+    await hb.runCostHeartbeat();
+    assert.equal(sent.length, 1);
+    const google = costModel.RECONCILED.lines.find((l) => l.id === 'google-cloud');
+    const railway = costModel.RECONCILED.lines.find((l) => l.id === 'railway');
+    assert.ok(sent[0].text.includes(`${google.label} line was last read`));
+    assert.ok(!sent[0].text.includes(`${railway.label} line`));
+  });
+  reset();
+  await withCodeDates({ 'google-cloud': TODAY(), railway: '2026-01-01' }, async () => {
+    await hb.runCostHeartbeat();
+    assert.equal(sent.length, 1);
+    assert.ok(sent[0].text.includes('Railway (backend and Postgres) line was last read'));
+    assert.ok(sent[0].text.includes('railway usage'), 'the email says where the Railway figure is read');
+  });
 });
 
 test('the two findings dedupe independently and both can mail on the same day', async () => {
   reset();
-  const saved = costModel.RECONCILED.asOf;
-  costModel.RECONCILED.asOf = '2026-01-01';
   photoStore.photoSpendStatus = async () => ({ monthUsed: 4571, monthUsd: 25, limits });
-  try {
+  await withCodeDates('2026-01-01', async () => {
     await hb.runCostHeartbeat();
     await hb.runCostHeartbeat();
     assert.equal(sent.length, 2, 'one email per finding, then silence');
     const subjects = sent.map((m) => m.subject).sort();
-    assert.ok(subjects.some((s) => /fresh invoice/.test(s)));
+    assert.ok(subjects.some((s) => /fresh bill figure/.test(s)));
     assert.ok(subjects.some((s) => /photo budget/.test(s)));
-  } finally {
-    costModel.RECONCILED.asOf = saved;
-  }
+  });
 });
 
 test('a failed send releases the claim so the next sweep can try again', async () => {
   reset();
-  const saved = costModel.RECONCILED.asOf;
-  costModel.RECONCILED.asOf = '2026-01-01';
   photoStore.photoSpendStatus = async () => ({ monthUsed: 0, monthUsd: 0, limits });
-  try {
+  await withCodeDates('2026-01-01', async () => {
     sendError = new Error('provider down');
     await hb.runCostHeartbeat();
     assert.equal(sent.length, 0);
     sendError = null;
     await hb.runCostHeartbeat();
     assert.equal(sent.length, 1, 'the claim was released, so the retry mailed');
-  } finally {
-    costModel.RECONCILED.asOf = saved;
-  }
+  });
 });
 
 test('a send that RESOLVES as failed releases the claim and is not logged as mailed', async () => {
@@ -201,8 +282,8 @@ test('a send that RESOLVES as failed releases the claim and is not logged as mai
   // Resend answers 429 used to keep the day's claim and log "Alert mailed.",
   // so the three sweeps after it stayed silent and the warning came a day
   // late, if the budget had not run out by then.
-  const saved = costModel.RECONCILED.asOf;
-  costModel.RECONCILED.asOf = new Date().toISOString().slice(0, 10);
+  const saved = costModel.RECONCILED.lines.map((l) => l.asOf);
+  for (const l of costModel.RECONCILED.lines) l.asOf = TODAY();
   photoStore.photoSpendStatus = async () => ({ monthUsed: 4200, monthUsd: 23, limits });
   const realError = console.error;
   // What a delivered alert logs through services/opsAlert.js is "Alert sent by
@@ -244,21 +325,17 @@ test('a send that RESOLVES as failed releases the claim and is not logged as mai
     }
   } finally {
     console.error = realError;
-    costModel.RECONCILED.asOf = saved;
+    costModel.RECONCILED.lines.forEach((l, i) => { l.asOf = saved[i]; });
   }
 });
 
 test('a healthy picture is silent', async () => {
   reset();
-  const saved = costModel.RECONCILED.asOf;
-  costModel.RECONCILED.asOf = new Date().toISOString().slice(0, 10);
   photoStore.photoSpendStatus = async () => ({ monthUsed: 10, monthUsd: 0, limits });
-  try {
+  await withCodeDates(TODAY(), async () => {
     await hb.runCostHeartbeat();
     assert.equal(sent.length, 0);
-  } finally {
-    costModel.RECONCILED.asOf = saved;
-  }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -266,30 +343,28 @@ test('a healthy picture is silent', async () => {
 // ---------------------------------------------------------------------------
 test('a database failure inside the sweep is caught', async () => {
   reset();
-  const saved = costModel.RECONCILED.asOf;
-  costModel.RECONCILED.asOf = '2026-01-01';
   photoStore.photoSpendStatus = async () => ({ monthUsed: 0, monthUsd: 0, limits });
   queryError = new Error('connection terminated');
   try {
-    await assert.doesNotReject(() => hb.runCostHeartbeat());
-    assert.equal(sent.length, 0);
+    await withCodeDates('2026-01-01', async () => {
+      await assert.doesNotReject(() => hb.runCostHeartbeat());
+      assert.equal(sent.length, 0);
+    });
   } finally {
-    costModel.RECONCILED.asOf = saved;
     queryError = null;
   }
 });
 
 test('the kill switch shared with the collection heartbeat silences it', async () => {
   reset();
-  const saved = costModel.RECONCILED.asOf;
-  costModel.RECONCILED.asOf = '2026-01-01';
   process.env.HEARTBEAT_DISABLED = 'true';
   try {
-    assert.equal(hb.costHeartbeatEnabled(), false);
-    await hb.runCostHeartbeat();
-    assert.equal(sent.length, 0);
+    await withCodeDates('2026-01-01', async () => {
+      assert.equal(hb.costHeartbeatEnabled(), false);
+      await hb.runCostHeartbeat();
+      assert.equal(sent.length, 0);
+    });
   } finally {
     delete process.env.HEARTBEAT_DISABLED;
-    costModel.RECONCILED.asOf = saved;
   }
 });

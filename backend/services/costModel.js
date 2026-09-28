@@ -44,6 +44,9 @@
 //     reads them from here instead of holding a second copy. Tooling bills
 //     are not in this file: they are entered on the admin dashboard into
 //     business_expenses (migration 080), because this file is published.
+//     Railway has since left FIXED_MONTHLY for RECONCILED (2026-09-28): the
+//     $20 is only the plan fee, usage past the included credit is billed on
+//     top, and only Railway's own meter knows that part.
 //
 // ONE CORRECTION THIS FILE MAKES, AND IT IS EXPENSIVE. Every venue-shaped
 // Places call in this repo — ten of them, across routes/venueSearch.js,
@@ -348,18 +351,15 @@ const RATES = {
 // 'tooling', entered from the admin dashboard, and services/moneyHub.js adds
 // them to these lines. Every line below is infrastructure, and
 // __tests__/costModel.test.js fails if a 'tooling' line is added back.
+//
+// RAILWAY IS NOT ON THIS LIST (2026-09-28). It sat here at $20.00, the Pro
+// plan's fee, but that fee only buys $20 of usage credit and everything past
+// the credit is billed on top, so the real bill ran higher than any flat line
+// could say. It is a RECONCILED line now, read off Railway's own estimate and
+// updated from the dashboard like the Google Cloud one. Putting a Railway
+// figure back here as well would count the plan fee twice.
 
 const FIXED_MONTHLY = [
-  {
-    id: 'railway',
-    label: 'Railway (backend and Postgres)',
-    usd: 20.00,
-    verified: true,
-    kind: 'infrastructure',
-    checked: '2026-08-20',
-    source: 'https://railway.com/pricing',
-    note: 'Matches Railway Pro at $20/month, which includes $20 of usage credits. Compute and volume draw down that credit before anything is billed on top.',
-  },
   {
     id: 'besttime-subscription',
     label: 'BestTime.app Pro, Package 100',
@@ -435,11 +435,14 @@ const ONE_TIME = [
 // cost_reconciled, one row per line id, written from the admin dashboard, so
 // recording a paid invoice no longer means editing this file and deploying.
 // This merges the rows over the constants: a line with a row reads the row,
-// a line without one reads the constant, and every line says which. The block
-// date is the newest date across the lines that were actually used, so a fresh
-// dashboard entry moves it and a stale constant cannot hide behind a newer row
-// for a different vendor. A database failure returns the constants, marked, so
-// a panel or a heartbeat degrades to the code figure rather than to nothing.
+// a line without one reads the constant, and every line says which. Every
+// line carries its own date, because two vendors are read on two different
+// days. The block carries the newest of them as `asOf` and the oldest as
+// `oldestAsOf`, and anything judging freshness (the cost heartbeat, the
+// panel's "only as current as" sentence) reads the lines or the oldest date,
+// so a fresh Railway entry can never make a stale Google figure look current.
+// A database failure returns the constants, marked, so a panel or a heartbeat
+// degrades to the code figure rather than to nothing.
 async function readReconciled(pool) {
   const byId = new Map();
   let readError = null;
@@ -473,14 +476,16 @@ async function readReconciled(pool) {
         // figure recorded here, and a money panel showed two contradictory
         // amounts for the same line.
         note: row.note || null,
+        readFrom: l.readFrom,
         source: 'dashboard',
       };
     }
-    return { id: l.id, label: l.label, usdPerMonth: l.usdPerMonth, asOf: RECONCILED.asOf, note: l.note, source: 'code' };
+    return { id: l.id, label: l.label, usdPerMonth: l.usdPerMonth, asOf: l.asOf, note: l.note, readFrom: l.readFrom, source: 'code' };
   });
-  const asOf = lines.map((l) => l.asOf).filter((d) => typeof d === 'string').sort().pop() || RECONCILED.asOf;
+  const dates = lines.map((l) => l.asOf).filter((d) => typeof d === 'string').sort();
   return {
-    asOf,
+    asOf: dates.length > 0 ? dates[dates.length - 1] : null,
+    oldestAsOf: dates.length > 0 ? dates[0] : null,
     lines,
     note: RECONCILED.note,
     editableIds: RECONCILED.lines.map((l) => l.id),
@@ -559,19 +564,40 @@ const WATCHLIST = [
 // RECONCILED — what a human has actually seen on a bill.
 // ---------------------------------------------------------------------------
 // This is the ONLY billed-money figure in the file. Everything else on the
-// dashboard is either an estimate from a meter or an arithmetic ceiling. Update
-// `asOf` and the numbers together, from the vendor's billing page, by hand.
+// dashboard is either an estimate from a meter or an arithmetic ceiling.
+//
+// EACH LINE CARRIES ITS OWN `asOf` (2026-09-28). There used to be one date for
+// the block, which was fine while the block held one vendor. Two vendors are
+// read on two different days, and one shared date would either age the fresh
+// figure or pass off the stale one as current, and the cost heartbeat judges
+// staleness per line for the same reason. `readFrom` says where the next
+// figure comes from; the heartbeat's email quotes it.
+//
+// These constants are the seed. The dashboard's reconciled-cost form writes a
+// row to cost_reconciled (migration 059) that readReconciled merges over the
+// line, so a new bill is recorded there rather than by editing this file.
 const RECONCILED = {
-  asOf: '2026-09-01',
   lines: [
     {
       id: 'google-cloud',
       label: 'Google Cloud (Places, Vision, Gemini on one bill)',
       usdPerMonth: 31.19,
+      asOf: '2026-09-01',
+      readFrom: 'the latest paid invoice on the Google Cloud billing page',
       note: 'A $31.19 invoice was paid on 2026-09-01, the first FULL billing cycle anyone has read off an invoice. The $9.00 that stood here from 2026-08-20 was a mid-month snapshot taken on day 20, so it was never a monthly figure and this line should not be read as a 3.5x increase. Essentially all of it is still Place Details Photos, and the size is what the photo budget is configured to allow: PHOTO_BUDGET_USD_PER_YEAR in services/photoStore.js defaults to $300, which is $25.00 a month of paid fetches on top of Google\'s 1,000 free, so a month that spends its photo allowance lands near $25 before Text Search, Place Details and Vision are added. $31.19 sits inside that envelope rather than outside it. Gemini has billed $0 to date on both callers. To lower it, lower the budget: this is a configured ceiling being used, not a leak.',
     },
+    {
+      // Moved here from FIXED_MONTHLY, where it read $20.00. Same id, so an
+      // expense row whose replaces_line is 'railway' still stands in for it.
+      id: 'railway',
+      label: 'Railway (backend and Postgres)',
+      usdPerMonth: 32.96,
+      asOf: '2026-09-28',
+      readFrom: 'the estimated bill `railway usage` prints for the current billing period',
+      note: 'Railway\'s own estimated bill for the Sep 16 to Oct 16, 2026 billing period, read with `railway usage` on 2026-09-28. It is the $20 Pro plan fee plus whatever usage runs past the $20 of credit the plan includes, so it moves with compute and volume from one period to the next. Each new period\'s figure is recorded in the reconciled-cost form on the admin dashboard\'s Costs tab, and a saved entry replaces this one.',
+    },
   ],
-  note: 'Read off the vendor billing pages by hand. Nothing in the app can verify this, so it is only as current as the date beside it.',
+  note: 'Read off the vendor billing pages by hand. Nothing in the app can verify this, so each line is only as current as the date beside it.',
 };
 
 // ---------------------------------------------------------------------------
@@ -630,9 +656,10 @@ const GOOGLE_QUOTAS = {
 // IT CARRIES NO NUMBERS OF ITS OWN, ON PURPOSE. Every entry is a JOIN KEY, not
 // a copy. `pricing` points at RATES, `observedLineId` at a line buildObserved()
 // produced, `fixedId` at a line in FIXED_MONTHLY / FIXED_ANNUAL / ONE_TIME,
-// `watchlistId` at a WATCHLIST entry. The panel resolves them. So there is
-// exactly one copy of every price and every sentence, and this list cannot
-// drift from the arithmetic the way a hand-typed expense array does. That has
+// `reconciledId` at a RECONCILED line, `watchlistId` at a WATCHLIST entry. The
+// panel resolves them. So there is exactly one copy of every price and every
+// sentence, and this list cannot drift from the arithmetic the way a
+// hand-typed expense array does. That has
 // already happened once here: frontend/src/App.js held its own vendor array and
 // it was five vendors out of date.
 //
@@ -774,10 +801,12 @@ const DEPENDENCIES = [
     what: 'Runs the backend and the Postgres database.',
     where: 'the whole server',
     group: 'fixed',
-    fixedId: 'railway',
+    // A reconciled line, not a fixed one: the bill is the plan fee plus usage
+    // past the included credit, and only Railway's own meter reads the second.
+    reconciledId: 'railway',
     configuredEnv: ['DATABASE_URL'],
     observedLineId: null,
-    usageNote: 'Compute and storage draw down the $20 of included credit before anything bills on top. This panel cannot see that meter. The Railway usage page can.',
+    usageNote: 'The $20 Pro plan fee buys $20 of usage credit, and compute and storage past that credit bill on top. This panel cannot see that meter; `railway usage` can, and its estimate is the reconciled figure recorded on this tab.',
   },
   {
     id: 'postgres-images',
@@ -1894,6 +1923,7 @@ function buildDependencies(ctx = {}) {
       // no price and no sentence exists twice in this payload.
       observedLineId: d.observedLineId || null,
       fixedId: d.fixedId || null,
+      reconciledId: d.reconciledId || null,
       watchlistId: d.watchlistId || null,
       statusKey: d.statusKey || null,
       finding: d.finding || null,

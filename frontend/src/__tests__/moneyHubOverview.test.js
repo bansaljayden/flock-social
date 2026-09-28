@@ -89,7 +89,7 @@ function screenProps(over = {}) {
 }
 
 const codeLines = [
-  { id: 'railway', label: 'Railway (backend and Postgres)', cadence: 'monthly' },
+  { id: 'railway', label: 'Railway (backend and Postgres)', cadence: 'usage' },
   { id: 'domain', label: 'flockcorp.com', cadence: 'yearly' },
 ];
 
@@ -556,7 +556,7 @@ describe('a partial read empties the figures it would shrink', () => {
   test('an unreadable expense list leaves costs, net, burn and break-even unstated', async () => {
     await renderHub({
       ...CONNECTED,
-      costs: { ...COSTS, status: 'error', reason: 'The expense list could not be read, so only the code lines and the reconciled invoice are counted.' },
+      costs: { ...COSTS, status: 'error', reason: 'The expense list could not be read, so only the code lines and the reconciled bills are counted.' },
       expenses: { ...EXPENSES, status: 'error', rows: [] },
       net: {
         ...CONNECTED.net,
@@ -589,7 +589,7 @@ describe('a partial read empties the figures it would shrink', () => {
     // Revenue never needed the list, so it still stands.
     expect(screen.getByText('$944.07')).toBeInTheDocument();
     // The Costs card says what it could read instead of passing it off as whole.
-    expect(screen.getAllByText(/only the code lines and the reconciled invoice are counted/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/only the code lines and the reconciled bills are counted/).length).toBeGreaterThan(0);
   });
 
   test('a Stripe balance read cut short withholds the revenue instead of showing it short', async () => {
