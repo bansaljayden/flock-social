@@ -2065,8 +2065,13 @@ const PEOPLE_ACTIVE_SQL = `WITH acts AS (
 // has passed into a completed one, and an unconfirmed one into a cancelled
 // one); and guests answering a plan's share link without an account. Plans
 // are counted when a people account made them.
+//
+// A plan the host called off after confirming it is cancelled, so its status
+// alone reads as never confirmed; confirmed_at (migration 102) says it was.
+// A guest answer a moderator took down (is_hidden, migration 005) is not
+// counted, the filter every guest read and broadcast uses.
 const PEOPLE_PLANS_SQL = `WITH plans AS (
-       SELECT f.id, f.created_at, f.event_time, f.status
+       SELECT f.id, f.created_at, f.event_time, f.status, f.confirmed_at
          FROM flocks f
          JOIN users u ON u.id = f.creator_id
         WHERE u.role = 'user'
@@ -2082,12 +2087,14 @@ const PEOPLE_PLANS_SQL = `WITH plans AS (
                                AND p.event_time < ($1::timestamptz AT TIME ZONE 'UTC'))::int AS passed_last_7,
             COUNT(*) FILTER (WHERE p.event_time >= ($1::timestamptz AT TIME ZONE 'UTC') - INTERVAL '7 days'
                                AND p.event_time < ($1::timestamptz AT TIME ZONE 'UTC')
-                               AND p.status IN ('confirmed', 'completed'))::int AS confirmed_last_7,
+                               AND (p.status IN ('confirmed', 'completed') OR p.confirmed_at IS NOT NULL))::int AS confirmed_last_7,
             (SELECT COUNT(*)::int FROM guest_rsvps g JOIN plans gp ON gp.id = g.flock_id
-              WHERE g.created_at >= $1::timestamptz - INTERVAL '7 days'
+              WHERE COALESCE(g.is_hidden, false) = false
+                AND g.created_at >= $1::timestamptz - INTERVAL '7 days'
                 AND g.created_at < $1::timestamptz) AS guests_last_7,
             (SELECT COUNT(*)::int FROM guest_rsvps g JOIN plans gp ON gp.id = g.flock_id
-              WHERE g.created_at >= $1::timestamptz - INTERVAL '14 days'
+              WHERE COALESCE(g.is_hidden, false) = false
+                AND g.created_at >= $1::timestamptz - INTERVAL '14 days'
                 AND g.created_at < $1::timestamptz - INTERVAL '7 days') AS guests_prior_7
        FROM plans p`;
 

@@ -406,6 +406,32 @@ test('the Research tab reads a median time to confirm, withheld under ten plans,
   }
 });
 
+test('a plan the host called off after confirming it counts as confirmed before it ended', async () => {
+  const get = () => call('GET', '/api/admin/analytics', { token: admin.token });
+  const before = (await get()).body;
+  assert.equal(before.endedPlans, 1, 'only the walked plan has ended so far');
+  const put = (id, status) => call('PUT', `/api/flocks/${id}`, { token: alice.token, body: { status } });
+  const mk = async (name) => (await pool.query(
+    `INSERT INTO flocks (name, creator_id, status, event_time)
+     VALUES ($1, $2, 'planning', (NOW() AT TIME ZONE 'UTC') + INTERVAL '2 days') RETURNING id`,
+    [name, alice.id]
+  )).rows[0].id;
+  const ids = [await mk('Confirmed Then Called Off'), await mk('Called Off Unconfirmed')];
+  try {
+    // Through the real route, the way the chat's cancel does it.
+    assert.equal((await put(ids[0], 'confirmed')).status, 200);
+    assert.equal((await put(ids[0], 'cancelled')).status, 200);
+    assert.equal((await put(ids[1], 'cancelled')).status, 200);
+    const after = (await get()).body;
+    assert.equal(after.endedPlans, 3);
+    // The walked plan and the one called off after confirming: 2 of 3. By
+    // status alone it read 1 of 3.
+    assert.equal(after.completionRate, 67);
+  } finally {
+    await pool.query('DELETE FROM flocks WHERE id = ANY($1)', [ids]);
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Stage 5 — the owner's Overview reading the walk back
 // ═══════════════════════════════════════════════════════════════════════════
@@ -481,4 +507,39 @@ test('the Overview counts this walk as people: signups by New York day, first we
   assert.equal(p.plans.passedLast7, 1);
   assert.equal(p.plans.confirmedLast7, 1);
   assert.equal(p.plans.guestAnswersLast7, 0);
+});
+
+test('the Overview counts a plan called off after confirming as confirmed, and no guest answer a moderator took down', async () => {
+  const moneyHub = require('../services/moneyHub');
+  const now = new Date();
+  const before = (await moneyHub.readPeople(pool, now)).plans;
+  // Both made three days ago for yesterday, both cancelled. Only the first
+  // was ever confirmed.
+  const mk = async (name, confirmedAt) => (await pool.query(
+    `INSERT INTO flocks (name, creator_id, status, created_at, event_time, confirmed_at)
+     VALUES ($1, $2, 'cancelled', ($3::timestamptz AT TIME ZONE 'UTC') - INTERVAL '3 days',
+             ($3::timestamptz AT TIME ZONE 'UTC') - INTERVAL '1 day', $4::timestamptz)
+     RETURNING id`,
+    [name, alice.id, now, confirmedAt]
+  )).rows[0].id;
+  const ids = [
+    await mk('Confirmed Then Called Off', new Date(now.getTime() - 2 * 86400000)),
+    await mk('Never Confirmed', null),
+  ];
+  try {
+    // Two guest answers an hour old on the first plan, one of them taken down.
+    await pool.query(
+      `INSERT INTO guest_rsvps (flock_id, name, status, is_hidden, created_at)
+       VALUES ($1, 'Seen', 'in', false, $2::timestamptz - INTERVAL '1 hour'),
+              ($1, 'Taken Down', 'in', true, $2::timestamptz - INTERVAL '1 hour')`,
+      [ids[0], now]
+    );
+    const after = (await moneyHub.readPeople(pool, now)).plans;
+    assert.equal(after.madeLast7 - before.madeLast7, 2);
+    assert.equal(after.passedLast7 - before.passedLast7, 2);
+    assert.equal(after.confirmedLast7 - before.confirmedLast7, 1, 'called off after confirming, it had still been confirmed');
+    assert.equal(after.guestAnswersLast7 - before.guestAnswersLast7, 1, 'the answer a moderator took down is not counted');
+  } finally {
+    await pool.query('DELETE FROM flocks WHERE id = ANY($1)', [ids]);
+  }
 });
