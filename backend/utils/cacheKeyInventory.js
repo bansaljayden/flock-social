@@ -1250,6 +1250,16 @@ const INVENTORY = [
     verdict: 'SAFE',
     why: 'The only map in the repo whose key space is closed by construction rather than by an eviction policy, because nothing outside this file can produce a key. It holds day strings, not counts, so an entry going stale costs one repeated alert rather than a lost budget; and it is deliberately NOT reset on a deploy the way the counters it watches are — a fresh process starts with an empty map and a zeroed budget, which is the consistent pair.',
   },
+  {
+    file: 'server.js', name: 'moneyWatchPaged', kind: 'cache',
+    key: 'the leg name of a watched ceiling that carries a page title, all literals in runMoneyWatch -> { the day a page about it reached somebody, the earliest time another attempt may run }',
+    callerControls: 'nothing. No request path writes to it; only the 15-minute watchdog timer does',
+    protects: 'a Postgres claim in ops_alert_ledger and an admin email and push. A miss costs one INSERT that the ledger then dedupes, never a second page the same day',
+    denominator: 'not a counter. One entry per paged leg, holding a date string and a retry time',
+    bound: 'one entry per titled checkMoneyLeg call in runMoneyWatch, which is a fixed list in this file',
+    verdict: 'SAFE',
+    why: 'Kept apart from moneyWatchSaid because the log and the page answer different questions: the log line is said once a day whatever happens next, while the page is done only once opsAlert reports that somebody was reached. opsAlert gives its ledger claim back when nobody was, and a day recorded before it answered would have blocked the retry that claim exists to allow.',
+  },
 
   {
     file: 'server.js', name: 'socketConnections', kind: 'counter',

@@ -112,7 +112,10 @@ function loadAlarm() {
   const pieces = [
     /const MONEY_WARN_FRACTION = [^\n]+;/,
     /const moneyWatchSaid = new Map\(\);/,
-    /function sayOnceToday\(leg, level, day, message, extra, title\) \{[\s\S]*?\n\}/,
+    /function sayOnceToday\(leg, level, day, message, extra\) \{[\s\S]*?\n\}/,
+    /const moneyWatchPaged = new Map\(\);/,
+    /const MONEY_PAGE_RETRY_MS = [^\n]+;/,
+    /function pageMoneyLeg\(leg, day, title, message\) \{[\s\S]*?\n\}/,
     /function checkMoneyLeg\(\{[\s\S]*?\n\}/,
   ].map((re) => {
     const m = re.exec(SRC);
@@ -124,12 +127,26 @@ function loadAlarm() {
   const paged = [];
   const Sentry = { captureMessage: (msg, opts) => captured.push({ msg, level: opts.level, tags: opts.tags }) };
   const fakeConsole = { error: () => {} };
-  const pageMoneyLeg = (leg, title, message) => paged.push({ leg, title, message });
-  const make = Function('Sentry', 'console', 'pageMoneyLeg', `"use strict";
+  // The real pageMoneyLeg, handed an opsAlert that records the page and
+  // answers what the test says it answers. `answer` can be swapped mid-test.
+  const alarm = { answer: () => ({ sent: true, legs: ['email', 'push'] }) };
+  const fakeRequire = (p) => {
+    assert.strictEqual(p, './services/opsAlert');
+    return {
+      opsAlert: async (a) => {
+        paged.push({ leg: a.key.replace(/^money_/, ''), title: a.push.title, message: a.push.body, key: a.key });
+        return alarm.answer(a);
+      },
+    };
+  };
+  const make = Function('Sentry', 'console', 'require', `"use strict";
     ${pieces.join('\n')}
-    return { checkMoneyLeg, reset: () => moneyWatchSaid.clear() };`);
-  return { ...make(Sentry, fakeConsole, pageMoneyLeg), captured, paged };
+    return { checkMoneyLeg, reset: () => { moneyWatchSaid.clear(); moneyWatchPaged.clear(); } };`);
+  return Object.assign(alarm, make(Sentry, fakeConsole, fakeRequire), { captured, paged });
 }
+
+// The page answers after opsAlert's promise settles.
+const settle = () => new Promise((r) => setImmediate(r));
 
 // ── 3. A spent ceiling reaches a person, not just the log ───────────────────
 
@@ -144,6 +161,87 @@ test('a spent ceiling pages the admins once, and the 80% warning stays in the lo
   assert.strictEqual(a.paged[0].leg, 'vision-global');
   assert.strictEqual(a.paged[0].title, 'Photo uploads are off');
   assert.ok(a.paged[0].message.includes('Uploads are off.'));
+});
+
+test('a page that reached nobody is tried again on a later run the same day', async () => {
+  // opsAlert answers { failed: true } when neither the email nor any admin
+  // device took the alert, and gives its ledger claim back so a later run can
+  // try again. A page marked done before that answer came back blocked the
+  // retry until 00:00 UTC, which is when the ceiling resets anyway, so a spent
+  // Vision or Gemini budget could reach nobody for the whole day it was spent.
+  const a = loadAlarm();
+  const realNow = Date.now;
+  const t0 = realNow();
+  const leg = { leg: 'gemini-global', day: '2026-09-27', used: 100, ceiling: 100, noun: 'tokens', atCeiling: 'Birdie is off.', atWarn: 'w', title: 'Birdie is off until 00:00 UTC' };
+  try {
+    Date.now = () => t0;
+    a.answer = () => ({ failed: true });
+    a.checkMoneyLeg(leg);
+    await settle();
+    assert.strictEqual(a.paged.length, 1);
+    assert.strictEqual(a.paged[0].key, 'money_gemini-global');
+
+    // A run moments later, while the answer is still fresh, does not page again.
+    a.checkMoneyLeg(leg);
+    await settle();
+    assert.strictEqual(a.paged.length, 1, 'attempts are spaced, not one per reading');
+
+    // The next fifteen-minute run pages again, although the log already spoke.
+    a.answer = () => ({ sent: true, legs: ['push'] });
+    Date.now = () => t0 + 15 * 60 * 1000;
+    a.checkMoneyLeg(leg);
+    await settle();
+    assert.strictEqual(a.paged.length, 2, 'nobody had been reached, so the page is not done');
+    assert.strictEqual(a.captured.length, 1, 'the log line is still said once a day');
+
+    // Reached now, so the rest of the day is quiet.
+    Date.now = () => t0 + 30 * 60 * 1000;
+    a.checkMoneyLeg(leg);
+    await settle();
+    assert.strictEqual(a.paged.length, 2);
+
+    // A new day is a new page.
+    Date.now = () => t0 + 45 * 60 * 1000;
+    a.checkMoneyLeg({ ...leg, day: '2026-09-28' });
+    await settle();
+    assert.strictEqual(a.paged.length, 3);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test('a page that threw or found no recipient is retried, and one the ledger already sent is done', async () => {
+  const realNow = Date.now;
+  const t0 = realNow();
+  const leg = { leg: 'vision-global', day: '2026-09-27', used: 100, ceiling: 100, noun: 'screens', atCeiling: 'Uploads are off.', atWarn: 'w', title: 'Photo uploads are off' };
+  try {
+    for (const miss of [() => { throw new Error('ledger down'); }, () => ({ skipped: 'no-recipient' })]) {
+      const a = loadAlarm();
+      Date.now = () => t0;
+      a.answer = miss;
+      a.checkMoneyLeg(leg);
+      await settle();
+      a.answer = () => ({ sent: true, legs: ['email'] });
+      Date.now = () => t0 + 15 * 60 * 1000;
+      a.checkMoneyLeg(leg);
+      await settle();
+      assert.strictEqual(a.paged.length, 2, `a page answered ${String(miss).slice(0, 60)} was never retried`);
+    }
+
+    // After a deploy the map is empty but the ledger remembers: the ledger's
+    // "already sent today" means somebody was reached, so the page is done.
+    const a = loadAlarm();
+    Date.now = () => t0;
+    a.answer = () => ({ skipped: 'already-sent-today' });
+    a.checkMoneyLeg(leg);
+    await settle();
+    Date.now = () => t0 + 15 * 60 * 1000;
+    a.checkMoneyLeg(leg);
+    await settle();
+    assert.strictEqual(a.paged.length, 1);
+  } finally {
+    Date.now = realNow;
+  }
 });
 
 test('a leg with no title stays in the log, so a leg another alert covers is not paged twice', () => {
@@ -164,7 +262,7 @@ test('every paged leg in runMoneyWatch carries a title, and only the photo leg g
     'a spent ceiling with no title is never paged. Only the photo month budget may go without, because '
     + 'services/costHeartbeat.js already alerts on it.');
   // And the pager itself goes through the shared sender, keyed per leg.
-  assert.match(SRC, /function pageMoneyLeg\(leg, title, message\) \{[\s\S]*?opsAlert\(\{[\s\S]*?key: `money_\$\{leg\}`/);
+  assert.match(SRC, /function pageMoneyLeg\(leg, day, title, message\) \{[\s\S]*?opsAlert\(\{[\s\S]*?key: `money_\$\{leg\}`/);
 });
 
 test('nothing is said below the warning threshold', () => {

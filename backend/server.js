@@ -2113,7 +2113,7 @@ const MONEY_WARN_FRACTION = 0.8;
 // per day per level.
 const moneyWatchSaid = new Map();
 
-function sayOnceToday(leg, level, day, message, extra, title) {
+function sayOnceToday(leg, level, day, message, extra) {
   const key = `${leg}:${level}`;
   // THE DAY IS ONLY A DEDUPE KEY IF THERE IS ONE. moneyWatchSaid.get(key) is
   // undefined before a leg has ever spoken, so a status reader that came back
@@ -2136,18 +2136,36 @@ function sayOnceToday(leg, level, day, message, extra, title) {
     tags: { money_leg: leg, money_level: level },
     extra: { day, ...extra },
   });
-  // AND THE HALF THAT REACHES A PERSON. Both lines above are dead ends on this
-  // deployment: the Railway log nobody reads, and a Sentry that is a no-op
-  // while SENTRY_DSN is unset. A spent ceiling is the moment the product has
-  // started refusing people, so it goes out as an email and a push to the
-  // admins, once per leg per day through ops_alert_ledger, which a deploy
-  // cannot reset the way it resets moneyWatchSaid. The 80% warning stays in
-  // the log: it is a decision that can wait for somebody to look.
-  if (level === 'exhausted' && title) pageMoneyLeg(leg, title, message);
 }
 
-function pageMoneyLeg(leg, title, message) {
-  require('./services/opsAlert').opsAlert({
+// leg name -> { day, nextTryAt }, the page's own record, kept apart from
+// moneyWatchSaid. `day` is the day a page about that leg reached somebody,
+// and it is written only when opsAlert answers sent or already-sent-today.
+// opsAlert gives its ledger claim back when neither the email nor any admin
+// device took the alert, so that a later run can try again; a day written
+// before it answered would block that retry until 00:00 UTC, which is when
+// the ceiling resets anyway, so a spent budget would have reached nobody at
+// all. `nextTryAt` spaces the attempts, so a page still in flight is not sent
+// a second time.
+const moneyWatchPaged = new Map();
+const MONEY_PAGE_RETRY_MS = 10 * 60 * 1000;
+
+// AND THE HALF THAT REACHES A PERSON. The log line and Sentry are dead ends on
+// this deployment: the Railway log nobody reads, and a Sentry that is a no-op
+// while SENTRY_DSN is unset. A spent ceiling is the moment the product has
+// started refusing people, so it goes out as an email and a push to the
+// admins, once per leg per day through ops_alert_ledger, which a deploy
+// cannot reset the way it resets these maps. The 80% warning stays in the
+// log: it is a decision that can wait for somebody to look.
+function pageMoneyLeg(leg, day, title, message) {
+  const now = Date.now();
+  const state = moneyWatchPaged.get(leg) || { day: null, nextTryAt: 0 };
+  // Same rule as sayOnceToday: a missing day cannot mark a page as done.
+  if (typeof day === 'string' && day && state.day === day) return;
+  if (now < state.nextTryAt) return;
+  state.nextTryAt = now + MONEY_PAGE_RETRY_MS;
+  moneyWatchPaged.set(leg, state);
+  Promise.resolve(require('./services/opsAlert').opsAlert({
     key: `money_${leg}`,
     subject: `Flock: ${title}`,
     text: [
@@ -2163,6 +2181,8 @@ function pageMoneyLeg(leg, title, message) {
     ].join('\n'),
     push: { title, body: message },
     tag: '[moneyWatch]',
+  })).then((out) => {
+    if (out && (out.sent || out.skipped === 'already-sent-today')) state.day = day;
   }).catch(() => {});
 }
 
@@ -2177,7 +2197,11 @@ function checkMoneyLeg({ leg, day, used, ceiling, noun, atCeiling, atWarn, title
   const pct = Math.round((used / ceiling) * 100);
   const numbers = `${used}/${ceiling} ${noun} (${pct}%) on ${day}`;
   if (used >= ceiling) {
-    sayOnceToday(leg, 'exhausted', day, `${atCeiling} ${numbers}`, { used, ceiling, pct }, title);
+    const said = `${atCeiling} ${numbers}`;
+    sayOnceToday(leg, 'exhausted', day, said, { used, ceiling, pct });
+    // On every exhausted reading, not only the one the log speaks on: the
+    // page keeps its own day, so one that reached nobody is tried again.
+    if (title) pageMoneyLeg(leg, day, title, said);
     return;
   }
   if (used >= ceiling * MONEY_WARN_FRACTION) {
@@ -2248,7 +2272,7 @@ async function runMoneyWatch() {
         // (an email and a push to the admins) dedupes through ops_alert_ledger in
         // Postgres rather than sayOnceToday's in-memory map, because migration
         // 058 exists precisely because a restart resets that map and mails
-        // twice. That is also why the sayOnceToday call above carries no title:
+        // twice. That is also why this leg does not go through pageMoneyLeg:
         // this is the one alert for this leg.
         await require('./services/placesOutageAlert').runPlacesOutageAlert(h);
     }
