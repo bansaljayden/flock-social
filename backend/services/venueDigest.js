@@ -17,7 +17,7 @@
 //      ml_venues.timezone when the venue is in the corpus, America/New_York
 //      otherwise (both live markets are in it).
 //   3. venue_profiles.notification_prefs.weekly is true. The column default
-//      is false, so the digest is opt-in via the dashboard's "Weekly reports"
+//      is false, so the digest is opt-in via the dashboard's "Monday email"
 //      switch, which this send finally makes real (see the pinned-open note
 //      in __tests__/alertPreferences.test.js).
 //   4. The owner has a verified, mailable address and is not banned.

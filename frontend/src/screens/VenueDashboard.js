@@ -2326,7 +2326,7 @@ export default function VenueDashboard({
                 )}
               </div>
 
-              {/* WEEKLY REPORTS. One switch, because one send exists: the Monday
+              {/* THE MONDAY EMAIL. One switch, because one send exists: the Monday
                   digest (backend/services/venueDigest.js) reads
                   notification_prefs.weekly and skips every venue whose value is
                   not true, and PUT /api/venue-profile is its only writer. The

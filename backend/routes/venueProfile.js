@@ -42,7 +42,7 @@ const { rejectIfProfane } = require('../utils/moderation');
 // it saying 'premium' (migration 040, services/venueEntitlements.js).
 const { getVenueEntitlement, venueBillingEnabled } = require('../services/venueEntitlements');
 // Whether the Monday digest sends at all (DIGEST_ENABLED). The dashboard shows
-// its Weekly reports switch only to a venue the sweep would mail, and this is
+// its "Monday email" switch only to a venue the sweep would mail, and this is
 // the one input to that the client cannot see for itself.
 const { digestEnabled } = require('../services/venueDigest');
 // The verification request has to reach a person, not just a column. Held as a
