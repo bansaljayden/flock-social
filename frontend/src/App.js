@@ -7916,6 +7916,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // flock bill split is the real, server-backed feature; the DM UI came out
   // rather than keep claiming one that did not exist (design rule 5).
   const [dmPinnedVenue, setDmPinnedVenue] = useState(null); // { name, addr, place_id, rating, photo_url }
+  // Which conversation the pin above and dmVenueVotes were read for, as a
+  // string. Neither slot names its thread, so this is what lets opening a
+  // different one empty them (readDmVenueSlots) and a late answer or rollback
+  // for a thread since left keep its hands off them.
+  const dmVenueSlotsForRef = useRef(null);
   const [pickingVenueForDm, setPickingVenueForDm] = useState(false);
 
   // Profile
@@ -12157,7 +12162,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     try {
       await apiUnpinDmVenue(userId);
     } catch (err) {
-      setDmPinnedVenue(previous);
+      // Put back only into the thread it came from: a notification tap can
+      // open another conversation while the request is out.
+      if (dmVenueSlotsForRef.current === String(userId)) setDmPinnedVenue(previous);
       showToast(err?.message || "That didn't unpin.", 'error');
     }
   }, [dmPinnedVenue, showToast]);
@@ -12178,7 +12185,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     try {
       await pinDmVenue(userId, venue);
     } catch (err) {
-      setDmPinnedVenue(previous);
+      // Into the thread it came from only, as the unpin above.
+      if (dmVenueSlotsForRef.current === String(userId)) setDmPinnedVenue(previous);
       showToast(err?.message || 'Could not pin that place. Try again.', 'error');
     }
   }, [dmPinnedVenue, showToast]);
@@ -14321,12 +14329,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   useEffect(() => { loadDmConversations(); }, [loadDmConversations]);
 
   // Named so the vote panel's retry runs the same read the screen does.
+  //
+  // The newest read wins, by number, as the DM list's reads do: a tally read
+  // for Alice's thread that answered after Bob's was opened is Alice's tally,
+  // and it used to be drawn in Bob's thread.
+  const dmVotesReadSeqRef = useRef(0);
   const loadDmVenueVotes = useCallback((dmId) => {
     if (!dmId) return;
+    const turn = dmVotesReadSeqRef.current + 1;
+    dmVotesReadSeqRef.current = turn;
+    const overtaken = () => dmVotesReadSeqRef.current !== turn;
     setDmVenueVotesError('');
     getDmVenueVotes(dmId)
-      .then(data => { setDmVenueVotes(data.votes || []); })
+      .then(data => { if (!overtaken()) setDmVenueVotes(data.votes || []); })
       .catch((err) => {
+        if (overtaken()) return;
         // Cleared rather than left standing: what is in state belongs to
         // whichever conversation was open last, and showing one chat's votes
         // inside another is a worse lie than showing none.
@@ -14335,19 +14352,42 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       });
   }, []);
 
+  // THE PIN AND THE TALLY BELONG TO ONE THREAD. Both are single slots with no
+  // conversation on them, and nothing emptied either when a different thread
+  // opened. Bob's header showed the place pinned in Alice's thread until his
+  // own read answered, and for the whole visit when that read failed; a slow
+  // answer for Alice landing after Bob's thread opened wrote her pin over his.
+  // The vote panel puts the pinned place at the top of its list, so one tap
+  // voted for Alice's venue in the chat with Bob, and told him its name. So
+  // both are emptied when the thread opening is not the one they were read
+  // for, and a pin answer a later read has overtaken changes nothing. Coming
+  // back to the same thread keeps what it showed until its reads answer, which
+  // includes a pin just placed from Discover.
+  const dmPinReadSeqRef = useRef(0);
+  const readDmVenueSlots = useCallback((dmId) => {
+    if (dmVenueSlotsForRef.current !== String(dmId)) {
+      dmVenueSlotsForRef.current = String(dmId);
+      setDmPinnedVenue(null);
+      setDmVenueVotes([]);
+    }
+    loadDmVenueVotes(dmId);
+    const turn = dmPinReadSeqRef.current + 1;
+    dmPinReadSeqRef.current = turn;
+    getDmPinnedVenue(dmId).then(data => {
+      if (dmPinReadSeqRef.current !== turn) return;
+      if (data.venue) setDmPinnedVenue({ name: data.venue.venue_name, addr: data.venue.venue_address, place_id: data.venue.venue_id, rating: data.venue.venue_rating, photo_url: resolveVenuePhoto(data.venue.venue_photo_url) });
+      else setDmPinnedVenue(null);
+    }).catch(() => {});
+  }, [loadDmVenueVotes]);
+
   // Load messages when opening a DM conversation
   useEffect(() => {
     if (currentScreen === 'dmDetail' && selectedDmId) {
       loadDmMessages(selectedDmId, { showSkeleton: true });
-      // Load venue votes for this conversation
-      loadDmVenueVotes(selectedDmId);
-      // Load pinned venue for this conversation
-      getDmPinnedVenue(selectedDmId).then(data => {
-        if (data.venue) setDmPinnedVenue({ name: data.venue.venue_name, addr: data.venue.venue_address, place_id: data.venue.venue_id, rating: data.venue.venue_rating, photo_url: resolveVenuePhoto(data.venue.venue_photo_url) });
-        else setDmPinnedVenue(null);
-      }).catch(() => {});
+      // Its venue votes and its pinned venue, and nobody else's
+      readDmVenueSlots(selectedDmId);
     }
-  }, [currentScreen, selectedDmId, loadDmMessages, loadDmVenueVotes]);
+  }, [currentScreen, selectedDmId, loadDmMessages, readDmVenueSlots]);
 
   // ── OPENED, the DM twin ─────────────────────────────────────────────────
   //
