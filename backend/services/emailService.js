@@ -777,7 +777,11 @@ async function sendEmail({ to, subject, html, text, replyTo, from = 'Flock <hell
   } catch (err) {
     console.error('[email] Resend client could not be built:', err.message);
     noteSendFailure(err.message);
-    return { sent: false, error: err.message };
+    // `refused` because no request was ever made, so nothing left the
+    // building. Without it this read as an unknown outcome, and a caller that
+    // keeps its marker on an unknown outcome (the digest, the waitlist launch
+    // run) wrote off every address it tried while the install was broken.
+    return { sent: false, error: err.message, refused: true };
   }
   if (!resend) {
     health.skipped += 1;
