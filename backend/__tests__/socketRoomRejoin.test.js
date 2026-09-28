@@ -22,13 +22,15 @@
 // caller cannot make that mistake.
 //
 // These tests EXECUTE the real frontend/src/services/socket.js rather than
-// pattern-matching it: the file is read, its two imports are replaced with
-// injected stubs (`io` and `getToken`), and the module body is run. Everything
+// pattern-matching it: the file is read, its imports are replaced with injected
+// stand-ins (`io` and `getToken` are this suite's fakes; the rest are listed in
+// helpers/clientSocketImports.js), and the module body is run. Everything
 // asserted below is the shipping code's actual behaviour.
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { clientSocketImports } = require('./helpers/clientSocketImports');
 
 const CLIENT_DIR = path.join(__dirname, '..', '..', 'frontend', 'src');
 const SOCKET_SRC = fs.readFileSync(path.join(CLIENT_DIR, 'services', 'socket.js'), 'utf8');
@@ -53,10 +55,11 @@ const APP_SRC = fs.readFileSync(path.join(CLIENT_DIR, 'App.js'), 'utf8')
 
 // --- load the real module --------------------------------------------------
 //
-// socket.js is ESM with exactly two imports and only `export function`
-// declarations. Strip the imports (their bindings are injected as parameters)
-// and drop the `export` keyword, then evaluate. If either of those assumptions
-// ever stops holding, this throws loudly instead of silently testing nothing.
+// socket.js is ESM with named imports only and only `export function`
+// declarations. Strip the imports (their bindings are injected as parameters,
+// and clientSocketImports refuses to run if one is not provided) and drop the
+// `export` keyword, then evaluate. If either of those assumptions ever stops
+// holding, this throws loudly instead of silently testing nothing.
 function loadSocketModule({ token = 'tok-a' } = {}) {
   const exported = [...SOCKET_SRC.matchAll(/^export function (\w+)/gm)].map((m) => m[1]);
   assert.ok(exported.includes('connectSocket') && exported.includes('joinFlock'),
@@ -72,10 +75,11 @@ function loadSocketModule({ token = 'tok-a' } = {}) {
     return sock;
   };
   let current = token;
+  const imports = clientSocketImports({ io, getToken: () => current, BASE_URL: 'http://test.invalid' });
   // eslint-disable-next-line no-new-func
-  const factory = new Function('io', 'getToken', 'BASE_URL',
+  const factory = new Function(...imports.names,
     `${body}\nreturn { ${exported.join(', ')} };`);
-  const api = factory(io, () => current, 'http://test.invalid');
+  const api = factory(...imports.values);
   return { api, built, setToken: (t) => { current = t; } };
 }
 
