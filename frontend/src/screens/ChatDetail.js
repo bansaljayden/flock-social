@@ -3772,7 +3772,6 @@ export default function ChatDetail({
         {/* Money Layer Modal — Budget Submit / Bill Split */}
         {showChatPool && (() => {
           const isCreator = flock.creatorId && String(flock.creatorId) === String(authUser?.id);
-          const isConfirmedOrComplete = flock.status === 'confirmed' || flock.status === 'completed';
           const hasBudget = flock.budgetEnabled;
           const ctx = budgetStatus?.budgetContext || flock.budgetContext || 'dinner';
           const presets = ctx?.includes('movie') || ctx?.includes('film') ? [15, 25, 35, 50]
@@ -4059,9 +4058,17 @@ export default function ChatDetail({
                         </p>
                       </div>
                     )}
-                    {/* Not over a quarantined bill: the server refuses to
-                        post over it, so the form would only fail. */}
-                    {isConfirmedOrComplete && !billSplitQuarantined && (
+                    {/* The same rule as the composer tile (billFormOffered),
+                        so the two ways into the form cannot disagree. That
+                        rule keeps the form off a quarantined bill (the server
+                        refuses to post over it), off a bill somebody paid (the
+                        form does not draw over one) and off a failed money
+                        read. The last one matters most here: this section
+                        shows on any ended plan, even when the budget read
+                        failed too, and a total entered over a bill nobody has
+                        seen replaces the live one through ON CONFLICT DO
+                        UPDATE. */}
+                    {billFormOffered && (
                       <button className="hit44 glass-btn glass-primary" onClick={() => setShowCreateBill(true)} style={{ ...styles.gradientButton, padding: '14px' }}>Split the Bill</button>
                     )}
                   </div>

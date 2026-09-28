@@ -1115,3 +1115,65 @@ describe('a budget plan that has ended', () => {
     expect(bar.textContent).toBe('Budget closed · no group number to show');
   });
 });
+
+// ---------------------------------------------------------------------------
+// 11. The budget section's Split the Bill follows the composer tile's rule
+// ---------------------------------------------------------------------------
+/* Section 10 put the budget status section on every ended plan, answered or
+   not, and the Split the Bill inside it checked only the plan's status and a
+   quarantined bill. A failed money read leaves billSplit null, which is also
+   what "no bill yet" looks like, and bill_splits is UNIQUE(flock_id) with ON
+   CONFLICT DO UPDATE behind it, so a total entered from that button replaced
+   whatever bill was really there. A failed budget read nulls budgetStatus as
+   well, and on an ended plan the section showed anyway, so a read that failed
+   on both halves still offered the form. The button now reads billFormOffered,
+   the tile's rule, which already stands down over a failed read. */
+describe('the budget section\'s Split the Bill', () => {
+  const budgetPlan = (status) => () => ({ ...FLOCK, budgetEnabled: true, status });
+  const unanswered = {
+    budgetEnabled: true, budgetLocked: false, ceiling: null, isReady: false, skipCount: null,
+    submissionCount: 0, totalMembers: 3, memberCount: 3, userSubmitted: false, userAmount: null, userSkipped: false,
+  };
+  const FAILED = 'The money side of this plan did not load.';
+
+  test.each([
+    ['the budget loaded and this member never answered', unanswered],
+    ['the budget read failed too', null],
+  ])('is not offered over a failed money read on a completed plan when %s', (_label, budgetStatus) => {
+    // Fails without the fix: the alert and a Split the Bill render together,
+    // and the button opens the form over a bill nobody has seen.
+    mount(null, { getSelectedFlock: budgetPlan('completed'), budgetStatus, moneyError: FAILED });
+    expect(screen.getByRole('alert').textContent).toContain(FAILED);
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Split the Bill' })).toBeNull();
+    expect(screen.queryByText('Who paid?')).toBeNull();
+  });
+
+  test('is not offered over a failed money read on a confirmed plan this member answered', () => {
+    // Fails without the fix: this route to the form predates section 10.
+    mount(null, {
+      getSelectedFlock: budgetPlan('confirmed'),
+      budgetStatus: { ...unanswered, userSubmitted: true, userAmount: 40, submissionCount: 1 },
+      moneyError: FAILED,
+    });
+    expect(screen.getByRole('alert').textContent).toContain(FAILED);
+    expect(screen.queryByRole('button', { name: 'Split the Bill' })).toBeNull();
+  });
+
+  test('is not offered over a bill somebody paid, which stays readable below', () => {
+    // Fails without the fix: the button rendered, and its tap only hid the
+    // budget section, because the form does not draw over a paid bill.
+    mount(bill([share(1, 'Ava', 100, { settled: true, outstanding: 0 }), share(9, 'Jay', 100)]), {
+      getSelectedFlock: budgetPlan('completed'),
+      budgetStatus: { ...unanswered, userSubmitted: true, userAmount: 40, submissionCount: 1 },
+    });
+    expect(screen.queryByRole('button', { name: 'Split the Bill' })).toBeNull();
+    expect(screen.getByRole('button', { name: /Settle Up/ }).textContent).toBe('Settle Up · $100.00');
+  });
+
+  test('is still offered on a completed plan whose money loaded', () => {
+    mount(null, { getSelectedFlock: budgetPlan('completed'), budgetStatus: unanswered });
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Split the Bill' })).toBeTruthy();
+  });
+});
