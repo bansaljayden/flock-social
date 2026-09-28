@@ -530,6 +530,15 @@ router.post('/',
         // Refused here too, because a hidden card is only the client's word.
         // The status rides on the membership read so the order of checks and
         // statements is unchanged.
+        //
+        // The refusal is a sentence a person can read, because installed
+        // builds from before this change still show the card on a cancelled
+        // plan and print the server's error as their toast; its Skip clears
+        // the card. A 2xx would have kept their card quiet only by thanking
+        // them for a report nobody files, which is the thing this refuses.
+        // The code lets a current build put the card away on this answer
+        // instead of offering Submit again, for a plan cancelled while its
+        // screen was open.
         if (flockId !== null) {
           const membership = await client.query(
             `SELECT (SELECT status FROM flocks WHERE id = $1) AS flock_status FROM flock_members
@@ -541,7 +550,10 @@ router.post('/',
             throw new Rollback();
           }
           if (membership.rows[0]?.flock_status === 'cancelled') {
-            refusal = { status: 409, body: { error: 'That plan was called off, so there is no night to report on.' } };
+            refusal = {
+              status: 409,
+              body: { error: 'That plan was called off, so there is no night to report on.', code: 'PLAN_CANCELLED' },
+            };
             throw new Rollback();
           }
         }

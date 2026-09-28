@@ -318,6 +318,10 @@ test('a report on a plan that was called off is refused, and nothing is written'
   const r = await call('POST', '/api/feedback', { ...base_payload(), flock_id: 10 });
   assert.equal(r.status, 409, r.text);
   assert.match(r.body.error, /called off/);
+  // A build from before the refusal prints the error as its toast, so it is a
+  // sentence; a current build keys off the code to put the card away.
+  assert.equal(r.body.error, 'That plan was called off, so there is no night to report on.');
+  assert.equal(r.body.code, 'PLAN_CANCELLED');
   assert.equal(inserted, null);
   assert.ok(queries.some((q) => /^ROLLBACK/i.test(q.text)), 'expected ROLLBACK');
   assert.ok(!queries.some((q) => /^COMMIT/i.test(q.text)), 'must not COMMIT');
