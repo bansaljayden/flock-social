@@ -68,11 +68,6 @@ let handlers = [];
 pool.query = (sql, params) => {
   const flat = String(sql).replace(/\s+/g, ' ').trim();
   queries.push({ sql: flat, params });
-  // Birdie refuses a user with no recorded consent (migration 099); every
-  // account in this file has given it. birdieConsent.test.js covers the refusal.
-  if (/SELECT birdie_ai_consent_at FROM users/.test(flat)) {
-    return Promise.resolve({ rows: [{ birdie_ai_consent_at: new Date('2026-09-01T00:00:00Z') }], rowCount: 1 });
-  }
   for (const [re, fn] of handlers) {
     if (re.test(flat)) return Promise.resolve(fn(params || [], flat) || { rows: [], rowCount: 0 });
   }

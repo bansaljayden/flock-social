@@ -1,26 +1,41 @@
 // Run: node --test  (from backend/)
 //
-// BIRDIE ASKS BEFORE ANYTHING GOES TO GEMINI, AND THE SERVER HOLDS THE LINE.
+// BIRDIE ASKS BEFORE ANYTHING GOES TO GEMINI, AND THE SERVER HOLDS THE LINE
+// FOR EVERY CLIENT THAT ASKS.
 //
 // Every Birdie turn sends the user's messages, first name, age range, what they
 // have open in the app, their area when location is on, and on request their
 // plans and friends' names to Google's Gemini. App Store Guideline 5.1.2(i)
 // asks for explicit permission before personal data goes to a third-party AI.
 // The app asks once, before the first message (components/birdie/BirdiePanel
-// .js), and the answer is users.birdie_ai_consent_at (migration 099).
+// .js), and the answer is users.birdie_ai_consent_at (migration 100).
 //
-// The question in the app is cosmetic on its own: a cached older bundle never
-// shows it and any client can call the route. So this file drives the real
-// router and pins the server side:
+// TWO KINDS OF CLIENT, AND BOTH DIRECTIONS ARE PINNED HERE.
+//
+// A client that runs the question sends consentFlow: 'ask' on every turn
+// (sendAiChat in the frontend's services/api.js). For it the server holds the
+// line on its own, so a stale copy of the answer or a direct call cannot skip
+// the question:
 //   1. no recorded consent: 403 BIRDIE_CONSENT_REQUIRED, Gemini never called,
 //      no chat created, the user's name and birthday never even read
 //   2. a refusal costs no message from the user's day
 //   3. Allow records a time, a repeated Allow keeps the first one, withdraw
 //      clears it, and /chat follows each change on the very next turn
-//   4. nothing the client sends can stand in for the recorded answer
+//   4. nothing else the client sends can stand in for the recorded answer
+//
+// An iOS build installed before the question existed sends no flag. It has no
+// question to show and no way to record an answer, and every account starts
+// with the column NULL, so refusing it would switch Birdie off for every
+// person on that build, including the one App Review is testing. It is served
+// exactly as before:
+//   5. an answer with no consent on record, and the column is never read, not
+//      even when reading it would fail
+//   6. the flag takes one value, and the frontend sends that value
 
 const test = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const path = require('node:path');
 const http = require('node:http');
 const express = require('express');
 
@@ -108,8 +123,8 @@ test.beforeEach(() => {
   sendCalls = 0;
 });
 
-async function call(method, path, body) {
-  const res = await fetch(`${base}${path}`, {
+async function call(method, urlPath, body) {
+  const res = await fetch(`${base}${urlPath}`, {
     method,
     headers: { 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -119,17 +134,26 @@ async function call(method, path, body) {
   try { json = JSON.parse(text); } catch { /* not JSON */ }
   return { status: res.status, body: json };
 }
-const chat = (extra = {}) => call('POST', '/api/ai/chat', {
+const TURN = {
   messages: [{ role: 'user', text: "what's the move tonight" }],
   location: { lat: 39.9526, lng: -75.1652 },
-  ...extra,
-});
+};
+// The web and every build from this change on: they ask, and say so.
+const chat = (extra = {}) => call('POST', '/api/ai/chat', { ...TURN, consentFlow: 'ask', ...extra });
+// Builds 38 and 44 and anything else installed before the question existed:
+// the same turn with no flag, which is the body they have always sent.
+const installedBuildChat = (extra = {}) => call('POST', '/api/ai/chat', { ...TURN, ...extra });
+
+const readsConsent = () => sql.some((s) => /birdie_ai_consent_at/.test(s));
 
 test('with no recorded consent, a turn is refused and nothing reaches Gemini', async () => {
   const res = await chat();
   assert.strictEqual(res.status, 403);
   assert.strictEqual(res.body.code, 'BIRDIE_CONSENT_REQUIRED');
-  assert.match(res.body.error, /Google's Gemini/, 'an older app with no question to show still says why');
+  assert.match(res.body.error, /Google's Gemini/);
+  // Only a client that shows the question ever gets this, so the sentence
+  // must not send the person looking for a version of the app to update to.
+  assert.doesNotMatch(res.body.error, /latest version|update/i);
   assert.strictEqual(chatsCreated, 0, 'no Gemini chat is even created');
   assert.strictEqual(sendCalls, 0, 'nothing is sent to Gemini');
   // The consent read is the only thing the refused turn did. The name and
@@ -158,6 +182,7 @@ test('Allow records the time, and the next turn goes through', async () => {
   assert.strictEqual(granted.status, 200);
   assert.strictEqual(granted.body.consented, true);
   assert.ok(!Number.isNaN(Date.parse(granted.body.consentedAt)), 'the time it was given comes back');
+  assert.ok(consentAt.get(CURRENT_USER.id) instanceof Date, 'the answer is recorded on the account, not only echoed');
 
   const res = await chat();
   assert.strictEqual(res.status, 200);
@@ -190,7 +215,7 @@ test('withdrawing consent stops the very next turn, and asking again works', asy
   assert.strictEqual((await chat()).status, 200);
 });
 
-test('nothing in the request can stand in for the recorded answer', async () => {
+test('nothing else in the request can stand in for the recorded answer', async () => {
   for (const extra of [{ consent: true }, { birdie_ai_consent_at: new Date().toISOString() }, { birdieAiConsent: 'granted' }]) {
     const res = await chat(extra);
     assert.strictEqual(res.status, 403, `${JSON.stringify(extra)} must not unlock Birdie`);
@@ -222,4 +247,67 @@ test('a database failure on the consent read is a 500, never a pass', async () =
     pool.query = real;
     console.error = errors;
   }
+});
+
+// --- builds installed before the question existed ---------------------------
+
+test('an installed build with no question to show gets its answer, and the column is never read', async () => {
+  // Every account starts NULL after migration 100. This is that account, on
+  // the build App Review has in hand.
+  assert.strictEqual(consentAt.get(CURRENT_USER.id), null);
+  const res = await installedBuildChat();
+  assert.strictEqual(res.status, 200, `expected an answer, got ${res.status} ${JSON.stringify(res.body)}`);
+  assert.strictEqual(res.body.text, 'oakwood, chill till 9');
+  assert.strictEqual(sendCalls, 1);
+  assert.strictEqual(readsConsent(), false, 'the old path now reads a column it never read before');
+});
+
+test('an installed build is not refused after a withdrawal on another device either', async () => {
+  // It has no question to show and no switch to flip back, so a refusal would
+  // leave Birdie dead on that phone with nothing to tap.
+  await call('POST', '/api/ai/consent');
+  await call('DELETE', '/api/ai/consent');
+  sql = [];
+  const res = await installedBuildChat();
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(readsConsent(), false);
+});
+
+test('an installed build keeps working when the consent read would fail', async () => {
+  // The strongest form of "not read": if the old path touched the column, a
+  // database that cannot answer for it would turn this into a 500.
+  const real = pool.query;
+  pool.query = (text, params) => (/birdie_ai_consent_at/.test(String(text))
+    ? Promise.reject(new Error('column "birdie_ai_consent_at" does not exist'))
+    : real(text, params));
+  try {
+    const res = await installedBuildChat();
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(sendCalls, 1);
+  } finally {
+    pool.query = real;
+  }
+});
+
+test('the flag takes one value; anything else is refused before any spend', async () => {
+  for (const consentFlow of ['yes', true, 1, 'ASK', { ask: true }]) {
+    const res = await chat({ consentFlow });
+    assert.strictEqual(res.status, 400, `consentFlow ${JSON.stringify(consentFlow)} was accepted`);
+  }
+  // A null is the absent flag, the same as an installed build.
+  assert.strictEqual((await chat({ consentFlow: null })).status, 200);
+  assert.strictEqual(chatsCreated, 1, 'only the null turn reached Gemini');
+});
+
+test('the frontend sends exactly the flag this route holds to the answer', () => {
+  // The two halves meet on one literal. If the app sent a different spelling,
+  // every new client would be served as an installed build and the question
+  // would be the only thing standing between a turn and Gemini.
+  const api = fs.readFileSync(path.join(__dirname, '..', '..', 'frontend', 'src', 'services', 'api.js'), 'utf8');
+  const start = api.indexOf('export async function sendAiChat(');
+  assert.ok(start > -1, 'sendAiChat moved; point this test at it');
+  const sendAiChat = api.slice(start, api.indexOf('\n}', start));
+  assert.match(sendAiChat, /\n {2}body\.consentFlow = 'ask';/, 'sendAiChat must set the flag on every turn, unconditionally');
+  const route = fs.readFileSync(path.join(__dirname, '..', 'routes', 'ai.js'), 'utf8');
+  assert.match(route, /const BIRDIE_CONSENT_FLOW = 'ask';/);
 });

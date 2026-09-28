@@ -1635,7 +1635,7 @@ Hard rules:
 router.use(authenticate);
 
 // ---------------------------------------------------------------------------
-// Consent to send personal data to Gemini (migration 099)
+// Consent to send personal data to Gemini (migration 100)
 // ---------------------------------------------------------------------------
 // Every Birdie turn sends the user's messages, first name, age range, what
 // they have open in the app, their area when location is on, and on request
@@ -1643,12 +1643,26 @@ router.use(authenticate);
 // for explicit permission before personal data goes to a third-party AI, so
 // the app asks once, before the first message, and records the answer here.
 //
-// The client's question is cosmetic on its own: a cached older bundle never
-// shows it, and any client can call /chat directly. The rule that counts is
-// the refusal in /chat below, which reads this column before a meter is
-// charged or a byte reaches Gemini.
+// WHO IS HELD TO IT. A client that runs the question says so on every turn
+// (consentFlow: 'ask', set in sendAiChat in the frontend's services/api.js),
+// and for that client the refusal in /chat below reads this column before a
+// meter is charged or a byte reaches Gemini, so its own question cannot be
+// skipped by a stale copy of the answer or a direct call.
+//
+// A client that does not say so is a build from before the question existed:
+// an installed iOS build, or a web tab still running an older bundle. It has
+// no question to show and no way to call POST /consent, and
+// every account starts with this column NULL, so holding it to the rule would
+// switch Birdie off for everyone on that build, App Review's own device
+// included, with nothing they could tap to turn it back on. Those builds are
+// served exactly as before, without this column being read; the web and every
+// build from here on send the flag and are asked.
 const BIRDIE_CONSENT_REQUIRED = 'BIRDIE_CONSENT_REQUIRED';
-const BIRDIE_CONSENT_MESSAGE = "Birdie needs your OK before it sends anything to Google's Gemini. Open Birdie in the latest version of the app to answer.";
+const BIRDIE_CONSENT_FLOW = 'ask';
+// Only a client that sent BIRDIE_CONSENT_FLOW ever receives this, and that
+// client answers the code by showing the question, so the sentence is the
+// fallback wording and names nothing it cannot do.
+const BIRDIE_CONSENT_MESSAGE = "Birdie needs your OK before it sends anything to Google's Gemini.";
 
 const consentBody = (consentedAt) => ({
   consented: Boolean(consentedAt),
@@ -1762,6 +1776,11 @@ router.post('/chat',
     // Sent only by a client built to sell nothing (see SALES COPY OFF in
     // buildSystemPrompt). One accepted value.
     body('purchases').optional({ values: 'null' }).isIn(['off']),
+    // Sent by every client that asks before Birdie's first message (see
+    // WHO IS HELD TO IT above). One accepted value, so a typo in a future
+    // client is a 400 in testing rather than a turn that silently skips the
+    // consent check.
+    body('consentFlow').optional({ values: 'null' }).isIn([BIRDIE_CONSENT_FLOW]),
   ],
   async (req, res) => {
     try {
@@ -1804,14 +1823,17 @@ router.post('/chat',
         return res.status(400).json({ error: errors.array()[0].msg });
       }
 
-      // NO RECORDED CONSENT, NOTHING LEAVES. Read before either meter and
-      // before Gemini, so a refused turn costs the user no message from their
-      // day and sends Google nothing. `code` is what the app answers by
-      // showing the question; the sentence is for an older app that has no
-      // question to show.
-      const consent = await pool.query('SELECT birdie_ai_consent_at FROM users WHERE id = $1', [req.user.id]);
-      if (!consent.rows[0]?.birdie_ai_consent_at) {
-        return res.status(403).json({ error: BIRDIE_CONSENT_MESSAGE, code: BIRDIE_CONSENT_REQUIRED });
+      // NO RECORDED CONSENT, NOTHING LEAVES, for a client that asks. Read
+      // before either meter and before Gemini, so a refused turn costs the
+      // user no message from their day and sends Google nothing. `code` is
+      // what the app answers by showing the question. A client that does not
+      // send the flag is an installed build with no question to show, and it
+      // skips this read entirely (see WHO IS HELD TO IT above).
+      if (req.body.consentFlow === BIRDIE_CONSENT_FLOW) {
+        const consent = await pool.query('SELECT birdie_ai_consent_at FROM users WHERE id = $1', [req.user.id]);
+        if (!consent.rows[0]?.birdie_ai_consent_at) {
+          return res.status(403).json({ error: BIRDIE_CONSENT_MESSAGE, code: BIRDIE_CONSENT_REQUIRED });
+        }
       }
 
       const genAI = getGenAI();

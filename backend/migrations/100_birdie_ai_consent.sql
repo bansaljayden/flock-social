@@ -1,4 +1,4 @@
--- 099: when a user agreed to Birdie sending their data to Google's Gemini.
+-- 100: when a user agreed to Birdie sending their data to Google's Gemini.
 --
 -- ASCII only, like 065 and 091-096: the embedded server the boot-safety suite
 -- runs is WIN1252.
@@ -15,15 +15,21 @@
 -- Allow (or turns the switch on in Settings); DELETE /api/ai/consent sets it
 -- back to NULL. Nothing else writes it.
 --
--- WHO READS IT. POST /api/ai/chat refuses with 403 BIRDIE_CONSENT_REQUIRED
--- while it is NULL, before any meter is charged or any byte reaches Gemini,
--- so a cached older client that never shows the question cannot skip it.
--- GET /api/auth/me returns it so the app knows whether to ask. The data export
--- carries it, because a consent and its time are the user's own record.
+-- WHO READS IT. POST /api/ai/chat, for a client that says it asks the
+-- question (consentFlow: 'ask' in the body), refuses with 403
+-- BIRDIE_CONSENT_REQUIRED while it is NULL, before any meter is charged or
+-- any byte reaches Gemini. A client that does not say so is an installed
+-- build from before the question existed; it has no way to ask or to record
+-- an answer, so it is served exactly as before and this column is not read
+-- for it. GET /api/auth/me returns it so the app knows whether to ask. The
+-- data export carries it, because a consent and its time are the user's own
+-- record.
 --
 -- ADDITIVE. A nullable column with no default is a catalog change: no rewrite,
 -- no scan, and every existing row reads NULL, which is the truth for all of
--- them, since nobody has been asked yet. A replay is a no-op.
+-- them, since nobody has been asked yet. A replay is a no-op, and because
+-- older builds never read it, every row starting NULL changes nothing for
+-- them.
 -- @requires column users.birdie_ai_consent_at
 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS birdie_ai_consent_at TIMESTAMPTZ;

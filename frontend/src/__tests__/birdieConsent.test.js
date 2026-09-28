@@ -14,12 +14,15 @@
  *   2. App.js: the one function every send goes through returns before
  *      sendAiChat without a yes, the send button's state includes it, and a
  *      403 BIRDIE_CONSENT_REQUIRED from the server puts the question back.
- *   3. The client calls: Allow is POST /api/ai/consent, withdraw is DELETE.
+ *   3. The client calls: Allow is POST /api/ai/consent, withdraw is DELETE,
+ *      and every Birdie turn says this client asks (consentFlow: 'ask'),
+ *      which is what makes the server hold it to the recorded answer.
  *   4. Settings: the switch that takes the answer back exists, under Safety
  *      and privacy, and flips through the same function the panel uses.
  *
- * The server half (the route refuses on its own, so an older bundle cannot
- * skip the question) is backend/__tests__/birdieConsent.test.js.
+ * The server half (the route refuses a client that asks and has no yes on
+ * record, and serves a build installed before the question exactly as
+ * before) is backend/__tests__/birdieConsent.test.js.
  */
 import fs from 'fs';
 import path from 'path';
@@ -269,6 +272,30 @@ describe('the client calls', () => {
     const [url, init] = global.fetch.mock.calls[0];
     expect(String(url)).toMatch(/\/api\/ai\/consent$/);
     expect(init.method).toBe('DELETE');
+  });
+
+  // The server serves a turn with no flag the way it served every turn before
+  // the question existed, because that is what builds 38 and 44 send. This
+  // client shows the question, so every turn it sends has to say so, in both
+  // builds, or its own question becomes the only check.
+  test.each([
+    ['the web build', undefined],
+    ['the App Store build', 'off'],
+  ])('every Birdie turn from %s says this client asks', async (_name, purchases) => {
+    const before = process.env.REACT_APP_PURCHASES;
+    if (purchases === undefined) delete process.env.REACT_APP_PURCHASES;
+    else process.env.REACT_APP_PURCHASES = purchases;
+    try {
+      global.fetch = answer({ text: 'go at 9', venues: [] });
+      await api.sendAiChat([{ role: 'user', text: 'hi' }], null, null);
+      await api.sendAiChat([{ role: 'user', text: 'hi' }, { role: 'assistant', text: 'go at 9' }, { role: 'user', text: 'and after' }], { lat: 1, lng: 2 }, { screen: 'home' });
+      const turns = global.fetch.mock.calls.filter(([url]) => String(url).includes('/api/ai/chat'));
+      expect(turns).toHaveLength(2);
+      for (const [, init] of turns) expect(JSON.parse(init.body).consentFlow).toBe('ask');
+    } finally {
+      if (before === undefined) delete process.env.REACT_APP_PURCHASES;
+      else process.env.REACT_APP_PURCHASES = before;
+    }
   });
 });
 

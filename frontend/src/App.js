@@ -6668,12 +6668,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [aiChatMode, setAiChatMode] = useState('bubble'); // 'bubble' | 'panel' | 'fullscreen'
   const [aiShareVenue, setAiShareVenue] = useState(null); // venue to share to flock/DM
   // Whether this account has let Birdie send its data to Google's Gemini
-  // (users.birdie_ai_consent_at, migration 099). Read off authUser, which the
+  // (users.birdie_ai_consent_at, migration 100). Read off authUser, which the
   // sign-in responses and GET /api/auth/me both carry, so there is one copy of
   // the answer and it is the server's. Until it is set the panel shows the
   // question instead of the chips and the box, and sendAiMessage sends
-  // nothing. That is the cosmetic half: POST /api/ai/chat refuses on its own
-  // (403 BIRDIE_CONSENT_REQUIRED), which is what holds for an older bundle.
+  // nothing. That is the cosmetic half: every turn this bundle sends says it
+  // asks (consentFlow in sendAiChat), so POST /api/ai/chat refuses on its own
+  // (403 BIRDIE_CONSENT_REQUIRED) when the server has no yes on record, even
+  // if the copy here is stale.
   const birdieConsented = !!authUser?.birdie_ai_consent_at;
   const birdieConsentedRef = useRef(birdieConsented);
   birdieConsentedRef.current = birdieConsented;
