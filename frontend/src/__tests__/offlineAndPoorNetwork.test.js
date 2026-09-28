@@ -434,7 +434,9 @@ describe('what the app can tell the user', () => {
     expect(probe).toBeGreaterThan(-1);
     expect(told).toBeGreaterThan(probe);
     expect(told).toBeLessThan(hidden);
-    expect(app).toMatch(/markReachable, isOffline as isDeviceOffline \} from '\.\/services\/api';/);
+    // Both from services/api, in the one import (other names may follow them
+    // in it, as the Birdie consent calls do).
+    expect(app).toMatch(/^import \{[^}]*\bmarkReachable, isOffline as isDeviceOffline\b[^}]*\} from '\.\/services\/api';$/m);
   });
 });
 

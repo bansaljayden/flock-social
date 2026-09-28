@@ -96,6 +96,9 @@ function dmList({ threads = [], deleted = [] } = {}) {
     setDmsLoading: noop,
     setDmsError: noop,
     getDMConversations: () => new Promise((resolve, reject) => { reads.push({ resolve, reject }); }),
+    // No read primed at boot here, so every call goes to the wire
+    // (bootListReads.test.js runs the primed case).
+    takeBootRead: () => null,
     deletedDmUserIdsRef: { get current() { return state.deleted; } },
     setDeletedDmUserIds: set('deleted'),
     setDirectMessages: set('threads'),

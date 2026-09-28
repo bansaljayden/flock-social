@@ -283,7 +283,9 @@ describe('the hook, mounted', () => {
 });
 
 describe('the other swipes leave the band to the back swipe', () => {
-  const row = { id: 'a', sender: 'Ava', senderId: 2, text: 'hi', sentAt: '2026-09-05T20:00:00', message_type: 'text', reactions: [] };
+  // A stored row (a server-issued id), since only those take a reply swipe at
+  // all (canQuote in MessageRow.js).
+  const row = { id: 41, sender: 'Ava', senderId: 2, text: 'hi', sentAt: '2026-09-05T20:00:00', message_type: 'text', reactions: [] };
 
   test('startsInEdgeBand is the band, and only in the native shell', () => {
     expect(startsInEdgeBand(EDGE_PX)).toBe(true);

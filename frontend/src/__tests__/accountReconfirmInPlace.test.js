@@ -165,7 +165,7 @@ describe('an Apple account deleting from the iOS app', () => {
     fireEvent.click(deleteButton());
     await screen.findByText("Confirm it's you first");
     expect(screen.getByText(/For your security, confirm it's you with Apple\. Your account can still be deleted\./)).toBeInTheDocument();
-    expect(screen.queryByText(/Log out, sign back in/)).toBeNull();
+    expect(screen.queryByText(/Sign out, sign back in/)).toBeNull();
     expect(deleteButton()).toBeDisabled();
 
     fireEvent.click(screen.getByRole('button', { name: 'Continue with Apple' }));
@@ -276,7 +276,7 @@ describe('where the provider cannot run here', () => {
 
     fireEvent.click(deleteButton());
     await screen.findByText('Sign in again first');
-    expect(screen.getByText(/Log out, sign back in, then come straight here\. Your account can still be deleted\./)).toBeInTheDocument();
+    expect(screen.getByText(/Sign out, sign back in, then come straight here\. Your account can still be deleted\./)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Continue with Apple' })).toBeNull();
   });
 });

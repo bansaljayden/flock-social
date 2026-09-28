@@ -62,6 +62,9 @@ const SCOPE_NAMES = [
   'setDmPendingImage', 'setShowDmImagePreview',
   'setCropImageSrc', 'setCropZoom', 'cropOffsetRef', 'setShowPicModal',
   'PICKED_PHOTO_MAX_BYTES', 'PICKED_PHOTO_TOO_BIG',
+  // The conversation a chat or DM photo was picked in (chatThreadSwitch.test.js
+  // runs what it does when that conversation is left while the photo is read).
+  'threadEpochRef',
 ];
 
 function run(name, file) {
@@ -83,6 +86,7 @@ function run(name, file) {
     setShowPicModal: jest.fn(),
     PICKED_PHOTO_MAX_BYTES: LIMITS.PICKED_PHOTO_MAX_BYTES,
     PICKED_PHOTO_TOO_BIG: LIMITS.PICKED_PHOTO_TOO_BIG,
+    threadEpochRef: { current: 0 },
   };
   // eslint-disable-next-line no-new-func
   const handler = new Function(...SCOPE_NAMES, `return (${handlerSource(name)});`)(...SCOPE_NAMES.map((n) => scope[n]));
@@ -141,9 +145,14 @@ describe('the ceiling that is left is a memory bound, and says its number', () =
     expect(handlerSource('handleDmImageSelect')).toContain('prepareChatImage(reader.result)');
     expect(APP).toMatch(/^const CHAT_IMAGE_MAX_EDGE = 1600;$/m);
     expect(APP).toMatch(/^const CHAT_IMAGE_MAX_CHARS = 700 \* 1024;$/m);
-    // The profile picture is drawn to a 400px square before upload.
+    // The profile picture is drawn to a small square before upload: AVATAR_EDGE
+    // from lib/avatarImage.js, which replaced the 400px square so the face fits
+    // the server's list ceiling, and is no larger than that square was.
     const crop = APP.slice(APP.indexOf('const confirmCrop = useCallback('));
-    expect(crop.slice(0, crop.indexOf('uploadProfileImage('))).toContain('const outputSize = 400;');
+    expect(crop.slice(0, crop.indexOf('uploadProfileImage('))).toContain('const outputSize = AVATAR_EDGE;');
+    expect(APP).toMatch(/^import \{ AVATAR_EDGE\b[^\n]*\} from '\.\/lib\/avatarImage';\r?$/m);
+    const { AVATAR_EDGE } = require('../lib/avatarImage');
+    expect(AVATAR_EDGE).toBeLessThanOrEqual(400);
   });
 
   test('the sentence is plain and has no dash in it', () => {
