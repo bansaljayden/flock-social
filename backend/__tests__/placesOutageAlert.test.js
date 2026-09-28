@@ -94,7 +94,13 @@ test('an outage mails once, and the mail says what is broken for users', async (
   assert.match(msg.text, /4 hours/);
   assert.match(msg.text, /HTTP 429/);
   // What a person can act on.
-  assert.match(msg.text, /venue search, venue photos/);
+  assert.match(msg.text, /broken for users right now: venue search, the crowd card/);
+  // Photos have their own quota and their own alert, so a search outage must
+  // not claim they are broken; it points at the photos alert instead.
+  const brokenLine = msg.text.slice(msg.text.indexOf('What is broken'), msg.text.indexOf('Venue photos are metered'));
+  assert.doesNotMatch(brokenLine, /photo/i, 'the search alert names search only');
+  assert.match(msg.text, /Venue photos are metered on a separate Google quota/);
+  assert.match(msg.text, /"Venue photos are failing"/);
   assert.match(msg.text, /quotas/i);
   // The trap that cost hours during the real incident.
   assert.match(msg.text, /caches an area search for 20 minutes/);
@@ -222,6 +228,8 @@ test('the outage also reaches the admins as a push, through the shared ops sende
     assert.strictEqual(pushes[0].data.type, 'ops_alert');
     assert.match(pushes[0].title, /Places/);
     assert.match(pushes[0].body, /12 calls in a row over 4 hours/);
+    assert.match(pushes[0].body, /^Venue search is failing/);
+    assert.doesNotMatch(pushes[0].body, /photo/i, 'photos push their own alert');
   } finally {
     pushHelper.pushAlways = saved;
     delete process.env.ADMIN_USER_IDS;
