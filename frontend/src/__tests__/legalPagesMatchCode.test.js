@@ -905,9 +905,34 @@ describe('reported plan content outlives its plan exactly as the pages say', () 
 
     for (const [name, p] of Object.entries(pages)) {
       expect({ name, ok: /Reported chat messages and guest names: deleting a plan deletes its chat and its guest RSVPs, however the plan is deleted, including along with its host's account\./.test(p) }).toEqual({ name, ok: true });
-      expect({ name, ok: /If a report about one of its messages, or about a guest's display name, is not yet closed at that moment, we first keep a copy of that message, photo included, or of that name, so the report can still be judged\. Nobody using Flock can see the copy\. Only we can, to handle the report\./.test(p) }).toEqual({ name, ok: true });
+      expect({ name, ok: /If a report about one of its messages, or about a guest's display name, is not yet closed at that moment, we first keep a copy of that message, photo included, or of that name, so the report can still be judged\. We can see the copy, to handle the report\./.test(p) }).toEqual({ name, ok: true });
       expect({ name, ok: /a copy of a message is deleted straight away if the person who wrote it deletes their account/.test(p) }).toEqual({ name, ok: true });
       expect({ name, ok: /No copy of a message you wrote survives your account\./.test(p) }).toEqual({ name, ok: true });
+    }
+  });
+
+  test('who can read a copy: us, and the author of a message through their own export, as both pages say', () => {
+    const users = read('backend', 'routes', 'users.js');
+    // The export reads the caller's own copies of messages and nothing else.
+    // author_id is written only from a message's sender, and a guest's copy
+    // has none, so no copy of anybody else's words can reach the file.
+    expect(users).toMatch(/FROM content_report_evidence\s+WHERE author_id = \$1 AND content_type = 'flock_message'/);
+    expect(evidence).toMatch(/SELECT 'flock_message', m\.id, m\.flock_id, m\.message_text, m\.venue_data, m\.image_url,\s*NULL, m\.sender_id,/);
+    expect(evidence).toMatch(/SELECT 'guest_rsvp', g\.id, g\.flock_id, NULL, NULL, NULL,\s*g\.name, NULL,/);
+    // And the rows reach the file, run through the same image rule as the
+    // live messages, which is what "the way it includes their other messages"
+    // promises.
+    expect(users).toMatch(/flock_messages_kept_for_a_report: section\('flock_messages_kept_for_a_report', keptMessages\)\.map\(\(m\) => \(\{[\s\S]{0,300}\.\.\.exportImage\(m\.image_url\),/);
+
+    for (const [name, p] of Object.entries(pages)) {
+      expect({ name, ok: /We can see the copy, to handle the report\. Nobody using Flock can see it except the person who wrote the message, whose own data export includes it the way it includes their other messages\./.test(p) }).toEqual({ name, ok: true });
+      // The export paragraph counts the copies among the messages you sent.
+      expect({ name, ok: /the messages you sent \(including any we are keeping for a report after their plan was deleted\), your votes/.test(p) }).toEqual({ name, ok: true });
+      // "Only we can" stopped being true the day the author could export it.
+      expect({ name, ok: /Only we can, to handle the report/.test(p) }).toEqual({ name, ok: false });
+      // The things the file leaves out are still the four the page names;
+      // a kept message is not a fifth.
+      expect({ name, ok: /Four things are not in that file today/.test(p) }).toEqual({ name, ok: true });
     }
   });
 

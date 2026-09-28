@@ -198,7 +198,10 @@ function handle(text, params = []) {
   if (['FROM venue_votes', 'FROM dm_venue_votes', 'FROM emoji_reactions',
        'FROM dm_emoji_reactions', 'FROM venue_reviews', 'FROM venue_feedback',
        'JOIN bill_splits', 'FROM emergency_alerts', 'FROM stories',
-       'FROM friendships'].some((s) => has(s))) {
+       'FROM friendships',
+       // Messages kept for a report after their plan was deleted; populated,
+       // with the other-author and guest probes, in userExportAndProfile.test.js.
+       'FROM content_report_evidence'].some((s) => has(s))) {
     return { rows: [], rowCount: 0 };
   }
 

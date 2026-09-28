@@ -28,7 +28,8 @@
 //    report names is now copied out in the delete's own transaction
 //    (migration 110), on every door that deletes a plan. And the copy is not
 //    kept for good: it goes a stated period after the last report naming it
-//    is closed, which is what the privacy policy says.
+//    is closed, which is what the privacy policy says. Until then a copy of a
+//    message is in its author's data export, and in nobody else's.
 //
 // Real routes on a real migrated Postgres, because both defects are about what
 // the server does with locks and transactions, and a scripted pool can only
@@ -618,6 +619,51 @@ test("the host's account deletion keeps other people's reported content from the
   const gone = await call('DELETE', '/api/users/me', { token: people.abuser.token, body: { password: PASSWORD } });
   assert.equal(gone.status, 200, gone.text);
   assert.deepEqual(await keptCopies(ids), [`guest_rsvp:${ids.guest}`]);
+});
+
+test("a message's author finds the copy kept of it in their own data export, and nobody else finds it in theirs", async () => {
+  // The privacy policy counts a kept copy among the messages you sent, and a
+  // copy is still the author's words, held about them, so the export that
+  // promises every message they sent has to carry it.
+  const people = {
+    host: await mkUser('Host'), abuser: await mkUser('Abuser'), reporter: await mkUser('Reporter'),
+  };
+  const { flockId, ids } = await reportedPlan({
+    ...people, roster: [people.host, people.abuser, people.reporter],
+  });
+  assert.equal((await call('DELETE', `/api/flocks/${flockId}`, { token: people.host.token })).status, 200);
+
+  const exportOf = async (user) => {
+    const res = await fetch(`${base}/api/users/export`, {
+      headers: { Authorization: `Bearer ${user.token}`, 'X-Export-Password': PASSWORD },
+    });
+    const text = await res.text();
+    assert.equal(res.status, 200, text);
+    return { kept: JSON.parse(text).flock_messages_kept_for_a_report, text };
+  };
+
+  // The abuser wrote the venue card, and gets it back as it read live.
+  const abuser = await exportOf(people.abuser);
+  assert.deepEqual(abuser.kept.map((m) => [m.id, m.flock_id, m.message_text]), [[ids.card, flockId, 'look']]);
+  assert.deepEqual(abuser.kept[0].venue_data, { name: 'Bad Place', addr: '1 Main St', category: 'bar' });
+  // What nobody had an open report on went with the plan and is kept nowhere.
+  assert.ok(!abuser.text.includes('already judged'));
+  assert.ok(!abuser.text.includes('nobody reported this'));
+
+  // The host's reported photo is the host's, under the same image rule as
+  // every other message in the file.
+  const host = await exportOf(people.host);
+  assert.deepEqual(host.kept.map((m) => m.id), [ids.photo]);
+  assert.equal(host.kept[0].image_url, null);
+  assert.equal(host.kept[0].image_omitted, true);
+  assert.ok(!host.text.includes(IMAGE), 'the inline photo bytes reached the file');
+
+  // The reporter wrote none of it, and a guest's kept name reaches nobody.
+  const reporter = await exportOf(people.reporter);
+  assert.deepEqual(reporter.kept, []);
+  for (const { text } of [abuser, host, reporter]) {
+    assert.ok(!text.includes('Rude Name'), "a guest's kept name reached an export");
+  }
 });
 
 test('a copy goes once every report naming it has been closed for the retention period, and not before', async () => {
