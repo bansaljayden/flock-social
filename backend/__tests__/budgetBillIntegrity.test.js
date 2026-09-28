@@ -97,7 +97,8 @@
 //      count on a face the roster no longer shows. A bill posted before the
 //      ban keeps the banned account's row as the record of what it owes, and
 //      its total, which that row no longer hides from anybody without a block
-//      of their own with the banned account.
+//      of their own with the banned account. The count the Create Split
+//      preview divides by leaves them out the same way /create does.
 // ---------------------------------------------------------------------------
 
 const test = require('node:test');
@@ -2195,6 +2196,44 @@ test('a bill posted after a member is banned splits across the people who can st
   assert.equal(done.body.bill.fullySettled, true, 'the bill reads settled once everybody who can pay has');
   const del = await call('DELETE', `/api/flocks/${flockId}`, { token: alice.token });
   assert.equal(del.status, 200, `nothing is owed, so the host can delete the plan: ${del.text}`);
+});
+
+test('the count the Create Split preview divides by is the roster /create splits across', async () => {
+  // The preview read member_count, the headcount, which still counts a banned
+  // member: "~$33.00 each" on the sheet, and $44.00 each on the bill it posted.
+  // billable_count is sent on both reads the app takes the divisor from.
+  const alice = await mkUser('Alice');
+  const bob = await mkUser('Bob');
+  const carol = await mkUser('Carol');
+  const dave = await mkUser('Dave');
+  const flockId = await mkFlock(alice, [bob, carol, dave], { budget: false, ghost: false });
+  await ban(dave);
+  // A member you have blocked is still billed, so a block must not move it.
+  await pool.query('INSERT INTO user_blocks (blocker_id, blocked_id) VALUES ($1, $2)', [bob.id, carol.id]);
+
+  for (const viewer of [alice, bob, carol]) {
+    const list = await call('GET', '/api/flocks', { token: viewer.token });
+    assert.equal(list.status, 200, list.text);
+    const card = list.body.flocks.find((f) => f.id === flockId);
+    assert.equal(card.billable_count, 3, `${viewer.name}: the list's divisor leaves the banned member out`);
+    assert.equal(Number(card.member_count), 4, `${viewer.name}: the headcount is left as it was`);
+
+    const detail = await call('GET', `/api/flocks/${flockId}`, { token: viewer.token });
+    assert.equal(detail.status, 200, detail.text);
+    assert.equal(detail.body.flock.billable_count, 3, `${viewer.name}: the plan read's divisor leaves the banned member out`);
+    assert.equal(detail.body.flock.member_count, 4);
+  }
+
+  // The preview's own arithmetic (screens/ChatDetail.js: the total with tip
+  // over billableCount), against the bill the server posts one tap later.
+  const [total, tip] = [120, 10];
+  const preview = ((total * (1 + tip / 100)) / 3).toFixed(2);
+  const r = await call('POST', `/api/billing/${flockId}/create`, {
+    token: alice.token, body: { totalAmount: total, tipPercent: tip, splitType: 'equal', paidBy: alice.id },
+  });
+  assert.equal(r.status, 201, r.text);
+  const amounts = (await shareHolders(flockId)).map((s) => s.amount);
+  assert.deepEqual(amounts, [preview, preview, preview], `the sheet said ~$${preview} each`);
 });
 
 test('a banned account cannot be named as payer or given a custom share', async () => {
