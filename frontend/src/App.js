@@ -6857,12 +6857,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           // going_count includes guests who RSVPed through the share link;
           // member_count is accounts only and stays as the fallback.
           memberCount: f.going_count ?? f.member_count ?? 1,
-          // What a bill actually divides by. The server splits across
-          // flock_members WHERE status = 'accepted' (routes/billing.js), which is
-          // member_count exactly: accounts only, guests excluded, and a blocked
-          // member still billed. memberCount above is the headcount shown on a
-          // card and includes guests, so it is the wrong number to divide by.
-          billableCount: f.member_count ?? null,
+          // What a bill actually divides by. POST /create splits across the
+          // accepted members whose account is not banned (routes/billing.js),
+          // which is billable_count exactly: accounts only, guests excluded, a
+          // banned member left out and a blocked member still billed. member_count
+          // is the headcount and still counts a banned member, so it stands in only
+          // for a server that does not send billable_count yet. memberCount above
+          // includes guests, so it is the wrong number to divide by.
+          billableCount: f.billable_count ?? f.member_count ?? null,
           time: formatEventTime(f.event_time),
           // Keep the raw timestamp: the display string alone can't be put on a
           // calendar, which is why "Add to calendar" used to save today.
@@ -7284,12 +7286,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         members: [],
         memberPreviews: [],
         memberCount: f.going_count ?? f.member_count ?? 1,
-        // What a bill actually divides by. The server splits across
-        // flock_members WHERE status = 'accepted' (routes/billing.js), which is
-        // member_count exactly: accounts only, guests excluded, and a blocked
-        // member still billed. memberCount above is the headcount shown on a
-        // card and includes guests, so it is the wrong number to divide by.
-        billableCount: f.member_count ?? null,
+        // What a bill actually divides by. POST /create splits across the
+        // accepted members whose account is not banned (routes/billing.js),
+        // which is billable_count exactly: accounts only, guests excluded, a
+        // banned member left out and a blocked member still billed. member_count
+        // is the headcount and still counts a banned member, so it stands in only
+        // for a server that does not send billable_count yet. memberCount above
+        // includes guests, so it is the wrong number to divide by.
+        billableCount: f.billable_count ?? f.member_count ?? null,
         time: formatEventTime(f.event_time || eventTime),
         eventTime: f.event_time || eventTime,
         status: f.status === 'planning' || !f.status ? 'voting' : f.status,
@@ -9576,12 +9580,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         members: [],
         memberPreviews: [],
         memberCount: f.going_count ?? f.member_count ?? 1,
-        // What a bill actually divides by. The server splits across
-        // flock_members WHERE status = 'accepted' (routes/billing.js), which is
-        // member_count exactly: accounts only, guests excluded, and a blocked
-        // member still billed. memberCount above is the headcount shown on a
-        // card and includes guests, so it is the wrong number to divide by.
-        billableCount: f.member_count ?? null,
+        // What a bill actually divides by. POST /create splits across the
+        // accepted members whose account is not banned (routes/billing.js),
+        // which is billable_count exactly: accounts only, guests excluded, a
+        // banned member left out and a blocked member still billed. member_count
+        // is the headcount and still counts a banned member, so it stands in only
+        // for a server that does not send billable_count yet. memberCount above
+        // includes guests, so it is the wrong number to divide by.
+        billableCount: f.billable_count ?? f.member_count ?? null,
         time: formatEventTime(f.event_time || draft.event_time || null),
         eventTime: f.event_time || draft.event_time || null,
         status: f.status === 'planning' || !f.status ? 'voting' : f.status,
@@ -10437,9 +10443,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             // every blocked member. A four-member flock where you have blocked
             // one previewed "$40.00 each" on a $120 bill and the server came
             // back with $30.00, on a screen whose own header said 4 going.
-            // `member_count` is the unfiltered accepted count, in the same
-            // response, and is what routes/billing.js divides by.
-            billableCount: data.flock?.member_count ?? accepted.length,
+            //
+            // `member_count` was the next answer, and it is one short of right
+            // too: it counts a banned member, whose membership a ban leaves
+            // accepted, and /create leaves that account off the bill. So a
+            // four-member flock with one banned previewed "$30.00 each" on a
+            // $120 bill the server posted at $40.00. `billable_count`, in the
+            // same response, is /create's own roster counted (blocks included,
+            // banned accounts not). member_count stays behind it only for a
+            // server that does not send it yet.
+            billableCount: data.flock?.billable_count ?? data.flock?.member_count ?? accepted.length,
             // momentum is left as the server sent it on purpose: it drives a
             // progress stage ("has two or more people"), not a headcount, and
             // a blocked member is still coming to the thing.

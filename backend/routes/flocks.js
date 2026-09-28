@@ -599,6 +599,23 @@ const OWN_SHARE_UNSETTLED_MESSAGE =
 const OWED_TO_YOU_MESSAGE =
   'People still owe you on this plan\'s bill. Settle it first, then you can leave.';
 
+// HOW MANY PEOPLE A NEW BILL WOULD BE SPLIT ACROSS, sent as billable_count on
+// the list and the plan read so the Create Split preview divides by it.
+//
+// POST /api/billing/:flockId/create splits across the accepted members whose
+// account is not banned: a ban leaves the membership accepted, and a banned
+// account can never sign in to settle a share. member_count is the headcount
+// and still counts that member, so a preview dividing by it quoted "~$30.00
+// each" on a bill the server then posted at $40.00. The predicate is the
+// /create roster's own (`JOIN users u ON u.id = fm.user_id AND u.is_banned IS
+// NOT TRUE WHERE ... fm.status = 'accepted'`), and budgetBillIntegrity posts
+// a bill and checks the two agree. There is no block predicate, because a
+// member you have blocked is still billed. `flockIdCol` is a column this file
+// names, never a request value.
+const billableCountOf = (flockIdCol) => `(SELECT COUNT(*) FROM flock_members bfm
+                   JOIN users bu ON bu.id = bfm.user_id AND bu.is_banned IS NOT TRUE
+                  WHERE bfm.flock_id = ${flockIdCol} AND bfm.status = 'accepted')::int`;
+
 router.get('/', async (req, res) => {
   try {
     const result = await pool.query(
@@ -692,6 +709,9 @@ router.get('/', async (req, res) => {
               -- put next to "going".
               c.guest_count,
               (c.member_count + c.guest_count)::int AS going_count,
+              -- What a new bill divides by, which is not the headcount: see
+              -- billableCountOf above.
+              c.billable_count,
               -- Blocks: member_previews carries a NAME and an AVATAR for up to
               -- four people, and had no block predicate at all — so a blocked
               -- user's face sat on the flock card of the person who blocked
@@ -765,15 +785,18 @@ router.get('/', async (req, res) => {
        FROM flocks f
        JOIN flock_members fm ON fm.flock_id = f.id AND fm.user_id = $1
        JOIN users u ON u.id = f.creator_id
-       -- The two counts, computed once per flock row and read three times above.
-       -- LATERAL because both correlate on f.id; LEFT ... ON TRUE because an
+       -- The two counts, computed once per flock row and read three times above,
+       -- and the divisor of a new bill beside them, a different count (it leaves
+       -- out a banned account) and so a scan of its own.
+       -- LATERAL because all three correlate on f.id; LEFT ... ON TRUE because an
        -- aggregate with no GROUP BY always produces exactly one row, so this can
        -- never drop a flock from the list or introduce a NULL count.
        LEFT JOIN LATERAL (
          SELECT (SELECT COUNT(*) FROM flock_members WHERE flock_id = f.id AND status = 'accepted') AS member_count,
                 (SELECT COUNT(*) FROM guest_rsvps gr
                   WHERE gr.flock_id = f.id AND gr.status = 'in'
-                    AND COALESCE(gr.is_hidden, false) = false)::int AS guest_count
+                    AND COALESCE(gr.is_hidden, false) = false)::int AS guest_count,
+                ${billableCountOf('f.id')} AS billable_count
        ) c ON TRUE
        ORDER BY f.updated_at DESC
        LIMIT $2`,
@@ -1220,7 +1243,10 @@ router.get('/:id', param('id').isInt({ min: 1, max: INT4_MAX }), async (req, res
                 SELECT 1 FROM user_blocks b
                 WHERE (b.blocker_id = $2 AND b.blocked_id = f.creator_id)
                    OR (b.blocker_id = f.creator_id AND b.blocked_id = $2)
-              ) THEN NULL ELSE u.name END AS creator_name
+              ) THEN NULL ELSE u.name END AS creator_name,
+              -- The divisor of a new bill, as on the list (billableCountOf).
+              -- The invite card below picks its own fields and never sends it.
+              ${billableCountOf('f.id')} AS billable_count
        FROM flocks f
        JOIN users u ON u.id = f.creator_id
        WHERE f.id = $1`,

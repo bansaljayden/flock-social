@@ -273,8 +273,15 @@ test('the flock list counts heads the same way, so the two screens cannot disagr
   // now and are read three times. Counting the spellings is the assertion,
   // because "computed once" is not something a text match on one of them can
   // tell you.
-  assert.strictEqual((sql.match(/COUNT\(\*\) FROM flock_members/g) || []).length, 1,
+  assert.strictEqual((sql.match(/COUNT\(\*\) FROM flock_members WHERE flock_id = f\.id AND status = 'accepted'/g) || []).length, 1,
     'the accepted-member count must be spelled once, not once per column that reads it');
+  // The one other count over flock_members is the divisor of a new bill,
+  // which leaves out banned accounts and so is a different number, spelled
+  // once, in the same lateral, and read once.
+  assert.strictEqual((sql.match(/COUNT\(\*\) FROM flock_members/g) || []).length, 2,
+    'a third count over flock_members crept into the list query');
+  assert.strictEqual((sql.match(/COUNT\(\*\) FROM flock_members bfm JOIN users bu ON bu\.id = bfm\.user_id AND bu\.is_banned IS NOT TRUE WHERE bfm\.flock_id = f\.id AND bfm\.status = 'accepted'\)::int AS billable_count/g) || []).length, 1);
+  assert.strictEqual((sql.match(/c\.billable_count/g) || []).length, 1);
   assert.strictEqual((sql.match(/FROM guest_rsvps/g) || []).length, 1,
     'and the guest count once');
   assert.match(sql, /\(c\.member_count \+ c\.guest_count\)::int AS going_count/,
