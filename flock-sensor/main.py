@@ -1510,12 +1510,14 @@ class PeopleModel:
     # examples and have to clear a higher one. People keep THERMAL_MODEL_THRESHOLD.
     NAME_BAR = {'hand': 1.25, 'pet': 1.75, 'hot drink': 1.25, 'food': 1.5, 'laptop': 1.4,
                 'screen': 1.4, 'heater': 1.4, 'lamp': 1.4, 'warm seat': 1.6}
-    # From this many people the finer-grid model, when installed, counts the
-    # frame too, and the higher count stands. The main model's 40 x 30 grid
-    # merges heads a few pixels apart, which is how a crowd reads short; the
-    # finer grid keeps them apart but is less sure in a small room, so it is
-    # only asked where crowds are. Graded on four real test sets this changed
-    # nothing, and in a crowd of ten it lifted within-one from 41% to 63%.
+    # From this many people the crowd model (models/people-fine.onnx), when
+    # installed, counts the frame too, and the highest count stands. The main
+    # model merges heads a few pixels apart, which is how a crowd reads short.
+    # The crowd model shipped now is owl-4.3, whose density head's total does
+    # not fall when heads merge; it is a little less sure in a small room, so
+    # it is only asked where crowds are. Graded on four real test sets the
+    # pairing matched the main model alone, and in a crowd of ten it lifted
+    # within-one from 41% to 82%.
     CROWD_AT = 5
     fine = None
 
