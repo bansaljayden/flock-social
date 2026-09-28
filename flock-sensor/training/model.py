@@ -49,9 +49,9 @@ class Res(nn.Module):
 
 
 class PeopleNet(nn.Module):
-    def __init__(self, w=24, classes=1, boxes=False, stride=4):
+    def __init__(self, w=24, classes=1, boxes=False, stride=4, density=False):
         super().__init__()
-        self.classes, self.boxes, self.stride = classes, boxes, stride
+        self.classes, self.boxes, self.stride, self.density = classes, boxes, stride, density
         self.s2 = nn.Sequential(block(2, w, 2), block(w, w))                   # 60x80
         self.s4 = nn.Sequential(block(w, w * 2, 2), Res(w * 2))                # 30x40
         self.s8 = nn.Sequential(block(w * 2, w * 3, 2), Res(w * 3), Res(w * 3))  # 15x20
@@ -71,6 +71,13 @@ class PeopleNet(nn.Module):
         nn.init.constant_(self.head.bias, -4.6)
         if boxes:
             self.box = nn.Sequential(block(w, w), nn.Conv2d(w, 4, 1))
+        if density:
+            # How much person is in each cell; its sum is the count. Peaks
+            # merge when heads touch, the mass of person does not.
+            self.dens = nn.Sequential(block(w, w), nn.Conv2d(w, 1, 1))
+            # Start near empty: softplus(-6) is 0.0025 a cell, so the first
+            # steps are not spent unlearning a room full of phantom people.
+            nn.init.constant_(self.dens[1].bias, -6.0)
 
     def forward(self, x):
         a = self.s2(x)
@@ -87,6 +94,8 @@ class PeopleNet(nn.Module):
             return self.head(f)                   # logits, classes x 30 x 40
         # Box reach is learned in log space: a hand filling half the frame and
         # a head across the room differ fiftyfold in size.
+        if self.density:
+            return self.head(f), self.box(f), F.softplus(self.dens(f))
         return self.head(f), self.box(f)
 
 
@@ -107,6 +116,16 @@ def focal_loss(logits, target, alpha=2.0, beta=4.0, known=None):
         pos, pos_loss, neg_loss = pos * w, pos_loss * w, neg_loss * w
     n = pos.sum().clamp(min=1.0)
     return -(pos_loss.sum() + neg_loss.sum()) / n
+
+
+def density_loss(dens, target, known_people):
+    """Squared error per cell, plus the error in the total: the count is what
+    the head is for. Frames whose people are not labelled are left out."""
+    w = known_people[:, None, None, None]
+    n = w.sum().clamp(min=1.0)
+    cell = (((dens - target) ** 2) * w).sum() / n
+    count = (torch.abs(dens.sum(dim=(1, 2, 3)) - target.sum(dim=(1, 2, 3))) * w[:, 0, 0, 0]).sum() / n
+    return cell + 0.1 * count
 
 
 def box_loss(raw, ltrb, mask):
