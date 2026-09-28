@@ -344,7 +344,7 @@ router.get('/analytics', async (req, res) => {
        FROM research_analytics`
       ),
 
-      // TIME TO CONFIRM, from flocks.confirmed_at (migration 099). This read
+      // TIME TO CONFIRM, from flocks.confirmed_at (migration 102). This read
       // research_analytics.time_to_confirmation, which holds the minutes from
       // creation to the host CLOSING the plan, after the night, for plans a
       // host closed by hand: it was printed as a confirmation time and read in

@@ -1618,7 +1618,7 @@ router.put('/:id',
       // appear, because a parameter read as two types is refused whole
       // (42P08; __tests__/sqlParameterTypes.test.js prepares this).
       //
-      // confirmed_at (migration 099) is stamped on the move INTO confirmed
+      // confirmed_at (migration 102) is stamped on the move INTO confirmed
       // only: `status` on the right of the SET is the row's value before this
       // write. A plan already confirmed and sent 'confirmed' again is not a
       // new confirmation, and one confirmed before the column existed must not
@@ -1770,7 +1770,7 @@ router.put('/:id',
           const ff = updated;
           // Minutes from creation to the host CLOSING the plan, after the
           // night, whatever the column's name says. The admin analytics reads
-          // a real time to confirm from flocks.confirmed_at (migration 099)
+          // a real time to confirm from flocks.confirmed_at (migration 102)
           // and no longer shows this one.
           const minutesElapsed = Math.round((Date.now() - new Date(ff.created_at).getTime()) / 60000);
 

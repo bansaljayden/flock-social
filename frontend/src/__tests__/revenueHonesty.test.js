@@ -116,7 +116,7 @@ describe('break-even: impossible inputs read as a sentence, not Infinity', () =>
 // closed by hand, so the two disagreed without saying why. "Time to Confirm"
 // printed the minutes from creation to the host closing a plan after the
 // night, with an "m" after it. And both user counts counted venue owners and
-// admins. The time now comes from flocks.confirmed_at (migration 099) and
+// admins. The time now comes from flocks.confirmed_at (migration 102) and
 // waits, in words, for enough plans confirmed since it was recorded.
 // ---------------------------------------------------------------------------
 jest.mock('../services/api', () => ({

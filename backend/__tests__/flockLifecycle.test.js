@@ -197,7 +197,7 @@ test('a member who is not the host cannot confirm', async () => {
   assert.equal((await flockRow()).status, 'confirmed', 'and the row did not move');
 });
 
-// When a plan was confirmed (migration 099), for the Research tab's time to
+// When a plan was confirmed (migration 102), for the Research tab's time to
 // confirm. Stamped on the move into confirmed, once.
 
 test('confirming stamps the moment, and sending confirmed again does not move it', async () => {
