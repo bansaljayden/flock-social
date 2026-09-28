@@ -187,23 +187,26 @@ trained on:
 
 | Real test set | the heat-threshold rule | **Owl** |
 |---|---|---|
-| Ceiling camera, 2,347 frames, 8,043 people | 9.2% exact | **93.8% exact, 99.5% within one** |
-| Side view, 2,151 frames, 3,872 people | 36.6% exact | **85.0% exact, 98.0% within one** |
+| Ceiling camera, 2,347 frames, 8,043 people | 9.2% exact | **94.1% exact, 99.8% within one** |
+| Wall-mounted meeting rooms, 813 frames, 1,061 people | 51.5% exact | **97.9% exact, 100% within one** |
+| Low-resolution rooms with hot laptops, 265 frames | 71.3% exact | **95.5% exact, 100% within one** |
+| Side view, 2,151 frames, 3,872 people | 36.6% exact | **84.1% exact, 97.1% within one** |
 
 **It knows what is not a person.** The old rule counted warm regions, so a hand
 held up to the lens was a person and spread fingers were two. A stress test
-builds forty-one hard situations on purpose and scores each alone: a hand at
-the lens, a hot mug, a monitor, a radiator, a pet, a reflection in glass, a
-candle and an empty room each come out right 96 to 100% of the time, where the
-rule managed 8 to 85%.
+builds forty-one hard situations on purpose and scores each alone, averaging
+94%: a hand at the lens, a hot mug, a monitor, a radiator, a pet, a reflection
+in glass, warm footprints, a candle and an empty room each come out right 96 to
+100% of the time, where the rule managed 8 to 85%.
 
 **It runs on the sensor, in 16 ms.** 718,550 parameters, a CenterNet-style
 network with a head map per kind of thing and a box head, exported to ONNX and
 run by ONNX Runtime on one Raspberry Pi 5 core, fast enough to read every frame
-the camera sends. It learns from millions of generated thermal frames of
-rooms, people and warm objects, drawn through this camera's optics and noise,
-mixed with real frames from commercially licensed public datasets, and it is
-chosen on real footage, never on its own drawings.
+the camera sends. It learns from millions of generated thermal frames drawn
+with measured physics (skin follows the room, clothing sits a measured share of
+the way from room to skin, fur is cool and eyes are hot) through this camera's
+optics and noise, mixed with real frames from four commercially licensed public
+datasets, and it is chosen on real footage, never on its own drawings.
 
 **It counts, and never watches.** Owl names kinds of things, never who anyone
 is. Every frame is read on its own and forgotten, nothing about it follows a
