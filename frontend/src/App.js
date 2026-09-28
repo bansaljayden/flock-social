@@ -9057,10 +9057,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
      it is narrowed to is what changes. */
   const votesLoaded = votesLoadedRef.current.has(selectedFlockId);
 
+  // Settles when the read does, so the screen entry can tell whether its
+  // answer had a row to land in (READS THAT BEAT THE LIST).
   const loadFlockVotes = useCallback((flockId) => {
-    if (typeof flockId !== 'number') return;
+    if (typeof flockId !== 'number') return Promise.resolve();
     setVotesLoadingFor(flockId);
-    getFlockVotes(flockId)
+    return getFlockVotes(flockId)
       .then((data) => {
         votesLoadedRef.current.add(flockId);
         setVotesError('');
@@ -10323,6 +10325,53 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     [loadMoneyState, selectedFlockId],
   );
 
+  // ── READS THAT BEAT THE LIST ────────────────────────────────────────────
+  //
+  // A notification tap on a cold start opens a plan before GET /api/flocks
+  // has answered: the flock branch of the push router sets the screen at once
+  // (only an invite waits for the lists). The plan's own reads then race the
+  // list, and every one of them writes into the plan's row with a map over the
+  // rows held. A map over an empty list does nothing, so whichever answered
+  // first was thrown away. The row then arrived from the list with no
+  // messages, no roster and no votes, and nothing read again: the chat said
+  // "Nothing here yet" over a live conversation, the vote nudge said nobody
+  // had picked a place, and the plan screen said "Loading members..." for
+  // good. The DM twin builds a missing row itself (loadDmMessages). A plan's
+  // row carries too much that only the list knows for that, so a read that
+  // found no row to land in is noted here, by plan and by read, and run again
+  // the moment the row is there.
+  const rowlessReadsRef = useRef(new Map());
+  const noteRowlessRead = useCallback((flockId, read) => {
+    if (flocksRef.current.some(f => f.id === flockId)) return;
+    const reads = rowlessReadsRef.current.get(flockId) || new Set();
+    reads.add(read);
+    rowlessReadsRef.current.set(flockId, reads);
+    // A tally with no row to land in was not read, whatever loadFlockVotes
+    // recorded on its way through, so the nudge waits for the real one.
+    if (read === 'votes') votesLoadedRef.current.delete(flockId);
+  }, []);
+  const rereadRowlessFlock = useCallback((flockId) => {
+    const reads = rowlessReadsRef.current.get(flockId);
+    if (!reads) return;
+    rowlessReadsRef.current.delete(flockId);
+    if (reads.has('roster')) refreshFlockRoster(flockId);
+    if (reads.has('votes')) loadFlockVotes(flockId);
+    if (reads.has('messages')) loadFlockMessages(flockId, { showSpinner: true });
+    // The plan screen's read is its effect below, which its retry count runs
+    // again.
+    if (reads.has('plan')) setRosterAttempt(n => n + 1);
+  }, [refreshFlockRoster, loadFlockVotes, loadFlockMessages]);
+  // Checked whenever the list changes, which is when a row can arrive. A
+  // layout effect, so the chat never paints its empty state between the row
+  // landing and the history read going out again. Nothing noted is the usual
+  // case, and costs one size check.
+  React.useLayoutEffect(() => {
+    if (rowlessReadsRef.current.size === 0) return;
+    for (const flockId of [...rowlessReadsRef.current.keys()]) {
+      if (flocks.some(f => f.id === flockId)) rereadRowlessFlock(flockId);
+    }
+  }, [flocks, rereadRowlessFlock]);
+
   useEffect(() => {
     if (currentScreen === 'chatDetail' && selectedFlockId) {
       // Leave previous room — unless a live location share is still running in
@@ -10339,18 +10388,23 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // Join socket room
       joinFlock(selectedFlockId);
 
+      // The three reads below write into this plan's row. Any that answers
+      // before the list has delivered the row is noted and run again once it
+      // has (READS THAT BEAT THE LIST, above).
+      const enteredId = selectedFlockId;
+
       // Fetch flock members + momentum
-      refreshFlockRoster(selectedFlockId);
+      refreshFlockRoster(enteredId).then(() => noteRowlessRead(enteredId, 'roster'));
 
       // Votes already cast (members + guests), so the panel isn't blank
-      loadFlockVotes(selectedFlockId);
+      loadFlockVotes(enteredId).then(() => noteRowlessRead(enteredId, 'votes'));
 
       // Skip message fetch for just-created flocks (we already have the messages locally)
       if (newlyCreatedFlockRef.current === selectedFlockId) {
         newlyCreatedFlockRef.current = null;
       } else {
         // Fetch message history via HTTP
-        loadFlockMessages(selectedFlockId, { showSpinner: true });
+        loadFlockMessages(enteredId, { showSpinner: true }).then(() => noteRowlessRead(enteredId, 'messages'));
       }
       // Load budget status and bill split
       loadMoneyState(selectedFlockId);
@@ -10372,7 +10426,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       setShowChatPool(false);
       setShowCreateBill(false);
     }
-  }, [currentScreen, selectedFlockId, loadFlockVotes, refreshFlockRoster, loadFlockMessages, loadMoneyState]);
+  }, [currentScreen, selectedFlockId, loadFlockVotes, refreshFlockRoster, loadFlockMessages, loadMoneyState, noteRowlessRead]);
 
   // --- Reconnect catch-up ---------------------------------------------------
   //
@@ -10559,11 +10613,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           // hiddenAccepted rides on the flock so a live going count (a guest
           // answering, below) can subtract the same blocked members this does.
           setFlocks(prev => prev.map(f => f.id === selectedFlockId ? { ...f, members, guests, hiddenAccepted, memberCount: Math.max(0, (data.momentum?.accepted ?? acceptedCount) - hiddenAccepted), momentum: data.momentum || null, reconfirm: data.reconfirm || null, eventTime: eventTime || f.eventTime || null } : f));
+          // A plan opened from a notification before the list has it: this
+          // answer had no row to land in, and is read again once there is one
+          // (READS THAT BEAT THE LIST).
+          noteRowlessRead(selectedFlockId, 'plan');
         })
         .catch(() => setRosterError(true));
-      loadFlockVotes(selectedFlockId);
+      loadFlockVotes(selectedFlockId).then(() => noteRowlessRead(selectedFlockId, 'votes'));
     }
-  }, [currentScreen, selectedFlockId, loadFlockVotes, rosterAttempt]);
+  }, [currentScreen, selectedFlockId, loadFlockVotes, rosterAttempt, noteRowlessRead]);
 
   // Listen for real-time messages via WebSocket
   useEffect(() => {
