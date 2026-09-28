@@ -3606,7 +3606,7 @@ function registerHandlers(io, socket) {
         return;
       }
 
-      // confirmed_at (migration 099) on the move into confirmed only, keeping
+      // confirmed_at (migration 102) on the move into confirmed only, keeping
       // the first stamp, the rule PUT /api/flocks/:id keeps: re-picking the
       // venue of a plan that is already confirmed is not a new confirmation.
       // A NEW VENUE IS ONE BLOCK, the rule PUT /api/flocks/:id follows. This

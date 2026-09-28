@@ -3596,7 +3596,7 @@ export default function RevenueScreen({
             // split is research_analytics, which only a host closing a plan by
             // hand writes. "Time to Confirm" printed the minutes from creation
             // to that closing, after the night, in the thousands. The time now
-            // comes from flocks.confirmed_at (migration 099), which only plans
+            // comes from flocks.confirmed_at (migration 102), which only plans
             // confirmed since it existed carry, so it waits for enough of them;
             // the server withholds the median under its floor and so does this.
             const ttc = data.timeToConfirm;
