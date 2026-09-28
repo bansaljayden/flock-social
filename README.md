@@ -32,6 +32,7 @@ product invariant (see below, including what it does not cover).
 | Money | Anonymous budget matching (aggregate ceiling only), bill splitting with Venmo and Cash App deep links, Zelle by instructions (it has no shared URL scheme to open) |
 | Crowd intelligence | Flock's own trained model in production (XGBoost v2.6.0, served in-process as ONNX, ship-gated against the popular-times baseline; see below). A rule engine covers venues with no baseline yet, and the response says which one answered |
 | Birdie | AI assistant for venue ideas ("somewhere quiet and cheap nearby") |
+| Venue sensor | Flux: a Raspberry Pi with a thermal camera, a doorway counter and a microphone. Counts people on the device with Owl, Flock's own trained vision model (see below), and sends counts only |
 | Safety | Live location inside a flock (off by default, never background), one-tap SOS to trusted contacts, report + block, account deletion in-app (with re-authentication) |
 | Venues | Venue dashboard on two plans. Free: profile, deals, events, reviews with owner reply, the incoming-flocks demand feed and the live busyness report. Roost: the venue's own forecast, the strip against nearby venues, the weekly summary, and Roost's cards and answers. The plan gate is server-side and switched off, and no venue has been charged |
 | Social | Friends (codes + search), DMs, post-hangout feedback |
