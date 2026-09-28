@@ -47,7 +47,8 @@ CLASSES = ('person', 'hand', 'pet', 'hot drink', 'food', 'laptop', 'screen',
            'heater', 'lamp', 'warm seat')
 _KIND_CLASS = {'mug': 'hot drink', 'plate': 'food', 'laptop': 'laptop',
                'screen': 'screen', 'radiator': 'heater', 'vent': 'heater',
-               'lamp': 'lamp', 'pet': 'pet', 'seat': 'warm seat', 'sun': None}
+               'lamp': 'lamp', 'pet': 'pet', 'seat': 'warm seat', 'sun': None,
+               'footprints': None}
 # Owner ids for objects start here, clear of any person id.
 OBJECT_ID0 = 10000
 W, H = COLS * SS, ROWS * SS
@@ -366,8 +367,8 @@ def distractor(c, rng, amb, oid=-1, kind=None):
     """Draw one thing that is warm and is not a person. Returns its class
     name (see CLASSES), or None for a patch of sun, which is background."""
     kind = kind or rng.choice(['mug', 'laptop', 'screen', 'radiator', 'lamp', 'pet',
-                       'seat', 'plate', 'sun', 'vent'],
-                      p=[0.18, 0.14, 0.08, 0.08, 0.06, 0.12, 0.1, 0.08, 0.1, 0.06])
+                       'seat', 'plate', 'sun', 'vent', 'footprints'],
+                      p=[0.16, 0.13, 0.08, 0.08, 0.06, 0.11, 0.1, 0.08, 0.09, 0.05, 0.06])
     d = rng.uniform(0.5, 6.0)
     if _KIND_CLASS[kind] is None:
         oid = -1
@@ -445,6 +446,14 @@ def distractor(c, rng, amb, oid=-1, kind=None):
                 amb + rng.uniform(3, 14))
     elif kind == 'vent':
         paint(rect(x, y * 0.4, 0.3 * s, 0.15 * s), amb + rng.uniform(6, 20))
+    elif kind == 'footprints':
+        # Where somebody walked a minute ago: small foot-shaped patches a few
+        # degrees over the floor, fading. owl-3 counted them as people 78% of
+        # the time in the stress test; they are nothing, and get no label.
+        for _ in range(int(rng.integers(2, 9))):
+            paint(ellipse(rng.uniform(0.1, 0.9) * W, rng.uniform(0.55, 0.98) * H,
+                          rng.uniform(4, 9), rng.uniform(7, 14), rng.normal(0, 0.4)),
+                  amb + rng.uniform(1.0, 5.0))
     return _KIND_CLASS[kind]
 
 
@@ -503,6 +512,13 @@ def scene_full(rng):
         placed.append((rng.uniform(0.3, 0.7), rng.uniform(0.25, 0.75) * W,
                        rng.uniform(-0.45, -0.05) * H, n))
         n += 1
+    # One person standing behind another, partly hidden: the stress test
+    # found owl-3 counted two as one 41% of the time.
+    if n >= 2 and not overhead and rng.random() < 0.25:
+        i, j = rng.choice(n, 2, replace=False)
+        di, xi, yi, pi = placed[i]
+        placed[j] = (di + rng.uniform(1.0, 3.0), xi + rng.normal(0, 0.03) * W,
+                     yi - rng.uniform(0.02, 0.08) * H, placed[j][3])
     # Pairs close together: move some people next to another.
     if n >= 2 and rng.random() < 0.35:
         for _ in range(int(rng.integers(1, max(2, n // 2 + 1)))):
