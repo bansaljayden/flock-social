@@ -918,8 +918,11 @@ describe('the budget settles the way the pages say it does', () => {
   const mirror = read('frontend', 'api', 'marketing-page.js');
 
   test('who has to answer, who makes the three, and who can lock it, in the code', () => {
-    // answeringPopulation: accepted members plus visible guests who are in.
-    expect(budget).toMatch(/"SELECT COUNT\(\*\) AS total FROM flock_members WHERE flock_id = \$1 AND status = 'accepted'"/);
+    // answeringPopulation: accepted members plus visible guests who are in. A
+    // banned member who never answered is not waited for: the account cannot
+    // sign in to answer, and the roster no longer shows it.
+    expect(budget).toMatch(/const MEMBER_ANSWERERS_SQL = `SELECT COUNT\(\*\) AS total FROM flock_members WHERE flock_id = \$1 AND status = 'accepted'/);
+    expect(budget).toMatch(/const memberResult = await run\(MEMBER_ANSWERERS_SQL, \[flockId\]\);/);
     expect(budget).toMatch(/const GUEST_ANSWERERS_SQL = `SELECT COUNT\(\*\) AS total FROM guest_rsvps\s+WHERE flock_id = \$1 AND status = 'in'/);
     // The three are member amounts only, and the settle needs them.
     expect(budget).toMatch(/COUNT\(\*\) FILTER \(WHERE skipped = false AND bm\.id IS NOT NULL\) AS non_skip_count/);
