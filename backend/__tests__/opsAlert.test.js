@@ -246,3 +246,45 @@ test('the email alarm pages the admins by push only, naming the condition and ne
   }
   assert.ok(pushes.some((p) => /verification, password reset and SOS/.test(p.body)));
 });
+
+test('an email alarm page that reached no phone is tried again later the same day', async () => {
+  reset({ admins: '7' });
+  emailService.resetEmailHealth();
+  const realError = console.error;
+  const realNow = Date.now;
+  console.error = () => {};
+  const landed = async (n) => {
+    for (let i = 0; i < 50 && pushes.length < n; i += 1) await new Promise((r) => setTimeout(r, 5));
+    // Let the answer from opsAlert settle into the page state as well.
+    await new Promise((r) => setTimeout(r, 5));
+  };
+  try {
+    pushAnswer = () => ({ sent: 0, failed: 1, reason: 'no device' });
+    emailService.raiseEmailAlarm('failing', 'the last 5 outbound emails all failed', { consecutiveFailures: 5 });
+    await landed(1);
+    assert.strictEqual(pushes.length, 1);
+    assert.ok(!ledger.has('email_failing'), 'opsAlert gave the day back');
+
+    // The next failure moments later does not hammer the ledger.
+    emailService.raiseEmailAlarm('failing', 'the last 6 outbound emails all failed', { consecutiveFailures: 6 });
+    await landed(2);
+    assert.strictEqual(pushes.length, 1, 'attempts are spaced, not one per failed send');
+
+    // Past the spacing, the next raise pages again, and this time it lands.
+    pushAnswer = () => ({ sent: 1, failed: 0 });
+    Date.now = () => realNow() + 11 * 60 * 1000;
+    emailService.raiseEmailAlarm('failing', 'the last 7 outbound emails all failed', { consecutiveFailures: 7 });
+    await landed(2);
+    assert.strictEqual(pushes.length, 2, 'the log already said it today, but nobody had been reached');
+    assert.ok(ledger.has('email_failing'));
+
+    // Reached now, so the rest of the day is quiet.
+    Date.now = () => realNow() + 30 * 60 * 1000;
+    emailService.raiseEmailAlarm('failing', 'the last 8 outbound emails all failed', { consecutiveFailures: 8 });
+    await landed(3);
+    assert.strictEqual(pushes.length, 2);
+  } finally {
+    Date.now = realNow;
+    console.error = realError;
+  }
+});

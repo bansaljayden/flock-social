@@ -663,10 +663,10 @@ const INVENTORY = [
   },
   {
     file: 'services/emailService.js', name: 'alarmPaged', kind: 'cache',
-    key: 'the alarm CONDITION CLASS (the part of the alarm key before the colon: failing, no-key, cap, locked-out, emergency-loop) -> the UTC day the admins were last paged about it',
+    key: 'the alarm CONDITION CLASS (the part of the alarm key before the colon: failing, no-key, cap, locked-out, emergency-loop) -> { the UTC day a page about it reached somebody, the earliest time another attempt may run }',
     callerControls: 'nothing. The address half of a locked-out or emergency-loop key is cut off before the class is taken, so a thousand distinct addresses are one entry',
     protects: 'a Postgres claim in ops_alert_ledger and an admin push. A miss costs one INSERT that the ledger then dedupes, never a second push the same day',
-    denominator: 'not a counter. One entry per condition class, holding a date string',
+    denominator: 'not a counter. One entry per condition class, holding a date string and a retry time',
     bound: 'the five condition classes the alarm raises, plus one per new class a future alarm adds; nothing a caller can grow',
     verdict: 'SAFE',
     why: 'The page leg of the email alarm goes through services/opsAlert.js, which already dedupes per key per day in Postgres. This map only saves that claim on a bad day when alarmSaid speaks about many distinct addresses of one class: keyed by class, it cannot grow with the addresses and cannot be used to force pushes, since the ledger key is the class too.',
