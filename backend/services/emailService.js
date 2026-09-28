@@ -301,7 +301,13 @@ const ALARM_KEYS_MAX = 2000;
 function raiseEmailAlarm(key, message, extra) {
   try {
     const day = utcDay();
-    if (alarmSaid.get(key) === day) return false;
+    if (alarmSaid.get(key) === day) {
+      // The log has said it today, but the page keeps its own day, which is
+      // set only once somebody was reached. A page that reached no phone gets
+      // another chance from the next raise.
+      pageEmailAlarm(key, extra);
+      return false;
+    }
     // Bounded, and swept STALE-FIRST rather than cleared. Two of the keys below
     // carry a recipient address, so an attacker who could force a clear() would
     // be forcing the alarm to speak again about something it had already
@@ -396,29 +402,43 @@ const EMAIL_ALARM_PUSH = {
   }),
 };
 
-// condition class -> the UTC day it was last paged. The ledger dedupes too;
-// this saves the database a claim per distinct address on a bad day.
+// condition class -> { day, nextTryAt }. `day` is the UTC day somebody was
+// reached about it, and is written only when opsAlert answers sent or
+// already-sent-today. opsAlert releases its ledger claim when no phone got the
+// push so that a later raise can try again, and marking the day before it
+// answered would block exactly that retry. `nextTryAt` spaces the attempts,
+// so a failure raised on every send does not become a database claim per
+// send. The ledger dedupes too; this saves the database a claim per distinct
+// address on a bad day.
 const alarmPaged = new Map();
+const PAGE_RETRY_MS = 10 * 60 * 1000;
 
 function pageEmailAlarm(key, extra) {
   try {
     const kind = String(key).split(':')[0];
     const day = utcDay();
-    if (alarmPaged.get(kind) === day) return;
-    alarmPaged.set(kind, day);
+    const now = Date.now();
+    const state = alarmPaged.get(kind) || { day: null, nextTryAt: 0 };
+    if (state.day === day) return;
+    // An attempt in flight, or one that reached nobody a moment ago.
+    if (now < state.nextTryAt) return;
+    state.nextTryAt = now + PAGE_RETRY_MS;
+    alarmPaged.set(kind, state);
     const words = EMAIL_ALARM_PUSH[kind]
       ? EMAIL_ALARM_PUSH[kind](extra)
       : { title: 'Flock email alarm', body: 'An email alarm was raised. The Railway log has the details under EMAIL.' };
     // Lazy: opsAlert requires this module for its own email leg.
     // eslint-disable-next-line global-require
     const { opsAlert } = require('./opsAlert');
-    opsAlert({
+    Promise.resolve(opsAlert({
       key: `email_${kind}`,
       subject: words.title,
       text: words.body,
       push: words,
       legs: ['push'],
       tag: '[email-alarm]',
+    })).then((out) => {
+      if (out && (out.sent || out.skipped === 'already-sent-today')) state.day = day;
     }).catch(() => {});
   } catch (err) {
     // The alarm is allowed to say nothing; it is not allowed to stop a send.
