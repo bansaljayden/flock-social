@@ -7316,6 +7316,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       setFlocks(prev => [...prev, newFlock]);
       setSelectedFlockId(f.id);
       setCurrentScreen('chatDetail');
+      // The plan was made and its invites did not go out. The server says so
+      // with the plan rather than answering 500, which is what made a second
+      // copy when the person tapped again. Inviting from the plan is the same
+      // pipeline, and safe to repeat.
+      if (data.invitesFailed) {
+        showToast('Your new plan is ready, but the invites did not go out. Invite people from the plan.', 'warning');
+      }
     } catch (err) {
       if (!needsEmailVerification(err, 'start a flock')) showToast(err.message || "That didn't get set up. Try again.", 'error');
     } finally {

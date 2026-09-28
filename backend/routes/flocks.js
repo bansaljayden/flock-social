@@ -3310,7 +3310,8 @@ router.post('/:id/invite',
 // still returns the new flock, and the caller can invite the rest later.
 //
 // Response: the same shape POST / returns — 201 { flock, invited_user_ids } —
-// so the client can navigate straight into the new flock.
+// so the client can navigate straight into the new flock. `invitesFailed: true`
+// rides on it when the plan was made and its invites could not be sent.
 router.post('/:id/rerun',
   requireVerified,
   [
@@ -3383,22 +3384,37 @@ router.post('/:id/rerun',
       // set the "do it again" button means. The shared pipeline re-applies
       // blocks and the rest, so a pair that blocked each other since the old
       // flock is not re-joined by replaying it.
-      const prior = await pool.query(
-        "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted' AND user_id != $2",
-        [sourceId, req.user.id]
-      );
-
+      //
+      // THE NEW PLAN EXISTS FROM HERE ON, whatever the invites do. The clone
+      // committed above, and the roster read and the invite pipeline are
+      // separate statements after it, any of which a slow or saturated
+      // database can fail. A failure there used to reach the outer catch and
+      // answer 500 "Failed to rerun flock" for a plan that had been made, so
+      // the tap again made a second copy and the first sat in the list with
+      // nobody invited to it. It answers with the plan instead, flagged, so
+      // the app opens it and says the invites did not go out; inviting from
+      // the plan is the same pipeline, and safe to repeat.
       const io = req.app.get('io');
-      const outcome = prior.rows.length > 0
-        ? await inviteUsersToFlock({
-            io,
-            inviter: req.user,
-            flockId: flock.id,
-            flockName: flock.name,
-            userIds: prior.rows.map((r) => r.user_id),
-            refuseClosed: true,
-          })
-        : { invited: [], throttled: false, full: false };
+      let outcome;
+      try {
+        const prior = await pool.query(
+          "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted' AND user_id != $2",
+          [sourceId, req.user.id]
+        );
+        outcome = prior.rows.length > 0
+          ? await inviteUsersToFlock({
+              io,
+              inviter: req.user,
+              flockId: flock.id,
+              flockName: flock.name,
+              userIds: prior.rows.map((r) => r.user_id),
+              refuseClosed: true,
+            })
+          : { invited: [], throttled: false, full: false };
+      } catch (inviteErr) {
+        console.error('[Rerun] Flock', flock.id, 'made, its invites failed:', inviteErr.message);
+        return res.status(201).json({ flock, invited_user_ids: [], invitesFailed: true });
+      }
 
       // Same shape as POST /, and like POST / the id list is who actually got
       // a row — blocks or an exhausted budget can make it shorter than the
