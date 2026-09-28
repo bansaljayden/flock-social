@@ -180,9 +180,17 @@ const read = (...p) => fs.readFileSync(path.join(__dirname, '..', ...p), 'utf8')
 
 test('the REST vote pushes after answering, and only for a vote that changed something', () => {
   const src = read('routes', 'venues.js');
-  // The answer's tally is built for the voter (viewerId marks their own row),
-  // and the push still follows it, gated on a vote that changed something.
-  assert.match(src, /res\.status\(changed \? 201 : 200\)\.json\(\{ vote, votes: tailorVotes\(rows, myInvisible, \{ viewerId: req\.user\.id \}\) \}\);[\s\S]{0,300}if \(changed\) await notifyHostVotesIn\(req\.app\.get\('io'\), flockId, req\.user\.id, rows\);/);
+  // The answer's tally is built for the voter (viewerId marks their own row)
+  // inside tallyAfterCommit, which hands the untailored rows to its caller
+  // through onRows and never puts them in the answer.
+  const helper = src.slice(src.indexOf('async function tallyAfterCommit('), src.indexOf("router.post('/:id/vote'"));
+  assert.match(helper, /const rows = await collectVoteRows\(flockId\);\s*if \(typeof onRows === 'function'\) onRows\(rows\);[\s\S]{0,200}return \{ votes: tailorVotes\(rows, myInvisible, \{ viewerId: req\.user\.id \}\) \};/);
+  // The route collects those rows, answers, and only then pushes, gated on a
+  // vote that changed something and on a tally there was to judge it by.
+  const route = src.slice(src.indexOf("router.post('/:id/vote'"), src.indexOf("console.error('Vote error:'"));
+  assert.match(route, /let talliedRows = null;\s*const tally = await tallyAfterCommit\(req, flockId, venue_name, true, \(rows\) => \{ talliedRows = rows; \}\);\s*res\.status\(changed \? 201 : 200\)\.json\(\{ vote, \.\.\.tally \}\);[\s\S]{0,400}if \(changed && talliedRows\) await notifyHostVotesIn\(req\.app\.get\('io'\), flockId, req\.user\.id, talliedRows\);/);
+  // One push in the route, so none can go out ahead of the answer.
+  assert.strictEqual(route.split('notifyHostVotesIn(').length - 1, 1);
 });
 
 test('the socket vote calls the same function, after its tallies go out', () => {
