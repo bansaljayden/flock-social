@@ -74,7 +74,8 @@ def real_frame(real, rng, groups_x3=False):
     Only people are labelled in them, so only the people map is graded.
     """
     from scipy.ndimage import zoom
-    sources = [('tp', 0.35), ('otp', 0.3), ('aau', 0.25), ('ss', 0.1)]
+    # Side view weighted up after owl-4.1 lost two points there to owl-3.
+    sources = [('tp', 0.3), ('otp', 0.4), ('aau', 0.22), ('ss', 0.08)]
     sources = [(k, w) for k, w in sources if f'{k}_img' in real]
     weights = np.array([w for _, w in sources])
     src = sources[int(rng.choice(len(sources), p=weights / weights.sum()))][0]

@@ -229,7 +229,7 @@ def person(c, rng, amb, d, hx, hy, pid, view=None, pose=None, overhead=False,
     pants = amb + (skin - amb) * rng.uniform(0.15, 0.55)
     head_rx, head_ry = 0.083 * s * rng.uniform(0.9, 1.1), 0.115 * s * rng.uniform(0.9, 1.1)
     view = view or rng.choice(['front', 'back', 'side'], p=[0.5, 0.3, 0.2])
-    pose = pose or rng.choice(['stand', 'sit', 'walk', 'lie'], p=[0.43, 0.34, 0.18, 0.05])
+    pose = pose or rng.choice(['stand', 'sit', 'walk', 'lie'], p=[0.41, 0.32, 0.17, 0.10])
 
     if pose == 'lie' and not overhead:
         # Lying on a sofa or the floor: the body runs sideways from the head.
@@ -471,7 +471,7 @@ def _people_count(rng):
         return 2
     if r < 0.76:
         return int(rng.integers(3, 6))
-    if r < 0.92:
+    if r < 0.9:
         return int(rng.integers(6, 13))
     return int(rng.integers(13, 26))
 
@@ -514,7 +514,7 @@ def scene_full(rng):
         n += 1
     # One person standing behind another, partly hidden: the stress test
     # found owl-3 counted two as one 41% of the time.
-    if n >= 2 and not overhead and rng.random() < 0.25:
+    if n >= 2 and not overhead and rng.random() < 0.4:
         i, j = rng.choice(n, 2, replace=False)
         di, xi, yi, pi = placed[i]
         placed[j] = (di + rng.uniform(1.0, 3.0), xi + rng.normal(0, 0.03) * W,
