@@ -520,13 +520,18 @@ describe('Make a new link, in the invite sheet', () => {
     fireEvent.click(screen.getByRole('button', { name: /Share invite link/ }));
     await waitFor(() => expect(api.createFlockInviteLink).toHaveBeenCalled());
     expect(api.createFlockInviteLink.mock.calls[0]).toEqual([1]);
-    expect(api.createFlockInviteLink.mock.calls.every((c) => c.length === 1)).toBe(true);
+    await act(async () => {});
+    expect(api.createFlockInviteLink.mock.calls.every((c) => c[1] !== true)).toBe(true);
   });
 
   test('after a new link is made, Share sends the new one', async () => {
-    api.createFlockInviteLink.mockImplementation((id, regenerate) => Promise.resolve({
-      url: regenerate ? 'https://flockcorp.com/i/new' : 'https://flockcorp.com/i/old',
-    }));
+    // The route's own behaviour: once a link is replaced, an ordinary ask
+    // hands back the replacement, never the revoked one.
+    let live = 'https://flockcorp.com/i/old';
+    api.createFlockInviteLink.mockImplementation((id, regenerate) => {
+      if (regenerate) live = 'https://flockcorp.com/i/new';
+      return Promise.resolve({ url: live });
+    });
     const restore = stubShare(() => Promise.resolve());
     try {
       const { p } = openSheet();
@@ -565,20 +570,32 @@ function stubNavigator(key, impl) {
 }
 function stubShare(impl) { return stubNavigator('share', jest.fn(impl)); }
 function stubClipboard(impl) { return stubNavigator('clipboard', { writeText: jest.fn(impl) }); }
+// The app in front, for the visibilitychange the sheet listens to.
+function stubVisible() {
+  const own = Object.getOwnPropertyDescriptor(document, 'visibilityState');
+  Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' });
+  return () => {
+    if (own) Object.defineProperty(document, 'visibilityState', own);
+    else delete document.visibilityState;
+  };
+}
 // Lets the fetch that opening the sheet started settle into the held link.
 async function linkHeld() {
-  await waitFor(() => expect(api.createFlockInviteLink).toHaveBeenCalledWith(1));
+  await waitFor(() => expect(api.createFlockInviteLink).toHaveBeenCalledWith(1, false, { quiet: true }));
   await act(async () => {});
 }
 
 describe('Share invite link, in the invite sheet', () => {
   const openSheet = (over = {}) => mount({ showFlockInviteModal: true, ...over });
 
-  test('opening the sheet asks for the ordinary link, once, before any tap', async () => {
+  test('opening the sheet asks for the ordinary link, once, quietly, before any tap', async () => {
+    // quiet keeps the ask out of invite_link_created (analyticsEvents pins
+    // what that option does), so opening the sheet to add app friends is
+    // not counted as anyone sharing the link.
     api.createFlockInviteLink.mockResolvedValue({ url: 'https://flockcorp.com/i/old' });
     openSheet();
     await linkHeld();
-    expect(api.createFlockInviteLink.mock.calls).toEqual([[1]]);
+    expect(api.createFlockInviteLink.mock.calls).toEqual([[1, false, { quiet: true }]]);
   });
 
   test('an ended plan asks for nothing on open, since the route would refuse it', async () => {
@@ -592,16 +609,141 @@ describe('Share invite link, in the invite sheet', () => {
     api.createFlockInviteLink.mockResolvedValue({ url: 'https://flockcorp.com/i/old' });
     const restore = stubShare(() => Promise.resolve());
     try {
-      openSheet();
+      const { p } = openSheet();
       await linkHeld();
       fireEvent.click(screen.getByRole('button', { name: /Share invite link/ }));
       // Synchronously, inside the click: the tap's activation is still there.
       expect(navigator.share).toHaveBeenCalledWith({ title: 'Join my flock', url: 'https://flockcorp.com/i/old' });
-      // And the tap asked the network for nothing.
+      // And nothing asked the network in front of it.
       expect(api.createFlockInviteLink).toHaveBeenCalledTimes(1);
+      await act(async () => {});
+      // Behind it, one counted ask: every Share tap has always made one,
+      // and it checks the link just sent is still the live one.
+      expect(api.createFlockInviteLink.mock.calls).toEqual([[1, false, { quiet: true }], [1, false, { quiet: false }]]);
+      expect(navigator.share.mock.invocationCallOrder[0])
+        .toBeLessThan(api.createFlockInviteLink.mock.invocationCallOrder[1]);
+      // The same link came back, so nothing is said and nothing goes on show.
+      expect(p.showToast).not.toHaveBeenCalled();
+      expect(p.setCopiedInviteUrl).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
+
+  test('a link replaced from another phone is still shared at once, then said to be dead, and the next tap sends the new one', async () => {
+    // The sheet opened on the old link; the creator then made a new one
+    // elsewhere, so every later ordinary ask gets the new one.
+    api.createFlockInviteLink.mockResolvedValueOnce({ url: 'https://flockcorp.com/i/old' });
+    api.createFlockInviteLink.mockResolvedValue({ url: 'https://flockcorp.com/i/new' });
+    const restore = stubShare(() => Promise.resolve());
+    try {
+      const { p, rerender } = openSheet();
+      await linkHeld();
+      fireEvent.click(screen.getByRole('button', { name: /Share invite link/ }));
+      expect(navigator.share).toHaveBeenLastCalledWith({ title: 'Join my flock', url: 'https://flockcorp.com/i/old' });
+      await waitFor(() => expect(p.setCopiedInviteUrl).toHaveBeenCalledWith('https://flockcorp.com/i/new'));
+      expect(p.showToast).toHaveBeenCalledWith(
+        'That link was just replaced and no longer works. Tap Share invite link to send the new one.', 'error',
+      );
+      rerender(React.createElement(ChatDetail, { ...p, copiedInviteUrl: 'https://flockcorp.com/i/new' }));
+      const panel = screen.getByRole('status').textContent;
+      expect(panel).toContain('New link made. The old one no longer works.');
+      expect(panel).not.toContain('Copied.');
+      fireEvent.click(screen.getByRole('button', { name: /Share invite link/ }));
+      expect(navigator.share).toHaveBeenLastCalledWith({ title: 'Join my flock', url: 'https://flockcorp.com/i/new' });
       await act(async () => {});
     } finally {
       restore();
+    }
+  });
+
+  test('a recheck that raced Make a new link never puts the killed link back', async () => {
+    const OLD = 'https://flockcorp.com/i/old';
+    const NEW = 'https://flockcorp.com/i/new';
+    let answerRecheck = null;
+    let live = OLD;
+    api.createFlockInviteLink.mockImplementation((id, regenerate, opts) => {
+      if (regenerate) { live = NEW; return Promise.resolve({ url: NEW }); }
+      // The first tap's ask behind the share: held open until the
+      // replacement has landed, then answered with the link the route handed
+      // out before it.
+      if (opts && opts.quiet === false && !answerRecheck) return new Promise((resolve) => { answerRecheck = resolve; });
+      return Promise.resolve({ url: live });
+    });
+    const restore = stubShare(() => Promise.resolve());
+    try {
+      const { p } = openSheet();
+      await linkHeld();
+      fireEvent.click(screen.getByRole('button', { name: /Share invite link/ }));
+      await waitFor(() => expect(answerRecheck).not.toBeNull());
+      fireEvent.click(screen.getByRole('button', { name: 'Make a new link' }));
+      fireEvent.click(within(dialogTitled('Make a new link?')).getByRole('button', { name: 'Make a new link' }));
+      await waitFor(() => expect(p.setCopiedInviteUrl).toHaveBeenCalledWith(NEW));
+      await act(async () => { answerRecheck({ url: OLD }); });
+      fireEvent.click(screen.getByRole('button', { name: /Share invite link/ }));
+      expect(navigator.share).toHaveBeenLastCalledWith({ title: 'Join my flock', url: NEW });
+      await act(async () => {});
+      expect(p.setCopiedInviteUrl).not.toHaveBeenCalledWith(OLD);
+      expect(p.showToast).not.toHaveBeenCalledWith(expect.stringContaining('just replaced'), 'error');
+    } finally {
+      restore();
+    }
+  });
+
+  test('coming back to the app with the sheet open picks up a replacement before the next tap', async () => {
+    api.createFlockInviteLink.mockResolvedValueOnce({ url: 'https://flockcorp.com/i/old' });
+    api.createFlockInviteLink.mockResolvedValue({ url: 'https://flockcorp.com/i/new' });
+    const restoreShare = stubShare(() => Promise.resolve());
+    const restoreVisible = stubVisible();
+    try {
+      // The dead link is the one on show, from an earlier copy.
+      const { p } = openSheet({ copiedInviteUrl: 'https://flockcorp.com/i/old' });
+      await linkHeld();
+      await act(async () => { document.dispatchEvent(new Event('visibilitychange')); });
+      // Quiet: coming back to the app is not anyone sharing the link.
+      expect(api.createFlockInviteLink.mock.calls).toEqual([[1, false, { quiet: true }], [1, false, { quiet: true }]]);
+      await waitFor(() => expect(p.setCopiedInviteUrl).toHaveBeenCalledWith('https://flockcorp.com/i/new'));
+      fireEvent.click(screen.getByRole('button', { name: /Share invite link/ }));
+      expect(navigator.share).toHaveBeenCalledWith({ title: 'Join my flock', url: 'https://flockcorp.com/i/new' });
+      await act(async () => {});
+    } finally {
+      restoreVisible();
+      restoreShare();
+    }
+  });
+
+  test('coming back with no link on show swaps the held link and shows nothing', async () => {
+    api.createFlockInviteLink.mockResolvedValueOnce({ url: 'https://flockcorp.com/i/old' });
+    api.createFlockInviteLink.mockResolvedValue({ url: 'https://flockcorp.com/i/new' });
+    const restoreShare = stubShare(() => Promise.resolve());
+    const restoreVisible = stubVisible();
+    try {
+      const { p } = openSheet();
+      await linkHeld();
+      await act(async () => { document.dispatchEvent(new Event('visibilitychange')); });
+      await act(async () => {});
+      expect(api.createFlockInviteLink).toHaveBeenCalledTimes(2);
+      expect(p.setCopiedInviteUrl).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole('button', { name: /Share invite link/ }));
+      expect(navigator.share).toHaveBeenCalledWith({ title: 'Join my flock', url: 'https://flockcorp.com/i/new' });
+      await act(async () => {});
+    } finally {
+      restoreVisible();
+      restoreShare();
+    }
+  });
+
+  test('a closed sheet stops listening for the app coming back', async () => {
+    api.createFlockInviteLink.mockResolvedValue({ url: 'https://flockcorp.com/i/old' });
+    const restoreVisible = stubVisible();
+    try {
+      const { p, rerender } = openSheet();
+      await linkHeld();
+      rerender(React.createElement(ChatDetail, { ...p, showFlockInviteModal: false }));
+      await act(async () => { document.dispatchEvent(new Event('visibilitychange')); });
+      expect(api.createFlockInviteLink).toHaveBeenCalledTimes(1);
+    } finally {
+      restoreVisible();
     }
   });
 

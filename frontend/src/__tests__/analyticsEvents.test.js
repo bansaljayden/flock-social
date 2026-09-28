@@ -560,6 +560,41 @@ describe('inviting people to a plan that already exists', () => {
   });
 });
 
+// The chat's invite sheet asks for the guest link when it opens and when the
+// app comes back to the front, so the Share tap has it in hand. Those asks are
+// nobody sharing anything; counted, invite_link_created would read as sheet
+// opens. The tap and a replacement still count, exactly as before.
+describe('invite_link_created counts a member reaching for the link, not the sheet opening', () => {
+  const inviteLinkBodies = () => global.fetch.mock.calls
+    .filter(([url]) => String(url).endsWith('/api/flocks/7/invite-link'))
+    .map(([, init]) => JSON.parse(init.body));
+
+  test('an ordinary ask and a replacement are each counted once', async () => {
+    respondWith(200, { token: 't', url: 'https://flockcorp.com/i/t' });
+    await api.createFlockInviteLink(7);
+    await api.createFlockInviteLink(7, true);
+    await api.createFlockInviteLink(7, false, { quiet: false });
+    await flush();
+    expect(events('invite_link_created')).toEqual([{ regenerate: false }, { regenerate: true }, { regenerate: false }]);
+  });
+
+  test('a quiet ask reaches the route the same way and is not counted', async () => {
+    respondWith(200, { token: 't', url: 'https://flockcorp.com/i/t' });
+    const r = await api.createFlockInviteLink(7, false, { quiet: true });
+    await flush();
+    expect(r.url).toBe('https://flockcorp.com/i/t');
+    expect(inviteLinkBodies()).toEqual([{ regenerate: false }]);
+    expect(events('invite_link_created')).toEqual([]);
+  });
+
+  test('a refused ask is not counted', async () => {
+    respondWith(409, { error: 'This plan is finished and cannot accept new invites', code: 'FLOCK_CLOSED' });
+    await expect(api.createFlockInviteLink(7)).rejects.toThrow();
+    await flush();
+    expect(events('invite_link_created')).toEqual([]);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // THE DENOMINATOR. Every other event in the vocabulary records a step
 // FINISHING; screen_viewed is the only one that records anybody arriving where

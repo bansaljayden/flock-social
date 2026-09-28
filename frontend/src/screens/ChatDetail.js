@@ -613,6 +613,34 @@ const coveredByCredit = (s) => Number(s?.paidAmount) >= Number(s?.amount);
 // chat screen on the critical path of every launch. Both readers still call
 // the same function, so they still cannot drift.
 
+/* Asks the route for the flock's live guest link and puts it in `heldRef`,
+   the link the invite sheet's Share tap sends without waiting on anything.
+
+   An answer lands only if nothing has touched the held link since the ask
+   went out. Whatever did (the tap's own fetch, Make a new link, the sheet
+   reopening) is newer than this answer, and an ask that raced a replacement
+   can come back with the very link the replacement killed.
+
+   Resolves to { from, to } when the answer replaced a different link for the
+   same flock: the creator made a new link somewhere else and the one held
+   here is dead. Anything else, a refusal included, resolves to null; the tap
+   asks again and says why if that fails too.
+
+   `quiet` keeps an ask nobody made by hand out of the invite_link_created
+   count (see createFlockInviteLink). */
+function refreshHeldInviteLink(heldRef, flockId, { quiet = true } = {}) {
+  const before = heldRef.current;
+  const was = before && before.flockId === flockId ? before.url : null;
+  return Promise.resolve()
+    .then(() => createFlockInviteLink(flockId, false, { quiet }))
+    .then((r) => {
+      if (!r?.url || heldRef.current !== before) return null;
+      heldRef.current = { flockId, url: r.url };
+      return was && was !== r.url ? { from: was, to: r.url } : null;
+    })
+    .catch(() => null);
+}
+
 export default function ChatDetail({
   // Module-level helpers, constants and components that live in App.js and
   // are shared with screens other than this one, so they stay declared there
@@ -1279,6 +1307,14 @@ export default function ChatDetail({
        unless regenerate is asked for, so this makes nothing new once a link
        exists. Not asked for on an ended plan, which the route refuses.
 
+       It does mint the flock's first link when there is none yet, before
+       anyone has shared it, the same as creating a plan already does. The
+       token stays on this phone until a tap sends it, and the expiry is set
+       from the plan's own time with a two-week floor, so opening the sheet a
+       few minutes before sharing moves nothing that matters. The ask is quiet:
+       opening the sheet is not sharing, and invite_link_created counts a
+       member reaching for the link, which here is the Share tap.
+
        A fetch that lands late never replaces a link already held for this
        flock: that one came from the tap or from Make a new link, and the
        late one may be the link a replacement just killed. */
@@ -1288,20 +1324,36 @@ export default function ChatDetail({
       && (inviteSheetFlock.status === 'completed' || inviteSheetFlock.status === 'cancelled');
     React.useEffect(() => {
       if (!showFlockInviteModal || !selectedFlockId || inviteSheetClosed) return;
-      const flockId = selectedFlockId;
       inviteLinkRef.current = null;
-      Promise.resolve()
-        .then(() => createFlockInviteLink(flockId))
-        .then((r) => {
-          const held = inviteLinkRef.current;
-          if (r?.url && (!held || held.flockId !== flockId)) inviteLinkRef.current = { flockId, url: r.url };
-        })
-        // The tap asks again, and says why if that fails too.
-        .catch(() => {});
+      refreshHeldInviteLink(inviteLinkRef, selectedFlockId);
     }, [showFlockInviteModal, selectedFlockId, inviteSheetClosed]);
     // Whether the link on show was really copied. The panel says "Copied."
     // only then; a refused copy shows the link without claiming it.
     const [inviteLinkCopied, setInviteLinkCopied] = React.useState(false);
+    /* THE HELD LINK CAN GO STALE WHILE THE SHEET IS OPEN. The creator can
+       make a new link from another phone, and the tap sends what is held, so
+       without another look it would keep sending the link that replacement
+       killed. The Share tap asks again right after it has handed the link
+       over (below), and this asks whenever the app comes back to the front
+       with the sheet open, which is when the sheet has been sitting longest.
+       It also fills a link the open's fetch never got, say while offline.
+       A replacement found here goes on show only if the dead link is the one
+       on show; otherwise the next tap simply sends the new one. */
+    React.useEffect(() => {
+      if (!showFlockInviteModal || !selectedFlockId || inviteSheetClosed) return undefined;
+      const flockId = selectedFlockId;
+      const onVisible = () => {
+        if (document.visibilityState !== 'visible') return;
+        refreshHeldInviteLink(inviteLinkRef, flockId).then((swap) => {
+          if (!swap || swap.from !== copiedInviteUrl) return;
+          setInviteLinkCopied(false);
+          setReplacedLinkUrl(swap.to);
+          setCopiedInviteUrl(swap.to);
+        });
+      };
+      document.addEventListener('visibilitychange', onVisible);
+      return () => document.removeEventListener('visibilitychange', onVisible);
+    }, [showFlockInviteModal, selectedFlockId, inviteSheetClosed, copiedInviteUrl, setCopiedInviteUrl]);
 
     const flock = getSelectedFlock();
     // Every line below reads off `flock` unguarded, starting with flock.name in
@@ -4524,35 +4576,58 @@ export default function ChatDetail({
                     showToast('Link ready. Tap Share invite link again.');
                     return;
                   }
-                  // Web Share works in mobile Safari and Chrome on Android,
-                  // which is exactly where a texted invite gets shared from.
-                  // This used to also require window.Capacitor.isNativePlatform,
-                  // so every one of those browsers fell through to the
-                  // clipboard. The AbortError branch below covers a decline and
-                  // the clipboard covers a browser without it, so the feature
-                  // check on its own is the whole gate.
-                  if (typeof navigator.share === 'function') {
-                    try {
-                      await navigator.share({ title: 'Join my flock', url });
-                      return;
-                    } catch (e) {
-                      if (e?.name === 'AbortError') return; // user backed out of the share sheet
-                      // fall through to the clipboard
+                  // An async function runs up to its first await before it
+                  // returns, so by the time deliver() hands back its promise
+                  // the share sheet or the clipboard already has the link, and
+                  // nothing below it can spend the tap's activation.
+                  const deliver = async () => {
+                    // Web Share works in mobile Safari and Chrome on Android,
+                    // which is exactly where a texted invite gets shared from.
+                    // This used to also require window.Capacitor.isNativePlatform,
+                    // so every one of those browsers fell through to the
+                    // clipboard. The AbortError branch below covers a decline and
+                    // the clipboard covers a browser without it, so the feature
+                    // check on its own is the whole gate.
+                    if (typeof navigator.share === 'function') {
+                      try {
+                        await navigator.share({ title: 'Join my flock', url });
+                        return;
+                      } catch (e) {
+                        if (e?.name === 'AbortError') return; // user backed out of the share sheet
+                        // fall through to the clipboard
+                      }
                     }
-                  }
-                  // Copying can fail on an insecure origin or a denied
-                  // permission. Either way the link is shown below, so the
-                  // user is never left with nothing, and the panel says
-                  // "Copied." only when the copy went through: a host told it
-                  // was copied pastes whatever was on the clipboard before.
-                  let copied = false;
-                  try { await navigator.clipboard.writeText(url); copied = true; } catch { copied = false; }
-                  showToast(copied ? 'Invite link copied' : 'Link ready. Copy it below');
-                  // On show because of this tap, not because it was just
-                  // replaced, so the panel goes back to an ordinary sentence.
-                  setReplacedLinkUrl('');
-                  setInviteLinkCopied(copied);
-                  setCopiedInviteUrl(url);
+                    // Copying can fail on an insecure origin or a denied
+                    // permission. Either way the link is shown below, so the
+                    // user is never left with nothing, and the panel says
+                    // "Copied." only when the copy went through: a host told it
+                    // was copied pastes whatever was on the clipboard before.
+                    let copied = false;
+                    try { await navigator.clipboard.writeText(url); copied = true; } catch { copied = false; }
+                    showToast(copied ? 'Invite link copied' : 'Link ready. Copy it below');
+                    // On show because of this tap, not because it was just
+                    // replaced, so the panel goes back to an ordinary sentence.
+                    setReplacedLinkUrl('');
+                    setInviteLinkCopied(copied);
+                    setCopiedInviteUrl(url);
+                  };
+                  const delivered = deliver();
+                  // Then the route is asked again, behind the share and never
+                  // in front of it. This is the tap's one counted ask, as every
+                  // Share tap has always made one, and it checks that the link
+                  // just handed over is still the live one: the creator may
+                  // have made a new link from another phone while this sheet
+                  // sat open, and the held link would then be a dead one.
+                  const recheck = refreshHeldInviteLink(inviteLinkRef, selectedFlockId, { quiet: false });
+                  await delivered;
+                  const swap = await recheck;
+                  if (!swap || swap.from !== url) return;
+                  // Said once the share sheet has closed, with the new link on
+                  // show and held, so the next tap sends the one that works.
+                  setInviteLinkCopied(false);
+                  setReplacedLinkUrl(swap.to);
+                  setCopiedInviteUrl(swap.to);
+                  showToast('That link was just replaced and no longer works. Tap Share invite link to send the new one.', 'error');
                 }}
                 style={{ width: '100%', marginBottom: copiedInviteUrl ? '8px' : '14px', padding: '12px 14px', borderRadius: '12px', border: `1.5px dashed ${colors.steel}`, backgroundColor: 'transparent', color: colors.steel, fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
               >
