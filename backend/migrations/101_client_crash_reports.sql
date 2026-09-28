@@ -13,12 +13,14 @@
 -- WHAT A ROW HOLDS, AND WHAT IT DOES NOT. The boundary that caught the crash,
 -- the error's name, its message (clamped to 200 characters with addresses,
 -- tokens and coordinates blanked by the client and again by the route), up to
--- eight React component names from the component stack, the build, and native
+-- eight React component names when a development build sends them (the
+-- production build minifies them, so it sends none), the build, and native
 -- or web. No account id, no user id, no IP address, no device id: the route
 -- never reads the Authorization header and nothing here could hold one.
 --
 -- ONE ROW PER CRASH SHAPE PER DAY. fingerprint is a hash of the boundary, the
--- error name and the top component, and (fingerprint, seen_on) is unique, so
+-- error name, the message with its digits folded and the top component when
+-- one is sent, and (fingerprint, seen_on) is unique, so
 -- a crash a hundred people send is one row with reports = 100. That keeps the
 -- table sized by how many different things broke, not by how many people
 -- pressed the button. routes/clientCrash.js deletes rows older than 90 days.

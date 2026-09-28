@@ -9,11 +9,22 @@
 //
 // WHAT IS SENT. The boundary label, the error's name, its message clamped to
 // 200 characters with invite tokens, reset tokens, coordinates and email
-// addresses removed, up to eight React component names from the component
-// stack, the build, and whether this is the phone app or the website. No
-// account: the request carries no Authorization header and no cookie, so the
-// server could not attach one if it tried. backend/routes/clientCrash.js
-// scrubs the message again, because a report is caller data to it.
+// addresses removed, the build, and whether this is the phone app or the
+// website. No account: the request carries no Authorization header and no
+// cookie, so the server could not attach one if it tried.
+// backend/routes/clientCrash.js scrubs the message again, because a report is
+// caller data to it, and tells one crash from another by the boundary, the
+// error's name and the message.
+//
+// COMPONENT NAMES ONLY FROM A BUILD THAT KEEPS THEM. React names each frame
+// of the component stack by the component's displayName, or else its
+// function name. The production build minifies function names, so there the
+// stack reads "at Xe", "at Ot", and a minified name that starts in lower case
+// is dropped as if it were a host element like "div". Sending those would put
+// unreadable names in the operator's email and could name a parent as the
+// component that threw. So a production build sends no component names, and
+// the boundary label says which part of the app broke. A development build,
+// where the names are the ones in the source, still sends up to eight.
 //
 // A plain fetch, not services/api.js. This module is reached from the crash
 // screen, which is in the entry chunk, and api.js is not; importing it here
@@ -42,7 +53,8 @@ function cleanLabel(label) {
 // "    in Name (at file.js:12)" before it. Host elements (div, span) are
 // lower case and say nothing about which screen broke, so only component
 // names, which start with a capital, are kept, and a name repeated on the
-// next frame is kept once.
+// next frame is kept once. That capital rule holds only for source names,
+// which is why a minified build does not call this.
 export function componentNames(componentStack) {
   const out = [];
   for (const line of String(componentStack || '').split('\n')) {
@@ -71,7 +83,13 @@ export function buildId(doc = typeof document === 'undefined' ? undefined : docu
   return null;
 }
 
-export function crashReportPayload({ error, componentStack, label }) {
+// Read when a report is built rather than once at load, so a test can stand
+// in for either build. The production bundle has the value inlined.
+function isMinifiedBuild() {
+  return process.env.NODE_ENV === 'production';
+}
+
+export function crashReportPayload({ error, componentStack, label }, { minified = isMinifiedBuild() } = {}) {
   const rawName = error && typeof error.name === 'string' ? error.name : '';
   const message = scrubUrlTokens(String((error && error.message) || ''))
     .replace(EMAIL_SHAPE, '[email]')
@@ -83,7 +101,7 @@ export function crashReportPayload({ error, componentStack, label }) {
     boundary: cleanLabel(label),
     name: NAME_RE.test(rawName) ? rawName : 'Error',
     message,
-    components: componentNames(componentStack),
+    ...(minified ? {} : { components: componentNames(componentStack) }),
     ...(build ? { build } : {}),
     platform: detectNativeShell() ? 'native' : 'web',
   };

@@ -6,8 +6,9 @@
  * one report when it is pressed, and only then. Pinned here:
  *
  *   1. what a report holds: the boundary, the error's name, a message clamped
- *      to 200 characters with tokens, coordinates and addresses removed, up to
- *      eight component names, the build and native or web; no account;
+ *      to 200 characters with tokens, coordinates and addresses removed, the
+ *      build and native or web; no account; component names only from a
+ *      build that has not minified them;
  *   2. the request carries no cookie and no Authorization header;
  *   3. the button says "Sent" only when the server kept it, and a failed send
  *      can be tried again;
@@ -67,6 +68,34 @@ describe('what a report holds', () => {
     expect(Object.keys(p).sort()).toEqual(
       ['boundary', 'components', 'message', 'name', 'platform', ...(p.build ? ['build'] : [])].sort(),
     );
+  });
+
+  test('a production build sends no component names, since its names are the minifier\'s', () => {
+    // What React prints in the production build: function names are
+    // minified, so a lower-case one would be dropped as a host element and
+    // the capitalised ones are unreadable. None of that is sent.
+    const minifiedStack = `
+    at Xe (https://flockcorp.com/static/js/123.abc.chunk.js:1:2)
+    at div
+    at ot (https://flockcorp.com/static/js/main.abc123def456.js:3:4)
+    at Ot (https://flockcorp.com/static/js/main.abc123def456.js:5:6)`;
+    const error = new TypeError("Cannot read properties of undefined (reading 'votes')");
+    const p = crashReportPayload({ error, componentStack: minifiedStack, label: 'screen:chat' }, { minified: true });
+    expect(p).not.toHaveProperty('components');
+    // The report still says what broke, where, and in which build.
+    expect(p.boundary).toBe('screen:chat');
+    expect(p.name).toBe('TypeError');
+    expect(p.message).toBe("Cannot read properties of undefined (reading 'votes')");
+
+    // And the default follows the build the bundle was made by.
+    const realEnv = process.env.NODE_ENV;
+    try {
+      process.env.NODE_ENV = 'production';
+      expect(crashReportPayload({ error, componentStack: REACT19_STACK, label: 'root' })).not.toHaveProperty('components');
+    } finally {
+      process.env.NODE_ENV = realEnv;
+    }
+    expect(crashReportPayload({ error, componentStack: REACT19_STACK, label: 'root' }).components[0]).toBe('FlockChat');
   });
 
   test('an odd error name or label is replaced with one the server accepts', () => {
