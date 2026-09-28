@@ -1298,6 +1298,13 @@ export function onBillFullySettled(callback) {
   return register('bill_fully_settled', callback);
 }
 
+// The payer asked for their money back (POST /api/billing/:id/remind). Sent to
+// each member who still owes, to their personal room, so it arrives wherever in
+// the app they are. Carries the plan and the payer's name, never an amount.
+export function onBillReminder(callback) {
+  return register('bill_reminder', callback);
+}
+
 // The tally over every row after a settlement moved. It names nobody, so it
 // is the one settlement event a viewer who has blocked the actor still
 // receives; ChatDetail's header reads it for the rows it cannot see.

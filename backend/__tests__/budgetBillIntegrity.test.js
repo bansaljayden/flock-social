@@ -80,6 +80,12 @@
 //      somebody else paid is unsettled. Neither carries an amount, and a
 //      quarantined bill, a payerless shell, a settled budget and a closed plan
 //      ask nothing, because the routes would refuse the answer.
+//  15. THE PAYER CAN REMIND WHOEVER STILL OWES (POST /:flockId/remind), and
+//      nobody else can. No amount goes out, the count does not shrink for a
+//      block (it would tell the payer they had been blocked), a blocked pair
+//      gets neither the toast nor the push, one goes out per plan an hour
+//      (a push_debounce claim, taken only once every refusal has passed),
+//      and a shell, a quarantined bill and a settled one are refused.
 // ---------------------------------------------------------------------------
 
 const test = require('node:test');
@@ -1916,4 +1922,156 @@ test('an invite card carries neither flag', async () => {
   assert.equal(card.invitePreview, true);
   assert.equal(card.i_budget_open, undefined);
   assert.equal(card.i_owe, undefined);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 15. The payer's reminder
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Push switched on by replacing the provider (services/pushHelper.js holds
+// firebaseService as a module object), never by reaching one.
+async function withPushCapture(fn) {
+  const firebaseService = require('../services/firebaseService');
+  const realEnabled = firebaseService.isEnabled;
+  const realSend = firebaseService.sendPushToUser;
+  const sends = [];
+  firebaseService.isEnabled = () => true;
+  firebaseService.sendPushToUser = async (userId, title, body, data) => {
+    sends.push({ userId: Number(userId), title, body, data });
+    return { sent: 1, failed: 0 };
+  };
+  try {
+    return await fn(sends);
+  } finally {
+    firebaseService.isEnabled = realEnabled;
+    firebaseService.sendPushToUser = realSend;
+  }
+}
+const remind = (flockId, user) => call('POST', `/api/billing/${flockId}/remind`, { token: user.token });
+const remindersTo = (flockId) => emits
+  .filter((e) => e.event === 'bill_reminder' && e.payload.flockId === flockId)
+  .map((e) => e.room)
+  .sort();
+
+test('the payer reminds everyone who still owes, with no amount, and nobody else can', async () => {
+  await withPushCapture(async (sends) => {
+    const ava = await mkUser('Ava');
+    const ben = await mkUser('Ben');
+    const cam = await mkUser('Cam');
+    const dee = await mkUser('Dee');
+    const stranger = await mkUser('Stranger');
+    const flockId = await mkFlock(ava, [ben, cam, dee]);
+    assert.equal((await call('POST', `/api/billing/${flockId}/create`, { token: ava.token, body: { totalAmount: 120 } })).status, 201);
+    assert.equal((await call('POST', `/api/billing/${flockId}/settle`, { token: ben.token })).status, 200);
+
+    assert.equal((await remind(flockId, cam)).status, 403, 'somebody who owes cannot send a reminder in the payer\'s name');
+    assert.equal((await remind(flockId, stranger)).status, 403);
+    assert.deepEqual(remindersTo(flockId), []);
+
+    const r = await remind(flockId, ava);
+    assert.equal(r.status, 200, r.text);
+    assert.deepEqual(r.body, { reminded: 2 }, 'Cam and Dee; Ben has paid and Ava is the payer');
+    assert.deepEqual(remindersTo(flockId), [`user:${cam.id}`, `user:${dee.id}`].sort());
+    const toast = emits.find((e) => e.event === 'bill_reminder' && e.payload.flockId === flockId).payload;
+    assert.deepEqual(toast, { flockId, flockName: 'Dinner', fromName: 'Ava' });
+
+    const pushed = [];
+    await until(() => {
+      pushed.splice(0, pushed.length, ...sends.filter((s) => s.data.type === 'bill_reminder' && s.data.flockId === String(flockId)));
+      return pushed.length >= 2;
+    });
+    assert.deepEqual(pushed.map((s) => s.userId).sort((a, b) => a - b), [cam.id, dee.id].sort((a, b) => a - b));
+    for (const p of pushed) {
+      assert.equal(p.title, 'Bill reminder');
+      assert.equal(p.body, 'Ava is waiting on your share for Dinner');
+      assert.equal(p.data.flockId, String(flockId));
+      assert.equal(p.data.fromUserId, String(ava.id), 'the payer is named, so the block gate applies');
+      assert.ok(!/\$|\d+\.\d\d/.test(p.title + p.body), `an amount reached a lock screen: ${p.body}`);
+    }
+  });
+});
+
+test('one reminder per plan an hour, and a refused one does not use the hour', async () => {
+  await withPushCapture(async (sends) => {
+    const ava = await mkUser('Ava');
+    const ben = await mkUser('Ben');
+    const flockId = await mkFlock(ava, [ben]);
+    assert.equal((await call('POST', `/api/billing/${flockId}/create`, { token: ava.token, body: { totalAmount: 50 } })).status, 201);
+
+    // Refused by the payer check: the window is untouched.
+    assert.equal((await remind(flockId, ben)).status, 403);
+    const key = `bill_remind:${flockId}`;
+    assert.equal((await pool.query('SELECT 1 FROM push_debounce WHERE debounce_key = $1', [key])).rowCount, 0);
+
+    assert.equal((await remind(flockId, ava)).status, 200);
+    const again = await remind(flockId, ava);
+    assert.equal(again.status, 429, again.text);
+    assert.match(again.body.error, /last hour/);
+    const mine = () => sends.filter((s) => s.data.type === 'bill_reminder' && s.data.flockId === String(flockId));
+    await until(() => mine().length > 0);
+    await sleep(50);
+    assert.equal(mine().length, 1, 'the second tap sent nothing');
+
+    // An hour on, it can go again. Waited for, because the push goes out
+    // after the answer and must land inside this test's capture.
+    await pool.query("UPDATE push_debounce SET sent_at = NOW() - INTERVAL '61 minutes' WHERE debounce_key = $1", [key]);
+    assert.equal((await remind(flockId, ava)).status, 200);
+    await until(() => mine().length >= 2);
+    assert.equal(mine().length, 2);
+  });
+});
+
+test('a blocked pair gets neither the toast nor the push, and the count does not give the block away', async () => {
+  await withPushCapture(async (sends) => {
+    const ava = await mkUser('Ava');
+    const ben = await mkUser('Ben');
+    const cam = await mkUser('Cam');
+    const flockId = await mkFlock(ava, [ben, cam]);
+    assert.equal((await call('POST', `/api/billing/${flockId}/create`, { token: ava.token, body: { totalAmount: 90 } })).status, 201);
+    await pool.query('INSERT INTO user_blocks (blocker_id, blocked_id) VALUES ($1, $2)', [cam.id, ava.id]);
+
+    const r = await remind(flockId, ava);
+    assert.equal(r.status, 200, r.text);
+    assert.equal(r.body.reminded, 2, 'the same number the tally shows, block or not');
+    assert.deepEqual(remindersTo(flockId), [`user:${ben.id}`]);
+    const mine = () => sends.filter((s) => s.data.type === 'bill_reminder' && s.data.flockId === String(flockId));
+    await until(() => mine().some((s) => s.userId === ben.id));
+    await sleep(100);
+    assert.deepEqual(mine().map((s) => s.userId), [ben.id]);
+  });
+});
+
+test('a shell, a quarantined bill, a settled bill and no bill at all are refused, and use no hour', async () => {
+  const ava = await mkUser('Ava');
+  const ben = await mkUser('Ben');
+
+  const none = await mkFlock(ava, [ben]);
+  assert.equal((await remind(none, ava)).status, 404);
+
+  const shell = await mkFlock(ava, [ben]);
+  const shellBill = await one('INSERT INTO bill_splits (flock_id, total_amount, paid_by) VALUES ($1, 60, NULL) RETURNING id', [shell]);
+  await pool.query('INSERT INTO bill_split_shares (bill_id, user_id, amount) VALUES ($1, $2, 30)', [shellBill.id, ben.id]);
+  const s = await remind(shell, ava);
+  assert.equal(s.status, 409, s.text);
+  assert.equal(s.body.reason, 'no_payer');
+
+  const q = await mkFlock(ava, [ben]);
+  const qBill = await one('INSERT INTO bill_splits (flock_id, total_amount, paid_by, quarantined) VALUES ($1, 60, $2, true) RETURNING id', [q, ava.id]);
+  await pool.query('INSERT INTO bill_split_shares (bill_id, user_id, amount) VALUES ($1, $2, 30)', [qBill.id, ben.id]);
+  const qr = await remind(q, ava);
+  assert.equal(qr.status, 409, qr.text);
+  assert.equal(qr.body.code, 'BILL_QUARANTINED');
+
+  const paid = await mkFlock(ava, [ben]);
+  assert.equal((await call('POST', `/api/billing/${paid}/create`, { token: ava.token, body: { totalAmount: 40 } })).status, 201);
+  assert.equal((await call('POST', `/api/billing/${paid}/settle`, { token: ben.token })).status, 200);
+  const pr = await remind(paid, ava);
+  assert.equal(pr.status, 409, pr.text);
+  assert.equal(pr.body.reason, 'settled');
+
+  const claimed = await pool.query(
+    'SELECT debounce_key FROM push_debounce WHERE debounce_key = ANY($1::text[])',
+    [[none, shell, q, paid].map((id) => `bill_remind:${id}`)]
+  );
+  assert.equal(claimed.rowCount, 0, 'a refused reminder took the hour');
 });

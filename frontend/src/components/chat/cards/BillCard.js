@@ -111,6 +111,11 @@ export default function BillCard({
   onCommit,
   onRetry,
   onOpen,
+  // The payer's "remind the people who owe me" (POST /api/billing/:id/remind).
+  // Drawn only for the payer, only while somebody has not paid, and only when
+  // the parent hands it in: the parent is what knows a reminder went out in
+  // the last hour and withholds it then.
+  onRemind,
 }) {
   if (!bill) return null;
 
@@ -243,13 +248,27 @@ export default function BillCard({
       );
     }
   } else if (viewerIsPayer) {
-    // The payer has no action. What they have is a count of who has not paid
-    // them back, and only while somebody has not.
+    // The payer does not settle. What they have is a count of who has not
+    // paid them back, only while somebody has not, and beside it the one
+    // thing they can do about it: remind those people.
     const waiting = Math.max(0, tally.total - tally.settled);
     footerRight = waiting > 0
       ? (
-        <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>
-          {`Waiting on ${waiting}`}
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+          <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-secondary)' }}>
+            {`Waiting on ${waiting}`}
+          </span>
+          {typeof onRemind === 'function' && (
+            <button
+              type="button"
+              className="hit44"
+              onClick={stop(onRemind)}
+              disabled={pendingAction === 'remind'}
+              style={{ ...linkStyle, opacity: pendingAction === 'remind' ? 0.6 : 1 }}
+            >
+              {pendingAction === 'remind' ? 'Reminding' : 'Remind'}
+            </button>
+          )}
         </span>
       )
       : null;

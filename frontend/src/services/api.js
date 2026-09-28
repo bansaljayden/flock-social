@@ -3235,6 +3235,13 @@ export async function unsettleShare(flockId) {
   return request(`/api/billing/${flockId}/unsettle`, { method: 'POST' });
 }
 
+// The payer's one-tap nudge to everyone whose share is still unsettled. The
+// route is payer-only, refuses a payerless, quarantined or settled bill, and
+// allows one per plan an hour (429 inside that). Answers { reminded: n }.
+export async function sendBillReminder(flockId) {
+  return request(`/api/billing/${flockId}/remind`, { method: 'POST' });
+}
+
 export async function ghostCommit(flockId) {
   return request(`/api/billing/${flockId}/ghost-commit`, { method: 'POST' });
 }

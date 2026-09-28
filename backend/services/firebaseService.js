@@ -102,6 +102,10 @@ function isEnabled() {
 //                      plan, to the host only, triggered by the last vote
 //                      (routes/venues.js notifyHostVotesIn). It lands on the
 //                      vote panel, which is where the host's Confirm is.
+//   bill_reminder      the member who paid a plan's bill asked the recipient,
+//                      whose share is unsettled, to pay them back. Sent only
+//                      by that payer's own tap, at most once an hour per plan,
+//                      and it carries no amount (routes/billing.js /remind).
 const FLOCK_SCOPED_TYPES = new Set([
   'flock_invite',
   'flock_message',
@@ -118,6 +122,7 @@ const FLOCK_SCOPED_TYPES = new Set([
   'guest_rsvp',
   'attendance_marked',
   'flock_votes_in',
+  'bill_reminder',
 ]);
 
 // ---------------------------------------------------------------------------
@@ -141,6 +146,7 @@ const FLOCK_SCOPED_TYPES = new Set([
 const FLOCK_VIEW = {
   bill_created: 'bill',
   bill_settled: 'bill',
+  bill_reminder: 'bill',
   budget_ready: 'budget',
   budget_reminder: 'budget',
   flock_updated: 'plan',

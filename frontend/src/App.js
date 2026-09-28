@@ -18,7 +18,7 @@ import { setStatusBarOverDark, screenTopIsNavy } from './services/systemBars';
 // Flock. App Review has that on tape. See the shim's header for the whole
 // story, including why moving the origin was the wrong fix.
 import { geolocationAvailable, getCurrentPosition, watchPosition, clearWatch } from './services/geolocation';
-import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, onDmReactionAdded, onDmReactionRemoved, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onShareUnsettled, onBillTally, onBillFullySettled, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockReconfirmOpened, onFlockReconfirmed, onFlockMemberLeft, onReliabilityUpdated, onFlockMessageUnsent, onDmMessageUnsent, onGuestRsvp, onSafetyAlert, onSafetyAlertCancelled, sendDmAck, sendDmOpen, sendFlockAck, sendFlockOpen, onDmDelivered, onDmOpened, onFlockRead, onFlockPinsChanged, onSocketDisconnect } from './services/socket';
+import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, onDmReactionAdded, onDmReactionRemoved, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onShareUnsettled, onBillTally, onBillFullySettled, onBillReminder, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockReconfirmOpened, onFlockReconfirmed, onFlockMemberLeft, onReliabilityUpdated, onFlockMessageUnsent, onDmMessageUnsent, onGuestRsvp, onSafetyAlert, onSafetyAlertCancelled, sendDmAck, sendDmOpen, sendFlockAck, sendFlockOpen, onDmDelivered, onDmOpened, onFlockRead, onFlockPinsChanged, onSocketDisconnect } from './services/socket';
 import { syncPushRegistration, readNotificationPermission, onForegroundMessage, onPushNavigate, unregisterPushToken, watchPendingNavigation, safetyIntentIsFor, noteSafetyStandDown, safetyAlarmWasStoodDown, standDownCovers, forgetDeliveredNotifications } from './services/firebase';
 import { resendVerificationEmail, trackPurchaseCompleted, hasRenewableSession, renewSession, primeBootReads, takeBootRead } from './services/api';
 // The last two steps of the invite-link trip: redeem the token this person was
@@ -12012,6 +12012,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     const unsubFullySettled = onBillFullySettled((data) => {
       if (data.flockId === selectedFlockId) showToast("Everyone's settled up");
     });
+    // The payer's nudge, for somebody with the app open (the push covers the
+    // rest). Only a member who still owes is sent one, so it also says the
+    // Nest's "you owe" is true right now.
+    const unsubBillReminder = onBillReminder((data) => {
+      if (!data) return;
+      if (data.flockId != null) setMyOwe(data.flockId, true);
+      const who = data.fromName || 'The person who paid';
+      showToast(data.flockName ? `${who} is waiting on your share for ${data.flockName}` : `${who} is waiting on your share`);
+    });
     const unsubGhost = onGhostCommitted((data) => {
       if (data.flockId === selectedFlockId) {
         // A first commit CREATES a bill_split_shares row, so mapping over the
@@ -12030,7 +12039,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         });
       }
     });
-    return () => { unsubBudget(); unsubLocked(); unsubReminder(); unsubBillCreated(); unsubSettled(); unsubUnsettled(); unsubTally(); unsubFullySettled(); unsubGhost(); };
+    return () => { unsubBudget(); unsubLocked(); unsubReminder(); unsubBillCreated(); unsubSettled(); unsubUnsettled(); unsubTally(); unsubFullySettled(); unsubBillReminder(); unsubGhost(); };
   }, [selectedFlockId, showToast, loadMoneyState]);
 
   // Listen for real-time venue votes

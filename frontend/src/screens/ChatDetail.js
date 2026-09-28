@@ -161,7 +161,7 @@
  */
 import React from 'react';
 import { useStableFn as useStableFnShared } from '../components/chat/useStableFn';
-import { leaveFlock as apiLeaveFlock, createBillSplit, createFlockInviteLink, getFlockMessageImage, getPaymentLinks, ghostCommit, lockBudget, resetBudget, sendBudgetReminder, settleShare, submitBudget, trackNotificationPermission, unsettleShare, getBillSplit, isOffline as isDeviceOffline } from '../services/api';
+import { leaveFlock as apiLeaveFlock, createBillSplit, createFlockInviteLink, getFlockMessageImage, getPaymentLinks, ghostCommit, lockBudget, resetBudget, sendBillReminder, sendBudgetReminder, settleShare, submitBudget, trackNotificationPermission, unsettleShare, getBillSplit, isOffline as isDeviceOffline } from '../services/api';
 import { getSocket, leaveFlock } from '../services/socket';
 import { getNotificationStatus, requestNotificationPermission } from '../services/firebase';
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
@@ -1399,6 +1399,14 @@ export default function ChatDetail({
       document.addEventListener('visibilitychange', onVisible);
       return () => document.removeEventListener('visibilitychange', onVisible);
     }, [showFlockInviteModal, selectedFlockId, inviteSheetClosed, copiedInviteUrl, setCopiedInviteUrl]);
+    /* THE PAYER'S REMINDER, by flock id: 'working' while the request is out,
+       'sent' once the server took one. POST /api/billing/:id/remind allows
+       one per plan an hour, so once one has gone the control says so rather
+       than offering a second that could only be refused. The ref is the
+       double-tap guard, because a tap lands before the state repaints. Above
+       the guard for the reason every hook here is. */
+    const [billRemind, setBillRemind] = React.useState({});
+    const billRemindingRef = React.useRef(null);
 
     const flock = getSelectedFlock();
     // Every line below reads off `flock` unguarded, starting with flock.name in
@@ -1583,6 +1591,34 @@ export default function ChatDetail({
         setFlocks(prev => prev.map(f => f.id === selectedFlockId ? { ...f, iOwe: true } : f));
         showToast('Your share is marked unpaid again');
       } catch (err) { showToast(err.message, 'error'); }
+    };
+
+    // The payer asks everyone who has not paid them back. Called by the bill
+    // sheet's button and by the card in the stream, so the two cannot differ.
+    // The server decides who that is and answers the count; a 429 means one
+    // already went out within the hour (from this phone or another), which
+    // is the same state as having just sent one.
+    const remindUnpaid = async () => {
+      const id = selectedFlockId;
+      if (billRemindingRef.current === id || billRemind[id] === 'sent') return;
+      billRemindingRef.current = id;
+      setBillRemind(prev => ({ ...prev, [id]: 'working' }));
+      try {
+        const r = await sendBillReminder(id);
+        const n = Number(r?.reminded) || 0;
+        setBillRemind(prev => ({ ...prev, [id]: 'sent' }));
+        showToast(n === 1 ? 'Reminded the one person who has not paid' : `Reminded the ${n} people who have not paid`);
+      } catch (err) {
+        if (err?.status === 429) {
+          setBillRemind(prev => ({ ...prev, [id]: 'sent' }));
+          showToast(err.message || 'A reminder already went out in the last hour.');
+        } else {
+          setBillRemind(prev => { const next = { ...prev }; delete next[id]; return next; });
+          showToast(err?.message || 'The reminder did not send. Try again.', 'error');
+        }
+      } finally {
+        if (billRemindingRef.current === id) billRemindingRef.current = null;
+      }
     };
 
     // Pre-committing to the group's number. The bill is re-read straight
@@ -2161,7 +2197,8 @@ export default function ChatDetail({
       }
       if (billForCard) {
         const created = billForCard.createdAt ? new Date(billForCard.createdAt).getTime() : NaN;
-        streamRows = spliceByTime(streamRows, { id: BILL_ROW_ID, message_type: 'system', bill: billForCard }, created);
+        // With the payer's reminder state, which the card draws too.
+        streamRows = spliceByTime(streamRows, { id: BILL_ROW_ID, message_type: 'system', bill: billForCard, remind: billRemind[selectedFlockId] || null }, created);
       }
       // Also on the end, and for the same reason as the nudge: this is the
       // state of the room right now, not a moment in the scrollback.
@@ -2198,6 +2235,8 @@ export default function ChatDetail({
       chatSearch,
       /* The bill card's whole payload, and half of the ghost-commit gate. */
       billSplit,
+      /* The payer's reminder state, which the bill card's Remind draws. */
+      billRemind,
       /* The other half. estimatedShare is read off budgetStatus.ceiling, and
          it is both the shell card's figure and the gate on drawing one. */
       budgetStatus,
@@ -2494,6 +2533,11 @@ export default function ChatDetail({
               && String(bill.paidBy?.id ?? '') !== String(authUser?.id ?? '')
               ? undoMySettle
               : undefined}
+            /* The card draws Remind for the payer alone and only while
+               somebody owes; once one has gone out it is not offered again
+               (remindUnpaid has why). */
+            onRemind={!settlesNothing && m.remind !== 'sent' ? remindUnpaid : undefined}
+            pendingAction={m.remind === 'working' ? 'remind' : null}
           />
         );
       }
@@ -4191,6 +4235,32 @@ export default function ChatDetail({
                         ))}
                       </div>
                     </div>
+                    {/* THE PAYER'S ONE CONTROL ON A BILL THEY COVERED: remind
+                        whoever has not paid them back. Payer only, on a
+                        posted bill that is not quarantined, while somebody
+                        still owes, which are the refusals POST /remind makes
+                        itself. The count is the server's tally (billBar),
+                        which names nobody and does not shrink for a block. */}
+                    {!billSplitQuarantined && billSplit.hasPayer !== false
+                      && String(billSplit.paidBy?.id ?? '') === String(authUser?.id ?? '')
+                      && billBar.total - billBar.settled > 0 && (() => {
+                      const waiting = billBar.total - billBar.settled;
+                      const remindState = billRemind[selectedFlockId];
+                      if (remindState === 'sent') {
+                        return (
+                          <p role="status" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', textAlign: 'center', margin: '0 0 8px' }}>
+                            Reminder sent. You can send one an hour.
+                          </p>
+                        );
+                      }
+                      return (
+                        <button className="hit44 glass-btn glass-secondary" disabled={remindState === 'working'} onClick={remindUnpaid} style={{ width: '100%', padding: '12px', marginBottom: '8px', borderRadius: '12px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: remindState === 'working' ? 'wait' : 'pointer', opacity: remindState === 'working' ? 0.6 : 1 }}>
+                          {remindState === 'working'
+                            ? 'Sending the reminder…'
+                            : (waiting === 1 ? "Remind the one who hasn't paid" : `Remind the ${waiting} who haven't paid`)}
+                        </button>
+                      );
+                    })()}
                     {/* Settle Up button for current user if they owe */}
                     {!billSplitQuarantined && billSplit.hasPayer !== false && billSplit.shares?.find(s => String(s.userId) === String(authUser?.id) && !s.settled) && (
                       /* startSettleUp, declared once above and called by the

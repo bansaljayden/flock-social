@@ -37,6 +37,8 @@
 //   budget_ready       their group's budget resolved          (routes/budget.js)
 //   budget_reminder    the organizer asked them to submit     (routes/budget.js, user-initiated)
 //   bill_created       they owe a share of a real bill        (routes/billing.js)
+//   bill_reminder      the payer asked them to pay back their share
+//                                                             (routes/billing.js, user-initiated)
 //   moderation_report  admin-only: a report needs review      (services/moderationAlerts.js)
 //   crowd_alert        forecast for an event they committed to (services/crowdAlerts.js)
 //
