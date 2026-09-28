@@ -82,7 +82,7 @@ def real_frame(real, rng, groups_x3=False):
     # SDT is this sensor's own camera, so it carries the most weight; AAU's
     # wall-mounted meeting rooms are the next closest view and lost 25 points
     # the one time their share was cut to make room for it.
-    sources = [('tp', 0.15), ('otp', 0.2), ('aau', 0.3), ('ss', 0.05), ('sdt', 0.3)]
+    sources = [('tp', 0.14), ('otp', 0.18), ('aau', 0.27), ('ss', 0.04), ('sdt', 0.27), ('sdts', 0.1)]
     sources = [(k, w) for k, w in sources if f'{k}_img' in real]
     weights = np.array([w for _, w in sources])
     src = sources[int(rng.choice(len(sources), p=weights / weights.sum()))][0]
@@ -113,11 +113,13 @@ def real_frame(real, rng, groups_x3=False):
         t = _eight_bit(real['aau_img'][i].astype(np.float32) / 255.0, rng)
         objects = [{'cls': 'person', 'x': hx, 'y': hy, 'box': box, 'approx': True}
                    for box, (hx, hy) in real['aau_people'][i]]
-    elif src == 'sdt':
-        i = int(rng.integers(len(real['sdt_img'])))
-        t = real['sdt_img'][i].astype(np.float32) + rng.normal(0, 1.0)
+    elif src in ('sdt', 'sdts'):
+        # sdts: SDT's rendered frames, drawn to this camera's look by the
+        # same lab, one person lying, sitting or standing or an empty room.
+        i = int(rng.integers(len(real[f'{src}_img'])))
+        t = real[f'{src}_img'][i].astype(np.float32) + rng.normal(0, 1.0)
         objects = [{'cls': 'person', 'x': hx, 'y': hy, 'box': box, 'approx': True}
-                   for box, (hx, hy) in real['sdt_people'][i]]
+                   for box, (hx, hy) in real[f'{src}_people'][i]]
     else:
         i = int(rng.integers(len(real['ss_img'])))
         t = zoom(_eight_bit(real['ss_img'][i].astype(np.float32) / 255.0, rng), (5, 5), order=1)
