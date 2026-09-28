@@ -770,6 +770,45 @@ test('a new guest RSVP takes guest_rsvp:, then the plan\'s row, before it writes
   assert.deepStrictEqual(log[plan].params, [42], 'the plan the link resolves to');
 });
 
+test('an RSVP edit takes the plan\'s row, then reads the answer it replaces, then writes, in one transaction', async () => {
+  // A guest's status is part of the budget (a present guest's amount is in
+  // the minimum and their answer is counted), and the settle reads those in
+  // separate statements while it holds the plan's row. An edit that took
+  // nothing could commit between two of them. budgetBillIntegrity.test.js
+  // runs that interleaving on a real Postgres; this pins the order.
+  scriptEdit();
+  on(/COALESCE\(is_hidden, false\) = true/, () => ({ rows: [] }));
+
+  const res = await call('POST', `/api/guest/${LINK_TOKEN}/rsvp`, { name: 'Bob', status: 'out', guestToken: GUEST_TOKEN });
+  assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+  const at = (re) => log.findIndex((q) => re.test(q.sql));
+  const begin = at(/^BEGIN/);
+  const plan = at(/^SELECT id FROM flocks WHERE id = \$1 FOR KEY SHARE$/);
+  const reread = at(/FROM guest_rsvps WHERE guest_token = \$1 AND flock_id = \$2 FOR NO KEY UPDATE$/);
+  const written = at(/^UPDATE guest_rsvps SET name/);
+  const committed = at(/^COMMIT/);
+  assert.ok(begin > -1 && begin < plan && plan < reread && reread < written && written < committed,
+    'the plan\'s row, the guest\'s own row read again, then the write, before the COMMIT');
+  assert.deepStrictEqual(log[plan].params, [42], 'the plan the link resolves to');
+});
+
+test('a row hidden between the first read and the lock is refused, and neither written nor replaced', async () => {
+  // The first read is on the pool, before the lock. A moderator's takedown
+  // or its person joining can hide the row after it; the write then found
+  // nothing to update and fell through to the new-guest path, which, for a
+  // row retired on a join, minted a second identity under the same name.
+  on(/FOR NO KEY UPDATE$/, (params) => ({ rows: [{ id: guestIdFor(params[0]), name: 'Bob', status: 'in', is_hidden: true }] }));
+  scriptEdit();
+  on(/COALESCE\(is_hidden, false\) = true/, () => ({ rows: [] }));
+
+  const res = await call('POST', `/api/guest/${LINK_TOKEN}/rsvp`, { name: 'Bob', status: 'out', guestToken: GUEST_TOKEN });
+  assert.strictEqual(res.status, 403, JSON.stringify(res.body));
+  assert.strictEqual(res.body.error, 'This RSVP was removed and cannot be edited');
+  assert.strictEqual(ran(/UPDATE guest_rsvps SET name/).length, 0, 'nothing is written');
+  assert.strictEqual(ran(/INSERT INTO guest_rsvps/).length, 0, 'and no new identity is minted in its place');
+  assert.strictEqual(emits.length, 0, 'and nobody is told');
+});
+
 // ===========================================================================
 // PART 5 — routes/checkin.js tryAuth must not be a weaker door than
 //          middleware/auth.js

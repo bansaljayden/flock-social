@@ -829,7 +829,9 @@ test('a guest who says out loses their night-of answer in the RSVP statement its
   // both flips (in to out, out to in) clear it.
   scriptGuest(guestRow());
   scriptWindow();
-  on(/^SELECT id, name, status, COALESCE\(is_hidden, false\) AS is_hidden FROM guest_rsvps WHERE guest_token = \$1 AND flock_id = \$2$/,
+  // Read once on the pool and again, locked, just before the write, which
+  // decides from the second read (routes/guest.js).
+  on(/^SELECT id, name, status, COALESCE\(is_hidden, false\) AS is_hidden FROM guest_rsvps WHERE guest_token = \$1 AND flock_id = \$2( FOR NO KEY UPDATE)?$/,
     (params) => (String(params[0]).toLowerCase() === GUEST_TOKEN
       ? { rows: [{ id: GUEST_ID, name: 'Cass', status: 'in', is_hidden: false }], rowCount: 1 }
       : { rows: [], rowCount: 0 }));

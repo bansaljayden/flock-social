@@ -467,6 +467,21 @@ async function settleIfComplete(client, flockId) {
   // decision below is made from it: "everyone has answered" is a comparison
   // between two counts, and reading one of them from a different snapshot is
   // how a flock settles on a roster that no longer exists.
+  //
+  // Being inside the transaction is not what makes these reads agree. Under
+  // Read Committed every statement here (the minimum, the counts, the two
+  // population counts) takes a snapshot of its own, so a writer that commits
+  // between two of them is seen by one and not the other. What keeps that
+  // writer out is the plan's row, held FOR UPDATE by every caller of this
+  // function. The doors that move who is present or what they answered take
+  // that row, or its key share, before they write (the joins and the leave
+  // in routes/flocks.js; a guest's answer, a guest's RSVP, new or changed,
+  // and the link join in routes/guest.js), so each commits before the first
+  // read here or waits for this COMMIT. A guest's RSVP change once took
+  // nothing, and a guest coming back in between the minimum and the counts
+  // was counted as answering and left out of the number. A moderator's
+  // takedown of a guest row (routes/admin.js) hides it without taking the
+  // plan's row.
   const population = await answeringPopulation((q, p) => client.query(q, p), flockId);
   const totalMembers = population.total;
 
