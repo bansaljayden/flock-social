@@ -66,6 +66,14 @@
 //      went with the account. A plan where one member still owes another is
 //      handed to the payer first and survives; every other plan the account
 //      created still goes, and its members are told.
+//  15. A GUEST WHO CHANGES THEIR ANSWER WHILE THE BUDGET SETTLES IS COUNTED
+//      BY ALL OF THE SETTLE OR BY NONE OF IT. The settle reads the minimum,
+//      then who answered, then who has to, each statement on a snapshot of
+//      its own, so a guest saying in or out between two of them used to be
+//      in one read and out of the next: "four of four answered" over a
+//      number that left the returning guest's $10 out. The change now takes
+//      the plan's row before it reads the answer it replaces, so it lands
+//      wholly before the settle or wholly after it, in either order.
 // ---------------------------------------------------------------------------
 
 const test = require('node:test');
@@ -1560,4 +1568,251 @@ test('a plan where nobody else is owed still goes with its creator, and its memb
     assert.equal(await planExists(id), false, `${label}: the plan survived with nobody owed on it`);
     assert.ok(emits.some((e) => e.event === 'flock_deleted' && e.payload.flockId === id), `${label}: its members were not told`);
   }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 15. A guest changing their answer while the budget settles
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// settleIfComplete reads the minimum, then the answers, then the population,
+// one statement each. Under Read Committed each statement takes a snapshot of
+// its own, so being in one transaction does not make them agree; holding the
+// plan's row does, for every writer that takes it. A returning guest's RSVP
+// change took nothing, so it could commit between two of those reads.
+//
+// Nothing a lock can do stops the settle BETWEEN two of its reads (they read
+// the same rows), so these stop it in JavaScript, on the connection its route
+// checks out, the way section 4 stops a fan-out. Everything else is real: the
+// routes, the locks and who waits for whom, read from pg_stat_activity.
+
+// Three members and a guest holding the link.
+async function planWithGuest() {
+  const ann = await mkUser('Ann');
+  const ben = await mkUser('Ben');
+  const cal = await mkUser('Cal');
+  const flockId = await mkFlock(ann, [ben, cal]);
+  const link = await mkLink(flockId, ann);
+  const gus = await mkGuest(flockId, 'Gus');
+  return { ann, ben, cal, flockId, link, gus };
+}
+const guestSays = (ctx, status) => call('POST', `/api/guest/${ctx.link}/rsvp`, {
+  body: { guestToken: ctx.gus.guest_token, name: 'Gus', status },
+});
+const guestAnswers = (ctx, amount) => call('POST', `/api/guest/${ctx.link}/budget`, {
+  body: { guestToken: ctx.gus.guest_token, amount },
+});
+
+// The settle's second read: who has answered, over the answers present.
+const SETTLE_COUNTS = /COUNT\(\*\) FILTER \(WHERE skipped = false AND bm\.id IS NOT NULL\) AS non_skip_count/;
+
+// Stop the first checked-out connection that sends a statement `match` picks
+// out, just before it is sent, until release(). Everything else goes straight
+// through. pool.query checks its connection out with a callback and is left
+// alone; the routes' transactions check theirs out as a promise.
+function holdStatement(match) {
+  const realConnect = pool.connect;
+  let open;
+  const gate = new Promise((r) => { open = r; });
+  const hold = { held: false, release: () => open() };
+  pool.connect = function connectHeld(...args) {
+    if (typeof args[0] === 'function') return realConnect.apply(pool, args);
+    return realConnect.apply(pool, args).then((client) => {
+      const hadOwnQuery = Object.prototype.hasOwnProperty.call(client, 'query');
+      const realQuery = client.query;
+      client.query = function queryHeld(text, ...rest) {
+        const sql = typeof text === 'string' ? text : (text && text.text) || '';
+        if (!hold.held && match.test(sql.replace(/\s+/g, ' '))) {
+          hold.held = true;
+          return gate.then(() => realQuery.call(client, text, ...rest));
+        }
+        return realQuery.call(client, text, ...rest);
+      };
+      const realRelease = client.release;
+      client.release = function releaseHeld(...a) {
+        if (hadOwnQuery) client.query = realQuery; else delete client.query;
+        client.release = realRelease;
+        return realRelease.apply(client, a);
+      };
+      return client;
+    });
+  };
+  hold.restore = () => { pool.connect = realConnect; open(); };
+  return hold;
+}
+
+async function lockWaiters() {
+  const { rows } = await pool.query(
+    `SELECT pid, query FROM pg_stat_activity
+      WHERE datname = current_database() AND wait_event_type = 'Lock' AND pid <> pg_backend_pid()`
+  );
+  return rows;
+}
+
+async function waitForWaiter(label, match) {
+  const deadline = Date.now() + 10000;
+  for (;;) {
+    const found = (await lockWaiters()).find((w) => match.test(w.query));
+    if (found) return found;
+    if (Date.now() > deadline) throw new Error(`${label} never waited on a lock`);
+    await sleep(20);
+  }
+}
+
+// Whether `pending` went straight through or is waiting on a lock `match`
+// picks out.
+async function finishedOrQueued(pending, match) {
+  let done = false;
+  pending.then(() => { done = true; }, () => { done = true; });
+  const deadline = Date.now() + 10000;
+  for (;;) {
+    if (done) return 'finished';
+    if ((await lockWaiters()).some((w) => match.test(w.query))) return 'queued';
+    if (Date.now() > deadline) throw new Error('neither finished nor waited on a lock');
+    await sleep(20);
+  }
+}
+
+// A connection of the test's own inside a transaction, ended exactly once.
+async function holder() {
+  const client = await pool.connect();
+  await client.query('BEGIN');
+  let ended = false;
+  const end = async (how = 'ROLLBACK') => {
+    if (ended) return;
+    ended = true;
+    await client.query(how).catch(() => {});
+    client.release();
+  };
+  return { client, end };
+}
+
+const settledAs = (reply) => [reply.body.budgetLocked, reply.body.submissionCount, reply.body.totalMembers, reply.body.ceiling];
+
+test('a guest coming back in while the last member\'s answer settles is not counted as answering and left out of the number', async () => {
+  // Gus answered $10 and said out. Ann and Ben have answered $100, so Cal's
+  // $100 is the last answer while Gus is out, and it settles the budget. Gus
+  // says in again between the settle's minimum (taken without him: $100) and
+  // its counts. The counts used to see him: four of four answered, $100
+  // published, and the budget locked against the one person it could not
+  // cover.
+  const ctx = await planWithGuest();
+  assert.equal((await guestAnswers(ctx, 10)).status, 200);
+  assert.equal((await guestSays(ctx, 'out')).status, 200);
+  for (const u of [ctx.ann, ctx.ben]) assert.equal((await submit(ctx.flockId, u, 100)).status, 200);
+
+  const hold = holdStatement(SETTLE_COUNTS);
+  let settle;
+  let back;
+  let how;
+  try {
+    const settling = submit(ctx.flockId, ctx.cal, 100);
+    await until(() => hold.held);
+    assert.ok(hold.held, 'Cal\'s answer never reached the settle');
+    const returning = guestSays(ctx, 'in');
+    how = await finishedOrQueued(returning, /FOR KEY SHARE/);
+    hold.release();
+    [settle, back] = await Promise.all([settling, returning]);
+  } finally {
+    hold.restore();
+  }
+  assert.equal(settle.status, 200, settle.text);
+  assert.equal(back.status, 200, back.text);
+  assert.deepEqual(settledAs(settle), [true, 3, 3, 100],
+    'the settle has to read one roster: here the one before Gus came back, three answers over three people');
+  assert.equal(how, 'queued', 'Gus\'s change waited for the settle holding the plan\'s row');
+  const f = await one('SELECT budget_locked, budget_ceiling FROM flocks WHERE id = $1', [ctx.flockId]);
+  assert.deepEqual([f.budget_locked, Number(f.budget_ceiling)], [true, 100]);
+  assert.equal((await one('SELECT status FROM guest_rsvps WHERE id = $1', [ctx.gus.id])).status, 'in',
+    'and he is in, after it');
+});
+
+test('a guest going out while the last member\'s answer settles is not left out of the count and kept in the number', async () => {
+  // The other flip. Gus is in with $10 and has answered; Cal's $100 is the
+  // fourth answer of four. Gus says out between the minimum (taken with him:
+  // $10) and the counts, which used to miss him: three of three answered,
+  // and the $10 published over the three members who had all said $100, a
+  // band of the answer of the one person who had just left.
+  const ctx = await planWithGuest();
+  assert.equal((await guestAnswers(ctx, 10)).status, 200);
+  for (const u of [ctx.ann, ctx.ben]) assert.equal((await submit(ctx.flockId, u, 100)).status, 200);
+
+  const hold = holdStatement(SETTLE_COUNTS);
+  let settle;
+  let gone;
+  try {
+    const settling = submit(ctx.flockId, ctx.cal, 100);
+    await until(() => hold.held);
+    assert.ok(hold.held, 'Cal\'s answer never reached the settle');
+    const leaving = guestSays(ctx, 'out');
+    // It waits either way: before its write under the fix, or after it, in
+    // the settle it runs once an in guest says out.
+    await finishedOrQueued(leaving, /FROM flocks WHERE id = \$1 FOR (KEY SHARE|UPDATE)/);
+    hold.release();
+    [settle, gone] = await Promise.all([settling, leaving]);
+  } finally {
+    hold.restore();
+  }
+  assert.equal(settle.status, 200, settle.text);
+  assert.equal(gone.status, 200, gone.text);
+  assert.deepEqual(settledAs(settle), [true, 4, 4, 10],
+    'the settle has to read one roster: here the one with Gus still in, four answers over four people');
+  assert.equal((await one('SELECT status FROM guest_rsvps WHERE id = $1', [ctx.gus.id])).status, 'out');
+  const f = await one('SELECT budget_locked, budget_ceiling FROM flocks WHERE id = $1', [ctx.flockId]);
+  assert.deepEqual([f.budget_locked, Number(f.budget_ceiling)], [true, 10], 'published once, and not again when he left');
+});
+
+test('a settle arriving while a guest\'s change holds the plan\'s row waits for it, and counts him', async () => {
+  // The other order. Gus's change has taken the plan's row and is stopped at
+  // his own guest row, which the test holds. Cal's answer arrives and has to
+  // wait for the change to commit, so the settle reads Gus back in, $10 and
+  // all. It used to go straight through and settle over the three members.
+  const ctx = await planWithGuest();
+  assert.equal((await guestAnswers(ctx, 10)).status, 200);
+  assert.equal((await guestSays(ctx, 'out')).status, 200);
+  for (const u of [ctx.ann, ctx.ben]) assert.equal((await submit(ctx.flockId, u, 100)).status, 200);
+
+  const hold = await holder();
+  let returning;
+  let settling;
+  let how;
+  try {
+    await hold.client.query('SELECT id FROM guest_rsvps WHERE id = $1 FOR UPDATE', [ctx.gus.id]);
+    returning = guestSays(ctx, 'in');
+    await waitForWaiter('Gus\'s change', /guest_rsvps/);
+    settling = submit(ctx.flockId, ctx.cal, 100);
+    how = await finishedOrQueued(settling, /FROM flocks WHERE id = \$1 FOR UPDATE/);
+  } finally {
+    await hold.end();
+  }
+  const [back, settle] = await Promise.all([returning, settling]);
+  assert.equal(back.status, 200, back.text);
+  assert.equal(settle.status, 200, settle.text);
+  assert.equal(how, 'queued', 'the settle waited for the change that held the plan\'s row');
+  assert.deepEqual(settledAs(settle), [true, 4, 4, 10], 'and read Gus back in, with his $10 in the number');
+});
+
+test('a change is announced against the answer it replaced, read under the lock, not the one read before it', async () => {
+  // Gus is in. Another of his requests saying out is part way through (the
+  // test's own uncommitted write). This one says in: it read "in" before
+  // that write committed, and used to take its word for it, so it announced
+  // nothing and the room was left showing him out. Read again once it holds
+  // his row, the answer it replaces is "out", so "in" is news.
+  const ctx = await planWithGuest();
+  const hold = await holder();
+  let returning;
+  try {
+    await hold.client.query("UPDATE guest_rsvps SET status = 'out' WHERE id = $1", [ctx.gus.id]);
+    emits.length = 0;
+    returning = guestSays(ctx, 'in');
+    await waitForWaiter('Gus\'s change', /guest_rsvps/);
+    await hold.end('COMMIT');
+  } finally {
+    await hold.end();
+  }
+  const back = await returning;
+  assert.equal(back.status, 200, back.text);
+  assert.equal((await one('SELECT status FROM guest_rsvps WHERE id = $1', [ctx.gus.id])).status, 'in');
+  const told = emits.filter((e) => e.event === 'guest_rsvp' && e.room === `user:${ctx.ann.id}`);
+  assert.equal(told.length, 1, 'the members were never told Gus is back in');
+  assert.equal(told[0].payload.status, 'in');
 });

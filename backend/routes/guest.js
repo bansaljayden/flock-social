@@ -943,13 +943,14 @@ router.post('/:token/rsvp',
            FROM guest_rsvps WHERE guest_token = $1 AND flock_id = $2`,
           [guestToken, link.flock_id]
         );
+        // Retired because its person joined, not removed: say which, so the
+        // page does not tell a new member their answer was taken away. Asked
+        // here and again under the lock below, with the same words.
+        const refuseHidden = async () => ((await retiredOnJoin(link.flock_id, guestToken))
+          ? res.status(403).json(JOINED_IN_APP)
+          : res.status(403).json({ error: 'This RSVP was removed and cannot be edited' }));
         if (existing.rows.length && existing.rows[0].is_hidden) {
-          // Retired because its person joined, not removed: say which, so the
-          // page does not tell a new member their answer was taken away.
-          if (await retiredOnJoin(link.flock_id, guestToken)) {
-            return res.status(403).json(JOINED_IN_APP);
-          }
-          return res.status(403).json({ error: 'This RSVP was removed and cannot be edited' });
+          return refuseHidden();
         }
 
         // Round 23 — the takedown had two doors.
@@ -1000,28 +1001,83 @@ router.post('/:token/rsvp',
         // cheapest thing to script against a link — announces nothing. That
         // guard is necessary and not sufficient: alternating `in` / `out` is
         // "changed" every time, which is what the per-guest budget above bounds.
-        const prior = existing.rows[0] || null;
+        //
+        // THE WRITE HOLDS THE PLAN'S ROW, AND READS THE ANSWER IT REPLACES
+        // UNDER IT. A guest's status is part of the budget: a present guest's
+        // amount is in the minimum, and their answer counts toward "everyone
+        // has answered" (routes/budget.js PRESENT_ANSWERS). The settle reads
+        // those in separate statements, and under Read Committed each takes
+        // its own snapshot, so an edit that took no lock could commit between
+        // two of them. A guest who had answered $10 and said out, coming back
+        // in while the last member's $100 settled it, was out of the minimum
+        // and in the count: four of four answered, $100 published and locked,
+        // over a person who could not pay it. The settles hold the plan's row
+        // FOR UPDATE; this takes its key share first (VOTE_PLAN_LOCK_SQL,
+        // which the new-guest insert below already takes, so a new guest
+        // never landed inside a settle either), and the edit lands wholly
+        // before a settle or wholly after it. The plan's row and then the
+        // guest's own is the order every guest write in this file takes.
+        //
+        // The answer being replaced is read again once the row is held.
+        // `existing` was read on the pool before any of this, and another of
+        // this guest's requests can have committed since: what the edit is
+        // announced as, whether it moves the vote tallies, and whether it is
+        // an in guest saying out that a budget was waiting on, are all
+        // decided by what the write actually replaced. A row hidden since
+        // (a moderator, or its person joining) is refused the way the check
+        // above refuses it. The write used to find nothing to update and fall
+        // through to the new-guest path, which, for a row retired on a join,
+        // minted a second identity under the same name.
+        let prior = null;
+        let upd = null;
+        let hiddenSince = false;
+        if (existing.rows.length) {
+          const client = await pool.connect();
+          try {
+            await client.query('BEGIN');
+            await client.query(VOTE_PLAN_LOCK_SQL, [link.flock_id]);
+            const locked = await client.query(
+              `SELECT id, name, status, COALESCE(is_hidden, false) AS is_hidden
+               FROM guest_rsvps WHERE guest_token = $1 AND flock_id = $2 FOR NO KEY UPDATE`,
+              [guestToken, link.flock_id]
+            );
+            prior = locked.rows[0] || null;
+            if (!prior || prior.is_hidden) {
+              hiddenSince = !!prior;
+              await client.query('ROLLBACK');
+            } else {
+              upd = await client.query(
+                /* $2 IS CAST IN BOTH PLACES, and it has to be. Assigned bare
+                   into a VARCHAR(10) column and compared as ::text in the
+                   same statement, Postgres cannot settle on one type for it
+                   and refuses the whole UPDATE with "inconsistent types
+                   deduced for parameter $2". That is a 500 on the only path a
+                   returning guest has, so a guest could answer once and never
+                   change their mind, rename, or come back: the first answer
+                   takes the INSERT path below, which carries no CASE and was
+                   never affected. The cast that broke it arrived with the
+                   night-of reconfirm window. The test beside this runs the
+                   statement against a real database rather than reading it. */
+                `UPDATE guest_rsvps SET name = $1, status = $2::text, updated_at = NOW(),
+                        reconfirmed_at = CASE WHEN $2::text = 'in' AND status = 'in' THEN reconfirmed_at ELSE NULL END
+                 WHERE guest_token = $3 AND flock_id = $4 AND COALESCE(is_hidden, false) = false
+                 RETURNING id, guest_token,
+                           (SELECT gv.venue_name FROM guest_votes gv WHERE gv.guest_rsvp_id = guest_rsvps.id
+                             ORDER BY gv.created_at DESC LIMIT 1) AS voted_venue`,
+                [name, status, guestToken, link.flock_id]
+              );
+              await client.query('COMMIT');
+            }
+          } catch (txErr) {
+            await client.query('ROLLBACK').catch(() => {});
+            throw txErr;
+          } finally {
+            client.release();
+          }
+        }
+        if (hiddenSince) return refuseHidden();
         const changed = !prior || prior.name !== name || prior.status !== status;
-        const upd = await pool.query(
-          /* $2 IS CAST IN BOTH PLACES, and it has to be. Assigned bare into a
-             VARCHAR(10) column and compared as ::text in the same statement,
-             Postgres cannot settle on one type for it and refuses the whole
-             UPDATE with "inconsistent types deduced for parameter $2". That
-             is a 500 on the only path a returning guest has, so a guest could
-             answer once and never change their mind, rename, or come back:
-             the first answer takes the INSERT path below, which carries no
-             CASE and was never affected. The cast that broke it arrived with
-             the night-of reconfirm window. The test beside this runs the
-             statement against a real database rather than reading it. */
-          `UPDATE guest_rsvps SET name = $1, status = $2::text, updated_at = NOW(),
-                  reconfirmed_at = CASE WHEN $2::text = 'in' AND status = 'in' THEN reconfirmed_at ELSE NULL END
-           WHERE guest_token = $3 AND flock_id = $4 AND COALESCE(is_hidden, false) = false
-           RETURNING id, guest_token,
-                     (SELECT gv.venue_name FROM guest_votes gv WHERE gv.guest_rsvp_id = guest_rsvps.id
-                       ORDER BY gv.created_at DESC LIMIT 1) AS voted_venue`,
-          [name, status, guestToken, link.flock_id]
-        );
-        if (upd.rows.length) {
+        if (upd && upd.rows.length) {
           if (changed) {
             await announceGuestRsvp(req, link, { guestId: upd.rows[0].id, name, status, isNew: false });
           }
@@ -1037,7 +1093,10 @@ router.post('/:token/rsvp',
           // and an 'in' guest saying out shrinks it: three members may have
           // answered a budget that was waiting on exactly this person. The
           // same settle, under the same lock, publishing the same way, or
-          // nothing (routes/budget.js). Never throws.
+          // nothing (routes/budget.js). Never throws. It runs after the
+          // COMMIT, in a transaction of its own: turning the key share held
+          // above into the row lock a settle takes would deadlock against
+          // another guest's edit holding a key share of its own.
           if (prior && prior.status === 'in' && status === 'out') {
             await settleAfterPopulationChange(req.app.get('io'), link.flock_id);
           }
