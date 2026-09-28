@@ -44,7 +44,7 @@ def flip(t, objects):
     out = []
     for o in objects:
         x0, y0, x1, y1 = o['box']
-        out.append({'cls': o['cls'], 'x': w - o['x'], 'y': o['y'], 'box': (w - x1, y0, w - x0, y1)})
+        out.append({**o, 'x': w - o['x'], 'box': (w - x1, y0, w - x0, y1)})
     return t[:, ::-1].copy(), out
 
 
@@ -104,13 +104,13 @@ def real_frame(real, rng, groups_x3=False):
     elif src == 'aau':
         i = int(rng.integers(len(real['aau_img'])))
         t = _eight_bit(real['aau_img'][i].astype(np.float32) / 255.0, rng)
-        objects = [{'cls': 'person', 'x': hx, 'y': hy, 'box': box}
+        objects = [{'cls': 'person', 'x': hx, 'y': hy, 'box': box, 'approx': True}
                    for box, (hx, hy) in real['aau_people'][i]]
     else:
         i = int(rng.integers(len(real['ss_img'])))
         t = zoom(_eight_bit(real['ss_img'][i].astype(np.float32) / 255.0, rng), (5, 5), order=1)
         objects = [{'cls': 'person', 'x': hx * 5, 'y': hy * 5,
-                    'box': tuple(v * 5 for v in box)}
+                    'box': tuple(v * 5 for v in box), 'approx': True}
                    for box, (hx, hy) in real['ss_people'][i]]
     t = t.astype(np.float32)
     if rng.random() < 0.5:
@@ -155,7 +155,10 @@ class Frames(IterableDataset):
                 t, objects = synth.scene_full(rng)
                 if rng.random() < 0.5:
                     t, objects = flip(t, objects)
-            heat, ltrb, mask = synth.targets(objects, stride=self.stride)
+            # AAU and SenSys mark bodies, not heads; their head points are
+            # estimated, so on the fine grid their peaks are spread wider.
+            soft = 5.0 if any(o.get('approx') for o in objects) else None
+            heat, ltrb, mask = synth.targets(objects, stride=self.stride, person_sigma_px=soft)
             if not boxes:
                 mask = np.zeros_like(mask)
             x = synth.model_input(t)

@@ -202,7 +202,8 @@ in glass, warm footprints, a candle and an empty room each come out right 96 to
 **It runs on the sensor, in 16 ms.** 718,550 parameters, a CenterNet-style
 network with a head map per kind of thing and a box head, exported to ONNX and
 run by ONNX Runtime on one Raspberry Pi 5 core, fast enough to read every frame
-the camera sends. It learns from millions of generated thermal frames drawn
+the camera sends. When it sees a crowd, a second model with an output grid twice
+as fine counts the frame again, so heads a few pixels apart stay two people. It learns from millions of generated thermal frames drawn
 with measured physics (skin follows the room, clothing sits a measured share of
 the way from room to skin, fur is cool and eyes are hot) through this camera's
 optics and noise, mixed with real frames from four commercially licensed public

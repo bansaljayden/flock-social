@@ -4003,5 +4003,31 @@ class NamesKindsNeverWho(unittest.TestCase):
         self.assertEqual(main.PeopleModel.CLASSES[0], 'person')
 
 
+class CrowdSecondLook(unittest.TestCase):
+    """The finer-grid model counts a crowd again, and only a crowd."""
+
+    def _model(self, n):
+        m = main.PeopleModel.__new__(main.PeopleModel)
+        m.fine = None
+        m.read = mock.Mock(return_value=([(i, i) for i in range(n)], []))
+        return m
+
+    def test_a_small_room_never_asks_the_fine_model(self):
+        m = self._model(3)
+        m.fine = self._model(9)
+        self.assertEqual(len(m.read_crowd([0.0])[0]), 3)
+        m.fine.read.assert_not_called()
+
+    def test_a_crowd_takes_the_higher_count(self):
+        m = self._model(6)
+        m.fine = self._model(9)
+        self.assertEqual(len(m.read_crowd([0.0])[0]), 9)
+        m.fine = self._model(4)
+        self.assertEqual(len(m.read_crowd([0.0])[0]), 6)
+
+    def test_without_the_fine_model_it_is_the_main_one(self):
+        self.assertEqual(len(self._model(7).read_crowd([0.0])[0]), 7)
+
+
 if __name__ == '__main__':
     unittest.main()
