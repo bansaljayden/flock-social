@@ -537,8 +537,10 @@ describe('PaywallSheet can be left without a pointer', () => {
 
   it('has a real close control, not just a backdrop and a drag handle', () => {
     expect(paywall).toMatch(/aria-label="Close"/);
-    // The handle is paint: it must not pretend to be the exit.
-    expect(paywall).toMatch(/<div aria-hidden="true" style=\{\{ width: '38px', height: '4px'/);
+    // The handle answers a pull now (hooks/useSheetDrag.js), but it is still
+    // hidden from assistive tech and cannot take focus, so it must not
+    // pretend to be the exit a keyboard or a screen reader needs.
+    expect(paywall).toMatch(/<div aria-hidden="true" className="sheet-grab" \{\.\.\.grabProps\} style=\{\{ padding: '10px 0' \}\}>\s*<div style=\{\{ width: '38px', height: '4px'/);
   });
 });
 

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { reportContent, blockUser } from '../services/api';
 import Icons from './ui/Icons';
+import useSheetDrag from '../hooks/useSheetDrag';
 
 // UGC moderation sheet (Apple Guideline 1.2). Opened from a message action, a
 // user/profile menu, or a guest's card in a flock roster. Lets a user REPORT
@@ -146,6 +147,10 @@ const ModerationSheet = ({ target, onClose, showToast, onBlocked, onReported }) 
     return () => { document.removeEventListener('keydown', onKeyDown, true); clearTimeout(t); };
   }, [target]);
 
+  // The grabber pulls the sheet down to close it (hooks/useSheetDrag.js),
+  // under the same rule as the backdrop and Escape: never mid-request.
+  const { handleProps: grabProps } = useSheetDrag(onClose, { enabled: !busy, sheetRef });
+
   if (!target) return null;
 
   const { userId, userName, contentType = 'profile', contentId } = target;
@@ -238,9 +243,13 @@ const ModerationSheet = ({ target, onClose, showToast, onBlocked, onReported }) 
         // is not there. That is the guest RSVP case.
         aria-label={userId ? `Report or block ${who}` : `Report ${who}`}
         onClick={(e) => e.stopPropagation()}
-        style={{ width: '100%', maxWidth: '440px', backgroundColor: 'var(--bg-card-solid)', borderTopLeftRadius: '20px', borderTopRightRadius: '20px', overflow: 'hidden', boxShadow: '0 -8px 30px rgba(0,0,0,0.25)', animation: 'fadeInUp 0.25s ease-out', fontFamily: FONT, paddingBottom: 'var(--safe-bottom)' }}
+        style={{ width: '100%', maxWidth: '440px', backgroundColor: 'var(--bg-card-solid)', borderTopLeftRadius: '20px', borderTopRightRadius: '20px', overflow: 'hidden', boxShadow: '0 -8px 30px rgba(0,0,0,0.25)', animation: 'sheetRise 280ms cubic-bezier(0.2, 0.8, 0.2, 1)', fontFamily: FONT, paddingBottom: 'var(--safe-bottom)' }}
       >
-        <div style={{ width: '38px', height: '4px', borderRadius: '2px', backgroundColor: 'var(--border-default)', margin: '10px auto 4px' }} />
+        {/* The grabber, and a strip the width of the sheet around it to take
+            hold of, 24px tall so a thumb can find it. */}
+        <div aria-hidden="true" className="sheet-grab" {...grabProps} style={{ padding: '10px 0' }}>
+          <div style={{ width: '38px', height: '4px', borderRadius: '2px', backgroundColor: 'var(--border-default)', margin: '0 auto' }} />
+        </div>
 
         {mode === 'menu' && (
           <div>

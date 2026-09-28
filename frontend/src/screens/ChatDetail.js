@@ -202,6 +202,7 @@ import { MAX_SEATS, etaMinutes, formatDistance, formatEta } from '../lib/travel'
 import useKeyboardComposer from '../hooks/useKeyboardComposer';
 import { holdStatusBarOverDark } from '../services/systemBars';
 import useEdgeSwipeBack from '../hooks/useEdgeSwipeBack';
+import useSheetDrag from '../hooks/useSheetDrag';
 import { hapticSuccess } from '../services/haptics';
 
 /* A half-written message, per flock, for the length of the session.
@@ -947,6 +948,13 @@ export default function ChatDetail({
     // the screen changes, in that order, as the arrow always did.
     const leaveToList = () => { leaveChatScreen(); setCurrentScreen('main'); };
     const edgeBack = useEdgeSwipeBack(leaveToList);
+
+    // A pull down on the grabber or header of a sheet closes it with the
+    // same close its X and Escape use (hooks/useSheetDrag.js). One per
+    // sheet, because each sheet is its own element to move.
+    const poolSheetDrag = useSheetDrag(() => { setShowChatPool(false); setShowCreateBill(false); });
+    const voteSheetDrag = useSheetDrag(() => setShowVotePanel(false));
+    const inviteSheetDrag = useSheetDrag(() => setShowFlockInviteModal(false));
 
     // THE COMPOSER'S TEXT, MIRRORED, and App.js is still the authority. The
     // draft lives in its `chatInputRef`, every keystroke below goes through
@@ -3694,7 +3702,13 @@ export default function ChatDetail({
           return (
             <div className="modal-backdrop kb-lift" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', zIndex: 50 }}>
             <DialogBehavior onClose={() => { setShowChatPool(false); setShowCreateBill(false); }} label="Cash pool" />
-              <div className="modal-content" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '20px 20px calc(20px + var(--safe-bottom))', width: '100%', maxHeight: '85%', overflowY: 'auto' }}>
+              <div ref={poolSheetDrag.sheetRef} className="modal-content sheet-rise" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '20px 20px calc(20px + var(--safe-bottom))', width: '100%', maxHeight: '85%', overflowY: 'auto' }}>
+                {/* The handle: the grabber and the header row under it, run
+                    out to the edges of the sheet so the whole top of it can
+                    be pulled down. Taps on Close still land (useSheetDrag,
+                    decision 1). */}
+                <div className="sheet-grab" {...poolSheetDrag.handleProps} style={{ margin: '-20px -20px 0', padding: '12px 20px 0' }}>
+                <div aria-hidden="true" style={{ width: '40px', height: '4px', backgroundColor: 'var(--pill-bg)', borderRadius: '2px', margin: '0 auto 12px' }} />
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                   {/* THE HEADING NAMED THE WRONG HALF OF THE SHEET. A local
                       called showBillCreate held "the plan has got far enough
@@ -3711,6 +3725,7 @@ export default function ChatDetail({
                       it. */}
                   <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0 }}>{showCreateBill || !hasBudget ? 'Split the Bill' : 'Group Budget'}</h2>
                   <button aria-label="Close" className="hit44" onClick={() => { setShowChatPool(false); setShowCreateBill(false); }} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 18)}</button>
+                </div>
                 </div>
 
                 {/* Budget Submission Section */}
@@ -4266,14 +4281,18 @@ export default function ChatDetail({
             <DialogBehavior onClose={() => setShowVotePanel(false)} label="Vote on a venue" />
               {/* SAFE-AREA rule 1: the last venue row sat in the home
                   indicator strip under a flat 20px. */}
-              <div className="modal-content" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '20px 20px calc(20px + var(--safe-bottom))', width: '100%', maxHeight: '80%', overflowY: 'auto' }}>
-                {/* Header */}
+              <div ref={voteSheetDrag.sheetRef} className="modal-content sheet-rise" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '20px 20px calc(20px + var(--safe-bottom))', width: '100%', maxHeight: '80%', overflowY: 'auto' }}>
+                {/* Header, and the handle: grabber plus header row, as on
+                    the cash pool sheet above. */}
+                <div className="sheet-grab" {...voteSheetDrag.handleProps} style={{ margin: '-20px -20px 0', padding: '12px 20px 0' }}>
+                <div aria-hidden="true" style={{ width: '40px', height: '4px', backgroundColor: 'var(--pill-bg)', borderRadius: '2px', margin: '0 auto 12px' }} />
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                   <div>
                     <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.vote(colors.navy, 20)} Vote for a Venue</h2>
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>{totalVoters} vote{totalVoters !== 1 ? 's' : ''} cast{myVote ? ` • You voted for ${myVote}` : ''}</p>
                   </div>
                   <button aria-label="Close" className="hit44" onClick={() => setShowVotePanel(false)} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 18)}</button>
+                </div>
                 </div>
 
                 {/* Current votes */}
@@ -4465,7 +4484,7 @@ export default function ChatDetail({
           <div className="modal-backdrop" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', zIndex: 50 }}>
             <DialogBehavior onClose={() => setShowVenueShareModal(false)} label="Share a venue" />
             {/* SAFE-AREA rule 1, as on the vote sheet above. */}
-            <div className="modal-content" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '20px 20px calc(20px + var(--safe-bottom))', width: '100%', maxHeight: '70%', overflowY: 'auto' }}>
+            <div className="modal-content sheet-rise" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '20px 20px calc(20px + var(--safe-bottom))', width: '100%', maxHeight: '70%', overflowY: 'auto' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                 <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.mapPin(colors.navy, 20)} Share a Venue</h2>
                 <button aria-label="Close" className="hit44" onClick={() => setShowVenueShareModal(false)} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 18)}</button>
@@ -4599,11 +4618,16 @@ export default function ChatDetail({
              the Invite button under the list, were under the keys. */
           <div className="modal-backdrop kb-lift" onClick={(e) => { if (e.target === e.currentTarget) setShowFlockInviteModal(false); }} style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', zIndex: 50 }}>
             <DialogBehavior onClose={() => setShowFlockInviteModal(false)} label="Invite friends" />
-            <div className="modal-content" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '20px 20px calc(20px + var(--safe-bottom))', width: '100%', maxHeight: '70%', overflowY: 'auto' }}>
-              <div style={{ width: '40px', height: '4px', backgroundColor: 'var(--pill-bg)', borderRadius: '2px', margin: '0 auto 16px' }} />
+            <div ref={inviteSheetDrag.sheetRef} className="modal-content sheet-rise" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '20px 20px calc(20px + var(--safe-bottom))', width: '100%', maxHeight: '70%', overflowY: 'auto' }}>
+              {/* The grabber was drawn here with nothing behind it. It and the
+                  header row are the handle now, run out to the edges of the
+                  sheet; the layout is the same as before. */}
+              <div className="sheet-grab" {...inviteSheetDrag.handleProps} style={{ margin: '-20px -20px 0', padding: '20px 20px 0' }}>
+              <div aria-hidden="true" style={{ width: '40px', height: '4px', backgroundColor: 'var(--pill-bg)', borderRadius: '2px', margin: '0 auto 16px' }} />
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                 <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0 }}>Invite Friends</h3>
                 <button aria-label="Close" className="hit44" onClick={() => setShowFlockInviteModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x(colors.textTertiary, 20)}</button>
+              </div>
               </div>
 
               {/* Guest link — anyone with it can RSVP and vote, no account.
