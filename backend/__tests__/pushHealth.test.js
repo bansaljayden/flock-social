@@ -121,6 +121,30 @@ test('a single auth-class code alarms at once and says where to look', async () 
   }
 });
 
+test('a token from another Firebase project is one device, not our credentials', async () => {
+  reset();
+  const code = 'messaging/mismatched-credential';
+  assert.ok(!firebaseService.AUTH_FAILURE_CODES.has(code));
+  // One dev-build token among working ones: no alarm, and the token is kept,
+  // because a wrong-project service account would answer this for every token.
+  const r = await send(code, 'SenderId mismatch');
+  await send(null);
+  await settle();
+  assert.strictEqual(alarms.length, 0, 'one odd token must not claim every push fails');
+  assert.strictEqual(r.stale, false);
+  assert.strictEqual(firebaseService.pushHealthStatus().stale, 0);
+  assert.strictEqual(firebaseService.pushHealthStatus().consecutiveFailures, 0);
+  // A key for the wrong project fails every send the same way, so the run
+  // still finds it.
+  for (let i = 0; i < firebaseService.CONSECUTIVE_FAILURES_BEFORE_ALARM; i += 1) {
+    await send(code, 'SenderId mismatch');
+  }
+  await settle();
+  assert.strictEqual(alarms.length, 1);
+  assert.match(alarms[0].text, /last 5 push sends all failed/);
+  assert.match(alarms[0].text, /mismatched-credential/);
+});
+
 test('an alarm nobody received does not ask again on every send', async () => {
   reset();
   alarmAnswer = { failed: true };
