@@ -253,6 +253,33 @@ const EVENT_TYPE_VOCABULARY = ['music', 'sports', 'arts', 'family', 'other'];
 // module must stay importable without touching the collectors.
 const HOUR_AXIS_VENUE_LOCAL = 'venue_local';
 
+// ---------------------------------------------------------------------------
+// HARVESTED VENUES ARE LEFT OUT UNLESS ASKED FOR (2026-09-28)
+//
+// scripts/ml/harvestVenueFilter.js adds venues from BestTime's Venue Filter as
+// ml_venues rows with besttime_status 'harvested': about a million weekly rows
+// for one market, against the tens of thousands of training rows a market
+// holds today, all on the NULL google_types / price_level signature a Google
+// listing never has. Exported silently, they would retrain the model on a
+// corpus nobody chose, and they would enter prepare_features.py's neighbour
+// table while services/mlPredictor.js keeps them out of its neighbour box: the
+// two sides of log_neighbor_count and neighbor_baseline_same_hour would be
+// computed over different venues. So they are excluded here by default, the
+// same exclusion serving applies (mlPredictor.HARVESTED_STATUS), and a retrain
+// that is meant to measure them says so: `--include-harvested` on the command
+// line, `includeHarvested: true` to runExport. Every run prints how many
+// venues and rows the choice covered. The same literal is harvestVenueFilter's
+// HARVEST_STATUS; __tests__/harvestedIsolation.test.js pins the three together.
+// ---------------------------------------------------------------------------
+const HARVESTED_STATUS = 'harvested';
+const INCLUDE_HARVESTED_FLAG = '--include-harvested';
+
+// The WHERE-clause fragment for ml_venues under `alias`: empty when harvested
+// venues are included, otherwise the exclusion serving applies.
+function harvestedClause(alias, includeHarvested) {
+  return includeHarvested ? '' : `AND ${alias}.besttime_status IS DISTINCT FROM '${HARVESTED_STATUS}'`;
+}
+
 // Rows per FETCH from the server-side cursor. The export is ~4M rows; a plain
 // pool.query() materialises every one of them as a JS object before a single
 // byte is written (see runExport).
@@ -311,7 +338,7 @@ const BASELINE_AGGREGATE_SQL = `
 // migration chain) is missing label_source / observed_date, and a missing
 // column is a hard SQL error — which is what the ALTER TABLE this file used to
 // run was papering over.
-function cityQuery(city, optional = {}) {
+function cityQuery(city, optional = {}, { includeHarvested = false } = {}) {
   // `column` is the ml_training_data column preflight() probed for; `alias` is
   // what the row object is keyed on. They differ for observed_date, which is
   // selected as stored_observed_date so rowToCsv can tell a stored value from
@@ -422,6 +449,8 @@ function cityQuery(city, optional = {}) {
         -- not reach the CSV. A row on the BestTime bucket axis is a row whose
         -- hour column means something else.
         AND (t.collection_mode <> 'weekly' OR t.hour_axis = '${HOUR_AXIS_VENUE_LOCAL}')
+        -- Harvested venues only when asked for; see HARVESTED_STATUS above.
+        ${harvestedClause('v', includeHarvested)}
       ORDER BY t.venue_id, t.day_of_week, t.hour
     `,
     values: [city],
@@ -748,7 +777,7 @@ function feedbackExportRequested(env = process.env) {
 // would otherwise abort the whole query. Rows it excludes are counted by the
 // census as `no_usable_timezone` rather than disappearing.
 // ---------------------------------------------------------------------------
-function feedbackCandidateQuery(city) {
+function feedbackCandidateQuery(city, { includeHarvested = false } = {}) {
   return {
     text: `
       SELECT
@@ -799,6 +828,8 @@ function feedbackCandidateQuery(city) {
        AND b.day_of_week = f.day_of_week
        AND b.hour = f.hour
       WHERE v.city = $1
+        -- A venue the CSV leaves out trains on no label at all, reports included.
+        ${harvestedClause('v', includeHarvested)}
       ORDER BY v.id, f.day_of_week, f.hour, local_date
     `,
     values: [city],
@@ -985,8 +1016,8 @@ const FEEDBACK_CLOCK_REFUSAL_MESSAGE =
 
 // Export every eligible feedback cell for one city onto `stream`. Returns
 // counters; the caller aggregates and reports them.
-async function exportFeedbackCity(pool, city, stream, crowdMap, counters) {
-  const q = feedbackCandidateQuery(city);
+async function exportFeedbackCity(pool, city, stream, crowdMap, counters, { includeHarvested = false } = {}) {
+  const q = feedbackCandidateQuery(city, { includeHarvested });
   const client = await pool.connect();
   let rows;
   try {
@@ -1454,8 +1485,8 @@ let cursorSeq = 0;
 // WHOLE result set as JS objects before returning — for the largest city that
 // is hundreds of thousands of ~40-field objects, and the failure mode is an
 // out-of-memory crash two thirds of the way through a two-hour export.
-async function exportCity(pool, city, stream, optional, onRows) {
-  const q = cityQuery(city, optional);
+async function exportCity(pool, city, stream, optional, onRows, { includeHarvested = false } = {}) {
+  const q = cityQuery(city, optional, { includeHarvested });
   const name = `flock_export_cur_${++cursorSeq}`;
   const client = await pool.connect();
   let rows = 0;
@@ -1495,7 +1526,19 @@ async function exportCity(pool, city, stream, optional, onRows) {
 // renamed only after the streams have flushed, and the final paths are deleted
 // FIRST so a failed run leaves no file at all rather than the previous run's.
 // ---------------------------------------------------------------------------
-async function runExport({ pool, outDir = __dirname, log = console.log } = {}) {
+// How many venues and labelled rows the harvested choice covers, read before
+// anything is written so the log says what the CSV does and does not hold.
+async function harvestedCensus(db) {
+  const { rows: [r] } = await db.query(
+    `SELECT COUNT(DISTINCT v.id)::bigint AS venues, COUNT(t.id)::bigint AS rows
+       FROM ml_venues v
+       LEFT JOIN ml_training_data t ON t.venue_id = v.id AND t.busyness_pct IS NOT NULL
+      WHERE v.besttime_status = '${HARVESTED_STATUS}'`
+  );
+  return { venues: Number(r.venues), rows: Number(r.rows) };
+}
+
+async function runExport({ pool, outDir = __dirname, log = console.log, includeHarvested = false } = {}) {
   const started = Date.now();
   const trainPath = path.join(outDir, 'training_data.csv');
   const holdoutPath = path.join(outDir, 'holdout_data.csv');
@@ -1525,6 +1568,13 @@ async function runExport({ pool, outDir = __dirname, log = console.log } = {}) {
       + 'Migration 024 stamps both from collected_at — apply it, or accept a run under '
       + 'FLOCK_CALENDAR_POLICY=drop, which is not shippable.');
   }
+
+  const harvested = await harvestedCensus(pool);
+  log(`[Export] Harvested venues (besttime_status '${HARVESTED_STATUS}'): ${harvested.venues} venues, `
+    + `${harvested.rows} labelled rows, ${includeHarvested
+      ? `INCLUDED (${INCLUDE_HARVESTED_FLAG}). Serving leaves them out of the neighbour box until their status `
+        + 'changes, so a model trained on this CSV ships only with that change (RETRAIN.md, "Venue Filter harvest").'
+      : `EXCLUDED, as serving excludes them from the neighbour box. ${INCLUDE_HARVESTED_FLAG} includes them for a retrain that measures them.`}`);
 
   log('[Export] Finding cities with data...');
   const { rows: cityRows } = await pool.query(
@@ -1607,14 +1657,14 @@ async function runExport({ pool, outDir = __dirname, log = console.log } = {}) {
           announced = soFar;
           log(`    ... ${soFar} rows`);
         }
-      });
+      }, { includeHarvested });
       cityCounts[city] = n;
       if (isHoldout) holdoutCount += n; else trainCount += n;
       log(`  ${n} rows ${isHoldout ? '(holdout)' : '(train)'}`);
 
       if (feedbackEnabled) {
         const before = feedbackCounters.emitted;
-        await exportFeedbackCity(pool, city, stream, crowdMap, feedbackCounters);
+        await exportFeedbackCity(pool, city, stream, crowdMap, feedbackCounters, { includeHarvested });
         const added = feedbackCounters.emitted - before;
         if (added > 0) {
           cityCounts[city] += added;
@@ -1632,6 +1682,7 @@ async function runExport({ pool, outDir = __dirname, log = console.log } = {}) {
           // Round 25: whether migration 044's provenance column is there to
           // read. Probed once in preflight, not once per city.
           optional: pre.ownerContext,
+          venueClause: harvestedClause('v', includeHarvested),
         });
         const added = ownerCounters.emitted - before;
         if (added > 0) {
@@ -1736,6 +1787,7 @@ async function runExport({ pool, outDir = __dirname, log = console.log } = {}) {
   return {
     trainCount, holdoutCount, cityCounts, trainPath, holdoutPath,
     trainBytes, holdoutBytes, elapsedMs,
+    harvested: { included: includeHarvested, ...harvested },
     feedback: { enabled: feedbackEnabled, ...feedbackCounters },
     owner: { enabled: ownerEnabled, ...ownerCounters },
   };
@@ -1765,10 +1817,23 @@ function createPool() {
   });
 }
 
-async function main() {
+// The one flag. Anything else is refused rather than ignored: a misspelt
+// --include-harvested must not quietly produce the default export.
+function parseExportArgs(argv) {
+  const args = argv.slice(2);
+  const unknown = args.filter((a) => a !== INCLUDE_HARVESTED_FLAG);
+  if (unknown.length > 0) {
+    return { error: `Unknown argument ${unknown.map((a) => `"${a}"`).join(', ')}; the only one is ${INCLUDE_HARVESTED_FLAG}.` };
+  }
+  return { includeHarvested: args.includes(INCLUDE_HARVESTED_FLAG) };
+}
+
+async function main(argv = process.argv) {
+  const args = parseExportArgs(argv);
+  if (args.error) throw new Error(args.error);
   const pool = createPool();
   try {
-    await runExport({ pool });
+    await runExport({ pool, includeHarvested: args.includeHarvested });
   } finally {
     await pool.end();
   }
@@ -1798,6 +1863,12 @@ module.exports = {
   createPool,
   BASELINE_AGGREGATE_SQL,
   HOUR_AXIS_VENUE_LOCAL,
+  // 2026-09-28: harvested venues, excluded unless asked for.
+  HARVESTED_STATUS,
+  INCLUDE_HARVESTED_FLAG,
+  harvestedClause,
+  harvestedCensus,
+  parseExportArgs,
   HOLDOUT_CITIES,
   UNDECLARED_WEEKLY_MESSAGE,
   FETCH_SIZE,

@@ -2516,6 +2516,27 @@ const neighborCache = new Map();      // "lat.toFixed(3)_lng.toFixed(3)" -> box 
 const selfBaselineCache = new Map();  // place_id -> that venue's own baselines
 
 // ---------------------------------------------------------------------------
+// HARVESTED VENUES ARE NOBODY'S NEIGHBOUR YET (2026-09-28).
+// ---------------------------------------------------------------------------
+// scripts/ml/harvestVenueFilter.js can add thousands of venues at once from
+// BestTime's Venue Filter, as ml_venues rows with besttime_status 'harvested'.
+// buildBaselines gives each one a curve within the hour, and without this
+// clause every one of them would join the box below: log_neighbor_count and
+// neighbor_baseline_same_hour are inputs of the shipped model, so every
+// existing venue's score would move within a cache TTL, by an amount no
+// evaluation had measured. So the box leaves them out, on both statements (the
+// totals and the self lookup, so a harvested venue is not subtracted from a
+// box it was never counted in), and train/export_training_data.js leaves them
+// out of the CSV by default for the same reason: training and serving see the
+// same neighbourhood. A harvested venue still gets its own baseline and its
+// own model-backed score; only its effect on OTHER venues waits. When a
+// retrain that included them (export --include-harvested) ships, their status
+// is changed in the same step (scripts/ml/RETRAIN.md, "Venue Filter harvest"),
+// which lets both sides see them at once.
+const HARVESTED_STATUS = 'harvested';
+const NOT_HARVESTED_SQL = `v.besttime_status IS DISTINCT FROM '${HARVESTED_STATUS}'`;
+
+// ---------------------------------------------------------------------------
 // THE BUCKET IS STILL THE CALLER'S NUMBER — audit round 4, R4-I2
 // ---------------------------------------------------------------------------
 // Round 3 took `place_id` out of the key above and the round-4 audit confirmed
@@ -2602,7 +2623,8 @@ const neighborInflight = new Map();
 // The venue's own contribution to the box it sits in: its coordinates (so the
 // caller can check it really is inside the box the totals were taken over) and
 // its baseline per dow/hour. Returns null when the venue is not in the corpus
-// at all — the common case for a fabricated place id — and null on failure, in
+// at all — the common case for a fabricated place id — and for a harvested
+// venue, which the box totals never counted (HARVESTED_STATUS), and null on failure, in
 // which case nothing is subtracted and the neighbour count is one too high
 // rather than wrong in the model's favour.
 // `userId` (optional) is the account a cache MISS is charged to — see
@@ -2620,7 +2642,8 @@ async function getSelfBaselines(placeId, userId) {
       `SELECT v.latitude AS lat, v.longitude AS lng, b.day_of_week AS dow, b.hour, b.baseline
          FROM ml_venues v
          JOIN ml_venue_baselines b ON b.google_place_id = v.google_place_id
-        WHERE v.google_place_id = $1`,
+        WHERE v.google_place_id = $1
+          AND ${NOT_HARVESTED_SQL}`,
       [placeId]
     );
     let data = null;
@@ -2660,6 +2683,7 @@ async function scanNeighborBox(key, bLat, bLng, userId) {
        JOIN ml_venue_baselines b ON b.google_place_id = v.google_place_id
        WHERE v.latitude BETWEEN $1 - $3::float AND $1 + $3::float
          AND v.longitude BETWEEN $2 - $3::float AND $2 + $3::float
+         AND ${NOT_HARVESTED_SQL}
        GROUP BY b.day_of_week, b.hour`,
       [Number(bLat), Number(bLng), NEIGHBOR_BOX_DEG]
     );
@@ -5048,6 +5072,7 @@ module.exports = {
     // apart). Read-only: nothing here changes what predictBusyness does.
     qmapEnabled,
     NEIGHBOR_BOX_DEG,
+    HARVESTED_STATUS,
     DEVIATION_WEIGHT,
     DEVIATION_MIN_READINGS,
     DEVIATION_CLAMP,

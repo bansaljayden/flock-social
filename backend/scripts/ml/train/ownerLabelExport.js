@@ -102,7 +102,9 @@ const OWNER_EXCLUSION_REASONS = {
 // only, enforced at the source the way the feedback query enforces
 // verified = true: the write path already refuses unverified venues, and this
 // join is what keeps that true for rows written before a venue lost its badge.
-function ownerCandidateQuery(city, baselineAggregateSql, optional = {}) {
+// `venueClause` is an extra condition on ml_venues v from the caller, which
+// owns the venue population (export_training_data.js harvestedClause).
+function ownerCandidateQuery(city, baselineAggregateSql, optional = {}, venueClause = '') {
   // Migration 044's provenance column. Naming a column that does not exist is a
   // hard SQL error, so a database on 036 but not 044 selects a literal NULL,
   // which is also the honest value for those rows: nothing recorded whether
@@ -171,6 +173,7 @@ function ownerCandidateQuery(city, baselineAggregateSql, optional = {}) {
        AND b.day_of_week = lc.dow
        AND b.hour = lc.hr
       WHERE v.city = $1
+        ${venueClause}
       ORDER BY v.id, r.created_at
     `,
     values: [city],
@@ -337,8 +340,8 @@ function ownerVenueToTrainingRows(venueGroup) {
 // ONE writer) and BASELINE_AGGREGATE_SQL (the anchor has ONE definition).
 // Passed in rather than required back to keep the module graph acyclic.
 async function exportOwnerCity(pool, city, stream, counters, deps) {
-  const { rowToCsv, baselineAggregateSql, write, optional = {} } = deps;
-  const q = ownerCandidateQuery(city, baselineAggregateSql, optional);
+  const { rowToCsv, baselineAggregateSql, write, optional = {}, venueClause = '' } = deps;
+  const q = ownerCandidateQuery(city, baselineAggregateSql, optional, venueClause);
   const client = await pool.connect();
   let rows;
   try {

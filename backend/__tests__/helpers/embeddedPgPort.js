@@ -142,6 +142,9 @@ const SUITE_SLOTS = {
                                  // writing weekly rows and new ml_venues rows
                                  // into a real, migrated schema. Far from the
                                  // low slots for the same reason as 57.
+  harvestedIsolation: 65,        // new in 2026-09-28; harvested venues change
+                                 // no other venue's neighbour features or score,
+                                 // and the export leaves them out by default.
 };
 
 // Two suites sharing a slot would silently reintroduce exactly the collision the
