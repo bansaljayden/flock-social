@@ -212,7 +212,7 @@ test('GET /:flockId says outright that nobody is recorded as having paid', async
         split_type: 'equal', paid_by: null, payer_name: null, created_at: 'now',
       }],
     })],
-    [/SELECT bss\.\*, u\.name FROM bill_split_shares/, () => ({
+    [/SELECT bss\.\*, u\.name, \(u\.is_banned IS TRUE\) AS holder_banned FROM bill_split_shares/, () => ({
       rows: [{ user_id: 1, name: 'Ava', amount: '25.00', committed: true, settled: false, settled_at: null }],
     })],
     // The reveal check the payerless branch runs (routes/budget.js
@@ -241,7 +241,7 @@ test('a finished bill reports hasPayer true from both the GET and the create', a
         split_type: 'equal', paid_by: 2, payer_name: 'Ben', created_at: 'now',
       }],
     })],
-    [/SELECT bss\.\*, u\.name FROM bill_split_shares/, () => ({ rows: [] })],
+    [/SELECT bss\.\*, u\.name, \(u\.is_banned IS TRUE\) AS holder_banned FROM bill_split_shares/, () => ({ rows: [] })],
     noBlocks,
   ];
 
@@ -274,7 +274,7 @@ test('a ghost estimate is readable exactly when the budget number is', async () 
         split_type: 'equal', paid_by: null, payer_name: null, created_at: 'now',
       }],
     })],
-    [/SELECT bss\.\*, u\.name FROM bill_split_shares/, () => ({
+    [/SELECT bss\.\*, u\.name, \(u\.is_banned IS TRUE\) AS holder_banned FROM bill_split_shares/, () => ({
       rows: [{ user_id: 1, name: 'Ava', amount: '30.00', committed: true, settled: false, settled_at: null }],
     })],
     [/AS shown\s+FROM flocks f WHERE f\.id = \$1/, () => ({ rows: [{ shown: false }] })],
@@ -307,7 +307,7 @@ test('a posted bill whose payer deleted their account keeps its figures and is n
         split_type: 'equal', paid_by: null, had_payer: true, payer_name: null, created_at: 'now',
       }],
     })],
-    [/SELECT bss\.\*, u\.name FROM bill_split_shares/, () => ({
+    [/SELECT bss\.\*, u\.name, \(u\.is_banned IS TRUE\) AS holder_banned FROM bill_split_shares/, () => ({
       rows: [{ user_id: 1, name: 'Ava', amount: '30.00', paid_amount: '0', committed: true, settled: false, settled_at: null }],
     })],
     noBlocks,
@@ -813,7 +813,7 @@ test('GET /:flockId shows the credit and what is still owed on every share', asy
         split_type: 'equal', paid_by: 1, payer_name: 'Ava', created_at: 'now',
       }],
     })],
-    [/SELECT bss\.\*, u\.name FROM bill_split_shares/, () => ({
+    [/SELECT bss\.\*, u\.name, \(u\.is_banned IS TRUE\) AS holder_banned FROM bill_split_shares/, () => ({
       rows: [
         { user_id: 1, name: 'Ava', amount: '100.00', paid_amount: '0.00', committed: false, settled: true, settled_at: 'now' },
         { user_id: 2, name: 'Ben', amount: '100.00', paid_amount: '30.00', committed: false, settled: false, settled_at: null },
@@ -854,7 +854,7 @@ test('GET /:flockId sends a quarantined bill as who is on it and nothing more, t
           paid_by: 1, had_payer: true, quarantined: true, payer_name: 'Ava', created_at: '2026-08-20',
         }],
       })],
-      [/SELECT bss\.\*, u\.name FROM bill_split_shares/, () => ({ rows: shares })],
+      [/SELECT bss\.\*, u\.name, \(u\.is_banned IS TRUE\) AS holder_banned FROM bill_split_shares/, () => ({ rows: shares })],
       noBlocks,
     ];
     const res = await call('GET', '/api/billing/42');

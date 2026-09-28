@@ -519,9 +519,17 @@ router.post('/:flockId/create',
         // The extra cent would then land on a different person every time the
         // bill was re-created, so "why do I owe a cent more than Ben" would have
         // no stable answer. Lowest user id carries it.
+        //
+        // NOT A BANNED ACCOUNT. A ban leaves the flock_members row accepted,
+        // so an equal split charged the banned member a share that could
+        // never be settled (a banned account cannot sign in to /settle), hid
+        // the total from everyone (their row is in every viewer's invisible
+        // set), and held the payer and the creator in the plan behind a debt
+        // nobody could clear. The roster, and so every share and every custom
+        // share this route accepts, is the members who can still use the app.
         const membersResult = await client.query(
           `SELECT u.id, u.name FROM flock_members fm
-           JOIN users u ON u.id = fm.user_id
+           JOIN users u ON u.id = fm.user_id AND u.is_banned IS NOT TRUE
            WHERE fm.flock_id = $1 AND fm.status = 'accepted'
            ORDER BY u.id`,
           [flockId]
@@ -529,6 +537,12 @@ router.post('/:flockId/create',
         members = membersResult.rows;
         if (members.length === 0) {
           return refuse(400, { error: 'No accepted members in this flock' });
+        }
+        // The payer is held to the same roster: a banned account can be
+        // nobody's payer, since nobody could reach them through the app to
+        // settle and they could never mark anything paid.
+        if (!members.some((m) => m.id === payerId)) {
+          return refuse(400, { error: 'Payer must be a member of the flock' });
         }
 
         // Read PRE-COMMIT, on purpose. It only shapes the 201 body, but every
@@ -1237,7 +1251,7 @@ router.get('/:flockId',
       const totalWithTip = Math.round(parseFloat(bill.total_amount) * (1 + parseFloat(bill.tip_percent) / 100) * 100) / 100;
 
       const sharesResult = await pool.query(
-        `SELECT bss.*, u.name FROM bill_split_shares bss
+        `SELECT bss.*, u.name, (u.is_banned IS TRUE) AS holder_banned FROM bill_split_shares bss
          JOIN users u ON u.id = bss.user_id
          WHERE bss.bill_id = $1
          ORDER BY bss.id`,
@@ -1356,6 +1370,8 @@ router.get('/:flockId',
       // so it is withheld rather than shrunk.
       const hidesAShare = visibleRows.length !== sharesResult.rows.length;
       const showTotals = !estimate && !hidesAShare;
+      // The shares somebody can still settle: all but a banned account's.
+      const settleable = sharesResult.rows.filter((s) => s.holder_banned !== true);
       const figuresOf = (s) => {
         if (estimate) {
           if (published == null) return { amount: null, paidAmount: null, outstanding: null };
@@ -1397,9 +1413,16 @@ router.get('/:flockId',
           // The client used to decide "All settled up" from the shares it could
           // see, and a viewer who has blocked a member sees one fewer row, so
           // it said the bill was settled while that member still owed.
-          fullySettled: sharesResult.rows.length > 0 && sharesResult.rows.every((s) => !!s.settled),
-          settledCount: sharesResult.rows.filter((s) => !!s.settled).length,
-          shareCount: sharesResult.rows.length,
+          //
+          // Every share, that is, but a banned account's. A bill posted before
+          // the ban keeps their row, and a banned account can never sign in
+          // to settle it, so counting it meant the bill could never read as
+          // settled at all (memberBoundToBill in routes/flocks.js leaves it
+          // out for the same reason). The row itself stays, as the record of
+          // what they owe.
+          fullySettled: settleable.length > 0 && settleable.every((s) => !!s.settled),
+          settledCount: settleable.filter((s) => !!s.settled).length,
+          shareCount: settleable.length,
           shares: visibleRows.map((s) => ({
             userId: s.user_id,
             name: s.name,

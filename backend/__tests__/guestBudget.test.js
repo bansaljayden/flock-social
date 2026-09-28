@@ -92,6 +92,10 @@ function freshWorld() {
 const acceptedMembers = (flockId) => world.members.filter((m) => m.flock_id === flockId && m.status === 'accepted');
 const inGuests = (flockId) => world.guests.filter((g) => g.flock_id === flockId && g.status === 'in' && !g.is_hidden);
 
+// routes/budget.js MEMBER_ANSWERERS_SQL, flattened: the accepted members, less
+// a banned one who never answered (nobody in this world is banned).
+const MEMBER_ANSWERERS_RE = /^SELECT COUNT\(\*\) AS total FROM flock_members WHERE flock_id = \$1 AND status = 'accepted' AND \(NOT EXISTS \(SELECT 1 FROM users bu WHERE bu\.id = flock_members\.user_id AND bu\.is_banned IS TRUE\) OR EXISTS \(SELECT 1 FROM budget_submissions ba WHERE ba\.flock_id = flock_members\.flock_id AND ba\.user_id = flock_members\.user_id\)\)$/;
+
 // The two presence rules routes/budget.js enforces in SQL, modelled.
 //
 // MEMBER_SUBMISSIONS is THE CROWD: a row counts while its author is an
@@ -321,8 +325,10 @@ async function dispatch(sql, params) {
     return { rows: [], rowCount: f ? 1 : 0 };
   }
 
-  // Who has to answer (routes/budget.js answeringPopulation), both halves.
-  if (/^SELECT COUNT\(\*\) AS total FROM flock_members WHERE flock_id = \$1 AND status = 'accepted'$/.test(flat)) {
+  // Who has to answer (routes/budget.js answeringPopulation), both halves. The
+  // member half's ban clause leaves out a banned member who never answered;
+  // nobody in this world is banned.
+  if (MEMBER_ANSWERERS_RE.test(flat)) {
     return { rows: [{ total: String(acceptedMembers(Number(p[0])).length) }], rowCount: 1 };
   }
   if (/^SELECT COUNT\(\*\) AS total FROM guest_rsvps WHERE flock_id = \$1 AND status = 'in' AND COALESCE\(is_hidden, false\) = false$/.test(flat)) {
@@ -511,7 +517,7 @@ function lastTransaction() {
 const SETTLE_SHAPE = [
   /^SELECT MIN\(amount\) AS ceiling FROM budget_submissions bs .* WHERE bs\.flock_id = \$1 AND skipped = false$/,
   /^SELECT COUNT\(\*\) AS total_submissions, COUNT\(\*\) FILTER \(WHERE skipped = false AND bm\.id IS NOT NULL\) AS non_skip_count, COUNT\(\*\) FILTER \(WHERE skipped = true\) AS skip_count FROM budget_submissions bs .* WHERE bs\.flock_id = \$1$/,
-  /^SELECT COUNT\(\*\) AS total FROM flock_members WHERE flock_id = \$1 AND status = 'accepted'$/,
+  MEMBER_ANSWERERS_RE,
   /^SELECT COUNT\(\*\) AS total FROM guest_rsvps WHERE flock_id = \$1 AND status = 'in' AND COALESCE\(is_hidden, false\) = false$/,
 ];
 

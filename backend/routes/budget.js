@@ -312,11 +312,18 @@ const PRESENT_ANSWERS = `budget_submissions bs
 // pool.
 const GUEST_ANSWERERS_SQL = `SELECT COUNT(*) AS total FROM guest_rsvps
    WHERE flock_id = $1 AND status = 'in' AND COALESCE(is_hidden, false) = false`;
+// A BANNED MEMBER WHO NEVER ANSWERED IS NOT WAITED FOR. A ban leaves the
+// membership accepted, and the account can never sign in to answer, so
+// counting it meant "everyone answered" could not come true and the budget
+// never settled on its own, while the roster showed one person fewer than the
+// count waited on. One who answered before the ban still counts on both sides:
+// PRESENT_ANSWERS counts the answer, so the population counts the person.
+const MEMBER_ANSWERERS_SQL = `SELECT COUNT(*) AS total FROM flock_members WHERE flock_id = $1 AND status = 'accepted'
+   AND (NOT EXISTS (SELECT 1 FROM users bu WHERE bu.id = flock_members.user_id AND bu.is_banned IS TRUE)
+        OR EXISTS (SELECT 1 FROM budget_submissions ba
+                    WHERE ba.flock_id = flock_members.flock_id AND ba.user_id = flock_members.user_id))`;
 async function answeringPopulation(run, flockId) {
-  const memberResult = await run(
-    "SELECT COUNT(*) AS total FROM flock_members WHERE flock_id = $1 AND status = 'accepted'",
-    [flockId]
-  );
+  const memberResult = await run(MEMBER_ANSWERERS_SQL, [flockId]);
   const guestResult = await run(GUEST_ANSWERERS_SQL, [flockId]);
   const members = parseInt((memberResult.rows && memberResult.rows[0] && memberResult.rows[0].total) || 0);
   const guests = parseInt((guestResult.rows && guestResult.rows[0] && guestResult.rows[0].total) || 0);
@@ -1443,6 +1450,7 @@ module.exports.SUB_DOLLAR_CEILING = SUB_DOLLAR_CEILING;
 // each. answeringPopulation is the denominator every "n of m answered" reads.
 module.exports.answeringPopulation = answeringPopulation;
 module.exports.GUEST_ANSWERERS_SQL = GUEST_ANSWERERS_SQL;
+module.exports.MEMBER_ANSWERERS_SQL = MEMBER_ANSWERERS_SQL;
 module.exports.PRESENT_ANSWERS = PRESENT_ANSWERS;
 module.exports.settleIfComplete = settleIfComplete;
 module.exports.answerPayload = answerPayload;

@@ -504,6 +504,13 @@ async function hasMembershipRow(flockId, userId) {
 // NOR DOES A QUARANTINED BILL (migration 089, routes/billing.js). It can no
 // longer be settled, so counting it would make the plan undeletable for good,
 // and the refusal would be the one place its settled flags still showed.
+//
+// A share a banned account holds DOES count here, unlike in memberBoundToBill
+// below. The ban cannot settle it, but it is still a record of money owed to
+// somebody, and deleting the plan is the one thing that would erase it; the
+// account deletion's hand-on keeps it for the same reason (routes/users.js
+// HAND_ON_OWED_PLANS_SQL). /create no longer puts a banned account on a new
+// split at all, so only a bill posted before the ban carries one.
 async function outstandingBillFor(flockId, db = pool) {
   const { rows } = await db.query(
     `SELECT EXISTS (
@@ -544,6 +551,16 @@ const OUTSTANDING_BILL_MESSAGE =
 // A quarantined bill binds nobody (migration 089, routes/billing.js): it can
 // no longer be settled, so it would hold its members in the plan for good, and
 // either refusal would be a settled flag the bill withholds from everybody.
+//
+// Nor does a banned account's unsettled share bind the payer it is owed to. A
+// ban leaves the membership and the share where they were, the account can
+// never sign in to settle it, and /settle only ever marks the caller's own
+// row, so counting it held the payer in the plan for good. The payer leaving
+// deletes nothing: the bill, and the record of what the banned account owes,
+// stay on the plan.
+const SHARE_HOLDER_CAN_SETTLE =
+  'NOT EXISTS (SELECT 1 FROM users bu WHERE bu.id = bss.user_id AND bu.is_banned IS TRUE)';
+
 async function memberBoundToBill(flockId, userId, db = pool) {
   const { rows } = await db.query(
     `SELECT
@@ -567,6 +584,7 @@ async function memberBoundToBill(flockId, userId, db = pool) {
             AND bss.user_id <> $2
             AND bs.quarantined IS NOT TRUE
             AND bss.settled IS NOT TRUE
+            AND ${SHARE_HOLDER_CAN_SETTLE}
        ) AS owed`,
     [flockId, userId]
   );

@@ -44,18 +44,27 @@ function reconfirmLeadHours() {
 // in routes/flocks.js clears answers, but a tap in flight can land after it),
 // or a reset that failed half way, leaves a timestamp older than the window,
 // and an older timestamp is not an answer to this question.
+//
+// NOT A BANNED ACCOUNT, on either side. A ban leaves the membership accepted,
+// the roster no longer shows the person, and they can never sign in to answer,
+// so counting them made "3 of 5 still in" wait on somebody nobody can see.
+// (The budget keeps a banned member who had already answered, because that
+// answer is still inside its number; a "still in" is a face on the roster, and
+// the roster no longer has theirs.)
+const MEMBER_CAN_ANSWER =
+  'NOT EXISTS (SELECT 1 FROM users bu WHERE bu.id = flock_members.user_id AND bu.is_banned IS TRUE)';
 const RECONFIRM_STATE_SQL = `SELECT
      (f.reconfirm_opened_at IS NOT NULL AND f.status = 'confirmed'
         AND f.event_time > (NOW() AT TIME ZONE 'UTC')) AS open,
      f.event_time AS deadline,
      (SELECT COUNT(*) FROM flock_members
        WHERE flock_id = f.id AND status = 'accepted' AND reconfirmed_at IS NOT NULL
-         AND reconfirmed_at >= f.reconfirm_opened_at)::int
+         AND reconfirmed_at >= f.reconfirm_opened_at AND ${MEMBER_CAN_ANSWER})::int
    + (SELECT COUNT(*) FROM guest_rsvps
        WHERE flock_id = f.id AND status = 'in' AND COALESCE(is_hidden, false) = false
          AND reconfirmed_at IS NOT NULL AND reconfirmed_at >= f.reconfirm_opened_at)::int AS count,
      (SELECT COUNT(*) FROM flock_members
-       WHERE flock_id = f.id AND status = 'accepted')::int
+       WHERE flock_id = f.id AND status = 'accepted' AND ${MEMBER_CAN_ANSWER})::int
    + (SELECT COUNT(*) FROM guest_rsvps
        WHERE flock_id = f.id AND status = 'in' AND COALESCE(is_hidden, false) = false)::int AS total
    FROM flocks f WHERE f.id = $1`;
