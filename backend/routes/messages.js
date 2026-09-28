@@ -1300,11 +1300,16 @@ router.get('/dm/messages/:id/image',
       // counterpart's photos stayed readable here the same way while the thread
       // read hid them. Same 404 as a stranger gets, and the same rule the flock
       // twin above closed: a screen-level fix is not an access rule.
+      //
+      // Both halves are one statement here because both lead to the same 404,
+      // so there is nothing to tell apart and no reason for a second round
+      // trip. It also asks whether the caller is banned, which
+      // counterpartyIsBanned deliberately does not, and that changes no
+      // answer: authenticate has already refused a banned caller, so that half
+      // only matters for a ban landing mid-request, and a just-banned account
+      // should not get the photo either.
       const counterpart = dm.rows[0].sender_id === req.user.id ? dm.rows[0].receiver_id : dm.rows[0].sender_id;
-      if (await isBlockedBetween(req.user.id, counterpart)) {
-        return res.status(404).json({ error: 'Photo not found' });
-      }
-      if (await counterpartyIsBanned(req.user.id, counterpart)) {
+      if (await isBlockedOrBannedBetween(req.user.id, counterpart)) {
         return res.status(404).json({ error: 'Photo not found' });
       }
       if (!dm.rows[0].image_url) return res.status(404).json({ error: 'Photo not found' });
