@@ -20,9 +20,11 @@ test('a DM screen with no conversation is not a blank dead end', () => {
 });
 
 test('a reconnect keeps the thread this session already read', () => {
+  // The whole loader, not a fixed window: the merge sits behind the comment
+  // on threads started here (dmNewThreadSurvivesRefresh.test.js runs it).
   const i = app.indexOf('const loadDmConversations = useCallback');
-  const fn = app.slice(i, i + 2600);
-  expect(fn).toMatch(/setDirectMessages\(prev => fresh\.map\(c => \{/);
+  const fn = app.slice(i, app.indexOf('}, []); // eslint-disable-line', i));
+  expect(fn).toMatch(/setDirectMessages\(prev => startedHere\(prev\)\.concat\(fresh\.map\(c => \{/);
   expect(fn).toMatch(/messages: old && old\.messages && old\.messages\.length \? old\.messages : \[\],/);
 });
 
