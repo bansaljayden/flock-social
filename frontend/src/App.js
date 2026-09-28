@@ -11106,7 +11106,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       catchUpOwedRef.current = false;
       return;
     }
-    if (!key) return; // no conversation open, nothing to catch up on
     const waitMs = force ? 0 : CATCHUP_MIN_GAP_MS - (Date.now() - (historyReadAtRef.current[key] || 0));
     if (waitMs <= 0) {
       // A deferred read is now redundant — this one covers the same window.
