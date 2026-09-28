@@ -188,14 +188,18 @@ const granularityArg = (dobGranularity) => (dobGranularity ? [{ dobGranularity }
  *   cannot offer the retry field. `resume` comes only with the creation 403
  *   that asks for a year; see makeResume above. Identical on both paths.
  * @param {function} [opts.setBusy]  toggled around the whole exchange
+ * @param {boolean}  [opts.reconfirm] the signed-in person proving it again
+ *   (the delete and export dialogs), not a sign-in: the token is stored as
+ *   usual and the login analytics are skipped (opts.reconfirm in
+ *   services/api.js)
  * @returns {function} start — call it as `start()` or `start({ dob })`
  */
-export default function useGoogleAuth({ onSuccess, onError, setBusy }) {
+export default function useGoogleAuth({ onSuccess, onError, setBusy, reconfirm }) {
   // Handlers are inline arrows in the screens, so they change identity every
   // render; a ref refreshed here is what keeps the async paths below calling
   // the CURRENT ones instead of the ones captured when the flow started.
   const handlers = useRef({});
-  handlers.current = { onSuccess, onError, setBusy };
+  handlers.current = { onSuccess, onError, setBusy, reconfirm };
 
   // The date of birth is supplied at the tap, not at hook-call time, and the
   // native round trip outlives the render that started it.
@@ -204,6 +208,18 @@ export default function useGoogleAuth({ onSuccess, onError, setBusy }) {
   // with the date so the server can refuse to write it onto an existing row.
   const dobGranularityRef = useRef(undefined);
   const runningRef = useRef(false);
+
+  // The trailing options argument for the api call, sent only when it holds
+  // something, so a plain sign-in calls it exactly as it always has: the
+  // year-only birth date when that is what was given, and reconfirm when the
+  // signed-in person is proving it again inside a dialog.
+  const loginOpts = (dobGranularity) => {
+    const opts = {
+      ...granularityArg(dobGranularity)[0],
+      ...(handlers.current.reconfirm ? { reconfirm: true } : {}),
+    };
+    return Object.keys(opts).length ? [opts] : [];
+  };
 
   // Posts whichever proof we ended up with and reports the result. `post` is
   // (dob, dobGranularity) => the api call, so the two paths share every line
@@ -229,7 +245,7 @@ export default function useGoogleAuth({ onSuccess, onError, setBusy }) {
   const startWeb = useGoogleLogin({
     onSuccess: (tokenResponse) =>
       exchange((dob, dobGranularity) => googleLoginWithToken(tokenResponse.access_token, dob,
-        ...granularityArg(dobGranularity))),
+        ...loginOpts(dobGranularity))),
     onError: () => handlers.current.onError?.('Google sign-in failed'),
   });
 
@@ -263,7 +279,7 @@ export default function useGoogleAuth({ onSuccess, onError, setBusy }) {
           busy?.(false);
         }
         await exchange((dob, dobGranularity) => googleLogin(idToken, dob,
-          ...granularityArg(dobGranularity)));
+          ...loginOpts(dobGranularity)));
       } finally {
         runningRef.current = false;
       }

@@ -21,7 +21,10 @@ import { GoogleG } from './AuthShell';
  * services/api.js). Those store the fresh token they are answered with, which
  * is exactly the proof the refused request was missing, so the dialog only has
  * to clear its refusal and let the person press the button again. The route
- * note at DELETE /api/users/me describes this flow.
+ * note at DELETE /api/users/me describes this flow. Both calls are made with
+ * reconfirm set, because this is the signed-in person proving it again and not
+ * a sign-in: the token is stored, and no login is recorded and the device is
+ * not identified again (opts.reconfirm in services/api.js).
  *
  * A DIFFERENT ACCOUNT. The sheet will happily sign in whichever Apple ID or
  * Google account the person picks, and by the time the answer arrives this
@@ -72,7 +75,7 @@ const PROVIDER_BUTTON = {
 
 function GoogleButton({ onUser, onFailure }) {
   const [busy, setBusy] = useState(false);
-  const start = useGoogleAuth({ onSuccess: onUser, onError: onFailure, setBusy });
+  const start = useGoogleAuth({ onSuccess: onUser, onError: onFailure, setBusy, reconfirm: true });
   return (
     <button type="button" className="hit44" onClick={() => start()} disabled={busy} style={{ ...PROVIDER_BUTTON, opacity: busy ? 0.6 : 1, cursor: busy ? 'progress' : 'pointer' }}>
       <GoogleG /> {busy ? 'Checking…' : 'Continue with Google'}
@@ -109,6 +112,7 @@ export default function OAuthReconfirm({ provider, expectedUserId, onConfirmed, 
           onError={onFailure}
           className="hit44"
           style={PROVIDER_BUTTON}
+          reconfirm
         />
       )}
       {provider === 'google' && (

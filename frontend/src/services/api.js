@@ -1555,6 +1555,15 @@ export async function login(email, password, dateOfBirth, opts) {
   return data;
 }
 
+// opts.reconfirm, on the three OAuth calls below: the person is already signed
+// in and is proving it again inside the delete or export dialog
+// (components/auth/OAuthReconfirm.js). The fresh token is still stored,
+// because it is the proof the refused request was missing. It is not a sign-in
+// though, so it records no login or login_failed and does not identify the
+// device. Identifying it is also wrong when a different account answers the
+// sheet: the dialog ends the session for that case, and PostHog would have
+// merged this device into the other person's history a moment before.
+//
 // Custom-button flow: useGoogleLogin yields an OAuth access token, verified
 // server-side (tokeninfo aud check + userinfo). Same backend route.
 export async function googleLoginWithToken(accessToken, dateOfBirth, opts) {
@@ -1569,10 +1578,11 @@ export async function googleLoginWithToken(accessToken, dateOfBirth, opts) {
       body: JSON.stringify(body),
     });
   } catch (err) {
-    if (authFailureIsRecordable(err)) track('login_failed', { method: 'google', reason: authFailureReason(err) });
+    if (!opts?.reconfirm && authFailureIsRecordable(err)) track('login_failed', { method: 'google', reason: authFailureReason(err) });
     throw err;
   }
   storeSession(data);
+  if (opts?.reconfirm) return data;
   identifyUser(data.user);
   track('login', { method: 'google' });
   return data;
@@ -1592,10 +1602,12 @@ export async function googleLogin(credential, dateOfBirth, opts) {
       body: JSON.stringify(body),
     });
   } catch (err) {
-    if (authFailureIsRecordable(err)) track('login_failed', { method: 'google', reason: authFailureReason(err) });
+    // See googleLoginWithToken for opts.reconfirm.
+    if (!opts?.reconfirm && authFailureIsRecordable(err)) track('login_failed', { method: 'google', reason: authFailureReason(err) });
     throw err;
   }
   storeSession(data);
+  if (opts?.reconfirm) return data;
   identifyUser(data.user);
   track('login', { method: 'google' });
   return data;
@@ -1619,10 +1631,12 @@ export async function appleLogin(identityToken, fullName, authorizationCode, dat
       body: JSON.stringify(body),
     });
   } catch (err) {
-    if (authFailureIsRecordable(err)) track('login_failed', { method: 'apple', reason: authFailureReason(err) });
+    // See googleLoginWithToken for opts.reconfirm.
+    if (!opts?.reconfirm && authFailureIsRecordable(err)) track('login_failed', { method: 'apple', reason: authFailureReason(err) });
     throw err;
   }
   storeSession(data);
+  if (opts?.reconfirm) return data;
   identifyUser(data.user);
   track('login', { method: 'apple' });
   return data;

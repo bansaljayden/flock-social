@@ -57,6 +57,15 @@ jest.mock('@capacitor-community/apple-sign-in', () => ({
   SignInWithApple: { authorize: (...args) => mockAppleAuthorize(...args) },
 }));
 
+// The native Google sheet in the iOS app. Plain functions, not jest.fn, so the
+// between-test mock reset leaves them answering.
+jest.mock('@capgo/capacitor-social-login', () => ({
+  SocialLogin: {
+    initialize: () => Promise.resolve(),
+    login: () => Promise.resolve({ result: { idToken: 'native-id-token' } }),
+  },
+}));
+
 jest.mock('../components/ui/BirdieBird', () => {
   const Stub = () => null;
   return { __esModule: true, default: Stub, BirdieStill: Stub, BirdNote: Stub, WARM_BIRD: {} };
@@ -161,7 +170,9 @@ describe('an Apple account deleting from the iOS app', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Continue with Apple' }));
     await waitFor(() => expect(deleteButton()).not.toBeDisabled());
-    expect(api.appleLogin).toHaveBeenCalledWith('apple-id-token', undefined, 'apple-code', undefined);
+    // Marked as a re-confirmation, so it is not counted as a sign-in; what
+    // that flag does is pinned in analyticsEvents.test.js.
+    expect(api.appleLogin).toHaveBeenCalledWith('apple-id-token', undefined, 'apple-code', undefined, { reconfirm: true });
     expect(screen.queryByText("Confirm it's you first")).toBeNull();
     // The typed confirmation survived the trip, so one more tap is all it is.
     expect(screen.getByLabelText('Type DELETE to confirm')).toHaveValue('DELETE');
@@ -227,8 +238,33 @@ describe('a Google account on the web', () => {
     await screen.findByText(/For your security, confirm it's you with Google\./);
     fireEvent.click(screen.getByRole('button', { name: /Continue with Google/ }));
     await waitFor(() => expect(deleteButton()).not.toBeDisabled());
-    expect(api.googleLoginWithToken).toHaveBeenCalledWith('google-access-token', undefined);
+    expect(api.googleLoginWithToken).toHaveBeenCalledWith('google-access-token', undefined, { reconfirm: true });
     expect(mockGoogleOptions).not.toBeNull();
+  });
+});
+
+describe('a Google account in the iOS app', () => {
+  test('the native sheet confirms in place, marked as a re-confirmation', async () => {
+    asNativeIos();
+    const prevIos = process.env.REACT_APP_GOOGLE_IOS_CLIENT_ID;
+    const prevWeb = process.env.REACT_APP_GOOGLE_CLIENT_ID;
+    process.env.REACT_APP_GOOGLE_IOS_CLIENT_ID = 'ios-client';
+    process.env.REACT_APP_GOOGLE_CLIENT_ID = 'web-client';
+    try {
+      api.deleteAccount.mockRejectedValueOnce(reauthRefusal());
+      api.googleLogin.mockResolvedValue({ token: 'fresh', user: { id: 42 } });
+      render(React.createElement(Harness, { authUser: { id: 42, sign_in_method: 'google' }, onLogout: jest.fn() }));
+
+      fireEvent.click(deleteButton());
+      fireEvent.click(await screen.findByRole('button', { name: /Continue with Google/ }));
+      await waitFor(() => expect(deleteButton()).not.toBeDisabled());
+      expect(api.googleLogin).toHaveBeenCalledWith('native-id-token', undefined, { reconfirm: true });
+    } finally {
+      if (prevIos === undefined) delete process.env.REACT_APP_GOOGLE_IOS_CLIENT_ID;
+      else process.env.REACT_APP_GOOGLE_IOS_CLIENT_ID = prevIos;
+      if (prevWeb === undefined) delete process.env.REACT_APP_GOOGLE_CLIENT_ID;
+      else process.env.REACT_APP_GOOGLE_CLIENT_ID = prevWeb;
+    }
   });
 });
 
