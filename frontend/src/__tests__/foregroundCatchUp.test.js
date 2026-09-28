@@ -16,7 +16,9 @@
  *   1. the return with a dead socket reads the open conversation at once, gap
  *      skipped, and cancels a read the gap had deferred;
  *   2. the return with a live socket reads nothing new;
- *   3. the lists are read on that return too;
+ *   3. the lists are read on that return too, and the reconnect that
+ *      follows defers its own read of them to the end of the same minimum
+ *      gap the conversation keeps, rather than reading the pair twice;
  *   4. a drop is heard through socket.js's registry, so the next sample after
  *      the socket comes back is a reconnect even if no sample saw it down.
  */
@@ -232,19 +234,66 @@ describe('the open conversation on the return', () => {
 // ---------------------------------------------------------------------------
 // The lists on the return
 // ---------------------------------------------------------------------------
+// The list reader, its reconnect effect and its return handler, lifted and run
+// against a clock and timers the test owns.
 function lists({ socketConnected, pending = false }) {
   const doc = fakeDocument('hidden');
   const reads = [];
-  const listsGapPendingRef = { current: pending };
-  run(effectAround('if (!listsGapPendingRef.current && getSocket()?.connected) return;'), {
-    useEffect: (fn) => fn(),
+  const clock = { now: 1000000 };
+  const timers = new Map();
+  let nextTimer = 1;
+  const socket = { connected: socketConnected };
+  const scope = {
+    useCallback: (fn) => fn,
     document: doc,
-    getSocket: () => ({ connected: socketConnected }),
-    listsGapPendingRef,
+    Date: { now: () => clock.now },
+    CATCHUP_MIN_GAP_MS,
+    listsGapPendingRef: { current: pending },
+    listsGapReadAtRef: { current: 0 },
+    listsGapTimerRef: { current: null },
+    readListsForGapRef: { current: null },
     loadFlocks: () => reads.push('flocks'),
     loadDmConversations: () => reads.push('dms'),
+    setTimeout: (fn, ms) => { const t = nextTimer++; timers.set(t, { fn, ms, at: clock.now + ms }); return t; },
+    clearTimeout: (t) => timers.delete(t),
+  };
+  const readListsForGap = run(`${statementFrom(app, app.indexOf('const readListsForGap = useCallback('))}\nreturn readListsForGap;`, scope);
+  scope.readListsForGapRef.current = readListsForGap;
+  const reconnectEffect = effectAround('if (reconnectTick) readListsForGap();');
+  let ticks = 0;
+  const tick = () => {
+    ticks += 1;
+    run(reconnectEffect, { useEffect: (fn) => fn(), reconnectTick: ticks, readListsForGap });
+  };
+  let cleanup = null;
+  run(effectAround('if (!getSocket()?.connected) readListsForGap({ force: true });'), {
+    useEffect: (fn) => { cleanup = fn(); },
+    document: doc,
+    getSocket: () => socket,
+    readListsForGap,
+    listsGapPendingRef: scope.listsGapPendingRef,
+    listsGapTimerRef: scope.listsGapTimerRef,
+    clearTimeout: scope.clearTimeout,
   });
-  return { doc, reads, listsGapPendingRef };
+  const advance = (ms) => { clock.now += ms; };
+  // Fire whatever timer is due, moving the clock to it.
+  const fireTimers = () => {
+    [...timers.entries()].forEach(([t, { fn, at }]) => {
+      timers.delete(t);
+      if (at > clock.now) clock.now = at;
+      fn();
+    });
+  };
+  // Fire only the timers already due at the current time.
+  const fireDue = () => {
+    [...timers.entries()].forEach(([t, { fn, at }]) => {
+      if (at > clock.now) return;
+      timers.delete(t);
+      fn();
+    });
+  };
+  const pairs = () => reads.filter((r) => r === 'flocks').length;
+  return { doc, reads, timers, socket, tick, advance, fireTimers, fireDue, pairs, listsGapPendingRef: scope.listsGapPendingRef, cleanup: () => cleanup && cleanup() };
 }
 
 describe('the plan and DM lists on the return', () => {
@@ -266,6 +315,106 @@ describe('the plan and DM lists on the return', () => {
     l.doc.show();
     expect(l.reads).toEqual(['flocks', 'dms']);
     expect(l.listsGapPendingRef.current).toBe(false);
+  });
+
+  test('a first reconnect with no read behind it reads at once', () => {
+    const l = lists({ socketConnected: true });
+    l.doc.visibilityState = 'visible';
+    l.tick();
+    expect(l.reads).toEqual(['flocks', 'dms']);
+    expect(l.timers.size).toBe(0);
+  });
+
+  test('the reconnect tick after the return defers its read to the end of the window instead of reading the pair again', () => {
+    const l = lists({ socketConnected: false });
+    l.doc.show();
+    expect(l.pairs()).toBe(1);
+    // The handshake lands and the sampler ticks a second and a half later.
+    l.socket.connected = true;
+    l.advance(1500);
+    l.tick();
+    expect(l.pairs()).toBe(1);
+    expect(l.timers.size).toBe(1);
+    const [{ ms }] = [...l.timers.values()];
+    expect(ms).toBe(CATCHUP_MIN_GAP_MS - 1500);
+    // Deferred, not dropped: the handshake window is still read once.
+    l.fireTimers();
+    expect(l.pairs()).toBe(2);
+    expect(l.timers.size).toBe(0);
+  });
+
+  test('switching apps every few seconds costs one pair per return, not two', () => {
+    const l = lists({ socketConnected: false });
+    for (let i = 0; i < 5; i += 1) {
+      l.socket.connected = false;
+      l.doc.show();
+      l.socket.connected = true;
+      l.advance(1500);
+      l.tick();
+      l.advance(2500);
+      l.doc.hide();
+      l.advance(1000);
+    }
+    expect(l.pairs()).toBe(5);
+    // The last return's handshake is still owed its read, on a timer.
+    expect(l.timers.size).toBe(1);
+  });
+
+  test('a forced read on the return cancels a deferred one, since it is later than the reconnect behind it', () => {
+    const l = lists({ socketConnected: true });
+    l.doc.visibilityState = 'visible';
+    l.tick();
+    l.advance(2000);
+    l.tick();
+    expect(l.timers.size).toBe(1);
+    l.doc.hide();
+    l.socket.connected = false;
+    l.doc.show();
+    expect(l.pairs()).toBe(2);
+    expect(l.timers.size).toBe(0);
+  });
+
+  test('a flapping socket reads the pair at most once per window', () => {
+    const l = lists({ socketConnected: true });
+    l.doc.visibilityState = 'visible';
+    // A tick on every two-second sample for a minute, which the heard drop
+    // now makes possible. With no gap of its own that was thirty pairs; now
+    // it is the first tick and one at the end of each twelve-second window.
+    for (let elapsed = 0; elapsed < 60000; elapsed += 2000) {
+      l.tick();
+      l.advance(2000);
+      l.fireDue();
+    }
+    expect(l.pairs()).toBe(1 + 60000 / CATCHUP_MIN_GAP_MS);
+    expect(l.timers.size).toBe(0);
+  });
+
+  test('a deferred read that comes due while hidden is held for the return', () => {
+    const l = lists({ socketConnected: true });
+    l.doc.visibilityState = 'visible';
+    l.tick();
+    l.advance(1000);
+    l.tick();
+    l.doc.hide();
+    l.fireTimers();
+    expect(l.pairs()).toBe(1);
+    expect(l.listsGapPendingRef.current).toBe(true);
+    l.doc.show();
+    expect(l.pairs()).toBe(2);
+    expect(l.listsGapPendingRef.current).toBe(false);
+  });
+
+  test('the listener and a deferred read come off on unmount', () => {
+    const l = lists({ socketConnected: true });
+    l.doc.visibilityState = 'visible';
+    l.tick();
+    l.advance(1000);
+    l.tick();
+    expect(l.timers.size).toBe(1);
+    expect(l.doc.listeners.size).toBe(1);
+    l.cleanup();
+    expect(l.doc.listeners.size).toBe(0);
+    expect(l.timers.size).toBe(0);
   });
 });
 
