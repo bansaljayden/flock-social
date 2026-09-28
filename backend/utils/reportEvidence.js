@@ -18,8 +18,10 @@
 //
 // Only content an open or under-review report names is copied: a report a
 // moderator has already closed is judged, the line the story purge draws too.
-// Nothing here is ever read by a member-facing route; routes/admin.js is the
-// only reader, and it falls back to a copy only when the live row is gone.
+// routes/admin.js reads a copy, falling back to it only when the live row is
+// gone. The one other reader is the author's own data export
+// (GET /api/users/export), which lists the copies of messages they wrote and
+// nothing else: a copy is still their words, held about them.
 //
 // A copy is not kept for ever. It exists so a moderator can judge a report, so
 // it goes EVIDENCE_RETENTION_DAYS after the last report naming it is closed,

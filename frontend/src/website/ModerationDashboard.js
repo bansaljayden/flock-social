@@ -1247,8 +1247,11 @@ function ReportedContent({ report: r, image, onToggleImage, onImageBroken, text,
         // missing Hide button needs a reason. The copy is deleted a week after
         // the last report naming it closes (EVIDENCE_RETENTION_DAYS in
         // backend/utils/reportEvidence.js), and a report cannot be reopened,
-        // so the card says so before anybody closes it.
-        <div style={S.dimSmall}>The plan this was in has been deleted. This is the copy kept for review, and nobody else can see it. It is deleted 7 days after the last report about it is closed, so save it first if it has to be kept.</div>
+        // so the card says so before anybody closes it. The one person outside
+        // the console who can read a copy is a message's own author, in their
+        // data export (GET /api/users/export), so the card no longer says
+        // nobody else can.
+        <div style={S.dimSmall}>The plan this was in has been deleted. This is the copy kept for review. Nobody else in Flock can see it, except that the person who wrote a message gets it in their own data export. It is deleted 7 days after the last report about it is closed, so save it first if it has to be kept.</div>
       ) : null}
 
       {gone ? (
