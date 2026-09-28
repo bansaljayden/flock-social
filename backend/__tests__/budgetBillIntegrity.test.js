@@ -89,6 +89,13 @@
 //  16. A REMINDER THAT WAITED (quiet hours, a retry) IS ASKED AGAIN AS IT GOES
 //      OUT, and is not sent to somebody who paid in the meantime, nor about a
 //      bill quarantined since.
+//  19. A BANNED MEMBER IS NOT SPLIT, COUNTED OR WAITED ON. A ban leaves the
+//      membership accepted, so an equal split charged the banned account a
+//      share it could never settle, which hid the total from everyone, never
+//      read as settled, and held the payer and the creator in the plan; the
+//      budget waited on an answer that could never come, and the night-of
+//      count on a face the roster no longer shows. A bill posted before the
+//      ban keeps the banned account's row as the record of what it owes.
 // ---------------------------------------------------------------------------
 
 const test = require('node:test');
@@ -1928,7 +1935,7 @@ test('an invite card carries neither flag', async () => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 15. The payer's reminder
+// 17. The payer's reminder
 // ═══════════════════════════════════════════════════════════════════════════
 
 // Push switched on by replacing the provider (services/pushHelper.js holds
@@ -2080,7 +2087,7 @@ test('a shell, a quarantined bill, a settled bill and no bill at all are refused
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 16. A reminder that waited
+// 18. A reminder that waited
 // ═══════════════════════════════════════════════════════════════════════════
 //
 // A bill_reminder held for quiet hours or queued for a retry keeps its words,
@@ -2142,4 +2149,156 @@ test('a reminder that waited is not sent to somebody who paid meanwhile, nor abo
   assert.equal(await pushHelper.canNotify(cam.id, data), true);
   await pool.query('UPDATE bill_splits SET quarantined = true WHERE flock_id = $1', [flockId]);
   assert.equal(await pushHelper.canNotify(cam.id, data), false);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 19. A banned member is not split, counted or waited on
+// ═══════════════════════════════════════════════════════════════════════════
+
+const ban = (user) => pool.query('UPDATE users SET is_banned = true, banned_at = NOW() WHERE id = $1', [user.id]);
+const shareHolders = async (flockId) => (await pool.query(
+  `SELECT bss.user_id, bss.amount::text AS amount FROM bill_split_shares bss
+     JOIN bill_splits bs ON bs.id = bss.bill_id
+    WHERE bs.flock_id = $1 ORDER BY bss.user_id`,
+  [flockId]
+)).rows;
+
+test('a bill posted after a member is banned splits across the people who can still settle, and closes like any other', async () => {
+  const alice = await mkUser('Alice');
+  const bob = await mkUser('Bob');
+  const carol = await mkUser('Carol');
+  const dave = await mkUser('Dave');
+  const flockId = await mkFlock(alice, [bob, carol, dave], { budget: false, ghost: false });
+  await ban(dave);
+
+  const r = await call('POST', `/api/billing/${flockId}/create`, {
+    token: alice.token, body: { totalAmount: 120, tipPercent: 0, splitType: 'equal', paidBy: alice.id },
+  });
+  assert.equal(r.status, 201, r.text);
+  assert.deepEqual(
+    (await shareHolders(flockId)).map((s) => [s.user_id, s.amount]),
+    [[alice.id, '40.00'], [bob.id, '40.00'], [carol.id, '40.00']].sort((a, b) => a[0] - b[0]),
+    'three ways at $40, not four at $30 with one share nobody can ever settle'
+  );
+
+  const seen = await call('GET', `/api/billing/${flockId}`, { token: bob.token });
+  assert.equal(seen.status, 200, seen.text);
+  assert.equal(seen.body.bill.totalWithTip, 120, 'no hidden share, so the total is shown');
+  assert.equal(seen.body.bill.shareCount, 3);
+
+  for (const u of [bob, carol]) {
+    assert.equal((await call('POST', `/api/billing/${flockId}/settle`, { token: u.token })).status, 200);
+  }
+  const done = await call('GET', `/api/billing/${flockId}`, { token: carol.token });
+  assert.equal(done.body.bill.fullySettled, true, 'the bill reads settled once everybody who can pay has');
+  const del = await call('DELETE', `/api/flocks/${flockId}`, { token: alice.token });
+  assert.equal(del.status, 200, `nothing is owed, so the host can delete the plan: ${del.text}`);
+});
+
+test('a banned account cannot be named as payer or given a custom share', async () => {
+  const alice = await mkUser('Alice');
+  const bob = await mkUser('Bob');
+  const dave = await mkUser('Dave');
+  const flockId = await mkFlock(alice, [bob, dave], { budget: false, ghost: false });
+  await ban(dave);
+
+  const payer = await call('POST', `/api/billing/${flockId}/create`, {
+    token: alice.token, body: { totalAmount: 90, tipPercent: 0, splitType: 'equal', paidBy: dave.id },
+  });
+  assert.equal(payer.status, 400, payer.text);
+  assert.equal(payer.body.error, 'Payer must be a member of the flock');
+
+  const custom = await call('POST', `/api/billing/${flockId}/create`, {
+    token: alice.token,
+    body: {
+      totalAmount: 90, tipPercent: 0, splitType: 'custom', paidBy: alice.id,
+      customShares: [{ userId: alice.id, amount: 30 }, { userId: bob.id, amount: 30 }, { userId: dave.id, amount: 30 }],
+    },
+  });
+  assert.equal(custom.status, 400, custom.text);
+  assert.equal(custom.body.error, 'All custom shares must be for members of this flock');
+  assert.equal(await one('SELECT COUNT(*)::int AS n FROM bill_splits WHERE flock_id = $1', [flockId]).then((x) => x.n), 0);
+});
+
+test('on a bill posted before the ban, the banned share frees the payer and the settled count, and stays on record', async () => {
+  const alice = await mkUser('Alice');
+  const bob = await mkUser('Bob');
+  const carol = await mkUser('Carol');
+  const dave = await mkUser('Dave');
+  const flockId = await mkFlock(alice, [bob, carol, dave], { budget: false, ghost: false });
+  assert.equal((await call('POST', `/api/billing/${flockId}/create`, {
+    token: bob.token, body: { totalAmount: 120, tipPercent: 0, splitType: 'equal', paidBy: bob.id },
+  })).status, 201);
+  await ban(dave);
+  for (const u of [alice, carol]) {
+    assert.equal((await call('POST', `/api/billing/${flockId}/settle`, { token: u.token })).status, 200);
+  }
+
+  const seen = await call('GET', `/api/billing/${flockId}`, { token: bob.token });
+  assert.equal(seen.body.bill.fullySettled, true, 'everybody who can still settle has');
+  assert.equal(seen.body.bill.shareCount, 3);
+
+  // Bob is owed only by an account that can never pay, so he can go.
+  const left = await call('POST', `/api/flocks/${flockId}/leave`, { token: bob.token });
+  assert.equal(left.status, 200, left.text);
+  // Dave's debt to Bob is still written down, and the host cannot delete the
+  // plan out from under it, as with any other unsettled share.
+  const daveRow = await one(
+    `SELECT bss.settled FROM bill_split_shares bss JOIN bill_splits bs ON bs.id = bss.bill_id
+      WHERE bs.flock_id = $1 AND bss.user_id = $2`,
+    [flockId, dave.id]
+  );
+  assert.equal(daveRow.settled, false);
+  assert.equal((await call('DELETE', `/api/flocks/${flockId}`, { token: alice.token })).status, 409);
+});
+
+test('the budget does not wait on a banned member who never answered, and still waits on one who did', async () => {
+  const alice = await mkUser('Alice');
+  const bob = await mkUser('Bob');
+  const carol = await mkUser('Carol');
+  const dave = await mkUser('Dave');
+  const locked = async (flockId) => (await one('SELECT budget_locked FROM flocks WHERE id = $1', [flockId])).budget_locked;
+
+  const quiet = await mkFlock(alice, [bob, carol, dave]);
+  await ban(dave);
+  for (const [u, amount] of [[alice, 50], [bob, 60], [carol, 70]]) {
+    assert.equal((await submit(quiet, u, amount)).status < 300, true);
+  }
+  assert.equal(await locked(quiet), true, 'everybody who can answer has, so the budget settles');
+
+  // One who answered before the ban is still an answer in the number, so the
+  // population keeps them and the last real member is still waited on.
+  await pool.query('UPDATE users SET is_banned = false, banned_at = NULL WHERE id = $1', [dave.id]);
+  const erin = await mkUser('Erin');
+  const answered = await mkFlock(alice, [bob, carol, dave, erin]);
+  assert.equal((await submit(answered, dave, 55)).status < 300, true);
+  await ban(dave);
+  for (const [u, amount] of [[alice, 50], [bob, 60], [carol, 70]]) {
+    assert.equal((await submit(answered, u, amount)).status < 300, true);
+  }
+  assert.equal(await locked(answered), false, 'Erin has not answered yet');
+  assert.equal((await submit(answered, erin, 65)).status < 300, true);
+  assert.equal(await locked(answered), true);
+});
+
+test('the night-of count leaves a banned member out of both sides', async () => {
+  const { reconfirmState } = require('../utils/reconfirm');
+  const alice = await mkUser('Alice');
+  const bob = await mkUser('Bob');
+  const dave = await mkUser('Dave');
+  const flockId = await mkFlock(alice, [bob, dave]);
+  await pool.query(
+    `UPDATE flocks SET event_time = (NOW() AT TIME ZONE 'UTC') + INTERVAL '2 hours',
+                       reconfirm_opened_at = NOW() - INTERVAL '1 minute'
+      WHERE id = $1`,
+    [flockId]
+  );
+  await pool.query(
+    'UPDATE flock_members SET reconfirmed_at = NOW() WHERE flock_id = $1 AND user_id = ANY($2::int[])',
+    [flockId, [alice.id, dave.id]]
+  );
+  await ban(dave);
+  const state = await reconfirmState((q, p) => pool.query(q, p), flockId);
+  assert.equal(state.open, true);
+  assert.deepEqual([state.count, state.total], [1, 2], 'Alice of Alice and Bob, not 2 of 3');
 });

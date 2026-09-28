@@ -194,7 +194,9 @@ async function dispatch(sql, params) {
     const n = world.submissions.filter((s) => s.flock_id === Number(p[0]) && s.user_id != null && !s.skipped).length;
     return { rows: [{ n }], rowCount: 1 };
   }
-  if (/^SELECT COUNT\(\*\) AS total FROM flock_members WHERE flock_id = \$1 AND status = 'accepted'$/.test(flat)) {
+  // routes/budget.js MEMBER_ANSWERERS_SQL. Its ban clause leaves out a banned
+  // member who never answered; nobody in this world is banned.
+  if (/^SELECT COUNT\(\*\) AS total FROM flock_members WHERE flock_id = \$1 AND status = 'accepted' AND \(NOT EXISTS \(SELECT 1 FROM users bu WHERE bu\.id = flock_members\.user_id AND bu\.is_banned IS TRUE\) OR EXISTS \(SELECT 1 FROM budget_submissions ba WHERE ba\.flock_id = flock_members\.flock_id AND ba\.user_id = flock_members\.user_id\)\)$/.test(flat)) {
     const n = world.members.filter((m) => m.flock_id === Number(p[0]) && m.status === 'accepted').length;
     return { rows: [{ total: String(n) }], rowCount: 1 };
   }

@@ -306,10 +306,13 @@ test('the state statement decides open in SQL and counts over both rosters', () 
   const flat = RECONFIRM_STATE_SQL.replace(/\s+/g, ' ').trim();
   assert.match(flat, /\(f\.reconfirm_opened_at IS NOT NULL AND f\.status = 'confirmed' AND f\.event_time > \(NOW\(\) AT TIME ZONE 'UTC'\)\) AS open/);
   assert.match(flat, /f\.event_time AS deadline/);
-  assert.match(flat, /\(SELECT COUNT\(\*\) FROM flock_members WHERE flock_id = f\.id AND status = 'accepted' AND reconfirmed_at IS NOT NULL AND reconfirmed_at >= f\.reconfirm_opened_at\)::int \+ \(SELECT COUNT\(\*\) FROM guest_rsvps WHERE flock_id = f\.id AND status = 'in' AND COALESCE\(is_hidden, false\) = false AND reconfirmed_at IS NOT NULL AND reconfirmed_at >= f\.reconfirm_opened_at\)::int AS count/,
+  // A banned member is left out of both sides: the roster no longer shows
+  // them and they can never sign in to answer.
+  const notBanned = "NOT EXISTS \\(SELECT 1 FROM users bu WHERE bu\\.id = flock_members\\.user_id AND bu\\.is_banned IS TRUE\\)";
+  assert.match(flat, new RegExp(`\\(SELECT COUNT\\(\\*\\) FROM flock_members WHERE flock_id = f\\.id AND status = 'accepted' AND reconfirmed_at IS NOT NULL AND reconfirmed_at >= f\\.reconfirm_opened_at AND ${notBanned}\\)::int \\+ \\(SELECT COUNT\\(\\*\\) FROM guest_rsvps WHERE flock_id = f\\.id AND status = 'in' AND COALESCE\\(is_hidden, false\\) = false AND reconfirmed_at IS NOT NULL AND reconfirmed_at >= f\\.reconfirm_opened_at\\)::int AS count`),
     'count is accepted members plus visible in guests who answered THIS window: an older timestamp is an answer to an earlier question');
-  assert.match(flat, /\(SELECT COUNT\(\*\) FROM flock_members WHERE flock_id = f\.id AND status = 'accepted'\)::int \+ \(SELECT COUNT\(\*\) FROM guest_rsvps WHERE flock_id = f\.id AND status = 'in' AND COALESCE\(is_hidden, false\) = false\)::int AS total/,
-    'total is the same population the budget counts');
+  assert.match(flat, new RegExp(`\\(SELECT COUNT\\(\\*\\) FROM flock_members WHERE flock_id = f\\.id AND status = 'accepted' AND ${notBanned}\\)::int \\+ \\(SELECT COUNT\\(\\*\\) FROM guest_rsvps WHERE flock_id = f\\.id AND status = 'in' AND COALESCE\\(is_hidden, false\\) = false\\)::int AS total`),
+    'total is the members the roster shows plus the visible in guests');
   assert.match(flat, /FROM flocks f WHERE f\.id = \$1$/);
   // event_time is a naive TIMESTAMP holding UTC wall clock. Compared against a
   // bare NOW() the answer depends on the database session's zone.

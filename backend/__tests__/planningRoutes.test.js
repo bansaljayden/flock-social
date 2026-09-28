@@ -405,6 +405,13 @@ function dispatch(text, params = []) {
       rowCount: 1,
     };
   }
+  // routes/budget.js MEMBER_ANSWERERS_SQL, before the budget_submissions arms
+  // its EXISTS would otherwise land in: the accepted members, less a banned
+  // one who never answered. Nobody in this fixture is banned.
+  if (sql === String(require('../routes/budget').MEMBER_ANSWERERS_SQL).replace(/\s+/g, ' ').trim()) {
+    const n = db.flock_members.filter((m) => String(m.flock_id) === String(params[0]) && m.status === 'accepted').length;
+    return { rows: [{ total: String(n) }], rowCount: 1 };
+  }
   if (/FROM budget_submissions/i.test(sql) && /COUNT\(\*\)::int/i.test(sql)) {
     return { rows: [{ n: db.budget_submissions.filter(match).length }], rowCount: 1 };
   }

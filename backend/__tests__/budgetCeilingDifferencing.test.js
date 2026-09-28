@@ -140,7 +140,9 @@ async function dispatch(sql, params) {
     world.flock.budget_ceiling = p[1];
     return { rows: [], rowCount: 1 };
   }
-  if (/^SELECT COUNT\(\*\) AS total FROM flock_members WHERE flock_id = \$1 AND status = 'accepted'$/.test(flat)) {
+  // routes/budget.js MEMBER_ANSWERERS_SQL. Its ban clause leaves out a banned
+  // member who never answered; nobody in this world is banned.
+  if (/^SELECT COUNT\(\*\) AS total FROM flock_members WHERE flock_id = \$1 AND status = 'accepted' AND \(NOT EXISTS \(SELECT 1 FROM users bu WHERE bu\.id = flock_members\.user_id AND bu\.is_banned IS TRUE\) OR EXISTS \(SELECT 1 FROM budget_submissions ba WHERE ba\.flock_id = flock_members\.flock_id AND ba\.user_id = flock_members\.user_id\)\)$/.test(flat)) {
     return { rows: [{ total: String(world.members.length) }], rowCount: 1 };
   }
   if (/^SELECT amount, skipped FROM budget_submissions WHERE flock_id = \$1 AND user_id = \$2$/.test(flat)) {
