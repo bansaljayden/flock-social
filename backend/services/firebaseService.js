@@ -73,6 +73,16 @@ function init() {
 // Plus the two ways push is off before a send is ever tried: the SDK failing
 // to start, and FIREBASE_SERVICE_ACCOUNT unset on the production service.
 //
+// messaging/mismatched-credential is deliberately NOT an auth-class code. FCM
+// answers it for one token registered under a different Firebase project (a
+// dev build's token, say), so on its own it describes one device and would
+// send a daily email claiming every push fails. It counts toward the run
+// instead: a service account for the wrong project fails every send with it,
+// so five in a row still trips the alarm, while one odd token is reset by the
+// next send that succeeds. It is not pruned as stale either: that
+// wrong-project key would answer it for every good token, and pruning them
+// all would be the outage.
+//
 // The alarm goes by EMAIL ONLY through services/opsAlert.js: a push about push
 // failing would go down the channel that is failing. Once per day through
 // ops_alert_ledger. It reports, it never refuses: nothing here changes a send.
@@ -81,7 +91,6 @@ const CONSECUTIVE_FAILURES_BEFORE_ALARM = 5;
 const AUTH_FAILURE_CODES = new Set([
   'messaging/third-party-auth-error',
   'messaging/authentication-error',
-  'messaging/mismatched-credential',
   'app/invalid-credential',
 ]);
 // How soon a failed or unaddressed alarm may try again. The ledger dedupes a
