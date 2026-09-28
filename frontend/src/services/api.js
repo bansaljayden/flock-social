@@ -264,7 +264,8 @@ function setRefreshToken(value) {
  * when it loaded, or the one it signed in to itself. A request (and a socket
  * connection, and an upload) whose stored token now names another account, or
  * none, is refused before anything is sent, and 'flock-account-switched' tells
- * the app, which reloads so the tab starts over as whoever is signed in now.
+ * the page, which reloads (index.js, for every page and not the app alone) so
+ * the tab starts over as whoever is signed in now.
  * The storage listener further down announces the same the moment another tab
  * writes, so an idle tab does not wait for its next request to find out.
  *
@@ -302,7 +303,7 @@ function accountSwitchedError() {
 // the tab that signs in becomes that account's (storeSession below).
 const SIGN_IN_DOORS = ['/api/auth/login', '/api/auth/signup', '/api/auth/google', '/api/auth/apple'];
 
-// Throws, and tells the app, when another tab has moved the stored session to
+// Throws, and tells the page, when another tab has moved the stored session to
 // a different account (or signed it out) under this one.
 function refuseIfAccountMoved(token = getToken()) {
   if (storedSessionIsThisTabs(token)) return;

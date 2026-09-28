@@ -20259,18 +20259,13 @@ const FlockApp = () => {
     });
     const onExpired = () => endSession(sessionEndCopy('session_expired'));
     window.addEventListener('flock-session-expired', onExpired);
-    // Another tab of this browser signed in as somebody else, or signed out.
-    // The stored session is shared, so this tab was left showing one account
-    // while its requests would have gone out as another; api.js now refuses
-    // them. Not endSession: that signs out, and the session in storage is the
-    // other tab's to keep. Reloading starts this tab over as whoever is signed
-    // in now, or at sign-in when nobody is.
-    const onAccountSwitched = () => { window.location.reload(); };
-    window.addEventListener('flock-account-switched', onAccountSwitched);
+    // 'flock-account-switched' (another tab of this browser signed in as
+    // somebody else, or signed out) is not handled here. index.js reloads on it
+    // for every page, this one included. Not endSession either way: that signs
+    // out, and the session in storage is the other tab's to keep.
     return () => {
       unsubscribe();
       window.removeEventListener('flock-session-expired', onExpired);
-      window.removeEventListener('flock-account-switched', onAccountSwitched);
     };
   }, [endSession]);
 
