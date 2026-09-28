@@ -170,6 +170,51 @@ The difference from busyness charts elsewhere: those measure who already showed
 up. Flock's venue votes also capture which venues groups are *considering* right
 now, which is the signal the venue side of the business is built on.
 
+## The sensor's people counter
+
+**Flux, Flock's venue sensor, counts people with its own trained vision model,
+Owl, running on the device. On real thermal footage it has never seen, it
+counts a room exactly right up to ten times as often as the heat-threshold
+method it replaced.**
+
+Owl reads the 160 by 120 grid of temperatures from the sensor's thermal camera
+and puts a point on every person and a box and a name on every other warm
+thing: a hand at the lens, a pet, a hot drink, food, a laptop, a screen, a
+heater, a lamp, a seat somebody just left. Only people are counted. Scored on
+the held-out test splits of four public thermal datasets, footage it never
+trained on:
+
+| Real test set | the heat-threshold rule | **Owl** |
+|---|---|---|
+| Ceiling camera, 2,347 frames, 8,043 people | 9.2% exact | **93.8% exact, 99.5% within one** |
+| Side view, 2,151 frames, 3,872 people | 36.6% exact | **85.0% exact, 98.0% within one** |
+
+**It knows what is not a person.** The old rule counted warm regions, so a hand
+held up to the lens was a person and spread fingers were two. A stress test
+builds forty-one hard situations on purpose and scores each alone: a hand at
+the lens, a hot mug, a monitor, a radiator, a pet, a reflection in glass, a
+candle and an empty room each come out right 96 to 100% of the time, where the
+rule managed 8 to 85%.
+
+**It runs on the sensor, in 16 ms.** 718,550 parameters, a CenterNet-style
+network with a head map per kind of thing and a box head, exported to ONNX and
+run by ONNX Runtime on one Raspberry Pi 5 core, fast enough to read every frame
+the camera sends. It learns from millions of generated thermal frames of
+rooms, people and warm objects, drawn through this camera's optics and noise,
+mixed with real frames from commercially licensed public datasets, and it is
+chosen on real footage, never on its own drawings.
+
+**It counts, and never watches.** Owl names kinds of things, never who anyone
+is. Every frame is read on its own and forgotten, nothing about it follows a
+person from one frame to the next, and what leaves the sensor is a handful of
+counts. Tests in `flock-sensor/test_main.py` fail the build if any of that
+stops being true.
+
+> Like the crowd model, the trained artifact is Flock's own and not published.
+> The generator, the network, the training and grading scripts are in
+> `flock-sensor/training/`; with no model on disk the sensor counts with the
+> heat-threshold rule and says so.
+
 ## Stack
 
 React 19 (CRA) on Vercel · Node + Express on Railway · PostgreSQL ·
