@@ -10696,7 +10696,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // survives instance swaps) marks the socket dead the moment it goes, and
   // the next sample after it comes back is a reconnect. Only the drop is
   // heard: the tick itself still comes from the sampler, so a flapping
-  // connection still reaches the reads below at most once per sample.
+  // connection still reaches the reads below at most once per sample, and
+  // both the conversation read and the list read (readListsForGap) hold a
+  // minimum gap behind that.
   const socketAliveRef = useRef(null); // null until the first sample
   const [reconnectTick, setReconnectTick] = useState(0);
   // WHAT WAS ON SCREEN BEFORE THE SOCKET DROPPED, for the catch-up to measure
@@ -14685,17 +14687,52 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // holds the intent and flushes it on the return, the same shape as
   // runCatchUp, rather than spending the request on a screen nobody can see
   // or losing the gap.
+  //
+  // AND THE SAME MINIMUM GAP AS runCatchUp. The return with the socket gone
+  // reads the lists at once (below), and the reconnect tick that follows the
+  // handshake used to read them again a second or two later, so every app
+  // switch cost the pair twice. A flapping connection was worse: the drop is
+  // heard as well as sampled, so it can tick on every sample, and the lists
+  // had no throttle of their own. A read inside the window is now deferred to
+  // its end, one timer, never dropped, because the tick still marks a gap
+  // that only a read after the handshake covers. A forced read (the return
+  // with the socket gone) cancels a deferred one, since it is later than the
+  // reconnect that deferred it. Someone switching apps every few seconds pays
+  // one pair per return rather than two, and a flapping socket one pair per
+  // window. The stamp is this reader's own: the mount read and the error
+  // retries are not gap reads, and a retry of one list does not cover the
+  // other.
   const listsGapPendingRef = useRef(false);
-  useEffect(() => {
-    if (!reconnectTick) return;
+  const listsGapReadAtRef = useRef(0);
+  const listsGapTimerRef = useRef(null);
+  const readListsForGapRef = useRef(null);
+  const readListsForGap = useCallback(({ force = false } = {}) => {
     if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
       listsGapPendingRef.current = true;
       return;
     }
     listsGapPendingRef.current = false;
-    loadFlocks();
-    loadDmConversations();
-  }, [reconnectTick, loadFlocks, loadDmConversations]);
+    const waitMs = force ? 0 : CATCHUP_MIN_GAP_MS - (Date.now() - listsGapReadAtRef.current);
+    if (waitMs <= 0) {
+      if (listsGapTimerRef.current) {
+        clearTimeout(listsGapTimerRef.current);
+        listsGapTimerRef.current = null;
+      }
+      listsGapReadAtRef.current = Date.now();
+      loadFlocks();
+      loadDmConversations();
+      return;
+    }
+    if (listsGapTimerRef.current) return;
+    listsGapTimerRef.current = setTimeout(() => {
+      listsGapTimerRef.current = null;
+      readListsForGapRef.current?.();
+    }, waitMs);
+  }, [loadFlocks, loadDmConversations]);
+  readListsForGapRef.current = readListsForGap;
+  useEffect(() => {
+    if (reconnectTick) readListsForGap();
+  }, [reconnectTick, readListsForGap]);
   // The Tonight pulses cross the same gap: a friend's availability_updated
   // sent while the socket was down is gone, and so is the viewer's own
   // status set or cleared from another device. A reconnect while hidden is
@@ -14709,19 +14746,24 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // The return with the socket gone is a gap too, and the lists are read on
   // it rather than after the handshake, for the reason the conversation
   // catch-up beside runCatchUp gives. The reconnect tick still reads them
-  // again once the socket is back, because an invite or a cancelled plan sent
-  // during the handshake reaches neither this read nor a socket.
+  // again once the socket is back (deferred to the end of the window this
+  // read opens), because an invite or a cancelled plan sent during the
+  // handshake reaches neither this read nor a socket.
   useEffect(() => {
     const onVisible = () => {
       if (document.visibilityState !== 'visible') return;
-      if (!listsGapPendingRef.current && getSocket()?.connected) return;
-      listsGapPendingRef.current = false;
-      loadFlocks();
-      loadDmConversations();
+      if (!getSocket()?.connected) readListsForGap({ force: true });
+      else if (listsGapPendingRef.current) readListsForGap();
     };
     document.addEventListener('visibilitychange', onVisible);
-    return () => document.removeEventListener('visibilitychange', onVisible);
-  }, [loadFlocks, loadDmConversations]);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      if (listsGapTimerRef.current) {
+        clearTimeout(listsGapTimerRef.current);
+        listsGapTimerRef.current = null;
+      }
+    };
+  }, [readListsForGap]);
 
   useEffect(() => { loadDmConversations(); }, [loadDmConversations]);
 

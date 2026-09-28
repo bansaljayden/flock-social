@@ -5,7 +5,9 @@
 // list in an error state, so a healthy list that missed events while the
 // phone was in a pocket stayed wrong until the next remount. This pins the
 // list catch-up: unconditional on the reconnect edge, deferred while hidden,
-// flushed on the return.
+// flushed on the return, and held to the same minimum gap as the open
+// conversation's catch-up so an app switch or a flapping socket does not read
+// the pair over and over.
 const fs = require('fs');
 const path = require('path');
 
@@ -20,21 +22,31 @@ function block(startMarker, endMarker) {
 }
 
 test('the lists refetch on every reconnect, not only when they are in error', () => {
-  const effect = block('const listsGapPendingRef = useRef(false);', '[reconnectTick, loadFlocks, loadDmConversations]);');
-  expect(effect).toMatch(/if \(!reconnectTick\) return;/);
-  // no error gate anywhere in this effect
-  expect(effect).not.toMatch(/flocksError|dmsError/);
-  expect(effect).toMatch(/loadFlocks\(\);\s*loadDmConversations\(\);/);
+  const effect = block('if (reconnectTick) readListsForGap();', '[reconnectTick, readListsForGap]);');
+  expect(effect).toMatch(/^if \(reconnectTick\) readListsForGap\(\);\s*\}, \[reconnectTick, readListsForGap\]\);$/);
+  // no error gate anywhere in the reader the tick calls
+  const reader = block('const readListsForGap = useCallback(', '[loadFlocks, loadDmConversations]);');
+  expect(reader).not.toMatch(/flocksError|dmsError/);
+  expect(reader).toMatch(/loadFlocks\(\);\s*loadDmConversations\(\);/);
 });
 
 test('a reconnect that lands while hidden is held and flushed on the return', () => {
-  const effect = block('const listsGapPendingRef = useRef(false);', '[reconnectTick, loadFlocks, loadDmConversations]);');
-  expect(effect).toMatch(/visibilityState === 'hidden'\) \{\s*listsGapPendingRef\.current = true;\s*return;/);
+  const reader = block('const readListsForGap = useCallback(', '[loadFlocks, loadDmConversations]);');
+  expect(reader).toMatch(/visibilityState === 'hidden'\) \{\s*listsGapPendingRef\.current = true;\s*return;/);
   // The flush also runs on any return with the socket gone, which the return
   // itself is a gap for (foregroundCatchUp.test.js runs it).
-  const flush = block("if (!listsGapPendingRef.current && getSocket()?.connected) return;", '[loadFlocks, loadDmConversations]);');
-  expect(flush).toMatch(/listsGapPendingRef\.current = false;\s*loadFlocks\(\);\s*loadDmConversations\(\);/);
+  const flush = block("if (!getSocket()?.connected) readListsForGap({ force: true });", '[readListsForGap]);');
+  expect(flush).toMatch(/else if \(listsGapPendingRef\.current\) readListsForGap\(\);/);
   expect(flush).toMatch(/addEventListener\('visibilitychange', onVisible\)/);
+});
+
+test('the list gap read keeps the conversation catch-up\'s minimum gap, deferred and never dropped', () => {
+  // foregroundCatchUp.test.js runs this; here the shape is pinned so the
+  // reader cannot quietly lose its throttle or its trailing read.
+  const reader = block('const readListsForGap = useCallback(', '[loadFlocks, loadDmConversations]);');
+  expect(reader).toMatch(/force \? 0 : CATCHUP_MIN_GAP_MS - \(Date\.now\(\) - listsGapReadAtRef\.current\)/);
+  expect(reader).toMatch(/listsGapTimerRef\.current = setTimeout\(/);
+  expect(reader).toMatch(/readListsForGapRef\.current\?\.\(\);/);
 });
 
 test('the error-recovery effect stays gated, so the two do not double-fetch a healthy list on online or the tick', () => {
