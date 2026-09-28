@@ -9658,9 +9658,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       ? voteForVenue(flockId, myVote.venue, myVote.place_id || null)
       : clearVenueVote(flockId);
     sync
-      .then((data) => setFlocks(prev => prev.map(f => (
-        f.id === flockId ? { ...f, votes: normalizeVotes(data?.votes, meRef.current, f.votes) } : f
-      ))))
+      .then((data) => {
+        setFlocks(prev => prev.map(f => (
+          f.id === flockId ? { ...f, votes: normalizeVotes(data?.votes, meRef.current, f.votes) } : f
+        )));
+        // Saved, and the tally read after it failed (routes/venues.js
+        // tallyAfterCommit answers votes: null). normalizeVotes keeps the tile
+        // as tapped for a null, which is the truth about this person's vote,
+        // and everyone else's comes from a fresh read rather than a guess.
+        if (data?.tallyUnavailable) loadFlockVotes(flockId);
+      })
       .catch((err) => {
         if (previousVotes) setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, votes: previousVotes } : f));
         // The tap buzzed as the vote landed on screen, so a refusal that puts
@@ -9675,7 +9682,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         const lead = myVote ? "Your vote didn't save." : "Clearing your vote didn't save.";
         showToast(err?.message ? `${lead} ${err.message}` : `${lead} Try again.`, 'error');
       });
-  }, [showToast]);
+  }, [showToast, loadFlockVotes]);
 
   // Assign or change venue on a flock. Optimistic locally, then reconciled
   // against what the server actually stored.
