@@ -59,7 +59,7 @@ var FLOCK_TYPES = [
   'flock_reconfirm',
   'budget_reminder', 'budget_ready', 'bill_created', 'bill_settled',
   'crowd_alert', 'guest_rsvp', 'attendance_marked',
-  'flock_votes_in',
+  'flock_votes_in', 'bill_reminder',
 ];
 
 // The types whose destination is a tab rather than a flock. Same map as

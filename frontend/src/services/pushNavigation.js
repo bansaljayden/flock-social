@@ -51,7 +51,7 @@ const FLOCK_TYPES = new Set([
   'flock_reconfirm',
   'budget_reminder', 'budget_ready', 'bill_created', 'bill_settled',
   'crowd_alert', 'guest_rsvp', 'attendance_marked',
-  'flock_votes_in',
+  'flock_votes_in', 'bill_reminder',
 ]);
 
 // Which surface inside the flock the notification is about. Kept in step with
@@ -67,6 +67,7 @@ const FLOCK_VIEWS = new Set(['bill', 'budget', 'plan', 'votes']);
 const VIEW_FOR_TYPE = {
   bill_created: 'bill',
   bill_settled: 'bill',
+  bill_reminder: 'bill',
   budget_ready: 'budget',
   budget_reminder: 'budget',
   flock_updated: 'plan',

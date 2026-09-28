@@ -3,7 +3,7 @@ const { body, param, validationResult } = require('express-validator');
 const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 
-const { pushIfOffline, isPushConfigured } = require('../services/pushHelper');
+const { pushIfOffline, pushAlways, isPushConfigured } = require('../services/pushHelper');
 
 const router = express.Router();
 router.use(authenticate);
@@ -1845,6 +1845,147 @@ router.post('/:flockId/unsettle',
     } catch (err) {
       console.error('Unsettle error:', err);
       if (!res.headersSent) res.status(500).json({ error: 'Failed to mark the share unpaid' });
+    }
+  }
+);
+
+// POST /api/billing/:flockId/remind: the payer asks the people who still owe
+//
+// Whoever covered the table had no way to chase what they were owed except to
+// type it into the group chat, while the budget has had a one-tap reminder for
+// the host all along (routes/budget.js POST /:flockId/remind). The only push a
+// debtor ever got was the one sent when the bill was posted.
+//
+// The rules, each one a thing the other routes here already refuse:
+//   - ONLY THE PAYER. It is their money; nobody else gets to send a debt
+//     reminder in their name. Membership first, so a stranger learns nothing
+//     about a plan they are not in (the same order /settle checks in).
+//   - A BILL WITH A PAYER. A payerless bill (a ghost-commit shell, or a bill
+//     whose payer deleted their account) has nobody to be owed.
+//   - NOT QUARANTINED. Its settled flags are withheld from everybody, and a
+//     reminder is exactly a statement about who has not settled.
+//   - SOMEBODY STILL OWES. A settled bill has nothing to remind anyone about.
+//   - ONCE AN HOUR PER PLAN. Claimed in push_debounce (migration 050), not a
+//     Map: a Map is per process and gone on every deploy (project documentation, the
+//     single-replica warning). An hour is also how long sweepPushMaintenance
+//     keeps a row there, so the window and the table agree. Claimed only once
+//     every refusal above has passed, so a refused tap does not burn it.
+//
+// THE PUSH CARRIES NO AMOUNT. It sits on a lock screen, this file withholds
+// figures in some states (a viewer with a share hidden by a block gets no
+// total, a quarantined bill gets none at all), and "who is waiting and for
+// which plan" is the whole message. The figure is one tap away on the bill.
+//
+// WHO IS COUNTED. Every accepted member with an unsettled share, the payer
+// excluded, and the count answered is that number whatever the blocks: a count
+// that shrank for a blocked pair would tell the payer somebody had blocked
+// them. The socket toast skips a blocked pair, and so does the push, because
+// it names the payer (fromUserId) and pushHelper's gate refuses to put a
+// blocked person's name on a lock screen.
+const BILL_REMINDER_WINDOW_MINUTES = 60;
+const BILL_REMINDER_CLAIM_SQL = `
+  INSERT INTO push_debounce (debounce_key, sent_at)
+  VALUES ($1, NOW())
+  ON CONFLICT (debounce_key) DO UPDATE
+     SET sent_at = NOW()
+   WHERE push_debounce.sent_at < NOW() - ($2::int * INTERVAL '1 minute')
+  RETURNING debounce_key`;
+
+router.post('/:flockId/remind',
+  [param('flockId').isInt({ min: 1, max: INT4_MAX }).withMessage('Invalid flock ID')],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ error: errors.array()[0].msg });
+      }
+
+      const flockId = parseInt(req.params.flockId);
+      const userId = req.user.id;
+
+      const memberCheck = await pool.query(
+        "SELECT id FROM flock_members WHERE flock_id = $1 AND user_id = $2 AND status = 'accepted'",
+        [flockId, userId]
+      );
+      if (memberCheck.rows.length === 0) {
+        return res.status(403).json({ error: 'You are not a member of this flock' });
+      }
+
+      const billResult = await pool.query(
+        `SELECT bs.id, bs.paid_by, bs.quarantined, f.name AS flock_name
+           FROM bill_splits bs
+           JOIN flocks f ON f.id = bs.flock_id
+          WHERE bs.flock_id = $1`,
+        [flockId]
+      );
+      if (billResult.rows.length === 0) {
+        return res.status(404).json({ error: 'No bill found for this flock' });
+      }
+      const bill = billResult.rows[0];
+      // First, as /settle does, so the answer says nothing about the flags it
+      // is withholding.
+      if (isQuarantined(bill)) {
+        return res.status(409).json(QUARANTINED);
+      }
+      if (bill.paid_by == null) {
+        return res.status(409).json({
+          error: 'Nobody is recorded as having paid this bill, so nobody owes a reminder.',
+          reason: 'no_payer',
+        });
+      }
+      if (Number(bill.paid_by) !== Number(userId)) {
+        return res.status(403).json({ error: 'Only the person who paid can send reminders' });
+      }
+
+      const owing = await pool.query(
+        `SELECT bss.user_id
+           FROM bill_split_shares bss
+           JOIN flock_members fm ON fm.flock_id = $2 AND fm.user_id = bss.user_id AND fm.status = 'accepted'
+          WHERE bss.bill_id = $1 AND bss.settled IS NOT TRUE AND bss.user_id <> $3`,
+        [bill.id, flockId, userId]
+      );
+      if (owing.rows.length === 0) {
+        return res.status(409).json({ error: 'Everyone has paid you back, so there is nobody to remind.', reason: 'settled' });
+      }
+
+      const claim = await pool.query(BILL_REMINDER_CLAIM_SQL, [`bill_remind:${flockId}`, BILL_REMINDER_WINDOW_MINUTES]);
+      if (claim.rowCount === 0) {
+        return res.status(429).json({ error: 'You already sent a reminder in the last hour. Try again later.' });
+      }
+
+      const flockName = bill.flock_name || 'your plan';
+      const payerName = req.user.name || 'The person who paid';
+      const ids = owing.rows.map((r) => r.user_id);
+
+      // The toast for anybody with the app open, to their personal room, and
+      // not to a pair with a block between them (the toast names the payer).
+      const io = req.app.get('io');
+      if (io) {
+        const invisible = new Set(await getInvisibleUserIds(userId));
+        for (const id of ids) {
+          if (invisible.has(id)) continue;
+          io.to(`user:${id}`).emit('bill_reminder', { flockId, flockName, fromName: payerName });
+        }
+      }
+
+      // Answer first, then push, for the reason the budget reminder gives: the
+      // count is the rows, not the deliveries, and each push is several round
+      // trips plus a provider call.
+      res.json({ reminded: ids.length });
+
+      try {
+        await Promise.allSettled(ids.map((id) => pushAlways(
+          id,
+          'Bill reminder',
+          `${payerName} is waiting on your share for ${flockName}`,
+          { type: 'bill_reminder', flockId: String(flockId), fromUserId: String(userId) }
+        )));
+      } catch (pushErr) {
+        console.error('Bill reminder push error:', pushErr.message);
+      }
+    } catch (err) {
+      console.error('Bill remind error:', err);
+      if (!res.headersSent) res.status(500).json({ error: 'Failed to send reminders' });
     }
   }
 );

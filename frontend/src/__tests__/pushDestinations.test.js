@@ -122,6 +122,8 @@ describe('a notification opens the surface it names', () => {
   const cases = [
     ['bill_created', 'bill'],
     ['bill_settled', 'bill'],
+    // The payer's reminder lands on the bill, where Settle Up is.
+    ['bill_reminder', 'bill'],
     ['budget_ready', 'budget'],
     ['budget_reminder', 'budget'],
     ['crowd_alert', 'plan'],

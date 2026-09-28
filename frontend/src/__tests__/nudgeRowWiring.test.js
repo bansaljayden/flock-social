@@ -134,11 +134,13 @@ describe('the row carries its own card', () => {
     expect(renderer).toMatch(/const bill = m\.bill;\s*\n\s*if \(!bill\) return null;/);
     // planClosed joined the poll row when an ended plan's card stopped taking
     // votes: the card reads `poll.closed`, never the screen's flag.
-    for (const screenValue of ['whoIsHere.', 'billForCard', 'pollVoteRows', 'pollLockedName', 'nudgeForCard', 'planClosed']) {
+    // billRemind joined the bill row when the payer's card grew Remind: the
+    // card reads `m.remind`, never the screen's per-flock state.
+    for (const screenValue of ['whoIsHere.', 'billForCard', 'pollVoteRows', 'pollLockedName', 'nudgeForCard', 'planClosed', 'billRemind']) {
       expect(renderer).not.toContain(screenValue);
     }
     expect(chatDetailSrc).toMatch(/\{ id: WHO_ROW_ID, message_type: 'system', who: whoIsHere \}/);
-    expect(chatDetailSrc).toMatch(/\{ id: BILL_ROW_ID, message_type: 'system', bill: billForCard \}/);
+    expect(chatDetailSrc).toMatch(/\{ id: BILL_ROW_ID, message_type: 'system', bill: billForCard, remind: billRemind\[selectedFlockId\] \|\| null \}/);
     expect(chatDetailSrc).toMatch(/\{ id: POLL_ROW_ID, message_type: 'system', poll: \{ rows: pollVoteRows, lockedName: pollLockedName, closed: planClosed \} \}/);
   });
 });
