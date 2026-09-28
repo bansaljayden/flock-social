@@ -180,7 +180,9 @@ const read = (...p) => fs.readFileSync(path.join(__dirname, '..', ...p), 'utf8')
 
 test('the REST vote pushes after answering, and only for a vote that changed something', () => {
   const src = read('routes', 'venues.js');
-  assert.match(src, /res\.status\(changed \? 201 : 200\)\.json\(\{ vote, votes: tailorVotes\(rows, myInvisible\) \}\);[\s\S]{0,300}if \(changed\) await notifyHostVotesIn\(req\.app\.get\('io'\), flockId, req\.user\.id, rows\);/);
+  // The answer's tally is built for the voter (viewerId marks their own row),
+  // and the push still follows it, gated on a vote that changed something.
+  assert.match(src, /res\.status\(changed \? 201 : 200\)\.json\(\{ vote, votes: tailorVotes\(rows, myInvisible, \{ viewerId: req\.user\.id \}\) \}\);[\s\S]{0,300}if \(changed\) await notifyHostVotesIn\(req\.app\.get\('io'\), flockId, req\.user\.id, rows\);/);
 });
 
 test('the socket vote calls the same function, after its tallies go out', () => {
