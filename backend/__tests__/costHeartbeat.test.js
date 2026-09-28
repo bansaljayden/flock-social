@@ -20,6 +20,10 @@ const test = require('node:test');
 const assert = require('node:assert');
 
 process.env.MODERATION_ALERT_EMAIL = 'jayden@example.com';
+// The alerts go through services/opsAlert.js, which also pushes to each
+// ADMIN_USER_IDS account. This suite pins the email leg alone, so a push that
+// reached somebody must not be what holds or releases a claim here.
+delete process.env.ADMIN_USER_IDS;
 
 const pool = require('../config/database');
 const emailService = require('../services/emailService');
@@ -201,6 +205,20 @@ test('a send that RESOLVES as failed releases the claim and is not logged as mai
   costModel.RECONCILED.asOf = new Date().toISOString().slice(0, 10);
   photoStore.photoSpendStatus = async () => ({ monthUsed: 4200, monthUsd: 23, limits });
   const realError = console.error;
+  // What a delivered alert logs through services/opsAlert.js is "Alert sent by
+  // <legs>.". The recovery run below checks this pattern does match a real
+  // delivery, so its absence on a failure means something.
+  const MAILED = /Alert sent by|Alert mailed/;
+  const capture = async (fn) => {
+    const logged = [];
+    console.error = (...a) => logged.push(a.join(' '));
+    try {
+      await fn();
+    } finally {
+      console.error = realError;
+    }
+    return logged;
+  };
   try {
     for (const failure of [
       { sent: false, error: 'Too many requests', refused: true },
@@ -210,21 +228,19 @@ test('a send that RESOLVES as failed releases the claim and is not logged as mai
     ]) {
       reset();
       sendResult = failure;
-      const logged = [];
-      console.error = (...a) => logged.push(a.join(' '));
-      try {
-        await hb.runCostHeartbeat();
-      } finally {
-        console.error = realError;
-      }
+      const logged = await capture(() => hb.runCostHeartbeat());
       assert.equal(ledger.size, 0, `${JSON.stringify(failure)} kept the day's claim`);
-      assert.ok(!logged.some((l) => /Alert mailed/.test(l)), `${JSON.stringify(failure)} was logged as mailed`);
+      assert.ok(!logged.some((l) => MAILED.test(l)), `${JSON.stringify(failure)} was logged as mailed`);
       assert.ok(logged.some((l) => /NOT delivered/.test(l)), 'the failure is said out loud');
+      assert.ok(logged.some((l) => /\[COST-HEARTBEAT\] Flock photo budget is nearly spent, and the alert was NOT delivered/.test(l)),
+        'the failure line names what went unreported');
 
       sendResult = null;
-      await hb.runCostHeartbeat();
+      const recovered = await capture(() => hb.runCostHeartbeat());
       assert.equal(sent.length, 1, 'the next sweep mails once the provider recovers');
       assert.ok(/photo budget/.test(sent[0].subject));
+      assert.ok(recovered.some((l) => MAILED.test(l)), 'a delivered alert is logged as sent');
+      assert.ok(!recovered.some((l) => /NOT delivered/.test(l)), 'and not as undelivered');
     }
   } finally {
     console.error = realError;

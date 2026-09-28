@@ -22,6 +22,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 process.env.MODERATION_ALERT_EMAIL = 'jayden@example.com';
+// The alert goes through services/opsAlert.js, which also pushes to each
+// ADMIN_USER_IDS account. This suite pins the email leg alone, so a push that
+// reached somebody must not be what holds or releases the claim here.
+delete process.env.ADMIN_USER_IDS;
 
 const pool = require('../config/database');
 
@@ -54,9 +58,10 @@ pool.query = async (text) => {
 };
 
 const sent = [];
-// The service destructures sendEmail at require time, so the stub has to be
-// installed before it loads and cannot be swapped later: flags are how a test
-// makes this one fail. The stub keeps the real contract. sendEmail never
+// One stub for the whole file, installed before the service loads; flags are
+// how a test makes it fail (services/opsAlert.js reads sendEmail off the
+// module at each send, so the stub is what every alert here reaches). The
+// stub keeps the real contract. sendEmail never
 // throws; a failed send RESOLVES { sent: false, ... }, and a stub that only
 // ever threw is how a claim that no real failure released stayed green here.
 let sendThrows = false;
@@ -176,6 +181,24 @@ test('a send that RESOLVES as failed releases the claim too, and is not logged a
   // the 8s deadline and the per-recipient cap all come back as a value. The
   // release used to live only in a catch, so none of these reached it and the
   // rest of the day's sweeps were silent about a collector that had stopped.
+  //
+  // What a delivered alert logs, through services/opsAlert.js: its "Alert sent
+  // by <legs>." line and the heartbeat's own "Collection <state>:" line, which
+  // it writes only when the alert went out. The recovery run below checks this
+  // pattern does match a real delivery, so its absence on a failure means
+  // something.
+  const MAILED = /Alert sent by|Alert mailed|\[HEARTBEAT\] Collection \w+:/;
+  const capture = async (fn) => {
+    const logged = [];
+    const realError = console.error;
+    console.error = (...a) => logged.push(a.join(' '));
+    try {
+      await fn();
+    } finally {
+      console.error = realError;
+    }
+    return logged;
+  };
   for (const failure of [
     { sent: false, error: 'Too many requests', refused: true },
     { sent: false, error: 'This operation was aborted' },
@@ -187,21 +210,18 @@ test('a send that RESOLVES as failed releases the claim too, and is not logged a
     sent.length = 0;
     freshRows = 0;
     sendResult = failure;
-    const logged = [];
-    const realError = console.error;
-    console.error = (...a) => logged.push(a.join(' '));
-    try {
-      await hb.runCollectionHeartbeat();
-    } finally {
-      console.error = realError;
-    }
+    const logged = await capture(() => hb.runCollectionHeartbeat());
     assert.strictEqual(ledger.size, 0, `${JSON.stringify(failure)} kept the day's claim, so nothing retries until tomorrow`);
-    assert.ok(!logged.some((l) => /Alert mailed/.test(l)), `${JSON.stringify(failure)} was logged as mailed`);
+    assert.ok(!logged.some((l) => MAILED.test(l)), `${JSON.stringify(failure)} was logged as mailed`);
     assert.ok(logged.some((l) => /NOT delivered/.test(l)), 'the failure is said out loud');
+    assert.ok(logged.some((l) => /collection has stopped, and the alert was NOT delivered/.test(l)),
+      'the failure line names what went unreported');
 
     sendResult = null;
-    await hb.runCollectionHeartbeat();
+    const recovered = await capture(() => hb.runCollectionHeartbeat());
     assert.strictEqual(sent.length, 1, 'the next sweep mails once the provider recovers');
+    assert.ok(recovered.some((l) => MAILED.test(l)), 'a delivered alert is logged as sent');
+    assert.ok(!recovered.some((l) => /NOT delivered/.test(l)), 'and not as undelivered');
   }
 });
 
