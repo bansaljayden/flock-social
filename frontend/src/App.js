@@ -1843,8 +1843,8 @@ const EmptyMark = ({ name, height = 160, style }) => (
 // Every line is a greeting. "Rounding up the group..." was one of them, and
 // on a first screen with nothing on it yet, a line ending in an ellipsis
 // reads as the app still loading something. The spin eases out and stops; it
-// used the overshoot curve DESIGN-STANDARD.md's precedence section bans, so each
-// new line bounced past its slot and back.
+// used an overshoot curve, so each new line bounced past its slot and back,
+// which on a first screen with nothing else moving reads as a toy.
 const GREETINGS = [
   () => `Good ${new Date().getHours() < 12 ? 'morning' : new Date().getHours() < 17 ? 'afternoon' : 'evening'}`,
   () => 'What\'s the move?',
@@ -5308,23 +5308,31 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // (isUnverified in backend/middleware/auth.js).
   const emailUnconfirmed = authUser?.email_verified === false;
   const [verifyChecking, setVerifyChecking] = useState(false);
-  // In flight, as a ref, so the focus and visibilitychange that iOS fires
-  // together on resume cost one request rather than two.
-  const verifyCheckInFlight = useRef(false);
+  // The read that is out right now, or null. A ref, and the promise itself
+  // rather than a flag, so everything that wants an answer while one is on
+  // its way shares it: the focus and visibilitychange that iOS fires together
+  // on resume, and a tap on "I've confirmed" that lands while that read is
+  // still out. With a flag, the tap sent a second request, and its finish
+  // cleared the flag under the read that was still going.
+  const verifyCheckInFlight = useRef(null);
 
   // Re-reads the account. `quiet` is the automatic read on coming back to the
   // app: it says nothing when the answer is still no, because nobody pressed
   // anything, and it stands aside for a read already going. A tap on "I've
-  // confirmed" always runs and is told either way; its own button is
-  // disabled while it does, so it cannot stack.
+  // confirmed" waits on a read already going instead of starting another,
+  // and is told the answer either way; its own button is disabled while it
+  // waits, so it cannot stack.
   const checkEmailConfirmed = useCallback(async (quiet = false) => {
     if (quiet && verifyCheckInFlight.current) return;
-    verifyCheckInFlight.current = true;
     if (!quiet) { setVerifyChecking(true); setVerifyNote(''); }
-    try {
-      const me = await getCurrentUser();
-      const user = me?.user || me;
-      if (user?.email_verified === true) {
+    let read = verifyCheckInFlight.current;
+    if (!read) {
+      // What a yes does is done in here, once per request, so a tap that
+      // joined a quiet read does not patch or toast a second time.
+      read = (async () => {
+        const me = await getCurrentUser();
+        const user = me?.user || me;
+        if (user?.email_verified !== true) return false;
         // The server reads the row on every gated request, so nothing else
         // has to be refreshed for Start a flock and Add friends to work now:
         // patching the session's copy is what takes the line and the sheet
@@ -5333,13 +5341,20 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         setVerifyPrompt(null);
         setVerifyNote('');
         showToast('Your email is confirmed.');
-        return;
-      }
-      if (!quiet) setVerifyNote('Not confirmed yet. Open the link in the email, then tap this again.');
+        return true;
+      })();
+      verifyCheckInFlight.current = read;
+      // Registered before anyone awaits it, so the ref is clear by the time
+      // a caller hears the answer, and only ever cleared by its own read.
+      const settle = () => { if (verifyCheckInFlight.current === read) verifyCheckInFlight.current = null; };
+      read.then(settle, settle);
+    }
+    try {
+      const confirmed = await read;
+      if (!confirmed && !quiet) setVerifyNote('Not confirmed yet. Open the link in the email, then tap this again.');
     } catch (err) {
       if (!quiet) setVerifyNote(err?.message || 'Could not check just now. Try again in a moment.');
     } finally {
-      verifyCheckInFlight.current = false;
       if (!quiet) setVerifyChecking(false);
     }
   }, [patchSessionUser, showToast]);
