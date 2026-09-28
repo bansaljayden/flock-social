@@ -41,12 +41,24 @@ test.before(() => { console.error = () => {}; });
 test.after(() => { console.error = realError; });
 
 const { createDbWatch, DOWN_TICKS_BEFORE_ALERT, MIN_GAP_MS } = require('../services/dbOutageAlert');
-const { runApiUptimeCheck, probeApi, ALERT_KEY } = require('../services/apiUptimeCheck');
+const uptime = require('../services/apiUptimeCheck');
+
+const { probeApi, ALERT_KEY, RETRY_AFTER_MS } = uptime;
+
+// The real wait before the second GET is 25 seconds; these tests record that
+// it was asked for and skip it.
+let sleeps = [];
+const runApiUptimeCheck = (opts) => uptime.runApiUptimeCheck({
+  sleep: async (ms) => { sleeps.push(ms); },
+  ...opts,
+});
 
 function reset() {
   mails = [];
+  sleeps = [];
   mailAnswer = () => ({ sent: true, id: 'm' });
   process.env.MODERATION_ALERT_EMAIL = 'ops@example.com';
+  process.env.RESEND_API_KEY = 're_test';
 }
 
 function watch(initialUp = true) {
@@ -202,8 +214,81 @@ test('a healthy API is one GET and nothing else', async () => {
   assert.strictEqual(seen.length, 1);
   assert.match(seen[0].url, /\/api\/health$/);
   assert.ok(seen[0].opts.signal, 'the GET is bounded');
+  assert.deepStrictEqual(sleeps, [], 'a healthy API costs the collector no wait');
   assert.strictEqual(db.calls.length, 0);
   assert.strictEqual(mails.length, 0);
+});
+
+test('one failed GET is asked again after a pause, and a 200 then mails nobody', async () => {
+  reset();
+  const db = ledgerDb();
+  const statuses = [null, 200];
+  let gets = 0;
+  const realWarn = console.warn;
+  console.warn = () => {};
+  try {
+    const out = await runApiUptimeCheck({
+      db,
+      fetchImpl: async () => {
+        const s = statuses[gets];
+        gets += 1;
+        if (s === null) throw Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNRESET' } });
+        return { status: s, json: async () => ({ status: 'ok', db: 'ok' }) };
+      },
+    });
+    assert.deepStrictEqual(out, { ok: true, retried: true });
+  } finally {
+    console.warn = realWarn;
+  }
+  assert.strictEqual(gets, 2);
+  assert.deepStrictEqual(sleeps, [RETRY_AFTER_MS]);
+  assert.ok(RETRY_AFTER_MS >= 20_000 && RETRY_AFTER_MS <= 30_000, 'long enough for a blip to clear, short enough not to hold up the run');
+  assert.strictEqual(db.calls.length, 0, 'a blip claims no day');
+  assert.strictEqual(mails.length, 0);
+});
+
+test('only a second failure mails, and the email says it failed twice', async () => {
+  reset();
+  const db = ledgerDb();
+  let gets = 0;
+  const out = await runApiUptimeCheck({
+    db,
+    fetchImpl: async () => { gets += 1; return { status: 502, json: async () => ({}) }; },
+  });
+  assert.deepStrictEqual(out, { ok: false, sent: true });
+  assert.strictEqual(gets, 2);
+  assert.deepStrictEqual(sleeps, [RETRY_AFTER_MS]);
+  assert.strictEqual(mails.length, 1);
+  assert.match(mails[0].text, /failed twice, 25 seconds apart/);
+});
+
+test('a collector that cannot mail says so in its log on every run, even a healthy one', async () => {
+  reset();
+  const logged = [];
+  console.error = (...a) => { logged.push(a.join(' ')); };
+  try {
+    delete process.env.RESEND_API_KEY;
+    process.env.MODERATION_ALERT_EMAIL = '';
+    await runApiUptimeCheck({ db: ledgerDb(), fetchImpl: answer(200, { db: 'ok' }) });
+    assert.ok(logged.some((l) => /RESEND_API_KEY and MODERATION_ALERT_EMAIL are unset on this service/.test(l)), logged.join('\n'));
+
+    logged.length = 0;
+    process.env.RESEND_API_KEY = 're_test';
+    await runApiUptimeCheck({ db: ledgerDb(), fetchImpl: answer(200, { db: 'ok' }) });
+    assert.ok(logged.some((l) => /MODERATION_ALERT_EMAIL is unset on this service/.test(l)), logged.join('\n'));
+
+    logged.length = 0;
+    process.env.MODERATION_ALERT_EMAIL = 'ops@example.com';
+    await runApiUptimeCheck({ db: ledgerDb(), fetchImpl: answer(200, { db: 'ok' }) });
+    assert.deepStrictEqual(logged, [], 'a configured collector stays quiet while the API is up');
+  } finally {
+    console.error = () => {};
+  }
+});
+
+test('the .env docs tell the operator the collector needs both variables', () => {
+  const env = fs.readFileSync(path.join(__dirname, '..', '.env.example'), 'utf8');
+  assert.match(env, /SET THIS AND RESEND_API_KEY ON THE BESTTIME COLLECTOR SERVICE TOO/);
 });
 
 test('a 503 from a database the API cannot reach is mailed, and says where to look', async () => {

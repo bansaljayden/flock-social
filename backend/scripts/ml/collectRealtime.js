@@ -1760,7 +1760,9 @@ async function run() {
     // THE API, CHECKED FROM OUTSIDE IT. This service is the one thing that
     // runs every hour and is not the API process, so it is the one thing that
     // can say the API is down or crash-looping; Railway only calls
-    // /api/health at deploy time. One GET, ten seconds at most, and it never
+    // /api/health at deploy time. One GET of ten seconds at most while the
+    // API is up; a failed one is asked again 25 seconds later before anyone
+    // is mailed, so a bad hour costs the sweep under a minute. It never
     // throws or stops the sweep (services/apiUptimeCheck.js). Required here
     // rather than at the top so the collector's own tests never load the
     // email stack.
