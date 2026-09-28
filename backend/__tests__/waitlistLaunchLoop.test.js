@@ -15,7 +15,9 @@
 //      stamped as it is picked, before its email goes, so two runs that
 //      overlap cannot both mail it. The stamp is handed back only when the
 //      email certainly did not leave (a refusal, a keyless deploy); a send
-//      whose outcome is unknown, like the 8 second abort, keeps it.
+//      whose outcome is unknown, like the 8 second abort, keeps it, and three
+//      of those with no delivered email between them stop the run, so a
+//      provider outage costs three people the email rather than a hundred.
 //   2. DRY RUN COUNTS AND SENDS NOTHING.
 //   3. SIGNUP LINKS THE ROW. All three account-creation paths (password,
 //      Google, Apple) call linkWaitlistConversion, so an arriving waitlister
@@ -259,6 +261,92 @@ test('a row given back after a refusal is not taken again by the same run', asyn
   assert.strictEqual(res.status, 200);
   assert.deepStrictEqual(sendsAsked, ['capped@example.com', 'next@example.com']);
   assert.deepStrictEqual(announcedIds(), [2]);
+});
+
+test('a provider outage stops the run after three unknown outcomes instead of writing off the whole batch', async () => {
+  // While Resend is down or timing out every send is unknown, and an unknown
+  // outcome keeps its stamp. A run that carried on would mark every claimed
+  // person announced, and they would never get the launch email.
+  reset();
+  statsRow = { total: 6, converted: 0, announced: 0, pending: 6 };
+  waitlistRows = [1, 2, 3, 4, 5, 6].map((id) => ({ id, email: `person${id}@example.com` }));
+  for (const r of waitlistRows) outcomes[r.email] = { sent: false, error: 'This operation was aborted' };
+  const res = await call('POST', '/api/admin/waitlist/announce', {}, signUserToken(ADMIN));
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.body.stopped_early, true);
+  assert.strictEqual(res.body.batch, 3);
+  assert.strictEqual(res.body.unknown, 3);
+  assert.deepStrictEqual(res.body.unknown_ids, [1, 2, 3], 'the operator is told which rows to check against the provider log');
+  assert.strictEqual(res.body.remaining, 3);
+  assert.deepStrictEqual(sendsAsked, ['person1@example.com', 'person2@example.com', 'person3@example.com'],
+    'the run kept claiming people while every send came back unknown');
+  assert.deepStrictEqual(announcedIds(), [1, 2, 3],
+    'the rows it tried stay marked, because each may have been sent; the rest are untouched for the next run');
+
+  // Once mail is going out again the next run picks up where this one stopped.
+  sendsAsked = [];
+  outcomes = {};
+  const again = await call('POST', '/api/admin/waitlist/announce', {}, signUserToken(ADMIN));
+  assert.strictEqual(again.body.stopped_early, false);
+  assert.deepStrictEqual(sendsAsked, ['person4@example.com', 'person5@example.com', 'person6@example.com']);
+});
+
+test('a single slow send does not stop the run, because a delivered email in between resets the count', async () => {
+  reset();
+  statsRow = { total: 6, converted: 0, announced: 0, pending: 6 };
+  waitlistRows = [1, 2, 3, 4, 5, 6].map((id) => ({ id, email: `person${id}@example.com` }));
+  const aborted = { sent: false, error: 'This operation was aborted' };
+  outcomes = {
+    'person1@example.com': aborted,
+    'person2@example.com': aborted,
+    'person4@example.com': aborted,
+    'person5@example.com': aborted,
+  };
+  const res = await call('POST', '/api/admin/waitlist/announce', {}, signUserToken(ADMIN));
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.body.stopped_early, false);
+  assert.strictEqual(res.body.batch, 6);
+  assert.strictEqual(res.body.sent, 2);
+  assert.deepStrictEqual(res.body.unknown_ids, [1, 2, 4, 5]);
+});
+
+test('a refusal between unknown outcomes does not reset the count, since it does not show mail is going out', async () => {
+  // A 429 or the per-recipient cap comes back refused while the provider is
+  // failing too. Only a delivered email shows the channel works.
+  reset();
+  statsRow = { total: 5, converted: 0, announced: 0, pending: 5 };
+  waitlistRows = [1, 2, 3, 4, 5].map((id) => ({ id, email: `person${id}@example.com` }));
+  const aborted = { sent: false, error: 'This operation was aborted' };
+  outcomes = {
+    'person1@example.com': aborted,
+    'person2@example.com': { sent: false, error: 'rate_limit_exceeded', refused: true },
+    'person3@example.com': aborted,
+    'person4@example.com': aborted,
+  };
+  const res = await call('POST', '/api/admin/waitlist/announce', {}, signUserToken(ADMIN));
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.body.stopped_early, true);
+  assert.strictEqual(res.body.batch, 4);
+  assert.strictEqual(res.body.failed, 1);
+  assert.deepStrictEqual(res.body.unknown_ids, [1, 3, 4]);
+  assert.deepStrictEqual(announcedIds(), [1, 3, 4], 'the refused row is handed back and the fifth was never claimed');
+  assert.strictEqual(res.body.remaining, 2);
+});
+
+test('a mail client that could not be built hands every row back, since nothing was sent', async () => {
+  // services/emailService.js answers a client it could not build as refused.
+  // Read as unknown, a broken install would have stamped each row it tried.
+  reset();
+  statsRow = { total: 2, converted: 0, announced: 0, pending: 2 };
+  waitlistRows = [1, 2].map((id) => ({ id, email: `person${id}@example.com` }));
+  const broken = { sent: false, error: 'resend module is broken', refused: true };
+  outcomes = { 'person1@example.com': broken, 'person2@example.com': broken };
+  const res = await call('POST', '/api/admin/waitlist/announce', {}, signUserToken(ADMIN));
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.body.failed, 2);
+  assert.strictEqual(res.body.unknown, 0);
+  assert.deepStrictEqual(announcedIds(), []);
+  assert.strictEqual(res.body.remaining, 2);
 });
 
 test('every waiting person is asked about, in list order', async () => {

@@ -123,6 +123,17 @@ router.use(requireAdmin);
 // was sending.
 const WAITLIST_ANNOUNCE_BATCH = 100;
 //
+// A PROVIDER OUTAGE STOPS THE RUN. Keeping an unknown outcome's stamp is right
+// for one timeout, but while Resend is down or timing out every send is
+// unknown, and a run that carried on would stamp all 100 claimed people as
+// announced and they would never get the launch email. So once this many
+// outcomes come back unknown with no email delivered between them, the run
+// stops claiming and says so. The row that tipped it keeps its stamp
+// like the others: it is exactly as likely to have been accepted as they are.
+// The response names every unknown row's id, so an operator can check them
+// against the provider's log and clear the ones that never went.
+const WAITLIST_ANNOUNCE_UNKNOWN_LIMIT = 3;
+//
 // The emailService namespace is required lazily here rather than destructured
 // at the top of the file so the launch email can be stubbed in tests and so
 // this admin file adds no weight to deployments that never announce.
@@ -160,6 +171,12 @@ router.post('/waitlist/announce', async (req, res) => {
     let suppressed = 0;
     let failed = 0;
     let unknown = 0;
+    const unknownIds = [];
+    // Unknown outcomes since the last email that certainly went. A refusal or
+    // a suppressed address does not reset it, because neither shows that the
+    // provider is taking mail.
+    let unknownSinceSent = 0;
+    let stoppedEarly = false;
     // The last id this run took. A row released below is left for the next
     // run rather than claimed again by this one, which would send to one
     // refusing address a hundred times over.
@@ -182,6 +199,7 @@ router.post('/waitlist/announce', async (req, res) => {
       const outcome = await emailService.sendWaitlistLaunchEmail({ to: row.email });
       if (outcome.sent) {
         sent += 1;
+        unknownSinceSent = 0;
       } else if (outcome.suppressed || (outcome.refused && outcome.error === 'invalid recipient')) {
         suppressed += 1;
       } else if (outcome.skipped || outcome.refused) {
@@ -189,7 +207,14 @@ router.post('/waitlist/announce', async (req, res) => {
         failed += 1;
       } else {
         unknown += 1;
+        unknownIds.push(row.id);
+        unknownSinceSent += 1;
         console.warn(`[admin] waitlist #${row.id}: the launch email's outcome is unknown (${outcome.error || 'no result'}). It stays marked announced, so it is not sent again.`);
+        if (unknownSinceSent >= WAITLIST_ANNOUNCE_UNKNOWN_LIMIT) {
+          stoppedEarly = true;
+          console.error(`[admin] waitlist announce stopped: ${unknownSinceSent} launch emails since the last one delivered have an unknown outcome, which looks like the mail provider failing rather than one slow send. Rows ${unknownIds.join(', ')} are marked announced and may not have been mailed; check them against the provider's log before clearing any. Run again once mail is going out.`);
+          break;
+        }
       }
     }
 
@@ -202,6 +227,9 @@ router.post('/waitlist/announce', async (req, res) => {
       failed,
       // May or may not have been sent, and not retried.
       unknown,
+      unknown_ids: unknownIds,
+      // True when a run of unknown outcomes stopped the batch short.
+      stopped_early: stoppedEarly,
       remaining: Math.max(0, summary.pending - claimed + failed),
     });
   } catch (err) {
