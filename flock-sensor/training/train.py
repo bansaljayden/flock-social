@@ -52,18 +52,35 @@ ALL_KNOWN = np.ones(K, dtype=np.float32)
 PEOPLE_ONLY = np.eye(K, dtype=np.float32)[0]
 
 
-def real_frame(real, rng, groups_x3=True):
+def _eight_bit(g, rng):
+    """An 8-bit frame carries no temperatures; a plausible room-to-skin range,
+    different every time, so no one mapping is learned as the truth."""
+    lo, span = rng.uniform(16, 28), rng.uniform(8, 16)
+    return lo + (g ** rng.uniform(0.8, 1.25)) * span
+
+
+def real_frame(real, rng, groups_x3=False):
     """One real training frame at Lepton size, with its people.
 
-    real is the 'train' part of the cache real_cache.py builds from public,
-    commercially licensed datasets (never their test splits):
-      tp   PUT Thermo Presence, MLX90640 32x24 from the ceiling, degrees C,
-           a point per person
-      otp  OpenThermalPose2, side view, 8-bit, a box and head per person
+    real is one split of the cache built from public datasets whose licences
+    allow commercial use (never their test splits):
+      tp   PUT Thermo Presence (MIT): MLX90640 32x24 from the ceiling, degrees
+           C, a point per person
+      otp  OpenThermalPose2 (MIT): side view, 8-bit, a box and head per person
+      aau  AAU Trimodal (CC BY): a wall-mounted camera in meeting rooms, up
+           to three people, 8-bit, a box per person
+      ss   SenSys 2021 low-resolution set (CC BY): 32x24 rooms with working
+           laptops and other hot objects, a box per person
     Only people are labelled in them, so only the people map is graded.
     """
     from scipy.ndimage import zoom
-    if rng.random() < 0.5:
+    # Side view weighted up after owl-4.1 lost two points there to owl-3.
+    sources = [('tp', 0.3), ('otp', 0.4), ('aau', 0.22), ('ss', 0.08)]
+    sources = [(k, w) for k, w in sources if f'{k}_img' in real]
+    weights = np.array([w for _, w in sources])
+    src = sources[int(rng.choice(len(sources), p=weights / weights.sum()))][0]
+    boxes = True
+    if src == 'tp':
         i = int(rng.integers(len(real['tp_img'])))
         t = zoom(real['tp_img'][i].astype(np.float32), (5, 5), order=1)
         t = t + rng.normal(0, 1.5)
@@ -71,9 +88,9 @@ def real_frame(real, rng, groups_x3=True):
                     'box': (x * 5 - 10, y * 5 - 10, x * 5 + 15, y * 5 + 15)}
                    for x, y in real['tp_pts'][i]]
         boxes = False
-    else:
-        # Frames with two or more people drawn three times as often: groups
-        # seen from the side are where owl-3 undercounted.
+    elif src == 'otp':
+        # groups_x3 draws frames with groups three times as often. Off by
+        # default: tried for owl-3.2, it did not help on real footage.
         if not groups_x3:
             i = int(rng.integers(len(real['otp_img'])))
         else:
@@ -81,14 +98,20 @@ def real_frame(real, rng, groups_x3=True):
                 w = np.array([3.0 if len(p) >= 2 else 1.0 for p in real['otp_people']])
                 real['_w'] = w / w.sum()
             i = int(rng.choice(len(real['otp_img']), p=real['_w']))
-        g = real['otp_img'][i].astype(np.float32) / 255.0
-        # 8-bit frames carry no temperatures; a plausible room-to-skin range,
-        # different every time, so no one mapping is learned as the truth.
-        lo, span = rng.uniform(16, 28), rng.uniform(8, 16)
-        t = lo + (g ** rng.uniform(0.8, 1.25)) * span
+        t = _eight_bit(real['otp_img'][i].astype(np.float32) / 255.0, rng)
         objects = [{'cls': 'person', 'x': hx, 'y': hy, 'box': box}
                    for box, (hx, hy) in real['otp_people'][i]]
-        boxes = True
+    elif src == 'aau':
+        i = int(rng.integers(len(real['aau_img'])))
+        t = _eight_bit(real['aau_img'][i].astype(np.float32) / 255.0, rng)
+        objects = [{'cls': 'person', 'x': hx, 'y': hy, 'box': box}
+                   for box, (hx, hy) in real['aau_people'][i]]
+    else:
+        i = int(rng.integers(len(real['ss_img'])))
+        t = zoom(_eight_bit(real['ss_img'][i].astype(np.float32) / 255.0, rng), (5, 5), order=1)
+        objects = [{'cls': 'person', 'x': hx * 5, 'y': hy * 5,
+                    'box': tuple(v * 5 for v in box)}
+                   for box, (hx, hy) in real['ss_people'][i]]
     t = t.astype(np.float32)
     if rng.random() < 0.5:
         t, objects = flip(t, objects)
@@ -96,19 +119,36 @@ def real_frame(real, rng, groups_x3=True):
 
 
 class Frames(IterableDataset):
-    def __init__(self, seed, real_path=None, real_share=0.0):
+    def __init__(self, seed, real_path=None, real_share=0.0, bank_path=None, bank_share=0.0):
         self.seed, self.real_path, self.real_share = seed, real_path, real_share
+        self.bank_path, self.bank_share = bank_path, bank_share
 
     def __iter__(self):
         info = torch.utils.data.get_worker_info()
         wid = info.id if info else 0
         rng = np.random.default_rng([self.seed, wid, int(time.time() * 1e6) % (1 << 31)])
         real = pickle.load(open(self.real_path, 'rb'))['train'] if self.real_path else None
+        bank = bank_objects = None
+        if self.bank_path:
+            # bank.py's frames, memory-mapped: read at disk speed, not drawn.
+            bank = np.load(Path(self.bank_path) / 'frames.f16', mmap_mode='r')
+            bank_objects = pickle.load(open(Path(self.bank_path) / 'objects.pkl', 'rb'))
         while True:
             known, boxes = ALL_KNOWN, True
             if real is not None and rng.random() < self.real_share:
                 t, objects, boxes = real_frame(real, rng)
                 known = PEOPLE_ONLY
+            elif bank is not None and rng.random() < self.bank_share:
+                i = int(rng.integers(len(bank_objects)))
+                t = np.asarray(bank[i], dtype=np.float32)
+                objects = bank_objects[i]
+                # Never the same frame twice: fresh sensor noise, a small shift
+                # and gain about the room, and a mirror half the time.
+                med = float(np.median(t))
+                t = med + (t - med) * rng.uniform(0.95, 1.05) + rng.uniform(-0.8, 0.8)
+                t = (t + rng.normal(0, 0.04, t.shape)).astype(np.float32)
+                if rng.random() < 0.5:
+                    t, objects = flip(t, objects)
             else:
                 t, objects = synth.scene_full(rng)
                 if rng.random() < 0.5:
@@ -117,12 +157,9 @@ class Frames(IterableDataset):
             if not boxes:
                 mask = np.zeros_like(mask)
             x = synth.model_input(t)
-            # Absolute temperature is not always to be trusted: an 8-bit real
-            # frame's temperatures are made up, and an uncalibrated Lepton's are
-            # a few degrees out. Now and then it is skewed, so the model leans on
-            # warmth relative to the room as well.
-            if rng.random() < (0.6 if known is PEOPLE_ONLY else 0.2):
-                x[0] = x[0] * rng.uniform(0.7, 1.3) + rng.uniform(-0.8, 0.8)
+            # Skewing the absolute channel was tried for owl-3.2 and dropped:
+            # graded on real footage it helped nowhere and cost a few points
+            # on rooms the model had never seen.
             yield (torch.from_numpy(x), torch.from_numpy(heat),
                    torch.from_numpy(ltrb), torch.from_numpy(mask), torch.from_numpy(known))
 
@@ -259,6 +296,10 @@ def main(argv=None):
     ap.add_argument('--real', default=None,
                     help='real_cache.pkl: public, commercially licensed real frames to mix in')
     ap.add_argument('--real-share', type=float, default=0.35)
+    ap.add_argument('--bank', default=None,
+                    help="a folder from bank.py; its frames stand in for some freshly drawn ones")
+    ap.add_argument('--bank-share', type=float, default=0.7,
+                    help='of the generated frames, the share read from the bank')
     ap.add_argument('--init', default=None,
                     help='a best.pt to start the shared layers from, such as owl-1')
     ap.add_argument('--name', default='owl-2',
@@ -285,7 +326,8 @@ def main(argv=None):
     print(f'{params:,} parameters on {device}', flush=True)
     opt = torch.optim.AdamW(net.parameters(), lr=args.lr, weight_decay=1e-4)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, args.lr, total_steps=args.steps, pct_start=0.05)
-    loader = DataLoader(Frames(args.seed, args.real, args.real_share if args.real else 0.0),
+    loader = DataLoader(Frames(args.seed, args.real, args.real_share if args.real else 0.0,
+                               args.bank, args.bank_share if args.bank else 0.0),
                         batch_size=args.batch, num_workers=args.workers,
                         persistent_workers=True, prefetch_factor=4)
     val = held_out(1500)
