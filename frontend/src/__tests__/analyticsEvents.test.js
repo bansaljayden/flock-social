@@ -179,6 +179,52 @@ describe('signup and login failures', () => {
   });
 });
 
+// The delete and export dialogs ask an Apple or Google account to confirm it
+// is them (components/auth/OAuthReconfirm.js) through the same three calls the
+// sign-in screens use. That is a person already signed in proving it again,
+// not a sign-in, and when a different account answers the sheet the dialog
+// ends the session, so identifying the device as that account first would
+// merge this device's history into someone else's.
+describe('a re-confirmation is not a sign-in', () => {
+  const CALLS = [
+    ['apple', (opts) => api.appleLogin('apple-id-token', undefined, 'apple-code', undefined, opts)],
+    ['google', (opts) => api.googleLogin('google-id-token', undefined, opts)],
+    ['google', (opts) => api.googleLoginWithToken('google-access-token', undefined, opts)],
+  ];
+
+  test.each(CALLS)('%s: the fresh token is stored, and nothing is identified or counted', async (_method, send) => {
+    respondWith(200, { token: 'fresh-proof', user: { id: 42 } });
+    await send({ reconfirm: true });
+    await flush();
+    expect(window.localStorage.getItem('flockToken')).toBe('fresh-proof');
+    expect(mockIdentify).not.toHaveBeenCalled();
+    expect(events('login')).toEqual([]);
+  });
+
+  test.each(CALLS)('%s: a different account answering is not identified either', async (_method, send) => {
+    respondWith(200, { token: 'other-account', user: { id: 77 } });
+    await send({ reconfirm: true });
+    await flush();
+    expect(mockIdentify).not.toHaveBeenCalled();
+    expect(mockCapture).not.toHaveBeenCalled();
+  });
+
+  test.each(CALLS)('%s: a refused re-confirmation records no login_failed', async (_method, send) => {
+    respondWith(400, { error: 'sign-in failed' });
+    await expect(send({ reconfirm: true })).rejects.toThrow();
+    await flush();
+    expect(events('login_failed')).toEqual([]);
+  });
+
+  test.each(CALLS)('%s: the same call as a sign-in still identifies and counts', async (method, send) => {
+    respondWith(200, { token: 't', user: { id: 42 } });
+    await send(undefined);
+    await flush();
+    expect(mockIdentify).toHaveBeenCalledWith('42');
+    expect(events('login')).toEqual([{ method }]);
+  });
+});
+
 describe('the funnel events carry the count and never the content', () => {
   test('a budget submission reports whether it was skipped, never the amount', async () => {
     respondWith(200, { ceiling: null, submissionCount: 1 });

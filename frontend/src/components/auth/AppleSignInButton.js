@@ -121,7 +121,10 @@ const makeResume = ({ identityToken, fullName, authorizationCode }) => {
 // the default; that stylesheet only exists while AuthShell is mounted, so a
 // caller inside the app (OAuthReconfirm, in the delete and export dialogs)
 // passes the same look inline. The title stays Apple's own either way.
-const AppleSignInButton = ({ onSuccess, onError, dob, dobGranularity, beforeAuthorize, className = 'auth-provider', style }) => {
+// `reconfirm` (optional): the signed-in person proving it again (the delete and
+// export dialogs), not a sign-in, so appleLogin skips the login analytics; see
+// opts.reconfirm in services/api.js.
+const AppleSignInButton = ({ onSuccess, onError, dob, dobGranularity, beforeAuthorize, className = 'auth-provider', style, reconfirm }) => {
   const [busy, setBusy] = useState(false);
 
   if (!isNativeIos()) return null;
@@ -156,8 +159,14 @@ const AppleSignInButton = ({ onSuccess, onError, dob, dobGranularity, beforeAuth
         : undefined;
       const fullName = delivered || remembered;
       held = { identityToken: r.identityToken, fullName, authorizationCode: r.authorizationCode };
+      // The options argument goes only when it holds something, so a plain
+      // sign-in calls appleLogin exactly as it always has.
+      const opts = {
+        ...(dobGranularity ? { dobGranularity } : {}),
+        ...(reconfirm ? { reconfirm: true } : {}),
+      };
       const data = await appleLogin(r.identityToken, fullName, r.authorizationCode, dob,
-        ...(dobGranularity ? [{ dobGranularity }] : []));
+        ...(Object.keys(opts).length ? [opts] : []));
       // Accepted: the account carries the name now, and nothing else on this
       // device should ever receive it.
       lastDelivered = null;
