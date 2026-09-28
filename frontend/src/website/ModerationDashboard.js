@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import { getToken, BASE_URL, ensureFreshSession } from '../services/api';
+import { getToken, BASE_URL, ensureFreshSession, storedSessionIsThisTabs } from '../services/api';
 import Icons from '../components/ui/Icons';
 import { connectSocket, onModerationReport } from '../services/socket';
 
@@ -172,6 +172,12 @@ async function adminFetch(path, options = {}) {
   const renewal = ensureFreshSession();
   if (renewal) await renewal.catch(() => {});
   const token = getToken();
+  // Another tab of this browser signed in as somebody else: a takedown or a
+  // ban from this console would be recorded as theirs (services/api.js, WHOSE
+  // TAB THIS IS).
+  if (!storedSessionIsThisTabs(token)) {
+    throw new Error('This browser is signed in to a different account in another tab. Reload this page before acting.');
+  }
   const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
   let timer = null;
   const arm = () => {

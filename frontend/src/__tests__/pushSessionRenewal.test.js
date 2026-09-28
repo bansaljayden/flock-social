@@ -116,7 +116,12 @@ test('a renewal is not a new session, and a different sign-in is', async () => {
   expect(registrations()).toHaveLength(1);
 
   // Somebody else signs in on the same phone: that is a new session, and the
-  // phone is registered to it.
+  // phone is registered to it. The first person signs out in this page first.
+  // A token for another account appearing with no sign-out here is another
+  // tab's session, which this page no longer sends anything with
+  // (services/api.js, WHOSE TAB THIS IS; crossTabAccountSwitch.test.js).
+  // eslint-disable-next-line global-require
+  require('../services/api').clearLocalSession();
   const other = tokenFor(8, nowS());
   localStorage.setItem('flockToken', other);
   window.dispatchEvent(new Event('focus'));
