@@ -7527,6 +7527,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // now stays full-screen with Retake and Use Photo under it.
   const [cameraReview, setCameraReview] = useState(null); // { dataUrl, source }
   const [cameraBusy, setCameraBusy] = useState(false);
+  // Counts viewfinder closes. A camera start notes the count as it begins and
+  // checks it once the stream arrives, because getUserMedia can take seconds
+  // (the permission prompt), and a stream for a viewfinder closed meanwhile
+  // would otherwise keep the camera light on with nothing showing it.
+  const cameraSessionRef = useRef(0);
+  // Counts the times an open conversation was left (leaveOpenThread). A photo
+  // is sized before it arms the composer, which takes a moment, so each photo
+  // route notes the count as it starts and arms nothing if it moved: a
+  // notification tap in that moment would otherwise put the photo meant for
+  // one person into the next conversation's composer.
+  const threadEpochRef = useRef(0);
   const [showFlockMenu, setShowFlockMenu] = useState(false);
   const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
 
@@ -12480,9 +12491,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     const file = e.target.files?.[0];
     if (!file) return;
     if (file.size > PICKED_PHOTO_MAX_BYTES) { showToast(PICKED_PHOTO_TOO_BIG, 'error'); return; }
+    // The conversation this photo was picked in (threadEpochRef). Left while
+    // the photo was being read and sized, it arms nothing anywhere.
+    const epoch = threadEpochRef.current;
     const reader = new FileReader();
     reader.onload = () => {
+      if (threadEpochRef.current !== epoch) return;
       prepareChatImage(reader.result).then(({ dataUrl, error }) => {
+        if (threadEpochRef.current !== epoch) return;
         if (error) { showToast(error, 'error'); return; }
         setPendingImage(dataUrl);
         setShowImagePreview(true);
@@ -12502,8 +12518,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
      Track lifetime is the thing to get right: a MediaStream that is not
      stopped leaves the camera light on. stopCameraTracks() is the ONLY way a
-     stream is released and it is called on close, on flip, on capture and on
-     unmount. Nothing else touches cameraStreamRef.
+     stream held in cameraStreamRef is released and it is called on close, on
+     flip, on capture and on unmount. Nothing else touches cameraStreamRef. The
+     one other stop is a stream that arrives after its viewfinder closed,
+     which startCameraStream stops before it is ever held.
      ═══════════════════════════════════════════════════════════════════ */
   const stopCameraTracks = useCallback(() => {
     const stream = cameraStreamRef.current;
@@ -12537,7 +12555,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // again once the JPEG ladder in prepareChatImage has been down it. `ideal`
   // rather than `exact` so a device that cannot reach 1440 quietly gives what
   // it has instead of rejecting the whole request.
-  const startCameraStream = useCallback(async (facing) => {
+  //
+  // `session` is the close count the start belongs to (cameraSessionRef): the
+  // current one unless the caller noted it earlier, as the open does before
+  // its one-tick wait.
+  const startCameraStream = useCallback(async (facing, session = cameraSessionRef.current) => {
+    // A start for a viewfinder that has closed since does nothing. Stopping
+    // tracks here would stop the stream of a viewfinder opened after it.
+    if (cameraSessionRef.current !== session) return;
     stopCameraTracks();
     setCameraTorch(false);
     let stream;
@@ -12554,6 +12579,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       } catch {
         stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
       }
+    }
+    // The viewfinder closed while the camera was being acquired: by its own
+    // close button, or by a tap that moved the app to another conversation
+    // (leaveOpenThread). Nothing will ever show this stream, so it is stopped
+    // where it arrives and never becomes the one cameraStreamRef holds.
+    if (cameraSessionRef.current !== session) {
+      stream.getTracks().forEach(t => { try { t.stop(); } catch { /* already ended */ } });
+      return;
     }
     cameraStreamRef.current = stream;
     const v = cameraVideoRef.current;
@@ -12573,11 +12606,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setCameraFacing('environment');
     setCameraCaps({});
     setCameraFocusPoint(null);
+    // Noted before the wait, so a close inside it counts (cameraSessionRef).
+    const session = cameraSessionRef.current;
     // One tick for the <video> to mount before the stream is attached.
     setTimeout(async () => {
       try {
-        await startCameraStream('environment');
+        await startCameraStream('environment', session);
       } catch (err) {
+        // Closed while it was being asked for: nobody is waiting on this
+        // camera, and the teardown below would close a viewfinder opened since.
+        if (cameraSessionRef.current !== session) return;
         console.error('Camera access error:', err);
         showToast(err.name === 'NotAllowedError' ? 'Camera permission denied. Allow it in browser settings' : 'Could not access camera: ' + (err.message || err.name), 'error');
         stopCameraTracks();
@@ -12587,6 +12625,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   }, [showToast, startCameraStream, stopCameraTracks]);
 
   const closeCameraViewfinder = useCallback(() => {
+    cameraSessionRef.current += 1;
     stopCameraTracks();
     setShowCameraViewfinder(null);
     setCameraCaps({});
@@ -12697,8 +12736,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const acceptCameraPhoto = useCallback(() => {
     if (!cameraReview || cameraBusy) return;
     const { dataUrl, source } = cameraReview;
+    // The conversation the shot was taken in (threadEpochRef). A tap that
+    // moves the app to another one while the shot is being sized has already
+    // closed the camera (leaveOpenThread), and the shot arms nothing: `source`
+    // says flock or DM, not which one.
+    const epoch = threadEpochRef.current;
     setCameraBusy(true);
     prepareChatImage(dataUrl).then(({ dataUrl: sized, error }) => {
+      if (threadEpochRef.current !== epoch) return;
       setCameraBusy(false);
       if (error) { showToast(error, 'error'); return; }
       closeCameraViewfinder();
@@ -15066,7 +15111,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // own exit it finds nothing left to clear. A flock draft is not lost: the
   // chat screen files it against its plan as it unmounts. A DM draft is
   // dropped, the way leaveDmScreen drops it.
+  //
+  // The in-app camera goes too. It is drawn over whichever chat opened it,
+  // and a push banner stays tappable above it, so Use Photo pressed after a
+  // tap into Bob's thread armed the shot taken for Alice in Bob's composer. A
+  // photo still being sized for the thread being left (a library pick, or a
+  // shot already accepted) is dropped when it finishes: threadEpochRef moves
+  // here, and every photo route checks it before arming.
   const leaveOpenThread = useCallback(() => {
+    threadEpochRef.current += 1;
+    closeCameraViewfinder();
     setChatInput('');
     setPendingImage(null);
     setShowImagePreview(false);
@@ -15093,7 +15147,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       dmStopSharingLocation(dmSharingLocation);
       setDmSharingLocation(null);
     }
-  }, [setChatInput, dmSharingLocation]);
+  }, [setChatInput, dmSharingLocation, closeCameraViewfinder]);
   // Which conversation is open, or null when no chat screen is up.
   const openThread = currentScreen === 'chatDetail' && selectedFlockId != null
     ? `flock:${selectedFlockId}`
@@ -15202,9 +15256,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     const file = e.target.files?.[0];
     if (!file) return;
     if (file.size > PICKED_PHOTO_MAX_BYTES) { showToast(PICKED_PHOTO_TOO_BIG, 'error'); return; }
+    // The thread this photo was picked in, as the flock twin notes it: a
+    // photo still being sized when the app moves to another thread is
+    // dropped, never armed for the wrong person.
+    const epoch = threadEpochRef.current;
     const reader = new FileReader();
     reader.onload = () => {
+      if (threadEpochRef.current !== epoch) return;
       prepareChatImage(reader.result).then(({ dataUrl, error }) => {
+        if (threadEpochRef.current !== epoch) return;
         if (error) { showToast(error, 'error'); return; }
         setDmPendingImage(dataUrl);
         setShowDmImagePreview(true);
