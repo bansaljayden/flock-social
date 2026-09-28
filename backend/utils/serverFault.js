@@ -163,9 +163,24 @@ function sentry() {
 
 // Mounted first in server.js. Runs the rest of the request inside a context
 // the console hook can see, and counts the response once it has finished.
+//
+// The store is inherited by every async resource first created inside the
+// request, and some of those outlive it: a new pool socket, a lazily started
+// timer, an SDK keep-alive agent. Each would pin whatever the store points at
+// for its whole life, so the store lets go of the request (and its parsed
+// body, an image upload's included) and of the logged error as soon as the
+// response is done, on 'finish' after counting or on 'close' for a request
+// the client abandoned. What stays behind is a handful of nulls.
 function faultMiddleware(req, res, next) {
-  const store = { error: null, note: null, route: null, req };
+  const store = { error: null, note: null, route: null, req, done: false };
+  const release = () => {
+    store.done = true;
+    store.req = null;
+    store.error = null;
+    store.note = null;
+  };
   let counted = false;
+  res.on('close', release);
   res.on('finish', () => {
     if (counted) return;
     counted = true;
@@ -189,6 +204,8 @@ function faultMiddleware(req, res, next) {
       }
     } catch (err) {
       // Never let the counter reach the request.
+    } finally {
+      release();
     }
   });
   context.run(store, next);
@@ -199,7 +216,9 @@ function faultMiddleware(req, res, next) {
 function noteLoggedError(args) {
   try {
     const store = context.getStore();
-    if (!store) return;
+    // After the response, nothing reads the store again, and keeping an error
+    // logged by work that outlived the request would pin it for no reason.
+    if (!store || store.done) return;
     for (let i = args.length - 1; i >= 0; i -= 1) {
       if (args[i] instanceof Error) {
         store.error = args[i];
