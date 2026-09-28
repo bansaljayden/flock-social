@@ -79,8 +79,10 @@ def real_frame(real, rng, groups_x3=False):
     """
     from scipy.ndimage import zoom
     # Side view weighted up after owl-4.1 lost two points there to owl-3.
-    # SDT is this sensor's own camera, so it carries the most weight.
-    sources = [('tp', 0.2), ('otp', 0.25), ('aau', 0.15), ('ss', 0.05), ('sdt', 0.35)]
+    # SDT is this sensor's own camera, so it carries the most weight; AAU's
+    # wall-mounted meeting rooms are the next closest view and lost 25 points
+    # the one time their share was cut to make room for it.
+    sources = [('tp', 0.18), ('otp', 0.22), ('aau', 0.25), ('ss', 0.05), ('sdt', 0.3)]
     sources = [(k, w) for k, w in sources if f'{k}_img' in real]
     weights = np.array([w for _, w in sources])
     src = sources[int(rng.choice(len(sources), p=weights / weights.sum()))][0]
