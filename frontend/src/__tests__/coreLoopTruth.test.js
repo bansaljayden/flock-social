@@ -66,7 +66,8 @@ test('one write confirms, and the local status follows the server\'s answer', ()
 
 test('a roster that could not be read says so, and the done step still opens the sheet', () => {
   expect(app).toMatch(/const \[rosterError, setRosterError\] = useState\(false\);/);
-  expect(app).toMatch(/\.catch\(\(\) => setRosterError\(true\)\);\s*loadFlockVotes\(selectedFlockId\);/);
+  // The tally read is chained to its rowless note now (flockReadsBeforeList).
+  expect(app).toMatch(/\.catch\(\(\) => setRosterError\(true\)\);\s*loadFlockVotes\(selectedFlockId\)(\.then\(|;)/);
   expect(detail).toMatch(/Couldn't load who's going\./);
   expect(detail).toMatch(/onClick=\{retryRoster\}/);
   expect(app).toMatch(/showToast\('Marked done\. Open the flock again to mark who showed up\.'\);/);
