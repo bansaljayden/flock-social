@@ -138,6 +138,10 @@ const SUITE_SLOTS = {
                                  // streak counted in the person's own days.
                                  // Far from 32-40 so suites written the same
                                  // week in other branches cannot land on it.
+  harvestVenueFilter: 64,        // new in 2026-09-28; the Venue Filter harvest
+                                 // writing weekly rows and new ml_venues rows
+                                 // into a real, migrated schema. Far from the
+                                 // low slots for the same reason as 57.
 };
 
 // Two suites sharing a slot would silently reintroduce exactly the collision the
