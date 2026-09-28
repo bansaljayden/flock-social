@@ -235,6 +235,116 @@ CASES = [
 ]
 
 
+# -- blind spots named by field research on thermal counters -----------------
+
+def _one(rng, **kw):
+    c, amb, _ = room(rng)
+    d = rng.uniform(1.2, 3.0)
+    xf, yf = rng.uniform(.35, .65), rng.uniform(.25, .4)
+    head, torso = person_at(c, rng, amb, d, xf, yf, **kw)
+    return c, amb, d, xf * W, yf * H, head[2]
+
+
+def case_glasses(rng):
+    c, amb, d, hx, hy, hr = _one(rng)
+    lens = amb + 0.55 * (33.5 - amb)
+    for side in (-1, 1):
+        c.paint(synth.ellipse(hx + side * hr * 0.35, hy + hr * 0.05, hr * 0.28, hr * 0.2), lens,
+                owner=0)
+    return c
+
+
+def case_mask(rng):
+    c, amb, d, hx, hy, hr = _one(rng)
+    c.paint(synth.ellipse(hx, hy + hr * 0.45, hr * 0.7, hr * 0.4), rng.uniform(26, 31), owner=0)
+    return c
+
+
+def case_bald(rng):
+    c, amb, d, hx, hy, hr = _one(rng)
+    c.paint(synth.ellipse(hx, hy - hr * 0.3, hr * 0.8, hr * 0.6), rng.uniform(32, 34.5), owner=0)
+    return c
+
+
+def case_one_behind_another(rng):
+    c, amb, _ = room(rng)
+    x = rng.uniform(.35, .65)
+    person_at(c, rng, amb, rng.uniform(3.5, 5), x + rng.uniform(-.04, .04), rng.uniform(.22, .3), pid=1)
+    person_at(c, rng, amb, rng.uniform(1.5, 2.2), x, rng.uniform(.3, .38), pid=0)
+    return c
+
+
+def case_phone(rng):
+    c, amb, d, hx, hy, hr = _one(rng)
+    s = synth.F_PX * synth.SS / d
+    c.paint(synth.rect(hx + rng.uniform(-.1, .1) * s, hy + .35 * s, .07 * s, .14 * s, corner=.01 * s),
+            rng.uniform(35, 43), owner=99990)
+    return c
+
+
+def case_floor_reflection(rng):
+    c, amb, _ = room(rng)
+    d = rng.uniform(1.5, 3)
+    xf, yf = rng.uniform(.35, .65), rng.uniform(.12, .22)
+    person_at(c, rng, amb, d, xf, yf, pose='stand')
+    s = synth.F_PX * synth.SS / d
+    feet = yf * H + 1.45 * s
+    ghost = amb + rng.uniform(1.0, 3.0)
+    c.paint(synth.rect(xf * W, feet + .4 * s, .36 * s, .7 * s, corner=.06 * s), ghost)
+    return c
+
+
+def case_footprints(rng):
+    c, amb, _ = room(rng)
+    for i in range(int(rng.integers(3, 8))):
+        c.paint(synth.ellipse(rng.uniform(.2, .8) * W, rng.uniform(.6, .95) * H, 6, 10,
+                              rng.normal(0, .3)), amb + rng.uniform(1.5, 4))
+    return c
+
+
+def case_candle(rng):
+    c, amb, _ = room(rng)
+    x, y = rng.uniform(.2, .8) * W, rng.uniform(.4, .8) * H
+    c.paint(synth.rect(x, y + 6, 10, 14), amb + rng.uniform(15, 40))
+    c.paint(synth.ellipse(x, y - 2, 3, 5), rng.uniform(60, 140))
+    return c
+
+
+def case_cold_drinks(rng):
+    c, amb, d, hx, hy, hr = _one(rng)
+    for _ in range(int(rng.integers(1, 4))):
+        c.paint(synth.rect(rng.uniform(.2, .8) * W, rng.uniform(.55, .8) * H, 12, 22),
+                rng.uniform(5, 12))
+    return c
+
+
+def case_after_recalibration(rng):
+    c, amb, d, hx, hy, hr = _one(rng)
+    c.t += rng.choice([-1, 1]) * rng.uniform(1.0, 2.0)
+    return c
+
+
+def case_clipped_hot(rng):
+    c, amb, d, hx, hy, hr = _one(rng)
+    c.paint(synth.ellipse(rng.uniform(.1, .9) * W, rng.uniform(.1, .5) * H, 8, 8), 140.0)
+    return c
+
+
+CASES += [
+    ('wearing glasses', 1, case_glasses),
+    ('wearing a mask', 1, case_mask),
+    ('bald head', 1, case_bald),
+    ('one behind another', 2, case_one_behind_another),
+    ('holding a phone', 1, case_phone),
+    ('reflection in a shiny floor', 1, case_floor_reflection),
+    ('warm footprints', 0, case_footprints),
+    ('candle', 0, case_candle),
+    ('person and cold drinks', 1, case_cold_drinks),
+    ('just after the camera recalibrates', 1, case_after_recalibration),
+    ('bulb past the camera range', 1, case_clipped_hot),
+]
+
+
 def main(argv):
     import main as sensor
     model = sensor.PeopleModel(argv[0], sensor.THERMAL_MODEL_THRESHOLD)

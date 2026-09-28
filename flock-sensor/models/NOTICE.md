@@ -1,8 +1,9 @@
 # Acknowledgements for the people counter
 
 `people.onnx` was trained on generated thermal frames and on frames from the
-two datasets below. None of their images are included in this product. Their
-licences are reproduced in full, as they require.
+datasets below. None of their images are included in this product. The MIT
+licences are reproduced in full, and the Creative Commons ones credited, as
+they require.
 
 ## PUT Thermo Presence
 
@@ -55,3 +56,16 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## AAU VAP Trimodal People Segmentation
+
+vap.aau.dk/vap-trimodal-people-segmentation-dataset, by Chris H. Bahnsen,
+Andreas Møgelmose and Thomas B. Moeslund, Aalborg University. Licensed under
+Creative Commons Attribution 4.0 (creativecommons.org/licenses/by/4.0). The
+images were resized and converted for training; none are included here.
+
+## Low-resolution infrared thermal dataset (SenSys 2021)
+
+zenodo.org/records/5574233, by Zhu, Voigt et al. Licensed under Creative
+Commons Attribution 4.0 (creativecommons.org/licenses/by/4.0). The images were
+converted for training; none are included here.
