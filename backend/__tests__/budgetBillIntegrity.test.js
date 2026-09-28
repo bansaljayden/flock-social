@@ -80,13 +80,13 @@
 //      somebody else paid is unsettled. Neither carries an amount, and a
 //      quarantined bill, a payerless shell, a settled budget and a closed plan
 //      ask nothing, because the routes would refuse the answer.
-//  15. THE PAYER CAN REMIND WHOEVER STILL OWES (POST /:flockId/remind), and
+//  17. THE PAYER CAN REMIND WHOEVER STILL OWES (POST /:flockId/remind), and
 //      nobody else can. No amount goes out, the count does not shrink for a
 //      block (it would tell the payer they had been blocked), a blocked pair
 //      gets neither the toast nor the push, one goes out per plan an hour
 //      (a push_debounce claim, taken only once every refusal has passed),
 //      and a shell, a quarantined bill and a settled one are refused.
-//  16. A REMINDER THAT WAITED (quiet hours, a retry) IS ASKED AGAIN AS IT GOES
+//  18. A REMINDER THAT WAITED (quiet hours, a retry) IS ASKED AGAIN AS IT GOES
 //      OUT, and is not sent to somebody who paid in the meantime, nor about a
 //      bill quarantined since.
 //  19. A BANNED MEMBER IS NOT SPLIT, COUNTED OR WAITED ON. A ban leaves the
@@ -99,6 +99,11 @@
 //      its total, which that row no longer hides from anybody without a block
 //      of their own with the banned account. The count the Create Split
 //      preview divides by leaves them out the same way /create does.
+//  20. A COMPLETED BUDGET PLAN TAKES ITS BILL WITH NOBODY'S ANSWER BEHIND IT,
+//      while the budget refuses every answer, Skip and the ghost commit
+//      included. The chat's bill sheet opens the bill form on a completed plan
+//      without waiting on an answer because of exactly this pair
+//      (frontend/src/screens/ChatDetail.js, billFormOffered).
 // ---------------------------------------------------------------------------
 
 const test = require('node:test');
@@ -2361,4 +2366,39 @@ test('the night-of count leaves a banned member out of both sides', async () => 
   const state = await reconfirmState((q, p) => pool.query(q, p), flockId);
   assert.equal(state.open, true);
   assert.deepEqual([state.count, state.total], [1, 2], 'Alice of Alice and Bob, not 2 of 3');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 20. A finished plan's budget takes no answer, and its bill needs none
+// ═══════════════════════════════════════════════════════════════════════════
+
+test('a completed budget plan nobody answered refuses every budget answer and still takes its bill', async () => {
+  const ann = await mkUser('Ann');
+  const ben = await mkUser('Ben');
+  const cy = await mkUser('Cy');
+  const flockId = await mkFlock(ann, [ben, cy], { status: 'completed' });
+
+  // Everything the budget form and the estimate card could send is refused.
+  for (const [label, r] of [
+    ['an amount', await submit(flockId, ben, 40)],
+    ['a skip', await submit(flockId, ben, 'skip')],
+    ['a ghost commit', await call('POST', `/api/billing/${flockId}/ghost-commit`, { token: ben.token })],
+  ]) {
+    assert.equal(r.status, 409, `${label}: ${r.text}`);
+    assert.equal(r.body.code, 'FLOCK_CLOSED', label);
+  }
+  assert.equal((await pool.query('SELECT 1 FROM budget_submissions WHERE flock_id = $1', [flockId])).rowCount, 0);
+  const plan = await one('SELECT budget_locked FROM flocks WHERE id = $1', [flockId]);
+  assert.equal(plan.budget_locked, false, 'finishing a plan does not close its budget');
+
+  // Ben never answered and the budget never closed, and the bill posts.
+  emits.length = 0;
+  const r = await call('POST', `/api/billing/${flockId}/create`, { token: ben.token, body: { totalAmount: 90 } });
+  assert.equal(r.status, 201, r.text);
+  assert.equal(r.body.bill.paidBy.id, ben.id);
+  assert.deepEqual(r.body.bill.shares.map((s) => s.amount), [30, 30, 30]);
+  // The fan-out runs after the response. Let it finish before the suite
+  // closes the pool under it.
+  await until(() => emits.filter((e) => e.event === 'bill_created').length === 3);
+  assert.equal(emits.filter((e) => e.event === 'bill_created').length, 3);
 });

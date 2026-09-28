@@ -995,3 +995,123 @@ describe('Create Split while it is on the wire', () => {
     await waitFor(() => expect(api.createBillSplit).toHaveBeenCalledTimes(2));
   });
 });
+
+// ---------------------------------------------------------------------------
+// 11. A finished budget plan can always be split, and asks for no answer the
+//     server refuses
+// ---------------------------------------------------------------------------
+/* POST /api/budget/:id/submit refuses a finished plan (FLOCK_CLOSED), and so
+   does POST /api/billing/:id/ghost-commit, while POST /api/billing/:id/create
+   takes a bill on a completed plan with no budget answer behind it. The sheet
+   had that the wrong way round. On a budget plan the bill waited for this
+   member's answer or a closed budget, so a plan that finished with the budget
+   still open put every member who had not answered on the budget form, where
+   Submit and Skip were both refused, and nowhere offered the bill. */
+describe('a budget plan that has ended', () => {
+  function MoneyState(over) {
+    const [showChatPool, setShowChatPool] = React.useState(false);
+    const [showCreateBill, setShowCreateBill] = React.useState(false);
+    return React.createElement(ChatDetail, chatProps({
+      ...over, showChatPool, setShowChatPool, showCreateBill, setShowCreateBill,
+    }));
+  }
+  const tap = (label) => {
+    fireEvent.click(screen.getByLabelText('More to send'));
+    fireEvent.click(within(screen.getByTestId('composer-plus-sheet')).getByRole('button', { name: label }));
+  };
+  const budgetPlan = (status) => () => ({ ...FLOCK, budgetEnabled: true, ghostModeEnabled: true, status });
+  const unanswered = {
+    budgetEnabled: true, budgetLocked: false, ceiling: null, isReady: false, skipCount: null,
+    submissionCount: 0, totalMembers: 3, memberCount: 3, userSubmitted: false, userAmount: null, userSkipped: false,
+  };
+  const QUESTION = 'What\'s your budget tonight?';
+
+  test('the composer tile opens the bill form on a completed plan this member never answered', () => {
+    // Fails without the fix: the tile opened the budget question instead.
+    render(React.createElement(MoneyState, { billSplit: null, getSelectedFlock: budgetPlan('completed'), budgetStatus: unanswered }));
+    tap('Split the bill');
+    expect(screen.getByText('Who paid?')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Create Split' })).toBeTruthy();
+    expect(screen.queryByText(QUESTION)).toBeNull();
+  });
+
+  test('Cash pool offers Split the Bill there, and no budget question to be refused', () => {
+    // Fails without the fix: Submit and Skip rendered, and no Split the Bill.
+    render(React.createElement(MoneyState, { billSplit: null, getSelectedFlock: budgetPlan('completed'), budgetStatus: unanswered }));
+    tap('Cash pool');
+    expect(screen.queryByText(QUESTION)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Submit' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Skip, any budget works' })).toBeNull();
+    expect(screen.getByText('Budget answers are closed')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Split the Bill' }));
+    expect(screen.getByText('Who paid?')).toBeTruthy();
+  });
+
+  test('a confirmed plan still asks first, because the server still takes the answer', () => {
+    render(React.createElement(MoneyState, { billSplit: null, getSelectedFlock: budgetPlan('confirmed'), budgetStatus: unanswered }));
+    tap('Split the bill');
+    expect(screen.getByText(QUESTION)).toBeTruthy();
+    expect(screen.queryByText('Who paid?')).toBeNull();
+  });
+
+  test('a cancelled plan offers no budget answer and no bill', () => {
+    // Fails without the fix: the budget question rendered on a plan that was
+    // called off.
+    mount(null, { getSelectedFlock: budgetPlan('cancelled'), budgetStatus: unanswered });
+    expect(screen.queryByText(QUESTION)).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Skip, any budget works' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Split the Bill' })).toBeNull();
+    expect(screen.getByText('Budget answers are closed')).toBeTruthy();
+  });
+
+  test.each(['completed', 'cancelled'])('a %s plan offers no way back into an answer', (status) => {
+    // Change and Set an amount reopen the form that /submit refuses. Fails
+    // without the fix: both links render.
+    const { unmount } = mount(null, {
+      getSelectedFlock: budgetPlan(status),
+      budgetStatus: { ...unanswered, userSubmitted: true, userAmount: 40, submissionCount: 1 },
+    });
+    expect(screen.queryByRole('button', { name: 'Change' })).toBeNull();
+    unmount();
+    mount(null, {
+      getSelectedFlock: budgetPlan(status),
+      budgetStatus: { ...unanswered, userSubmitted: true, userSkipped: true, submissionCount: 1 },
+    });
+    expect(screen.queryByRole('button', { name: 'Set an amount' })).toBeNull();
+  });
+
+  test('a live plan keeps both ways back', () => {
+    const { unmount } = mount(null, {
+      getSelectedFlock: budgetPlan('confirmed'),
+      budgetStatus: { ...unanswered, userSubmitted: true, userAmount: 40, submissionCount: 1 },
+    });
+    expect(screen.getByRole('button', { name: 'Change' })).toBeTruthy();
+    unmount();
+    mount(null, {
+      getSelectedFlock: budgetPlan('confirmed'),
+      budgetStatus: { ...unanswered, userSubmitted: true, userSkipped: true, submissionCount: 1 },
+    });
+    expect(screen.getByRole('button', { name: 'Set an amount' })).toBeTruthy();
+  });
+
+  test('the estimate card offers Commit on a live plan and not once the plan is over', () => {
+    // The ghost commit refuses a finished plan too. Fails without the fix:
+    // "Commit $40" stays on the card after the plan is completed.
+    const shell = bill([share(9, 'Jay', 40), share(1, 'Ava', 40), share(3, 'Cy', 40)], {
+      hasPayer: false, paidBy: { id: null, name: null }, estimate: true, totalAmount: 120, totalWithTip: 120,
+    });
+    const settledBudget = { ...unanswered, budgetLocked: true, ceiling: 40, isReady: true, submissionCount: 3, userSubmitted: true, userAmount: 40 };
+    const live = mount(shell, { getSelectedFlock: budgetPlan('confirmed'), budgetStatus: settledBudget, showChatPool: false });
+    expect(within(live.container.querySelector('[data-card="bill"]')).getByRole('button', { name: 'Commit $40' })).toBeTruthy();
+    live.unmount();
+    const over = mount(shell, { getSelectedFlock: budgetPlan('completed'), budgetStatus: settledBudget, showChatPool: false });
+    expect(within(over.container.querySelector('[data-card="bill"]')).queryByRole('button', { name: /Commit/ })).toBeNull();
+  });
+
+  test('the budget bar does not say it is waiting on answers nobody can give', () => {
+    // Fails without the fix: "Waiting on amounts · 0 of 3 answered".
+    mount(null, { getSelectedFlock: budgetPlan('completed'), budgetStatus: unanswered, showChatPool: false });
+    const bar = screen.getByLabelText('Open group cash pool');
+    expect(bar.textContent).toBe('Budget closed · no group number to show');
+  });
+});
