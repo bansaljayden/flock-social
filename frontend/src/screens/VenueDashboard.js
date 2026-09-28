@@ -1181,7 +1181,14 @@ export default function VenueDashboard({
                   this one printed a confident 0 for a request that 403'd or
                   timed out, and 0 here is the number a venue would act on. */}
               <p style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: colors.navy, margin: '4px 0 0' }}>{(venueListErrors.incomingFlocks || venueListErrors.incomingFlocksLocked || venueListErrors.incomingFlocksUnverified) ? '–' : realIncomingFlocks.length}</p>
-              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>flocks, next 7 days</p>
+              {/* The window GET /incoming-flocks keeps: plans up to 7 days
+                  ahead, plus any whose time passed less than 12 hours ago
+                  (INCOMING_PAST_HOURS), which is a party that may be inside
+                  right now. "Next 7 days" left that party out. "This week"
+                  would collide with the This Week card just below, which
+                  counts the last 7 days and so shows a different number for
+                  the same kind of vote. */}
+              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>flocks, now and the week ahead</p>
             </div>
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
               <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Biggest Night Ahead</p>
