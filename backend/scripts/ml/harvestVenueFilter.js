@@ -3,7 +3,8 @@
 // ---------------------------------------------------------------------------
 // Run (from backend/):
 //   node scripts/ml/harvestVenueFilter.js --city=philly            dry run
-//   node scripts/ml/harvestVenueFilter.js --city=philly --commit   writes
+//   node scripts/ml/harvestVenueFilter.js --city=philly --commit   writes, once the dry run's axis proof passes
+// One market at a time; --radius-km (default 20) sets how far it reaches.
 //
 // WHY THIS EXISTS. The plan (Pro Package 100) meters exactly one thing: 100
 // NEW venue admissions a calendar month. Forecasts by id, live calls, query
@@ -1209,12 +1210,15 @@ async function writeOne(pool, item, cells) {
     } else if (item.kind === 'known_place' || item.kind === 'known_near') {
       // A near-duplicate row was chosen by distance and name, not by this
       // place id, so only the BestTime half of the check applies to it.
-      const { rows } = await client.query(
-        item.kind === 'known_place'
-          ? 'SELECT * FROM ml_venues WHERE id = $1 AND google_place_id = $2 AND (besttime_venue_id IS NULL OR besttime_venue_id = $3)'
-          : 'SELECT * FROM ml_venues WHERE id = $1 AND $2::text IS NOT NULL AND (besttime_venue_id IS NULL OR besttime_venue_id = $3)',
-        [item.row.id, v.placeId, v.venueId]
-      );
+      const { rows } = item.kind === 'known_place'
+        ? await client.query(
+          'SELECT * FROM ml_venues WHERE id = $1 AND google_place_id = $2 AND (besttime_venue_id IS NULL OR besttime_venue_id = $3)',
+          [item.row.id, v.placeId, v.venueId]
+        )
+        : await client.query(
+          'SELECT * FROM ml_venues WHERE id = $1 AND (besttime_venue_id IS NULL OR besttime_venue_id = $2)',
+          [item.row.id, v.venueId]
+        );
       if (!rows[0]) return { status: 'vanished' };
       const { rows: holder } = await client.query(
         'SELECT 1 FROM ml_venues WHERE besttime_venue_id = $1 AND id <> $2', [v.venueId, item.row.id]

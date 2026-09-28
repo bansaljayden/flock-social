@@ -812,7 +812,15 @@ test('an artifact that lists no live or sports feature serves byte for byte as b
     const { out, sql, version } = await serveFixture(env);
     if (version !== GOLDEN.version) assert.fail(`the served artifact is ${version}; re-record PRE_FAMILY for it`);
     assert.equal(sha(JSON.stringify(out, (k, v) => (k === 'asOf' ? null : v))), PRE_FAMILY[name][0], `${name}: responses`);
-    assert.equal(sha(JSON.stringify(sql)), PRE_FAMILY[name][1], `${name}: statements`);
+    // 2026-09-28: the two neighbour statements gained one clause, leaving
+    // harvested venues out of the box (HARVESTED_STATUS in mlPredictor.js).
+    // It is the only change: with it taken back out, the statements hash to
+    // what was recorded, and the responses above did not move.
+    const stripped = sql.map((s) => s.replace(/\r?\n[ \t]*AND v\.besttime_status IS DISTINCT FROM 'harvested'/g, ''));
+    assert.ok(sql.every((s, i) => s === stripped[i] || /FROM ml_venues v\s+JOIN ml_venue_baselines b/.test(s)),
+      `${name}: the harvested clause reached a statement other than the neighbour box`);
+    assert.ok(sql.some((s, i) => s !== stripped[i]), `${name}: the neighbour box no longer leaves harvested venues out`);
+    assert.equal(sha(JSON.stringify(stripped)), PRE_FAMILY[name][1], `${name}: statements`);
     assert.ok(sql.every((s) => !/ml_sports_events/.test(s)), `${name}: the schedule is never read`);
   }
 });
