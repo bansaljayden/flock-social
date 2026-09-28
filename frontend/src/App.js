@@ -6364,6 +6364,28 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // with forty.
   const [friendCount, setFriendCount] = useState(null);
 
+  // ADD FRIENDS FROM THE NEST, FOR AN ACCOUNT WITH NOBODY ON IT YET.
+  //
+  // Add friends opens on Search, and on a new app a name search finds almost
+  // nobody a new account knows. Where an address book can be read, Contacts
+  // is the tab that can: one tap checks every number on the phone, and the
+  // invite card sits under it for the people it does not find. So the first
+  // time the Nest opens the screen this session for an account whose friend
+  // count came back zero, it opens on Contacts. Once only: after that the
+  // tab is wherever the person left it, as it has always been. Opening the
+  // tab asks for nothing (the system prompt fires only from Check my
+  // contacts), a refusal already given this session keeps Search, and null
+  // is not zero: while the stats read is out the screen opens where it
+  // always did.
+  const addFriendsOpenedFromNest = useRef(false);
+  const openAddFriendsFromNest = () => {
+    if (!addFriendsOpenedFromNest.current && friendCount === 0 && contactsSupported && !contactsDenied) {
+      setAddFriendsTab('contacts');
+    }
+    addFriendsOpenedFromNest.current = true;
+    setCurrentScreen('addFriends');
+  };
+
   // Availability Pulse — 3-tap status: down / maybe / not (or null = unset)
   const [myPulse, setMyPulse] = useState(null);
   const [friendsPulses, setFriendsPulses] = useState([]); // [{id, name, profile_image_url, status, note, set_at, expires_at}]
@@ -16382,7 +16404,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               {Icons.clock('var(--text-secondary)', 12)} Past
             </button>
             <button className="hit44"
-              onClick={() => setCurrentScreen('addFriends')}
+              onClick={openAddFriendsFromNest}
               style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '5px 10px', borderRadius: '8px', border: '1px solid var(--border-default)', background: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}
             >
               {Icons.userPlus('var(--text-secondary)', 12)} Add friends
@@ -16430,7 +16452,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               <button className="hit44" onClick={() => setCurrentScreen('create')} style={{ width: '100%', maxWidth: '300px', height: '48px', borderRadius: '14px', border: 'none', background: isDark ? '#f1ede0' : '#1e293b', color: isDark ? '#1e293b' : '#ffffff', fontSize: 'var(--t-body)', fontWeight: '600', letterSpacing: '-0.1px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', boxShadow: isDark ? 'inset 0 1px 0 rgba(255,255,255,0.55), 0 1px 2px rgba(0,0,0,0.20)' : 'inset 0 1px 0 rgba(255,255,255,0.12), 0 1px 2px rgba(30,41,59,0.10)' }}>
                 {Icons.plus(isDark ? '#1e293b' : 'white', 16)} Start a flock
               </button>
-              <button className="hit44" onClick={() => setCurrentScreen('addFriends')} style={{ width: '100%', maxWidth: '300px', height: '48px', marginTop: '10px', borderRadius: '14px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-primary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+              <button className="hit44" onClick={openAddFriendsFromNest} style={{ width: '100%', maxWidth: '300px', height: '48px', marginTop: '10px', borderRadius: '14px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-primary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
                 {Icons.userPlus('var(--text-primary)', 16)} Add friends
               </button>
               {/* An active list can be empty while the history is not; without
