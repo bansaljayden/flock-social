@@ -14,7 +14,10 @@
  *
  * Each read that finds no row now says so (noteRowlessRead), and the ones that
  * did are run again as soon as the list brings the row (rereadRowlessFlock,
- * from a layout effect on the list). App.js cannot be imported, so the screen
+ * from a layout effect on the list), for the plan still on screen only: the
+ * history skeleton and the plan screen's retry count belong to the screen, so
+ * a plan left before its row landed is read by whatever opens it next.
+ * App.js cannot be imported, so the screen
  * entry effect, the plan screen's effect, the three real loaders and the new
  * pieces are lifted out by source and run against one state, the way
  * chatEchoOrderAndRetraction.test.js runs the loaders.
@@ -115,7 +118,10 @@ const listRow = () => ({ id: PLAN, name: 'Friday', messages: [], members: [], vo
  * held open until the test answers it (requests.<kind>[n]).
  */
 function app({ flocks = [], screen = 'chatDetail' } = {}) {
-  const state = { flocks, rosterAttempt: 0, rosterError: false };
+  // `screen` and `selected` are what is on screen now; a test moves them to
+  // walk away before the list lands. `spinner` is every write of the chat's
+  // history skeleton flag, which is the chat screen's, whatever plan it shows.
+  const state = { flocks, rosterAttempt: 0, rosterError: false, screen, selected: PLAN, spinner: [] };
   const requests = { messages: [], roster: [], votes: [] };
   const hold = (kind) => () => new Promise((resolve, reject) => { requests[kind].push({ resolve, reject }); });
   const setFlocks = (next) => { state.flocks = typeof next === 'function' ? next(state.flocks) : next; };
@@ -130,7 +136,7 @@ function app({ flocks = [], screen = 'chatDetail' } = {}) {
     historyReadAtRef: { current: {} },
     historyReadSeqRef: { current: {} },
     retractionsRef: { current: { seq: 0, log: [] } },
-    setMessagesLoading: noop,
+    setMessagesLoading: (v) => state.spinner.push(v),
     setMessagesError: noop,
     getMessages: hold('messages'),
     mapFlockRow: H.mapFlockRow,
@@ -174,13 +180,17 @@ function app({ flocks = [], screen = 'chatDetail' } = {}) {
     votesLoadedRef,
   });
   const setRosterAttempt = (next) => { state.rosterAttempt = typeof next === 'function' ? next(state.rosterAttempt) : next; };
-  const rereadRowlessFlock = run(`${callback('rereadRowlessFlock')}\nreturn rereadRowlessFlock;`, {
+  // Built for the render the list lands in, as React hands out a new one
+  // whenever the screen or the plan on it changes.
+  const rereadRowlessFlock = () => run(`${callback('rereadRowlessFlock')}\nreturn rereadRowlessFlock;`, {
     useCallback: (fn) => fn,
     rowlessReadsRef,
     refreshFlockRoster,
     loadFlockVotes,
     loadFlockMessages,
     setRosterAttempt,
+    selectedFlockId: state.selected,
+    currentScreen: state.screen,
   });
 
   const chatEntry = effectBody("  useEffect(() => {\n    if (currentScreen === 'chatDetail' && selectedFlockId) {");
@@ -231,7 +241,7 @@ function app({ flocks = [], screen = 'chatDetail' } = {}) {
     /** GET /api/flocks answering, and the layout effect that runs on it. */
     listLands() {
       setFlocks((prev) => (prev.some((f) => f.id === PLAN) ? prev : [...prev, listRow()]));
-      run(rowArrival, { rowlessReadsRef, flocks: state.flocks, rereadRowlessFlock });
+      run(rowArrival, { rowlessReadsRef, flocks: state.flocks, rereadRowlessFlock: rereadRowlessFlock() });
     },
     row: () => state.flocks.find((f) => f.id === PLAN),
   };
@@ -334,6 +344,87 @@ describe('the plan screen opened before the list has the plan', () => {
     await settle();
     expect(a.row().members.map((m) => m.name)).toEqual(['Jo', 'Sam']);
     expect(a.row().votes.map((v) => v.venue)).toEqual(['The Owl']);
+  });
+});
+
+describe('a row that lands after the person has moved on', () => {
+  // The notes are the plan's, but the history skeleton and the plan screen's
+  // retry count belong to whatever screen is up. A late row used to re-read
+  // with both, so it flashed a skeleton over another chat, or re-ran the plan
+  // screen's read for another plan.
+  test('another chat opened meanwhile gets no skeleton, and the plan left is not read', async () => {
+    const a = app();
+    a.open();
+    answerAll(a.requests, 0);
+    await settle();
+    expect(a.state.spinner).toEqual([true, false]);
+
+    // A second notification: Saturday's chat is on screen now.
+    a.state.selected = 8;
+    a.listLands();
+    await settle();
+    expect(a.requests.messages).toHaveLength(1);
+    expect(a.requests.roster).toHaveLength(1);
+    expect(a.requests.votes).toHaveLength(1);
+    expect(a.state.spinner).toEqual([true, false]);
+    // Friday's notes go: the chat that opens Friday next reads all of it.
+    expect(a.rowlessReadsRef.current.size).toBe(0);
+  });
+
+  test('back on the Nest, nothing is read', async () => {
+    const a = app();
+    a.open();
+    answerAll(a.requests, 0);
+    await settle();
+    a.state.screen = 'main';
+    a.listLands();
+    await settle();
+    expect(a.requests.messages).toHaveLength(1);
+    expect(a.requests.roster).toHaveLength(1);
+    expect(a.requests.votes).toHaveLength(1);
+    expect(a.rowlessReadsRef.current.size).toBe(0);
+  });
+
+  test("another plan's screen is not re-run by this plan's retry count", async () => {
+    const a = app({ screen: 'detail' });
+    a.open();
+    a.requests.roster[0].resolve(ROSTER);
+    a.requests.votes[0].resolve(TALLY);
+    await settle();
+    a.state.selected = 8;
+    a.listLands();
+    expect(a.state.rosterAttempt).toBe(0);
+    expect(a.requests.votes).toHaveLength(1);
+  });
+
+  test("the same plan's screen, reached from its chat, gets its roster and tally and no skeleton", async () => {
+    const a = app();
+    a.open();
+    answerAll(a.requests, 0);
+    await settle();
+    a.state.screen = 'detail';
+    a.listLands();
+    // The history is the chat's, and the chat reads it again on the way back.
+    expect(a.requests.messages).toHaveLength(1);
+    expect(a.requests.roster).toHaveLength(2);
+    expect(a.requests.votes).toHaveLength(2);
+    a.requests.roster[1].resolve(ROSTER);
+    a.requests.votes[1].resolve(TALLY);
+    await settle();
+    expect(a.state.spinner).toEqual([true, false]);
+    expect(a.row().members.map((m) => m.name)).toEqual(['Jo', 'Sam']);
+    expect(a.row().votes.map((v) => v.venue)).toEqual(['The Owl']);
+  });
+
+  test('the chat still on the plan shows its skeleton for the re-read, as it does on entry', async () => {
+    const a = app();
+    a.open();
+    answerAll(a.requests, 0);
+    await settle();
+    a.listLands();
+    answerAll(a.requests, 1);
+    await settle();
+    expect(a.state.spinner).toEqual([true, false, true, false]);
   });
 });
 
