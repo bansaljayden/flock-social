@@ -1306,6 +1306,16 @@ export default function ChatDetail({
        repaint, and above the guard for the reason every hook here is. */
     const [reconfirmPending, setReconfirmPending] = React.useState(false);
 
+    /* "Create Split" WHILE IT IS ON THE WIRE. A double tap sent the bill
+       twice: the second POST rewrote the bill the first had just made and ran
+       its push loop again, so everyone who owed was told twice, and on a payer
+       handoff it was judged against the new payer and came back as an error
+       toast after the change had landed. The ref is the guard, read first,
+       because two taps can arrive before a repaint; the state is what
+       disables and relabels the button. */
+    const [billCreating, setBillCreating] = React.useState(false);
+    const billCreatingRef = React.useRef(false);
+
     /* ARMING FOR "Start the budget over". That link is the only irreversible
        one-tap action left on a screen any member's creator can reach: it
        deletes every private amount in the flock and unpublishes the number.
@@ -4132,7 +4142,10 @@ export default function ChatDetail({
                         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '6px 0 0', textAlign: 'center' }}>Equal split · ~${(parseFloat(billTotal) * (1 + billTip / 100) / Math.max(1, flock.billableCount ?? (flock.members?.length || flock.memberCount || 1))).toFixed(2)} each</p>
                       </div>
                     )}
-                    <button className="hit44 glass-btn glass-primary" disabled={!billTotal || parseFloat(billTotal) <= 0} onClick={async () => {
+                    <button className="hit44 glass-btn glass-primary" disabled={billCreating || !billTotal || parseFloat(billTotal) <= 0} onClick={async () => {
+                      if (billCreatingRef.current) return;
+                      billCreatingRef.current = true;
+                      setBillCreating(true);
                       try {
                         const data = await createBillSplit(selectedFlockId, {
                           totalAmount: parseFloat(billTotal),
@@ -4156,9 +4169,12 @@ export default function ChatDetail({
                           } catch { /* the toast below still says what the server said */ }
                         }
                         showToast(err.message, 'error');
+                      } finally {
+                        billCreatingRef.current = false;
+                        setBillCreating(false);
                       }
-                    }} style={{ ...styles.gradientButton, padding: '14px', opacity: (!billTotal || parseFloat(billTotal) <= 0) ? 0.4 : 1 }}>
-                      Create Split
+                    }} style={{ ...styles.gradientButton, padding: '14px', opacity: (billCreating || !billTotal || parseFloat(billTotal) <= 0) ? 0.4 : 1 }}>
+                      {billCreating ? 'Creating...' : 'Create Split'}
                     </button>
                   </div>
                 )}
