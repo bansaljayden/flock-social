@@ -357,6 +357,21 @@ describe('deletion copy matches the deletion path', () => {
     // page may call them encrypted.
     expect(deletePage).not.toMatch(/encrypted backups/i);
   });
+
+  test('the retention list names crash reports, with the days the prune deletes them after', () => {
+    // Every stored category is in the "How long we keep it" list. Crash
+    // reports were said only in the error-reports paragraph, so a reader of
+    // the list would have found nothing about them.
+    const route = read('backend', 'routes', 'clientCrash.js');
+    const days = route.match(/const RETENTION_DAYS = (\d+);/);
+    expect(days).not.toBeNull();
+    expect(route).toMatch(/DELETE FROM client_crash_reports WHERE seen_on < CURRENT_DATE - \$1::int',\s*\[RETENTION_DAYS\]/);
+    const start = privacy.indexOf('<section id="how-long">');
+    expect(start).toBeGreaterThan(0);
+    const list = privacy.slice(start, privacy.indexOf('</section>', start));
+    expect(list).toContain(`<li><strong>Crash reports you send:</strong> ${days[1]} days, then deleted.`);
+    expect(privacy).toContain(`we delete it after ${days[1]} days.`);
+  });
 });
 
 describe('privacy claims that depend on how the code behaves', () => {

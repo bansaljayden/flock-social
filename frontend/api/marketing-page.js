@@ -447,6 +447,7 @@ const PAGE_BLOCKS = {
     ["li", "Plan statistics: when a flock ends we keep one row per plan describing how it went: group size, whether a budget was used, the group's ceiling, how many people submitted, whether it was confirmed, how long that took, and where it stalled. It carries no names, no messages, and no individual budget amounts, and once the plan is deleted it is not linked to anyone. We keep these to understand where planning breaks down."],
     ["li", "Venue occupancy readings by owners: kept indefinitely, including retracted and expired ones, because each is a labelled observation the crowd model learns from. They are deleted if the venue account is deleted."],
     ["li", "Venue digest send records: 90 days, then deleted."],
+    ["li", "Crash reports you send: 90 days, then deleted. A report is not linked to any account, so deleting your account does not change this."],
     ["li", "Cached venue photos from Google: 30 days, then re-fetched."],
     ["li", "Sensor readings: kept as venue history. They contain no identifiers. See section 3."],
     ["li", "Waitlist emails: kept until you unsubscribe or ask us to delete the address."],

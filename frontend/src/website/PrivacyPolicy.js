@@ -832,6 +832,7 @@ export default function PrivacyPolicy() {
                 <li><strong>Plan statistics:</strong> when a flock ends we keep one row per plan describing how it went: group size, whether a budget was used, the group's ceiling, how many people submitted, whether it was confirmed, how long that took, and where it stalled. It carries no names, no messages, and no individual budget amounts, and once the plan is deleted it is not linked to anyone. We keep these to understand where planning breaks down.</li>
                 <li><strong>Venue occupancy readings by owners:</strong> kept indefinitely, including retracted and expired ones, because each is a labelled observation the crowd model learns from. They are deleted if the venue account is deleted.</li>
                 <li><strong>Venue digest send records:</strong> 90 days, then deleted.</li>
+                <li><strong>Crash reports you send:</strong> 90 days, then deleted. A report is not linked to any account, so deleting your account does not change this.</li>
                 <li><strong>Cached venue photos from Google:</strong> 30 days, then re-fetched.</li>
                 <li><strong>Sensor readings:</strong> kept as venue history. They contain no identifiers. See section 3.</li>
                 <li><strong>Waitlist emails:</strong> kept until you unsubscribe or ask us to delete the address.</li>
