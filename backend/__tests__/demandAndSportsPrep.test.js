@@ -32,8 +32,13 @@ const MIG = fs.readFileSync(path.join(__dirname, '..', 'migrations', '057_ml_spo
 const stripComments = (src) => src.replace(/^\s*\/\/.*$/gm, '');
 
 test('neither prep script can spend a BestTime credit', () => {
-  assert.ok(!/besttime/i.test(stripComments(DEMAND)),
+  // The one vendor-named token the demand script may hold is the ml_venues
+  // status COLUMN it reads to list harvested rows; a column read calls no
+  // endpoint. Any other mention (a URL, a key, an import) still fails.
+  assert.ok(!/besttime/i.test(stripComments(DEMAND).replace(/\bv\.besttime_status\b/g, '')),
     'the demand script stages rows; admission happens through the collector');
+  assert.ok(!/require\([^)]*harvestVenueFilter/.test(DEMAND),
+    'the harvester loads the vendor client; the demand script keeps its own copy of the status literal');
   assert.ok(!/besttime/i.test(stripComments(SPORTS)),
     'the sports collector must not reach any BestTime endpoint');
 });
@@ -73,6 +78,17 @@ test('a going-out place is judged by its own types: bars, clubs, stages and tapr
   }
   assert.strictEqual(isGoingOutPlace(['corporate_office', 'cafe']), false, 'an office that lists a cafe is an office');
   assert.strictEqual(isGoingOutPlace(['corporate_office', 'cocktail_bar']), true, 'a bar in an office building is a bar');
+});
+
+test('a demanded venue held only as a harvested row is listed for promotion, never silently skipped', () => {
+  assert.match(DEMAND, /WHERE v\.id IS NULL/, 'the staging list is still only venues with no row at all');
+  assert.match(DEMAND, /v\.besttime_status = '\$\{HARVESTED_STATUS\}'\s+AND v\.is_active = false/,
+    'the promotion list is the inactive harvested rows');
+  const main = DEMAND.slice(DEMAND.indexOf('async function main'));
+  assert.ok(main.indexOf('HARVESTED_DEMAND_SQL') < main.indexOf('if (candidates.length === 0) return'),
+    'the promotion list is printed even when nothing is missing');
+  assert.match(DEMAND, /PUTS IT IN THE HOURLY/, 'the note says what promotion starts');
+  assert.ok(!/query\(\s*[`'"]\s*UPDATE/.test(DEMAND), 'the script prints the promotion statement and never runs one');
 });
 
 test('a Places 429 is rate limiting, never a dead venue', () => {
