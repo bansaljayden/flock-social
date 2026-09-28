@@ -11,8 +11,12 @@
 // flipping that switch.
 //
 // WHAT IS KEPT, AND WHAT IS NEVER READ. The boundary label, the error's name,
-// a clamped and scrubbed message, up to eight component names, the build and
-// native or web. The route takes no auth middleware and never reads the
+// a clamped and scrubbed message, up to eight component names when the
+// report carries any, the build and native or web. The app sends component
+// names only from a development build: the production build minifies them
+// (frontend/src/services/crashReport.js says why), so a report from a phone
+// is told apart by its boundary, error name and message. The route takes no
+// auth middleware and never reads the
 // Authorization header, the IP or the user agent into anything it stores, so
 // a report cannot be tied back to an account. The limiter keys on the address
 // in memory only, like every other open endpoint.
@@ -67,10 +71,17 @@ function scrubMessage(raw) {
   return s.length > MESSAGE_MAX ? s.slice(0, MESSAGE_MAX) : s;
 }
 
-function fingerprintOf(boundary, name, topComponent) {
+// The scrubbed message is part of the shape. Without it, two different
+// crashes behind one boundary with the same error name were one row, since a
+// production build sends no component names to split them, and the row keeps
+// only the first message, so the second crash was counted and never mailed.
+// Digits are folded first, so a crash whose message carries a count or an id
+// is still one crash rather than one row per value.
+function fingerprintOf(boundary, name, message, topComponent) {
+  const shape = String(message || '').replace(/\d+/g, '0');
   return crypto
     .createHash('sha256')
-    .update(`${boundary}|${name}|${topComponent || ''}`)
+    .update(`${boundary}|${name}|${shape}|${topComponent || ''}`)
     .digest('hex')
     .slice(0, 32);
 }
@@ -101,8 +112,10 @@ async function alertFirstSighting(report, fingerprint) {
         '',
         `Error:       ${report.name}${report.message ? `: ${report.message}` : ''}`,
         `Screen:      the "${report.boundary}" error boundary`,
-        `Components:  ${report.components.length ? report.components.join(' < ') : 'none sent'}`,
         `Build:       ${report.build || 'unknown'}`,
+        // Only a development build sends names; a line saying "none" on every
+        // report from a phone would read as something missing.
+        ...(report.components.length ? [`Components:  ${report.components.join(' < ')}`] : []),
         '',
         'No account is attached, by design. Every report of this same crash today',
         'is counted on one row:',
@@ -161,7 +174,7 @@ router.post(
         build: req.body.build || null,
         platform: req.body.platform,
       };
-      const fingerprint = fingerprintOf(report.boundary, report.name, report.components[0]);
+      const fingerprint = fingerprintOf(report.boundary, report.name, report.message, report.components[0]);
 
       // One statement: a new shape is stored only while today is under its
       // cap, and a shape already seen today is always counted. `inserted`

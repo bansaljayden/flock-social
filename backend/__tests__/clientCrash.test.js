@@ -125,7 +125,7 @@ test('the first report of a crash each day is mailed once; repeats only count', 
   reset();
   await post(REPORT);
   await post(REPORT);
-  await post({ ...REPORT, message: 'the same crash, a different message' });
+  await post({ ...REPORT, build: 'e5f6a7b8', platform: 'web' });
   await settle();
   assert.strictEqual(table.size, 1, 'one row per crash shape per day');
   assert.strictEqual([...table.values()][0].reports, 3);
@@ -139,14 +139,45 @@ test('the first report of a crash each day is mailed once; repeats only count', 
   assert.doesNotMatch(`${a.subject}\n${a.text}`, /—/, 'no em dashes in copy a person reads');
 });
 
-test('a different boundary, error or top component is a different crash', async () => {
+test('a different boundary, error, message or top component is a different crash', async () => {
   reset();
   await post(REPORT);
   await post({ ...REPORT, boundary: 'root' });
   await post({ ...REPORT, name: 'ChunkLoadError' });
+  await post({ ...REPORT, message: 'Cannot read properties of null (reading \'id\')' });
   await post({ ...REPORT, components: ['DiscoverLayer'] });
   await post({ ...REPORT, components: [...REPORT.components.slice(0, 1), 'Other'] });
-  assert.strictEqual(table.size, 4, 'only the top component is part of the shape');
+  assert.strictEqual(table.size, 5, 'of the component names, only the top one is part of the shape');
+});
+
+test('two crashes on one screen from a production build are two rows, and each is mailed', async () => {
+  // A production build sends no component names, because its names are the
+  // minifier's. Keyed on boundary, error name and top component alone, these
+  // two were one row, and the row kept the first message only: the second
+  // crash was counted and never mailed.
+  reset();
+  const fromPhone = { ...REPORT };
+  delete fromPhone.components;
+  await post(fromPhone);
+  await post({ ...fromPhone, message: 'Cannot read properties of null (reading \'members\')' });
+  await settle();
+  assert.strictEqual(table.size, 2);
+  assert.strictEqual(alerts.length, 2);
+  assert.match(alerts[0].text, /Error: {7}TypeError: Cannot read properties of undefined \(reading 'votes'\)/);
+  assert.match(alerts[1].text, /\(reading 'members'\)/);
+  assert.match(alerts[0].text, /Screen: {6}the "screen" error boundary/);
+  assert.match(alerts[0].text, /Build: {7}a1b2c3d4/);
+  assert.doesNotMatch(alerts[0].text, /Components:/, 'no line for names that were never sent');
+});
+
+test('a message that differs only in a number is the same crash', async () => {
+  reset();
+  await post({ ...REPORT, message: 'Venue 1234 has no hours for day 5' });
+  await post({ ...REPORT, message: 'Venue 98 has no hours for day 6' });
+  await settle();
+  assert.strictEqual(table.size, 1);
+  assert.strictEqual([...table.values()][0].reports, 2);
+  assert.strictEqual(alerts.length, 1);
 });
 
 test('every field has a closed shape', async () => {

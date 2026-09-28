@@ -757,7 +757,7 @@ export default function PrivacyPolicy() {
                 When part of the app stops working, the error screen has a <strong>Send this
                 to Flock</strong> button, and nothing is sent unless you press it. A report
                 holds the kind of error, its message with invite and reset tokens,
-                coordinates and email addresses removed, the names of the parts of the app it
+                coordinates and email addresses removed, which part of the app it
                 happened in, the app version, and whether it was the phone app or the
                 website. It carries no account, name, email address or device identifier, and
                 we delete it after 90 days.

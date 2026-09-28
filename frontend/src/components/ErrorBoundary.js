@@ -57,7 +57,9 @@ class ErrorBoundary extends React.Component {
     super(props);
     // componentStack is kept for the "Send this to Flock" button: it is the
     // only place the names of the components that crashed are available, and
-    // it arrives in componentDidCatch, after getDerivedStateFromError.
+    // it arrives in componentDidCatch, after getDerivedStateFromError. Only a
+    // development build sends those names; services/crashReport.js says why a
+    // minified one does not.
     this.state = { error: null, eventId: null, componentStack: null };
     this._mounted = false;
     this.reload = this.reload.bind(this);
