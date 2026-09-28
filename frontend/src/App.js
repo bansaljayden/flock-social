@@ -2715,6 +2715,33 @@ const guestRsvpId = (g) => {
 // names row exactly one matching name becomes 'You', and only on that row;
 // a second Alex on the same row stays Alex. The name match is kept only for a
 // payload without `mine`, which is a server from before it.
+//
+// THE COUNT ON A ROW IS THE SERVER'S. vote_count is the member votes plus the
+// guest-link votes as the server WEIGHS them: a venue's guest votes count for
+// at most the number of member votes cast on the whole plan, and a tie breaks
+// toward the venue the members picked (routes/venues.js collectVoteRows and
+// tailorVotes). This dropped vote_count and voteTotal added the names to the
+// RAW guest_count instead, so three members on one venue and four link RSVPs
+// on another read 3 to 4 here while the server had them level with the
+// members' pick on top. One person holding the share link outvoted the whole
+// roster on every screen that shows a leader, which is the thing the cap
+// exists to stop. guest_count stays raw on the row because it is a headcount
+// ("and 4 guests"), not a weight.
+//
+// It is kept as `unnamedVotes`, the part of the count no name on the row
+// accounts for, and not as a total, because vote rows are rewritten
+// optimistically: a tap moves 'You' from one row's voters to another's and
+// spreads everything else across, so a stored total would sit still under a
+// row that had just gained or lost a name. Names plus the remainder moves
+// with the tap and is the server's own figure again when its reply lands.
+// The remainder is the weighted guest votes plus the vote of any member this
+// reader has blocked, which the server counts and leaves unnamed. What a tap
+// cannot know is the cap moving: a first vote or an un-vote changes how many
+// member votes were cast, so a venue with more guests than the cap can read
+// one off until the reply replaces the rows, which comes back on every vote.
+//
+// A payload with no vote_count is a server from before the cap, which counted
+// every guest vote one for one, and the remainder reads it that way.
 const normalizeVotes = (raw, me, previous = []) => {
   if (!Array.isArray(raw)) return Array.isArray(previous) ? previous : [];
   const myId = me?.id != null ? String(me.id) : null;
@@ -2727,28 +2754,40 @@ const normalizeVotes = (raw, me, previous = []) => {
       // when the server says the row is theirs, none when it says not, and
       // null (every match, the old reading) when it says nothing.
       let meLeft = typeof v.mine === 'boolean' ? (v.mine ? 1 : 0) : null;
+      const voters = (v.voters || []).map((p) => {
+        if (typeof p === 'string') {
+          if (!myName || p !== myName || meLeft === 0) return p;
+          if (meLeft !== null) meLeft -= 1;
+          return 'You';
+        }
+        if (!p || typeof p !== 'object') return '';
+        if (myId != null && String(p.id) === myId) return 'You';
+        return p.name || '';
+      }).filter(Boolean);
+      const guestCount = Number(v.guest_count ?? v.guestCount ?? 0) || 0;
+      const counted = v.vote_count == null ? NaN : Number(v.vote_count);
       return {
         venue,
         type: v.type || prior?.type || 'Venue',
         place_id: v.place_id || v.venue_id || prior?.place_id || null,
-        voters: (v.voters || []).map((p) => {
-          if (typeof p === 'string') {
-            if (!myName || p !== myName || meLeft === 0) return p;
-            if (meLeft !== null) meLeft -= 1;
-            return 'You';
-          }
-          if (!p || typeof p !== 'object') return '';
-          if (myId != null && String(p.id) === myId) return 'You';
-          return p.name || '';
-        }).filter(Boolean),
-        guestCount: Number(v.guest_count ?? v.guestCount ?? 0) || 0,
+        voters,
+        guestCount,
+        unnamedVotes: Number.isFinite(counted) ? Math.max(0, counted - voters.length) : guestCount,
       };
     })
     .filter((v) => v.venue);
 };
 
-// Members who voted plus guest-link votes, which have no identities.
-const voteTotal = (v) => (v?.voters?.length || 0) + (v?.guestCount || 0);
+// What a vote row counts for, and the only figure a count or a ranking may be
+// read from: its names plus the part of the server's count no name accounts
+// for (normalizeVotes above has why). A row built on this device that never
+// came through normalizeVotes, the reader's fresh pick or the vote panel's
+// assigned venue, carries no remainder and counts what it shows.
+//
+// Rank by this with a STABLE sort and nothing else. The rows arrive in the
+// server's order, which already breaks a tie toward the members' pick, so a
+// tie left where it stands is the server's tie order.
+const voteTotal = (v) => (v?.voters?.length || 0) + (v?.unnamedVotes ?? (v?.guestCount || 0));
 
 // Has the person reading this screen already voted in this flock?
 //

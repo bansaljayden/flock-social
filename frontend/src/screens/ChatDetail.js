@@ -2231,10 +2231,14 @@ export default function ChatDetail({
       }
     };
 
+    // A row stays while it still counts for something, which is the rule the
+    // server's tally keeps rows by. Names and raw guests were the test, and a
+    // row held up only by the vote of somebody this reader blocked (counted,
+    // unnamed) vanished under the tap and came back with the reply.
     const handleUnvote = () => {
       const newVotes = flockVotesAll
         .map(v => ({ ...v, voters: v.voters.filter(x => x !== 'You') }))
-        .filter(v => v.voters.length > 0 || (v.guestCount || 0) > 0);
+        .filter(v => voteTotal(v) > 0);
       updateFlockVotes(selectedFlockId, newVotes);
     };
 
@@ -2509,7 +2513,7 @@ export default function ChatDetail({
               if (mine && (mine.voters || []).includes('You')) {
                 updateFlockVotes(selectedFlockId, current
                   .map(v => ({ ...v, voters: v.voters.filter(x => x !== 'You') }))
-                  .filter(v => v.voters.length > 0 || (v.guestCount || 0) > 0));
+                  .filter(v => voteTotal(v) > 0));
                 return;
               }
               if (mine) {
