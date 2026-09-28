@@ -31,6 +31,11 @@
 // MAX_KM from both. Demo serves and travel serves exist in
 // served_predictions, and a Tokyo venue would otherwise ride in carrying a
 // city label the collectors would then loyally spend credits on.
+//
+// A demanded venue that harvestVenueFilter.js already added is present but
+// inactive, so it is neither staged here nor refreshed by either collector.
+// Every run lists those separately as PROMOTION CANDIDATES (promotionReport);
+// promoting one is a hand-made UPDATE that puts it in the hourly live sweep.
 // ---------------------------------------------------------------------------
 
 require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.env') });
@@ -149,6 +154,76 @@ function isGoingOutPlace(types) {
   return list.some(isDrinkOrMeal) || !list.some((t) => NOT_A_NIGHT_OUT.has(t));
 }
 
+// Every demand signal, weighted by how much intent it carries: a check-in
+// is a person standing in the room, a vote is a plan considering it, a
+// serve is a card somebody looked at.
+const DEMAND_CTE = `
+    WITH demand AS (
+      SELECT venue_place_id AS place_id, COUNT(*)::int AS serves, 0 AS votes, 0 AS checkins
+        FROM served_predictions GROUP BY 1
+      UNION ALL
+      SELECT venue_id, 0, COUNT(*)::int, 0
+        FROM venue_votes WHERE venue_id IS NOT NULL GROUP BY 1
+      UNION ALL
+      SELECT venue_place_id, 0, 0, COUNT(*)::int
+        FROM venue_checkins GROUP BY 1
+    ),
+    rolled AS (
+      SELECT place_id,
+             SUM(serves)::int AS serves,
+             SUM(votes)::int AS votes,
+             SUM(checkins)::int AS checkins,
+             (SUM(serves) + SUM(votes) * 3 + SUM(checkins) * 5)::int AS signal
+        FROM demand
+       WHERE place_id IS NOT NULL AND LENGTH(place_id) BETWEEN 10 AND 255
+       GROUP BY 1
+    )`;
+
+// Demanded places with no ml_venues row at all: the ones this script stages.
+const MISSING_DEMAND_SQL = `${DEMAND_CTE}
+    SELECT r.*
+      FROM rolled r
+      LEFT JOIN ml_venues v ON v.google_place_id = r.place_id
+     WHERE v.id IS NULL
+     ORDER BY r.signal DESC, r.place_id`;
+
+// Demanded places whose only row is one harvestVenueFilter.js added: present,
+// so the query above rightly skips them, but inactive, so neither collector
+// ever reaches them, and a demanded venue would sit there unrefreshed with
+// nothing saying so. They are listed as promotion candidates instead. The
+// status literal is harvestVenueFilter.HARVEST_STATUS; it is not required from
+// there because that module loads the vendor client this script must never
+// load, and __tests__/harvestedIsolation.test.js pins the two equal.
+const HARVESTED_STATUS = 'harvested';
+const HARVESTED_DEMAND_SQL = `${DEMAND_CTE}
+    SELECT r.*, v.id AS venue_row_id, v.name, v.city, v.venue_category
+      FROM rolled r
+      JOIN ml_venues v ON v.google_place_id = r.place_id
+     WHERE v.besttime_status = '${HARVESTED_STATUS}'
+       AND v.is_active = false
+     ORDER BY r.signal DESC, r.place_id`;
+
+// The printed half of the promotion list. Nothing here writes: promotion is an
+// UPDATE the operator makes on purpose, because of what it starts.
+function promotionReport(rows) {
+  if (rows.length === 0) {
+    return ['[ML:Demand] No demanded venue is held only as an inactive harvested row.'];
+  }
+  const lines = [
+    `[ML:Demand] ${rows.length} demanded venues are in ml_venues only as inactive harvested rows. They are PROMOTION `
+      + 'CANDIDATES, listed apart from the list below; this script neither stages nor changes them.',
+  ];
+  for (const r of rows) {
+    lines.push(`  PROMOTE? ml_venues.id=${r.venue_row_id} ${r.name || '(unnamed)'} [${r.city}/${r.venue_category}] `
+      + `signal=${r.signal} (s${r.serves} v${r.votes} c${r.checkins})`);
+  }
+  lines.push('[ML:Demand] Promoting one (UPDATE ml_venues SET is_active = true WHERE id IN (...)) PUTS IT IN THE HOURLY '
+    + 'LIVE SWEEP: collectRealtime.js then calls it every hour against the sweep\'s 2,500-credit ceiling, and whether a '
+    + 'live call on a venue another account first forecast spends one of the month\'s 100 admissions is not documented. '
+    + 'Promote a few on purpose, never the whole list.');
+  return lines;
+}
+
 async function fetchDetails(placeId) {
   // 429 is Google saying slow down, not Google saying this place is gone.
   // The first dry run mislabeled live venues as unresolvable for exactly
@@ -202,38 +277,14 @@ async function main() {
     return pool.end();
   }
 
-  // Every demand signal, weighted by how much intent it carries: a check-in
-  // is a person standing in the room, a vote is a plan considering it, a
-  // serve is a card somebody looked at.
-  const { rows: candidates } = await pool.query(`
-    WITH demand AS (
-      SELECT venue_place_id AS place_id, COUNT(*)::int AS serves, 0 AS votes, 0 AS checkins
-        FROM served_predictions GROUP BY 1
-      UNION ALL
-      SELECT venue_id, 0, COUNT(*)::int, 0
-        FROM venue_votes WHERE venue_id IS NOT NULL GROUP BY 1
-      UNION ALL
-      SELECT venue_place_id, 0, 0, COUNT(*)::int
-        FROM venue_checkins GROUP BY 1
-    ),
-    rolled AS (
-      SELECT place_id,
-             SUM(serves)::int AS serves,
-             SUM(votes)::int AS votes,
-             SUM(checkins)::int AS checkins,
-             (SUM(serves) + SUM(votes) * 3 + SUM(checkins) * 5)::int AS signal
-        FROM demand
-       WHERE place_id IS NOT NULL AND LENGTH(place_id) BETWEEN 10 AND 255
-       GROUP BY 1
-    )
-    SELECT r.*
-      FROM rolled r
-      LEFT JOIN ml_venues v ON v.google_place_id = r.place_id
-     WHERE v.id IS NULL
-     ORDER BY r.signal DESC, r.place_id
-  `);
-
+  const { rows: candidates } = await pool.query(MISSING_DEMAND_SQL);
   console.log(`[ML:Demand] ${candidates.length} distinct demanded venues are missing from ml_venues.`);
+
+  // Listed before anything else can return: a harvested row real users asked
+  // about is the demand list's business even on a day nothing is missing.
+  const { rows: promotable } = await pool.query(HARVESTED_DEMAND_SQL);
+  for (const line of promotionReport(promotable)) console.log(line);
+
   if (candidates.length === 0) return pool.end();
   console.log(`[ML:Demand] Walking by signal until ${maxNew} are staged or ${maxProbe} probed (the Package tier admits 100 new venues a month; --max-new= and --max-probe= raise on purpose).`);
 
@@ -329,7 +380,10 @@ async function main() {
   return pool.end();
 }
 
-module.exports = { PA_CITIES, MAX_KM, kmBetween, nearestPaCity };
+module.exports = {
+  PA_CITIES, MAX_KM, kmBetween, nearestPaCity,
+  MISSING_DEMAND_SQL, HARVESTED_DEMAND_SQL, HARVESTED_STATUS, promotionReport,
+};
 
 // Only when run directly. The market rule above is required by
 // harvestVenueFilter.js, and a require must not start a Places walk against
