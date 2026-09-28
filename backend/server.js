@@ -2401,6 +2401,8 @@ let photoPruneInterval = null;
 let photoPruneKickoff = null;
 let storyPurgeInterval = null;
 let storyPurgeKickoff = null;
+let evidencePurgeInterval = null;
+let evidencePurgeKickoff = null;
 let refreshPruneInterval = null;
 let refreshPruneKickoff = null;
 let flockSweepInterval = null;
@@ -2563,6 +2565,21 @@ async function boot() {
   // tick of a cold boot.
   storyPurgeKickoff = setTimeout(storyPurge, 105 * 1000);
 
+  // Delete the saved copies of reported plan content once their reports are
+  // closed (utils/reportEvidence.js). A plan delete keeps a copy of any message
+  // or guest name an open report names, and a guest's copy has no account
+  // whose deletion would ever take it, so this timer is the only thing that
+  // ends it. The privacy policy states the period after the close; hourly, like
+  // the story purge, because that period is a week and being an hour late
+  // costs an hour.
+  const { purgeClosedReportEvidence, EVIDENCE_PURGE_INTERVAL_MS } = require('./utils/reportEvidence');
+  const evidencePurge = () => purgeClosedReportEvidence()
+    .catch((e) => console.error('[moderation] saved report copy purge failed:', e && e.message));
+  evidencePurgeInterval = setInterval(evidencePurge, EVIDENCE_PURGE_INTERVAL_MS);
+  // 95s: between the completion sweep's 90s and the reconfirm sweep's 100s,
+  // same stagger reason as its neighbours.
+  evidencePurgeKickoff = setTimeout(evidencePurge, 95 * 1000);
+
   // Delete refresh credentials that can never renew anything again
   // (services/refreshTokens.js). A renewal prunes its own account's dead rows,
   // but the rows that pile up belong to accounts that never renew again:
@@ -2691,6 +2708,8 @@ function shutdown(signal) {
   if (photoPruneKickoff) clearTimeout(photoPruneKickoff);
   if (storyPurgeInterval) clearInterval(storyPurgeInterval);
   if (storyPurgeKickoff) clearTimeout(storyPurgeKickoff);
+  if (evidencePurgeInterval) clearInterval(evidencePurgeInterval);
+  if (evidencePurgeKickoff) clearTimeout(evidencePurgeKickoff);
   if (refreshPruneInterval) clearInterval(refreshPruneInterval);
   if (refreshPruneKickoff) clearTimeout(refreshPruneKickoff);
   if (crashReportPruneInterval) clearInterval(crashReportPruneInterval);

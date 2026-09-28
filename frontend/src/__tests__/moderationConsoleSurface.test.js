@@ -735,6 +735,12 @@ describe('every action the server can still honour is on the card', () => {
 
     expect(screen.getByText('kept words')).toBeInTheDocument();
     expect(screen.getByText(/The plan this was in has been deleted\. This is the copy kept for review/)).toBeInTheDocument();
+    // How long it lasts once the report is closed, in the same number the
+    // server's purge uses, since a closed report cannot be reopened.
+    const days = Number(fs.readFileSync(
+      path.join(__dirname, '..', '..', '..', 'backend', 'utils', 'reportEvidence.js'), 'utf8'
+    ).match(/const EVIDENCE_RETENTION_DAYS = (\d+);/)[1]);
+    expect(screen.getByText(new RegExp(`It is deleted ${days} days after the last report about it is closed`))).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Hide content' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Restore content' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Ban user' })).toBeInTheDocument();

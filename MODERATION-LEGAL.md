@@ -110,7 +110,9 @@ You will know because the alert is distinct: the email subject starts with
      `open`/`under_review` report names is kept in `content_report_evidence`
      (migration 110), and the console shows that copy. The copy still goes
      with its author's account, like the message it replaces, so it is not a
-     reason to wait.
+     reason to wait. It also goes 7 days after the last report naming it is
+     closed (an hourly timer, `purgeClosedReportEvidence`), so export it
+     before you close the report, as with everything else here.
 
    Export now, to an encrypted disk or encrypted archive OFF the production
    database, access limited to you. Image bytes live inline in the rows as

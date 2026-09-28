@@ -26,7 +26,9 @@
 //    cascade away with their plan, so deleting a plan took reported content
 //    with it and the moderator opened the report to nothing. What an open
 //    report names is now copied out in the delete's own transaction
-//    (migration 110), on every door that deletes a plan.
+//    (migration 110), on every door that deletes a plan. And the copy is not
+//    kept for good: it goes a stated period after the last report naming it
+//    is closed, which is what the privacy policy says.
 //
 // Real routes on a real migrated Postgres, because both defects are about what
 // the server does with locks and transactions, and a scripted pool can only
@@ -616,4 +618,98 @@ test("the host's account deletion keeps other people's reported content from the
   const gone = await call('DELETE', '/api/users/me', { token: people.abuser.token, body: { password: PASSWORD } });
   assert.equal(gone.status, 200, gone.text);
   assert.deepEqual(await keptCopies(ids), [`guest_rsvp:${ids.guest}`]);
+});
+
+test('a copy goes once every report naming it has been closed for the retention period, and not before', async () => {
+  const {
+    purgeClosedReportEvidence, EVIDENCE_RETENTION_DAYS,
+  } = require('../utils/reportEvidence');
+  const people = {
+    host: await mkUser('Host'), abuser: await mkUser('Abuser'), reporter: await mkUser('Reporter'),
+  };
+  const second = await mkUser('Witness');
+  const mod = await mkModerator();
+  const { flockId, ids, reports } = await reportedPlan({
+    ...people, roster: [people.host, people.abuser, people.reporter, second],
+  });
+  // A second person reported the venue card too, so one close is not enough.
+  const cardAgain = await report(second, people.abuser, 'flock_message', ids.card);
+
+  assert.equal((await call('DELETE', `/api/flocks/${flockId}`, { token: people.host.token })).status, 200);
+  assert.deepEqual(await keptCopies(ids), [
+    `flock_message:${ids.card}`, `flock_message:${ids.photo}`, `guest_rsvp:${ids.guest}`,
+  ].sort());
+
+  // Closed through the console, which is what writes resolved_at, the clock.
+  const close = async (reportId) => {
+    const res = await call('PUT', `/api/admin/reports/${reportId}`, {
+      token: mod.token, body: { action: 'dismiss' },
+    });
+    assert.equal(res.status, 200, res.text);
+  };
+  const closedAgo = (reportId, days) => pool.query(
+    `UPDATE content_reports SET resolved_at = NOW() - ($2::int * INTERVAL '1 day') - INTERVAL '1 minute'
+      WHERE id = $1`,
+    [reportId, days]
+  );
+
+  // Just closed: still inside the period, so nothing goes.
+  for (const id of [reports.photo, reports.guest, reports.card]) await close(id);
+  await purgeClosedReportEvidence();
+  assert.deepEqual(await keptCopies(ids), [
+    `flock_message:${ids.card}`, `flock_message:${ids.photo}`, `guest_rsvp:${ids.guest}`,
+  ].sort());
+
+  // A day short of the period: still kept.
+  await closedAgo(reports.photo, EVIDENCE_RETENTION_DAYS - 1);
+  await purgeClosedReportEvidence();
+  assert.ok((await keptCopies(ids)).includes(`flock_message:${ids.photo}`));
+
+  // Past the period: the photo and the guest's name go, the guest's with no
+  // account behind it whose deletion would ever have taken it. The card stays,
+  // because another report about it is still open.
+  await closedAgo(reports.photo, EVIDENCE_RETENTION_DAYS);
+  await closedAgo(reports.guest, EVIDENCE_RETENTION_DAYS);
+  await closedAgo(reports.card, EVIDENCE_RETENTION_DAYS);
+  assert.equal(await purgeClosedReportEvidence(), 2);
+  assert.deepEqual(await keptCopies(ids), [`flock_message:${ids.card}`]);
+
+  // The last report closes: the period starts from that close, not the first.
+  await close(cardAgain);
+  await purgeClosedReportEvidence();
+  assert.deepEqual(await keptCopies(ids), [`flock_message:${ids.card}`]);
+  await closedAgo(cardAgain, EVIDENCE_RETENTION_DAYS);
+  await purgeClosedReportEvidence();
+  assert.deepEqual(await keptCopies(ids), [], 'a closed report leaves no copy behind');
+
+  // And the console says the content is gone rather than showing a copy.
+  const card = await queueCard(mod, reports.card);
+  assert.equal(card.content_preserved, false);
+  assert.equal(card.content_missing, true);
+
+  // A copy no report names at all holds nothing either, and a batch of one
+  // still deletes everything there is to delete.
+  await pool.query(
+    `INSERT INTO content_report_evidence (content_type, content_id, name)
+     VALUES ('guest_rsvp', 2000000001, 'orphan'), ('guest_rsvp', 2000000002, 'orphan')`
+  );
+  assert.equal(await purgeClosedReportEvidence(1), 2);
+  assert.equal(await count(
+    'SELECT COUNT(*)::int AS n FROM content_report_evidence WHERE content_id IN (2000000001, 2000000002)'
+  ), 0);
+});
+
+test('server.js runs the saved copy purge on a timer and clears it on shutdown', () => {
+  // Anchored at the start of each line, so a commented-out line does not pass.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8').replace(/\r/g, '');
+  const { EVIDENCE_PURGE_INTERVAL_MS } = require('../utils/reportEvidence');
+  assert.equal(EVIDENCE_PURGE_INTERVAL_MS, 60 * 60 * 1000, 'the privacy policy says the cleanup runs every hour');
+  assert.match(src, /^let evidencePurgeInterval = null;$/m);
+  assert.match(src, /^let evidencePurgeKickoff = null;$/m);
+  assert.match(src, /^\s*const evidencePurge = \(\) => purgeClosedReportEvidence\(\)$/m);
+  assert.match(src, /^\s*evidencePurgeInterval = setInterval\(evidencePurge, EVIDENCE_PURGE_INTERVAL_MS\);$/m);
+  assert.match(src, /^\s*evidencePurgeKickoff = setTimeout\(evidencePurge, /m);
+  const shutdown = src.slice(src.indexOf('function shutdown('));
+  assert.match(shutdown, /^\s*if \(evidencePurgeInterval\) clearInterval\(evidencePurgeInterval\);$/m);
+  assert.match(shutdown, /^\s*if \(evidencePurgeKickoff\) clearTimeout\(evidencePurgeKickoff\);$/m);
 });
