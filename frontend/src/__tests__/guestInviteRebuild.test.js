@@ -1129,6 +1129,88 @@ describe('a regenerated link does not strand a guest who already answered', () =
   });
 });
 
+// A first answer whose reply the connection lost. The row committed on the
+// server, and the reply was the only place its identity lived, so the tap again
+// was refused as a name already taken, on the device that had answered. The
+// page now mints the identity and sends it with the first answer, and sends
+// the same one again until an answer comes back (routes/guest.js keys the row
+// on it and answers a repeat from that row).
+describe('GuestInvite: a first answer whose reply was lost is the same answer when tapped again', () => {
+  // eslint-disable-next-line global-require
+  const GuestInvite = require('../website/GuestInvite').default;
+  const KEY = `flock_guest_${NEW_TOKEN}`;
+  const PENDING = `flock_rsvp_pending_${NEW_TOKEN}`;
+  const MINTED = '5b0c7e1a-2f3d-4a6b-8c9d-0e1f2a3b4c5d';
+  const reply = (status, body) => Promise.resolve({ ok: status < 400, status, json: () => Promise.resolve(body) });
+
+  let realCrypto;
+  beforeEach(() => {
+    window.localStorage.clear();
+    realCrypto = Object.getOwnPropertyDescriptor(window, 'crypto');
+    Object.defineProperty(window, 'crypto', { configurable: true, value: { randomUUID: () => MINTED } });
+  });
+  afterEach(() => {
+    if (realCrypto) Object.defineProperty(window, 'crypto', realCrypto);
+    else delete window.crypto;
+    window.history.pushState({}, '', '/');
+  });
+
+  test('both taps carry one identity the page minted, and it is kept only until an answer lands', async () => {
+    window.history.pushState({}, '', `/i/${NEW_TOKEN}`);
+    const sent = [];
+    let rsvpCalls = 0;
+    global.fetch = jest.fn((url, opts) => {
+      const route = String(url).replace(/^.*\/api\/guest\/[^/?]+/, '');
+      if (route === '/rsvp') {
+        sent.push(JSON.parse(opts.body));
+        rsvpCalls += 1;
+        // The first answer's reply never arrives.
+        if (rsvpCalls === 1) return Promise.reject(new TypeError('Failed to fetch'));
+        return reply(200, { guestToken: MINTED, status: 'in' });
+      }
+      return route === '' ? reply(200, PLAN) : reply(404, {});
+    });
+    const { container } = render(React.createElement(GuestInvite));
+    await screen.findByRole('heading', { level: 1, name: /friday night out/i });
+
+    fireEvent.change(screen.getByLabelText(/your name/i), { target: { value: 'Riley' } });
+    fireEvent.click(screen.getByRole('button', { name: /i'm in/i }));
+    await waitFor(() => expect(container.querySelector('#gi-problem-rsvp').textContent).toMatch(/did not go through/));
+    // Kept, so the tap again is the same person.
+    expect(JSON.parse(window.localStorage.getItem(PENDING))).toEqual({ guestToken: MINTED });
+    expect(window.localStorage.getItem(KEY)).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: /i'm in/i }));
+    await waitFor(() => expect(JSON.parse(window.localStorage.getItem(KEY) || 'null')).toMatchObject({ guestToken: MINTED, name: 'Riley', status: 'in' }));
+    expect(sent).toEqual([
+      { name: 'Riley', status: 'in', guestToken: MINTED },
+      { name: 'Riley', status: 'in', guestToken: MINTED },
+    ]);
+    expect(window.localStorage.getItem(PENDING)).toBeNull();
+    expect(container.querySelector('#gi-problem-rsvp').textContent).toBe('');
+  });
+
+  test('an identity already answered under is sent as it always was, and nothing is minted', async () => {
+    window.localStorage.setItem(KEY, JSON.stringify({ guestToken: 'g-1', name: 'Riley', status: 'in' }));
+    window.history.pushState({}, '', `/i/${NEW_TOKEN}`);
+    const sent = [];
+    global.fetch = jest.fn((url, opts) => {
+      const route = String(url).replace(/^.*\/api\/guest\/[^/?]+/, '');
+      if (route === '/rsvp') {
+        sent.push(JSON.parse(opts.body));
+        return reply(200, { guestToken: 'g-1', status: 'out' });
+      }
+      return route === '' ? reply(200, PLAN) : reply(404, {});
+    });
+    render(React.createElement(GuestInvite));
+    await screen.findByRole('heading', { level: 1, name: /friday night out/i });
+    fireEvent.click(screen.getByRole('button', { name: /can't make it/i }));
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect(sent[0]).toEqual({ name: 'Riley', status: 'out', guestToken: 'g-1' });
+    expect(window.localStorage.getItem(PENDING)).toBeNull();
+  });
+});
+
 // ───────────────────────────────────────────────────────────────────────────
 // The link does what a member can do: the anonymous budget and the night-of
 // "still in?", added 2026-09-16 because production data said no flock had ever
