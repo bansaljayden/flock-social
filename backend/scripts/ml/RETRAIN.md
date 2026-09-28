@@ -1783,6 +1783,74 @@ The armed sequence, in order, once BestTime is cleared to spend:
    deliberately created Railway cron, which is his call, not an autonomous
    one)
 
+## Venue Filter harvest (2026-09-28): weekly curves without spending admissions
+
+`scripts/ml/harvestVenueFilter.js` asks BestTime's Venue Filter for every
+venue BestTime holds a forecast for in a market, one weekday at a time, and
+files each curve as weekly rows. The filter bills query credits (about one per
+ten venues returned), which the package does not meter. The script cannot call
+a forecast by name, a venue search or a live endpoint (a guard refuses them
+before the request leaves, pinned in `__tests__/harvestVenueFilter.test.js`),
+so it spends none of the month's 100 admissions. Dry run is the default.
+
+```bash
+# from backend/, one market at a time; read each dry run before its --commit
+node scripts/ml/harvestVenueFilter.js --city=philly            # dry run
+node scripts/ml/harvestVenueFilter.js --city=philly --commit
+node scripts/ml/harvestVenueFilter.js --city=lehigh            # dry run
+node scripts/ml/harvestVenueFilter.js --city=lehigh --commit
+```
+
+`--days=0` asks Monday only, a seventh of the requests, for a first look. Every
+run prints the key's counters before and after; the besttime.app dashboard is
+the authority for the admission count. Requests start four seconds apart (the
+filter is documented at 30 a minute), and a market is at least one request per
+tile per weekday (62 tiles for philly, 60 for lehigh, more where a tile passes
+the 500-result cap and is split), so allow an hour per market per run.
+
+What a `--commit` writes:
+
+- Weekly rows through collectWeekly's slot transform and upsert key, labelled
+  the way collectWeekly labels them: `collection_mode = 'weekly'`,
+  `hour_axis = 'venue_local'`, `label_source` NULL, events_observed false with
+  `'no_observation_date'`, and `besttime_epoch` NULL because the filter does not
+  say which analysis produced the curve. A rerun refreshes in place, newest
+  wins, so run `archiveWeeklyWindow.js --suffix=...` first if the current
+  weekly rows are a window worth keeping.
+- A new `ml_venues` row only for a venue with a real Google place id that the
+  corpus holds under neither its BestTime id nor its place id, placed by
+  addDemandVenues' nearest-centroid rule (80 km). New rows are
+  `is_active = false`, `besttime_status = 'harvested'`: the hourly live sweep
+  reads active rows with a BestTime id and refuses above 2,500 of them, so a
+  harvest of thousands would stop it. They still train (the export reads every
+  row) and get served curves once buildBaselines runs.
+- A known venue matched by place id gets its curves and no BestTime id: a
+  stamped id would put it in the hourly sweep, and whether a live call on a
+  venue first forecast by another account spends an admission is not
+  documented.
+
+It exits nonzero on an abort, on a dry run with nothing to write, and on a
+`--commit` that wrote nothing or failed a write.
+
+**Monthly.** BestTime deletes a stored forecast after 31 days, and the filter
+only returns venues whose forecast still exists. Harvest both markets in the
+first week of every calendar month (dry run, then `--commit`). Our own venues'
+forecasts are renewed only by a forecast call by id, `collectWeekly.js
+--city=... --only-found` (unlimited on the package); run it inside the same 31
+days or they drop out of the filter too.
+
+**Not settled by the documentation, check on the first dry run:** the place-id
+flag is sent as `place_id=True` and read from `venue_place_id`, `place_id` or
+`google_place_id`, none of which the published filter schema names. If the dry
+run warns that no venue carried a place id, nothing new can be added (known
+venues still refresh); if BestTime answers 400, `--no-place-id` runs without
+the flag and `--all-types` without the types list (the `*_RESTAURANT` names
+are taken from BestTime's venue-types catalog, not from a live answer).
+`own_venues_only=False` is sent in BestTime's True/False spelling.
+The 500 cap is the account's limit, not the documentation's (which allows
+`limit` up to 10,000); `--result-cap` and `--page-size` change it, and
+`venues_n` is read as a box total only when it is larger than the page.
+
 ## The BESTTIME cron service: what it is and how it breaks (audited 2026-09-01)
 
 > **The cadence in this section is historical. Corrected 2026-09-06.** It runs

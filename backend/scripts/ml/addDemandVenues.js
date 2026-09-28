@@ -69,6 +69,20 @@ function kmBetween(lat1, lon1, lat2, lon2) {
   return 2 * R * Math.asin(Math.sqrt(a));
 }
 
+// The market rule, in one place: the nearest PA centroid, or no city at all
+// when the point is more than MAX_KM from both. harvestVenueFilter.js assigns
+// its venues with this same function, so the two ways a venue enters the
+// corpus cannot disagree about where philly ends.
+function nearestPaCity(lat, lon) {
+  let cityKey = null;
+  let best = Infinity;
+  for (const [key, city] of Object.entries(PA_CITIES)) {
+    const d = kmBetween(lat, lon, city.lat, city.lon);
+    if (d < best) { best = d; cityKey = key; }
+  }
+  return { cityKey: best > MAX_KM ? null : cityKey, km: best };
+}
+
 // Google types to the corpus's own category vocabulary (the GROUP BY of
 // ml_venues.venue_category). Order matters: the first match wins, and the
 // specific types outrank the generic ones Google attaches to everything.
@@ -258,17 +272,13 @@ async function main() {
     const lon = p.location?.longitude;
     if (!lat || !lon) { gone++; continue; }
 
-    let cityKey = null;
-    let best = Infinity;
-    for (const [key, city] of Object.entries(PA_CITIES)) {
-      const d = kmBetween(lat, lon, city.lat, city.lon);
-      if (d < best) { best = d; cityKey = key; }
-    }
-    if (best > MAX_KM) {
+    const nearest = nearestPaCity(lat, lon);
+    if (!nearest.cityKey) {
       outOfArea++;
-      console.log(`  SKIP (out of area, ${Math.round(best)}km) ${p.displayName?.text || c.place_id}`);
+      console.log(`  SKIP (out of area, ${Math.round(nearest.km)}km) ${p.displayName?.text || c.place_id}`);
       continue;
     }
+    const cityKey = nearest.cityKey;
     if (p.businessStatus && p.businessStatus !== 'OPERATIONAL') {
       gone++;
       console.log(`  SKIP (${p.businessStatus}) ${p.displayName?.text || c.place_id}`);
@@ -319,8 +329,15 @@ async function main() {
   return pool.end();
 }
 
-main().catch((err) => {
-  console.error('[ML:Demand] Fatal:', err);
-  pool.end();
-  process.exitCode = 1;
-});
+module.exports = { PA_CITIES, MAX_KM, kmBetween, nearestPaCity };
+
+// Only when run directly. The market rule above is required by
+// harvestVenueFilter.js, and a require must not start a Places walk against
+// whatever database the environment names.
+if (require.main === module) {
+  main().catch((err) => {
+    console.error('[ML:Demand] Fatal:', err);
+    pool.end();
+    process.exitCode = 1;
+  });
+}

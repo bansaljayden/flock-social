@@ -55,7 +55,8 @@ test('the demand script keeps the corpus PA by geometry, not trust', () => {
 });
 
 test('a going-out place is judged by its own types: bars, clubs, stages and taprooms pass, garages do not', () => {
-  // The script runs on require, so the filter is evaluated from its source.
+  // Evaluated from the source, so the test needs neither the pg pool nor the
+  // Places key the script opens at load time.
   const tableAt = DEMAND.indexOf('const TYPE_TO_CATEGORY = [');
   const table = DEMAND.slice(tableAt, DEMAND.indexOf('];', tableAt) + 2);
   const fnAt = DEMAND.indexOf('function isGoingOutPlace');

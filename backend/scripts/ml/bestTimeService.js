@@ -236,3 +236,9 @@ async function fetchLiveBusyness(venueId) {
 }
 
 module.exports = { fetchWeeklyForecast, fetchLiveBusyness, NETWORK_ERR_RE };
+// Also exported for harvestVenueFilter.js, which calls a different endpoint
+// under the same error contract and the same body deadline. A second copy of
+// either is how a 402 would come to mean "no venues here" in one collector and
+// "stop" in another.
+module.exports.classifyHttpFailure = classifyHttpFailure;
+module.exports.fetchJsonWithTimeout = fetchJsonWithTimeout;
