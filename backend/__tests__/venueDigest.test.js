@@ -1039,3 +1039,30 @@ test('server.js mounts /api/venue-digest ahead of the bare /api catch-alls, or t
     + 'answers every emailed unsubscribe link 401 "No token provided" and the router never runs.'
   );
 });
+
+// ============================================================================
+// The switch is "Monday email" on the dashboard, in the email and on the
+// unsubscribe pages. The operator's notes had kept the old names: the
+// DIGEST_ENABLED entry in .env.example sent whoever turns the send on to a
+// "Weekly reports" switch that no longer exists, and the money hub's venue
+// cost note called the send "the Monday digest".
+// ============================================================================
+test('the operator notes call the Monday email by the name the dashboard shows', () => {
+  const path = require('node:path');
+  const dashboard = fs.readFileSync(
+    path.join(__dirname, '..', '..', 'frontend', 'src', 'screens', 'VenueDashboard.js'), 'utf8'
+  );
+  assert.ok(dashboard.includes(' Monday email</h3>'), 'the dashboard switch is no longer titled "Monday email"');
+
+  const env = fs.readFileSync(path.join(__dirname, '..', '.env.example'), 'utf8').replace(/\r\n/g, '\n');
+  const at = env.indexOf('\nDIGEST_ENABLED=');
+  assert.notStrictEqual(at, -1, '.env.example no longer documents DIGEST_ENABLED');
+  const entry = env.slice(env.lastIndexOf('\n\n', at), at);
+  assert.match(entry, /dashboard "Monday email" switch/);
+  assert.doesNotMatch(entry, /weekly reports?/i);
+
+  const { buildVenueUnitEconomics } = require('../services/costModel');
+  const { note } = buildVenueUnitEconomics({});
+  assert.match(note, /Monday email/);
+  assert.doesNotMatch(note, /digest|weekly reports?/i);
+});

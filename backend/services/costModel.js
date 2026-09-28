@@ -2052,7 +2052,7 @@ function buildVenueUnitEconomics(args = {}) {
     observedMonthlyUsd,
     observedMarginPct: margin(observedMonthlyUsd),
     note:
-      'Gemini is the only per-venue cost that scales with use. Weather, Ticketmaster and the Monday digest are inside free tiers at any venue count this reaches, and the Places ledger is shared across the whole product rather than attributable to one venue.',
+      'Gemini is the only per-venue cost that scales with use. Weather, Ticketmaster and the Monday email to venues are inside free tiers at any venue count this reaches, and the Places ledger is shared across the whole product rather than attributable to one venue.',
   };
 }
 
