@@ -49,9 +49,9 @@ class Res(nn.Module):
 
 
 class PeopleNet(nn.Module):
-    def __init__(self, w=24, classes=1, boxes=False):
+    def __init__(self, w=24, classes=1, boxes=False, stride=4):
         super().__init__()
-        self.classes, self.boxes = classes, boxes
+        self.classes, self.boxes, self.stride = classes, boxes, stride
         self.s2 = nn.Sequential(block(2, w, 2), block(w, w))                   # 60x80
         self.s4 = nn.Sequential(block(w, w * 2, 2), Res(w * 2))                # 30x40
         self.s8 = nn.Sequential(block(w * 2, w * 3, 2), Res(w * 3), Res(w * 3))  # 15x20
@@ -59,6 +59,13 @@ class PeopleNet(nn.Module):
         self.up16 = nn.Conv2d(w * 4, w * 3, 1)
         self.up8 = nn.Conv2d(w * 3, w * 2, 1)
         self.fuse = nn.Sequential(block(w * 2, w * 2), block(w * 2, w))
+        if stride == 2:
+            # A second, finer output grid (80 x 60): two heads a few pixels
+            # apart fall in one cell of the 40 x 30 grid and merge into one
+            # person, which is how crowds and one person behind another were
+            # undercounted. The finer grid takes the stride-2 features back in.
+            self.fine_skip = block(w, w)
+            self.fine = block(w, w)
         self.head = nn.Conv2d(w, classes, 1)
         # Start from "nothing here" so early training is not a flood of peaks.
         nn.init.constant_(self.head.bias, -4.6)
@@ -73,6 +80,9 @@ class PeopleNet(nn.Module):
         c = c + F.interpolate(self.up16(d), size=c.shape[-2:], mode='bilinear', align_corners=False)
         b = b + F.interpolate(self.up8(c), size=b.shape[-2:], mode='bilinear', align_corners=False)
         f = self.fuse(b)
+        if self.stride == 2:
+            f = F.interpolate(f, size=a.shape[-2:], mode='bilinear', align_corners=False)
+            f = self.fine(f + self.fine_skip(a))
         if not self.boxes:
             return self.head(f)                   # logits, classes x 30 x 40
         # Box reach is learned in log space: a hand filling half the frame and
