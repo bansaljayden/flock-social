@@ -19,8 +19,14 @@
 //     made, and the in-process guard refuses the admitting endpoints before a
 //     byte leaves;
 //   * identity: an existing row by BestTime id, an existing row by Google place
-//     id (curves filed, no id stamped), a new row only with a real place id,
-//     outside-market venues skipped, and never a second identity for one place;
+//     id (curves filed, no id stamped), an existing row within 40 m under a
+//     similar name (the same), a new row only with a real place id inside
+//     --radius-km, outside-market venues skipped, and never a second identity
+//     for one place;
+//   * the axis proof: 24 known venues whose stored weeks match at rotation 0
+//     let --commit through; 24 whose stored weeks put slot 0 at midnight are
+//     found at +6 and refused, as is a run with too few venues to compare;
+//   * a refreshed row keeps its stored besttime_epoch;
 //   * a dry run writes nothing (xmin snapshot), a commit upserts, a rerun
 //     changes nothing but collected_at;
 //   * an empty run, an aborted run and a refused key all exit nonzero;
@@ -75,18 +81,38 @@ function fx(venueId, lat, lng, type, placeId, seed, extra = {}) {
   return { venueId, lat, lng, type, placeId, week: seed === null ? ZERO_WEEK : weekFor(seed), rating: 4.4, reviews: 120, ...extra };
 }
 
-// A point inside a tile the harvester will ask about but more than MAX_KM from
-// both centroids, derived from the tiling itself so the fixture cannot drift
+// A tile corner the harvester will ask about (both markets, `radiusKm`) that
+// satisfies `ok`, derived from the tiling itself so the fixture cannot drift
 // out of the area the harvester covers.
-function outsidePoint() {
-  for (const t of harvester.buildTiles(['philly', 'lehigh'], 20)) {
+function tileCorner(radiusKm, ok, what) {
+  for (const t of harvester.buildTiles(['philly', 'lehigh'], 20, radiusKm)) {
     for (const [lat, lng] of [[t.s + 0.5, t.w + 0.5], [t.s + 0.5, t.e - 0.5], [t.n - 0.5, t.w + 0.5], [t.n - 0.5, t.e - 0.5]]) {
-      if (!nearestPaCity(lat / 1000, lng / 1000).cityKey) return { lat: lat / 1000, lng: lng / 1000 };
+      if (ok(nearestPaCity(lat / 1000, lng / 1000))) return { lat: lat / 1000, lng: lng / 1000 };
     }
   }
-  throw new Error('fixture: no tile corner lies outside both markets');
+  throw new Error(`fixture: no tile corner ${what}`);
 }
-const OUT = outsidePoint();
+// More than MAX_KM from both centroids, asked about only at --radius-km=80.
+const OUT = tileCorner(80, (w) => !w.cityKey, 'lies outside both markets');
+// Philadelphia's market, past the default 20 km, still inside a default tile.
+const FAR = tileCorner(20, (w) => w.cityKey === 'philly' && w.km > 21, 'lies past 20 km in a default tile');
+
+// Twenty-four venues the corpus already holds by BestTime id, with the weekly
+// rows collectWeekly would have stored for them: the evidence the axis proof
+// compares against. Four of them come back from the filter under a place id
+// other than the one stored.
+const AXIS = Array.from({ length: 24 }, (_, i) => fx(
+  `ven_axis_${String(i).padStart(2, '0')}`, 39.9200 + i * 0.001, -75.2000, 'BAR',
+  i < 20 ? `ChIJharvestAxisPl${String(i).padStart(3, '0')}` : `ChIJharvestAxisNw${String(i).padStart(3, '0')}`,
+  100 + i * 7
+));
+// Twenty-four more whose stored rows put slot 0 at MIDNIGHT: what the corpus
+// would hold if the filter's origin differed from the transform's by six
+// hours. Only the gate test asks the fake for them.
+const SHIFTED = Array.from({ length: 24 }, (_, i) => fx(
+  `ven_shift_${String(i).padStart(2, '0')}`, 40.0000 + i * 0.001, -75.2500, 'BAR',
+  `ChIJharvestShiftP${String(i).padStart(3, '0')}`, 300 + i * 5
+));
 
 const V = {
   // The twin first, so the order-independence of the identity pass is tested:
@@ -105,14 +131,26 @@ const V = {
   otherBt: fx('ven_other_bt', 39.98001, -75.13001, 'BAR', 'ChIJharvestHeldElse1', 15),
   unmapped: fx('ven_supermarket', 39.98501, -75.12501, 'SUPERMARKET', 'ChIJharvestSuperMk01', 25),
   zero: fx('ven_zero', 39.99001, -75.12001, 'BAR', 'ChIJharvestZeroWk001', null),
+  // Identity rule 4. The seeded "The Olde Bar" row sits 17 m away under
+  // another place id; "Sushi Palace" is as close and a different venue.
+  nearDup: fx('ven_near_dup', 39.94135, -75.14510, 'BAR', 'ChIJharvestNearNew01', 35, { name: 'Olde Bar Philadelphia' }),
+  nearOther: fx('ven_near_other', 39.94130, -75.14505, 'RESTAURANT', 'ChIJharvestNearOth01', 45, { name: 'Sushi Palace' }),
+  // The seeded row it resembles holds another BestTime id.
+  nearHeld: fx('ven_near_held', 39.93129, -75.16129, 'RESTAURANT', 'ChIJharvestNearHeld2', 55, { name: 'Bing Bing Dim Sum' }),
+  // Two new listings of one beer hall, 15 m apart.
+  twinHallA: fx('ven_twin_hall_a', 39.96870, -75.13450, 'BAR', 'ChIJharvestTwinHallA', 65, { name: 'Frankford Hall' }),
+  twinHallB: fx('ven_twin_hall_b', 39.96883, -75.13455, 'BAR', 'ChIJharvestTwinHallB', 75, { name: 'Frankford Hall Beer Garden' }),
+  // Past the default radius: a new one is skipped, a known one refreshed.
+  farNew: fx('ven_far_new', FAR.lat, FAR.lng, 'BAR', 'ChIJharvestFarNew001', 85),
+  farKnown: fx('ven_far_known', FAR.lat + 0.0002, FAR.lng, 'BAR', 'ChIJharvestFarKnwn01', 95),
 };
-const FIXTURE = Object.values(V);
+const FIXTURE = [...Object.values(V), ...AXIS];
 
 const jsonResponse = (status, body) => ({ ok: status >= 200 && status < 300, status, json: async () => body });
 
 function toRecord(v, day) {
   const rec = {
-    venue_id: v.venueId, venue_name: `Venue ${v.venueId}`, venue_address: '1 Test St, Philadelphia, PA',
+    venue_id: v.venueId, venue_name: v.name || `Venue ${v.venueId}`, venue_address: '1 Test St, Philadelphia, PA',
     venue_lat: v.lat, venue_lng: v.lng, venue_type: v.type, day_int: day, day_info: { day_int: day },
     day_raw_whole: v.week[day], rating: v.rating, reviews: v.reviews, price_level: 2,
   };
@@ -211,17 +249,53 @@ test.before(async () => {
     const { rows } = await pool.query(
       `INSERT INTO ml_venues (google_place_id, besttime_venue_id, name, city, latitude, longitude,
                               venue_category, rating, review_count, timezone)
-       VALUES ($1, $2, $3, 'philly', 39.95, -75.16, $4, $5, $6, 'America/New_York') RETURNING id`,
-      [placeId, btId, `Seeded ${tag}`, category,
-        'rating' in extra ? extra.rating : 4.2, 'reviews' in extra ? extra.reviews : 300]
+       VALUES ($1, $2, $3, 'philly', $7, $8, $4, $5, $6, 'America/New_York') RETURNING id`,
+      [placeId, btId, extra.name || `Seeded ${tag}`, category,
+        'rating' in extra ? extra.rating : 4.2, 'reviews' in extra ? extra.reviews : 300,
+        extra.lat ?? 39.95, extra.lng ?? -75.16]
     );
     seeded[tag] = rows[0].id;
+  };
+  // The week collectWeekly would have stored for fixture venue `v`: each
+  // BestTime slot through the transform, or, with `midnight`, as if slot 0
+  // were midnight (the origin the axis proof must catch).
+  const storeWeek = async (venueRowId, v, { midnight = false } = {}) => {
+    const values = [];
+    const params = [];
+    for (let d = 0; d < 7; d++) {
+      for (let s = 0; s < 24; s++) {
+        const js = bestTimeDayToJsDay(d);
+        const cell = midnight ? { dayOfWeek: js, hour: s } : bestTimeSlotToLocal(s, js);
+        params.push(venueRowId, cell.dayOfWeek, cell.hour, v.week[d][s]);
+        const b = params.length - 4;
+        values.push(`($${b + 1}, 'weekly', 'venue_local', $${b + 2}, $${b + 3}, 'bar', $${b + 4}, 1786000000, false, 'no_observation_date')`);
+      }
+    }
+    await pool.query(
+      `INSERT INTO ml_training_data (venue_id, collection_mode, hour_axis, day_of_week, hour, venue_category,
+                                     busyness_pct, besttime_epoch, events_observed, events_unavailable_reason)
+       VALUES ${values.join(', ')}`,
+      params
+    );
   };
   await insertVenue('knownBt', 'ChIJharvestKnownBt01', 'ven_known_bt', 'bar');
   await insertVenue('knownPlace', 'ChIJharvestKnownPl01', null, 'restaurant');
   await insertVenue('otherBt', 'ChIJharvestHeldElse1', 'ven_someone_else', 'bar');
   // A row the old discovery path minted: pseudo place id, real BestTime id.
   await insertVenue('pseudoRow', 'bt_ven_pseudo_row', 'ven_pseudo_row', 'bar', { rating: null, reviews: null });
+  // Identity rule 4's rows, and the known venue past the default radius.
+  await insertVenue('nearRow', 'ChIJharvestNearRow01', null, 'bar', { name: 'The Olde Bar', lat: 39.94120, lng: -75.14500 });
+  await insertVenue('nearHeldRow', 'ChIJharvestNearHeld1', 'ven_someone_else_2', 'restaurant',
+    { name: 'Bing Bing Dim Sum', lat: 39.93120, lng: -75.16120 });
+  await insertVenue('farKnown', 'ChIJharvestFarKnwn01', 'ven_far_known', 'bar', { lat: FAR.lat + 0.0002, lng: FAR.lng });
+  for (const [i, v] of AXIS.entries()) {
+    await insertVenue(`axis${i}`, `ChIJharvestAxisPl${String(i).padStart(3, '0')}`, v.venueId, 'bar', { lat: v.lat, lng: v.lng });
+    await storeWeek(seeded[`axis${i}`], v);
+  }
+  for (const [i, v] of SHIFTED.entries()) {
+    await insertVenue(`shift${i}`, v.placeId, v.venueId, 'bar', { lat: v.lat, lng: v.lng });
+    await storeWeek(seeded[`shift${i}`], v, { midnight: true });
+  }
 
   // A stale weekly row the harvest must refresh in place: Tuesday 20:00 is
   // BestTime Tuesday (day 1) slot 14, which the fixture fills with 48.
@@ -347,18 +421,48 @@ test('a dry run reports the plan and writes nothing', async () => {
   assert.strictEqual(summary.aborted, false, summary.abortReason);
   assert.strictEqual(summary.commit, false);
   assert.strictEqual(summary.exitCode, 0);
-  assert.deepStrictEqual(summary.plan, { known_bt: 2, known_place: 1, new: 3 });
-  assert.strictEqual(summary.rowsPlanned, 6 * 168);
+  // 3 known + 24 axis by BestTime id; one by place id; one near-duplicate;
+  // philly, lehigh, one of the dup pair, Sushi Palace and one beer hall new.
+  assert.deepStrictEqual(summary.plan, { known_bt: 27, known_place: 1, known_near: 1, new: 5 });
+  assert.strictEqual(summary.rowsPlanned, 34 * 168);
   assert.deepStrictEqual(summary.skipped, {
-    outsideMarkets: 1, otherMarket: 0, noPlaceId: 1, unusablePlaceId: 1, placeHeldByOtherBtId: 1,
-    placeClaimedTwice: 2, unmappedType: 1, noName: 0, noSignal: 1, noCoordinates: 0,
+    // The outside venue is not asked about at all inside 20 km.
+    outsideMarkets: 0, otherMarket: 0, outsideRadius: 1, noPlaceId: 1, unusablePlaceId: 1, placeHeldByOtherBtId: 1,
+    placeClaimedTwice: 2, nearDupHeldByOtherBtId: 1, nearDupClaimed: 0, nearDuplicateInRun: 1,
+    unmappedType: 1, noName: 0, noSignal: 1, noCoordinates: 0,
   });
+  assert.deepStrictEqual(summary.placeIds, {
+    knownBt: 27, same: 22, differs: 4, storedPseudo: 1, filterUnusable: 0, filterNone: 0,
+  });
+  assert.deepStrictEqual(summary.nearDuplicates, { filed: 1, heldByOtherBtId: 1, claimed: 0, inRun: 1 });
+  assert.strictEqual(summary.axisVerdict.pass, true, summary.axisVerdict.reason);
+  assert.strictEqual(summary.axis.bestShift, 0);
+  assert.strictEqual(summary.axis.venues, 24, 'the 24 axis venues; knownBt has one stored cell and is too thin');
   assert.match(out, /DRY RUN/);
-  assert.match(out, /Would write 1008 weekly rows for 6 venues and add 3 ml_venues rows/);
+  assert.match(out, /within 20 km/);
+  assert.match(out, /Would write 5712 weekly rows for 34 venues and add 5 ml_venues rows/);
+  assert.match(out, /AXIS PROOF: 27 venues known by BestTime id, 25 with stored weekly rows; 24 compared/);
+  assert.match(out, /\n +0 +4032 +0\.00 +100\.0% +100\.0% +1\.000 +24 +<- best/, 'the rotation-0 row of the table');
+  assert.match(out, /\n +\+6 +4032 /, 'the six-hour rotation is always printed');
+  assert.match(out, /COMMIT GATE: PASS/);
+  assert.match(out, /PLACE IDS, venues known by BestTime id: 22 of 27 carry the stored google_place_id; 4 carry a different real one; 1 are stored under a bt_/);
+  assert.match(out, /NEAR-DUPLICATES: 2 venues .* within 40 m .*: 1 filed under that row \(no new row\), 1 skipped \(the row holds another BestTime id\)/);
+  assert.match(out, /Place ids refused as no Google shape, by first four characters: bt_v\.\. 1\./);
+  assert.match(out, /PEAK HOUR by category, venue-local/);
   assert.match(out, /Account before: key OK/);
   assert.match(out, /Account after: key OK/);
   assert.match(out, /tiles of about 20 km/);
   assert.deepStrictEqual(await snapshot(), before, 'the dry run changed or rewrote a row');
+});
+
+test('at --radius-km=80 the market rule decides: the far venue is new, the outside one is skipped', async () => {
+  const { summary, out } = await runHarvest(['--radius-km=80'], fakeBestTime(FIXTURE));
+  assert.strictEqual(summary.aborted, false, summary.abortReason);
+  assert.match(out, /within 80 km/);
+  assert.strictEqual(summary.skipped.outsideMarkets, 1);
+  assert.strictEqual(summary.skipped.outsideRadius, 0);
+  assert.strictEqual(summary.plan.new, 6);
+  assert.ok(summary.tiles > 40, `${summary.tiles} tiles cannot cover two 80 km circles`);
 });
 
 test('--commit files every week under the right identity and mints none twice', async () => {
@@ -366,10 +470,11 @@ test('--commit files every week under the right identity and mints none twice', 
   assertNoKey(out);
   assert.strictEqual(summary.aborted, false, summary.abortReason);
   assert.strictEqual(summary.exitCode, 0);
-  assert.strictEqual(summary.venuesInserted, 3);
-  assert.strictEqual(summary.rowsWritten, 1008);
-  assert.strictEqual(summary.rowsRefreshed, 1, 'the one stale row is refreshed, the rest are new');
+  assert.strictEqual(summary.venuesInserted, 5);
+  assert.strictEqual(summary.rowsWritten, 5712);
+  assert.strictEqual(summary.rowsRefreshed, 1 + 24 * 168, 'the stale row and the axis weeks are refreshed, the rest are new');
   assert.strictEqual(summary.writeFailures, 0);
+  assert.match(out, /COMMIT GATE: PASS/);
 
   // No second identity anywhere.
   const { rows: dupBt } = await pool.query(
@@ -407,10 +512,27 @@ test('--commit files every week under the right identity and mints none twice', 
   // One place, two BestTime venues: exactly one identity.
   assert.ok(held.has('ven_dup_a') !== held.has('ven_dup_b'), 'both or neither of the two venues for one place were added');
 
+  // A near-duplicate: filed under the existing row, which keeps its own place
+  // id and gets no BestTime id; no second row for the building.
+  const { rows: [nr] } = await pool.query('SELECT * FROM ml_venues WHERE id = $1', [seeded.nearRow]);
+  assert.strictEqual(nr.besttime_venue_id, null, 'a BestTime id was stamped onto a near-duplicate row');
+  assert.strictEqual(nr.google_place_id, 'ChIJharvestNearRow01');
+  const { rows: nearNew } = await pool.query("SELECT 1 FROM ml_venues WHERE google_place_id = 'ChIJharvestNearNew01'");
+  assert.deepStrictEqual(nearNew, [], 'a second identity for The Olde Bar');
+  // Close by but a different venue: new.
+  assert.ok(held.has('ven_near_other'));
+  // Of two listings of one beer hall, the lower BestTime id.
+  assert.ok(held.has('ven_twin_hall_a'));
+
   // Never added.
-  for (const id of ['ven_no_place', 'ven_pseudo', 'ven_outside', 'ven_other_bt', 'ven_supermarket', 'ven_zero', 'ven_twin_other']) {
+  for (const id of ['ven_no_place', 'ven_pseudo', 'ven_outside', 'ven_other_bt', 'ven_supermarket', 'ven_zero', 'ven_twin_other',
+    'ven_near_dup', 'ven_near_held', 'ven_twin_hall_b', 'ven_far_new']) {
     assert.ok(!held.has(id), `${id} was added`);
   }
+  const { rows: heldElse } = await pool.query('SELECT COUNT(*)::int AS n FROM ml_training_data WHERE venue_id = $1', [seeded.nearHeldRow]);
+  assert.strictEqual(heldElse[0].n, 0, "a near-duplicate's week was filed under a row holding another BestTime id");
+  // Past the default radius, the known venue is still refreshed.
+  assert.strictEqual(held.get('ven_far_known').id, seeded.farKnown);
   const { rows: pseudo } = await pool.query("SELECT google_place_id FROM ml_venues WHERE google_place_id LIKE 'bt\\_%'");
   assert.deepStrictEqual(pseudo.map((r) => r.google_place_id), ['bt_ven_pseudo_row'], 'a pseudo place id was minted');
   const { rows: twin } = await pool.query("SELECT COUNT(*)::int AS n FROM ml_venues WHERE google_place_id = 'ChIJharvestTwinPlc01'");
@@ -425,7 +547,11 @@ test('--commit files every week under the right identity and mints none twice', 
     [seeded.knownBt, V.knownBt], [seeded.pseudoRow, V.pseudoRow], [seeded.knownPlace, V.knownPlace],
     [np.id, V.newPhilly], [nl.id, V.newLehigh],
     [(held.get('ven_dup_a') || held.get('ven_dup_b')).id, held.has('ven_dup_a') ? V.dupA : V.dupB],
+    [seeded.nearRow, V.nearDup], [seeded.farKnown, V.farKnown],
+    [held.get('ven_near_other').id, V.nearOther], [held.get('ven_twin_hall_a').id, V.twinHallA],
+    [seeded.axis0, AXIS[0]], [seeded.axis23, AXIS[23]],
   ];
+  const keptEpoch = new Set([seeded.axis0, seeded.axis23]);
   for (const [venueId, fixture] of written) {
     const expected = new Map();
     for (let d = 0; d < 7; d++) {
@@ -435,7 +561,7 @@ test('--commit files every week under the right identity and mints none twice', 
       }
     }
     const { rows } = await pool.query(
-      `SELECT day_of_week, hour, busyness_pct, collection_mode, hour_axis, label_source, besttime_epoch,
+      `SELECT id, day_of_week, hour, busyness_pct, collection_mode, hour_axis, label_source, besttime_epoch,
               events_observed, events_unavailable_reason, event_nearby, has_nearby_event, total_nearby_events,
               total_nearby_attendance, nearest_event_attendance, nearest_event_distance_km, nearest_event_type,
               temperature, is_raining, month, season
@@ -449,7 +575,12 @@ test('--commit files every week under the right identity and mints none twice', 
       assert.strictEqual(r.collection_mode, 'weekly');
       assert.strictEqual(r.hour_axis, 'venue_local');
       assert.strictEqual(r.label_source, null, 'a weekly forecast row claimed a realtime label');
-      assert.strictEqual(r.besttime_epoch, null, 'an analysis epoch the filter never reported');
+      if (keptEpoch.has(venueId) || r.id === seeded.staleRowId) {
+        // A refreshed row keeps the epoch it had rather than being blanked.
+        assert.strictEqual(Number(r.besttime_epoch), 1786000000, 'a stored analysis epoch was overwritten');
+      } else {
+        assert.strictEqual(r.besttime_epoch, null, 'an analysis epoch the filter never reported');
+      }
       assert.strictEqual(r.events_observed, false);
       assert.strictEqual(r.events_unavailable_reason, 'no_observation_date');
       for (const c of ['event_nearby', 'has_nearby_event', 'total_nearby_events', 'total_nearby_attendance',
@@ -462,7 +593,7 @@ test('--commit files every week under the right identity and mints none twice', 
   // The stale row was refreshed in place, not stacked beside.
   const { rows: [stale] } = await pool.query('SELECT busyness_pct, besttime_epoch FROM ml_training_data WHERE id = $1', [seeded.staleRowId]);
   assert.strictEqual(stale.busyness_pct, 48);
-  assert.strictEqual(stale.besttime_epoch, null);
+  assert.strictEqual(Number(stale.besttime_epoch), 1786000000, 'the known row lost its analysis epoch to NULL');
   const { rows: [stamped] } = await pool.query('SELECT last_collected_at FROM ml_venues WHERE id = $1', [seeded.knownBt]);
   assert.ok(stamped.last_collected_at, 'last_collected_at not set after rows landed');
 });
@@ -473,7 +604,7 @@ test('a rerun changes nothing but the refresh time', async () => {
   assert.strictEqual(summary.exitCode, 0);
   assert.strictEqual(summary.venuesInserted, 0);
   assert.strictEqual(summary.rowsInserted, 0);
-  assert.strictEqual(summary.rowsRefreshed, 1008);
+  assert.strictEqual(summary.rowsRefreshed, 5712);
   const after = await snapshot();
 
   const venueKey = (v) => [v.id, v.google_place_id, v.besttime_venue_id, v.city, v.is_active, v.besttime_status].join('|');
@@ -482,7 +613,89 @@ test('a rerun changes nothing but the refresh time', async () => {
   assert.deepStrictEqual(after.training.map(rowKey), before.training.map(rowKey), 'weekly rows changed on a rerun');
   const beforeAt = new Map(before.training.map((r) => [r.id, r.collected_at.getTime()]));
   const refreshed = after.training.filter((r) => r.collected_at.getTime() > beforeAt.get(r.id));
-  assert.strictEqual(refreshed.length, after.training.length, 'a row the rerun re-read was not stamped as refreshed');
+  // Every row the rerun re-read, and only those: the SHIFTED venues were not asked about.
+  const shifted = new Set(SHIFTED.map((_, i) => seeded[`shift${i}`]));
+  assert.strictEqual(refreshed.length, 5712, 'a row the rerun re-read was not stamped as refreshed');
+  assert.ok(refreshed.every((r) => !shifted.has(r.venue_id)), 'a row nobody asked about was stamped');
+});
+
+// ---------------------------------------------------------------------------
+// The axis proof and its gate.
+// ---------------------------------------------------------------------------
+test('a six-hour origin error is caught: --commit refuses and writes nothing, the dry run exits nonzero', async () => {
+  const before = await snapshot();
+  const fixture = SHIFTED;
+  const commit = await runHarvest(['--commit', '--city=philly'], fakeBestTime(fixture));
+  assertNoKey(commit.out);
+  assert.strictEqual(commit.summary.aborted, true);
+  assert.strictEqual(commit.summary.exitCode, 1);
+  assert.strictEqual(commit.summary.axis.bestShift, 6, 'the planted six-hour error is what the proof finds');
+  assert.match(commit.out, /COMMIT GATE: REFUSED \(the curves agree best with the stored rows at a rotation of \+6 hours, not 0\)/);
+  assert.match(commit.out, /ABORTED: REFUSED: the axis proof failed/);
+  assert.match(commit.out, /\n +\+6 +4032 +0\.00 +100\.0% +100\.0% +1\.000 +24 +<- best/);
+  assert.deepStrictEqual(await snapshot(), before, 'a refused commit wrote');
+
+  const dry = await runHarvest(['--city=philly'], fakeBestTime(fixture));
+  assert.strictEqual(dry.summary.aborted, false);
+  assert.strictEqual(dry.summary.exitCode, 1, 'a dry run whose commit would be refused reported success');
+  assert.match(dry.out, /The axis proof would refuse --commit: exiting nonzero/);
+});
+
+test('too few known venues to compare is a refusal, not a pass', async () => {
+  const before = await snapshot();
+  const { summary, out } = await runHarvest(['--commit', '--city=philly'], fakeBestTime([V.noPlace, ...AXIS.slice(0, 5)]));
+  assert.strictEqual(summary.exitCode, 1);
+  assert.strictEqual(summary.axis.venues, 5);
+  assert.match(out, /COMMIT GATE: REFUSED \(only 5 known venues could be compared \(at least 20 are needed/);
+  assert.deepStrictEqual(await snapshot(), before);
+});
+
+test('axisProof names the rotation, and the gate holds the floors', () => {
+  const week = (seed) => harvester.weekCurve(harvester.weekCells(weekFor(seed).map((h, d) => [d, h])));
+  const rotate = (c, k) => { const o = new Int16Array(168); for (let i = 0; i < 168; i++) o[(i + k + 168) % 168] = c[i]; return o; };
+  const venues = (k, n = 25) => Array.from({ length: n }, (_, i) => { const c = week(i * 11); return { planned: rotate(c, k), stored: c }; });
+  for (const k of [0, 6, -6, 24, -24, 1]) {
+    const proof = harvester.axisProof(venues(k));
+    assert.strictEqual(proof.bestShift, k, `rotation ${k}`);
+    assert.strictEqual(harvester.axisVerdict(proof).pass, k === 0, `gate at rotation ${k}`);
+  }
+  // Flat and thin stored weeks are left out rather than voting.
+  const flat = { planned: week(1), stored: new Int16Array(168).fill(40) };
+  const thin = { planned: week(2), stored: new Int16Array(168).fill(-1).fill(30, 0, 10) };
+  const p = harvester.axisProof([...venues(0, 20), flat, thin]);
+  assert.deepStrictEqual([p.venues, p.flat, p.thin], [20, 1, 1]);
+  assert.strictEqual(harvester.axisVerdict(harvester.axisProof(venues(0, 19))).pass, false, '19 venues prove nothing');
+  // Rotation 0 best is not enough on its own: both floors hold.
+  const at0 = (within5, venuesBestHere) => ({ venues: 100, bestShift: 0, table: [{ shift: 0, within5, venuesBestHere }] });
+  assert.strictEqual(harvester.axisVerdict(at0(0.99, 90)).pass, true);
+  assert.match(harvester.axisVerdict(at0(harvester.AXIS_MIN_WITHIN5 - 0.01, 90)).reason, /within five points/);
+  assert.match(harvester.axisVerdict(at0(0.99, 100 * harvester.AXIS_MIN_VENUE_SHARE - 1)).reason, /agree best at rotation 0/);
+});
+
+test('the peak-hour histogram is on the venue clock', () => {
+  // A bar busiest at BestTime slot 16 of every day: 22:00 local.
+  const hours = Array.from({ length: 24 }, (_, s) => (s === 16 ? 90 : 10));
+  const cells = harvester.weekCells([0, 1, 2, 3, 4, 5, 6].map((d) => [d, hours]));
+  const h = harvester.peakHourHistogram([{ category: 'bar', cells }, { row: { venue_category: 'cafe' }, cells: [] }]);
+  assert.strictEqual(h.get('bar')[22], 1);
+  assert.strictEqual([...h.get('bar')].reduce((a, b) => a + b, 0), 1);
+  assert.ok(!h.has('cafe'), 'a venue with no curve has no peak');
+});
+
+test('place ids are Google shapes, names are compared as names', () => {
+  for (const id of ['ChIJgUbEo8cfqokR5lP9_Wh_DaM', 'GhIJQWDl0CIeQUARxks3icF8U8A', 'ChIJharvestKnownBt01']) {
+    assert.ok(harvester.isRealGooglePlaceId(id), id);
+  }
+  for (const id of ['EicxMyBNYXJrZXQgU3QsIFdpbG1pbmd0b24sIE5DIDI4NDAxLCBVU0E', 'bt_ven_pseudo', 'ven_1234567890abcdef',
+    'abcdefghijklmnop', 'ChIJshort', '', null, 'ChIJ has spaces in it here']) {
+    assert.ok(!harvester.isRealGooglePlaceId(id), String(id));
+  }
+  const same = [['The Olde Bar', 'Olde Bar Philadelphia'], ["Joe's Pizza", 'Joes Pizza'], ['Starbucks', 'Starbucks Coffee'],
+    ["Dave & Buster's", 'Dave and Busters'], ['Frankford Hall', 'Frankford Hall Beer Garden'], ['Café Lutèce', 'Cafe Lutece']];
+  for (const [a, b] of same) assert.ok(harvester.namesSimilar(a, b), `${a} / ${b}`);
+  const different = [['Sushi Palace', 'The Olde Bar'], ['Cafe', 'Cafe Lift'], ['Bar', 'Bar Hygge'], ['', 'Anything'],
+    ['Philadelphia', 'Philly'], ['Pizza Hut', 'Pizza Brain']];
+  for (const [a, b] of different) assert.ok(!harvester.namesSimilar(a, b), `${a} / ${b}`);
 });
 
 // ---------------------------------------------------------------------------
@@ -530,7 +743,7 @@ test('a filter that ignores the day aborts rather than filing one weekday under 
 });
 
 test('bad arguments refuse before any request', async () => {
-  for (const args of [['--city=nyc'], ['--days=7'], ['--page-size=600'], ['--frobnicate']]) {
+  for (const args of [['--city=nyc'], ['--days=7'], ['--page-size=600'], ['--frobnicate'], ['--radius-km=0'], ['--radius-km=81']]) {
     const fake = fakeBestTime(FIXTURE);
     const { summary } = await runHarvest(args, fake);
     assert.strictEqual(summary.exitCode, 1, args.join(' '));
