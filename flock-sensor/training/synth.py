@@ -701,7 +701,7 @@ def heatmap(points, stride=4, sigma=1.1):
     return hm
 
 
-def targets(objects, stride=4):
+def targets(objects, stride=4, person_sigma_px=None):
     """Training targets for owl-2 on the model's 30x40 grid.
 
     heat [len(CLASSES), 30, 40]: a Gaussian peak of 1 at each object's point,
@@ -722,6 +722,10 @@ def targets(objects, stride=4):
         cx, cy = o['x'] / stride - 0.5, o['y'] / stride - 0.5
         size = min(x1 - x0, y1 - y0) / stride
         sigma = max(1.1, size / 6.0) if k else 1.1
+        if k == 0 and person_sigma_px:
+            # A head whose place was estimated from a body box, not marked:
+            # the peak is spread over the pixels it could be in.
+            sigma = max(sigma, person_sigma_px / stride)
         g = np.exp(-((xs - cx) ** 2 + (ys - cy) ** 2) / (2 * sigma * sigma))
         heat[k] = np.maximum(heat[k], g)
         ix, iy = int(round(cx)), int(round(cy))
