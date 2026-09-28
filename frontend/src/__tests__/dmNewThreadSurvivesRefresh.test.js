@@ -12,7 +12,8 @@
  * that row and nowhere else, was gone with it.
  *
  * The row startNewDmWithUser makes is marked, and the loader keeps a marked row
- * its answer leaves out, unless it was deleted here or its person was blocked.
+ * its answer leaves out while it is the thread last opened or holds a message,
+ * unless it was deleted here or its person was blocked after it was started.
  * loadDmConversations and startNewDmWithUser are lifted out of App.js by
  * source and run, the way chatEchoOrderAndRetraction.test.js runs the loader.
  *
@@ -100,9 +101,12 @@ function dmList({ threads = [], deleted = [] } = {}) {
     setDirectMessages: set('threads'),
     retractionsRef,
     retractedSince: H.retractedSince,
+    // The thread last opened, as the render before the answer left it.
+    selectedDmIdRef: { get current() { return state.selected; } },
   });
   const start = (user) => run(`${callback('startNewDmWithUser')}\nreturn startNewDmWithUser;`, {
     useCallback: (fn) => fn,
+    retractionsRef,
     directMessages: state.threads,
     deletedDmUserIds: state.deleted,
     sendFriendRequest: () => Promise.resolve(),
@@ -190,6 +194,59 @@ describe('a thread started on this device and not stored yet', () => {
     list.reads[0].resolve({ conversations: [] });
     await read;
     expect(listed(list)).toEqual([]);
+  });
+
+  test('started after an unblock in the same session, it is kept, and a block after it still ends it', async () => {
+    const list = dmList();
+    // Blocked earlier in the session, unblocked from Settings (an unblock
+    // logs nothing), and messaged again.
+    list.block(8);
+    list.start(RIA);
+    const first = list.load();
+    list.reads[0].resolve({ conversations: [] });
+    await first;
+    expect(listed(list)).toEqual([8]);
+
+    list.block(8);
+    const second = list.load();
+    list.reads[1].resolve({ conversations: [] });
+    await second;
+    expect(listed(list)).toEqual([]);
+  });
+
+  test('left empty for another conversation, it goes on the next refresh, as it always did', async () => {
+    // Message tapped on Ria, then on Bo, and nothing written to Ria. Kept, an
+    // empty Ria thread sat in the Messages list until the app restarted.
+    const list = dmList({ threads: [{ ...conv(5, 'Bo'), messages: [] }] });
+    list.start(RIA);
+    list.state.selected = 5;
+    list.state.screen = 'dmDetail';
+    const read = list.load();
+    list.reads[0].resolve({ conversations: [conv(5, 'Bo')] });
+    await read;
+    expect(listed(list)).toEqual([5]);
+  });
+
+  test('empty, and a venue page away from its screen, it is still there to come back to', async () => {
+    const list = dmList();
+    list.start(RIA);
+    // A venue card opened from the thread: another screen, the same thread.
+    list.state.screen = 'venueDetail';
+    const read = list.load();
+    list.reads[0].resolve({ conversations: [] });
+    await read;
+    expect(listed(list)).toEqual([8]);
+  });
+
+  test('left for another conversation, it is kept while it holds a message that has not gone', async () => {
+    const sending = { id: 'c-1', text: 'hey, it is Priya', sender: 'You', pending: true };
+    const list = dmList({ threads: [{ userId: 8, name: 'Ria', image: null, messages: [sending], lastMessage: null, unread: 0, localOnly: true, startedAt: 0 }] });
+    list.state.selected = 5;
+    const read = list.load();
+    list.reads[0].resolve({ conversations: [] });
+    await read;
+    expect(listed(list)).toEqual([8]);
+    expect(list.state.threads[0].messages).toEqual([sending]);
   });
 });
 

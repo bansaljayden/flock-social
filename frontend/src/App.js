@@ -14178,9 +14178,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // Only this device knows about the thread until something is stored
         // in it: GET /api/dm lists a pair once it has a message and not
         // before. loadDmConversations keeps a row marked this way that its
-        // answer leaves out, and the mark goes the first time the server
-        // lists the pair.
+        // answer leaves out while the row is worth keeping (it says when),
+        // and the mark goes the first time the server lists the pair.
         localOnly: true,
+        // Where the retraction log stood when the thread was started. A block
+        // logged after this ends the thread; one logged before it, and undone
+        // by an unblock before the thread was started, does not.
+        startedAt: retractionsRef.current.seq,
       };
       setDirectMessages(prev => [newDm, ...prev]);
       setSelectedDmId(user.id);
@@ -14219,6 +14223,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // anybody blocked since is left as the block left them: no row for the
   // person who blocked, and for the person who was blocked, the emptied thread
   // kept open under its notice (handleUserBlocked, keepDmOpen).
+
+  // The DM thread last opened, for the loader below: it keeps an empty thread
+  // started on this device while that thread is the one open, or the one a
+  // venue page or the map returns to. Through a ref for the reason the hidden
+  // list is.
+  const selectedDmIdRef = useRef(selectedDmId);
+  selectedDmIdRef.current = selectedDmId;
 
   // Load DM conversations from backend (filter out deleted ones). Named so the
   // Messages error card retries the read the screen already ran.
@@ -14277,14 +14288,26 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // open thread turned into "This conversation is not here", and a
         // first message that had failed to send, which lives nowhere but that
         // row, went with it. So a row startNewDmWithUser made (localOnly) and
-        // the answer left out is kept, ahead of the rest as it was put, unless
-        // it was deleted here or anybody in it has been blocked this session.
+        // the answer left out is kept, ahead of the rest as it was put, while
+        // it holds a message (a first send still going, or one that failed)
+        // or is the thread last opened (selectedDmIdRef).
+        // An empty thread somebody opened and left for another one goes, as
+        // it always did, since nothing goes with it and Message starts it
+        // again; kept, every friend tapped and never written to sat in the
+        // Messages list as an empty conversation until the app restarted.
+        // Never kept once deleted here, or once its person has been blocked,
+        // either way round, since the thread was started (startedAt).
         const listed = new Set(fresh.map(c => String(c.userId)));
-        const blockedEver = retractedSince(retractionsRef.current.log, 0, 'dm');
+        const blockedSinceStart = (p) => {
+          const since = retractedSince(retractionsRef.current.log, p.startedAt || 0, 'dm');
+          return !!since && since.senders.has(String(p.userId));
+        };
         const startedHere = (prev) => (Array.isArray(prev) ? prev : []).filter(p => p && p.localOnly
           && !listed.has(String(p.userId))
           && !hidden.includes(p.userId)
-          && !(blockedEver && blockedEver.senders.has(String(p.userId))));
+          && ((Array.isArray(p.messages) && p.messages.length > 0)
+            || (selectedDmIdRef.current != null && String(selectedDmIdRef.current) === String(p.userId)))
+          && !blockedSinceStart(p));
         setDirectMessages(prev => startedHere(prev).concat(fresh.map(c => {
           const old = Array.isArray(prev) ? prev.find(p => p.userId === c.userId) : null;
           if (blockedSince(c)) return old || null;
