@@ -187,6 +187,10 @@ async function opsAlert({ key, subject, text, push, legs = LEGS, tag = '[ops-ale
 
     if (reached.length === 0) {
       await releaseToday(key);
+      // The leg lines above say why each send failed; this one says WHAT went
+      // unreported, so a log read later names the broken thing and not only
+      // the failed mail about it, and says the claim is free for a retry.
+      console.error(`${tag} ${subject}, and the alert was NOT delivered. The next run will try again.`);
       return { failed: true };
     }
     console.error(`${tag} ${subject}. Alert sent by ${reached.join(' and ')}.`);

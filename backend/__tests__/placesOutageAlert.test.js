@@ -69,6 +69,8 @@ test.beforeEach(() => {
   sendShouldFail = false;
   sendResult = null;
   process.env.MODERATION_ALERT_EMAIL = 'jayden@example.com';
+  // Email is the only leg unless a test turns the admin push on itself.
+  delete process.env.ADMIN_USER_IDS;
 });
 
 const inserts = () => queries.filter((q) => /INSERT INTO ops_alert_ledger/.test(q.sql));
@@ -163,7 +165,9 @@ test('a send that RESOLVES as failed releases the claim and is not reported as m
 
     sendResult = null;
     const retry = await runPlacesOutageAlert(UNHEALTHY);
-    assert.deepStrictEqual(retry, { mailed: true }, 'the next run mails instead of answering already-sent-today');
+    // opsAlert's answer for a delivered alert, naming the legs that reached
+    // somebody; the email leg is the only one configured here.
+    assert.deepStrictEqual(retry, { sent: true, legs: ['email'] }, 'the next run mails instead of answering already-sent-today');
     assert.strictEqual(sent.length, 1);
   }
 });
