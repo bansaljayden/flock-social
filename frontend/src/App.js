@@ -10366,17 +10366,28 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // recorded on its way through, so the nudge waits for the real one.
     if (read === 'votes') votesLoadedRef.current.delete(flockId);
   }, []);
+  //
+  // Only for the plan still on screen. The row can land after the person has
+  // moved to another plan, and the history read's spinner and error line are
+  // the chat screen's, not the plan's, so a late row flashed a skeleton over
+  // a different chat; the retry count re-runs the plan screen's read for
+  // whatever plan it shows. A plan that has been left needs nothing here: the
+  // screen that opens it next reads all of it on the way in.
   const rereadRowlessFlock = useCallback((flockId) => {
     const reads = rowlessReadsRef.current.get(flockId);
     if (!reads) return;
     rowlessReadsRef.current.delete(flockId);
+    if (selectedFlockId !== flockId) return;
+    const inChat = currentScreen === 'chatDetail';
+    const onPlan = currentScreen === 'detail';
+    if (!inChat && !onPlan) return;
     if (reads.has('roster')) refreshFlockRoster(flockId);
     if (reads.has('votes')) loadFlockVotes(flockId);
-    if (reads.has('messages')) loadFlockMessages(flockId, { showSpinner: true });
+    if (inChat && reads.has('messages')) loadFlockMessages(flockId, { showSpinner: true });
     // The plan screen's read is its effect below, which its retry count runs
     // again.
-    if (reads.has('plan')) setRosterAttempt(n => n + 1);
-  }, [refreshFlockRoster, loadFlockVotes, loadFlockMessages]);
+    if (onPlan && reads.has('plan')) setRosterAttempt(n => n + 1);
+  }, [refreshFlockRoster, loadFlockVotes, loadFlockMessages, selectedFlockId, currentScreen]);
   // Checked whenever the list changes, which is when a row can arrive. A
   // layout effect, so the chat never paints its empty state between the row
   // landing and the history read going out again. Nothing noted is the usual
