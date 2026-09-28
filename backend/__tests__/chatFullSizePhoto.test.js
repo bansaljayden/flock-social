@@ -11,7 +11,8 @@
 // stranger (not 403, which would confirm the id exists), and a hidden
 // (taken down) message serves nothing on either path. The DM read also answers
 // 404 across a block, either way, and for a banned counterpart, which it did
-// not until the pair rules every other DM read applies were added to it.
+// not until the pair rules every other DM read applies were added to it. It
+// asks both in one statement (isBlockedOrBannedBetween), one round trip.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -34,10 +35,21 @@ let blockedPair = null;     // [a, b] with a block between them, either way, or 
 let bannedIds = [];         // accounts a moderator has banned
 let pairQuestions = [];     // what the route asked of user_blocks and the ban column
 
+const sameIds = (a, b) => a.map(Number).sort().join(',') === b.map(Number).sort().join(',');
+
 pool.query = async (text, params = []) => {
   const sql = String(text).replace(/\s+/g, ' ').trim();
   if (sql.includes('FROM users WHERE id = $1') && sql.includes('token_version')) {
     return { rows: [ME], rowCount: 1 };
+  }
+  // utils/blocks.js isBlockedOrBannedBetween: the block, either way, and a ban
+  // on either account, as one statement.
+  if (sql.includes('FROM user_blocks') && sql.includes('UNION ALL')
+      && sql.includes('FROM users WHERE id IN ($1, $2) AND is_banned IS TRUE')) {
+    const pair = params.map(Number);
+    pairQuestions.push({ pair: [...pair] });
+    const hit = (blockedPair && sameIds(pair, blockedPair)) || pair.some((id) => bannedIds.includes(id));
+    return hit ? { rows: [{ '?column?': 1 }], rowCount: 1 } : { rows: [], rowCount: 0 };
   }
   if (sql.includes('FROM user_blocks')) {
     pairQuestions.push({ blocks: params.map(Number) });
@@ -146,7 +158,7 @@ test('after a block, either way, neither side can pull a DM original by id', asy
       const res = await get('/api/dm/messages/77/image');
       assert.strictEqual(res.status, 404, `a blocked pair was served ${JSON.stringify(res.body)}`);
       assert.deepStrictEqual(res.body, { error: 'Photo not found' }, 'the same answer a stranger gets');
-      assert.deepStrictEqual(pairQuestions[0].blocks.sort(), [5, 8], 'the block is asked of this pair');
+      assert.deepStrictEqual(pairQuestions, [{ pair: [5, 8] }], 'the block is asked of this pair, once');
     }
   } finally {
     blockedPair = null;
@@ -161,7 +173,8 @@ test('a banned counterpart\'s DM originals are not served', async () => {
     pairQuestions = [];
     const res = await get('/api/dm/messages/77/image');
     assert.strictEqual(res.status, 404);
-    assert.ok(pairQuestions.some((q) => q.banned === 8), 'the ban is asked of the counterpart, not the caller');
+    assert.deepStrictEqual(res.body, { error: 'Photo not found' }, 'the same answer a stranger gets');
+    assert.deepStrictEqual(pairQuestions, [{ pair: [5, 8] }], 'the ban is asked of this pair, in the same statement as the block');
   } finally {
     bannedIds = [];
   }
@@ -169,6 +182,29 @@ test('a banned counterpart\'s DM originals are not served', async () => {
   const ok = await get('/api/dm/messages/77/image');
   assert.strictEqual(ok.status, 200);
   assert.strictEqual(ok.body.image, 'data:image/jpeg;base64,BANNED');
+});
+
+test('the block and the ban are one round trip, and a caller banned mid-request gets nothing', async () => {
+  // A served photo costs the pair exactly one statement: the two rules lead
+  // to the same 404, so asking them as two queries bought nothing.
+  blockedPair = null;
+  bannedIds = [];
+  dmRow = { sender_id: 8, receiver_id: 5, image_url: 'data:image/jpeg;base64,ONE' };
+  pairQuestions = [];
+  const ok = await get('/api/dm/messages/77/image');
+  assert.strictEqual(ok.status, 200);
+  assert.deepStrictEqual(pairQuestions, [{ pair: [5, 8] }], 'one pair question per photo, not a block query and a ban query');
+
+  // authenticate read the caller as not banned (the ME row). A ban that
+  // lands between that read and this one is still honoured.
+  bannedIds = [5];
+  try {
+    const res = await get('/api/dm/messages/77/image');
+    assert.strictEqual(res.status, 404);
+    assert.deepStrictEqual(res.body, { error: 'Photo not found' });
+  } finally {
+    bannedIds = [];
+  }
 });
 
 test('non-integer ids are refused by validation', async () => {
