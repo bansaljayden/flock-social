@@ -25,7 +25,11 @@
  * 2. Every listener is passive and nothing calls preventDefault. A non-passive
  *    touchmove on the screen root would put every scroll of the message list
  *    behind the main thread. The root does not scroll sideways and the list
- *    only scrolls vertically, so a sideways drag has nothing to fight.
+ *    only scrolls vertically, so a sideways drag has nothing to fight. The
+ *    cost is that the gesture cannot stop anything else from moving, so an
+ *    element that DOES scroll sideways inside a drill-in screen has to keep
+ *    its touches by the marker in decision 5; a test sweeps for any that do
+ *    not.
  *
  * 3. Not from a sheet. DialogBehavior marks every modal sheet role="dialog"
  *    and aria-modal="true", and a sheet's backdrop covers the screen, so a
@@ -43,7 +47,8 @@
  *    that starts in the band (startsInEdgeBand), so the two gestures never
  *    compete for the same finger. The other way round, a control that is a
  *    sideways drag in its own right marks itself data-edge-swipe="off" and
- *    keeps its touches, which is the plan's slide to complete.
+ *    keeps its touches: the plan's slide to complete, and the plan's row of
+ *    faces, which scrolls sideways.
  *
  * 6. The global reduced-motion rule in index.css collapses the settle
  *    transition, so the screen follows the finger and then simply goes.
