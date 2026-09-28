@@ -59,14 +59,23 @@ const CLIENT_OPTS = {
   randomizationFactor: 0.5,
 };
 
+// `ended` records why the SERVER ended each session. socket.io gives
+// 'server namespace disconnect' only when it wrote a DISCONNECT packet
+// (socket.disconnect(), which io.disconnectSockets() runs per socket), so it is
+// the one observation that tells the two shutdowns apart on every transport,
+// whether or not the packet got as far as the client.
 function startInstance(port = 0) {
   return new Promise((resolve, reject) => {
     const server = http.createServer();
     const io = new Server(server, { transports: ['websocket', 'polling'] });
     const seen = [];
-    io.on('connection', (socket) => seen.push(socket.id));
+    const ended = [];
+    io.on('connection', (socket) => {
+      seen.push(socket.id);
+      socket.on('disconnect', (reason) => ended.push(reason));
+    });
     server.once('error', reject);
-    server.listen(port, '127.0.0.1', () => resolve({ server, io, seen, port: server.address().port }));
+    server.listen(port, '127.0.0.1', () => resolve({ server, io, seen, ended, port: server.address().port }));
   });
 }
 
@@ -109,9 +118,26 @@ function waitFor(emitter, event, ms, what) {
   });
 }
 
+async function until(check, ms, what) {
+  const deadline = Date.now() + ms;
+  while (!check()) {
+    if (Date.now() > deadline) throw new Error(`timed out after ${ms}ms waiting for ${what}`);
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
 // Both transports the app allows: a websocket (nearly everyone) and long
 // polling (the fallback when a network will not carry a websocket). They are
 // closed by different code in engine.io, so each gets its own run.
+//
+// What each run can catch differs. Over a websocket the old shutdown's
+// DISCONNECT packet reaches the client, which then reports 'io server
+// disconnect' and stops, so the client-side checks below fail on it. Over
+// polling the transport is closed before that packet is flushed, so the client
+// reports a transport close and reconnects even under the old shutdown: its
+// client-side checks describe the behaviour and cannot tell the two apart. The
+// server-side reason can, on both transports, which is why it is asserted
+// first.
 for (const transports of [['websocket', 'polling'], ['polling']]) {
   test(`a deploy's SIGTERM leaves every connected client dialling the next instance, and it gets there (${transports[0]})`,
     { skip: skipReason, timeout: 20000 }, async () => {
@@ -129,6 +155,12 @@ for (const transports of [['websocket', 'polling'], ['polling']]) {
       const { signals, proc, exitedAt } = loadShutdown({ io: old.io, server: old.server });
       signals.SIGTERM();
       await gone;
+      await until(() => old.ended.length > 0, 2000, 'the server to record why the session ended');
+
+      assert.strictEqual(old.ended.length, 1, 'the server must have ended the one session it held');
+      assert.notStrictEqual(old.ended[0], 'server namespace disconnect',
+        'shutdown ended the session with a socket.io DISCONNECT packet, which the client never reconnects from '
+        + '(over polling the packet happens not to be flushed in time, over a websocket it is)');
 
       assert.notStrictEqual(reasons[0], 'io server disconnect',
         'shutdown sent a socket.io DISCONNECT packet, and socket.io-client never reconnects from one: '
@@ -174,6 +206,10 @@ test('the premise: socket.io-client does not come back from a server DISCONNECT,
       const [reason] = await gone;
       assert.strictEqual(reason, 'io server disconnect');
       assert.strictEqual(client.active, false, 'no retry is scheduled after a server DISCONNECT');
+      // And the server-side reason the deploy test asserts against is what
+      // that call produces, so the assertion there is not vacuous.
+      await until(() => inst.ended.length > 0, 2000, 'the server to record why the session ended');
+      assert.deepStrictEqual(inst.ended, ['server namespace disconnect']);
     } finally {
       client.close();
       await inst.io.close();
