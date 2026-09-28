@@ -59,7 +59,7 @@ def _eight_bit(g, rng):
     return lo + (g ** rng.uniform(0.8, 1.25)) * span
 
 
-def real_frame(real, rng, groups_x3=True):
+def real_frame(real, rng, groups_x3=False):
     """One real training frame at Lepton size, with its people.
 
     real is one split of the cache built from public datasets whose licences
@@ -88,8 +88,8 @@ def real_frame(real, rng, groups_x3=True):
                    for x, y in real['tp_pts'][i]]
         boxes = False
     elif src == 'otp':
-        # Frames with two or more people drawn three times as often in
-        # training: groups seen from the side are where owl-3 undercounted.
+        # groups_x3 draws frames with groups three times as often. Off by
+        # default: tried for owl-3.2, it did not help on real footage.
         if not groups_x3:
             i = int(rng.integers(len(real['otp_img'])))
         else:
@@ -139,12 +139,9 @@ class Frames(IterableDataset):
             if not boxes:
                 mask = np.zeros_like(mask)
             x = synth.model_input(t)
-            # Absolute temperature is not always to be trusted: an 8-bit real
-            # frame's temperatures are made up, and an uncalibrated Lepton's are
-            # a few degrees out. Now and then it is skewed, so the model leans on
-            # warmth relative to the room as well.
-            if rng.random() < (0.6 if known is PEOPLE_ONLY else 0.2):
-                x[0] = x[0] * rng.uniform(0.7, 1.3) + rng.uniform(-0.8, 0.8)
+            # Skewing the absolute channel was tried for owl-3.2 and dropped:
+            # graded on real footage it helped nowhere and cost a few points
+            # on rooms the model had never seen.
             yield (torch.from_numpy(x), torch.from_numpy(heat),
                    torch.from_numpy(ltrb), torch.from_numpy(mask), torch.from_numpy(known))
 
