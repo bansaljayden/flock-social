@@ -48,9 +48,20 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
   // the year is asked after Apple's sheet, in the Apple button's place, and
   // Continue sends the same credentials with it. AppleYearStep.js has why.
   const apple = useAppleYearStep({ fieldId: 'signup-apple-year', onSuccess: onSignupSuccess });
-  // Messages about the Apple tap go where the person is looking: into the
-  // step while it is open, otherwise beside the providers.
+  // And a new Google account the same way, where the providers come first:
+  // the year is asked after Google's sheet, in the Google button's place,
+  // and Continue posts the same Google proof with it (makeResume in
+  // useGoogleAuth.js). With Apple finishing in place and Google sending the
+  // person down to the form's year field, the two buttons stacked together
+  // asked for the same thing in two different ways. One step is open at a
+  // time, so there is only ever one year field on screen.
+  const google = useAppleYearStep({ fieldId: 'signup-google-year', provider: 'Google', onSuccess: onSignupSuccess });
+  const stepOpen = Boolean(apple.step || google.step);
+  const leaveSteps = () => { apple.leave(); google.leave(); };
+  // Messages about a provider tap go where the person is looking: into that
+  // provider's step while it is open, otherwise beside the providers.
   const showAppleError = (message) => (apple.step ? apple.setError(message) : showProviderError(message));
+  const showGoogleError = (message) => (google.step ? google.setError(message) : showProviderError(message));
 
   // The arrival event for the signup form. screen_viewed only fires inside
   // the authed shell, so this screen, shown before it, had no denominator of
@@ -145,8 +156,30 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
   // The hook routes native iOS through Google's own SDK and everything else
   // through the GIS browser flow; both post to the same /api/auth/google.
   const startGoogle = useGoogleAuth({
-    onSuccess: onSignupSuccess,
-    onError: (msg) => showProviderError(msg || 'Google sign-in failed'),
+    onSuccess: (user) => { google.leave(); onSignupSuccess(user); },
+    onError: (msg, err, resume) => {
+      if (err?.data?.needsDob && err.data.dobGranularity === 'year') {
+        // A new account, asked for its year: the Google step, in the Google
+        // button's place. The server's own sentence says to tap Google again,
+        // which is exactly what the step makes unnecessary, so it is not
+        // shown.
+        clearErrors();
+        apple.leave();
+        if (resume) google.hold(resume);
+        // Nothing held means nothing to send again, so the step opens on the
+        // Google button, which carries the year.
+        else google.retap('Add the year you were born, then tap Continue with Google again.');
+        return;
+      }
+      if (err?.data?.needsDob && !google.step && !dob) {
+        // No granularity is the server backfilling an account that already
+        // exists, which needs the full date and the sign-in screen's
+        // read-back; the same answer the Apple button gets here.
+        showProviderError('This Google account already has a Flock account. Tap Sign in below and continue with Google there.');
+        return;
+      }
+      showGoogleError(msg || 'Google sign-in failed');
+    },
     setBusy: setLoading,
   });
 
@@ -495,13 +528,17 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
     </>
   );
 
-  // Where the year field for a provider tap is, from the provider buttons:
-  // above them on the web and inside an open Apple step, below them in the
-  // iOS form.
-  const yearIs = providersFirst && !apple.step ? 'below' : 'above';
-
   // Hidden only when a native build carries no iOS Google client id, i.e.
   // when the button could not work by any route. On web it always shows.
+  //
+  // The server requires a year to create an account on this path. On the web
+  // the year field sits right above this button, so it is asked for first,
+  // as it always was. Where the providers come first, an empty year goes
+  // through, as it does for Apple: an account that exists needs none, and a
+  // new one is asked for it after Google's sheet, in this button's place
+  // (see googleBlock). A year that is not four digits yet, or one no living
+  // person can have, is still stopped here. What the year says about age is
+  // not decided here, exactly as it is not decided in handleSubmit.
   const googleButton = isGoogleSignInAvailable() && (
         <button
           type="button"
@@ -509,16 +546,21 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
           disabled={loading}
           onClick={() => {
             clearErrors();
-            // The server requires a date of birth to create an account on this
-            // path, so the field has to be filled before Google's sheet is any
-            // use. What the date says about age is not decided here, exactly as
-            // it is not decided in handleSubmit.
+            google.setError('');
             if (!dob) {
-              showProviderError(`Add the year you were born ${yearIs} first, then continue with Google.`);
+              if (!providersFirst) {
+                showProviderError('Add the year you were born above first, then continue with Google.');
+                return;
+              }
+              if (birthYear) {
+                showGoogleError('Write the year in full, like 2004.');
+                return;
+              }
+              startGoogle();
               return;
             }
             if (!dobLooksReal(dob)) {
-              showProviderError('That year does not look right. Check it and try again.');
+              showGoogleError('That year does not look right. Check it and try again.');
               return;
             }
             startGoogle({ dob, dobGranularity: 'year' });
@@ -526,6 +568,26 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
         >
           <GoogleG /> Continue with Google
         </button>
+  );
+
+  // The Google step in the Google button's place, with Continue, while the
+  // server is waiting on a year for a Google sheet already done; otherwise
+  // the button. The same step as Apple's, with its own field id.
+  const googleBlock = googleButton && (
+    <>
+      {google.step && (
+        <AppleYearStep
+          idPrefix="signup"
+          provider="google"
+          error={google.error}
+          value={birthYear}
+          onChange={(v) => { setBirthYear(v); google.setError(''); }}
+        />
+      )}
+      {google.step === 'resume'
+        ? <AppleStepContinue busy={google.busy} busyLabel="Creating account…" onClick={() => google.continueWith(birthYear)} />
+        : googleButton}
+    </>
   );
 
   // Apple guideline 4.8 parity with the Google button; native iOS only
@@ -549,10 +611,11 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
   // can have (see dobLooksReal). Neither names an age.
   const appleButton = (
       <AppleSignInButton
-        onSuccess={(user) => { apple.leave(); onSignupSuccess(user); }}
+        onSuccess={(user) => { leaveSteps(); onSignupSuccess(user); }}
         onError={(m, err, resume) => {
           if (err?.data?.needsDob && err.data.dobGranularity === 'year') {
             clearErrors();
+            google.leave();
             if (resume) apple.hold(resume);
             // No credentials held means nothing to send again, so the step
             // opens on the Apple button instead of Continue.
@@ -626,16 +689,16 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
         {/* Wrapped for its gap: under the Apple button the stylesheet's
             .auth-provider + .auth-provider rule would give one, but under the
             step's Continue nothing would. */}
-        {googleButton && <div style={{ marginTop: '10px' }}>{googleButton}</div>}
-        {/* While the Apple step is open the email form steps aside: one year
+        {googleBlock && <div style={{ marginTop: '10px' }}>{googleBlock}</div>}
+        {/* While either step is open the email form steps aside: one year
             field on screen and one thing to tap, the same rule the sign-in
             screen's step keeps. Leaving drops the held credentials; a later
-            Apple tap simply opens a new sheet. */}
-        {apple.step ? (
+            provider tap simply opens a new sheet. */}
+        {stepOpen ? (
           <button
             type="button"
             className="auth-textbtn"
-            onClick={() => { apple.leave(); clearErrors(); }}
+            onClick={() => { leaveSteps(); clearErrors(); }}
             style={{ display: 'block', margin: '16px auto 0' }}
           >
             Sign up with email instead
@@ -657,7 +720,7 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
 
       <AuthRule label="or sign up with" />
 
-      {googleButton}
+      {googleBlock}
       {appleBlock}
 
       {foot}

@@ -136,14 +136,57 @@ async function nativeGoogleIdToken() {
 const isCancellation = (err) =>
   err?.code === 'USER_CANCELLED' || /cancel/i.test(String(err?.message || ''));
 
+// FINISHING A NEW ACCOUNT WITHOUT A SECOND SHEET.
+//
+// A brand-new Google account that arrives with no birth year is answered
+// 403 {needsDob, dobGranularity:'year'}. The server refuses before it creates
+// anything and hands the credential's replay claim back on every refusal (the
+// `finally` on POST /api/auth/google), precisely so the same proof can come
+// back with a year. So on that one answer the proof this sheet produced is
+// kept in a closure and handed to the screen as a third argument to onError,
+// `resume(dob, dobGranularity)`, the same shape as the Apple button's. A
+// screen that has the year asked in place posts it with the proof it already
+// has, and nobody goes through Google's sheet twice.
+//
+// Memory only, one use, and short. A Google token lives about an hour, but
+// holding a live credential for longer than it takes to type four digits buys
+// nothing, so past GOOGLE_RESUME_LIFETIME_MS the handle refuses without
+// posting and the screen puts the Google button back.
+export const GOOGLE_RESUME_LIFETIME_MS = 5 * 60 * 1000;
+
+const makeResume = (post) => {
+  const heldAt = Date.now();
+  let used = false;
+  return async (dob, dobGranularity) => {
+    if (used || Date.now() - heldAt > GOOGLE_RESUME_LIFETIME_MS) {
+      used = true;
+      throw Object.assign(new Error('Google sign-in timed out'), { expired: true });
+    }
+    used = true;
+    try {
+      return await post(dob, dobGranularity);
+    } catch (err) {
+      // Kept only when the request provably never reached Flock: offline,
+      // which api.js refuses before sending, or a captive portal answering in
+      // Flock's place. Anything else may have landed.
+      if (err?.isOffline || err?.isCaptivePortal) used = false;
+      throw err;
+    }
+  };
+};
+
+// The optional third argument of both api calls, spelled once.
+const granularityArg = (dobGranularity) => (dobGranularity ? [{ dobGranularity }] : []);
+
 /**
  * @param {object}   opts
  * @param {function} opts.onSuccess  called with the signed-in user
- * @param {function} opts.onError    (message, error) — the raw error is the
- *   second argument so a screen can read `err.data.needsDob`. The server
- *   answers 403 {needsDob:true} when a brand-new OAuth account arrives without
- *   a date of birth, and a screen that only sees the message string cannot
- *   offer the retry field. Identical on both paths.
+ * @param {function} opts.onError    (message, error, resume?). The raw error
+ *   is the second argument so a screen can read `err.data.needsDob`. The
+ *   server answers 403 {needsDob:true} when a brand-new OAuth account arrives
+ *   without a date of birth, and a screen that only sees the message string
+ *   cannot offer the retry field. `resume` comes only with the creation 403
+ *   that asks for a year; see makeResume above. Identical on both paths.
  * @param {function} [opts.setBusy]  toggled around the whole exchange
  * @returns {function} start — call it as `start()` or `start({ dob })`
  */
@@ -162,16 +205,20 @@ export default function useGoogleAuth({ onSuccess, onError, setBusy }) {
   const dobGranularityRef = useRef(undefined);
   const runningRef = useRef(false);
 
-  // Posts whichever proof we ended up with and reports the result. `send` is a
-  // thunk so the two paths share every line after the token exists.
-  const exchange = async (send) => {
+  // Posts whichever proof we ended up with and reports the result. `post` is
+  // (dob, dobGranularity) => the api call, so the two paths share every line
+  // after the token exists, and a creation 403 can hand the same call back
+  // as `resume` to be made again with a year.
+  const exchange = async (post) => {
     const { onSuccess: ok, onError: fail, setBusy: busy } = handlers.current;
     busy?.(true);
     try {
-      const data = await send();
+      const data = await post(dobRef.current, dobGranularityRef.current);
       ok?.(data.user);
     } catch (err) {
-      fail?.(err?.message || 'Google sign-in failed', err);
+      const message = err?.message || 'Google sign-in failed';
+      if (err?.data?.needsDob && err.data.dobGranularity === 'year') fail?.(message, err, makeResume(post));
+      else fail?.(message, err);
     } finally {
       busy?.(false);
     }
@@ -181,8 +228,8 @@ export default function useGoogleAuth({ onSuccess, onError, setBusy }) {
   // these screens already shipped — GIS popup, access token, same api call.
   const startWeb = useGoogleLogin({
     onSuccess: (tokenResponse) =>
-      exchange(() => googleLoginWithToken(tokenResponse.access_token, dobRef.current,
-        ...(dobGranularityRef.current ? [{ dobGranularity: dobGranularityRef.current }] : []))),
+      exchange((dob, dobGranularity) => googleLoginWithToken(tokenResponse.access_token, dob,
+        ...granularityArg(dobGranularity))),
     onError: () => handlers.current.onError?.('Google sign-in failed'),
   });
 
@@ -215,8 +262,8 @@ export default function useGoogleAuth({ onSuccess, onError, setBusy }) {
         } finally {
           busy?.(false);
         }
-        await exchange(() => googleLogin(idToken, dobRef.current,
-          ...(dobGranularityRef.current ? [{ dobGranularity: dobGranularityRef.current }] : [])));
+        await exchange((dob, dobGranularity) => googleLogin(idToken, dob,
+          ...granularityArg(dobGranularity)));
       } finally {
         runningRef.current = false;
       }

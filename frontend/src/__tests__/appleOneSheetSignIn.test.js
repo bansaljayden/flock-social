@@ -362,11 +362,16 @@ describe('the signup screen on iOS puts the providers first', () => {
     expect(utils.getByText('or sign up with')).toBeTruthy();
   });
 
-  it('Google with no year says where the field is from where the button now sits', async () => {
+  // This pinned "Add the year you were born below first" until Google got
+  // the same in-place step as Apple: an empty year now opens Google's sheet
+  // (googleYearStepOnSignup.test.js pins that flow). A half-typed year is
+  // still not sent as no year at all.
+  it('Google with a half-typed year says so beside the providers and opens nothing', async () => {
     const utils = openSignup();
+    fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: '20' } });
     fireEvent.click(utils.getByRole('button', { name: /continue with google/i }));
-    await waitFor(() => expect(utils.getByRole('alert').textContent)
-      .toBe('Add the year you were born below first, then continue with Google.'));
+    await waitFor(() => expect(utils.getByRole('alert').textContent).toBe('Write the year in full, like 2004.'));
+    expect(api.googleLogin).not.toHaveBeenCalled();
   });
 });
 
