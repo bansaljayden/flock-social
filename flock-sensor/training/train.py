@@ -118,19 +118,36 @@ def real_frame(real, rng, groups_x3=False):
 
 
 class Frames(IterableDataset):
-    def __init__(self, seed, real_path=None, real_share=0.0):
+    def __init__(self, seed, real_path=None, real_share=0.0, bank_path=None, bank_share=0.0):
         self.seed, self.real_path, self.real_share = seed, real_path, real_share
+        self.bank_path, self.bank_share = bank_path, bank_share
 
     def __iter__(self):
         info = torch.utils.data.get_worker_info()
         wid = info.id if info else 0
         rng = np.random.default_rng([self.seed, wid, int(time.time() * 1e6) % (1 << 31)])
         real = pickle.load(open(self.real_path, 'rb'))['train'] if self.real_path else None
+        bank = bank_objects = None
+        if self.bank_path:
+            # bank.py's frames, memory-mapped: read at disk speed, not drawn.
+            bank = np.load(Path(self.bank_path) / 'frames.f16', mmap_mode='r')
+            bank_objects = pickle.load(open(Path(self.bank_path) / 'objects.pkl', 'rb'))
         while True:
             known, boxes = ALL_KNOWN, True
             if real is not None and rng.random() < self.real_share:
                 t, objects, boxes = real_frame(real, rng)
                 known = PEOPLE_ONLY
+            elif bank is not None and rng.random() < self.bank_share:
+                i = int(rng.integers(len(bank_objects)))
+                t = np.asarray(bank[i], dtype=np.float32)
+                objects = bank_objects[i]
+                # Never the same frame twice: fresh sensor noise, a small shift
+                # and gain about the room, and a mirror half the time.
+                med = float(np.median(t))
+                t = med + (t - med) * rng.uniform(0.95, 1.05) + rng.uniform(-0.8, 0.8)
+                t = (t + rng.normal(0, 0.04, t.shape)).astype(np.float32)
+                if rng.random() < 0.5:
+                    t, objects = flip(t, objects)
             else:
                 t, objects = synth.scene_full(rng)
                 if rng.random() < 0.5:
@@ -278,6 +295,10 @@ def main(argv=None):
     ap.add_argument('--real', default=None,
                     help='real_cache.pkl: public, commercially licensed real frames to mix in')
     ap.add_argument('--real-share', type=float, default=0.35)
+    ap.add_argument('--bank', default=None,
+                    help="a folder from bank.py; its frames stand in for some freshly drawn ones")
+    ap.add_argument('--bank-share', type=float, default=0.7,
+                    help='of the generated frames, the share read from the bank')
     ap.add_argument('--init', default=None,
                     help='a best.pt to start the shared layers from, such as owl-1')
     ap.add_argument('--name', default='owl-2',
@@ -304,7 +325,8 @@ def main(argv=None):
     print(f'{params:,} parameters on {device}', flush=True)
     opt = torch.optim.AdamW(net.parameters(), lr=args.lr, weight_decay=1e-4)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, args.lr, total_steps=args.steps, pct_start=0.05)
-    loader = DataLoader(Frames(args.seed, args.real, args.real_share if args.real else 0.0),
+    loader = DataLoader(Frames(args.seed, args.real, args.real_share if args.real else 0.0,
+                               args.bank, args.bank_share if args.bank else 0.0),
                         batch_size=args.batch, num_workers=args.workers,
                         persistent_workers=True, prefetch_factor=4)
     val = held_out(1500)
