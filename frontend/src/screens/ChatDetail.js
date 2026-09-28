@@ -1504,12 +1504,20 @@ export default function ChatDetail({
        (the form rewrites a live bill), not over a quarantined bill (the
        server refuses to post over it), not over a bill somebody has paid (the
        form does not draw over one), and on a budget plan only once it is
-       confirmed or done and this member has answered or the budget has
-       closed. Anywhere else the sheet opens on what is there, the bill or the
-       budget, rather than on a form that cannot be sent. */
+       confirmed and this member has answered or the budget has closed, or
+       once it is done. Anywhere else the sheet opens on what is there, the
+       bill or the budget, rather than on a form that cannot be sent.
+
+       A DONE PLAN DOES NOT WAIT ON AN ANSWER. POST /api/budget/:id/submit
+       refuses a completed plan (FLOCK_CLOSED), Skip included, while
+       POST /api/billing/:id/create takes the bill with no answer behind it.
+       Waiting on this member's answer there sent everyone who had not given
+       one to a budget form that could only be refused, with no way to the
+       bill at all. */
     const billFormOffered = !moneyError && !billSplitQuarantined && (!billSplit || billSplitIsShell)
       && (!flock.budgetEnabled
-        || ((flock.status === 'confirmed' || flock.status === 'completed')
+        || flock.status === 'completed'
+        || (flock.status === 'confirmed'
           && !!(budgetStatus?.userSubmitted || budgetStatus?.budgetLocked)));
     /* The viewer's own figure before a bill exists, for the card's shell
        state. It is the settled budget ceiling, which is the same number
@@ -2207,8 +2215,9 @@ export default function ChatDetail({
       }
       if (billForCard) {
         const created = billForCard.createdAt ? new Date(billForCard.createdAt).getTime() : NaN;
-        // With the payer's reminder state, which the card draws too.
-        streamRows = spliceByTime(streamRows, { id: BILL_ROW_ID, message_type: 'system', bill: billForCard, remind: billRemind[selectedFlockId] || null }, created);
+        // With the payer's reminder state and the plan's closed flag, which
+        // the card draws too.
+        streamRows = spliceByTime(streamRows, { id: BILL_ROW_ID, message_type: 'system', bill: billForCard, closed: planClosed, remind: billRemind[selectedFlockId] || null }, created);
       }
       // Also on the end, and for the same reason as the nudge: this is the
       // state of the room right now, not a moment in the scrollback.
@@ -2532,7 +2541,10 @@ export default function ChatDetail({
             members={roster}
             estimatedShare={estimatedShare}
             onOpen={() => setShowChatPool(true)}
-            onCommit={isEstimateBill(bill) ? commitEstimatedShare : undefined}
+            /* Not once the plan has ended: POST /ghost-commit refuses a
+               finished plan (FLOCK_CLOSED), like every other budget answer.
+               The row carries the flag, the same way the poll row does. */
+            onCommit={isEstimateBill(bill) && !m.closed ? commitEstimatedShare : undefined}
             onSettle={!settlesNothing && myShare && !myShare.settled ? startSettleUp : undefined}
             /* Hidden for the payer and for a share settled by carried credit,
                rather than shown and refused: the server answers 409 on both
@@ -3334,12 +3346,14 @@ export default function ChatDetail({
                    flock it was waiting on itself. Three amounts is the floor,
                    and a flock that cannot reach it is not waiting. */
                 <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)', margin: 0 }}>
-                  {budgetStatus.budgetLocked
+                  {budgetStatus.budgetLocked || planClosed
                     /* Closed with no number to show: a budget closed before
                        three people had shared an amount (the first lock had no
                        floor), or one whose third sharer has since deleted their
                        account. "Waiting on amounts" here told a member the group
-                       was waiting when answers were closed. */
+                       was waiting when answers were closed. A plan that has
+                       ended is closed to answers too (/submit refuses it), even
+                       with its budget still open. */
                     ? 'Budget closed · no group number to show'
                     /* Judged on MEMBERS (budgetCrowdSize): a guest's answer
                        binds the number but never counts toward three, so two
@@ -3803,8 +3817,11 @@ export default function ChatDetail({
                 </div>
                 </div>
 
-                {/* Budget Submission Section */}
-                {hasBudget && !budgetStatus?.budgetLocked && !userSubmitted && !showCreateBill && (
+                {/* Budget Submission Section. Not on a plan that has ended:
+                    POST /submit refuses a finished plan (FLOCK_CLOSED), and
+                    Skip is a submission too, so both buttons could only fail.
+                    The status section below takes its place there. */}
+                {hasBudget && !budgetStatus?.budgetLocked && !userSubmitted && !showCreateBill && !planClosed && (
                   <div>
                     <p style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: '0 0 4px' }}>What's your budget tonight?</p>
                     {ctx && <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 14px' }}>For {ctx}</p>}
@@ -3881,8 +3898,12 @@ export default function ChatDetail({
                   </div>
                 )}
 
-                {/* Budget Status (already submitted or locked) */}
-                {hasBudget && (userSubmitted || budgetStatus?.budgetLocked) && !showCreateBill && (
+                {/* Budget Status (already submitted or locked, or closed with
+                    the plan). A plan that has ended takes no answer, so a
+                    member who never gave one lands here and not on the form
+                    above, and on a completed plan the Split the Bill below is
+                    theirs as much as anyone's. */}
+                {hasBudget && (userSubmitted || budgetStatus?.budgetLocked || planClosed) && !showCreateBill && (
                   <div>
                     {budgetStatus?.ceiling ? (
                       <div style={{ padding: '14px', borderRadius: '12px', backgroundColor: `${colors.steel}10`, border: `1px solid ${colors.steel}30`, marginBottom: '14px' }}>
@@ -3904,6 +3925,17 @@ export default function ChatDetail({
                         <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0 }}>The group number is not being shown</p>
                         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '4px 0 0', lineHeight: 1.5 }}>
                           Flock only shows one when at least three people's amounts are behind it, and this budget does not have three. The budget is closed, so nobody can add an amount now.
+                        </p>
+                      </div>
+                    ) : planClosed ? (
+                      /* The plan ended with the budget still open. Finishing a
+                         plan never closes its budget, but /submit refuses a
+                         finished plan, so "waiting on more answers" would be
+                         waiting on answers nobody can give. */
+                      <div style={{ padding: '14px', borderRadius: '12px', backgroundColor: 'var(--bg-primary)', marginBottom: '14px' }}>
+                        <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0 }}>Budget answers are closed</p>
+                        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '4px 0 0', lineHeight: 1.5 }}>
+                          This plan has ended, so nobody can add or change an amount now.
                         </p>
                       </div>
                     ) : (
@@ -3941,11 +3973,14 @@ export default function ChatDetail({
                         form (which needs !userSubmitted) AND the Change link in
                         the same move: there was no way left to enter an amount,
                         ever. The server was always happy to take one, so this
-                        was a dead end the UI built by itself. */}
-                    {!budgetStatus?.budgetLocked && budgetStatus?.userAmount != null && (
+                        was a dead end the UI built by itself.
+                        Neither way back is offered once the plan has ended:
+                        both reopen the form, and /submit refuses a finished
+                        plan (FLOCK_CLOSED). */}
+                    {!planClosed && !budgetStatus?.budgetLocked && budgetStatus?.userAmount != null && (
                       <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', marginBottom: '12px' }}>Your budget: ${budgetStatus.userAmount} · <button className="hit44" onClick={() => { setBudgetAmount(budgetStatus.userAmount); setBudgetCustom(''); setBudgetStatus(prev => ({ ...prev, userSubmitted: false })); }} style={{ background: 'none', border: 'none', color: colors.steel, fontWeight: '600', cursor: 'pointer', padding: 0, fontSize: 'var(--t-meta)' }}>Change</button></p>
                     )}
-                    {!budgetStatus?.budgetLocked && budgetStatus?.userAmount == null && budgetStatus?.userSubmitted && (
+                    {!planClosed && !budgetStatus?.budgetLocked && budgetStatus?.userAmount == null && budgetStatus?.userSubmitted && (
                       <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', marginBottom: '12px' }}>You skipped, so any budget works for you. · <button className="hit44" onClick={() => { setBudgetAmount(null); setBudgetCustom(''); setBudgetStatus(prev => ({ ...prev, userSubmitted: false })); }} style={{ background: 'none', border: 'none', color: colors.steel, fontWeight: '600', cursor: 'pointer', padding: 0, fontSize: 'var(--t-meta)' }}>Set an amount</button></p>
                     )}
                     {/* LOCK, ONLY WHEN LOCKING CAN WORK. isReady is exactly the
