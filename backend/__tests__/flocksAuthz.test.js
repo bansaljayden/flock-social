@@ -118,8 +118,10 @@ let closeAfterStatusReadTo = 'cancelled'; // what closeAfterStatusRead sets: 'ca
 let closeAfterReinvite = null; // a flock id: cancelled right after the re-invite UPDATE landed, before the INSERT
 let closeAfterSeat = null; // a flock id: cancelled right after the new seat is written, before the announcement
 let vanishAfterSeat = null; // a flock id: deleted right after the new seat is written, before the announcement
+let failStatement = null; // a string: the first statement containing it throws, the way a pool timeout would
 
 function reset() {
+  failStatement = null;
   vanishAfterOwnershipCheck = false;
   closeAfterStatusRead = null;
   seatAfterMembershipRead = null;
@@ -167,6 +169,10 @@ async function dispatch(text, params = []) {
   // SAVEPOINT and RELEASE are the leave's audience read (routes/flocks.js
   // POST /:id/leave), which a failed read rolls back to on its own.
   if (/^(BEGIN|COMMIT|ROLLBACK|SAVEPOINT|RELEASE|SELECT pg_advisory)/i.test(sql)) return { rows: [], rowCount: 0 };
+  if (failStatement && has(failStatement)) {
+    failStatement = null;
+    throw new Error('timeout exceeded when trying to connect');
+  }
 
   // ── middleware/auth.js ──
   if (has('is_banned, token_version FROM users WHERE id = $1')) {
@@ -2157,6 +2163,28 @@ test('rerun: a block that happened since the old flock keeps the pair apart', as
     'a blocked pair must not be re-joined by replaying an old plan');
   assertQueriesUnderstood();
 });
+
+// The clone commits before the roster read and the invite pipeline run, so a
+// failure in either used to answer 500 for a plan that existed, and the tap
+// again made a second one. Either failure is a 201 with the plan, flagged.
+for (const [step, statement] of [
+  ['the old roster read', "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted' AND user_id != $2"],
+  ['the invite write', "SELECT $1::int, t.uid, 'invited' FROM UNNEST($2::int[])"],
+]) {
+  test(`rerun: ${step} failing after the clone committed answers with the new plan, not a 500 a retry would copy`, async () => {
+    flocks.get(10).status = 'completed';
+    failStatement = statement;
+    const res = await call('POST', '/api/flocks/10/rerun', 'bob');
+    const body = await res.json();
+    assert.strictEqual(res.status, 201, JSON.stringify(body));
+    assert.strictEqual(failStatement, null, 'the fault has to have fired for this to mean anything');
+    assert.strictEqual(body.invitesFailed, true);
+    assert.deepStrictEqual(body.invited_user_ids, []);
+    assert.ok(body.flock && body.flock.id && body.flock.id !== 10);
+    assert.ok(flocks.has(body.flock.id), 'the plan the answer names is the one that was made');
+    assert.deepStrictEqual(rowsOf(body.flock.id).filter((m) => m.status === 'accepted').map((m) => m.user_id), [2]);
+  });
+}
 
 // This sweep is only complete while the route list is. A new endpoint added to
 // flocks.js without a line here means an ungated surface nobody audited.

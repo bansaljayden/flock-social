@@ -311,6 +311,53 @@ describe('past flocks screen', () => {
     expect(rerunCode).toContain('next.setDate(next.getDate() + 7)');
   });
 
+  // Lifted out of App.js and executed. The server answers 201 with
+  // invitesFailed when the plan was made and its invites could not be sent;
+  // it used to answer 500, and the tap again made a second copy.
+  const OPEN = 'const handleRerunFlock = useCallback(async (pf) => {';
+  const CLOSE = '\n  }, [rerunningFlockId, authUser, needsEmailVerification, showToast]);';
+  const RERUN_BODY = APP.slice(APP.indexOf(OPEN) + OPEN.length, APP.indexOf(CLOSE, APP.indexOf(OPEN)));
+  const runRerun = async (answer) => {
+    const scope = {
+      rerunningFlockId: null,
+      setRerunningFlockId: jest.fn(),
+      rerunFlock: jest.fn().mockResolvedValue(answer),
+      showToast: jest.fn(),
+      authUser: { id: 2, name: 'Bob' },
+      formatEventTime: () => 'Fri 7:00 PM',
+      resolveVenuePhoto: () => null,
+      hapticSuccess: jest.fn(),
+      newlyCreatedFlockRef: { current: null },
+      setFlocks: jest.fn(),
+      setSelectedFlockId: jest.fn(),
+      setCurrentScreen: jest.fn(),
+      needsEmailVerification: () => false,
+    };
+    const names = Object.keys(scope);
+    // eslint-disable-next-line no-new-func
+    const run = new Function(...names, 'pf', `return (async () => {${RERUN_BODY}})();`);
+    await run(...names.map((n) => scope[n]), { id: 10, name: 'Friday', event_time: null });
+    return scope;
+  };
+  const MADE = { id: 44, name: 'Friday', status: 'planning', creator_id: 2 };
+
+  it('the lift found the real handler', () => {
+    expect(RERUN_BODY).toContain('await rerunFlock(pf.id, { event_time: eventTime })');
+  });
+
+  it('a plan made without its invites is opened, and says the invites did not go out', async () => {
+    const s = await runRerun({ flock: MADE, invited_user_ids: [], invitesFailed: true });
+    expect(s.setSelectedFlockId).toHaveBeenCalledWith(44);
+    expect(s.setCurrentScreen).toHaveBeenCalledWith('chatDetail');
+    expect(s.showToast).toHaveBeenCalledWith('Your new plan is ready, but the invites did not go out. Invite people from the plan.', 'warning');
+  });
+
+  it('a rerun whose invites landed opens the plan and says nothing more', async () => {
+    const s = await runRerun({ flock: MADE, invited_user_ids: [1, 6] });
+    expect(s.setCurrentScreen).toHaveBeenCalledWith('chatDetail');
+    expect(s.showToast).not.toHaveBeenCalled();
+  });
+
   it('no em dashes in any of the new user-visible copy', () => {
     for (const src of [screenCode, rerunCode]) {
       const strings = src.match(/'[^'\n]*'|"[^"\n]*"/g) || [];
