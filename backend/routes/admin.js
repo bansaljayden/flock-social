@@ -2335,11 +2335,14 @@ router.post('/venues/:userId/tier', async (req, res) => {
              -- checkout would refuse it as already holding Roost. Later than
              -- the Stripe end, the grant's own date stands, which is also why
              -- a founding comp over a monthly payer runs its six months
-             -- rather than the few days left in the period.
+             -- rather than the few days left in the period. Only a period
+             -- that is PAID counts: past_due is a renewal Stripe could not
+             -- collect, so its end date is not a date the venue paid through,
+             -- and the grant's own date stands over it.
              WHEN $6 OR ($7 AND venue_subscriptions.source = 'stripe') THEN GREATEST(
                EXCLUDED.expires_at,
                CASE WHEN venue_subscriptions.source = 'stripe'
-                     AND venue_subscriptions.status IN ('active', 'trialing', 'past_due')
+                     AND venue_subscriptions.status IN ('active', 'trialing')
                      AND venue_subscriptions.expires_at > NOW()
                     THEN venue_subscriptions.expires_at END)
              -- A founding re-grant fills in a MISSING end date and never
