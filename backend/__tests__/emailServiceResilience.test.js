@@ -204,6 +204,27 @@ test('contract: a resend module whose constructor throws still settles, not reje
   } finally { cap.restore(); r.restore(); emailService.resetClient(); }
 });
 
+test('contract: a client that could not be built is a refusal, because no request was made', async () => {
+  // A caller that keeps its marker on an unknown outcome (the Monday digest,
+  // the waitlist launch run) releases it only on `skipped` or `refused`. This
+  // failure certainly sent nothing, so reading it as unknown wrote off every
+  // address tried while the install was broken.
+  const r = stubBrokenResendModule();
+  const cap = captureConsole();
+  try {
+    await withEnv({ ...CLEAN_ENV, RESEND_API_KEY: 'k' }, async () => {
+      emailService.resetClient();
+      const direct = await emailService.sendEmail({ to: 'a@b.co', subject: 's', html: '<p>x</p>' });
+      assert.strictEqual(direct.refused, true, 'no request left, so a caller may safely retry');
+      assert.notStrictEqual(direct.suppressed, true, 'a broken install says nothing about the address');
+      emailService.resetClient();
+      const launch = await emailService.sendWaitlistLaunchEmail({ to: 'waiting@b.co' });
+      assert.strictEqual(launch.sent, false);
+      assert.strictEqual(launch.refused, true, 'the launch email inherits the refusal, so the waitlist row is handed back');
+    });
+  } finally { cap.restore(); r.restore(); emailService.resetClient(); }
+});
+
 test('contract: the templated senders inherit the settle contract on every failure mode', async () => {
   for (const make of [
     () => stubResend({ throws: 'ETIMEDOUT' }),

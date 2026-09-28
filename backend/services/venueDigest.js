@@ -526,7 +526,8 @@ async function runVenueDigestSweep(now = new Date()) {
         //   * `skipped`  — no RESEND_API_KEY, the provider was never consulted;
         //   * `refused`  — the provider answered and declined, or sendEmail
         //                  itself refused (suppressed address, per-recipient
-        //                  cap, unmailable recipient).
+        //                  cap, unmailable recipient, a mail client that
+        //                  could not be built so no request was made).
         // An ambiguous failure keeps its marker and this venue simply misses
         // one Monday. A missed weekly email is a smaller harm than five copies
         // of it, and the log line below says which happened.
