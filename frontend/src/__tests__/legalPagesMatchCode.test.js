@@ -880,7 +880,52 @@ describe('invite links and guest answers are described as the guest routes behav
 
     const p = flat(privacy);
     expect(p).toMatch(/the budget amount they enter if they choose to share one, tied to a random link token/);
-    expect(p).toMatch(/the display name, votes and budget amount a guest leaves on an invite link are kept with that plan, and deleted when the plan is deleted/);
+    expect(p).toMatch(/the display name, votes and budget amount a guest leaves on an invite link are kept with that plan, and deleted when the plan is deleted\. The one exception is a display name somebody has reported, described in the next item\./);
+  });
+});
+
+describe('reported plan content outlives its plan exactly as the pages say', () => {
+  const evidence = read('backend', 'utils', 'reportEvidence.js');
+  const server = read('backend', 'server.js');
+  const migration = read('backend', 'migrations', '110_report_evidence.sql');
+  const mirror = read('frontend', 'api', 'marketing-page.js');
+  // The page's markup is dropped so both read as the words a visitor sees.
+  const pages = { 'PrivacyPolicy.js': flat(privacy.replace(/<[^>]+>/g, '')), 'marketing-page.js': flat(mirror) };
+
+  test('what is copied: a reported message, photo included, or guest name, only while a report is open', () => {
+    // The copy is taken only for content an open or under-review report names.
+    expect(evidence).toMatch(/const OPEN_REPORT = [\s\S]{0,300}r\.status IN \('open', 'under_review'\)/);
+    // Both kinds of plan content, the message with its photo.
+    expect(evidence).toMatch(/SELECT 'flock_message', m\.id, m\.flock_id, m\.message_text, m\.venue_data, m\.image_url,/);
+    expect(evidence).toMatch(/SELECT 'guest_rsvp', g\.id, g\.flock_id, NULL, NULL, NULL,\s*g\.name,/);
+    // Every door that deletes a plan, the host's account deletion among them.
+    expect(read('backend', 'routes', 'users.js')).toMatch(/await client\.query\(PRESERVE_REPORTED_HOSTED_CONTENT_SQL, \[req\.user\.id\]\);/);
+    // A copy of a message goes with its author's account.
+    expect(migration).toMatch(/author_id INTEGER REFERENCES users\(id\) ON DELETE CASCADE/);
+
+    for (const [name, p] of Object.entries(pages)) {
+      expect({ name, ok: /Reported chat messages and guest names: deleting a plan deletes its chat and its guest RSVPs, however the plan is deleted, including along with its host's account\./.test(p) }).toEqual({ name, ok: true });
+      expect({ name, ok: /If a report about one of its messages, or about a guest's display name, is not yet closed at that moment, we first keep a copy of that message, photo included, or of that name, so the report can still be judged\. Nobody using Flock can see the copy\. Only we can, to handle the report\./.test(p) }).toEqual({ name, ok: true });
+      expect({ name, ok: /a copy of a message is deleted straight away if the person who wrote it deletes their account/.test(p) }).toEqual({ name, ok: true });
+      expect({ name, ok: /No copy of a message you wrote survives your account\./.test(p) }).toEqual({ name, ok: true });
+    }
+  });
+
+  test('how long: the period and the hourly cleanup on the page are the ones the code runs', () => {
+    const days = Number(evidence.match(/const EVIDENCE_RETENTION_DAYS = (\d+);/)[1]);
+    expect(days).toBeGreaterThan(0);
+    // The purge keeps a copy while a report naming it is open or closed less
+    // than the period ago, and takes it otherwise.
+    expect(evidence).toMatch(/AND \(r\.status IN \('open', 'under_review'\)\s*OR r\.resolved_at > NOW\(\) - \(\$1::int \* INTERVAL '1 day'\)\)/);
+    expect(evidence).toMatch(/await db\.query\(PURGE_CLOSED_REPORT_EVIDENCE_SQL, \[EVIDENCE_RETENTION_DAYS, batch\]\)/);
+    // Every hour, on a timer server.js starts.
+    expect(evidence).toMatch(/const EVIDENCE_PURGE_INTERVAL_MS = 60 \* 60 \* 1000;/);
+    expect(server).toMatch(/evidencePurgeInterval = setInterval\(evidencePurge, EVIDENCE_PURGE_INTERVAL_MS\);/);
+
+    for (const [name, p] of Object.entries(pages)) {
+      const said = new RegExp(`It is deleted by a cleanup that runs every hour once the last report about it has been closed for ${days} days`);
+      expect({ name, ok: said.test(p) }).toEqual({ name, ok: true });
+    }
   });
 });
 

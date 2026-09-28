@@ -34,6 +34,14 @@
 -- A plan delete is what no longer erases evidence; an account deletion still
 -- does, for the reason written there.
 --
+-- HOW LONG. A copy exists only so its report can be judged, and a guest's copy
+-- has no author whose account deletion would take it. So a timer
+-- (purgeClosedReportEvidence in utils/reportEvidence.js, hourly, started by
+-- server.js) deletes each copy once no report naming it is open or under
+-- review and the last of them closed more than 7 days ago, the period the
+-- privacy policy states. content_reports.resolved_at, written by every close,
+-- is the clock.
+--
 -- flock_id carries no foreign key on purpose: the row exists because the plan
 -- is gone. One row per piece of content, keyed like the report that names it,
 -- so a second report on the same message does not store the image twice.

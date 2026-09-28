@@ -20,6 +20,13 @@
 // moderator has already closed is judged, the line the story purge draws too.
 // Nothing here is ever read by a member-facing route; routes/admin.js is the
 // only reader, and it falls back to a copy only when the live row is gone.
+//
+// A copy is not kept for ever. It exists so a moderator can judge a report, so
+// it goes EVIDENCE_RETENTION_DAYS after the last report naming it is closed,
+// by purgeClosedReportEvidence below on an hourly timer in server.js. The
+// privacy policy states that period, and a test ties the two together.
+
+const pool = require('../config/database');
 
 // The content types a plan delete can take with it, which are the only types a
 // copy is ever kept for. routes/admin.js reads this list to decide where to
@@ -61,9 +68,67 @@ const PRESERVE_REPORTED_HOSTED_CONTENT_SQL = reportedPlanContentInsert(
   (col) => `${col} IN (SELECT id FROM flocks WHERE creator_id = $1)`
 );
 
+// ---------------------------------------------------------------------------
+// Retention: deleting a copy once its reports are closed
+// ---------------------------------------------------------------------------
+// The copy is the message or guest name its plan's delete would otherwise have
+// taken, kept only so the report naming it can be judged. Once every report
+// naming it is closed, that purpose is over, and a guest's copy has no account
+// behind it whose deletion would ever take it (author_id is NULL), so without
+// this the name was kept for good.
+//
+// Seven days after the last close, not the moment it closes. There is no way
+// to reopen a report, so the week is the time left to save the evidence off
+// the database for a report that was closed before anybody did. Seven days is
+// also the period the privacy policy already gives a spent password reset
+// link, so the page states one short period rather than a new one.
+//
+// A copy is kept while any report naming it is open or under review, or was
+// closed less than the period ago. Every close writes resolved_at
+// (PUT /api/admin/reports/:id, and the takedown that closes the other reports
+// on the same content), so a closed report with no resolved_at, or a copy no
+// report names at all, holds nothing and goes on the next run.
+const EVIDENCE_RETENTION_DAYS = 7;
+const EVIDENCE_PURGE_BATCH = 500;
+const EVIDENCE_PURGE_INTERVAL_MS = 60 * 60 * 1000;
+
+// $1 the period in days, $2 the batch size. SKIP LOCKED, so a copy a plan
+// delete is still writing is left for the next pass rather than waited on.
+const PURGE_CLOSED_REPORT_EVIDENCE_SQL = `DELETE FROM content_report_evidence
+ WHERE id IN (
+   SELECT e.id FROM content_report_evidence e
+    WHERE NOT EXISTS (
+      SELECT 1 FROM content_reports r
+       WHERE r.content_type = e.content_type AND r.content_id = e.content_id
+         AND (r.status IN ('open', 'under_review')
+              OR r.resolved_at > NOW() - ($1::int * INTERVAL '1 day'))
+    )
+    ORDER BY e.preserved_at
+    LIMIT $2::int
+    FOR UPDATE SKIP LOCKED
+ )`;
+
+// Resolves to the number of copies deleted. In batches, so a first run over a
+// backlog is a few short statements rather than one long one.
+async function purgeClosedReportEvidence(batch = EVIDENCE_PURGE_BATCH, db = pool) {
+  let total = 0;
+  for (;;) {
+    // eslint-disable-next-line no-await-in-loop
+    const result = await db.query(PURGE_CLOSED_REPORT_EVIDENCE_SQL, [EVIDENCE_RETENTION_DAYS, batch]);
+    const n = result.rowCount || 0;
+    total += n;
+    if (n < batch) return total;
+  }
+}
+
 module.exports = {
   PRESERVED_CONTENT_TYPES,
   PRESERVE_REPORTED_PLAN_CONTENT_SQL,
   PRESERVE_REPORTED_HOSTED_CONTENT_SQL,
   reportedPlanContentInsert,
+  EVIDENCE_RETENTION_DAYS,
+  EVIDENCE_PURGE_BATCH,
+  EVIDENCE_PURGE_INTERVAL_MS,
+  PURGE_CLOSED_REPORT_EVIDENCE_SQL,
+  purgeClosedReportEvidence,
 };

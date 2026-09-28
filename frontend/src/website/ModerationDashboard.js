@@ -1244,8 +1244,11 @@ function ReportedContent({ report: r, image, onToggleImage, onImageBroken, text,
       {r.content_preserved ? (
         // The plan was deleted after the report came in, and the server kept
         // this copy for review (migration 110). Said plainly, because the
-        // missing Hide button needs a reason.
-        <div style={S.dimSmall}>The plan this was in has been deleted. This is the copy kept for review, and nobody else can see it.</div>
+        // missing Hide button needs a reason. The copy is deleted a week after
+        // the last report naming it closes (EVIDENCE_RETENTION_DAYS in
+        // backend/utils/reportEvidence.js), and a report cannot be reopened,
+        // so the card says so before anybody closes it.
+        <div style={S.dimSmall}>The plan this was in has been deleted. This is the copy kept for review, and nobody else can see it. It is deleted 7 days after the last report about it is closed, so save it first if it has to be kept.</div>
       ) : null}
 
       {gone ? (
