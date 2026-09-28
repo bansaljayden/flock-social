@@ -447,7 +447,9 @@ describe('Make a new link, in the invite sheet', () => {
     expect(text).toContain('The current link stops working right away, for everyone who has it.');
     expect(text).toContain('People who already joined with it stay in the plan.');
     expect(text).not.toContain(String.fromCharCode(0x2014));
-    expect(api.createFlockInviteLink).not.toHaveBeenCalled();
+    // Opening the sheet fetches the ordinary link (see the Share block below);
+    // nothing asks for a replacement until the confirm.
+    expect(api.createFlockInviteLink).not.toHaveBeenCalledWith(1, true);
   });
 
   test('Keep this link backs out and sends nothing', () => {
@@ -455,7 +457,7 @@ describe('Make a new link, in the invite sheet', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Make a new link' }));
     fireEvent.click(within(dialogTitled('Make a new link?')).getByRole('button', { name: 'Keep this link' }));
     expect(screen.queryByText('Make a new link?')).toBeNull();
-    expect(api.createFlockInviteLink).not.toHaveBeenCalled();
+    expect(api.createFlockInviteLink).not.toHaveBeenCalledWith(1, true);
   });
 
   test('confirming asks the route to regenerate, and puts the new link on screen', async () => {
@@ -464,8 +466,8 @@ describe('Make a new link, in the invite sheet', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Make a new link' }));
     fireEvent.click(within(dialogTitled('Make a new link?')).getByRole('button', { name: 'Make a new link' }));
 
-    expect(api.createFlockInviteLink).toHaveBeenCalledTimes(1);
-    expect(api.createFlockInviteLink).toHaveBeenCalledWith(1, true);
+    const regenerations = api.createFlockInviteLink.mock.calls.filter((c) => c[1] === true);
+    expect(regenerations).toEqual([[1, true]]);
     await waitFor(() => expect(p.setCopiedInviteUrl).toHaveBeenCalledWith('https://flockcorp.com/i/new'));
     expect(p.showToast).toHaveBeenCalledWith('New link made. The old one no longer works.');
     expect(screen.queryByText('Make a new link?')).toBeNull();
@@ -486,9 +488,19 @@ describe('Make a new link, in the invite sheet', () => {
     expect(panel.textContent).toContain('https://flockcorp.com/i/new');
   });
 
-  test('a link on show because it was shared still says Copied', () => {
-    openSheet({ copiedInviteUrl: 'https://flockcorp.com/i/old' });
-    expect(screen.getByRole('status').textContent).toContain('Copied. Anyone with this link');
+  test('a link put on show by a copy that went through says Copied', async () => {
+    api.createFlockInviteLink.mockResolvedValue({ url: 'https://flockcorp.com/i/old' });
+    const restore = stubClipboard(() => Promise.resolve());
+    try {
+      const { p, rerender } = openSheet();
+      await linkHeld();
+      fireEvent.click(screen.getByRole('button', { name: /Share invite link/ }));
+      await waitFor(() => expect(p.setCopiedInviteUrl).toHaveBeenCalledWith('https://flockcorp.com/i/old'));
+      rerender(React.createElement(ChatDetail, { ...p, copiedInviteUrl: 'https://flockcorp.com/i/old' }));
+      expect(screen.getByRole('status').textContent).toContain('Copied. Anyone with this link');
+    } finally {
+      restore();
+    }
   });
 
   test('a refusal is said, the dialog stays, and no link is put on screen', async () => {
@@ -508,6 +520,140 @@ describe('Make a new link, in the invite sheet', () => {
     fireEvent.click(screen.getByRole('button', { name: /Share invite link/ }));
     await waitFor(() => expect(api.createFlockInviteLink).toHaveBeenCalled());
     expect(api.createFlockInviteLink.mock.calls[0]).toEqual([1]);
+    expect(api.createFlockInviteLink.mock.calls.every((c) => c.length === 1)).toBe(true);
+  });
+
+  test('after a new link is made, Share sends the new one', async () => {
+    api.createFlockInviteLink.mockImplementation((id, regenerate) => Promise.resolve({
+      url: regenerate ? 'https://flockcorp.com/i/new' : 'https://flockcorp.com/i/old',
+    }));
+    const restore = stubShare(() => Promise.resolve());
+    try {
+      const { p } = openSheet();
+      await linkHeld();
+      fireEvent.click(screen.getByRole('button', { name: 'Make a new link' }));
+      fireEvent.click(within(dialogTitled('Make a new link?')).getByRole('button', { name: 'Make a new link' }));
+      await waitFor(() => expect(p.setCopiedInviteUrl).toHaveBeenCalledWith('https://flockcorp.com/i/new'));
+      fireEvent.click(screen.getByRole('button', { name: /Share invite link/ }));
+      expect(navigator.share).toHaveBeenCalledWith({ title: 'Join my flock', url: 'https://flockcorp.com/i/new' });
+      await act(async () => {});
+    } finally {
+      restore();
+    }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 2b. Share invite link: the tap shares a link already in hand
+// ═══════════════════════════════════════════════════════════════════════════
+
+/* The share sheet and the clipboard open only inside the tap's own
+   activation, and an await on the network spends it. Share used to await
+   createFlockInviteLink on every tap, so on iOS both could be refused, and the
+   panel said "Copied." whatever the clipboard had done. The link is now
+   fetched when the sheet opens, and the panel says Copied only when the copy
+   went through. jsdom has neither navigator.share nor navigator.clipboard, so
+   each test that needs one puts it there and takes it away again. */
+function stubNavigator(key, impl) {
+  const had = Object.prototype.hasOwnProperty.call(navigator, key);
+  const before = navigator[key];
+  Object.defineProperty(navigator, key, { value: impl, configurable: true, writable: true });
+  return () => {
+    if (had) Object.defineProperty(navigator, key, { value: before, configurable: true, writable: true });
+    else delete navigator[key];
+  };
+}
+function stubShare(impl) { return stubNavigator('share', jest.fn(impl)); }
+function stubClipboard(impl) { return stubNavigator('clipboard', { writeText: jest.fn(impl) }); }
+// Lets the fetch that opening the sheet started settle into the held link.
+async function linkHeld() {
+  await waitFor(() => expect(api.createFlockInviteLink).toHaveBeenCalledWith(1));
+  await act(async () => {});
+}
+
+describe('Share invite link, in the invite sheet', () => {
+  const openSheet = (over = {}) => mount({ showFlockInviteModal: true, ...over });
+
+  test('opening the sheet asks for the ordinary link, once, before any tap', async () => {
+    api.createFlockInviteLink.mockResolvedValue({ url: 'https://flockcorp.com/i/old' });
+    openSheet();
+    await linkHeld();
+    expect(api.createFlockInviteLink.mock.calls).toEqual([[1]]);
+  });
+
+  test('an ended plan asks for nothing on open, since the route would refuse it', async () => {
+    api.createFlockInviteLink.mockResolvedValue({ url: 'https://flockcorp.com/i/old' });
+    openSheet({ flock: { status: 'completed' } });
+    await act(async () => {});
+    expect(api.createFlockInviteLink).not.toHaveBeenCalled();
+  });
+
+  test('the tap opens the share sheet at once, with no network wait in front of it', async () => {
+    api.createFlockInviteLink.mockResolvedValue({ url: 'https://flockcorp.com/i/old' });
+    const restore = stubShare(() => Promise.resolve());
+    try {
+      openSheet();
+      await linkHeld();
+      fireEvent.click(screen.getByRole('button', { name: /Share invite link/ }));
+      // Synchronously, inside the click: the tap's activation is still there.
+      expect(navigator.share).toHaveBeenCalledWith({ title: 'Join my flock', url: 'https://flockcorp.com/i/old' });
+      // And the tap asked the network for nothing.
+      expect(api.createFlockInviteLink).toHaveBeenCalledTimes(1);
+      await act(async () => {});
+    } finally {
+      restore();
+    }
+  });
+
+  test('a copy the clipboard refused does not say Copied, and says where the link is', async () => {
+    api.createFlockInviteLink.mockResolvedValue({ url: 'https://flockcorp.com/i/old' });
+    const restore = stubClipboard(() => Promise.reject(Object.assign(new Error('denied'), { name: 'NotAllowedError' })));
+    try {
+      const { p, rerender } = openSheet();
+      await linkHeld();
+      fireEvent.click(screen.getByRole('button', { name: /Share invite link/ }));
+      await waitFor(() => expect(p.setCopiedInviteUrl).toHaveBeenCalledWith('https://flockcorp.com/i/old'));
+      expect(p.showToast).toHaveBeenCalledWith('Link ready. Copy it below');
+      rerender(React.createElement(ChatDetail, { ...p, copiedInviteUrl: 'https://flockcorp.com/i/old' }));
+      const panel = screen.getByRole('status').textContent;
+      expect(panel).not.toContain('Copied.');
+      expect(panel).toContain('Here is the link. Anyone with it can see the plan');
+      expect(panel).toContain('https://flockcorp.com/i/old');
+    } finally {
+      restore();
+    }
+  });
+
+  test('a tap with no link in hand yet fetches it, shows it, and leaves the share for the next tap', async () => {
+    // The fetch from opening the sheet was refused, so nothing is held.
+    api.createFlockInviteLink.mockRejectedValueOnce(new Error('offline'));
+    api.createFlockInviteLink.mockResolvedValue({ url: 'https://flockcorp.com/i/old' });
+    const restore = stubShare(() => Promise.resolve());
+    try {
+      const { p, rerender } = openSheet();
+      await linkHeld();
+      fireEvent.click(screen.getByRole('button', { name: /Share invite link/ }));
+      await waitFor(() => expect(p.setCopiedInviteUrl).toHaveBeenCalledWith('https://flockcorp.com/i/old'));
+      expect(navigator.share).not.toHaveBeenCalled();
+      expect(p.showToast).toHaveBeenCalledWith('Link ready. Tap Share invite link again.');
+      rerender(React.createElement(ChatDetail, { ...p, copiedInviteUrl: 'https://flockcorp.com/i/old' }));
+      expect(screen.getByRole('status').textContent).not.toContain('Copied.');
+      // The next tap shares it, straight away.
+      fireEvent.click(screen.getByRole('button', { name: /Share invite link/ }));
+      expect(navigator.share).toHaveBeenCalledWith({ title: 'Join my flock', url: 'https://flockcorp.com/i/old' });
+      await act(async () => {});
+    } finally {
+      restore();
+    }
+  });
+
+  test('a refused fetch on the tap is said, and nothing goes on show', async () => {
+    api.createFlockInviteLink.mockRejectedValue(new Error('This plan is finished and cannot accept new invites'));
+    const { p } = openSheet();
+    await linkHeld();
+    fireEvent.click(screen.getByRole('button', { name: /Share invite link/ }));
+    await waitFor(() => expect(p.showToast).toHaveBeenCalledWith('This plan is finished and cannot accept new invites', 'error'));
+    expect(p.setCopiedInviteUrl).not.toHaveBeenCalled();
   });
 });
 

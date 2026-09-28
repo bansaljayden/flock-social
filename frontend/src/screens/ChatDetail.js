@@ -1269,6 +1269,40 @@ export default function ChatDetail({
     const [newLinkStep, setNewLinkStep] = React.useState(null);
     const [replacedLinkUrl, setReplacedLinkUrl] = React.useState('');
 
+    /* THE GUEST LINK IS IN HAND BEFORE THE SHARE TAP.
+       The share sheet and the clipboard open only inside the tap's own
+       activation, and an await on the network spends it (the rule
+       CreateScreen's sendLink is built on). Share used to await the link on
+       every tap, so on iOS both could be refused while the panel still said
+       "Copied." So the link is asked for when the sheet opens, and the tap
+       shares what is already held. The route hands back the flock's live link
+       unless regenerate is asked for, so this makes nothing new once a link
+       exists. Not asked for on an ended plan, which the route refuses.
+
+       A fetch that lands late never replaces a link already held for this
+       flock: that one came from the tap or from Make a new link, and the
+       late one may be the link a replacement just killed. */
+    const inviteLinkRef = React.useRef(null);
+    const inviteSheetFlock = showFlockInviteModal ? getSelectedFlock() : null;
+    const inviteSheetClosed = !!inviteSheetFlock
+      && (inviteSheetFlock.status === 'completed' || inviteSheetFlock.status === 'cancelled');
+    React.useEffect(() => {
+      if (!showFlockInviteModal || !selectedFlockId || inviteSheetClosed) return;
+      const flockId = selectedFlockId;
+      inviteLinkRef.current = null;
+      Promise.resolve()
+        .then(() => createFlockInviteLink(flockId))
+        .then((r) => {
+          const held = inviteLinkRef.current;
+          if (r?.url && (!held || held.flockId !== flockId)) inviteLinkRef.current = { flockId, url: r.url };
+        })
+        // The tap asks again, and says why if that fails too.
+        .catch(() => {});
+    }, [showFlockInviteModal, selectedFlockId, inviteSheetClosed]);
+    // Whether the link on show was really copied. The panel says "Copied."
+    // only then; a refused copy shows the link without claiming it.
+    const [inviteLinkCopied, setInviteLinkCopied] = React.useState(false);
+
     const flock = getSelectedFlock();
     // Every line below reads off `flock` unguarded, starting with flock.name in
     // the header. An empty flock list here is a TypeError during render, which
@@ -2659,6 +2693,9 @@ export default function ChatDetail({
         return;
       }
       setNewLinkStep(null);
+      // The link Share sends from now on, so the next tap shares the new one.
+      inviteLinkRef.current = { flockId: selectedFlockId, url };
+      setInviteLinkCopied(false);
       setReplacedLinkUrl(url);
       setCopiedInviteUrl(url);
       showToast('New link made. The old one no longer works.');
@@ -4461,11 +4498,30 @@ export default function ChatDetail({
                   This is the growth surface: every plan reaches non-users. */}
               <button className="hit44"
                 onClick={async () => {
-                  let url;
-                  try {
-                    ({ url } = await createFlockInviteLink(selectedFlockId));
-                  } catch (err) {
-                    showToast(err?.message || "Couldn't make an invite link. Try again.", 'error');
+                  const held = inviteLinkRef.current;
+                  const url = held && held.flockId === selectedFlockId ? held.url : null;
+                  if (!url) {
+                    // No link in hand: the fetch from opening the sheet is
+                    // still out, or it was refused. Fetched on THIS tap and
+                    // shared on the NEXT, because after this await the share
+                    // sheet and the clipboard would both be refused. The link
+                    // goes on show now, so it can be copied by hand as well.
+                    let fresh;
+                    try {
+                      fresh = (await createFlockInviteLink(selectedFlockId))?.url || null;
+                    } catch (err) {
+                      showToast(err?.message || "Couldn't make an invite link. Try again.", 'error');
+                      return;
+                    }
+                    if (!fresh) {
+                      showToast("Couldn't make an invite link. Try again.", 'error');
+                      return;
+                    }
+                    inviteLinkRef.current = { flockId: selectedFlockId, url: fresh };
+                    setReplacedLinkUrl('');
+                    setInviteLinkCopied(false);
+                    setCopiedInviteUrl(fresh);
+                    showToast('Link ready. Tap Share invite link again.');
                     return;
                   }
                   // Web Share works in mobile Safari and Chrome on Android,
@@ -4486,12 +4542,16 @@ export default function ChatDetail({
                   }
                   // Copying can fail on an insecure origin or a denied
                   // permission. Either way the link is shown below, so the
-                  // user is never left with nothing.
-                  try { await navigator.clipboard.writeText(url); showToast('Invite link copied'); }
-                  catch { showToast('Link ready. Copy it below'); }
-                  // Shown now because it was shared, not because it was just
-                  // replaced, so the panel goes back to its ordinary sentence.
+                  // user is never left with nothing, and the panel says
+                  // "Copied." only when the copy went through: a host told it
+                  // was copied pastes whatever was on the clipboard before.
+                  let copied = false;
+                  try { await navigator.clipboard.writeText(url); copied = true; } catch { copied = false; }
+                  showToast(copied ? 'Invite link copied' : 'Link ready. Copy it below');
+                  // On show because of this tap, not because it was just
+                  // replaced, so the panel goes back to an ordinary sentence.
                   setReplacedLinkUrl('');
+                  setInviteLinkCopied(copied);
                   setCopiedInviteUrl(url);
                 }}
                 style={{ width: '100%', marginBottom: copiedInviteUrl ? '8px' : '14px', padding: '12px 14px', borderRadius: '12px', border: `1.5px dashed ${colors.steel}`, backgroundColor: 'transparent', color: colors.steel, fontWeight: '600', fontSize: 'var(--t-label)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
@@ -4501,15 +4561,18 @@ export default function ChatDetail({
               </button>
               {copiedInviteUrl && (
                 <div role="status" style={{ marginBottom: '14px', padding: '10px 12px', borderRadius: '12px', backgroundColor: 'var(--accent-green-bg)', border: '1px solid var(--border-subtle)' }}>
-                  {/* Two whole sentences rather than a swapped first word, so
-                      the grant and the expiry read the same either way. The
+                  {/* Whole sentences rather than a swapped first word, so
+                      the grant and the expiry read the same every way. The
                       first is for a link just replaced: nothing was copied
                       then, and the one fact the host needs is that the old
-                      link is dead. */}
+                      link is dead. "Copied." only when the clipboard took
+                      it; otherwise the link is just here to copy. */}
                   <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--accent-green-text)', margin: '0 0 4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
                     {Icons.check('var(--accent-green-text)', 13)} {copiedInviteUrl === replacedLinkUrl
                       ? 'New link made. The old one no longer works. Anyone with this link can see the plan, answer, vote, and join this flock. It stops working two weeks from now or a week after the plan, whichever is later.'
-                      : 'Copied. Anyone with this link can see the plan, answer, vote, and join this flock. It stops working two weeks from now or a week after the plan, whichever is later.'}
+                      : inviteLinkCopied
+                        ? 'Copied. Anyone with this link can see the plan, answer, vote, and join this flock. It stops working two weeks from now or a week after the plan, whichever is later.'
+                        : 'Here is the link. Anyone with it can see the plan, answer, vote, and join this flock. It stops working two weeks from now or a week after the plan, whichever is later.'}
                   </p>
                   <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, wordBreak: 'break-all', fontFamily: 'monospace' }}>{copiedInviteUrl}</p>
                 </div>
