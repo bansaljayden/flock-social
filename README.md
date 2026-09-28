@@ -187,11 +187,11 @@ trained on, the first of them from the very camera Flux uses:
 
 | Real test set | the heat-threshold rule | **Owl** |
 |---|---|---|
-| **Flux's own camera** (FLIR Lepton 3.5, indoor rooms), 2,000 frames | 77.1% exact | **88.8% exact, 100% within one** |
-| Ceiling camera, 2,347 frames, 8,043 people | 9.2% exact | **93.4% exact, 99.7% within one** |
-| Low-resolution rooms with hot laptops, 265 frames | 71.3% exact | **96.6% exact, 100% within one** |
-| Side view, 2,151 frames, 3,872 people | 36.6% exact | **82.9% exact, 97.0% within one** |
-| Wall-mounted meeting rooms, 813 frames, 1,061 people | 51.5% exact | **82.0% exact, 98.6% within one** |
+| **Flux's own camera** (FLIR Lepton 3.5, indoor rooms), 2,000 frames | 77.1% exact | **90.1% exact, 100% within one** |
+| Ceiling camera, 2,347 frames, 8,043 people | 9.2% exact | **93.5% exact, 99.7% within one** |
+| Low-resolution rooms with hot laptops, 265 frames | 71.3% exact | **95.8% exact, 100% within one** |
+| Wall-mounted meeting rooms, 813 frames, 1,061 people | 51.5% exact | **93.4% exact, 99.9% within one** |
+| Side view, 2,151 frames, 3,872 people | 36.6% exact | **82.5% exact, 96.6% within one** |
 
 The Lepton 3.5 frames are from the SDT dataset of the Computer Vision Lab at
 TU Wien (C. Pramerdorfer, J. Strohmayer and M. Kampel, "SDT: A Synthetic
