@@ -351,11 +351,12 @@ function tailorVotes(rows, invisible, { voterObjects = false, viewerId = null } 
 // while every such member has a vote, so two votes landing together cannot
 // both send it, and a member switching their pick afterwards cannot send it
 // again. A column, not push_debounce and not a Map: the maintenance sweep
-// clears push_debounce after an hour, a Map is per process and gone on deploy
-// (project documentation, the single-replica warning), and "once per plan" has no hour in
-// it. If the host's own vote is the event that finds it true (the others all
-// voted before this column existed, or the one member who had not voted
-// left), the claim is still taken and nothing is sent: they are looking at it.
+// clears push_debounce after an hour, a Map is per process (empty after every
+// deploy, and a second server instance would keep a copy of its own), and
+// "once per plan" has no hour in it. If the host's own vote is the event that
+// finds it true (the others all voted before this column existed, or the one
+// member who had not voted left), the claim is still taken and nothing is
+// sent: they are looking at it.
 //
 // Nothing here touches the database when push is not configured, which is the
 // rule every push producer in this backend keeps (several suites assert a
