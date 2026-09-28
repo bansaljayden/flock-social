@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { useTheme } from './context/ThemeContext';
 import useKeyboardInset from './hooks/useKeyboardInset';
+import useSheetDrag from './hooks/useSheetDrag';
 // The revenue simulator math (lib/finance.js) moved to screens/RevenueScreen.js
 // with the admin console on 2026-08-27 and is imported there now. It was the
 // only reader of it in App.js, so the import went with it.
@@ -13689,6 +13690,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setUserProfileTarget(null);
     setProfileBlockStep(false);
   }, [profileBlocking]);
+  // The grabber on the person card pulls it down to close it, with the same
+  // close and the same refusal while a block is being sent
+  // (hooks/useSheetDrag.js).
+  const personSheetDrag = useSheetDrag(closeUserProfile, { enabled: !profileBlocking });
 
   const confirmProfileBlock = useCallback(async () => {
     const person = userProfileTarget;
@@ -19367,11 +19372,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               style={{ position: 'absolute', inset: 0, zIndex: 190, backgroundColor: 'rgba(0,0,0,0.45)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
             >
               <div
+                ref={personSheetDrag.sheetRef}
                 onClick={(e) => e.stopPropagation()}
-                style={{ width: '100%', maxWidth: '440px', backgroundColor: 'var(--bg-card-solid)', borderTopLeftRadius: '20px', borderTopRightRadius: '20px', overflow: 'hidden', boxShadow: '0 -8px 30px rgba(0,0,0,0.25)', animation: 'fadeInUp 0.25s ease-out' }}
+                style={{ width: '100%', maxWidth: '440px', backgroundColor: 'var(--bg-card-solid)', borderTopLeftRadius: '20px', borderTopRightRadius: '20px', overflow: 'hidden', boxShadow: '0 -8px 30px rgba(0,0,0,0.25)', animation: 'sheetRise 280ms cubic-bezier(0.2, 0.8, 0.2, 1)' }}
               >
                 <DialogBehavior onClose={closeUserProfile} label={`About ${userProfileTarget.name}`} />
-                <div style={{ width: '38px', height: '4px', borderRadius: '2px', backgroundColor: 'var(--border-default)', margin: '10px auto 4px' }} />
+                {/* The grabber, in a full-width strip a pull down closes the
+                    card from (personSheetDrag). */}
+                <div aria-hidden="true" className="sheet-grab" {...personSheetDrag.handleProps} style={{ padding: '10px 0' }}>
+                  <div style={{ width: '38px', height: '4px', borderRadius: '2px', backgroundColor: 'var(--border-default)', margin: '0 auto' }} />
+                </div>
 
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', padding: '14px 16px 16px' }}>
                   {userProfileTarget.image ? (

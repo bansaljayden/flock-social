@@ -247,7 +247,7 @@ describe('the flat-20px sheets that sat in the home indicator strip', () => {
     const out = [];
     // One line per backdrop, and `[^\n]` rather than `[^>]` because the invite
     // sheet's backdrop has an arrow function in its onClick.
-    const re = /<div className="modal-backdrop[^"]*"[^\n]*alignItems: 'flex-end'[^\n]*\n[\s\S]*?className="modal-content" style=\{\{([^}]*)\}\}/g;
+    const re = /<div className="modal-backdrop[^"]*"[^\n]*alignItems: 'flex-end'[^\n]*\n[\s\S]*?className="modal-content[^"]*" style=\{\{([^}]*)\}\}/g;
     let m;
     while ((m = re.exec(src))) {
       const pad = /padding: '([^']*)'/.exec(m[1]);

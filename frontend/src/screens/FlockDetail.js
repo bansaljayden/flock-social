@@ -60,6 +60,7 @@ import { lsGet } from '../lib/storage';
 import { BirdieStill, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
 import useEdgeSwipeBack from '../hooks/useEdgeSwipeBack';
+import useSheetDrag from '../hooks/useSheetDrag';
 import { hapticTap } from '../services/haptics';
 
 // The time editor's day chips are relative words (Tonight, Tomorrow, This
@@ -170,6 +171,9 @@ export default function FlockDetail({
     // every render or on none.
     const leaveToPlans = () => setCurrentScreen('main');
     const edgeBack = useEdgeSwipeBack(leaveToPlans);
+    // The grabber on the time editor pulls the sheet down to close it
+    // (hooks/useSheetDrag.js), with the close its backdrop and Escape use.
+    const timeSheetDrag = useSheetDrag(() => setShowTimeEditor(false));
     const flock = getSelectedFlock();
     if (!flock) return <MissingFlockPanel />;
     const acceptedMembers = (flock.members || []).filter(m => typeof m === 'object' ? (m.status === 'accepted' || !m.status) : true);
@@ -870,9 +874,13 @@ export default function FlockDetail({
         {showTimeEditor && (
           <div className="modal-backdrop" onClick={(e) => { if (e.target === e.currentTarget) setShowTimeEditor(false); }} style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'flex-end', zIndex: 60 }}>
             <DialogBehavior onClose={() => setShowTimeEditor(false)} label="Change the time" />
-            <div className="modal-content" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '20px', paddingBottom: 'calc(20px + var(--safe-bottom))', width: '100%' }}>
-              <div style={{ width: '40px', height: '4px', backgroundColor: 'var(--pill-bg)', borderRadius: '2px', margin: '0 auto 16px' }} />
+            <div ref={timeSheetDrag.sheetRef} className="modal-content sheet-rise" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '20px', paddingBottom: 'calc(20px + var(--safe-bottom))', width: '100%' }}>
+              {/* The grabber and the heading are the handle, run out to the
+                  edges of the sheet. The layout is what it was. */}
+              <div className="sheet-grab" {...timeSheetDrag.handleProps} style={{ margin: '-20px -20px 0', padding: '20px 20px 0' }}>
+              <div aria-hidden="true" style={{ width: '40px', height: '4px', backgroundColor: 'var(--pill-bg)', borderRadius: '2px', margin: '0 auto 16px' }} />
               <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>When are you going?</h3>
+              </div>
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 14px' }}>Everyone in the flock sees the new time, and it moves on your Plans calendar.</p>
 
               <label style={{ display: 'block', fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, marginBottom: '6px' }}>Day</label>

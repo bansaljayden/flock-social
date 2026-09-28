@@ -5,9 +5,11 @@ import { getProStatus, startProCheckout, trackPaywallShown, trackPurchaseComplet
 import { yearlySavingsPercent, planSavingsPercent, perMonthLabel, storePerMonthLabel } from '../lib/proPricing';
 import { birdieBackText, forecastBackText } from '../lib/meterResets';
 import { isNativeShell } from '../lib/nativeShell';
+import useSheetDrag from '../hooks/useSheetDrag';
 
 // Flock Pro paywall bottom sheet. Sheet mechanics mirror ModerationSheet.js
-// (overlay, 440px max, 20px top radius, drag handle, fadeInUp).
+// (overlay, 440px max, 20px top radius, a grabber that pulls it closed,
+// sheetRise).
 //
 // Props: { open, onClose, showToast, onUpgraded, trigger, birdieResetsAt, place }
 //   trigger ∈ 'birdie' | 'forecast' | 'settings' | null: which limit opened it.
@@ -279,6 +281,11 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger, birdieRes
     return () => { document.removeEventListener('keydown', onKeyDown, true); clearTimeout(t); };
   }, [open]);
 
+  // The grabber pulls the sheet down to close it (hooks/useSheetDrag.js), and
+  // like the backdrop and Escape it is inert while a purchase, a restore or
+  // the trip to checkout is under way.
+  const { handleProps: grabProps } = useSheetDrag(onClose, { enabled: !busy && !restoring, sheetRef });
+
   if (!open) return null;
 
   // ---- native (App Store) ----
@@ -469,13 +476,16 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger, birdieRes
         aria-modal="true"
         aria-label="Flock Pro"
         onClick={(e) => e.stopPropagation()}
-        style={{ position: 'relative', width: '100%', maxWidth: '440px', backgroundColor: 'var(--bg-card-solid)', borderTopLeftRadius: '20px', borderTopRightRadius: '20px', overflow: 'hidden', boxShadow: '0 -8px 30px rgba(0,0,0,0.25)', animation: 'fadeInUp 0.25s ease-out', fontFamily: FONT }}
+        style={{ position: 'relative', width: '100%', maxWidth: '440px', backgroundColor: 'var(--bg-card-solid)', borderTopLeftRadius: '20px', borderTopRightRadius: '20px', overflow: 'hidden', boxShadow: '0 -8px 30px rgba(0,0,0,0.25)', animation: 'sheetRise 280ms cubic-bezier(0.2, 0.8, 0.2, 1)', fontFamily: FONT }}
       >
-        <div aria-hidden="true" style={{ width: '38px', height: '4px', borderRadius: '2px', backgroundColor: 'var(--border-default)', margin: '10px auto 4px' }} />
-        {/* A real exit, visible from the first frame. The drag handle above is
-            paint: it looks like a way out and it is not focusable, not
-            labelled and has no handler. This is the only control that can
-            dismiss the sheet without a pointer. */}
+        {/* The grabber, in a strip the width of the sheet that a pull down
+            closes it from (useSheetDrag above). */}
+        <div aria-hidden="true" className="sheet-grab" {...grabProps} style={{ padding: '10px 0' }}>
+          <div style={{ width: '38px', height: '4px', borderRadius: '2px', backgroundColor: 'var(--border-default)', margin: '0 auto' }} />
+        </div>
+        {/* A real exit, visible from the first frame. The grabber above answers
+            a pull, but it is not focusable and not labelled, so this is still
+            the only control that can dismiss the sheet without a pointer. */}
         <button
           type="button"
           className="hit44"

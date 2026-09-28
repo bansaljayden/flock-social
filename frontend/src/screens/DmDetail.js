@@ -87,6 +87,7 @@ import { VENUE_PHOTO_PLACEHOLDER } from '../lib/venuePhoto';
 import useKeyboardComposer from '../hooks/useKeyboardComposer';
 import { holdStatusBarOverDark } from '../services/systemBars';
 import useEdgeSwipeBack from '../hooks/useEdgeSwipeBack';
+import useSheetDrag from '../hooks/useSheetDrag';
 import Icons from '../components/ui/Icons';
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
 
@@ -700,6 +701,9 @@ export default function DmDetail({
   // used: the screen changes, then the thread's shared state is cleared.
   const leaveToList = () => { setCurrentScreen('main'); leaveDmScreen(); };
   const edgeBack = useEdgeSwipeBack(leaveToList);
+  // A pull down on the grabber or header of the vote sheet closes it, the
+  // same close its X uses (hooks/useSheetDrag.js).
+  const dmVoteSheetDrag = useSheetDrag(() => setShowDmVotePanel(false));
 
   /* THE COMPOSER'S OWN COPY OF THE DRAFT.
      App.js owns this field: `handleDmInputChange` writes the shared
@@ -1079,8 +1083,12 @@ export default function DmDetail({
             <DialogBehavior onClose={() => setShowDmVotePanel(false)} label="Vote on a venue" />
             {/* SAFE-AREA rule 1: the last row sat in the home indicator strip
                 under a flat 20px. Same fix as the flock chat's vote sheet. */}
-            <div className="modal-content" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '20px 20px calc(20px + var(--safe-bottom))', width: '100%', maxHeight: '80%', overflowY: 'auto' }}>
-              {/* Header */}
+            <div ref={dmVoteSheetDrag.sheetRef} className="modal-content sheet-rise" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '20px 20px calc(20px + var(--safe-bottom))', width: '100%', maxHeight: '80%', overflowY: 'auto' }}>
+              {/* Header, and the handle: a grabber and the header row, run out
+                  to the edges of the sheet, as on the vote sheet in the flock
+                  chat. */}
+              <div className="sheet-grab" {...dmVoteSheetDrag.handleProps} style={{ margin: '-20px -20px 0', padding: '12px 20px 0' }}>
+              <div aria-hidden="true" style={{ width: '40px', height: '4px', backgroundColor: 'var(--pill-bg)', borderRadius: '2px', margin: '0 auto 12px' }} />
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                 <div>
                   <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.vote(colors.navy, 20)} Vote for a Venue</h2>
@@ -1091,6 +1099,7 @@ export default function DmDetail({
                   )}
                 </div>
                 <button aria-label="Close" className="hit44" onClick={() => setShowDmVotePanel(false)} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 18)}</button>
+              </div>
               </div>
 
               {/* A failed read is said once, above the list, because the list
@@ -1217,7 +1226,7 @@ export default function DmDetail({
         <div className="modal-backdrop" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-end', zIndex: 50 }}>
             <DialogBehavior onClose={() => setShowDmVenueSearch(false)} label="Share a venue" />
           {/* SAFE-AREA rule 1, as on the vote sheet above. */}
-          <div className="modal-content" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '20px 20px calc(20px + var(--safe-bottom))', width: '100%', maxHeight: '70%', overflowY: 'auto' }}>
+          <div className="modal-content sheet-rise" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '20px 20px calc(20px + var(--safe-bottom))', width: '100%', maxHeight: '70%', overflowY: 'auto' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
               <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.mapPin(colors.navy, 20)} Share a Venue</h2>
               <button aria-label="Close" className="hit44" onClick={() => setShowDmVenueSearch(false)} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 18)}</button>
