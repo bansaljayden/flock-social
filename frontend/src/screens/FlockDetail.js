@@ -718,9 +718,11 @@ export default function FlockDetail({
                 // same flock, two screens, two behaviours.
                 //
                 // Same three lines as handleUnvote in ChatDetail.js, on purpose.
-                // Stripping the last voter drops the row because a venue with no
-                // votes and no guests is not in the server's tally either, so
+                // Stripping the last vote drops the row because a venue that
+                // counts for nothing is not in the server's tally either, so
                 // leaving it would be a row that vanishes on the next load.
+                // voteTotal decides that, not the names: a vote from somebody
+                // this reader blocked is counted and unnamed, and keeps a row.
                   // A CLOSED PLAN'S TALLY IS A RECORD, NOT A BALLOT. Every
                   // other control on this screen is gated on isCompleted,
                   // which covers cancelled as well as completed -- the venue
@@ -744,7 +746,7 @@ export default function FlockDetail({
                       const newVotes = isMyVote
                         ? flock.votes
                           .map(vt => ({ ...vt, voters: vt.voters.filter(x => x !== 'You') }))
-                          .filter(vt => vt.voters.length > 0 || (vt.guestCount || 0) > 0)
+                          .filter(vt => voteTotal(vt) > 0)
                         : flock.votes.map(vt => ({ ...vt, voters: vt.venue === v.venue ? [...vt.voters, 'You'] : vt.voters.filter(x => x !== 'You') }));
                       updateFlockVotes(selectedFlockId, newVotes);
                     },
