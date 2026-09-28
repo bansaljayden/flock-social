@@ -44,10 +44,14 @@ function body(h) {
     '',
     h.reasons.length ? `What Google said: ${h.reasons.join(', ')}.` : '',
     '',
-    'What is broken for users right now: venue search, venue photos, the crowd',
-    'card and the public demo on flockcorp.com. The app degrades to a plain',
-    '"could not load" message rather than showing an empty list, so this looks',
-    'like nothing to a user and like nothing in the product analytics.',
+    'What is broken for users right now: venue search, the crowd card and the',
+    'public demo on flockcorp.com. The app degrades to a plain "could not load"',
+    'message rather than showing an empty list, so this looks like nothing to a',
+    'user and like nothing in the product analytics.',
+    '',
+    'Venue photos are metered on a separate Google quota and have an alert of',
+    'their own ("Venue photos are failing"), so they may still be loading. If',
+    'they fail too, that alert arrives separately.',
     '',
     'This is NOT a spend ceiling. utils/placesBudget.js has its own alarm for',
     'that, and it cannot see this one, because a call Google REFUSES costs',
@@ -92,7 +96,8 @@ async function runPlacesOutageAlert(status) {
       text: body(h),
       push: {
         title: 'Google Places is down',
-        body: `Venue search and photos are failing: ${h.consecutiveFailures} calls in a row over ${forPhrase(h.failingForMs)}.`,
+        // Search only: photos run on their own quota and push their own alert.
+        body: `Venue search is failing: ${h.consecutiveFailures} calls in a row over ${forPhrase(h.failingForMs)}.`,
       },
       tag: '[PlacesHealth]',
     });
