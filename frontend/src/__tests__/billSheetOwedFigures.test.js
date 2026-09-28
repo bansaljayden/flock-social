@@ -947,3 +947,51 @@ describe('the creator\'s budget controls on a plan that has ended', () => {
     expect(screen.queryByRole('button', { name: 'Send Reminder' })).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// 10. Create Split sends one bill, however fast it is tapped
+// ---------------------------------------------------------------------------
+/* A second tap before the answer sent a second POST, which rewrote the bill
+   the first had just made and pushed "You owe" to everybody again. */
+describe('Create Split while it is on the wire', () => {
+  const api = require('../services/api');
+  function OpenForm(over) {
+    const [showChatPool, setShowChatPool] = React.useState(true);
+    const [showCreateBill, setShowCreateBill] = React.useState(true);
+    return React.createElement(ChatDetail, chatProps({
+      ...over, showChatPool, setShowChatPool, showCreateBill, setShowCreateBill,
+    }));
+  }
+
+  test('a double tap sends one bill, and the button says it is working until the answer lands', async () => {
+    let answer;
+    api.createBillSplit.mockImplementation(() => new Promise((resolve) => { answer = resolve; }));
+    const setBillSplit = jest.fn();
+    render(React.createElement(OpenForm, {
+      billSplit: null, billTotal: '120', setBillSplit, getSelectedFlock: () => ({ ...FLOCK, status: 'planning' }),
+    }));
+    const button = screen.getByRole('button', { name: 'Create Split' });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    expect(api.createBillSplit).toHaveBeenCalledTimes(1);
+    const working = screen.getByRole('button', { name: 'Creating...' });
+    expect(working.disabled).toBe(true);
+
+    answer({ bill: { id: 5, shares: [] } });
+    await waitFor(() => expect(setBillSplit).toHaveBeenCalledTimes(1));
+    expect(api.createBillSplit).toHaveBeenCalledTimes(1);
+  });
+
+  test('a refusal frees the button for another try', async () => {
+    api.createBillSplit.mockRejectedValueOnce(Object.assign(new Error('Payer must be a member of the flock'), { status: 400 }));
+    render(React.createElement(OpenForm, {
+      billSplit: null, billTotal: '120', getSelectedFlock: () => ({ ...FLOCK, status: 'planning' }),
+    }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create Split' }));
+    const again = await screen.findByRole('button', { name: 'Create Split' });
+    await waitFor(() => expect(again.disabled).toBe(false));
+    api.createBillSplit.mockResolvedValueOnce({ bill: { id: 6, shares: [] } });
+    fireEvent.click(again);
+    await waitFor(() => expect(api.createBillSplit).toHaveBeenCalledTimes(2));
+  });
+});
