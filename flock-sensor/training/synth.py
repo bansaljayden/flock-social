@@ -701,6 +701,25 @@ def heatmap(points, stride=4, sigma=1.1):
     return hm
 
 
+def density(objects, stride=4, sigma=1.5):
+    """Density target: every person adds a Gaussian that sums to one, so the
+    map's total is the number of people, wherever their heads are."""
+    gh, gw = ROWS // stride, COLS // stride
+    out = np.zeros((1, gh, gw), dtype=np.float32)
+    ys, xs = np.mgrid[0:gh, 0:gw].astype(np.float32)
+    for o in objects:
+        if o['cls'] != 'person':
+            continue
+        cx, cy = o['x'] / stride - 0.5, o['y'] / stride - 0.5
+        g = np.exp(-((xs - cx) ** 2 + (ys - cy) ** 2) / (2 * sigma * sigma))
+        total = float(g.sum())
+        if total > 1e-6:
+            # Normalised to one whatever is cut off at the frame's edge: a
+            # person half out of view is still one person.
+            out[0] += g / total
+    return out
+
+
 def targets(objects, stride=4, person_sigma_px=None):
     """Training targets for owl-2 on the model's 30x40 grid.
 
