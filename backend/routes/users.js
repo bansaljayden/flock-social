@@ -3043,7 +3043,7 @@ router.get('/export', async (req, res) => {
         // issued (migration 079). The user is shown it in the app already.
         friend_code: account.friend_code ?? null,
         // When the user allowed Birdie to send their data to Google's Gemini,
-        // or null while they have not (migration 099). A consent record, for
+        // or null while they have not (migration 100). A consent record, for
         // the same reason as phone_discoverable_at above.
         birdie_ai_consent_at: account.birdie_ai_consent_at ?? null,
         created_at: account.created_at,

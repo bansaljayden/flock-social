@@ -3323,6 +3323,13 @@ export async function sendAiChat(messages, location, currentContext) {
   // The server only ever removes wording on this; it grants nothing
   // (lib/purchasesBuild.js has why the test is written out).
   if (process.env.REACT_APP_PURCHASES === 'off') body.purchases = 'off';
+  // This client asks before Birdie's first message (components/birdie/
+  // BirdiePanel.js) and says so on every turn, which is what makes the server
+  // hold the turn to the recorded answer. A build installed before the
+  // question existed sends no flag and is served as it always was (backend
+  // routes/ai.js, WHO IS HELD TO IT). Never behind a condition: a turn
+  // without it skips the server's check.
+  body.consentFlow = 'ask';
   try {
     data = await request('/api/ai/chat', {
       method: 'POST',
@@ -3342,8 +3349,9 @@ export async function sendAiChat(messages, location, currentContext) {
 }
 
 // Birdie's permission to send personal data to Google's Gemini (backend
-// routes/ai.js, migration 099). Both answer { consented, consentedAt }, and
-// /chat refuses with BIRDIE_CONSENT_REQUIRED until the grant has landed.
+// routes/ai.js, migration 100). Both answer { consented, consentedAt }, and
+// /chat refuses this client (it sends consentFlow, see sendAiChat) with
+// BIRDIE_CONSENT_REQUIRED until the grant has landed.
 export async function grantBirdieConsent() {
   return request('/api/ai/consent', { method: 'POST' });
 }
