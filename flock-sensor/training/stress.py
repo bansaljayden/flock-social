@@ -1,6 +1,6 @@
 """Stress test: every hard situation, built on purpose, scored on its own.
 
-    python stress.py path/to/people.onnx [frames_per_case]
+    python stress.py path/to/people.onnx [frames_per_case] [people-fine.onnx]
 
 The held-out score says how a model does on average; this says where it
 breaks. Each case builds one kind of hard scene many times over and reports
@@ -349,6 +349,9 @@ def main(argv):
     import main as sensor
     model = sensor.PeopleModel(argv[0], sensor.THERMAL_MODEL_THRESHOLD)
     n = int(argv[1]) if len(argv) > 1 else 150
+    if len(argv) > 2:
+        # The crowd model, as the sensor loads it beside the main one.
+        model.fine = sensor.PeopleModel(argv[2], sensor.THERMAL_MODEL_THRESHOLD)
     rows = []
     for name, truth, build in CASES:
         rng = np.random.default_rng(abs(hash(name)) % (1 << 31))
@@ -356,7 +359,7 @@ def main(argv):
         for _ in range(n):
             t = finish(build(rng), rng)
             frame = t.ravel().tolist()
-            said = len(model.read(frame)[0])
+            said = model.read_crowd(frame)[2]   # counted exactly as the sensor counts
             ok += said == truth
             near += abs(said - truth) <= 1
             rule_ok += sensor.count_thermal_clusters(frame) == truth
