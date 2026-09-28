@@ -1092,10 +1092,12 @@ export default function LandingPage() {
                   that answers it and the screen that renders it.
 
                   "Who picked you tonight" and "the flocks that chose you" were
-                  the sixth. GET /incoming-flocks lists a flock when one member
-                  voted for the venue, whether or not the group went there, and
-                  it looks seven days ahead, not one night. "In their vote" is
-                  what the route knows, and it is the name the dashboard uses. */}
+                  the sixth. GET /incoming-flocks lists a plan going to the
+                  venue, or one still deciding with it as the pick or in a
+                  present member's vote, and it looks seven days ahead, not one
+                  night. It knows nothing about who chose whom. "In their vote"
+                  is what the route knows, and it is the name the dashboard
+                  uses. */}
               <p className="lp-plan-note">
                 A dashboard for your door: which flocks have you in their vote,
                 how the week ahead looks, and a card inside the app that you
