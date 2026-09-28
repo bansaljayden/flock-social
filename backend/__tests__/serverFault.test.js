@@ -44,6 +44,10 @@ const realError = console.error;
 console.error = () => {};
 installConsoleHook();
 
+// Request stores captured from inside a handler, as a long-lived resource
+// created there would hold them.
+const inherited = [];
+
 function buildApp() {
   const app = express();
   app.use(faultMiddleware);
@@ -72,6 +76,20 @@ function buildApp() {
   router.get('/:id/words', (req, res) => {
     console.error('Words error:', new Error('pool timed out').message);
     res.status(500).json({ error: 'Server error' });
+  });
+  // Stands in for a long-lived resource first created inside a request (a new
+  // pool socket, a lazily started timer): it inherits the request's store and
+  // keeps it, so what the store still points at afterwards is what leaks.
+  router.get('/:id/inherits', (req, res) => {
+    inherited.push(serverFault.__context.getStore());
+    console.error('Inherits error:', new Error('failed while a socket was being opened'));
+    res.status(500).json({ error: 'Server error' });
+    // Work that outlives the response, still inside the same context.
+    setTimeout(() => console.error('late:', new Error('logged after the answer')), 5);
+  });
+  // A request the client gives up on before any answer.
+  router.get('/:id/hangs', () => {
+    inherited.push(serverFault.__context.getStore());
   });
   app.use('/api/things', router);
   app.use((err, req, res, next) => {
@@ -161,6 +179,51 @@ test('a route that logs only err.message still leaves its words for the alert an
   assert.strictEqual(s.routes[0].lastMessage, 'Words error: pool timed out');
   assert.strictEqual(captured.length, 1);
   assert.match(captured[0].msg, /^500 on GET \/api\/things\/:id\/words: Words error: pool timed out$/);
+});
+
+test('a resource that outlives the request keeps no request, body or error through the store', async () => {
+  __resetServerFaults();
+  captured.length = 0;
+  inherited.length = 0;
+  await withServer(async (get) => { assert.strictEqual(await get('/api/things/4/inherits'), 500); });
+  await settle();
+  // Counted and reported first, with the error the route logged.
+  const s = serverFaultStatus();
+  assert.strictEqual(s.total, 1);
+  assert.strictEqual(s.routes[0].route, 'GET /api/things/:id/inherits');
+  assert.match(s.routes[0].lastMessage, /failed while a socket was being opened/);
+  assert.strictEqual(captured.length, 1);
+  // Then let go.
+  assert.strictEqual(inherited.length, 1);
+  const store = inherited[0];
+  assert.strictEqual(store.req, null, 'the request, and its parsed body, would be pinned for the life of the resource');
+  assert.strictEqual(store.error, null);
+  assert.strictEqual(store.note, null);
+  // The error logged after the answer went nowhere.
+  assert.strictEqual(serverFaultStatus().total, 1);
+  assert.match(serverFaultStatus().routes[0].lastMessage, /failed while a socket was being opened/);
+});
+
+test('a request the client abandoned lets go of the request too', async () => {
+  __resetServerFaults();
+  inherited.length = 0;
+  const server = http.createServer(buildApp());
+  await new Promise((r) => server.listen(0, r));
+  try {
+    const ac = new AbortController();
+    const pending = fetch(`http://127.0.0.1:${server.address().port}/api/things/5/hangs`, { signal: ac.signal }).catch(() => null);
+    for (let i = 0; i < 100 && inherited.length === 0; i += 1) await new Promise((r) => setTimeout(r, 5));
+    assert.strictEqual(inherited.length, 1);
+    assert.ok(inherited[0].req, 'held while the request is live');
+    ac.abort();
+    await pending;
+    for (let i = 0; i < 100 && inherited[0].req !== null; i += 1) await new Promise((r) => setTimeout(r, 5));
+    assert.strictEqual(inherited[0].req, null);
+    assert.strictEqual(serverFaultStatus().total, 0, 'no answer is not a fault');
+  } finally {
+    server.closeAllConnections();
+    await new Promise((r) => server.close(r));
+  }
 });
 
 test('faults older than the window drop out', () => {
