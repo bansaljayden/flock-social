@@ -688,7 +688,10 @@ test('065 survives a replay over live data: it moves no rows', () => {
   assert.strictEqual(alters.length, 4);
   for (const a of alters) assert.match(a, /ADD COLUMN IF NOT EXISTS/i, a);
   assert.match(body, /CREATE INDEX CONCURRENTLY IF NOT EXISTS/);
-  assert.match(sql.split('\n')[0], /^-- @noTransaction$/,
+  // Split on either ending: a Windows checkout gives this file CRLF, and
+  // db/migrate.js reads the directive with startsWith, so a trailing \r
+  // there is no defect for the runner and must not be one for this test.
+  assert.match(sql.split(/\r?\n/)[0], /^-- @noTransaction$/,
     'CREATE INDEX CONCURRENTLY cannot run inside a transaction block');
 });
 
