@@ -12,8 +12,8 @@
  *    and it was the first interactive thing on the screen.
  * 3. The greeting that cycles above the name. One of its lines was "Rounding
  *    up the group...", which on an empty screen reads as the app still
- *    loading, and every line arrived on an overshoot curve DESIGN-STANDARD.md's
- *    precedence section bans.
+ *    loading, and every line arrived on an overshoot curve that bounced it
+ *    past its slot and back.
  *
  * HomeScreen is declared inside FlockAppInner, so it cannot be rendered on its
  * own. What can be done without rendering it is done: the two guards are

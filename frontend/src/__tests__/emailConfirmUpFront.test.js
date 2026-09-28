@@ -180,7 +180,7 @@ const FOREGROUND_BODY = (() => {
 
 function checkScope(over = {}) {
   return {
-    verifyCheckInFlight: { current: false },
+    verifyCheckInFlight: { current: null },
     setVerifyChecking: jest.fn(),
     setVerifyNote: jest.fn(),
     getCurrentUser: jest.fn().mockResolvedValue({ user: { id: 1, email_verified: true } }),
@@ -211,7 +211,7 @@ describe('checkEmailConfirmed, lifted out of App.js and executed', () => {
     expect(s.setVerifyPrompt).toHaveBeenCalledWith(null);
     expect(s.showToast).toHaveBeenCalledWith('Your email is confirmed.');
     expect(s.setVerifyChecking).toHaveBeenLastCalledWith(false);
-    expect(s.verifyCheckInFlight.current).toBe(false);
+    expect(s.verifyCheckInFlight.current).toBeNull();
   });
 
   test('a tap on an account still unconfirmed is told so, and nothing is patched', async () => {
@@ -242,21 +242,99 @@ describe('checkEmailConfirmed, lifted out of App.js and executed', () => {
     const tap = checkScope({ getCurrentUser: failing() });
     await makeCheck(tap)(false);
     expect(tap.setVerifyNote).toHaveBeenLastCalledWith('You are offline.');
-    expect(tap.verifyCheckInFlight.current).toBe(false);
+    expect(tap.verifyCheckInFlight.current).toBeNull();
 
     const quiet = checkScope({ getCurrentUser: failing() });
     await makeCheck(quiet)(true);
     expect(quiet.setVerifyNote).not.toHaveBeenCalled();
   });
 
-  test('a quiet read stands aside for one already going; a tap does not', async () => {
-    const quiet = checkScope({ verifyCheckInFlight: { current: true } });
-    await makeCheck(quiet)(true);
-    expect(quiet.getCurrentUser).not.toHaveBeenCalled();
+  // A read whose answer the test hands over when it chooses.
+  const heldRead = () => {
+    const held = {};
+    held.fn = jest.fn(() => new Promise((resolve, reject) => { held.resolve = resolve; held.reject = reject; }));
+    return held;
+  };
 
-    const tap = checkScope({ verifyCheckInFlight: { current: true } });
-    await makeCheck(tap)(false);
-    expect(tap.getCurrentUser).toHaveBeenCalledTimes(1);
+  test('a quiet read stands aside for one already going', async () => {
+    const held = heldRead();
+    const s = checkScope({ getCurrentUser: held.fn });
+    const check = makeCheck(s);
+    const tap = check(false);
+    await check(true);
+    expect(s.getCurrentUser).toHaveBeenCalledTimes(1);
+    held.resolve({ user: { id: 1, email_verified: false } });
+    await tap;
+  });
+
+  test('a tap during a quiet read waits on that read: one request, one toast', async () => {
+    const held = heldRead();
+    const s = checkScope({ getCurrentUser: held.fn });
+    const check = makeCheck(s);
+    const quiet = check(true);
+    const tap = check(false);
+    expect(s.getCurrentUser).toHaveBeenCalledTimes(1);
+    expect(s.setVerifyChecking).toHaveBeenLastCalledWith(true);
+
+    held.resolve({ user: { id: 1, email_verified: true } });
+    await Promise.all([quiet, tap]);
+    expect(s.getCurrentUser).toHaveBeenCalledTimes(1);
+    expect(s.patchSessionUser).toHaveBeenCalledTimes(1);
+    expect(s.showToast).toHaveBeenCalledTimes(1);
+    expect(s.setVerifyPrompt).toHaveBeenCalledWith(null);
+    expect(s.setVerifyChecking).toHaveBeenLastCalledWith(false);
+    expect(s.verifyCheckInFlight.current).toBeNull();
+  });
+
+  test('the tap that joined a quiet read is still told when the answer is no', async () => {
+    const held = heldRead();
+    const s = checkScope({ getCurrentUser: held.fn });
+    const check = makeCheck(s);
+    const quiet = check(true);
+    const tap = check(false);
+    held.resolve({ user: { id: 1, email_verified: false } });
+    await Promise.all([quiet, tap]);
+    expect(s.setVerifyNote).toHaveBeenLastCalledWith('Not confirmed yet. Open the link in the email, then tap this again.');
+    expect(s.setVerifyChecking).toHaveBeenLastCalledWith(false);
+  });
+
+  test('the tap that joined a quiet read is told when that read fails, and the quiet one stays silent', async () => {
+    const held = heldRead();
+    const s = checkScope({ getCurrentUser: held.fn });
+    const check = makeCheck(s);
+    const quiet = check(true);
+    const tap = check(false);
+    held.reject(Object.assign(new Error('You are offline.'), { isOffline: true }));
+    await Promise.all([quiet, tap]);
+    expect(s.setVerifyNote).toHaveBeenCalledTimes(2);
+    expect(s.setVerifyNote).toHaveBeenNthCalledWith(1, '');
+    expect(s.setVerifyNote).toHaveBeenLastCalledWith('You are offline.');
+    expect(s.verifyCheckInFlight.current).toBeNull();
+  });
+
+  test('once a read has answered, the next tap asks the server again', async () => {
+    const s = checkScope({ getCurrentUser: jest.fn().mockResolvedValue({ user: { id: 1, email_verified: false } }) });
+    const check = makeCheck(s);
+    await check(false);
+    await check(false);
+    expect(s.getCurrentUser).toHaveBeenCalledTimes(2);
+    expect(s.verifyCheckInFlight.current).toBeNull();
+  });
+
+  test('an older read settling never clears the one that replaced it', async () => {
+    const first = heldRead();
+    const s = checkScope({ getCurrentUser: first.fn });
+    const check = makeCheck(s);
+    const tap = check(false);
+    const going = s.verifyCheckInFlight.current;
+    expect(going).not.toBeNull();
+    // Something else took the slot (a later read); the first one finishing
+    // must leave it alone.
+    const later = Promise.resolve(false);
+    s.verifyCheckInFlight.current = later;
+    first.resolve({ user: { id: 1, email_verified: false } });
+    await tap;
+    expect(s.verifyCheckInFlight.current).toBe(later);
   });
 });
 
