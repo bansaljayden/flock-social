@@ -236,7 +236,7 @@ test('server.js mounts it with its own limiter, before the catch-alls that deman
 });
 
 test('the migration is additive and keyed one row per shape per day', () => {
-  const sql = fs.readFileSync(path.join(__dirname, '..', 'migrations', '099_client_crash_reports.sql'), 'utf8');
+  const sql = fs.readFileSync(path.join(__dirname, '..', 'migrations', '101_client_crash_reports.sql'), 'utf8');
   assert.match(sql, /CREATE TABLE IF NOT EXISTS client_crash_reports/);
   assert.match(sql, /UNIQUE \(fingerprint, seen_on\)/);
   assert.match(sql, /-- @requires table client_crash_reports/);

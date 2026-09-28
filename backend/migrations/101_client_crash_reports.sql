@@ -1,4 +1,4 @@
--- 099: crash reports a person chose to send from the app's crash screen.
+-- 101: crash reports a person chose to send from the app's crash screen.
 --
 -- ASCII only, like 065, 082 and 091 to 096: the embedded server the
 -- boot-safety suite runs is WIN1252.
