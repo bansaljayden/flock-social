@@ -131,16 +131,20 @@ describe('the page only sells things that exist', () => {
 
     // "See which flocks have you in their vote this week". It said "the
     // flocks that chose you" and "who picked you tonight", and the route
-    // behind it lists a flock when ONE member voted for the venue, whether or
-    // not the group went there, for seven days ahead rather than one night.
-    // Nothing in the feed knows who chose whom, so the pitch may not say so.
+    // behind it lists a plan going to the venue, or one still deciding with it
+    // as the pick or in ONE present member's vote, for seven days ahead rather
+    // than one night. Nothing in the feed knows who chose whom, so the pitch
+    // may not say so.
     expect(venueCard).toMatch(/which flocks have you in their vote this week/i);
     expect(venueCard).not.toMatch(/\b(chose|picked|choosing|picking) you\b/i);
     expect(venueCard).not.toMatch(/\btonight\b/i);
     const route = fs.readFileSync(
       path.join(REPO, 'backend', 'routes', 'venueDashboard.js'), 'utf8'
     );
-    expect(route).toMatch(/JOIN venue_votes vv ON vv\.flock_id = f\.id\s+WHERE vv\.venue_id = \$1/);
+    // Where the plan is going, and a member's vote while it is still deciding:
+    // the two halves of "in their vote".
+    expect(route).toMatch(/\(f\.venue_id = \$1 AND \(f\.status IS NULL OR f\.status IN \('planning', 'confirmed'\)\)\)/);
+    expect(route).toMatch(/\(\(f\.status IS NULL OR f\.status = 'planning'\) AND EXISTS \(\s*SELECT 1 FROM venue_votes vv[\s\S]{0,300}WHERE vv\.flock_id = f\.id AND vv\.venue_id = \$1\)\)/);
     expect(route).toMatch(/const INCOMING_AHEAD_HOURS = 168;/);
     expect(api).toMatch(/venue-dashboard\/incoming-flocks/);
     expect(app).toMatch(/getIncomingFlocks\(/);
