@@ -31,8 +31,12 @@ import BirthYearField, { birthYearToDob } from './BirthYearField';
 // state can reach it, and it is dropped the moment it is used.
 //
 // `fieldId` is the id of the step's year field, focused when the step opens.
-// `onSuccess` gets the user the server returns.
-export function useAppleYearStep({ fieldId, onSuccess }) {
+// `onSuccess` gets the user the server returns. `provider` is the name the
+// step's own sentences use. Google's creation 403 is the same answer with the
+// same kind of handle (see makeResume in useGoogleAuth.js), so the sign-up
+// screen finishes a new Google account with this step too, and the only
+// thing that differs is which button a sentence sends the person back to.
+export function useAppleYearStep({ fieldId, onSuccess, provider = 'Apple' }) {
   const [step, setStep] = useState(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -94,7 +98,7 @@ export function useAppleYearStep({ fieldId, onSuccess }) {
     resumeRef.current = null;
     setBusy(true);
     try {
-      if (!resume) throw Object.assign(new Error('Apple sign-in timed out'), { expired: true });
+      if (!resume) throw Object.assign(new Error(`${provider} sign-in timed out`), { expired: true });
       const data = await resume(sendDob, 'year');
       leave();
       onSuccess(data.user);
@@ -108,19 +112,19 @@ export function useAppleYearStep({ fieldId, onSuccess }) {
         setError(err.message);
         return;
       }
-      // Otherwise the credentials are gone. Put the Apple button back; it
-      // carries the year now, so one more sheet finishes the account.
+      // Otherwise the credentials are gone. Put the provider's button back;
+      // it carries the year now, so one more sheet finishes the account.
       setStep('retap');
-      // A code past Apple's five minutes, a lapsed identity token (401), a
-      // failed code exchange (503) and a request that timed out all mean the
-      // same thing to the person: the sheet has to be done again. Anything
-      // else is the server's answer word for word, which keeps the under-13
-      // refusal exactly what it was.
+      // A handle past its few minutes, a lapsed token (401), a failed code
+      // exchange (503) and a request that timed out all mean the same thing
+      // to the person: the sheet has to be done again. Anything else is the
+      // server's answer word for word, which keeps the under-13 refusal
+      // exactly what it was.
       const status = err?.status;
       const timedOut = err?.expired || err?.isTimeout || status === 401 || status === 503 || !status;
       setError(timedOut
-        ? 'Apple sign-in did not finish in time. Tap Continue with Apple to try again. Your year is still filled in.'
-        : (err?.message || 'Apple sign-in failed'));
+        ? `${provider} sign-in did not finish in time. Tap Continue with ${provider} to try again. Your year is still filled in.`
+        : (err?.message || `${provider} sign-in failed`));
     } finally {
       setBusy(false);
     }
@@ -130,19 +134,21 @@ export function useAppleYearStep({ fieldId, onSuccess }) {
 }
 
 // The step itself: what is being asked, and the field to answer it in. The
-// screen draws it where its Apple button is and puts Continue (below) in the
-// button's place while the step is 'resume'. `idPrefix` keeps the two screens'
-// ids apart: `${idPrefix}-apple-year` is the field.
-export default function AppleYearStep({ idPrefix, error, value, onChange }) {
+// screen draws it where the provider's button is and puts Continue (below) in
+// the button's place while the step is 'resume'. `idPrefix` keeps the two
+// screens' ids apart and `provider` the two providers' on one screen:
+// `${idPrefix}-${provider}-year` is the field, `signup-apple-year` say.
+export default function AppleYearStep({ idPrefix, provider = 'apple', error, value, onChange }) {
+  const id = `${idPrefix}-${provider}`;
   return (
-    <div className="auth-apple-step" id={`${idPrefix}-apple-step`}>
+    <div className="auth-apple-step" id={`${id}-step`}>
       <AuthError>{error}</AuthError>
-      <p className="auth-step-line" id={`${idPrefix}-apple-step-line`}>
+      <p className="auth-step-line" id={`${id}-step-line`}>
         One more step: the year you were born.
       </p>
       <BirthYearField
-        id={`${idPrefix}-apple-year`}
-        hintId={`${idPrefix}-apple-year-hint`}
+        id={`${id}-year`}
+        hintId={`${id}-year-hint`}
         value={value}
         onChange={onChange}
       />
