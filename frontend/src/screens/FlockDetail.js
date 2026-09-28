@@ -629,8 +629,14 @@ export default function FlockDetail({
                 {Number(flock.reconfirm.count) || 0} of {Number(flock.reconfirm.total) || 0} still in tonight.
               </p>
             )}
+            {/* The faces scroll sideways, so a sideways finger on this row
+                belongs to the row. The back swipe listens passively and
+                cannot stop the row scrolling, so a touch that began on it
+                would scroll the row and drag the screen at once. The marker
+                keeps the gesture off the row. The row sits about 30px in,
+                past the 20px band, so today this guards a padding change. */}
             {roster.length > 0 ? (
-              <div style={{ display: 'flex', gap: '12px', overflowX: 'auto', paddingBottom: '4px' }}>
+              <div data-edge-swipe="off" style={{ display: 'flex', gap: '12px', overflowX: 'auto', paddingBottom: '4px' }}>
                 {roster.map((member, i) => {
                   const mName = typeof member === 'string' ? member : (member.name || 'User');
                   const mImage = typeof member === 'object' ? member.image : null;

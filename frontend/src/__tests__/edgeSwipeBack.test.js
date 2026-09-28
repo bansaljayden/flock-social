@@ -13,7 +13,9 @@
  *   2. the hook, mounted, using the handler from the latest render;
  *   3. the message row and the pin bar leave the band to the back swipe;
  *   4. every drill-in screen is wired, and the arrow and the swipe share one
- *      function, so the two can never leave differently.
+ *      function, so the two can never leave differently;
+ *   5. every sideways scroller those screens render keeps its own touches,
+ *      because the passive listeners cannot stop it scrolling under a drag.
  *
  * HOW TO RUN
  *   cd frontend && CI=true npx react-scripts test edgeSwipeBack --watchAll=false
@@ -376,5 +378,95 @@ describe('every drill-in screen is wired, and the arrow and the swipe share one 
 
   test('the plan\'s slide to complete keeps its own touches', () => {
     expect(read('screens', 'FlockDetail.js')).toMatch(/ref=\{slideRef\}[\s\S]{0,200}data-edge-swipe="off"/);
+  });
+});
+
+describe('a sideways scroller in a drill-in screen keeps its own touches', () => {
+  const parser = require('@babel/parser');
+  const traverse = require('@babel/traverse').default;
+  const PARSE = {
+    sourceType: 'module',
+    plugins: ['jsx', 'classProperties', 'optionalChaining', 'nullishCoalescingOperator', 'objectRestSpread', 'dynamicImport'],
+  };
+
+  /* The six screens, the components they import, and every chat component,
+     since the chat and the DM render those inside the dragged root. */
+  const chatFiles = (dir) => fs.readdirSync(path.join(SRC, dir), { withFileTypes: true }).flatMap((d) => {
+    const rel = `${dir}/${d.name}`;
+    if (d.isDirectory()) return chatFiles(rel);
+    return /\.js$/.test(d.name) ? [rel] : [];
+  });
+  const FILES = [
+    'screens/ChatDetail.js',
+    'screens/DmDetail.js',
+    'screens/FlockDetail.js',
+    'screens/AddFriends.js',
+    'screens/PastFlocksScreen.js',
+    'screens/ProfileSettings.js',
+    'components/EditProfileForm.js',
+    'components/ui/FormBits.js',
+    ...chatFiles('components/chat'),
+  ];
+
+  const keyName = (k) => (k.type === 'Identifier' ? k.name : k.type === 'StringLiteral' ? k.value : null);
+
+  /** Every JSX element whose inline style scrolls sideways, and whether it
+   *  carries data-edge-swipe="off". */
+  const sidewaysScrollers = (file) => {
+    const src = read(...file.split('/'));
+    const ast = parser.parse(src, PARSE);
+    const found = [];
+    traverse(ast, {
+      JSXOpeningElement(p) {
+        const attrs = p.node.attributes.filter((a) => a.type === 'JSXAttribute');
+        const style = attrs.find((a) => a.name.name === 'style');
+        const obj = style && style.value && style.value.type === 'JSXExpressionContainer' ? style.value.expression : null;
+        if (!obj || obj.type !== 'ObjectExpression') return;
+        const scrolls = obj.properties.some((prop) => prop.type === 'ObjectProperty'
+          && keyName(prop.key) === 'overflowX'
+          && prop.value.type === 'StringLiteral'
+          && (prop.value.value === 'auto' || prop.value.value === 'scroll'));
+        if (!scrolls) return;
+        const marker = attrs.find((a) => a.name.name === 'data-edge-swipe');
+        const off = !!(marker && marker.value && marker.value.type === 'StringLiteral' && marker.value.value === 'off');
+        found.push({ line: p.node.loc.start.line, off });
+      },
+    });
+    return found;
+  };
+
+  test('the sweep reaches the chat components', () => {
+    expect(FILES).toContain('components/chat/MessageRow.js');
+    expect(FILES).toContain('components/chat/sheets/PinnedMessageBar.js');
+  });
+
+  test.each(FILES)('%s', (file) => {
+    const unmarked = sidewaysScrollers(file).filter((s) => !s.off).map((s) => `${file}:${s.line}`);
+    expect(unmarked).toEqual([]);
+  });
+
+  test('the plan\'s row of faces is one of them, and is marked', () => {
+    const rows = sidewaysScrollers('screens/FlockDetail.js');
+    expect(rows.length).toBeGreaterThanOrEqual(1);
+    expect(rows.every((r) => r.off)).toBe(true);
+  });
+
+  test('a touch at the edge on a marked scroller does not drag the screen', () => {
+    const onBack = jest.fn();
+    const node = screenNode();
+    const row = document.createElement('div');
+    row.setAttribute('data-edge-swipe', 'off');
+    row.style.overflowX = 'auto';
+    const face = document.createElement('button');
+    row.appendChild(face);
+    node.appendChild(row);
+    bindEdgeSwipe(node, { onBack, clock });
+    touch(face, 'touchstart', 6);
+    touch(face, 'touchmove', 120);
+    touch(face, 'touchmove', 260);
+    touch(face, 'touchend', 260);
+    act(() => { jest.advanceTimersByTime(SETTLE_MS); });
+    expect(node.style.transform).toBe('');
+    expect(onBack).not.toHaveBeenCalled();
   });
 });
