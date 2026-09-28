@@ -10,14 +10,18 @@
  * the same from plan to plan, and a Birdie card took the same path.
  *
  * Every clear lived in the screens' own exits (leaveChatScreen,
- * leaveDmScreen), which a push never runs. Three things now close it:
+ * leaveDmScreen), which a push never runs. Four things now close it:
  *
  *   1. Both screens are keyed on their conversation, so what they hold for
  *      themselves starts over.
  *   2. App.js puts down what IT holds for the composer (leaveOpenThread)
- *      whenever the open conversation stops being the one on screen.
+ *      whenever the open conversation stops being the one on screen,
+ *      the in-app camera included.
  *   3. The flock chat, taken away that way, still files its draft against
  *      its own plan, as its own exit would have.
+ *   4. A photo still being sized when that happens (a library pick, or a
+ *      camera shot already accepted) arms nothing, and a camera stream that
+ *      arrives after its viewfinder closed is stopped, not held.
  *
  * App.js cannot be imported (it is the whole app), so the callback and the
  * effect that fires it are lifted out by source and run, the way
@@ -337,14 +341,15 @@ describe("App.js puts down the composer it holds when the open conversation chan
     'setShowDmImagePreview', 'setDmReplyingTo', 'setShowDmReactionPicker', 'setShowDmMenu',
     'setShowDeleteDmConfirm', 'setShowDmChatSearch', 'setDmChatSearch', 'setShowDmVotePanel',
     'setShowDmVenueSearch', 'setDmNavOpen', 'setDmSharingLocation', 'dmStopSharingLocation',
+    'closeCameraViewfinder',
   ];
-  function leaveOpenThread({ dmSharingLocation = null } = {}) {
+  function leaveOpenThread({ dmSharingLocation = null, threadEpochRef = { current: 0 } } = {}) {
     const calls = {};
     const scope = {};
     NAMES.forEach((n) => { scope[n] = (v) => { calls[n] = (calls[n] || []).concat([v]); }; });
     // eslint-disable-next-line no-new-func
-    const run = new Function(...NAMES, 'dmSharingLocation', `return () => ${callbackBody('leaveOpenThread')};`)(
-      ...NAMES.map((n) => scope[n]), dmSharingLocation,
+    const run = new Function(...NAMES, 'dmSharingLocation', 'threadEpochRef', `return () => ${callbackBody('leaveOpenThread')};`)(
+      ...NAMES.map((n) => scope[n]), dmSharingLocation, threadEpochRef,
     );
     run();
     return calls;
@@ -378,6 +383,15 @@ describe("App.js puts down the composer it holds when the open conversation chan
     const calls = leaveOpenThread({ dmSharingLocation: 41 });
     expect(calls.dmStopSharingLocation).toEqual([41]);
     expect(calls.setDmSharingLocation).toEqual([null]);
+  });
+
+  test('the in-app camera closes, and every photo still being sized for the thread is marked as left', () => {
+    const threadEpochRef = { current: 4 };
+    const calls = leaveOpenThread({ threadEpochRef });
+    // The viewfinder is drawn over whichever chat opened it, and a push banner
+    // is tappable above it.
+    expect(calls.closeCameraViewfinder).toHaveLength(1);
+    expect(threadEpochRef.current).toBe(5);
   });
 
   // The layout effect that calls it, lifted and run over a sequence of screens.
@@ -422,5 +436,328 @@ describe("App.js puts down the composer it holds when the open conversation chan
   test('both chat screens are keyed on their conversation', () => {
     expect(APP).toMatch(/<React\.Suspense key=\{`flock:\$\{selectedFlockId\}`\} fallback=\{<ScreenChunkFallback chat \/>\}>\n\s+<ChatDetail \{\.\.\.chatDetailProps\} \/>/);
     expect(APP).toMatch(/<React\.Suspense key=\{`dm:\$\{selectedDmId\}`\} fallback=\{<ScreenChunkFallback chat \/>\}>\n\s+<DmDetail \{\.\.\.dmDetailProps\} \/>/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 3. A photo on its way into the composer when the conversation changes
+// ---------------------------------------------------------------------------
+//
+// Maya opens the camera in her DM with Alice and takes a shot. Bob's banner
+// comes down over the viewfinder and she taps it: the push router moves the
+// app to Bob's thread underneath the camera, which is drawn over everything.
+// She taps Use Photo, and the shot, sized a moment later, armed in Bob's
+// composer. A library pick does the same while it is read and sized. The
+// camera now closes with the thread, and each photo route notes the thread it
+// started in (threadEpochRef) and arms nothing if that thread has been left.
+
+/* A whole `const <name> = useCallback(...);` statement, brace-matched to the
+   `;` that ends it at depth zero, skipping strings and comments. */
+function callbackStatement(name) {
+  const start = APP.indexOf(`  const ${name} = useCallback(`);
+  if (start === -1) throw new Error(`no \`${name} = useCallback(\` in App.js`);
+  let i = APP.indexOf('=', start) + 1;
+  let depth = 0;
+  while (i < APP.length) {
+    const ch = APP[i];
+    const next = APP[i + 1];
+    if (ch === '/' && next === '/') { i = APP.indexOf('\n', i); if (i === -1) break; continue; }
+    if (ch === '/' && next === '*') { const end = APP.indexOf('*/', i + 2); i = end === -1 ? APP.length : end + 2; continue; }
+    if (ch === "'" || ch === '"' || ch === '`') {
+      const quote = ch;
+      i += 1;
+      while (i < APP.length) {
+        if (APP[i] === '\\') { i += 2; continue; }
+        if (APP[i] === quote) { i += 1; break; }
+        i += 1;
+      }
+      continue;
+    }
+    if (ch === '(' || ch === '[' || ch === '{') depth += 1;
+    else if (ch === ')' || ch === ']' || ch === '}') depth -= 1;
+    else if (ch === ';' && depth === 0) return APP.slice(start, i + 1);
+    i += 1;
+  }
+  throw new Error(`${name}: unterminated statement`);
+}
+
+/** The callback, lifted and built over `scope`, as React would hand it out. */
+function lifted(name, scope) {
+  const all = { useCallback: (fn) => fn, ...scope };
+  // eslint-disable-next-line no-new-func
+  return new Function(...Object.keys(all), `${callbackStatement(name)}\nreturn ${name};`)(...Object.values(all));
+}
+
+/** A promise the test settles by hand. */
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+  return { promise, resolve, reject };
+}
+
+const flush = () => new Promise((r) => setTimeout(r, 0));
+const SIZED = 'data:image/jpeg;base64,U0laRUQ=';
+
+/* The composer state a photo arms, recorded. */
+function composerState() {
+  const armed = {};
+  const record = (key) => (v) => { armed[key] = (armed[key] || []).concat([v]); };
+  return {
+    armed,
+    setters: {
+      setPendingImage: record('pendingImage'),
+      setShowImagePreview: record('showImagePreview'),
+      setDmPendingImage: record('dmPendingImage'),
+      setShowDmImagePreview: record('showDmImagePreview'),
+    },
+  };
+}
+
+/* leaveOpenThread over one shared epoch, as the layout effect runs it when a
+   notification tap moves the app. */
+function leaveOver(threadEpochRef, closeCameraViewfinder = () => {}) {
+  const scope = { threadEpochRef, closeCameraViewfinder, setChatInput: () => {}, dmSharingLocation: null };
+  [
+    'setPendingImage', 'setShowImagePreview', 'setFlockReplyingTo', 'setShowReactionPicker', 'setShowFlockMenu',
+    'setShowLeaveConfirm', 'setShowChatSearch', 'setChatSearch', 'setShowVotePanel', 'setChatNavOpen',
+    'setDmPendingImage', 'setShowDmImagePreview', 'setDmReplyingTo', 'setShowDmReactionPicker', 'setShowDmMenu',
+    'setShowDeleteDmConfirm', 'setShowDmChatSearch', 'setDmChatSearch', 'setShowDmVotePanel',
+    'setShowDmVenueSearch', 'setDmNavOpen', 'setDmSharingLocation', 'dmStopSharingLocation',
+  ].forEach((n) => { scope[n] = () => {}; });
+  return lifted('leaveOpenThread', scope);
+}
+
+describe('a photo still being sized when the conversation changes', () => {
+  function libraryPick(name) {
+    const threadEpochRef = { current: 0 };
+    const { armed, setters } = composerState();
+    const readers = [];
+    const sizing = [];
+    class FakeReader {
+      readAsDataURL() { this.result = 'data:image/jpeg;base64,UkFX'; readers.push(this); }
+    }
+    const toasts = [];
+    const pick = lifted(name, {
+      showToast: (m) => toasts.push(m),
+      threadEpochRef,
+      FileReader: FakeReader,
+      prepareChatImage: () => { const d = deferred(); sizing.push(d); return d.promise; },
+      ...setters,
+    });
+    const event = { target: { files: [{ size: 1024 }], value: 'photo.jpg' } };
+    return { threadEpochRef, armed, readers, sizing, toasts, pick: () => pick(event) };
+  }
+
+  describe.each([
+    ['the flock composer', 'handleChatImageSelect', 'pendingImage', 'showImagePreview'],
+    ['the DM composer', 'handleDmImageSelect', 'dmPendingImage', 'showDmImagePreview'],
+  ])('a library pick into %s', (_, name, imageKey, previewKey) => {
+    test('arms in the thread it was picked in', async () => {
+      const p = libraryPick(name);
+      p.pick();
+      p.readers[0].onload();
+      p.sizing[0].resolve({ dataUrl: SIZED });
+      await flush();
+      expect(p.armed[imageKey]).toEqual([SIZED]);
+      expect(p.armed[previewKey]).toEqual([true]);
+    });
+
+    test('arms nothing once the thread is left while it is being sized', async () => {
+      const p = libraryPick(name);
+      p.pick();
+      p.readers[0].onload();
+      // Bob's banner, tapped.
+      leaveOver(p.threadEpochRef)();
+      p.sizing[0].resolve({ dataUrl: SIZED });
+      await flush();
+      expect(p.armed).toEqual({});
+    });
+
+    test('is not even sized once the thread is left while the file is read', async () => {
+      const p = libraryPick(name);
+      p.pick();
+      leaveOver(p.threadEpochRef)();
+      p.readers[0].onload();
+      await flush();
+      expect(p.sizing).toHaveLength(0);
+      expect(p.armed).toEqual({});
+    });
+
+    test("a sizing failure in a thread already left says nothing over the next one", async () => {
+      const p = libraryPick(name);
+      p.pick();
+      p.readers[0].onload();
+      leaveOver(p.threadEpochRef)();
+      p.sizing[0].resolve({ error: 'That photo is too large to send.' });
+      await flush();
+      expect(p.toasts).toEqual([]);
+    });
+  });
+
+  describe('Use Photo on a shot from the in-app camera', () => {
+    function camera(source) {
+      const threadEpochRef = { current: 0 };
+      const { armed, setters } = composerState();
+      const sizing = [];
+      const closes = [];
+      const busy = [];
+      const accept = lifted('acceptCameraPhoto', {
+        cameraReview: { dataUrl: 'data:image/jpeg;base64,RlVMTA==', source },
+        cameraBusy: false,
+        threadEpochRef,
+        setCameraBusy: (v) => busy.push(v),
+        prepareChatImage: () => { const d = deferred(); sizing.push(d); return d.promise; },
+        closeCameraViewfinder: () => closes.push('close'),
+        showToast: () => {},
+        ...setters,
+      });
+      return { threadEpochRef, armed, sizing, closes, busy, accept };
+    }
+
+    test('arms the thread the shot was taken in', async () => {
+      const c = camera('dm');
+      c.accept();
+      c.sizing[0].resolve({ dataUrl: SIZED });
+      await flush();
+      expect(c.closes).toEqual(['close']);
+      expect(c.armed.dmPendingImage).toEqual([SIZED]);
+      expect(c.armed.showDmImagePreview).toEqual([true]);
+    });
+
+    test("Alice's shot, accepted as a tap moves the app to Bob's thread, arms nothing", async () => {
+      const c = camera('dm');
+      c.accept();
+      // The tap: the layout effect runs leaveOpenThread, which closes the
+      // camera itself.
+      leaveOver(c.threadEpochRef, () => c.closes.push('left'))();
+      c.sizing[0].resolve({ dataUrl: SIZED });
+      await flush();
+      expect(c.closes).toEqual(['left']);
+      expect(c.armed).toEqual({});
+    });
+
+    test('a flock shot is held to its plan the same way', async () => {
+      const c = camera('flock');
+      c.accept();
+      leaveOver(c.threadEpochRef)();
+      c.sizing[0].resolve({ dataUrl: SIZED });
+      await flush();
+      expect(c.armed).toEqual({});
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 4. A camera closed while it is still being acquired
+// ---------------------------------------------------------------------------
+//
+// leaveOpenThread closes the camera at whatever moment the tap lands, and
+// that can be inside the one-tick wait before the stream is asked for, or
+// while getUserMedia is still out (the permission prompt, the first time).
+// A stream that arrived after its viewfinder closed used to be held anyway:
+// nothing showed it, and the camera light stayed on until the app went away.
+describe('a camera closed while its stream is still on the way', () => {
+  function rig() {
+    const cameraSessionRef = { current: 0 };
+    const cameraStreamRef = { current: null };
+    const cameraVideoRef = { current: null };
+    const asks = [];
+    const ticks = [];
+    const toasts = [];
+    const shown = [];
+    const navigator = {
+      mediaDevices: { getUserMedia: () => { const d = deferred(); asks.push(d); return d.promise; } },
+    };
+    const noop = () => {};
+    const stopCameraTracks = lifted('stopCameraTracks', { cameraStreamRef, cameraVideoRef });
+    const startCameraStream = lifted('startCameraStream', {
+      cameraSessionRef, cameraStreamRef, cameraVideoRef, stopCameraTracks, navigator,
+      setCameraTorch: noop, readCameraCaps: noop, CAMERA_RES: {},
+    });
+    const closeCameraViewfinder = lifted('closeCameraViewfinder', {
+      cameraSessionRef, stopCameraTracks,
+      setShowCameraViewfinder: (v) => shown.push(v),
+      setCameraCaps: noop, setCameraTorch: noop, setCameraFocusPoint: noop, setCameraReview: noop, setCameraBusy: noop,
+    });
+    const openCameraViewfinder = lifted('openCameraViewfinder', {
+      navigator, cameraSessionRef, startCameraStream, stopCameraTracks,
+      showToast: (m) => toasts.push(m),
+      setShowCameraViewfinder: (v) => shown.push(v),
+      setCameraFacing: noop, setCameraCaps: noop, setCameraFocusPoint: noop,
+      setTimeout: (fn) => { ticks.push(fn); },
+    });
+    return { cameraStreamRef, asks, ticks, toasts, shown, openCameraViewfinder, closeCameraViewfinder };
+  }
+  const fakeStream = () => {
+    const track = { stop: jest.fn() };
+    return { track, getTracks: () => [track], getVideoTracks: () => [track] };
+  };
+
+  test('an open that runs its course holds the stream', async () => {
+    const r = rig();
+    r.openCameraViewfinder('dm');
+    const tick = r.ticks[0]();
+    const stream = fakeStream();
+    r.asks[0].resolve(stream);
+    await tick;
+    expect(r.cameraStreamRef.current).toBe(stream);
+    expect(stream.track.stop).not.toHaveBeenCalled();
+  });
+
+  test('closed inside the wait, the camera is never asked for', async () => {
+    const r = rig();
+    r.openCameraViewfinder('dm');
+    r.closeCameraViewfinder();
+    await r.ticks[0]();
+    expect(r.asks).toHaveLength(0);
+    expect(r.cameraStreamRef.current).toBe(null);
+  });
+
+  test('closed while the stream is being asked for, the stream is stopped where it lands', async () => {
+    const r = rig();
+    r.openCameraViewfinder('dm');
+    const tick = r.ticks[0]();
+    r.closeCameraViewfinder();
+    const stream = fakeStream();
+    r.asks[0].resolve(stream);
+    await tick;
+    expect(stream.track.stop).toHaveBeenCalledTimes(1);
+    expect(r.cameraStreamRef.current).toBe(null);
+  });
+
+  test("a stale start leaves the viewfinder opened after it alone", async () => {
+    const r = rig();
+    r.openCameraViewfinder('dm');
+    r.closeCameraViewfinder();
+    r.openCameraViewfinder('flock');
+    // The second open's stream arrives first.
+    const second = r.ticks[1]();
+    const stream = fakeStream();
+    r.asks[0].resolve(stream);
+    await second;
+    // Then the first open's tick fires, late.
+    await r.ticks[0]();
+    expect(r.asks).toHaveLength(1);
+    expect(r.cameraStreamRef.current).toBe(stream);
+    expect(stream.track.stop).not.toHaveBeenCalled();
+  });
+
+  test('a refusal that lands after the close raises no error over the next screen', async () => {
+    const r = rig();
+    r.openCameraViewfinder('dm');
+    const tick = r.ticks[0]();
+    r.closeCameraViewfinder();
+    const shownAtClose = r.shown.slice();
+    // Every fallback startCameraStream tries is refused.
+    const denied = Object.assign(new Error('denied'), { name: 'NotAllowedError' });
+    r.asks[0].reject(denied);
+    await flush();
+    r.asks[1].reject(denied);
+    await flush();
+    r.asks[2].reject(denied);
+    await tick;
+    expect(r.toasts).toEqual([]);
+    expect(r.shown).toEqual(shownAtClose);
   });
 });
