@@ -404,18 +404,29 @@ function grantFromSubscription(sub, now = Date.now(), { unknownPriceIsRoost = fa
 //            on the same transaction, so the last write is the latest read.
 //            And never over a live paid grant WE wrote (source 'comp' or
 //            'admin', from POST /api/admin/venues/:userId/tier) unless the
-//            subscription is live and paid past that grant's end. A comp laid
-//            over a paying venue keeps the Stripe columns it found, so the row
-//            still names the old subscription, and "the same subscription
-//            overwrites its own row" let that subscription's events undo the
-//            comp: the cancel_at_period_end update cut six months down to the
+//            subscription is live and paid through at least that grant's end.
+//            A comp laid over a paying venue keeps the Stripe columns it
+//            found, so the row still names the old subscription, and "the
+//            same subscription overwrites its own row" let that
+//            subscription's events undo the comp: the cancel_at_period_end
+//            update cut six months down to the
 //            Stripe period plus grace, and the deleted event wrote 'canceled'
 //            and the cache 'free'. Checkout already refuses a venue holding a
 //            live grant (buildVenueCheckout), so the only subscription that can
 //            reach such a row is one that was running before the grant. It
-//            takes the row back once the venue is paying for longer than the
-//            grant covers, so a venue that kept paying never falls into a gap
-//            between the two.
+//            takes the row back once it is paid through at least the grant's
+//            end. At least, not strictly past: a grant the admin route lifted
+//            to the Stripe end meets any event from that same period with the
+//            same date, and that subscription already covers everything the
+//            grant does. Two things keep a venue that kept paying out of a
+//            gap between the two. The admin route never ends a grant it
+//            writes over a live Stripe grant before that Stripe grant ends,
+//            so the subscription renews while ours is still running. And
+//            each renewal carries the end of a full period, so the last one
+//            before our grant ends carries a date past it. A later admin edit
+//            that shortens a grant already written over a subscription is not
+//            covered: the row no longer says whether that subscription is
+//            still live, because its events were not written.
 //   upd      moves the cache only when it changes, only when the grant was
 //            written, and never to a paid tier for an unverified profile.
 //   audit    one tier_changed row per actual change, none per renewal.
@@ -454,7 +465,7 @@ const SYNC_SQL = `WITH old AS (
        AND venue_subscriptions.status IN ('active', 'trialing', 'past_due')
        AND (venue_subscriptions.expires_at IS NULL OR venue_subscriptions.expires_at > NOW())
        AND NOT ($11::boolean AND venue_subscriptions.expires_at IS NOT NULL
-                AND EXCLUDED.expires_at > venue_subscriptions.expires_at))
+                AND EXCLUDED.expires_at >= venue_subscriptions.expires_at))
     RETURNING user_id
   ),
   upd AS (

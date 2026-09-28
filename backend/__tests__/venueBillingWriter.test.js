@@ -91,11 +91,12 @@ const ENV = {
   JWT_SECRET: 'venue-billing-writer-test-secret',
   STRIPE_SECRET_KEY: ['sk', 'test', 'z'.repeat(24)].join('_'),
   STRIPE_PRICE_ROOST_MONTHLY: 'price_roost_month',
+  STRIPE_PRICE_ROOST_YEARLY: 'price_roost_year',
 };
 const savedEnv = {};
 
 const venueBilling = require('../services/venueBilling');
-const { getVenueEntitlement } = require('../services/venueEntitlements');
+const { getVenueEntitlement, resolveGrantedTier } = require('../services/venueEntitlements');
 
 test.before(async () => {
   for (const [k, v] of Object.entries(ENV)) { savedEnv[k] = process.env[k]; process.env[k] = v; }
@@ -157,6 +158,13 @@ function sub(id, userId, status, extra = {}) {
     ...extra,
   };
   return id;
+}
+
+// The subscription's one item, on the given price, with its current period
+// ending at endUnix (seconds): for a test that needs that end exactly, or a
+// period a year long.
+function period(priceId, endUnix) {
+  return { items: { data: [{ price: { id: priceId }, current_period_end: endUnix }] } };
 }
 
 async function state(userId) {
@@ -461,20 +469,23 @@ test('a subscription still being paid takes the grant back once its period runs 
   const id = await venue({ verified: true });
   const adminId = await admin();
   await venueBilling.syncVenueSubscription(sub('sub_outlasts', id, 'active'));
+  // Twenty days, past the 14-day period plus grace, so the comp's own date
+  // stands and the row stays ours until a renewal outruns it.
   const comp = await adminCall('POST', `/api/admin/venues/${id}/tier`, {
-    as: adminId, body: { tier: 'pro', grantReason: 'admin', durationDays: 7 },
+    as: adminId, body: { tier: 'pro', grantReason: 'admin', durationDays: 20 },
   });
   assert.strictEqual(comp.status, 200, comp.text);
   assert.strictEqual((await state(id)).grant.source, 'admin');
 
-  // A renewal whose period (14 days out) ends after the week-long comp: the
+  // The renewal at the end of the 14-day period carries the next month: the
   // venue is paying for longer than the comp covers, so the Stripe grant is
   // the one that keeps Roost on past the comp's end.
-  const renewal = await venueBilling.syncVenueSubscription(sub('sub_outlasts', id, 'active'));
+  const nextEnd = Math.floor(Date.now() / 1000) + 44 * 86400;
+  const renewal = await venueBilling.syncVenueSubscription(sub('sub_outlasts', id, 'active', period('price_roost_month', nextEnd)));
   assert.strictEqual(renewal.written, true);
   const s = await state(id);
   assert.strictEqual(s.grant.source, 'stripe');
-  assert.ok(new Date(s.grant.expires_at).getTime() > Date.now() + 14 * 86400000);
+  assert.strictEqual(new Date(s.grant.expires_at).getTime(), nextEnd * 1000 + venueBilling.__test.GRACE_MS);
   assert.strictEqual(s.served, 'pro');
 });
 
@@ -493,6 +504,158 @@ test('a comp that has lapsed does not hold back the subscription behind it', asy
   assert.strictEqual(r.written, true, 'a dead comp kept a Stripe event from being recorded');
   const s = await state(id);
   assert.strictEqual(s.grant.source, 'stripe');
+  assert.strictEqual(s.grant.status, 'canceled');
+  assert.strictEqual(s.served, 'free');
+});
+
+// ---------------------------------------------------------------------------
+// A GRANT WRITTEN OVER A LIVE STRIPE GRANT NEVER ENDS BEFORE IT. A yearly plan
+// sends no event between renewals, so a comp that ended inside the paid year
+// left the venue on free for the rest of it while Stripe billed it, and
+// checkout refused it as already subscribed. Six months of founding comp over
+// eleven paid months was exactly that.
+// ---------------------------------------------------------------------------
+
+const DAY_S = 86400;
+const YEAR_S = 365 * DAY_S;
+
+// What the resolver serves from the stored rows at a moment other than now.
+async function servedAt(userId, atMs) {
+  const s = await state(userId);
+  return resolveGrantedTier({ tier: s.cached, grant_tier: s.grant.tier, grant_status: s.grant.status, expires_at: s.grant.expires_at }, atMs);
+}
+
+test('a founding comp over a yearly subscriber runs to the end of the paid year, and the renewal takes the row back', async () => {
+  const id = await venue({ verified: true });
+  const adminId = await admin();
+  // Eleven months left on the yearly plan.
+  const yearEnds = Math.floor(Date.now() / 1000) + 335 * DAY_S;
+  await venueBilling.syncVenueSubscription(sub('sub_yearly', id, 'active', period('price_roost_year', yearEnds)));
+  const paidThrough = yearEnds * 1000 + venueBilling.__test.GRACE_MS;
+  assert.strictEqual(new Date((await state(id)).grant.expires_at).getTime(), paidThrough);
+
+  const comp = await adminCall('POST', `/api/admin/venues/${id}/tier`, {
+    as: adminId, body: { tier: 'pro', grantReason: 'founding_comp', reason: 'founding cohort' },
+  });
+  assert.strictEqual(comp.status, 200, comp.text);
+  assert.strictEqual(new Date(comp.body.expires_at).getTime(), paidThrough,
+    'the founding comp ended six months in, inside the year the venue paid for');
+  const s = await state(id);
+  assert.strictEqual(s.grant.source, 'comp');
+  assert.strictEqual(s.grant.stripe_subscription_id, 'sub_yearly');
+  assert.strictEqual(s.served, 'pro');
+  // Seven months on: the six-month comp would have lapsed, and no Stripe
+  // event arrives before the renewal to take the row back.
+  const sevenMonths = new Date();
+  sevenMonths.setUTCMonth(sevenMonths.getUTCMonth() + 7);
+  assert.strictEqual(await servedAt(id, sevenMonths.getTime()), 'pro', 'a venue Stripe billed for the year was served free from month six');
+
+  // The annual renewal carries the next year and hands the row back.
+  const nextYearEnds = yearEnds + YEAR_S;
+  const renewal = await venueBilling.syncVenueSubscription(sub('sub_yearly', id, 'active', period('price_roost_year', nextYearEnds)));
+  assert.strictEqual(renewal.written, true);
+  const after = await state(id);
+  assert.strictEqual(after.grant.source, 'stripe');
+  assert.strictEqual(new Date(after.grant.expires_at).getTime(), nextYearEnds * 1000 + venueBilling.__test.GRACE_MS);
+  assert.strictEqual(after.served, 'pro');
+});
+
+test('an explicit end date over a live yearly subscription never ends before the paid year, and a later one stands', async () => {
+  const shorter = await venue({ verified: true });
+  const longer = await venue({ verified: true });
+  const adminId = await admin();
+  const yearEnds = Math.floor(Date.now() / 1000) + 200 * DAY_S;
+  const paidThrough = yearEnds * 1000 + venueBilling.__test.GRACE_MS;
+  await venueBilling.syncVenueSubscription(sub('sub_yearly_short', shorter, 'active', period('price_roost_year', yearEnds)));
+  await venueBilling.syncVenueSubscription(sub('sub_yearly_long', longer, 'active', period('price_roost_year', yearEnds)));
+
+  const a = await adminCall('POST', `/api/admin/venues/${shorter}/tier`, {
+    as: adminId, body: { tier: 'pro', grantReason: 'paid', durationDays: 30 },
+  });
+  assert.strictEqual(a.status, 200, a.text);
+  assert.strictEqual(new Date(a.body.expires_at).getTime(), paidThrough,
+    'a 30-day grant cut a paid year down to 30 days');
+  assert.strictEqual((await state(shorter)).grant.source, 'admin');
+  assert.strictEqual(await servedAt(shorter, Date.now() + 60 * DAY_S * 1000), 'pro');
+
+  // The same through expiresAt, the other explicit form.
+  const b = await adminCall('POST', `/api/admin/venues/${longer}/tier`, {
+    as: adminId, body: { tier: 'pro', grantReason: 'paid', expiresAt: new Date(Date.now() + 400 * DAY_S * 1000).toISOString() },
+  });
+  assert.strictEqual(b.status, 200, b.text);
+  const stands = new Date(b.body.expires_at).getTime();
+  assert.ok(stands > paidThrough + 150 * DAY_S * 1000, 'a date later than the paid year is the grant\'s own and stands');
+});
+
+test('an explicit date over an admin-written row, or a subscription that has ended, is taken as sent', async () => {
+  const id = await venue({ verified: true });
+  const adminId = await admin();
+  await venueBilling.syncVenueSubscription(sub('sub_ended', id, 'active'));
+  await venueBilling.syncVenueSubscription(sub('sub_ended', id, 'canceled'));
+  assert.strictEqual((await state(id)).served, 'free');
+
+  const r = await adminCall('POST', `/api/admin/venues/${id}/tier`, {
+    as: adminId, body: { tier: 'pro', grantReason: 'demo', durationDays: 7 },
+  });
+  assert.strictEqual(r.status, 200, r.text);
+  const ends = new Date(r.body.expires_at).getTime();
+  assert.ok(Math.abs(ends - (Date.now() + 7 * DAY_S * 1000)) < 60000, `a dead subscription moved the end date to ${r.body.expires_at}`);
+
+  // Our own grant can be shortened: only a Stripe grant is protected.
+  const shorter = await adminCall('POST', `/api/admin/venues/${id}/tier`, {
+    as: adminId, body: { tier: 'pro', grantReason: 'demo', durationDays: 2 },
+  });
+  assert.strictEqual(shorter.status, 200, shorter.text);
+  assert.ok(Math.abs(new Date(shorter.body.expires_at).getTime() - (Date.now() + 2 * DAY_S * 1000)) < 60000);
+});
+
+test('an explicit null over a live Stripe grant is still a grant with no end date', async () => {
+  const id = await venue({ verified: true });
+  const adminId = await admin();
+  await venueBilling.syncVenueSubscription(sub('sub_then_permanent', id, 'active'));
+  const r = await adminCall('POST', `/api/admin/venues/${id}/tier`, {
+    as: adminId, body: { tier: 'pro', grantReason: 'paid', expiresAt: null },
+  });
+  assert.strictEqual(r.status, 200, r.text);
+  assert.strictEqual(r.body.expires_at, null, 'the Stripe period end was written in place of no end date');
+  assert.strictEqual((await state(id)).grant.expires_at, null);
+});
+
+test('an event from the same paid period hands a grant lifted to that period back to the subscription', async () => {
+  const id = await venue({ verified: true });
+  const adminId = await admin();
+  const periodEnds = Math.floor(Date.now() / 1000) + 14 * DAY_S;
+  await venueBilling.syncVenueSubscription(sub('sub_same_period', id, 'active', period('price_roost_month', periodEnds)));
+  const comp = await adminCall('POST', `/api/admin/venues/${id}/tier`, {
+    as: adminId, body: { tier: 'pro', grantReason: 'admin', durationDays: 7 },
+  });
+  assert.strictEqual(comp.status, 200, comp.text);
+  const paidThrough = periodEnds * 1000 + venueBilling.__test.GRACE_MS;
+  assert.strictEqual(new Date(comp.body.expires_at).getTime(), paidThrough);
+
+  // The venue cancels at the period end. The subscription covers exactly what
+  // the grant does, so it owns the row again: nobody has been billed for
+  // anything we gave away, and its deleted event ends Roost as usual.
+  const errors = [];
+  const realError = console.error;
+  console.error = (...args) => { errors.push(args.join(' ')); };
+  let update;
+  try {
+    update = await venueBilling.syncVenueSubscription(sub('sub_same_period', id, 'active', {
+      ...period('price_roost_month', periodEnds), cancel_at: periodEnds, cancel_at_period_end: true,
+    }));
+  } finally {
+    console.error = realError;
+  }
+  assert.strictEqual(update.written, true, 'a grant ending with the paid period held the row against its own subscription');
+  assert.ok(!errors.some((e) => /refund or cancel it in Stripe/.test(e)), `a refund was asked for with nothing given away: ${errors.join(' | ')}`);
+  let s = await state(id);
+  assert.strictEqual(s.grant.source, 'stripe');
+  assert.strictEqual(new Date(s.grant.expires_at).getTime(), paidThrough);
+  assert.strictEqual(s.served, 'pro');
+
+  await venueBilling.syncVenueSubscription(sub('sub_same_period', id, 'canceled', period('price_roost_month', periodEnds)));
+  s = await state(id);
   assert.strictEqual(s.grant.status, 'canceled');
   assert.strictEqual(s.served, 'free');
 });
