@@ -1,4 +1,4 @@
-# Log the current account out and land on the login screen. Must be called
+# Sign the current account out and land on the login screen. Must be called
 # from a screen that has the tab bar (Nest, Discover, Plans, Messages, You).
 # The chat and Add Friends screens have no tab bar; tap their "Back" first
 # (ChatDetail.js:487, AddFriends.js:143).
@@ -39,12 +39,19 @@ appId: com.flockcorp.flock
           optional: true
       - waitForAnimationToEnd
 - tapOn: "You"                                  # App.js tab table, label: 'You'
+# The button is labelled "Sign out" (it said "Log out" until the app settled on
+# one verb). "Sign out everywhere" sits directly above it and also ends up on
+# the login screen, but it revokes the account's sessions on every device, so
+# it must never be the one tapped here. Maestro's text match is a whole-string,
+# case-insensitive regex (Filters.textMatches -> regex.matches), so "Sign out"
+# cannot match "Sign out everywhere". Keep it free of ".*" and other wildcards.
+# signInVocabulary.test.js checks this selector against the real label.
 - scrollUntilVisible:
-    element: "Log out"                          # ProfileSettings.js:798
+    element: "Sign out"                         # ProfileSettings.js:866
     direction: DOWN
     timeout: 15000
-- tapOn: "Log out"
-# Log out calls onLogout() directly, no confirm dialog (ProfileSettings.js:796).
+- tapOn: "Sign out"
+# Sign out calls onLogout() directly, no confirm dialog (ProfileSettings.js:861).
 - extendedWaitUntil:
-    visible: "Welcome back|Plan the night"                     # LoginScreen.js:146, endSession sets authScreen to 'login'
+    visible: "Welcome back|Plan the night"                     # LoginScreen.js:303, endSession sets authScreen to 'login'
     timeout: 15000

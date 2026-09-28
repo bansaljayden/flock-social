@@ -160,3 +160,106 @@ describe('the Safety screen has one name for its list', () => {
     expect(toasts).toHaveLength(2);
   });
 });
+
+// ---------------------------------------------------------------------------
+// THE REVIEW RECORDING TAPS THE SAME WORDS.
+//
+// The Maestro flows under frontend/.maestro find controls by their visible
+// label, and no other test reads them. When "Log out" became "Sign out",
+// parts/logout.yaml still scrolled to and tapped "Log out", and every flow
+// that signs an account out (apple-2-1.yaml twice, the cleanup flow, and the
+// fallback inside parts/login.yaml) would have timed out on a Simulator while
+// every suite stayed green.
+//
+// Maestro matches `text` as a whole-string, case-insensitive regex
+// (Filters.textMatches calls Kotlin's Regex.matches), so the check below
+// compiles each selector the same way and runs it against the app's copy.
+// ---------------------------------------------------------------------------
+
+const MAESTRO = path.join(FRONTEND, '.maestro');
+
+function listFlows(dir, out = []) {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    if (entry.isDirectory()) { listFlows(path.join(dir, entry.name), out); continue; }
+    if (entry.name.endsWith('.yaml')) out.push(path.join(dir, entry.name));
+  }
+  return out;
+}
+
+// The quoted selector on each command line that finds something by its label.
+// Comment lines are skipped; they are where old labels are quoted on purpose.
+const SELECTOR_LINE = /^\s*(?:-\s*)?(tapOn|text|element|visible|notVisible|assertVisible|assertNotVisible):\s*"((?:[^"\\]|\\.)*)"/;
+
+function selectorsIn(file) {
+  return fs.readFileSync(file, 'utf8').split(/\r?\n/).flatMap((line, i) => {
+    if (/^\s*#/.test(line)) return [];
+    const m = line.match(SELECTOR_LINE);
+    if (!m) return [];
+    return [{
+      file: path.relative(MAESTRO, file).split(path.sep).join('/'),
+      line: i + 1,
+      key: m[1],
+      value: m[2].replace(/\\(.)/g, '$1'),
+    }];
+  });
+}
+
+const asMaestro = (selector) => new RegExp(`^(?:${selector})$`, 'i');
+const FLOWS = listFlows(MAESTRO);
+const APP_COPY = COPY
+  .filter((s) => s.file.startsWith('frontend/src/'))
+  .map((s) => s.value.replace(/\s+/g, ' ').trim())
+  .filter(Boolean);
+
+describe('the review recording taps the words the app shows', () => {
+  test('it found the flows and the sign-out part', () => {
+    const names = FLOWS.map((f) => path.relative(MAESTRO, f).split(path.sep).join('/'));
+    expect(names).toEqual(expect.arrayContaining([
+      'apple-2-1.yaml',
+      'apple-2-1-cleanup.yaml',
+      'parts/login.yaml',
+      'parts/logout.yaml',
+      'parts/signup-to-login.yaml',
+    ]));
+    expect(FLOWS.flatMap(selectorsIn).length).toBeGreaterThan(100);
+  });
+
+  test('no selector in any flow says log in or log out', () => {
+    const hits = FLOWS.flatMap(selectorsIn)
+      .filter((s) => LOG_VERB.test(s.value))
+      .map((s) => `${s.file}:${s.line} ${JSON.stringify(s.value)}`);
+    expect(hits).toEqual([]);
+  });
+
+  test('parts/logout.yaml scrolls to and taps the You tab\'s "Sign out", and only that', () => {
+    const logout = selectorsIn(path.join(MAESTRO, 'parts', 'logout.yaml'));
+    const scroll = logout.filter((s) => s.key === 'element');
+    const tap = logout.filter((s) => s.key === 'tapOn' && /sign/i.test(s.value));
+    expect(scroll.map((s) => s.value)).toEqual(['Sign out']);
+    expect(tap.map((s) => s.value)).toEqual(['Sign out']);
+
+    const settings = copyIn(path.join(FRONTEND, 'src', 'screens', 'ProfileSettings.js'))
+      .map((s) => s.value.replace(/\s+/g, ' ').trim());
+    // "Sign out everywhere" sits directly above and revokes every session the
+    // account has; the recording must not be able to land on it.
+    expect(settings).toContain('Sign out everywhere');
+    for (const s of [...scroll, ...tap]) {
+      const matched = [...new Set(settings.filter((v) => asMaestro(s.value).test(v)))];
+      expect(matched).toEqual(['Sign out']);
+    }
+  });
+
+  test('every label the sign-in and sign-out parts wait for or tap exists in the app', () => {
+    // The iOS permission alerts are drawn by the system, not by this app.
+    const SYSTEM = new Set(['Allow While Using App|Allow Once', 'Allow']);
+    const parts = ['logout.yaml', 'login.yaml', 'signup-to-login.yaml'];
+    const missing = parts
+      .flatMap((p) => selectorsIn(path.join(MAESTRO, 'parts', p)))
+      // A selector built from a flow variable is the account's own address,
+      // typed by the flow, not a label.
+      .filter((s) => !SYSTEM.has(s.value) && !/\$\{/.test(s.value))
+      .filter((s) => !APP_COPY.some((v) => asMaestro(s.value).test(v)))
+      .map((s) => `${s.file}:${s.line} ${JSON.stringify(s.value)}`);
+    expect(missing).toEqual([]);
+  });
+});
