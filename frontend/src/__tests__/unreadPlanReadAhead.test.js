@@ -51,7 +51,8 @@ const moduleConst = (name) => {
 const HELPERS = [
   'SERVER_ID_MAX', 'isServerId', 'sameSend', 'echoMatches', 'sendLandedAs', 'landedSends',
   'orderByServerId', 'retractedSince', 'retractedIdsIn', 'saidByAny', 'withoutBlockedQuote',
-  'dropRetracted', 'dropRetractedPins', 'mergeHistory', 'mapFlockRow', 'onMeteredConnection',
+  'dropRetracted', 'dropRetractedPins', 'DM_PAGE_SIZE', 'pageAgainstHeld', 'mergeHistory', 'mapFlockRow',
+  'onMeteredConnection',
 ];
 // eslint-disable-next-line no-new-func
 const H = new Function('navigator', `${HELPERS.map(moduleConst).join('\n')}\nreturn { ${HELPERS.join(', ')} };`);

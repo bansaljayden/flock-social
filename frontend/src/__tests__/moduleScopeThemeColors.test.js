@@ -49,6 +49,18 @@ const AST = parser.parse(APP, {
 
 const lineOf = (node) => (node && node.loc ? node.loc.start.line : -1);
 
+/** The top-level statement a path sits in, looked through an `export`, so an
+ *  exported `export const PromoModal = ...` names its declaration the way an
+ *  unexported one does (PromoModal and EventModal are exported for
+ *  venueModalDoubleSubmit.test.js). */
+function topLevelDeclaration(p) {
+  const top = p.findParent((q) => q.parentPath && q.parentPath.isProgram());
+  if (top && (top.isExportNamedDeclaration() || top.isExportDefaultDeclaration()) && top.node.declaration) {
+    return top.get('declaration');
+  }
+  return top;
+}
+
 /** Every function-level read of the module-scope `colors`, with the name of
  *  the top-level declaration it sits in. */
 function moduleColorsReadsInsideFunctions() {
@@ -63,7 +75,7 @@ function moduleColorsReadsInsideFunctions() {
       const isModule = !binding || binding.scope.path.isProgram();
       if (!isModule) return;
       if (!p.getFunctionParent()) return; // top-level code, e.g. a static styles object
-      const top = p.findParent((q) => q.parentPath && q.parentPath.isProgram());
+      const top = topLevelDeclaration(p);
       let owner = '(unknown)';
       if (top && top.isVariableDeclaration()) owner = top.node.declarations.map((d) => d.id.name).join(', ');
       else if (top && top.isFunctionDeclaration() && top.node.id) owner = top.node.id.name;
@@ -134,7 +146,7 @@ describe('no function reads the light-only module palette', () => {
         if (p.node.name !== 'colors' || !p.isReferencedIdentifier()) return;
         const binding = p.scope.getBinding('colors');
         if (binding && binding.kind === 'param') {
-          const top = p.findParent((q) => q.parentPath && q.parentPath.isProgram());
+          const top = topLevelDeclaration(p);
           if (top && top.isVariableDeclaration()) top.node.declarations.forEach((d) => seen.add(d.id.name));
         }
       },

@@ -273,6 +273,14 @@ describe('where each verb is called', () => {
   test('a budget buzzes after submitBudget resolves, in the same try as the toast', () => {
     const chat = read('screens', 'ChatDetail.js');
     expect(chat).toMatch(/import \{ hapticSuccess \} from '\.\.\/services\/haptics';/);
-    expect(chat).toMatch(/const data = await submitBudget\(selectedFlockId, \{ amount: amt, skipped: false \}\);[\s\S]{0,900}hapticSuccess\(\);\s*showToast\('Budget submitted'\);/);
+    // Measured from the resolve to the buzz rather than inside a fixed window:
+    // the same try also clears the Nest's budget ask (lib/nestAsks.js), and the
+    // rule is that nothing between the two is a catch.
+    const submitAt = chat.indexOf('const data = await submitBudget(selectedFlockId, { amount: amt, skipped: false });');
+    expect(submitAt).toBeGreaterThan(-1);
+    const after = chat.slice(submitAt);
+    const buzzAt = after.search(/hapticSuccess\(\);\s*showToast\('Budget submitted'\);/);
+    expect(buzzAt).toBeGreaterThan(-1);
+    expect(after.slice(0, buzzAt)).not.toMatch(/\}\s*catch\b/);
   });
 });

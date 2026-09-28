@@ -99,6 +99,42 @@ function run(src, scope) {
   // eslint-disable-next-line no-new-func
   return new Function(...Object.keys(scope), src)(...Object.values(scope));
 }
+// A module-scope `const <name> = ...;`, from its `=` to the `;` that ends it
+// at depth zero, skipping strings and comments.
+function moduleConst(name) {
+  const start = app.search(new RegExp(`^const ${name} = `, 'm'));
+  expect(start).toBeGreaterThan(-1);
+  let i = app.indexOf('=', start) + 1;
+  let depth = 0;
+  while (i < app.length) {
+    const ch = app[i];
+    const next = app[i + 1];
+    if (ch === '/' && next === '/') { i = app.indexOf('\n', i); continue; }
+    if (ch === '/' && next === '*') { i = app.indexOf('*/', i + 2) + 2; continue; }
+    if (ch === "'" || ch === '"' || ch === '`') {
+      const quote = ch;
+      i += 1;
+      while (i < app.length && app[i] !== quote) i += app[i] === '\\' ? 2 : 1;
+      i += 1;
+      continue;
+    }
+    if (ch === '(' || ch === '[' || ch === '{') depth += 1;
+    else if (ch === ')' || ch === ']' || ch === '}') depth -= 1;
+    else if (ch === ';' && depth === 0) return app.slice(start, i + 1);
+    i += 1;
+  }
+  throw new Error(`moduleConst: ${name} unterminated`);
+}
+// What runCatchUp hands a loader as `anchor`: the rows on screen before the
+// socket dropped (chatEchoOrderAndRetraction.test.js pins that measure). No
+// sampler runs in these conversations, so there is no snapshot, and the
+// anchor is the empty set heldBeforeDrop answers with.
+const heldBeforeDrop = (() => {
+  const names = ['SERVER_ID_MAX', 'isServerId', 'heldServerIds', 'heldBeforeDrop'];
+  // eslint-disable-next-line no-new-func
+  return new Function(`${names.map(moduleConst).join('\n')}\nreturn heldBeforeDrop;`)();
+})();
+const NO_SNAPSHOT = new Set();
 // A document stand-in the lifted code sees instead of jsdom's.
 function fakeDocument(state = 'visible') {
   const listeners = new Set();
@@ -130,6 +166,9 @@ function conversation({ readAgoMs, screen = 'chatDetail', socketConnected = fals
     historyReadAtRef,
     catchUpTimerRef: { current: null },
     runCatchUpRef: { current: null },
+    heldWhileUpRef: { current: null },
+    catchUpOwedRef: { current: false },
+    heldBeforeDrop,
     loadFlockMessages: (id, opts) => reads.push(['messages', id, opts]),
     loadMoneyState: (id) => reads.push(['money', id]),
     loadFlockVotes: (id) => reads.push(['votes', id]),
@@ -172,7 +211,7 @@ describe('the open conversation on the return', () => {
     expect(c.timers.size).toBe(1);
     c.runCatchUp({ force: true });
     expect(c.reads.map((r) => r[0])).toEqual(['messages', 'money', 'votes', 'roster']);
-    expect(c.reads[0]).toEqual(['messages', 7, { keepOlder: true }]);
+    expect(c.reads[0]).toEqual(['messages', 7, { keepOlder: true, anchor: NO_SNAPSHOT }]);
     expect(c.timers.size).toBe(0);
   });
 
@@ -187,13 +226,13 @@ describe('the open conversation on the return', () => {
     const c = conversation({ readAgoMs: 2000, doc: fakeDocument('hidden') });
     c.doc.show();
     expect(c.calls).toEqual([{ force: true }]);
-    expect(c.reads[0]).toEqual(['messages', 7, { keepOlder: true }]);
+    expect(c.reads[0]).toEqual(['messages', 7, { keepOlder: true, anchor: NO_SNAPSHOT }]);
   });
 
   test('a DM thread is read the same way', () => {
     const c = conversation({ readAgoMs: 1000, screen: 'dmDetail', doc: fakeDocument('hidden') });
     c.doc.show();
-    expect(c.reads).toEqual([['dm', 5, { keepOlder: true }]]);
+    expect(c.reads).toEqual([['dm', 5, { keepOlder: true, anchor: NO_SNAPSHOT }]]);
   });
 
   test('coming back with the socket still up reads nothing, since nothing was missed', () => {
@@ -430,6 +469,12 @@ function sampler() {
     clearInterval: () => { state.cleared = true; },
     getSocket: () => ({ connected: state.connected }),
     socketAliveRef,
+    // The snapshot of what was on screen while the socket was up, which the
+    // same tick keeps (chatEchoOrderAndRetraction.test.js runs that part).
+    catchUpOwedRef: { current: false },
+    heldWhileUpRef: { current: null },
+    flocksRef: { current: [] },
+    directMessagesRef: { current: [] },
     setReconnectTick: (f) => { state.ticks = f(state.ticks); },
     SOCKET_SAMPLE_MS: 2000,
     onSocketDisconnect: (cb) => { state.onDrop = cb; return () => { state.off = true; }; },

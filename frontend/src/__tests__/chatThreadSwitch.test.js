@@ -528,6 +528,20 @@ function leaveOver(threadEpochRef, closeCameraViewfinder = () => {}) {
   return lifted('leaveOpenThread', scope);
 }
 
+/* The picked-photo ceiling both library pickers check before reading a file,
+   evaluated from App.js's own module-scope declarations
+   (pickedPhotoSizeGate.test.js pins what it is). */
+const PICKED_PHOTO = (() => {
+  const names = ['PICKED_PHOTO_MAX_MB', 'PICKED_PHOTO_MAX_BYTES', 'PICKED_PHOTO_TOO_BIG'];
+  const decls = names.map((n) => {
+    const m = APP.match(new RegExp(`^const ${n} = [^\\n]+;$`, 'm'));
+    if (!m) throw new Error(`${n} is not declared at module scope in App.js`);
+    return m[0];
+  });
+  // eslint-disable-next-line no-new-func
+  return new Function(`${decls.join('\n')}\nreturn { ${names.join(', ')} };`)();
+})();
+
 describe('a photo still being sized when the conversation changes', () => {
   function libraryPick(name) {
     const threadEpochRef = { current: 0 };
@@ -541,6 +555,8 @@ describe('a photo still being sized when the conversation changes', () => {
     const pick = lifted(name, {
       showToast: (m) => toasts.push(m),
       threadEpochRef,
+      PICKED_PHOTO_MAX_BYTES: PICKED_PHOTO.PICKED_PHOTO_MAX_BYTES,
+      PICKED_PHOTO_TOO_BIG: PICKED_PHOTO.PICKED_PHOTO_TOO_BIG,
       FileReader: FakeReader,
       prepareChatImage: () => { const d = deferred(); sizing.push(d); return d.promise; },
       ...setters,
