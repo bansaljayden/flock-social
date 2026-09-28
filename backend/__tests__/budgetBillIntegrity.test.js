@@ -95,7 +95,9 @@
 //      read as settled, and held the payer and the creator in the plan; the
 //      budget waited on an answer that could never come, and the night-of
 //      count on a face the roster no longer shows. A bill posted before the
-//      ban keeps the banned account's row as the record of what it owes.
+//      ban keeps the banned account's row as the record of what it owes, and
+//      its total, which that row no longer hides from anybody without a block
+//      of their own with the banned account.
 // ---------------------------------------------------------------------------
 
 const test = require('node:test');
@@ -2237,6 +2239,25 @@ test('on a bill posted before the ban, the banned share frees the payer and the 
   const seen = await call('GET', `/api/billing/${flockId}`, { token: bob.token });
   assert.equal(seen.body.bill.fullySettled, true, 'everybody who can still settle has');
   assert.equal(seen.body.bill.shareCount, 3);
+  // The banned account's row leaves the list, and the total stays: what it
+  // owes was on this bill for everybody until the ban, and a ban does not make
+  // it a secret from the payer it is owed to.
+  assert.deepEqual(seen.body.bill.shares.map((s) => s.userId).sort((a, b) => a - b),
+    [alice.id, bob.id, carol.id].sort((a, b) => a - b));
+  assert.equal(seen.body.bill.totalAmount, 120);
+  assert.equal(seen.body.bill.totalWithTip, 120);
+  const byAlice = await call('GET', `/api/billing/${flockId}`, { token: alice.token });
+  assert.equal(byAlice.body.bill.totalWithTip, 120, 'every member, not only the payer');
+
+  // A block with the banned account is still a block: the viewer who has one
+  // gets no total, since the total less the rows they see is that share.
+  await pool.query('INSERT INTO user_blocks (blocker_id, blocked_id) VALUES ($1, $2)', [dave.id, carol.id]);
+  const byCarol = await call('GET', `/api/billing/${flockId}`, { token: carol.token });
+  assert.equal(byCarol.status, 200, byCarol.text);
+  assert.equal(byCarol.body.bill.totalAmount, null);
+  assert.equal(byCarol.body.bill.totalWithTip, null);
+  assert.equal((await call('GET', `/api/billing/${flockId}`, { token: bob.token })).body.bill.totalWithTip, 120,
+    "somebody else's block does not take the payer's total");
 
   // Bob is owed only by an account that can never pay, so he can go.
   const left = await call('POST', `/api/flocks/${flockId}/leave`, { token: bob.token });

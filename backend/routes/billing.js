@@ -1368,7 +1368,30 @@ router.get('/:flockId',
       // The block rule on the total (see "Blocks on the bill" above): with a
       // share hidden from this viewer the total is that share's difference,
       // so it is withheld rather than shrunk.
-      const hidesAShare = visibleRows.length !== sharesResult.rows.length;
+      //
+      // A BANNED HOLDER'S ROW IS NOT A HIDDEN SHARE FOR THIS RULE. It leaves
+      // every viewer's list, because getInvisibleUserIds counts a ban as a
+      // block, and so on a bill posted before the ban every member, the payer
+      // included, lost the total for as long as the bill lasted. What the
+      // difference would tell them is what the banned account owes: a figure
+      // this bill showed its members until the ban, and the payer's own
+      // record of what the night cost. A ban keeps that account away from
+      // people; it does not make its debt a secret from the person it is owed
+      // to. A block between this viewer and that account, in either
+      // direction, is still a block, and withholds the total as before.
+      const bannedHolders = sharesResult.rows.filter((s) => s.holder_banned === true).map((s) => s.user_id);
+      let blockedWithViewer = NOBODY;
+      if (bannedHolders.length > 0) {
+        const blocked = await pool.query(
+          `SELECT blocked_id AS id FROM user_blocks WHERE blocker_id = $1 AND blocked_id = ANY($2::int[])
+           UNION
+           SELECT blocker_id AS id FROM user_blocks WHERE blocked_id = $1 AND blocker_id = ANY($2::int[])`,
+          [userId, bannedHolders]
+        );
+        blockedWithViewer = new Set(blocked.rows.map((r) => r.id));
+      }
+      const hidesAShare = sharesResult.rows.some((s) => invisible.has(s.user_id)
+        && (s.holder_banned !== true || blockedWithViewer.has(s.user_id)));
       const showTotals = !estimate && !hidesAShare;
       // The shares somebody can still settle: all but a banned account's.
       const settleable = sharesResult.rows.filter((s) => s.holder_banned !== true);
