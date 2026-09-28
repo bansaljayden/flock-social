@@ -14111,6 +14111,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         messages: [],
         lastMessage: null,
         unread: 0,
+        // Only this device knows about the thread until something is stored
+        // in it: GET /api/dm lists a pair once it has a message and not
+        // before. loadDmConversations keeps a row marked this way that its
+        // answer leaves out, and the mark goes the first time the server
+        // lists the pair.
+        localOnly: true,
       };
       setDirectMessages(prev => [newDm, ...prev]);
       setSelectedDmId(user.id);
@@ -14198,7 +14204,24 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           });
         }
         const fresh = (data.conversations || []).filter(c => !hidden.includes(c.userId) || revivedIds.includes(c.userId));
-        setDirectMessages(prev => fresh.map(c => {
+        // A THREAD STARTED ON THIS DEVICE AND NOT STORED YET. The server lists
+        // a pair only once it has a message, so this answer never holds a
+        // conversation somebody opened from Add Friends and has not written in
+        // yet, or one whose first message or photo has not gone through. A
+        // list rebuilt from the answer alone dropped it, and this runs on
+        // every reconnect, which on iOS is every return from another app: the
+        // open thread turned into "This conversation is not here", and a
+        // first message that had failed to send, which lives nowhere but that
+        // row, went with it. So a row startNewDmWithUser made (localOnly) and
+        // the answer left out is kept, ahead of the rest as it was put, unless
+        // it was deleted here or anybody in it has been blocked this session.
+        const listed = new Set(fresh.map(c => String(c.userId)));
+        const blockedEver = retractedSince(retractionsRef.current.log, 0, 'dm');
+        const startedHere = (prev) => (Array.isArray(prev) ? prev : []).filter(p => p && p.localOnly
+          && !listed.has(String(p.userId))
+          && !hidden.includes(p.userId)
+          && !(blockedEver && blockedEver.senders.has(String(p.userId))));
+        setDirectMessages(prev => startedHere(prev).concat(fresh.map(c => {
           const old = Array.isArray(prev) ? prev.find(p => p.userId === c.userId) : null;
           if (blockedSince(c)) return old || null;
           return {
@@ -14211,7 +14234,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             lastMessageIsYou: c.lastMessageIsYou,
             unread: c.unread,
           };
-        }).filter(Boolean));
+        }).filter(Boolean)));
       })
       // The list already on screen is left alone, exactly as loadFlocks leaves
       // its own. The empty state is what has to be suppressed, not the data.
