@@ -888,7 +888,9 @@ router.get('/:token',
   }
 );
 
-// POST /api/guest/:token/rsvp — { name, status } -> { guestToken }
+// POST /api/guest/:token/rsvp — { name, status, guestToken? } -> { guestToken }
+// guestToken is the identity the page already holds, or the one it minted for
+// its first answer (see A LOST REPLY below), which the new row is keyed on.
 router.post('/:token/rsvp',
   [
     param('token').trim().isLength({ min: LINK_TOKEN_PARAM_MIN, max: LINK_TOKEN_PARAM_MAX }),
@@ -1128,9 +1130,46 @@ router.post('/:token/rsvp',
       let blockedByTakedown = false;
       let nameTaken = false;
       let planOver = false;
+      // The identity the page minted for this answer, when it sent one that no
+      // row on this plan holds yet (the returning-guest path above found none).
+      let pageToken = guestToken || null;
+      let replay = null;
       try {
         await client.query('BEGIN');
         await client.query("SELECT pg_advisory_xact_lock(hashtext('guest_rsvp:' || $1::text))", [String(link.flock_id)]);
+
+        // A LOST REPLY IS NOT A SECOND PERSON. The guest token used to be
+        // minted here and handed back only in the 201, so an answer that
+        // committed on a connection that dropped before the reply left a row
+        // the browser held no key to. Tapping again carried no identity, the
+        // name was taken by the row just written, and the guest was told to
+        // open the link on the device they used, on that device; the orphaned
+        // "in" stayed on the roster and in the budget's count for good. The page
+        // now mints the identity, keeps it until an answer comes back, and
+        // sends it with the first answer (website/GuestInvite.js), and the row
+        // is keyed on it. A retry after the first one committed finds the row
+        // on the returning-guest path above; one that raced it here, waiting on
+        // this lock, finds it now and gets the same answer. A token another
+        // plan's row already holds is not reused: the row gets its own.
+        if (pageToken) {
+          const held = await client.query(
+            `SELECT id, flock_id, guest_token, status, COALESCE(is_hidden, false) AS is_hidden
+               FROM guest_rsvps WHERE guest_token = $1`,
+            [pageToken]
+          );
+          const row = held.rows[0];
+          if (row && row.flock_id === link.flock_id) replay = row;
+          else if (row) pageToken = null;
+        }
+        if (replay) {
+          // Answered the way the returning-guest path answers this row.
+          await client.query('ROLLBACK');
+          if (replay.is_hidden) {
+            if (await retiredOnJoin(link.flock_id, replay.guest_token)) return res.status(403).json(JOINED_IN_APP);
+            return res.status(403).json({ error: 'This RSVP was removed and cannot be edited' });
+          }
+          return res.json({ guestToken: replay.guest_token, status: replay.status });
+        }
         // THEN THE PLAN'S ROW, the order the vote below takes: this route's
         // own lock, the plan's key share, then the row it writes. The insert's
         // foreign key takes the same key share, but only once the row has been
@@ -1189,12 +1228,14 @@ router.post('/:token/rsvp',
           // a guest on a finished plan, and announce them to the roster. The
           // write reads the status in the same statement, so it decides for
           // itself; nothing written is the same 409 the check gives.
+          // Keyed on the page's identity when it sent one (see A LOST REPLY
+          // above), and on a fresh one otherwise, as it always was.
           ins = await client.query(
-            `INSERT INTO guest_rsvps (flock_id, name, status)
-             SELECT $1::int, $2::text, $3::text
+            `INSERT INTO guest_rsvps (flock_id, name, status, guest_token)
+             SELECT $1::int, $2::text, $3::text, COALESCE($4::uuid, gen_random_uuid())
               WHERE EXISTS (SELECT 1 FROM flocks WHERE id = $1::int AND status NOT IN ('completed', 'cancelled'))
              RETURNING id, guest_token, COALESCE(is_hidden, false) AS is_hidden`,
-            [link.flock_id, name, status]
+            [link.flock_id, name, status, pageToken]
           );
           if (ins.rows.length === 0) {
             planOver = true;
@@ -1231,16 +1272,23 @@ router.post('/:token/rsvp',
         return res.status(403).json({ error: 'That name cannot be used on this flock. Try a different one.' });
       }
 
+      // THE ANSWER GOES FIRST. The row has committed, and the reply is what
+      // carries its identity to the page. Announcing it (a count, the fan-out,
+      // the host lookup and, for a new yes, a push with its own eight-second
+      // deadline) used to run before the reply, which held the one copy of the
+      // guest token back behind work the guest has no part in and widened the
+      // window in which a dropped connection lost it.
+      res.status(201).json({ guestToken: ins.rows[0].guest_token, status });
+
       // Let members see the RSVP land in real time. Hidden rows are never
       // broadcast (a default-false column means this is normally true).
+      // Never throws.
       if (!ins.rows[0].is_hidden) {
         await announceGuestRsvp(req, link, { guestId: ins.rows[0].id, name, status, isNew: true });
       }
-
-      res.status(201).json({ guestToken: ins.rows[0].guest_token, status });
     } catch (err) {
       console.error('Guest RSVP error:', err);
-      res.status(500).json({ error: 'Could not save your RSVP' });
+      if (!res.headersSent) res.status(500).json({ error: 'Could not save your RSVP' });
     }
   }
 );

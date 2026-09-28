@@ -42,6 +42,10 @@
 //      with two last votes fired together, rather than trusted. A push that
 //      waited (quiet hours, a retry) is asked again as it goes out, and is not
 //      sent once the plan is locked in, called off or done.
+//  11. A GUEST ANSWER WHOSE REPLY WAS LOST IS THE SAME ANSWER SENT AGAIN. The
+//      page mints the identity and sends it with the first answer, so the
+//      row is keyed on something the page already holds; the retry lands on
+//      that row whether the first one committed before it or while it waited.
 //
 // The fixture suites pin the statements' text; this one runs them.
 
@@ -1171,4 +1175,76 @@ test('a votes-in push that waited is not sent once the plan is locked in, and on
     await pool.query('UPDATE flocks SET status = $2 WHERE id = $1', [lockedLater, status]);
     assert.strictEqual(await pushHelper.canNotify(host.id, data(lockedLater)), false, status);
   }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 11. A guest answer whose reply was lost is the same answer sent again
+// ═══════════════════════════════════════════════════════════════════════════
+
+const guestRowsNamed = async (flockId) => (await pool.query(
+  'SELECT guest_token, name, status FROM guest_rsvps WHERE flock_id = $1 ORDER BY id', [flockId]
+)).rows;
+
+test('an answer sent again after its reply was lost lands on the row it made, not on "name taken"', async () => {
+  const host = await mkUser('Host TwentyFive');
+  const flockId = await mkFlock(host, { hoursFromNow: 24 });
+  const link = await mkLinkRow(flockId, host, { revoked: false, expiresInDays: 10 });
+  const minted = '0f1e2d3c-4b5a-4968-8778-695a4b3c2d1e';
+
+  // The first answer commits; its reply is what the connection dropped.
+  const first = await sayAs(link, { name: 'Sam', status: 'in', guestToken: minted });
+  assert.strictEqual(first.status, 201, JSON.stringify(first.body));
+  assert.strictEqual(first.body.guestToken, minted, 'the row is keyed on the identity the page already holds');
+
+  // The tap again: the same identity, so the same row.
+  const again = await sayAs(link, { name: 'Sam', status: 'in', guestToken: minted });
+  assert.strictEqual(again.status, 200, JSON.stringify(again.body));
+  assert.strictEqual(again.body.guestToken, minted);
+  // And a second try with a last initial renames it rather than adding a Sam.
+  const initial = await sayAs(link, { name: 'Sam R', status: 'in', guestToken: minted });
+  assert.strictEqual(initial.status, 200, JSON.stringify(initial.body));
+  assert.deepStrictEqual(await guestRowsNamed(flockId), [{ guest_token: minted, name: 'Sam R', status: 'in' }],
+    'one person, counted once');
+});
+
+test('a retry that waited behind the first answer is answered with the row the first one made', async () => {
+  const host = await mkUser('Host TwentySix');
+  const flockId = await mkFlock(host, { hoursFromNow: 24 });
+  const link = await mkLinkRow(flockId, host, { revoked: false, expiresInDays: 10 });
+  const minted = '1a2b3c4d-5e6f-4a0b-9c1d-2e3f4a5b6c7d';
+
+  // Both requests are past the returning-guest read, which found nothing, and
+  // queued on the link's own lock: the page's first answer slow, and the tap
+  // again that followed it.
+  const holder = await pool.connect();
+  let slow;
+  let retry;
+  try {
+    await holder.query('BEGIN');
+    await holder.query("SELECT pg_advisory_xact_lock(hashtext('guest_rsvp:' || $1::text))", [String(flockId)]);
+    slow = sayAs(link, { name: 'Sam', status: 'in', guestToken: minted });
+    await waitForLockWaiters(1);
+    retry = sayAs(link, { name: 'Sam', status: 'in', guestToken: minted });
+    await waitForLockWaiters(2);
+    await holder.query('COMMIT');
+  } finally {
+    holder.release();
+  }
+  const answers = await Promise.all([slow, retry]);
+  assert.deepStrictEqual(answers.map((a) => a.status).sort(), [200, 201], JSON.stringify(answers.map((a) => a.body)));
+  for (const a of answers) assert.strictEqual(a.body.guestToken, minted);
+  assert.deepStrictEqual(await guestRowsNamed(flockId), [{ guest_token: minted, name: 'Sam', status: 'in' }]);
+});
+
+test('an identity another plan\'s row already holds is not borrowed: the new row gets its own', async () => {
+  const host = await mkUser('Host TwentySeven');
+  const elsewhere = await mkFlock(host, { hoursFromNow: 24 });
+  const here = await mkFlock(host, { hoursFromNow: 24 });
+  const theirs = await guestRow(elsewhere, 'Jo');
+  const link = await mkLinkRow(here, host, { revoked: false, expiresInDays: 10 });
+
+  const r = await sayAs(link, { name: 'Kit', status: 'in', guestToken: theirs.guest_token });
+  assert.strictEqual(r.status, 201, JSON.stringify(r.body));
+  assert.notStrictEqual(r.body.guestToken, theirs.guest_token);
+  assert.deepStrictEqual((await guestRowsNamed(elsewhere)).map((g) => g.name), ['Jo'], 'the other plan\'s row is untouched');
 });

@@ -160,6 +160,35 @@ const clearStore = (key) => {
   try { window.localStorage.removeItem(key); } catch { /* see above */ }
 };
 
+// THE IDENTITY FOR A FIRST ANSWER IS MINTED HERE, BEFORE THE ANSWER GOES OUT.
+// The server used to mint it and hand it back in the reply, the only copy, so
+// an answer that committed on a connection that dropped before the reply left
+// a row on the plan this browser held no key to. Tapping again carried no
+// identity and was refused as a name already taken ("Open the link on the
+// device you used", on the device they used), and the orphaned "in" stayed in
+// every count. Now the page picks it, keeps it under a key of its own until an
+// answer comes back, and sends it with the first answer; the server keys the
+// new row on it (routes/guest.js, A LOST REPLY), so the tap again is the same
+// person answering again. Deliberately NOT under a flock_guest_ key: that
+// prefix means "an answer this device gave", which carriedIdentityFor and the
+// app's own invite handoff both read, and this is only an answer on its way.
+// No crypto at all (a very old browser) leaves the server to mint, as before.
+const PENDING_KEY_PREFIX = 'flock_rsvp_pending_';
+const mintGuestToken = () => {
+  try {
+    const c = window.crypto;
+    if (c && typeof c.randomUUID === 'function') return c.randomUUID();
+    if (c && typeof c.getRandomValues === 'function') {
+      const b = c.getRandomValues(new Uint8Array(16));
+      b[6] = (b[6] & 0x0f) | 0x40; // version 4
+      b[8] = (b[8] & 0x3f) | 0x80; // RFC 4122 variant
+      const h = Array.from(b, (x) => x.toString(16).padStart(2, '0')).join('');
+      return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+    }
+  } catch { /* fall through to the server minting one */ }
+  return null;
+};
+
 // The invite token, handed to the app so it survives signup, login, the Google
 // popup and the native Sign in with Apple sheet. Written with the same key and
 // the same shape services/inviteHandoff.js reads, and inlined here rather than
@@ -470,6 +499,8 @@ export default function GuestInvite() {
   const rawToken = window.location.pathname.split('/i/')[1] || '';
   const token = safeDecode(rawToken.split('/')[0].split('?')[0]).trim();
   const storageKey = `flock_guest_${token}`;
+  // The identity a first answer is going out under (mintGuestToken above).
+  const pendingKey = `${PENDING_KEY_PREFIX}${token}`;
 
   // loading | ready | gone | badlink | error | slow | stalled | blocked
   const [phase, setPhase] = useState('loading');
@@ -753,6 +784,9 @@ export default function GuestInvite() {
   const dropIdentity = () => {
     setGuest(null);
     clearStore(storageKey);
+    // An identity on its way out goes too: the server refused it, so the next
+    // answer starts from a new one rather than being refused the same way.
+    clearStore(pendingKey);
     setEditingName(true);
     setName('');
     setPendingRsvp(null);
@@ -943,11 +977,22 @@ export default function GuestInvite() {
     setPendingRsvp(status); // optimistic: the choice reads as made immediately
     hush('rsvp');
 
-    // Never retried, whatever went wrong. Re-POSTing an RSVP through a flaky
-    // connection puts the same person on the roster twice and spends one of
-    // the guest identities this network is allowed to mint on this flock in
-    // an hour (NEW_GUESTS_PER_IP_PER_FLOCK in routes/guest.js), which on a
-    // shared wifi is somebody else's answer.
+    // With no identity held, the answer goes out under one minted and kept
+    // here first (mintGuestToken), and the same one again on every tap until
+    // an answer comes back, so a reply the connection lost cannot turn the
+    // tap again into a second person or a refusal.
+    const held = carried || (guest && guest.guestToken) || (readStore(storageKey) || {}).guestToken;
+    let pending = null;
+    if (!held) {
+      pending = (readStore(pendingKey) || {}).guestToken || mintGuestToken();
+      if (pending) writeStore(pendingKey, { guestToken: pending });
+    }
+
+    // Never retried automatically, whatever went wrong. Re-POSTing an RSVP
+    // through a flaky connection spends one of the guest identities this
+    // network is allowed to mint on this flock in an hour
+    // (NEW_GUESTS_PER_IP_PER_FLOCK in routes/guest.js), which on a shared wifi
+    // is somebody else's answer. The person tapping again is the retry.
     const r = await ask(`${API}/api/guest/${encodeURIComponent(token)}/rsvp`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -959,7 +1004,7 @@ export default function GuestInvite() {
         // answering there minted a second identity, a duplicate roster name,
         // and spent one of the per-network identity slots shared wifi lives
         // on. The store is the tabs' common ground.
-        guestToken: carried || (guest && guest.guestToken) || (readStore(storageKey) || {}).guestToken || undefined,
+        guestToken: carried || (guest && guest.guestToken) || (readStore(storageKey) || {}).guestToken || pending || undefined,
       }),
     });
     const body = r.body;
@@ -1075,6 +1120,8 @@ export default function GuestInvite() {
     };
     setGuest(next);
     writeStore(storageKey, next);
+    // Answered: the identity is the one stored above now.
+    clearStore(pendingKey);
     setPendingRsvp(null);
     setEditingName(false);
     say('rsvp', status === 'in'
