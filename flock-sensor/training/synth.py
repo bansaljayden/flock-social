@@ -219,7 +219,7 @@ def person(c, rng, amb, d, hx, hy, pid, view=None, pose=None, overhead=False,
     if coat if coat is not None else rng.random() < 0.08:
         # A winter coat reads barely above the room.
         cloth = amb + (skin - amb) * rng.uniform(0.05, 0.2)
-    elif shirtless if shirtless is not None else rng.random() < 0.12:
+    elif shirtless if shirtless is not None else rng.random() < 0.2:
         # No shirt, or a vest: the torso reads as skin, as warm as a face.
         # A real unit missed a bare torso filling its view because every
         # person it had learned from wore clothes cooler than skin.
@@ -229,7 +229,7 @@ def person(c, rng, amb, d, hx, hy, pid, view=None, pose=None, overhead=False,
     pants = amb + (skin - amb) * rng.uniform(0.15, 0.55)
     head_rx, head_ry = 0.083 * s * rng.uniform(0.9, 1.1), 0.115 * s * rng.uniform(0.9, 1.1)
     view = view or rng.choice(['front', 'back', 'side'], p=[0.5, 0.3, 0.2])
-    pose = pose or rng.choice(['stand', 'sit', 'walk', 'lie'], p=[0.41, 0.32, 0.17, 0.10])
+    pose = pose or rng.choice(['stand', 'sit', 'walk', 'lie'], p=[0.38, 0.30, 0.16, 0.16])
 
     if pose == 'lie' and not overhead:
         # Lying on a sofa or the floor: the body runs sideways from the head.
@@ -508,7 +508,7 @@ def scene_full(rng):
         n += 1
     # A body filling the frame with the head above it, out of view: somebody
     # standing right at the sensor. Still a person; the body carries the label.
-    if not overhead and rng.random() < 0.12:
+    if not overhead and rng.random() < 0.22:
         placed.append((rng.uniform(0.3, 0.7), rng.uniform(0.25, 0.75) * W,
                        rng.uniform(-0.45, -0.05) * H, n))
         n += 1
