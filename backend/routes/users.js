@@ -2532,10 +2532,26 @@ router.get('/settings', async (req, res) => {
 
 // PATCH /api/users/settings - Merge partial settings into stored JSONB
 //
-// The ceiling on the MERGED blob, measured as Postgres prints it (jsonb::text,
-// which puts a space after every colon and comma, so it reads a little wider
-// than JSON.stringify of the same object).
+// The ceiling on the MERGED blob, in JSON.stringify characters: the width the
+// cap has always been measured in, so a row stored under it is still under it.
 const MAX_SETTINGS_STORED = 16384;
+// That width, measured in SQL (the merge happens in the statement, below).
+// jsonb::text prints a space after every separator: ": " once per member of
+// every object, ", " between members and between array elements. Measured raw,
+// a row that had passed the cap read about two characters wider per member,
+// and once over, every later save to it was refused, a one-key Crowd alerts
+// opt-out included.
+// The separators are counted from the structure, over every object and array
+// at every depth ('strict $.**' visits each once, the root included), so a
+// ", " or ": " inside a string value is left in the count as it should be. For
+// ASCII this is exactly JSON.stringify's length; a character outside the BMP
+// counts one here and two there, which only leaves more room.
+const settingsWidthSql = (expr) => `(length((${expr})::text) - (
+         SELECT COALESCE(SUM(CASE jsonb_typeof(v)
+                  WHEN 'object' THEN GREATEST(2 * (SELECT count(*) FROM jsonb_object_keys(v)) - 1, 0)
+                  WHEN 'array' THEN GREATEST(jsonb_array_length(v) - 1, 0)
+                  ELSE 0 END), 0)
+           FROM jsonb_path_query(${expr}, 'strict $.**') AS v))`;
 router.patch('/settings', async (req, res) => {
   try {
     // Bounded (round 7): a plain object only (arrays CONCATENATE under
@@ -2562,7 +2578,7 @@ router.patch('/settings', async (req, res) => {
        ON CONFLICT (user_id) DO UPDATE
        SET settings = user_settings.settings || EXCLUDED.settings,
            updated_at = NOW()
-       WHERE length((user_settings.settings || EXCLUDED.settings)::text) <= $3
+       WHERE ${settingsWidthSql('user_settings.settings || EXCLUDED.settings')} <= $3
        RETURNING settings`,
       [req.user.id, JSON.stringify(partial), MAX_SETTINGS_STORED]
     );

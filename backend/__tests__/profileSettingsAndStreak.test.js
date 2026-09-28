@@ -232,6 +232,65 @@ test('a save that would push the merged blob past the cap is refused and changes
   assert.equal(huge.body.error, 'Settings payload too large');
 });
 
+// A blob exactly `width` characters long as JSON.stringify prints it, made of
+// many short members (plus nested objects and arrays), which is where Postgres's
+// own printing (a space after every ':' and ',') reads widest against it.
+// `extra` members come first; 'fill' pads to the width.
+function blobOfWidth(width, extra = {}) {
+  const blob = { ...extra };
+  for (let i = 0; i < 300; i += 1) blob[`p${i}`] = 'v'.repeat(12);
+  blob.nested = { list: [1, 2, 3], deeper: [{ a: 1, b: 'x, y: z' }, { c: [] }, {}] };
+  blob.fill = '';
+  blob.fill = 'f'.repeat(width - JSON.stringify(blob).length);
+  assert.equal(JSON.stringify(blob).length, width);
+  return blob;
+}
+const MAX_SETTINGS_STORED = 16384;
+const printedWidth = async (userId) => (await pool.query(
+  'SELECT length(settings::text) AS n FROM user_settings WHERE user_id = $1', [userId]
+)).rows[0].n;
+
+test('a row stored under the cap still takes a one-key save, however Postgres prints it', async () => {
+  // Written the way the route wrote it before the merge moved into SQL: the
+  // cap checked JSON.stringify of the merged object. Printed by Postgres, the
+  // same row is hundreds of characters over, and measured that way it refused
+  // every save, the Crowd alerts opt-out included.
+  const hal = await mkUser('Hal');
+  const blob = blobOfWidth(MAX_SETTINGS_STORED - 8, { crowdAlerts: 'true' });
+  await pool.query('INSERT INTO user_settings (user_id, settings) VALUES ($1, $2::jsonb)', [hal.id, JSON.stringify(blob)]);
+  assert.ok(await printedWidth(hal.id) > MAX_SETTINGS_STORED + 500,
+    'the fixture no longer reads wider in Postgres than in JSON.stringify, so this test proves nothing');
+
+  const optOut = await save(hal, { crowdAlerts: 'false' });
+  assert.equal(optOut.status, 200, optOut.text);
+  assert.equal((await stored(hal)).crowdAlerts, 'false', 'the opt-out was refused by a cap the row was already under');
+});
+
+test('the cap is JSON.stringify\'s width of the merged blob, to the character', async () => {
+  const ivy = await mkUser('Ivy');
+  const blob = blobOfWidth(MAX_SETTINGS_STORED - 20, { room: '' });
+  await pool.query('INSERT INTO user_settings (user_id, settings) VALUES ($1, $2::jsonb)', [ivy.id, JSON.stringify(blob)]);
+
+  // Exactly at the cap: allowed.
+  const at = await save(ivy, { room: 'r'.repeat(20) });
+  assert.equal(at.status, 200, at.text);
+  assert.equal(JSON.stringify(await stored(ivy)).length, MAX_SETTINGS_STORED);
+
+  // One past it: refused, and the row is left as it was.
+  const past = await save(ivy, { room: 'r'.repeat(21) });
+  assert.equal(past.status, 400, past.text);
+  assert.equal(past.body.error, 'Settings storage limit reached');
+  assert.equal((await stored(ivy)).room, 'r'.repeat(20));
+
+  // A ', ' or ': ' inside a string is part of the value, not a separator, and
+  // counts: swapping 20 characters for 20 others is still exactly at the cap.
+  const sameWidth = await save(ivy, { room: ', : '.repeat(5) });
+  assert.equal(sameWidth.status, 200, sameWidth.text);
+  assert.equal((await stored(ivy)).room, ', : '.repeat(5));
+  const over = await save(ivy, { room: `${', : '.repeat(5)},` });
+  assert.equal(over.status, 400, over.text);
+});
+
 // ── The profile streak ───────────────────────────────────────────────────────
 // America/Phoenix keeps UTC-7 all year, so every wall-clock time below lands on
 // the same UTC date whatever the season: 16:00 there is 23:00 UTC the same day,
