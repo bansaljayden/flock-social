@@ -8,7 +8,9 @@
 // cost_reconciled; this pins the seam around it:
 //   1. readReconciled merges a saved row OVER the code constant for that line,
 //      leaves lines with no row on the code figure, says which is which, and
-//      dates the block by the newest line actually used.
+//      dates every line on its own. The block carries the newest line date as
+//      asOf and the oldest as oldestAsOf, so a fresh entry for one vendor can
+//      never make another vendor's stale figure look current.
 //   2. A database failure degrades to the code figures, marked, never to nothing.
 //   3. POST /api/admin/costs/reconciled validates by hand and upserts.
 
@@ -34,19 +36,27 @@ pool.query = async (text, params) => {
 
 const CODE = costModel.RECONCILED;
 const firstId = CODE.lines[0].id;
+const codeLine = (id) => CODE.lines.find((l) => l.id === id);
+const newest = (lines) => lines.map((l) => l.asOf).sort().pop();
+const oldest = (lines) => lines.map((l) => l.asOf).sort()[0];
 
 test.beforeEach(() => { rows = []; queryError = null; writes.length = 0; });
 
-test('with no saved rows every line reads from code and the block keeps the code date', async () => {
+test('with no saved rows every line reads from code, each on its own code date', async () => {
   const r = await costModel.readReconciled(pool);
   assert.equal(r.lines.length, CODE.lines.length);
-  for (const l of r.lines) assert.equal(l.source, 'code');
-  assert.equal(r.lines[0].usdPerMonth, CODE.lines[0].usdPerMonth);
-  assert.equal(r.asOf, CODE.asOf);
+  for (const l of r.lines) {
+    assert.equal(l.source, 'code');
+    assert.equal(l.asOf, codeLine(l.id).asOf, `${l.id} lost its own date`);
+    assert.equal(l.usdPerMonth, codeLine(l.id).usdPerMonth);
+    assert.equal(l.readFrom, codeLine(l.id).readFrom);
+  }
+  assert.equal(r.asOf, newest(CODE.lines));
+  assert.equal(r.oldestAsOf, oldest(CODE.lines));
   assert.equal(r.readError, null);
 });
 
-test('a saved row wins over the code constant for its line and moves the block date', async () => {
+test('a saved row wins over the code constant for its line and dates only that line', async () => {
   rows = [{ line_id: firstId, usd_per_month: '42.50', as_of: '2026-09-15', note: 'September invoice', updated_at: 'x' }];
   const r = await costModel.readReconciled(pool);
   const l = r.lines.find((x) => x.id === firstId);
@@ -54,7 +64,25 @@ test('a saved row wins over the code constant for its line and moves the block d
   assert.equal(l.usdPerMonth, 42.5);
   assert.equal(l.asOf, '2026-09-15');
   assert.equal(l.note, 'September invoice');
-  assert.equal(r.asOf, '2026-09-15', 'the block is dated by the newest line actually used');
+  for (const other of r.lines.filter((x) => x.id !== firstId)) {
+    assert.equal(other.source, 'code');
+    assert.equal(other.asOf, codeLine(other.id).asOf, `${other.id} took the saved row's date`);
+  }
+  assert.equal(r.asOf, newest(r.lines), 'asOf is the newest line date');
+  assert.equal(r.oldestAsOf, oldest(r.lines), 'oldestAsOf is the oldest line date');
+});
+
+test('a fresh Railway entry cannot make an old Google figure look current', async () => {
+  rows = [{ line_id: 'railway', usd_per_month: '35.10', as_of: '2026-10-16', note: null, updated_at: 'x' }];
+  const r = await costModel.readReconciled(pool);
+  const railway = r.lines.find((x) => x.id === 'railway');
+  const google = r.lines.find((x) => x.id === 'google-cloud');
+  assert.equal(railway.source, 'dashboard');
+  assert.equal(railway.usdPerMonth, 35.1);
+  assert.equal(google.source, 'code');
+  assert.equal(google.asOf, codeLine('google-cloud').asOf);
+  assert.equal(r.asOf, '2026-10-16');
+  assert.equal(r.oldestAsOf, codeLine('google-cloud').asOf, 'the oldest date is still the Google one');
 });
 
 test('a saved row with no note carries no note, never the code note about another invoice', async () => {
@@ -118,8 +146,19 @@ function withServer(fn) {
 test('an unknown line id is refused and the known ids are named', withServer(async (post) => {
   const r = await post({ id: 'nope', usdPerMonth: 10, asOf: '2026-09-01' });
   assert.equal(r.status, 400);
-  assert.match(r.body.error, new RegExp(firstId));
+  for (const l of CODE.lines) assert.match(r.body.error, new RegExp(l.id));
+  assert.match(r.body.error, /railway/);
   assert.equal(writes.length, 0);
+}));
+
+test('Railway is accepted, so its real bill is recorded from the dashboard like Google Cloud', withServer(async (post) => {
+  // Railway used to be a fixed $20.00 line the route did not know, so the
+  // owner could not record the plan fee plus the usage billed on top of it.
+  const r = await post({ id: 'railway', usdPerMonth: 32.96, asOf: '2026-09-16', note: 'railway usage estimate, Sep 16 to Oct 16' });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.deepEqual(writes, [['railway', 32.96, '2026-09-16', 'railway usage estimate, Sep 16 to Oct 16', 7]]);
+  assert.ok(r.body.reconciled.editableIds.includes('railway'));
+  assert.ok(r.body.reconciled.lines.some((l) => l.id === 'railway'), 'the merged block carries the Railway line');
 }));
 
 test('a negative, huge or non-numeric amount is refused', withServer(async (post) => {

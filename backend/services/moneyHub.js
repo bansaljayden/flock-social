@@ -10,8 +10,9 @@
 //            trials, recurring revenue, what was collected this month, refunds,
 //            disputes, Stripe's fees and promotion code redemptions.
 //   costs    the infrastructure lines in services/costModel.js, the reconciled
-//            invoice in cost_reconciled (059), and every row of the expense
-//            list in business_expenses (080), without counting a bill twice.
+//            Google Cloud and Railway bills in cost_reconciled (059), and
+//            every row of the expense list in business_expenses (080),
+//            without counting a bill twice.
 //   net      revenue less costs this month, the monthly burn, and how many
 //            subscribers or venues would cover it.
 //   pricing  every price Stripe will charge next to every price the code
@@ -371,7 +372,7 @@ async function cachedRead(key, read, {
 // ---------------------------------------------------------------------------
 
 // Every id a row's replaces_line may name: the fixed, annual and one-time
-// lines, and the reconciled invoice line(s). Read from costModel so a line
+// lines, and the reconciled bill lines. Read from costModel so a line
 // added there is linkable here without a second list.
 function codeLineIds() {
   return [
@@ -690,8 +691,9 @@ async function importExpenses(items, userId, db = pool) {
 // Three sources, one rule each:
 //   * costModel.js lines (monthly, annual, one-time): counted unless an active
 //     expense row names the line in replaces_line.
-//   * the reconciled invoice (cost_reconciled over costModel.RECONCILED): the
-//     same, a usage bill read as this much a month.
+//   * the reconciled bills (cost_reconciled over costModel.RECONCILED, today
+//     Google Cloud and Railway): the same, each a usage bill read as this much
+//     a month.
 //   * expense rows: counted while active and in USD.
 //
 // Two figures come out of every line:
@@ -763,7 +765,7 @@ function codeCostLines(reconciled) {
   for (const e of costModel.ONE_TIME) add(e, 'one_time');
   const recLines = reconciled && Array.isArray(reconciled.lines)
     ? reconciled.lines
-    : costModel.RECONCILED.lines.map((l) => ({ ...l, asOf: costModel.RECONCILED.asOf, source: 'code' }));
+    : costModel.RECONCILED.lines.map((l) => ({ ...l, source: 'code' }));
   for (const l of recLines) {
     lines.push({
       id: l.id,
@@ -785,7 +787,8 @@ function codeCostLines(reconciled) {
 function buildCostPicture({ expenses = [], reconciled = null, month }) {
   // Only a row that is itself counted may take a code line out of the total:
   // active, and in dollars. A euro bill linked to Railway would otherwise
-  // remove the $20 and add nothing, since nothing here converts currencies.
+  // remove the Railway figure and add nothing, since nothing here converts
+  // currencies.
   // Nor may a credit: it has no code figure to stand in for (096 refuses the
   // pair in the table as well).
   const replacedBy = new Map();
@@ -2839,7 +2842,7 @@ function buildOwnerActions({ roundTrip, expensesRead, revenuecat }) {
     expensesWords = 'The expense list has bills on it, so the costs on this page count them.';
   } else if (expensesRead && expensesRead.ok) {
     expensesState = 'todo';
-    expensesWords = 'The expense list is empty, so the costs on this page count only the code\'s own lines and the reconciled invoice. Paste the list into Import a list, at the bottom of the Expense list card.';
+    expensesWords = 'The expense list is empty, so the costs on this page count only the code\'s own lines and the reconciled bills. Paste the list into Import a list, at the bottom of the Expense list card.';
   }
 
   // instrument.js's own test, so this step and the boot log line agree.
@@ -3096,9 +3099,9 @@ async function buildMoneyHub({
     },
     costs: {
       status: expensesR.ok ? 'ok' : 'error',
-      reason: expensesR.ok ? null : 'The expense list could not be read, so only the code lines and the reconciled invoice are counted.',
+      reason: expensesR.ok ? null : 'The expense list could not be read, so only the code lines and the reconciled bills are counted.',
       ...costs,
-      reconciledReadError: reconciled && reconciled.readError ? 'The saved invoice figure could not be read; the code figure stands in.' : null,
+      reconciledReadError: reconciled && reconciled.readError ? 'The saved reconciled figures could not be read, so the code figures stand in.' : null,
       googleMeteredThisMonth: photoR.ok && photoR.value ? {
         photosBought: Number.isFinite(photoR.value.monthUsed) ? photoR.value.monthUsed : null,
         photosUsd: Number.isFinite(photoR.value.monthUsd) ? photoR.value.monthUsd : null,

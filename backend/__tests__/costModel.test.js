@@ -411,13 +411,72 @@ test('every rate on the card carries a checked date and a source', () => {
   }
 });
 
-test('the reconciled block is the only place a billed figure lives, and it is dated', () => {
-  assert.match(cm.RECONCILED.asOf, /^\d{4}-\d{2}-\d{2}$/);
+test('the reconciled block is the only place a billed figure lives, and every line is dated', () => {
+  // Each line carries its own date, because two vendors are read on two
+  // different days. One shared date for the block would age the fresh figure
+  // or pass off the stale one as current, and the cost heartbeat judges each
+  // line on its own date for the same reason.
   assert.ok(cm.RECONCILED.lines.length > 0);
   for (const l of cm.RECONCILED.lines) {
     assert.strictEqual(typeof l.usdPerMonth, 'number');
     assert.ok(Number.isFinite(l.usdPerMonth));
+    assert.match(l.asOf, /^\d{4}-\d{2}-\d{2}$/, `${l.id} has no date of its own`);
+    assert.ok(!Number.isNaN(Date.parse(`${l.asOf}T00:00:00Z`)), `${l.id} date is not a real day`);
+    assert.ok(typeof l.readFrom === 'string' && l.readFrom.length > 10, `${l.id} does not say where its next figure is read`);
+    assert.ok(typeof l.label === 'string' && l.label.length > 0, `${l.id} has no label`);
+    // The notes reach the admin panel. No em dashes in copy a person reads.
+    assert.ok(!/\u2014/.test(l.note || ''), `${l.id} note carries an em dash`);
   }
+  assert.strictEqual(new Set(cm.RECONCILED.lines.map((l) => l.id)).size, cm.RECONCILED.lines.length, 'a reconciled id is listed twice');
+});
+
+test('Railway is a reconciled line at its own estimated bill, and no fixed line carries a Railway figure', async () => {
+  // Railway sat on FIXED_MONTHLY at $20.00, the Pro plan's fee. The plan buys
+  // $20 of usage credit and everything past it bills on top, so the real bill
+  // ran higher than that line could say: `railway usage` estimated $32.96 for
+  // the Sep 16 to Oct 16, 2026 period. It is a reconciled line now, recorded
+  // from the dashboard like Google Cloud, and nothing may count it twice.
+  const railway = cm.RECONCILED.lines.find((l) => l.id === 'railway');
+  assert.ok(railway, 'Railway is on the reconciled block');
+  assert.strictEqual(railway.usdPerMonth, 32.96);
+  assert.strictEqual(railway.label, 'Railway (backend and Postgres)');
+  assert.match(railway.asOf, /^2026-09-\d{2}$/);
+  assert.match(railway.note, /estimated bill/);
+  assert.match(railway.note, /Sep 16 to Oct 16, 2026/);
+  assert.match(railway.note, /\$20 Pro plan fee plus/);
+  assert.match(railway.note, /\$20 of credit/);
+  assert.match(railway.note, /`railway usage`/);
+  assert.match(railway.note, /reconciled-cost form on the admin dashboard/);
+  assert.match(railway.readFrom, /railway usage/);
+
+  // No Railway figure left among the fixed lines, by id or by name.
+  const fixed = [...cm.FIXED_MONTHLY, ...cm.FIXED_ANNUAL, ...cm.ONE_TIME];
+  assert.ok(!fixed.some((e) => e.id === 'railway'), 'railway is still a fixed id');
+  assert.deepStrictEqual(fixed.filter((e) => /railway/i.test(e.label)).map((e) => e.id), [], 'a fixed line still names Railway');
+  // And no id lives in both blocks, so a line cannot be counted as fixed and
+  // reconciled at once.
+  const reconciledIds = new Set(cm.RECONCILED.lines.map((l) => l.id));
+  assert.deepStrictEqual(fixed.filter((e) => reconciledIds.has(e.id)).map((e) => e.id), []);
+  // The fixed total no longer carries the $20 plan fee.
+  const f = cm.buildFixed();
+  assert.strictEqual(f.monthlyUsd, Math.round(cm.FIXED_MONTHLY.reduce((s, e) => s + e.usd, 0) * 100) / 100);
+  assert.ok(!f.unverifiedLines.includes('railway'));
+
+  // Editable from the dashboard: readReconciled lists it among the ids the
+  // POST route accepts, and with no saved row it reads the code figure.
+  const r = await cm.readReconciled({ query: async () => ({ rows: [] }) });
+  assert.ok(r.editableIds.includes('railway'), 'the dashboard cannot record Railway');
+  assert.ok(r.editableIds.includes('google-cloud'));
+  const line = r.lines.find((l) => l.id === 'railway');
+  assert.strictEqual(line.source, 'code');
+  assert.strictEqual(line.usdPerMonth, 32.96);
+  assert.strictEqual(line.asOf, railway.asOf);
+
+  // The inventory row resolves against the reconciled block, not the fixed one.
+  const dep = cm.buildDependencies({ onDate: '2026-09-28' }).groups
+    .flatMap((g) => g.entries).find((e) => e.id === 'railway');
+  assert.strictEqual(dep.reconciledId, 'railway');
+  assert.strictEqual(dep.fixedId, null);
 });
 
 // ===========================================================================
@@ -845,6 +904,7 @@ test('every join key points at something that exists', () => {
     [...cm.FIXED_MONTHLY, ...cm.FIXED_ANNUAL, ...cm.ONE_TIME].map((e) => e.id)
   );
   const watchIds = new Set(cm.WATCHLIST.map((w) => w.id));
+  const reconciledIds = new Set(cm.RECONCILED.lines.map((l) => l.id));
   for (const d of ALL_DEPS) {
     if (d.observedLineId) {
       assert.ok(observedIds.has(d.observedLineId), `${d.id} points at a meter line that does not exist`);
@@ -852,6 +912,10 @@ test('every join key points at something that exists', () => {
     if (d.fixedId) {
       assert.ok(fixedIds.has(d.fixedId), `${d.id} points at a fixed line that does not exist`);
     }
+    if (d.reconciledId) {
+      assert.ok(reconciledIds.has(d.reconciledId), `${d.id} points at a reconciled line that does not exist`);
+    }
+    assert.ok(!(d.fixedId && d.reconciledId), `${d.id} joins a fixed and a reconciled line at once, which prices it twice`);
     if (d.watchlistId) {
       assert.ok(watchIds.has(d.watchlistId), `${d.id} points at a watchlist entry that does not exist`);
     }
@@ -868,6 +932,17 @@ test('nothing on the rate card, the fixed list or the watchlist is missing from 
     assert.ok(
       ALL_DEPS.some((d) => d.fixedId === id),
       `the fixed bill ${id} is on nobody's inventory row`
+    );
+  }
+  // A reconciled bill is on an inventory row too. Google Cloud is the one
+  // exception, named: its single invoice is split across the metered rows
+  // (Places, Vision, Gemini) that the RATE_GROUP_ROW check below reaches.
+  const SPLIT_ACROSS_METERED_ROWS = new Set(['google-cloud']);
+  for (const l of cm.RECONCILED.lines) {
+    if (SPLIT_ACROSS_METERED_ROWS.has(l.id)) continue;
+    assert.ok(
+      ALL_DEPS.some((d) => d.reconciledId === l.id),
+      `the reconciled bill ${l.id} is on nobody's inventory row`
     );
   }
   for (const w of cm.WATCHLIST) {

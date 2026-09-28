@@ -534,7 +534,7 @@ test('with no keys, revenue says not connected and carries no numbers, and costs
   assert.strictEqual(h.net.revenueThisMonthCents, null, 'unread revenue is null, never $0');
   assert.strictEqual(h.net.netThisMonthCents, null);
   assert.ok(h.net.revenueMissing.includes('stripe'));
-  assert.ok(h.costs.totals.perMonthCents > 0, 'the code lines and the reconciled invoice still count');
+  assert.ok(h.costs.totals.perMonthCents > 0, 'the code lines and the reconciled bills still count');
   for (const s of h.pricing.stated) {
     assert.ok(['unchecked', 'unsold'].includes(s.verdict), `${s.id} claimed ${s.verdict} with no Stripe to check against`);
   }
@@ -990,13 +990,16 @@ test('a row that stands in for a code line counts once, and a lookalike is flagg
   const base = moneyHub.buildCostPicture({ expenses: [], month: MONTH });
   const railway = base.lines.find((l) => l.id === 'railway');
   assert.strictEqual(railway.counted, true);
+  // Railway is a reconciled line now, so a row still names it by the same id.
+  assert.strictEqual(railway.origin, 'reconciled');
+  assert.strictEqual(railway.amountCents, 3296);
 
   const linked = moneyHub.buildCostPicture({
     expenses: [expense({ id: 1, vendor: 'Railway', kind: 'infrastructure', amountCents: 2500, replacesLine: 'railway' })],
     month: MONTH,
   });
   assert.strictEqual(linked.lines.find((l) => l.id === 'railway').counted, false);
-  assert.strictEqual(linked.totals.perMonthCents, base.totals.perMonthCents - 2000 + 2500, 'the code $20 leaves and the row $25 arrives');
+  assert.strictEqual(linked.totals.perMonthCents, base.totals.perMonthCents - 3296 + 2500, 'the reconciled $32.96 leaves and the row $25 arrives');
   assert.deepStrictEqual(linked.replaced.map((x) => x.id), ['railway']);
   assert.deepStrictEqual(linked.possibleDoubles, []);
 
@@ -1007,6 +1010,54 @@ test('a row that stands in for a code line counts once, and a lookalike is flagg
   assert.strictEqual(unlinked.possibleDoubles.length, 1);
   assert.strictEqual(unlinked.possibleDoubles[0].codeLineId, 'railway');
   assert.strictEqual(unlinked.possibleDoubles[0].expenseId, 2);
+});
+
+test('the monthly total counts Railway once at its real bill: 32.96, not 52.96', () => {
+  // Railway moved from a fixed $20.00 line (the plan fee alone) to a
+  // reconciled $32.96 line (the fee plus usage past the credit). Left in both
+  // blocks, the hub would count the fee twice and read $52.96.
+  const cm = require('../services/costModel');
+  const pic = moneyHub.buildCostPicture({ expenses: [], month: MONTH });
+  const railwayLines = pic.lines.filter((l) => /railway/i.test(`${l.id} ${l.label}`));
+  assert.deepStrictEqual(
+    railwayLines.map((l) => [l.id, l.origin, l.cadence, l.counted, l.perMonthCents]),
+    [['railway', 'reconciled', 'usage', true, 3296]],
+    'one Railway line, reconciled, at $32.96'
+  );
+  assert.strictEqual(railwayLines.reduce((s, l) => s + l.perMonthCents, 0), 3296);
+  // Hosting is Railway and Vercel, so the category shows the same single count.
+  const vercel = cm.FIXED_MONTHLY.find((e) => e.id === 'vercel');
+  assert.strictEqual(pic.byCategory.find((c) => c.category === 'Hosting').perMonthCents, 3296 + Math.round(vercel.usd * 100));
+  // And the whole total is every code line once: fixed monthly in full, yearly
+  // at a twelfth, each reconciled line in full.
+  const expected = cm.FIXED_MONTHLY.reduce((s, e) => s + Math.round(e.usd * 100), 0)
+    + cm.FIXED_ANNUAL.reduce((s, e) => s + Math.round(Math.round(e.usd * 100) / 12), 0)
+    + cm.RECONCILED.lines.reduce((s, l) => s + Math.round(l.usdPerMonth * 100), 0);
+  assert.strictEqual(pic.totals.perMonthCents, expected);
+  // The id is still a line an expense row may name, listed once, as usage.
+  const ids = moneyHub.codeLineIds();
+  assert.strictEqual(ids.filter((id) => id === 'railway').length, 1);
+  assert.strictEqual(new Set(ids).size, ids.length, 'no code line id is listed twice');
+});
+
+test('a Railway figure saved from the dashboard is the one the hub counts, once', async () => {
+  expenseRows = [];
+  handlers = [
+    [/FROM cost_reconciled/, () => ({ rows: [{ line_id: 'railway', usd_per_month: '35.10', as_of: '2026-09-28', note: null, updated_at: null }], rowCount: 1 })],
+    ...hubHandlers(),
+  ];
+  const r = await req('GET', '/api/admin/money');
+  assert.strictEqual(r.status, 200, r.text);
+  const railway = r.body.costs.lines.filter((l) => /railway/i.test(`${l.id} ${l.label}`));
+  assert.deepStrictEqual(railway.map((l) => [l.id, l.recordedIn, l.perMonthCents]), [['railway', 'dashboard', 3510]]);
+  // The expense form's "Counts instead of" list still offers Railway, once.
+  assert.deepStrictEqual(r.body.expenses.codeLines.filter((l) => l.id === 'railway'),
+    [{ id: 'railway', label: 'Railway (backend and Postgres)', cadence: 'usage' }]);
+  handlers = hubHandlers();
+  const code = await req('GET', '/api/admin/money');
+  assert.strictEqual(code.status, 200, code.text);
+  assert.strictEqual(r.body.costs.totals.perMonthCents - code.body.costs.totals.perMonthCents, 3510 - 3296,
+    'the saved figure replaces the code one rather than adding to it');
 });
 
 test('tooling comes from the list; yearly is spread; one-time lands only in its own month; other currencies are named', () => {
@@ -1269,7 +1320,7 @@ test('a bill in another currency cannot take a code line out of the total', () =
     expenses: [expense({ id: 9, vendor: 'Railway', kind: 'infrastructure', amountCents: 1900, currency: 'EUR', replacesLine: 'railway' })],
     month: MONTH,
   });
-  assert.strictEqual(pic.lines.find((l) => l.id === 'railway').counted, true, 'the $20 code line still counts');
+  assert.strictEqual(pic.lines.find((l) => l.id === 'railway').counted, true, 'the reconciled Railway line still counts');
   assert.strictEqual(pic.totals.perMonthCents, base.totals.perMonthCents, 'nothing left and nothing arrived');
   assert.deepStrictEqual(pic.replaced, []);
   assert.deepStrictEqual(pic.nonUsd, [{ label: 'Railway', amountCents: 1900, currency: 'EUR', replacesLine: 'railway', isCredit: false }]);

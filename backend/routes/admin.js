@@ -2499,8 +2499,9 @@ router.get('/moderation-actions', async (req, res) => {
 //     deploy and it divides by the instance count. Those lines are labelled
 //     durable false, and the panel says "today, this process only" rather than
 //     pretending to be a month.
-//   * None of it is an invoice. costModel.RECONCILED carries the only figure a
-//     human has actually seen on a bill, and its date says how stale it is.
+//   * None of it is an invoice. costModel.RECONCILED carries the only figures a
+//     human has actually read off a bill, and each line's date says how stale
+//     that line is.
 //
 // Every ledger read is wrapped: a meter that throws must degrade to "not
 // measured" rather than 500 the whole panel, because the fixed-cost half is
@@ -2576,6 +2577,12 @@ function meterBlockOrNull(read) {
 // costModel.readReconciled merges it over the code figure for the panel and
 // for the cost heartbeat. Validation is by hand, like the tier route above;
 // the expense routes at the bottom of this file use express-validator.
+//
+// Any id in costModel.RECONCILED.lines is accepted, and the list is read here
+// rather than copied, so a vendor moved into that block becomes recordable
+// with no change to this route. Railway joined it on 2026-09-28: its bill is
+// the plan fee plus usage past the included credit, and the owner records
+// Railway's own estimate for the period through this same form.
 // ---------------------------------------------------------------------------
 router.post('/costs/reconciled', async (req, res) => {
   try {
@@ -3008,7 +3015,7 @@ router.get('/costs', async (req, res) => {
     // Said in the payload, not only in the panel, so an API reader cannot miss
     // it either.
     disclaimer:
-      'observed is priced from meters and is an estimate of a bill, not a bill. worstCase is what ceilings permit and nothing has ever reached one. reconciled is the only line a human has seen on an invoice.',
+      'observed is priced from meters and is an estimate of a bill, not a bill. worstCase is what ceilings permit and nothing has ever reached one. reconciled holds the only figures a human has read off a vendor bill.',
   });
 });
 
