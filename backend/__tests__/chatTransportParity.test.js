@@ -37,6 +37,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const { clientSocketImports } = require('./helpers/clientSocketImports');
 
 process.env.JWT_SECRET = 'chat-transport-parity-secret';
 
@@ -561,9 +562,11 @@ test('a body-parser refusal is reported as a client error, not as a server fault
 // 7. frontend/src/services/socket.js — the emitted payload
 // ---------------------------------------------------------------------------
 //
-// The client module is ESM and imports two things. Rather than assert on its
-// text, it is loaded here with those imports stubbed and the emitted frames
-// captured, so the assertions are about what actually goes on the wire.
+// The client module is ESM. Rather than assert on its text, it is loaded here
+// with its imports stubbed (helpers/clientSocketImports.js lists what stands in
+// for each, and refuses to run if socket.js imports a name it does not cover)
+// and the emitted frames captured, so the assertions are about what actually
+// goes on the wire.
 
 function loadClientSocketModule() {
   const file = path.join(__dirname, '..', '..', 'frontend', 'src', 'services', 'socket.js');
@@ -579,11 +582,12 @@ function loadClientSocketModule() {
     active: true,
   };
   const exportsObj = {};
+  const imports = clientSocketImports({ io: () => instance, getToken: () => 'token', BASE_URL: 'http://localhost' });
   const factory = new Function(
-    'io', 'getToken', 'BASE_URL', 'exports', 'window', 'document',
+    ...imports.names, 'exports', 'window', 'document',
     `${src}\nObject.assign(exports, { connectSocket, sendMessage, sendImageMessage, socketSendDm, onSocketError });`
   );
-  factory(() => instance, () => 'token', 'http://localhost', exportsObj, undefined, undefined);
+  factory(...imports.values, exportsObj, undefined, undefined);
   exportsObj.connectSocket();
   return { api: exportsObj, emitted, instance };
 }
