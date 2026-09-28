@@ -1641,12 +1641,19 @@ export async function askAdvisorQuestion(question) {
 }
 
 // Shareable guest invite link for a flock (guests RSVP + vote, no account).
-export async function createFlockInviteLink(flockId, regenerate = false) {
+//
+// `quiet` asks without counting. invite_link_created counts a member reaching
+// for the link: one per Share tap, one per replacement, one per plan created.
+// The chat's invite sheet also asks when it opens and when the app comes back
+// to the front, so the tap has the live link in hand before it happens; those
+// asks are not anyone sharing, and counting them would turn the event into a
+// count of sheet opens.
+export async function createFlockInviteLink(flockId, regenerate = false, { quiet = false } = {}) {
   const data = await request(`/api/flocks/${flockId}/invite-link`, {
     method: 'POST',
     body: JSON.stringify({ regenerate }),
   });
-  track('invite_link_created', { regenerate });
+  if (!quiet) track('invite_link_created', { regenerate });
   return data;
 }
 
