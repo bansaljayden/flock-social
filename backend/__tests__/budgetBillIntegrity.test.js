@@ -86,6 +86,9 @@
 //      gets neither the toast nor the push, one goes out per plan an hour
 //      (a push_debounce claim, taken only once every refusal has passed),
 //      and a shell, a quarantined bill and a settled one are refused.
+//  16. A REMINDER THAT WAITED (quiet hours, a retry) IS ASKED AGAIN AS IT GOES
+//      OUT, and is not sent to somebody who paid in the meantime, nor about a
+//      bill quarantined since.
 // ---------------------------------------------------------------------------
 
 const test = require('node:test');
@@ -2074,4 +2077,69 @@ test('a shell, a quarantined bill, a settled bill and no bill at all are refused
     [[none, shell, q, paid].map((id) => `bill_remind:${id}`)]
   );
   assert.equal(claimed.rowCount, 0, 'a refused reminder took the hour');
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 16. A reminder that waited
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// A bill_reminder held for quiet hours or queued for a retry keeps its words,
+// and the person it asks can pay before it goes out. "Ava is waiting on your
+// share" to somebody who has paid her is wrong, and the route's own checks ran
+// before the wait. services/pushHelper.js asks again at delivery, on every
+// path: the recipient's own share still unpaid, on a bill that still has a
+// payer and is not quarantined.
+
+test('a reminder that waited is not sent to somebody who paid meanwhile, nor about a bill quarantined since', async () => {
+  const firebaseService = require('../services/firebaseService');
+  const pushHelper = require('../services/pushHelper');
+  const ava = await mkUser('Ava');
+  const ben = await mkUser('Ben');
+  const cam = await mkUser('Cam');
+  const flockId = await mkFlock(ava, [ben, cam]);
+  assert.equal((await call('POST', `/api/billing/${flockId}/create`, { token: ava.token, body: { totalAmount: 90 } })).status, 201);
+  const data = { type: 'bill_reminder', flockId: String(flockId), fromUserId: String(ava.id) };
+
+  assert.equal(await pushHelper.canNotify(ben.id, data), true, 'an unpaid share on an ordinary bill');
+  assert.equal(await pushHelper.canNotify(ava.id, data), false, 'the payer owes nobody');
+  assert.equal(await pushHelper.canNotify(ben.id, { type: 'bill_reminder', fromUserId: String(ava.id) }), false,
+    'a payload naming no plan cannot be asked');
+
+  // One device each, with no time zone on record, so nothing waits for morning.
+  const tokenOf = (u) => `fcm-bbr-${u.id}-${'x'.repeat(40)}`;
+  for (const u of [ben, cam]) {
+    await pool.query('INSERT INTO device_tokens (user_id, token) VALUES ($1, $2)', [u.id, tokenOf(u)]);
+  }
+  const queue = async (userId) => Number((await one(
+    `INSERT INTO push_outbox (user_id, reason, title, body, data, next_attempt_at, expires_at)
+     VALUES ($1, 'retry', 'Bill reminder', 'Ava is waiting on your share for Dinner', $2::jsonb,
+             NOW() - INTERVAL '1 second', NOW() + INTERVAL '1 hour')
+     RETURNING id`,
+    [userId, JSON.stringify(data)]
+  )).id);
+  const benRow = await queue(ben.id);
+  const camRow = await queue(cam.id);
+  // Ben pays Ava while his reminder waits; Cam has not.
+  assert.equal((await call('POST', `/api/billing/${flockId}/settle`, { token: ben.token })).status, 200);
+
+  const sent = [];
+  pushHelper._resetDebounce();
+  firebaseService.__setSenderForTests((message) => { sent.push(message); return 'ok'; });
+  try {
+    await pushHelper.sweepPushOutbox();
+  } finally {
+    firebaseService.__setSenderForTests(null);
+    pushHelper._resetDebounce();
+  }
+  const reached = sent
+    .filter((m) => m.data && m.data.type === 'bill_reminder' && m.data.flockId === String(flockId))
+    .map((m) => m.token);
+  assert.deepEqual(reached, [tokenOf(cam)], 'the reminder reached somebody who had paid, or nobody at all');
+  assert.deepEqual(await outboxRows([benRow, camRow]), [], 'the refused row was kept to be tried again');
+
+  // Quarantined after the tap: its settled flags are withheld from everybody,
+  // and a reminder is a statement about exactly those.
+  assert.equal(await pushHelper.canNotify(cam.id, data), true);
+  await pool.query('UPDATE bill_splits SET quarantined = true WHERE flock_id = $1', [flockId]);
+  assert.equal(await pushHelper.canNotify(cam.id, data), false);
 });

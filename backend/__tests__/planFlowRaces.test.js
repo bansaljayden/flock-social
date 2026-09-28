@@ -39,7 +39,9 @@
 //  10. THE HOST HEARS ONCE WHEN EVERYONE ELSE HAS VOTED (routes/venues.js
 //      notifyHostVotesIn). "Once" is an UPDATE that claims
 //      flocks.votes_in_pushed_at only while it is NULL, so it is run here,
-//      with two last votes fired together, rather than trusted.
+//      with two last votes fired together, rather than trusted. A push that
+//      waited (quiet hours, a retry) is asked again as it goes out, and is not
+//      sent once the plan is locked in, called off or done.
 //
 // The fixture suites pin the statements' text; this one runs them.
 
@@ -1109,4 +1111,64 @@ test('with push not configured the vote claims nothing, so a later vote can stil
   await vote(ivy, flockId, 'Kome');
   await settle();
   assert.strictEqual(await pushedAt(flockId), null);
+});
+
+// The push can wait. Held for quiet hours or queued for a retry, it keeps its
+// words, and the host can lock the plan in before it goes out; "Lock it in?"
+// about a plan already locked in is a nudge whose reason has passed.
+// services/pushHelper.js asks again at delivery, which every path passes
+// through, whether the plan is still being planned and the recipient still
+// hosts it.
+test('a votes-in push that waited is not sent once the plan is locked in, and only ever to the host', async () => {
+  const pushHelper = require('../services/pushHelper');
+  const firebaseService = require('../services/firebaseService');
+  const host = await mkUser('Host Fifteen');
+  const jo = await mkUser('Jo Fifteen');
+  const lockedLater = await mkFlock(host);
+  await addMember(lockedLater, jo, 'accepted');
+  // A second plan, still being planned, so the sweep below proves it sends.
+  const otherHost = await mkUser('Host Sixteen');
+  const kit = await mkUser('Kit Sixteen');
+  const stillOpen = await mkFlock(otherHost);
+  await addMember(stillOpen, kit, 'accepted');
+  const data = (flockId) => ({ type: 'flock_votes_in', flockId: String(flockId) });
+
+  assert.strictEqual(await pushHelper.canNotify(host.id, data(lockedLater)), true, 'a plan still being planned, to its host');
+  assert.strictEqual(await pushHelper.canNotify(jo.id, data(lockedLater)), false, 'a member cannot lock it in, so is never asked to');
+  assert.strictEqual(await pushHelper.canNotify(host.id, { type: 'flock_votes_in' }), false, 'a payload naming no plan cannot be asked');
+
+  // One device each, with no time zone on record, so nothing waits for morning.
+  for (const u of [host, otherHost]) {
+    await pool.query('INSERT INTO device_tokens (user_id, token) VALUES ($1, $2)', [u.id, `fcm-pfr-${u.id}-${'x'.repeat(40)}`]);
+  }
+  const queue = async (userId, flockId) => Number((await pool.query(
+    `INSERT INTO push_outbox (user_id, reason, title, body, data, next_attempt_at, expires_at)
+     VALUES ($1, 'retry', 'The votes are in', 'Kome is ahead for Plan. Lock it in?', $2::jsonb,
+             NOW() - INTERVAL '1 second', NOW() + INTERVAL '1 hour')
+     RETURNING id`,
+    [userId, JSON.stringify(data(flockId))]
+  )).rows[0].id);
+  const staleRow = await queue(host.id, lockedLater);
+  const liveRow = await queue(otherHost.id, stillOpen);
+  // The host locks it in while the push waits.
+  await pool.query("UPDATE flocks SET status = 'confirmed' WHERE id = $1", [lockedLater]);
+
+  const sent = [];
+  pushHelper._resetDebounce();
+  firebaseService.__setSenderForTests((message) => { sent.push(message); return 'ok'; });
+  try {
+    await pushHelper.sweepPushOutbox();
+  } finally {
+    firebaseService.__setSenderForTests(null);
+    pushHelper._resetDebounce();
+  }
+  const told = sent.filter((m) => JSON.stringify(m).includes('flock_votes_in')).map((m) => m.data && m.data.flockId);
+  assert.deepStrictEqual(told, [String(stillOpen)], 'only the plan still being planned was pushed');
+  const left = await pool.query('SELECT id FROM push_outbox WHERE id = ANY($1::bigint[])', [[staleRow, liveRow]]);
+  assert.deepStrictEqual(left.rows, [], 'the refused row is dropped, not kept to be tried again');
+
+  for (const status of ['confirmed', 'cancelled', 'completed']) {
+    await pool.query('UPDATE flocks SET status = $2 WHERE id = $1', [lockedLater, status]);
+    assert.strictEqual(await pushHelper.canNotify(host.id, data(lockedLater)), false, status);
+  }
 });

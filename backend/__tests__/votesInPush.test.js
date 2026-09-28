@@ -203,6 +203,82 @@ test('the type is registered where a tap is routed, and lands on the vote panel'
   assert.match(read('services', 'pushHelper.js'), /flock_votes_in\s+everyone else in the plan they host has voted/);
 });
 
+// ── Asked again at delivery ────────────────────────────────────────────────
+//
+// A push held for quiet hours or queued for a retry keeps its words, and the
+// host can lock the plan in (or a member pay their share) before it goes out.
+// pushHelper's visibility check, which every delivery path passes through,
+// asks whether the reason still holds. planFlowRaces and budgetBillIntegrity
+// run the two clauses against a real Postgres; this pins which pushes carry
+// them and that neither leaks onto any other push.
+
+const pushHelper = require('../services/pushHelper');
+
+async function visibilitySqlFor(data) {
+  reset();
+  let sql = null;
+  on(/FROM users u/i, (params, text) => {
+    sql = text;
+    return { rows: [{ is_banned: false, actor_banned: false, can_see: true }] };
+  });
+  await pushHelper.pushAlways(HOST, 'T', 'B', data);
+  return sql;
+}
+
+test('a votes-in push is sent only while the plan is still being planned, and only to its host', async () => {
+  const sql = await visibilitySqlFor({ type: 'flock_votes_in', flockId: '41' });
+  assert.ok(sql, 'the visibility check ran');
+  assert.match(sql, /\(f\.creator_id = u\.id OR m\.status IN \('accepted', 'invited'\)\) AND f\.status = 'planning' AND f\.creator_id = u\.id/);
+});
+
+test('a bill reminder is sent only while the recipient still owes somebody else on an ordinary bill', async () => {
+  const sql = await visibilitySqlFor({ type: 'bill_reminder', flockId: '41', fromUserId: '2' });
+  assert.ok(sql, 'the visibility check ran');
+  assert.match(sql, /AND EXISTS \(SELECT 1 FROM bill_splits bs JOIN bill_split_shares bss ON bss\.bill_id = bs\.id WHERE bs\.flock_id = f\.id AND bs\.paid_by IS NOT NULL AND bs\.paid_by <> u\.id AND bs\.quarantined IS NOT TRUE AND bss\.user_id = u\.id AND bss\.settled IS NOT TRUE\)/);
+});
+
+test('no other push carries either clause, a name off Object.prototype included', async () => {
+  for (const type of ['flock_message', 'flock_confirmed', 'bill_created', 'bill_settled', 'budget_reminder', 'constructor', '__proto__']) {
+    const sql = await visibilitySqlFor({ type, flockId: '41' });
+    assert.ok(sql, `${type}: the visibility check ran`);
+    assert.doesNotMatch(sql, /f\.status = 'planning'/, type);
+    assert.doesNotMatch(sql, /bss\.settled IS NOT TRUE/, type);
+    assert.doesNotMatch(sql, /function|\[native code\]|\[object/, `${type}: something that is not SQL was spliced in`);
+  }
+});
+
+test('a nudge that names no plan cannot be asked, so it is not sent and nothing is read', async () => {
+  for (const data of [{ type: 'flock_votes_in' }, { type: 'bill_reminder', fromUserId: '2' }]) {
+    reset();
+    recipientOk();
+    const res = await pushHelper.pushAlways(HOST, 'T', 'B', data);
+    assert.strictEqual(res.skipped, true, data.type);
+    assert.strictEqual(res.reason, 'not-visible', data.type);
+    assert.ok(!log.some((q) => /FROM users u/i.test(q.text)), `${data.type}: the membership read ran anyway`);
+    assert.deepStrictEqual(sends, []);
+  }
+});
+
+// The reasons in these comments ship to a public copy of the code, so they
+// state the reason itself rather than pointing at a document that is not there.
+test('the votes-in and bill-reminder notes give their reasons, not an internal document', () => {
+  // [file, source, block start, block end, why a Map would not do (null: no Map)]
+  const blocks = [
+    ['routes/venues.js', read('routes', 'venues.js'), '// TELL THE HOST WHEN THE VOTE IS DONE.', 'const VOTES_IN_CLAIM_SQL', true],
+    ['routes/billing.js', read('routes', 'billing.js'), '// POST /api/billing/:flockId/remind', "router.post('/:flockId/remind'", true],
+    ['services/pushHelper.js', read('services', 'pushHelper.js'), '// A NUDGE WHOSE REASON HAS PASSED IS NOT SENT.', 'function stillTrueClause', false],
+  ];
+  for (const [name, src, from, to, mapReason] of blocks) {
+    const at = src.indexOf(from);
+    const end = src.indexOf(to, at);
+    assert.ok(at >= 0 && end > at, `${name}: the block moved`);
+    const text = src.slice(at, end).replace(/\n\s*\/\/\s*/g, ' ');
+    assert.doesNotMatch(text, /\b[A-Za-z][A-Za-z0-9_-]*\.md\b/, `${name} cites a document by name`);
+    // Where a Map was turned down, the note still says why in its own words.
+    if (mapReason) assert.match(text, /a Map is per process[^.]*a second server instance would keep a copy of its own/, name);
+  }
+});
+
 test('the migration that holds the claim is additive and replay-safe', () => {
   const sql = read('migrations', '099_flock_votes_in_push.sql');
   assert.match(sql, /-- @requires column flocks\.votes_in_pushed_at/);

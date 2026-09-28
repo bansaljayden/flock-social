@@ -1866,8 +1866,9 @@ router.post('/:flockId/unsettle',
 //     reminder is exactly a statement about who has not settled.
 //   - SOMEBODY STILL OWES. A settled bill has nothing to remind anyone about.
 //   - ONCE AN HOUR PER PLAN. Claimed in push_debounce (migration 050), not a
-//     Map: a Map is per process and gone on every deploy (project documentation, the
-//     single-replica warning). An hour is also how long sweepPushMaintenance
+//     Map: a Map is per process, so it is empty after every deploy and a
+//     second server instance would keep a copy of its own, each allowing a
+//     reminder of its own. An hour is also how long sweepPushMaintenance
 //     keeps a row there, so the window and the table agree. Claimed only once
 //     every refusal above has passed, so a refused tap does not burn it.
 //
