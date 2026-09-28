@@ -206,9 +206,36 @@ test('the socket is never dialled with the other account\'s token', async () => 
   expect(io.__instances.length).toBe(before);
 });
 
-test('the app reloads on the switch rather than signing the other account out', () => {
+// /pro and the moderation console are mounted by index.js outside the app and
+// send through api.js too. With the reload wired only inside the app, those
+// pages refused every action after a switch, said they were reloading, and
+// never did.
+const LISTENER_LINE = "window.addEventListener('flock-account-switched', () => { window.location.reload(); });";
+
+test('every page reloads on the switch, not only the app, and nothing signs the other account out', () => {
+  const index = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
+  const lines = index.split(/\r?\n/);
+  const at = lines.indexOf(LISTENER_LINE);
+  // At column 0, so module scope: it runs whichever branch below renders.
+  expect(at).toBeGreaterThan(-1);
+  const renderBranch = lines.findIndex((l) => l.startsWith('if (page) {'));
+  expect(renderBranch).toBeGreaterThan(at);
+  // Both pages are rendered by that branch, outside the app.
+  expect(index).toMatch(/id: 'pro',[\s\S]{0,200}import\('\.\/website\/ProPage'\)/);
+  expect(index).toMatch(/id: 'moderation',[\s\S]{0,200}import\('\.\/website\/ModerationDashboard'\)/);
+
+  // The line itself reloads, and does nothing else.
+  const reload = jest.fn();
+  const heard = {};
+  const fakeWindow = { location: { reload }, addEventListener: (name, fn) => { heard[name] = fn; } };
+  // eslint-disable-next-line no-new-func
+  new Function('window', LISTENER_LINE)(fakeWindow);
+  expect(Object.keys(heard)).toEqual(['flock-account-switched']);
+  heard['flock-account-switched']();
+  expect(reload).toHaveBeenCalledTimes(1);
+
+  // One owner, so the app does not reload a second time on top of it, and
+  // does not end the session (which would sign the other tab's account out).
   const app = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8');
-  expect(app).toContain("const onAccountSwitched = () => { window.location.reload(); };");
-  expect(app).toContain("window.addEventListener('flock-account-switched', onAccountSwitched);");
-  expect(app).toContain("window.removeEventListener('flock-account-switched', onAccountSwitched);");
+  expect(app).not.toMatch(/addEventListener\('flock-account-switched'/);
 });

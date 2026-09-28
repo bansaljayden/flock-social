@@ -922,6 +922,16 @@ const wantsApp = !page && (
   || APP_PATHS.some((re) => re.test(path))
 );
 
+// services/api.js binds each page load to the account it began with, refuses
+// every request once another tab of this browser has signed in as somebody
+// else (or signed out), and announces 'flock-account-switched' when it sees
+// that (WHOSE TAB THIS IS). The reload lives here, above every page, and not
+// in the app alone: /pro and the moderation console send through api.js too,
+// and a page with nobody listening sat refusing every action, telling the
+// visitor it was reloading when nothing was. Reloading starts the tab over as
+// whoever is signed in now. A DOM event, so api.js stays out of this chunk.
+window.addEventListener('flock-account-switched', () => { window.location.reload(); });
+
 const root = ReactDOM.createRoot(document.getElementById('root'));
 
 if (page) {
