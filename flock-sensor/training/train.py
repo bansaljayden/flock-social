@@ -119,8 +119,10 @@ def real_frame(real, rng, groups_x3=False):
 
 
 class Frames(IterableDataset):
-    def __init__(self, seed, real_path=None, real_share=0.0, bank_path=None, bank_share=0.0):
+    def __init__(self, seed, real_path=None, real_share=0.0, bank_path=None, bank_share=0.0,
+                 stride=4):
         self.seed, self.real_path, self.real_share = seed, real_path, real_share
+        self.stride = stride
         self.bank_path, self.bank_share = bank_path, bank_share
 
     def __iter__(self):
@@ -153,7 +155,7 @@ class Frames(IterableDataset):
                 t, objects = synth.scene_full(rng)
                 if rng.random() < 0.5:
                     t, objects = flip(t, objects)
-            heat, ltrb, mask = synth.targets(objects)
+            heat, ltrb, mask = synth.targets(objects, stride=self.stride)
             if not boxes:
                 mask = np.zeros_like(mask)
             x = synth.model_input(t)
@@ -196,10 +198,11 @@ def predict(net, frames, device, threshold=PEAK_THRESHOLD):
         for i in range(0, len(frames), 256):
             x = torch.stack([torch.from_numpy(synth.model_input(t)) for t, _ in frames[i:i + 256]])
             heat, _ = net(x.to(device))
+            st = synth.COLS / heat.shape[-1]
             pk = peaks(torch.sigmoid(heat), threshold).cpu().numpy()
             for f in pk:
                 ks, ys, xs = np.nonzero(f)
-                found.append([(int(k), (x + 0.5) * 4, (y + 0.5) * 4) for k, y, x in zip(ks, ys, xs)])
+                found.append([(int(k), (x + 0.5) * st, (y + 0.5) * st) for k, y, x in zip(ks, ys, xs)])
     net.train()
     return found
 
@@ -292,6 +295,8 @@ def main(argv=None):
     # first trained on stopped responding.
     ap.add_argument('--workers', type=int, default=8)
     ap.add_argument('--width', type=int, default=24)
+    ap.add_argument('--stride', type=int, default=4, choices=(2, 4),
+                    help='output grid: 4 is 40 x 30, 2 is 80 x 60 and keeps close heads apart')
     ap.add_argument('--seed', type=int, default=1)
     ap.add_argument('--real', default=None,
                     help='real_cache.pkl: public, commercially licensed real frames to mix in')
@@ -310,7 +315,7 @@ def main(argv=None):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     torch.manual_seed(args.seed)
 
-    net = PeopleNet(args.width, classes=K, boxes=True).to(device)
+    net = PeopleNet(args.width, classes=K, boxes=True, stride=args.stride).to(device)
     if args.init:
         # Everything but the output layer carries over; that is where owl-1
         # learned what a person looks like in this camera.
@@ -327,7 +332,7 @@ def main(argv=None):
     opt = torch.optim.AdamW(net.parameters(), lr=args.lr, weight_decay=1e-4)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, args.lr, total_steps=args.steps, pct_start=0.05)
     loader = DataLoader(Frames(args.seed, args.real, args.real_share if args.real else 0.0,
-                               args.bank, args.bank_share if args.bank else 0.0),
+                               args.bank, args.bank_share if args.bank else 0.0, args.stride),
                         batch_size=args.batch, num_workers=args.workers,
                         persistent_workers=True, prefetch_factor=4)
     val = held_out(1500)

@@ -1468,7 +1468,9 @@ class PeopleModel:
     else, so a unit without them loses the model and keeps the rule.
     """
 
-    STRIDE = 4          # model output is a quarter of the frame's resolution
+    STRIDE = 4          # owl-4's output grid is a quarter of the frame's resolution;
+                        # read() takes the real one from the model's output, so a
+                        # finer-grid model (owl-5: 80 x 60, stride 2) works unchanged
 
     def __init__(self, path, threshold):
         import numpy as np
@@ -1523,6 +1525,7 @@ class PeopleModel:
         outputs = self.session.run(None, {self.input: self.inputs(frame)})
         heat = outputs[0][0]
         ltrb = outputs[1][0] if len(outputs) > 1 else None
+        stride = THERMAL_COLS / float(heat.shape[-1])
         # A peak is a cell at least as sure as all eight neighbours, the same
         # rule training scored the model with.
         padded = np.pad(heat, ((0, 0), (1, 1), (1, 1)), constant_values=-1.0)
@@ -1542,7 +1545,7 @@ class PeopleModel:
         ambient = float(np.percentile(t, 10))
         people, things = [], []
         for k, y, x in zip(ks.tolist(), ys.tolist(), xs.tolist()):
-            fx, fy = (x + 0.5) * self.STRIDE, (y + 0.5) * self.STRIDE
+            fx, fy = (x + 0.5) * stride, (y + 0.5) * stride
             if k == 0 and heat.shape[0] > 1:
                 # A person the model is less sure of than a screen or a heater
                 # in the same place is that screen or heater.
@@ -1567,7 +1570,7 @@ class PeopleModel:
                     continue
                 people.append((fx, fy))
             if ltrb is not None:
-                left, top, right, bottom = (float(v) * self.STRIDE for v in ltrb[:, y, x])
+                left, top, right, bottom = (float(v) * stride for v in ltrb[:, y, x])
                 box = (max(0.0, fx - left), max(0.0, fy - top),
                        min(float(THERMAL_COLS), fx + right), min(float(THERMAL_ROWS), fy + bottom))
             else:
