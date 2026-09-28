@@ -137,22 +137,6 @@ const STORIES = [
   { id: 1, user_id: 1, caption: 'my story caption', image_url: 'data:image/png;base64,c3RvcnktYnl0ZXM=',
     created_at: '2026-03-08T00:00:00Z', expires_at: '2026-03-09T00:00:00Z' },
 ];
-// Saved copies of reported plan content whose plan was deleted (migration 110).
-// One of the caller's own messages, with an inline photo; somebody else's
-// message; and a guest's name, which has no author at all.
-const OTHERS_KEPT_MESSAGE = 'OTHERS-KEPT-MESSAGE-DO-NOT-EXPORT';
-const KEPT_GUEST_NAME = 'KEPT-GUEST-NAME-DO-NOT-EXPORT';
-const KEPT = [
-  { id: 1, content_type: 'flock_message', content_id: 501, flock_id: 9, message_text: 'my reported words',
-    venue_data: { name: 'Bad Place' }, image_url: 'data:image/png;base64,a2VwdC1ieXRlcw==', name: null,
-    author_id: 1, created_at: '2026-03-10T00:00:00Z', is_hidden: true, preserved_at: '2026-03-11T00:00:00Z' },
-  { id: 2, content_type: 'flock_message', content_id: 502, flock_id: 9, message_text: OTHERS_KEPT_MESSAGE,
-    venue_data: null, image_url: null, name: null,
-    author_id: 2, created_at: '2026-03-10T00:01:00Z', is_hidden: false, preserved_at: '2026-03-11T00:00:00Z' },
-  { id: 3, content_type: 'guest_rsvp', content_id: 503, flock_id: 9, message_text: null,
-    venue_data: null, image_url: null, name: KEPT_GUEST_NAME,
-    author_id: null, created_at: '2026-03-10T00:02:00Z', is_hidden: false, preserved_at: '2026-03-11T00:00:00Z' },
-];
 const FRIENDSHIPS = [
   { id: 1, requester_id: 1, addressee_id: 2, status: 'accepted', created_at: '2026-02-15T00:00:00Z' },
   { id: 2, requester_id: 3, addressee_id: 1, status: 'pending', created_at: '2026-02-16T00:00:00Z' },
@@ -259,18 +243,6 @@ function handle(text, params = []) {
       .filter((c) => new RegExp(`\\b${c}\\b`).test(text));
     const rows = SOS.filter((r) => r.user_id === uid)
       .map((r) => pick(r, cols));
-    return { rows: capped(rows, params[1]), rowCount: rows.length };
-  }
-  if (has('FROM content_report_evidence')) {
-    // Filtered only by what the route's WHERE actually says, so a query that
-    // forgot the author or the content type exports somebody else's copy or
-    // a guest's name here, as it would on Postgres.
-    const byAuthor = /WHERE[\s\S]*\bauthor_id = \$1/.test(text);
-    const messagesOnly = has("content_type = 'flock_message'");
-    const rows = KEPT
-      .filter((r) => (!byAuthor || r.author_id === uid) && (!messagesOnly || r.content_type === 'flock_message'))
-      .map((r) => ({ ...pick(r, ['flock_id', 'message_text', 'venue_data', 'image_url', 'created_at', 'name', 'is_hidden']), id: r.content_id }))
-      .map((r) => Object.fromEntries(Object.entries(r).filter(([k]) => new RegExp(`\\b${k}\\b`).test(text))));
     return { rows: capped(rows, params[1]), rowCount: rows.length };
   }
   if (has('FROM stories WHERE user_id = $1')) {
@@ -403,59 +375,34 @@ test('the top-level key set is pinned exactly', async () => {
     'availability', 'bill_splits', 'budget_submissions', 'calendar_events',
     'crowd_reports', 'direct_messages_sent', 'dm_emoji_reactions',
     'dm_venue_votes', 'emoji_reactions', 'export_format', 'flock_messages',
-    'flock_messages_kept_for_a_report',
     'flocks', 'friends', 'profile', 'reports_filed', 'settings', 'sos_alerts',
     'stories', 'truncated_sections', 'trusted_contacts', 'venue_checkins',
     'venue_reviews', 'venue_votes',
   ]);
 });
 
-test('a message of yours kept for a report after its plan was deleted is in your export, and nobody else\'s is', async () => {
-  // The privacy policy counts these among "the messages you sent". A copy is
-  // still held and still the caller's words, so leaving it out was a fifth
-  // omission the page did not name.
-  const res = await exportCall(tokenFor(1));
-  assert.strictEqual(res.status, 200, res.text);
+test('a copy kept of your reported message is not in your export, and every file says so in the same words', async () => {
+  // A copy exists only because a report about the message was open when its
+  // plan was deleted, so a copy in the author's file told them they had been
+  // reported before anybody had judged it. The route never reads the table.
+  const mine = await exportCall(tokenFor(1));
+  assert.strictEqual(mine.status, 200, mine.text);
   assertModelled();
+  assert.ok(!sql.some((s) => s.text.includes('content_report_evidence')), 'the export read the kept copies');
+  assert.ok(!('flock_messages_kept_for_a_report' in mine.body));
 
-  assert.deepStrictEqual(res.body.flock_messages_kept_for_a_report, [{
-    id: 501,
-    flock_id: 9,
-    message_text: 'my reported words',
-    venue_data: { name: 'Bad Place' },
-    created_at: '2026-03-10T00:00:00Z',
-    // The same image rule as every other message in the file.
-    image_url: null,
-    image_omitted: true,
-  }]);
-  assert.ok(!res.text.includes('a2VwdC1ieXRlcw=='), 'the inline photo bytes of a kept copy leaked');
-
-  // Somebody else's kept message, and a guest's kept name, never appear.
-  assert.ok(!res.text.includes(OTHERS_KEPT_MESSAGE), 'another author\'s kept message leaked');
-  assert.ok(!res.text.includes(KEPT_GUEST_NAME), 'a guest\'s kept name leaked');
-
-  // Moderation state and the report stay out of the SELECT itself.
-  const keptSql = sql.find((s) => s.text.includes('FROM content_report_evidence'));
-  assert.ok(keptSql, 'the kept-copy query did not run');
-  for (const col of ['is_hidden', 'preserved_at', 'content_reports', 'reporter_id']) {
-    assert.ok(!keptSql.text.includes(col), `the kept-copy SELECT names ${col}`);
-  }
-  assert.strictEqual(keptSql.params[0], 1, 'the kept-copy query is keyed on the caller');
-
-  // The file says what the section is and how long a copy lasts, in the
-  // period the purge runs on.
+  // The gap is named in the file, with the period the purge runs on, because
+  // the privacy policy says the file lists what it leaves out.
   const { EVIDENCE_RETENTION_DAYS } = require('../utils/reportEvidence');
-  assert.ok(res.body.export_format.notes.some((n) => n.startsWith('flock_messages_kept_for_a_report lists messages you sent')
-    && n.includes(`closed for ${EVIDENCE_RETENTION_DAYS} days`)), JSON.stringify(res.body.export_format.notes));
-});
+  const note = mine.body.export_format.notes.find((n) => n.startsWith('Also left out on purpose: while a report about a message you sent is being handled'));
+  assert.ok(note, JSON.stringify(mine.body.export_format.notes));
+  assert.ok(note.includes(`until the last report about it has been closed for ${EVIDENCE_RETENTION_DAYS} days`), note);
 
-test('another account\'s export carries its own kept copy and not the caller\'s', async () => {
-  // Bob is an Apple account: a freshly minted token is his proof.
-  const res = await exportCall(tokenFor(2));
-  assert.strictEqual(res.status, 200, res.text);
-  assert.deepStrictEqual(res.body.flock_messages_kept_for_a_report.map((m) => m.id), [502]);
-  assert.ok(!res.text.includes('my reported words'));
-  assert.ok(!res.text.includes(KEPT_GUEST_NAME));
+  // And it is the same note in somebody else's file, so the note itself says
+  // nothing about whether a report exists.
+  const bob = await exportCall(tokenFor(2));
+  assert.strictEqual(bob.status, 200, bob.text);
+  assert.deepStrictEqual(bob.body.export_format.notes, mine.body.export_format.notes);
 });
 
 // ===========================================================================

@@ -24,10 +24,7 @@
 -- the moderation console reads from the live row (routes/admin.js
 -- CONTENT_TEXT_SQL), under the same names, so the console renders a saved
 -- copy through the same expression as the original and the two can never
--- read differently. Nothing here is served to anyone but the admin console,
--- and a message's own author, whose data export (GET /api/users/export) lists
--- the copies with author_id = them, because a held copy of their words is
--- still their data.
+-- read differently. Nothing here is served to anyone but the admin console.
 --
 -- WHAT IS NOT. Reports already resolved or dismissed: a moderator has judged
 -- them, which is the same line the story purge draws. And the author's own
