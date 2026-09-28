@@ -9899,12 +9899,29 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // Set or change a flock's time. Same generic PUT /api/flocks/:id that
   // saveFlockVenue and setFlockStatus use, and the same rules apply: creator
   // only (the server answers 403 otherwise), event_time must be ISO 8601.
+  //
+  // A NEW TIME CLOSES THE NIGHT-OF WINDOW. The PUT clears the window and every
+  // "still in" answer in the same transaction as the time (routes/flocks.js,
+  // reconfirm_reset), and its flock_updated fan-out skips the actor, so the
+  // host's own copy is the one this has to write, as cancelFlockPlan does.
+  // Left alone, the host's plan screen kept "3 of 5 still in tonight" and the
+  // STILL IN tags, answers to the old time that read as the group confirming
+  // the new one. The saved row says whether a window is still open: a closed
+  // one comes back with reconfirm_opened_at null, and then no answer on this
+  // copy belongs to an open window either.
   const saveFlockEventTime = useCallback(async (flockId, isoString) => {
     const data = await setFlockEventTime(flockId, isoString);
     const saved = data?.flock?.event_time || isoString;
-    setFlocks(prev => prev.map(f => f.id === flockId
-      ? { ...f, eventTime: saved, time: formatEventTime(saved), momentum: f.momentum ? { ...f.momentum, hasTime: true } : f.momentum }
-      : f));
+    const windowClosed = !!data?.flock && !data.flock.reconfirm_opened_at;
+    setFlocks(prev => prev.map(f => {
+      if (f.id !== flockId) return f;
+      const moved = { ...f, eventTime: saved, time: formatEventTime(saved), momentum: f.momentum ? { ...f.momentum, hasTime: true } : f.momentum };
+      if (!windowClosed) return moved;
+      const unanswer = (rows) => (Array.isArray(rows)
+        ? rows.map(r => (r && typeof r === 'object' && r.reconfirmed ? { ...r, reconfirmed: false } : r))
+        : rows);
+      return { ...moved, reconfirm: null, members: unanswer(f.members), guests: unanswer(f.guests) };
+    }));
     return saved;
   }, []);
 

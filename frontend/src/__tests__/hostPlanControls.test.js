@@ -888,6 +888,59 @@ describe('cancelFlockPlan, lifted out of App.js and executed', () => {
   });
 });
 
+// The host moving a confirmed plan's time: the PUT closes the night-of window
+// and clears every answer in it, and the fan-out that tells everybody else
+// skips the host, so the host's own copy is written here or not at all.
+const SAVE_TIME_BODY = lift('const saveFlockEventTime = useCallback(async (flockId, isoString) => {', '\n  }, []);');
+
+function runSaveTime(scope, flockId, iso) {
+  // eslint-disable-next-line no-new-func
+  const factory = new Function('setFlockEventTime', 'setFlocks', 'formatEventTime', 'flockId', 'isoString',
+    `return (async () => {${SAVE_TIME_BODY}})();`);
+  return factory(scope.setFlockEventTime, scope.setFlocks, scope.formatEventTime, flockId, iso);
+}
+
+describe('saveFlockEventTime, lifted out of App.js and executed', () => {
+  const ANSWERED = {
+    id: 7, status: 'confirmed', eventTime: '2026-09-26T21:00:00', time: 'Fri 9:00 PM',
+    momentum: { hasTime: true },
+    reconfirm: { open: true, count: 3, total: 5, me: true },
+    members: [{ id: 1, name: 'Ava', reconfirmed: true }, { id: 2, name: 'Ben', reconfirmed: false }],
+    guests: [{ id: 'guest:4', name: 'Cass', reconfirmed: true }],
+  };
+  const OTHER = { id: 8, status: 'voting', reconfirm: { open: true, count: 1, total: 2 } };
+  const saveScope = (flock) => ({
+    setFlockEventTime: jest.fn().mockResolvedValue({ flock }),
+    setFlocks: jest.fn(),
+    formatEventTime: jest.fn(() => 'Fri 10:30 PM'),
+  });
+
+  test('the lift found the real handler', () => {
+    expect(SAVE_TIME_BODY).toContain('setFlockEventTime(flockId, isoString)');
+  });
+
+  test('a move that closed the window takes the count and every "still in" off the host\'s own copy', async () => {
+    const s = saveScope({ id: 7, event_time: '2026-09-26T22:30:00', reconfirm_opened_at: null });
+    await expect(runSaveTime(s, 7, '2026-09-26T22:30:00.000Z')).resolves.toBe('2026-09-26T22:30:00');
+
+    const [after, other] = s.setFlocks.mock.calls[0][0]([ANSWERED, OTHER]);
+    expect(after.eventTime).toBe('2026-09-26T22:30:00');
+    expect(after.time).toBe('Fri 10:30 PM');
+    expect(after.reconfirm).toBeNull();
+    expect(after.members.map((m) => m.reconfirmed)).toEqual([false, false]);
+    expect(after.guests.map((g) => g.reconfirmed)).toEqual([false]);
+    expect(other).toBe(OTHER);
+  });
+
+  test('a save whose row still carries an open window leaves the answers alone', async () => {
+    const s = saveScope({ id: 7, event_time: '2026-09-26T21:00:00', reconfirm_opened_at: '2026-09-26T18:00:00Z' });
+    await runSaveTime(s, 7, '2026-09-26T21:00:00.000Z');
+    const [after] = s.setFlocks.mock.calls[0][0]([ANSWERED]);
+    expect(after.reconfirm).toBe(ANSWERED.reconfirm);
+    expect(after.members).toBe(ANSWERED.members);
+  });
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // 4. What every other member's app does with it
 // ═══════════════════════════════════════════════════════════════════════════
