@@ -2245,7 +2245,9 @@ router.post('/venues/:userId/tier', async (req, res) => {
 
     // The founding default, applied ONLY when nobody named a date, and only to a
     // grant that does not already have one (the COALESCE in the upsert). A
-    // second founding_comp grant is a correction, not a renewal.
+    // second founding_comp grant is a correction, not a renewal. Over a live
+    // Stripe grant it is six months or the end of what the venue has paid
+    // for, whichever is later (the GREATEST in the upsert).
     const foundingDefault = !expirySpecified && grantReason === 'founding_comp' && tier !== 'free';
     if (foundingDefault) endsAt = monthsFromNow(FOUNDING_COMP_MONTHS);
     // Round 23: the reason is validated like every other audit reason on this
@@ -2322,11 +2324,24 @@ router.post('/venues/:userId/tier', async (req, res) => {
            granted_by = EXCLUDED.granted_by,
            expires_at = CASE
              WHEN $1 = 'free' THEN NULL
-             WHEN $6 THEN EXCLUDED.expires_at
-             -- A Stripe period end is not a comp's end date. A founding comp
-             -- laid over a paying venue kept it, and ran out with the period
-             -- (days) instead of the six months the offer names.
-             WHEN $7 AND venue_subscriptions.source = 'stripe' THEN EXCLUDED.expires_at
+             -- An explicit null is a grant with no end date. GREATEST skips a
+             -- NULL, so this has to be answered before it.
+             WHEN $6 AND EXCLUDED.expires_at IS NULL THEN NULL
+             -- A grant written over a LIVE Stripe grant never ends before it.
+             -- The venue has paid through that date, and nothing takes the
+             -- row back for Stripe until the subscription's next event, which
+             -- for a yearly plan can be months after a shorter grant ends:
+             -- the venue would be served free while being billed, and
+             -- checkout would refuse it as already holding Roost. Later than
+             -- the Stripe end, the grant's own date stands, which is also why
+             -- a founding comp over a monthly payer runs its six months
+             -- rather than the few days left in the period.
+             WHEN $6 OR ($7 AND venue_subscriptions.source = 'stripe') THEN GREATEST(
+               EXCLUDED.expires_at,
+               CASE WHEN venue_subscriptions.source = 'stripe'
+                     AND venue_subscriptions.status IN ('active', 'trialing', 'past_due')
+                     AND venue_subscriptions.expires_at > NOW()
+                    THEN venue_subscriptions.expires_at END)
              -- A founding re-grant fills in a MISSING end date and never
              -- replaces a live one; a lapsed one counts as missing.
              WHEN $7 THEN COALESCE(
