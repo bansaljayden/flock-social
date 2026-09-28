@@ -32,7 +32,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import synth                      # noqa: E402
-from model import PeopleNet, focal_loss, box_loss   # noqa: E402
+from model import PeopleNet, focal_loss, box_loss, density_loss   # noqa: E402
 
 PEAK_THRESHOLD = 0.4
 K = len(synth.CLASSES)
@@ -165,8 +165,10 @@ class Frames(IterableDataset):
             # Skewing the absolute channel was tried for owl-3.2 and dropped:
             # graded on real footage it helped nowhere and cost a few points
             # on rooms the model had never seen.
+            dens = synth.density(objects, stride=self.stride)
             yield (torch.from_numpy(x), torch.from_numpy(heat),
-                   torch.from_numpy(ltrb), torch.from_numpy(mask), torch.from_numpy(known))
+                   torch.from_numpy(ltrb), torch.from_numpy(mask), torch.from_numpy(known),
+                   torch.from_numpy(dens))
 
 
 def peaks(prob, threshold=PEAK_THRESHOLD):
@@ -200,7 +202,7 @@ def predict(net, frames, device, threshold=PEAK_THRESHOLD):
     with torch.no_grad():
         for i in range(0, len(frames), 256):
             x = torch.stack([torch.from_numpy(synth.model_input(t)) for t, _ in frames[i:i + 256]])
-            heat, _ = net(x.to(device))
+            heat = net(x.to(device))[0]
             st = synth.COLS / heat.shape[-1]
             pk = peaks(torch.sigmoid(heat), threshold).cpu().numpy()
             for f in pk:
@@ -280,11 +282,16 @@ def export(net, path):
             self.inner = inner
 
         def forward(self, x):
-            heat, raw = self.inner(x)
+            out = self.inner(x)
+            heat, raw = out[0], out[1]
+            if len(out) > 2:
+                return torch.sigmoid(heat), torch.exp(raw.clamp(0.0, 6.0)) - 1.0, out[2]
             return torch.sigmoid(heat), torch.exp(raw.clamp(0.0, 6.0)) - 1.0
 
     torch.onnx.export(Exported(net), torch.zeros(1, 2, synth.ROWS, synth.COLS), str(path),
-                      input_names=['frame'], output_names=['heat', 'ltrb'], opset_version=17,
+                      input_names=['frame'],
+                      output_names=['heat', 'ltrb'] + (['density'] if net.density else []),
+                      opset_version=17,
                       dynamo=False)
 
 
@@ -298,6 +305,8 @@ def main(argv=None):
     # first trained on stopped responding.
     ap.add_argument('--workers', type=int, default=8)
     ap.add_argument('--width', type=int, default=24)
+    ap.add_argument('--density', action='store_true',
+                    help='add a density head whose sum is the people count, for crowds')
     ap.add_argument('--stride', type=int, default=4, choices=(2, 4),
                     help='output grid: 4 is 40 x 30, 2 is 80 x 60 and keeps close heads apart')
     ap.add_argument('--seed', type=int, default=1)
@@ -318,7 +327,8 @@ def main(argv=None):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     torch.manual_seed(args.seed)
 
-    net = PeopleNet(args.width, classes=K, boxes=True, stride=args.stride).to(device)
+    net = PeopleNet(args.width, classes=K, boxes=True, stride=args.stride,
+                    density=args.density).to(device)
     if args.init:
         # Everything but the output layer carries over; that is where owl-1
         # learned what a person looks like in this camera.
@@ -356,12 +366,15 @@ def main(argv=None):
         print(f'resuming at step {start}', flush=True)
     t0 = time.time()
     running = 0.0
-    for step, (x, heat, ltrb, mask, known) in enumerate(loader, start + 1):
+    for step, (x, heat, ltrb, mask, known, dens) in enumerate(loader, start + 1):
         x, heat = x.to(device, non_blocking=True), heat.to(device, non_blocking=True)
         ltrb, mask = ltrb.to(device, non_blocking=True), mask.to(device, non_blocking=True)
-        known = known.to(device, non_blocking=True)
-        logits, raw = net(x)
+        known, dens = known.to(device, non_blocking=True), dens.to(device, non_blocking=True)
+        pred = net(x)
+        logits, raw = pred[0], pred[1]
         loss = focal_loss(logits, heat, known=known) + box_loss(raw, ltrb, mask)
+        if args.density:
+            loss = loss + density_loss(pred[2], dens, known[:, 0])
         opt.zero_grad(set_to_none=True)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(net.parameters(), 5.0)

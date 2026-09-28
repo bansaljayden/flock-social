@@ -1510,12 +1510,14 @@ class PeopleModel:
     # examples and have to clear a higher one. People keep THERMAL_MODEL_THRESHOLD.
     NAME_BAR = {'hand': 1.25, 'pet': 1.75, 'hot drink': 1.25, 'food': 1.5, 'laptop': 1.4,
                 'screen': 1.4, 'heater': 1.4, 'lamp': 1.4, 'warm seat': 1.6}
-    # From this many people the finer-grid model, when installed, counts the
-    # frame too, and the higher count stands. The main model's 40 x 30 grid
-    # merges heads a few pixels apart, which is how a crowd reads short; the
-    # finer grid keeps them apart but is less sure in a small room, so it is
-    # only asked where crowds are. Graded on four real test sets this changed
-    # nothing, and in a crowd of ten it lifted within-one from 41% to 63%.
+    # From this many people the crowd model (models/people-fine.onnx), when
+    # installed, counts the frame too, and the highest count stands. The main
+    # model merges heads a few pixels apart, which is how a crowd reads short.
+    # The crowd model shipped now is owl-4.3, whose density head's total does
+    # not fall when heads merge; it is a little less sure in a small room, so
+    # it is only asked where crowds are. Graded on four real test sets the
+    # pairing matched the main model alone, and in a crowd of ten it lifted
+    # within-one from 41% to 82%.
     CROWD_AT = 5
     fine = None
 
@@ -1523,7 +1525,7 @@ class PeopleModel:
     # than the person at the same spot, it is that thing and nobody is there.
     PERSON_LOOKALIKES = ('screen', 'laptop', 'heater', 'lamp', 'warm seat')
 
-    def read(self, frame):
+    def read(self, frame, crowd=None):
         """Everything the model finds in one frame.
 
         Returns (people, things): people is [(x, y)] in frame pixels, one per
@@ -1536,6 +1538,10 @@ class PeopleModel:
         outputs = self.session.run(None, {self.input: self.inputs(frame)})
         heat = outputs[0][0]
         ltrb = outputs[1][0] if len(outputs) > 1 else None
+        if crowd is not None and len(outputs) > 2:
+            # A model with a density head: its total is a count that does not
+            # fall when heads merge. Handed back to the caller, never kept.
+            crowd.append(float(outputs[2].sum()))
         stride = THERMAL_COLS / float(heat.shape[-1])
         # A peak is a cell at least as sure as all eight neighbours, the same
         # rule training scored the model with.
@@ -1592,13 +1598,21 @@ class PeopleModel:
         return people, things
 
     def read_crowd(self, frame):
-        """read(), with the finer-grid model's second look at a crowd."""
-        people, things = self.read(frame)
-        if self.fine is not None and len(people) >= self.CROWD_AT:
-            more, more_things = self.fine.read(frame)
-            if len(more) > len(people):
-                return more, more_things
-        return people, things
+        """read(), with a second look at a crowd. Returns (people, things,
+        count): count is len(people) except in a crowd, where it is the
+        highest of the people found, the finer-grid model's people, and the
+        density head's total. Peaks merge when heads touch; the other two
+        do not, and the higher count is the one that saw more heads."""
+        density = []
+        people, things = self.read(frame, crowd=density)
+        count = len(people)
+        if count >= self.CROWD_AT:
+            if self.fine is not None:
+                more, more_things = self.fine.read(frame, crowd=density)
+                if len(more) > len(people):
+                    people, things = more, more_things
+            count = max([len(people)] + [int(round(d)) for d in density])
+        return people, things, count
 
     def points(self, frame):
         """(x, y) in frame pixels for every person the model finds."""
@@ -1738,17 +1752,17 @@ def thermal_loop():
                     continue
                 failures = 0
                 backoff = 0.0
-                points, things, counter = None, None, 'rule'
+                points, things, counter, crowd_count = None, None, 'rule', None
                 if people_model is not None:
                     try:
-                        points, things = people_model.read_crowd(frame)
+                        points, things, crowd_count = people_model.read_crowd(frame)
                         counter = 'model'
                     except Exception as e:
                         # One bad inference falls back for that frame; the
                         # model stays loaded for the next.
                         log_throttled('people_model', logging.WARNING,
                                       f'People counter model failed, using the rule: {e}')
-                n = len(points) if points is not None else count_people(frame, scene)
+                n = crowd_count if points is not None else count_people(frame, scene)
                 if n is None:
                     # Still learning the room. Not a reading and not a
                     # failure, so the freshness clock is left alone.

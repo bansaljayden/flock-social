@@ -4006,27 +4006,37 @@ class NamesKindsNeverWho(unittest.TestCase):
 class CrowdSecondLook(unittest.TestCase):
     """The finer-grid model counts a crowd again, and only a crowd."""
 
-    def _model(self, n):
+    def _model(self, n, density=None):
         m = main.PeopleModel.__new__(main.PeopleModel)
         m.fine = None
-        m.read = mock.Mock(return_value=([(i, i) for i in range(n)], []))
+
+        def read(frame, crowd=None):
+            if crowd is not None and density is not None:
+                crowd.append(density)
+            return [(i, i) for i in range(n)], []
+        m.read = mock.Mock(side_effect=read)
         return m
 
     def test_a_small_room_never_asks_the_fine_model(self):
-        m = self._model(3)
+        m = self._model(3, density=9.0)
         m.fine = self._model(9)
-        self.assertEqual(len(m.read_crowd([0.0])[0]), 3)
+        people, _, count = m.read_crowd([0.0])
+        self.assertEqual((len(people), count), (3, 3))
         m.fine.read.assert_not_called()
 
     def test_a_crowd_takes_the_higher_count(self):
         m = self._model(6)
         m.fine = self._model(9)
-        self.assertEqual(len(m.read_crowd([0.0])[0]), 9)
+        self.assertEqual(m.read_crowd([0.0])[2], 9)
         m.fine = self._model(4)
-        self.assertEqual(len(m.read_crowd([0.0])[0]), 6)
+        self.assertEqual(m.read_crowd([0.0])[2], 6)
+
+    def test_the_density_total_counts_merged_heads(self):
+        self.assertEqual(self._model(6, density=8.6).read_crowd([0.0])[2], 9)
+        self.assertEqual(self._model(6, density=4.2).read_crowd([0.0])[2], 6)
 
     def test_without_the_fine_model_it_is_the_main_one(self):
-        self.assertEqual(len(self._model(7).read_crowd([0.0])[0]), 7)
+        self.assertEqual(self._model(7).read_crowd([0.0])[2], 7)
 
 
 if __name__ == '__main__':
