@@ -2688,9 +2688,17 @@ test('people: every statement counts people accounts only, reads the naive colum
   }
   assert.match(active, /COUNT\(DISTINCT a\.user_id\)/);
   assert.match(active, /sv\.served_at AT TIME ZONE 'UTC'/, 'the one TIMESTAMPTZ source is turned to UTC wall time with the rest');
-  // A plan reached confirmed if it was confirmed, or completed from confirmed.
-  assert.match(flat(all.plans), /p\.status IN \('confirmed', 'completed'\)/);
-  assert.match(flat(all.plans), /FROM guest_rsvps g JOIN plans gp ON gp\.id = g\.flock_id/);
+  // A plan reached confirmed if it was confirmed, or completed from confirmed,
+  // or carries the moment it was confirmed, which a plan called off after
+  // confirming keeps.
+  assert.match(flat(all.plans), /SELECT f\.id, f\.created_at, f\.event_time, f\.status, f\.confirmed_at FROM flocks f/);
+  assert.match(flat(all.plans), /AND \(p\.status IN \('confirmed', 'completed'\) OR p\.confirmed_at IS NOT NULL\)\)::int AS confirmed_last_7/);
+  // Both guest counts leave out an answer a moderator took down.
+  const guestCounts = flat(all.plans).match(/FROM guest_rsvps g JOIN plans gp ON gp\.id = g\.flock_id WHERE .*?AS guests_(?:last|prior)_7/g) || [];
+  assert.strictEqual(guestCounts.length, 2, 'the week and the week before');
+  for (const g of guestCounts) {
+    assert.match(g, /WHERE COALESCE\(g\.is_hidden, false\) = false AND /, 'a guest answer taken down by a moderator still counts');
+  }
 });
 
 test('people: on the hub, counts only, and a failed read is an error with no numbers while the rest stands', async () => {

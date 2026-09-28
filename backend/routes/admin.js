@@ -305,8 +305,9 @@ router.get('/analytics', async (req, res) => {
     // included. Several suites in __tests__ script a fake pool by matching the
     // wording of a statement, so re-wrapping one of these strings is a test
     // change wearing the clothes of a formatting change. Moving the wrapper is
-    // not. Since then three statements changed on purpose, each with its reason
-    // beside it: the time to confirm, and the two that count accounts.
+    // not. Since then four statements changed on purpose, each with its reason
+    // beside it: the confirmed share, the time to confirm, and the two that
+    // count accounts.
     //
     // Nine concurrent statements hold nine of the pool's 20 slots for as long as
     // they run (config/database.js). That is acceptable on THIS route and would
@@ -326,9 +327,16 @@ router.get('/analytics', async (req, res) => {
     ] = await Promise.all([
       pool.query('SELECT COUNT(*) AS count FROM flocks'),
 
+      // CONFIRMED BEFORE IT ENDED. A completed plan was confirmed: the sweep
+      // completes only confirmed plans and the host's slider shows only on a
+      // confirmed one. A cancelled plan was confirmed too when it carries a
+      // confirmed_at, since a host can call off a plan that is already
+      // confirmed; counting status alone read every one of those as never
+      // confirmed. A plan confirmed before migration 102 and then cancelled
+      // has no stamp, so it still reads as unconfirmed.
       pool.query(
         `SELECT
-        COUNT(*) FILTER (WHERE status = 'completed') AS completed,
+        COUNT(*) FILTER (WHERE status = 'completed' OR (status = 'cancelled' AND confirmed_at IS NOT NULL)) AS confirmed,
         COUNT(*) FILTER (WHERE status IN ('completed', 'cancelled')) AS terminal
        FROM flocks`
       ),
@@ -429,9 +437,11 @@ router.get('/analytics', async (req, res) => {
       totalFlocks: parseInt(totalFlocks.rows[0].count),
       // Of the plans that ended, the share that had been confirmed: the sweep
       // (services/flockSweep.js) closes a confirmed plan as completed and an
-      // unconfirmed one as cancelled once its time has passed, and a host
-      // closes one by hand the same way. No ended plan is no share, not 0%.
-      completionRate: terminal > 0 ? Math.round((parseInt(cr.completed) / terminal) * 100) : null,
+      // unconfirmed one as cancelled once its time has passed, a host closes
+      // one by hand the same way, and a host can also call off a confirmed
+      // plan, which the statement above reads from confirmed_at. No ended
+      // plan is no share, not 0%.
+      completionRate: terminal > 0 ? Math.round(((parseInt(cr.confirmed) || 0) / terminal) * 100) : null,
       endedPlans: terminal,
       avgGroupSize: avgGroupSize.rows[0].avg_size ? parseFloat(avgGroupSize.rows[0].avg_size) : 0,
       budgetAdoptionRate: baTotal > 0 ? Math.round((parseInt(ba.with_budget) / baTotal) * 100) : 0,
