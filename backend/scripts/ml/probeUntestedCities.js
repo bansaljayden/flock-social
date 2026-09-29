@@ -10,6 +10,7 @@ require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.e
 
 const { Pool } = require('pg');
 const { fetchWeeklyForecast } = require('./bestTimeService');
+const { describeError } = require('./logSafe');
 const { sleep } = require('./config');
 
 if (!process.env.DATABASE_URL && process.env.PGHOST) {
@@ -108,4 +109,6 @@ async function run() {
   await pool.end();
 }
 
-run().catch(err => { console.error(err); process.exit(1); });
+// Never the whole error: a native fetch error's cause can hold the request
+// URL, key included (logSafe.js).
+run().catch(err => { console.error(`[ML:Probe] Fatal: ${describeError(err)}`); process.exit(1); });

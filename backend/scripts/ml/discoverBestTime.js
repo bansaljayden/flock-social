@@ -50,6 +50,7 @@ require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.e
 
 const { Pool } = require('pg');
 const { bestTimeDayToJsDay, sleep } = require('./config');
+const { labelFor, describeError, describeDbError } = require('./logSafe');
 // IMPORTED, NEVER REIMPLEMENTED. The slot -> (venue-local day, hour) transform
 // exists once, in collectWeekly.js, and migration 023's SQL is pinned against
 // that same function by __tests__/mlClockAxisBackfill.test.js. A second copy
@@ -163,7 +164,7 @@ async function submitSearch(query, city) {
 
   const data = await response.json();
   if (data.status !== 'OK') {
-    console.error(`[ML:BTSearch] Search error for "${query}" in ${city.name}:`, data.message);
+    console.error(`[ML:BTSearch] Search error for "${query}" in ${city.name}: ${labelFor(data.message)}`);
     return null;
   }
 
@@ -397,7 +398,7 @@ async function insertForecastData(dbVenue, venue, city) {
         // actually hid was 23514, migration 023's axis CHECK, raised on every
         // single row this function ever wrote. With a real conflict target
         // there is no expected error left to suppress.
-        console.error(`  Row insert error (${err.code || 'no code'}):`, err.message);
+        console.error(`  Row insert error (${err.code || 'no code'}): ${describeDbError(err)}`);
       }
     }
   }
@@ -474,7 +475,7 @@ async function discover() {
           if (rows > 0) totalRows += rows;
           totalVenues++;
         } catch (err) {
-          console.error(`  Failed to insert ${venue.venue_name}:`, err.message);
+          console.error(`  Failed to insert ${venue.venue_name}: ${describeDbError(err)}`);
         }
       }
 
@@ -504,7 +505,7 @@ module.exports = {
 // started a paid BestTime run against whatever DATABASE_URL happened to be set.
 if (require.main === module) {
   discover().catch(err => {
-    console.error('[ML:BTSearch] Fatal error:', err);
+    console.error(`[ML:BTSearch] Fatal error: ${describeError(err)}`);
     pool.end();
     process.exit(1);
   });

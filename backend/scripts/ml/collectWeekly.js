@@ -8,6 +8,7 @@ require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.e
 
 const { Pool } = require('pg');
 const { fetchWeeklyForecast } = require('./bestTimeService');
+const { describeError, describeDbError } = require('./logSafe');
 const { bestTimeDayToJsDay, getLocalTime, getSeason, sleep, withCorpusWriteLock } = require('./config');
 
 if (!process.env.DATABASE_URL && process.env.PGHOST) {
@@ -388,7 +389,7 @@ async function collectWeekly() {
         const transient = /ETIMEDOUT|ECONNRESET|terminated|connection|EAI_AGAIN|ENOTFOUND/i.test(err.code || err.message || '');
         if (!transient || attempt === 3) throw err;
         const backoff = 1000 * attempt;
-        console.warn(`  DB error (attempt ${attempt}/3): ${err.message} — retrying in ${backoff}ms`);
+        console.warn(`  DB error (attempt ${attempt}/3): ${describeDbError(err)} — retrying in ${backoff}ms`);
         await sleep(backoff);
       }
     }
@@ -734,7 +735,7 @@ async function collectWeekly() {
             venueNew = res.rows.filter((r) => r.inserted).length;
           }
         } catch (err) {
-          console.error(`  Batch insert error:`, err.message);
+          console.error(`  Batch insert error: ${describeDbError(err)}`);
           insertFailed = true;
         }
       }
@@ -801,7 +802,7 @@ async function collectWeekly() {
       // venue problems — nothing further in this run can succeed, and before
       // this check every remaining venue would have burned an attempt. Stop now.
       if (err.fatal) {
-        console.error(`  [FATAL] ${err.message} — aborting run immediately`);
+        console.error(`  [FATAL] ${describeError(err)} — aborting run immediately`);
         break;
       }
       // A 503 is BestTime asking for space, so it gets its OWN budget. The
@@ -821,7 +822,7 @@ async function collectWeekly() {
       }
       // Per-venue errors must NOT kill the run. Log, count, sleep, continue.
       consecutiveErrors++;
-      console.error(`  [PER-VENUE ERROR ${consecutiveErrors}] ${err.message}`);
+      console.error(`  [PER-VENUE ERROR ${consecutiveErrors}] ${describeError(err)}`);
       if (consecutiveErrors >= 10) {
         console.error('  10 consecutive errors — bailing to avoid burning slots');
         break;
@@ -855,7 +856,7 @@ module.exports = {
 // Allow direct execution
 if (require.main === module) {
   run().catch(err => {
-    console.error('[ML:Weekly] Fatal error:', err);
+    console.error(`[ML:Weekly] Fatal error: ${describeError(err)}`);
     pool.end();
     process.exit(1);
   });
