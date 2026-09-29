@@ -568,6 +568,16 @@ const corsOptions = {
     }
   },
   credentials: true,
+  // A PREFLIGHT ANSWER THE BROWSER MAY REUSE. With no Access-Control-Max-Age a
+  // browser keeps a preflight for five seconds, so nearly every call from the
+  // iOS app (a WKWebView, cross-origin to this host) and from the web app paid
+  // for an OPTIONS round trip before the request itself: production logs show
+  // one ahead of almost every authenticated read, and each is a full trip to
+  // the server's region. WebKit clamps this to 600 seconds and Chromium to
+  // 7200. What is cached is only "this origin may send these methods and
+  // headers to this URL"; the origin check above still runs on every real
+  // request, so an origin taken off the list is refused on its next call.
+  maxAge: 7200,
 };
 
 // THE TWO EMAILED OPT-OUT PAGES POST TO THEMSELVES, AND A BROWSER NAMES THAT POST.
