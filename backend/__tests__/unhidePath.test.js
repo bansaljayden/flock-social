@@ -63,6 +63,12 @@ pool.connect = async () => ({
       log.push({ sql: String(sql).trim(), params: null });
       return Promise.resolve({ rows: [] });
     }
+    // The reports a moderation action locks before anything else
+    // (routes/admin.js, MODERATION_REPORT_LOCKS_SQL). Nothing reads the rows.
+    if (/^\s*SELECT id FROM content_reports[\s\S]*FOR UPDATE\s*$/i.test(sql)) {
+      log.push({ sql: String(sql).replace(/\s+/g, ' ').trim(), params });
+      return Promise.resolve({ rows: [] });
+    }
     return dispatch(sql, params);
   },
   release: () => {},
