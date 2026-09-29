@@ -80,6 +80,42 @@ async function confirmEmail(email) {
   }
 }
 
+/**
+ * Give an account one accepted friend, and open the app again so it counts.
+ *
+ * THE TONIGHT CONTROL IS ONLY DRAWN FOR SOMEBODY WITH A FRIEND. Its caption
+ * says friends see the answer, so a brand-new account with none is not offered
+ * it (App.js, the Nest header), and the two Tonight specs below were red
+ * waiting for a control a friendless account is correctly never shown. The
+ * friendship is a precondition here, not the subject, the same as confirmEmail:
+ * the friend is a row nobody signs in as, and the reload is what makes the
+ * friend count read on the way in say one.
+ */
+async function giveOneFriend(person) {
+  const client = new Client({
+    connectionString: `postgresql://postgres:postgres@127.0.0.1:${PG_PORT}/flock_e2e`,
+    ssl: false,
+  });
+  await client.connect();
+  try {
+    const me = await client.query('SELECT id FROM users WHERE LOWER(email) = LOWER($1)', [person.email]);
+    if (me.rowCount !== 1) throw new Error(`no account to befriend for ${person.email}`);
+    const friend = await client.query(
+      'INSERT INTO users (email, name) VALUES ($1, $2) RETURNING id',
+      [newEmail('offline-friend'), `Bea Z${randomTag(5)}`]
+    );
+    await client.query(
+      "INSERT INTO friendships (requester_id, addressee_id, status) VALUES ($1, $2, 'accepted')",
+      [friend.rows[0].id, me.rows[0].id]
+    );
+  } finally {
+    await client.end();
+  }
+  await person.page.reload();
+  await expect(person.page.getByRole('heading', { name: new RegExp(`hey, ${person.firstName}`, 'i') }))
+    .toBeVisible({ timeout: 30_000 });
+}
+
 function phoneContext(browser) {
   return browser.newContext({ ...devices['iPhone 13'], baseURL: WEB, permissions: [] });
 }
@@ -557,6 +593,7 @@ test('a send that hangs is given up on and reported, and the composer works agai
 test('a hung write hands the control back instead of leaving it disabled', async ({ browser }) => {
   test.setTimeout(120_000);
   const ada = await newPerson(browser, 'offline-hangctl');
+  await giveOneFriend(ada);
 
   await goTab(ada.page, 'Nest');
   const down = ada.page.getByRole('button', { name: 'Tonight: Down' });
@@ -617,6 +654,7 @@ test('a reaction the server never got is taken back off the screen, and the toas
 test('the Tonight control does not light up for a write that never landed', async ({ browser }) => {
   test.slow();
   const ada = await newPerson(browser, 'offline-pulse');
+  await giveOneFriend(ada);
 
   await goTab(ada.page, 'Nest');
   const down = ada.page.getByRole('button', { name: 'Tonight: Down' });
