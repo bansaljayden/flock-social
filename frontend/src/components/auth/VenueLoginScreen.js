@@ -194,27 +194,48 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
   const apple = useAppleYearStep({ fieldId: 'venue-apple-year', onSuccess: onLoginSuccess });
   const appleStep = apple.step;
   const leaveAppleStep = apple.leave;
+  // And the same step for a new Google account, whose creation 403 comes with
+  // the proof from Google's sheet held (makeResume in useGoogleAuth.js). This
+  // half used to drop it too and ask for a second Google sheet.
+  const google = useAppleYearStep({ fieldId: 'venue-google-year', provider: 'Google', onSuccess: onLoginSuccess });
+  // One step open at a time, so there is only ever one year field on screen.
+  const stepOpen = Boolean(appleStep || google.step);
+  const leaveSteps = () => { apple.leave(); google.leave(); };
   // A message about an Apple tap goes where the person is looking: into the
   // step while it is open, otherwise the form's box.
   const showAppleError = (message) => (appleStep ? apple.setError(message) : setError(message));
-  // The year field on screen. While the step is open the form's own field
+  // The year field on screen. While a step is open the form's own field
   // steps aside (one year field at a time), so the sign-up half's checks
   // point at the step's.
-  const yearFieldId = appleStep ? 'venue-apple-year' : 'venue-dob';
+  const yearFieldId = appleStep ? 'venue-apple-year' : google.step ? 'venue-google-year' : 'venue-dob';
 
   // Native iOS runs Google's own SDK, everything else the GIS browser flow;
   // one hook, one backend route, and the needsDob 403 handled the same on both.
   const startGoogle = useGoogleAuth({
-    onSuccess: onLoginSuccess,
-    onError: (msg, err) => {
+    onSuccess: (user) => { leaveSteps(); onLoginSuccess(user); },
+    onError: (msg, err, resume) => {
       if (err?.data?.needsDob) {
-        // Google's own ask takes the field back up to the form.
-        leaveAppleStep();
+        const granularity = err.data.dobGranularity || null;
         setNeedsDob(true);
-        setDobGranularity(err.data.dobGranularity || null);
-        setError(err.data.dobGranularity === 'year'
+        setDobGranularity(granularity);
+        // A new account asked for its year, with Google's proof held: the
+        // Google step, in the Google button's place. The server's "tap
+        // Continue with Google again" is what the step makes unnecessary.
+        if (granularity === 'year' && resume) {
+          setError('');
+          apple.leave();
+          google.hold(resume);
+          return;
+        }
+        // Nothing held, or the full date a backfill needs: the field goes
+        // back up to the form.
+        leaveSteps();
+        setError(granularity === 'year'
           ? 'Add the year you were born below, then tap Continue with Google again.'
           : 'Add your date of birth below, then tap Continue with Google again.');
+      } else if (google.step) {
+        // The retap after a timeout, answered: beside the button tapped.
+        google.setError(msg || 'Google sign-in failed');
       } else {
         setError(msg || 'Google sign-in failed');
       }
@@ -288,7 +309,7 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
         // an existing account, so this is a backfill and the exact date is
         // required. The date field is the only one this path may show.
         setDobGranularity(null);
-        leaveAppleStep();
+        leaveSteps();
         setError(needsDob && !askYearOnly && backfillDob
           ? err.message
           : 'One more thing: add your date of birth below to continue.');
@@ -311,8 +332,8 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
     setDobConfirmed('');
     setBirthYear('');
     setBackfillDob('');
-    // A held Apple sign-in belongs to the half it was asked on too.
-    leaveAppleStep();
+    // A held Apple or Google sign-in belongs to the half it was asked on too.
+    leaveSteps();
     // A password typed under the login rules is not carried into a signup form
     // that is about to grade it against a checklist.
     setPassword('');
@@ -410,10 +431,10 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
           </div>
         )}
 
-        {/* Not while the Apple step is open: the step draws its own year
-            field where the Apple button was, and one year field on screen is
-            the rule the consumer screens keep. */}
-        {(isSignup || needsDob) && !appleStep && (
+        {/* Not while a provider's step is open: the step draws its own year
+            field where that provider's button was, and one year field on
+            screen is the rule the consumer screens keep. */}
+        {(isSignup || needsDob) && !stepOpen && (
           askYearOnly ? (
             /* One field, shared with SignupScreen and LoginScreen, so the three
                cannot drift apart again. They already did once: signup was moved
@@ -599,8 +620,26 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
       <AuthRule label={isSignup ? 'or sign up with' : 'or continue with'} />
 
       {/* Hidden only when a native build carries no iOS Google client id, i.e.
-          when the button could not work by any route. On web it always shows. */}
-      {isGoogleSignInAvailable() && (
+          when the button could not work by any route. On web it always shows.
+          While a new Google account's year is being asked, the Google step
+          and its Continue take the button's place. */}
+      {isGoogleSignInAvailable() && google.step && (
+        <AppleYearStep
+          idPrefix="venue"
+          provider="google"
+          error={google.error}
+          value={birthYear}
+          onChange={(v) => { setBirthYear(v); google.setError(''); }}
+          hint="Yours, not the venue's. We use it to check your age."
+        />
+      )}
+      {isGoogleSignInAvailable() && (google.step === 'resume' ? (
+        <AppleStepContinue
+          busy={google.busy}
+          busyLabel={isSignup ? 'Creating account…' : 'Signing in…'}
+          onClick={() => google.continueWith(birthYear)}
+        />
+      ) : (
         <button
           type="button"
           className="auth-provider"
@@ -612,12 +651,16 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
               return;
             }
             setError('');
+            google.setError('');
             if (isSignup) {
               // The server requires a date of birth to create an account on
               // this path, so the field has to be filled first. What the date
               // says about age is not decided here, exactly as it is not
               // decided in handleSubmit.
               if (!dob) {
+                // An Apple step left open is given up for Google, so the
+                // form's field comes back and "above" is where it is.
+                leaveAppleStep();
                 setError(isSignup
                   ? 'Add the year you were born above first, then continue with Google.'
                   : 'Add your date of birth above first, then continue with Google.');
@@ -635,7 +678,7 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
         >
           <GoogleG /> Continue with Google
         </button>
-      )}
+      ))}
 
       {/* Apple guideline 4.8: the venue portal ships inside the same iOS binary
           and offers Google above, so it must offer Sign in with Apple too.
@@ -662,7 +705,7 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
         />
       ) : (
       <AppleSignInButton
-        onSuccess={(user) => { leaveAppleStep(); onLoginSuccess(user); }}
+        onSuccess={(user) => { leaveSteps(); onLoginSuccess(user); }}
         onError={(m, err, resume) => {
           // The structured error is the second argument for exactly this: a
           // brand-new Apple account on the sign-in half is answered 403
@@ -678,13 +721,14 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
             // The year ask with the sheet's credentials held: finish in place.
             if (granularity === 'year' && resume) {
               setError('');
+              google.leave();
               apple.hold(resume);
               return;
             }
             // Nothing held, or the full date a backfill needs: the same
             // transition the Google path above makes, the field up in the
             // form and a sentence saying so.
-            leaveAppleStep();
+            leaveSteps();
             setError(needsDob && dob
               ? m
               : granularity === 'year'
@@ -700,6 +744,9 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
         }}
         dob={dob}
         dobGranularity={askYearOnly ? 'year' : undefined}
+        /* Under the Google step's Continue the stylesheet's provider-to-
+           provider gap does not apply, so the gap is given here. */
+        style={google.step === 'resume' ? { marginTop: '10px' } : undefined}
         beforeAuthorize={() => {
           if (dobNeedsCheck) {
             setError('Check the date of birth above before you continue.');
