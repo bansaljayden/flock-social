@@ -77,10 +77,10 @@ async function main() {
   const body = answer.body;
   const status = besttime.readKeyStatus(body, { secrets });
   // The three health fields as BestTime sent them, screened like everything else.
-  const raw = (v) => (besttime.containsKeyMaterial(v, secrets) ? '[withheld]' : String(v));
+  const screened = (v) => (besttime.containsKeyMaterial(v, secrets) ? '[withheld]' : String(v));
 
   console.log(`[BestTime:Status] Checked ${new Date().toISOString()} (key from BESTTIME_API_KEY; the key itself is never printed)`);
-  console.log(`  Key health         : ${status.healthy ? 'OK (valid, active)' : `NOT OK (status=${raw(body.status)}, valid=${raw(body.valid)}, active=${raw(body.active)})`}`);
+  console.log(`  Key health         : ${status.healthy ? 'OK (valid, active)' : `NOT OK (status=${screened(body.status)}, valid=${screened(body.valid)}, active=${screened(body.active)})`}`);
   console.log('  Plan name          : not reported by the key endpoint (see the besttime.app dashboard)');
 
   const forecast = status.creditsForecast;

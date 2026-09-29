@@ -101,6 +101,22 @@ function containsConfiguredSecret(text, secrets = []) {
   });
 }
 
+const SECRET_WINDOW = 8;
+function containsSecretWindow(text, secrets = []) {
+  if (typeof text !== 'string' || text.length < SECRET_WINDOW) return false;
+  const forms = keyCheckForms(text);
+  return secrets.some((s) => {
+    if (typeof s !== 'string' || s.length < 8) return false;
+    const body = s.toLowerCase().replace(/^(pri|pub)_/, '');
+    if (body.length < SECRET_WINDOW * 2) return false;
+    for (let i = 0; i + SECRET_WINDOW <= body.length; i++) {
+      const piece = body.slice(i, i + SECRET_WINDOW);
+      if (forms.some((t) => t.includes(piece))) return true;
+    }
+    return false;
+  });
+}
+
 function containsKeyMaterial(value, secrets = []) {
   const text = typeof value === 'string' ? value : JSON.stringify(value);
   if (!text) return false;
@@ -196,7 +212,10 @@ function readKeyStatus(body, { secrets = [] } = {}) {
   // that passed are also joined and searched for the configured key (whole or
   // its body). Only for the configured key: the generic hex rule would read a
   // few numeric quota fields run together as a key.
-  const flagged = candidates.map((c) => containsKeyMaterial(c.value, secrets));
+  // A piece is any eight characters of a configured key's body, so the pieces
+  // are caught in any order and with anything between them.
+  const flagged = candidates.map((c) => containsKeyMaterial(c.value, secrets)
+    || containsSecretWindow(String(c.value), secrets));
   const passing = candidates.filter((_, i) => !flagged[i]).map((c) => String(c.value));
   const splitKey = passing.length > 1 && containsConfiguredSecret(passing.join(''), secrets);
   const reported = candidates.map(({ name, value }, i) => (

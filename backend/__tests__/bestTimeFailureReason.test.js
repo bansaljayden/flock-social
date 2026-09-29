@@ -125,16 +125,20 @@ test('a 200 that says Error, or JSON that does not parse, logs no body text eith
   // quotes the text it choked on.
   const secretish = `api_key_private=${KEY}`;
   const bodies = [
-    { json: async () => ({ status: 'Error', message: `denied: ${secretish}` }) },
-    // Node quotes the start of the text a parse error chokes on.
-    { json: async () => JSON.parse(`${KEY} and more`) },
+    // An OK answer that says Error is a venue-level miss.
+    { json: async () => ({ status: 'Error', message: `denied: ${secretish}` }), weekly: 'null' },
+    // A body that is not JSON is transient. Node quotes the start of the text
+    // a parse error chokes on.
+    { json: async () => JSON.parse(`${KEY} and more`), weekly: 'transient' },
   ];
   for (const shape of bodies) {
-    global.fetch = async () => ({ ok: true, status: 200, ...shape });
+    global.fetch = async () => ({ ok: true, status: 200, json: shape.json });
     const lines = captureErrors(t);
-    // The OK-but-Error answer is a miss (null); the unparseable one is now a
-    // transient failure (thrown). Either way nothing of the body is printed.
-    await fetchWeeklyForecast('W', 'x', null).catch(() => null);
+    if (shape.weekly === 'null') {
+      assert.strictEqual(await fetchWeeklyForecast('W', 'x', null), null);
+    } else {
+      await assert.rejects(fetchWeeklyForecast('W', 'x', null), (e) => e.transient === true && e.notJson === true);
+    }
     await fetchLiveBusyness('bt-venue-1').catch(() => {});
     const all = lines.join('\n');
     assert.ok(lines.length >= 1, all);
