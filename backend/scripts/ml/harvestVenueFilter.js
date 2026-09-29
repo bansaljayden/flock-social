@@ -161,7 +161,7 @@ const {
 } = require('./collectWeekly');
 const { requireVenueIdIndex } = require('./discoverBestTime');
 const { PA_CITIES, MAX_KM, kmBetween, nearestPaCity } = require('./addDemandVenues');
-const { classifyHttpFailure, fetchJsonWithTimeout, NETWORK_ERR_RE } = require('./bestTimeService');
+const { classifyHttpFailure, fetchJsonWithTimeout, loggableError, NETWORK_ERR_RE } = require('./bestTimeService');
 const besttime = require('../../services/besttimeAccount');
 
 if (!process.env.DATABASE_URL && process.env.PGHOST) {
@@ -1521,7 +1521,7 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
     summary.aborted = true;
     summary.exitCode = 1;
     summary.abortReason = err.message;
-    console.error(`${TAG} ABORTED: ${err.message}`);
+    console.error(`${TAG} ABORTED: ${loggableError(err)}`);
     if (err.abort) {
       // The run is over; the after-read still shows what was spent. Outside the
       // guard only because the guard is gone by now; it is the same allowed call.
@@ -1588,7 +1588,7 @@ module.exports = {
 // Only when run directly: a require from a test must not call BestTime.
 if (require.main === module) {
   main().catch((err) => {
-    console.error(`${TAG} Fatal (${(err && err.name) || 'unknown error'}): ${err && err.message}`);
+    console.error(`${TAG} Fatal (${(err && err.name) || 'unknown error'}): ${loggableError(err)}`);
     process.exitCode = 1;
   });
 }
