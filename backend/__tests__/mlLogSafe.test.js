@@ -136,7 +136,20 @@ test('the account read withholds a key split across fields, and screens status b
   const thirds = readKeyStatus({
     plan_a: body.slice(0, 11), plan_b: body.slice(11, 22), plan_c: body.slice(22), plan_name: 'Max 100',
   }, { secrets: [KEY] });
-  assert.ok(thirds.reported.every((f) => f.withheld), JSON.stringify(thirds.reported));
+  // Each piece is caught on its own (eight characters of the key's body), so
+  // the harmless field beside them is still shown.
+  assert.deepStrictEqual(thirds.reported, [
+    { name: 'plan_a', withheld: true }, { name: 'plan_b', withheld: true }, { name: 'plan_c', withheld: true },
+    { name: 'plan_name', value: 'Max 100' },
+  ]);
+  // Pieces out of order, padded, or with the first one withheld on its own.
+  for (const fields of [
+    { plan_a: `${body.slice(20)} `, plan_b: `${body.slice(0, 10)} `, plan_c: `${body.slice(10, 20)} ` },
+    { plan_a: `pri_${body.slice(0, 4)}`, plan_b: body.slice(4, 18), plan_c: body.slice(18) },
+  ]) {
+    const got = readKeyStatus(fields, { secrets: [KEY] });
+    assert.ok(got.reported.length === 3 && got.reported.every((f) => f.withheld), JSON.stringify(got.reported));
+  }
   // Numbers run together are not a key.
   const quotas = readKeyStatus({ quota_venues: 100, quota_used: 1000000, quota_left: 99000000 }, { secrets: [KEY] });
   assert.ok(quotas.reported.every((f) => !f.withheld), JSON.stringify(quotas.reported));
@@ -152,7 +165,8 @@ test('the account read withholds a key split across fields, and screens status b
 // @sentry/node, a production dependency; if it ever goes, this test fails
 // loudly rather than skipping.
 const acorn = require('acorn');
-const SAFE_CALLS = new Set(['describeError', 'describeDbError', 'labelFor', 'failureReason']);
+// screened() is besttimeAccountStatus.js's pass through containsKeyMaterial.
+const SAFE_CALLS = new Set(['describeError', 'describeDbError', 'labelFor', 'failureReason', 'screened']);
 // `reason` is left out on purpose: in bestTimeService it is the fixed label.
 const ERRORISH = /^(err|error|e|callError|cause|ex)$/;
 const RESPONSEISH = /^(data|body|json|answer|response|parsed)$/;
@@ -170,35 +184,38 @@ function unsafeOutput(src) {
   const flag = (n, what) => problems.push(`line ${n.loc.start.line}: ${what}`);
   // Everything an output call is handed, except what passes through a safe
   // describer first.
-  const inspect = (n, direct) => {
+  // An error-like or response-like name anywhere inside an output argument is
+  // flagged (in an object, an array, a || default, a toString or inspect call),
+  // unless all that is read from it is one of these properties.
+  const ALLOWED_PROPS = new Set(['code', 'name', 'status', 'httpStatus', 'length', 'kind']);
+  const inspect = (n) => {
     if (!n || typeof n.type !== 'string') return;
     if (n.type === 'CallExpression' && n.callee.type === 'Identifier' && SAFE_CALLS.has(n.callee.name)) return;
-    if (n.type === 'MemberExpression' && !n.computed && ['message', 'stack'].includes(n.property.name)) {
-      flag(n, `.${n.property.name}`);
-    }
-    if (n.type === 'Identifier' && direct && (ERRORISH.test(n.name) || RESPONSEISH.test(n.name))) {
-      flag(n, `whole ${n.name}`);
-    }
-    if (n.type === 'CallExpression' && n.callee.type === 'Identifier' && n.callee.name === 'String') {
-      n.arguments.forEach((a) => inspect(a, true));
+    if (n.type === 'MemberExpression') {
+      const prop = n.computed ? (n.property.type === 'Literal' ? String(n.property.value) : null) : n.property.name;
+      if (prop === 'message' || prop === 'stack') { flag(n, '.' + prop); return; }
+      if (prop && ALLOWED_PROPS.has(prop) && n.object.type === 'Identifier') return;
+      inspect(n.object);
+      if (n.computed) inspect(n.property);
       return;
     }
-    if (n.type === 'CallExpression' && n.callee.type === 'MemberExpression' && n.callee.object.name === 'JSON') {
-      n.arguments.forEach((a) => inspect(a, true));
+    if (n.type === 'Identifier') {
+      if (ERRORISH.test(n.name) || RESPONSEISH.test(n.name)) flag(n, 'whole ' + n.name);
       return;
     }
-    if (n.type === 'TemplateLiteral') { n.expressions.forEach((x) => inspect(x, true)); return; }
-    if (n.type === 'BinaryExpression') { inspect(n.left, true); inspect(n.right, true); return; }
-    if (n.type === 'ConditionalExpression') { inspect(n.consequent, true); inspect(n.alternate, true); return; }
+    if (n.type === 'Property') { if (n.computed) inspect(n.key); inspect(n.value); return; }
+    // `a && b` prints `a` only when it is falsy, so a guard like
+    // `(err && err.name)` reads nothing of err but its truthiness.
+    if (n.type === 'LogicalExpression' && n.operator === '&&') { inspect(n.right); return; }
     for (const [k, v] of Object.entries(n)) {
       if (k === 'loc' || k === 'start' || k === 'end') continue;
-      if (Array.isArray(v)) v.forEach((x) => inspect(x, false));
-      else if (v && typeof v.type === 'string') inspect(v, false);
+      if (Array.isArray(v)) v.forEach(inspect);
+      else if (v && typeof v.type === 'string') inspect(v);
     }
   };
   const walk = (n) => {
     if (!n || typeof n.type !== 'string') return;
-    if (n.type === 'CallExpression' && isOutputCall(n)) n.arguments.forEach((a) => inspect(a, true));
+    if (n.type === 'CallExpression' && isOutputCall(n)) n.arguments.forEach(inspect);
     for (const [k, v] of Object.entries(n)) {
       if (k === 'loc') continue;
       if (Array.isArray(v)) v.forEach(walk);
@@ -219,8 +236,20 @@ test('the sweep itself catches what the line check missed', () => {
     'process.stderr.write(String(error));',
     'console.log(JSON.stringify(data));',
     'console.error(`fine ${describeError(err)} ${labelFor(data.message)}`);',
+    'console.error({ err });',
+    'console.error([err]);',
+    'console.error(`${err || "x"}`);',
+    'console.error(err.toString());',
+    'console.error(`${err.cause}`);',
+    'console.error(err["message"]);',
+    'console.error(util.inspect(err));',
+    'console.error(`fine ${err.code} ${answer.httpStatus} ${data.venues.length} ${(err && err.name) || "?"}`);',
   ].join('\n'));
-  assert.deepStrictEqual(caught.map((p) => p.split(':')[0]), ['line 1', 'line 3', 'line 4', 'line 5', 'line 6', 'line 7']);
+  // data.venues.length reads a field of the response before its length, so it
+  // is flagged too; only a property read straight off the name is allowed.
+  assert.deepStrictEqual([...new Set(caught.map((p) => p.split(':')[0]))],
+    ['line 1', 'line 3', 'line 4', 'line 5', 'line 6', 'line 7',
+      'line 9', 'line 10', 'line 11', 'line 12', 'line 13', 'line 14', 'line 15', 'line 16']);
 });
 
 test('no collector output prints an error\'s message or stack, a whole error, or a response', () => {
