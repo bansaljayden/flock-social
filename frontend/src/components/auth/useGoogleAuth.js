@@ -78,6 +78,17 @@ export const isNativeIos = () =>
 const iosClientId = () => process.env.REACT_APP_GOOGLE_IOS_CLIENT_ID || '';
 const serverClientId = () => process.env.REACT_APP_GOOGLE_CLIENT_ID || '';
 
+// NO CLIENT ID, NO GOOGLE LIBRARY. @react-oauth/google calls
+// google.accounts.oauth2.initTokenClient({ client_id }) from an effect as soon
+// as Google's script loads, and with an empty id that THROWS ("Missing required
+// parameter client_id") inside the hook every auth screen calls: the whole
+// sign-in screen went to the crash screen, email and password included, and so
+// did every browser test on the local stack, whose build carries no id. The id
+// is inlined at build time, so this is decided once per build and the hook
+// order never changes between renders.
+export const WEB_GOOGLE_CONFIGURED = Boolean(process.env.REACT_APP_GOOGLE_CLIENT_ID);
+const useWebGoogleLogin = WEB_GOOGLE_CONFIGURED ? useGoogleLogin : () => null;
+
 /**
  * Should a "Continue with Google" button be on screen at all?
  *
@@ -242,12 +253,13 @@ export default function useGoogleAuth({ onSuccess, onError, setBusy, reconfirm }
 
   // Web / Android / anything that is not native iOS: byte-for-byte the flow
   // these screens already shipped — GIS popup, access token, same api call.
-  const startWeb = useGoogleLogin({
+  const startWebGoogle = useWebGoogleLogin({
     onSuccess: (tokenResponse) =>
       exchange((dob, dobGranularity) => googleLoginWithToken(tokenResponse.access_token, dob,
         ...loginOpts(dobGranularity))),
     onError: () => handlers.current.onError?.('Google sign-in failed'),
   });
+  const startWeb = startWebGoogle || (() => handlers.current.onError?.('Google sign-in is not set up in this build.'));
 
   return (options) => {
     dobRef.current = options?.dob || undefined;
