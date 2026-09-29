@@ -27,6 +27,17 @@ function getKey() {
   return key;
 }
 
+// The key rides in the query string, so an error body that echoes the request
+// would print it. Every configured key is cut out before a reason is logged.
+function redactKey(text) {
+  if (!text) return text;
+  let out = String(text).slice(0, 300);
+  for (const secret of [process.env.BESTTIME_API_KEY, process.env.BESTTIME_API_KEY_PUBLIC]) {
+    if (secret) out = out.split(secret).join('[key]');
+  }
+  return out;
+}
+
 // Classify a non-OK HTTP status into the error contract above.
 // Returns an Error to throw, or null meaning "treat as venue-level no-data".
 function classifyHttpFailure(status, context) {
@@ -74,7 +85,17 @@ async function fetchJsonWithTimeout(url, options, ms) {
   const timer = setTimeout(() => controller.abort(), ms);
   try {
     const response = await fetch(url, { ...options, signal: controller.signal });
-    return { response, data: response.ok ? await response.json() : null };
+    if (response.ok) return { response, data: await response.json() };
+    // A failure's own reason, so a 404 that means "no foot traffic data" can be
+    // told apart from one that means "no venue at that address", which a
+    // better address would fix. Bounded, and never allowed to replace the
+    // status the caller classifies on.
+    let reason = null;
+    try {
+      const text = (await response.text()).slice(0, 2000);
+      try { reason = JSON.parse(text).message || null; } catch { reason = text || null; }
+    } catch { /* the status alone still says what happened */ }
+    return { response, data: null, reason: redactKey(reason) };
   } finally {
     // Round 13: previously cleared only on the success path — a network error
     // left a 30s timer pending, keeping the process alive after pool.end().
@@ -93,14 +114,15 @@ async function fetchWeeklyForecast(venueName, venueAddress, existingVenueId) {
       ? new URLSearchParams({ api_key_private: apiKey, venue_id: existingVenueId })
       : new URLSearchParams({ api_key_private: apiKey, venue_name: venueName, venue_address: venueAddress });
 
-    const { response, data } = await fetchJsonWithTimeout(
+    const { response, data, reason } = await fetchJsonWithTimeout(
       `https://besttime.app/api/v1/forecasts?${params}`,
       { method: 'POST' },
       30000
     );
 
     if (!response.ok) {
-      console.error(`[ML:BestTime] Weekly forecast failed (${response.status}) for ${venueName}`);
+      console.error(`[ML:BestTime] Weekly forecast failed (${response.status}) for ${venueName}`
+        + (reason ? `: ${reason}` : ''));
       const err = classifyHttpFailure(response.status, 'weekly');
       if (err) throw err;
       return null; // genuine venue-level 404 → caller marks as 404, never retries
@@ -242,3 +264,4 @@ module.exports = { fetchWeeklyForecast, fetchLiveBusyness, NETWORK_ERR_RE };
 // "stop" in another.
 module.exports.classifyHttpFailure = classifyHttpFailure;
 module.exports.fetchJsonWithTimeout = fetchJsonWithTimeout;
+module.exports.redactKey = redactKey;
