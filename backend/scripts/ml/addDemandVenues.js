@@ -41,7 +41,7 @@
 require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.env') });
 
 const { Pool } = require('pg');
-const { priceLevelToNum, sleep } = require('./config');
+const { priceLevelToNum, sleep, withCorpusWriteLock } = require('./config');
 
 if (!process.env.DATABASE_URL && process.env.PGHOST) {
   const host = process.env.PGHOST;
@@ -349,7 +349,9 @@ async function main() {
       inserted++;
       continue;
     }
-    await pool.query(
+    // Under the corpus write lock the harvest takes, so a harvest re-checking
+    // for a near-duplicate and this insert cannot interleave.
+    await withCorpusWriteLock(pool, (client) => client.query(
       `INSERT INTO ml_venues (google_place_id, name, address, city, latitude, longitude, venue_category, google_types, price_level, rating, review_count, timezone)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
        ON CONFLICT (google_place_id) DO NOTHING`,
@@ -367,7 +369,7 @@ async function main() {
         p.userRatingCount || 0,
         PA_CITIES[cityKey].tz,
       ]
-    );
+    ));
     inserted++;
     console.log(`  ADDED ${label}`);
   }

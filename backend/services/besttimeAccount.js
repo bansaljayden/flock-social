@@ -198,6 +198,10 @@ async function fetchKeyStatus(key, { timeoutMs = 10000 } = {}) {
   try {
     response = await fetch(KEY_STATUS_URL + encodeURIComponent(key), {
       method: 'GET',
+      // Not followed: the harvest's admission guard approved this address, and
+      // a redirect is a request it never saw. A 3xx comes back as an HTTP
+      // failure like any other.
+      redirect: 'manual',
       signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (err) {
