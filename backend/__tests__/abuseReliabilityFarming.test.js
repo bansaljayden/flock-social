@@ -480,11 +480,18 @@ test('FIXED A3: a slot that contains a no_show can never be counted as attended'
   const M = 65;
   const P = 66;
   const H = 67;
-  const afternoon = new Date(Date.now() - 3600e3).toISOString();
+  // Both plans inside ONE four-hour slot, fixed rather than "an hour ago":
+  // slots are UTC buckets (epoch / 14400), so "now" and "an hour ago" straddle
+  // a boundary for the first hour after 00, 04, 08, 12, 16 and 20 UTC, and
+  // this test failed a quarter of the day. An hour into yesterday's slot, and
+  // both made the day before, so neither moment is floored to its creation.
+  const slotStart = Math.floor((Date.now() - 86400e3) / 14400e3) * 14400e3;
+  const afternoon = new Date(slotStart + 3600e3).toISOString();
+  const madeBefore = new Date(slotStart - 86400e3).toISOString();
 
   world.flocks.set(830, {
     id: 830, creator_id: H, status: 'completed', name: 'The one they skipped', venue_id: 'ChIJreal0000000009',
-    event_time: afternoon, created_at: new Date(Date.now() - 86400e3).toISOString(),
+    event_time: afternoon, created_at: madeBefore,
   });
   world.members.push(
     { flock_id: 830, user_id: M, status: 'accepted', attendance: 'no_show' },
@@ -492,7 +499,7 @@ test('FIXED A3: a slot that contains a no_show can never be counted as attended'
   );
 
   CURRENT_USER = { id: M, name: 'Mallory', email_verified: true, role: 'user' };
-  seedPairFlock(831, M, P, { eventTime: afternoon });
+  seedPairFlock(831, M, P, { eventTime: afternoon, createdAt: madeBefore });
   await call('PUT', '/api/flocks/831', { status: 'completed' });
   const res = await call('POST', '/api/flocks/831/attendance', {
     attendance: [{ userId: M, attended: true }, { userId: P, attended: true }],
