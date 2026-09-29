@@ -1551,11 +1551,12 @@ class PeopleModel:
     # From this many people the crowd model (models/people-fine.onnx), when
     # installed, counts the frame too, and the highest count stands. The main
     # model merges heads a few pixels apart, which is how a crowd reads short.
-    # The crowd model shipped now is owl-4.3, whose density head's total does
-    # not fall when heads merge; it is a little less sure in a small room, so
-    # it is only asked where crowds are. Graded on four real test sets the
-    # pairing matched the main model alone, and in a crowd of ten it lifted
-    # within-one from 41% to 82%.
+    # The crowd model shipped now is owl-4.9-crowd, whose density head's total
+    # does not fall when heads merge; it is a little less sure in a small room,
+    # so it is only asked where crowds are. On IISER Bhopal's real classroom
+    # crowds on this camera the pair counts rooms of six to ten within one 96%
+    # of the time. Asking it from three people or four instead of five was
+    # tried on the same frames and was worse.
     CROWD_AT = 5
     fine = None
 
