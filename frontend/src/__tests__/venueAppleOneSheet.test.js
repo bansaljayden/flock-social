@@ -17,7 +17,10 @@
  *     plus the year with no second sheet;
  *   - an Apple ID that already has an account is simply signed in;
  *   - an under-13 refusal is shown as the server wrote it;
- *   - switching halves, or the password path's backfill ask, drops the step.
+ *   - switching halves, or the password path's backfill ask, drops the step;
+ *   - the sign-up half lets an empty year through to Apple's sheet, the way
+ *     the consumer screens do, and asks it afterwards in the same step, while
+ *     a half-typed year is still stopped before the sheet.
  *
  * appleOneSheetSignIn.test.js pins the same step on the consumer screens,
  * including the timeouts, which this screen shares through AppleYearStep.js.
@@ -181,5 +184,65 @@ describe('the venue sign-in half, a brand-new Apple ID', () => {
     expect(api.login).toHaveBeenCalledWith('owner@example.com', 'Password1', undefined);
     expect(continueButton(utils)).toBeNull();
     expect(utils.queryByLabelText('Year of birth')).toBeNull();
+  });
+});
+
+describe('the venue sign-up half', () => {
+  const openSignupHalf = () => {
+    const utils = openVenue();
+    fireEvent.click(utils.getByRole('button', { name: 'Create an account' }));
+    return utils;
+  };
+
+  it('an empty year opens Apple\'s sheet, and the year is asked after it in the Apple button\'s place', async () => {
+    const utils = openSignupHalf();
+    await firstTap(utils);
+
+    expect(mockAppleAuthorize).toHaveBeenCalledTimes(1);
+    // Sent with no year, which is what earns the creation 403.
+    expect(api.appleLogin.mock.calls[0][3]).toBe('');
+    const field = utils.getByLabelText('Year of birth');
+    expect(field.id).toBe('venue-apple-year');
+    expect(document.activeElement).toBe(field);
+    expect(utils.queryByRole('alert')).toBeNull();
+    // The form's own year field steps aside, so there is one on screen.
+    expect(yearFields(utils).length).toBe(1);
+    expect(utils.getByRole('button', { name: /^continue$/i })).toBeTruthy();
+  });
+
+  it('Continue creates the account with the same credentials plus the year, on one sheet', async () => {
+    const utils = openSignupHalf();
+    await firstTap(utils);
+    fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: '1985' } });
+    api.appleLogin.mockResolvedValueOnce({ user: { id: 83 } });
+    fireEvent.click(continueButton(utils));
+
+    await waitFor(() => expect(utils.onLoginSuccess).toHaveBeenCalledWith({ id: 83 }));
+    expect(mockAppleAuthorize).toHaveBeenCalledTimes(1);
+    const [first, second] = api.appleLogin.mock.calls;
+    expect(second[0]).toBe(first[0]);
+    expect(second[1]).toEqual({ givenName: 'Robin', familyName: 'Ortiz' });
+    expect(second[2]).toBe(first[2]);
+    expect(second[3]).toBe('1985-12-31');
+    expect(second[4]).toEqual({ dobGranularity: 'year' });
+  });
+
+  it('a half-typed year is not sent to Apple as no year at all', async () => {
+    const utils = openSignupHalf();
+    fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: '19' } });
+    fireEvent.click(appleButton(utils));
+    await waitFor(() => expect(utils.getByRole('alert').textContent).toBe('Write the year in full, like 2004.'));
+    expect(mockAppleAuthorize).not.toHaveBeenCalled();
+  });
+
+  it('Create account with the step open and no year points at the step\'s field and sends nothing', async () => {
+    const utils = openSignupHalf();
+    await firstTap(utils);
+    fireEvent.change(utils.getByLabelText('Your name'), { target: { value: 'Robin' } });
+    fireEvent.change(utils.getByLabelText('Email'), { target: { value: 'owner@example.com' } });
+    fireEvent.change(utils.getByLabelText('Password'), { target: { value: 'Password1' } });
+    fireEvent.submit(utils.container.querySelector('form'));
+    await waitFor(() => expect(utils.getByRole('alert').textContent).toBe('Add the year you were born.'));
+    expect(api.signup).not.toHaveBeenCalled();
   });
 });
