@@ -252,8 +252,10 @@ async function collectWeekly() {
   const retry404 = process.argv.includes('--retry-404');
   const retryAfterArg = process.argv.find((a) => a.startsWith('--retry-404-after-days='));
   const retryAfterRaw = retryAfterArg ? retryAfterArg.slice('--retry-404-after-days='.length) : '30';
-  if (!/^\d+$/.test(retryAfterRaw)) {
-    console.error(`[ML:Weekly] --retry-404-after-days must be a whole number of days, got "${retryAfterRaw}".`);
+  // Capped at ten years: past that the question is meaningless, and a number
+  // past Postgres's integer range would reach the SELECT and fail there.
+  if (!/^\d{1,4}$/.test(retryAfterRaw) || Number(retryAfterRaw) > 3650) {
+    console.error(`[ML:Weekly] --retry-404-after-days must be a whole number of days from 0 to 3650, got "${retryAfterRaw}".`);
     process.exitCode = 1;
     await pool.end();
     return;

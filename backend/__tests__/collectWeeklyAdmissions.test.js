@@ -171,9 +171,13 @@ test('a 404 retry skips venues asked within the last 30 days', async () => {
 test('--retry-404-after-days=0 is the old retry-everything pass, and junk refuses', async () => {
   const zero = await selectsFor(['--city=lehigh', '--skip-collected', '--retry-404', '--retry-404-after-days=0', '--max-new=5']);
   assert.deepStrictEqual(zero.selects[0].params, ['lehigh', 0]);
-  const bad = await selectsFor(['--city=lehigh', '--skip-collected', '--retry-404', '--retry-404-after-days=soon', '--max-new=5']);
-  assert.strictEqual(bad.exitCode, 1);
-  assert.strictEqual(bad.selects.length, 0);
+  const max = await selectsFor(['--city=lehigh', '--skip-collected', '--retry-404', '--retry-404-after-days=3650', '--max-new=5']);
+  assert.deepStrictEqual(max.selects[0].params, ['lehigh', 3650]);
+  for (const junk of ['soon', '1.5', '-1', '3651', '2147483648', '9'.repeat(310)]) {
+    const bad = await selectsFor(['--city=lehigh', '--skip-collected', '--retry-404', `--retry-404-after-days=${junk}`, '--max-new=5']);
+    assert.strictEqual(bad.exitCode, 1, junk);
+    assert.strictEqual(bad.selects.length, 0, `${junk} reached the venue SELECT`);
+  }
 });
 
 test('without the new flags the selection is what it always was', async () => {

@@ -1867,8 +1867,10 @@ node scripts/ml/collectWeekly.js --city=lehigh --skip-collected --retry-404 --wi
 Measured that night, it is close to worthless: 1 found in 21 of the most
 reviewed lehigh 404s (Whitehall Plaza), and every miss carried the same reason,
 "Venue found, but could not forecast this venue ... too new, or does not have
-enough visitor volume" (the collector now logs BestTime's reason beside the
-status). That is BestTime's data, not our address, so no rewrite fixes it.
+enough visitor volume". The collector now logs which of BestTime's known
+answers a failure was, as a fixed label beside the status; it never logs the
+body's own text, because the key rides in the query string. That answer is
+BestTime's data, not our address, so no rewrite fixes it.
 A retry skips anything attempted in the last 30 days (`--retry-404-after-days`,
 0 for the old behaviour): without that, the second pass re-selected the nine
 venues the first had just been refused on. The besttime.app counter read

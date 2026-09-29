@@ -27,37 +27,35 @@ function getKey() {
   return key;
 }
 
-// The key rides in the query string, so an error body that echoes the request
-// would print it. Every configured key, raw and percent-encoded, is cut out of
-// the WHOLE text before anything shortens it: shortening first can split a key
-// and leave all but its last characters in the log. A text that ENDS partway
-// through a key (the read limit below can cut one) loses that tail too.
-const REASON_MAX_CHARS = 300;
-function redactKey(text) {
-  if (!text) return text;
-  let out = String(text);
-  const forms = [];
-  for (const secret of [process.env.BESTTIME_API_KEY, process.env.BESTTIME_API_KEY_PUBLIC]) {
-    if (!secret) continue;
-    forms.push(secret);
-    const encoded = encodeURIComponent(secret);
-    if (encoded !== secret) forms.push(encoded);
+// WHAT A FAILED LOOKUP MEANT, NEVER WHAT IT SAID. The key rides in the query
+// string, so a failure body that echoes the request would carry it, in any of
+// the encodings a URL, a form or JSON can give it. Redacting free text is a
+// losing game (the first two versions of this leaked through a cut, an
+// encoding and an overlap), so no body text is ever logged. The message is
+// matched against BestTime's known answers and only one of these fixed labels
+// comes back.
+const FAILURE_REASONS = [
+  [/could not forecast/i, 'found, but BestTime has too little visitor data to forecast it'],
+  [/could not find|not found|no venue/i, 'BestTime could not match a venue to that name and address'],
+];
+const UNRECOGNISED_REASON = 'reason not recognised';
+function failureReason(text) {
+  if (typeof text !== 'string' || !text) return null;
+  let probe = text;
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed.message === 'string') probe = parsed.message;
+  } catch { /* a cut or non-JSON body is matched as it stands */ }
+  for (const [pattern, label] of FAILURE_REASONS) {
+    if (pattern.test(probe)) return label;
   }
-  for (const form of forms) out = out.split(form).join('[key]');
-  for (const form of forms) {
-    for (let k = form.length - 1; k >= 4; k--) {
-      if (out.endsWith(form.slice(0, k))) {
-        out = `${out.slice(0, out.length - k)}[key]`;
-        break;
-      }
-    }
-  }
-  return out.slice(0, REASON_MAX_CHARS);
+  return UNRECOGNISED_REASON;
 }
 
 // At most this many bytes of a failure body are read, and for at most this
 // long: the reason is a nicety, and a body that never ends must not hold a
-// lookup for the rest of its thirty seconds.
+// lookup for the rest of its thirty seconds. Each chunk is clipped to what is
+// left of the allowance BEFORE it is copied.
 const REASON_MAX_BYTES = 4096;
 const REASON_MAX_MS = 5000;
 async function readBoundedText(response) {
@@ -70,14 +68,23 @@ async function readBoundedText(response) {
     while (size < REASON_MAX_BYTES) {
       const { done, value } = await reader.read();
       if (done) break;
-      const chunk = Buffer.from(value);
-      chunks.push(chunk);
-      size += chunk.length;
+      const bytes = value instanceof Uint8Array ? value : Buffer.from(value);
+      const take = Math.min(bytes.byteLength, REASON_MAX_BYTES - size);
+      chunks.push(Buffer.from(bytes.buffer, bytes.byteOffset, take));
+      size += take;
     }
   } finally {
-    reader.cancel().catch(() => {});
+    Promise.resolve().then(() => reader.cancel()).catch(() => {});
   }
-  return Buffer.concat(chunks).subarray(0, REASON_MAX_BYTES).toString('utf8');
+  return Buffer.concat(chunks, size).toString('utf8');
+}
+
+// A failure whose body nobody reads is cancelled, so its connection goes back
+// to the pool instead of waiting on a body after the deadline has been let go.
+function discardBody(response) {
+  const body = response && response.body;
+  if (!body || typeof body.cancel !== 'function') return;
+  Promise.resolve().then(() => body.cancel()).catch(() => {});
 }
 
 // Classify a non-OK HTTP status into the error contract above.
@@ -120,34 +127,34 @@ const NETWORK_ERR_RE = /aborted|timeout|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AG
 // hourly run in between. utils/upstream.js describes the same trap. The body is
 // now read here, inside the deadline; an abort mid-body rejects the read with
 // "This operation was aborted", which NETWORK_ERR_RE already counts as ours.
-// A failed status is answered from the status alone and its body is never
-// read, unless the caller asks for { withReason: true }: then up to
-// REASON_MAX_BYTES of it are read for up to REASON_MAX_MS, and its message
-// comes back as `reason`, key cut out. Only the weekly lookup asks. A by-name
-// lookup spends an admission whether or not it finds the venue, and the reason
-// is what tells "no foot traffic data" from "no venue at that address". The
-// live sweep and the harvest never use it, so they never wait on a failure
-// body. Returns { response, data }, with data null when the status failed.
+// A failed status is answered from the status alone and its body is cancelled
+// unread, unless the caller asks for { withReason: true }: then up to
+// REASON_MAX_BYTES of it are read for up to REASON_MAX_MS and `reason` is one
+// of the fixed labels above. Only the weekly lookup asks. A by-name lookup
+// spends an admission whether or not it finds the venue, and the reason is
+// what tells "no foot traffic data" from "no venue at that address". The live
+// sweep and the harvest never use it, so they never wait on a failure body.
+// Returns { response, data }, with data null when the status failed.
 async function fetchJsonWithTimeout(url, options, ms, { withReason = false } = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ms);
   try {
     const response = await fetch(url, { ...options, signal: controller.signal });
     if (response.ok) return { response, data: await response.json() };
-    if (!withReason) return { response, data: null };
+    if (!withReason) {
+      discardBody(response);
+      return { response, data: null };
+    }
     let reason = null;
     const reasonTimer = setTimeout(() => controller.abort(), REASON_MAX_MS);
     try {
-      const text = await readBoundedText(response);
-      if (text) {
-        try { reason = JSON.parse(text).message || null; } catch { reason = text; }
-      }
+      reason = failureReason(await readBoundedText(response));
     } catch {
       // Cut by a deadline or a broken body: the status still says what happened.
     } finally {
       clearTimeout(reasonTimer);
     }
-    return { response, data: null, reason: redactKey(reason) };
+    return { response, data: null, reason };
   } finally {
     // Round 13: previously cleared only on the success path — a network error
     // left a 30s timer pending, keeping the process alive after pool.end().
@@ -317,4 +324,6 @@ module.exports = { fetchWeeklyForecast, fetchLiveBusyness, NETWORK_ERR_RE };
 // "stop" in another.
 module.exports.classifyHttpFailure = classifyHttpFailure;
 module.exports.fetchJsonWithTimeout = fetchJsonWithTimeout;
-module.exports.redactKey = redactKey;
+module.exports.failureReason = failureReason;
+module.exports.readBoundedText = readBoundedText;
+module.exports.REASON_MAX_BYTES = REASON_MAX_BYTES;
