@@ -109,8 +109,8 @@ test('no text from the body reaches the log, however the key is encoded or cut',
 });
 
 test('a message that is not a string cannot knock the status out of its class', async (t) => {
-  // the review's case: {"message":{"toString":null}} made String() throw, the throw
-  // was swallowed, and a 503 came back as a venue miss.
+  // A review found this: {"message":{"toString":null}} made String() throw,
+  // the throw was swallowed, and a 503 came back as a venue miss.
   failWith(503, ['{"message":{"toString":null}}']);
   t.mock.method(console, 'error', () => {});
   await assert.rejects(fetchWeeklyForecast('Down', 'x', null), (err) => err.transient === true);
