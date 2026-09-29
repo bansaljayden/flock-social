@@ -266,6 +266,7 @@ module.exports = {
   readKeyStatus,
   containsKeyMaterial,
   screenValue,
+  decodeEscapes,
   nextCalendarMonthStart,
   calendarMonthEnd,
   errorCode,

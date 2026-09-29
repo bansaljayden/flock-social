@@ -68,7 +68,11 @@ test('describeDbError: a data exception is printed by code, anything else as bef
 test('safeText prints a response value only when nothing in it looks like a key', () => {
   const { safeText } = require('../scripts/ml/logSafe');
   for (const name of ["Joe's Pizza", 'Cafe 1234', 'Terminal 5 (2026)', '']) assert.strictEqual(safeText(name), name);
-  for (const bad of [`Bar ${KEY}`, `Bar ${KEY.replace(/^pri_/, '')}`, 'x pri_1', `deadbeef${'0'.repeat(8)}cafe`]) {
+  assert.strictEqual(safeText('Three Mugs Pub & Restaurant'), 'Three Mugs Pub & Restaurant');
+  const pct = (s) => s.split('').map((c) => `%${c.charCodeAt(0).toString(16).padStart(2, '0')}`).join('');
+  const esc = (s, p, w) => s.split('').map((c) => `\\${p}${c.charCodeAt(0).toString(16).padStart(w, '0')}`).join('');
+  for (const bad of [`Bar ${KEY}`, `Bar ${KEY.replace(/^pri_/, '')}`, 'x pri_1234', `deadbeef${'0'.repeat(8)}cafe`,
+    `Bar ${pct(KEY)}`, `Bar ${pct(pct(KEY))}`, `Bar ${esc(KEY, 'u', 4)}`, `Bar ${esc(KEY, 'x', 2)}`]) {
     assert.strictEqual(safeText(bad), '[withheld]', bad);
   }
   assert.strictEqual(safeText(null), '');
@@ -167,6 +171,8 @@ test('the account read withholds a key split across fields, and screens status b
   // which is not a key and must still show.
   const escaped = KEY.split('').map((c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`).join('');
   assert.deepStrictEqual(readKeyStatus({ plan_name: escaped }, { secrets: [KEY] }).reported, [{ name: 'plan_name', withheld: true }]);
+  const xEscaped = KEY.split('').map((c) => `\\x${c.charCodeAt(0).toString(16).padStart(2, '0')}`).join('');
+  assert.deepStrictEqual(readKeyStatus({ plan_name: xEscaped }, { secrets: [KEY] }).reported, [{ name: 'plan_name', withheld: true }]);
   assert.strictEqual(readKeyStatus({ status: body.slice(0, 11) }, { secrets: [KEY] }).status, '[withheld]');
   assert.deepStrictEqual(readKeyStatus({ plan_id: '1234567890123456' }, { secrets: [KEY] }).reported, [{ name: 'plan_id', value: '1234567890123456' }]);
   // Numbers run together are not a key.
@@ -190,7 +196,10 @@ const SAFE_CALLS = new Set(['describeError', 'describeDbError', 'labelFor', 'fai
 const ERRORISH = /^(err|error|e|callError|cause|ex)$/;
 const RESPONSEISH = /^(data|body|json|answer|response|parsed)$/;
 
-function unsafeOutput(src) {
+// extraResponseNames: names that hold response data in one file only (in the
+// discovery script `venue` is a row of BestTime's search answer; elsewhere it
+// is our own ml_venues row).
+function unsafeOutput(src, extraResponseNames = []) {
   const ast = acorn.parse(src, { ecmaVersion: 'latest', sourceType: 'script', allowHashBang: true, locations: true });
   const problems = [];
   const isOutputCall = (n) => {
@@ -223,7 +232,7 @@ function unsafeOutput(src) {
       return;
     }
     if (n.type === 'Identifier') {
-      if (ERRORISH.test(n.name) || RESPONSEISH.test(n.name)) flag(n, 'whole ' + n.name);
+      if (ERRORISH.test(n.name) || RESPONSEISH.test(n.name) || extraResponseNames.includes(n.name)) flag(n, 'whole ' + n.name);
       return;
     }
     if (n.type === 'Property') { if (n.computed) inspect(n.key); inspect(n.value); return; }
@@ -283,7 +292,8 @@ test('no collector output prints an error\'s message or stack, a whole error, or
     .map((f) => path.join(ml, f))
     .concat([path.join(__dirname, '..', 'services', 'besttimeAccount.js')]);
   for (const file of files) {
-    const problems = unsafeOutput(fs.readFileSync(file, 'utf8'));
+    const problems = unsafeOutput(fs.readFileSync(file, 'utf8'),
+      path.basename(file) === 'discoverBestTime.js' ? ['venue'] : []);
     assert.deepStrictEqual(problems, [], `${path.basename(file)}:\n  ${problems.join('\n  ')}`);
   }
   const harvest = fs.readFileSync(path.join(ml, 'harvestVenueFilter.js'), 'utf8');
