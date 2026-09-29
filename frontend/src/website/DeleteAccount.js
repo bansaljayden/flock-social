@@ -71,6 +71,15 @@ export default function DeleteAccount() {
           you. If you sign in with Apple or Google, you may be asked to sign in again first.
           Your account and data are then deleted immediately.
         </p>
+        {/* The in-app confirmation says this too (screens/ProfileSettings.js),
+            and Apple expects the deletion flow to: we cannot cancel a
+            subscription Apple bills, so it runs on after the account is gone
+            unless the person stops it first. */}
+        <p>
+          Deleting your account does not cancel a subscription paid through the App Store, so
+          cancel it first: on your iPhone open <strong>Settings</strong>, tap your name, then{' '}
+          <strong>Subscriptions</strong>.
+        </p>
         {/*
           APPLE REVOCATION IS LIVE (promise restored 2026-08-18). All five
           APPLE_* variables (APPLE_TEAM_ID, APPLE_KEY_ID, APPLE_PRIVATE_KEY,

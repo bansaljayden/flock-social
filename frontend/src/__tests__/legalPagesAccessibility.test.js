@@ -858,6 +858,16 @@ describe('DeleteAccount: the destructive page', () => {
     unmount();
   });
 
+  test('it says deleting the account leaves an App Store subscription running, and where to cancel it', () => {
+    // The in-app confirmation says so; the public page someone reads before
+    // deleting has to as well, since nothing on our side can stop Apple billing.
+    const { container, unmount } = mount();
+    const body = container.textContent.replace(/\s+/g, ' ');
+    expect(body).toMatch(/Deleting your account does not cancel a subscription paid through the App Store/);
+    expect(body).toMatch(/open Settings, tap your name, then Subscriptions/);
+    unmount();
+  });
+
   test('if this page ever gains a state machine, it must also gain a live region', () => {
     // Today /delete-account is a static instruction page: no useState, no
     // fetch, nothing to announce. The real destructive flow with its confirm
