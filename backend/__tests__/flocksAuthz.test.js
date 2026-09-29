@@ -587,7 +587,10 @@ async function dispatch(text, params = []) {
   return { rows: [], rowCount: 0 };
 }
 
-pool.query = (text, params) => dispatch(text, params);
+// The flock list is a named statement, which arrives as one config object.
+pool.query = (text, params) => (text && typeof text === 'object'
+  ? dispatch(text.text, text.values)
+  : dispatch(text, params));
 pool.connect = async () => ({
   query: (text, params) => dispatch(text, params),
   release: () => {},

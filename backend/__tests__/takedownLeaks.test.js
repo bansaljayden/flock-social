@@ -54,7 +54,10 @@ function dispatch(sql, params) {
   return Promise.reject(new Error(`unscripted query: ${String(sql).replace(/\s+/g, ' ').slice(0, 140)}`));
 }
 
-pool.query = (sql, params) => dispatch(sql, params);
+// The flock list is a named statement, which arrives as one config object.
+pool.query = (sql, params) => (sql && typeof sql === 'object'
+  ? dispatch(sql.text, sql.values)
+  : dispatch(sql, params));
 pool.connect = async () => ({
   query: (sql, params) => {
     if (/^\s*(BEGIN|COMMIT|ROLLBACK)/i.test(sql)) {

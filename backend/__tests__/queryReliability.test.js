@@ -79,7 +79,10 @@ async function dispatch(sql, params) {
   throw new Error(`unscripted query: ${flat.slice(0, 160)}`);
 }
 
-pool.query = (sql, params) => dispatch(sql, params);
+// The flock list is a named statement, which arrives as one config object.
+pool.query = (sql, params) => (sql && typeof sql === 'object'
+  ? dispatch(sql.text, sql.values)
+  : dispatch(sql, params));
 pool.connect = async () => {
   checkedOut += 1;
   peakCheckedOut = Math.max(peakCheckedOut, checkedOut);
