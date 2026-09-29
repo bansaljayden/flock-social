@@ -1823,6 +1823,21 @@ minutes at one request every four seconds) and up to seven times the rows.
 Every run prints the key's counters before and after; the besttime.app
 dashboard is the authority for the admission count.
 
+The first commits, 2026-09-28, all seven days at 20 km: philly 427 requests,
+about 3,193 query credits, 586,632 weekly rows for 3,578 venues and 3,243 new
+rows, 71 minutes, gate at rotation 0 with 99.7% of cells within five and 100%
+of 276 venues; lehigh 70 requests, about 392 credits, gate 99.5% and 100% of
+142. The write phase prints nothing until its summary, so a quiet log for most
+of an hour is normal; the node process's CPU time is the progress signal.
+
+**Judge the gate on the week, not on a Monday dry run.** Lehigh's `--days=0`
+dry run was refused at 73.2% of venues agreeing (99.6% of cells exact at
+rotation 0, no venue better at any hour shift): with one day asked, a venue
+whose days look alike ties with a whole-day rotation, and a tie does not count
+as agreeing. The seven-day dry run of the same market passed at 100%. A
+one-day refusal with the cells still exact at 0 means ask the whole week, never
+lower the threshold.
+
 ### Spending the rest of a month's admissions, after a harvest
 
 The admissions reset on the 1st (UTC) and do not carry over. Once a market's
@@ -1839,6 +1854,16 @@ harvest matched by place id or as a near-duplicate has its curves and no
 BestTime id, so `--skip-collected` alone would select it and pay an admission
 for a week the corpus already holds. `--order=reviews` puts the places BestTime
 is likeliest to find first; a 404 still spends the lookup.
+
+After the September harvests that selection was empty in both markets: every
+active venue had an id, a curve or an attempt, and addDemandVenues had nothing
+new in the area. What remains is the venues that answered 404 before and still
+have no curve (283 lehigh, 225 philly that night). BestTime adds venues over
+time, and an admission not spent by the 1st is gone, so they are the last use:
+
+```bash
+node scripts/ml/collectWeekly.js --city=lehigh --skip-collected --retry-404 --without-weekly --order=reviews --limit=N --max-new=N
+```
 
 ### What every run proves and prints before anything is written
 
