@@ -910,7 +910,7 @@ async function sweepVenues(cityOrder, {
     await gate.drain();
   } catch (callError) {
     if (!sweepError) throw callError;
-    console.error(`[ML:Realtime] A call also failed while the sweep was stopping: ${callError.message}`);
+    console.error(`[ML:Realtime] A call also failed while the sweep was stopping: ${describeError(callError)}`);
   }
   if (sweepError) throw sweepError;
 
