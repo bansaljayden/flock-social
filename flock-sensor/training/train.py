@@ -75,6 +75,11 @@ def real_frame(real, rng, groups_x3=False):
            Social LLC by the authors, 2026-09-28): real frames from this
            sensor's own camera, a Lepton 3.5, in degrees C, one person lying,
            sitting or standing, or an empty room
+      iiser Thermal Vision, IISER Bhopal (licence and permission granted to
+           Flock Social LLC by the authors, 2026-09-29): this sensor's camera,
+           a Lepton 3.5, in a classroom of up to ten people and a lab of up
+           to five, 8-bit, where each person's head is (from a face box;
+           nothing learns what a face looks like)
     Only people are labelled in them, so only the people map is graded.
     """
     from scipy.ndimage import zoom
@@ -82,7 +87,10 @@ def real_frame(real, rng, groups_x3=False):
     # SDT is this sensor's own camera, so it carries the most weight; AAU's
     # wall-mounted meeting rooms are the next closest view and lost 25 points
     # the one time their share was cut to make room for it.
-    sources = [('tp', 0.14), ('otp', 0.18), ('aau', 0.27), ('ss', 0.04), ('sdt', 0.27), ('sdts', 0.1)]
+    # iiser is the only real crowd on this camera, rows of people half hidden
+    # behind the row in front, which is where every earlier model undercounted.
+    sources = [('tp', 0.14), ('otp', 0.18), ('aau', 0.27), ('ss', 0.04), ('sdt', 0.27), ('sdts', 0.1),
+               ('iiser', 0.2)]
     sources = [(k, w) for k, w in sources if f'{k}_img' in real]
     weights = np.array([w for _, w in sources])
     src = sources[int(rng.choice(len(sources), p=weights / weights.sum()))][0]
@@ -120,6 +128,13 @@ def real_frame(real, rng, groups_x3=False):
         t = real[f'{src}_img'][i].astype(np.float32) + rng.normal(0, 1.0)
         objects = [{'cls': 'person', 'x': hx, 'y': hy, 'box': box, 'approx': True}
                    for box, (hx, hy) in real[f'{src}_people'][i]]
+    elif src == 'iiser':
+        # Face boxes, not body boxes, so only where the heads are is graded.
+        i = int(rng.integers(len(real['iiser_img'])))
+        t = _eight_bit(real['iiser_img'][i].astype(np.float32) / 255.0, rng)
+        objects = [{'cls': 'person', 'x': hx, 'y': hy, 'box': box}
+                   for box, (hx, hy) in real['iiser_people'][i]]
+        boxes = False
     else:
         i = int(rng.integers(len(real['ss_img'])))
         t = zoom(_eight_bit(real['ss_img'][i].astype(np.float32) / 255.0, rng), (5, 5), order=1)
