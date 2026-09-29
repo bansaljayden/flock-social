@@ -182,6 +182,26 @@ function createdAfterFrom(argv) {
   return { at };
 }
 
+// Spending what is left of a month. --without-weekly drops every venue that
+// already has a weekly curve under any identity, which is the harvest's case:
+// harvestVenueFilter.js writes weekly rows onto an existing ml_venues row it
+// matched by place id or by a near duplicate WITHOUT stamping its
+// besttime_venue_id, so --skip-collected alone would pay an admission for a
+// week that is already in the corpus. --order=reviews spends the admissions on
+// the most reviewed places first, which are the ones BestTime is likeliest to
+// find (a 404 still spends the lookup) and the ones people are likeliest to open.
+function selectionOptions(argv) {
+  const orderArg = argv.find((a) => a.startsWith('--order='));
+  const order = orderArg ? orderArg.slice('--order='.length) : null;
+  if (order !== null && order !== 'reviews') {
+    return { error: `--order must be "reviews", got "${order}".` };
+  }
+  return {
+    withoutWeekly: argv.includes('--without-weekly'),
+    orderBy: order === 'reviews' ? 'review_count DESC NULLS LAST, id' : 'city, id',
+  };
+}
+
 // No single run can admit more than the plan allows in a month, so a --max-new
 // above it is refused here rather than handed to BestTime to refuse halfway.
 const PLAN_MONTHLY_ADMISSIONS = 100;
@@ -244,8 +264,10 @@ async function collectWeekly() {
   }
 
   const createdAfter = createdAfterFrom(process.argv);
-  if (createdAfter.error) {
-    console.error(`[ML:Weekly] ${createdAfter.error}`);
+  const selection = selectionOptions(process.argv);
+  const argError = createdAfter.error || selection.error;
+  if (argError) {
+    console.error(`[ML:Weekly] ${argError}`);
     process.exitCode = 1;
     await pool.end();
     return;
@@ -274,7 +296,11 @@ async function collectWeekly() {
     params.push(createdAfter.at.toISOString());
     query += ` AND created_at >= $${params.length}`;
   }
-  query += ' ORDER BY city, id';
+  if (selection.withoutWeekly) {
+    query += ` AND NOT EXISTS (SELECT 1 FROM ml_training_data t
+                WHERE t.venue_id = ml_venues.id AND t.collection_mode = 'weekly')`;
+  }
+  query += ` ORDER BY ${selection.orderBy}`;
   if (limitFilter) {
     params.push(limitFilter);
     query += ` LIMIT $${params.length}`;
@@ -796,6 +822,7 @@ module.exports = {
   bestTimeSlotToLocal,
   createdAfterFrom,
   newVenueCheck,
+  selectionOptions,
   venueCalendar,
   requireSlotIndex,
   BESTTIME_DAY_START_HOUR,

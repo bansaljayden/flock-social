@@ -1823,6 +1823,23 @@ minutes at one request every four seconds) and up to seven times the rows.
 Every run prints the key's counters before and after; the besttime.app
 dashboard is the authority for the admission count.
 
+### Spending the rest of a month's admissions, after a harvest
+
+The admissions reset on the 1st (UTC) and do not carry over. Once a market's
+harvest has landed, what is left of the month goes to the active venues that
+still have no weekly curve, most reviewed first:
+
+```bash
+# from backend/. N = the month's unspent admissions (the dashboard's number).
+node scripts/ml/collectWeekly.js --city=philly --skip-collected --without-weekly --order=reviews --limit=N --max-new=N
+```
+
+`--without-weekly` is what makes this safe after a harvest. A venue the
+harvest matched by place id or as a near-duplicate has its curves and no
+BestTime id, so `--skip-collected` alone would select it and pay an admission
+for a week the corpus already holds. `--order=reviews` puts the places BestTime
+is likeliest to find first; a 404 still spends the lookup.
+
 ### What every run proves and prints before anything is written
 
 - **The axis.** The curves are read from `day_raw_whole` and mapped through
