@@ -2298,8 +2298,9 @@ const dbUrl = (host) => ['postgresql://', DB_USER, ':', DB_PASSWORD, '@', host, 
 const PRIVATE_NETWORK_FIX = 'railway variables --service Flock-app- --set PGHOST=postgres.railway.internal --set PGPORT=5432';
 
 const OWNER_STEP_IDS = [
-  'database_private_network', 'revenuecat_project_figures', 'revenuecat_webhook', 'expense_list', 'error_reporting',
+  'database_private_network', 'revenuecat_project_figures', 'revenuecat_webhook', 'expense_list', 'error_reporting', 'sales_tax',
   'paid_apps_agreement', 'small_business_program', 'subscription_review_screenshot', 'apple_organization_account', 'besttime_admissions',
+  'vercel_plan',
 ];
 const ownerStep = (body, id) => body.ownerActions.items.find((s) => s.id === id);
 const roundTrips = () => log.filter((q) => q.sql === 'SELECT 1').length;
@@ -2347,8 +2348,9 @@ test('with nothing set, every step the server checks reads to do, and the databa
   for (const id of ['revenuecat_project_figures', 'revenuecat_webhook']) {
     assert.deepStrictEqual(ownerStep(r.body, id).link, { href: 'https://app.revenuecat.com/', text: 'RevenueCat' });
   }
-  // Four required steps to do and one optional one, counted apart.
-  assert.deepStrictEqual(oa.counts, { todo: 4, optionalTodo: 1, done: 0, unknown: 0, checkYourself: 5 });
+  // Four required steps to do and two optional ones (error reporting, sales
+  // tax), counted apart.
+  assert.deepStrictEqual(oa.counts, { todo: 4, optionalTodo: 2, done: 0, unknown: 0, checkYourself: 6 });
 
   // A good round trip is held for the vendor reads' five minutes: a reload
   // and an early refresh reuse it rather than ping the database again.
@@ -2384,7 +2386,8 @@ test('each step reads done once it is in place, and a v2 key is judged with what
     /^REVENUECAT_WEBHOOK_SECRET is set on the server\..*Authorization header, with or without Bearer in front\. The server cannot see RevenueCat's side, so that half is yours to check\.$/);
   assert.strictEqual(ownerStep(r.body, 'expense_list').words, 'The expense list has bills on it, so the costs on this page count them.');
   assert.strictEqual(ownerStep(r.body, 'error_reporting').words, 'SENTRY_DSN is set, so server errors are collected in Sentry with their stack, including the ones a route catches and answers with a 500.');
-  assert.deepStrictEqual(r.body.ownerActions.counts, { todo: 0, optionalTodo: 0, done: 5, unknown: 0, checkYourself: 5 });
+  // Sales tax stays an optional to do: STRIPE_AUTOMATIC_TAX is its own test below.
+  assert.deepStrictEqual(r.body.ownerActions.counts, { todo: 0, optionalTodo: 1, done: 5, unknown: 0, checkYourself: 6 });
   // With no v1 key the hub asks RevenueCat nothing, so the v2 key is set and
   // not yet used, and the step says so rather than implying it works.
   let rc = ownerStep(r.body, 'revenuecat_project_figures');
@@ -2564,6 +2567,7 @@ test('the steps the server cannot see carry no state, and each links to the page
     ['subscription_review_screenshot', 'https://appstoreconnect.apple.com/apps'],
     ['apple_organization_account', 'https://developer.apple.com/contact/'],
     ['besttime_admissions', 'https://besttime.app/settings'],
+    ['vercel_plan', 'https://vercel.com/dashboard'],
   ]);
   for (const s of yours) {
     assert.strictEqual(s.state, null, `${s.id} made a claim the server cannot check`);
@@ -2571,7 +2575,7 @@ test('the steps the server cannot see carry no state, and each links to the page
     assert.ok(typeof s.label === 'string' && s.label && typeof s.words === 'string' && s.words, s.id);
     assert.ok(typeof s.link.text === 'string' && s.link.text, s.id);
   }
-  assert.strictEqual(r.body.ownerActions.counts.checkYourself, 5);
+  assert.strictEqual(r.body.ownerActions.counts.checkYourself, 6);
   assert.match(yours[0].words, /Apple sells no in-app purchase until the Account Holder signs it/);
   // The Small Business Program step quotes the cost model's two rates, and the
   // break-even it talks about is worked from the standard one.
@@ -2945,5 +2949,30 @@ test('a stated break-even price says why: Stripe unread, or no monthly dollar pr
     assert.strictEqual(be.proWeb.statedBecause, 'stripe_prices_unread');
   } finally {
     delete stripeState.pricesFail;
+  }
+});
+
+test('the sales tax step reads the checkouts\' own switch, and says what a buyer is charged either way', async () => {
+  const saved = process.env.STRIPE_AUTOMATIC_TAX;
+  try {
+    delete process.env.STRIPE_AUTOMATIC_TAX;
+    handlers = hubHandlers();
+    let r = await req('GET', '/api/admin/money');
+    let s = ownerStep(r.body, 'sales_tax');
+    assert.strictEqual(s.checkedBy, 'server');
+    assert.strictEqual(s.state, 'todo');
+    assert.strictEqual(s.optional, true);
+    assert.match(s.words, /^STRIPE_AUTOMATIC_TAX is off, so web checkouts for Flock Pro and Roost charge the list price and add no sales tax\./);
+    assert.deepStrictEqual(s.link, { href: 'https://dashboard.stripe.com/tax', text: 'Stripe Tax' });
+
+    process.env.STRIPE_AUTOMATIC_TAX = 'true';
+    moneyHub.__test.resetCache();
+    handlers = hubHandlers();
+    r = await req('GET', '/api/admin/money');
+    s = ownerStep(r.body, 'sales_tax');
+    assert.strictEqual(s.state, 'done');
+    assert.match(s.words, /^STRIPE_AUTOMATIC_TAX is on, so Stripe Tax works out sales tax at each web checkout/);
+  } finally {
+    if (saved === undefined) delete process.env.STRIPE_AUTOMATIC_TAX; else process.env.STRIPE_AUTOMATIC_TAX = saved;
   }
 });

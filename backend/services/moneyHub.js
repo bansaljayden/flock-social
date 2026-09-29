@@ -2910,6 +2910,8 @@ function buildOwnerActions({ roundTrip, expensesRead, revenuecat }) {
 
   // instrument.js's own test, so this step and the boot log line agree.
   const sentrySet = Boolean(process.env.SENTRY_DSN);
+  // The checkouts' own switch, so this step and what a buyer is charged agree.
+  const taxOn = billing.taxEnabled();
 
   const server = [
     {
@@ -2957,6 +2959,19 @@ function buildOwnerActions({ roundTrip, expensesRead, revenuecat }) {
         ? 'SENTRY_DSN is set, so server errors are collected in Sentry with their stack, including the ones a route catches and answers with a 500.'
         : `SENTRY_DSN is not set. Server errors reach the Railway logs, and ${SERVER_FAULT_ALERT_THRESHOLD} of them in ${Math.round(FAULT_WINDOW_MS / 60000)} minutes, or a background job that stops, raises an ops alert. What is missing is a stack trace for each error. Setting it needs no code change.`,
     },
+    {
+      // Optional because whether a subscription is taxable, and where, is a
+      // question for the states and an accountant, not something the code
+      // can decide. What the server can say is whether checkout adds tax.
+      id: 'sales_tax',
+      label: 'Sales tax on web checkouts',
+      state: taxOn ? 'done' : 'todo',
+      optional: true,
+      words: taxOn
+        ? 'STRIPE_AUTOMATIC_TAX is on, so Stripe Tax works out sales tax at each web checkout, for Flock Pro and Roost, wherever the account has a registration. It adds nothing where there is none.'
+        : 'STRIPE_AUTOMATIC_TAX is off, so web checkouts for Flock Pro and Roost charge the list price and add no sales tax. Once the company is registered to collect it, add the registration in Stripe under Tax, then set STRIPE_AUTOMATIC_TAX=true. Checkouts then add tax on top of the price. The App Store collects its own.',
+      link: { href: 'https://dashboard.stripe.com/tax', text: 'Stripe Tax' },
+    },
   ].map((s) => ({ optional: false, fix: null, link: null, ...s, checkedBy: 'server' }));
 
   // The steps the server cannot see. Each goes out with no state, so nothing
@@ -2993,6 +3008,12 @@ function buildOwnerActions({ roundTrip, expensesRead, revenuecat }) {
       label: 'BestTime new-venue admissions this month',
       words: 'BestTime\'s key endpoint does not report them, so the server cannot count them. BestTime\'s settings page shows how many are left this month.',
       link: { href: 'https://besttime.app/settings', text: 'BestTime settings' },
+    },
+    {
+      id: 'vercel_plan',
+      label: 'A Vercel plan that allows a business',
+      words: 'Vercel\'s free Hobby plan is for non-commercial, personal use only, and the website sells Flock Pro. The plan that fits is Pro, $20 a month per developer seat, under Settings, then Billing. The Vercel line under Costs says which plan the cost figures assume.',
+      link: { href: 'https://vercel.com/dashboard', text: 'Vercel' },
     },
   ].map((s) => ({ ...s, checkedBy: 'you', state: null, optional: false, fix: null }));
 
