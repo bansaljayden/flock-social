@@ -911,3 +911,28 @@ test('a new venue re-checks the near-duplicate rule under the write lock', async
   assert.strictEqual(res.status, 'claimed');
   assert.ok(!queries.some((q) => /INSERT INTO ml_venues/.test(q)), 'a second row was inserted for a venue that already has one');
 });
+
+test('the key-status read does not follow redirects either', async () => {
+  // Every request the harvest makes passes the admission guard as the address
+  // it asked for; the key endpoint's read is one of them, and before and after
+  // an abort it runs twice.
+  const { fetchKeyStatus } = require('../services/besttimeAccount');
+  const saved = globalThis.fetch;
+  const modes = [];
+  globalThis.fetch = async (url, init = {}) => { modes.push(init.redirect); return jsonResponse(302, {}); };
+  try {
+    const answer = await fetchKeyStatus('test-key');
+    assert.deepStrictEqual(answer, { ok: false, kind: 'http', httpStatus: 302 });
+    assert.deepStrictEqual(modes, ['manual']);
+  } finally {
+    globalThis.fetch = saved;
+  }
+});
+
+test('the demand list inserts under the same corpus lock the harvest writes under', () => {
+  // So a harvest re-checking for a near-duplicate and a demand insert of the
+  // same place under another Google listing cannot interleave.
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'scripts', 'ml', 'addDemandVenues.js'), 'utf8');
+  assert.match(src, /withCorpusWriteLock\(pool, \(client\) => client\.query\(\s*`INSERT INTO ml_venues/);
+  assert.doesNotMatch(src, /await pool\.query\(\s*`INSERT INTO ml_venues/);
+});
