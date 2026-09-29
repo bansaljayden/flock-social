@@ -80,6 +80,9 @@ jest.mock('@capacitor-community/apple-sign-in', () => ({
 }));
 
 const api = require('../services/api');
+// The web Google flow exists only in a build that carries a client id
+// (useGoogleAuth reads it once, at load), so these load the module as one.
+process.env.REACT_APP_GOOGLE_CLIENT_ID = process.env.REACT_APP_GOOGLE_CLIENT_ID || 'web-client.apps.googleusercontent.com';
 const SignupScreen = require('../components/auth/SignupScreen').default;
 const VenueLoginScreen = require('../components/auth/VenueLoginScreen').default;
 
