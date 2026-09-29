@@ -79,3 +79,15 @@ Flock Social LLC on 28 September 2026; the images are not redistributed.
 C. Pramerdorfer, J. Strohmayer and M. Kampel, "SDT: A Synthetic Multi-Modal
 Dataset for Person Detection and Pose Classification", 2020 IEEE International
 Conference on Image Processing (ICIP), doi:10.1109/ICIP40778.2020.9191284.
+
+## Thermal Vision dataset (IISER Bhopal)
+
+osf.io/9z5a4, by Arijit Samal and Haroon R. Lone, Indian Institute of Science
+Education and Research Bhopal. Used to train and evaluate the people counter
+under the licence the authors attached to the dataset and with their
+permission, granted to Flock Social LLC on 29 September 2026. The images are
+not redistributed, are used only to count people, and cannot be reconstructed
+from the model.
+
+Arijit Samal and Haroon R. Lone, "Thermal vision: Pioneering non-invasive
+temperature tracking in congested spaces", Smart Health 36 (2025): 100576.
