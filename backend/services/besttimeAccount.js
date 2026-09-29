@@ -68,11 +68,22 @@ function configuredKey() {
 function decodeEscapes(text) {
   let cur = text;
   for (let pass = 0; pass < 4; pass++) {
-    const next = cur.replace(/%([0-9a-f]{2})/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+    // %XX, and \uXXXX / \xXX left as literal text inside a parsed string.
+    const next = cur
+      .replace(/%([0-9a-f]{2})/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+      .replace(/\\u([0-9a-f]{4})/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+      .replace(/\\x([0-9a-f]{2})/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
     if (next === cur) break;
     cur = next;
   }
   return cur;
+}
+
+// A run of sixteen or more hex characters with at least one letter in it, the
+// shape of a key's body. Digits alone are an id or a count, not a key.
+function hasHexKeyRun(text) {
+  const runs = text.match(/[0-9a-f]{16,}/g) || [];
+  return runs.some((r) => /[a-f]/.test(r));
 }
 function keyCheckForms(text) {
   const forms = new Set([text]);
@@ -117,11 +128,18 @@ function containsSecretWindow(text, secrets = []) {
   });
 }
 
+// Both screens at once: key-shaped text, or any eight characters of a
+// configured key's body. What every printed account value goes through.
+function screenValue(value, secrets = []) {
+  const text = typeof value === 'string' ? value : JSON.stringify(value);
+  return containsKeyMaterial(value, secrets) || containsSecretWindow(String(text || ''), secrets);
+}
+
 function containsKeyMaterial(value, secrets = []) {
   const text = typeof value === 'string' ? value : JSON.stringify(value);
   if (!text) return false;
   const forms = keyCheckForms(text);
-  if (forms.some((t) => /(pri|pub)[_\s-]?[0-9a-f]{4,}|[0-9a-f]{16,}/.test(t))) return true;
+  if (forms.some((t) => /(pri|pub)[_\s-]?[0-9a-f]{4,}/.test(t) || hasHexKeyRun(t))) return true;
   return containsConfiguredSecret(text, secrets);
 }
 
@@ -227,7 +245,7 @@ function readKeyStatus(body, { secrets = [] } = {}) {
     // Screened whole, then shortened: shortening first let the start of a key
     // through under the cut.
     const full = String(b.status);
-    status = containsKeyMaterial(full, secrets) ? '[withheld]' : full.slice(0, 40);
+    status = screenValue(full, secrets) ? '[withheld]' : full.slice(0, 40);
   }
   return {
     healthy: b.status === 'OK' && b.valid === true && b.active === true,
@@ -247,6 +265,7 @@ module.exports = {
   fetchKeyStatus,
   readKeyStatus,
   containsKeyMaterial,
+  screenValue,
   nextCalendarMonthStart,
   calendarMonthEnd,
   errorCode,
