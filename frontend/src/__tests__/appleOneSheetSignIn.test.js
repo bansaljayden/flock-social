@@ -16,8 +16,12 @@
  * nothing"). What is pinned here:
  *   - one sheet, same identity token, same code, same name, plus the year;
  *   - the copy follows the server's granularity, not stale screen state;
- *   - past Apple's five minutes, or on a 401/503, the screen falls back to the
- *     Apple button with a plain sentence, and the year stays filled in;
+ *   - past Apple's five minutes the held code is never sent: the same Continue
+ *     opens Apple's sheet itself and sends the new credentials with the year,
+ *     so it is still one step; a dismissed sheet keeps Continue and says why
+ *     Apple asked again;
+ *   - on a 401/503 the screen falls back to the Apple button with a plain
+ *     sentence, and the year stays filled in;
  *   - a refusal such as under 13 is shown in the server's own words, and the
  *     held credentials are not tried again;
  *   - a request that never reached the server keeps Continue usable.
@@ -175,7 +179,36 @@ describe('the copy follows the server, not the previous render', () => {
 });
 
 describe('when the held credentials cannot be used', () => {
-  it("past Apple's five minutes: no post, a plain sentence, and the Apple button back with the year kept", async () => {
+  // This pinned a Continue that posted nothing, a sentence, and the Apple
+  // button back, which cost the person a dead tap before the second sheet.
+  // Apple's code is still never sent past its few minutes; the Continue they
+  // pressed now opens the sheet itself.
+  it("past Apple's five minutes: Continue opens Apple's sheet itself and finishes with the year, in one step", async () => {
+    const utils = open();
+    const t0 = Date.now();
+    const clock = jest.spyOn(Date, 'now').mockReturnValue(t0);
+    await firstTap(utils);
+    fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: '2001' } });
+
+    clock.mockReturnValue(t0 + 10 * 60 * 1000);
+    mockAppleAuthorize.mockResolvedValueOnce({ response: { user: 'apple-user-1', identityToken: 'apple-id-token-2', authorizationCode: 'apple-code-2' } });
+    api.appleLogin.mockResolvedValueOnce({ user: { id: 42 } });
+    fireEvent.click(continueButton(utils));
+
+    await waitFor(() => expect(utils.onLoginSuccess).toHaveBeenCalledWith({ id: 42 }));
+    expect(mockAppleAuthorize).toHaveBeenCalledTimes(2);
+    expect(api.appleLogin).toHaveBeenCalledTimes(2);
+    const last = api.appleLogin.mock.calls[1];
+    // The new sheet's credentials, never the stale code.
+    expect(last[0]).toBe('apple-id-token-2');
+    expect(last[2]).toBe('apple-code-2');
+    // Apple sends the name only once; the one from the first sheet goes.
+    expect(last[1]).toEqual({ givenName: 'Sam', familyName: 'Lee' });
+    expect(last[3]).toBe('2001-12-31');
+    expect(last[4]).toEqual({ dobGranularity: 'year' });
+  });
+
+  it("past Apple's five minutes, a dismissed sheet keeps Continue, says why, and the next Continue opens it again", async () => {
     const utils = open();
     const t0 = Date.now();
     const clock = jest.spyOn(Date, 'now').mockReturnValue(t0);
@@ -183,23 +216,47 @@ describe('when the held credentials cannot be used', () => {
     fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: '2001' } });
 
     clock.mockReturnValue(t0 + APPLE_CODE_LIFETIME_MS + 1000);
+    mockAppleAuthorize.mockRejectedValueOnce(Object.assign(new Error('The operation could not be completed. (com.apple.AuthenticationServices.AuthorizationError error 1001.)'), { code: '1001' }));
     fireEvent.click(continueButton(utils));
     await waitFor(() => expect(utils.getByRole('alert').textContent).toBe(
-      'Apple sign-in did not finish in time. Tap Continue with Apple to try again. Your year is still filled in.'));
+      'Apple sign-in timed out, so Apple needs to check it is you again. Tap Continue to open it. Your year is still filled in.'));
+    // Nothing was sent, the stale code least of all.
     expect(api.appleLogin).toHaveBeenCalledTimes(1);
-    expect(continueButton(utils)).toBeNull();
-    expect(appleButton(utils)).not.toBeNull();
+    expect(continueButton(utils)).not.toBeNull();
+    expect(appleButton(utils)).toBeNull();
     expect(utils.getByLabelText('Year of birth').value).toBe('2001');
 
-    // One more sheet finishes it, carrying the year that is already typed.
-    mockAppleAuthorize.mockResolvedValueOnce({ response: { ...SHEET, identityToken: 'apple-id-token-2', authorizationCode: 'apple-code-2' } });
-    api.appleLogin.mockResolvedValueOnce({ user: { id: 42 } });
-    fireEvent.click(appleButton(utils));
-    await waitFor(() => expect(utils.onLoginSuccess).toHaveBeenCalledWith({ id: 42 }));
-    const last = api.appleLogin.mock.calls[1];
-    expect(last[0]).toBe('apple-id-token-2');
-    expect(last[3]).toBe('2001-12-31');
-    expect(last[4]).toEqual({ dobGranularity: 'year' });
+    mockAppleAuthorize.mockResolvedValueOnce({ response: { user: 'apple-user-1', identityToken: 'apple-id-token-3', authorizationCode: 'apple-code-3' } });
+    api.appleLogin.mockResolvedValueOnce({ user: { id: 45 } });
+    await act(async () => { fireEvent.click(continueButton(utils)); });
+    await waitFor(() => expect(utils.onLoginSuccess).toHaveBeenCalledWith({ id: 45 }));
+    expect(mockAppleAuthorize).toHaveBeenCalledTimes(3);
+    expect(api.appleLogin.mock.calls[1][0]).toBe('apple-id-token-3');
+    expect(api.appleLogin.mock.calls[1][3]).toBe('2001-12-31');
+  });
+
+  it("past Apple's five minutes, a new sheet whose post never left is sent again without a third sheet", async () => {
+    const utils = open();
+    const t0 = Date.now();
+    const clock = jest.spyOn(Date, 'now').mockReturnValue(t0);
+    await firstTap(utils);
+    fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: '2001' } });
+
+    clock.mockReturnValue(t0 + APPLE_CODE_LIFETIME_MS + 1000);
+    mockAppleAuthorize.mockResolvedValueOnce({ response: { user: 'apple-user-1', identityToken: 'apple-id-token-4', authorizationCode: 'apple-code-4' } });
+    api.appleLogin.mockRejectedValueOnce(Object.assign(
+      new Error("You're offline. This will work again once you're back on signal."), { isNetworkError: true, isOffline: true },
+    ));
+    fireEvent.click(continueButton(utils));
+    await waitFor(() => expect(utils.getByRole('alert').textContent)
+      .toBe("You're offline. This will work again once you're back on signal."));
+
+    api.appleLogin.mockResolvedValueOnce({ user: { id: 46 } });
+    await act(async () => { fireEvent.click(continueButton(utils)); });
+    await waitFor(() => expect(utils.onLoginSuccess).toHaveBeenCalledWith({ id: 46 }));
+    expect(mockAppleAuthorize).toHaveBeenCalledTimes(2);
+    expect(api.appleLogin.mock.calls[2][0]).toBe('apple-id-token-4');
+    expect(api.appleLogin.mock.calls[2][2]).toBe('apple-code-4');
   });
 
   it.each([
@@ -433,6 +490,28 @@ describe('a new Apple account on the signup screen finishes on one sheet', () =>
     expect(continueButton(utils)).toBeNull();
     expect(utils.onSignupSuccess).not.toHaveBeenCalled();
     expect(api.appleLogin.mock.calls[1][3]).toBe('2019-12-31');
+  });
+
+  it("past Apple's five minutes, Continue opens Apple's sheet itself and creates the account with the year", async () => {
+    const utils = openSignup();
+    const t0 = Date.now();
+    const clock = jest.spyOn(Date, 'now').mockReturnValue(t0);
+    await firstTap(utils);
+    fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: '2000' } });
+
+    clock.mockReturnValue(t0 + 10 * 60 * 1000);
+    mockAppleAuthorize.mockResolvedValueOnce({ response: { user: 'apple-user-1', identityToken: 'apple-id-token-5', authorizationCode: 'apple-code-5' } });
+    api.appleLogin.mockResolvedValueOnce({ user: { id: 53 } });
+    fireEvent.click(continueButton(utils));
+
+    await waitFor(() => expect(utils.onSignupSuccess).toHaveBeenCalledWith({ id: 53 }));
+    expect(mockAppleAuthorize).toHaveBeenCalledTimes(2);
+    expect(utils.queryByRole('alert')).toBeNull();
+    const last = api.appleLogin.mock.calls[1];
+    expect(last[0]).toBe('apple-id-token-5');
+    expect(last[1]).toEqual({ givenName: 'Sam', familyName: 'Lee' });
+    expect(last[3]).toBe('2000-12-31');
+    expect(last[4]).toEqual({ dobGranularity: 'year' });
   });
 
   it('Sign up with email instead puts the form back and drops what was held', async () => {

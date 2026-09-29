@@ -62,10 +62,11 @@ let lastDelivered = null;
 //
 // Memory only. They are never written to storage, never put in React state
 // that devtools or a crash report could serialise, and the closure is dropped
-// by the screen the moment it is used or fails. Apple's authorization code
-// lasts about five minutes, so after that `resume` refuses without posting
-// and the screen asks for the Apple tap again, which is the old path and
-// still works.
+// by the screen the moment it is used or fails.
+//
+// Apple's authorization code is single-use and lasts about five minutes, and
+// the server has to exchange it, so a hold older than that is never sent.
+// What happens instead is below, under PAST THE CODE'S FEW MINUTES.
 export const APPLE_CODE_LIFETIME_MS = 5 * 60 * 1000;
 
 export class AppleResumeExpiredError extends Error {
@@ -76,20 +77,69 @@ export class AppleResumeExpiredError extends Error {
   }
 }
 
-const makeResume = ({ identityToken, fullName, authorizationCode }) => {
-  const heldAt = Date.now();
+// A dismissed sheet. The button stays quiet about it and the step tells it
+// apart from a failure, so the plugin's two ways of saying it are matched in
+// one place.
+const isCancelled = (err) => /cancel|1001/i.test(String(err?.message || err));
+
+// Apple's sheet, and what it handed over. Shared by the button's tap and by a
+// hold that has outlived the code, so the name rule above (lastDelivered) is
+// applied the same way to both.
+const openAppleSheet = async () => {
+  const { SignInWithApple } = await import('@capacitor-community/apple-sign-in');
+  const result = await SignInWithApple.authorize({
+    clientId: 'com.flockcorp.flock',
+    // api.flockcorp.com, not the Railway-generated host. Inert today (the
+    // native ASAuthorization path ignores redirectURI and the button is
+    // gated on iOS), but the Railway name is an implementation detail that
+    // changes if the service is ever recreated, which is the reasoning
+    // services/emailService.js already pins for every other URL we mint.
+    redirectURI: 'https://api.flockcorp.com/api/auth/apple',
+    scopes: 'email name',
+  });
+  const r = result?.response;
+  if (!r?.identityToken) throw new Error('Apple sign-in was cancelled');
+  // fullName only arrives on the first-ever authorization for the Apple ID.
+  const delivered = (r.givenName || r.familyName)
+    ? { givenName: r.givenName || '', familyName: r.familyName || '' }
+    : undefined;
+  if (delivered) lastDelivered = r.user ? { user: r.user, fullName: delivered } : null;
+  const remembered = lastDelivered && r.user && lastDelivered.user === r.user
+    ? lastDelivered.fullName
+    : undefined;
+  return { identityToken: r.identityToken, fullName: delivered || remembered, authorizationCode: r.authorizationCode };
+};
+
+const makeResume = (first) => {
+  let held = first;
+  let heldAt = Date.now();
   let used = false;
   return async (dob, dobGranularity) => {
     // One use. A second call, whatever happened to the first, is a stale
     // handle, and the server would refuse a spent credential anyway.
-    if (used || Date.now() - heldAt > APPLE_CODE_LIFETIME_MS) {
-      used = true;
-      throw new AppleResumeExpiredError();
+    if (used) throw new AppleResumeExpiredError();
+    // PAST THE CODE'S FEW MINUTES the held code is worth nothing. This used
+    // to refuse without posting, and the step then put the Apple button back
+    // under a sentence saying so: a Continue that did nothing, then a second
+    // tap and a sheet. Now this tap opens Apple's sheet itself and the year
+    // already typed goes with what the new sheet hands over, so the Continue
+    // the person pressed still finishes the account. A dismissed sheet has
+    // sent nothing, so the handle stays good and the next Continue opens it
+    // again.
+    if (Date.now() - heldAt > APPLE_CODE_LIFETIME_MS) {
+      try {
+        held = await openAppleSheet();
+      } catch (err) {
+        if (isCancelled(err)) throw Object.assign(new Error('Apple sign-in was cancelled'), { cancelled: true });
+        used = true;
+        throw err;
+      }
+      heldAt = Date.now();
     }
     used = true;
     let data;
     try {
-      data = await appleLogin(identityToken, fullName, authorizationCode, dob,
+      data = await appleLogin(held.identityToken, held.fullName, held.authorizationCode, dob,
         ...(dobGranularity ? [{ dobGranularity }] : []));
     } catch (err) {
       // Kept only when the request provably never reached Flock: offline, which
@@ -136,36 +186,14 @@ const AppleSignInButton = ({ onSuccess, onError, dob, dobGranularity, beforeAuth
     // What this sheet handed over, kept only for the catch below.
     let held = null;
     try {
-      const { SignInWithApple } = await import('@capacitor-community/apple-sign-in');
-      const result = await SignInWithApple.authorize({
-        clientId: 'com.flockcorp.flock',
-        // api.flockcorp.com, not the Railway-generated host. Inert today (the
-        // native ASAuthorization path ignores redirectURI and the button is
-        // gated on iOS), but the Railway name is an implementation detail that
-        // changes if the service is ever recreated, which is the reasoning
-        // services/emailService.js already pins for every other URL we mint.
-        redirectURI: 'https://api.flockcorp.com/api/auth/apple',
-        scopes: 'email name',
-      });
-      const r = result?.response;
-      if (!r?.identityToken) throw new Error('Apple sign-in was cancelled');
-      // fullName only arrives on the first-ever authorization for the Apple ID.
-      const delivered = (r.givenName || r.familyName)
-        ? { givenName: r.givenName || '', familyName: r.familyName || '' }
-        : undefined;
-      if (delivered) lastDelivered = r.user ? { user: r.user, fullName: delivered } : null;
-      const remembered = lastDelivered && r.user && lastDelivered.user === r.user
-        ? lastDelivered.fullName
-        : undefined;
-      const fullName = delivered || remembered;
-      held = { identityToken: r.identityToken, fullName, authorizationCode: r.authorizationCode };
+      held = await openAppleSheet();
       // The options argument goes only when it holds something, so a plain
       // sign-in calls appleLogin exactly as it always has.
       const opts = {
         ...(dobGranularity ? { dobGranularity } : {}),
         ...(reconfirm ? { reconfirm: true } : {}),
       };
-      const data = await appleLogin(r.identityToken, fullName, r.authorizationCode, dob,
+      const data = await appleLogin(held.identityToken, held.fullName, held.authorizationCode, dob,
         ...(Object.keys(opts).length ? [opts] : []));
       // Accepted: the account carries the name now, and nothing else on this
       // device should ever receive it.
@@ -185,7 +213,7 @@ const AppleSignInButton = ({ onSuccess, onError, dob, dobGranularity, beforeAuth
         ? makeResume(held)
         : undefined;
       held = null;
-      if (!/cancel|1001/i.test(msg)) onError?.(msg || 'Apple sign-in failed', err, resume);
+      if (!isCancelled(err)) onError?.(msg || 'Apple sign-in failed', err, resume);
     } finally {
       setBusy(false);
     }
