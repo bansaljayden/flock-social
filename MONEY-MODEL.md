@@ -73,7 +73,9 @@ no-users problem; it only needs users in one city instead of everywhere.
 ## The consumer arithmetic
 
 Apple's Small Business Program takes 15% (enrolment is a step in the App Store
-setup; at the standard 30% every figure below roughly doubles). The yearly plan
+setup). At the standard 30% the yearly plan nets about $1.75 a month instead of
+$2.12, so every subscriber count below rises by about a fifth: $1,000 a month
+takes 572 yearly subscribers instead of 471. The yearly plan
 then nets about $25.49 per subscriber, or $2.12 a month. The monthly plan nets
 about $3.39 a month.
 

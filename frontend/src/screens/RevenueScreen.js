@@ -303,6 +303,7 @@ const HUB_GAP_SOURCE = {
   stripe: 'Stripe',
   stripe_partial: 'a full Stripe read',
   stripe_unpriced: 'a price for every Stripe subscription',
+  stripe_tax: "this month's Stripe invoices, for the sales tax in the charges",
   app_store: 'RevenueCat',
   app_store_partial: 'every Pro account in RevenueCat',
   app_store_unpriced: 'a price for every App Store subscription',
@@ -312,6 +313,7 @@ const HUB_GAP_WORDS = {
   stripe: 'Stripe was not read',
   stripe_partial: 'Stripe had more entries this month than the hub reads, and a missing page could move a total either way',
   stripe_unpriced: 'some live Stripe subscriptions carry a price or a discount this read could not work out in dollars',
+  stripe_tax: "automatic tax is on and this month's invoices could not be read, so the sales tax inside the charges is unknown",
   app_store: 'the App Store is not in it, because RevenueCat was not read',
   app_store_partial: 'the App Store is not in it, because RevenueCat answered for only some Pro accounts',
   app_store_unpriced: 'the App Store is not in it, because some live App Store subscriptions carry no dollar price in RevenueCat',
@@ -398,7 +400,7 @@ function HubSummary({ h, colors, loading, onRefresh }) {
           label="Net this month"
           value={Number.isFinite(net) ? hubMoney(net, { sign: true }) : netNeeds}
           tone={Number.isFinite(net) ? (net < 0 ? 'bad' : 'good') : 'muted'}
-          note={`Revenue this month less costs this month.${netMissing.length > 0 ? ` ${hubGapSentence(netMissing)}` : ''}`}
+          note={`Revenue this month less costs this month. Revenue is cash as it arrived, so a yearly plan lands whole in the month it was bought; costs are yearly and quarterly bills spread by month, so a $99 yearly bill counts as $8.25 in every month.${netMissing.length > 0 ? ` ${hubGapSentence(netMissing)}` : ''}`}
         />
         <HubRow
           navy={navy}
@@ -2676,7 +2678,13 @@ export default function RevenueScreen({
                       ? ledger.infrastructureMonthlyUsd
                       : (Number.isFinite(fixed.infrastructureMonthlyUsd) ? fixed.infrastructureMonthlyUsd + reconciledTotal : null);
                     const tooling = ledger ? ledger.toolingMonthlyUsd : null;
-                    const price = Number.isFinite(d.venues?.priceUsd) && d.venues.priceUsd > 0 ? d.venues.priceUsd : null;
+                    const listPrice = Number.isFinite(d.venues?.priceUsd) && d.venues.priceUsd > 0 ? d.venues.priceUsd : null;
+                    // What a venue leaves after Stripe's fees, from the hub the
+                    // Overview loaded, so this and the Overview agree; the list
+                    // price until it has.
+                    const roostBe = hubMemo.data && hubMemo.data.net && hubMemo.data.net.breakEven && hubMemo.data.net.breakEven.roost;
+                    const roostNet = roostBe && Number.isFinite(roostBe.netPerUnitCents) && roostBe.netPerUnitCents > 0 ? roostBe.netPerUnitCents / 100 : null;
+                    const price = roostNet || listPrice;
                     const venuesFor = (usd) => (price && Number.isFinite(usd) ? Math.max(0, Math.ceil(usd / price)) : null);
                     const infraVenues = venuesFor(infra);
                     const allVenues = venuesFor(allInMonthly);
@@ -2701,7 +2709,7 @@ export default function RevenueScreen({
                         </div>
                         {price ? (
                           <p style={{ ...sub, margin: '10px 0 0' }}>
-                            At {moneyOr(price, '', 0)} a venue, {infraVenues === null ? 'an unknown number of' : infraVenues} {plural(infraVenues)} covers serving and {allVenues === null ? 'an unknown number of' : allVenues} {plural(allVenues)} covers everything including tooling. Computed from the bills above, so it moves when they do.
+                            At {moneyOr(listPrice || price, '', 0)} a venue{roostNet ? `, ${moneyOr(roostNet, '', 2)} after Stripe's fees` : ', before Stripe’s fees'}, {infraVenues === null ? 'an unknown number of' : infraVenues} {plural(infraVenues)} covers serving and {allVenues === null ? 'an unknown number of' : allVenues} {plural(allVenues)} covers everything including tooling. Computed from the bills above, so it moves when they do.
                           </p>
                         ) : (
                           <p style={{ ...sub, margin: '10px 0 0' }}>Break-even in venues needs a venue price on the payload, and none was served.</p>
@@ -3472,7 +3480,17 @@ export default function RevenueScreen({
                 const ledger = costsData.expenses && costsData.expenses.status === 'ok' ? costsData.expenses : null;
                 const reconciledMonthly = (costsData.reconciled?.lines || []).reduce((s2, l) => s2 + (Number.isFinite(l.usdPerMonth) ? l.usdPerMonth : 0), 0);
                 const effectiveMonthly = ledger ? ledger.burnMonthlyUsd : fixed.effectiveMonthlyUsd + reconciledMonthly;
-                const subsToBreakEven = effectiveMonthly > 0 ? Math.ceil(effectiveMonthly / PRO_MONTHLY_USD) : 0;
+                // What one subscriber actually leaves, from the hub the Overview
+                // loaded (Stripe's fees on the web, Apple's cut in the App
+                // Store), so this tile and the Overview give one answer. Before
+                // the Overview has loaded, the plain price is used and the line
+                // under the figure says so.
+                const hubBe = hubMemo.data && hubMemo.data.net && hubMemo.data.net.breakEven;
+                const perUnit = (b) => (b && Number.isFinite(b.netPerUnitCents) && b.netPerUnitCents > 0 ? b.netPerUnitCents / 100 : null);
+                const webNet = perUnit(hubBe && hubBe.proWeb);
+                const appNet = perUnit(hubBe && hubBe.proAppStore);
+                const subsToBreakEven = effectiveMonthly > 0 ? Math.ceil(effectiveMonthly / (webNet || PRO_MONTHLY_USD)) : 0;
+                const appSubsToBreakEven = appNet && effectiveMonthly > 0 ? Math.ceil(effectiveMonthly / appNet) : null;
                 const usd0 = (n) => `$${Math.round(n).toLocaleString()}`;
                 const row = (name, amount, sub) => (
                   <div key={name} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', padding: '5px 0', borderTop: '1px solid var(--border-light)' }}>
@@ -3497,11 +3515,15 @@ export default function RevenueScreen({
                       <div>
                         <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Target to cover it</p>
                         <p style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: colors.navy, margin: '2px 0 0', lineHeight: 1.1 }}>{subsToBreakEven}</p>
-                        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '3px 0 0' }}>Flock Pro subscriptions at ${PRO_MONTHLY_USD.toFixed(2)}/mo, before Apple's cut.</p>
+                        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '3px 0 0' }}>
+                          {webNet
+                            ? `Flock Pro subscriptions at $${PRO_MONTHLY_USD.toFixed(2)}/mo on the web, after Stripe's fees ($${webNet.toFixed(2)} each).${appSubsToBreakEven !== null ? ` ${appSubsToBreakEven} if they all came through the App Store, after Apple's cut.` : ''}`
+                            : `Flock Pro subscriptions at $${PRO_MONTHLY_USD.toFixed(2)}/mo, before Stripe's fees and Apple's cut. Open the Overview tab for the figure after fees.`}
+                        </p>
                       </div>
                     </div>
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '10px 0 0', paddingTop: '8px', borderTop: '1px solid var(--border-light)' }}>
-                      {subsToBreakEven} is what break-even would take at this price, not a count of anything. Subscribers and revenue are counted on the Overview tab, after fees.
+                      {subsToBreakEven} is what break-even would take at this price, not a count of anything. Subscribers and revenue are counted on the Overview tab.
                     </p>
                   </div>
                   <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>

@@ -107,6 +107,7 @@ function FakeStripe() {
     invoices: {
       list: call('invoices.list', async (p) => {
         stripeState.params.invoices.push(p);
+        if (stripeState.invoicesFail) throw Object.assign(new Error('invoices unavailable'), { type: 'StripeAPIError', statusCode: 500 });
         const gte = p && p.created && p.created.gte;
         const data = stripeState.invoices.filter((inv) => !Number.isFinite(gte) || !Number.isFinite(inv.created) || inv.created >= gte);
         return { data, has_more: false };
@@ -2779,4 +2780,89 @@ test('people: on the hub, counts only, and a failed read is an error with no num
   assert.strictEqual(r.body.health.collector.status, 'ok');
   assert.strictEqual(r.body.costs.status, 'ok');
   assert.ok(!r.text.includes('does not exist'), 'the database\'s own words stay in the log');
+});
+
+// ===========================================================================
+// A review of the hub's arithmetic, 2026-09-29: each of these showed a wrong
+// figure before its fix.
+// ===========================================================================
+
+test('a bill stopped this month still counts what it cost this month, and nothing after', () => {
+  const base = moneyHub.buildCostPicture({ expenses: [], month: MONTH });
+  const today = MONTH.todayYmd;
+  const stopped = moneyHub.buildCostPicture({
+    expenses: [
+      expense({ id: 1, vendor: 'Law firm', cadence: 'one_time', amountCents: 50000, active: false, lastChargedOn: today }),
+      expense({ id: 2, vendor: 'Some tool', kind: 'tooling', cadence: 'monthly', amountCents: 2000, active: false, lastChargedOn: today }),
+    ],
+    month: MONTH,
+  });
+  assert.strictEqual(stopped.totals.thisMonthCents, base.totals.thisMonthCents + 52000, 'a $500 bill paid and then marked stopped vanished from this month');
+  assert.strictEqual(stopped.totals.perMonthCents, base.totals.perMonthCents, 'a stopped bill adds nothing to the run rate');
+  // Last charged before this month, or standing in for a code line (which is
+  // back in the totals and covers the month): not counted.
+  const notThisMonth = moneyHub.buildCostPicture({
+    expenses: [
+      expense({ id: 3, vendor: 'Old tool', cadence: 'monthly', amountCents: 2000, active: false, lastChargedOn: '2000-01-15' }),
+      expense({ id: 4, vendor: 'Railway', kind: 'infrastructure', cadence: 'monthly', amountCents: 2500, active: false, lastChargedOn: today, replacesLine: 'railway' }),
+    ],
+    month: MONTH,
+  });
+  assert.strictEqual(notThisMonth.totals.thisMonthCents, base.totals.thisMonthCents);
+  assert.strictEqual(notThisMonth.totals.perMonthCents, base.totals.perMonthCents);
+});
+
+test('a row linked to the wrong code line is still flagged beside the line it doubles', () => {
+  // A $119 BestTime bill tied to the corpus line left the real BestTime line
+  // counted beside it, $119 twice, with no warning.
+  const pic = moneyHub.buildCostPicture({
+    expenses: [expense({ id: 1, vendor: 'BestTime', product: 'Pro Package 100', kind: 'infrastructure', amountCents: 11900, replacesLine: 'besttime-corpus' })],
+    month: MONTH,
+  });
+  assert.ok(pic.possibleDoubles.some((d) => d.codeLineId === 'besttime-subscription' && d.expenseId === 1), JSON.stringify(pic.possibleDoubles));
+});
+
+test('a yearly price behind the monthly variable is not used as a monthly price for break-even', async () => {
+  seedStripe();
+  const pm = stripeState.prices.find((p) => p.id === 'price_pro_m');
+  Object.assign(pm, { unit_amount: 2999, recurring: { interval: 'year', interval_count: 1 }, active: true });
+  handlers = hubHandlers();
+  const r = await req('GET', '/api/admin/money');
+  const pro = r.body.net.breakEven.proWeb;
+  assert.strictEqual(pro.source, 'stated', 'a $29.99 yearly price was read as $29.99 a month');
+  assert.strictEqual(pro.priceCents, 399);
+});
+
+test('sales tax inside this month\'s charges is taken out of revenue, and unknown tax is a gap', async () => {
+  const taxed = moneyHub.__test.summarizeInvoices([
+    { status: 'paid', currency: 'usd', amount_paid: 10692, status_transitions: { paid_at: MONTH.startUnix + 60 }, total_taxes: [{ amount: 792 }] },
+    { status: 'paid', currency: 'usd', amount_paid: 431, status_transitions: { paid_at: MONTH.startUnix + 60 }, total_tax_amounts: [{ amount: 32 }] },
+    { status: 'paid', currency: 'usd', amount_paid: 500, status_transitions: { paid_at: MONTH.startUnix + 60 }, tax: 40 },
+  ], { roles: new Map(), month: MONTH });
+  assert.strictEqual(taxed.taxCents, 792 + 32 + 40);
+
+  seedStripe();
+  handlers = hubHandlers();
+  const before = (await req('GET', '/api/admin/money')).body.net.revenueThisMonthCents;
+  moneyHub.__test.resetCache();
+  seedStripe();
+  stripeState.invoices[0].total_taxes = [{ amount: 792 }];
+  handlers = hubHandlers();
+  const after = (await req('GET', '/api/admin/money')).body.net.revenueThisMonthCents;
+  assert.strictEqual(after, before - 792, 'the $7.92 owed to the state was counted as revenue');
+
+  moneyHub.__test.resetCache();
+  seedStripe();
+  const saved = process.env.STRIPE_AUTOMATIC_TAX;
+  process.env.STRIPE_AUTOMATIC_TAX = 'true';
+  stripeState.invoicesFail = true;
+  try {
+    handlers = hubHandlers();
+    const n = (await req('GET', '/api/admin/money')).body.net;
+    assert.strictEqual(n.revenueThisMonthCents, null, 'automatic tax on and the invoices unread: the tax is unknown, so the revenue is');
+    assert.ok(n.revenueMissing.includes('stripe_tax'), JSON.stringify(n.revenueMissing));
+  } finally {
+    if (saved === undefined) delete process.env.STRIPE_AUTOMATIC_TAX; else process.env.STRIPE_AUTOMATIC_TAX = saved;
+    delete stripeState.invoicesFail;
+  }
 });
