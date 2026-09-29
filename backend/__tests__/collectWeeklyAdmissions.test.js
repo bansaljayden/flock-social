@@ -98,6 +98,12 @@ test('--order=reviews and --without-weekly aim the rest of a month at uncovered,
   // the filter must look at the corpus, not at the id column.
   assert.match(WEEKLY, /if \(selection\.withoutWeekly\) \{\s*query \+= ` AND NOT EXISTS \(SELECT 1 FROM ml_training_data t\s*WHERE t\.venue_id = ml_venues\.id AND t\.collection_mode = 'weekly'\)`;/);
   assert.match(WEEKLY, /query \+= ` ORDER BY \$\{selection\.orderBy\}`;/);
+  // Wired to the real argv, and its refusal stops the run before the SELECT.
+  const body = WEEKLY.slice(WEEKLY.indexOf('async function collectWeekly'));
+  const parsed = body.indexOf('const selection = selectionOptions(process.argv);');
+  const refused = body.indexOf('const argError = createdAfter.error || selection.error;');
+  const select = body.indexOf('await pool.query(query, params)');
+  assert.ok(parsed > 0 && refused > parsed && select > refused, 'selectionOptions must read process.argv and refuse before the venue SELECT');
 });
 
 test('addDemandVenues prints the exact admission command for what it staged', () => {
