@@ -146,14 +146,25 @@ test('at most 4 KB is read and copied, and the rest is cancelled', async (t) => 
   // Watch what is handed to the one copy. The first version copied each whole
   // chunk and cut afterwards, which a length check on the result cannot see.
   const realConcat = Buffer.concat;
+  const realFrom = Buffer.from;
   const copied = [];
+  const wholeChunkCopies = [];
   t.mock.method(Buffer, 'concat', (list, total) => {
     copied.push(list.reduce((n, b) => n + b.length, 0));
     return realConcat.call(Buffer, list, total);
   });
+  // Buffer.from(aUint8Array) copies all of it; only the (buffer, offset,
+  // length) view form is allowed to see a chunk bigger than the allowance.
+  t.mock.method(Buffer, 'from', (...args) => {
+    if (args.length === 1 && args[0] instanceof Uint8Array && args[0].byteLength > REASON_MAX_BYTES) {
+      wholeChunkCopies.push(args[0].byteLength);
+    }
+    return realFrom.apply(Buffer, args);
+  });
   const text = await readBoundedText({ body });
   t.mock.restoreAll();
   assert.deepStrictEqual(copied, [REASON_MAX_BYTES], `copied ${copied} bytes for a ${REASON_MAX_BYTES}-byte allowance`);
+  assert.deepStrictEqual(wholeChunkCopies, [], 'a whole oversized chunk was copied before it was cut');
   assert.strictEqual(Buffer.byteLength(text), REASON_MAX_BYTES, 'copied past the allowance');
   assert.strictEqual(seen.reads, 1, 'kept reading past the limit');
   await flush();

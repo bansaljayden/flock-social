@@ -161,7 +161,8 @@ const {
 } = require('./collectWeekly');
 const { requireVenueIdIndex } = require('./discoverBestTime');
 const { PA_CITIES, MAX_KM, kmBetween, nearestPaCity } = require('./addDemandVenues');
-const { classifyHttpFailure, fetchJsonWithTimeout, loggableError, NETWORK_ERR_RE } = require('./bestTimeService');
+const { classifyHttpFailure, fetchJsonWithTimeout, NETWORK_ERR_RE } = require('./bestTimeService');
+const { labelFor, describeError, describeDbError } = require('./logSafe');
 const besttime = require('../../services/besttimeAccount');
 
 if (!process.env.DATABASE_URL && process.env.PGHOST) {
@@ -861,8 +862,9 @@ async function requestPage(ctx, q) {
     if (!Array.isArray(data.venues)) {
       const msg = typeof data.message === 'string' ? data.message : '';
       if (/no venues?|not found|none found/i.test(msg)) return { venues: [], total: 0, credits: null };
-      const shown = besttime.containsKeyMaterial(msg, [ctx.key]) ? '[withheld]' : msg.slice(0, 160);
-      throw abortError(`the venue filter answered status "${String(data.status).slice(0, 20)}"${shown ? `: ${shown}` : ''}.`);
+      // What the answer meant, never its text: status and message both came
+      // back from BestTime and can echo the request, key included (logSafe.js).
+      throw abortError(`the venue filter answered without a venue list (${labelFor(msg)}).`);
     }
     const total = Number.isInteger(data.venues_n) ? data.venues_n : null;
     const credits = typeof data.credits_charged === 'number' && Number.isFinite(data.credits_charged) ? data.credits_charged : null;
@@ -1490,7 +1492,7 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
             summary.rowsRefreshed += res.written - res.inserted;
           } catch (err) {
             summary.writeFailures++;
-            console.error(`  write failed for ${item.venue.venueId} (${err.code || 'no code'}): ${err.message}`);
+            console.error(`  write failed for ${item.venue.venueId} (${err.code || 'no code'}): ${describeDbError(err)}`);
           }
         }
         console.log(`${TAG} Wrote ${summary.rowsWritten} weekly rows (${summary.rowsInserted} new, `
@@ -1521,7 +1523,7 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
     summary.aborted = true;
     summary.exitCode = 1;
     summary.abortReason = err.message;
-    console.error(`${TAG} ABORTED: ${loggableError(err)}`);
+    console.error(`${TAG} ABORTED: ${describeError(err)}`);
     if (err.abort) {
       // The run is over; the after-read still shows what was spent. Outside the
       // guard only because the guard is gone by now; it is the same allowed call.
@@ -1588,7 +1590,7 @@ module.exports = {
 // Only when run directly: a require from a test must not call BestTime.
 if (require.main === module) {
   main().catch((err) => {
-    console.error(`${TAG} Fatal (${(err && err.name) || 'unknown error'}): ${loggableError(err)}`);
+    console.error(`${TAG} Fatal (${(err && err.name) || 'unknown error'}): ${describeError(err)}`);
     process.exitCode = 1;
   });
 }

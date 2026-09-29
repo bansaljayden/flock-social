@@ -60,11 +60,26 @@ function configuredKey() {
   return raw || null;
 }
 
+// Checked on every decoding a URL, a form or JSON can give the text, and
+// without regard to case: "pri%5F..." (percent-encoded underscore) and a
+// lowercased %2f each carried a whole key past the literal check.
+function keyCheckForms(text) {
+  const forms = new Set([text]);
+  const unescaped = text.replace(/\\\//g, '/');
+  forms.add(unescaped);
+  for (const t of [text, unescaped]) {
+    try { forms.add(decodeURIComponent(t.replace(/\+/g, ' '))); } catch { /* not valid percent-encoding */ }
+  }
+  return [...forms].map((t) => t.toLowerCase());
+}
+
 function containsKeyMaterial(value, secrets = []) {
   const text = typeof value === 'string' ? value : JSON.stringify(value);
   if (!text) return false;
-  if (/\b(pri|pub)_[0-9a-f]{8,}/i.test(text)) return true;
-  return secrets.some((s) => typeof s === 'string' && s.length >= 8 && text.includes(s));
+  const forms = keyCheckForms(text);
+  if (forms.some((t) => /\b(pri|pub)_[0-9a-f]{8,}/.test(t))) return true;
+  return secrets.some((s) => typeof s === 'string' && s.length >= 8
+    && forms.some((t) => t.includes(s.toLowerCase())));
 }
 
 // The first day of next month, UTC, as YYYY-MM-DD.

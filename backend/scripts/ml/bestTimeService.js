@@ -27,43 +27,9 @@ function getKey() {
   return key;
 }
 
-// WHAT A FAILED LOOKUP MEANT, NEVER WHAT IT SAID. The key rides in the query
-// string, so a failure body that echoes the request would carry it, in any of
-// the encodings a URL, a form or JSON can give it. Redacting free text is a
-// losing game (the first two versions of this leaked through a cut, an
-// encoding and an overlap), so no body text is ever logged. The message is
-// matched against BestTime's known answers and only one of these fixed labels
-// comes back.
-const FAILURE_REASONS = [
-  [/could not forecast/i, 'found, but BestTime has too little visitor data to forecast it'],
-  [/could not find|not found|no venue/i, 'BestTime could not match a venue to that name and address'],
-];
-const UNRECOGNISED_REASON = 'reason not recognised';
-function labelFor(message) {
-  if (typeof message !== 'string' || !message) return UNRECOGNISED_REASON;
-  for (const [pattern, label] of FAILURE_REASONS) {
-    if (pattern.test(message)) return label;
-  }
-  return UNRECOGNISED_REASON;
-}
-function failureReason(text) {
-  if (typeof text !== 'string' || !text) return null;
-  let probe = text;
-  try {
-    const parsed = JSON.parse(text);
-    if (parsed && typeof parsed.message === 'string') probe = parsed.message;
-  } catch { /* a cut or non-JSON body is matched as it stands */ }
-  return labelFor(probe);
-}
-
-// The same rule for a caught error: a JSON parse error quotes the body it
-// choked on, so it is logged as a fixed phrase. Everything else thrown here
-// is ours (a classified status, a timeout, a network failure, a shape error)
-// and carries no body text. Classification still reads the real message.
-function loggableError(err) {
-  if (err instanceof SyntaxError) return 'the response was not valid JSON';
-  return (err && err.message) || String(err);
-}
+// WHAT A FAILED LOOKUP MEANT, NEVER WHAT IT SAID. No text that came back from
+// BestTime is ever logged: see logSafe.js for why, and for the fixed labels.
+const { labelFor, failureReason, describeError } = require('./logSafe');
 
 // At most this many bytes of a failure body are read, and for at most this
 // long: the reason is a nicety, and a body that never ends must not hold a
@@ -217,13 +183,16 @@ async function fetchWeeklyForecast(venueName, venueAddress, existingVenueId) {
     return {
       venueId: data.venue_info?.venue_id || null,
       days,
-      epochAnalysis: data.epoch_analysis || null,
+      // A number or nothing: it goes into a BIGINT column, and a stray string
+      // there would come back quoted inside a Postgres error.
+      epochAnalysis: Number.isSafeInteger(Number(data.epoch_analysis)) && Number(data.epoch_analysis) > 0
+        ? Number(data.epoch_analysis) : null,
     };
   } catch (err) {
-    console.error(`[ML:BestTime] Weekly forecast error for ${venueName}: ${loggableError(err)}`);
+    console.error(`[ML:BestTime] Weekly forecast error for ${venueName}: ${describeError(err)}`);
     // Re-throw classified errors (transient 5xx/429, fatal 401/402/403) and
     // network/timeout/abort failures so the caller never 404-marks these.
-    if (err.transient || err.fatal || NETWORK_ERR_RE.test(err.message || '')) throw err;
+    if (err.transient || err.fatal || (!(err instanceof SyntaxError) && NETWORK_ERR_RE.test(err.message || ''))) throw err;
     return null;
   }
 }
@@ -324,8 +293,8 @@ async function fetchLiveBusyness(venueId) {
       vendorLocalTime: data.venue_info?.venue_current_localtime ?? null,
     };
   } catch (err) {
-    console.error(`[ML:BestTime] Live query error for ${venueId}: ${loggableError(err)}`);
-    if (err.transient || err.fatal || NETWORK_ERR_RE.test(err.message || '')) throw err;
+    console.error(`[ML:BestTime] Live query error for ${venueId}: ${describeError(err)}`);
+    if (err.transient || err.fatal || (!(err instanceof SyntaxError) && NETWORK_ERR_RE.test(err.message || ''))) throw err;
     return null;
   }
 }
@@ -338,6 +307,5 @@ module.exports = { fetchWeeklyForecast, fetchLiveBusyness, NETWORK_ERR_RE };
 module.exports.classifyHttpFailure = classifyHttpFailure;
 module.exports.fetchJsonWithTimeout = fetchJsonWithTimeout;
 module.exports.failureReason = failureReason;
-module.exports.loggableError = loggableError;
 module.exports.readBoundedText = readBoundedText;
 module.exports.REASON_MAX_BYTES = REASON_MAX_BYTES;

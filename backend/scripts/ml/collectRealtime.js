@@ -9,6 +9,7 @@ require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.e
 const { Pool } = require('pg');
 const { getWeather } = require('../../services/weatherService');
 const { fetchLiveBusyness, NETWORK_ERR_RE } = require('./bestTimeService');
+const { describeError, describeDbError } = require('./logSafe');
 const { CITIES, getLocalTime, isHoliday, isSchoolBreak, sleep, withCorpusWriteLock } = require('./config');
 const {
   getNearestEvent, fetchTicketmasterPage, fetchSeatGeekEvents, nearestEventFromAnswers, distanceKm,
@@ -689,11 +690,11 @@ async function sweepVenues(cityOrder, {
       // A call that was already in flight when a breaker tripped. The run is
       // stopping; the failure is logged and counts toward nothing.
       if (aborted) {
-        console.error(`[ML:Realtime] In-flight call for ${venue.name} failed after the run stopped: ${err.message}`);
+        console.error(`[ML:Realtime] In-flight call for ${venue.name} failed after the run stopped: ${describeError(err)}`);
         return;
       }
       if (err.fatal) {
-        console.error(`[ML:Realtime] FATAL: ${err.message} — aborting run`);
+        console.error(`[ML:Realtime] FATAL: ${describeError(err)} — aborting run`);
         abortRun('fatal');
         return;
       }
@@ -731,7 +732,7 @@ async function sweepVenues(cityOrder, {
       const networkish = err && NETWORK_ERR_RE.test(String(err.message || ''));
       if (networkish) {
         consecutiveNetwork++;
-        console.error(`[ML:Realtime] Slow or unreachable ${consecutiveNetwork}/25 for ${venue.name}: ${err.message}`);
+        console.error(`[ML:Realtime] Slow or unreachable ${consecutiveNetwork}/25 for ${venue.name}: ${describeError(err)}`);
         if (consecutiveNetwork >= 25) {
           console.error('[ML:Realtime] 25 calls in a row timed out or could not connect, aborting run');
           abortRun('network');
@@ -741,7 +742,7 @@ async function sweepVenues(cityOrder, {
         return;
       }
       consecutiveErrors++;
-      console.error(`[ML:Realtime] Transient error ${consecutiveErrors}/10 for ${venue.name}: ${err.message}`);
+      console.error(`[ML:Realtime] Transient error ${consecutiveErrors}/10 for ${venue.name}: ${describeError(err)}`);
       if (consecutiveErrors >= 10) {
         console.error('[ML:Realtime] 10 consecutive errors, BestTime looks down, aborting run');
         abortRun('upstream');
@@ -1192,7 +1193,7 @@ async function storeReading(venue, at, live,
     // hour before it.
     eventData = await lookupEvents(venue.latitude, venue.longitude, startedAt);
   } catch (err) {
-    console.error(`  Event fetch error for ${venue.name}:`, err.message);
+    console.error(`  Event fetch error for ${venue.name}: ${describeError(err)}`);
   }
 
   // One value per column, in the column list's order, with the placeholder
@@ -1344,7 +1345,7 @@ async function storeReading(venue, at, live,
     if (result.rowCount === 0) return 'duplicate';
     return labelSource;
   } catch (err) {
-    console.error(`  Insert error for ${venue.name}:`, err.message);
+    console.error(`  Insert error for ${venue.name}: ${describeDbError(err)}`);
     return 'failed';
   }
 }
@@ -1503,7 +1504,7 @@ async function collectRealtime() {
         + `weekly curve to judge by (+/-${OPEN_HOUR_PAD}h); the rest are called unconditionally.`);
     } catch (err) {
       openHourMasks = new Map();
-      console.error(`[ML:Realtime] Open-hours lookup failed (${err.message}) — calling every venue.`);
+      console.error(`[ML:Realtime] Open-hours lookup failed (${describeDbError(err)}) — calling every venue.`);
     }
   } else {
     console.log('[ML:Realtime] Open-hours filter DISABLED by --no-open-hours; every venue will be called.');
@@ -1798,7 +1799,7 @@ async function run() {
           console.log(`[ML:Realtime] Baselines refreshed (${result.upserted} changed, ${result.deleted} stale removed)`);
         }
       } catch (err) {
-        console.error('[ML:Realtime] Baseline refresh failed:', err.message);
+        console.error(`[ML:Realtime] Baseline refresh failed: ${describeDbError(err)}`);
       }
 
       // THE TRAILING OFFSET, refreshed after the baselines and not before.
@@ -1822,7 +1823,7 @@ async function run() {
         console.log(`[ML:Realtime] Recent-deviation offsets rebuilt `
           + `(${dev.written} venues written, ${dev.pruned} stale rows pruned).`);
       } catch (err) {
-        console.error('[ML:Realtime] Recent-deviation refresh failed:', err.message);
+        console.error(`[ML:Realtime] Recent-deviation refresh failed: ${describeDbError(err)}`);
       }
     }
 
@@ -1851,7 +1852,7 @@ module.exports = {
 
 if (require.main === module) {
   run().catch(err => {
-    console.error('[ML:Realtime] Fatal error:', err);
+    console.error(`[ML:Realtime] Fatal error: ${describeError(err)}`);
     pool.end();
     process.exit(1);
   });
