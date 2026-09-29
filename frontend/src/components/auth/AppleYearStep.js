@@ -24,11 +24,13 @@ import BirthYearField, { birthYearToDob } from './BirthYearField';
 //
 //   step null      no Apple step on screen
 //   step 'resume'  holding this sheet's credentials; Continue sends them again,
-//                  or, once Apple's code has run out, opens Apple's sheet
-//                  itself and sends the new one's with the year
+//                  or, once the hold has run out, opens the provider's sheet
+//                  itself and sends the new one's with the year (Apple, and
+//                  Google in the iOS app)
 //   step 'retap'   they are gone (the server said no, the connection died
-//                  after sending, or a Google handle ran out); the provider's
-//                  button is back and carries the year, so one more sheet ends it
+//                  after sending, or a Google hold ran out on the web); the
+//                  provider's button is back and carries the year, so one more
+//                  sheet ends it
 //
 // The handle lives in a ref, never in state, so nothing that reads component
 // state can reach it, and it is dropped the moment it is used.
@@ -129,10 +131,11 @@ export function useAppleYearStep({ fieldId, onSuccess, provider = 'Apple' }) {
         setError(err.message);
         return;
       }
-      // The hold had outlived Apple's code, so this Continue opened Apple's
-      // sheet again (makeResume in AppleSignInButton.js), and the sheet was
-      // dismissed. Nothing was sent and the handle is still good, so Continue
-      // stays and opens it again. The sentence says why Apple asked twice.
+      // The hold had run out, so this Continue opened the provider's sheet
+      // again (makeResume in AppleSignInButton.js and in useGoogleAuth.js),
+      // and the sheet was dismissed. Nothing was sent and the handle is still
+      // good, so Continue stays and opens it again. The sentence says why the
+      // provider asked twice.
       if (err?.cancelled) {
         resumeRef.current = resume;
         setError(`${provider} sign-in timed out, so ${provider} needs to check it is you again. Tap Continue to open it. Your year is still filled in.`);
@@ -142,10 +145,10 @@ export function useAppleYearStep({ fieldId, onSuccess, provider = 'Apple' }) {
       // it carries the year now, so one more sheet finishes the account.
       setStep('retap');
       // A lapsed token (401), a failed code exchange (503), a request that
-      // timed out and a Google handle past its few minutes all mean the same
-      // thing to the person: the sheet has to be done again. Anything else is
-      // the server's answer word for word, which keeps the under-13 refusal
-      // exactly what it was.
+      // timed out and a Google hold past its few minutes on the web all mean
+      // the same thing to the person: the sheet has to be done again.
+      // Anything else is the server's answer word for word, which keeps the
+      // under-13 refusal exactly what it was.
       const status = err?.status;
       const timedOut = err?.expired || err?.isTimeout || status === 401 || status === 503 || !status;
       setError(timedOut

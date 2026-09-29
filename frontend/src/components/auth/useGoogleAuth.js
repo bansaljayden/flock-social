@@ -161,17 +161,44 @@ const isCancellation = (err) =>
 //
 // Memory only, one use, and short. A Google token lives about an hour, but
 // holding a live credential for longer than it takes to type four digits buys
-// nothing, so past GOOGLE_RESUME_LIFETIME_MS the handle refuses without
-// posting and the screen puts the Google button back.
+// nothing, so past GOOGLE_RESUME_LIFETIME_MS the held proof is never sent.
+//
+// What happens instead depends on where. In the iOS app `reopen` is given:
+// the Continue the person pressed opens Google's sheet itself and the year
+// goes with the new token, so it is still one step, the way Apple's is (see
+// makeResume in AppleSignInButton.js). A dismissed sheet sends nothing and
+// the next Continue opens it again.
+//
+// On the web there is no `reopen`, and the handle refuses without posting so
+// the screen puts the Google button back. That is deliberate. GIS's popup
+// hands its token to a callback, and whether a popup that was blocked or
+// closed is ever reported depends on the browser, and it is never reported
+// when Google's script has not loaded, because the starter then does nothing
+// at all. A Continue waiting on that could stay "Signing in" for good. The
+// Google button starts the popup from its own tap and waits on nothing, so it
+// costs one more tap but can never hang.
 export const GOOGLE_RESUME_LIFETIME_MS = 5 * 60 * 1000;
 
-const makeResume = (post) => {
-  const heldAt = Date.now();
+const makeResume = (first, reopen) => {
+  let post = first;
+  let heldAt = Date.now();
   let used = false;
   return async (dob, dobGranularity) => {
-    if (used || Date.now() - heldAt > GOOGLE_RESUME_LIFETIME_MS) {
-      used = true;
-      throw Object.assign(new Error('Google sign-in timed out'), { expired: true });
+    if (used) throw Object.assign(new Error('Google sign-in timed out'), { expired: true });
+    if (Date.now() - heldAt > GOOGLE_RESUME_LIFETIME_MS) {
+      if (!reopen) {
+        used = true;
+        throw Object.assign(new Error('Google sign-in timed out'), { expired: true });
+      }
+      try {
+        post = await reopen();
+      } catch (err) {
+        // Dismissed: nothing was sent, so the handle stays good.
+        if (isCancellation(err)) throw Object.assign(new Error('Google sign-in was cancelled'), { cancelled: true });
+        used = true;
+        throw err;
+      }
+      heldAt = Date.now();
     }
     used = true;
     try {
@@ -235,8 +262,9 @@ export default function useGoogleAuth({ onSuccess, onError, setBusy, reconfirm }
   // Posts whichever proof we ended up with and reports the result. `post` is
   // (dob, dobGranularity) => the api call, so the two paths share every line
   // after the token exists, and a creation 403 can hand the same call back
-  // as `resume` to be made again with a year.
-  const exchange = async (post) => {
+  // as `resume` to be made again with a year. `reopen`, native only, is how
+  // that resume gets a new token once the held one is past its minutes.
+  const exchange = async (post, reopen) => {
     const { onSuccess: ok, onError: fail, setBusy: busy } = handlers.current;
     busy?.(true);
     try {
@@ -244,10 +272,28 @@ export default function useGoogleAuth({ onSuccess, onError, setBusy, reconfirm }
       ok?.(data.user);
     } catch (err) {
       const message = err?.message || 'Google sign-in failed';
-      if (err?.data?.needsDob && err.data.dobGranularity === 'year') fail?.(message, err, makeResume(post));
+      if (err?.data?.needsDob && err.data.dobGranularity === 'year') fail?.(message, err, makeResume(post, reopen));
       else fail?.(message, err);
     } finally {
       busy?.(false);
+    }
+  };
+
+  // The native post for a given ID token, spelled once for the tap and for a
+  // held sign-in's new sheet.
+  const nativePost = (idToken) => (dob, dobGranularity) => googleLogin(idToken, dob,
+    ...loginOpts(dobGranularity));
+
+  // Google's sheet again, for a held sign-in past its minutes. Behind the same
+  // guard as a tap: two GIDSignIn presentations at once hang on device, and a
+  // sheet already up counts as this one dismissed, so nothing is sent.
+  const reopenNative = async () => {
+    if (runningRef.current) throw Object.assign(new Error('Google sign-in was cancelled'), { code: 'USER_CANCELLED' });
+    runningRef.current = true;
+    try {
+      return nativePost(await nativeGoogleIdToken());
+    } finally {
+      runningRef.current = false;
     }
   };
 
@@ -290,8 +336,7 @@ export default function useGoogleAuth({ onSuccess, onError, setBusy, reconfirm }
         } finally {
           busy?.(false);
         }
-        await exchange((dob, dobGranularity) => googleLogin(idToken, dob,
-          ...loginOpts(dobGranularity)));
+        await exchange(nativePost(idToken), reopenNative);
       } finally {
         runningRef.current = false;
       }

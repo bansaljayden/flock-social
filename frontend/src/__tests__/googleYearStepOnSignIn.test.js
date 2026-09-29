@@ -17,7 +17,10 @@
  *   - the web's GIS path holds its access token the same way;
  *   - an under-13 refusal is shown as the server wrote it;
  *   - the full-date backfill ask still goes up to the form's date field;
- *   - one step at a time, with Apple's.
+ *   - one step at a time, with Apple's;
+ *   - past the held token's few minutes, Continue opens Google's sheet
+ *     itself in the app, and on the web deliberately puts the Google button
+ *     back rather than wait on a popup (useGoogleAuth.js says why).
  *
  * HOW TO RUN
  *   cd frontend && CI=true npx react-scripts test --watchAll=false --testPathPattern=googleYearStepOnSignIn
@@ -128,6 +131,7 @@ beforeEach(() => {
 
 afterEach(() => {
   ENV.forEach((k, i) => { if (savedEnv[i] === undefined) delete process.env[k]; else process.env[k] = savedEnv[i]; });
+  jest.restoreAllMocks();
   jest.clearAllMocks();
   delete window.Capacitor;
 });
@@ -190,6 +194,24 @@ SCREENS.forEach((screen) => {
       expect(continueButton(utils)).toBeNull();
     });
 
+    it('past the held token\'s few minutes, Continue opens Google\'s sheet itself and finishes with the year', async () => {
+      const utils = screen.open();
+      const t0 = Date.now();
+      const clock = jest.spyOn(Date, 'now').mockReturnValue(t0);
+      await firstTap(utils);
+      fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: '1995' } });
+
+      clock.mockReturnValue(t0 + 10 * 60 * 1000);
+      sheetGives('google-id-token-2');
+      api.googleLogin.mockResolvedValueOnce({ user: { id: 93 } });
+      fireEvent.click(continueButton(utils));
+
+      await waitFor(() => expect(utils.onLoginSuccess).toHaveBeenCalledWith({ id: 93 }));
+      expect(mockSocialLogin.login).toHaveBeenCalledTimes(2);
+      expect(api.googleLogin.mock.calls[1]).toEqual(['google-id-token-2', '1995-12-31', { dobGranularity: 'year' }]);
+      expect(utils.queryByRole('alert')).toBeNull();
+    });
+
     it('Apple\'s step opening closes Google\'s, so there is still one year field and one Continue', async () => {
       const utils = screen.open();
       await firstTap(utils);
@@ -219,6 +241,32 @@ describe('the sign-in screen on the web', () => {
     fireEvent.click(continueButton(utils));
     await waitFor(() => expect(utils.onLoginSuccess).toHaveBeenCalledWith({ id: 92 }));
     expect(mockWebStart).toHaveBeenCalledTimes(1);
+    expect(api.googleLoginWithToken.mock.calls[1]).toEqual(['web-access-token', '1999-12-31', { dobGranularity: 'year' }]);
+  });
+
+  it('past the held token\'s minutes, Continue does not start a popup it would have to wait on; the Google button comes back', async () => {
+    // Deliberate, and written out above makeResume in useGoogleAuth.js: a
+    // blocked or closed GIS popup is not reliably reported, so a Continue
+    // waiting on one could hang. The button starts the popup from its own tap.
+    delete window.Capacitor;
+    const utils = SCREENS[0].open();
+    const t0 = Date.now();
+    const clock = jest.spyOn(Date, 'now').mockReturnValue(t0);
+    api.googleLoginWithToken.mockRejectedValueOnce(yearAsk());
+    fireEvent.click(googleButton(utils));
+    await waitFor(() => expect(continueButton(utils)).not.toBeNull());
+    fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: '1999' } });
+
+    clock.mockReturnValue(t0 + 10 * 60 * 1000);
+    fireEvent.click(continueButton(utils));
+    await waitFor(() => expect(utils.getByRole('alert').textContent).toBe(
+      'Google sign-in did not finish in time. Tap Continue with Google to try again. Your year is still filled in.'));
+    expect(mockWebStart).toHaveBeenCalledTimes(1);
+    expect(api.googleLoginWithToken).toHaveBeenCalledTimes(1);
+
+    api.googleLoginWithToken.mockResolvedValueOnce({ user: { id: 94 } });
+    fireEvent.click(googleButton(utils));
+    await waitFor(() => expect(utils.onLoginSuccess).toHaveBeenCalledWith({ id: 94 }));
     expect(api.googleLoginWithToken.mock.calls[1]).toEqual(['web-access-token', '1999-12-31', { dobGranularity: 'year' }]);
   });
 });
