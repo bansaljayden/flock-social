@@ -135,10 +135,12 @@ export function useAppleYearStep({ fieldId, onSuccess, provider = 'Apple' }) {
 
 // The step itself: what is being asked, and the field to answer it in. The
 // screen draws it where the provider's button is and puts Continue (below) in
-// the button's place while the step is 'resume'. `idPrefix` keeps the two
-// screens' ids apart and `provider` the two providers' on one screen:
+// the button's place while the step is 'resume'. `idPrefix` keeps the screens'
+// ids apart and `provider` the two providers' on one screen:
 // `${idPrefix}-${provider}-year` is the field, `signup-apple-year` say.
-export default function AppleYearStep({ idPrefix, provider = 'apple', error, value, onChange }) {
+// `hint` replaces the field's own line where a screen needs a different one;
+// the venue portal's says the year is the owner's, not the venue's.
+export default function AppleYearStep({ idPrefix, provider = 'apple', error, value, onChange, hint }) {
   const id = `${idPrefix}-${provider}`;
   return (
     <div className="auth-apple-step" id={`${id}-step`}>
@@ -151,6 +153,7 @@ export default function AppleYearStep({ idPrefix, provider = 'apple', error, val
         hintId={`${id}-year-hint`}
         value={value}
         onChange={onChange}
+        hint={hint}
       />
     </div>
   );
