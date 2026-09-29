@@ -65,7 +65,7 @@ try:
 except ImportError:  # pragma: no cover
     fcntl = None
 
-VERSION = '1.15.0'
+VERSION = '1.16.0'
 
 # ---------------------------------------------------------------------------
 # Config
@@ -207,6 +207,12 @@ DEFAULTS = {
     # shifting the window cannot widen it. --listen measures both ends and
     # recommends the pair. 1.0 leaves the old behaviour exactly as it was.
     'NOISE_SCALE': '1.0',
+    # Microseconds between the microphone's reads. Reading the converter back
+    # to back nearly tripled its noise floor on the first unit, which hid a
+    # quiet room under the microphone's own hiss. --listen measures the best
+    # gap for each unit and writes it here; 1000 is the spacing that measured
+    # clean.
+    'NOISE_SAMPLE_GAP_US': '1000',
     # One measured point against a phone sound level app turns the relative
     # index into an estimated dB SPL. Only the constant is unknown: the slope
     # is physics, because the capsule's sensitivity is a fixed volts-per-pascal
@@ -361,6 +367,7 @@ THERMAL_BIN, THERMAL_MIN_CLUSTER, _pair_complaint = validated_thermal_pair(
 NOISE_REF_COUNTS = _cfg_number('NOISE_REF_COUNTS', float, 1e-6, 1024.0, 1.0)
 NOISE_DB_OFFSET = _cfg_number('NOISE_DB_OFFSET', float, -100.0, 200.0, 50.0)
 NOISE_SCALE = _cfg_number('NOISE_SCALE', float, 0.1, 10.0, 1.0)
+NOISE_SAMPLE_GAP_US = _cfg_number('NOISE_SAMPLE_GAP_US', float, 0.0, 5000.0, 1000.0)
 NOISE_SPL_ANCHOR_COUNTS = _cfg_number('NOISE_SPL_ANCHOR_COUNTS', float, 0.0, 1024.0, 0.0)
 NOISE_SPL_ANCHOR_DB = _cfg_number('NOISE_SPL_ANCHOR_DB', float, 0.0, 140.0, 0.0)
 
@@ -1924,6 +1931,14 @@ def recommend_noise_ref(floor_rms, offset=None, target=None):
     return round(floor_rms * (10 ** ((offset - target) / 20.0)), 1)
 
 
+# The least distance between the room at rest and the loudest burst of a run
+# before a scale is set from it. A run with nothing loud in it once recommended
+# a scale of 59, outside what the config accepts, so the unit fell back to 1.0
+# with the new reference and read its quiet room on the line. Below this the
+# run gets the reference alone and is asked for a loud moment.
+NOISE_MIN_SCALE_SPAN_DB = 6.0
+
+
 def recommend_noise_settings(floor_rms, peak_rms, offset=None,
                              quiet_target=None, loud_target=None):
     """Reference and scale that map a measured room onto the whole word scale.
@@ -1942,7 +1957,7 @@ def recommend_noise_settings(floor_rms, peak_rms, offset=None,
     if floor_rms <= 0 or peak_rms <= floor_rms:
         return None
     span_db = 20 * math.log10(peak_rms / floor_rms)
-    if span_db <= 0:
+    if span_db < NOISE_MIN_SCALE_SPAN_DB:
         return None
     scale = (loud_target - quiet_target) / span_db
     ref = floor_rms * (10 ** ((offset - quiet_target) / (20.0 * scale)))
@@ -2040,20 +2055,20 @@ def compute_noise_db(samples, ref_counts=None, offset=None, scale=None):
     return max(0.0, min(MAX_NOISE_DB, db))
 
 
-# How long each burst listens for. The sleep that used to sit inside this loop
-# is gone, and that was the whole problem: time.sleep(0.001) does not cost a
-# millisecond, it costs about 1.5, so the loop managed roughly 63 samples in
-# 100ms. That is a 650Hz sample rate and a Nyquist limit of about 325Hz, which
-# is below almost everything in a room. Speech formants, music, glassware and
-# every consonant sat above it and folded back down into the measurement as
-# alias, so the RMS was not the loudness of the room, it was the loudness of a
-# scrambled version of it.
+# How long each burst listens for.
 #
-# Without the sleep the same loop manages thousands of samples in the same
-# window, which moves Nyquist into the kilohertz and makes the figure mean what
-# it claims. The cost is 100ms of one core every 5 seconds.
+# The read rate went wrong twice, so the history is kept. A 1ms sleep once
+# held the loop to about 650 reads a second, and it was removed on the belief
+# that the slow rate aliased the room into a scrambled RMS. Aliasing moves sound
+# to other frequencies without changing the RMS of the samples, so the rate was
+# never the problem. Reading back to back was. Measured on the first unit on
+# 2026-09-28: forty reads 2ms apart in a quiet room spread 67 counts, about 15
+# rms, and back-to-back bursts in the same room seconds later read 41. Whatever
+# reading back to back couples in, spacing the reads removes it, and a floor of
+# 41 had hidden everything quieter than conversation. NOISE_SAMPLE_GAP_US sets
+# the spacing and --listen finds the smallest gap that stays clean.
 #
-# Changing the sample rate changes the measured RMS, so it changes what
+# Changing the gap changes the measured RMS, so it changes what
 # NOISE_REF_COUNTS should be. Re-run --listen after this.
 NOISE_BURST_SECONDS = 0.1
 # How often a burst is taken. It was every 5 seconds, so the microphone listened
@@ -2104,19 +2119,106 @@ def trimmed_mean(values, trim=None):
         ordered = ordered[trim:len(ordered) - trim]
     return sum(ordered) / float(len(ordered))
 
-def noise_burst(seconds=None):
-    """One burst from the microphone at the converter's full rate, centred on 0.
+def noise_burst(seconds=None, gap_us=None):
+    """One burst from the microphone, centred on ADC_MID.
 
     The one sampler everything uses: the running loop, --listen and --anchor.
-    Those two used to keep loops of their own with a 1ms sleep between reads,
-    about 650 samples a second against the loop's thousands, so the settings
-    they recommended were measured differently from the figure they set.
+    Those two used to keep loops of their own, so the settings they recommended
+    were measured differently from the figure they set.
+
+    Reads are NOISE_SAMPLE_GAP_US apart. A gap of a millisecond or more sleeps,
+    so the core rests between reads; a shorter one waits on the clock, because
+    a sleep that short overshoots by more than the gap itself.
     """
+    gap = (NOISE_SAMPLE_GAP_US if gap_us is None else gap_us) / 1e6
     samples = []
     t_end = time.monotonic() + (NOISE_BURST_SECONDS if seconds is None else seconds)
     while time.monotonic() < t_end and len(samples) < NOISE_MAX_SAMPLES:
         samples.append(_read_mcp3008_ch0() - ADC_MID)  # centre around 0
+        if gap >= 0.001:
+            time.sleep(gap)
+        elif gap > 0:
+            until = time.perf_counter() + gap
+            while time.perf_counter() < until:
+                pass
     return samples
+
+
+def remove_dc(samples):
+    """A burst centred on its own mean rather than on the converter's midpoint.
+
+    The microphone rests near the middle, not at it: 515 and 518 on the first
+    unit, against 512. Measured about 512, those few counts read as sound, and
+    they matter most where it hurts, in a quiet room once the floor is low.
+    Clipping is still judged on the burst as read, against the rails.
+    """
+    if not samples:
+        return []
+    mean = sum(samples) / len(samples)
+    return [s - mean for s in samples]
+
+
+def burst_rms(samples):
+    """RMS of a burst about its own mean. 0.0 for an empty burst."""
+    centred = remove_dc(samples)
+    if not centred:
+        return 0.0
+    return math.sqrt(sum(c * c for c in centred) / len(centred))
+
+
+# The gaps --listen tries between reads, in microseconds, and how close to the
+# quietest a gap has to come to be chosen. The smallest gap that is nearly as
+# clean as the best one wins, because more reads in a burst make each burst's
+# figure steadier.
+NOISE_GAP_CANDIDATES_US = (0, 100, 250, 500, 1000, 2000)
+NOISE_GAP_TOLERANCE = 1.15
+
+
+def measure_sample_gaps(rounds=6, candidates=None):
+    """Median burst RMS at each gap, in whatever the room is doing right now.
+
+    Taken round robin, one burst at each gap in turn, so a noise that comes and
+    goes during the test lands on every gap alike instead of on whichever gap
+    happened to be under test at the time.
+    """
+    candidates = NOISE_GAP_CANDIDATES_US if candidates is None else candidates
+    readings = {g: [] for g in candidates}
+    for _ in range(rounds):
+        for gap in candidates:
+            burst = noise_burst(gap_us=gap)
+            if len(burst) >= 8:
+                readings[gap].append(burst_rms(burst))
+    return {g: (sorted(r)[len(r) // 2] if r else None) for g, r in readings.items()}
+
+
+def pick_sample_gap(floors, tolerance=None):
+    """The smallest gap whose quiet floor is within tolerance of the lowest.
+
+    None when no gap read anything above zero, which is a dead channel rather
+    than a clean one.
+    """
+    tolerance = NOISE_GAP_TOLERANCE if tolerance is None else tolerance
+    usable = {g: f for g, f in floors.items() if f is not None and f > 0}
+    if not usable:
+        return None
+    best = min(usable.values())
+    return min(g for g, f in usable.items() if f <= best * tolerance)
+
+
+def typical_quiet(rms_values, share=0.25):
+    """The level a room rests at, from every burst of a --listen run.
+
+    The quietest single burst is the wrong number. A room holding still still
+    wanders, 34 to 48 on the first unit, so a scale set from the lowest burst
+    put the room's ordinary quiet at 47 against a line at 50, and the panel
+    flipped between Quiet and Moderate with nothing happening. The 25th
+    percentile is the room at rest as long as a quarter of the run was quiet,
+    and the run asks for most of it to be.
+    """
+    values = sorted(v for v in rms_values if v is not None)
+    if not values:
+        return None
+    return values[min(len(values) - 1, int(share * len(values)))]
 
 
 # A sample within this many counts of either end of the converter's range is
@@ -2159,7 +2261,7 @@ def _spread(values, low, high):
     return ordered[min(n - 1, int(high * n))] - ordered[int(low * n)]
 
 
-def noise_insight(history, people=None, calibrated_db=None):
+def noise_insight(history, people=None, calibrated_db=None, scale=None):
     """What the last minutes of loudness say, beyond how loud it is.
 
     Works from the loudness figures alone, which are all this device keeps, so
@@ -2175,10 +2277,15 @@ def noise_insight(history, people=None, calibrated_db=None):
       deaf        a sentence when the microphone looks disconnected, else None.
     """
     out = {'character': None, 'talk': None, 'deaf': None}
+    # The spreads are judged in decibels of sound. The history is on the level
+    # scale, which NOISE_SCALE stretches to fit the words onto a narrow
+    # microphone, and judged stretched a silent room at a scale of 4.4 wandered
+    # nine points and was called changing.
+    stretch = max(NOISE_SCALE if scale is None else scale, 0.1)
     values = list(history)
     minute = values[-120:]
     if len(minute) >= 40:
-        out['character'] = ('steady' if _spread(minute, 0.1, 0.9) < STEADY_SPREAD
+        out['character'] = ('steady' if _spread(minute, 0.1, 0.9) / stretch < STEADY_SPREAD
                             else 'changing')
     if calibrated_db is not None:
         if calibrated_db < 60:
@@ -2190,7 +2297,7 @@ def noise_insight(history, people=None, calibrated_db=None):
         else:
             out['talk'] = 'Shouting to be heard'
     if (people is not None and people >= DEAF_MIN_PEOPLE and len(values) >= 600
-            and _spread(values, 0.05, 0.95) < DEAF_SPREAD):
+            and _spread(values, 0.05, 0.95) / stretch < DEAF_SPREAD):
         out['deaf'] = (f'{people} people in view and the sound has not moved in five '
                        'minutes. The microphone may be unplugged or covered.')
     return out
@@ -2213,7 +2320,7 @@ def noise_loop():
                                   'the converter is not running, so the noise level is '
                                   'being withheld. Run main.py --selftest.')
                 else:
-                    db = compute_noise_db(samples)
+                    db = compute_noise_db(remove_dc(samples))
                     clipped = burst_clipped(samples)
                     with _lock:
                         _state['noise_window'].append(db)
@@ -4414,6 +4521,45 @@ def noise_band(db):
     return 'Loud', BRAND_RED
 
 
+# How far past a line the level has to go before the panel changes its word.
+# Without it a room resting near a line changes words every few seconds while
+# nothing in it changes, which reads as the sensor not knowing what quiet is.
+NOISE_WORD_HOLD = 3.0
+_NOISE_BAND_EDGES = {'Quiet': (None, 50.0), 'Moderate': (50.0, 70.0),
+                     'Lively': (70.0, 85.0), 'Loud': (85.0, None)}
+_NOISE_BAND_INSIDE = {'Quiet': 40.0, 'Moderate': 60.0, 'Lively': 77.0, 'Loud': 95.0}
+
+
+def held_noise_band(value, held=None, margin=None):
+    """noise_band, keeping the word already showing near its own edges.
+
+    The word held is kept until the level is more than `margin` past the band
+    it names. A jump clean across a band still changes the word at once.
+    """
+    margin = NOISE_WORD_HOLD if margin is None else margin
+    word, colour = noise_band(value)
+    if held is None or held == word or held not in _NOISE_BAND_EDGES:
+        return word, colour
+    lo, hi = _NOISE_BAND_EDGES[held]
+    if (lo is None or value >= lo - margin) and (hi is None or value < hi + margin):
+        return noise_band(_NOISE_BAND_INSIDE[held])
+    return word, colour
+
+
+def live_level(window, fallback):
+    """The panel's live figure: the middle of the last three bursts.
+
+    The panel used to lead with the newest single burst, so that shouting at
+    the sensor showed at once. It also meant one 100ms burst of the
+    microphone's own hiss could change the word. The middle of three ignores
+    any one burst, and a sound lasting a second still shows within a second.
+    """
+    recent = list(window)[-3:]
+    if not recent:
+        return fallback
+    return sorted(recent)[len(recent) // 2]
+
+
 def home_cards(w, h, m):
     """The three tappable readings, as rectangles.
 
@@ -4514,6 +4660,15 @@ class Panel:
         # The panel keeps its own noise trace, one point per burst, so drawing
         # never waits on the thread doing the measuring.
         self.trace = deque(maxlen=max(120, w // 3))
+        # The noise word on the panel, kept until the level is clearly past a
+        # line. See held_noise_band.
+        self.held_word = None
+
+    def band(self, basis):
+        """The noise word and colour, held against a level resting on a line."""
+        word, colour = held_noise_band(basis, getattr(self, 'held_word', None))
+        self.held_word = word
+        return word, colour
 
     # -- primitives --------------------------------------------------------
 
@@ -4676,7 +4831,7 @@ class Panel:
         m = self.m
         self.header(live=therm_live or noise_live)
         n_value, n_caption, basis = noise_reading(level)
-        word, colour = noise_band(basis)
+        word, colour = self.band(basis)
         cells = [
             ('Through the door', str(ir) if door_live else '--', BRAND_CREAM,
              'since the last update' if door_live else 'counter offline', door_live),
@@ -4785,7 +4940,7 @@ class Panel:
         pad = m['pad']
         self.header('Noise', back=True, live=live)
         n_value, n_caption, basis = noise_reading(level)
-        word, colour = noise_band(basis)
+        word, colour = self.band(basis)
         if average is not None and live:
             # What the venue card will actually say: the steady minute figure,
             # under the live one, so nobody reads the latest burst as the
@@ -5103,10 +5258,10 @@ def display_loop():
                 # purpose to ignore a slammed door or a dropped glass, which also
                 # means it ignores somebody testing the microphone by shouting
                 # at it, and on a demo screen that reads as the sensor being
-                # dead. The screen leads with the latest burst; the venue card
+                # dead. The screen leads with the last few bursts; the venue card
                 # keeps the steady figure.
                 window = _state['noise_window']
-                burst = float(window[-1]) if window else db
+                burst = float(live_level(window, db))
                 insight = _state['noise_insight']
                 clipped_at = _state['noise_clipped_at']
                 frame = _state['thermal_frame'] if THERMAL_VIEW_ON else None
@@ -5436,7 +5591,7 @@ def _median_burst_rms(seconds):
     while time.monotonic() < deadline:
         centred = noise_burst()
         if centred:
-            readings.append(math.sqrt(sum(c * c for c in centred) / len(centred)))
+            readings.append(burst_rms(centred))
     if not readings:
         return None
     readings.sort()
@@ -5564,27 +5719,44 @@ def listen(seconds=None, write=False):
 
     print(f'flock-sensor {VERSION} microphone level')
     print(f'  channel {NOISE_CHANNEL}, {why}')
+    print('')
+    # How far apart to take the reads, measured before anything else, because
+    # every figure after it depends on the answer.
+    global NOISE_SAMPLE_GAP_US
+    print('  Keep the room quiet for a few seconds while it times the reads.')
+    floors = measure_sample_gaps()
+    gap = pick_sample_gap(floors)
+    for g in sorted(floors):
+        shown = f'{floors[g]:6.1f}' if floors[g] is not None else '    --'
+        mark = '  <- using this' if g == gap else ''
+        print(f'    reads {g:4d} us apart: noise {shown}{mark}')
+    if gap is not None:
+        NOISE_SAMPLE_GAP_US = float(gap)
+    print('')
     print('  relative level, NOT dB SPL. Ctrl+C to stop.')
     print('')
     deadline = None if seconds is None else time.monotonic() + seconds
     peak = 0.0
-    floor = None
+    quietest = None
+    heard = []
     try:
         while deadline is None or time.monotonic() < deadline:
-            centred = noise_burst()
-            if not centred:
+            raw = noise_burst()
+            if not raw:
                 continue
-            rms = math.sqrt(sum(c * c for c in centred) / len(centred))
+            centred = remove_dc(raw)
+            rms = burst_rms(raw)
             level = compute_noise_db(centred)
             peak = max(peak, rms)
-            floor = rms if floor is None else min(floor, rms)
+            quietest = rms if quietest is None else min(quietest, rms)
+            heard.append(rms)
             # The same four words the venue card shows, from the same
             # thresholds, so what a person sees here is what a venue sees.
             word = ('Quiet' if level < 50 else 'Moderate' if level < 70
                     else 'Lively' if level < 85 else 'Loud')
             # Clipping is worth its own counter: it is the one fault the bar
             # cannot show, because a pinned reading looks like a loud room.
-            clips = sum(1 for c in centred if c <= 1 - ADC_MID or c >= 1022 - ADC_MID)
+            clips = sum(1 for c in raw if c <= 1 - ADC_MID or c >= 1022 - ADC_MID)
             filled = max(0, min(32, int(level / 100.0 * 32)))
             bar = '#' * filled + '.' * (32 - filled)
             flag = f'  CLIPPING x{clips}' if clips else ''
@@ -5593,10 +5765,12 @@ def listen(seconds=None, write=False):
     except KeyboardInterrupt:
         print('')
     print(f'  loudest burst seen: rms {peak:.1f}')
+    floor = typical_quiet(heard)
     if floor is not None:
-        print(f'  quietest burst seen: rms {floor:.1f}')
+        print(f'  quietest burst seen: rms {quietest:.1f}')
+        print(f'  the room at rest: rms {floor:.1f}, which is what Quiet is set from')
         span = 20 * math.log10(max(peak, 1e-6) / max(floor, 1e-6))
-        print(f'  usable range: {span:.1f} dB between the two')
+        print(f'  usable range: {span:.1f} dB between the room at rest and the loudest')
 
         # Pick a reference that puts a room this quiet at QUIET_TARGET_LEVEL,
         # which sits inside Quiet rather than on its boundary. Setting the
@@ -5636,8 +5810,11 @@ def listen(seconds=None, write=False):
             if write:
                 try:
                     current = CONFIG_PATH.read_text() if CONFIG_PATH.exists() else ''
-                    CONFIG_PATH.write_text(set_config_keys(
-                        current, {'NOISE_REF_COUNTS': f'{ref}', 'NOISE_SCALE': f'{scale}'}))
+                    keys = {'NOISE_REF_COUNTS': f'{ref}', 'NOISE_SCALE': f'{scale}'}
+                    if gap is not None:
+                        # Measured at this gap, so they only hold at this gap.
+                        keys['NOISE_SAMPLE_GAP_US'] = f'{gap}'
+                    CONFIG_PATH.write_text(set_config_keys(current, keys))
                     print(f'  Written to {CONFIG_PATH}. sudo systemctl restart flock-sensor')
                     print('  to use it.')
                 except Exception as e:
@@ -5659,9 +5836,12 @@ def listen(seconds=None, write=False):
             print('')
             print(f'  NOTE: {span:.0f} dB of range, and Quiet through Loud needs '
                   f'{WORD_SCALE_SPAN_DB:.0f} dB.')
-            print('  The top word is unreachable at this gain. Turn the screw on the')
-            print('  MAX4466 anticlockwise until a clap stops showing CLIPPING, then')
-            print('  run this again: the noise floor drops and the range widens.')
+            print('  The scale above stretches the words to fit, so each word is a')
+            print('  smaller step in real sound than it looks. The gain screw will not')
+            print('  widen it: the noise gets in after the amplifier, so turning it')
+            print('  down lowers the sound and leaves the noise. Leave it where talking')
+            print('  does not show CLIPPING. Shorter wires to the converter, away from')
+            print('  the screen and the camera cable, bring the noise down.')
         print('')
         print('  Run this again in the quietest the venue ever gets before setting it.')
 
@@ -5669,8 +5849,9 @@ def listen(seconds=None, write=False):
         # all? The gap between the noise floor and the clipping point is fixed at
         # roughly 25 to 28 dB on this hardware, and a venue spans closer to 45,
         # so a good part of the range is simply below the floor and reads as
-        # silence. Turning the gain trimpot slides this window; it cannot widen
-        # it, because gain multiplies the floor and the signal equally.
+        # silence. The gain trimpot does not widen it: on this hardware the
+        # noise enters after the amplifier, so less gain lowers the sound and
+        # leaves the floor where it was (README, Calibration).
         window = hearing_window(floor)
         if window is None:
             print('')

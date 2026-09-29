@@ -603,6 +603,11 @@ Turning the gain down costs range and buys nothing. Set it just below the point
 where ordinary speech clips and leave it. Bringing that floor down is a wiring
 job, not a settings one: shorter leads, off the breadboard, away from the modem.
 
+**How far apart the reads are matters more than the screw.** On 2026-09-28 the
+same unit read a quiet room at 41 when the converter was read back to back and
+about 15 when the reads were 2ms apart. `--listen` now times the reads before it
+measures anything, and writes the gap it chose as `NOISE_SAMPLE_GAP_US`.
+
 **What none of this fixes.** The level has a fixed slope, so the reference
 shifts the scale and cannot stretch it. Quiet through Loud spans 35 dB of
 thresholds and that unit had 20 to 30 dB of range between its own noise and
