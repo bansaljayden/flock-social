@@ -260,9 +260,16 @@ test('a block shuts the chat on the other screen while it is open, and empties s
     // every "who is free tonight" read is joined against, so a block that left
     // it standing would leave a blocked person's status and free-text note
     // still arriving.
+    //
+    // Read off the You screen's Friends tile, which prints the count as a
+    // number whatever it is. The Nest stat line this used to read is no longer
+    // drawn for an account with no flocks and no friends ("0 flocks · 0
+    // friends" over an empty state that already says so), so "0 friends" is
+    // never on the Nest for Alpha now, friendship or none. The tile reads a
+    // dash until the count lands, so this waits for the real number.
     await openSettings(alpha.page);
-    await alpha.page.getByRole('button', { name: 'Nest', exact: true }).click();
-    await expect(alpha.page.getByText('0 friends')).toBeVisible({ timeout: 15_000 });
+    const friendsTile = alpha.page.getByText('Friends', { exact: true }).locator('..');
+    await expect(friendsTile.locator('p').first()).toHaveText('0', { timeout: 15_000 });
 
     expect(a.errors).toEqual([]);
     expect(b.errors).toEqual([]);
