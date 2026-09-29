@@ -79,6 +79,13 @@ function decodeEscapes(text) {
   return cur;
 }
 
+// True when text still holds an escape after decodeEscapes has run all its
+// passes: five or more layers of encoding, which no real value has and which
+// is how a key would be buried past the decoder.
+function stillEncoded(decodedText) {
+  return /%[0-9a-f]{2}|\\u[0-9a-f]{4}|\\x[0-9a-f]{2}/i.test(decodedText);
+}
+
 // A run of sixteen or more hex characters with at least one letter in it, the
 // shape of a key's body. Digits alone are an id or a count, not a key.
 function hasHexKeyRun(text) {
@@ -138,6 +145,7 @@ function screenValue(value, secrets = []) {
 function containsKeyMaterial(value, secrets = []) {
   const text = typeof value === 'string' ? value : JSON.stringify(value);
   if (!text) return false;
+  if (stillEncoded(decodeEscapes(text))) return true;
   const forms = keyCheckForms(text);
   if (forms.some((t) => /(pri|pub)[_\s-]?[0-9a-f]{4,}/.test(t) || hasHexKeyRun(t))) return true;
   return containsConfiguredSecret(text, secrets);
@@ -267,6 +275,7 @@ module.exports = {
   containsKeyMaterial,
   screenValue,
   decodeEscapes,
+  stillEncoded,
   nextCalendarMonthStart,
   calendarMonthEnd,
   errorCode,
