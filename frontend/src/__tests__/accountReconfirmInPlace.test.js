@@ -71,6 +71,9 @@ jest.mock('../components/ui/BirdieBird', () => {
   return { __esModule: true, default: Stub, BirdieStill: Stub, BirdNote: Stub, WARM_BIRD: {} };
 });
 
+// The web Google flow exists only in a build that carries a client id
+// (useGoogleAuth reads it once, at load), so these load the module as one.
+process.env.REACT_APP_GOOGLE_CLIENT_ID = process.env.REACT_APP_GOOGLE_CLIENT_ID || 'web-client.apps.googleusercontent.com';
 const api = require('../services/api');
 const ProfileSettings = require('../screens/ProfileSettings').default;
 
