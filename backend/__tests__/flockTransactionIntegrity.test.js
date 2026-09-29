@@ -32,6 +32,12 @@
 //    nobody's data export, its author's included, since a copy there would
 //    tell the author about an open report.
 //
+// 4. TWO ACCOUNT DELETIONS AND THE REPORTS BETWEEN THEM. Two people who had
+//    reported each other and deleted their accounts at once each cleared the
+//    report they filed, then waited for the one the other filed: 40P01. The
+//    deletion now locks every report naming the account in id order before
+//    it clears any (ACCOUNT_REPORT_LOCKS_SQL in routes/users.js).
+//
 // Real routes on a real migrated Postgres, because both defects are about what
 // the server does with locks and transactions, and a scripted pool can only
 // assert the order of statements it was written to expect. The interleavings
@@ -78,6 +84,7 @@ let server;
 let base;
 let signUserToken;
 let ACCOUNT_FLOCK_LOCKS_SQL;
+let ACCOUNT_REPORT_LOCKS_SQL;
 
 test.before(async () => {
   dataDir = path.join(os.tmpdir(), `flock-txintegrity-pg-${Date.now()}`);
@@ -92,7 +99,7 @@ test.before(async () => {
   ({ signUserToken } = require('../middleware/auth'));
 
   const users = require('../routes/users');
-  ({ ACCOUNT_FLOCK_LOCKS_SQL } = users.__testing);
+  ({ ACCOUNT_FLOCK_LOCKS_SQL, ACCOUNT_REPORT_LOCKS_SQL } = users.__testing);
   const app = express();
   app.use(express.json());
   app.set('io', null);
@@ -752,4 +759,90 @@ test('server.js runs the saved copy purge on a timer and clears it on shutdown',
   const shutdown = src.slice(src.indexOf('function shutdown('));
   assert.match(shutdown, /^\s*if \(evidencePurgeInterval\) clearInterval\(evidencePurgeInterval\);$/m);
   assert.match(shutdown, /^\s*if \(evidencePurgeKickoff\) clearTimeout\(evidencePurgeKickoff\);$/m);
+});
+
+// ---------------------------------------------------------------------------
+// 4. TWO ACCOUNT DELETIONS AND THE REPORTS BETWEEN THEM
+// ---------------------------------------------------------------------------
+
+const reportNames = async (ids) => (await pool.query(
+  'SELECT id, reporter_id, reported_user_id FROM content_reports WHERE id = ANY($1) ORDER BY id', [ids]
+)).rows;
+
+test('two people who reported each other delete their accounts at once: both finish, and both reports are kept', async () => {
+  const ana = await mkUser('Ana');
+  const ben = await mkUser('Ben');
+  const aboutBen = await report(ana, ben, 'profile', null);
+  const aboutAna = await report(ben, ana, 'profile', null);
+
+  // Ana's deletion takes her account row after the reports, so holding that
+  // row stops it there with both reports in hand.
+  const release = await holdRow('SELECT id FROM users WHERE id = $1 FOR UPDATE', [ana.id]);
+  try {
+    const first = call('DELETE', '/api/users/me', { token: ana.token, body: { password: PASSWORD } });
+    const held = await waitForWaiter('the first deletion', (w) => /FROM users WHERE id = \$1 FOR UPDATE/.test(w.query));
+
+    const second = call('DELETE', '/api/users/me', { token: ben.token, body: { password: PASSWORD } });
+    const queued = await waitForWaiter('the second deletion', (w) => w.pid !== held.pid);
+    // Where it waits is the fix: on the id-ordered lock, before it has
+    // cleared a single report, so it holds nothing the first one needs.
+    assert.equal(flat(queued.query), flat(ACCOUNT_REPORT_LOCKS_SQL));
+
+    await release();
+    const [a, b] = await Promise.all([first, second]);
+    assert.equal(a.status, 200, `the first deletion: ${a.text}`);
+    assert.equal(b.status, 200, `the second deletion: ${b.text}`);
+  } finally {
+    await release();
+  }
+  assert.equal(await count('SELECT COUNT(*)::int AS n FROM users WHERE id = ANY($1)', [[ana.id, ben.id]]), 0);
+  // Moderation records outlive both accounts, with neither name on them.
+  assert.deepEqual(await reportNames([aboutBen, aboutAna]), [
+    { id: aboutBen, reporter_id: null, reported_user_id: null },
+    { id: aboutAna, reporter_id: null, reported_user_id: null },
+  ]);
+});
+
+test('with the two report statements as they were, the same pair is a deadlock', async () => {
+  // The de-attribution as it was: the reports this account filed, then the
+  // reports about it, on the schedule two simultaneous deletions produce.
+  const ana = await mkUser('Ana');
+  const ben = await mkUser('Ben');
+  await report(ana, ben, 'profile', null);
+  await report(ben, ana, 'profile', null);
+  const byAna = await pool.connect();
+  const byBen = await pool.connect();
+  try {
+    await byAna.query('BEGIN');
+    await byBen.query('BEGIN');
+    await byAna.query('UPDATE content_reports SET reporter_id = NULL WHERE reporter_id = $1', [ana.id]);
+    await byBen.query('UPDATE content_reports SET reporter_id = NULL WHERE reporter_id = $1', [ben.id]);
+    const anaDone = byAna.query(
+      'UPDATE content_reports SET reported_user_id = NULL WHERE reported_user_id = $1', [ana.id]
+    ).then(() => null, (e) => e);
+    await waitForWaiter("Ana's deletion", (w) => /reported_user_id = NULL/.test(w.query));
+    const benDone = byBen.query(
+      'UPDATE content_reports SET reported_user_id = NULL WHERE reported_user_id = $1', [ben.id]
+    ).then(() => null, (e) => e);
+    const failures = (await Promise.all([anaDone, benDone])).filter(Boolean);
+    assert.deepEqual(failures.map((e) => e.code), ['40P01'], 'exactly one of the two is chosen as the deadlock victim');
+  } finally {
+    await byAna.query('ROLLBACK').catch(() => {});
+    await byBen.query('ROLLBACK').catch(() => {});
+    byAna.release();
+    byBen.release();
+  }
+});
+
+test("a deletion clears only the account's own side of each report", async () => {
+  const gone = await mkUser('Gone');
+  const stays = await mkUser('Stays');
+  const filed = await report(gone, stays, 'profile', null);
+  const about = await report(stays, gone, 'profile', null);
+  const res = await call('DELETE', '/api/users/me', { token: gone.token, body: { password: PASSWORD } });
+  assert.equal(res.status, 200, res.text);
+  assert.deepEqual(await reportNames([filed, about]), [
+    { id: filed, reporter_id: null, reported_user_id: stays.id },
+    { id: about, reporter_id: stays.id, reported_user_id: null },
+  ]);
 });

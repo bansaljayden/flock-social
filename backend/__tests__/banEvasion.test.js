@@ -208,6 +208,9 @@ function handle(text, params = []) {
   if (has('SELECT id FROM flocks') && has('FOR UPDATE')) return { rows: [], rowCount: 0 };
   // And hands none on for a bill still owed (HAND_ON_OWED_PLANS_SQL).
   if (has('SET creator_id = heir.user_id')) return { rows: [], rowCount: 0 };
+  // Every report naming the account, locked in id order before it is cleared
+  // (ACCOUNT_REPORT_LOCKS_SQL). Nobody here filed or drew one.
+  if (has('FROM content_reports') && has('FOR UPDATE')) return { rows: [], rowCount: 0 };
   if (has('UPDATE content_reports') || has('UPDATE moderation_actions')) return { rows: [], rowCount: 0 };
   if (has('DELETE FROM messages')) return { rows: [], rowCount: 0 };
   // Reported content in plans the deletion cascades is copied out first
