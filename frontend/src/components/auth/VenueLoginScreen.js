@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { login, signup, resendVerificationEmail } from '../../services/api';
-import useGoogleAuth, { isGoogleSignInAvailable } from './useGoogleAuth';
+import useGoogleAuth, { isGoogleSignInAvailable, isNativeIos } from './useGoogleAuth';
 import AppleSignInButton from './AppleSignInButton';
 import AppleYearStep, { AppleStepContinue, useAppleYearStep } from './AppleYearStep';
 import AuthShell, {
@@ -193,7 +193,6 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
   // with the same sign-in.
   const apple = useAppleYearStep({ fieldId: 'venue-apple-year', onSuccess: onLoginSuccess });
   const appleStep = apple.step;
-  const leaveAppleStep = apple.leave;
   // And the same step for a new Google account, whose creation 403 comes with
   // the proof from Google's sheet held (makeResume in useGoogleAuth.js). This
   // half used to drop it too and ask for a second Google sheet.
@@ -204,6 +203,11 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
   // A message about an Apple tap goes where the person is looking: into the
   // step while it is open, otherwise the form's box.
   const showAppleError = (message) => (appleStep ? apple.setError(message) : setError(message));
+  // A message about the year itself goes beside whichever year field is on
+  // screen: a step's while one is open, otherwise the form's box.
+  const showYearError = (message) => (appleStep
+    ? apple.setError(message)
+    : google.step ? google.setError(message) : setError(message));
   // The year field on screen. While a step is open the form's own field
   // steps aside (one year field at a time), so the sign-up half's checks
   // point at the step's.
@@ -653,23 +657,31 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
             setError('');
             google.setError('');
             if (isSignup) {
-              // The server requires a date of birth to create an account on
-              // this path, so the field has to be filled first. What the date
-              // says about age is not decided here, exactly as it is not
-              // decided in handleSubmit.
+              // The server needs a year to create an account on this path.
+              // In the iOS app an empty one goes through, the way it does for
+              // Apple here and for Google on the consumer sign-up screen: an
+              // account that already exists needs none, so a returning owner
+              // was being stopped for nothing, and a new one is asked for it
+              // after Google's sheet, in this button's place (the Google step
+              // above). On the web the field sits right above this button and
+              // is asked for first, as it always was. A year that is not four
+              // digits yet, or one no living person can have, is stopped
+              // either way. What the year says about age is not decided here,
+              // exactly as it is not decided in handleSubmit.
               if (!dob) {
-                // An Apple step left open is given up for Google, so the
-                // form's field comes back and "above" is where it is.
-                leaveAppleStep();
-                setError(isSignup
-                  ? 'Add the year you were born above first, then continue with Google.'
-                  : 'Add your date of birth above first, then continue with Google.');
+                if (!isNativeIos()) {
+                  setError('Add the year you were born above first, then continue with Google.');
+                  return;
+                }
+                if (birthYear) {
+                  showYearError('Write the year in full, like 2004.');
+                  return;
+                }
+                startGoogle();
                 return;
               }
               if (!dobLooksReal(dob)) {
-                setError(isSignup
-              ? 'That year does not look right. Check it and try again.'
-              : 'That date of birth does not look right. Check it and try again.');
+                showYearError('That year does not look right. Check it and try again.');
                 return;
               }
             }
