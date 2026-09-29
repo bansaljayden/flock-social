@@ -23,8 +23,11 @@ import BirthYearField, { birthYearToDob } from './BirthYearField';
 // credentials carry that name, so the reason is gone.
 //
 //   step null      no Apple step on screen
-//   step 'resume'  holding this sheet's credentials; Continue sends them again
-//   step 'retap'   they are gone (timed out, or the server said no); the Apple
+//   step 'resume'  holding this sheet's credentials; Continue sends them again,
+//                  or, once Apple's code has run out, opens Apple's sheet
+//                  itself and sends the new one's with the year
+//   step 'retap'   they are gone (the server said no, the connection died
+//                  after sending, or a Google handle ran out); the provider's
 //                  button is back and carries the year, so one more sheet ends it
 //
 // The handle lives in a ref, never in state, so nothing that reads component
@@ -112,13 +115,22 @@ export function useAppleYearStep({ fieldId, onSuccess, provider = 'Apple' }) {
         setError(err.message);
         return;
       }
+      // The hold had outlived Apple's code, so this Continue opened Apple's
+      // sheet again (makeResume in AppleSignInButton.js), and the sheet was
+      // dismissed. Nothing was sent and the handle is still good, so Continue
+      // stays and opens it again. The sentence says why Apple asked twice.
+      if (err?.cancelled) {
+        resumeRef.current = resume;
+        setError(`${provider} sign-in timed out, so ${provider} needs to check it is you again. Tap Continue to open it. Your year is still filled in.`);
+        return;
+      }
       // Otherwise the credentials are gone. Put the provider's button back;
       // it carries the year now, so one more sheet finishes the account.
       setStep('retap');
-      // A handle past its few minutes, a lapsed token (401), a failed code
-      // exchange (503) and a request that timed out all mean the same thing
-      // to the person: the sheet has to be done again. Anything else is the
-      // server's answer word for word, which keeps the under-13 refusal
+      // A lapsed token (401), a failed code exchange (503), a request that
+      // timed out and a Google handle past its few minutes all mean the same
+      // thing to the person: the sheet has to be done again. Anything else is
+      // the server's answer word for word, which keeps the under-13 refusal
       // exactly what it was.
       const status = err?.status;
       const timedOut = err?.expired || err?.isTimeout || status === 401 || status === 503 || !status;
