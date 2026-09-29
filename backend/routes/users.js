@@ -96,6 +96,8 @@ const { createUserBudget } = require('../utils/probeBudget');
 const { phoneDiscoveryHash } = require('../utils/phone');
 const { customerIdFor: stripeCustomerIdFor, closeCustomer: closeStripeCustomer, holdCheckoutLock } = require('../services/proBilling');
 const { closeVenueCustomer, venueCheckoutKey } = require('../services/venueBilling');
+// Held as a module object so a test can replace opsAlert after this loads.
+const opsAlertModule = require('../services/opsAlert');
 
 const router = express.Router();
 const SALT_ROUNDS = 10;
@@ -3264,6 +3266,45 @@ async function holdAccountCheckouts(userId) {
   };
 }
 
+// AN APPLE TOKEN DELETED UNREVOKED IS SAID OUT LOUD.
+//
+// Revocation needs Apple's signing key (services/appleAuth.js), and without it
+// the route below skips revocation rather than refuse, because refusing would
+// make deletion unreachable for every Apple account and Apple 5.1.1(v) needs
+// it reachable. But the privacy policy and the delete-account page both
+// promise the revocation, and a refresh token only exists because signing was
+// configured when the person signed in, so a skip means the key has since
+// gone from the deployment. The skip was silent: Flock stayed connected on the
+// person's Apple ID, and nobody found out until someone looked. Once the
+// deletion has committed and the token is gone for good, the operator is told
+// by the ops alert path, once a day, with nothing about the account or the
+// token in it: the fix is the configuration, not the account.
+function alertAppleTokenNotRevoked() {
+  console.error('[users] An account was deleted without revoking its Apple refresh token, because Apple signing (APPLE_TEAM_ID, APPLE_KEY_ID, APPLE_PRIVATE_KEY) is not configured.');
+  Promise.resolve(opsAlertModule.opsAlert({
+    key: 'apple_revocation_unconfigured',
+    subject: 'Flock: an Apple refresh token could not be revoked',
+    text: [
+      'An account that signs in with Apple was deleted, and its Apple refresh token',
+      'could not be revoked because Apple signing is not configured on this',
+      'deployment: APPLE_TEAM_ID, APPLE_KEY_ID or APPLE_PRIVATE_KEY is unset.',
+      '',
+      'The token was deleted with the account, so that revocation cannot be done',
+      'now. Flock stays listed under Sign in with Apple on that Apple ID until the',
+      'person removes it in their iPhone settings. The privacy policy and the',
+      'delete-account page promise the revocation, so restore the three',
+      'variables on the Railway service before the next Apple account is deleted.',
+      '',
+      'This alert repeats at most once a day.',
+    ].join('\n'),
+    push: {
+      title: 'Apple token not revoked',
+      body: 'An Apple account was deleted while Apple signing is not configured.',
+    },
+    tag: '[apple-revocation]',
+  })).catch(() => {});
+}
+
 // DELETE /api/users/me - Permanently delete the authenticated user's account.
 // Hard-deletes the user row; ON DELETE CASCADE removes their flocks (all but
 // the ones HAND_ON_OWED_PLANS_SQL gives to another member first), memberships,
@@ -3344,8 +3385,10 @@ async function deleteAccount(req, res) {
     // Apple 5.1.1(v): revoke Sign in with Apple tokens before deleting the row.
     // Round 5: when revocation is CONFIGURED and fails, abort — deleting the
     // row destroys the only stored refresh token, so a swallowed failure would
-    // make revocation permanently impossible. Unconfigured env stays a no-op.
+    // make revocation permanently impossible. Unconfigured env does not block
+    // the deletion, and is reported once it commits (alertAppleTokenNotRevoked).
     let appleRevoked = false;
+    let appleNotRevoked = false;
     if (u.rows[0].oauth_provider === 'apple' && u.rows[0].apple_refresh_token && appleAuthConfigured()) {
       let revoked = false;
       try { revoked = await revokeAppleToken(u.rows[0].apple_refresh_token); } catch (_) { revoked = false; }
@@ -3353,6 +3396,8 @@ async function deleteAccount(req, res) {
         return res.status(503).json({ error: "We couldn't disconnect your Apple sign-in just now. Try again in a minute." });
       }
       appleRevoked = true;
+    } else if (u.rows[0].oauth_provider === 'apple' && u.rows[0].apple_refresh_token) {
+      appleNotRevoked = true;
     }
 
     // A WEB SUBSCRIPTION MUST NOT OUTLIVE THE ACCOUNT. Flock Pro bought on
@@ -3671,6 +3716,10 @@ async function deleteAccount(req, res) {
     // the COMMIT, so a rolled-back deletion never disconnects anyone.
     const io = req.app.get('io');
     revokeUserSessions(io, req.user.id);
+
+    // The token went with the row just committed, unrevoked. Not awaited: an
+    // alert that is slow or fails must not hold or fail a finished deletion.
+    if (appleNotRevoked) alertAppleTokenNotRevoked();
 
     // The first week without free-tier limits is once per identity (migration
     // 076). After the COMMIT and never able to fail the deletion: see

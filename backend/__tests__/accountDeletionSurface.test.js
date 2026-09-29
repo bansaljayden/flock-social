@@ -590,6 +590,16 @@ pushHelper.pushIfOffline = async (_io, userId, title, body, data) => {
   return true;
 };
 
+// Apple signing is pinned off here and a revocation is recorded rather than
+// sent, whatever the machine running this has set. Patched before
+// routes/users is required, for the same reason as pushHelper above.
+const appleAuth = require('../services/appleAuth');
+const appleRevokes = [];
+appleAuth.isConfigured = () => false;
+appleAuth.revokeAppleToken = async (token) => { appleRevokes.push(token); return true; };
+// routes/users holds this as a module object, so a test swaps opsAlert on it.
+const opsAlertModule = require('../services/opsAlert');
+
 const sharedPool = require('../config/database');
 const realSharedQuery = sharedPool.query;
 const realSharedConnect = sharedPool.connect;
@@ -630,6 +640,9 @@ let deletionOrder = [];
 // at the top of the route, so a test can see where the deletion was waiting.
 let customerReads = [];
 let accountReads = 0;
+// Whether the deleting account signs in with Apple and holds a refresh token.
+let appleAccount = false;
+const APPLE_TOKEN = 'r.apple-refresh-token-for-this-test';
 
 // Who a handed-on plan goes to in this fixture: member 21 of plan 200.
 const HEIR = { id: 21, name: 'Sam' };
@@ -664,8 +677,10 @@ function stubQuery(text, params = []) {
     else if (has('apple_refresh_token')) accountReads += 1;
     return { rows: [{
       id: DELETER, email: 'deleter@example.com', name: 'Robin', phone: null,
-      password: PASSWORD_HASH, oauth_provider: null, oauth_id: null,
-      apple_refresh_token: null, is_banned: false, banned_at: null,
+      password: appleAccount ? null : PASSWORD_HASH,
+      oauth_provider: appleAccount ? 'apple' : null,
+      oauth_id: appleAccount ? '000123.abcdef.0456' : null,
+      apple_refresh_token: appleAccount ? APPLE_TOKEN : null, is_banned: false, banned_at: null,
       email_verified: true, verified_email: 'deleter@example.com', role: 'user',
       token_version: 0,
     }], rowCount: 1 };
@@ -773,6 +788,8 @@ async function deleteAccountAs(opts = {}) {
   deletionOrder = [];
   customerReads = [];
   accountReads = 0;
+  appleAccount = Boolean(opts.apple);
+  appleRevokes.length = 0;
   // getInvisibleUserIds is the UNCACHED variant, so blockedBoth is read fresh
   // on every call and there is nothing to invalidate.
   usersRouter.__testing.proofFailures.clearAll();
@@ -1159,4 +1176,58 @@ test('a rollback with nothing billed carries no billing code', async () => {
   assert.equal(res.status, 503);
   assert.match(res.body.error, /Nothing was changed/);
   assert.equal('code' in res.body, false);
+});
+
+// ---------------------------------------------------------------------------
+// AN APPLE TOKEN THAT COULD NOT BE REVOKED IS REPORTED.
+//
+// With Apple signing unconfigured the route skips revocation rather than
+// refuse, since Apple needs deletion to stay reachable. The privacy policy and
+// the delete-account page promise the revocation, and the skip used to say
+// nothing to anyone. It now reaches the operator through the ops alert path,
+// once the deletion has committed, with nothing about the account in it.
+// ---------------------------------------------------------------------------
+async function withAlertsRecorded(fn) {
+  const alerts = [];
+  const real = opsAlertModule.opsAlert;
+  opsAlertModule.opsAlert = async (alert) => { alerts.push(alert); return { sent: true, legs: ['email'] }; };
+  try {
+    await fn(alerts);
+  } finally {
+    opsAlertModule.opsAlert = real;
+  }
+}
+
+test('an Apple account deleted while Apple signing is unconfigured is still deleted, and the operator is told', async () => {
+  await withAlertsRecorded(async (alerts) => {
+    const res = await deleteAccountAs({ apple: true });
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(rowDeleted, true, 'Apple 5.1.1(v) needs deletion to work whether or not revocation can run');
+    assert.deepEqual(appleRevokes, [], 'nothing could have been sent to Apple without its signing key');
+    assert.deepEqual(unmodelled, [], 'fixture did not model a query the route ran');
+
+    assert.equal(alerts.length, 1, 'the skip reached the ops alert path exactly once');
+    const [alert] = alerts;
+    assert.equal(alert.key, 'apple_revocation_unconfigured', 'one alert a day, whichever account it was');
+    assert.match(alert.subject, /Apple refresh token could not be revoked/);
+    assert.match(alert.text, /Apple signing is not configured/);
+    assert.match(alert.text, /APPLE_TEAM_ID, APPLE_KEY_ID or APPLE_PRIVATE_KEY/);
+    const said = JSON.stringify(alert);
+    for (const personal of [APPLE_TOKEN, 'deleter@example.com', 'Robin', '000123.abcdef.0456']) {
+      assert.ok(!said.includes(personal), `the alert carried ${personal}`);
+    }
+    assert.doesNotMatch(said, new RegExp(`\\b${DELETER}\\b`), 'the alert carried the account id');
+  });
+});
+
+test('no Apple alert for a deletion that rolled back, or for an account with nothing to revoke', async () => {
+  await withAlertsRecorded(async (alerts) => {
+    // Rolled back: the token is still on the row, and a retry can revoke it
+    // once signing is back, so nothing has been lost yet.
+    const kept = await deleteAccountAs({ apple: true, failTransaction: true });
+    assert.equal(kept.status, 503);
+    const plain = await deleteAccountAs();
+    assert.equal(plain.status, 200, JSON.stringify(plain.body));
+    assert.deepEqual(alerts, []);
+  });
 });
