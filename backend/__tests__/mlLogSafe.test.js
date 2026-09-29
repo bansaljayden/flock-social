@@ -150,6 +150,9 @@ test('the account read withholds a key split across fields, and screens status b
     const got = readKeyStatus(fields, { secrets: [KEY] });
     assert.ok(got.reported.length === 3 && got.reported.every((f) => f.withheld), JSON.stringify(got.reported));
   }
+  // Pieces used as field NAMES are screened like values.
+  const named = readKeyStatus({ usage: { [body.slice(15, 30)]: 1, [body.slice(0, 15)]: 2 } }, { secrets: [KEY] });
+  assert.deepStrictEqual(named.reported, [], JSON.stringify(named.reported));
   // Numbers run together are not a key.
   const quotas = readKeyStatus({ quota_venues: 100, quota_used: 1000000, quota_left: 99000000 }, { secrets: [KEY] });
   assert.ok(quotas.reported.every((f) => !f.withheld), JSON.stringify(quotas.reported));
@@ -194,7 +197,11 @@ function unsafeOutput(src) {
     if (n.type === 'MemberExpression') {
       const prop = n.computed ? (n.property.type === 'Literal' ? String(n.property.value) : null) : n.property.name;
       if (prop === 'message' || prop === 'stack') { flag(n, '.' + prop); return; }
-      if (prop && ALLOWED_PROPS.has(prop) && n.object.type === 'Identifier') return;
+      // Allowed only off an error or our own wrappers (`response`'s HTTP
+      // status, `answer` from fetchKeyStatus). Off a parsed body, status and
+      // name are BestTime's text: the harvest once printed String(data.status).
+      if (prop && ALLOWED_PROPS.has(prop) && n.object.type === 'Identifier'
+        && !/^(data|body|json|parsed)$/.test(n.object.name)) return;
       inspect(n.object);
       if (n.computed) inspect(n.property);
       return;
@@ -244,12 +251,13 @@ test('the sweep itself catches what the line check missed', () => {
     'console.error(err["message"]);',
     'console.error(util.inspect(err));',
     'console.error(`fine ${err.code} ${answer.httpStatus} ${data.venues.length} ${(err && err.name) || "?"}`);',
+    'console.error(`${data.status} ${body.name} ${json.code}`);',
   ].join('\n'));
   // data.venues.length reads a field of the response before its length, so it
   // is flagged too; only a property read straight off the name is allowed.
   assert.deepStrictEqual([...new Set(caught.map((p) => p.split(':')[0]))],
     ['line 1', 'line 3', 'line 4', 'line 5', 'line 6', 'line 7',
-      'line 9', 'line 10', 'line 11', 'line 12', 'line 13', 'line 14', 'line 15', 'line 16']);
+      'line 9', 'line 10', 'line 11', 'line 12', 'line 13', 'line 14', 'line 15', 'line 16', 'line 17']);
 });
 
 test('no collector output prints an error\'s message or stack, a whole error, or a response', () => {
