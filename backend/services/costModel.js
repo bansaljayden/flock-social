@@ -384,11 +384,11 @@ const FIXED_MONTHLY = [
     id: 'vercel',
     label: 'Vercel (web hosting)',
     usd: 0,
-    verified: false,
+    verified: true,
     kind: 'infrastructure',
-    checked: '2026-08-20',
-    source: 'https://vercel.com/pricing',
-    note: 'Assumed Hobby, which is free. Pro is $20/month per seat. Confirm against the Vercel billing page before quoting this to anyone.',
+    checked: '2026-09-29',
+    source: 'https://vercel.com/docs/plans/hobby',
+    note: 'Hobby, which is free: the Vercel billing API has no charges at all for the team (costs_not_found, read 2026-09-29). Hobby is restricted to non-commercial, personal use by Vercel\'s fair use guidelines, and the site sells Flock Pro, so the plan that fits is Pro at $20 a month per developer seat. Moving to it is a purchase, and this line changes to 20 the day it happens.',
   },
 ];
 
@@ -406,12 +406,12 @@ const FIXED_ANNUAL = [
   {
     id: 'domain',
     label: 'flockcorp.com',
-    usd: 12.00,
+    usd: 11.15,
     verified: false,
     kind: 'infrastructure',
-    checked: '2026-08-20',
-    source: 'https://porkbun.com/products/domains',
-    note: 'Published .com renewal prices run about $11 to $16 a year. $12 is a placeholder inside that band. Replace it with the registrar invoice figure and set verified.',
+    checked: '2026-09-29',
+    source: 'https://www.cloudflare.com/products/registrar/',
+    note: 'Registered at Cloudflare Registrar (the .com registry record names Cloudflare, Inc.) on 2026-02-28, renewing 2027-02-28. Cloudflare charges the registry fee at cost: $10.44 a year when this was registered, $11.15 from 2026-11-01 when Verisign\'s wholesale price rises, so the next renewal is $11.15. Not verified because no Cloudflare invoice is on file; set verified from the renewal receipt.',
   },
 ];
 
