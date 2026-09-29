@@ -626,6 +626,10 @@ let failForget = false;
 // replies and the user delete, in the order they ran, so a test can see the
 // erase lands inside the transaction under the lock and before the delete.
 let deletionOrder = [];
+// Every read of a Stripe customer ('pro' or 'roost') and of the account row
+// at the top of the route, so a test can see where the deletion was waiting.
+let customerReads = [];
+let accountReads = 0;
 
 // Who a handed-on plan goes to in this fixture: member 21 of plan 200.
 const HEIR = { id: 21, name: 'Sam' };
@@ -647,6 +651,7 @@ function stubQuery(text, params = []) {
   // Also before the generic SELECT, which would answer it with a user row that
   // has no stripe_customer_id at all.
   if (has('SELECT stripe_customer_id FROM users WHERE id = $1')) {
+    customerReads.push('pro');
     return { rows: [{ stripe_customer_id: proCustomer }], rowCount: 1 };
   }
   if (has('UPDATE users SET stripe_customer_id = NULL')) {
@@ -656,6 +661,7 @@ function stubQuery(text, params = []) {
   if (has('UPDATE venue_profiles SET stripe_customer_id = NULL')) return { rows: [], rowCount: 1 };
   if (has('FROM users WHERE id = $1')) {
     if (has('FOR UPDATE')) deletionOrder.push('lock users');
+    else if (has('apple_refresh_token')) accountReads += 1;
     return { rows: [{
       id: DELETER, email: 'deleter@example.com', name: 'Robin', phone: null,
       password: PASSWORD_HASH, oauth_provider: null, oauth_id: null,
@@ -707,6 +713,7 @@ function stubQuery(text, params = []) {
   // Whether the account holds a Roost customer to cancel first; by default it
   // does not.
   if (has('SELECT stripe_customer_id FROM venue_profiles WHERE user_id = $1')) {
+    customerReads.push('roost');
     return roostCustomer
       ? { rows: [{ stripe_customer_id: roostCustomer }], rowCount: 1 }
       : { rows: [], rowCount: 0 };
@@ -764,6 +771,8 @@ async function deleteAccountAs(opts = {}) {
   roostCustomer = opts.roostCustomer || null;
   rowDeleted = false;
   deletionOrder = [];
+  customerReads = [];
+  accountReads = 0;
   // getInvisibleUserIds is the UNCACHED variant, so blockedBoth is read fresh
   // on every call and there is nothing to invalidate.
   usersRouter.__testing.proofFailures.clearAll();
@@ -980,6 +989,121 @@ test('customers Stripe confirms as cancelled are forgotten and the deletion goes
     assert.equal(rowDeleted, true);
     assert.deepEqual(unmodelled, [], 'fixture did not model a query the route ran');
   });
+});
+
+// ---------------------------------------------------------------------------
+// A CHECKOUT AND THE DELETION OF THE SAME ACCOUNT DO NOT INTERLEAVE.
+//
+// The deletion read the Stripe customer before anything held the account, so
+// a checkout building at that moment saved a customer the deletion had
+// already looked for and not found. The account went, and the customer and a
+// payable session on it stayed at Stripe with nothing pointing at them. Both
+// now go through the account's checkout queue (routes/users.js
+// holdAccountCheckouts): the deletion reads only after a running build is
+// done, and a build asked for during the deletion runs after its COMMIT.
+// ---------------------------------------------------------------------------
+const { venueCheckoutKey } = require('../services/venueBilling');
+
+async function until(cond, label) {
+  for (let i = 0; i < 400; i += 1) {
+    if (cond()) return;
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  throw new Error(`never happened: ${label}`);
+}
+
+const CHECKOUT_QUEUES = [
+  { product: 'Pro', key: () => DELETER, read: 'pro', save: (id) => { proCustomer = id; } },
+  { product: 'Roost', key: () => venueCheckoutKey(DELETER), read: 'roost', save: (id) => { roostCustomer = id; } },
+];
+
+for (const { product, key, read, save } of CHECKOUT_QUEUES) {
+  test(`a ${product} checkout being built when the deletion starts finishes first, and the deletion cancels the customer it saved`, async () => {
+    await withStripe(async (deletedAtStripe) => {
+      let finishBuild = null;
+      // The build saves the account's first customer as its last step, the
+      // way ensureCustomer does, and not until the test lets it.
+      const building = billing.withCheckoutLock(key(), () => new Promise((resolve) => {
+        finishBuild = () => { save('cus_SAVED_BY_CHECKOUT'); resolve(); };
+      }));
+      try {
+        const deletion = deleteAccountAs();
+        await until(() => accountReads > 0 && finishBuild, 'the deletion reading the account');
+        // Past the password check, which is a few milliseconds at cost 4; a
+        // deletion not waiting on the queue would have read both customers
+        // and finished well inside this.
+        await new Promise((r) => setTimeout(r, 80));
+        assert.deepEqual(customerReads.filter((c) => c === read), [],
+          `the deletion read the ${product} customer while a checkout was still building one`);
+        assert.equal(rowDeleted, false);
+
+        finishBuild();
+        await building;
+        const res = await deletion;
+        assert.equal(res.status, 200, JSON.stringify(res.body));
+        assert.deepEqual(deletedAtStripe, ['cus_SAVED_BY_CHECKOUT'],
+          'the customer the checkout saved is cancelled with the account');
+        assert.equal(rowDeleted, true);
+        assert.deepEqual(unmodelled, [], 'fixture did not model a query the route ran');
+      } finally {
+        // A failed assertion must not leave the queue held for the tests after.
+        if (finishBuild) finishBuild();
+      }
+    });
+  });
+
+  test(`a ${product} checkout asked for during the deletion runs only after its COMMIT`, async () => {
+    const events = [];
+    let asked = null;
+    const realConnect = sharedPool.connect;
+    sharedPool.connect = async () => ({
+      async query(text, params) {
+        const q = String(text);
+        if (q.includes('DELETE FROM users WHERE id = $1') && !asked) {
+          // Somebody presses Subscribe while the row is being deleted.
+          asked = billing.withCheckoutLock(key(), () => { events.push('checkout'); });
+        }
+        if (q.trim() === 'COMMIT') {
+          // A slow COMMIT, so a checkout that was not waiting for it runs first.
+          await new Promise((r) => setTimeout(r, 40));
+          events.push('commit');
+        }
+        return stubQuery(text, params);
+      },
+      release() {},
+    });
+    try {
+      const res = await deleteAccountAs();
+      assert.equal(res.status, 200, JSON.stringify(res.body));
+      assert.ok(asked, 'the checkout was asked for during the deletion');
+      await asked;
+      assert.deepEqual(events, ['commit', 'checkout'],
+        'a checkout built before the COMMIT could save a customer to an account the COMMIT then deletes');
+    } finally {
+      sharedPool.connect = realConnect;
+    }
+  });
+}
+
+test('a deletion refused over billing lets the checkout queues go', async () => {
+  // The refusals return from inside the route's try; a queue left held would
+  // leave every later checkout for this account waiting for ever.
+  const savedKey = process.env.STRIPE_SECRET_KEY;
+  delete process.env.STRIPE_SECRET_KEY;
+  billing.__test.resetStripe();
+  try {
+    const res = await deleteAccountAs({ proCustomer: 'cus_PRO_ON_FILE' });
+    assert.equal(res.status, 503, JSON.stringify(res.body));
+  } finally {
+    if (savedKey !== undefined) process.env.STRIPE_SECRET_KEY = savedKey;
+  }
+  for (const { key } of CHECKOUT_QUEUES) {
+    const ran = await Promise.race([
+      billing.withCheckoutLock(key(), () => 'ran'),
+      new Promise((r) => setTimeout(() => r('still held'), 500)),
+    ]);
+    assert.equal(ran, 'ran');
+  }
 });
 
 // ---------------------------------------------------------------------------

@@ -258,9 +258,22 @@ async function customerIdFor(userId) {
 // The account's Stripe customer, created once. The idempotency key makes two
 // racing first checkouts produce ONE customer at Stripe, and the WHERE on the
 // update keeps the first id written if both land.
+//
+// NO ROW IS A REFUSAL, not "no customer yet". This runs inside the checkout
+// queue, which an account deletion holds until its COMMIT (routes/users.js
+// deleteAccount), so a checkout that queued behind a deletion reads here
+// after the account is gone. Carrying on would create a Stripe customer, and
+// a payable session on it, that no account points at and nothing in Flock
+// can ever cancel.
 async function ensureCustomer(user) {
-  const existing = await customerIdFor(user.id);
-  if (existing) return existing;
+  const current = await pool.query('SELECT stripe_customer_id FROM users WHERE id = $1', [user.id]);
+  const row = current && Array.isArray(current.rows) ? current.rows[0] : null;
+  if (!row) {
+    const err = new Error('Account not found.');
+    err.status = 404;
+    throw err;
+  }
+  if (row.stripe_customer_id) return row.stripe_customer_id;
   const customer = await stripe().customers.create({
     email: user.email || undefined,
     name: user.name || undefined,
@@ -371,6 +384,25 @@ function withCheckoutLock(userId, fn) {
   checkoutQueues.set(key, tail);
   tail.then(() => { if (checkoutQueues.get(key) === tail) checkoutQueues.delete(key); });
   return run;
+}
+
+// The same queue, held by a caller whose work is not one function. Account
+// deletion reads the account's Stripe customer, cancels it and deletes the row
+// in steps that end in a COMMIT, and a checkout built in between them saved a
+// customer the deletion had already looked for and found missing. Resolves,
+// once every build queued before it has finished, to the function that lets
+// the next one in. Calling that function again does nothing.
+function holdCheckoutLock(key) {
+  return new Promise((held) => {
+    withCheckoutLock(key, () => new Promise((release) => {
+      let open = true;
+      held(() => {
+        if (!open) return;
+        open = false;
+        release();
+      });
+    }));
+  });
 }
 
 // WHERE A BUYER CAME FROM, so the trip back from Stripe lands on the thing
@@ -694,6 +726,7 @@ module.exports = {
   // The per-account checkout queue, shared with Roost for the same reason:
   // two interleaved builds can each leave a payable session.
   withCheckoutLock,
+  holdCheckoutLock,
   webBase,
   revenueCatApiConfigured,
   PRO_ENTITLEMENT,
