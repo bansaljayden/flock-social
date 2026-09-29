@@ -1830,6 +1830,20 @@ of 276 venues; lehigh 70 requests, about 392 credits, gate 99.5% and 100% of
 142. The write phase prints nothing until its summary, so a quiet log for most
 of an hour is normal; the node process's CPU time is the progress signal.
 
+**One row was filed under the wrong venue, and repaired (2026-09-29).** The
+planner used to take place-id matches and near-duplicates in one pass, so a
+similar name 40 m away with a lower BestTime id could take a row before the
+venue whose Google place id WAS that row. The first philly commit reported it
+as one `placeClaimedTwice` beside one near-duplicate filing: that row got its
+neighbour's curves. Exact place ids now claim first (a831e358), and a full
+philly rerun at 03:18 rewrote the row with its own week (583,488 rows, 432
+new, 583,056 refreshed in place; `placeClaimedTwice 0`, `nearDupClaimed 1`).
+The same review made the harvest refuse redirects (the admission guard only
+approves the address asked for), page an unsplittable box to the cap, and
+re-check near-duplicates under the write lock. A `placeClaimedTwice` above
+zero next to a near-duplicate filing in a future run's summary is this bug
+coming back.
+
 **Judge the gate on the week, not on a Monday dry run.** Lehigh's `--days=0`
 dry run was refused at 73.2% of venues agreeing (99.6% of cells exact at
 rotation 0, no venue better at any hour shift): with one day asked, a venue
