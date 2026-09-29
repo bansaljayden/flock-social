@@ -2007,8 +2007,8 @@ class QuietIsKnown(unittest.TestCase):
              40.2, 41.5, 41.0, 40.1, 48.1, 38.1, 38.6, 46.2, 39.7, 43.8] * 5
     RUN = QUIET + [121.8, 90.0, 125.2]
 
-    def resting_level(self, floor):
-        ref, scale = main.recommend_noise_settings(floor, max(self.RUN))
+    def resting_level(self, floor, max_scale=None):
+        ref, scale = main.recommend_noise_settings(floor, max(self.RUN), max_scale=max_scale)
         middle = sorted(self.QUIET)[len(self.QUIET) // 2]
         return main.compute_noise_db([middle], ref_counts=ref, scale=scale)
 
@@ -2018,7 +2018,8 @@ class QuietIsKnown(unittest.TestCase):
         self.assertLess(self.resting_level(floor), 47.0)
 
     def test_setting_it_from_the_quietest_burst_put_the_room_on_the_line(self):
-        self.assertGreater(self.resting_level(min(self.RUN)), 46.0)
+        # Uncapped, as it was then.
+        self.assertGreater(self.resting_level(min(self.RUN), max_scale=10.0), 46.0)
 
     def test_a_run_with_nothing_loud_in_it_sets_no_scale(self):
         # 14.3 against 15.8 would have asked for a scale of 59.
@@ -2063,6 +2064,63 @@ class QuietIsKnown(unittest.TestCase):
         minute = [40.0, 44.0, 47.0, 41.0, 38.0, 45.0] * 20
         self.assertEqual(main.noise_insight(minute, scale=4.42)['character'], 'steady')
         self.assertEqual(main.noise_insight(minute, scale=1.0)['character'], 'changing')
+
+
+class CalibrateByEar(unittest.TestCase):
+    """--listen --write: quiet, then talking, then a clap.
+
+    The free-running calibration set the scale from the loudest burst it
+    heard. On the first unit that was a voice at 58 against a quiet room at 27,
+    and it stretched the scale to 7.3, so every breath changed the word.
+    """
+
+    def run_it(self, quiet, talk, claps, write=True):
+        phases = iter([[(r, False) for r in quiet], [(r, False) for r in talk], claps])
+        cfg = Path(tempfile.mkdtemp()) / 'flock_sensor.env'
+        cfg.write_text('DEVICE_ID=sensor_001\n')
+        with mock.patch.object(main, 'measure_sample_gaps', return_value={0: 43.1, 250: 30.3}), \
+                mock.patch.object(main, '_collect_bursts', side_effect=lambda s: next(phases)), \
+                mock.patch.object(main.time, 'sleep'), \
+                mock.patch.object(main, 'CONFIG_PATH', cfg), \
+                mock.patch.object(main, 'NOISE_SAMPLE_GAP_US', 1000.0), \
+                mock.patch('builtins.print'):
+            code = main.calibrate_by_ear(write=write)
+        return code, main._parse_config_text(cfg.read_text())
+
+    def level(self, cfg, rms):
+        return main.compute_noise_db([rms], ref_counts=float(cfg['NOISE_REF_COUNTS']),
+                                     scale=float(cfg['NOISE_SCALE']))
+
+    def test_quiet_reads_quiet_and_talking_reads_moderate(self):
+        code, cfg = self.run_it([16.0] * 16, [45.0] * 16, [(150.0, True)])
+        self.assertEqual(code, 0)
+        self.assertAlmostEqual(self.level(cfg, 16.0), 40.0, delta=0.5)
+        self.assertAlmostEqual(self.level(cfg, 45.0), 60.0, delta=0.5)
+        self.assertEqual(cfg['NOISE_SAMPLE_GAP_US'], '250')
+
+    def test_the_run_that_asked_for_seven_is_held_at_the_cap(self):
+        code, cfg = self.run_it([27.0] * 16, [45.0] * 16, [(58.6, False)])
+        self.assertEqual(code, 0)
+        self.assertEqual(float(cfg['NOISE_SCALE']), main.NOISE_MAX_SCALE)
+        self.assertEqual(main.noise_band(self.level(cfg, 27.0))[0], 'Quiet')
+        self.assertEqual(main.noise_band(self.level(cfg, 45.0))[0], 'Moderate')
+
+    def test_a_voice_the_microphone_cannot_hear_writes_nothing(self):
+        code, cfg = self.run_it([27.0] * 16, [28.0] * 16, [(40.0, False)])
+        self.assertEqual(code, 1)
+        self.assertNotIn('NOISE_SCALE', cfg)
+
+    def test_the_pure_arithmetic(self):
+        self.assertIsNone(main.recommend_from_talk(27.0, 30.0))
+        self.assertIsNone(main.recommend_from_talk(0.0, 30.0))
+        ref, scale = main.recommend_from_talk(16.0, 45.0)
+        self.assertLess(scale, main.NOISE_MAX_SCALE)
+
+    def test_the_meter_alone_writes_nothing(self):
+        # Only the guided run writes; the free-running meter is for looking.
+        body = NoiseCadence.body(NoiseCadence, 'listen')
+        self.assertEqual(body.count('CONFIG_PATH.write_text'), 0)
+        self.assertIn('return calibrate_by_ear()', body)
 
 
 class NoiseWindowTrim(unittest.TestCase):

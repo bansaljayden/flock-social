@@ -65,7 +65,7 @@ try:
 except ImportError:  # pragma: no cover
     fcntl = None
 
-VERSION = '1.16.0'
+VERSION = '1.16.1'
 
 # ---------------------------------------------------------------------------
 # Config
@@ -1892,6 +1892,17 @@ WORD_SCALE_SPAN_DB = 35.0
 # Where the loudest thing the microphone can register should land. Inside Loud,
 # which starts at 85, rather than on its edge.
 LOUD_TARGET_LEVEL = 90.0
+# Where someone talking at an ordinary volume should land: the middle of
+# Moderate. See calibrate_by_ear.
+TALK_TARGET_LEVEL = 60.0
+# The most the level scale may stretch. Past this each word is a step of under
+# about 3 dB of real sound and a breath changes it: a run on the first unit
+# with 7 dB between its quiet room and its loudest sound asked for 7.3.
+NOISE_MAX_SCALE = 3.0
+# How far talking has to stand above the quiet room before a scale is set
+# from the two. Closer than this the microphone cannot hear a voice at that
+# distance, and there is nothing to set it from.
+TALK_MIN_SPAN_DB = 4.0
 
 
 # The converter's hard ceiling. A signal centred at ADC_MID can swing 512 counts
@@ -1971,7 +1982,7 @@ NOISE_MIN_SCALE_SPAN_DB = 6.0
 
 
 def recommend_noise_settings(floor_rms, peak_rms, offset=None,
-                             quiet_target=None, loud_target=None):
+                             quiet_target=None, loud_target=None, max_scale=None):
     """Reference and scale that map a measured room onto the whole word scale.
 
     Returns (ref, scale), or None when the two ends are not distinguishable.
@@ -1991,7 +2002,34 @@ def recommend_noise_settings(floor_rms, peak_rms, offset=None,
     if span_db < NOISE_MIN_SCALE_SPAN_DB:
         return None
     scale = (loud_target - quiet_target) / span_db
+    # Capped, so a narrow run cannot squeeze the words into a few decibels.
+    # The loudest sound then lands short of loud_target, which is the honest
+    # answer for a microphone that cannot tell those sounds apart.
+    scale = min(scale, NOISE_MAX_SCALE if max_scale is None else max_scale)
     ref = floor_rms * (10 ** ((offset - quiet_target) / (20.0 * scale)))
+    return round(ref, 1), round(scale, 2)
+
+
+def recommend_from_talk(quiet_rms, talk_rms, offset=None, quiet_target=None,
+                        talk_target=None, max_scale=None):
+    """Reference and scale that put a quiet room at 40 and talking at 60.
+
+    Returns (ref, scale), or None when talking did not stand at least
+    TALK_MIN_SPAN_DB above the quiet room. The scale is held between 0.5 and
+    NOISE_MAX_SCALE; at the cap, talking lands below 60 rather than the words
+    being squeezed until a breath changes one. Pure, so it is tested.
+    """
+    offset = NOISE_DB_OFFSET if offset is None else offset
+    quiet_target = QUIET_TARGET_LEVEL if quiet_target is None else quiet_target
+    talk_target = TALK_TARGET_LEVEL if talk_target is None else talk_target
+    max_scale = NOISE_MAX_SCALE if max_scale is None else max_scale
+    if not quiet_rms or not talk_rms or quiet_rms <= 0 or talk_rms <= 0:
+        return None
+    span_db = 20 * math.log10(talk_rms / quiet_rms)
+    if span_db < TALK_MIN_SPAN_DB:
+        return None
+    scale = max(0.5, min(max_scale, (talk_target - quiet_target) / span_db))
+    ref = quiet_rms * (10 ** ((offset - quiet_target) / (20.0 * scale)))
     return round(ref, 1), round(scale, 2)
 
 
@@ -5727,6 +5765,112 @@ def anchor(meter_db, seconds=None, write=False):
     return 0
 
 
+def _collect_bursts(seconds):
+    """(rms, clipped) for every burst in a window. Prints nothing while it runs."""
+    out = []
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        raw = noise_burst()
+        if raw:
+            out.append((burst_rms(raw), burst_clipped(raw)))
+    return out
+
+
+def _middle(values):
+    ordered = sorted(values)
+    return ordered[len(ordered) // 2] if ordered else None
+
+
+def calibrate_by_ear(write=True):
+    """--listen --write. Three short measurements, then the settings they give.
+
+    A quiet room, someone talking, a clap. The scale is set from the first
+    two, because quiet and conversation are what a venue is made of: silence
+    lands at 40, inside Quiet, and ordinary talking at 60, the middle of
+    Moderate. The calibration before this set the scale from the loudest burst
+    of a free-running meter, which put the words wherever one sound happened
+    to fall; a run on the first unit whose loudest sound was a voice stretched
+    the scale to 7.3 and every breath changed the word.
+
+    Nothing is printed while a measurement runs. Over ssh every printed line is
+    radio traffic from the Pi, inches from the microphone's wires, and the
+    free-running meter prints ten lines a second.
+    """
+    global NOISE_SAMPLE_GAP_US
+    print('')
+    print('  1 of 3. Stay silent until it says done. About 15 seconds.')
+    floors = measure_sample_gaps()
+    gap = pick_sample_gap(floors)
+    if gap is not None:
+        NOISE_SAMPLE_GAP_US = float(gap)
+    quiet = [r for r, _ in _collect_bursts(8.0)]
+    print('     done.')
+    print('')
+    print('  2 of 3. Talk at your normal volume, from where people would sit,')
+    print('     until it says done. Starting in 3 seconds.')
+    time.sleep(3.0)
+    print('     go.')
+    talk = [r for r, _ in _collect_bursts(8.0)]
+    print('     done.')
+    print('')
+    print('  3 of 3. Clap hard, close to it, a few times. Starting in 3 seconds.')
+    time.sleep(3.0)
+    print('     go.')
+    claps = _collect_bursts(5.0)
+    print('     done.')
+    print('')
+    if not quiet or not talk or not claps:
+        print('  The microphone returned nothing to measure. Run --selftest.')
+        return 1
+
+    for g in sorted(floors):
+        shown = f'{floors[g]:6.1f}' if floors[g] is not None else '    --'
+        mark = '  <- using this' if g == gap else ''
+        print(f'  reads {g:4d} us apart: noise {shown}{mark}')
+    quiet_rms, talk_rms = _middle(quiet), _middle(talk)
+    clap_rms = max(r for r, _ in claps)
+    clipped = any(c for _, c in claps)
+    print('')
+    print(f'  quiet room    rms {quiet_rms:6.1f}   (it wandered {min(quiet):.1f} to {max(quiet):.1f})')
+    print(f'  talking       rms {talk_rms:6.1f}')
+    print(f'  loudest clap  rms {clap_rms:6.1f}' + ('   clipped' if clipped else ''))
+
+    pair = recommend_from_talk(quiet_rms, talk_rms)
+    if pair is None:
+        print('')
+        print('  Talking did not stand clear of the quiet room, so there is nothing to')
+        print('  set the words from. Talk louder or closer and run it again.')
+        print('  Nothing was written.')
+        return 1
+    ref, scale = pair
+    print('')
+    for name, rms in (('quiet room', quiet_rms), ('talking', talk_rms),
+                      ('loudest clap', clap_rms)):
+        level = compute_noise_db([rms], ref_counts=ref, scale=scale)
+        print(f'  {name:<13} reads {level:5.1f}, which the app calls {noise_band(level)[0]}')
+    if scale >= NOISE_MAX_SCALE:
+        print('')
+        print('  The scale is at its limit. This microphone hears only a few decibels')
+        print('  between a quiet room and a voice, so the words are spread as far as')
+        print('  they can go without a breath changing one. Shorter wires to the')
+        print('  converter, away from the screen and the camera cable, widen it.')
+    print('')
+    keys = {'NOISE_REF_COUNTS': f'{ref}', 'NOISE_SCALE': f'{scale}',
+            # Measured at this gap, so they only hold at this gap.
+            'NOISE_SAMPLE_GAP_US': f'{NOISE_SAMPLE_GAP_US:.0f}'}
+    print('  ' + '   '.join(f'{k}={v}' for k, v in keys.items()))
+    if not write:
+        return 0
+    try:
+        current = CONFIG_PATH.read_text() if CONFIG_PATH.exists() else ''
+        CONFIG_PATH.write_text(set_config_keys(current, keys))
+        print(f'  Written to {CONFIG_PATH}. sudo systemctl start flock-sensor to use it.')
+    except Exception as e:
+        print(f'  Could not write {CONFIG_PATH}: {e}. Add the three settings by hand.')
+        return 1
+    return 0
+
+
 def listen(seconds=None, write=False):
     """Live level meter. What the microphone is hearing, right now.
 
@@ -5754,20 +5898,9 @@ def listen(seconds=None, write=False):
 
     print(f'flock-sensor {VERSION} microphone level')
     print(f'  channel {NOISE_CHANNEL}, {why}')
-    print('')
-    # How far apart to take the reads, measured before anything else, because
-    # every figure after it depends on the answer.
-    global NOISE_SAMPLE_GAP_US
-    print('  Keep the room quiet for a few seconds while it times the reads.')
-    floors = measure_sample_gaps()
-    gap = pick_sample_gap(floors)
-    for g in sorted(floors):
-        shown = f'{floors[g]:6.1f}' if floors[g] is not None else '    --'
-        mark = '  <- using this' if g == gap else ''
-        print(f'    reads {g:4d} us apart: noise {shown}{mark}')
-    if gap is not None:
-        NOISE_SAMPLE_GAP_US = float(gap)
-    print('')
+    if write:
+        return calibrate_by_ear()
+    print(f'  reads {NOISE_SAMPLE_GAP_US:.0f} us apart, as the running sensor reads them')
     print('  relative level, NOT dB SPL. Ctrl+C to stop.')
     print('')
     deadline = None if seconds is None else time.monotonic() + seconds
@@ -5842,27 +5975,14 @@ def listen(seconds=None, write=False):
                   f'heard at {LOUD_TARGET_LEVEL:.0f},')
             print('  so all four words are reachable. Both are needed: the')
             print('  reference slides the scale, and only the scale can stretch it.')
-            if write:
-                try:
-                    current = CONFIG_PATH.read_text() if CONFIG_PATH.exists() else ''
-                    keys = {'NOISE_REF_COUNTS': f'{ref}', 'NOISE_SCALE': f'{scale}'}
-                    if gap is not None:
-                        # Measured at this gap, so they only hold at this gap.
-                        keys['NOISE_SAMPLE_GAP_US'] = f'{gap}'
-                    CONFIG_PATH.write_text(set_config_keys(current, keys))
-                    print(f'  Written to {CONFIG_PATH}. sudo systemctl restart flock-sensor')
-                    print('  to use it.')
-                except Exception as e:
-                    print(f'  Could not write {CONFIG_PATH}: {e}. Add the two settings by hand.')
+            print('  To set it, run --listen --write, which measures the room quiet,')
+            print('  with someone talking, and with a clap.')
         elif suggested is not None:
             print('')
             print(f'  RECOMMENDED: NOISE_REF_COUNTS={suggested}')
             print(f'  That puts a room this quiet at {QUIET_TARGET_LEVEL:.0f}, inside Quiet.')
             print('  Make some noise during the next run and it can recommend a')
             print('  NOISE_SCALE too, which is what makes Loud reachable.')
-            if write:
-                print('  Nothing was written: without a loud moment in the run there is')
-                print('  no scale to set. Be quiet for a few seconds, then shout or clap.')
 
         # The four words span 35 dB. A microphone whose whole range is narrower
         # than that can never reach the top word no matter how it is referenced,
