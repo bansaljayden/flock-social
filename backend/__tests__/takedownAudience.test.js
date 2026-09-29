@@ -75,7 +75,7 @@ pool.connect = async () => ({
     }
     // The reports a moderation action locks before anything else
     // (routes/admin.js, MODERATION_REPORT_LOCKS_SQL). Nothing reads the rows.
-    if (/^\s*SELECT id FROM content_reports[\s\S]*FOR UPDATE\s*$/i.test(sql)) {
+    if (/^\s*SELECT id, reported_user_id FROM content_reports[\s\S]*FOR UPDATE\s*$/i.test(sql)) {
       log.push({ sql: String(sql).replace(/\s+/g, ' ').trim(), params });
       return Promise.resolve({ rows: [] });
     }
