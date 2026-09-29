@@ -22,6 +22,10 @@
  *     itself in the app, and on the web deliberately puts the Google button
  *     back rather than wait on a popup (useGoogleAuth.js says why).
  *
+ * And on the venue portal's sign-up half in the iOS app, an empty year now
+ * reaches Google's sheet, as it does on the consumer sign-up screen: a
+ * returning owner signs straight in and a new one gets the same step.
+ *
  * HOW TO RUN
  *   cd frontend && CI=true npx react-scripts test --watchAll=false --testPathPattern=googleYearStepOnSignIn
  */
@@ -268,5 +272,47 @@ describe('the sign-in screen on the web', () => {
     fireEvent.click(googleButton(utils));
     await waitFor(() => expect(utils.onLoginSuccess).toHaveBeenCalledWith({ id: 94 }));
     expect(api.googleLoginWithToken.mock.calls[1]).toEqual(['web-access-token', '1999-12-31', { dobGranularity: 'year' }]);
+  });
+});
+
+describe('the venue portal\'s sign-up half, in the iOS app', () => {
+  const openSignupHalf = () => {
+    const utils = SCREENS[1].open();
+    fireEvent.click(utils.getByRole('button', { name: 'Create an account' }));
+    return utils;
+  };
+
+  it('a returning Google owner with the year empty is signed straight in, with no year asked', async () => {
+    const utils = openSignupHalf();
+    sheetGives();
+    api.googleLogin.mockResolvedValueOnce({ user: { id: 95 } });
+    fireEvent.click(googleButton(utils));
+    await waitFor(() => expect(utils.onLoginSuccess).toHaveBeenCalledWith({ id: 95 }));
+    expect(api.googleLogin).toHaveBeenCalledWith('google-id-token-1', undefined);
+    expect(utils.queryByRole('alert')).toBeNull();
+  });
+
+  it('a new Google account with the year empty is asked it after the sheet, and Continue creates the account', async () => {
+    const utils = openSignupHalf();
+    await firstTap(utils);
+    const field = utils.getByLabelText('Year of birth');
+    expect(field.id).toBe('venue-google-year');
+    expect(yearFields(utils).length).toBe(1);
+    expect(utils.queryByRole('alert')).toBeNull();
+
+    fireEvent.change(field, { target: { value: '1980' } });
+    api.googleLogin.mockResolvedValueOnce({ user: { id: 96 } });
+    fireEvent.click(continueButton(utils));
+    await waitFor(() => expect(utils.onLoginSuccess).toHaveBeenCalledWith({ id: 96 }));
+    expect(mockSocialLogin.login).toHaveBeenCalledTimes(1);
+    expect(api.googleLogin.mock.calls[1]).toEqual(['google-id-token-1', '1980-12-31', { dobGranularity: 'year' }]);
+  });
+
+  it('a half-typed year is not sent to Google as no year at all', async () => {
+    const utils = openSignupHalf();
+    fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: '19' } });
+    fireEvent.click(googleButton(utils));
+    await waitFor(() => expect(utils.getByRole('alert').textContent).toBe('Write the year in full, like 2004.'));
+    expect(mockSocialLogin.login).not.toHaveBeenCalled();
   });
 });
