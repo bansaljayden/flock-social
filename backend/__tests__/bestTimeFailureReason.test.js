@@ -119,10 +119,41 @@ test('a message that is not a string cannot knock the status out of its class', 
   assert.strictEqual(failureReason(''), null);
 });
 
-test('at most 4 KB is read and copied, and the rest is cancelled', async () => {
+test('a 200 that says Error, or JSON that does not parse, logs no body text either', async (t) => {
+  // The fixed-label rule covers every path that logs, not only the failed
+  // status: an OK answer can carry an error message, and a JSON parse error
+  // quotes the text it choked on.
+  const secretish = `api_key_private=${KEY}`;
+  const bodies = [
+    { json: async () => ({ status: 'Error', message: `denied: ${secretish}` }) },
+    // Node quotes the start of the text a parse error chokes on.
+    { json: async () => JSON.parse(`${KEY} and more`) },
+  ];
+  for (const shape of bodies) {
+    global.fetch = async () => ({ ok: true, status: 200, ...shape });
+    const lines = captureErrors(t);
+    assert.strictEqual(await fetchWeeklyForecast('W', 'x', null), null);
+    await fetchLiveBusyness('bt-venue-1').catch(() => {});
+    const all = lines.join('\n');
+    assert.ok(lines.length >= 1, all);
+    assert.ok(!all.includes(KEY.slice(0, 6)) && !all.includes('abcdabcd'), `key material leaked: ${all}`);
+  }
+});
+
+test('at most 4 KB is read and copied, and the rest is cancelled', async (t) => {
   const mib = 'y'.repeat(1024 * 1024);
   const { body, seen } = streamOf([mib, mib, mib, mib]);
+  // Watch what is handed to the one copy. The first version copied each whole
+  // chunk and cut afterwards, which a length check on the result cannot see.
+  const realConcat = Buffer.concat;
+  const copied = [];
+  t.mock.method(Buffer, 'concat', (list, total) => {
+    copied.push(list.reduce((n, b) => n + b.length, 0));
+    return realConcat.call(Buffer, list, total);
+  });
   const text = await readBoundedText({ body });
+  t.mock.restoreAll();
+  assert.deepStrictEqual(copied, [REASON_MAX_BYTES], `copied ${copied} bytes for a ${REASON_MAX_BYTES}-byte allowance`);
   assert.strictEqual(Buffer.byteLength(text), REASON_MAX_BYTES, 'copied past the allowance');
   assert.strictEqual(seen.reads, 1, 'kept reading past the limit');
   await flush();

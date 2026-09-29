@@ -39,6 +39,13 @@ const FAILURE_REASONS = [
   [/could not find|not found|no venue/i, 'BestTime could not match a venue to that name and address'],
 ];
 const UNRECOGNISED_REASON = 'reason not recognised';
+function labelFor(message) {
+  if (typeof message !== 'string' || !message) return UNRECOGNISED_REASON;
+  for (const [pattern, label] of FAILURE_REASONS) {
+    if (pattern.test(message)) return label;
+  }
+  return UNRECOGNISED_REASON;
+}
 function failureReason(text) {
   if (typeof text !== 'string' || !text) return null;
   let probe = text;
@@ -46,10 +53,16 @@ function failureReason(text) {
     const parsed = JSON.parse(text);
     if (parsed && typeof parsed.message === 'string') probe = parsed.message;
   } catch { /* a cut or non-JSON body is matched as it stands */ }
-  for (const [pattern, label] of FAILURE_REASONS) {
-    if (pattern.test(probe)) return label;
-  }
-  return UNRECOGNISED_REASON;
+  return labelFor(probe);
+}
+
+// The same rule for a caught error: a JSON parse error quotes the body it
+// choked on, so it is logged as a fixed phrase. Everything else thrown here
+// is ours (a classified status, a timeout, a network failure, a shape error)
+// and carries no body text. Classification still reads the real message.
+function loggableError(err) {
+  if (err instanceof SyntaxError) return 'the response was not valid JSON';
+  return (err && err.message) || String(err);
 }
 
 // At most this many bytes of a failure body are read, and for at most this
@@ -189,7 +202,7 @@ async function fetchWeeklyForecast(venueName, venueAddress, existingVenueId) {
     }
 
     if (!data.analysis || data.status !== 'OK') {
-      console.error(`[ML:BestTime] No analysis data for ${venueName}:`, data.message || 'unknown error');
+      console.error(`[ML:BestTime] No analysis data for ${venueName}: ${labelFor(data.message)}`);
       return null;
     }
 
@@ -207,7 +220,7 @@ async function fetchWeeklyForecast(venueName, venueAddress, existingVenueId) {
       epochAnalysis: data.epoch_analysis || null,
     };
   } catch (err) {
-    console.error(`[ML:BestTime] Weekly forecast error for ${venueName}:`, err.message);
+    console.error(`[ML:BestTime] Weekly forecast error for ${venueName}: ${loggableError(err)}`);
     // Re-throw classified errors (transient 5xx/429, fatal 401/402/403) and
     // network/timeout/abort failures so the caller never 404-marks these.
     if (err.transient || err.fatal || NETWORK_ERR_RE.test(err.message || '')) throw err;
@@ -311,7 +324,7 @@ async function fetchLiveBusyness(venueId) {
       vendorLocalTime: data.venue_info?.venue_current_localtime ?? null,
     };
   } catch (err) {
-    console.error(`[ML:BestTime] Live query error for ${venueId}:`, err.message);
+    console.error(`[ML:BestTime] Live query error for ${venueId}: ${loggableError(err)}`);
     if (err.transient || err.fatal || NETWORK_ERR_RE.test(err.message || '')) throw err;
     return null;
   }
@@ -325,5 +338,6 @@ module.exports = { fetchWeeklyForecast, fetchLiveBusyness, NETWORK_ERR_RE };
 module.exports.classifyHttpFailure = classifyHttpFailure;
 module.exports.fetchJsonWithTimeout = fetchJsonWithTimeout;
 module.exports.failureReason = failureReason;
+module.exports.loggableError = loggableError;
 module.exports.readBoundedText = readBoundedText;
 module.exports.REASON_MAX_BYTES = REASON_MAX_BYTES;
