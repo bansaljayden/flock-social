@@ -1133,8 +1133,8 @@ const DEPENDENCIES = [
   {
     id: 'besttime-subscription',
     label: 'BestTime.app Pro, Package 100',
-    what: 'The live subscription feeding nightly collection. A fixed allowance rather than a meter, so the monthly cap governs new venue admissions and ordinary by-id, live and query calls on admitted venues are unlimited.',
-    where: 'backend/scripts/ml/collectRealtime.js, run by the Railway BESTTIME cron at 02:00 UTC',
+    what: 'The live subscription feeding the hourly collection. A fixed allowance rather than a meter, so the monthly cap governs new venue admissions and ordinary by-id, live and query calls on admitted venues are unlimited. The Venue Filter harvest (scripts/ml/harvestVenueFilter.js) runs on those unlimited query calls and spends no admissions.',
+    where: 'backend/scripts/ml/collectRealtime.js, run hourly at :07 by the Railway BESTTIME cron (7 * * * *)',
     group: 'fixed',
     fixedId: 'besttime-subscription',
     configuredEnv: ['BESTTIME_API_KEY'],
