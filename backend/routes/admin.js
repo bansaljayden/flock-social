@@ -1299,6 +1299,25 @@ function warnEmailHtml(name) {
   </div>`;
 }
 
+// EVERY REPORT A MODERATION ACTION WRITES IS LOCKED FIRST, IN ID ORDER.
+//
+// An account deletion locks every report naming the account in id order and
+// only then the account row (routes/users.js, ACCOUNT_REPORT_LOCKS_SQL). A ban
+// took the account row first and the report second, so a ban racing the
+// reported account's own deletion could end up holding one each, and Postgres
+// broke the cycle with 40P01: a 500 for one of the two, for nothing either
+// could see. A takedown's sibling sweep had the same shape, holding this
+// report and then reaching, in scan order, reports the deletion already held.
+// Taking the report and, for a takedown, the open siblings the sweep will
+// close, up front and in the deletion's order, makes the two queue instead.
+// __tests__/flockTransactionIntegrity.test.js runs both schedules.
+const MODERATION_REPORT_LOCKS_SQL = `SELECT id FROM content_reports
+   WHERE id = $1
+      OR ($2::boolean AND content_type = $3 AND content_id = $4
+          AND status IN ('open', 'under_review'))
+   ORDER BY id
+   FOR UPDATE`;
+
 // PUT /api/admin/reports/:id — take a moderation action:
 //   action ∈ 'hide' (take content down) | 'unhide' (put it back) | 'warn' |
 //            'ban' | 'unban' | 'dismiss'
@@ -1427,6 +1446,9 @@ router.put('/reports/:id', async (req, res) => {
     let sweepSiblingReports = false;
     try {
       await client.query('BEGIN');
+      // Before any other row; see MODERATION_REPORT_LOCKS_SQL.
+      await client.query(MODERATION_REPORT_LOCKS_SQL,
+        [reportId, action === 'hide', report.content_type, report.content_id || null]);
 
       if (action === 'hide' || action === 'unhide') {
         // Round 18: hide and un-hide are ONE branch over a boolean. Before this
@@ -3275,4 +3297,7 @@ module.exports.__test = {
   QUEUE_LIMIT_DEFAULT,
   QUEUE_LIMIT_MAX,
   QUEUE_OFFSET_MAX,
+  // For __tests__/flockTransactionIntegrity.test.js, which checks a moderation
+  // action racing an account deletion waits on this statement.
+  MODERATION_REPORT_LOCKS_SQL,
 };

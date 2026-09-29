@@ -903,6 +903,95 @@ test('a report filed after the deletion holds the account row waits for it, then
   assert.equal(await count('SELECT COUNT(*)::int AS n FROM content_reports WHERE reporter_id = $1', [reporter.id]), 0);
 });
 
+test("a ban and the reported account's own deletion queue on the report, whichever starts first", async () => {
+  const { MODERATION_REPORT_LOCKS_SQL } = require('../routes/admin').__test;
+
+  // The deletion first. Stopped at the account row with every report naming it
+  // in hand, so the ban has to wait on the report, holding nothing yet.
+  {
+    const mod = await mkModerator();
+    const target = await mkUser('Target');
+    const reporter = await mkUser('Reporter');
+    const reportId = await report(reporter, target, 'profile', null);
+    const release = await holdRow('SELECT id FROM users WHERE id = $1 FOR KEY SHARE', [target.id]);
+    try {
+      const deletion = call('DELETE', '/api/users/me', { token: target.token, body: { password: PASSWORD } });
+      const deleting = await waitForWaiter('the deletion', (w) => /FROM users WHERE id = \$1 FOR UPDATE/.test(w.query));
+      const ban = call('PUT', `/api/admin/reports/${reportId}`, { token: mod.token, body: { action: 'ban' } });
+      const queued = await waitForWaiter('the ban', (w) => w.pid !== deleting.pid);
+      assert.equal(flat(queued.query), flat(MODERATION_REPORT_LOCKS_SQL));
+
+      await release();
+      const [d, b] = await Promise.all([deletion, ban]);
+      assert.equal(d.status, 200, `the deletion: ${d.text}`);
+      assert.equal(b.status, 404, `the ban, on an account that is gone: ${b.text}`);
+    } finally {
+      await release();
+    }
+    assert.equal(await count('SELECT COUNT(*)::int AS n FROM users WHERE id = $1', [target.id]), 0);
+    assert.deepEqual(await reportNames([reportId]), [{ id: reportId, reporter_id: reporter.id, reported_user_id: null }]);
+  }
+
+  // The ban first. Stopped at the account row with the report in hand, so the
+  // deletion has to wait on its id-ordered report lock, holding nothing yet.
+  {
+    const mod = await mkModerator();
+    const target = await mkUser('Target');
+    const reporter = await mkUser('Reporter');
+    const reportId = await report(reporter, target, 'profile', null);
+    const release = await holdRow('SELECT id FROM users WHERE id = $1 FOR UPDATE', [target.id]);
+    try {
+      const ban = call('PUT', `/api/admin/reports/${reportId}`, { token: mod.token, body: { action: 'ban' } });
+      const banning = await waitForWaiter('the ban', (w) => /UPDATE users SET is_banned = true/.test(w.query));
+      const deletion = call('DELETE', '/api/users/me', { token: target.token, body: { password: PASSWORD } });
+      const queued = await waitForWaiter('the deletion', (w) => w.pid !== banning.pid);
+      assert.equal(flat(queued.query), flat(ACCOUNT_REPORT_LOCKS_SQL));
+
+      await release();
+      const [b, d] = await Promise.all([ban, deletion]);
+      assert.equal(b.status, 200, `the ban: ${b.text}`);
+      assert.equal(d.status, 200, `the deletion: ${d.text}`);
+    } finally {
+      await release();
+    }
+    assert.equal(await count('SELECT COUNT(*)::int AS n FROM users WHERE id = $1', [target.id]), 0);
+    // The ban's record outlives the account it was about.
+    assert.equal(await count(
+      "SELECT COUNT(*)::int AS n FROM moderation_actions WHERE report_id = $1 AND action = 'user_banned'", [reportId]
+    ), 1);
+  }
+});
+
+test('with the ban taking the account row before the report, the same race is a deadlock', async () => {
+  // The moderation transaction as it was: the account row, then the report,
+  // against a deletion that holds the report and wants the account row.
+  const target = await mkUser('Target');
+  const reporter = await mkUser('Reporter');
+  const reportId = await report(reporter, target, 'profile', null);
+  const byMod = await pool.connect();
+  const byDeletion = await pool.connect();
+  try {
+    await byMod.query('BEGIN');
+    await byDeletion.query('BEGIN');
+    await byMod.query('UPDATE users SET is_banned = true, banned_at = NOW() WHERE id = $1', [target.id]);
+    await byDeletion.query(ACCOUNT_REPORT_LOCKS_SQL, [target.id]);
+    const modDone = byMod.query(
+      "UPDATE content_reports SET status = 'resolved' WHERE id = $1", [reportId]
+    ).then(() => null, (e) => e);
+    await waitForWaiter('the ban', (w) => /UPDATE content_reports SET status/.test(w.query));
+    const deletionDone = byDeletion.query(
+      'SELECT id FROM users WHERE id = $1 FOR UPDATE', [target.id]
+    ).then(() => null, (e) => e);
+    const failures = (await Promise.all([modDone, deletionDone])).filter(Boolean);
+    assert.deepEqual(failures.map((e) => e.code), ['40P01'], 'exactly one of the two is chosen as the deadlock victim');
+  } finally {
+    await byMod.query('ROLLBACK').catch(() => {});
+    await byDeletion.query('ROLLBACK').catch(() => {});
+    byMod.release();
+    byDeletion.release();
+  }
+});
+
 test("a deletion clears only the account's own side of each report", async () => {
   const gone = await mkUser('Gone');
   const stays = await mkUser('Stays');
