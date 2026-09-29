@@ -616,9 +616,36 @@ const billableCountOf = (flockIdCol) => `(SELECT COUNT(*) FROM flock_members bfm
                    JOIN users bu ON bu.id = bfm.user_id AND bu.is_banned IS NOT TRUE
                   WHERE bfm.flock_id = ${flockIdCol} AND bfm.status = 'accepted')::int`;
 
+// THE LIST IS PLANNED ONCE PER CONNECTION, NOT ONCE PER REQUEST. Its text is the
+// same on every call (each interpolation in it is a column name this file
+// writes) and it is long, so as an unnamed query Postgres parsed and planned
+// all of it on every home-screen load: about 1.1 ms of planning for 0.5 ms of
+// work, 2.3 ms a call against 0.27 ms as a named statement (local stack,
+// 2026-09-29). A named statement is parsed once per pooled connection, and
+// after five runs Postgres settles on a generic plan.
+//
+// The catch is `f.*`. A migration that adds a column to flocks changes the
+// statement's result row, and Postgres then refuses every later run of the
+// already-prepared statement with 0A000 ("cached plan must not change result
+// type"). Migrations run on the NEW server at boot while the OLD one is still
+// serving, so without this the old one would fail the list until it was
+// retired. On that error this process goes back to unnamed queries for the
+// rest of its life; the next process prepares against the migrated schema.
+let listStatementUsable = true;
+async function queryFlockList(text, values) {
+  if (!listStatementUsable) return pool.query(text, values);
+  try {
+    return await pool.query({ name: 'flocks-list', text, values });
+  } catch (err) {
+    if (!err || err.code !== '0A000') throw err;
+    listStatementUsable = false;
+    return pool.query(text, values);
+  }
+}
+
 router.get('/', async (req, res) => {
   try {
-    const result = await pool.query(
+    const result = await queryFlockList(
       `SELECT f.*,
               -- PRIVACY: budget_ceiling is MIN(submissions); below the 3-non-skip
               -- threshold it IS someone's exact budget, and before the budget
