@@ -21,6 +21,8 @@
  *   - the sign-up half lets an empty year through to Apple's sheet, the way
  *     the consumer screens do, and asks it afterwards in the same step, while
  *     a half-typed year is still stopped before the sheet.
+ *   - a Continue still waiting when the owner switches halves does not bring
+ *     the step back when its refusal lands.
  *
  * appleOneSheetSignIn.test.js pins the same step on the consumer screens,
  * including the timeouts, which this screen shares through AppleYearStep.js.
@@ -30,7 +32,7 @@
  */
 
 const React = require('react');
-const { render, fireEvent, waitFor } = require('@testing-library/react');
+const { render, fireEvent, waitFor, act } = require('@testing-library/react');
 
 jest.mock('../services/api', () => ({
   trackAuthScreen: jest.fn(),
@@ -244,5 +246,65 @@ describe('the venue sign-up half', () => {
     fireEvent.submit(utils.container.querySelector('form'));
     await waitFor(() => expect(utils.getByRole('alert').textContent).toBe('Add the year you were born.'));
     expect(api.signup).not.toHaveBeenCalled();
+  });
+});
+
+describe('a Continue still waiting when the owner switches halves', () => {
+  // The reply is held back until after "Create an account" has been tapped.
+  const switchMidFlight = async (utils) => {
+    let settle;
+    api.appleLogin.mockReturnValueOnce(new Promise((resolve, reject) => { settle = { resolve, reject }; }));
+    fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: '2000' } });
+    fireEvent.click(continueButton(utils));
+    fireEvent.click(utils.getByRole('button', { name: 'Create an account' }));
+    expect(utils.container.querySelector('.auth-apple-step')).toBeNull();
+    return settle;
+  };
+
+  it.each([
+    ['a failed code exchange', () => httpError(503, "Apple sign-in didn't complete. Try again in a moment.", {})],
+    ['a lapsed token', () => httpError(401, 'Apple sign-in expired, please try again', {})],
+    ['an under-13 refusal', () => httpError(403, 'Flock could not create an account.', { error: 'Flock could not create an account.' })],
+    ['an offline refusal', () => Object.assign(new Error("You're offline. This will work again once you're back on signal."), { isNetworkError: true, isOffline: true })],
+  ])('%s landing late leaves the sign-up half as it is', async (_label, refusal) => {
+    const utils = openVenue();
+    await firstTap(utils);
+    const settle = await switchMidFlight(utils);
+
+    await act(async () => { settle.reject(refusal()); });
+
+    expect(utils.container.querySelector('h1').textContent).toBe('Register your venue');
+    expect(utils.container.querySelector('.auth-apple-step')).toBeNull();
+    expect(utils.queryByRole('alert')).toBeNull();
+    expect(utils.container.textContent).not.toContain('Your year is still filled in');
+    // The sign-up half's own year field, empty, and the Apple button.
+    expect(yearFields(utils).length).toBe(1);
+    expect(utils.getByLabelText('Year of birth').id).toBe('venue-dob');
+    expect(appleButton(utils)).not.toBeNull();
+  });
+
+  it('nothing held is put back, so a later Apple tap opens a fresh sheet', async () => {
+    const utils = openVenue();
+    await firstTap(utils);
+    const settle = await switchMidFlight(utils);
+    await act(async () => {
+      settle.reject(Object.assign(new Error("You're offline. This will work again once you're back on signal."), { isNetworkError: true, isOffline: true }));
+    });
+
+    fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: '1990' } });
+    mockAppleAuthorize.mockResolvedValueOnce({ response: { ...SHEET, identityToken: 'apple-id-token-v2', authorizationCode: 'apple-code-v2' } });
+    api.appleLogin.mockResolvedValueOnce({ user: { id: 85 } });
+    fireEvent.click(appleButton(utils));
+    await waitFor(() => expect(utils.onLoginSuccess).toHaveBeenCalledWith({ id: 85 }));
+    expect(mockAppleAuthorize).toHaveBeenCalledTimes(2);
+    expect(api.appleLogin.mock.calls[2][0]).toBe('apple-id-token-v2');
+  });
+
+  it('an acceptance landing late is still followed: the account exists and has a session', async () => {
+    const utils = openVenue();
+    await firstTap(utils);
+    const settle = await switchMidFlight(utils);
+    await act(async () => { settle.resolve({ user: { id: 84 } }); });
+    expect(utils.onLoginSuccess).toHaveBeenCalledWith({ id: 84 });
   });
 });
