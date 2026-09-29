@@ -368,9 +368,9 @@ function HubSummary({ h, colors, loading, onRefresh }) {
   const needed = (b) => (b && Number.isFinite(b.needed) ? hubCount(b.needed) : 'Not reachable');
   const priceWords = (b) => (b ? `${hubMoney(b.priceCents)} a month, ${b.source === 'stripe'
     ? 'the price Stripe charges'
-    : stripe.status === 'ok'
+    : b.statedBecause === 'no_monthly_price'
       ? 'the price the code states, because Stripe has no monthly dollar price for it'
-      : 'the price the code states, because Stripe was not read'}` : 'no price');
+      : "the price the code states, because Stripe's prices were not read"}` : 'no price');
   const payingWords = (count, missing) => (Number.isFinite(count)
     ? hubCount(count)
     : `not known, waiting on ${[...new Set(hubGaps(missing).map((g) => HUB_GAP_SOURCE[g] || g))].join(' and ') || 'a read'}`);

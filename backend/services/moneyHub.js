@@ -2669,8 +2669,12 @@ function buildNet({ stripe, revenuecat, costs, costsComplete = true, appStoreCom
   // A refund in the month takes the tax back out of the balance too, and the
   // hub cannot tell which refunded charges carried tax, so subtracting every
   // invoice's tax would take refunded tax out twice: then it is unknown.
-  const taxRefunded = invoicesRead && (invoicesRead.taxCents || 0) > 0 && balance && balance.refunds > 0;
-  const taxGap = taxOn && !invoicesRead ? 'stripe_tax' : (taxRefunded ? 'stripe_tax_refunded' : null);
+  // With tax on, ANY refund this month can return tax from an earlier
+  // month's charge, which this month's invoices do not show.
+  const taxRefunded = !!(balance && balance.refunds > 0 && (taxOn || (invoicesRead && (invoicesRead.taxCents || 0) > 0)));
+  // Only said when the balance itself was read: with Stripe unread, that is
+  // the reason, not the tax.
+  const taxGap = balanceGap ? null : (taxOn && !invoicesRead ? 'stripe_tax' : (taxRefunded ? 'stripe_tax_refunded' : null));
   const taxCollectedCents = invoicesRead ? (invoicesRead.taxCents || 0) : 0;
   const stripeNetCents = balanceGap || taxGap ? null : balance.netCents - taxCollectedCents;
   const appStoreNetCents = appRevenueGap ? null : Math.round((appStore ? appStore.monthChargedCents : 0) * keep);
@@ -2693,7 +2697,11 @@ function buildNet({ stripe, revenuecat, costs, costsComplete = true, appStoreCom
       && Number.isFinite(s.liveCents) && s.liveUsable === true);
     if (live) return { cents: live.liveCents, source: 'stripe' };
     const stated = STATED_PRICES.find((s) => s.product === product && s.plan === plan);
-    return stated ? { cents: Math.round(stated.usd * 100), source: 'stated' } : null;
+    // Why the code's price: Stripe or its price list was not read, or it was
+    // and has no monthly dollar price set for this plan.
+    const record = (pricing.stated || []).find((s) => s.product === product && s.plan === plan);
+    const statedBecause = !record || record.verdict === 'unchecked' ? 'stripe_prices_unread' : 'no_monthly_price';
+    return stated ? { cents: Math.round(stated.usd * 100), source: 'stated', statedBecause } : null;
   };
   // No burn, no break-even: a count worked from a partial burn would be a
   // smaller number that looks whole.
@@ -2727,9 +2735,9 @@ function buildNet({ stripe, revenuecat, costs, costsComplete = true, appStoreCom
     netBurnMissing: gaps(...recurringMissing, costGap),
     appleCommissionPct: APPLE_COMMISSION_PCT,
     breakEven: {
-      proWeb: proPrice ? { priceCents: proPrice.cents, source: proPrice.source, netPerUnitCents: Math.round(proWebNet), needed: need(proWebNet) } : null,
-      proAppStore: proPrice ? { priceCents: proPrice.cents, source: proPrice.source, netPerUnitCents: Math.round(proAppNet), needed: need(proAppNet) } : null,
-      roost: roostPrice ? { priceCents: roostPrice.cents, source: roostPrice.source, netPerUnitCents: Math.round(roostNet), needed: need(roostNet) } : null,
+      proWeb: proPrice ? { priceCents: proPrice.cents, source: proPrice.source, statedBecause: proPrice.statedBecause || null, netPerUnitCents: Math.round(proWebNet), needed: need(proWebNet) } : null,
+      proAppStore: proPrice ? { priceCents: proPrice.cents, source: proPrice.source, statedBecause: proPrice.statedBecause || null, netPerUnitCents: Math.round(proAppNet), needed: need(proAppNet) } : null,
+      roost: roostPrice ? { priceCents: roostPrice.cents, source: roostPrice.source, statedBecause: roostPrice.statedBecause || null, netPerUnitCents: Math.round(roostNet), needed: need(roostNet) } : null,
       burnMissing: gaps(costGap),
       payingPro: payingProMissing.length > 0 ? null : subs.pro.live - subs.pro.freeViaCode + (appStore ? appStore.live : 0),
       payingProMissing,

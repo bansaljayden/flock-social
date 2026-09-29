@@ -125,7 +125,10 @@ function FakeStripe() {
     },
     promotionCodes: { list: call('promotionCodes.list', async () => ({ data: stripeState.promotionCodes, has_more: false })) },
     prices: {
-      list: call('prices.list', async () => ({ data: stripeState.prices, has_more: false })),
+      list: call('prices.list', async () => {
+        if (stripeState.pricesFail) throw Object.assign(new Error('prices unavailable'), { type: 'StripeAPIError', statusCode: 500 });
+        return { data: stripeState.prices, has_more: false };
+      }),
       retrieve: call('prices.retrieve', async (id) => {
         if (stripeState.retrievable[id]) return stripeState.retrievable[id];
         const err = new Error('No such price');
@@ -2898,4 +2901,49 @@ test('tax and a refund in the same month make revenue after tax unknown, not tax
   const n = (await req('GET', '/api/admin/money')).body.net;
   assert.strictEqual(n.revenueThisMonthCents, null);
   assert.ok(n.revenueMissing.includes('stripe_tax_refunded'), JSON.stringify(n.revenueMissing));
+});
+
+test('the third pass: a refund with tax on is a gap even untaxed this month, and the reason is the right one', async () => {
+  // A September refund of an August taxed charge: this month's invoices carry
+  // no tax, but the refund returned some.
+  seedStripe();
+  const saved = process.env.STRIPE_AUTOMATIC_TAX;
+  process.env.STRIPE_AUTOMATIC_TAX = 'true';
+  try {
+    handlers = hubHandlers();
+    let n = (await req('GET', '/api/admin/money')).body.net;
+    assert.ok(stripeState.balance.some((bt) => /refund/.test(bt.reporting_category)), 'the seed has a refund this month');
+    assert.strictEqual(n.revenueThisMonthCents, null);
+    assert.ok(n.revenueMissing.includes('stripe_tax_refunded'), JSON.stringify(n.revenueMissing));
+    // Stripe not read at all: that is the reason, not the tax.
+    moneyHub.__test.resetCache();
+    resetStripeState();
+    handlers = hubHandlers();
+    n = (await req('GET', '/api/admin/money')).body.net;
+    assert.ok(!n.revenueMissing.includes('stripe_tax') && !n.revenueMissing.includes('stripe_tax_refunded'), JSON.stringify(n.revenueMissing));
+  } finally {
+    if (saved === undefined) delete process.env.STRIPE_AUTOMATIC_TAX; else process.env.STRIPE_AUTOMATIC_TAX = saved;
+  }
+});
+
+test('a stated break-even price says why: Stripe unread, or no monthly dollar price in it', async () => {
+  seedStripe();
+  const pm = stripeState.prices.find((p) => p.id === 'price_pro_m');
+  Object.assign(pm, { unit_amount: 2999, recurring: { interval: 'year', interval_count: 1 }, active: true });
+  handlers = hubHandlers();
+  let be = (await req('GET', '/api/admin/money')).body.net.breakEven;
+  assert.strictEqual(be.proWeb.source, 'stated');
+  assert.strictEqual(be.proWeb.statedBecause, 'no_monthly_price');
+  // Stripe answered, but its price list did not.
+  moneyHub.__test.resetCache();
+  seedStripe();
+  stripeState.pricesFail = true;
+  try {
+    handlers = hubHandlers();
+    be = (await req('GET', '/api/admin/money')).body.net.breakEven;
+    assert.strictEqual(be.proWeb.source, 'stated');
+    assert.strictEqual(be.proWeb.statedBecause, 'stripe_prices_unread');
+  } finally {
+    delete stripeState.pricesFail;
+  }
 });
