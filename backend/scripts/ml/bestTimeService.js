@@ -28,14 +28,56 @@ function getKey() {
 }
 
 // The key rides in the query string, so an error body that echoes the request
-// would print it. Every configured key is cut out before a reason is logged.
+// would print it. Every configured key, raw and percent-encoded, is cut out of
+// the WHOLE text before anything shortens it: shortening first can split a key
+// and leave all but its last characters in the log. A text that ENDS partway
+// through a key (the read limit below can cut one) loses that tail too.
+const REASON_MAX_CHARS = 300;
 function redactKey(text) {
   if (!text) return text;
-  let out = String(text).slice(0, 300);
+  let out = String(text);
+  const forms = [];
   for (const secret of [process.env.BESTTIME_API_KEY, process.env.BESTTIME_API_KEY_PUBLIC]) {
-    if (secret) out = out.split(secret).join('[key]');
+    if (!secret) continue;
+    forms.push(secret);
+    const encoded = encodeURIComponent(secret);
+    if (encoded !== secret) forms.push(encoded);
   }
-  return out;
+  for (const form of forms) out = out.split(form).join('[key]');
+  for (const form of forms) {
+    for (let k = form.length - 1; k >= 4; k--) {
+      if (out.endsWith(form.slice(0, k))) {
+        out = `${out.slice(0, out.length - k)}[key]`;
+        break;
+      }
+    }
+  }
+  return out.slice(0, REASON_MAX_CHARS);
+}
+
+// At most this many bytes of a failure body are read, and for at most this
+// long: the reason is a nicety, and a body that never ends must not hold a
+// lookup for the rest of its thirty seconds.
+const REASON_MAX_BYTES = 4096;
+const REASON_MAX_MS = 5000;
+async function readBoundedText(response) {
+  const body = response.body;
+  if (!body || typeof body.getReader !== 'function') return null;
+  const reader = body.getReader();
+  const chunks = [];
+  let size = 0;
+  try {
+    while (size < REASON_MAX_BYTES) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = Buffer.from(value);
+      chunks.push(chunk);
+      size += chunk.length;
+    }
+  } finally {
+    reader.cancel().catch(() => {});
+  }
+  return Buffer.concat(chunks).subarray(0, REASON_MAX_BYTES).toString('utf8');
 }
 
 // Classify a non-OK HTTP status into the error contract above.
@@ -79,22 +121,32 @@ const NETWORK_ERR_RE = /aborted|timeout|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AG
 // now read here, inside the deadline; an abort mid-body rejects the read with
 // "This operation was aborted", which NETWORK_ERR_RE already counts as ours.
 // A failed status is answered from the status alone and its body is never
-// read. Returns { response, data }, with data null when the status failed.
-async function fetchJsonWithTimeout(url, options, ms) {
+// read, unless the caller asks for { withReason: true }: then up to
+// REASON_MAX_BYTES of it are read for up to REASON_MAX_MS, and its message
+// comes back as `reason`, key cut out. Only the weekly lookup asks. A by-name
+// lookup spends an admission whether or not it finds the venue, and the reason
+// is what tells "no foot traffic data" from "no venue at that address". The
+// live sweep and the harvest never use it, so they never wait on a failure
+// body. Returns { response, data }, with data null when the status failed.
+async function fetchJsonWithTimeout(url, options, ms, { withReason = false } = {}) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ms);
   try {
     const response = await fetch(url, { ...options, signal: controller.signal });
     if (response.ok) return { response, data: await response.json() };
-    // A failure's own reason, so a 404 that means "no foot traffic data" can be
-    // told apart from one that means "no venue at that address", which a
-    // better address would fix. Bounded, and never allowed to replace the
-    // status the caller classifies on.
+    if (!withReason) return { response, data: null };
     let reason = null;
+    const reasonTimer = setTimeout(() => controller.abort(), REASON_MAX_MS);
     try {
-      const text = (await response.text()).slice(0, 2000);
-      try { reason = JSON.parse(text).message || null; } catch { reason = text || null; }
-    } catch { /* the status alone still says what happened */ }
+      const text = await readBoundedText(response);
+      if (text) {
+        try { reason = JSON.parse(text).message || null; } catch { reason = text; }
+      }
+    } catch {
+      // Cut by a deadline or a broken body: the status still says what happened.
+    } finally {
+      clearTimeout(reasonTimer);
+    }
     return { response, data: null, reason: redactKey(reason) };
   } finally {
     // Round 13: previously cleared only on the success path — a network error
@@ -117,7 +169,8 @@ async function fetchWeeklyForecast(venueName, venueAddress, existingVenueId) {
     const { response, data, reason } = await fetchJsonWithTimeout(
       `https://besttime.app/api/v1/forecasts?${params}`,
       { method: 'POST' },
-      30000
+      30000,
+      { withReason: true }
     );
 
     if (!response.ok) {
