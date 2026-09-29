@@ -636,6 +636,9 @@ let failForget = false;
 // replies and the user delete, in the order they ran, so a test can see the
 // erase lands inside the transaction under the lock and before the delete.
 let deletionOrder = [];
+// The moderation record's statements and the account row's lock and delete,
+// in the order they ran, so a test can see the record cleared under the lock.
+let moderationOrder = [];
 // Every read of a Stripe customer ('pro' or 'roost') and of the account row
 // at the top of the route, so a test can see where the deletion was waiting.
 let customerReads = [];
@@ -657,6 +660,7 @@ function stubQuery(text, params = []) {
   // rollback case silently passes as a success.
   if (has('DELETE FROM users WHERE id = $1')) {
     deletionOrder.push('users');
+    moderationOrder.push('delete account');
     if (failTransaction) throw new Error('simulated write failure');
     rowDeleted = true;
     return { rows: [{ id: DELETER }], rowCount: 1 };
@@ -673,7 +677,7 @@ function stubQuery(text, params = []) {
   }
   if (has('UPDATE venue_profiles SET stripe_customer_id = NULL')) return { rows: [], rowCount: 1 };
   if (has('FROM users WHERE id = $1')) {
-    if (has('FOR UPDATE')) deletionOrder.push('lock users');
+    if (has('FOR UPDATE')) { deletionOrder.push('lock users'); moderationOrder.push('lock account'); }
     else if (has('apple_refresh_token')) accountReads += 1;
     return { rows: [{
       id: DELETER, email: 'deleter@example.com', name: 'Robin', phone: null,
@@ -715,8 +719,14 @@ function stubQuery(text, params = []) {
   }
   // Every report naming the account, locked in id order before it is
   // de-attributed (routes/users.js ACCOUNT_REPORT_LOCKS_SQL).
-  if (has('FROM content_reports') && has('FOR UPDATE')) return { rows: [], rowCount: 0 };
-  if (has('UPDATE content_reports') || has('UPDATE moderation_actions')) return { rows: [], rowCount: 0 };
+  if (has('FROM content_reports') && has('FOR UPDATE')) {
+    moderationOrder.push('lock reports');
+    return { rows: [], rowCount: 0 };
+  }
+  if (has('UPDATE content_reports') || has('UPDATE moderation_actions')) {
+    moderationOrder.push(has('content_reports') ? 'clear reports' : 'clear moderation actions');
+    return { rows: [], rowCount: 0 };
+  }
   if (has('DELETE FROM messages')) return { rows: [], rowCount: 0 };
   // Other people's reported content in the plans the deletion cascades is
   // copied out first (utils/reportEvidence.js). Nothing here is reported.
@@ -789,6 +799,7 @@ async function deleteAccountAs(opts = {}) {
   roostCustomer = opts.roostCustomer || null;
   rowDeleted = false;
   deletionOrder = [];
+  moderationOrder = [];
   customerReads = [];
   accountReads = 0;
   appleAccount = Boolean(opts.apple);
@@ -917,6 +928,19 @@ test("a venue owner's replies to reviews are erased in the deletion's transactio
   assert.equal(deletionOrder[0], 'lock users', 'the reply erase ran before the account row was locked');
   assert.match(deletionOrder[1], /SET venue_reply = NULL, venue_replied_at = NULL, venue_reply_user_id = NULL WHERE venue_reply_user_id = \$1/);
   assert.equal(deletionOrder[2], 'users');
+});
+
+test('reports and moderation actions are cleared under the account row lock, with the reports locked before it', async () => {
+  const res = await deleteAccountAs();
+  assert.equal(res.status, 200, res.body && JSON.stringify(res.body));
+  assert.deepEqual(unmodelled, [], 'fixture did not model a query the route ran');
+  // Cleared before the lock, a report filed in between was cascaded away by
+  // the delete (flockTransactionIntegrity.test.js runs that on a real
+  // database). Locked after the account row, a moderator acting on a report
+  // about this account would deadlock with the deletion instead of waiting.
+  assert.deepEqual(moderationOrder, [
+    'lock reports', 'lock account', 'clear reports', 'clear moderation actions', 'delete account',
+  ]);
 });
 
 test('a deletion that rolls back tells nobody their plan is off', async () => {

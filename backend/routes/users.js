@@ -3253,8 +3253,9 @@ const ACCOUNT_REPORT_LOCKS_SQL = `SELECT id FROM content_reports
    ORDER BY id
    FOR UPDATE`;
 
-// Then one statement clears whichever side names the account, and leaves the
-// other name on the report as it was.
+// Then, once the account row is locked too (deleteAccount says why), one
+// statement clears whichever side names the account, and leaves the other
+// name on the report as it was.
 const DEATTRIBUTE_REPORTS_SQL = `UPDATE content_reports
     SET reporter_id = NULLIF(reporter_id, $1),
         reported_user_id = NULLIF(reported_user_id, $1)
@@ -3623,10 +3624,10 @@ async function deleteAccount(req, res) {
       const kept = await client.query(HAND_ON_OWED_PLANS_SQL, [req.user.id]);
       handedOn = new Map(((kept && kept.rows) || []).map((r) => [r.id, { id: r.heir_id, name: r.heir_name }]));
 
-      // See ACCOUNT_REPORT_LOCKS_SQL: locked in id order, then cleared.
+      // Every report naming this account, locked in id order (see
+      // ACCOUNT_REPORT_LOCKS_SQL). Only locked here: they are cleared under
+      // the account row's lock below.
       await client.query(ACCOUNT_REPORT_LOCKS_SQL, [req.user.id]);
-      await client.query(DEATTRIBUTE_REPORTS_SQL, [req.user.id]);
-      await client.query('UPDATE moderation_actions SET target_user_id = NULL WHERE target_user_id = $1', [req.user.id]);
 
       // messages.sender_id is ON DELETE SET NULL (anonymize). Explicitly remove the
       // user's flock messages so no authored content is retained after deletion.
@@ -3644,7 +3645,7 @@ async function deleteAccount(req, res) {
 
       // Round 16: a BAN has to outlive the account it was imposed on, or
       // deleting the account is a one-tap ban reset. Same transaction as the
-      // evidence de-attribution above and for the same reason — the account
+      // evidence de-attribution and for the same reason — the account
       // must never vanish while the record of why it was banned fails to land.
       // Nothing is written for accounts that were not banned.
       //
@@ -3671,6 +3672,29 @@ async function deleteAccount(req, res) {
       if (wasBanned) {
         tombstoned = await recordBannedIdentity(client, banState);
       }
+
+      // THE MODERATION RECORD IS CLEARED UNDER THE ACCOUNT ROW'S LOCK, NOT
+      // BEFORE IT. content_reports and moderation_actions name the account
+      // through keys that are ON DELETE CASCADE, so a row the clearing does not
+      // reach is deleted with the account instead of kept. The clearing used
+      // to run before this lock, so a report filed about this account between
+      // the two (routes/moderation.js, whose insert needs only a key-share lock
+      // on this row) was cascaded away by the DELETE, the opposite of what the
+      // round 5 note above says these tables are for. Under
+      // the lock, a report or moderation action that committed first is cleared
+      // here with the rest and kept, and one that arrives now waits for this
+      // transaction and fails once the account is gone.
+      //
+      // The reports were locked above, before the account row, and stay that
+      // way round on purpose. A moderator's warn, dismiss or hide on a report
+      // about this account (routes/admin.js PUT /reports/:id) updates the
+      // report's row and then writes a moderation_actions row naming this
+      // account, which takes the key-share lock on it: report first, account
+      // second, the order this takes them in. Taking the account first would
+      // turn a moderator acting on the report during the deletion from a wait
+      // into a deadlock.
+      await client.query(DEATTRIBUTE_REPORTS_SQL, [req.user.id]);
+      await client.query('UPDATE moderation_actions SET target_user_id = NULL WHERE target_user_id = $1', [req.user.id]);
 
       // Same rule as the messages for a venue owner's replies to reviews, run
       // under the lock above and not before it. The review belongs to the

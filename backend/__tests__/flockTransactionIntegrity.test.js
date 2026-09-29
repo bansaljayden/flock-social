@@ -36,7 +36,9 @@
 //    reported each other and deleted their accounts at once each cleared the
 //    report they filed, then waited for the one the other filed: 40P01. The
 //    deletion now locks every report naming the account in id order before
-//    it clears any (ACCOUNT_REPORT_LOCKS_SQL in routes/users.js).
+//    it clears any (ACCOUNT_REPORT_LOCKS_SQL in routes/users.js). And it
+//    clears them under the account row's lock, so a report filed during the
+//    deletion is either cleared and kept or refused, never cascaded away.
 //
 // Real routes on a real migrated Postgres, because both defects are about what
 // the server does with locks and transactions, and a scripted pool can only
@@ -832,6 +834,73 @@ test('with the two report statements as they were, the same pair is a deadlock',
     byAna.release();
     byBen.release();
   }
+});
+
+// The statement routes/moderation.js files a profile report with, as it runs it.
+const fileReport = (reporter, about) => pool.query(
+  `INSERT INTO content_reports (reporter_id, reported_user_id, content_type, content_id, reason, details)
+   VALUES ($1, $2, 'profile', NULL, 'harassment', NULL)
+   RETURNING id`,
+  [reporter.id, about.id]
+);
+
+test('a report filed about an account while its deletion is under way is kept, with that name cleared', async () => {
+  // content_reports.reported_user_id is ON DELETE CASCADE. The deletion
+  // cleared the reports before it locked the account row, so a report that
+  // committed between the two was cascaded away by the DELETE, and a moderator
+  // never saw it. The key-share lock held here is the one a report's own
+  // foreign key check takes, so it stops the deletion at the account row
+  // without stopping the report.
+  const leaving = await mkUser('Leaving');
+  const reporter = await mkUser('Reporter');
+  const release = await holdRow('SELECT id FROM users WHERE id = $1 FOR KEY SHARE', [leaving.id]);
+  let filed;
+  try {
+    const deletion = call('DELETE', '/api/users/me', { token: leaving.token, body: { password: PASSWORD } });
+    await waitForWaiter('the deletion', (w) => /FROM users WHERE id = \$1 FOR UPDATE/.test(w.query));
+
+    // Filed and committed while the deletion is past the report lock and
+    // waiting on the account row.
+    filed = (await fileReport(reporter, leaving)).rows[0].id;
+
+    await release();
+    const res = await deletion;
+    assert.equal(res.status, 200, res.text);
+  } finally {
+    await release();
+  }
+  assert.equal(await count('SELECT COUNT(*)::int AS n FROM users WHERE id = $1', [leaving.id]), 0);
+  assert.deepEqual(await reportNames([filed]), [{ id: filed, reporter_id: reporter.id, reported_user_id: null }],
+    'the report filed during the deletion was cascaded away instead of kept');
+});
+
+test('a report filed after the deletion holds the account row waits for it, then fails because the account is gone', async () => {
+  const host = await mkUser('Host');
+  const leaving = await mkUser('Leaving');
+  const reporter = await mkUser('Reporter');
+  const flockId = await planWith(host, [leaving, host], []);
+  // Stops the deletion inside its DELETE, whose cascade reaches this
+  // membership row, long after it has taken the account row.
+  const release = await holdRow(
+    'SELECT id FROM flock_members WHERE flock_id = $1 AND user_id = $2 FOR UPDATE', [flockId, leaving.id]
+  );
+  try {
+    const deletion = call('DELETE', '/api/users/me', { token: leaving.token, body: { password: PASSWORD } });
+    const deleting = await waitForWaiter('the deletion', (w) => /DELETE FROM users/.test(w.query));
+
+    const late = fileReport(reporter, leaving).then(() => null, (e) => e);
+    await waitForWaiter('the report', (w) => w.pid !== deleting.pid && /INSERT INTO content_reports/.test(w.query));
+
+    await release();
+    const res = await deletion;
+    assert.equal(res.status, 200, res.text);
+    const err = await late;
+    assert.ok(err, 'a report about an account that no longer exists was accepted');
+    assert.equal(err.code, '23503', 'refused by the foreign key, not by anything that would hide a real fault');
+  } finally {
+    await release();
+  }
+  assert.equal(await count('SELECT COUNT(*)::int AS n FROM content_reports WHERE reporter_id = $1', [reporter.id]), 0);
 });
 
 test("a deletion clears only the account's own side of each report", async () => {
