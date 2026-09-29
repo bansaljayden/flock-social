@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { login, signup, resendVerificationEmail } from '../../services/api';
 import useGoogleAuth, { isGoogleSignInAvailable } from './useGoogleAuth';
 import AppleSignInButton from './AppleSignInButton';
+import AppleYearStep, { AppleStepContinue, useAppleYearStep } from './AppleYearStep';
 import AuthShell, {
   ageFromDob, AUTH, AuthError, AuthLabelRow, AuthRule, formatDob, GoogleG, MIN_AGE, PasswordEye,
 } from './AuthShell';
@@ -182,12 +183,26 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
     return years !== null && years >= 0;
   };
 
+  // THE APPLE STEP, the one the consumer sign-in and sign-up screens use
+  // (AppleYearStep.js has the whole of why). A brand-new Apple ID from "Run a
+  // venue? Sign in here" is answered 403 asking for a year, and the
+  // credentials from that sheet can be sent again with it. This screen used
+  // to drop them, show a red "tap Continue with Apple again" and send the
+  // owner through Apple's sheet a second time. Now the year field and a
+  // Continue take the Apple button's place and Continue finishes the account
+  // with the same sign-in.
+  const apple = useAppleYearStep({ fieldId: 'venue-apple-year', onSuccess: onLoginSuccess });
+  const appleStep = apple.step;
+  const leaveAppleStep = apple.leave;
+
   // Native iOS runs Google's own SDK, everything else the GIS browser flow;
   // one hook, one backend route, and the needsDob 403 handled the same on both.
   const startGoogle = useGoogleAuth({
     onSuccess: onLoginSuccess,
     onError: (msg, err) => {
       if (err?.data?.needsDob) {
+        // Google's own ask takes the field back up to the form.
+        leaveAppleStep();
         setNeedsDob(true);
         setDobGranularity(err.data.dobGranularity || null);
         setError(err.data.dobGranularity === 'year'
@@ -266,6 +281,7 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
         // an existing account, so this is a backfill and the exact date is
         // required. The date field is the only one this path may show.
         setDobGranularity(null);
+        leaveAppleStep();
         setError(needsDob && !askYearOnly && backfillDob
           ? err.message
           : 'One more thing: add your date of birth below to continue.');
@@ -288,6 +304,8 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
     setDobConfirmed('');
     setBirthYear('');
     setBackfillDob('');
+    // A held Apple sign-in belongs to the half it was asked on too.
+    leaveAppleStep();
     // A password typed under the login rules is not carried into a signup form
     // that is about to grade it against a checklist.
     setPassword('');
@@ -385,7 +403,10 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
           </div>
         )}
 
-        {(isSignup || needsDob) && (
+        {/* Not while the Apple step is open: the step draws its own year
+            field where the Apple button was, and one year field on screen is
+            the rule the consumer screens keep. */}
+        {(isSignup || needsDob) && !appleStep && (
           askYearOnly ? (
             /* One field, shared with SignupScreen and LoginScreen, so the three
                cannot drift apart again. They already did once: signup was moved
@@ -612,24 +633,60 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
       {/* Apple guideline 4.8: the venue portal ships inside the same iOS binary
           and offers Google above, so it must offer Sign in with Apple too.
           Renders null on web. Its absence here was a standing 4.8 rejection
-          risk that the consumer screens had already fixed. */}
+          risk that the consumer screens had already fixed.
+
+          A new Apple ID's year is asked in this button's place (see THE APPLE
+          STEP above), with the owner's hint rather than the consumer one. */}
+      {appleStep && (
+        <AppleYearStep
+          idPrefix="venue"
+          error={apple.error}
+          value={birthYear}
+          onChange={(v) => { setBirthYear(v); apple.setError(''); }}
+          hint="Yours, not the venue's. We use it to check your age."
+        />
+      )}
+
+      {appleStep === 'resume' ? (
+        <AppleStepContinue
+          busy={apple.busy}
+          busyLabel={isSignup ? 'Creating account…' : 'Signing in…'}
+          onClick={() => apple.continueWith(birthYear)}
+        />
+      ) : (
       <AppleSignInButton
-        onSuccess={onLoginSuccess}
-        onError={(m, err) => {
+        onSuccess={(user) => { leaveAppleStep(); onLoginSuccess(user); }}
+        onError={(m, err, resume) => {
           // The structured error is the second argument for exactly this: a
           // brand-new Apple account on the sign-in half is answered 403
           // needsDob, and a screen that only read the message told them to
           // try again with no field to fill, so every retry failed the same
-          // way (adversarial audit round 2, 2026-09-05). Same transition the
-          // Google path above makes: reveal the date field and say so.
+          // way (adversarial audit round 2, 2026-09-05).
           if (err?.data?.needsDob) {
+            // Read off the answer, not off screen state, which is the
+            // previous render's.
+            const granularity = err.data.dobGranularity || null;
             setNeedsDob(true);
-            setDobGranularity(err.data.dobGranularity || null);
+            setDobGranularity(granularity);
+            // The year ask with the sheet's credentials held: finish in place.
+            if (granularity === 'year' && resume) {
+              setError('');
+              apple.hold(resume);
+              return;
+            }
+            // Nothing held, or the full date a backfill needs: the same
+            // transition the Google path above makes, the field up in the
+            // form and a sentence saying so.
+            leaveAppleStep();
             setError(needsDob && dob
               ? m
-              : err.data.dobGranularity === 'year'
+              : granularity === 'year'
                 ? 'Add the year you were born below, then tap Continue with Apple again.'
                 : 'Add your date of birth below, then tap Continue with Apple again.');
+          } else if (appleStep) {
+            // The retap after a timeout, answered by the server: shown next
+            // to the button that was tapped, under 13 in the server's words.
+            apple.setError(m);
           } else {
             setError(m);
           }
@@ -667,6 +724,7 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
           return true;
         }}
       />
+      )}
 
       {/* The server will not say which addresses belong to Google or Apple
           accounts — answering that turns login into an account enumeration
