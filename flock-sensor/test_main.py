@@ -1946,31 +1946,118 @@ class SoundPressureEstimate(unittest.TestCase):
 
 
 class NoiseSampleRate(unittest.TestCase):
-    """A 1ms sleep between reads held the sample rate at about 650Hz.
+    """How far apart the microphone's reads are taken.
 
-    Measured on the development machine: time.sleep(0.001) costs nearer 1.5ms,
-    so the burst managed about 63 samples in 100ms. Nyquist at 650Hz is 325Hz,
-    which is below almost everything in a room, so speech formants, music and
-    glassware all folded back into the measurement as alias and the RMS was the
-    loudness of a scrambled signal rather than of the room.
+    A 1ms sleep once held the loop to about 650 reads a second, and it was
+    removed on the belief that the slow rate aliased the room into a scrambled
+    RMS. Aliasing moves sound to other frequencies without changing the RMS of
+    the samples, so the rate was never the problem. Reading back to back was:
+    on the first unit, 2026-09-28, forty reads 2ms apart in a quiet room spread
+    67 counts, about 15 rms, and back-to-back bursts in the same room seconds
+    later read 41. The gap is a setting now, and --listen measures it.
     """
 
-    def test_the_sleep_is_gone_from_the_sampling_loop(self):
-        source = Path(__file__).resolve().parent.joinpath('main.py').read_text(encoding='utf-8')
-        idx = source.index('def noise_loop():')
-        window = source[idx:idx + 900]
-        self.assertNotIn('time.sleep(0.001)', window,
-                         'the sampling loop is rate-limited again, which aliases the room')
+    def test_the_default_gap_is_the_spacing_that_measured_clean(self):
+        self.assertEqual(main.DEFAULTS['NOISE_SAMPLE_GAP_US'], '1000')
 
     def test_the_burst_is_bounded_in_both_time_and_count(self):
-        # No sleep means a fast machine could otherwise build a very large list.
         self.assertGreater(main.NOISE_BURST_SECONDS, 0.0)
         self.assertGreater(main.NOISE_MAX_SAMPLES, 500)
 
-    def test_the_burst_can_hold_enough_samples_to_beat_the_old_rate(self):
-        # The old loop managed about 63. The cap has to be well clear of that
-        # or the fix is undone by the ceiling that protects it.
-        self.assertGreater(main.NOISE_MAX_SAMPLES, 63 * 10)
+    def reads(self, gap_us, seconds=0.05):
+        with mock.patch.object(main, '_read_mcp3008_ch0', return_value=512):
+            return len(main.noise_burst(seconds=seconds, gap_us=gap_us))
+
+    def test_a_gap_spaces_the_reads(self):
+        # 50ms at 2ms apart is at most 25 reads, at 250us at most 200.
+        self.assertLessEqual(self.reads(2000), 26)
+        self.assertLessEqual(self.reads(250), 201)
+        self.assertGreater(self.reads(0), 200)
+
+    def test_the_smallest_gap_that_is_nearly_as_clean_wins(self):
+        floors = {0: 41.0, 100: 30.0, 250: 16.5, 500: 15.2, 1000: 15.5, 2000: 15.0}
+        self.assertEqual(main.pick_sample_gap(floors), 250)
+
+    def test_back_to_back_is_kept_when_spacing_does_not_help(self):
+        self.assertEqual(main.pick_sample_gap({0: 15.0, 250: 15.2, 1000: 14.9}), 0)
+
+    def test_a_dead_channel_picks_no_gap(self):
+        self.assertIsNone(main.pick_sample_gap({0: 0.0, 1000: None}))
+
+    def test_the_resting_offset_is_not_counted_as_sound(self):
+        # The first unit rests at 518 against a midpoint of 512.
+        raw = [a + 6.0 for a in [10.0, -10.0] * 50]
+        self.assertAlmostEqual(main.burst_rms(raw), 10.0, places=6)
+        about_the_midpoint = (sum(r * r for r in raw) / len(raw)) ** 0.5
+        self.assertGreater(about_the_midpoint, 11.0)
+
+
+class QuietIsKnown(unittest.TestCase):
+    """A room with nothing in it flipped between Quiet and Moderate.
+
+    Three things put it there, found on the first unit on 2026-09-28: a noise
+    floor tripled by reading back to back (NoiseSampleRate), a scale set from
+    the single quietest burst so the room's ordinary quiet sat at 47 against a
+    line at 50, and a panel that led with one 100ms burst.
+    """
+
+    # The --listen run that showed it: a quiet room wandering 34 to 48, and
+    # three claps.
+    QUIET = [41.0, 38.7, 41.8, 43.3, 44.7, 34.0, 42.3, 38.5, 39.8, 46.0,
+             40.2, 41.5, 41.0, 40.1, 48.1, 38.1, 38.6, 46.2, 39.7, 43.8] * 5
+    RUN = QUIET + [121.8, 90.0, 125.2]
+
+    def resting_level(self, floor):
+        ref, scale = main.recommend_noise_settings(floor, max(self.RUN))
+        middle = sorted(self.QUIET)[len(self.QUIET) // 2]
+        return main.compute_noise_db([middle], ref_counts=ref, scale=scale)
+
+    def test_quiet_is_set_from_the_room_at_rest(self):
+        floor = main.typical_quiet(self.RUN)
+        self.assertGreater(floor, min(self.RUN) + 3)
+        self.assertLess(self.resting_level(floor), 47.0)
+
+    def test_setting_it_from_the_quietest_burst_put_the_room_on_the_line(self):
+        self.assertGreater(self.resting_level(min(self.RUN)), 46.0)
+
+    def test_a_run_with_nothing_loud_in_it_sets_no_scale(self):
+        # 14.3 against 15.8 would have asked for a scale of 59.
+        self.assertIsNone(main.recommend_noise_settings(14.3, 15.8))
+        ref, scale = main.recommend_noise_settings(15.0, 125.0)
+        self.assertLessEqual(scale, 10.0)
+
+    def test_nothing_heard_sets_nothing(self):
+        self.assertIsNone(main.typical_quiet([]))
+
+    def test_the_word_holds_until_the_level_is_clearly_past_the_line(self):
+        held, words = None, []
+        for value in (45, 51, 52.9, 53.1, 48, 47.1, 46.9):
+            held = main.held_noise_band(value, held)[0]
+            words.append(held)
+        self.assertEqual(words, ['Quiet', 'Quiet', 'Quiet', 'Moderate',
+                                 'Moderate', 'Moderate', 'Quiet'])
+
+    def test_a_real_jump_changes_the_word_at_once(self):
+        self.assertEqual(main.held_noise_band(92.0, 'Quiet')[0], 'Loud')
+
+    def test_a_held_word_keeps_its_own_colour(self):
+        self.assertEqual(main.held_noise_band(51.0, 'Quiet'), main.noise_band(40.0))
+
+    def test_one_burst_of_hiss_does_not_change_the_panel(self):
+        self.assertEqual(main.live_level([40.0, 55.0, 40.0], 0.0), 40.0)
+
+    def test_a_sound_lasting_a_second_shows_at_once(self):
+        self.assertEqual(main.live_level([40.0, 95.0, 96.0], 0.0), 95.0)
+
+    def test_no_bursts_falls_back_to_the_minute_figure(self):
+        self.assertEqual(main.live_level([], 44.0), 44.0)
+
+    def test_a_stretched_scale_does_not_make_a_still_room_look_busy(self):
+        minute = [40.0, 44.0, 47.0, 41.0, 38.0, 45.0] * 20
+        self.assertEqual(main.noise_insight(minute, scale=4.42)['character'], 'steady')
+        self.assertEqual(main.noise_insight(minute, scale=1.0)['character'], 'changing')
+
+
 class NoiseWindowTrim(unittest.TestCase):
     """A slammed door owned a sixth of the published loudness.
 
