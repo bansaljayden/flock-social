@@ -832,3 +832,82 @@ test('across every run, only the venue filter and the key endpoint were called, 
   assert.ok(filters.every((r) => r.params.own_venues_only === 'False' && r.params.foot_traffic === 'day'));
   assert.ok(filters.every((r) => /^\d+\.\d{3}$/.test(r.params.lat_min.replace('-', ''))), 'more than three decimals sent');
 });
+
+// ---------------------------------------------------------------------------
+// A review of the harvester after its first real runs, 2026-09-29.
+// ---------------------------------------------------------------------------
+
+test('an exact place id claims its row before a similar name nearby can', () => {
+  // "Cafe Lift Annex" (lower BestTime id, 20 m away, a different place id) used
+  // to take the row first; "Cafe Lift", whose place id IS that row, was skipped
+  // as placeClaimedTwice and the Annex's curves were filed under Cafe Lift.
+  const lat = tileCenter.lat;
+  const lng = tileCenter.lng;
+  const days = new Map([[0, new Array(24).fill(10)]]);
+  const row = { id: 7, name: 'Cafe Lift', latitude: lat, longitude: lng, besttime_venue_id: null };
+  const annex = { venueId: 'ven_a', placeId: 'ChIJannexannexannex', name: 'Cafe Lift Annex', lat: lat + 0.00018, lng, type: 'cafe', days };
+  const lift = { venueId: 'ven_b', placeId: 'ChIJliftliftliftlift', name: 'Cafe Lift', lat, lng, type: 'cafe', days };
+  const identities = { byBtId: new Map(), byPlaceId: new Map([[lift.placeId, row]]), nearby: [row] };
+  const { plan, skipped } = harvester.planVenues([annex, lift], identities, ['philly']);
+  const onRow = plan.filter((p) => p.row && p.row.id === 7);
+  assert.strictEqual(onRow.length, 1);
+  assert.strictEqual(onRow[0].kind, 'known_place');
+  assert.strictEqual(onRow[0].venue.venueId, 'ven_b', 'the near name took the exact match\'s row');
+  assert.strictEqual(skipped.placeClaimedTwice, 0);
+  assert.strictEqual(skipped.nearDupClaimed, 1);
+});
+
+test('a redirect from the venue filter is not followed, and the run stops', async () => {
+  // The guard approves the address asked for; a followed redirect is a request
+  // it never saw, and could be one that spends an admission.
+  const fake = fakeBestTime(cluster(5, tileCenter.lat, tileCenter.lng, 0.01));
+  const inner = fake.fetchImpl;
+  const redirectModes = [];
+  fake.fetchImpl = async (input, init = {}) => {
+    if (new URL(String(input)).pathname === '/api/v1/venues/filter') {
+      redirectModes.push(init.redirect);
+      return jsonResponse(302, {});
+    }
+    return inner(input, init);
+  };
+  const { summary } = await runHarvest(['--city=philly', '--days=0'], fake);
+  assert.strictEqual(summary.aborted, true);
+  assert.match(summary.abortReason, /redirect, which is not followed/);
+  assert.ok(redirectModes.length > 0 && redirectModes.every((m) => m === 'manual'), `redirect modes: ${redirectModes}`);
+});
+
+test('a box that cannot be split is paged to the cap even when page one reports a bigger total', async () => {
+  // Six hundred venues on one point with venues_n as the box total: the old
+  // early stop kept page 0's hundred of a box that could never be split.
+  const fixture = cluster(600, 39.95265, -75.16525, 0);
+  const fake = fakeBestTime(fixture, { reportTotal: true });
+  const { summary } = await runHarvest(['--city=philly', '--days=0'], fake);
+  assert.strictEqual(summary.aborted, false, summary.abortReason);
+  assert.strictEqual(summary.venuesFound, 500, 'the unsplittable box was not paged to the cap');
+  assert.strictEqual(summary.stats.truncatedTiles, 1);
+});
+
+test('a new venue re-checks the near-duplicate rule under the write lock', async () => {
+  const queries = [];
+  const client = {
+    query: async (sql) => {
+      const text = String(sql);
+      queries.push(text);
+      if (/latitude BETWEEN/.test(text)) {
+        return { rows: [{ id: 9, name: 'Cafe Lift', latitude: 39.9526, longitude: -75.1652 }] };
+      }
+      return { rows: [] };
+    },
+    release: () => {},
+  };
+  const fakePool = { connect: async () => client };
+  const item = {
+    kind: 'new',
+    city: 'philly',
+    category: 'cafe',
+    venue: { venueId: 'ven_new', placeId: 'ChIJnewnewnewnewnew', name: 'Cafe Lift', lat: 39.95262, lng: -75.16522, address: null, rating: null, reviews: null },
+  };
+  const res = await harvester.writeOne(fakePool, item, []);
+  assert.strictEqual(res.status, 'claimed');
+  assert.ok(!queries.some((q) => /INSERT INTO ml_venues/.test(q)), 'a second row was inserted for a venue that already has one');
+});

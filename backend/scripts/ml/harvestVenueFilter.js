@@ -162,7 +162,7 @@ const {
 const { requireVenueIdIndex } = require('./discoverBestTime');
 const { PA_CITIES, MAX_KM, kmBetween, nearestPaCity } = require('./addDemandVenues');
 const { classifyHttpFailure, fetchJsonWithTimeout, NETWORK_ERR_RE } = require('./bestTimeService');
-const { labelFor, describeError, describeDbError } = require('./logSafe');
+const { labelFor, describeError, describeDbError, safeText } = require('./logSafe');
 const besttime = require('../../services/besttimeAccount');
 
 if (!process.env.DATABASE_URL && process.env.PGHOST) {
@@ -822,7 +822,10 @@ async function requestPage(ctx, q) {
     let response;
     let data;
     try {
-      ({ response, data } = await fetchJsonWithTimeout(url, { method: 'GET' }, REQUEST_TIMEOUT_MS));
+      // redirect: 'manual', because assertAllowedRequest approved THIS address;
+      // a followed redirect is a request the guard never saw, and could be one
+      // that spends an admission.
+      ({ response, data } = await fetchJsonWithTimeout(url, { method: 'GET', redirect: 'manual' }, REQUEST_TIMEOUT_MS));
     } catch (err) {
       if (err && err.admissionRefused) throw err;
       const code = besttime.errorCode(err);
@@ -837,6 +840,9 @@ async function requestPage(ctx, q) {
     }
     if (!response.ok) {
       const status = response.status;
+      if (status >= 300 && status < 400) {
+        throw abortError(`HTTP ${status} from the venue filter: a redirect, which is not followed. The admission guard approved only the address asked for.`);
+      }
       if (status === 404) {
         // Documented as "resource not found". Counted, and treated as an empty
         // box; a run in which every request 404s finds nothing and exits
@@ -875,6 +881,11 @@ async function requestPage(ctx, q) {
 
 // Pages one box for one day, up to the cap.
 async function fetchTile(ctx, tile, day) {
+  // A box that cannot be split any further is paged to the cap even when page
+  // one already reports a total past it: stopping early to split is only worth
+  // it when there is a split to make, and otherwise throws away pages that
+  // could still be read.
+  const splittable = splitTile(tile) !== null;
   const venues = [];
   let saturated = false;
   let pages = 0;
@@ -892,7 +903,7 @@ async function fetchTile(ctx, tile, day) {
     // box total only when it is larger than the page it came with; otherwise
     // it says nothing the page length does not, and the short page decides.
     const total = res.total !== null && res.total > n ? res.total : null;
-    if (venues.length >= ctx.opts.resultCap || (total !== null && total >= ctx.opts.resultCap)) {
+    if (venues.length >= ctx.opts.resultCap || (splittable && total !== null && total >= ctx.opts.resultCap)) {
       saturated = true;
       break;
     }
@@ -1066,7 +1077,13 @@ function planVenues(venues, identities, cities, { radiusKm = DEFAULT_RADIUS_KM }
   // similar name. In BestTime id order, so which of two claimants wins does not
   // depend on the order the filter listed them in.
   rest.sort((a, b) => (a.v.venueId < b.v.venueId ? -1 : a.v.venueId > b.v.venueId ? 1 : 0));
-  const newGrid = new Map(); // new venues accepted so far, by ~110 m cell
+  // Every exact Google place id match claims its row BEFORE any near-duplicate
+  // is considered. In one pass, a similar name 40 m away with a lower BestTime
+  // id ("Cafe Lift Annex") took the row first, the venue whose place id WAS
+  // that row ("Cafe Lift") was skipped as placeClaimedTwice, and the Annex's
+  // curves were filed under Cafe Lift. The first philly commit (2026-09-28)
+  // reported one placeClaimedTwice beside one near-duplicate filing.
+  const unresolved = [];
   for (const { v, where } of rest) {
     if (!v.placeId) {
       if (v.rawPlaceId) skipped.unusablePlaceId++; else skipped.noPlaceId++;
@@ -1083,6 +1100,14 @@ function planVenues(venues, identities, cities, { radiusKm = DEFAULT_RADIUS_KM }
       plan.push({ kind: 'known_place', venue: v, row: byPlace, city: where.cityKey });
       continue;
     }
+    unresolved.push({ v, where });
+  }
+  const newGrid = new Map(); // new venues accepted so far, by ~110 m cell
+  for (const { v, where } of unresolved) {
+    // A second listing of the same place id, neither one known: the first
+    // (lower BestTime id) holds it.
+    const claimedBy = claimedPlaces.get(v.placeId);
+    if (claimedBy && claimedBy !== v.venueId) { skipped.placeClaimedTwice++; continue; }
     // Rule 4: the nearest row close enough with a similar name.
     const near = nearRows(v.lat, v.lng).find((c) => namesSimilar(v.name, c.row.name));
     if (near) {
@@ -1235,6 +1260,22 @@ async function writeOne(pool, item, cells) {
         'SELECT 1 FROM ml_venues WHERE besttime_venue_id = $1 OR google_place_id = $2', [v.venueId, v.placeId]
       );
       if (taken[0]) return { status: 'claimed' };
+      // And the near-duplicate rule, asked again too: a row another writer
+      // added since the plan under a different Google listing of the same
+      // place (same name, a few metres off) holds no id this one could match.
+      // A box of about 45 m either way, then the planner's own distance and
+      // name test.
+      const dLat = 0.0004;
+      const dLng = 0.0004 / Math.max(0.2, Math.cos((v.lat * Math.PI) / 180));
+      const { rows: around } = await client.query(
+        `SELECT id, name, latitude, longitude FROM ml_venues
+          WHERE latitude BETWEEN $1 AND $2 AND longitude BETWEEN $3 AND $4`,
+        [v.lat - dLat, v.lat + dLat, v.lng - dLng, v.lng + dLng]
+      );
+      if (around.some((r) => kmBetween(v.lat, v.lng, Number(r.latitude), Number(r.longitude)) * 1000 <= NEAR_DUP_METERS
+        && namesSimilar(v.name, r.name))) {
+        return { status: 'claimed' };
+      }
       const { rows } = await client.query(
         `INSERT INTO ml_venues
            (google_place_id, besttime_venue_id, name, address, city, latitude, longitude,
@@ -1493,7 +1534,7 @@ async function harvest({ argv = process.argv, pool, sleep = realSleep } = {}) {
             summary.rowsRefreshed += res.written - res.inserted;
           } catch (err) {
             summary.writeFailures++;
-            console.error(`  write failed for ${item.venue.venueId} (${err.code || 'no code'}): ${describeDbError(err)}`);
+            console.error(`  write failed for ${safeText(item.venue.venueId)} (${err.code || 'no code'}): ${describeDbError(err)}`);
           }
         }
         console.log(`${TAG} Wrote ${summary.rowsWritten} weekly rows (${summary.rowsInserted} new, `
@@ -1569,6 +1610,7 @@ module.exports = {
   weekCells,
   weekCurve,
   planVenues,
+  writeOne,
   placeIdAgreement,
   axisProof,
   axisVerdict,
