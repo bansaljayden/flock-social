@@ -3235,6 +3235,31 @@ const HAND_ON_OWED_PLANS_SQL = `UPDATE flocks f
  WHERE f.id = heir.flock_id
 RETURNING f.id, heir.user_id AS heir_id, heir.heir_name`;
 
+// EVERY REPORT NAMING THE ACCOUNT IS LOCKED FIRST, IN ID ORDER.
+//
+// A report names two accounts, whoever filed it and whoever it is about, and
+// the deletion cleared them in two statements: the reports this account
+// filed, then the reports filed about it. Two people who had reported each
+// other and deleted their accounts at the same moment each took the report
+// they had filed in the first statement, then waited in the second for the
+// one the other had filed, and Postgres broke the cycle with 40P01: one of
+// them was told the deletion failed, for nothing either could see. Every
+// report naming the account, from either side, is now locked in one pass in
+// id order, so the second deletion waits for the first before it holds any
+// of them, and they queue instead.
+// __tests__/flockTransactionIntegrity.test.js runs both schedules.
+const ACCOUNT_REPORT_LOCKS_SQL = `SELECT id FROM content_reports
+   WHERE reporter_id = $1 OR reported_user_id = $1
+   ORDER BY id
+   FOR UPDATE`;
+
+// Then one statement clears whichever side names the account, and leaves the
+// other name on the report as it was.
+const DEATTRIBUTE_REPORTS_SQL = `UPDATE content_reports
+    SET reporter_id = NULLIF(reporter_id, $1),
+        reported_user_id = NULLIF(reported_user_id, $1)
+  WHERE reporter_id = $1 OR reported_user_id = $1`;
+
 // A CHECKOUT AND A DELETION OF THE SAME ACCOUNT RUN ONE AFTER THE OTHER.
 //
 // A checkout makes the account's Stripe customer the first time it is needed
@@ -3598,8 +3623,9 @@ async function deleteAccount(req, res) {
       const kept = await client.query(HAND_ON_OWED_PLANS_SQL, [req.user.id]);
       handedOn = new Map(((kept && kept.rows) || []).map((r) => [r.id, { id: r.heir_id, name: r.heir_name }]));
 
-      await client.query('UPDATE content_reports SET reporter_id = NULL WHERE reporter_id = $1', [req.user.id]);
-      await client.query('UPDATE content_reports SET reported_user_id = NULL WHERE reported_user_id = $1', [req.user.id]);
+      // See ACCOUNT_REPORT_LOCKS_SQL: locked in id order, then cleared.
+      await client.query(ACCOUNT_REPORT_LOCKS_SQL, [req.user.id]);
+      await client.query(DEATTRIBUTE_REPORTS_SQL, [req.user.id]);
       await client.query('UPDATE moderation_actions SET target_user_id = NULL WHERE target_user_id = $1', [req.user.id]);
 
       // messages.sender_id is ON DELETE SET NULL (anonymize). Explicitly remove the
@@ -3896,6 +3922,10 @@ module.exports.__testing = {
   // against the catalog: every table a plan delete cascades into that also
   // names a user must be in it.
   ACCOUNT_FLOCK_LOCKS_SQL,
+  // So the same file can tell where a second deletion waits: on the reports,
+  // in id order, before it has touched any of them.
+  ACCOUNT_REPORT_LOCKS_SQL,
+  DEATTRIBUTE_REPORTS_SQL,
   // So a scripted harness can answer it by identity rather than by pattern.
   HAND_ON_OWED_PLANS_SQL,
 };

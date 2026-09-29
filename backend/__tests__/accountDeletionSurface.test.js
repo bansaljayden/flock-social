@@ -713,6 +713,9 @@ function stubQuery(text, params = []) {
     const ids = plan ? plan.member_ids : [];
     return { rows: ids.map((user_id) => ({ user_id })), rowCount: ids.length };
   }
+  // Every report naming the account, locked in id order before it is
+  // de-attributed (routes/users.js ACCOUNT_REPORT_LOCKS_SQL).
+  if (has('FROM content_reports') && has('FOR UPDATE')) return { rows: [], rowCount: 0 };
   if (has('UPDATE content_reports') || has('UPDATE moderation_actions')) return { rows: [], rowCount: 0 };
   if (has('DELETE FROM messages')) return { rows: [], rowCount: 0 };
   // Other people's reported content in the plans the deletion cascades is
