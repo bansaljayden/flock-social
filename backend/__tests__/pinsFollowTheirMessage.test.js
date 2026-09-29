@@ -36,7 +36,7 @@ async function dispatch(sql, params) {
   log.push({ sql: flat, params });
   if (/^(BEGIN|COMMIT|ROLLBACK)/i.test(flat)) return { rows: [], rowCount: 0 };
   // The reports a moderation action locks first (routes/admin.js). Unread.
-  if (/^SELECT id FROM content_reports .* FOR UPDATE$/i.test(flat)) return { rows: [], rowCount: 0 };
+  if (/^SELECT id, reported_user_id FROM content_reports .* FOR UPDATE$/i.test(flat)) return { rows: [], rowCount: 0 };
   for (const [re, fn] of handlers) {
     if (re.test(flat)) {
       const out = await fn(params || [], flat);

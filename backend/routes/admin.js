@@ -1311,7 +1311,12 @@ function warnEmailHtml(name) {
 // Taking the report and, for a takedown, the open siblings the sweep will
 // close, up front and in the deletion's order, makes the two queue instead.
 // __tests__/flockTransactionIntegrity.test.js runs both schedules.
-const MODERATION_REPORT_LOCKS_SQL = `SELECT id FROM content_reports
+//
+// reported_user_id comes back because the audit row names it, and the copy
+// read before the transaction can be stale by the time this lock is granted:
+// a deletion that committed while this waited has cleared it from the report
+// and deleted the account, and the audit row's foreign key refuses the old id.
+const MODERATION_REPORT_LOCKS_SQL = `SELECT id, reported_user_id FROM content_reports
    WHERE id = $1
       OR ($2::boolean AND content_type = $3 AND content_id = $4
           AND status IN ('open', 'under_review'))
@@ -1447,8 +1452,11 @@ router.put('/reports/:id', async (req, res) => {
     try {
       await client.query('BEGIN');
       // Before any other row; see MODERATION_REPORT_LOCKS_SQL.
-      await client.query(MODERATION_REPORT_LOCKS_SQL,
+      const locked = await client.query(MODERATION_REPORT_LOCKS_SQL,
         [reportId, action === 'hide', report.content_type, report.content_id || null]);
+      const lockedReport = (locked.rows || []).find((r) => Number(r.id) === Number(reportId));
+      // Who the audit row names: the report as it stands under the lock.
+      const auditTargetId = lockedReport ? lockedReport.reported_user_id : report.reported_user_id;
 
       if (action === 'hide' || action === 'unhide') {
         // Round 18: hide and un-hide are ONE branch over a boolean. Before this
@@ -1683,7 +1691,7 @@ router.put('/reports/:id', async (req, res) => {
         await client.query(
           `INSERT INTO moderation_actions (report_id, moderator_id, target_user_id, action, content_type, content_id, reason)
            VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-          [reportId, req.user.id, report.reported_user_id || null, actionType, report.content_type, report.content_id || null, reason || null]
+          [reportId, req.user.id, auditTargetId || null, actionType, report.content_type, report.content_id || null, reason || null]
         );
 
         await client.query('COMMIT');

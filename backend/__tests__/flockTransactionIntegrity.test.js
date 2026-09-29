@@ -962,6 +962,36 @@ test("a ban and the reported account's own deletion queue on the report, whichev
   }
 });
 
+test("a dismiss queued behind the reported account's deletion is recorded against nobody, not refused", async () => {
+  // The audit row names the reported account. The name read before the
+  // transaction was the deleted account's, and its foreign key turned the
+  // moderator's dismiss into a 500 once the deletion committed.
+  const { MODERATION_REPORT_LOCKS_SQL } = require('../routes/admin').__test;
+  const mod = await mkModerator();
+  const target = await mkUser('Target');
+  const reporter = await mkUser('Reporter');
+  const reportId = await report(reporter, target, 'profile', null);
+  const release = await holdRow('SELECT id FROM users WHERE id = $1 FOR KEY SHARE', [target.id]);
+  try {
+    const deletion = call('DELETE', '/api/users/me', { token: target.token, body: { password: PASSWORD } });
+    const deleting = await waitForWaiter('the deletion', (w) => /FROM users WHERE id = \$1 FOR UPDATE/.test(w.query));
+    const dismiss = call('PUT', `/api/admin/reports/${reportId}`, { token: mod.token, body: { action: 'dismiss' } });
+    const queued = await waitForWaiter('the dismiss', (w) => w.pid !== deleting.pid);
+    assert.equal(flat(queued.query), flat(MODERATION_REPORT_LOCKS_SQL));
+
+    await release();
+    const [d, m] = await Promise.all([deletion, dismiss]);
+    assert.equal(d.status, 200, `the deletion: ${d.text}`);
+    assert.equal(m.status, 200, `the dismiss: ${m.text}`);
+  } finally {
+    await release();
+  }
+  const { rows } = await pool.query(
+    'SELECT action, target_user_id FROM moderation_actions WHERE report_id = $1', [reportId]
+  );
+  assert.deepEqual(rows, [{ action: 'dismissed', target_user_id: null }]);
+});
+
 test('with the ban taking the account row before the report, the same race is a deadlock', async () => {
   // The moderation transaction as it was: the account row, then the report,
   // against a deletion that holds the report and wants the account row.
