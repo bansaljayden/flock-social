@@ -194,6 +194,13 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
   const apple = useAppleYearStep({ fieldId: 'venue-apple-year', onSuccess: onLoginSuccess });
   const appleStep = apple.step;
   const leaveAppleStep = apple.leave;
+  // A message about an Apple tap goes where the person is looking: into the
+  // step while it is open, otherwise the form's box.
+  const showAppleError = (message) => (appleStep ? apple.setError(message) : setError(message));
+  // The year field on screen. While the step is open the form's own field
+  // steps aside (one year field at a time), so the sign-up half's checks
+  // point at the step's.
+  const yearFieldId = appleStep ? 'venue-apple-year' : 'venue-dob';
 
   // Native iOS runs Google's own SDK, everything else the GIS browser flow;
   // one hook, one backend route, and the needsDob 403 handled the same on both.
@@ -237,8 +244,8 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
     // The sign-in half had no checks whatsoever, so an empty form met a button
     // that refused to submit and said nothing.
     if (isSignup && !name.trim()) return fail('venue-name', 'Add your name.');
-    if (isSignup && !birthYear) return fail('venue-dob', 'Add the year you were born.');
-    if (isSignup && !dob) return fail('venue-dob', 'Write the year in full, like 2004.');
+    if (isSignup && !birthYear) return fail(yearFieldId, 'Add the year you were born.');
+    if (isSignup && !dob) return fail(yearFieldId, 'Write the year in full, like 2004.');
     if (dobNeedsCheck) return fail('venue-dob-check', 'Check the date of birth below before you continue.');
     if (!email.trim()) return fail('venue-email', 'Add your email address.');
     if (!password) return fail('venue-password', isSignup ? 'Choose a password.' : 'Add your password.');
@@ -249,7 +256,7 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
       }
       // Shape only. What the date says about age is the server's call.
       if (!dobLooksReal(dob)) {
-        return fail('venue-dob', 'That year does not look right. Check it and try again.');
+        return fail(yearFieldId, 'That year does not look right. Check it and try again.');
       }
     }
 
@@ -699,24 +706,27 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
             document.getElementById('venue-dob-check')?.focus();
             return false;
           }
-          // On the signup half an empty field is stopped before the sheet
-          // opens, the same as the Google button above: the server will not
-          // create an account without a date, and Apple hands over the
-          // person's name only on the first sheet that completes, so a tap
-          // the server was always going to refuse spent that one delivery
-          // and the retry named the account after the email's local part.
-          // On the sign-in half an empty field still goes through: an Apple
-          // account that already exists signs in without one, and a new one
-          // gets the server's needsDob answer and this field.
-          if (isSignup && !dob) {
-            setError(isSignup
-              ? 'Add the year you were born above first, then continue with Apple.'
-              : 'Add your date of birth above first, then continue with Apple.');
+          // AN EMPTY YEAR GOES THROUGH ON BOTH HALVES, as it does on the
+          // consumer screens. The sign-up half used to stop it before the
+          // sheet, because Apple hands over the person's name only on the
+          // first sheet that completes and a new account's first tap with no
+          // date was always refused, so that tap spent the one delivery and
+          // the retry named the account after the email's local part. The
+          // refusal now arrives with the sheet's credentials held, the name
+          // among them, and the Apple step sends them again with the year:
+          // one sheet and the real name. An Apple ID that already has an
+          // account needs no year at all.
+          //
+          // What is still stopped is what cannot be an honest answer: a year
+          // that is not four digits yet, which would otherwise go as no year
+          // at all.
+          if (askYearOnly && birthYear && !dob) {
+            showAppleError('Write the year in full, like 2004.');
             return false;
           }
           // The impossible date, stopped for the reason on dobLooksReal.
           if (dob && !dobLooksReal(dob)) {
-            setError(isSignup
+            showAppleError(askYearOnly
               ? 'That year does not look right. Check it and try again.'
               : 'That date of birth does not look right. Check it and try again.');
             return false;
