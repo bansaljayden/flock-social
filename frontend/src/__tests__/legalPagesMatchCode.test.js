@@ -275,8 +275,9 @@ describe('deletion copy matches the deletion path', () => {
   });
 
   test('what survives deletion is exactly what the pages list', () => {
-    // Evidence is de-attributed, not deleted.
-    expect(users).toMatch(/UPDATE content_reports SET reporter_id = NULL/);
+    // Evidence is de-attributed, not deleted: both names a report can hold,
+    // cleared in one statement (routes/users.js DEATTRIBUTE_REPORTS_SQL).
+    expect(users).toMatch(/UPDATE content_reports\s+SET reporter_id = NULLIF\(reporter_id, \$1\),\s+reported_user_id = NULLIF\(reported_user_id, \$1\)/);
     expect(users).toMatch(/UPDATE moderation_actions SET target_user_id = NULL/);
     expect(deletePage).toMatch(/Reports and moderation records are kept/);
 
