@@ -21332,12 +21332,17 @@ const FlockApp = () => {
        has to sit over them. This is the smallest place that is still over all
        three, and `notice` stays outside it because a session-expiry line has
        nothing to do with Google. */
+    // A build with no client id mounts no provider and fetches no Google script:
+    // useGoogleAuth does not start the library without an id, because the
+    // library throws on an empty one and took the whole sign-in screen with it.
     return (
       <>
         {notice}
-        <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
-          {authScreenEl}
-        </GoogleOAuthProvider>
+        {GOOGLE_CLIENT_ID ? (
+          <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
+            {authScreenEl}
+          </GoogleOAuthProvider>
+        ) : authScreenEl}
       </>
     );
   }

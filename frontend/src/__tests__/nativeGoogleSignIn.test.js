@@ -90,6 +90,9 @@ jest.mock('../components/auth/PasswordReset', () => ({
 
 let mockNativeModuleLoads = 0;
 
+// The web Google flow exists only in a build that carries a client id
+// (useGoogleAuth reads it once, at load), so these load the module as one.
+process.env.REACT_APP_GOOGLE_CLIENT_ID = process.env.REACT_APP_GOOGLE_CLIENT_ID || 'web-client.apps.googleusercontent.com';
 const api = require('../services/api');
 
 const SRC = (...p) => fs.readFileSync(path.join(__dirname, '..', ...p), 'utf8');

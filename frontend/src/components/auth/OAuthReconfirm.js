@@ -115,11 +115,15 @@ export default function OAuthReconfirm({ provider, expectedUserId, onConfirmed, 
           reconfirm
         />
       )}
-      {provider === 'google' && (
+      {provider === 'google' && (GOOGLE_CLIENT_ID ? (
         <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
           <GoogleButton onUser={onUser} onFailure={onFailure} />
         </GoogleOAuthProvider>
-      )}
+      ) : (
+        // No id in this build: no provider and no Google script (useGoogleAuth
+        // does not start the library without one), so the button says so.
+        <GoogleButton onUser={onUser} onFailure={onFailure} />
+      ))}
       {error && (
         <p role="alert" style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: '#EF4444', margin: '8px 0 0', lineHeight: 1.4 }}>{error}</p>
       )}
