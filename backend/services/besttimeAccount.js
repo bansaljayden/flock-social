@@ -205,7 +205,8 @@ function readKeyStatus(body, { secrets = [] } = {}) {
     if (KNOWN_FIELDS.has(name)) continue;
     if (NEVER_PRINT_NAME.test(name) || !REPORTABLE_NAME.test(name)) continue;
     if (value !== null && !['number', 'boolean', 'string'].includes(typeof value)) continue;
-    if (containsKeyMaterial(name, secrets)) continue;
+    // A name is printed too, so it gets the same two screens as a value.
+    if (containsKeyMaterial(name, secrets) || containsSecretWindow(name, secrets)) continue;
     candidates.push({ name, value });
   }
   // A key split across fields can pass each field's own check, so the values
