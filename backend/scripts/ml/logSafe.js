@@ -59,8 +59,12 @@ function configuredSecrets() {
 // \x escapes, with the account screen's own decoder), without regard to case.
 function keyShaped(text) {
   if (typeof text !== 'string' || !text) return false;
-  const { decodeEscapes } = require('../../services/besttimeAccount');
-  const forms = [...new Set([text, decodeEscapes(text), decodeEscapes(text).replace(/\+/g, ' ')])]
+  const { decodeEscapes, stillEncoded } = require('../../services/besttimeAccount');
+  const decoded = decodeEscapes(text);
+  // Still encoded after every decoding pass: nothing a real name looks like,
+  // and exactly how a key would be buried past the decoder's limit.
+  if (stillEncoded(decoded)) return true;
+  const forms = [...new Set([text, decoded, decoded.replace(/\+/g, ' ')])]
     .map((t) => t.toLowerCase());
   const secrets = configuredSecrets().map((s) => s.toLowerCase());
   // pri_/pub_ followed by hex, not "pub" alone: "Three Mugs Pub & Restaurant"

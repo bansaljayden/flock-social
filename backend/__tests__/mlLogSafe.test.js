@@ -76,6 +76,17 @@ test('safeText prints a response value only when nothing in it looks like a key'
     assert.strictEqual(safeText(bad), '[withheld]', bad);
   }
   assert.strictEqual(safeText(null), '');
+  // A regression one commit had: a literal pri_ with the body encoded past the
+  // decoder's four passes printed whole. Anything still encoded after every
+  // pass is withheld, by both screens.
+  const { containsKeyMaterial } = require('../services/besttimeAccount');
+  let deep = KEY.replace(/^pri_/, '');
+  for (let layer = 0; layer < 5; layer++) deep = pct(deep);
+  for (const bad of [`Bar pri_${deep}`, `Bar ${pct(deep)}`]) {
+    assert.strictEqual(safeText(bad), '[withheld]', bad.slice(0, 40));
+    assert.strictEqual(containsKeyMaterial(bad, []), true, bad.slice(0, 40));
+  }
+  assert.strictEqual(safeText('100% Pizza'), '100% Pizza');
 });
 
 test('labels: only fixed strings come back, whatever the message holds', () => {
