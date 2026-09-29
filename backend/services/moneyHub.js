@@ -812,7 +812,11 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
     // when its last charge falls inside it, and toward the monthly run rate
     // only while it is active. A stopped row that had replaced a code line is
     // the exception: that code line is back in the totals and covers the month.
-    const stoppedButPaidThisMonth = !x.active && !x.replacesLine && inMonth(x.lastChargedOn, month);
+    // The exception holds only for a RECURRING code line: a one-time code line
+    // carries no charge date and adds nothing to this month, so it covers none.
+    const replaced = x.replacesLine ? lines.find((l) => l.origin !== 'expense' && l.id === x.replacesLine) : null;
+    const stoppedButPaidThisMonth = !x.active && inMonth(x.lastChargedOn, month)
+      && (!x.replacesLine || !replaced || replaced.cadence === 'one_time');
     lines.push({
       id: `expense-${x.id}`,
       origin: 'expense',
@@ -892,16 +896,19 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
   // Probably the same bill twice: a code line still counted, and an active
   // expense row whose name looks like it and whose cadence fits.
   const possibleDoubles = [];
+  const countedExpenseIds = new Set(lines.filter((l) => l.origin === 'expense' && l.counted).map((l) => l.expenseId));
   const fits = (codeCadence, rowCadence) => codeCadence === rowCadence
     || (codeCadence === 'usage' && rowCadence === 'monthly')
     || (codeCadence === 'monthly' && rowCadence === 'usage');
   for (const c of lines) {
     if (c.origin === 'expense' || !c.counted || !has(CODE_LINE_LOOKALIKE, c.id)) continue;
     for (const x of expenses) {
+      // Every row counted this month, a stopped one paid this month included.
+      if (!countedExpenseIds.has(x.id)) continue;
       // Skipped only when it replaces THIS line. A row linked to the wrong
       // code line (a BestTime bill tied to the corpus line) left the real
       // BestTime line counted beside it with no warning.
-      if (!x.active || x.replacesLine === c.id || x.isCredit) continue;
+      if (x.replacesLine === c.id || x.isCredit) continue;
       const name = `${x.vendor} ${x.product || ''}`;
       if (CODE_LINE_LOOKALIKE[c.id].test(name) && fits(c.cadence, x.cadence)) {
         possibleDoubles.push({ codeLineId: c.id, codeLabel: c.label, expenseId: x.id, expenseLabel: x.product ? `${x.vendor}, ${x.product}` : x.vendor });
@@ -2597,6 +2604,8 @@ function buildModelBlock({ version, accuracy, ladder, coverage = null }) {
 //   stripe             Stripe was not read: no key, or it did not answer
 //   stripe_tax         automatic tax is on and this month's invoices were not
 //                      read, so the tax inside the charges is unknown
+//   stripe_tax_refunded  taxed charges and refunds in the same month: a refund
+//                      takes its tax back out, and which charges it hit is not read
 //   stripe_partial     Stripe answered with more entries than the hub pages
 //                      through, and a missing page can move a total either way
 //   app_store          RevenueCat was not read
@@ -2657,7 +2666,11 @@ function buildNet({ stripe, revenuecat, costs, costsComplete = true, appStoreCom
   // unread, the tax is unknown, so the revenue is too.
   const invoicesRead = stripeOk && stripe.invoices && stripe.invoices.status === 'ok' && !stripe.invoices.truncated ? stripe.invoices : null;
   const taxOn = String(process.env.STRIPE_AUTOMATIC_TAX || '').toLowerCase() === 'true';
-  const taxGap = taxOn && !invoicesRead ? 'stripe_tax' : null;
+  // A refund in the month takes the tax back out of the balance too, and the
+  // hub cannot tell which refunded charges carried tax, so subtracting every
+  // invoice's tax would take refunded tax out twice: then it is unknown.
+  const taxRefunded = invoicesRead && (invoicesRead.taxCents || 0) > 0 && balance && balance.refunds > 0;
+  const taxGap = taxOn && !invoicesRead ? 'stripe_tax' : (taxRefunded ? 'stripe_tax_refunded' : null);
   const taxCollectedCents = invoicesRead ? (invoicesRead.taxCents || 0) : 0;
   const stripeNetCents = balanceGap || taxGap ? null : balance.netCents - taxCollectedCents;
   const appStoreNetCents = appRevenueGap ? null : Math.round((appStore ? appStore.monthChargedCents : 0) * keep);

@@ -304,6 +304,7 @@ const HUB_GAP_SOURCE = {
   stripe_partial: 'a full Stripe read',
   stripe_unpriced: 'a price for every Stripe subscription',
   stripe_tax: "this month's Stripe invoices, for the sales tax in the charges",
+  stripe_tax_refunded: 'which refunded charges carried sales tax',
   app_store: 'RevenueCat',
   app_store_partial: 'every Pro account in RevenueCat',
   app_store_unpriced: 'a price for every App Store subscription',
@@ -314,6 +315,7 @@ const HUB_GAP_WORDS = {
   stripe_partial: 'Stripe had more entries this month than the hub reads, and a missing page could move a total either way',
   stripe_unpriced: 'some live Stripe subscriptions carry a price or a discount this read could not work out in dollars',
   stripe_tax: "automatic tax is on and this month's invoices could not be read, so the sales tax inside the charges is unknown",
+  stripe_tax_refunded: "some of this month's charges carried sales tax and some charges were refunded, and a refund takes its tax back out too, so the tax to subtract is not known",
   app_store: 'the App Store is not in it, because RevenueCat was not read',
   app_store_partial: 'the App Store is not in it, because RevenueCat answered for only some Pro accounts',
   app_store_unpriced: 'the App Store is not in it, because some live App Store subscriptions carry no dollar price in RevenueCat',
@@ -347,7 +349,9 @@ function HubSummary({ h, colors, loading, onRefresh }) {
   if (n.revenueThisMonthCents === null || n.revenueThisMonthCents === undefined) {
     revenueNote = revenueWithheld
       ? 'Stripe had more balance entries this month than the hub reads. A missing page could move the total either way, so it is withheld rather than shown short.'
-      : stripe.status === 'not_connected' ? 'Stripe is not connected, so there is no revenue figure to show.' : 'Stripe could not be read, so there is no revenue figure to show.';
+      : revenueMissing.includes('stripe_tax') || revenueMissing.includes('stripe_tax_refunded')
+        ? `${hubGapSentence(revenueMissing.filter((g) => g === 'stripe_tax' || g === 'stripe_tax_refunded'))} So there is no revenue figure after tax to show.`
+        : stripe.status === 'not_connected' ? 'Stripe is not connected, so there is no revenue figure to show.' : 'Stripe could not be read, so there is no revenue figure to show.';
   } else if (appGap) {
     revenueNote = `Stripe, after refunds, disputes and fees. ${hubGapSentence([appGap])}`;
   } else {
@@ -362,7 +366,11 @@ function HubSummary({ h, colors, loading, onRefresh }) {
   // empties the net, which carries Stripe and says so.
   const netNeeds = hubNeeds(netMissing.filter((g) => !HUB_APP_STORE_GAPS.includes(g)));
   const needed = (b) => (b && Number.isFinite(b.needed) ? hubCount(b.needed) : 'Not reachable');
-  const priceWords = (b) => (b ? `${hubMoney(b.priceCents)} a month, ${b.source === 'stripe' ? 'the price Stripe charges' : 'the price the code states, because Stripe was not read'}` : 'no price');
+  const priceWords = (b) => (b ? `${hubMoney(b.priceCents)} a month, ${b.source === 'stripe'
+    ? 'the price Stripe charges'
+    : stripe.status === 'ok'
+      ? 'the price the code states, because Stripe has no monthly dollar price for it'
+      : 'the price the code states, because Stripe was not read'}` : 'no price');
   const payingWords = (count, missing) => (Number.isFinite(count)
     ? hubCount(count)
     : `not known, waiting on ${[...new Set(hubGaps(missing).map((g) => HUB_GAP_SOURCE[g] || g))].join(' and ') || 'a read'}`);
@@ -2709,7 +2717,7 @@ export default function RevenueScreen({
                         </div>
                         {price ? (
                           <p style={{ ...sub, margin: '10px 0 0' }}>
-                            At {moneyOr(listPrice || price, '', 0)} a venue{roostNet ? `, ${moneyOr(roostNet, '', 2)} after Stripe's fees` : ', before Stripe’s fees'}, {infraVenues === null ? 'an unknown number of' : infraVenues} {plural(infraVenues)} covers serving and {allVenues === null ? 'an unknown number of' : allVenues} {plural(allVenues)} covers everything including tooling. Computed from the bills above, so it moves when they do.
+                            At {moneyOr(roostNet && roostBe && Number.isFinite(roostBe.priceCents) ? roostBe.priceCents / 100 : (listPrice || price), '', 0)} a venue{roostNet ? `, ${moneyOr(roostNet, '', 2)} after Stripe's fees` : ', before Stripe’s fees'}, {infraVenues === null ? 'an unknown number of' : infraVenues} {plural(infraVenues)} covers serving and {allVenues === null ? 'an unknown number of' : allVenues} {plural(allVenues)} covers everything including tooling. Computed from the bills above, so it moves when they do.
                           </p>
                         ) : (
                           <p style={{ ...sub, margin: '10px 0 0' }}>Break-even in venues needs a venue price on the payload, and none was served.</p>
@@ -3517,7 +3525,7 @@ export default function RevenueScreen({
                         <p style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: colors.navy, margin: '2px 0 0', lineHeight: 1.1 }}>{subsToBreakEven}</p>
                         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '3px 0 0' }}>
                           {webNet
-                            ? `Flock Pro subscriptions at $${PRO_MONTHLY_USD.toFixed(2)}/mo on the web, after Stripe's fees ($${webNet.toFixed(2)} each).${appSubsToBreakEven !== null ? ` ${appSubsToBreakEven} if they all came through the App Store, after Apple's cut.` : ''}`
+                            ? `Flock Pro subscriptions at $${(hubBe && hubBe.proWeb && Number.isFinite(hubBe.proWeb.priceCents) ? hubBe.proWeb.priceCents / 100 : PRO_MONTHLY_USD).toFixed(2)}/mo on the web, after Stripe's fees ($${webNet.toFixed(2)} each).${appSubsToBreakEven !== null ? ` ${appSubsToBreakEven} if they all came through the App Store, after Apple's cut.` : ''}`
                             : `Flock Pro subscriptions at $${PRO_MONTHLY_USD.toFixed(2)}/mo, before Stripe's fees and Apple's cut. Open the Overview tab for the figure after fees.`}
                         </p>
                       </div>
