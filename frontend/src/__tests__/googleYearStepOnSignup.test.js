@@ -20,9 +20,11 @@
  *   - an existing Google account is simply signed in;
  *   - an under-13 refusal is shown as the server wrote it, and nothing is
  *     tried again;
- *   - past the handle's few minutes, or on a connection that died after
- *     sending, the Google button comes back with the year kept, and one more
- *     sheet carries it;
+ *   - past the handle's few minutes the held token is never sent: Continue
+ *     opens Google's sheet itself and sends the new token with the year, and
+ *     a dismissed sheet keeps Continue;
+ *   - on a connection that died after sending, the Google button comes back
+ *     with the year kept, and one more sheet carries it;
  *   - offline keeps Continue and resends the same token;
  *   - one step at a time: Apple's step closes Google's, and the other way;
  *   - the web layout is untouched: the year is still asked first there.
@@ -227,7 +229,30 @@ describe('when the held token cannot be used', () => {
     expect(api.googleLogin.mock.calls[1][1]).toBe('2019-12-31');
   });
 
-  it('past the handle\'s few minutes: no post, a plain sentence, and the Google button back with the year kept', async () => {
+  // This pinned a Continue that posted nothing, a sentence, and the Google
+  // button back, a dead tap before the second sheet. The held token is still
+  // never sent past its minutes; in the app the Continue that was pressed now
+  // opens Google's sheet itself, the way Apple's does.
+  it('past the handle\'s few minutes: Continue opens Google\'s sheet itself and finishes with the year, in one step', async () => {
+    const utils = openSignup();
+    const t0 = Date.now();
+    const clock = jest.spyOn(Date, 'now').mockReturnValue(t0);
+    await firstTap(utils);
+    fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: '2001' } });
+
+    clock.mockReturnValue(t0 + 10 * 60 * 1000);
+    sheetGives('google-id-token-2');
+    api.googleLogin.mockResolvedValueOnce({ user: { id: 64 } });
+    fireEvent.click(continueButton(utils));
+
+    await waitFor(() => expect(utils.onSignupSuccess).toHaveBeenCalledWith({ id: 64 }));
+    expect(mockSocialLogin.login).toHaveBeenCalledTimes(2);
+    expect(api.googleLogin).toHaveBeenCalledTimes(2);
+    // The new sheet's token with the year typed, never the held one.
+    expect(api.googleLogin.mock.calls[1]).toEqual(['google-id-token-2', '2001-12-31', { dobGranularity: 'year' }]);
+  });
+
+  it('past the handle\'s few minutes, a dismissed sheet keeps Continue, says why, and the next Continue opens it again', async () => {
     const utils = openSignup();
     const t0 = Date.now();
     const clock = jest.spyOn(Date, 'now').mockReturnValue(t0);
@@ -235,20 +260,20 @@ describe('when the held token cannot be used', () => {
     fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: '2001' } });
 
     clock.mockReturnValue(t0 + GOOGLE_RESUME_LIFETIME_MS + 1000);
+    mockSocialLogin.login.mockRejectedValueOnce(Object.assign(new Error('The user canceled the sign-in flow.'), { code: 'USER_CANCELLED' }));
     fireEvent.click(continueButton(utils));
     await waitFor(() => expect(utils.getByRole('alert').textContent).toBe(
-      'Google sign-in did not finish in time. Tap Continue with Google to try again. Your year is still filled in.'));
+      'Google sign-in timed out, so Google needs to check it is you again. Tap Continue to open it. Your year is still filled in.'));
     expect(api.googleLogin).toHaveBeenCalledTimes(1);
-    expect(continueButton(utils)).toBeNull();
-    expect(googleButton(utils)).not.toBeNull();
-    expect(utils.getByLabelText('Year of birth').value).toBe('2001');
+    expect(continueButton(utils)).not.toBeNull();
+    expect(googleButton(utils)).toBeNull();
 
-    // One more sheet finishes it, carrying the year already typed.
-    sheetGives('google-id-token-2');
-    api.googleLogin.mockResolvedValueOnce({ user: { id: 64 } });
-    fireEvent.click(googleButton(utils));
-    await waitFor(() => expect(utils.onSignupSuccess).toHaveBeenCalledWith({ id: 64 }));
-    expect(api.googleLogin.mock.calls[1]).toEqual(['google-id-token-2', '2001-12-31', { dobGranularity: 'year' }]);
+    sheetGives('google-id-token-3');
+    api.googleLogin.mockResolvedValueOnce({ user: { id: 66 } });
+    await act(async () => { fireEvent.click(continueButton(utils)); });
+    await waitFor(() => expect(utils.onSignupSuccess).toHaveBeenCalledWith({ id: 66 }));
+    expect(mockSocialLogin.login).toHaveBeenCalledTimes(3);
+    expect(api.googleLogin.mock.calls[1]).toEqual(['google-id-token-3', '2001-12-31', { dobGranularity: 'year' }]);
   });
 
   it('a request refused while offline keeps Continue, and the retry sends the same token', async () => {
