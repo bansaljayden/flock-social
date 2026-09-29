@@ -250,6 +250,15 @@ async function collectWeekly() {
   const skipCollected = process.argv.includes('--skip-collected');
   const skipAttempted = process.argv.includes('--skip-attempted') || skipCollected;
   const retry404 = process.argv.includes('--retry-404');
+  const retryAfterArg = process.argv.find((a) => a.startsWith('--retry-404-after-days='));
+  const retryAfterRaw = retryAfterArg ? retryAfterArg.slice('--retry-404-after-days='.length) : '30';
+  if (!/^\d+$/.test(retryAfterRaw)) {
+    console.error(`[ML:Weekly] --retry-404-after-days must be a whole number of days, got "${retryAfterRaw}".`);
+    process.exitCode = 1;
+    await pool.end();
+    return;
+  }
+  const retryAfterDays = Number(retryAfterRaw);
   // --only-found is the REFRESH mode: only venues whose besttime_venue_id is
   // already stored, which bills at 1 credit by id instead of 2 by name, and
   // which skips every historical 404 that would otherwise be re-attempted at
@@ -291,6 +300,17 @@ async function collectWeekly() {
   }
   if (skipAttempted && !retry404) {
     query += ' AND besttime_attempted_at IS NULL';
+  }
+  if (skipAttempted && retry404) {
+    // A 404 is BestTime answering "found, but not enough visitor volume to
+    // forecast". Asking again the same month re-buys that answer: the first
+    // 2026-09-28 retry pass re-selected, most reviewed first, the nine venues a
+    // probe ten minutes earlier had just been told no about. So a retry skips
+    // anything attempted within --retry-404-after-days (30 by default; 0 is the
+    // old retry-everything behaviour).
+    params.push(retryAfterDays);
+    query += ` AND (besttime_attempted_at IS NULL
+                 OR besttime_attempted_at < NOW() - make_interval(days => $${params.length}))`;
   }
   if (createdAfter.at) {
     params.push(createdAfter.at.toISOString());

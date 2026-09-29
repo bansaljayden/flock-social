@@ -1858,12 +1858,22 @@ is likeliest to find first; a 404 still spends the lookup.
 After the September harvests that selection was empty in both markets: every
 active venue had an id, a curve or an attempt, and addDemandVenues had nothing
 new in the area. What remains is the venues that answered 404 before and still
-have no curve (283 lehigh, 225 philly that night). BestTime adds venues over
-time, and an admission not spent by the 1st is gone, so they are the last use:
+have no curve (283 lehigh, 225 philly that night). The retry command is:
 
 ```bash
 node scripts/ml/collectWeekly.js --city=lehigh --skip-collected --retry-404 --without-weekly --order=reviews --limit=N --max-new=N
 ```
+
+Measured that night, it is close to worthless: 1 found in 21 of the most
+reviewed lehigh 404s (Whitehall Plaza), and every miss carried the same reason,
+"Venue found, but could not forecast this venue ... too new, or does not have
+enough visitor volume" (the collector now logs BestTime's reason beside the
+status). That is BestTime's data, not our address, so no rewrite fixes it.
+A retry skips anything attempted in the last 30 days (`--retry-404-after-days`,
+0 for the old behaviour): without that, the second pass re-selected the nine
+venues the first had just been refused on. The besttime.app counter read
+0 / 100 after all of it, so whether these lookups spend admissions at all is
+not settled; read the dashboard before assuming either way.
 
 ### What every run proves and prints before anything is written
 
