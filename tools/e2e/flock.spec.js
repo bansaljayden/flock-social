@@ -674,8 +674,16 @@ test('leaving a flock removes you from it and from everyone else', async ({ brow
   await expect(mate.page.getByText(/pending invites/i)).toBeVisible({ timeout: 30_000 });
   await mate.page.getByRole('button', { name: /accept invite/i }).click();
   await expectToast(mate.page, new RegExp(`joined ${name}`, 'i'));
+  // A JOIN ENDS INSIDE THE PLAN NOW, and this spec was red because it raced
+  // that. Accepting fetches the full row and then opens the plan's chat
+  // (App.js, openChatAfterJoin), so the toast lands a beat before the chat
+  // does. goTab straight after the toast saw the tab bar still up, skipped the
+  // Back arrow, and then watched the chat draw over the bar it was about to
+  // click. Waiting for the chat makes the landing part of the claim, and the
+  // goTab below then proves Back gets her out of it to the tabs.
+  await expectInFlockChat(mate.page, name);
 
-  // Bea walks out through the chat's own menu.
+  // Bea walks out through the chat's own menu, opened from her Messages list.
   await goTab(mate.page, 'Messages');
   await mate.page.locator('button').filter({ hasText: name }).first().click();
   await expectInFlockChat(mate.page, name);

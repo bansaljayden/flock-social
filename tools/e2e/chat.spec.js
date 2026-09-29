@@ -436,7 +436,15 @@ test.describe('flock chat, with two people watching it', () => {
       await expect(invite).toBeVisible({ timeout: 25_000 });
     }
     await bo.page.getByRole('button', { name: 'Accept invite' }).first().click();
-    await openFlockChat(bo.page, flockName);
+    // ACCEPTING OPENS THE PLAN'S CHAT BY ITSELF, once the full row has been
+    // fetched (App.js, openChatAfterJoin). openFlockChat used to follow here,
+    // and it raced that: it found the Messages tab still up, and by the time
+    // it clicked, the chat had drawn over the tab bar and the click waited on
+    // a tab that was gone until the whole hook timed out. So this waits for
+    // the chat the join lands in, the same one openFlockChat would have opened.
+    await expect(bo.page.getByRole('button', { name: 'Open the plan' }))
+      .toContainText(flockName, { timeout: 25_000 });
+    await expect(composer(bo.page)).toBeVisible({ timeout: 20_000 });
 
     // Nothing below can tell a broken feature from a missing socket, so give
     // the pair every chance to have one before the first spec runs.

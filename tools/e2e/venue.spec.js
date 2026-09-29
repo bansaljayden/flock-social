@@ -152,12 +152,22 @@ async function createFlock(page, inviteeNames, { budget = false } = {}) {
  */
 const IN_CHAT = (page) => page.getByRole('button', { name: 'More to send' });
 
-/** Accept the invite from where the product actually puts it, the Messages tab. */
+/**
+ * Accept the invite from where the product actually puts it, the Messages tab.
+ *
+ * The join ends inside the plan: once the server says yes the full row is
+ * fetched and the plan's chat opens (App.js, openChatAfterJoin). This used to
+ * wait for the flock's row on the list instead, which passed only when the
+ * list was read before the chat drew over it; the chat header carries the name
+ * inside "Open the plan", so once the chat was up nothing matched and the wait
+ * ran out. It waits for the chat now, which is where every caller goes next.
+ */
 async function acceptInvite(page) {
   await page.reload();
   await page.getByRole('button', { name: /^Messages(,|$)/ }).click();
   await page.getByRole('button', { name: /accept invite/i }).click({ timeout: 40_000 });
-  await expect(page.getByRole('button', { name: new RegExp(FLOCK_NAME) }).first()).toBeVisible({ timeout: 25_000 });
+  await expect(page.getByRole('button', { name: 'Open the plan' })).toContainText(FLOCK_NAME, { timeout: 25_000 });
+  await expect(IN_CHAT(page)).toBeVisible({ timeout: 25_000 });
 }
 
 /** Open the flock chat from wherever we are. */
