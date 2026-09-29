@@ -44,8 +44,15 @@ export function useAppleYearStep({ fieldId, onSuccess, provider = 'Apple' }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const resumeRef = useRef(null);
+  // Counts the times the screen has closed the step. A Continue that is still
+  // waiting on the server when the step is closed (the venue portal's "Create
+  // an account", say) must not reopen it when its refusal lands: that drew
+  // the step, "Your year is still filled in." and an empty field on the other
+  // half of the form. The count is how the reply knows it is late.
+  const leftRef = useRef(0);
 
   const leave = useCallback(() => {
+    leftRef.current += 1;
     resumeRef.current = null;
     setStep(null);
     setError('');
@@ -99,13 +106,20 @@ export function useAppleYearStep({ fieldId, onSuccess, provider = 'Apple' }) {
     const resume = resumeRef.current;
     // Used once, whatever happens next.
     resumeRef.current = null;
+    const visit = leftRef.current;
     setBusy(true);
     try {
       if (!resume) throw Object.assign(new Error(`${provider} sign-in timed out`), { expired: true });
       const data = await resume(sendDob, 'year');
+      // An acceptance is followed even when the step was closed meanwhile:
+      // the server has made the account and handed over a session, and the
+      // person did press Continue.
       leave();
       onSuccess(data.user);
     } catch (err) {
+      // Closed while this was in flight: the screen has moved on, so the
+      // refusal changes nothing on it, and nothing held is put back.
+      if (leftRef.current !== visit) return;
       // Provably never reached Flock (offline, or a captive portal answered):
       // the same credentials are still good, so Continue stays and can be
       // tapped again. Any other connection failure is ambiguous and falls
