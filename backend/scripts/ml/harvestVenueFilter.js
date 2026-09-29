@@ -826,7 +826,8 @@ async function requestPage(ctx, q) {
     } catch (err) {
       if (err && err.admissionRefused) throw err;
       const code = besttime.errorCode(err);
-      if (!NETWORK_ERR_RE.test(String((err && err.message) || '')) && !(err instanceof SyntaxError)) {
+      if (!NETWORK_ERR_RE.test(String((err && err.message) || '')) && !(err instanceof SyntaxError)
+        && !(err && err.notJson)) {
         throw abortError(`the venue filter request failed (${code}).`);
       }
       if (attempt >= RETRY_WAITS_MS.length) throw abortError(`the venue filter kept failing (${code}); stopping.`);

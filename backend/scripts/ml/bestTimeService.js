@@ -94,7 +94,8 @@ function classifyHttpFailure(status, context) {
 // its ten-error breaker says "BestTime looks down" and a timeout on our own
 // clock is not that, so the two places that decide what a network error is have
 // to be one place. A second copy is how they drift.
-const NETWORK_ERR_RE = /aborted|timeout|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|fetch failed/i;
+// "terminated" / UND_ERR_SOCKET is undici dropping a connection mid-body.
+const NETWORK_ERR_RE = /aborted|timeout|terminated|UND_ERR_SOCKET|ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|fetch failed/i;
 
 // THE DEADLINE LASTS UNTIL THE BODY HAS BEEN READ. `await fetch()` resolves
 // when the response HEADERS arrive, and this used to clear its timer right
@@ -119,7 +120,20 @@ async function fetchJsonWithTimeout(url, options, ms, { withReason = false } = {
   const timer = setTimeout(() => controller.abort(), ms);
   try {
     const response = await fetch(url, { ...options, signal: controller.signal });
-    if (response.ok) return { response, data: await response.json() };
+    if (response.ok) {
+      // A 200 whose body is not JSON is a gateway page or a cut answer, not a
+      // verdict on the venue. Returned as null it marked the venue 404, spent
+      // its admission for nothing and reset the error count, so an outage that
+      // answers 200 with HTML walked the whole list without tripping the bail.
+      // It is transient; and the parse error's own text (a quote of the body)
+      // goes nowhere.
+      try {
+        return { response, data: await response.json() };
+      } catch (err) {
+        if (!(err instanceof SyntaxError)) throw err;
+        throw Object.assign(new Error('BestTime answered 200 with a body that is not JSON'), { transient: true, notJson: true });
+      }
+    }
     if (!withReason) {
       discardBody(response);
       return { response, data: null };

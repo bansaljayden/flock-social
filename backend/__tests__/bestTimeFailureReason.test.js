@@ -132,7 +132,9 @@ test('a 200 that says Error, or JSON that does not parse, logs no body text eith
   for (const shape of bodies) {
     global.fetch = async () => ({ ok: true, status: 200, ...shape });
     const lines = captureErrors(t);
-    assert.strictEqual(await fetchWeeklyForecast('W', 'x', null), null);
+    // The OK-but-Error answer is a miss (null); the unparseable one is now a
+    // transient failure (thrown). Either way nothing of the body is printed.
+    await fetchWeeklyForecast('W', 'x', null).catch(() => null);
     await fetchLiveBusyness('bt-venue-1').catch(() => {});
     const all = lines.join('\n');
     assert.ok(lines.length >= 1, all);

@@ -41,6 +41,18 @@ function failureReason(text) {
   return labelFor(probe);
 }
 
+// The configured keys, whole and without their pri_/pub_ prefix.
+function configuredSecrets() {
+  const out = [];
+  for (const k of [process.env.BESTTIME_API_KEY, process.env.BESTTIME_API_KEY_PUBLIC]) {
+    if (typeof k !== 'string' || k.length < 8) continue;
+    out.push(k);
+    const body = k.replace(/^(pri|pub)_/i, '');
+    if (body.length >= 12 && body !== k) out.push(body);
+  }
+  return out;
+}
+
 // A caught error, as one printable line. A JSON parse error quotes the body,
 // so it becomes a fixed phrase. A native fetch error's cause can hold the
 // request URL (an invalid redirect puts it in cause.input or cause.base), so
@@ -52,7 +64,13 @@ function describeError(err) {
   let text = typeof err.message === 'string' && err.message ? err.message : 'unknown error';
   // Node's fetch puts the whole URL in its own message for a URL it cannot
   // parse ("Failed to parse URL from https://...?api_key_private=...").
-  if (/api_key|https?:\/\/\S*\?/i.test(text)) text = `${err.name || 'Error'} naming a request URL (withheld)`;
+  if (/api_key|https?:\/\/\S*\?/i.test(text)) {
+    text = `${err.name || 'Error'} naming a request URL (withheld)`;
+  } else if (/(pri|pub)[_%]/i.test(text) || configuredSecrets().some((s) => text.includes(s))) {
+    // Key-shaped, or a configured key whole or by its body, however it got in
+    // (a URL with the key in its path has no "?").
+    text = `${err.name || 'Error'} carrying key material (withheld)`;
+  }
   const code = typeof err.code === 'string' ? err.code
     : (err.cause && typeof err.cause.code === 'string' ? err.cause.code : null);
   return code && !text.includes(code) ? `${text} (${code})` : text;

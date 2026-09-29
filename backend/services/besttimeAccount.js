@@ -62,24 +62,51 @@ function configuredKey() {
 
 // Checked on every decoding a URL, a form or JSON can give the text, and
 // without regard to case: "pri%5F..." (percent-encoded underscore) and a
-// lowercased %2f each carried a whole key past the literal check.
+// lowercased %2f each carried a whole key past the literal check. Escapes are
+// decoded one at a time, repeatedly, so one stray "%" cannot void the whole
+// decode ("100% used; pri%5F...") and a double encoding (%255F) unwinds.
+function decodeEscapes(text) {
+  let cur = text;
+  for (let pass = 0; pass < 4; pass++) {
+    const next = cur.replace(/%([0-9a-f]{2})/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16)));
+    if (next === cur) break;
+    cur = next;
+  }
+  return cur;
+}
 function keyCheckForms(text) {
   const forms = new Set([text]);
   const unescaped = text.replace(/\\\//g, '/');
-  forms.add(unescaped);
   for (const t of [text, unescaped]) {
-    try { forms.add(decodeURIComponent(t.replace(/\+/g, ' '))); } catch { /* not valid percent-encoding */ }
+    forms.add(t);
+    const decoded = decodeEscapes(t);
+    forms.add(decoded);
+    forms.add(decoded.replace(/\+/g, ' '));
   }
   return [...forms].map((t) => t.toLowerCase());
+}
+
+// Key material is: a pri_/pub_ prefix with hex after it (no word boundary
+// asked for, so "ref_pub_..." counts), any run of sixteen or more hex
+// characters (a key's body without its prefix), or a configured key, whole or
+// its body alone.
+function containsConfiguredSecret(text, secrets = []) {
+  if (typeof text !== 'string' || !text) return false;
+  const forms = keyCheckForms(text);
+  return secrets.some((s) => {
+    if (typeof s !== 'string' || s.length < 8) return false;
+    const whole = s.toLowerCase();
+    const body = whole.replace(/^(pri|pub)_/, '');
+    return forms.some((t) => t.includes(whole) || (body.length >= 12 && t.includes(body)));
+  });
 }
 
 function containsKeyMaterial(value, secrets = []) {
   const text = typeof value === 'string' ? value : JSON.stringify(value);
   if (!text) return false;
   const forms = keyCheckForms(text);
-  if (forms.some((t) => /\b(pri|pub)_[0-9a-f]{8,}/.test(t))) return true;
-  return secrets.some((s) => typeof s === 'string' && s.length >= 8
-    && forms.some((t) => t.includes(s.toLowerCase())));
+  if (forms.some((t) => /(pri|pub)[_\s-]?[0-9a-f]{4,}|[0-9a-f]{16,}/.test(t))) return true;
+  return containsConfiguredSecret(text, secrets);
 }
 
 // The first day of next month, UTC, as YYYY-MM-DD.
@@ -157,18 +184,30 @@ async function fetchKeyStatus(key, { timeoutMs = 10000 } = {}) {
 function readKeyStatus(body, { secrets = [] } = {}) {
   const b = body && typeof body === 'object' && !Array.isArray(body) ? body : {};
   const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
-  const reported = [];
+  const candidates = [];
   for (const [name, value] of flatten(b)) {
     if (KNOWN_FIELDS.has(name)) continue;
     if (NEVER_PRINT_NAME.test(name) || !REPORTABLE_NAME.test(name)) continue;
     if (value !== null && !['number', 'boolean', 'string'].includes(typeof value)) continue;
     if (containsKeyMaterial(name, secrets)) continue;
-    reported.push(containsKeyMaterial(value, secrets) ? { name, withheld: true } : { name, value });
+    candidates.push({ name, value });
   }
+  // A key split across fields can pass each field's own check, so the values
+  // that passed are also joined and searched for the configured key (whole or
+  // its body). Only for the configured key: the generic hex rule would read a
+  // few numeric quota fields run together as a key.
+  const flagged = candidates.map((c) => containsKeyMaterial(c.value, secrets));
+  const passing = candidates.filter((_, i) => !flagged[i]).map((c) => String(c.value));
+  const splitKey = passing.length > 1 && containsConfiguredSecret(passing.join(''), secrets);
+  const reported = candidates.map(({ name, value }, i) => (
+    flagged[i] || splitKey ? { name, withheld: true } : { name, value }
+  ));
   let status = null;
   if (b.status !== undefined && b.status !== null) {
-    const text = String(b.status).slice(0, 40);
-    status = containsKeyMaterial(text, secrets) ? '[withheld]' : text;
+    // Screened whole, then shortened: shortening first let the start of a key
+    // through under the cut.
+    const full = String(b.status);
+    status = containsKeyMaterial(full, secrets) ? '[withheld]' : full.slice(0, 40);
   }
   return {
     healthy: b.status === 'OK' && b.valid === true && b.active === true,
