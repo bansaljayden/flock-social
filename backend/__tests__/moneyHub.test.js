@@ -2841,11 +2841,15 @@ test('sales tax inside this month\'s charges is taken out of revenue, and unknow
   ], { roles: new Map(), month: MONTH });
   assert.strictEqual(taxed.taxCents, 792 + 32 + 40);
 
+  // A month with no refunds: the refund case has its own test below.
+  const noRefunds = () => { stripeState.balance = stripeState.balance.filter((bt) => !/refund/.test(bt.reporting_category)); };
   seedStripe();
+  noRefunds();
   handlers = hubHandlers();
   const before = (await req('GET', '/api/admin/money')).body.net.revenueThisMonthCents;
   moneyHub.__test.resetCache();
   seedStripe();
+  noRefunds();
   stripeState.invoices[0].total_taxes = [{ amount: 792 }];
   handlers = hubHandlers();
   const after = (await req('GET', '/api/admin/money')).body.net.revenueThisMonthCents;
@@ -2865,4 +2869,33 @@ test('sales tax inside this month\'s charges is taken out of revenue, and unknow
     if (saved === undefined) delete process.env.STRIPE_AUTOMATIC_TAX; else process.env.STRIPE_AUTOMATIC_TAX = saved;
     delete stripeState.invoicesFail;
   }
+});
+
+test('the second pass: a stopped row covering a one-time line counts, and a stopped double is flagged', () => {
+  const base = moneyHub.buildCostPicture({ expenses: [], month: MONTH });
+  const today = MONTH.todayYmd;
+  // A one-time code line has no charge date and adds nothing this month, so a
+  // stopped row that replaced it is this month's only record of the charge.
+  const oneTime = moneyHub.buildCostPicture({
+    expenses: [expense({ id: 1, vendor: 'BestTime', cadence: 'one_time', amountCents: 150000, active: false, lastChargedOn: today, replacesLine: 'besttime-corpus' })],
+    month: MONTH,
+  });
+  assert.strictEqual(oneTime.totals.thisMonthCents, base.totals.thisMonthCents + 150000);
+  // A stopped, unlinked Railway row paid this month is counted beside the
+  // reconciled Railway line, and so it has to be flagged too.
+  const stoppedDouble = moneyHub.buildCostPicture({
+    expenses: [expense({ id: 2, vendor: 'Railway', kind: 'infrastructure', amountCents: 3296, active: false, lastChargedOn: today })],
+    month: MONTH,
+  });
+  assert.ok(stoppedDouble.possibleDoubles.some((d) => d.codeLineId === 'railway' && d.expenseId === 2), JSON.stringify(stoppedDouble.possibleDoubles));
+});
+
+test('tax and a refund in the same month make revenue after tax unknown, not tax taken out twice', async () => {
+  seedStripe();
+  stripeState.invoices[0].total_taxes = [{ amount: 792 }];
+  stripeState.balance.push({ id: 'txn_refund_tax', amount: -10692, fee: 0, net: -10692, currency: 'usd', reporting_category: 'refund', created: IN_MONTH_SEC });
+  handlers = hubHandlers();
+  const n = (await req('GET', '/api/admin/money')).body.net;
+  assert.strictEqual(n.revenueThisMonthCents, null);
+  assert.ok(n.revenueMissing.includes('stripe_tax_refunded'), JSON.stringify(n.revenueMissing));
 });
