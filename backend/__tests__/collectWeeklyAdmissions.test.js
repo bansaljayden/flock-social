@@ -16,7 +16,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { newVenueCheck, createdAfterFrom } = require('../scripts/ml/collectWeekly');
+const { newVenueCheck, createdAfterFrom, selectionOptions } = require('../scripts/ml/collectWeekly');
 
 const WEEKLY = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ml', 'collectWeekly.js'), 'utf8');
 const DEMAND = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ml', 'addDemandVenues.js'), 'utf8');
@@ -82,6 +82,22 @@ test('the collector wires both into the run before the first call', () => {
   const check = WEEKLY.indexOf('newVenueCheck(venues, process.argv)');
   const firstCall = WEEKLY.indexOf('fetchWeeklyForecast(', WEEKLY.indexOf('async function collectWeekly'));
   assert.ok(check > 0 && firstCall > check, 'the admission check must run before the first BestTime call');
+});
+
+test('--order=reviews and --without-weekly aim the rest of a month at uncovered, well-reviewed places', () => {
+  assert.deepStrictEqual(selectionOptions([]), { withoutWeekly: false, orderBy: 'city, id' });
+  assert.deepStrictEqual(
+    selectionOptions(['--order=reviews', '--without-weekly']),
+    { withoutWeekly: true, orderBy: 'review_count DESC NULLS LAST, id' }
+  );
+  // Anything else refuses: a typo must not quietly fall back to the oldest rows.
+  for (const bad of ['--order=', '--order=rating', '--order=reviews;drop']) {
+    assert.match(selectionOptions([bad]).error, /--order must be "reviews"/, bad);
+  }
+  // The harvest writes weekly rows onto matched rows without a BestTime id, so
+  // the filter must look at the corpus, not at the id column.
+  assert.match(WEEKLY, /if \(selection\.withoutWeekly\) \{\s*query \+= ` AND NOT EXISTS \(SELECT 1 FROM ml_training_data t\s*WHERE t\.venue_id = ml_venues\.id AND t\.collection_mode = 'weekly'\)`;/);
+  assert.match(WEEKLY, /query \+= ` ORDER BY \$\{selection\.orderBy\}`;/);
 });
 
 test('addDemandVenues prints the exact admission command for what it staged', () => {
