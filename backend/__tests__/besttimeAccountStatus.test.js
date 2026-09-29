@@ -134,3 +134,17 @@ test('with no key configured it says so and calls nothing', async () => {
     process.env.BESTTIME_API_KEY = saved;
   }
 });
+
+test('an unhealthy answer carrying the key in pieces across status, valid and active prints none of them', async () => {
+  // A later review: the health line printed valid and active as sent, so a key
+  // cut into three pieces across the three health fields came out whole. They
+  // are printed only as booleans now, and status through the account screen.
+  const body = FAKE_PRIVATE.slice(4);
+  const pieces = [body.slice(0, 11), body.slice(11, 22), body.slice(22)];
+  const { out } = await runWith(async () => jsonResponse(200, {
+    status: pieces[0], valid: pieces[1], active: pieces[2],
+  }));
+  for (const piece of pieces) assert.ok(!out.includes(piece), `a piece of the key was printed: ${piece}`);
+  assert.match(out, /NOT OK \(status=\[withheld\], valid=not a boolean, active=not a boolean\)/);
+  assertNoKeyMaterial(out);
+});

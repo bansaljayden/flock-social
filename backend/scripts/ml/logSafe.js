@@ -55,11 +55,19 @@ function configuredSecrets() {
 
 // Key-shaped text: a pri_/pub_ prefix, a configured key whole or by its body,
 // or a long mixed hex run (a key's body without its prefix).
+// Checked on the text as it stands and decoded (%XX, doubled %, literal \u and
+// \x escapes, with the account screen's own decoder), without regard to case.
 function keyShaped(text) {
   if (typeof text !== 'string' || !text) return false;
-  if (/(pri|pub)[_%]/i.test(text)) return true;
-  if (configuredSecrets().some((s) => text.includes(s))) return true;
-  return (text.match(/[0-9a-f]{16,}/gi) || []).some((r) => /[a-f]/i.test(r));
+  const { decodeEscapes } = require('../../services/besttimeAccount');
+  const forms = [...new Set([text, decodeEscapes(text), decodeEscapes(text).replace(/\+/g, ' ')])]
+    .map((t) => t.toLowerCase());
+  const secrets = configuredSecrets().map((s) => s.toLowerCase());
+  // pri_/pub_ followed by hex, not "pub" alone: "Three Mugs Pub & Restaurant"
+  // is a venue, not a key.
+  return forms.some((t) => /(pri|pub)_[0-9a-f]{4,}/.test(t)
+    || secrets.some((s) => t.includes(s))
+    || (t.match(/[0-9a-f]{16,}/g) || []).some((r) => /[a-f]/.test(r)));
 }
 
 // A value that came back in a response and is worth printing (a venue's
