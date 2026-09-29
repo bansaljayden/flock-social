@@ -806,6 +806,13 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
   }
   for (const x of expenses) {
     const usd = x.currency === 'USD';
+    // A bill marked stopped still cost money in the month it was last charged:
+    // a $500 one-time bill paid on the 10th and then marked "no longer
+    // charged" dropped out of this month's costs. It counts toward THIS month
+    // when its last charge falls inside it, and toward the monthly run rate
+    // only while it is active. A stopped row that had replaced a code line is
+    // the exception: that code line is back in the totals and covers the month.
+    const stoppedButPaidThisMonth = !x.active && !x.replacesLine && inMonth(x.lastChargedOn, month);
     lines.push({
       id: `expense-${x.id}`,
       origin: 'expense',
@@ -821,7 +828,8 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
       renewsOn: x.renewsOn,
       replacesLine: x.replacesLine,
       isCredit: x.isCredit === true,
-      counted: x.active && usd,
+      counted: usd && (x.active || stoppedButPaidThisMonth),
+      recurring: usd && x.active,
       inactive: !x.active,
       nonUsd: !usd,
     });
@@ -831,9 +839,12 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
     const sign = l.isCredit ? -1 : 1;
     const run = l.counted ? perMonthCents(l.cadence, l.amountCents) : 0;
     const once = l.counted && l.cadence === 'one_time' && inMonth(l.lastChargedOn, month) ? l.amountCents : 0;
+    // The run rate is what keeps coming: a stopped expense row adds nothing
+    // to it, only to the month it was paid in. Code lines always run.
+    const forward = l.origin === 'expense' && !l.recurring ? 0 : run;
     // Rounded before the sign goes on, so a credit and a charge of the same
     // amount cancel to exactly zero (Math.round(-0.5) is 0, not -1).
-    l.perMonthCents = sign * Math.round(run) || 0;
+    l.perMonthCents = sign * Math.round(forward) || 0;
     l.thisMonthCents = sign * Math.round(run + once) || 0;
   }
 
@@ -887,7 +898,10 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
   for (const c of lines) {
     if (c.origin === 'expense' || !c.counted || !has(CODE_LINE_LOOKALIKE, c.id)) continue;
     for (const x of expenses) {
-      if (!x.active || x.replacesLine || x.isCredit) continue;
+      // Skipped only when it replaces THIS line. A row linked to the wrong
+      // code line (a BestTime bill tied to the corpus line) left the real
+      // BestTime line counted beside it with no warning.
+      if (!x.active || x.replacesLine === c.id || x.isCredit) continue;
       const name = `${x.vendor} ${x.product || ''}`;
       if (CODE_LINE_LOOKALIKE[c.id].test(name) && fits(c.cadence, x.cadence)) {
         possibleDoubles.push({ codeLineId: c.id, codeLabel: c.label, expenseId: x.id, expenseLabel: x.product ? `${x.vendor}, ${x.product}` : x.vendor });
@@ -1185,6 +1199,18 @@ function invoiceProduct(inv, roles) {
   return 'other';
 }
 
+// Sales tax on an invoice, in cents, whichever shape the API version gives it
+// (total_taxes on current versions, total_tax_amounts or tax on older ones).
+// With STRIPE_AUTOMATIC_TAX on, checkout charges price plus tax, and the
+// charge's balance amount carries that tax: it is owed to the state, not
+// revenue.
+function invoiceTaxCents(inv) {
+  const sumOf = (list) => list.reduce((t, x) => t + (Number(x && (x.amount !== undefined ? x.amount : x.tax_amount)) || 0), 0);
+  if (Array.isArray(inv.total_taxes)) return sumOf(inv.total_taxes);
+  if (Array.isArray(inv.total_tax_amounts)) return sumOf(inv.total_tax_amounts);
+  return Number(inv.tax) || 0;
+}
+
 function summarizeInvoices(invoices, { roles, month }) {
   const byProduct = {
     pro: { paidCents: 0, invoices: 0, zeroInvoices: 0 },
@@ -1192,6 +1218,7 @@ function summarizeInvoices(invoices, { roles, month }) {
     other: { paidCents: 0, invoices: 0, zeroInvoices: 0 },
   };
   let nonUsd = 0;
+  let taxCents = 0;
   for (const inv of invoices) {
     if (!inv || inv.status !== 'paid') continue;
     const paidAt = inv.status_transitions && inv.status_transitions.paid_at;
@@ -1202,8 +1229,9 @@ function summarizeInvoices(invoices, { roles, month }) {
     b.paidCents += paid;
     b.invoices += 1;
     if (paid === 0) b.zeroInvoices += 1;
+    taxCents += invoiceTaxCents(inv);
   }
-  return { byProduct, nonUsd };
+  return { byProduct, nonUsd, taxCents };
 }
 
 function summarizePromotionCodes(codes, coupons) {
@@ -1760,7 +1788,7 @@ function buildPricing({ stripe, revenuecat, venuePriceUsd }) {
       problems.push(`Stripe charges ${money(p.unitAmountCents, p.currency || 'USD')} and ${s.file} says ${money(statedCents)}`);
     }
     if (problems.length === 0) {
-      return { ...base, verdict: 'match', env: envName, liveCents: p.unitAmountCents, priceId: p.id, words: `Matches Stripe (${envName}).` };
+      return { ...base, verdict: 'match', env: envName, liveCents: p.unitAmountCents, liveUsable: true, priceId: p.id, words: `Matches Stripe (${envName}).` };
     }
     const sentence = problems.join('; ');
     return {
@@ -1768,6 +1796,10 @@ function buildPricing({ stripe, revenuecat, venuePriceUsd }) {
       verdict: 'mismatch',
       env: envName,
       liveCents: p.unitAmountCents,
+      // What Stripe charges is only a price per plan period when it bills in
+      // dollars on that period: a yearly price behind the monthly variable read
+      // as $29.99 a month made the break-even 8 subscribers instead of 57.
+      liveUsable: p.currency === 'USD' && p.interval === want && (!p.intervalCount || p.intervalCount === 1),
       priceId: p.id,
       words: `${label} ${planWords(s.plan)}: ${sentence.charAt(0).toUpperCase()}${sentence.slice(1)}.`,
     };
@@ -2563,6 +2595,8 @@ function buildModelBlock({ version, accuracy, ladder, coverage = null }) {
 
 // WHY A FIGURE IS MISSING, in codes the screen turns into words:
 //   stripe             Stripe was not read: no key, or it did not answer
+//   stripe_tax         automatic tax is on and this month's invoices were not
+//                      read, so the tax inside the charges is unknown
 //   stripe_partial     Stripe answered with more entries than the hub pages
 //                      through, and a missing page can move a total either way
 //   app_store          RevenueCat was not read
@@ -2618,10 +2652,17 @@ function buildNet({ stripe, revenuecat, costs, costsComplete = true, appStoreCom
   const appRevenueGap = appGap || (appStore && appStore.unpricedThisMonth > 0 ? 'app_store_unpriced' : null);
   const appRecurringGap = appGap || (appStore && appStore.unpriced > 0 ? 'app_store_unpriced' : null);
 
-  const stripeNetCents = balanceGap ? null : balance.netCents;
+  // Sales tax collected this month is subtracted: the balance counts what the
+  // customer paid, tax included. With automatic tax on and the invoices
+  // unread, the tax is unknown, so the revenue is too.
+  const invoicesRead = stripeOk && stripe.invoices && stripe.invoices.status === 'ok' && !stripe.invoices.truncated ? stripe.invoices : null;
+  const taxOn = String(process.env.STRIPE_AUTOMATIC_TAX || '').toLowerCase() === 'true';
+  const taxGap = taxOn && !invoicesRead ? 'stripe_tax' : null;
+  const taxCollectedCents = invoicesRead ? (invoicesRead.taxCents || 0) : 0;
+  const stripeNetCents = balanceGap || taxGap ? null : balance.netCents - taxCollectedCents;
   const appStoreNetCents = appRevenueGap ? null : Math.round((appStore ? appStore.monthChargedCents : 0) * keep);
   const revenueCents = stripeNetCents === null ? null : stripeNetCents + (appStoreNetCents || 0);
-  const missing = gaps(balanceGap, appRevenueGap);
+  const missing = gaps(balanceGap, taxGap, appRevenueGap);
 
   const costsThisMonthCents = costGap ? null : costs.totals.thisMonthCents;
   const burnCents = costGap ? null : costs.totals.perMonthCents;
@@ -2635,7 +2676,8 @@ function buildNet({ stripe, revenuecat, costs, costsComplete = true, appStoreCom
   // The price a break-even is worked from: Stripe's, when Stripe answered,
   // otherwise the price the code states, and the payload says which.
   const priceFor = (product, plan) => {
-    const live = (pricing.stated || []).find((s) => s.product === product && s.plan === plan && Number.isFinite(s.liveCents));
+    const live = (pricing.stated || []).find((s) => s.product === product && s.plan === plan
+      && Number.isFinite(s.liveCents) && s.liveUsable === true);
     if (live) return { cents: live.liveCents, source: 'stripe' };
     const stated = STATED_PRICES.find((s) => s.product === product && s.plan === plan);
     return stated ? { cents: Math.round(stated.usd * 100), source: 'stated' } : null;
