@@ -50,7 +50,7 @@ require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.e
 
 const { Pool } = require('pg');
 const { bestTimeDayToJsDay, sleep } = require('./config');
-const { labelFor, describeError, describeDbError } = require('./logSafe');
+const { labelFor, describeError, describeDbError, safeText } = require('./logSafe');
 // IMPORTED, NEVER REIMPLEMENTED. The slot -> (venue-local day, hour) transform
 // exists once, in collectWeekly.js, and migration 023's SQL is pinned against
 // that same function by __tests__/mlClockAxisBackfill.test.js. A second copy
@@ -463,7 +463,7 @@ async function discover() {
         const lon = Number(venue.venue_lon);
         if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
           noCoords++;
-          console.warn(`  SKIP (no coordinates) ${venue.venue_name}`);
+          console.warn(`  SKIP (no coordinates) ${safeText(venue.venue_name)}`);
           continue;
         }
 
@@ -475,7 +475,7 @@ async function discover() {
           if (rows > 0) totalRows += rows;
           totalVenues++;
         } catch (err) {
-          console.error(`  Failed to insert ${venue.venue_name}: ${describeDbError(err)}`);
+          console.error(`  Failed to insert ${safeText(venue.venue_name)}: ${describeDbError(err)}`);
         }
       }
 

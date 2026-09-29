@@ -76,11 +76,15 @@ async function main() {
 
   const body = answer.body;
   const status = besttime.readKeyStatus(body, { secrets });
-  // The three health fields as BestTime sent them, screened like everything else.
-  const screened = (v) => (besttime.containsKeyMaterial(v, secrets) ? '[withheld]' : String(v));
+  // The three health fields: status as readKeyStatus screened it (whole, and
+  // for any eight characters of the key), valid and active only as the
+  // booleans they should be. Free text in those two, split across all three,
+  // could carry a key in pieces.
+  const asBoolean = (v) => (typeof v === 'boolean' ? String(v) : (v === undefined || v === null ? 'not reported' : 'not a boolean'));
+  const shownStatus = status.status === null ? 'not reported' : status.status;
 
   console.log(`[BestTime:Status] Checked ${new Date().toISOString()} (key from BESTTIME_API_KEY; the key itself is never printed)`);
-  console.log(`  Key health         : ${status.healthy ? 'OK (valid, active)' : `NOT OK (status=${screened(body.status)}, valid=${screened(body.valid)}, active=${screened(body.active)})`}`);
+  console.log(`  Key health         : ${status.healthy ? 'OK (valid, active)' : `NOT OK (status=${shownStatus}, valid=${asBoolean(body.valid)}, active=${asBoolean(body.active)})`}`);
   console.log('  Plan name          : not reported by the key endpoint (see the besttime.app dashboard)');
 
   const forecast = status.creditsForecast;

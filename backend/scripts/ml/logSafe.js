@@ -53,6 +53,22 @@ function configuredSecrets() {
   return out;
 }
 
+// Key-shaped text: a pri_/pub_ prefix, a configured key whole or by its body,
+// or a long mixed hex run (a key's body without its prefix).
+function keyShaped(text) {
+  if (typeof text !== 'string' || !text) return false;
+  if (/(pri|pub)[_%]/i.test(text)) return true;
+  if (configuredSecrets().some((s) => text.includes(s))) return true;
+  return (text.match(/[0-9a-f]{16,}/gi) || []).some((r) => /[a-f]/i.test(r));
+}
+
+// A value that came back in a response and is worth printing (a venue's
+// name), printed only if nothing in it looks like a key.
+function safeText(value) {
+  const text = value === undefined || value === null ? '' : String(value);
+  return keyShaped(text) ? '[withheld]' : text;
+}
+
 // A caught error, as one printable line. A JSON parse error quotes the body,
 // so it becomes a fixed phrase. A native fetch error's cause can hold the
 // request URL (an invalid redirect puts it in cause.input or cause.base), so
@@ -87,5 +103,5 @@ function describeDbError(err) {
 }
 
 module.exports = {
-  labelFor, failureReason, describeError, describeDbError, UNRECOGNISED_REASON,
+  labelFor, failureReason, describeError, describeDbError, safeText, UNRECOGNISED_REASON,
 };

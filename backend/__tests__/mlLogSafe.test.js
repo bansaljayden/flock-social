@@ -65,6 +65,15 @@ test('describeDbError: a data exception is printed by code, anything else as bef
   assert.strictEqual(describeDbError(other), 'deadlock detected (40P01)');
 });
 
+test('safeText prints a response value only when nothing in it looks like a key', () => {
+  const { safeText } = require('../scripts/ml/logSafe');
+  for (const name of ["Joe's Pizza", 'Cafe 1234', 'Terminal 5 (2026)', '']) assert.strictEqual(safeText(name), name);
+  for (const bad of [`Bar ${KEY}`, `Bar ${KEY.replace(/^pri_/, '')}`, 'x pri_1', `deadbeef${'0'.repeat(8)}cafe`]) {
+    assert.strictEqual(safeText(bad), '[withheld]', bad);
+  }
+  assert.strictEqual(safeText(null), '');
+});
+
 test('labels: only fixed strings come back, whatever the message holds', () => {
   assert.strictEqual(labelFor('Venue found, but could not forecast this venue.'), 'found, but BestTime has too little visitor data to forecast it');
   assert.strictEqual(labelFor(`denied ${URL_WITH_KEY}`), 'reason not recognised');
@@ -153,6 +162,13 @@ test('the account read withholds a key split across fields, and screens status b
   // Pieces used as field NAMES are screened like values.
   const named = readKeyStatus({ usage: { [body.slice(15, 30)]: 1, [body.slice(0, 15)]: 2 } }, { secrets: [KEY] });
   assert.deepStrictEqual(named.reported, [], JSON.stringify(named.reported));
+  // The final review's cases: a key written as literal \u escapes inside a
+  // parsed string, a piece of the key as the status, and a long all-digit id,
+  // which is not a key and must still show.
+  const escaped = KEY.split('').map((c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`).join('');
+  assert.deepStrictEqual(readKeyStatus({ plan_name: escaped }, { secrets: [KEY] }).reported, [{ name: 'plan_name', withheld: true }]);
+  assert.strictEqual(readKeyStatus({ status: body.slice(0, 11) }, { secrets: [KEY] }).status, '[withheld]');
+  assert.deepStrictEqual(readKeyStatus({ plan_id: '1234567890123456' }, { secrets: [KEY] }).reported, [{ name: 'plan_id', value: '1234567890123456' }]);
   // Numbers run together are not a key.
   const quotas = readKeyStatus({ quota_venues: 100, quota_used: 1000000, quota_left: 99000000 }, { secrets: [KEY] });
   assert.ok(quotas.reported.every((f) => !f.withheld), JSON.stringify(quotas.reported));
@@ -168,8 +184,8 @@ test('the account read withholds a key split across fields, and screens status b
 // @sentry/node, a production dependency; if it ever goes, this test fails
 // loudly rather than skipping.
 const acorn = require('acorn');
-// screened() is besttimeAccountStatus.js's pass through containsKeyMaterial.
-const SAFE_CALLS = new Set(['describeError', 'describeDbError', 'labelFor', 'failureReason', 'screened']);
+// asBoolean() is besttimeAccountStatus.js's: it prints a boolean or a fixed phrase. safeText() is logSafe's.
+const SAFE_CALLS = new Set(['describeError', 'describeDbError', 'labelFor', 'failureReason', 'asBoolean', 'safeText']);
 // `reason` is left out on purpose: in bestTimeService it is the fixed label.
 const ERRORISH = /^(err|error|e|callError|cause|ex)$/;
 const RESPONSEISH = /^(data|body|json|answer|response|parsed)$/;
