@@ -158,6 +158,24 @@ test('the month-end command selects uncovered, never-tried venues, most reviewed
   assert.deepStrictEqual(params, ['philly', 5]);
 });
 
+test('a 404 retry skips venues asked within the last 30 days', async () => {
+  const { selects } = await selectsFor([
+    '--city=lehigh', '--skip-collected', '--retry-404', '--without-weekly', '--order=reviews', '--limit=20', '--max-new=20',
+  ]);
+  assert.strictEqual(selects.length, 1);
+  const { sql, params } = selects[0];
+  assert.match(sql, / AND \(besttime_attempted_at IS NULL OR besttime_attempted_at < NOW\(\) - make_interval\(days => \$2\)\) /);
+  assert.deepStrictEqual(params, ['lehigh', 30, 20]);
+});
+
+test('--retry-404-after-days=0 is the old retry-everything pass, and junk refuses', async () => {
+  const zero = await selectsFor(['--city=lehigh', '--skip-collected', '--retry-404', '--retry-404-after-days=0', '--max-new=5']);
+  assert.deepStrictEqual(zero.selects[0].params, ['lehigh', 0]);
+  const bad = await selectsFor(['--city=lehigh', '--skip-collected', '--retry-404', '--retry-404-after-days=soon', '--max-new=5']);
+  assert.strictEqual(bad.exitCode, 1);
+  assert.strictEqual(bad.selects.length, 0);
+});
+
 test('without the new flags the selection is what it always was', async () => {
   const { selects } = await selectsFor(['--city=philly', '--only-found']);
   assert.strictEqual(selects.length, 1);
