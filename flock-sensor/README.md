@@ -571,15 +571,21 @@ it. Silence is being compared against a single ADC count, which nothing real
 ever reaches. That default was a placeholder and no one had looked at it through
 a meter.
 
-**To calibrate, run the meter.** In the quietest the venue ever gets:
+**To look, run the meter.** `--listen` prints a live bar with the rms, the
+level, the same four words the card shows, and a clipping counter, read the way
+the running sensor reads. Ctrl+C for a summary. It changes nothing.
+
+**To calibrate, let it guide you.** In the quietest the venue ever gets:
 
     sudo systemctl stop flock-sensor
-    python3 /opt/flock-sensor/main.py --listen
+    python3 /opt/flock-sensor/main.py --listen --write
+    sudo systemctl start flock-sensor
 
-It prints a live bar with the rms, the level, the same four words the card
-shows, and a clipping counter. Sit quiet for twenty seconds, make some noise,
-then Ctrl+C. It reports the quietest and loudest bursts it saw and recommends a
-`NOISE_REF_COUNTS`.
+It asks for three things in turn: silence, talking at a normal volume from
+where people sit, and a few hard claps close to it. It prints nothing while it
+measures. It puts the quiet room at 40 and talking at 60, writes
+`NOISE_REF_COUNTS`, `NOISE_SCALE` and `NOISE_SAMPLE_GAP_US`, and writes nothing
+if talking did not stand at least 4 dB clear of the quiet room.
 
 It aims to put a silent room at 40 rather than at 50. Setting the reference
 equal to the measured floor is the obvious move and it is wrong: 50 is exactly
@@ -605,7 +611,7 @@ job, not a settings one: shorter leads, off the breadboard, away from the modem.
 
 **How far apart the reads are matters more than the screw.** On 2026-09-28 the
 same unit read a quiet room at 41 when the converter was read back to back and
-about 15 when the reads were 2ms apart. `--listen` now times the reads before it
+about 15 when the reads were 2ms apart. `--listen --write` times the reads before it
 measures anything, and writes the gap it chose as `NOISE_SAMPLE_GAP_US`.
 
 **What none of this fixes.** The level has a fixed slope, so the reference
