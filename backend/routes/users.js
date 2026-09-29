@@ -94,8 +94,8 @@ const { createUserBudget } = require('../utils/probeBudget');
 // tombstone digests below, so neither table's rows can be compared with the
 // other's. See utils/phone.js.
 const { phoneDiscoveryHash } = require('../utils/phone');
-const { customerIdFor: stripeCustomerIdFor, closeCustomer: closeStripeCustomer } = require('../services/proBilling');
-const { closeVenueCustomer } = require('../services/venueBilling');
+const { customerIdFor: stripeCustomerIdFor, closeCustomer: closeStripeCustomer, holdCheckoutLock } = require('../services/proBilling');
+const { closeVenueCustomer, venueCheckoutKey } = require('../services/venueBilling');
 
 const router = express.Router();
 const SALT_ROUNDS = 10;
@@ -3233,6 +3233,37 @@ const HAND_ON_OWED_PLANS_SQL = `UPDATE flocks f
  WHERE f.id = heir.flock_id
 RETURNING f.id, heir.user_id AS heir_id, heir.heir_name`;
 
+// A CHECKOUT AND A DELETION OF THE SAME ACCOUNT RUN ONE AFTER THE OTHER.
+//
+// A checkout makes the account's Stripe customer the first time it is needed
+// and saves it on the account (proBilling.ensureCustomer, and the same for a
+// venue's Roost customer). The deletion read the customer, cancelled it, and
+// only then deleted the row. A checkout built between that read and the
+// DELETE saved a customer the deletion had already looked for and not found,
+// with a payable session on it, and the account went with nothing left
+// pointing at either: a subscription paid after that was billed to a card
+// every month for an account that no longer existed, and nobody in Flock
+// could cancel it.
+//
+// Both products' checkout builds queue per account (proBilling
+// withCheckoutLock), and the deletion now joins both queues before it reads
+// either customer and leaves them only once its transaction has ended. A
+// build already running finishes first and the deletion then cancels the
+// customer it saved. A build that arrives during the deletion waits for it,
+// then finds no account and makes nothing. Pro before Roost, always, so two
+// deletions of one account cannot each hold one of the two. The deletion
+// waits here holding no database lock, so no route that holds one can be
+// waiting on it in turn. In process memory, like the queue itself: the app
+// runs on exactly one server (project documentation).
+async function holdAccountCheckouts(userId) {
+  const releasePro = await holdCheckoutLock(userId);
+  const releaseRoost = await holdCheckoutLock(venueCheckoutKey(userId));
+  return () => {
+    releaseRoost();
+    releasePro();
+  };
+}
+
 // DELETE /api/users/me - Permanently delete the authenticated user's account.
 // Hard-deletes the user row; ON DELETE CASCADE removes their flocks (all but
 // the ones HAND_ON_OWED_PLANS_SQL gives to another member first), memberships,
@@ -3245,6 +3276,9 @@ RETURNING f.id, heir.user_id AS heir_id, heir.heir_name`;
 // declaration, hoisted) so the banned-user exemption is a property of this one
 // route rather than a string match every DELETE in the API could trip.
 async function deleteAccount(req, res) {
+  // Set while this deletion holds the account's checkout queues (see
+  // holdAccountCheckouts); the finally below lets them go on every way out.
+  let releaseCheckouts = null;
   try {
     const u = await pool.query(
       // email_verified + verified_email are selected so recordBannedIdentity can
@@ -3336,6 +3370,10 @@ async function deleteAccount(req, res) {
     // the code (frontend/src/screens/ProfileSettings.js DELETE_BILLING_NEUTRAL):
     //   SUBSCRIPTION_NOT_CANCELLED           account kept, subscription still on
     //   SUBSCRIPTION_CANCELLED_ACCOUNT_KEPT  subscription cancelled, account kept
+    //
+    // Read inside the checkout queues and not before them, so a customer a
+    // checkout saved a moment ago is the one read here (holdAccountCheckouts).
+    releaseCheckouts = await holdAccountCheckouts(req.user.id);
     const stripeCustomer = await stripeCustomerIdFor(req.user.id);
     let stripeClosed = false;
     if (stripeCustomer) {
@@ -3613,6 +3651,10 @@ async function deleteAccount(req, res) {
       });
     } finally {
       client.release();
+      // The transaction has ended one way or the other, so a checkout queued
+      // behind this deletion may run: it finds the account, or finds it gone.
+      releaseCheckouts();
+      releaseCheckouts = null;
     }
 
     // Round 19 (re-audit): the row is gone, so every REST call 401s on the next
@@ -3725,6 +3767,11 @@ async function deleteAccount(req, res) {
     // Express answers with ERR_HTTP_HEADERS_SENT and an unhandled error, not
     // with a second body. Same guard, same reason, as routes/flocks.js.
     if (!res.headersSent) res.status(500).json({ error: 'Failed to delete account' });
+  } finally {
+    // Every refusal between taking the checkout queues and the transaction
+    // returns from inside the try, and none of them may leave a checkout
+    // waiting on this account for ever.
+    if (releaseCheckouts) releaseCheckouts();
   }
 }
 

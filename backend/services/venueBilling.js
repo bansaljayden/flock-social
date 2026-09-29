@@ -239,8 +239,14 @@ async function expireOpenSessions(customerId) {
 // expires the session the first one made. A Pro checkout by the same person is
 // on a different Stripe customer and cannot double-bill a Roost one, so the
 // two products do not wait on each other.
+//
+// The key is exported because account deletion holds this queue too, from
+// before it reads the Roost customer until its COMMIT, so a build can never
+// save a customer the deletion has already looked for.
+const venueCheckoutKey = (userId) => `venue:${userId}`;
+
 function createVenueCheckout(user, plan) {
-  return billing.withCheckoutLock(`venue:${user && user.id}`, () => buildVenueCheckout(user, plan));
+  return billing.withCheckoutLock(venueCheckoutKey(user && user.id), () => buildVenueCheckout(user, plan));
 }
 
 async function buildVenueCheckout(user, plan) {
@@ -651,6 +657,7 @@ module.exports = {
   handleVenueEvent,
   venueCustomerIdFor,
   closeVenueCustomer,
+  venueCheckoutKey,
   grantFromSubscription,
   legacyRoostPrices,
   TRIAL_DAYS,

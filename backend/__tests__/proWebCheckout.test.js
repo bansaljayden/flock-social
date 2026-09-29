@@ -870,6 +870,38 @@ test('two checkouts started at once are built one after the other, so only one c
   } finally { restore(); }
 });
 
+test('a checkout that finds the account already deleted makes no Stripe customer and no session', async () => {
+  // Account deletion holds the checkout queue until its COMMIT, so a build
+  // queued behind one reads the account after it is gone. A customer made
+  // then would be one no account points at and nothing in Flock can cancel.
+  setEnv(ON);
+  const { restore } = stubPool(async (sql) => {
+    if (sql.includes('SELECT stripe_customer_id')) return { rows: [] };
+    return null;
+  });
+  try {
+    await assert.rejects(billing.createCheckout(ME, 'monthly'), (err) => err.status === 404);
+    assert.deepStrictEqual(stripeCalls.map((c) => c[0]), [], 'Stripe was asked for something for an account that is gone');
+  } finally { restore(); }
+});
+
+test('account deletion can hold the checkout queue, and a build waits until it lets go', async () => {
+  const release = await billing.holdCheckoutLock(ME.id);
+  let ran = false;
+  const build = billing.withCheckoutLock(ME.id, () => { ran = true; });
+  await new Promise((r) => setTimeout(r, 30));
+  assert.strictEqual(ran, false, 'a build ran while the queue was held');
+  release();
+  release(); // a second call is harmless
+  await build;
+  assert.strictEqual(ran, true);
+  const after = await Promise.race([
+    billing.withCheckoutLock(ME.id, () => 'ran'),
+    new Promise((r) => setTimeout(() => r('still held'), 200)),
+  ]);
+  assert.strictEqual(after, 'ran');
+});
+
 test('a sandbox purchase unlocks nothing unless the account is allowlisted, and a paid one still counts', async () => {
   setEnv({ ...ON, REVENUECAT_SANDBOX_USER_IDS: undefined });
   const future = new Date(Date.now() + 30 * 864e5).toISOString();
