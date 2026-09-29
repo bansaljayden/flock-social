@@ -475,3 +475,47 @@ test('the 4xx branch sits below the two that name their own status, and above th
     'the general 4xx branch is below the unhandled-error branch, so every one of them logs a stack and '
     + 'answers 500 again');
 });
+
+test('a preflight from an allowed origin may be reused, so calls do not each pay for an OPTIONS first', async () => {
+  // With no max age a browser keeps a preflight for five seconds, and the app
+  // and the web app then paid a round trip before nearly every request.
+  const express = require('express');
+  const http = require('node:http');
+  const cors = require('cors');
+  const build = new Function('process', 'console', `${region}\n; return { corsOptions };`);
+  const { corsOptions } = build({ env: {} }, { warn() {}, log() {}, error() {} });
+  assert.strictEqual(corsOptions.maxAge, 7200);
+
+  const app = express();
+  app.use(cors(corsOptions));
+  app.get('/thing', (_req, res) => res.json({ ok: true }));
+  app.use((err, _req, res, _next) => res.status(err.status || 500).json({ error: err.type || 'fault' }));
+  const server = http.createServer(app);
+  await new Promise((r) => server.listen(0, r));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  try {
+    const preflight = await fetch(`${base}/thing`, {
+      method: 'OPTIONS',
+      headers: {
+        origin: 'capacitor://localhost',
+        'access-control-request-method': 'GET',
+        'access-control-request-headers': 'authorization',
+      },
+    });
+    assert.strictEqual(preflight.status, 204);
+    assert.strictEqual(preflight.headers.get('access-control-max-age'), '7200');
+    assert.strictEqual(preflight.headers.get('access-control-allow-origin'), 'capacitor://localhost');
+
+    // The cache never stands in for the origin check: a refused origin is
+    // still refused, preflight or not, and is given no max age to keep.
+    const refused = await fetch(`${base}/thing`, {
+      method: 'OPTIONS',
+      headers: { origin: 'https://evil.example', 'access-control-request-method': 'GET' },
+    });
+    assert.strictEqual(refused.status, 403);
+    assert.strictEqual(refused.headers.get('access-control-max-age'), null);
+    assert.strictEqual(refused.headers.get('access-control-allow-origin'), null);
+  } finally {
+    await new Promise((r) => server.close(r));
+  }
+});
