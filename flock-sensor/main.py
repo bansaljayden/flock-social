@@ -368,6 +368,37 @@ NOISE_REF_COUNTS = _cfg_number('NOISE_REF_COUNTS', float, 1e-6, 1024.0, 1.0)
 NOISE_DB_OFFSET = _cfg_number('NOISE_DB_OFFSET', float, -100.0, 200.0, 50.0)
 NOISE_SCALE = _cfg_number('NOISE_SCALE', float, 0.1, 10.0, 1.0)
 NOISE_SAMPLE_GAP_US = _cfg_number('NOISE_SAMPLE_GAP_US', float, 0.0, 5000.0, 1000.0)
+
+
+def _set_outside_defaults(key):
+    """True when the config file or the environment sets this key."""
+    try:
+        if os.environ.get(key):
+            return True
+        if CONFIG_PATH.exists():
+            return key in _parse_config_text(CONFIG_PATH.read_text())
+    except Exception:
+        pass
+    return False
+
+
+def calibration_predates_gap(ref_counts, scale, gap_was_set):
+    """True for a noise calibration written before the reads were spaced.
+
+    Those were measured back to back, and they only hold back to back. Applied
+    to spaced reads, the first unit, calibrated against a floor of 41, read its
+    new floor of about 15 through a scale of 4.4, and ordinary sounds jumped a
+    word or two. --listen writes the gap with the calibration, so a
+    calibration with no gap beside it is one of the old ones.
+    """
+    return (ref_counts != 1.0 or scale != 1.0) and not gap_was_set
+
+
+NOISE_CALIBRATION_PREDATES_GAP = calibration_predates_gap(
+    NOISE_REF_COUNTS, NOISE_SCALE, _set_outside_defaults('NOISE_SAMPLE_GAP_US'))
+if NOISE_CALIBRATION_PREDATES_GAP:
+    # Read the way it was calibrated until --listen is run again.
+    NOISE_SAMPLE_GAP_US = 0.0
 NOISE_SPL_ANCHOR_COUNTS = _cfg_number('NOISE_SPL_ANCHOR_COUNTS', float, 0.0, 1024.0, 0.0)
 NOISE_SPL_ANCHOR_DB = _cfg_number('NOISE_SPL_ANCHOR_DB', float, 0.0, 140.0, 0.0)
 
@@ -2304,6 +2335,10 @@ def noise_insight(history, people=None, calibrated_db=None, scale=None):
 
 
 def noise_loop():
+    if NOISE_CALIBRATION_PREDATES_GAP:
+        logger.warning('The noise calibration was measured before the microphone reads '
+                       'were spaced, so it is still read back to back, which is noisier. '
+                       'Run main.py --listen --write to recalibrate.')
     while not _stop.is_set():
         started = time.monotonic()
         try:
@@ -6101,6 +6136,10 @@ def selftest():
         healthy, why = adc_health(mic, spare)
         if healthy:
             print(f'    noise mic      : ok  ({why})')
+            if NOISE_CALIBRATION_PREDATES_GAP:
+                print('                     calibrated before the reads were spaced, so it')
+                print('                     still reads the old, noisier way. Recalibrate:')
+                print('                     main.py --listen --write')
         else:
             print('    noise mic      : READING NOTHING USEFUL')
             for line in textwrap.wrap(why, 62):

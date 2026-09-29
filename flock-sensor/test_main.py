@@ -2026,6 +2026,13 @@ class QuietIsKnown(unittest.TestCase):
         ref, scale = main.recommend_noise_settings(15.0, 125.0)
         self.assertLessEqual(scale, 10.0)
 
+    def test_an_old_calibration_keeps_reading_the_way_it_was_measured(self):
+        # 44.1 and 4.42 were written before the gap existed.
+        self.assertTrue(main.calibration_predates_gap(44.1, 4.42, gap_was_set=False))
+        self.assertFalse(main.calibration_predates_gap(25.7, 2.03, gap_was_set=True))
+        # An uncalibrated unit has nothing to protect.
+        self.assertFalse(main.calibration_predates_gap(1.0, 1.0, gap_was_set=False))
+
     def test_nothing_heard_sets_nothing(self):
         self.assertIsNone(main.typical_quiet([]))
 
