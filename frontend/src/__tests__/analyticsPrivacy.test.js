@@ -75,6 +75,8 @@ describe('POSTHOG_PRIVACY_CONFIG is pinned to minimum collection', () => {
     expect(c.capture_dead_clicks).toBe(false);
     expect(c.capture_exceptions).toBe(false);
     expect(c.disable_surveys).toBe(true);
+    // PostHog's own web vitals and network timing: not in the policy's list.
+    expect(c.capture_performance).toBe(false);
     expect(c.person_profiles).toBe('identified_only');
     expect(c.persistence).toBe('localStorage'); // no cookie mode: see PrivacyPolicy.js
     expect(c.respect_dnt).toBe(true);

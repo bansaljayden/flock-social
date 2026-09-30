@@ -114,17 +114,22 @@ function UsageAnalyticsRow({ Toggle, colors }) {
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState('');
   const live = React.useRef(true);
+  // Taps since this row mounted. A read that began before a tap answers for a
+  // moment that has passed, so its value is not drawn over the tap's.
+  const taps = React.useRef(0);
   React.useEffect(() => {
     live.current = true;
+    const tapsAtRead = taps.current;
     // Read fresh on every visit: it may have been changed on another device.
     getAnalyticsChoice()
-      .then((data) => { if (live.current) setOptOut(data.optOut); })
+      .then((data) => { if (live.current && taps.current === tapsAtRead) setOptOut(data.optOut); })
       .catch(() => { /* keep what was known */ });
     return () => { live.current = false; };
   }, []);
 
   const flip = async () => {
     if (busy || optOut === null) return;
+    taps.current += 1;
     const turningOff = optOut === false;
     setBusy(true);
     setError('');

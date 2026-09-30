@@ -237,6 +237,10 @@ const HELD_FOR_ACCOUNT_MAX = 50;
 let accountChoice = null;
 // { account, promise } while that answer is being read.
 let accountChoiceRead = null;
+// An account whose off tap this page could not save. It stays off on this page
+// until Flock is opened again or an on is accepted (setAnalyticsChoice), which
+// is what the switch's error line tells the person.
+let pageOffAccount = null;
 // Where the SDK is for that account: 'off' | 'starting' | 'running' | 'unavailable'.
 let accountAnalytics = 'off';
 // Bumped by every stop, so a start that resolves after one is ignored.
@@ -288,7 +292,7 @@ function loadAccountChoice(account, { fresh = false } = {}) {
 function applyAccountChoice(account, optOut) {
   if (!analyticsFollowsAccount() || account !== signedInUserId) return;
   accountChoice = { account, optOut: optOut !== false };
-  if (accountChoice.optOut) {
+  if (accountChoice.optOut || pageOffAccount === account) {
     stopAccountAnalyticsHere();
     return;
   }
@@ -355,9 +359,10 @@ export async function getAnalyticsChoice() {
  *  OFF STOPS FIRST, before the request: PostHog is reset and switched off on
  *  this page at the tap, and what it held goes with it. If the request then
  *  fails, the account still says on and the switch shows that, but this page
- *  stays off until the account's setting is read again (the next launch, or
- *  the switch's own fresh read), because the person asked for off and the
- *  error is ours. ON waits for the server and starts only once it has agreed.
+ *  stays off for that account until Flock is opened again (pageOffAccount),
+ *  because the person asked for off and the error is ours. A later read that
+ *  says on, the switch's own fresh read included, does not start it again;
+ *  only an on that the server accepts does. ON waits for the server and starts only once it has agreed.
  *  Either way the device answer is removed: the account holds the choice now. */
 export async function setAnalyticsChoice(optOut) {
   const off = optOut === true;
@@ -372,11 +377,18 @@ export async function setAnalyticsChoice(optOut) {
     if (off) accountChoice = { account, optOut: true };
   }
   if (off && analyticsFollowsAccount()) stopAccountAnalyticsHere();
-  const data = await request(ACCOUNT_ANALYTICS_PATH, {
-    method: 'PUT',
-    body: JSON.stringify({ optOut: off }),
-  });
+  let data;
+  try {
+    data = await request(ACCOUNT_ANALYTICS_PATH, {
+      method: 'PUT',
+      body: JSON.stringify({ optOut: off }),
+    });
+  } catch (err) {
+    if (off && account) pageOffAccount = account;
+    throw err;
+  }
   const serverOff = data?.optOut !== false;
+  if (!serverOff && pageOffAccount === account) pageOffAccount = null;
   forgetConsent();
   if (account && account === signedInUserId && analyticsFollowsAccount()) {
     // Newer than any read still in flight, so that read's answer is dropped.
@@ -825,7 +837,9 @@ export function clearLocalSession({ keepInviteHandoff = false } = {}) {
     endAccountAnalytics();
   } else {
     withPostHog((posthog) => {
-      posthog.reset();
+      // true: a new device id as well, so the next person on this browser is
+      // not linked to this one (index.js stopAccountAnalytics says why).
+      posthog.reset(true);
       posthog.opt_out_capturing();
     });
   }
