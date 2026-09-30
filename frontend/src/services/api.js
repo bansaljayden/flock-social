@@ -1245,7 +1245,7 @@ function buildHttpError(res, data, endpoint, hadToken) {
   // A gateway 502/503/504 body is an HTML error page, not display copy.
   if (typeof message === 'string' && message.trim().startsWith('<')) message = null;
   // Every unhandled 500 in the backend answers with the literal "Server error"
-  // (the route pattern's catch block, project documentation). That is an internal
+  // (the catch block every route shares). That is an internal
   // placeholder, not a sentence written for a person, so it is dropped the same
   // way the gateway HTML is, and the honest fallback at the bottom speaks
   // instead. Only the exact catch-all string is matched: a 500 that carries a
