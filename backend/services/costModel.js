@@ -591,10 +591,10 @@ const RECONCILED = {
       // expense row whose replaces_line is 'railway' still stands in for it.
       id: 'railway',
       label: 'Railway (backend and Postgres)',
-      usdPerMonth: 32.96,
-      asOf: '2026-09-28',
+      usdPerMonth: 36.05,
+      asOf: '2026-09-29',
       readFrom: 'the estimated bill `railway usage` prints for the current billing period',
-      note: 'Railway\'s own estimated bill for the Sep 16 to Oct 16, 2026 billing period, read with `railway usage` on 2026-09-28. It is the $20 Pro plan fee plus whatever usage runs past the $20 of credit the plan includes, so it moves with compute and volume from one period to the next. Each new period\'s figure is recorded in the reconciled-cost form on the admin dashboard\'s Costs tab, and a saved entry replaces this one.',
+      note: 'Railway\'s own estimated bill for the Sep 16 to Oct 16, 2026 billing period, read with `railway usage` on 2026-09-29 ($32.96 the day before: the estimate climbs as the period\'s usage comes in). It is the $20 Pro plan fee plus whatever usage runs past the $20 of credit the plan includes, so it moves with compute and volume from one period to the next. Each new period\'s figure is recorded in the reconciled-cost form on the admin dashboard\'s Costs tab, and a saved entry replaces this one.',
     },
   ],
   note: 'Read off the vendor billing pages by hand. Nothing in the app can verify this, so each line is only as current as the date beside it.',

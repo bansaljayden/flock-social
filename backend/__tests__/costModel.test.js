@@ -433,12 +433,12 @@ test('the reconciled block is the only place a billed figure lives, and every li
 test('Railway is a reconciled line at its own estimated bill, and no fixed line carries a Railway figure', async () => {
   // Railway sat on FIXED_MONTHLY at $20.00, the Pro plan's fee. The plan buys
   // $20 of usage credit and everything past it bills on top, so the real bill
-  // ran higher than that line could say: `railway usage` estimated $32.96 for
+  // ran higher than that line could say: `railway usage` estimated $32.96 on 09-28 and $36.05 on 09-29 for
   // the Sep 16 to Oct 16, 2026 period. It is a reconciled line now, recorded
   // from the dashboard like Google Cloud, and nothing may count it twice.
   const railway = cm.RECONCILED.lines.find((l) => l.id === 'railway');
   assert.ok(railway, 'Railway is on the reconciled block');
-  assert.strictEqual(railway.usdPerMonth, 32.96);
+  assert.strictEqual(railway.usdPerMonth, 36.05);
   assert.strictEqual(railway.label, 'Railway (backend and Postgres)');
   assert.match(railway.asOf, /^2026-09-\d{2}$/);
   assert.match(railway.note, /estimated bill/);
@@ -469,7 +469,7 @@ test('Railway is a reconciled line at its own estimated bill, and no fixed line 
   assert.ok(r.editableIds.includes('google-cloud'));
   const line = r.lines.find((l) => l.id === 'railway');
   assert.strictEqual(line.source, 'code');
-  assert.strictEqual(line.usdPerMonth, 32.96);
+  assert.strictEqual(line.usdPerMonth, 36.05);
   assert.strictEqual(line.asOf, railway.asOf);
 
   // The inventory row resolves against the reconciled block, not the fixed one.

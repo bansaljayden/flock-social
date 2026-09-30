@@ -62,6 +62,12 @@ const RC_KEY = 'rc_secret_moneyhub_fake_key_000';
 const RC_V2_KEY = 'rc_v2_secret_moneyhub_fake_000';
 const BT_KEY = ['pri', 'feedface'.repeat(4)].join('_');
 const BT_PUBLIC_KEY = ['pub', 'decafbad'.repeat(4)].join('_');
+// Railway's reconciled figure in the cost model, in cents. Read from there so
+// recording a new estimate is one edit in services/costModel.js; the value
+// itself is pinned in costModel.test.js.
+const railwayCodeCents = () => Math.round(
+  require('../services/costModel').RECONCILED.lines.find((l) => l.id === 'railway').usdPerMonth * 100
+);
 
 // ---- the fake Stripe -------------------------------------------------------
 const stripeCalls = [];
@@ -996,14 +1002,14 @@ test('a row that stands in for a code line counts once, and a lookalike is flagg
   assert.strictEqual(railway.counted, true);
   // Railway is a reconciled line now, so a row still names it by the same id.
   assert.strictEqual(railway.origin, 'reconciled');
-  assert.strictEqual(railway.amountCents, 3296);
+  assert.strictEqual(railway.amountCents, railwayCodeCents());
 
   const linked = moneyHub.buildCostPicture({
     expenses: [expense({ id: 1, vendor: 'Railway', kind: 'infrastructure', amountCents: 2500, replacesLine: 'railway' })],
     month: MONTH,
   });
   assert.strictEqual(linked.lines.find((l) => l.id === 'railway').counted, false);
-  assert.strictEqual(linked.totals.perMonthCents, base.totals.perMonthCents - 3296 + 2500, 'the reconciled $32.96 leaves and the row $25 arrives');
+  assert.strictEqual(linked.totals.perMonthCents, base.totals.perMonthCents - railwayCodeCents() + 2500, 'the reconciled code figure leaves and the row $25 arrives');
   assert.deepStrictEqual(linked.replaced.map((x) => x.id), ['railway']);
   assert.deepStrictEqual(linked.possibleDoubles, []);
 
@@ -1016,22 +1022,22 @@ test('a row that stands in for a code line counts once, and a lookalike is flagg
   assert.strictEqual(unlinked.possibleDoubles[0].expenseId, 2);
 });
 
-test('the monthly total counts Railway once at its real bill: 32.96, not 52.96', () => {
+test('the monthly total counts Railway once at its real bill, not with the plan fee again on top', () => {
   // Railway moved from a fixed $20.00 line (the plan fee alone) to a
-  // reconciled $32.96 line (the fee plus usage past the credit). Left in both
-  // blocks, the hub would count the fee twice and read $52.96.
+  // reconciled line (the fee plus usage past the credit). Left in both blocks,
+  // the hub would count the $20 fee twice.
   const cm = require('../services/costModel');
   const pic = moneyHub.buildCostPicture({ expenses: [], month: MONTH });
   const railwayLines = pic.lines.filter((l) => /railway/i.test(`${l.id} ${l.label}`));
   assert.deepStrictEqual(
     railwayLines.map((l) => [l.id, l.origin, l.cadence, l.counted, l.perMonthCents]),
-    [['railway', 'reconciled', 'usage', true, 3296]],
-    'one Railway line, reconciled, at $32.96'
+    [['railway', 'reconciled', 'usage', true, railwayCodeCents()]],
+    'one Railway line, reconciled, at the code figure'
   );
-  assert.strictEqual(railwayLines.reduce((s, l) => s + l.perMonthCents, 0), 3296);
+  assert.strictEqual(railwayLines.reduce((s, l) => s + l.perMonthCents, 0), railwayCodeCents());
   // Hosting is Railway and Vercel, so the category shows the same single count.
   const vercel = cm.FIXED_MONTHLY.find((e) => e.id === 'vercel');
-  assert.strictEqual(pic.byCategory.find((c) => c.category === 'Hosting').perMonthCents, 3296 + Math.round(vercel.usd * 100));
+  assert.strictEqual(pic.byCategory.find((c) => c.category === 'Hosting').perMonthCents, railwayCodeCents() + Math.round(vercel.usd * 100));
   // And the whole total is every code line once: fixed monthly in full, yearly
   // at a twelfth, each reconciled line in full.
   const expected = cm.FIXED_MONTHLY.reduce((s, e) => s + Math.round(e.usd * 100), 0)
@@ -1060,7 +1066,7 @@ test('a Railway figure saved from the dashboard is the one the hub counts, once'
   handlers = hubHandlers();
   const code = await req('GET', '/api/admin/money');
   assert.strictEqual(code.status, 200, code.text);
-  assert.strictEqual(r.body.costs.totals.perMonthCents - code.body.costs.totals.perMonthCents, 3510 - 3296,
+  assert.strictEqual(r.body.costs.totals.perMonthCents - code.body.costs.totals.perMonthCents, 3510 - railwayCodeCents(),
     'the saved figure replaces the code one rather than adding to it');
 });
 
