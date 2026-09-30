@@ -1228,9 +1228,19 @@ let webVitalsAttached = false;
 function attachWebVitals() {
   if (webVitalsAttached) return;
   webVitalsAttached = true;
+  // ONE OBSERVER PER PAGE, BUT ANALYTICS BELONGS TO AN ACCOUNT. Some metrics
+  // (CLS, LCP) arrive only when the page is hidden, which can be after a
+  // sign-out and another account's sign-in on the same page, since a sign-out
+  // does not reload it. The analytics run in progress when measuring starts is
+  // recorded here, and a metric that arrives after that run has ended (a
+  // sign-out, an account change, switching off) is dropped rather than sent
+  // under whoever is signed in by then.
+  const runAtAttach = import('./services/api')
+    .then((api) => api.analyticsRunToken())
+    .catch(() => undefined);
   reportWebVitals((metric) => {
-    import('./services/api')
-      .then((api) => api.trackWebVital(metric, page ? page.id : (wantsApp ? 'app' : 'other')))
+    Promise.all([import('./services/api'), runAtAttach])
+      .then(([api, run]) => api.trackWebVital(metric, page ? page.id : (wantsApp ? 'app' : 'other'), run))
       .catch(() => { /* a number is never load-bearing */ });
   });
 }

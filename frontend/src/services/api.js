@@ -3890,8 +3890,17 @@ const WEB_VITALS = ['CLS', 'FID', 'FCP', 'LCP', 'TTFB', 'INP'];
 const VITAL_ROUTES = ['app', 'landing', 'guest-invite', 'privacy', 'terms',
   'guidelines', 'support', 'about', 'delete-account', 'tap', 'moderation', 'other'];
 
-export function trackWebVital(metric, route) {
+/** The analytics run in progress on this page. Every stop (a sign-out, an
+ *  account change, switching off) starts a new one, so a value read earlier
+ *  that no longer matches belongs to a run that has ended. */
+export function analyticsRunToken() {
+  return accountAnalyticsRun;
+}
+
+export function trackWebVital(metric, route, run) {
   if (!metric || !WEB_VITALS.includes(metric.name)) return;
+  // Measured under a run that has since ended (index.js attachWebVitals).
+  if (run !== undefined && run !== accountAnalyticsRun) return;
   track('web_vital', {
     metric: metric.name,
     // CLS is a unitless score well under 1; everything else is milliseconds.
