@@ -448,6 +448,59 @@ test('turning Location services off stops the app asking, and Discover says so',
   expect(errors).toEqual([]);
 });
 
+/* ═══ USAGE ANALYTICS ══════════════════════════════════════════════════════ */
+
+// The app asks no analytics question on screen: signed-in analytics is part of
+// the service agreed to at signup, and this switch is where it is turned off.
+// The answer lives on the account, so a reload and another device both find
+// it. The website keeps its own bar for anonymous visitors.
+test('the app asks nothing about analytics, and Share usage analytics is kept on the account', async ({ page, browser }) => {
+  const { email, errors } = await enterApp(page, 'Analytics Tester');
+  await expect(page.getByRole('dialog', { name: 'Analytics choice' })).toHaveCount(0);
+
+  await openSettings(page);
+  const sw = page.getByRole('switch', { name: 'Share usage analytics' });
+  await expect(sw).toHaveAttribute('aria-checked', 'true');
+  await expect(page.getByText('Which screens you open and a few actions, tied to your account number. No ads, no selling.')).toBeVisible();
+  await sw.click();
+  await expect(sw).toHaveAttribute('aria-checked', 'false');
+  await expect(page.getByRole('alert')).toHaveCount(0);
+
+  // Kept on the account, not the page.
+  await page.reload();
+  await openSettings(page);
+  await expect(page.getByRole('switch', { name: 'Share usage analytics' })).toHaveAttribute('aria-checked', 'false');
+
+  // Another device, signed in through the sign-in screen, finds it off too,
+  // and was asked nothing on the way in.
+  await confirmEmail(email);
+  const other = await newPhone(browser);
+  try {
+    await other.page.goto('/app');
+    await expect(other.page.getByRole('textbox', { name: /email/i })).toBeVisible({ timeout: 20_000 });
+    await expect(other.page.getByRole('dialog', { name: 'Analytics choice' })).toHaveCount(0);
+    await other.page.getByRole('textbox', { name: /email/i }).fill(email);
+    await other.page.getByRole('textbox', { name: /password/i }).first().fill(PASSWORD);
+    await other.page.getByRole('button', { name: /^sign in$/i }).click();
+    await expect(other.page.getByRole('button', { name: 'You', exact: true })).toBeVisible({ timeout: 20_000 });
+    await expect(other.page.getByRole('dialog', { name: 'Analytics choice' })).toHaveCount(0);
+    await openSettings(other.page);
+    const there = other.page.getByRole('switch', { name: 'Share usage analytics' });
+    await expect(there).toHaveAttribute('aria-checked', 'false');
+
+    // And back on from there.
+    await there.click();
+    await expect(there).toHaveAttribute('aria-checked', 'true');
+  } finally {
+    await other.context.close();
+  }
+
+  // The website still asks an anonymous visitor, as it always did.
+  await page.goto('/privacy');
+  await expect(page.getByRole('dialog', { name: 'Analytics choice' })).toBeVisible({ timeout: 15_000 });
+  expect(errors).toEqual([]);
+});
+
 /* ═══ GET A COPY OF MY DATA ════════════════════════════════════════════════ */
 
 test('the data export refuses a wrong password in words', async ({ page }) => {

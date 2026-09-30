@@ -51,12 +51,11 @@ test('closing a venue sheet opened from the results list does not crash Discover
     errors.push(entry);
   });
 
-  // The analytics choice sheet sits over the auth screen on a fresh profile
-  // and intercepts every click until it is answered.
+  // The app asks no analytics question (the bar is the website's), so a
+  // fresh profile goes straight to the sign-in screen.
   const off = searchIsOff(page);
   await page.goto('/app');
-  const noThanks = page.getByRole('button', { name: /no thanks/i }).first();
-  try { await noThanks.click({ timeout: 8_000 }); } catch { /* not shown */ }
+  await expect(page.getByRole('dialog', { name: 'Analytics choice' })).toHaveCount(0);
 
   await signUp(page, 'discover');
 
@@ -118,7 +117,6 @@ test('tapping a map pin opens the card with the dial and closing it does not cra
   });
   const off = searchIsOff(page);
   await page.goto('/app');
-  try { await page.getByRole('button', { name: /no thanks/i }).first().click({ timeout: 8_000 }); } catch { /* not shown */ }
   await signUp(page, 'pin');
   try { await page.getByText(/Continue for now, confirm later/i).first().click({ timeout: 15_000 }); } catch { /* not shown */ }
   try { await page.getByText(/I'm Going Out/i).first().click({ timeout: 10_000 }); } catch { /* not shown */ }
