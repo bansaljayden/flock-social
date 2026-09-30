@@ -393,6 +393,35 @@ describe('the Settings switch', () => {
     expect(mockPosthog.opt_out_capturing).not.toHaveBeenCalled();
   });
 
+  test('off while the sign-in read is still in flight: that read\'s "on" is dropped and nothing starts', async () => {
+    const { api } = await boot();
+    const get = deferred();
+    answers[`GET ${ANALYTICS}`] = () => get.promise;
+    await signIn(api, 42);
+    expect(analyticsCalls().map((c) => c.key)).toEqual([`GET ${ANALYTICS}`]);
+
+    const put = deferred();
+    answers[`PUT ${ANALYTICS}`] = (body) => { serverOptOut.set(42, body.optOut); return put.promise; };
+    const pending = api.setAnalyticsChoice(true);
+    await flushAll();
+
+    // The read that began before the tap answers "on" first.
+    get.resolve(jsonRes({ optOut: false }));
+    await flushAll();
+    api.trackScreenView('home');
+    await flushAll();
+    expect(mockPosthog.init).not.toHaveBeenCalled();
+    expect(mockPosthog.identify).not.toHaveBeenCalled();
+    expect(mockPosthog.capture).not.toHaveBeenCalled();
+    expect(api.knownAnalyticsChoice()).toEqual({ optOut: true });
+
+    put.resolve(jsonRes({ optOut: true }));
+    await expect(pending).resolves.toEqual({ optOut: true });
+    await flushAll();
+    expect(mockPosthog.init).not.toHaveBeenCalled();
+    expect(mockPosthog.capture).not.toHaveBeenCalled();
+  });
+
   test('on starts again once the server agrees, in memory, and names the account', async () => {
     serverOptOut.set(42, true);
     const { api } = await boot();

@@ -304,8 +304,10 @@ function applyAccountChoice(account, optOut) {
       return;
     }
     accountAnalytics = 'running';
-    // Named first, so every held capture and everything after is the
-    // account's, by its number and nothing else.
+    // Named before the held captures go, so they and everything after are
+    // the account's, by its number and nothing else. The page view PostHog
+    // takes at init goes out just before this under a temporary id, which
+    // this identify merges into the account.
     runWithPostHog((posthog) => posthog.identify(account));
     const held = heldForAccount;
     heldForAccount = [];
@@ -353,12 +355,22 @@ export async function getAnalyticsChoice() {
  *  OFF STOPS FIRST, before the request: PostHog is reset and switched off on
  *  this page at the tap, and what it held goes with it. If the request then
  *  fails, the account still says on and the switch shows that, but this page
- *  stays off until the next launch, because the person asked for off and the
+ *  stays off until the account's setting is read again (the next launch, or
+ *  the switch's own fresh read), because the person asked for off and the
  *  error is ours. ON waits for the server and starts only once it has agreed.
  *  Either way the device answer is removed: the account holds the choice now. */
 export async function setAnalyticsChoice(optOut) {
   const off = optOut === true;
   const account = signedInUserId;
+  if (account && analyticsFollowsAccount()) {
+    // THE TAP IS NEWER THAN ANY READ STILL IN FLIGHT. A launch or a sign-in
+    // may have asked the server moments ago; if that answer ("on") landed
+    // after an off tap and before the PUT did, it would start PostHog again
+    // for someone who had just switched it off. Dropping the read here means
+    // only this request's answer is applied.
+    if (accountChoiceRead && accountChoiceRead.account === account) accountChoiceRead = null;
+    if (off) accountChoice = { account, optOut: true };
+  }
   if (off && analyticsFollowsAccount()) stopAccountAnalyticsHere();
   const data = await request(ACCOUNT_ANALYTICS_PATH, {
     method: 'PUT',
