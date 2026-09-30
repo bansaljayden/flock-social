@@ -193,6 +193,26 @@ function getPostHog() {
   return posthogClient;
 }
 
+// THE ACCOUNT'S "SHARE USAGE ANALYTICS" SWITCH COVERS THIS TOO. An account
+// that switched it off (users.analytics_opt_out, migration 111) is not traced,
+// so the switch means what it says across the whole product. Asked once per
+// turn, and only when tracing is configured: without POSTHOG_API_KEY (the case
+// in production today) nothing is read and nothing is sent. A failed read
+// counts as off, the direction that sends nothing.
+function aiTracingConfigured(env = process.env) {
+  return analyticsEnvAllowed(env) && !!env.POSTHOG_API_KEY;
+}
+
+async function aiTracingAllowedFor(userId, db = pool, env = process.env) {
+  if (!aiTracingConfigured(env)) return false;
+  try {
+    const r = await db.query('SELECT analytics_opt_out FROM users WHERE id = $1', [userId]);
+    return r.rows.length > 0 && r.rows[0].analytics_opt_out !== true;
+  } catch {
+    return false;
+  }
+}
+
 function captureAiGeneration({ userId, traceId, sessionId, resp, latencyMs }) {
   const posthog = getPostHog();
   if (!posthog) return;
@@ -1858,6 +1878,7 @@ router.post('/chat',
       // every Gemini call and tool span the tool loop below produces.
       const aiSessionId = `birdie:${userId}`;
       const aiTraceId = crypto.randomUUID();
+      const aiTraceAllowed = await aiTracingAllowedFor(userId);
 
       // The turn has to HAVE a message. `messages.*.text` is optional in the
       // validator above, so `{ messages: [{}] }` passed it, and the last element
@@ -2042,7 +2063,7 @@ router.post('/chat',
           // a systematically low estimate cannot accumulate into a free
           // allowance across a long tool loop.
           settleGeminiCall(userId, estimate, reportedTokens(resp));
-          captureAiGeneration({ userId, traceId: aiTraceId, sessionId: aiSessionId, resp, latencyMs: Date.now() - genStart });
+          if (aiTraceAllowed) captureAiGeneration({ userId, traceId: aiTraceId, sessionId: aiSessionId, resp, latencyMs: Date.now() - genStart });
           promptChars += responseChars(resp);
           return resp;
         };
@@ -2152,7 +2173,7 @@ router.post('/chat',
             }
             const toolStart = Date.now();
             const result = await executeTool(name, args || {}, userId, toolOpts);
-            captureAiToolSpan({ userId, traceId: aiTraceId, sessionId: aiSessionId, name, latencyMs: Date.now() - toolStart });
+            if (aiTraceAllowed) captureAiToolSpan({ userId, traceId: aiTraceId, sessionId: aiSessionId, name, latencyMs: Date.now() - toolStart });
             // Charged on DELIVERY, not on intent. `hourly_forecast` is the
             // paid payload itself, so its presence is the only honest trigger:
             // an upstream 404, a spent Places budget or a thrown tool all leave
@@ -2369,4 +2390,4 @@ router.__clearBirdieSearchCache = () => {
 // It decides whether $ai_generation leaves this process at all, and the whole
 // point of it is that a dev machine holding the live POSTHOG_API_KEY stops
 // filing its turns as product data.
-module.exports.__testables = { executeTool, buildSystemPrompt, analyticsEnvAllowed };
+module.exports.__testables = { executeTool, buildSystemPrompt, analyticsEnvAllowed, aiTracingConfigured, aiTracingAllowedFor };
