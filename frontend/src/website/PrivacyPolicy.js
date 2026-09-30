@@ -641,7 +641,7 @@ export default function PrivacyPolicy() {
                 <li><strong>Apple Push Notification service</strong> and <strong>Firebase Cloud Messaging</strong> deliver push notifications. They receive the device token and the notification.</li>
                 <li><strong>Google Cloud Vision</strong> screens every image you upload against our content rules before anyone can see it. The image is sent for that check and for nothing else. If the check cannot run, the upload is refused rather than let through.</li>
                 <li><strong>Google Gemini</strong> powers Birdie and Roost. <a href="#ai">Birdie and Roost</a> says exactly what each of them sends.</li>
-                <li><strong>PostHog</strong> receives the app's product analytics events, tied to your account number, the page views and events counted on our website if you agreed to them, and the IP address each request arrives from. It also receives the cost and speed measurements behind Birdie: token counts and latency, never the words. See <a href="#analytics">Analytics, error reports, and email</a>.</li>
+                <li><strong>PostHog</strong> receives the app's product analytics events, tied to your account number, the page views and events counted on our website if you agreed to them, and the IP address each request arrives from. Birdie's cost and speed measurement, token counts and latency and never the words, is wired up to go there too and is switched off today. See <a href="#analytics">Analytics, error reports, and email</a>.</li>
                 <li><strong>Apple</strong> and <strong>Google</strong> verify sign-in identity, only when you choose those options. Apple additionally receives the revocation call when you delete an account you created with Sign in with Apple.</li>
                 <li><strong>MapTiler</strong> and <strong>CARTO</strong> serve the map tiles. Your device loads tiles from them directly, so whichever one is in use sees your IP address and the area of the map you are looking at. It does not see your account.</li>
                 <li><strong>DiceBear</strong> serves the default avatar for an account with no photo. Your device loads that image directly, so it sees your IP address and nothing else.</li>
@@ -769,12 +769,12 @@ export default function PrivacyPolicy() {
                 <li>PostHog never sets a cookie. In the app it keeps its identifier in memory only, with the exception above; on the website, after a yes, in your device's local storage.</li>
               </ul>
               <p>
-                Birdie has one extra measurement, taken on our server rather than in the app.
-                Every call to the model records how many tokens it used and how long it took,
-                against your account number. The words are deliberately left out: PostHog is
-                where we measure cost and speed, not where conversations go. This measurement
-                is part of running Birdie and is not covered by the Share usage analytics
-                switch; it is only ever taken when you use Birdie.
+                Birdie has one extra measurement, wired up on our server and switched off today.
+                Switched on, every call to the model would record how many tokens it used and
+                how long it took, against your account number. The words are deliberately left
+                out: PostHog is where we would measure cost and speed, not where conversations
+                go. The Share usage analytics switch covers it: an account that has switched
+                analytics off is never measured.
               </p>
 
               <h3>Crash and error reporting, with Sentry</h3>
