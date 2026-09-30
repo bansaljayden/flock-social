@@ -697,14 +697,20 @@ test.describe('flock chat, with two people watching it', () => {
 
   test('new messages land at the bottom and the thread is already scrolled there', async () => {
     const before = errors.length;
+    const FILLER_LINES = 20;
     test.setTimeout(120_000);
     await requireLive(ada, bo);
 
-    for (let i = 1; i <= 14; i += 1) {
+    // ENOUGH LINES TO OVERFLOW THE THREAD, which is the premise of the last
+    // assertion below. It was 14 while the analytics bar sat at the bottom of
+    // every app screen; the app no longer shows that bar, the thread is that
+    // much taller, and on a 390x664 phone all 14 fit with the thread already
+    // at the bottom, so "line 1 is off screen" was testing the bar's height.
+    for (let i = 1; i <= FILLER_LINES; i += 1) {
       await sendInFlock(ada.page, `filler line ${i}`);
       await ada.page.waitForTimeout(150);
     }
-    await expect(bo.page.getByText('filler line 14')).toBeVisible({ timeout: 25_000 });
+    await expect(bo.page.getByText(`filler line ${FILLER_LINES}`)).toBeVisible({ timeout: 25_000 });
 
     // Newest at the bottom, oldest pushed off the top: the arrangement every
     // chat on earth uses, and the one thing a person notices instantly if it
@@ -719,10 +725,10 @@ test.describe('flock chat, with two people watching it', () => {
     });
     expect(order.length, 'no message rows were found at all').toBeGreaterThan(0);
     expect(order).toEqual(order.slice().sort((a, b) => Number(a.split(' ')[2]) - Number(b.split(' ')[2])));
-    expect(order[order.length - 1]).toBe('filler line 14');
+    expect(order[order.length - 1]).toBe(`filler line ${FILLER_LINES}`);
 
     // Bo never scrolled. The newest line has to be on screen anyway.
-    await expect(bo.page.getByText('filler line 14')).toBeInViewport();
+    await expect(bo.page.getByText(`filler line ${FILLER_LINES}`)).toBeInViewport();
     await expect(bo.page.getByText('filler line 1', { exact: true })).not.toBeInViewport();
 
     // And one more arriving live goes underneath, not on top.

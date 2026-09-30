@@ -487,11 +487,12 @@ test('a sheet takes focus, traps Tab, closes on Escape and hands focus back to s
   // just the same, and this catches it the same way.
   const after = await page.evaluate(`(() => {
     // THE VOTE SHEET, not every dialog on the page. The analytics consent
-    // banner is a role="dialog" of its own and it sits on every signed-in
-    // screen until somebody answers it, so a bare count is never 0: this read
-    // "Escape did not close the vote sheet" about a chat that had closed it
-    // perfectly. Naming the sheet is the stricter claim anyway, because a
-    // count can also fall to zero because the wrong thing closed.
+    // banner is a role="dialog" of its own and used to sit on every signed-in
+    // screen until somebody answered it, so a bare count was never 0: this
+    // read "Escape did not close the vote sheet" about a chat that had closed
+    // it perfectly. The app no longer mounts that banner at all, but naming
+    // the sheet is the stricter claim anyway, because a count can also fall to
+    // zero because the wrong thing closed.
     const dialogs = document.querySelectorAll('[role="dialog"][aria-label="Vote on a venue"]').length;
     const el = document.activeElement;
     if (!el || el === document.body) return { dialogs, name: '(body)', onScreen: false, vis: 'n/a' };
