@@ -212,6 +212,45 @@ describe('signed in, the account\'s own setting decides', () => {
     expect(mockPosthog.opt_out_capturing).not.toHaveBeenCalled();
   });
 
+  test('a page-speed number measured under one account is not sent under the next', async () => {
+    // index.js records the run in progress when it starts measuring and hands
+    // it back with every metric (attachWebVitals). Its lazy import of api.js
+    // is a separate module instance under jest.isolateModules, so the gate is
+    // driven here on this page's own api.js, and the wiring is pinned below.
+    const { api } = await boot();
+    await signIn(api, 42);
+    const run42 = api.analyticsRunToken();
+
+    // While 42's run lasts, a metric goes through.
+    api.trackWebVital({ name: 'LCP', value: 1234 }, 'app', run42);
+    await flushAll();
+    expect(captured()).toContain('web_vital');
+
+    // 42 signs out and 43 signs in on the same page. A metric measured under
+    // 42's run (CLS arrives when the page is finally hidden) is dropped.
+    await signOut(api);
+    await signIn(api, 43);
+    expect(mockPosthog.identify).toHaveBeenLastCalledWith('43');
+    mockPosthog.capture.mockClear();
+    api.trackWebVital({ name: 'CLS', value: 0.12 }, 'app', run42);
+    await flushAll();
+    expect(captured()).not.toContain('web_vital');
+
+    // One measured under 43's own run is 43's.
+    api.trackWebVital({ name: 'CLS', value: 0.12 }, 'app', api.analyticsRunToken());
+    await flushAll();
+    expect(captured()).toContain('web_vital');
+  });
+
+  test('the page records the run when it starts measuring and passes it with every metric', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const src = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
+    const body = src.slice(src.indexOf('function attachWebVitals()'), src.indexOf('function attachWebVitals()') + 1600);
+    expect(body).toMatch(/api\.analyticsRunToken\(\)/);
+    expect(body).toMatch(/api\.trackWebVital\(metric,[^)]*\), run\)/);
+  });
+
   test('an account that switched it off never starts PostHog', async () => {
     const { api } = await boot();
     serverOptOut.set(42, true);
