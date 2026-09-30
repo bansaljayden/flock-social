@@ -58,7 +58,7 @@
  * character. Nothing was renamed, reformatted or improved on the way across.
  */
 import React from 'react';
-import { deleteAccount, trackNotificationPermission, updatePaymentMethods, logoutAll, getCurrentUser, clearLocalSession, getProStatus, openProPortal, cancelProSubscription, resumeProSubscription } from '../services/api';
+import { deleteAccount, trackNotificationPermission, updatePaymentMethods, logoutAll, getCurrentUser, clearLocalSession, getProStatus, openProPortal, cancelProSubscription, resumeProSubscription, getAnalyticsChoice, setAnalyticsChoice, knownAnalyticsChoice } from '../services/api';
 import { getNotificationStatus, requestNotificationPermission } from '../services/firebase';
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
@@ -80,6 +80,87 @@ export const DELETE_BILLING_NEUTRAL = {
   SUBSCRIPTION_NOT_CANCELLED: 'Your account was not deleted. A subscription on it could not be cancelled just now and is still active. Try again in a minute.',
   SUBSCRIPTION_CANCELLED_ACCOUNT_KEPT: 'Your subscription was cancelled, but your account could not be deleted just now. Try again in a minute.',
 };
+
+// The one line under the switch. The privacy policy describes the same
+// collection and names the switch; usageAnalyticsSwitch.test.js holds the two
+// together.
+const USAGE_ANALYTICS_LINE = 'Which screens you open and a few actions, tied to your account number. No ads, no selling.';
+
+/**
+ * "SHARE USAGE ANALYTICS", the account's own switch for product analytics.
+ *
+ * The app asks no analytics question on screen. Signed-in analytics is part of
+ * the service agreed to at signup, and this is where it is turned off. The
+ * answer is kept on the ACCOUNT (PUT /api/users/me/analytics), so it holds
+ * after a sign-out, a reinstall and on every other device, and the privacy
+ * policy points here by this exact name.
+ *
+ * Built like the other server-backed switches on this screen (Find me by
+ * phone, Birdie and Google Gemini): the switch lands where the server's answer
+ * lands, a tap is ignored while one is in flight or before the first read,
+ * and a refusal is shown under it as an alert. Off stops PostHog on this page
+ * at the tap, before the request, and clears what it held
+ * (services/api.js setAnalyticsChoice). A component of its own, at module
+ * scope, so its state and its read survive the settings list re-rendering.
+ */
+function UsageAnalyticsRow({ Toggle, colors }) {
+  // The answer this page already read at sign-in, so the switch is drawn in
+  // the right place the first time. Null until something has been read: a
+  // switch that guesses its own state is worse than one that waits.
+  const [optOut, setOptOut] = React.useState(() => {
+    const known = knownAnalyticsChoice();
+    return known ? known.optOut : null;
+  });
+  const [busy, setBusy] = React.useState(false);
+  const [error, setError] = React.useState('');
+  const live = React.useRef(true);
+  React.useEffect(() => {
+    live.current = true;
+    // Read fresh on every visit: it may have been changed on another device.
+    getAnalyticsChoice()
+      .then((data) => { if (live.current) setOptOut(data.optOut); })
+      .catch(() => { /* keep what was known */ });
+    return () => { live.current = false; };
+  }, []);
+
+  const flip = async () => {
+    if (busy || optOut === null) return;
+    const turningOff = optOut === false;
+    setBusy(true);
+    setError('');
+    try {
+      const data = await setAnalyticsChoice(turningOff);
+      if (live.current) setOptOut(data.optOut);
+    } catch (err) {
+      if (!live.current || err?.sessionExpired) return;
+      // Off already took effect on this page before the request went out, so
+      // the sentence says so; the switch stays where the account still is.
+      setError(turningOff
+        ? 'That did not save to your account. Nothing more is sent until you next open Flock, so try again to keep it off.'
+        : (err?.message || 'That did not save. Try again.'));
+    } finally {
+      if (live.current) setBusy(false);
+    }
+  };
+
+  return (
+    <div style={{ width: '100%', padding: '12px', backgroundColor: 'var(--bg-card-solid)', borderTop: '1px solid var(--border-light)', boxSizing: 'border-box' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.barChart(colors.navy, 18)}</div>
+        <div style={{ flex: 1 }}>
+          <span style={{ fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy, display: 'block' }}>Share usage analytics</span>
+          <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>{USAGE_ANALYTICS_LINE}</span>
+        </div>
+        <Toggle label="Share usage analytics" on={optOut === false} onChange={flip} />
+      </div>
+      {error && (
+        <div role="alert" style={{ marginTop: '12px', padding: '10px 12px', borderRadius: '10px', backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)' }}>
+          <p style={{ fontSize: 'var(--t-meta)', color: colors.redText, fontWeight: '600', margin: 0, lineHeight: '1.4' }}>{error}</p>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function ProfileSettings({
   // Module-level helpers, constants and components that live in App.js and are
@@ -763,6 +844,11 @@ export default function ProfileSettings({
                 // asks once; this is the switch that answer lives behind.
                 { l: 'Birdie and Google Gemini', s: 'birdieai', icon: Icons.messageSquare, v: birdieConsented ? 'On' : 'Off' },
               ],
+              // A switch rather than a row that opens a page, so it sits under
+              // the rows in the same card, drawn like the Device switches. The
+              // app asks nothing about analytics on screen; this is where it
+              // is turned off, and the privacy policy sends people here.
+              tail: <UsageAnalyticsRow Toggle={Toggle} colors={colors} />,
             },
           ].map(group => (
             <div key={group.g} style={{ marginBottom: '16px' }}>
@@ -776,6 +862,7 @@ export default function ProfileSettings({
                     <span style={{ color: 'var(--text-tertiary)' }}>›</span>
                   </button>
                 ))}
+                {group.tail || null}
               </div>
             </div>
           ))}

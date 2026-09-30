@@ -1,9 +1,10 @@
 /**
- * THE ANALYTICS ANSWER, ACROSS A SIGN-OUT.
+ * THE ANALYTICS ANSWER, ACROSS A SIGN-OUT, ON THE WEBSITE'S OWN PAGES.
  *
- * The answer to the analytics bar is stored under flock_analytics_consent. In
- * the app it is consent for an ACCOUNT's activity (the app copy says the
- * events carry "your account number"), and three things went wrong with it:
+ * The answer to the website's analytics bar is stored under
+ * flock_analytics_consent. Once somebody is signed in it is consent for an
+ * ACCOUNT's activity (the events carry the account number), and three things
+ * went wrong with it:
  *
  *   1. The sign-out sweep in services/api.js removed it, so every sign-out and
  *      every 24h token expiry asked again, including the person who had said
@@ -24,6 +25,11 @@
  *
  * analyticsConsentRestart.test.js drives the other half, index.js starting the
  * SDK again for a yes that comes back.
+ *
+ * None of this is the app's rule any more. The app routes mount no bar: the
+ * signed-in account's own setting decides there, and accountAnalytics.test.js
+ * holds that. This file loads services/api.js without index.js, which is
+ * exactly a page that is not the app, so the bar's rules are what it sees.
  *
  * HOW TO RUN
  *   cd frontend && CI=true npx react-scripts test --watchAll=false
@@ -49,7 +55,7 @@ jest.mock('posthog-js', () => ({
 }));
 
 const React = require('react');
-const { act, fireEvent, render, screen } = require('@testing-library/react');
+const { act, render } = require('@testing-library/react');
 const fs = require('fs');
 const path = require('path');
 
@@ -221,7 +227,7 @@ describe('the same account signing back in on this page is not asked again', () 
     await signIn(42);
     setConsent('no');
     await signOut();
-    // The web bar on the sign-in screen, answered before signing in.
+    // The web bar on a page of the site, answered before signing in.
     setConsent('yes');
 
     await signIn(42);
@@ -278,47 +284,25 @@ describe('the SDK is reset and switched off at every sign-out after a yes', () =
 });
 
 describe('the bar opens again for the next account', () => {
-  test('in the app: answered by A, back after sign-out once B\'s tab bar is up, never over the sign-in screen', async () => {
+  test('inside the native app it never opens, before or after an account changes', async () => {
+    // The app asks no analytics question; the old in-app bar waited for the
+    // tab bar and appeared above it. It renders nothing there now.
     window.Capacitor = { isNativePlatform: () => true, getPlatform: () => 'ios' };
     await signIn(42);
     const { container } = render(React.createElement(ConsentBanner, { onAnswer: () => {} }));
     let nav;
     await act(async () => { nav = mountNav(89); });
     await settle();
-    fireEvent.click(screen.getByText("That's fine"));
-    await settle();
-    expect(container.querySelector('.cb-wrap')).toBeNull();
-
-    // Log out: the tab bar goes with the session.
-    await act(async () => { nav.remove(); await signOut(); });
-    await settle();
     expect(consentUnanswered()).toBe(true);
     expect(container.querySelector('.cb-wrap')).toBeNull();
 
+    await act(async () => { nav.remove(); await signOut(); });
     await act(async () => { await signIn(77); mountNav(89); });
     await settle();
-    const wrap = container.querySelector('.cb-wrap');
-    expect(wrap).not.toBeNull();
-    expect(wrap.style.getPropertyValue('--cb-clearance')).toBe('89px');
-  });
-
-  test('in the app: the same account signing back in is not shown the bar', async () => {
-    window.Capacitor = { isNativePlatform: () => true, getPlatform: () => 'ios' };
-    await signIn(42);
-    setConsent('no');
-    const { container } = render(React.createElement(ConsentBanner, { onAnswer: () => {} }));
-    const nav = mountNav(89);
-    await settle();
-    expect(container.querySelector('.cb-wrap')).toBeNull();
-
-    await act(async () => { nav.remove(); await signOut(); });
-    await act(async () => { await signIn(42); mountNav(89); });
-    await settle();
-
     expect(container.querySelector('.cb-wrap')).toBeNull();
   });
 
-  test('on the web: the bar is back on the sign-in screen at once, and leaves when the same account signs in', async () => {
+  test('on the website: the bar is back at once after a sign-out, and leaves when the same account signs in', async () => {
     await signIn(42);
     setConsent('yes');
     const { container } = render(React.createElement(ConsentBanner, { onAnswer: () => {} }));
@@ -378,13 +362,16 @@ describe('a yes given after sign-in names the account', () => {
     expect(mockIdentify).not.toHaveBeenCalled();
   });
 
-  test('the app entry waits for init, then identifies, and only on a yes', () => {
-    expect(INDEX).toContain('<ConsentBanner onAnswer={startAnalyticsInApp} />');
-    const fn = INDEX.slice(INDEX.indexOf('function startAnalyticsInApp(answer) {'));
+  test('a yes that comes back on a website page waits for init, then identifies', () => {
+    // The app mounts no bar and has no handler for one.
+    expect(INDEX).not.toContain('startAnalyticsInApp');
+    const fn = INDEX.slice(INDEX.indexOf('function startAnalyticsForReturningYes() {'));
     const body = fn.slice(0, fn.indexOf('\n}'));
-    expect(body).toContain("if (answer !== 'yes' || !started) return;");
+    expect(body).toContain('if (!hasAnalyticsConsent()) return;');
     expect(body).toMatch(/started\s*\n\s*\.then\(\(\) => import\('\.\/services\/api'\)\)\s*\n\s*\.then\(\(api\) => api\.identifySignedInUser\(\)\)/);
+    // Registered for every route but the app's.
+    expect(INDEX).toMatch(/\} else \{\s*\n\s*onConsentChange\(startAnalyticsForReturningYes\);/);
     // And startAnalytics hands back the promise it waits on.
-    expect(INDEX).toMatch(/return import\('posthog-js'\)\.then\(\(\{ default: posthog \}\) => \{/);
+    expect(INDEX).toMatch(/return initPostHog\(true\)\.then\(\(posthog\) => \{/);
   });
 });

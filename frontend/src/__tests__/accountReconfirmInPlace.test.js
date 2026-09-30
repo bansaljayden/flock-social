@@ -37,6 +37,10 @@ jest.mock('../services/api', () => ({
   appleLogin: jest.fn(),
   googleLogin: jest.fn(),
   googleLoginWithToken: jest.fn(),
+  // The You tab's Share usage analytics switch reads the account's setting.
+  getAnalyticsChoice: jest.fn(),
+  setAnalyticsChoice: jest.fn(),
+  knownAnalyticsChoice: jest.fn(),
 }));
 jest.mock('../services/firebase', () => ({
   getNotificationStatus: jest.fn(),
@@ -153,6 +157,8 @@ const APPLE_SHEET = { response: { identityToken: 'apple-id-token', authorization
 
 beforeEach(() => {
   api.getProStatus.mockResolvedValue({});
+  api.getAnalyticsChoice.mockResolvedValue({ optOut: false });
+  api.knownAnalyticsChoice.mockReturnValue(null);
   mockAppleAuthorize.mockResolvedValue(APPLE_SHEET);
 });
 afterEach(() => { asWeb(); });
