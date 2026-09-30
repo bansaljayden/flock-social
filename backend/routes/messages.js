@@ -717,12 +717,17 @@ router.get('/flocks/:id/messages',
       // which a pin made while the page loads, or a friend's "opened", is
       // overwritten by the stale list until the next event. Started beside
       // the history read, the snapshot aged for as long as the page took to
-      // read and decorate. Started here, it waits at most for the slowest of
-      // the four reads beside it, all small indexed lookups, so it lands within
-      // a few milliseconds of where the one-by-one order took it (pins last,
-      // the roster just before). The response then spends far longer on the
-      // network, and that window has always been there; closing it for good
-      // takes the client merging these forward rather than replacing them.
+      // read and decorate. Started here, it waits for the slowest of the four
+      // reads beside it. Those are small indexed lookups, so it normally lands
+      // within a few milliseconds of where the one-by-one order took it (pins
+      // last, the roster just before); a reactions read held up behind a lock,
+      // a migration's for instance, stretches that to however long it waits.
+      // The response then spends far longer on the network, and that window
+      // has always been there. The app closes it for the receipts by lifting
+      // each member's marks onto the ones it holds (frontend
+      // services/flockReaders.js) instead of taking the answer's; the pins
+      // are still replaced, because their list is filtered by this viewer's
+      // blocks and has no mark to compare.
       // Waiting for the page also keeps a request to one pool connection
       // until its page exists, so a history read that fails has not already
       // spent two more.

@@ -28,6 +28,7 @@ import { redeemPendingInvite, openJoinedFlock, rememberInvite, storedGuestTokens
 import { setAvailability, clearAvailability, getMyAvailability, getFriendsAvailability, getSensorCurrent, getSensorHistory, checkInManual, getNfcCheckin, getCalendarEvents, createCalendarEvent, deleteCalendarEvent } from './services/api';
 import { joinVenueRoom, leaveVenueRoom, joinVenueContentRoom, leaveVenueContentRoom, onVenueSensorUpdate, onVenueCheckin, onSessionRevoked, onSocketError, onAvailabilityUpdated, onBlockedBy, onUnblockedBy, onContentRemoved, onContentRestored } from './services/socket';
 import { pullSettings, queueSync } from './services/userSettings';
+import { liftReaders } from './services/flockReaders';
 // html5-qrcode is NOT imported here on purpose. It is loaded with a dynamic
 // import() inside startQrScanner, the one place that uses it. See the note
 // there for the measurement; the short version is that it bundles its own
@@ -10555,7 +10556,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // REPLACED, not merged, and only from this read. The route runs one
         // roster query for the whole page, so this is the complete and current
         // answer; the live `flock_read` events below merge into it because each
-        // of those carries one member and nothing about the rest. The
+        // of those carries one member and nothing about the rest. The LIST is
+        // replaced; each member's two marks are lifted onto the ones already
+        // held (liftReaders), because an event that landed while this answer
+        // was in flight carries a newer mark than the answer does. The
         // older-page reader deliberately ignores the copy it gets back: it is
         // the same query, it adds nothing, and a `before` page that lands after
         // a live event would put the roster back to how it looked when the
@@ -10577,7 +10581,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           if (f.id !== flockId) return f;
           const have = new Set((f.messages || []).map(m => m.id));
           const localWithFailed = [...(f.messages || []), ...failed.filter(fm => !have.has(fm.id))];
-          return { ...f, messages: mergeHistory(localWithFailed, msgs, { keepOlder, drop, held, reach }), readers, pins };
+          return { ...f, messages: mergeHistory(localWithFailed, msgs, { keepOlder, drop, held, reach }), readers: liftReaders(readers, f.readers), pins };
         }));
         // DELIVERY, THE VIEWER'S OWN. These rows just reached this device,
         // which is the whole of what "Delivered" claims. The route already
@@ -10660,7 +10664,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           const pins = Array.isArray(data.pins) ? dropRetractedPins(data.pins, gone, drop) : [];
           const readers = Array.isArray(data.readers) ? data.readers : [];
           setFlocks((prev) => prev.map((f) => (f.id !== target.id ? f
-            : { ...f, messages: mergeHistory(f.messages || [], msgs, { drop }), readers, pins })));
+            : { ...f, messages: mergeHistory(f.messages || [], msgs, { drop }), readers: liftReaders(readers, f.readers), pins })));
         })
         .catch(() => {
           // A miss costs the skeleton on open, which is where this started,
