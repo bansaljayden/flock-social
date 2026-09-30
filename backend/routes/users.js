@@ -3282,7 +3282,7 @@ const DEATTRIBUTE_REPORTS_SQL = `UPDATE content_reports
 // deletions of one account cannot each hold one of the two. The deletion
 // waits here holding no database lock, so no route that holds one can be
 // waiting on it in turn. In process memory, like the queue itself: the app
-// runs on exactly one server (project documentation).
+// runs as exactly one Railway instance, so no other process takes checkouts.
 async function holdAccountCheckouts(userId) {
   const releasePro = await holdCheckoutLock(userId);
   const releaseRoost = await holdCheckoutLock(venueCheckoutKey(userId));

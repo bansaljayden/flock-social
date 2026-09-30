@@ -20623,7 +20623,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           width: 100%;
         }
         /* The animated background-clip:text gradient that lived here is a
-           banned pattern (project documentation, DESIGN-STANDARD.md) and nothing in the
+           banned pattern (DESIGN-STANDARD.md) and nothing in the
            app referenced it. Removed with its keyframes. */
         /* Notification badge bounce */
         @keyframes badgeBounce {
