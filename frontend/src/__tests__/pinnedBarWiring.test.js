@@ -58,7 +58,7 @@ describe('the list is the server\'s answer, never assembled here', () => {
 
   test('the pins ride with the history read rather than a second round trip', () => {
     expect(appSrc).toMatch(/const pins = Array\.isArray\(data\.pins\) \? data\.pins : \[\];/);
-    expect(appSrc).toMatch(/readers, pins \};/);
+    expect(appSrc).toMatch(/readers: liftReaders\(readers, f\.readers\), pins \};/);
   });
 });
 

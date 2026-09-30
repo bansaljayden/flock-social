@@ -28,6 +28,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { liftReaders } = require('../services/flockReaders');
 
 const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8').replace(/\r\n/g, '\n');
 
@@ -154,6 +155,7 @@ function app({ flocks = [], screen = 'chatDetail' } = {}) {
     dropRetractedPins: H.dropRetractedPins,
     setFlocks,
     mergeHistory: H.mergeHistory,
+    liftReaders,
     sendFlockAck: noop,
   });
   const refreshFlockRoster = run(`${callback('refreshFlockRoster')}\nreturn refreshFlockRoster;`, {
