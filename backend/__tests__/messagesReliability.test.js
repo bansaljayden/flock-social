@@ -248,10 +248,10 @@ function scriptDmThread(corpus, { blockedPair = false, bannedCounterpart = false
     return { rows, rowCount: rows.length };
   });
 
-  // The thread read: its page of ids comes from one index-ordered half per
-  // direction, then joins back to direct_messages and users. The fixture
-  // answers with what that statement means, not how it gets there.
-  on(/direct_messages dm (?:ON dm\.id = page\.id )?JOIN users u ON u\.id = dm\.sender_id/, (p, sql) => {
+  // The thread read: its page comes from one index-ordered half per
+  // direction, then joins to users. The fixture answers with what that
+  // statement means, not how it gets there.
+  on(/\) dm JOIN users u ON u\.id = dm\.sender_id/, (p, sql) => {
     const me = Number(p[0]);
     const other = Number(p[1]);
     let before = null;
@@ -585,7 +585,7 @@ test('DM thread: a banned counterpart hands back an empty thread, and the histor
   assert.strictEqual(res.status, 200, res.text);
   assert.deepStrictEqual(res.body.messages, []);
   assert.strictEqual(res.body.blocked, true);
-  assert.ok(!log.some((q) => /direct_messages dm (?:ON dm\.id = page\.id )?JOIN users u/.test(q.sql)),
+  assert.ok(!log.some((q) => /\) dm JOIN users u ON u\.id = dm\.sender_id/.test(q.sql)),
     'the thread was read anyway and only filtered afterwards');
 });
 

@@ -32,7 +32,7 @@ function kindOf(sql) {
   if (sql.includes('token_version FROM users WHERE id = $1')) return 'auth';
   if (sql.includes('FROM user_blocks') && sql.includes('blocker_id = $1 AND blocked_id = $2')) return 'block';
   if (sql.includes('FROM users WHERE id = $1 AND is_banned IS TRUE')) return 'ban';
-  if (sql.includes('direct_messages dm') && sql.includes('ORDER BY dm.id DESC')) return 'thread';
+  if (sql.includes(') dm JOIN users u ON u.id = dm.sender_id')) return 'thread';
   return 'other';
 }
 
