@@ -1291,6 +1291,16 @@ const INVENTORY = [
     verdict: 'SAFE',
     why: 'An entry exists only while one upstream fetch for that key is in flight and is deleted in a finally on every exit path, so the map is bounded by concurrent distinct misses rather than by anything the caller can accumulate, and a rejected fetch cannot leave a poisoned promise behind for the next caller to join. A caller who joins an in-flight request gets the same answer the first caller gets, which is the answer Google gave for that exact key.',
   },
+  {
+    file: 'config/database.js', name: 'guardVerdicts', kind: 'cache',
+    key: 'the full SQL text handed to pool.query',
+    callerControls: 'nothing — every text is written in this codebase; no route builds SQL from request data, and values travel as parameters',
+    protects: 'CPU: the dangerous-statement guard scanned each statement a character at a time on every call (4% of the API under the chat history read)',
+    denominator: 'n/a (not a counter)',
+    bound: 'GUARD_CACHE_MAX_ENTRIES 1000 texts, and only texts up to GUARD_CACHE_MAX_TEXT 16384 characters; past either bound a text is checked every time, as before',
+    verdict: 'SAFE',
+    why: 'The verdict is a pure function of the text, so remembering it cannot change an answer: an allowed text stays allowed and a refused text stays refused, and ALLOW_DROP_TABLES is still read before the cache on every call. The key space is the set of fixed statements in the code, a few hundred, so the entry cap is never reached in practice; SQL with values spliced into it would only ever fill it to the cap and then fall back to checking every time.',
+  },
 ];
 
 // ---------------------------------------------------------------------------
