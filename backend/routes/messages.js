@@ -701,19 +701,31 @@ router.get('/flocks/:id/messages',
       // anywhere else in the app, ever.
       const params = [flockId, before, limit, invisibleArr];
 
-      // ── THE DECORATIONS RUN BESIDE THE READ, NOT AFTER IT ─────────────
+      // ── THE DECORATIONS GO OUT TOGETHER, ONCE THE PAGE IS BACK ─────────
       //
-      // The receipt roster and the pins need the invisible set and nothing
-      // the history read returns, so they go out now and run while it does.
-      // Reactions and reply quotes need only the page, so they go out together
-      // once it is back. Six statements in a row after the membership gate
-      // become three, and on a network every statement is a round trip.
+      // Reactions, reply quotes, the receipt roster and the pins are four
+      // independent reads, so they run at the same time instead of one after
+      // another. After the membership gate that is three steps (the invisible
+      // set, the page, then all four at once) where there used to be six
+      // statements in a row.
       //
-      // Each decoration has its failure handler attached where it starts, so
-      // none can become an unhandled rejection however the history read ends,
-      // and each settles to "no decoration" rather than failing a page that is
-      // owed. The reactions read is not a decoration and never was: it fails
-      // the page, as before.
+      // The roster and the pins need nothing from the page and could start
+      // beside the history read, one step sooner. They wait for it on
+      // purpose. The app REPLACES its read receipts and its pin bar with what
+      // this response carries, while `flock_read` and `flock_pins_changed`
+      // update both live, so the older the snapshot, the wider the window in
+      // which a pin made while the page loads, or a friend's "opened", is
+      // overwritten by the stale list until the next event. Read last, the
+      // snapshot is as fresh as it was when these reads ran one by one. It
+      // also keeps a request to one pool connection until its page exists, so
+      // a history read that fails has not already spent two more.
+      //
+      // Each decoration settles to "no decoration" on failure rather than
+      // failing a page that is owed. The reactions read is not a decoration
+      // and never was: it fails the page, as before.
+      const messagesResult = await pool.query(messagesQuery, params);
+      const messages = messagesResult.rows;
+
       const rosterRead = pool.query(
         prepared('flock-history-roster',
           `SELECT fm.user_id, u.name, fm.last_delivered_message_id, fm.last_opened_message_id
@@ -731,9 +743,6 @@ router.get('/flocks/:id/messages',
         console.error('Flock pin read error:', pinErr.message);
         return [];
       });
-
-      const messagesResult = await pool.query(messagesQuery, params);
-      const messages = messagesResult.rows;
 
       const replyIds = messages.filter((m) => m.reply_to_id).map((m) => m.reply_to_id);
       const [reactionRows, quoteRows, rosterRows, pins] = await Promise.all([
@@ -1892,13 +1901,21 @@ router.get('/dm/:userId',
       // they are asked together rather than one round trip after the other.
       // Either one refusing hides the thread; nothing below runs until both
       // have answered.
-      const [blocked, counterpartyBanned] = await Promise.all([
+      //
+      // A refusal outranks an error. Asked one after the other, a blocked pair
+      // was answered by the block check and the ban read never ran, so a ban
+      // read that fails must not turn that pair's answer into a 500. The
+      // thread is hidden if EITHER gate that answered says so, and a failed
+      // read fails the request only when no gate refused.
+      const gates = await Promise.allSettled([
         isBlockedBetween(req.user.id, otherUserId),
         counterpartyIsBanned(req.user.id, otherUserId),
       ]);
-      if (blocked || counterpartyBanned) {
+      if (gates.some((g) => g.status === 'fulfilled' && g.value)) {
         return res.json({ messages: [], blocked: true });
       }
+      const gateFailure = gates.find((g) => g.status === 'rejected');
+      if (gateFailure) throw gateFailure.reason;
 
       // Same cursor/order alignment as the flock read above, for the same
       // reasons: the sort key IS the cursor key (id — SERIAL, unique, monotone

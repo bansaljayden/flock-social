@@ -56,8 +56,9 @@ test('moderation and friends: a block keeps the decline cooldown, cancel is not 
   // still gets, so the call site is identified by its json body — the receipt
   // route calls the same helper and refuses with a 403 instead.
   // The DM thread asks the block gate and the ban gate together; either one
-  // refusing hides the thread before anything else is read.
-  assert.match(msgs, /isBlockedBetween\(req\.user\.id, otherUserId\),\n\s+counterpartyIsBanned\(req\.user\.id, otherUserId\),\n\s+\]\);\n\s+if \(blocked \|\| counterpartyBanned\) \{\n\s+return res\.json\(\{ messages: \[\], blocked: true \}\);/);
+  // refusing hides the thread before anything else is read, even when the
+  // other read failed (__tests__/dmGatePrecedence.test.js drives that).
+  assert.match(msgs, /isBlockedBetween\(req\.user\.id, otherUserId\),\n\s+counterpartyIsBanned\(req\.user\.id, otherUserId\),\n\s+\]\);\n\s+if \(gates\.some\(\(g\) => g\.status === 'fulfilled' && g\.value\)\) \{\n\s+return res\.json\(\{ messages: \[\], blocked: true \}\);/);
   // And the helper has to READ the ban rather than assume it, or the guard
   // above is a call into a stub that always answers "not banned".
   assert.match(msgs, /async function counterpartyIsBanned\(viewerId, otherUserId\) \{[\s\S]{0,240}SELECT 1 FROM users WHERE id = \$1 AND is_banned IS TRUE/);

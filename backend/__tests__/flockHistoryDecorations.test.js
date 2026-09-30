@@ -3,15 +3,18 @@
 // THE CHAT HISTORY READ AND ITS DECORATIONS.
 //
 // GET /api/flocks/:id/messages reads a page of history and decorates it with
-// reactions, reply quotes, the receipt roster and the pins. The roster and the
-// pins need only the invisible set, so they start beside the history read;
-// reactions and quotes need the page, so they go out together once it is back.
+// reactions, reply quotes, the receipt roster and the pins. The four
+// decorations go out together once the page is back. The roster and the pins
+// could start sooner, but the app replaces its receipts and its pin bar with
+// this response while live events update both, so they are read last to keep
+// that snapshot fresh.
 // Pinned here:
 //   1. A full page comes back decorated.
 //   2. A failed roster, pins or quote read costs that decoration only: 200.
 //   3. A failed reactions read, or a failed history read, is the route's 500,
-//      and nothing started early is left as an unhandled rejection.
-//   4. The roster and the pins are asked for before the history read answers.
+//      and nothing is left as an unhandled rejection.
+//   4. No decoration is asked for before the history read answers, and all
+//      four are asked for before any of them answers.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -34,6 +37,8 @@ const PAGE = [
 let failing = new Set();
 let order = [];
 let historyGate = null;
+let decorationGate = null;
+const DECORATIONS = ['reactions', 'quotes', 'roster', 'pins'];
 
 function kindOf(sql) {
   if (sql.includes('token_version FROM users WHERE id = $1')) return 'auth';
@@ -53,6 +58,7 @@ pool.query = async (text, params = []) => {
   const kind = kindOf(sql);
   order.push(kind);
   if (kind === 'history' && historyGate) await historyGate;
+  if (DECORATIONS.includes(kind) && decorationGate) await decorationGate;
   if (failing.has(kind)) throw Object.assign(new Error(`${kind} read failed`), { code: '57P01' });
   switch (kind) {
     case 'auth': return { rows: [ME], rowCount: 1 };
@@ -100,7 +106,7 @@ const settle = () => new Promise((r) => setTimeout(r, 20));
 test.before(() => new Promise((resolve) => server.listen(0, '127.0.0.1', resolve)));
 test.after(() => new Promise((resolve) => server.close(resolve)));
 test.after(() => { pool.query = realQuery; process.off('unhandledRejection', onUnhandled); });
-test.beforeEach(() => { failing = new Set(); order = []; historyGate = null; unhandled.length = 0; });
+test.beforeEach(() => { failing = new Set(); order = []; historyGate = null; decorationGate = null; unhandled.length = 0; });
 
 test('a full page comes back decorated', async () => {
   const res = await get('/api/flocks/1/messages?limit=50');
@@ -135,29 +141,39 @@ test('a failed reactions read is the route\'s 500', async () => {
   assert.deepStrictEqual(unhandled, []);
 });
 
-test('a failed history read is the route\'s 500, and the reads started beside it settle quietly', async () => {
+test('a failed history read is the route\'s 500 and spends no decoration read', async () => {
   failing.add('history');
-  failing.add('roster');
-  failing.add('pins');
   const res = await get('/api/flocks/1/messages?limit=50');
   assert.strictEqual(res.status, 500);
   await settle();
   assert.deepStrictEqual(unhandled, []);
+  assert.deepStrictEqual(order.filter((k) => DECORATIONS.includes(k)), []);
 });
 
-test('the roster and the pins are asked for before the history read answers', async () => {
-  let release;
-  historyGate = new Promise((r) => { release = r; });
+test('the decorations wait for the page, then all four go out together', async () => {
+  let releaseHistory;
+  historyGate = new Promise((r) => { releaseHistory = r; });
+  let releaseDecorations;
+  decorationGate = new Promise((r) => { releaseDecorations = r; });
   const pending = get('/api/flocks/1/messages?limit=50');
-  for (let i = 0; i < 50 && !(order.includes('roster') && order.includes('pins')); i += 1) await settle();
-  // What had been asked for while the history read was held; released before
-  // any assertion so a failure here cannot leave the request hanging.
+  for (let i = 0; i < 50 && !order.includes('history'); i += 1) await settle();
+  await settle();
+  // What had been asked for while the history read was held.
   const beforeHistoryAnswered = [...order];
-  release();
+  releaseHistory();
+  // Every decoration read is held now, so a route that awaited one before
+  // sending the next would stop at one and never ask for the other three.
+  for (let i = 0; i < 50 && !DECORATIONS.every((k) => order.includes(k)); i += 1) await settle();
+  const beforeAnyDecorationAnswered = [...order];
+  // Released before any assertion so a failure cannot leave the request hanging.
+  releaseDecorations();
   const res = await pending;
   assert.strictEqual(res.status, 200);
   assert.ok(beforeHistoryAnswered.includes('history'), 'the history read was sent');
-  assert.ok(beforeHistoryAnswered.includes('roster') && beforeHistoryAnswered.includes('pins'),
-    `asked for before the history answered: ${beforeHistoryAnswered.join(', ')}`);
-  assert.ok(!beforeHistoryAnswered.includes('reactions'), 'reactions wait for the page');
+  assert.deepStrictEqual(beforeHistoryAnswered.filter((k) => DECORATIONS.includes(k)), [],
+    `nothing is decorated before the page: ${beforeHistoryAnswered.join(', ')}`);
+  for (const k of DECORATIONS) {
+    assert.ok(beforeAnyDecorationAnswered.includes(k),
+      `${k} asked for before any decoration answered: ${beforeAnyDecorationAnswered.join(', ')}`);
+  }
 });
