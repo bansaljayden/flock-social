@@ -896,6 +896,8 @@ function reviewPage(page, limit) {
 // are rows, not opinions, and leave every list and average unless the
 // viewer is one of them. See utils/demoAccounts.js.
 const { hideDemoReviews } = require('../utils/demoAccounts');
+const { prepared } = require('../db/prepared');
+const crypto = require('crypto');
 
 const NOT_OWNER_OF_THE_PLACE = `AND NOT EXISTS (
            SELECT 1 FROM venue_profiles vpo
@@ -1416,7 +1418,19 @@ router.get('/public-reviews/:placeId', placeIdParam, async (req, res) => {
     // wrong precisely for the venues with the most reviews. Aggregate over
     // every visible row, with the SAME visibility rules as the list below so
     // the two cannot disagree.
-    const statsResult = await pool.query(
+    //
+    // The stats and the page are independent reads, so they go out together
+    // rather than one round trip after the other; either failing is still the
+    // route's 500, as it was. The stats read is a named statement: its plan
+    // turns on nothing but the place and the viewer. Its text carries the
+    // demo clause, which is empty or lists DEMO_USER_IDS, so the name carries
+    // a digest of that clause: one name per text, whatever the list is. The
+    // page read stays
+    // unnamed, because its cursor and LIMIT are the kind of parameter a
+    // generic plan can get wrong (db/prepared.js).
+    const demoClause = hideDemoReviews(req.user.id);
+    const statsRead = pool.query(
+      prepared(`public-reviews-stats-${crypto.createHash('sha1').update(demoClause).digest('hex').slice(0, 12)}`,
       `SELECT COUNT(*)::int AS total, AVG(vr.rating)::float AS average
        FROM venue_reviews vr
        JOIN users u ON u.id = vr.user_id AND u.is_banned IS NOT TRUE
@@ -1428,11 +1442,9 @@ router.get('/public-reviews/:placeId', placeIdParam, async (req, res) => {
               OR (b.blocker_id = vr.user_id AND b.blocked_id = $2)
          )
          ${NOT_OWNER_OF_THE_PLACE}
-         ${hideDemoReviews(req.user.id)}`,
+         ${hideDemoReviews(req.user.id)}`),
       [req.params.placeId, req.user.id]
     );
-    const total = statsResult.rows[0]?.total || 0;
-    const average = total > 0 ? parseFloat(Number(statsResult.rows[0].average).toFixed(1)) : 0;
 
     // venue_reply comes from whoever claimed the place, so expose it publicly
     // only when that claim is verified. User reviews themselves always show.
@@ -1454,7 +1466,7 @@ router.get('/public-reviews/:placeId', placeIdParam, async (req, res) => {
     const listParams = cursor
       ? [req.params.placeId, req.user.id, cursor.at, cursor.id, limit + 1]
       : [req.params.placeId, req.user.id, limit + 1];
-    const { rows: page } = await pool.query(
+    const pageRead = pool.query(
       `SELECT vr.id, vr.rating, vr.text,
               -- The reply is the business speaking in public; a banned owner
               -- no longer speaks (see the promotions read), and neither does
@@ -1487,6 +1499,9 @@ router.get('/public-reviews/:placeId', placeIdParam, async (req, res) => {
        LIMIT ${cursor ? '$5' : '$3'}`,
       listParams
     );
+    const [statsResult, { rows: page }] = await Promise.all([statsRead, pageRead]);
+    const total = statsResult.rows[0]?.total || 0;
+    const average = total > 0 ? parseFloat(Number(statsResult.rows[0].average).toFixed(1)) : 0;
     const { rows, hasMore, nextBefore } = reviewPage(page, limit);
 
     res.json({ reviews: rows, average, total, hasMore, nextBefore });
