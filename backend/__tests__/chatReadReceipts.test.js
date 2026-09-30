@@ -408,7 +408,7 @@ function scriptDmThread({ rows, bannedCounterparts = [] }) {
       ? { rows: [{ '?column?': 1 }], rowCount: 1 }
       : { rows: [], rowCount: 0 }
   ));
-  on(/FROM direct_messages dm JOIN users u/, () => ({ rows: rows.slice().reverse(), rowCount: rows.length }));
+  on(/direct_messages dm (?:ON dm\.id = page\.id )?JOIN users u/, () => ({ rows: rows.slice().reverse(), rowCount: rows.length }));
   on(/FROM dm_emoji_reactions dr/, () => ({ rows: [], rowCount: 0 }));
   on(/^UPDATE direct_messages SET read_status = TRUE/, () => ({ rows: [], rowCount: 0 }));
 }

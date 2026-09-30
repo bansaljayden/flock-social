@@ -1949,14 +1949,35 @@ router.get('/dm/:userId',
                  -- Same rule as the flock history: a row with a thumbnail ships
                  -- only the thumbnail, and this is now its only source.
                  CASE WHEN dm.thumb_url IS NOT NULL THEN NULL ELSE dm.image_url END AS image_url
-          FROM direct_messages dm
+          FROM (
+            -- ONE DIRECTION AT A TIME (2026-09-30). The two directions of a
+            -- conversation joined by OR cannot be read newest-first off one
+            -- index, so the planner read the whole thread, joined users onto
+            -- every row and sorted it, to return the newest page: cost that
+            -- grew with the length of the thread. Each half below walks its
+            -- own (sender_id, receiver_id, id DESC) index and stops at the
+            -- page size; the newest page of both is the newest page of the
+            -- two halves' newest pages. UNION rather than UNION ALL, so a
+            -- thread with yourself, where both halves are the same rows,
+            -- still lists each row once. The users join moves after the page
+            -- and drops nothing on the way: sender_id is ON DELETE CASCADE.
+            (SELECT id FROM direct_messages
+              WHERE sender_id = $1 AND receiver_id = $2
+                AND COALESCE(is_hidden, false) = false AND sender_deleted_at IS NULL
+                AND ($3::int IS NULL OR id < $3)
+              ORDER BY id DESC LIMIT $4)
+            UNION
+            (SELECT id FROM direct_messages
+              WHERE sender_id = $2 AND receiver_id = $1
+                AND COALESCE(is_hidden, false) = false AND sender_deleted_at IS NULL
+                AND ($3::int IS NULL OR id < $3)
+              ORDER BY id DESC LIMIT $4)
+            ORDER BY id DESC
+            LIMIT $4
+          ) page
+          JOIN direct_messages dm ON dm.id = page.id
           JOIN users u ON u.id = dm.sender_id
-          WHERE ((dm.sender_id = $1 AND dm.receiver_id = $2)
-              OR (dm.sender_id = $2 AND dm.receiver_id = $1))
-            AND COALESCE(dm.is_hidden, false) = false AND dm.sender_deleted_at IS NULL
-            AND ($3::int IS NULL OR dm.id < $3)
-          ORDER BY dm.id DESC
-          LIMIT $4`;
+          ORDER BY dm.id DESC`;
       const params = [req.user.id, otherUserId, before, limit];
 
       const result = await pool.query(dmQuery, params);
