@@ -178,7 +178,7 @@ function rejectInvalid(req, res) {
 // Helper: check if user is a member of the flock
 async function verifyFlockMember(flockId, userId) {
   const result = await pool.query(
-    "SELECT id FROM flock_members WHERE flock_id = $1 AND user_id = $2 AND status = 'accepted'",
+    prepared('flock-member-gate', "SELECT id FROM flock_members WHERE flock_id = $1 AND user_id = $2 AND status = 'accepted'"),
     [flockId, userId]
   );
   return result.rows.length > 0;
@@ -701,24 +701,79 @@ router.get('/flocks/:id/messages',
       // anywhere else in the app, ever.
       const params = [flockId, before, limit, invisibleArr];
 
+      // ── THE DECORATIONS RUN BESIDE THE READ, NOT AFTER IT ─────────────
+      //
+      // The receipt roster and the pins need the invisible set and nothing
+      // the history read returns, so they go out now and run while it does.
+      // Reactions and reply quotes need only the page, so they go out together
+      // once it is back. Six statements in a row after the membership gate
+      // become three, and on a network every statement is a round trip.
+      //
+      // Each decoration has its failure handler attached where it starts, so
+      // none can become an unhandled rejection however the history read ends,
+      // and each settles to "no decoration" rather than failing a page that is
+      // owed. The reactions read is not a decoration and never was: it fails
+      // the page, as before.
+      const rosterRead = pool.query(
+        prepared('flock-history-roster',
+          `SELECT fm.user_id, u.name, fm.last_delivered_message_id, fm.last_opened_message_id
+             FROM flock_members fm
+             JOIN users u ON u.id = fm.user_id
+            WHERE fm.flock_id = $1 AND fm.status = 'accepted'
+              AND fm.user_id <> $2
+              AND NOT (fm.user_id = ANY($3::int[]))`),
+        [flockId, req.user.id, invisibleArr]
+      ).then((r) => r.rows, (receiptErr) => {
+        console.error('Flock receipt roster error:', receiptErr.message);
+        return null;
+      });
+      const pinsRead = readFlockPins(flockId, invisibleArr).catch((pinErr) => {
+        console.error('Flock pin read error:', pinErr.message);
+        return [];
+      });
+
       const messagesResult = await pool.query(messagesQuery, params);
       const messages = messagesResult.rows;
 
-      // Fetch reactions for all returned messages in one query
-      if (messages.length > 0) {
-        const messageIds = messages.map((m) => m.id);
-        const reactionsResult = await pool.query(
-          `SELECT er.message_id, er.emoji, er.user_id, u.name AS user_name
+      const replyIds = messages.filter((m) => m.reply_to_id).map((m) => m.reply_to_id);
+      const [reactionRows, quoteRows, rosterRows, pins] = await Promise.all([
+        messages.length > 0
+          ? pool.query(
+            prepared('flock-history-reactions',
+              `SELECT er.message_id, er.emoji, er.user_id, u.name AS user_name
            FROM emoji_reactions er
            JOIN users u ON u.id = er.user_id
-           WHERE er.message_id = ANY($1)`,
-          [messageIds]
-        );
+           WHERE er.message_id = ANY($1)`),
+            [messages.map((m) => m.id)]
+          ).then((r) => r.rows)
+          : null,
+        // The quoted parent for any reply on this page; see the note above
+        // the loop that attaches it below.
+        replyIds.length > 0
+          ? pool.query(
+            prepared('flock-history-quotes',
+              `SELECT m.id, m.message_text, m.message_type, m.sender_id, u.name AS sender_name
+               FROM messages m
+               LEFT JOIN users u ON u.id = m.sender_id
+              WHERE m.id = ANY($1) AND m.flock_id = $2
+                AND m.is_hidden IS NOT TRUE AND m.sender_deleted_at IS NULL`),
+            [replyIds, flockId]
+          ).then((r) => r.rows, (quoteErr) => {
+            // Same rule as the receipts block below: a decoration failing must
+            // never cost the history read that is already owed.
+            console.error('Flock reply hydrate error:', quoteErr.message);
+            return null;
+          })
+          : null,
+        rosterRead,
+        pinsRead,
+      ]);
 
+      if (reactionRows) {
         // Group reactions by message ID — a blocked user's reaction on a third
         // member's message would otherwise still expose their name/activity.
         const reactionsByMessage = {};
-        for (const r of reactionsResult.rows) {
+        for (const r of reactionRows) {
           if (invisible.has(r.user_id)) continue;
           if (!reactionsByMessage[r.message_id]) {
             reactionsByMessage[r.message_id] = [];
@@ -760,37 +815,22 @@ router.get('/flocks/:id/messages',
       // read that left before the block). Without the id there is no telling
       // whose words the quote carries. Every row on this page already names
       // its own sender the same way.
-      const replyIds = messages.filter((m) => m.reply_to_id).map((m) => m.reply_to_id);
-      if (replyIds.length > 0) {
-        try {
-          const replyResult = await pool.query(
-            `SELECT m.id, m.message_text, m.message_type, m.sender_id, u.name AS sender_name
-               FROM messages m
-               LEFT JOIN users u ON u.id = m.sender_id
-              WHERE m.id = ANY($1) AND m.flock_id = $2
-                AND m.is_hidden IS NOT TRUE AND m.sender_deleted_at IS NULL`,
-            [replyIds, flockId]
-          );
-          const replyMap = {};
-          for (const r of replyResult.rows) {
-            if (r.sender_id != null && invisible.has(r.sender_id)) continue;
-            replyMap[r.id] = {
-              id: r.id,
-              message_text: r.message_text,
-              message_type: r.message_type,
-              sender_id: r.sender_id,
-              sender_name: r.sender_name,
-            };
+      if (quoteRows) {
+        const replyMap = {};
+        for (const r of quoteRows) {
+          if (r.sender_id != null && invisible.has(r.sender_id)) continue;
+          replyMap[r.id] = {
+            id: r.id,
+            message_text: r.message_text,
+            message_type: r.message_type,
+            sender_id: r.sender_id,
+            sender_name: r.sender_name,
+          };
+        }
+        for (const msg of messages) {
+          if (msg.reply_to_id && replyMap[msg.reply_to_id]) {
+            msg.reply_to = replyMap[msg.reply_to_id];
           }
-          for (const msg of messages) {
-            if (msg.reply_to_id && replyMap[msg.reply_to_id]) {
-              msg.reply_to = replyMap[msg.reply_to_id];
-            }
-          }
-        } catch (quoteErr) {
-          // Same rule as the receipts block below: a decoration failing must
-          // never cost the history read that is already owed.
-          console.error('Flock reply hydrate error:', quoteErr.message);
         }
       }
 
@@ -813,33 +853,21 @@ router.get('/flocks/:id/messages',
       // be able to turn a history read into a 500 — the same rule the DM reply
       // hydrate below already follows.
       let readers = [];
-      try {
-        const rosterResult = await pool.query(
-          `SELECT fm.user_id, u.name, fm.last_delivered_message_id, fm.last_opened_message_id
-             FROM flock_members fm
-             JOIN users u ON u.id = fm.user_id
-            WHERE fm.flock_id = $1 AND fm.status = 'accepted'
-              AND fm.user_id <> $2
-              AND NOT (fm.user_id = ANY($3::int[]))`,
-          [flockId, req.user.id, invisibleArr]
-        );
-        readers = flockRoster(rosterResult.rows);
-        attachFlockStatus(messages, req.user.id, readers);
-      } catch (receiptErr) {
-        console.error('Flock receipt roster error:', receiptErr.message);
+      if (rosterRows) {
+        try {
+          readers = flockRoster(rosterRows);
+          attachFlockStatus(messages, req.user.id, readers);
+        } catch (receiptErr) {
+          console.error('Flock receipt roster error:', receiptErr.message);
+        }
       }
 
-      /* The pins ride with the history read rather than costing a second
-         round trip, the same way the receipt roster above does. A failure
-         here costs the pins and NOTHING else: the messages are read, the
-         response is owed, and a decoration on the payload must never be able
-         to turn a history read into a 500. */
-      let pins = [];
-      try {
-        pins = await readFlockPins(flockId, invisibleArr);
-      } catch (pinErr) {
-        console.error('Flock pin read error:', pinErr.message);
-      }
+      /* The pins ride with the history read rather than costing the client a
+         second request, the same way the receipt roster above does. A failure
+         there costs the pins and NOTHING else (pinsRead above settles to an
+         empty list): the messages are read, the response is owed, and a
+         decoration on the payload must never be able to turn a history read
+         into a 500. */
 
       // Return in chronological order
       res.json({ messages: messages.reverse(), readers, pins });
