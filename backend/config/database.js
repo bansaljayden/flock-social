@@ -293,16 +293,34 @@ function stripSqlComments(sql) {
   return out;
 }
 
+// THE VERDICT IS A FUNCTION OF THE TEXT, SO IT IS WORKED OUT ONCE PER TEXT.
+// The two passes above walk a statement a character at a time, and every
+// pool.query paid for them again: 4% of the API's CPU under the chat history
+// read, most of it re-reading the same long comments in the same few
+// statements. A text is remembered with its answer, refusals included.
+// ALLOW_DROP_TABLES is still read first on every call. Bounded in entries and
+// in text length, so SQL built with values spliced in cannot grow it without
+// limit; past either bound a text is checked every time, as before.
+const guardVerdicts = new Map();
+const GUARD_CACHE_MAX_ENTRIES = 1000;
+const GUARD_CACHE_MAX_TEXT = 16384;
+
 /** The refusal message for a statement, or null when it is allowed. */
 function dangerousStatement(queryText) {
   if (!queryText || typeof queryText !== 'string') return null;
   if (process.env.ALLOW_DROP_TABLES === 'true') return null;
+  const known = guardVerdicts.get(queryText);
+  if (known !== undefined) return known;
   const code = blankStringLiterals(stripSqlComments(queryText));
+  let verdict = null;
   for (const [rule, message] of SQL_DANGER) {
     const hit = typeof rule === 'function' ? rule(code) : rule.test(code);
-    if (hit) return message;
+    if (hit) { verdict = message; break; }
   }
-  return null;
+  if (queryText.length <= GUARD_CACHE_MAX_TEXT && guardVerdicts.size < GUARD_CACHE_MAX_ENTRIES) {
+    guardVerdicts.set(queryText, verdict);
+  }
+  return verdict;
 }
 
 const originalQuery = pool.query.bind(pool);
