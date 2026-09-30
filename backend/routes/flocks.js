@@ -11,6 +11,7 @@ const express = require('express');
 const { settledSharersOf, settledCrowdHolds } = require('./budget');
 const { body, param, validationResult } = require('express-validator');
 const pool = require('../config/database');
+const { prepared } = require('../db/prepared');
 const { authenticate, requireVerified, UNVERIFIED_MESSAGE } = require('../middleware/auth');
 const { stripHtml } = require('../utils/sanitize');
 const { rejectIfProfane, rejectIfProfaneVenue } = require('../utils/moderation');
@@ -1251,14 +1252,15 @@ router.get('/:id', param('id').isInt({ min: 1, max: INT4_MAX }), async (req, res
 
     // Verify user is a member
     const membership = await pool.query(
-      'SELECT status FROM flock_members WHERE flock_id = $1 AND user_id = $2',
+      prepared('flock-membership-status', 'SELECT status FROM flock_members WHERE flock_id = $1 AND user_id = $2'),
       [flockId, req.user.id]
     );
     if (membership.rows.length === 0) {
       return res.status(404).json({ error: 'Flock not found' });
     }
 
-    const flockResult = await pool.query(
+    // Named (db/prepared.js), and `f.*` is why the 0A000 fallback there exists.
+    const flockResult = await pool.query(prepared('flock-detail',
       `SELECT f.*,
               CASE WHEN f.budget_locked = true
                     AND ${settledSharersOf('f.id')} >= 3
@@ -1276,7 +1278,7 @@ router.get('/:id', param('id').isInt({ min: 1, max: INT4_MAX }), async (req, res
               ${billableCountOf('f.id')} AS billable_count
        FROM flocks f
        JOIN users u ON u.id = f.creator_id
-       WHERE f.id = $1`,
+       WHERE f.id = $1`),
       [flockId, req.user.id]
     );
 
@@ -1358,13 +1360,13 @@ router.get('/:id', param('id').isInt({ min: 1, max: INT4_MAX }), async (req, res
     // flock.budget_enabled, which comes from flockResult, so it stays its own
     // await and stays unasked when the flock has no budget.
     const [membersResult, guestsResult, votesResult, guestVotesResult, invisibleIds] = await Promise.all([
-      pool.query(
+      pool.query(prepared('flock-detail-roster',
         `SELECT u.id, u.name, CASE WHEN LENGTH(u.profile_image_url) > 12000 THEN NULL ELSE u.profile_image_url END AS profile_image_url, u.reliability_score, fm.status, fm.attendance, fm.joined_at, fm.reconfirmed_at,
                 (fm.reconfirmed_at IS NOT NULL AND fm.reconfirmed_at >= (SELECT reconfirm_opened_at FROM flocks WHERE id = fm.flock_id)) AS reconfirmed
          FROM flock_members fm
          JOIN users u ON u.id = fm.user_id
          WHERE fm.flock_id = $1
-         ORDER BY fm.joined_at ASC`,
+         ORDER BY fm.joined_at ASC`),
         [flockId]
       ),
       // Guest-link RSVPs. Nothing in this file read this table before, so a
@@ -1373,7 +1375,7 @@ router.get('/:id', param('id').isInt({ min: 1, max: INT4_MAX }), async (req, res
       // own array (tagged is_guest, string ids) rather than mixed into
       // `members`, where a guest id would leak into member-only, integer-keyed
       // paths.
-      pool.query(GUEST_RSVP_SELECT, [flockId]),
+      pool.query(prepared('flock-guest-rsvps', GUEST_RSVP_SELECT), [flockId]),
       // The two venue-vote tallies. Both are scored at `uniqueVoters` below,
       // where the note on the guest-inclusive denominator lives. Counted by
       // the rule the venue tally itself counts by (routes/venues.js
@@ -1381,19 +1383,19 @@ router.get('/:id', param('id').isInt({ min: 1, max: INT4_MAX }), async (req, res
       // who is a visible 'in'. Every venue_votes row used to count here, a
       // departed or banned member's included, and a guest who had said out,
       // so momentum credited votes the tally beside it did not show.
-      pool.query(
+      pool.query(prepared('flock-member-voters',
         `SELECT COUNT(DISTINCT vv.user_id) AS voters
          FROM venue_votes vv
          JOIN flock_members fm ON fm.flock_id = vv.flock_id AND fm.user_id = vv.user_id AND fm.status = 'accepted'
          JOIN users u ON u.id = vv.user_id AND u.is_banned IS NOT TRUE
-         WHERE vv.flock_id = $1`,
+         WHERE vv.flock_id = $1`),
         [flockId]
       ),
-      pool.query(
+      pool.query(prepared('flock-guest-voters',
         `SELECT COUNT(DISTINCT gv.guest_rsvp_id) AS voters
          FROM guest_votes gv
          JOIN guest_rsvps gr ON gr.id = gv.guest_rsvp_id
-         WHERE gv.flock_id = $1 AND COALESCE(gr.is_hidden, false) = false AND gr.status = 'in'`,
+         WHERE gv.flock_id = $1 AND COALESCE(gr.is_hidden, false) = false AND gr.status = 'in'`),
         [flockId]
       ),
       // The caller's block set, applied at `visibleMembers` at the bottom of

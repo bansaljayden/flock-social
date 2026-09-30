@@ -1,4 +1,5 @@
 const { Pool } = require('pg');
+const { preparedName, retirePrepared } = require('../db/prepared');
 
 // TLS decision, in priority order — and the history of why it is written out:
 //
@@ -305,12 +306,29 @@ function dangerousStatement(queryText) {
 }
 
 const originalQuery = pool.query.bind(pool);
+
+// A registered hot statement goes out named (db/prepared.js has the numbers
+// and the rules). Only the (text, values) promise form is rewritten; a
+// callback or a config object passes through exactly as it came.
+function namedOrPlain(text, values) {
+  const name = preparedName(text);
+  if (!name) return originalQuery(text, values);
+  return originalQuery({ name, text, values }).catch((err) => {
+    if (!err || err.code !== '0A000') throw err;
+    retirePrepared(text);
+    return originalQuery(text, values);
+  });
+}
+
 pool.query = function safeQuery(...args) {
   const queryText = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].text);
   const refusal = dangerousStatement(queryText);
   if (refusal) {
     console.error('🛡️ BLOCKED dangerous query:', queryText);
     return Promise.reject(new Error(refusal));
+  }
+  if (args.length === 2 && typeof args[0] === 'string' && Array.isArray(args[1])) {
+    return namedOrPlain(args[0], args[1]);
   }
   return originalQuery(...args);
 };

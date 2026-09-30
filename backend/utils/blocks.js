@@ -4,6 +4,7 @@
 // content. These helpers are the single source of truth for that enforcement.
 // ---------------------------------------------------------------------------
 const pool = require('../config/database');
+const { prepared } = require('../db/prepared');
 
 // ---------------------------------------------------------------------------
 // "NOT BLOCKED" IS A CLAIM, AND THIS MODULE MAY ONLY MAKE IT WHEN IT IS TRUE.
@@ -132,11 +133,11 @@ async function getInvisibleUserIds(userId, db = pool) {
   // the push gate already did on their own. Bans are moderation-scale, so the
   // list stays small; a banned account's OWN reads still see everyone.
   const r = await db.query(
-    `SELECT blocked_id AS id FROM user_blocks WHERE blocker_id = $1
+    prepared('invisible-users', `SELECT blocked_id AS id FROM user_blocks WHERE blocker_id = $1
      UNION
      SELECT blocker_id AS id FROM user_blocks WHERE blocked_id = $1
      UNION
-     SELECT id FROM users WHERE is_banned IS TRUE AND id <> $1`,
+     SELECT id FROM users WHERE is_banned IS TRUE AND id <> $1`),
     [id]
   );
   return r.rows.map((row) => row.id);
