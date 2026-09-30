@@ -1294,12 +1294,12 @@ const INVENTORY = [
   {
     file: 'config/database.js', name: 'guardVerdicts', kind: 'cache',
     key: 'the full SQL text handed to pool.query',
-    callerControls: 'nothing — every text is written in this codebase; no route builds SQL from request data, and values travel as parameters',
+    callerControls: 'which columns a partial update names: routes/venueProfile.js and the payment-handle route in routes/users.js build `UPDATE ... SET` from the fields a request carries, so a signed-in caller can mint a new text per combination of fields. Column names come from fixed lists and values travel as parameters, so no request text reaches the SQL itself',
     protects: 'CPU: the dangerous-statement guard scanned each statement a character at a time on every call (4% of the API under the chat history read)',
     denominator: 'n/a (not a counter)',
     bound: 'GUARD_CACHE_MAX_ENTRIES 1000 texts, and only texts up to GUARD_CACHE_MAX_TEXT 16384 characters; past either bound a text is checked every time, as before',
     verdict: 'SAFE',
-    why: 'The verdict is a pure function of the text, so remembering it cannot change an answer: an allowed text stays allowed and a refused text stays refused, and ALLOW_DROP_TABLES is still read before the cache on every call. The key space is the set of fixed statements in the code, a few hundred, so the entry cap is never reached in practice; SQL with values spliced into it would only ever fill it to the cap and then fall back to checking every time.',
+    why: 'The verdict is a pure function of the text, so remembering it cannot change an answer: an allowed text stays allowed and a refused text stays refused, and ALLOW_DROP_TABLES is still read before the cache on every call. The fixed statements in the code are a few hundred texts. The partial updates above add one text per combination of fields, so a caller who varies the fields sent can fill the cache to its cap; past that point new texts are checked every call, which is where every text was before the cache. Filling it costs speed, never a wrong verdict, and memory stays within the two bounds.',
   },
 ];
 
