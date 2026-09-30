@@ -1882,15 +1882,21 @@ router.get('/dm/:userId',
       const before = req.query.before ? parseInt(req.query.before) : null;
 
       // Mutual block: hide the conversation entirely if either side blocked the other.
-      if (await isBlockedBetween(req.user.id, otherUserId)) {
-        return res.json({ messages: [], blocked: true });
-      }
       // A banned counterpart is gone from the inbox; the direct thread read
       // used to hand it back by id (hardening round, 2026-09-05). ONE PAIR
       // QUERY rather than the product's whole ban list — see
       // counterpartyIsBanned, which the receipt route above refuses the same
       // pair with.
-      if (await counterpartyIsBanned(req.user.id, otherUserId)) {
+      //
+      // Both gates are reads of the same pair and both answer the same way, so
+      // they are asked together rather than one round trip after the other.
+      // Either one refusing hides the thread; nothing below runs until both
+      // have answered.
+      const [blocked, counterpartyBanned] = await Promise.all([
+        isBlockedBetween(req.user.id, otherUserId),
+        counterpartyIsBanned(req.user.id, otherUserId),
+      ]);
+      if (blocked || counterpartyBanned) {
         return res.json({ messages: [], blocked: true });
       }
 
@@ -1928,16 +1934,42 @@ router.get('/dm/:userId',
       // Exclude moderator-hidden DMs (A6 takedown).
       const messages = result.rows.filter((m) => !m.is_hidden);
 
-      // Fetch reactions for all returned DMs
-      if (messages.length > 0) {
-        const dmIds = messages.map((m) => m.id);
-        const reactionsResult = await pool.query(
-          `SELECT dr.dm_id, dr.emoji, dr.user_id, u.name AS user_name
+      // Reactions and reply quotes both need only this page, so they go out
+      // together. Either failing is still the route's 500, as it was when
+      // they ran one after the other; Promise.all has a handler on both.
+      //
+      // Reply quotes: SECURITY, scoped to this conversation's pair — a stored
+      // reply_to_id pointing at another conversation must never hydrate its
+      // text here.
+      //
+      // sender_id rides on the quote, the quoted author's, as it does on the
+      // flock twin's and on both DM send paths: a client that learns of a
+      // block takes that person's words out of a quote by it, including a
+      // quote on a row that reached it live after the block.
+      const replyIds = messages.filter(m => m.reply_to_id).map(m => m.reply_to_id);
+      const [reactionsResult, replyResult] = await Promise.all([
+        messages.length > 0
+          ? pool.query(
+            `SELECT dr.dm_id, dr.emoji, dr.user_id, u.name AS user_name
            FROM dm_emoji_reactions dr
            JOIN users u ON u.id = dr.user_id
            WHERE dr.dm_id = ANY($1)`,
-          [dmIds]
-        );
+            [messages.map((m) => m.id)]
+          )
+          : null,
+        replyIds.length > 0
+          ? pool.query(
+            `SELECT dm.id, dm.message_text, dm.sender_id, u.name AS sender_name
+           FROM direct_messages dm JOIN users u ON u.id = dm.sender_id
+           WHERE dm.id = ANY($1)
+             AND COALESCE(dm.is_hidden, false) = false AND dm.sender_deleted_at IS NULL
+             AND ((dm.sender_id = $2 AND dm.receiver_id = $3) OR (dm.sender_id = $3 AND dm.receiver_id = $2))`,
+            [replyIds, req.user.id, otherUserId]
+          )
+          : null,
+      ]);
+
+      if (reactionsResult) {
         const reactionsByDm = {};
         for (const r of reactionsResult.rows) {
           if (!reactionsByDm[r.dm_id]) reactionsByDm[r.dm_id] = [];
@@ -1948,24 +1980,8 @@ router.get('/dm/:userId',
         }
       }
 
-      // Fetch reply-to message text for any replies.
-      // SECURITY: scoped to this conversation's pair — a stored reply_to_id
-      // pointing at another conversation must never hydrate its text here.
-      //
-      // sender_id rides on the quote, the quoted author's, as it does on the
-      // flock twin's and on both DM send paths: a client that learns of a
-      // block takes that person's words out of a quote by it, including a
-      // quote on a row that reached it live after the block.
-      const replyIds = messages.filter(m => m.reply_to_id).map(m => m.reply_to_id);
-      if (replyIds.length > 0) {
-        const replyResult = await pool.query(
-          `SELECT dm.id, dm.message_text, dm.sender_id, u.name AS sender_name
-           FROM direct_messages dm JOIN users u ON u.id = dm.sender_id
-           WHERE dm.id = ANY($1)
-             AND COALESCE(dm.is_hidden, false) = false AND dm.sender_deleted_at IS NULL
-             AND ((dm.sender_id = $2 AND dm.receiver_id = $3) OR (dm.sender_id = $3 AND dm.receiver_id = $2))`,
-          [replyIds, req.user.id, otherUserId]
-        );
+      // Attach the quoted parent to each reply on this page.
+      if (replyResult) {
         const replyMap = {};
         replyResult.rows.forEach(r => { replyMap[r.id] = r; });
         for (const msg of messages) {
