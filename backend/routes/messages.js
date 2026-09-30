@@ -715,10 +715,17 @@ router.get('/flocks/:id/messages',
       // this response carries, while `flock_read` and `flock_pins_changed`
       // update both live, so the older the snapshot, the wider the window in
       // which a pin made while the page loads, or a friend's "opened", is
-      // overwritten by the stale list until the next event. Read last, the
-      // snapshot is as fresh as it was when these reads ran one by one. It
-      // also keeps a request to one pool connection until its page exists, so
-      // a history read that fails has not already spent two more.
+      // overwritten by the stale list until the next event. Started beside
+      // the history read, the snapshot aged for as long as the page took to
+      // read and decorate. Started here, it waits at most for the slowest of
+      // the four reads beside it, all small indexed lookups, so it lands within
+      // a few milliseconds of where the one-by-one order took it (pins last,
+      // the roster just before). The response then spends far longer on the
+      // network, and that window has always been there; closing it for good
+      // takes the client merging these forward rather than replacing them.
+      // Waiting for the page also keeps a request to one pool connection
+      // until its page exists, so a history read that fails has not already
+      // spent two more.
       //
       // Each decoration settles to "no decoration" on failure rather than
       // failing a page that is owed. The reactions read is not a decoration
