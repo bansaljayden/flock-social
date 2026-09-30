@@ -1,11 +1,19 @@
 // Consent, read live on every capture. See the gate in withPostHog below. The
-// other three carry the answer from one session to the next sign-in of the
-// same account and no other (analyticsConsent.js, WHOSE ANSWER IT IS).
+// next three carry the answer from one session to the next sign-in of the
+// same account and no other (analyticsConsent.js, WHOSE ANSWER IT IS). The
+// rest are the app's: there the account's own setting decides, and the driver
+// index.js registers starts and stops the SDK for it (ACCOUNT ANALYTICS below).
 import {
   hasAnalyticsConsent,
   holdConsentAtSignOut,
   restoreConsentFor,
   announceConsentChange,
+  readConsent,
+  forgetConsent,
+  analyticsFollowsAccount,
+  accountAnalyticsCanRun,
+  startAccountAnalytics,
+  stopAccountAnalytics,
 } from './analyticsConsent';
 import { lsGet, lsSet, lsRemove } from '../lib/storage';
 // Which sign-in a token belongs to (lib/sessionIdentity.js): a renewal keeps
@@ -57,8 +65,26 @@ function withPostHog(fn) {
      mobile data who has not agreed to anything.
 
      Read live rather than captured once at module scope: somebody who accepts
-     mid-session gets analytics from the next event, with no reload. */
-  if (!hasAnalyticsConsent()) return;
+     mid-session gets analytics from the next event, with no reload.
+
+     IN THE APP THE GATE IS THE ACCOUNT'S OWN SETTING instead of the bar's
+     answer (ACCOUNT ANALYTICS below): nothing while signed out, nothing for an
+     account that switched it off, and a capture made before the account's
+     answer has been read is held, not sent, until it has. */
+  if (analyticsFollowsAccount()) {
+    const gate = accountAnalyticsGate();
+    if (gate === 'drop') return;
+    if (gate === 'hold') {
+      if (heldForAccount.length < HELD_FOR_ACCOUNT_MAX) heldForAccount.push(fn);
+      return;
+    }
+  } else if (!hasAnalyticsConsent()) {
+    return;
+  }
+  runWithPostHog(fn);
+}
+
+function runWithPostHog(fn) {
   if (!posthogPromise) {
     posthogPromise = import('posthog-js').then((m) => m.default).catch(() => null);
   }
@@ -134,33 +160,218 @@ let signedInUserId = null;
 
 function rememberSignedInUser(user) {
   if (user?.id === undefined || user?.id === null) return;
-  signedInUserId = String(user.id);
+  const account = String(user.id);
+  // A different account than the one this page was following: whatever was
+  // known, held or started for the last one ends before this one is read.
+  if (analyticsFollowsAccount() && signedInUserId !== null && signedInUserId !== account) {
+    endAccountAnalytics();
+  }
+  signedInUserId = account;
   // The analytics answer the last session on this page took with it comes
   // back here, and only when this is the same account. Anyone else finds the
   // question unanswered and is asked. Before the identify that follows, so a
   // restored yes names the account and anything else sends nothing.
   restoreConsentFor(signedInUserId);
+  // In the app: read this account's own setting, once, before anything is
+  // sent for it (ACCOUNT ANALYTICS below).
+  if (analyticsFollowsAccount() && accountAnalyticsCanRun()) {
+    loadAccountChoice(signedInUserId).catch(() => { /* unknown stays unknown, and sends nothing */ });
+  }
 }
 
 function identifyUser(user) {
   if (!user?.id) return;
   rememberSignedInUser(user);
+  // In the app the account is named when its own setting starts analytics
+  // (applyAccountChoice below), and never before that answer is known.
+  if (analyticsFollowsAccount()) return;
   withPostHog((posthog) => posthog.identify(String(user.id)));
 }
 
-/* THE IDENTIFY A SIGN-IN COULD NOT MAKE.
-   In the app the analytics question is asked after sign-in: the native shell
-   holds the bar back until the tab bar is on screen (components/
-   ConsentBanner.js), and on the web a fresh visitor often signs in before
-   answering. Either way the identify at login ran into the consent gate in
-   withPostHog and was dropped, so everything the person did after saying yes
-   was recorded against an anonymous id until their next sign-in, a day later
-   at the soonest. index.js calls this once PostHog has started on a yes, and
-   it names the account signed in now, or does nothing when nobody is. */
+/* THE IDENTIFY A SIGN-IN COULD NOT MAKE, on the website.
+   A signed-in visitor to one of the site's own pages often signs in before
+   answering the bar, and the identify at sign-in ran into the consent gate in
+   withPostHog and was dropped, so everything after the yes was recorded
+   against an anonymous id until the next sign-in. index.js calls this once
+   PostHog has started on a yes that comes back, and it names the account
+   signed in now, or does nothing when nobody is. The app does not need it: it
+   names the account itself when that account's setting starts analytics. */
 export function identifySignedInUser() {
   const id = signedInUserId;
   if (!id) return;
   withPostHog((posthog) => posthog.identify(id));
+}
+
+/* ACCOUNT ANALYTICS: THE APP.
+
+   The app asks no analytics question on screen. Signed-in product analytics,
+   the screen views and the short list of events in this file, tied to the
+   account number, is part of the service a person agrees to at signup, and
+   the account can switch it off in Settings ("Share usage analytics"). The
+   answer lives on the server (users.analytics_opt_out, migration 111), so a
+   sign-out, a reinstall or another phone cannot lose it.
+
+   index.js turns this on for the app routes only, by handing
+   services/analyticsConsent.js a driver. From then on, for every capture:
+
+     * nobody signed in: nothing, ever. The sign-in and sign-up screens send
+       no event at all.
+     * signed in, the account's answer not read yet: HELD here, in memory, up
+       to HELD_FOR_ACCOUNT_MAX, and sent only once the answer is "on" and the
+       SDK is running. Never sent before the answer is known. A sign-out, an
+       "off", or a different account drops what is held.
+     * the answer is off: nothing, and the held captures are dropped.
+     * the answer is on: PostHog is started (index.js, with NOTHING stored on
+       the device unless this browser holds an explicit yes from the
+       website's bar), the account is named by its number, then the held
+       captures go, then everything after them.
+
+   AN EXPLICIT "NO" LEFT ON THE DEVICE by the question the app used to ask is
+   honoured: it is moved onto the account with one PUT, instead of the read,
+   and then removed from the device (forgetConsent), so switching analytics
+   back on later is never undone by a stale device answer on the next launch.
+   Until that PUT succeeds nothing is sent, and the next read tries again. */
+const ACCOUNT_ANALYTICS_PATH = '/api/users/me/analytics';
+const HELD_FOR_ACCOUNT_MAX = 50;
+// { account, optOut } once the server has answered for the signed-in account.
+let accountChoice = null;
+// { account, promise } while that answer is being read.
+let accountChoiceRead = null;
+// Where the SDK is for that account: 'off' | 'starting' | 'running' | 'unavailable'.
+let accountAnalytics = 'off';
+// Bumped by every stop, so a start that resolves after one is ignored.
+let accountAnalyticsRun = 0;
+let heldForAccount = [];
+
+function accountAnalyticsGate() {
+  if (!accountAnalyticsCanRun() || !getToken()) return 'drop';
+  const choice = accountChoice;
+  if (!choice || choice.account !== signedInUserId) return 'hold';
+  if (choice.optOut !== false) return 'drop';
+  if (accountAnalytics === 'running') return 'send';
+  return accountAnalytics === 'starting' ? 'hold' : 'drop';
+}
+
+// The one read, or the one-time move of a device "no" onto the account.
+// Resolves the account's optOut; only an explicit false turns analytics on.
+async function fetchAccountChoice() {
+  if (readConsent() === 'no') {
+    const data = await request(ACCOUNT_ANALYTICS_PATH, {
+      method: 'PUT',
+      body: JSON.stringify({ optOut: true }),
+    });
+    forgetConsent();
+    return data?.optOut !== false;
+  }
+  const data = await request(ACCOUNT_ANALYTICS_PATH);
+  return data?.optOut !== false;
+}
+
+function loadAccountChoice(account, { fresh = false } = {}) {
+  if (!fresh && accountChoice && accountChoice.account === account) {
+    return Promise.resolve(accountChoice.optOut);
+  }
+  if (accountChoiceRead && accountChoiceRead.account === account) return accountChoiceRead.promise;
+  const read = { account, promise: fetchAccountChoice() };
+  accountChoiceRead = read;
+  read.promise.then(
+    (optOut) => {
+      if (accountChoiceRead !== read) return; // superseded: a sign-out, a switch, a newer answer
+      accountChoiceRead = null;
+      applyAccountChoice(account, optOut);
+    },
+    () => { if (accountChoiceRead === read) accountChoiceRead = null; },
+  );
+  return read.promise;
+}
+
+function applyAccountChoice(account, optOut) {
+  if (!analyticsFollowsAccount() || account !== signedInUserId) return;
+  accountChoice = { account, optOut: optOut !== false };
+  if (accountChoice.optOut) {
+    stopAccountAnalyticsHere();
+    return;
+  }
+  if (accountAnalytics === 'running' || accountAnalytics === 'starting') return;
+  accountAnalytics = 'starting';
+  const run = accountAnalyticsRun;
+  startAccountAnalytics().then((running) => {
+    if (run !== accountAnalyticsRun || accountAnalytics !== 'starting') return;
+    if (!running) {
+      // This build or origin reports nothing. Held captures have nowhere to go.
+      accountAnalytics = 'unavailable';
+      heldForAccount = [];
+      return;
+    }
+    accountAnalytics = 'running';
+    // Named first, so every held capture and everything after is the
+    // account's, by its number and nothing else.
+    runWithPostHog((posthog) => posthog.identify(account));
+    const held = heldForAccount;
+    heldForAccount = [];
+    held.forEach((fn) => runWithPostHog(fn));
+  });
+}
+
+function stopAccountAnalyticsHere() {
+  accountAnalyticsRun += 1;
+  heldForAccount = [];
+  accountAnalytics = 'off';
+  // index.js: reset PostHog and turn capture off, storing nothing. A no-op
+  // when it never started on this page.
+  stopAccountAnalytics();
+}
+
+// A session ending, or a different account signing in.
+function endAccountAnalytics() {
+  accountChoice = null;
+  accountChoiceRead = null;
+  stopAccountAnalyticsHere();
+}
+
+/** The signed-in account's answer as this page last read it, or null while it
+ *  is not known. The Settings switch draws from it before its own read lands. */
+export function knownAnalyticsChoice() {
+  if (!accountChoice || accountChoice.account !== signedInUserId) return null;
+  return { optOut: accountChoice.optOut };
+}
+
+/** GET /api/users/me/analytics -> { optOut }. Read fresh (it may have been
+ *  changed on another device) and applied to this page. In the app this is
+ *  the same read a launch makes, so a device "no" is moved first here too. */
+export async function getAnalyticsChoice() {
+  const account = signedInUserId;
+  if (account && analyticsFollowsAccount()) {
+    return { optOut: await loadAccountChoice(account, { fresh: true }) };
+  }
+  const data = await request(ACCOUNT_ANALYTICS_PATH);
+  return { optOut: data?.optOut !== false };
+}
+
+/** PUT /api/users/me/analytics { optOut } -> { optOut }, the Settings switch.
+ *
+ *  OFF STOPS FIRST, before the request: PostHog is reset and switched off on
+ *  this page at the tap, and what it held goes with it. If the request then
+ *  fails, the account still says on and the switch shows that, but this page
+ *  stays off until the next launch, because the person asked for off and the
+ *  error is ours. ON waits for the server and starts only once it has agreed.
+ *  Either way the device answer is removed: the account holds the choice now. */
+export async function setAnalyticsChoice(optOut) {
+  const off = optOut === true;
+  const account = signedInUserId;
+  if (off && analyticsFollowsAccount()) stopAccountAnalyticsHere();
+  const data = await request(ACCOUNT_ANALYTICS_PATH, {
+    method: 'PUT',
+    body: JSON.stringify({ optOut: off }),
+  });
+  const serverOff = data?.optOut !== false;
+  forgetConsent();
+  if (account && account === signedInUserId && analyticsFollowsAccount()) {
+    // Newer than any read still in flight, so that read's answer is dropped.
+    if (accountChoiceRead && accountChoiceRead.account === account) accountChoiceRead = null;
+    applyAccountChoice(account, serverOff);
+  }
+  return { optOut: serverOff };
 }
 
 function getToken() {
@@ -376,16 +587,18 @@ function storeSession(data) {
  *                                session found already dead at boot, where
  *                                they belong to whoever is holding the
  *                                device now (holdInviteHandoff below)
- *     flock_analytics_consent    the answer to the analytics bar. In the app it
- *                                is consent for an ACCOUNT's activity, so the
- *                                next account is asked for itself: kept, it
- *                                identified B to PostHog on A's yes. The same
- *                                account signing in again on this page gets
- *                                its answer back without being asked, from a
- *                                copy held in memory only
- *                                (services/analyticsConsent.js, WHOSE ANSWER
- *                                IT IS), so no account id is left on the
- *                                device to say who used it.
+ *     flock_analytics_consent    the answer to the website's analytics bar.
+ *                                Once somebody is signed in it is consent for
+ *                                an ACCOUNT's activity, so the next account is
+ *                                asked for itself: kept, it identified B to
+ *                                PostHog on A's yes. The same account signing
+ *                                in again on this page gets its answer back
+ *                                without being asked, from a copy held in
+ *                                memory only (services/analyticsConsent.js,
+ *                                WHOSE ANSWER IT IS), so no account id is left
+ *                                on the device to say who used it. (In the app
+ *                                the account's own setting, on the server,
+ *                                decides; see ACCOUNT ANALYTICS.)
  *
  *   KEPT — device facts, nothing personal in them. The three display ones are
  *   overwritten by pullSettings() the moment the next account signs in; the
@@ -591,10 +804,19 @@ export function clearLocalSession({ keepInviteHandoff = false } = {}) {
   // SDK kept the last account's identified id. The calls themselves still land
   // after the sweep, a microtask later, so they cannot come between Log out
   // and the wipe.
-  withPostHog((posthog) => {
-    posthog.reset();
-    posthog.opt_out_capturing();
-  });
+  //
+  // IN THE APP the account's own setting started PostHog, so the session
+  // ending ends it: the account's answer, anything held for it, and the SDK,
+  // which is reset and switched off with nothing stored (ACCOUNT ANALYTICS
+  // above). The next account is read for itself.
+  if (analyticsFollowsAccount()) {
+    endAccountAnalytics();
+  } else {
+    withPostHog((posthog) => {
+      posthog.reset();
+      posthog.opt_out_capturing();
+    });
+  }
   // The answer leaves with the session, and waits in memory for this account
   // to sign in again on this page (analyticsConsent.js, WHOSE ANSWER IT IS).
   // A boot that finds the stored session already dead never heard from the
@@ -617,8 +839,8 @@ export function clearLocalSession({ keepInviteHandoff = false } = {}) {
   // and left there. Signing out does not reload the page, so it sat in memory
   // and came back in the next account's box for any plan both of them are in.
   clearFlockDrafts();
-  // No answer is in force now, so the bar opens again, for whoever signs in
-  // next (it waits for the tab bar in the app).
+  // No answer is in force now, so on the website the bar opens again, for
+  // whoever signs in next. The app has no bar and nothing listening.
   announceConsentChange();
   // LAST, and after the storage sweep has already run, so nothing this touches
   // can come between a user tapping Log out and their data leaving the device.
@@ -1799,7 +2021,8 @@ export async function joinFlockByInviteToken(token, guestToken) {
 export async function getCurrentUser() {
   const data = await request('/api/auth/me');
   // A boot on a stored session never passes through login(), so this is where
-  // an identify that has to wait for consent learns whose it is.
+  // an identify that has to wait for consent learns whose it is, and where the
+  // app reads the account's own analytics setting at launch.
   rememberSignedInUser(data && (data.user || data));
   return data;
 }

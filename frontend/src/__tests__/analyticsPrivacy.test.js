@@ -30,13 +30,14 @@ const readSrc = (...p) => fs.readFileSync(path.join(SRC, ...p), 'utf8');
 
 let scrubUrlTokens;
 let POSTHOG_PRIVACY_CONFIG;
+let POSTHOG_SIGNED_IN_CONFIG;
 let isLocalAnalyticsOrigin;
 
 beforeAll(() => {
   // Neither analytics SDK may lazy-load during the module boot below.
   delete process.env.REACT_APP_POSTHOG_KEY;
   delete process.env.REACT_APP_SENTRY_DSN;
-  ({ scrubUrlTokens, POSTHOG_PRIVACY_CONFIG, isLocalAnalyticsOrigin } = require('../index'));
+  ({ scrubUrlTokens, POSTHOG_PRIVACY_CONFIG, POSTHOG_SIGNED_IN_CONFIG, isLocalAnalyticsOrigin } = require('../index'));
 });
 
 describe('scrubUrlTokens', () => {
@@ -110,17 +111,55 @@ describe('POSTHOG_PRIVACY_CONFIG is pinned to minimum collection', () => {
       );
     })();
     const types = fs.readFileSync(typesFile, 'utf8');
-    for (const key of Object.keys(POSTHOG_PRIVACY_CONFIG)) {
+    for (const key of new Set([...Object.keys(POSTHOG_PRIVACY_CONFIG), ...Object.keys(POSTHOG_SIGNED_IN_CONFIG)])) {
+      expect({ key, declared: new RegExp(`^\\s*${key}\\??:`, 'm').test(types) })
+        .toEqual({ key, declared: true });
+    }
+    // The two options the app's start and stop set at run time, and nothing
+    // else: capture is turned off and on without a record written to storage.
+    for (const key of ['persistence', 'opt_out_capturing_by_default']) {
       expect({ key, declared: new RegExp(`^\\s*${key}\\??:`, 'm').test(types) })
         .toEqual({ key, declared: true });
     }
   });
 
-  test('init is handed exactly this object, not a drifted copy', () => {
+  test('init is handed one of the two pinned objects, never a drifted copy', () => {
     const index = readSrc('index.js');
-    expect(index).toMatch(/posthog\.init\(process\.env\.REACT_APP_POSTHOG_KEY,\s*POSTHOG_PRIVACY_CONFIG\)/);
+    // Exactly the explicit-yes config or the app's signed-in default, chosen
+    // inline, so there is no third object for a setting to widen in.
+    expect(index).toMatch(/posthog\.init\(process\.env\.REACT_APP_POSTHOG_KEY, deviceStorage \? POSTHOG_PRIVACY_CONFIG : POSTHOG_SIGNED_IN_CONFIG\)/);
     // One init in the codebase; api.js only reaches for the singleton.
     expect(index.match(/posthog\.init\(/g)).toHaveLength(1);
+  });
+
+  // THE APP'S SIGNED-IN DEFAULT. It exists to store nothing on the device, and
+  // that is the only thing it may change: every other value is the pinned one
+  // above, the same before_send function included, so it cannot scrub less.
+  test('the signed-in config is the pinned config with memory persistence, and differs in nothing else', () => {
+    expect(POSTHOG_SIGNED_IN_CONFIG.persistence).toBe('memory');
+    const { persistence: a, ...rest } = POSTHOG_SIGNED_IN_CONFIG;
+    const { persistence: b, ...pinned } = POSTHOG_PRIVACY_CONFIG;
+    expect(a).not.toBe(b);
+    expect(Object.keys(rest).sort()).toEqual(Object.keys(pinned).sort());
+    for (const key of Object.keys(pinned)) {
+      expect({ key, same: rest[key] === pinned[key] }).toEqual({ key, same: true });
+    }
+  });
+
+  // The app never toggles capture with opt_in_capturing or opt_out_capturing,
+  // because both write a record of the choice to local storage. Its start and
+  // stop use opt_out_capturing_by_default, which lives in memory.
+  test('the app\'s start and stop write no consent record', () => {
+    const index = readSrc('index.js');
+    const start = index.slice(index.indexOf('function startAccountAnalytics() {'));
+    const stop = index.slice(index.indexOf('function stopAccountAnalytics() {'));
+    const body = (s) => s.slice(0, s.indexOf('\n}'));
+    for (const fn of [body(start), body(stop)]) {
+      expect(fn.length).toBeGreaterThan(50);
+      expect(fn).not.toMatch(/opt_in_capturing|opt_out_capturing\(/);
+    }
+    expect(body(start)).toMatch(/opt_out_capturing_by_default: false/);
+    expect(body(stop)).toMatch(/opt_out_capturing_by_default: true/);
   });
 });
 
@@ -198,6 +237,81 @@ describe('the real SDK honors the shipped config', () => {
 
     expect(instance.config.disable_session_recording).toBe(true);
     expect(instance.sessionRecordingStarted()).toBe(false);
+  });
+
+  // The app's signed-in default, against the real SDK: identified, capturing,
+  // reset and switched off the way the app's stop does it, and at no point is
+  // anything written to local storage, session storage or a cookie.
+  test('the signed-in config stores nothing on the device, through a whole session', () => {
+    const token = 'phc_signed_in_memory_test';
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    const posthog = require('posthog-js').default;
+    const sent = [];
+    const instance = posthog.init(
+      token,
+      {
+        ...POSTHOG_SIGNED_IN_CONFIG,
+        advanced_disable_flags: true,
+        disable_external_dependency_loading: true,
+        disable_compression: true,
+        before_send: [POSTHOG_SIGNED_IN_CONFIG.before_send, (event) => { if (event) sent.push(event.event); return null; }],
+      },
+      'signed_in_memory_test'
+    );
+    expect(instance).toBeTruthy();
+    expect(instance.config.persistence).toBe('memory');
+    expect(instance.is_capturing()).toBe(true);
+
+    instance.identify('42');
+    instance.capture('screen_viewed', { screen: 'home' });
+    expect(sent).toContain('screen_viewed');
+
+    // The app's stop: forget the account, turn capture off in memory.
+    instance.reset();
+    instance.set_config({ persistence: 'memory', opt_out_capturing_by_default: true });
+    expect(instance.is_capturing()).toBe(false);
+    const before = sent.length;
+    instance.capture('screen_viewed', { screen: 'home' });
+    expect(sent.length).toBe(before);
+
+    // And the app's start for the next account on the same page.
+    instance.set_config({ persistence: 'memory', opt_out_capturing_by_default: false });
+    expect(instance.is_capturing()).toBe(true);
+
+    const phKeys = (store) => Object.keys(store).filter((k) => k.startsWith('ph_') || k.startsWith('__ph'));
+    expect(phKeys(window.localStorage)).toEqual([]);
+    expect(phKeys(window.sessionStorage)).toEqual([]);
+    expect(document.cookie).not.toMatch(/ph_/);
+  });
+
+  // Older builds switched the SDK off at every sign-out with
+  // opt_out_capturing, which leaves a record in local storage that init obeys.
+  // index.js removes that record before the app's first start rather than
+  // writing an opt-in over it. This pins that the name it removes is the one
+  // this SDK version actually reads, so an SDK upgrade that renames it fails
+  // here instead of leaving upgraded devices silently off.
+  test('the opt-out record the app removes before its first start is the one this SDK obeys', () => {
+    const posthog = require('posthog-js').default;
+    const index = readSrc('index.js');
+    expect(index).toContain('const optOutRecord = `__ph_opt_in_out_${key}`;');
+    const quiet = {
+      advanced_disable_flags: true,
+      disable_external_dependency_loading: true,
+      disable_compression: true,
+    };
+
+    const staleToken = 'phc_stale_opt_out_test';
+    window.localStorage.setItem(`__ph_opt_in_out_${staleToken}`, '0');
+    const stale = posthog.init(staleToken, { ...POSTHOG_SIGNED_IN_CONFIG, ...quiet }, 'stale_opt_out_test');
+    expect(stale.is_capturing()).toBe(false);
+
+    const clearedToken = 'phc_cleared_opt_out_test';
+    window.localStorage.setItem(`__ph_opt_in_out_${clearedToken}`, '0');
+    window.localStorage.removeItem(`__ph_opt_in_out_${clearedToken}`);
+    const cleared = posthog.init(clearedToken, { ...POSTHOG_SIGNED_IN_CONFIG, ...quiet }, 'cleared_opt_out_test');
+    expect(cleared.is_capturing()).toBe(true);
+    expect(window.localStorage.getItem(`__ph_opt_in_out_${clearedToken}`)).toBeNull();
   });
 });
 

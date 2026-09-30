@@ -7,8 +7,10 @@ import ErrorBoundary from './components/ErrorBoundary';
 // fallbacks below get their birds for free.
 import { BirdieStill, BIRDIE, WARM_BIRD } from './components/ui/BirdieBird';
 import FloppyBird from './components/ui/FloppyBird';
+// The website's analytics bar. The app routes do not mount it: there, the
+// signed-in account's own setting decides (followAccountForAnalytics below).
 import ConsentBanner from './components/ConsentBanner';
-import { hasAnalyticsConsent, onConsentChange } from './services/analyticsConsent';
+import { hasAnalyticsConsent, onConsentChange, followAccountForAnalytics } from './services/analyticsConsent';
 import { detectNativeShell } from './lib/nativeShell';
 // Bearer tokens and live coordinates are scrubbed from every analytics and
 // error payload that leaves the device. The rules and the reasons are in
@@ -142,7 +144,9 @@ const scrubEventStrings = (val, depth = 0) => {
 // The privacy policy (website/PrivacyPolicy.js) says PostHog keeps its
 // identifier in local storage rather than in a cookie, which is what
 // persistence 'localStorage' below makes true. Do not switch persistence back
-// to a cookie mode without changing that page in the same commit.
+// to a cookie mode without changing that page in the same commit. That is the
+// config for an explicit yes to the website's bar. The app's signed-in default
+// stores nothing at all: POSTHOG_SIGNED_IN_CONFIG, directly under this one.
 //
 // Exported for src/__tests__/analyticsPrivacy.test.js, which locks every
 // value here and fails on the commit that loosens one.
@@ -191,6 +195,22 @@ export const POSTHOG_PRIVACY_CONFIG = {
     if (event.$set_once) scrubEventStrings(event.$set_once);
     return event;
   },
+};
+
+// THE APP'S SIGNED-IN DEFAULT WRITES NOTHING TO THE DEVICE.
+//
+// In the app, analytics for a signed-in account runs because the account has
+// not switched it off in Settings, not because this device said yes to
+// anything. So PostHog there keeps its identifier, its session and everything
+// else in memory for the life of the page: no local storage, no session
+// storage, no cookie. The account is named by its number on every launch, so
+// nothing needs to survive a reload. Every other value is POSTHOG_PRIVACY_CONFIG
+// itself, spread rather than restated, so a privacy setting cannot drift
+// between the two; analyticsPrivacy.test.js pins that this differs in
+// persistence and in nothing else, and that the real SDK writes nothing with it.
+export const POSTHOG_SIGNED_IN_CONFIG = {
+  ...POSTHOG_PRIVACY_CONFIG,
+  persistence: 'memory',
 };
 
 // ---------------------------------------------------------------------------
@@ -259,13 +279,29 @@ const analyticsEnabled = !!process.env.REACT_APP_POSTHOG_KEY && (
    substitute for it.
 
    The config object is unchanged and is still handed to init verbatim, which
-   __tests__/analyticsPrivacy.test.js pins. Only the MOMENT moved. */
+   __tests__/analyticsPrivacy.test.js pins. Only the MOMENT moved.
+
+   That is the WEBSITE's rule, and the bar is the website's question. The app
+   routes ask nothing and start PostHog from the signed-in account's own
+   setting instead: see THE APP, below.
+
+   ONE INIT, TWO PINNED CONFIGS. This is the only posthog.init in the codebase,
+   and it is handed one of the two exported objects above, never a copy:
+   POSTHOG_PRIVACY_CONFIG when this device holds an explicit yes to the bar,
+   which is what lets PostHog keep its identifier in local storage, and
+   POSTHOG_SIGNED_IN_CONFIG, which keeps everything in memory, otherwise. */
+function initPostHog(deviceStorage) {
+  return import('posthog-js').then(({ default: posthog }) => {
+    posthog.init(process.env.REACT_APP_POSTHOG_KEY, deviceStorage ? POSTHOG_PRIVACY_CONFIG : POSTHOG_SIGNED_IN_CONFIG);
+    return posthog;
+  });
+}
+
 export function startAnalytics() {
   if (!analyticsEnabled || !hasAnalyticsConsent()) return;
   // Returned so a caller can wait for init before anything else reaches the
   // SDK. A call that lands before init is dropped (services/api.js).
-  return import('posthog-js').then(({ default: posthog }) => {
-    posthog.init(process.env.REACT_APP_POSTHOG_KEY, POSTHOG_PRIVACY_CONFIG);
+  return initPostHog(true).then((posthog) => {
     // A sign-out turns the SDK off (clearLocalSession in services/api.js), so
     // that nothing is recorded for the next person before they answer. The
     // yes that reaches here is that answer, so capture comes back on. A second
@@ -276,59 +312,119 @@ export function startAnalytics() {
   }).catch(() => { /* analytics is never load-bearing */ });
 }
 
-/* A YES GIVEN INSIDE THE APP IS USUALLY GIVEN AFTER SIGN-IN. The native shell
-   holds the bar back until the tab bar is on screen, and on the web a visitor
-   who signs in first answers later. The sign-in's identify had already run
-   into the consent gate in services/api.js and been dropped, so without this
-   everything after the yes was recorded against an anonymous id until the next
-   sign-in, a day later at the soonest. Once init has run, the account signed
-   in now is named. api.js is the module the App chunk already holds, and it
-   does nothing when nobody is signed in. */
-function startAnalyticsInApp(answer) {
+/* A YES THAT COMES BACK WITH ITS OWN ACCOUNT, on the website's own pages. A
+   session ending takes the analytics answer with it and turns the SDK off;
+   when the same account signs in again on this page,
+   services/analyticsConsent.js gives the answer back without asking (WHOSE
+   ANSWER IT IS there). Nothing tapped the bar, so nothing called
+   startAnalytics, and a yes restored that way would otherwise sit in storage
+   with the SDK still off. Once init has run, the account signed in now is
+   named; api.js does nothing when nobody is. The sweep itself announces too,
+   and leaves no yes, so this starts nothing then. Registered below, for every
+   route but the app's. */
+function startAnalyticsForReturningYes() {
+  if (!hasAnalyticsConsent()) return;
   const started = startAnalytics();
-  if (answer !== 'yes' || !started) return;
+  if (!started) return;
   started
     .then(() => import('./services/api'))
     .then((api) => api.identifySignedInUser())
     .catch(() => { /* analytics is never load-bearing */ });
 }
 
-/* A YES THAT COMES BACK WITH ITS OWN ACCOUNT. A session ending takes the
-   analytics answer with it and turns the SDK off; when the same account signs
-   in again on this page, services/analyticsConsent.js gives the answer back
-   without asking (WHOSE ANSWER IT IS there). Nothing tapped the bar, so nothing
-   called the handler above, and a yes restored that way would otherwise sit
-   in storage with the SDK still off. The sweep itself announces too, and
-   leaves no yes, so this starts nothing then. */
-onConsentChange(() => {
-  if (hasAnalyticsConsent()) startAnalyticsInApp('yes');
-});
+/* THE APP: THE ACCOUNT'S OWN SETTING DECIDES, AND NOTHING IS STORED FOR IT.
 
-/* Already answered yes on a previous visit: no banner, nothing to ask, and
-   nothing on screen waiting on this.
+   On the app routes, web and iOS, there is no analytics question on screen.
+   Signed-in product analytics is part of the service agreed to at signup, and
+   the account can switch it off in Settings ("Share usage analytics"), which
+   is remembered on the account (GET and PUT /api/users/me/analytics).
+   services/api.js reads that answer after every sign-in and at launch, sends
+   nothing before it has it and nothing while signed out, and calls these two
+   through the driver registered below (services/analyticsConsent.js).
 
-   IT USED TO BE A BARE CALL HERE, at module scope, hundreds of lines above
-   root.render(). For every returning consented visitor that put
-   import('posthog-js') (~70 KB gzipped), the SDK init above and a cold DNS +
-   TLS handshake to PostHog into the queue AHEAD of the App or route chunk the
-   person is actually waiting for — which is precisely the rule the comment
-   above afterLoad states, and the reason the api.js import and reportWebVitals
-   are already deferred. Analytics is now behind the same helper, so it starts
-   once the page the visitor came for has loaded. afterLoad is a hoisted
-   function declaration at the foot of this file, so calling it here is safe;
-   it no-ops without a window, which is also the only case startAnalytics could
-   not run in anyway.
+   start() starts PostHog for an account whose answer is on, with
+   POSTHOG_SIGNED_IN_CONFIG, so nothing at all is written to the device for it,
+   unless this browser holds an explicit yes from the website's bar, the one
+   case that already agreed to local storage. It resolves true once PostHog is
+   running, and api.js names the account and sends what it held. stop() resets
+   PostHog and turns capture off, and clears anything PostHog kept for this
+   project on the device. Neither ever calls opt_in_capturing or
+   opt_out_capturing, because both of those WRITE a record of the choice to
+   local storage; capture is turned off and on with
+   opt_out_capturing_by_default instead, which lives in memory.
 
-   THE CONSENT GATE IS UNCHANGED. startAnalytics still refuses without an
-   explicit yes, and ConsentBanner's onAnswer still calls it DIRECTLY so a
-   fresh yes starts immediately rather than waiting for a load event that has
-   long since fired. The hasAnalyticsConsent() test here is what keeps those
-   two paths from both firing: the banner only renders when nobody has
-   answered, so deferring only the already-answered case means the two cannot
-   both run on the first answer of a visit. A later yes on the same page, from
-   the next account after a sign-out, reaches init again, which posthog-js
-   ignores, and turns capture back on (startAnalytics). */
-if (hasAnalyticsConsent()) afterLoad(startAnalytics);
+   One posthog-js instance per page: init runs once, and a later account on
+   the same page, after a sign-out, is started again with set_config. */
+let accountPostHog = null;
+
+// Removals only: PostHog's keys for this project, in local and session
+// storage. Before the app's first start in memory mode, this takes away what
+// older builds left behind: an identifier nobody will read again, and the
+// opt-out record their sign-out wrote, which init would otherwise obey and
+// keep capture off with no way back that does not write a new record. After a
+// stop, it is the "clears anything it held" half of switching off.
+function clearPostHogStorage({ optOutRecordOnly = false } = {}) {
+  const key = process.env.REACT_APP_POSTHOG_KEY || '';
+  if (!key) return;
+  const optOutRecord = `__ph_opt_in_out_${key}`;
+  for (const name of ['localStorage', 'sessionStorage']) {
+    try {
+      const store = window[name];
+      const doomed = [];
+      for (let i = 0; i < store.length; i += 1) {
+        const k = store.key(i);
+        if (!k) continue;
+        if (k === optOutRecord || (!optOutRecordOnly && k.startsWith(`ph_${key}`))) doomed.push(k);
+      }
+      doomed.forEach((k) => store.removeItem(k));
+    } catch { /* storage blocked: nothing readable to clear */ }
+  }
+}
+
+function startAccountAnalytics() {
+  if (!analyticsEnabled) return Promise.resolve(false);
+  const deviceStorage = hasAnalyticsConsent();
+  if (!accountPostHog) {
+    clearPostHogStorage({ optOutRecordOnly: deviceStorage });
+    accountPostHog = initPostHog(deviceStorage).catch(() => null);
+  } else {
+    accountPostHog = accountPostHog.then((posthog) => {
+      try {
+        if (posthog) {
+          posthog.set_config({
+            persistence: deviceStorage ? POSTHOG_PRIVACY_CONFIG.persistence : POSTHOG_SIGNED_IN_CONFIG.persistence,
+            opt_out_capturing_by_default: false,
+          });
+        }
+      } catch { /* analytics is never load-bearing */ }
+      return posthog;
+    });
+  }
+  const running = accountPostHog.then((posthog) => !!posthog);
+  // How fast the app is on a real device, measured only once analytics is on
+  // for this account, for the same reason the website waits for its yes.
+  running.then((on) => { if (on) attachWebVitals(); });
+  return running;
+}
+
+function stopAccountAnalytics() {
+  if (!accountPostHog) return;
+  accountPostHog = accountPostHog.then((posthog) => {
+    try {
+      if (posthog) {
+        // Forget the account, then turn capture off. Moving to memory first
+        // takes an explicit yes's local-storage copy off the device as well.
+        posthog.reset();
+        posthog.set_config({
+          persistence: POSTHOG_SIGNED_IN_CONFIG.persistence,
+          opt_out_capturing_by_default: true,
+        });
+      }
+    } catch { /* analytics is never load-bearing */ }
+    clearPostHogStorage();
+    return posthog;
+  });
+}
 
 // ---------------------------------------------------------------------------
 // WHERE ARE WE
@@ -895,6 +991,37 @@ const wantsApp = !page && (
 // whoever is signed in now. A DOM event, so api.js stays out of this chunk.
 window.addEventListener('flock-account-switched', () => { window.location.reload(); });
 
+// The app itself is what mounts below when no page claimed the path and it is
+// neither of the two standalone auth pages, which match APP_PATHS but render
+// on their own. Spelled out once, because analytics follows it.
+const appMounted = wantsApp && !page && path !== '/reset-password' && path !== '/verify-email';
+
+// WHO DECIDES ANALYTICS ON THIS PAGE.
+//
+// The app: the signed-in account's own setting, through the driver above. No
+// bar is mounted, nothing runs before sign-in, and nothing is stored for it.
+//
+// Every other route: the website's bar, as before. A returning visitor who
+// already said yes starts once the page they came for has loaded. That used
+// to be a bare call at module scope, hundreds of lines above root.render(),
+// which put import('posthog-js') (~70 KB gzipped), the init and a cold DNS +
+// TLS handshake to PostHog AHEAD of the route chunk the person was waiting
+// for; afterLoad (a hoisted declaration at the foot of this file) defers it.
+// ConsentBanner's onAnswer still calls startAnalytics DIRECTLY, so a fresh yes
+// starts at once rather than waiting for a load event that has long since
+// fired, and the two cannot both run on the first answer of a visit, because
+// the bar only renders when nobody has answered.
+if (appMounted) {
+  followAccountForAnalytics({
+    enabled: analyticsEnabled,
+    start: startAccountAnalytics,
+    stop: stopAccountAnalytics,
+  });
+} else {
+  onConsentChange(startAnalyticsForReturningYes);
+  if (hasAnalyticsConsent()) afterLoad(startAnalytics);
+}
+
 const root = ReactDOM.createRoot(document.getElementById('root'));
 
 if (page) {
@@ -902,7 +1029,7 @@ if (page) {
   const { Loading } = page;
   root.render(
     <React.StrictMode>
-      {/* The ask, on every surface analytics can run on. Renders nothing
+      {/* The website's ask, on every route but the app's. Renders nothing
           once answered, and declining is remembered. */}
       <ConsentBanner onAnswer={startAnalytics} />
       {/* Outside Suspense on purpose: this also catches a chunk that 404s
@@ -928,7 +1055,7 @@ if (page) {
     .then((m) => ({ default: m.PasswordResetPage })));
   root.render(
     <React.StrictMode>
-      {/* The ask, on every surface analytics can run on. Renders nothing
+      {/* The website's ask, on every route but the app's. Renders nothing
           once answered, and declining is remembered. */}
       <ConsentBanner onAnswer={startAnalytics} />
       <ErrorBoundary label="reset-password" fallback={pageErrorFallback}>
@@ -945,7 +1072,7 @@ if (page) {
   const VerifyEmailPage = React.lazy(() => import('./components/auth/VerifyEmailPage'));
   root.render(
     <React.StrictMode>
-      {/* The ask, on every surface analytics can run on. Renders nothing
+      {/* The website's ask, on every route but the app's. Renders nothing
           once answered, and declining is remembered. */}
       <ConsentBanner onAnswer={startAnalytics} />
       <ErrorBoundary label="verify-email" fallback={pageErrorFallback}>
@@ -953,7 +1080,7 @@ if (page) {
       </ErrorBoundary>
     </React.StrictMode>
   );
-} else if (wantsApp) {
+} else if (appMounted) {
   // Nothing about the theme is worth a white screen: everything below this
   // point still renders if the attribute never gets written.
   try { applyStoredTheme(); } catch { /* index.css defaults to the light tokens */ }
@@ -982,10 +1109,10 @@ if (page) {
 
   root.render(
     <React.StrictMode>
-      {/* The ask, on every surface analytics can run on. Renders nothing
-          once answered, and declining is remembered. Here a yes also names
-          the account signed in (startAnalyticsInApp). */}
-      <ConsentBanner onAnswer={startAnalyticsInApp} />
+      {/* No analytics bar in the app, on the web or in the iOS shell. Signed
+          in, the account's own setting decides (followAccountForAnalytics
+          above, and "Share usage analytics" in Settings); signed out, nothing
+          runs at all. */}
       {/* ThemeProvider writes data-theme onto <html> and never removes it, and
           applyStoredTheme above set it before this first render, so the
           fallback paints in the user's theme even though it renders before
@@ -1002,7 +1129,7 @@ if (page) {
   // "no route matched AND the page that says so threw".
   root.render(
     <React.StrictMode>
-      {/* The ask, on every surface analytics can run on. Renders nothing
+      {/* The website's ask, on every route but the app's. Renders nothing
           once answered, and declining is remembered. */}
       <ConsentBanner onAnswer={startAnalytics} />
       <ErrorBoundary label="not-found" fallback={pageErrorFallback}>
@@ -1034,8 +1161,8 @@ if (page) {
 
 // THREE CALLERS NOW, and one of them is above this line. A hoisted function
 // declaration on purpose: startAnalytics for a returning consented visitor is
-// deferred here too, and that call sits next to startAnalytics itself, several
-// hundred lines up, where the reasoning for it belongs. Keep this a
+// deferred here too, and that call sits in WHO DECIDES ANALYTICS ON THIS PAGE,
+// above the render, where the reasoning for it belongs. Keep this a
 // declaration rather than a const, or that call breaks at boot.
 function afterLoad(fn) {
   if (typeof window === 'undefined') return;
@@ -1050,8 +1177,10 @@ if (analyticsEnabled) {
       // chat. It is a different event from a real invite being opened, and
       // telling them apart is the only reason this argument exists. The token
       // itself is not passed, is not read here, and has no property to sit in.
+      // In the app, services/api.js holds this until the signed-in account's
+      // setting is known, and drops it when nobody is signed in.
       if (page && page.id === 'guest-invite') api.trackInviteLinkOpened(path !== '/i');
-      else if (wantsApp) api.trackAppOpened(isNativeShell ? 'native' : 'web');
+      else if (appMounted) api.trackAppOpened(isNativeShell ? 'native' : 'web');
     }).catch(() => { /* see above */ });
   });
 }
@@ -1073,13 +1202,22 @@ if (analyticsEnabled) {
    is measuring. The metrics themselves are collected by the browser from the
    moment the page starts regardless of when the library attaches; web-vitals
    reads them out of the performance timeline, so deferring the import costs no
-   accuracy. LCP and CLS are reported on hide, long after this. */
-if (analyticsEnabled && hasAnalyticsConsent()) {
-  afterLoad(() => {
-    reportWebVitals((metric) => {
-      import('./services/api')
-        .then((api) => api.trackWebVital(metric, page ? page.id : (wantsApp ? 'app' : 'other')))
-        .catch(() => { /* a number is never load-bearing */ });
-    });
+   accuracy. LCP and CLS are reported on hide, long after this.
+
+   IN THE APP THE GATE IS THE ACCOUNT'S SETTING, so web-vitals is attached by
+   startAccountAnalytics once analytics is running for a signed-in account,
+   and never for anyone signed out or switched off. Once per page either way. */
+let webVitalsAttached = false;
+function attachWebVitals() {
+  if (webVitalsAttached) return;
+  webVitalsAttached = true;
+  reportWebVitals((metric) => {
+    import('./services/api')
+      .then((api) => api.trackWebVital(metric, page ? page.id : (wantsApp ? 'app' : 'other')))
+      .catch(() => { /* a number is never load-bearing */ });
   });
+}
+
+if (analyticsEnabled && !appMounted && hasAnalyticsConsent()) {
+  afterLoad(attachWebVitals);
 }

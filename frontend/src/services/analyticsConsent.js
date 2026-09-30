@@ -1,5 +1,22 @@
 /**
- * ANALYTICS CONSENT.
+ * ANALYTICS CONSENT, ON THE WEBSITE. IN THE APP, THE ACCOUNT'S OWN SETTING.
+ *
+ * Two surfaces, two rules, and the second half of this file is the app's:
+ *
+ *   THE WEBSITE (the marketing pages, the legal pages, the guest invite, the
+ *   other standalone pages). Anonymous visitors have agreed to nothing, so the
+ *   bar asks (components/ConsentBanner.js) and everything below this note
+ *   applies exactly as written.
+ *
+ *   THE APP (/app on the web, and the iOS shell). There is no bar. Signed-in
+ *   product analytics is part of the service a person agrees to at signup,
+ *   and the account can switch it off in Settings ("Share usage analytics").
+ *   That answer lives on the server (users.analytics_opt_out, GET and PUT
+ *   /api/users/me/analytics) so it survives a sign-out, a reinstall and
+ *   another device. index.js hands this module a driver on the app routes
+ *   (followAccountForAnalytics below), and from then on services/api.js sends
+ *   nothing while signed out and nothing for an account until its answer has
+ *   been read. See ACCOUNT ANALYTICS in services/api.js.
  *
  * PostHog used to initialise at module scope in index.js, on page load, before
  * render and before any interaction. Every first-time visitor to flockcorp.com,
@@ -32,12 +49,16 @@ const KEY = 'flock_analytics_consent';
 /**
  * WHOSE ANSWER IT IS.
  *
- * In the app the question is about an account: the app copy says the events
- * carry "your account number". So an answer is good for the account that gave
- * it and for nobody else. The stored key is swept with every other flock* key
- * when a session ends (services/api.js clearLocalSession), which means the next
- * account on a shared phone is asked for itself and nothing is sent for it
- * until it answers. Keeping the key across sign-out, as one fix tried, handed
+ * Once somebody is signed in, the events carry their account number. So an
+ * answer is good for the account that gave it and for nobody else. (In the app
+ * the device answer no longer decides whether analytics runs, the account's
+ * setting does; what it still decides there is whether PostHog may keep its
+ * identifier on the device, which only an explicit yes allows, and an explicit
+ * no found there is moved onto the account. See the app's driver below.)
+ * The stored key is swept with every other flock* key when a session ends
+ * (services/api.js clearLocalSession), which means the next account on a
+ * shared browser is asked for itself and nothing is sent for it until it
+ * answers. Keeping the key across sign-out, as one fix tried, handed
  * A's yes to B: B was identified to PostHog by account id without ever seeing
  * the bar, which is the "unset is not permission" rule above broken one person
  * later.
@@ -58,9 +79,9 @@ const KEY = 'flock_analytics_consent';
  * never sends anything unasked.
  *
  * An answer given while nobody is signed in (the web bar on the landing page
- * or the sign-in screen) has no account yet. It stays for the next sign-in on
- * this browser, which is nearly always the person who answered, on their way
- * from the landing page or the sign-in form into the app. From then on it is
+ * or another page of the site) has no account yet. It stays for the next
+ * sign-in on this browser, which is nearly always the person who answered, on
+ * their way from the landing page into the app. From then on it is
  * that account's, and leaves with its session like any other.
  */
 let heldAtSignOut = null;
@@ -170,4 +191,68 @@ export function revokeAnalytics() {
       })
       .catch(() => {});
   } catch { /* analytics is never load-bearing */ }
+}
+
+/**
+ * Remove this device's stored answer, and anything held for a sign-in.
+ *
+ * Used in the app, where the account's own setting is the answer. An explicit
+ * "no" found on the device is moved onto the account once and then removed
+ * here, so that turning the switch back on later, on this device or another,
+ * is never overridden by a stale device answer re-sent on the next launch.
+ * The Settings switch removes it too, for the same reason.
+ */
+export function forgetConsent() {
+  heldAtSignOut = null;
+  try {
+    window.localStorage.removeItem(KEY);
+  } catch { /* storage blocked: there was nothing readable to remove */ }
+}
+
+/*
+ * THE APP'S DRIVER.
+ *
+ * index.js registers one on the app routes, and only there: { enabled, start,
+ * stop }. `enabled` is false when this build or origin reports nothing at all
+ * (no key, or a dev server), in which case services/api.js does not even ask
+ * the server for the account's answer. `start()` loads and starts PostHog for
+ * a signed-in account whose answer is on, and resolves true once it is
+ * running; `stop()` resets it and turns capture off, storing nothing. Both
+ * live in index.js because that is the one file allowed to call posthog.init
+ * (__tests__/analyticsPrivacy.test.js), and this module is the one place the
+ * entry chunk and the app chunk both import, so the driver can cross without
+ * services/api.js joining the entry chunk.
+ */
+let accountDriver = null;
+
+export function followAccountForAnalytics(driver) {
+  accountDriver = driver && typeof driver.start === 'function' && typeof driver.stop === 'function'
+    ? driver
+    : null;
+}
+
+/** True on the app routes: analytics follows the signed-in account's setting. */
+export function analyticsFollowsAccount() {
+  return accountDriver !== null;
+}
+
+/** True when this build and origin can report at all. */
+export function accountAnalyticsCanRun() {
+  return !!(accountDriver && accountDriver.enabled);
+}
+
+/** Resolves true once PostHog is running for the signed-in account. */
+export function startAccountAnalytics() {
+  if (!accountAnalyticsCanRun()) return Promise.resolve(false);
+  try {
+    return Promise.resolve(accountDriver.start()).then((running) => running === true, () => false);
+  } catch {
+    return Promise.resolve(false);
+  }
+}
+
+/** Reset PostHog and turn capture off. A no-op when it never started. */
+export function stopAccountAnalytics() {
+  if (!accountDriver) return;
+  try { accountDriver.stop(); } catch { /* analytics is never load-bearing */ }
 }

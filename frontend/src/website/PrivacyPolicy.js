@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import './PrivacyPolicy.css';
 import SiteFooter from './SiteFooter';
 
-const EFFECTIVE_DATE = 'September 27, 2026';
+const EFFECTIVE_DATE = 'September 30, 2026';
 const CONTACT_EMAIL = 'social@flockcorp.com';
 
 // THE OPERATOR IS A REGISTERED COMPANY NOW, and this name is its legal name.
@@ -320,7 +320,7 @@ export default function PrivacyPolicy() {
                 <li><strong>What we showed you:</strong> when the app shows you a crowd prediction for a venue, we record the venue, the number we published, which model produced it, and when. That record is what lets us check the prediction against what you or the venue later reported, which is how the model gets better. It is tied to your account and kept for 180 days.</li>
                 <li><strong>Check-ins:</strong> a check-in inside the app is stored with your account and the venue. A tap on an NFC tag at a venue while you are signed out is stored with the venue and no account at all.</li>
                 <li><strong>Reliability:</strong> when a plan ends, the host can mark who turned up. We keep a running score from that on your account, and the people in a flock with you can see it. It is a number about attendance and nothing else.</li>
-                <li><strong>On-device storage:</strong> your browser or app keeps your sign-in token, your display preferences (theme, map style, the order of your flocks), your interests, and your last known coordinates so the map opens where you are. Those coordinates stay on the device. PostHog keeps its identifier in local storage rather than in a cookie, so no analytics cookie rides on requests and clearing site data removes it.</li>
+                <li><strong>On-device storage:</strong> your browser or app keeps your sign-in token, your display preferences (theme, map style, the order of your flocks), your interests, and your last known coordinates so the map opens where you are. Those coordinates stay on the device. PostHog never sets a cookie. In the app it keeps nothing on your device unless you had already said yes to that when asked; on our website, if you say yes to counting page views, it keeps its identifier in local storage, so no analytics cookie rides on requests and clearing site data removes it.</li>
                 <li><strong>Connection metadata:</strong> your IP address is used for rate limiting and to spot abuse. It appears in our server logs. Three places also write it to the database. The record of an email verification link, so we can limit how many verification emails one address or one network can trigger; those are deleted when your account is deleted. The record of a password reset <em>request</em>, which holds the requesting address next to a one-way hash of the email and is deleted after 7 days. And the record of a password reset <em>link</em>, which holds the requesting address next to your account number and the email address the link was sent to, in the clear, so that a link cannot keep working after you change your address. That third record is deleted with your account, and separately once the link is spent or expired and old enough that nothing needs it.</li>
               </ul>
 
@@ -434,16 +434,19 @@ export default function PrivacyPolicy() {
               </p>
               <ul>
                 <li><strong>Performing our agreement with you:</strong> your account, your flocks, chat and direct messages, votes, RSVPs, budgets, bill splits, the calendar, venue search, crowd predictions, the venue dashboard, and the transactional email that keeps an account working. Without these there is no product to deliver.</li>
-                {/* "The anonymous page-view count" understated this for as long
-                    as it stood. One answer gates ALL of PostHog, not the page
-                    views alone: src/index.js refuses to call posthog.init
-                    without it, and services/api.js returns before every
-                    hand-written capture, which is the set that carries your
-                    account number. Naming the smallest thing the consent covers
-                    is the same failure as naming a feature that does not ship,
-                    pointed the other way. */}
-                <li><strong>Your consent:</strong> location, push notifications, access to your photo library or camera, matching your phone contacts, the waitlist email, and every analytics event described in <a href="#analytics">Analytics, error reports, and email</a>, the page views and the hand-written events tied to your account number alike, none of which run until you agree and none of which leave a gap if you decline. Each of those is asked for and each can be withdrawn, in your device settings or by clearing the thing you set. Withdrawing consent does not undo processing that already happened.</li>
-                <li><strong>Our legitimate interests:</strong> keeping Flock safe and working. Rate limiting, abuse and fraud prevention, moderation and the records it produces, error monitoring, and improving the crowd model from reports people choose to file. We have weighed these against your interests, which is why the analytics are configured the way <a href="#analytics">Analytics, error reports, and email</a> describes and why the model's training data carries no account identifiers.</li>
+                {/* Analytics sits under two bases, because it runs two ways.
+                    The website's page-view count is consent: src/index.js will
+                    not start PostHog on a website route without a yes to the
+                    bar. The app's signed-in analytics is not asked for on
+                    screen: it is part of the service agreed to at signup, kept
+                    to the screens and the hand-written events in
+                    services/api.js, and the account can switch it off (You,
+                    Share usage analytics; users.analytics_opt_out on the
+                    server). That is a legitimate interest with an opt-out, so
+                    it is named there, and naming it under consent would be the
+                    old claim that it waits for a yes, which it no longer does. */}
+                <li><strong>Your consent:</strong> location, push notifications, access to your photo library or camera, matching your phone contacts, the waitlist email, and the page views and events counted on our website described in <a href="#analytics">Analytics, error reports, and email</a>, none of which run until you agree and none of which leave a gap if you decline. Each of those is asked for and each can be withdrawn, in your device settings or by clearing the thing you set. Withdrawing consent does not undo processing that already happened.</li>
+                <li><strong>Our legitimate interests:</strong> keeping Flock safe and working, and making it better. Rate limiting, abuse and fraud prevention, moderation and the records it produces, error monitoring, improving the crowd model from reports people choose to file, and the product analytics the app records while you are signed in: which screens you open and the short list of events described in <a href="#analytics">Analytics, error reports, and email</a>, tied to your account number, never to your name or your email. You can switch those analytics off at any time in the app under You &rarr; Share usage analytics. We have weighed these against your interests, which is why the analytics are configured the way <a href="#analytics">Analytics, error reports, and email</a> describes and why the model's training data carries no account identifiers.</li>
                 <li><strong>Legal obligation:</strong> responding to lawful requests, and reporting apparent child sexual abuse material to the National Center for Missing and Exploited Children or the relevant authority.</li>
                 <li><strong>Vital interests:</strong> the SOS feature. When you press it, we email your trusted contacts, and alert in the app the people on a plan with you that the SOS entry above describes, with your location when your phone can find one, because you are telling us something is wrong.</li>
               </ul>
@@ -638,7 +641,7 @@ export default function PrivacyPolicy() {
                 <li><strong>Apple Push Notification service</strong> and <strong>Firebase Cloud Messaging</strong> deliver push notifications. They receive the device token and the notification.</li>
                 <li><strong>Google Cloud Vision</strong> screens every image you upload against our content rules before anyone can see it. The image is sent for that check and for nothing else. If the check cannot run, the upload is refused rather than let through.</li>
                 <li><strong>Google Gemini</strong> powers Birdie and Roost. <a href="#ai">Birdie and Roost</a> says exactly what each of them sends.</li>
-                <li><strong>PostHog</strong> receives product analytics events tied to your account number, and the IP address the request arrives from. It also receives the cost and speed measurements behind Birdie: token counts and latency, never the words. See <a href="#analytics">Analytics, error reports, and email</a>.</li>
+                <li><strong>PostHog</strong> receives the app's product analytics events, tied to your account number, the page views and events counted on our website if you agreed to them, and the IP address each request arrives from. It also receives the cost and speed measurements behind Birdie: token counts and latency, never the words. See <a href="#analytics">Analytics, error reports, and email</a>.</li>
                 <li><strong>Apple</strong> and <strong>Google</strong> verify sign-in identity, only when you choose those options. Apple additionally receives the revocation call when you delete an account you created with Sign in with Apple.</li>
                 <li><strong>MapTiler</strong> and <strong>CARTO</strong> serve the map tiles. Your device loads tiles from them directly, so whichever one is in use sees your IP address and the area of the map you are looking at. It does not see your account.</li>
                 <li><strong>DiceBear</strong> serves the default avatar for an account with no photo. Your device loads that image directly, so it sees your IP address and nothing else.</li>
@@ -704,26 +707,52 @@ export default function PrivacyPolicy() {
 
               <h3>Product analytics, with PostHog</h3>
               <p>
-                We use PostHog to understand how Flock is used: pages viewed, and a short list
-                of events we write by hand, such as signing up, logging in, creating a flock,
-                sharing an invite link, and submitting a crowd report. Events are tied to your
-                account number, never to your name or your email, and only signed-in people get
-                a profile at all. Like any web request, the one that carries an event also
-                carries your IP address to PostHog's servers.
+                We use PostHog to understand how Flock is used. It runs one way in the app and
+                another way on our website.
               </p>
-              {/* The section this page's consent clause points AT never said the
-                  word consent, so a reader who followed the link to check the
-                  claim found no mention of it. The gate is real and it is in two
-                  places: src/index.js will not call posthog.init without a yes,
-                  and services/api.js returns before every capture without one,
-                  read live so a yes mid-session starts working on the next
-                  event. Not "we ask before we use it" in the abstract: the SDK
-                  is not even downloaded. */}
+              {/* Each sentence below is something the code does. The app half:
+                  src/index.js mounts no analytics bar on the app routes;
+                  services/api.js sends nothing while signed out, reads
+                  GET /api/users/me/analytics before the first event for an
+                  account, holds everything until then, and drops it all when
+                  the answer is off; PostHog is started there with
+                  POSTHOG_SIGNED_IN_CONFIG, persistence 'memory', unless the
+                  device already holds an explicit yes; the switch in the You
+                  tab writes users.analytics_opt_out and, switched off, resets
+                  PostHog and clears its keys. The website half is the bar and
+                  the gate that was always there: no init and no capture
+                  without a yes, and the SDK is not even downloaded before it. */}
               <p>
-                None of this happens until you agree to it. Before you answer, and after you
-                decline, PostHog is never started, nothing is written to your device for it,
-                and no event is sent. If you agreed and then change your mind, declining also
-                clears the identifier PostHog stored.
+                <strong>In the app</strong>, on your phone or in your browser, while you are
+                signed in, we record which screens you open and a short list of events we write
+                by hand, such as signing up, logging in, creating a flock, sharing an invite
+                link, and submitting a crowd report. They are tied to your account number, never
+                to your name or your email. This is part of providing and improving the service
+                you agree to when you create an account, so the app does not ask about it
+                separately. It runs without storing an identifier on your device, unless you had
+                already said yes to that when asked, on our website or in an earlier version of
+                the app. Nothing is recorded while you are signed out.
+              </p>
+              <p>
+                You can switch it off at any time in the app under You &rarr; Share usage
+                analytics. The choice is saved to your account, so it stays off after you sign
+                out, reinstall, or sign in on another device, and switching it off also clears
+                what PostHog was holding on your device. If you said no to the analytics
+                question earlier versions of the app asked and are still signed in on that
+                device, the app carries that answer over to this switch the next time you open
+                it.
+              </p>
+              <p>
+                <strong>On our website</strong>, we count page views, and a few events on the
+                site's own pages such as opening an invite link, only if you say yes when we ask.
+                A visitor who is not signed in stays anonymous. Before you answer, and
+                after you decline, PostHog is never started on the website, nothing is written to
+                your device for it, and no event is sent. If you agreed and then change your
+                mind, declining also clears the identifier PostHog stored.
+              </p>
+              <p>
+                Only signed-in people get a profile in PostHog at all. Like any web request, the
+                one that carries an event also carries your IP address to PostHog's servers.
               </p>
               <p>
                 The youngest person allowed on Flock is 13, so the settings are written to
@@ -737,13 +766,15 @@ export default function PrivacyPolicy() {
                 <li>A browser that sends a Do Not Track signal is not tracked.</li>
                 <li>Advertising click identifiers are masked, and invite tokens and coordinates are scrubbed out of every property before an event leaves your device.</li>
                 <li>We ask PostHog not to derive a city or region from your IP address.</li>
-                <li>PostHog keeps its identifier in your device's local storage rather than in a cookie.</li>
+                <li>PostHog never sets a cookie. In the app it keeps its identifier in memory only, with the exception above; on the website, after a yes, in your device's local storage.</li>
               </ul>
               <p>
-                Birdie has one extra measurement. Every call to the model records how many
-                tokens it used and how long it took, against your account number. The words
-                are deliberately left out: PostHog is where we measure cost and speed, not
-                where conversations go.
+                Birdie has one extra measurement, taken on our server rather than in the app.
+                Every call to the model records how many tokens it used and how long it took,
+                against your account number. The words are deliberately left out: PostHog is
+                where we measure cost and speed, not where conversations go. This measurement
+                is part of running Birdie and is not covered by the Share usage analytics
+                switch; it is only ever taken when you use Birdie.
               </p>
 
               <h3>Crash and error reporting, with Sentry</h3>
@@ -895,6 +926,7 @@ export default function PrivacyPolicy() {
                 <li><strong>Live location sharing:</strong> stop at any time from within the flock or the conversation you started it in.</li>
                 <li><strong>Push notifications:</strong> Flock asks before it sends any. To stop them, turn notifications off for Flock in your device settings. Signing out also deletes that device's push token from our servers.</li>
                 <li><strong>Photos and contacts:</strong> both are asked for at the moment you use them, and both can be withdrawn in your device settings. Phone numbers you matched were never stored. Turning off "Let friends find me by my phone number" erases the code we matched you against.</li>
+                <li><strong>Usage analytics:</strong> in the app, switch it off under You &rarr; Share usage analytics. The choice is saved to your account and applies on every device you sign in on. On our website, nothing is counted unless you say yes when asked.</li>
                 <li><strong>Email:</strong> we don't send marketing email. Optional email, which today means the waitlist confirmation and the Monday venue email, carries an unsubscribe link in every message and needs no sign-in. Transactional email cannot be turned off while your account is active.</li>
                 <li><strong>Blocking and reporting:</strong> you can block anyone and report any message, profile, review or guest from inside the app. Our <a href="/guidelines">Community Guidelines</a> say where every one of those controls is.</li>
                 <li><strong>Complaints:</strong> if you think we have handled your information badly, tell us first at {mail}. If you are in the EEA or the UK you can also complain to your national data protection authority.</li>
@@ -944,7 +976,7 @@ export default function PrivacyPolicy() {
                 <li><strong>Customer records:</strong> password hash, payment handles such as a Venmo username. Collected to run sign-in and bill splitting. Not shared, except the hosting that stores them.</li>
                 <li><strong>Protected classifications:</strong> year of birth, or a full date of birth on accounts created before 15 September 2026, which yields age. Collected only to enforce the minimum age. An age bracket, never the year or the date, is sent to Google for Birdie.</li>
                 <li><strong>Commercial information:</strong> venues you voted on, checked into, reviewed or reported on, bill splits, and subscription receipts if you ever buy one. Collected to run the product.</li>
-                <li><strong>Internet activity:</strong> pages viewed and the short list of hand-written events described under <a href="#analytics">Analytics, error reports, and email</a>. Shared with PostHog.</li>
+                <li><strong>Internet activity:</strong> screens opened in the app and the short list of hand-written events, and page views and events on our website if you agreed to them, as described under <a href="#analytics">Analytics, error reports, and email</a>. Shared with PostHog. The app's analytics can be switched off under You &rarr; Share usage analytics.</li>
                 <li><strong>Geolocation:</strong> precise location while you are using the app, for the map, venue search, weather, events and SOS. Relayed, not stored, except for the coordinates in an SOS record. A rounded position goes to Google for Birdie.</li>
                 <li><strong>Audio, electronic, visual information:</strong> photos you upload, with their hidden camera data removed, and the messages you write. Photos are screened by Google Cloud Vision.</li>
                 <li><strong>Inferences:</strong> your reliability score, and the crowd predictions we compute for venues.</li>
