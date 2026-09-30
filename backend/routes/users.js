@@ -1808,6 +1808,70 @@ router.put('/phone-discovery',
   }
 );
 
+// ---------------------------------------------------------------------------
+// GET / PUT /api/users/me/analytics - "Share usage analytics"
+// ---------------------------------------------------------------------------
+// The app asks no analytics question on screen. Signed-in product analytics,
+// the screens a person opens and the short list of hand-written events in
+// frontend/src/services/api.js, tied to the account number and to nothing
+// else, is part of the service agreed to at signup, and this is the switch
+// that turns it off (Settings, "Share usage analytics"). Migration 111.
+//
+// THE ANSWER BELONGS TO THE ACCOUNT, which is why it is a column and not a
+// device key: the device-local answer is swept at every sign-out, so a "no"
+// kept only there was gone after a sign-out, a reinstall, or a sign-in on
+// another phone. The app reads this after every sign-in and at every launch on
+// a stored session, and sends nothing until it has the answer.
+//
+// Both halves read and write the CALLER'S OWN row and answer nothing about
+// anybody else, so there is nothing here to ration beyond the general limiter,
+// the same reasoning as PUT /phone-discovery above. router.use(authenticate)
+// guards both.
+router.get('/me/analytics', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT analytics_opt_out FROM users WHERE id = $1`,
+      [req.user.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+    res.json({ optOut: result.rows[0].analytics_opt_out === true });
+  } catch (err) {
+    console.error('Get analytics setting error:', err);
+    res.status(500).json({ error: 'Failed to read the analytics setting' });
+  }
+});
+
+// STRICTLY A BOOLEAN. isBoolean() would also take the strings 'true', 'false',
+// '1' and '0', and the one direction that has to be unambiguous is OFF: a
+// client that sent "false" meaning "not opted out" and a client that sent it
+// meaning "analytics false" read the same string two ways. Only a JSON true or
+// false is accepted, so the value stored is the value the switch showed.
+router.put('/me/analytics',
+  scalarOnly(body('optOut'), 'optOut')
+    .custom((value) => typeof value === 'boolean')
+    .withMessage('optOut must be true or false'),
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({ error: errors.array()[0].msg });
+      }
+      const result = await pool.query(
+        `UPDATE users
+            SET analytics_opt_out = $2::boolean, updated_at = NOW()
+          WHERE id = $1
+          RETURNING analytics_opt_out`,
+        [req.user.id, req.body.optOut]
+      );
+      if (result.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+      res.json({ optOut: result.rows[0].analytics_opt_out === true });
+    } catch (err) {
+      console.error('Update analytics setting error:', err);
+      res.status(500).json({ error: 'Failed to update the analytics setting' });
+    }
+  }
+);
+
 // GET /api/users/stats - Get user's real stats (friends, XP, streak)
 router.get('/stats', async (req, res) => {
   try {
@@ -2783,7 +2847,7 @@ router.get('/export', async (req, res) => {
               reliability_score, total_plans_joined, total_plans_attended,
               created_at, updated_at, password,
               phone_discoverable, phone_discoverable_at, grace_forfeited, friend_code,
-              birdie_ai_consent_at
+              birdie_ai_consent_at, analytics_opt_out
          FROM users WHERE id = $1`,
       [userId]
     );
@@ -3070,6 +3134,9 @@ router.get('/export', async (req, res) => {
         // or null while they have not (migration 100). A consent record, for
         // the same reason as phone_discoverable_at above.
         birdie_ai_consent_at: account.birdie_ai_consent_at ?? null,
+        // Whether the account switched off "Share usage analytics" (migration
+        // 111). A choice the user made, so it is theirs to see.
+        analytics_opt_out: account.analytics_opt_out ?? false,
         created_at: account.created_at,
         updated_at: account.updated_at,
       },

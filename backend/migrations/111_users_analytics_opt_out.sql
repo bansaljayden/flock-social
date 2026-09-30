@@ -1,0 +1,32 @@
+-- 111: whether an account has switched off usage analytics in the app.
+--
+-- ASCII only, like 094 and 100-102: the embedded server the boot-safety suite
+-- runs is WIN1252.
+--
+-- WHY. The app no longer puts an analytics question on screen. Signed-in
+-- product analytics (the screens a person opens and the short list of
+-- hand-written events in frontend/src/services/api.js, tied to the account
+-- number and to nothing else) is part of the service a person agrees to at
+-- signup, and Settings has a switch, "Share usage analytics", that turns it
+-- off. The answer has to belong to the ACCOUNT rather than to the device: the
+-- device-local answer is swept at every sign-out (services/api.js
+-- clearLocalSession), so a "no" kept there was lost on sign-out, on reinstall,
+-- and on every other phone or browser the same person signs in on.
+--
+-- WHO WRITES IT. PUT /api/users/me/analytics (routes/users.js), from the
+-- Settings switch, and once from an app that still holds an explicit "no"
+-- given on that device to the analytics question the app used to ask, which
+-- is how that answer reaches the account.
+--
+-- WHO READS IT. GET /api/users/me/analytics, which the app asks after every
+-- sign-in and at every launch on a stored session, before it sends a single
+-- event. The data export carries it, because it is a choice the user made.
+--
+-- ADDITIVE. ADD COLUMN with a constant default is a catalog change on
+-- PostgreSQL 11 and later: the default is stored once, there is no rewrite and
+-- no scan, and every existing row reads FALSE, which is the default an account
+-- agrees to at signup. A replay is a no-op, and builds that never read the
+-- column are unaffected by it.
+-- @requires column users.analytics_opt_out
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS analytics_opt_out BOOLEAN NOT NULL DEFAULT FALSE;
