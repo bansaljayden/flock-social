@@ -72,6 +72,35 @@ const CHAT_ALLOWED = [
 const chatFilter = new Filter();
 chatFilter.removeWords(...CHAT_ALLOWED);
 
+// ONE COMPILE, NOT ONE PER CALL (2026-09-30). content-checker's isProfane
+// builds a new RegExp for every word on its list, about 715 of them, and
+// searches the exclude list for each one, on every call: 433 µs for a clean
+// chat message, a third of a message send's CPU under load. The screens below
+// run the same test, compiled once after the allow-lists above are applied:
+// for each listed word that is not excluded, `\bword(?:word)*\b` without
+// regard to case, and any hit refuses. Same list, same order, same
+// exclusions, so the same verdict; __tests__/profanityScreenCompiled.test.js
+// holds each screen to the library's own answer over every word on the list.
+// The three filters are never changed after this point, and one that was
+// would need its screen compiled again.
+function compileScreen(f) {
+  // The library asks exclude.includes(word.toLowerCase()), so the entries are
+  // compared as stored (removeWords lowercases them on the way in).
+  const excluded = new Set(f.exclude);
+  const tests = f.list
+    .filter((word) => !excluded.has(word.toLowerCase()))
+    .map((word) => {
+      const cleanWord = word.replace(/(\W)/g, '\\$1');
+      // No `g` flag: a stored global RegExp carries lastIndex from one test()
+      // to the next, and the library's fresh one always started at zero.
+      return new RegExp(`\\b${cleanWord}(?:${cleanWord})*\\b`, 'i');
+    });
+  return (text) => tests.some((re) => re.test(text));
+}
+const screenFull = compileScreen(filter);
+const screenChat = compileScreen(chatFilter);
+const screenProvider = compileScreen(providerFilter);
+
 const TEXT_REJECTED_MESSAGE =
   "That doesn't fit our community guidelines. Rephrase and try again.";
 
@@ -84,7 +113,7 @@ function moderateText(text) {
   if (typeof text !== 'string' || text.trim() === '') {
     return { allowed: true, flagged: false, reason: null };
   }
-  if (filter.isProfane(text)) {
+  if (screenFull(text)) {
     return { allowed: false, flagged: true, reason: 'profanity' };
   }
   return { allowed: true, flagged: false, reason: null };
@@ -98,7 +127,7 @@ function moderateChatText(text) {
   if (typeof text !== 'string' || text.trim() === '') {
     return { allowed: true, flagged: false, reason: null };
   }
-  if (chatFilter.isProfane(text)) {
+  if (screenChat(text)) {
     return { allowed: false, flagged: true, reason: 'profanity' };
   }
   return { allowed: true, flagged: false, reason: null };
@@ -142,7 +171,7 @@ function moderateVenueText(text, placeId) {
   // check, not a lookup: a crafted id of the right shape still passes, which
   // is the residual risk until cards are verified against the details cache.
   const fromProvider = typeof placeId === 'string' && /^[A-Za-z0-9_-]{20,}$/.test(placeId.trim());
-  if ((fromProvider ? providerFilter : filter).isProfane(text)) {
+  if ((fromProvider ? screenProvider : screenFull)(text)) {
     return { allowed: false, flagged: true, reason: 'profanity' };
   }
   return { allowed: true, flagged: false, reason: null };
@@ -1067,6 +1096,7 @@ module.exports = {
 // Exposed for __tests__/safetyFlow.test.js, __tests__/animatedImageModeration.test.js
 // and __tests__/animatedImageScreening.test.js.
 module.exports.__test = {
+  screens: { full: [filter, screenFull], chat: [chatFilter, screenChat], provider: [providerFilter, screenProvider] },
   isPrivateAddress,
   inspectImageFrames,
   IMAGE_MODERATION_REQUIRED,
