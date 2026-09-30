@@ -212,7 +212,8 @@ pool.query = async (text, params = []) => {
       ? { rows: [{ sender_id: 1, receiver_id: 2 }], rowCount: 1 }
       : { rows: [], rowCount: 0 };
   }
-  if (has('FROM direct_messages dm JOIN users u ON u.id = dm.sender_id')) {
+  if (has('JOIN direct_messages dm ON dm.id = page.id JOIN users u ON u.id = dm.sender_id')
+      || has('FROM direct_messages dm JOIN users u ON u.id = dm.sender_id')) {
     return { rows: [], rowCount: 0 };
   }
   if (has('UPDATE direct_messages SET read_status = TRUE')) return { rows: [], rowCount: 0 };
@@ -522,13 +523,16 @@ test('a DM thread is always bound to the caller, never to two ids from the URL',
   assert.deepStrictEqual((await res.json()).messages, []);
   assertQueriesUnderstood();
 
-  const history = queries.find((q) => q.sql.includes('FROM direct_messages dm JOIN users u ON u.id = dm.sender_id'));
+  const history = queries.find((q) => q.sql.includes('JOIN direct_messages dm ON dm.id = page.id JOIN users u ON u.id = dm.sender_id'));
   assert.ok(history, 'no DM history query ran');
-  // $1 is the authenticated caller and both halves of the OR pin it, so there
-  // is no shape of the request that returns a conversation the caller is not in.
+  // $1 is the authenticated caller and each direction's half pins it, so
+  // there is no shape of the request that returns a conversation the caller
+  // is not in.
   assert.strictEqual(history.params[0], 3);
-  assert.match(history.sql, /\(dm\.sender_id = \$1 AND dm\.receiver_id = \$2\)/);
-  assert.match(history.sql, /\(dm\.sender_id = \$2 AND dm\.receiver_id = \$1\)/);
+  assert.match(history.sql, /WHERE sender_id = \$1 AND receiver_id = \$2 /);
+  assert.match(history.sql, /WHERE sender_id = \$2 AND receiver_id = \$1 /);
+  assert.strictEqual((history.sql.match(/FROM direct_messages WHERE/g) || []).length, 2,
+    'two halves, both bound to the pair, and no third read of the table');
 });
 
 // ── Friendships ─────────────────────────────────────────────────────────────
