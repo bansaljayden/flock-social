@@ -55,7 +55,9 @@ test('moderation and friends: a block keeps the decline cooldown, cancel is not 
   // back to Node to scan it. What is pinned is the answer the banned pair
   // still gets, so the call site is identified by its json body — the receipt
   // route calls the same helper and refuses with a 403 instead.
-  assert.match(msgs, /if \(await counterpartyIsBanned\(req\.user\.id, otherUserId\)\) \{\n\s+return res\.json\(\{ messages: \[\], blocked: true \}\);/);
+  // The DM thread asks the block gate and the ban gate together; either one
+  // refusing hides the thread before anything else is read.
+  assert.match(msgs, /isBlockedBetween\(req\.user\.id, otherUserId\),\n\s+counterpartyIsBanned\(req\.user\.id, otherUserId\),\n\s+\]\);\n\s+if \(blocked \|\| counterpartyBanned\) \{\n\s+return res\.json\(\{ messages: \[\], blocked: true \}\);/);
   // And the helper has to READ the ban rather than assume it, or the guard
   // above is a call into a stub that always answers "not banned".
   assert.match(msgs, /async function counterpartyIsBanned\(viewerId, otherUserId\) \{[\s\S]{0,240}SELECT 1 FROM users WHERE id = \$1 AND is_banned IS TRUE/);
