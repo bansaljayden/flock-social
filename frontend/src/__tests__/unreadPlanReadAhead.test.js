@@ -14,6 +14,7 @@
  */
 const fs = require('fs');
 const path = require('path');
+const { liftReaders } = require('../services/flockReaders');
 
 const app = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8').replace(/\r\n/g, '\n');
 
@@ -86,6 +87,7 @@ function readAhead({ flocks, order = flocks.map((f) => f.id), connection = null,
     retractedIdsIn: helpers.retractedIdsIn,
     dropRetractedPins: helpers.dropRetractedPins,
     mergeHistory: helpers.mergeHistory,
+    liftReaders,
     setFlocks: (next) => { state.flocks = typeof next === 'function' ? next(state.flocks) : next; },
     // The open chat's own state. The read-ahead must never reach these.
     setMessagesLoading: () => { state.untouched = false; },

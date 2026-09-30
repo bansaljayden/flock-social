@@ -132,6 +132,7 @@ jest.mock('socket.io-client', () => {
 const socketIoClient = require('socket.io-client');
 const socketApi = require('../services/socket');
 const api = require('../services/api');
+const { liftReaders } = require('../services/flockReaders');
 
 const read = (...p) => fs.readFileSync(path.join(__dirname, '..', ...p), 'utf8').replace(/\r\n/g, '\n');
 const appSource = read('App.js');
@@ -534,6 +535,7 @@ function liftedFlockLoader(flocks = [{ id: 7, messages: [], pins: [] }], { atTop
     dropRetractedPins: H.dropRetractedPins,
     setFlocks: setterOn(state, 'flocks'),
     mergeHistory: H.mergeHistory,
+    liftReaders,
     sendFlockAck: (flockId, id) => state.acks.push([flockId, id]),
   });
   return { state, reads, load, retractionsRef };
@@ -1617,6 +1619,7 @@ describe('a send delivered while its echo was lost never comes back as a failed 
       dropRetractedPins: H.dropRetractedPins,
       setFlocks: commit,
       mergeHistory: H.mergeHistory,
+      liftReaders,
       sendFlockAck: (flockId, id) => state.acks.push([flockId, id]),
     });
     // One history read, answered with these rows.
@@ -1869,6 +1872,7 @@ describe("a send's failure is decided by the newest state, whatever the transpor
       dropRetractedPins: H.dropRetractedPins,
       setFlocks,
       mergeHistory: H.mergeHistory,
+      liftReaders,
       sendFlockAck: () => {},
     });
     const echo = runLifted(`return ${liftListener(appSource, 'const unsub = onNewMessage(')};`, {
@@ -2076,6 +2080,7 @@ function liftedDmLoader(threads, { atTop = {} } = {}) {
     setDmAtTop: setterOn(state, 'atTop'),
     dropRetracted: H.dropRetracted,
     mergeHistory: H.mergeHistory,
+    liftReaders,
     sendDmAck: (userId) => state.acks.push(userId),
   });
   return { state, reads, load };
