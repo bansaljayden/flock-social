@@ -1,6 +1,7 @@
 const express = require('express');
 const { body, param, query, validationResult } = require('express-validator');
 const pool = require('../config/database');
+const { prepared } = require('../db/prepared');
 const { authenticate } = require('../middleware/auth');
 const { stripHtml } = require('../utils/sanitize');
 const { rejectIfProfane, rejectIfProfaneChat, moderateImage, imageRejectionMessage } = require('../utils/moderation');
@@ -253,7 +254,7 @@ const MAX_PINS = 3;
  * instead of two copies of it that drift the next time these filters change.
  */
 async function readFlockPinRows(flockId, invisibleArr) {
-  const result = await pool.query(
+  const result = await pool.query(prepared('flock-pins',
     `SELECT p.id, p.message_id, p.pinned_by, p.created_at,
             m.message_text, m.message_type, m.sender_id,
             u.name AS sender_name
@@ -264,7 +265,7 @@ async function readFlockPinRows(flockId, invisibleArr) {
         AND m.is_hidden IS NOT TRUE
         AND m.sender_deleted_at IS NULL
         AND (m.sender_id IS NULL OR NOT (m.sender_id = ANY($2::int[])))
-      ORDER BY p.created_at ASC, p.id ASC`,
+      ORDER BY p.created_at ASC, p.id ASC`),
     [flockId, invisibleArr]
   );
   return result.rows;

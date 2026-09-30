@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const pool = require('../config/database');
+const { prepared } = require('../db/prepared');
 
 // The ACCESS token's life. It stays short on purpose: it is the bearer
 // credential every request and socket carries, so it is the one a theft
@@ -369,7 +370,7 @@ function makeAuthenticate({ allowBanned = false, allowExpired = false } = {}) {
       // the `is_banned, token_version FROM users WHERE id = $1` substring that
       // the existing test harnesses dispatch on intact.
       const result = await pool.query(
-        'SELECT id, email, name, role, email_verified, is_banned, token_version FROM users WHERE id = $1',
+        prepared('auth-user', 'SELECT id, email, name, role, email_verified, is_banned, token_version FROM users WHERE id = $1'),
         [decoded.userId]
       );
 
