@@ -865,6 +865,7 @@ export default function PrivacyPolicy() {
                 <li><strong>Venue occupancy readings by owners:</strong> kept indefinitely, including retracted and expired ones, because each is a labelled observation the crowd model learns from. They are deleted if the venue account is deleted.</li>
                 <li><strong>Monday venue email send records:</strong> 90 days, then deleted.</li>
                 <li><strong>Crash reports you send:</strong> 90 days, then deleted. A report is not linked to any account, so deleting your account does not change this.</li>
+                <li><strong>Product analytics in PostHog:</strong> one year from each event, on the plan we use today, whether or not the account still exists. Deleting your account does not remove them; see <a href="#deletion">Deleting your account</a> for how to ask.</li>
                 <li><strong>Cached venue photos from Google:</strong> 30 days, then re-fetched.</li>
                 <li><strong>Sensor readings:</strong> kept as venue history. They contain no identifiers. See section 3.</li>
                 <li><strong>Waitlist emails:</strong> kept until you unsubscribe or ask us to delete the address.</li>
@@ -897,6 +898,7 @@ export default function PrivacyPolicy() {
                 <li><strong>A ban tombstone,</strong> but only if the account was banned. A one-way hashed code of the email, phone and sign-in ID, for 12 months, so a banned person cannot sign straight back up.</li>
                 <li><strong>A first-week code,</strong> for any account. A one-way hashed code of the email the account confirmed and its Apple or Google sign-in ID, for 12 months, so that signing up again does not bring back the first week without free-tier limits.</li>
                 <li><strong>One row per finished plan,</strong> with no names, no messages and no individual amounts, as described under <a href="#how-long">How long we keep it</a>.</li>
+                <li><strong>Product analytics already sent to PostHog.</strong> Deleting your account does not reach into PostHog. The screens and events already recorded there stay, tied to an account number that no longer belongs to anyone, until PostHog's retention removes them, one year after each event on the plan we use today. If you want them erased sooner, write to {mail} and we will delete them from PostHog by hand.</li>
                 {/* This lived welded onto the end of the export paragraph below,
                     which made a retention disclosure read as part of "how to get
                     a copy of your data". It is a survival, so it belongs in the
