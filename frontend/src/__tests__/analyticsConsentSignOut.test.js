@@ -266,7 +266,8 @@ describe('the SDK is reset and switched off at every sign-out after a yes', () =
     const body = fn.slice(0, fn.indexOf('\n}'));
     const ask = body.indexOf('withPostHog((posthog) => {');
     expect(ask).toBeGreaterThan(-1);
-    expect(body.slice(ask, ask + 120)).toMatch(/posthog\.reset\(\);\s*\n\s*posthog\.opt_out_capturing\(\);/);
+    // reset(true): a new device id too, so the next person is not linked.
+    expect(body.slice(ask, ask + 400)).toMatch(/posthog\.reset\(true\);\s*\n\s*posthog\.opt_out_capturing\(\);/);
     expect(ask).toBeLessThan(body.indexOf('sweepStore(window.localStorage)'));
     // And the answer is held before the sweep takes it.
     expect(body.indexOf('holdConsentAtSignOut(')).toBeLessThan(body.indexOf('sweepStore(window.localStorage)'));

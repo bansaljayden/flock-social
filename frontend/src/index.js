@@ -168,6 +168,11 @@ export const POSTHOG_PRIVACY_CONFIG = {
   // Exception autocapture can embed thrown-error text, which can quote user
   // content. Sentry owns errors, with the same scrub applied above.
   capture_exceptions: false,
+  // PostHog's own web-vitals and network-timing capture, pinned off here
+  // rather than left to a project setting: the privacy policy promises the
+  // screens a person opens and a short list of hand-written events, and the
+  // app's performance numbers already go through that list (trackWebVital).
+  capture_performance: false,
   disable_surveys: true,
   // The SDK default since v1.167, made explicit because we rely on it:
   // marketing-site visitors never get a person profile, only signed-in users
@@ -408,13 +413,25 @@ function startAccountAnalytics() {
 }
 
 function stopAccountAnalytics() {
-  if (!accountPostHog) return;
+  // NOT STARTED ON THIS PAGE IS NOT THE SAME AS NOTHING ON THE DEVICE. A page
+  // that ran with an explicit website yes left the account's identity in
+  // PostHog's local-storage record; if a later page never starts PostHog (the
+  // account now reads off, or the read failed) and signs out, that record would
+  // otherwise stay, and the next anonymous yes on the website would load it and
+  // send its page view under that account's number.
+  if (!accountPostHog) {
+    clearPostHogStorage();
+    return;
+  }
   accountPostHog = accountPostHog.then((posthog) => {
     try {
       if (posthog) {
         // Forget the account, then turn capture off. Moving to memory first
         // takes an explicit yes's local-storage copy off the device as well.
-        posthog.reset();
+        // reset(true) replaces the device id too: a sign-out does not reload
+        // the page, and a kept $device_id would ride on the next account's
+        // events and link two people who share a phone.
+        posthog.reset(true);
         posthog.set_config({
           persistence: POSTHOG_SIGNED_IN_CONFIG.persistence,
           opt_out_capturing_by_default: true,

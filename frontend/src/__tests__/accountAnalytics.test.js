@@ -312,6 +312,8 @@ describe('stopping writes no record, and the next account starts for itself', ()
 
     await signOut(api);
     expect(mockPosthog.reset).toHaveBeenCalledTimes(1);
+    // A new device id as well: the next account on this phone is not linked.
+    expect(mockPosthog.reset).toHaveBeenCalledWith(true);
     expect(mockPosthog.set_config).toHaveBeenLastCalledWith({ persistence: 'memory', opt_out_capturing_by_default: true });
     expect(mockPosthog.opt_out_capturing).not.toHaveBeenCalled();
 
@@ -349,6 +351,28 @@ describe('stopping writes no record, and the next account starts for itself', ()
   });
 });
 
+describe('a sign-out on a page where PostHog never started', () => {
+  test('still clears what an earlier page left on the device', async () => {
+    // An earlier page ran under a website yes and saved the account in
+    // PostHog's record; this page reads the account as off, so PostHog never
+    // starts here. Signing out must not leave that record for the next
+    // anonymous visitor to load.
+    localStorage.setItem('flock_analytics_consent', 'yes');
+    serverOptOut.set(42, true);
+    const { api } = await boot();
+    await signIn(api, 42);
+    expect(mockPosthog.init).not.toHaveBeenCalled();
+    localStorage.setItem(`ph_${KEY}_posthog`, '{"distinct_id":"42"}');
+    localStorage.setItem('unrelated_key', 'kept');
+
+    await signOut(api);
+
+    expect(localStorage.getItem(`ph_${KEY}_posthog`)).toBeNull();
+    expect(localStorage.getItem('unrelated_key')).toBe('kept');
+    expect(mockPosthog.capture).not.toHaveBeenCalled();
+  });
+});
+
 describe('an explicit yes from the website\'s bar', () => {
   test('keeps the local-storage config it agreed to', async () => {
     localStorage.setItem('flock_analytics_consent', 'yes');
@@ -378,6 +402,8 @@ describe('the Settings switch', () => {
 
     // Before the answer: reset, capture off in memory, PostHog's keys gone.
     expect(mockPosthog.reset).toHaveBeenCalledTimes(1);
+    // A new device id as well: the next account on this phone is not linked.
+    expect(mockPosthog.reset).toHaveBeenCalledWith(true);
     expect(mockPosthog.set_config).toHaveBeenLastCalledWith({ persistence: 'memory', opt_out_capturing_by_default: true });
     expect(localStorage.getItem(`ph_${KEY}_posthog`)).toBeNull();
     api.trackScreenView('home');
@@ -420,6 +446,31 @@ describe('the Settings switch', () => {
     await flushAll();
     expect(mockPosthog.init).not.toHaveBeenCalled();
     expect(mockPosthog.capture).not.toHaveBeenCalled();
+  });
+
+  test('an off that does not save keeps this page off, even when the switch reads on again', async () => {
+    const { api } = await boot();
+    await signIn(api, 42);
+    expect(mockPosthog.identify).toHaveBeenCalledWith('42');
+    clearSdk();
+
+    answers[`PUT ${ANALYTICS}`] = () => Promise.resolve(jsonRes({ error: 'Failed to update the analytics setting' }, 500));
+    await expect(api.setAnalyticsChoice(true)).rejects.toBeTruthy();
+    await flushAll();
+    // The account still says on, and the switch's own fresh read says so.
+    await expect(api.getAnalyticsChoice()).resolves.toEqual({ optOut: false });
+    await flushAll();
+    api.trackScreenView('home');
+    await flushAll();
+    expect(mockPosthog.init).not.toHaveBeenCalled();
+    expect(mockPosthog.identify).not.toHaveBeenCalled();
+    expect(mockPosthog.capture).not.toHaveBeenCalled();
+
+    // An on the server accepts is the way back.
+    delete answers[`PUT ${ANALYTICS}`];
+    await expect(api.setAnalyticsChoice(false)).resolves.toEqual({ optOut: false });
+    await flushAll();
+    expect(mockPosthog.identify).toHaveBeenCalledWith('42');
   });
 
   test('on starts again once the server agrees, in memory, and names the account', async () => {

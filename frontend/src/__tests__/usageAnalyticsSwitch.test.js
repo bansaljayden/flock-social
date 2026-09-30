@@ -164,6 +164,23 @@ test('it is drawn from what the page already knew, then from a fresh read', asyn
   expect(theSwitch().getAttribute('aria-checked')).toBe('true');
 });
 
+test('a read that began before a tap does not draw over it', async () => {
+  // Known off at sign-in; the row's fresh read is slow. The person turns it
+  // on, the server agrees, and only then does the old read answer "off".
+  api.knownAnalyticsChoice.mockReturnValue({ optOut: true });
+  const read = deferred();
+  api.getAnalyticsChoice.mockReturnValue(read.promise);
+  render(React.createElement(ProfileSettings, props()));
+  expect(theSwitch().getAttribute('aria-checked')).toBe('false');
+
+  api.setAnalyticsChoice.mockResolvedValue({ optOut: false });
+  await act(async () => { fireEvent.click(theSwitch()); });
+  expect(theSwitch().getAttribute('aria-checked')).toBe('true');
+
+  await act(async () => { read.resolve({ optOut: true }); });
+  expect(theSwitch().getAttribute('aria-checked')).toBe('true');
+});
+
 test('off calls the endpoint with optOut true, on with optOut false, and the switch follows the server', async () => {
   render(React.createElement(ProfileSettings, props()));
   await waitFor(() => expect(theSwitch().getAttribute('aria-checked')).toBe('true'));
