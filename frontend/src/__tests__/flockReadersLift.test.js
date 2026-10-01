@@ -54,6 +54,17 @@ test('nothing held, or nothing sent, is handled', () => {
   expect(liftReaders([ana(null, undefined)], [ana('4', '2')])).toEqual([ana(4, 2)]);
 });
 
+test('a member who leaves takes their receipts with them, so a rejoin starts from the new row', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8');
+  const at = src.indexOf('const unsub = onFlockMemberLeft((data) => {');
+  expect(at).toBeGreaterThan(-1);
+  const handler = src.slice(at, at + 1500);
+  expect(handler).toMatch(/readers: Array\.isArray\(f\.readers\) \? f\.readers\.filter\(r => Number\(r\.userId\) !== Number\(data\.userId\)\) : f\.readers,/);
+  // With the leaver gone from what the flock holds, the next answer's zero
+  // stands: there is nothing left to lift it onto.
+  expect(liftReaders([ana(0, 0)], [bo(5, 5)])).toEqual([ana(0, 0)]);
+});
+
 test('both history reads in App.js lift the roster onto the one the flock holds', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8');
   const uses = src.match(/readers: liftReaders\(readers, f\.readers\)/g) || [];
