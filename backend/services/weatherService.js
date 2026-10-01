@@ -21,8 +21,14 @@
 //   cheaper vendor and the 30-minute cache absorbs most of the traffic.
 //
 //   DECIDED 2026-08-14: WX_DAILY sits at
-//   950, UNDER OpenWeatherMap's free allowance of 1,000/day, with 50 calls of
-//   headroom for clock skew between our day window and theirs. The old value
+//   950, UNDER what was taken to be OpenWeatherMap's free allowance of
+//   1,000/day, with 50 calls of headroom for clock skew between our day window
+//   and theirs. CORRECTED 2026-09-30: 1,000/day is One Call 3.0's free
+//   allowance, and this file calls the 2.5 /weather and /forecast endpoints,
+//   whose Free plan allows 60 calls a minute and 1,000,000 a month
+//   (openweathermap.org/price), about 33,000 a day. So 950 is far below the
+//   real free ceiling: it costs nothing to keep and can be raised without
+//   reaching billed usage. The old value
 //   was 3000, which was willing to spend past free into billed usage on a plan
 //   nobody had confirmed paying for. Raise it only after confirming a paid
 //   plan on a real invoice. WX_PER_MINUTE stays under the free plan's
