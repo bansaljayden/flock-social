@@ -76,6 +76,17 @@ for (const [name, [lib, screen]] of Object.entries(screens)) {
   });
 }
 
+test('a filter cannot be changed after its screen is compiled', () => {
+  for (const [name, [lib]] of Object.entries(screens)) {
+    const before = lib.list.length;
+    assert.throws(() => lib.addWords('zzqvflocksentinel'), TypeError, `${name}: addWords`);
+    assert.throws(() => lib.removeWords('zzqvflocksentinel'), TypeError, `${name}: removeWords`);
+    assert.throws(() => { 'use strict'; lib.list = []; }, TypeError, `${name}: replacing the list`);
+    assert.strictEqual(lib.list.length, before);
+    assert.strictEqual(lib.isProfane('zzqvflocksentinel'), false);
+  }
+});
+
 test('the three screens still differ where the allow-lists say they do', () => {
   assert.strictEqual(mod.moderateChatText('fuck you lol').allowed, true);
   assert.strictEqual(mod.moderateText('fuck you lol').allowed, false);
