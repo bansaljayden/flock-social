@@ -19,12 +19,24 @@
  * the server has made. The one row that starts over is a member who left and
  * came back, at zero. The member-left event drops the old row from the
  * app, and when that event was missed (the socket was down through a leave
- * and a rejoin) the seat says so: the server sends each row's seatId, a new
- * membership has a new one, and marks are lifted only across the same seat.
- * A row the app holds without a seat (a live event added it, or an older
- * server sent it) is lifted as before.
+ * and a rejoin) the seat says so: the server sends each row's seatId, the
+ * flock_members row id.
+ *
+ * SEATS ARE ORDERED. The id is a SERIAL, and coming back inserts a new row
+ * after the old one was deleted, so a member's later membership always has
+ * the higher seat. So:
+ *   - same seat: lift, the marks of one membership only move forward;
+ *   - the answer's seat is HIGHER: a newer membership, its marks stand;
+ *   - the answer's seat is LOWER: the answer describes the membership before
+ *     the one the app already holds (a live event about the new row landed
+ *     first), so the held row stands;
+ *   - the answer has a seat and the held row has none: nothing proves they
+ *     are one membership, so the answer stands rather than inheriting marks;
+ *   - neither has a seat, or only the held row does (an older server): lift,
+ *     as before seats existed.
  */
 const mark = (v) => Number(v) || 0;
+const seatOf = (row) => (row && row.seatId != null ? Number(row.seatId) || null : null);
 
 export function liftReaders(fresh, held) {
   const list = Array.isArray(fresh) ? fresh : [];
@@ -37,7 +49,19 @@ export function liftReaders(fresh, held) {
   return list.map((r) => {
     const had = known.get(Number(r && r.userId));
     if (!had) return r;
-    if (r.seatId != null && had.seatId != null && Number(r.seatId) !== Number(had.seatId)) return r;
+    const freshSeat = seatOf(r);
+    const heldSeat = seatOf(had);
+    if (freshSeat != null && freshSeat !== heldSeat) {
+      if (heldSeat != null && freshSeat < heldSeat) {
+        return {
+          ...r,
+          seatId: had.seatId,
+          lastDeliveredMessageId: mark(had.lastDeliveredMessageId),
+          lastOpenedMessageId: mark(had.lastOpenedMessageId),
+        };
+      }
+      return r;
+    }
     const delivered = Math.max(mark(r.lastDeliveredMessageId), mark(had.lastDeliveredMessageId));
     const opened = Math.max(mark(r.lastOpenedMessageId), mark(had.lastOpenedMessageId));
     if (delivered === mark(r.lastDeliveredMessageId) && opened === mark(r.lastOpenedMessageId)) return r;

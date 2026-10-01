@@ -11404,6 +11404,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // a receipt that arrives while you are looking updates under your message,
   // and one that arrives while you are elsewhere is already right when you
   // come back.
+  //
+  // Seats this app has watched leave a flock (the flock_members row ids of
+  // members who left). A receipt written just before a leave can be emitted
+  // after the leave reached this app, and it must not put the leaver back in
+  // "Opened by". A member who returns has a new, higher seat, so the set never
+  // stands in their way.
+  const departedSeatsRef = useRef(new Set());
   useEffect(() => {
     // The DM pair is a property of the ROW: two events carrying the exact ids
     // that moved, addressed to the sender's room alone. An empty list is never
@@ -11472,6 +11479,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         const list = Array.isArray(prev[at].readers) ? prev[at].readers : [];
         const seat = list.findIndex((r) => Number(r.userId) === userId);
         if (seat === -1) {
+          if (seatId != null && departedSeatsRef.current.has(seatId)) return prev;
           // Somebody the roster read did not return: a member who joined after
           // it, or a roster query that failed. Recorded with whatever name the
           // event carried, which may be none — a reader with no readable name
@@ -11492,10 +11500,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         }
         const cur = list[seat];
         const name = cur.name || ev.name || null;
-        // A different seat is a different membership: the member left and came
-        // back, and the new row started at zero. Its marks replace the old
-        // ones rather than being measured against them (services/flockReaders.js).
-        if (seatId != null && cur.seatId != null && Number(cur.seatId) !== seatId) {
+        // A different seat is a different membership, and seats are ordered
+        // (services/flockReaders.js): a rejoin always gets the higher one. A
+        // late event about a LOWER seat is about a membership that has
+        // already ended, so it changes nothing. A HIGHER seat, or a seated
+        // event for a row held without one, is a membership these marks
+        // cannot be proven to share, so its marks replace the held ones
+        // rather than being measured against them.
+        const curSeat = Number(cur.seatId) || null;
+        if (seatId != null && seatId !== curSeat) {
+          if (curSeat != null && seatId < curSeat) return prev;
           const readers = list.slice();
           readers[seat] = { ...cur, name, seatId, lastDeliveredMessageId: delivered, lastOpenedMessageId: opened };
           const next = prev.slice();
@@ -11508,11 +11522,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // be a message un-delivering itself.
         const nextDelivered = Math.max(curDelivered, delivered);
         const nextOpened = Math.max(curOpened, opened);
-        const curSeat = cur.seatId != null ? cur.seatId : null;
-        const nextSeat = curSeat != null ? curSeat : seatId;
-        if (nextDelivered === curDelivered && nextOpened === curOpened && name === cur.name && nextSeat === curSeat) return prev;
+        if (nextDelivered === curDelivered && nextOpened === curOpened && name === cur.name) return prev;
         const readers = list.slice();
-        readers[seat] = { ...cur, name, seatId: nextSeat, lastDeliveredMessageId: nextDelivered, lastOpenedMessageId: nextOpened };
+        readers[seat] = { ...cur, name, lastDeliveredMessageId: nextDelivered, lastOpenedMessageId: nextOpened };
         const next = prev.slice();
         next[at] = { ...prev[at], readers };
         return next;
@@ -12561,6 +12573,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // Listen for flock member left
   useEffect(() => {
     const unsub = onFlockMemberLeft((data) => {
+      // The seat that left, so a late receipt about it cannot put them back.
+      const plan = (flocksRef.current || []).find(f => f.id === data.flockId);
+      const leaving = plan && Array.isArray(plan.readers)
+        ? plan.readers.find(r => Number(r.userId) === Number(data.userId))
+        : null;
+      if (leaving && Number(leaving.seatId)) departedSeatsRef.current.add(Number(leaving.seatId));
       setFlocks(prev => prev.map(f => {
         if (f.id !== data.flockId) return f;
         return {

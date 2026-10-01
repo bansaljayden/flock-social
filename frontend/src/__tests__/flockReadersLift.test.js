@@ -72,10 +72,17 @@ test('marks are lifted only across the same seat: a missed leave and a rejoin st
   expect(liftReaders([seat(ana(0, 0), 92)], [seat(ana(40, 40), 41)])).toEqual([seat(ana(0, 0), 92)]);
   // The same membership is lifted as before.
   expect(liftReaders([seat(ana(12, 11), 41)], [seat(ana(12, 12), 41)])).toEqual([seat(ana(12, 12), 41)]);
-  // A row the app holds without a seat (a live event added it) is lifted as before.
-  expect(liftReaders([seat(ana(12, 11), 92)], [ana(12, 12)])).toEqual([seat(ana(12, 12), 92)]);
-  // And an answer from a server that sends no seat.
+  // Seats are ordered: an answer about an OLDER seat than the one held (a
+  // live event about the new membership landed first) leaves the held row
+  // standing, with the answer's other fields.
+  expect(liftReaders([seat({ ...ana(40, 40), name: 'Ana B.' }, 41)], [seat(ana(3, 0), 92)]))
+    .toEqual([seat({ ...ana(3, 0), name: 'Ana B.' }, 92)]);
+  // A seated answer for a row held without a seat: nothing proves they are
+  // one membership, so the answer stands instead of inheriting old marks.
+  expect(liftReaders([seat(ana(0, 0), 92)], [ana(40, 40)])).toEqual([seat(ana(0, 0), 92)]);
+  // An answer from a server that sends no seat lifts as before seats existed.
   expect(liftReaders([ana(12, 11)], [seat(ana(12, 12), 41)])).toEqual([ana(12, 12)]);
+  expect(liftReaders([ana(12, 11)], [ana(12, 12)])).toEqual([ana(12, 12)]);
   // Numeric strings compare as numbers.
   expect(liftReaders([seat(ana(12, 11), '41')], [seat(ana(12, 12), 41)])).toEqual([seat(ana(12, 12), '41')]);
 });
@@ -86,9 +93,19 @@ test('a live flock_read from a new seat replaces the old membership\'s marks ins
   expect(at).toBeGreaterThan(-1);
   const handler = src.slice(at, at + 4000);
   expect(handler).toMatch(/const seatId = Number\(ev\.seatId\) \|\| null;/);
-  expect(handler).toMatch(/if \(seatId != null && cur\.seatId != null && Number\(cur\.seatId\) !== seatId\) \{\s+const readers = list\.slice\(\);\s+readers\[seat\] = \{ \.\.\.cur, name, seatId, lastDeliveredMessageId: delivered, lastOpenedMessageId: opened \};/);
-  // A row the event adds keeps the seat it came with.
+  // A different seat: a LOWER one is a late event about an ended membership
+  // and changes nothing; a higher one (or a seated event for an unseated row)
+  // replaces the marks.
+  expect(handler).toMatch(/const curSeat = Number\(cur\.seatId\) \|\| null;\s+if \(seatId != null && seatId !== curSeat\) \{\s+if \(curSeat != null && seatId < curSeat\) return prev;\s+const readers = list\.slice\(\);\s+readers\[seat\] = \{ \.\.\.cur, name, seatId, lastDeliveredMessageId: delivered, lastOpenedMessageId: opened \};/);
+  // A row the event adds keeps the seat it came with, unless that seat was
+  // seen leaving: a late receipt does not put a leaver back.
+  expect(handler).toMatch(/if \(seat === -1\) \{\s+if \(seatId != null && departedSeatsRef\.current\.has\(seatId\)\) return prev;/);
   expect(handler).toMatch(/lastOpenedMessageId: opened,\s+seatId,\s+\}\],/);
+  // The member-left handler records the seat that left, before it drops the row.
+  const at2 = src.indexOf('const unsub = onFlockMemberLeft((data) => {');
+  expect(src.slice(at2, at2 + 900)).toMatch(/departedSeatsRef\.current\.add\(Number\(leaving\.seatId\)\)/);
+  // And the set is declared before the effect that reads it.
+  expect(src.indexOf('const departedSeatsRef = useRef(new Set());')).toBeLessThan(at);
 });
 
 test('both history reads in App.js lift the roster onto the one the flock holds', () => {
