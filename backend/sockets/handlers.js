@@ -1239,6 +1239,11 @@ function flockReadPayload(flockId, userId, name, row) {
     ...(name ? { name } : {}),
     lastDeliveredMessageId: Number(row.last_delivered_message_id) || 0,
     lastOpenedMessageId: Number(row.last_opened_message_id) || 0,
+    // The membership row these marks belong to, as the history read's roster
+    // carries it (utils/messageStatus.js flockRoster): a member who left and
+    // came back has a new row at zero, and the app must not lift the old
+    // row's marks onto it.
+    seatId: Number(row.seat_id) || null,
   };
 }
 
@@ -1266,7 +1271,7 @@ async function markFlockDelivered(io, flockId, readerId, readerName, upToId) {
         SET last_delivered_message_id = $3
       WHERE flock_id = $1 AND user_id = $2 AND status = 'accepted'
         AND last_delivered_message_id < $3
-      RETURNING last_delivered_message_id, last_opened_message_id`,
+      RETURNING last_delivered_message_id, last_opened_message_id, id AS seat_id`,
     [id, readerId, upTo]
   );
   if (result.rows.length === 0) return false;
@@ -1304,7 +1309,7 @@ async function markFlockOpened(io, flockId, readerId, readerName, upToId) {
         SET last_opened_message_id = GREATEST(last_opened_message_id, $3),
             last_delivered_message_id = GREATEST(last_delivered_message_id, $3)
       WHERE flock_id = $1 AND user_id = $2 AND status = 'accepted'
-      RETURNING last_delivered_message_id, last_opened_message_id`,
+      RETURNING last_delivered_message_id, last_opened_message_id, id AS seat_id`,
     [id, readerId, upTo]
   );
   if (result.rows.length === 0) return null;
@@ -2115,7 +2120,7 @@ function registerHandlers(io, socket) {
                   SET last_delivered_message_id = $3
                 WHERE flock_id = $1 AND user_id = ANY($2::int[]) AND status = 'accepted'
                   AND last_delivered_message_id < $3
-                RETURNING user_id, last_delivered_message_id, last_opened_message_id`,
+                RETURNING user_id, last_delivered_message_id, last_opened_message_id, id AS seat_id`,
               [flockId, online, message.id]
             );
             for (const row of moved.rows) {

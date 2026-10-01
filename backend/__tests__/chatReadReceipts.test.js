@@ -242,6 +242,19 @@ test('each reader carries the membership row its marks belong to', () => {
   assert.match(src, /SELECT fm\.user_id, u\.name, fm\.last_delivered_message_id, fm\.last_opened_message_id,\s+fm\.id AS seat_id\s+FROM flock_members fm/);
 });
 
+test('every live flock_read names the membership row its marks belong to', () => {
+  // The four writers that emit flock_read return the row id beside the two
+  // marks, and the one payload builder carries it as seatId, so the app can
+  // tell a rejoined member's new zero from the old membership's marks.
+  const handlersSrc = fs.readFileSync(path.join(__dirname, '..', 'sockets', 'handlers.js'), 'utf8');
+  const routeSrc = fs.readFileSync(path.join(__dirname, '..', 'routes', 'messages.js'), 'utf8');
+  const returning = (src) => (src.match(/RETURNING (?:user_id, )?last_delivered_message_id, last_opened_message_id(?:, id AS seat_id)?`/g) || []);
+  const all = [...returning(handlersSrc), ...returning(routeSrc)];
+  assert.strictEqual(all.length, 4, 'the four flock_read writers');
+  for (const r of all) assert.match(r, /, id AS seat_id`$/);
+  assert.match(handlersSrc, /function flockReadPayload\(flockId, userId, name, row\) \{[\s\S]{0,700}seatId: Number\(row\.seat_id\) \|\| null,/);
+});
+
 // ═════════════════════════════════════════════════════════════════════════════
 // 3. THE FLOCK HISTORY READ
 // ═════════════════════════════════════════════════════════════════════════════
