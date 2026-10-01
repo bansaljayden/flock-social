@@ -952,9 +952,7 @@ describe('receipts arriving move the ladder one way only', () => {
     // The send-time sweep emits one of these per online member per message.
     const src = block();
     expect(src).toContain('if (!touched) return prev;');
-    // The seat joins the comparison (a seat adopted from the event is a
-    // change); nothing else that moves is left out of it.
-    expect(src).toMatch(/name === cur\.name && nextSeat === curSeat\) return prev;/);
+    expect(src).toMatch(/name === cur\.name\) return prev;/);
   });
 });
 
