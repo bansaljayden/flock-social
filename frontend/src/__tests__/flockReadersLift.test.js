@@ -80,6 +80,17 @@ test('marks are lifted only across the same seat: a missed leave and a rejoin st
   expect(liftReaders([seat(ana(12, 11), '41')], [seat(ana(12, 12), 41)])).toEqual([seat(ana(12, 12), '41')]);
 });
 
+test('a live flock_read from a new seat replaces the old membership\'s marks instead of maxing them', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8');
+  const at = src.indexOf('const unsubFlockRead = onFlockRead((ev) => {');
+  expect(at).toBeGreaterThan(-1);
+  const handler = src.slice(at, at + 4000);
+  expect(handler).toMatch(/const seatId = Number\(ev\.seatId\) \|\| null;/);
+  expect(handler).toMatch(/if \(seatId != null && cur\.seatId != null && Number\(cur\.seatId\) !== seatId\) \{\s+const readers = list\.slice\(\);\s+readers\[seat\] = \{ \.\.\.cur, name, seatId, lastDeliveredMessageId: delivered, lastOpenedMessageId: opened \};/);
+  // A row the event adds keeps the seat it came with.
+  expect(handler).toMatch(/lastOpenedMessageId: opened,\s+seatId,\s+\}\],/);
+});
+
 test('both history reads in App.js lift the roster onto the one the flock holds', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8');
   const uses = src.match(/readers: liftReaders\(readers, f\.readers\)/g) || [];

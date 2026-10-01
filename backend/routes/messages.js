@@ -1258,7 +1258,7 @@ router.post('/flocks/:id/messages',
                   SET last_delivered_message_id = $3
                 WHERE flock_id = $1 AND user_id = ANY($2::int[]) AND status = 'accepted'
                   AND last_delivered_message_id < $3
-                RETURNING user_id, last_delivered_message_id, last_opened_message_id`,
+                RETURNING user_id, last_delivered_message_id, last_opened_message_id, id AS seat_id`,
               [flockId, online, message.id]
             );
             for (const row of moved.rows) {

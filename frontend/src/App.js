@@ -11464,6 +11464,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       if (meRef.current?.id != null && Number(meRef.current.id) === userId) return;
       const delivered = Number(ev.lastDeliveredMessageId) || 0;
       const opened = Number(ev.lastOpenedMessageId) || 0;
+      // Which membership the marks belong to (null from an older server).
+      const seatId = Number(ev.seatId) || null;
       setFlocks((prev) => {
         const at = prev.findIndex((f) => Number(f.id) === flockId);
         if (at === -1) return prev;
@@ -11483,21 +11485,34 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               name: ev.name || null,
               lastDeliveredMessageId: delivered,
               lastOpenedMessageId: opened,
+              seatId,
             }],
           };
           return next;
         }
         const cur = list[seat];
+        const name = cur.name || ev.name || null;
+        // A different seat is a different membership: the member left and came
+        // back, and the new row started at zero. Its marks replace the old
+        // ones rather than being measured against them (services/flockReaders.js).
+        if (seatId != null && cur.seatId != null && Number(cur.seatId) !== seatId) {
+          const readers = list.slice();
+          readers[seat] = { ...cur, name, seatId, lastDeliveredMessageId: delivered, lastOpenedMessageId: opened };
+          const next = prev.slice();
+          next[at] = { ...prev[at], readers };
+          return next;
+        }
         const curDelivered = Number(cur.lastDeliveredMessageId) || 0;
         const curOpened = Number(cur.lastOpenedMessageId) || 0;
-        const name = cur.name || ev.name || null;
         // Forward only, on both marks. A watermark that went backwards would
         // be a message un-delivering itself.
         const nextDelivered = Math.max(curDelivered, delivered);
         const nextOpened = Math.max(curOpened, opened);
-        if (nextDelivered === curDelivered && nextOpened === curOpened && name === cur.name) return prev;
+        const curSeat = cur.seatId != null ? cur.seatId : null;
+        const nextSeat = curSeat != null ? curSeat : seatId;
+        if (nextDelivered === curDelivered && nextOpened === curOpened && name === cur.name && nextSeat === curSeat) return prev;
         const readers = list.slice();
-        readers[seat] = { ...cur, name, lastDeliveredMessageId: nextDelivered, lastOpenedMessageId: nextOpened };
+        readers[seat] = { ...cur, name, seatId: nextSeat, lastDeliveredMessageId: nextDelivered, lastOpenedMessageId: nextOpened };
         const next = prev.slice();
         next[at] = { ...prev[at], readers };
         return next;
