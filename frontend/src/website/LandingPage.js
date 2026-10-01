@@ -46,8 +46,12 @@ const APP_STORE_LIVE = false;
 // inbox (set up 2026-08-12). Outbound stays on Resend.
 const CONTACT_EMAIL = 'social@flockcorp.com';
 
-/* Every destination in the page menu. Same six sections the header used to
-   list inline, all of which exist on this page. */
+/* Every destination in the page menu. The first six are the sections the
+   header used to list inline, all of which exist on this page. The research
+   paper is the one destination off the page, and the menu is the only place
+   it is linked: it is reference reading for the people who go looking, not
+   part of the pitch, so nothing in the scrolling page or the footer points at
+   it. It opens in a new tab so the site stays where the reader left it. */
 const NAV_LINKS = [
   { href: '#how', label: 'How it works' },
   { href: '#try', label: 'Try it live' },
@@ -55,6 +59,7 @@ const NAV_LINKS = [
   { href: '#money', label: 'Money' },
   { href: '#safety', label: 'Safety' },
   { href: '#pricing', label: 'Pricing' },
+  { href: '/research/flock-research-paper.pdf', label: 'Research paper', newTab: true },
 ];
 
 /* The Flock mark: the actual logo (same artwork as the app icon), not a
@@ -456,6 +461,7 @@ export default function LandingPage() {
               key={l.href}
               className={`lp-menu-link${i === NAV_LINKS.length - 1 ? ' is-last' : ''}`}
               href={l.href}
+              {...(l.newTab ? { target: '_blank', rel: 'noopener noreferrer' } : {})}
               onClick={() => setMenuOpen(false)}
             >
               {l.label}
