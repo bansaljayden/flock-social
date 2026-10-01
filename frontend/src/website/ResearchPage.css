@@ -143,3 +143,6 @@
   .rs-findings li { grid-template-columns: minmax(0, 1fr); }
   .rs-row { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* The card already ends on a rule; the first section must not draw a second. */
+.rs-paper + .rs-section { border-top: 0; padding-top: 0; }
