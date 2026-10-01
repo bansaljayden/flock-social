@@ -12552,6 +12552,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           ...f,
           members: (f.members || []).filter(m => m.id !== data.userId),
           memberPreviews: Array.isArray(f.memberPreviews) ? f.memberPreviews.filter(m => m.id !== data.userId) : f.memberPreviews,
+          // Their receipts go with their seat. The server's roster stops
+          // counting a member who left, so "Opened by" here should too; and a
+          // member who comes back starts a new row at zero, which liftReaders
+          // could only honour if the old marks were gone by then.
+          readers: Array.isArray(f.readers) ? f.readers.filter(r => Number(r.userId) !== Number(data.userId)) : f.readers,
           memberCount: Math.max(0, (f.memberCount || 1) - 1),
         };
       }));
