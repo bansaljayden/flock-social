@@ -740,7 +740,8 @@ router.get('/flocks/:id/messages',
 
       const rosterRead = pool.query(
         prepared('flock-history-roster',
-          `SELECT fm.user_id, u.name, fm.last_delivered_message_id, fm.last_opened_message_id
+          `SELECT fm.user_id, u.name, fm.last_delivered_message_id, fm.last_opened_message_id,
+                  fm.id AS seat_id
              FROM flock_members fm
              JOIN users u ON u.id = fm.user_id
             WHERE fm.flock_id = $1 AND fm.status = 'accepted'

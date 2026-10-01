@@ -227,6 +227,21 @@ test('a watermark that arrives as a string still compares as a number', () => {
   assert.strictEqual(messageStatus.flockStatusFor(9, roster).status, 'opened');
 });
 
+test('each reader carries the membership row its marks belong to', () => {
+  // Leaving deletes the flock_members row and coming back inserts a new one
+  // at zero, so the row id is what tells the app an old membership's marks
+  // from a new one's (frontend services/flockReaders.js lifts only across the
+  // same seat). The history read selects it under that name.
+  const [sam] = messageStatus.flockRoster([
+    { user_id: 2, name: 'Sam', last_delivered_message_id: 20, last_opened_message_id: 9, seat_id: '41' },
+  ]);
+  assert.strictEqual(sam.seatId, 41);
+  const [old] = messageStatus.flockRoster([{ user_id: 2, name: 'Sam', last_delivered_message_id: 20 }]);
+  assert.strictEqual(old.seatId, null, 'no seat is null, never 0 or NaN');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'routes', 'messages.js'), 'utf8');
+  assert.match(src, /SELECT fm\.user_id, u\.name, fm\.last_delivered_message_id, fm\.last_opened_message_id,\s+fm\.id AS seat_id\s+FROM flock_members fm/);
+});
+
 // ═════════════════════════════════════════════════════════════════════════════
 // 3. THE FLOCK HISTORY READ
 // ═════════════════════════════════════════════════════════════════════════════

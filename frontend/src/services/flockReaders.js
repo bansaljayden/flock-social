@@ -17,8 +17,12 @@
  * carries a `<` predicate or a GREATEST), and the live handler in App.js
  * already refuses to move one back, so the higher of the two marks is a claim
  * the server has made. The one row that starts over is a member who left and
- * came back, at zero; the higher mark kept here still names only messages
- * that member did open.
+ * came back, at zero. The member-left event drops the old row from the
+ * app, and when that event was missed (the socket was down through a leave
+ * and a rejoin) the seat says so: the server sends each row's seatId, a new
+ * membership has a new one, and marks are lifted only across the same seat.
+ * A row the app holds without a seat (a live event added it, or an older
+ * server sent it) is lifted as before.
  */
 const mark = (v) => Number(v) || 0;
 
@@ -33,6 +37,7 @@ export function liftReaders(fresh, held) {
   return list.map((r) => {
     const had = known.get(Number(r && r.userId));
     if (!had) return r;
+    if (r.seatId != null && had.seatId != null && Number(r.seatId) !== Number(had.seatId)) return r;
     const delivered = Math.max(mark(r.lastDeliveredMessageId), mark(had.lastDeliveredMessageId));
     const opened = Math.max(mark(r.lastOpenedMessageId), mark(had.lastOpenedMessageId));
     if (delivered === mark(r.lastDeliveredMessageId) && opened === mark(r.lastOpenedMessageId)) return r;
