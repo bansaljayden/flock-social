@@ -65,6 +65,21 @@ test('a member who leaves takes their receipts with them, so a rejoin starts fro
   expect(liftReaders([ana(0, 0)], [bo(5, 5)])).toEqual([ana(0, 0)]);
 });
 
+test('marks are lifted only across the same seat: a missed leave and a rejoin start from zero', () => {
+  const seat = (row, seatId) => ({ ...row, seatId });
+  // Ana left and came back while the socket was down: the answer has her new
+  // membership (seat 92) at zero, the app still holds the old one (seat 41).
+  expect(liftReaders([seat(ana(0, 0), 92)], [seat(ana(40, 40), 41)])).toEqual([seat(ana(0, 0), 92)]);
+  // The same membership is lifted as before.
+  expect(liftReaders([seat(ana(12, 11), 41)], [seat(ana(12, 12), 41)])).toEqual([seat(ana(12, 12), 41)]);
+  // A row the app holds without a seat (a live event added it) is lifted as before.
+  expect(liftReaders([seat(ana(12, 11), 92)], [ana(12, 12)])).toEqual([seat(ana(12, 12), 92)]);
+  // And an answer from a server that sends no seat.
+  expect(liftReaders([ana(12, 11)], [seat(ana(12, 12), 41)])).toEqual([ana(12, 12)]);
+  // Numeric strings compare as numbers.
+  expect(liftReaders([seat(ana(12, 11), '41')], [seat(ana(12, 12), 41)])).toEqual([seat(ana(12, 12), '41')]);
+});
+
 test('both history reads in App.js lift the roster onto the one the flock holds', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8');
   const uses = src.match(/readers: liftReaders\(readers, f\.readers\)/g) || [];

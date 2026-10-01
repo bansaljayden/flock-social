@@ -99,6 +99,11 @@ function flockRoster(rows) {
     name: r.name ?? null,
     lastDeliveredMessageId: Number(r.last_delivered_message_id ?? r.lastDeliveredMessageId ?? 0) || 0,
     lastOpenedMessageId: Number(r.last_opened_message_id ?? r.lastOpenedMessageId ?? 0) || 0,
+    // WHICH MEMBERSHIP these marks belong to. Leaving deletes the row and
+    // coming back inserts a new one at zero, so the row id tells the app's
+    // copy of an old membership from the new one: frontend
+    // services/flockReaders.js lifts marks only across the same seat.
+    seatId: Number(r.seat_id ?? r.seatId) || null,
   })).filter((r) => Number.isInteger(r.userId) && r.userId > 0);
 }
 
