@@ -6,9 +6,10 @@ import SiteFooter from './SiteFooter';
 // footer links (--pp-ink-2, 8.14:1 light, 10.12:1 dark).
 const READABLE = { color: 'var(--pp-ink-2)' };
 
-// The paper itself. It lives in public/research/ and is the published copy of
-// the full write-up of both studies summarised below.
-const PAPER_URL = '/research/flock-research-paper.pdf';
+// The paper itself, the full write-up of both studies summarised below. It
+// lives in public/papers/, not public/research/: a folder named like the page
+// makes a static server answer /research with the folder instead of the app.
+const PAPER_URL = '/papers/flock-research-paper.pdf';
 
 // Why the research exists and what it found, in plain words, then the paper.
 // Reached from the landing page's menu only: it is reference reading for the
