@@ -87,7 +87,7 @@ export default function ResearchPage() {
           on a Raspberry Pi 5, and only the count leaves the device.
         </p>
         <p>
-          <strong>Real footage mattered more than a bigger model.</strong>
+          <strong>Real footage mattered more than a bigger model.</strong>{' '}
           Trained only on generated scenes, the counter got 0% of real frames
           exactly right. Mixing in licensed real thermal footage fixed that,
           and making the network wider did not help.
