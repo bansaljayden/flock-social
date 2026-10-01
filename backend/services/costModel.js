@@ -144,7 +144,7 @@ const RATES = {
   // Roost's whole variable cost is this model, so that date is a real event for
   // this business and both rate cards are carried rather than only today's.
   gemini: {
-    checked: '2026-08-20',
+    checked: '2026-09-30',
     source: 'https://ai.google.dev/gemini-api/docs/pricing',
     models: {
       'gemini-3.7-flash': {
@@ -173,7 +173,7 @@ const RATES = {
   // The tier names are Google's and they are decided by the FIELD MASK, not by
   // the endpoint. See the correction in the header.
   places: {
-    checked: '2026-08-20',
+    checked: '2026-09-30',
     source: 'https://developers.google.com/maps/billing-and-pricing/sku-details',
     skus: {
       textSearchEnterprise: { label: 'Text Search (Enterprise fields)', perThousand: 35.00, freePerMonth: 1000 },
@@ -199,7 +199,7 @@ const RATES = {
   // imported from utils/visionBudget.js, which already owns it and already
   // prints it in its own log lines. Two copies of a price is how they drift.
   vision: {
-    checked: '2026-08-20',
+    checked: '2026-09-30',
     source: 'https://cloud.google.com/vision/pricing',
     perThousand: VISION_UNIT_PRICE_USD * 1000,
     freePerMonth: 1000,
@@ -212,7 +212,7 @@ const RATES = {
   // allowance. This is $0 and stays $0 until the call volume grows by a factor
   // of thirty.
   weather: {
-    checked: '2026-08-20',
+    checked: '2026-09-30',
     source: 'https://openweathermap.org/price',
     freePerMonth: 1000000,
     freePerMinute: 60,
@@ -236,7 +236,7 @@ const RATES = {
   // which is the difference between "nowhere near" and "within one more
   // surface of it". A fourth ledger is now a decision rather than an accident.
   ticketmaster: {
-    checked: '2026-08-20',
+    checked: '2026-09-30',
     source: 'https://developer.ticketmaster.com/products-and-docs/apis/getting-started/',
     freePerDay: 5000,
     perCallOverFree: null,
@@ -246,7 +246,7 @@ const RATES = {
   // digest is one email per venue per week, so the daily cap is the binding one
   // and it is not close to binding.
   resend: {
-    checked: '2026-08-20',
+    checked: '2026-09-30',
     source: 'https://resend.com/pricing',
     freePerMonth: 3000,
     freePerDay: 100,
@@ -257,7 +257,7 @@ const RATES = {
   // MapTiler. The frontend's map styles. Metered in SESSIONS (one map load),
   // not tiles.
   maptiler: {
-    checked: '2026-08-20',
+    checked: '2026-09-30',
     source: 'https://www.maptiler.com/cloud/pricing/',
     freeSessionsPerMonth: 5000,
     freeApiRequestsPerMonth: 100000,
@@ -266,7 +266,7 @@ const RATES = {
 
   // PostHog. Product analytics events.
   posthog: {
-    checked: '2026-08-20',
+    checked: '2026-09-30',
     source: 'https://posthog.com/pricing',
     freeEventsPerMonth: 1000000,
     perEventOverFree: 0.00005,
@@ -275,7 +275,7 @@ const RATES = {
   // Sentry. SENTRY_DSN is unset on the Railway service, so nothing is being
   // sent and the free tier is not even being consumed.
   sentry: {
-    checked: '2026-08-20',
+    checked: '2026-09-30',
     source: 'https://sentry.io/pricing/',
     freeErrorsPerMonth: 5000,
     nextTierUsd: 26.00,
@@ -285,7 +285,7 @@ const RATES = {
   // RevenueCat. Free under $2,500 monthly tracked revenue, then 1% of it. The
   // paywall has never been switched on, so tracked revenue is $0.
   revenuecat: {
-    checked: '2026-08-20',
+    checked: '2026-09-30',
     source: 'https://www.revenuecat.com/pricing/',
     freeMonthlyTrackedRevenueUsd: 2500,
     percentOverFree: 1.0,
@@ -307,7 +307,7 @@ const RATES = {
   // Developer Program. The APNs line is a conclusion from an ABSENCE of any
   // published price, which is weaker evidence than a quoted zero.
   push: {
-    checked: '2026-08-20',
+    checked: '2026-09-30',
     source: 'https://firebase.google.com/pricing',
     fcmUsd: 0,
     apnsUsd: 0,
@@ -317,7 +317,7 @@ const RATES = {
   // Store commissions. Not a cost today (nothing is purchasable) but the number
   // that decides what a subscription is actually worth when it is.
   stores: {
-    checked: '2026-08-20',
+    checked: '2026-09-30',
     source: 'https://developer.apple.com/app-store/small-business-program/',
     appleStandardPct: 30,
     appleSmallBusinessPct: 15,
@@ -404,7 +404,7 @@ const FIXED_ANNUAL = [
     usd: 99.00,
     verified: true,
     kind: 'infrastructure',
-    checked: '2026-08-20',
+    checked: '2026-09-30',
     source: 'https://developer.apple.com/support/enrollment/',
     note: 'Also covers APNs, which has no separate price.',
   },
@@ -796,7 +796,7 @@ const DEPENDENCIES = [
     unknownCost: true,
     unknownAction: 'CARTO\'s basemap terms of 2026-09-29 require a CARTO-issued key for every use, allow a visible watermark on unkeyed tiles, and cap commercial free use at 1,000,000 tile requests a month (carto.com basemap terms). Production builds set the MapTiler key and never load these, so only keyless builds do (local, contributors, the e2e stack); a production build that lost its MapTiler key would be outside the terms.',
     source: 'https://carto.com/basemaps',
-    checked: '2026-08-20',
+    checked: '2026-09-30',
   },
 
   // -- Fixed. The bill arrives whether anybody opens the app or not. ---------
@@ -1032,7 +1032,7 @@ const DEPENDENCIES = [
     usageNote: null,
     costsNothingBecause: 'Google Identity Services publishes no price for sign-in.',
     source: 'https://developers.google.com/identity/gsi/web/guides/overview',
-    checked: '2026-08-20',
+    checked: '2026-09-30',
   },
   {
     id: 'apple-sign-in',
@@ -1046,7 +1046,7 @@ const DEPENDENCIES = [
     usageNote: null,
     costsNothingBecause: 'Included with the Apple Developer Program, which is already on the fixed list.',
     source: 'https://developer.apple.com/sign-in-with-apple/',
-    checked: '2026-08-20',
+    checked: '2026-09-30',
   },
   {
     id: 'dicebear',
@@ -1062,7 +1062,7 @@ const DEPENDENCIES = [
     usageNote: 'Requests go straight from the browser and are counted nowhere.',
     costsNothingBecause: 'No account and no key, but the hosted API is free only for non-commercial use, so this is a licence exposure rather than a bill: see the watchlist line.',
     source: 'https://www.dicebear.com/',
-    checked: '2026-08-20',
+    checked: '2026-09-30',
   },
   {
     id: 'venmo-cashapp',
@@ -1077,7 +1077,7 @@ const DEPENDENCIES = [
     usageNote: null,
     costsNothingBecause: 'There is no integration to charge for. Flock builds a URL and opens it.',
     source: 'https://venmo.com/',
-    checked: '2026-08-20',
+    checked: '2026-09-30',
   },
   {
     id: 'apple-commission',
@@ -1133,7 +1133,7 @@ const DEPENDENCIES = [
     usageNote: null,
     costsNothingBecause: 'No server code reads the key and nothing schedules the scripts, so it generates no calls.',
     source: 'https://platform.seatgeek.com/',
-    checked: '2026-08-20',
+    checked: '2026-09-30',
   },
   {
     id: 'besttime-subscription',
@@ -1148,7 +1148,7 @@ const DEPENDENCIES = [
   },
 ];
 
-const DEPENDENCIES_CHECKED = '2026-08-20';
+const DEPENDENCIES_CHECKED = '2026-09-30';
 
 // ---------------------------------------------------------------------------
 // Pricing helpers
