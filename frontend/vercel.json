@@ -100,6 +100,13 @@
       ]
     },
     {
+      "source": "/research",
+      "headers": [
+        { "key": "Link", "value": "<https://www.flockcorp.com/research>; rel=\"canonical\"" },
+        { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }
+      ]
+    },
+    {
       "source": "/support",
       "headers": [
         { "key": "Link", "value": "<https://www.flockcorp.com/support>; rel=\"canonical\"" },
