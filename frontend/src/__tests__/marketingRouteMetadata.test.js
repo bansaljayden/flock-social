@@ -58,6 +58,7 @@ const PAGES = [
   { file: 'TermsOfService.js', route: '/terms', title: 'Terms of Service and EULA | Flock' },
   { file: 'CommunityGuidelines.js', route: '/guidelines', title: 'Community Guidelines | Flock' },
   { file: 'DeleteAccount.js', route: '/delete-account', title: 'Delete your account | Flock' },
+  { file: 'ResearchPage.js', route: '/research', title: 'Research: forecasting and counting crowds | Flock' },
 ];
 
 const load = (file) => {

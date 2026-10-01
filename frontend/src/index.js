@@ -923,6 +923,14 @@ const PAGES = [
       : () => import('./website/AboutPage'),
     Loading: PaperLoading,
   },
+  {
+    // What the research found, in plain words, and the paper. Linked from the
+    // landing page's menu only.
+    id: 'research',
+    test: (p) => p === '/research',
+    load: () => import('./website/ResearchPage'),
+    Loading: PaperLoading,
+  },
   // Flock Pro on the web. WEB ONLY: inside the native shell this route does
   // not match, so the WebView falls through to the app like any other path.
   // Apple does not allow the app to point at a web price outside the US, and
