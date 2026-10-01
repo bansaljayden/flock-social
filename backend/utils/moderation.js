@@ -100,6 +100,15 @@ function compileScreen(f) {
 const screenFull = compileScreen(filter);
 const screenChat = compileScreen(chatFilter);
 const screenProvider = compileScreen(providerFilter);
+// Enforced, not only stated: a screen is a snapshot of its filter, and the
+// library's addWords or removeWords would change the filter without changing
+// the screen, so the two would disagree from then on (`filter` is exported).
+// Frozen, either call throws instead.
+for (const f of [filter, chatFilter, providerFilter]) {
+  Object.freeze(f.list);
+  Object.freeze(f.exclude);
+  Object.freeze(f);
+}
 
 const TEXT_REJECTED_MESSAGE =
   "That doesn't fit our community guidelines. Rephrase and try again.";
