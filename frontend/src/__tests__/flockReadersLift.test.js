@@ -96,10 +96,12 @@ test('a live flock_read from a new seat replaces the old membership\'s marks ins
   // A different seat: a LOWER one is a late event about an ended membership
   // and changes nothing; a higher one (or a seated event for an unseated row)
   // replaces the marks.
-  expect(handler).toMatch(/const curSeat = Number\(cur\.seatId\) \|\| null;\s+if \(seatId != null && seatId !== curSeat\) \{\s+if \(curSeat != null && seatId < curSeat\) return prev;\s+const readers = list\.slice\(\);\s+readers\[seat\] = \{ \.\.\.cur, name, seatId, lastDeliveredMessageId: delivered, lastOpenedMessageId: opened \};/);
+  expect(handler).toMatch(/if \(seatId != null && seatId !== curSeat\) \{\s+if \(curSeat != null && seatId < curSeat\) return prev;\s+const readers = list\.slice\(\);\s+readers\[seat\] = \{ \.\.\.cur, name, seatId, lastDeliveredMessageId: delivered, lastOpenedMessageId: opened \};/);
   // A row the event adds keeps the seat it came with, unless that seat was
   // seen leaving: a late receipt does not put a leaver back.
-  expect(handler).toMatch(/if \(seat === -1\) \{\s+if \(seatId != null && departedSeatsRef\.current\.has\(seatId\)\) return prev;/);
+  expect(handler).toMatch(/if \(seatId == null \|\| departedSeatsRef\.current\.has\(seatId\)\) return prev;/);
+  // A seatless event cannot be ordered against a seated row.
+  expect(handler).toMatch(/if \(seatId == null && curSeat != null\) return prev;\s+if \(seatId != null && seatId !== curSeat\) \{/);
   expect(handler).toMatch(/lastOpenedMessageId: opened,\s+seatId,\s+\}\],/);
   // The member-left handler records the seat that left, before it drops the row.
   const at2 = src.indexOf('const unsub = onFlockMemberLeft((data) => {');

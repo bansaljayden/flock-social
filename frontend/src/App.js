@@ -11479,7 +11479,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         const list = Array.isArray(prev[at].readers) ? prev[at].readers : [];
         const seat = list.findIndex((r) => Number(r.userId) === userId);
         if (seat === -1) {
-          if (seatId != null && departedSeatsRef.current.has(seatId)) return prev;
+          // Only a seated event can add somebody. Every server that sends
+          // flock_read now names the seat; one without it (an older instance
+          // during a deploy) cannot show its member still holds a seat, and
+          // the next seated event or history read brings them in. A seat this
+          // app watched leave is not let back in by a late event about it.
+          if (seatId == null || departedSeatsRef.current.has(seatId)) return prev;
           // Somebody the roster read did not return: a member who joined after
           // it, or a roster query that failed. Recorded with whatever name the
           // event carried, which may be none — a reader with no readable name
@@ -11508,6 +11513,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // cannot be proven to share, so its marks replace the held ones
         // rather than being measured against them.
         const curSeat = Number(cur.seatId) || null;
+        // A seatless event cannot be ordered against a seated row: it may be
+        // about the membership before this one. It changes nothing.
+        if (seatId == null && curSeat != null) return prev;
         if (seatId != null && seatId !== curSeat) {
           if (curSeat != null && seatId < curSeat) return prev;
           const readers = list.slice();
