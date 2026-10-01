@@ -56,7 +56,10 @@
 // Places (New) request at the tier of the most expensive field in the mask, and
 // all four of those are ENTERPRISE fields, not Pro. So Text Search bills at $35
 // per 1,000 rather than the Pro $32, Place Details at $20 rather than $17, and
-// the free monthly allowance for each is 1,000 calls rather than 5,000.
+// the free monthly allowance for each is 1,000 calls rather than 5,000. Place
+// Details asks for two more Enterprise fields besides those four,
+// nationalPhoneNumber and websiteUri (services/placeDetailsCache.js), so it
+// reaches the Pro price only if those go too.
 //
 // WHERE THE MONEY ACTUALLY IS, because the rate delta is the small half. Pro
 // saves $3 per 1,000 on either SKU — 9% of Text Search, 15% of Place Details.
@@ -184,7 +187,9 @@ const RATES = {
       nearbySearchEnterprise: { label: 'Nearby Search (Enterprise fields)', perThousand: 35.00, freePerMonth: 1000 },
       photos: { label: 'Place Details Photos', perThousand: 7.00, freePerMonth: 1000 },
       // Carried for the comparison the correction above describes: what the
-      // same two calls would cost if the four Enterprise fields were dropped.
+      // same two calls would cost at the Pro tier. Text Search gets there by
+      // dropping the four Enterprise fields; Place Details also needs
+      // nationalPhoneNumber and websiteUri dropped.
       textSearchPro: { label: 'Text Search (Pro fields)', perThousand: 32.00, freePerMonth: 5000 },
       detailsPro: { label: 'Place Details (Pro fields)', perThousand: 17.00, freePerMonth: 5000 },
     },
@@ -274,7 +279,7 @@ const RATES = {
     source: 'https://sentry.io/pricing/',
     freeErrorsPerMonth: 5000,
     nextTierUsd: 26.00,
-    nextTierNote: 'Team, billed annually. The monthly-billing price is higher and was not confirmed.',
+    nextTierNote: 'Team, billed annually ($312 a year). Billed monthly it is $29 (sentry.io/pricing, read 2026-09-30).',
   },
 
   // RevenueCat. Free under $2,500 monthly tracked revenue, then 1% of it. The
@@ -368,7 +373,7 @@ const FIXED_MONTHLY = [
     kind: 'infrastructure',
     checked: '2026-09-01',
     source: null,
-    note: 'Live recurring cost since 2026-09-01, when collection restarted after a 106-day freeze. Package 100 is a fixed allowance rather than metered: by-id, live and query calls are unlimited on venues already admitted, and the monthly cap governs NEW admissions only. The commitment runs roughly five months, so this line is expected through early 2027 and ends by cancelling the subscription, not by a code change. The puller is a Railway cron on the BESTTIME service running scripts/ml/collectRealtime.js HOURLY at :07 (cron 7 * * * *, verified against the service config 2026-09-06). This note said 02:00 UTC nightly until then, which was the cadence at the 2026-09-01 check and had not been true for days; none of the cost above moves with it, because Package 100 meters new admissions and not calls.',
+    note: 'Live recurring cost since 2026-09-01, when collection restarted after a 106-day freeze. Package 100 is a fixed allowance rather than metered: by-id and live calls are unlimited on venues already admitted, the 100 is the monthly cap on new venue admissions, and the pricing page also caps Venue Filter queries at 200,000 a month and searches by query at 5,000 (besttime.app pricing, read 2026-09-30). The commitment runs roughly five months, so this line is expected through early 2027 and ends by cancelling the subscription, not by a code change. The puller is a Railway cron on the BESTTIME service running scripts/ml/collectRealtime.js HOURLY at :07 (cron 7 * * * *, verified against the service config 2026-09-06). This note said 02:00 UTC nightly until then, which was the cadence at the 2026-09-01 check and had not been true for days; none of the cost above moves with it, because Package 100 meters new admissions and not calls.',
   },
   {
     id: 'sportsdb',
@@ -388,7 +393,7 @@ const FIXED_MONTHLY = [
     kind: 'infrastructure',
     checked: '2026-09-29',
     source: 'https://vercel.com/docs/plans/hobby',
-    note: 'Hobby, which is free: the Vercel billing API has no charges at all for the team (costs_not_found, read 2026-09-29). Hobby is restricted to non-commercial, personal use by Vercel\'s fair use guidelines, and the site sells Flock Pro, so the plan that fits is Pro at $20 a month per developer seat. Moving to it is a purchase, and this line changes to 20 the day it happens.',
+    note: 'Hobby, which is free: the Vercel billing API has no charges at all for the team (costs_not_found, read 2026-09-29). Hobby is restricted to non-commercial, personal use by Vercel\'s fair use guidelines, and the site sells Flock Pro, so the plan that fits is Pro: a $20 monthly platform fee that includes one deploying seat and $20 of usage credit. Moving to it is a purchase, and this line changes to 20 the day it happens.',
   },
 ];
 
@@ -406,12 +411,12 @@ const FIXED_ANNUAL = [
   {
     id: 'domain',
     label: 'flockcorp.com',
-    usd: 11.15,
+    usd: 11.17,
     verified: false,
     kind: 'infrastructure',
     checked: '2026-09-29',
     source: 'https://www.cloudflare.com/products/registrar/',
-    note: 'Registered at Cloudflare Registrar (the .com registry record names Cloudflare, Inc.) on 2026-02-28, renewing 2027-02-28. Cloudflare charges the registry fee at cost: $10.44 a year when this was registered, $11.15 from 2026-11-01 when Verisign\'s wholesale price rises, so the next renewal is $11.15. Not verified because no Cloudflare invoice is on file; set verified from the renewal receipt.',
+    note: 'Registered at Cloudflare Registrar (the .com registry record names Cloudflare, Inc.) on 2026-02-28, renewing 2027-02-28. Cloudflare charges the registry fee at cost: Verisign\'s wholesale price plus ICANN\'s $0.20 fee (raised from $0.18 on 2025-07-01, ICANN FY26 registrar fees), about $10.46 when this was registered and $11.17 from 2026-11-01 when the wholesale price rises to $10.97, so the next renewal is $11.17. Not verified because no Cloudflare invoice is on file; set verified from the renewal receipt.',
   },
 ];
 
@@ -424,7 +429,7 @@ const ONE_TIME = [
     kind: 'infrastructure',
     checked: '2026-08-20',
     source: null,
-    note: 'The original 2026 corpus purchase, spent and finished. That key did die and this ONE_TIME line genuinely cannot grow, but the sentence that used to end it here, that the corpus is frozen, stopped being true on 2026-09-01: a new key on a $119/month Package 100 subscription restarted nightly collection, and that cost is a FIXED_MONTHLY line rather than an extension of this one.',
+    note: 'The original 2026 corpus purchase, spent and finished. That key did die and this ONE_TIME line genuinely cannot grow, but the sentence that used to end it here, that the corpus is frozen, stopped being true on 2026-09-01: a new key on a $119/month Package 100 subscription restarted collection (hourly since 2026-09-06), and that cost is a FIXED_MONTHLY line rather than an extension of this one.',
   },
 ];
 
@@ -505,18 +510,18 @@ const WATCHLIST = [
   {
     id: 'maptiler-satellite',
     label: 'MapTiler map sessions (basemap + satellite)',
-    where: 'frontend/src/App.js, every Discover map load',
+    where: 'frontend/src/components/map/MapLibreMapView.js and frontend/src/website/LiveDemo.js, every Discover map load and every landing-page demo',
     usd: null,
     severity: 'watch',
-    note: 'Free plan is 5,000 map sessions and 100,000 API requests a month; the next tier up is Flex at $30/month, and Flex overages bill automatically. This became the ONLY satellite source on 2026-08-20, when the unkeyed Esri ArcGIS World_Imagery fallback was removed from the satellite style. That fallback was a licence exposure rather than a bill — Esri basemaps are not free for commercial use and Flock has no Esri account — and it was already dead in every shipping build, because Vercel and Codemagic both set REACT_APP_MAPTILER_KEY and the MapTiler branch won whenever it was present. It was removed because the repo is public: a contributor cloning Flock without a key and tapping the satellite toggle was making unlicensed Esri requests from their own address. With no key the toggle is now hidden rather than falling back.',
+    note: 'Free plan is 5,000 map sessions and 100,000 API requests a month, for non-commercial use only, and it does not bill past those limits: it pauses the map until the next month. The next tier up is Flex at $30/month, licensed for commercial use, and Flex overages bill automatically (maptiler.com pricing, read 2026-09-30). This became the ONLY satellite source on 2026-08-20, when the unkeyed Esri ArcGIS World_Imagery fallback was removed from the satellite style. That fallback was a licence exposure rather than a bill — Esri basemaps are not free for commercial use and Flock has no Esri account — and it was already dead in every shipping build, because Vercel and Codemagic both set REACT_APP_MAPTILER_KEY and the MapTiler branch won whenever it was present. It was removed because the repo is public: a contributor cloning Flock without a key and tapping the satellite toggle was making unlicensed Esri requests from their own address. With no key the toggle is now hidden rather than falling back.',
   },
   {
     id: 'carto-basemaps',
     label: 'CARTO basemap tiles',
-    where: 'frontend/src/App.js, the light and dark styles, used whenever REACT_APP_MAPTILER_KEY is unset',
+    where: 'frontend/src/components/map/MapLibreMapView.js and frontend/src/website/LiveDemo.js, the light and dark styles, used whenever REACT_APP_MAPTILER_KEY is unset',
     usd: null,
     severity: 'watch',
-    note: 'Free with attribution and unkeyed, so there is no account to bill. It is the fallback path, which means a missing MapTiler key silently moves the map onto somebody else free tier.',
+    note: 'Unkeyed and attribution-only until 2026-09-29, when CARTO\'s basemap terms began requiring a CARTO-issued key for every use and allowing a visible watermark on unkeyed tiles; commercial free use is capped at 1,000,000 tile requests a month. It is the fallback path, so a missing MapTiler key silently moves the map onto it, now outside its terms.',
   },
   {
     id: 'codemagic',
@@ -524,7 +529,7 @@ const WATCHLIST = [
     where: 'codemagic.yaml, the ios-capacitor workflow on a mac_mini_m2',
     usd: null,
     severity: 'usage',
-    note: 'No trigger block, so it runs only when a build is started by hand. Cost is per build rather than per month, and a build takes on the order of twenty minutes on a premium-billed instance. September 2026 went past the 500 free macOS minutes (506 used, mostly the Apple review-recording runs) and left a $130.15 balance invoiced on Oct 1; that bill is on the expense list, not here, because it follows builds rather than the calendar.',
+    note: 'No trigger block, so it runs only when a build is started by hand. Cost is per build rather than per month, and a build takes on the order of twenty minutes on a premium-billed instance. The billing page on 2026-09-30 showed 506 of the 500 free macOS minutes used (mostly the Apple review-recording runs) and a $130.15 balance invoiced on Oct 1. Six minutes past the allowance would be $0.57 at $0.095, so the balance is not that overage; $130.15 is exactly 1,370 minutes at $0.095, and the Oct 1 invoice is what itemizes it. That bill is on the expense list, not here, because it follows builds rather than the calendar.',
   },
   {
     id: 'github-actions',
@@ -532,7 +537,7 @@ const WATCHLIST = [
     where: '.github/workflows/gitleaks.yml, on every push and pull request',
     usd: 0,
     severity: 'watch',
-    note: 'A short ubuntu-latest job. Free on repositorysitories and inside the free monthly minutes on private ones.',
+    note: 'A short ubuntu-latest job in the deployment source, so it would draw on the 2,000 free minutes a month. It costs nothing today because nothing runs: since 2026-09-05 every run has stopped before starting, on GitHub\'s hold for a failed account payment. The same secret scan runs locally in the pre-commit hook.',
   },
   {
     id: 'seatgeek',
@@ -545,10 +550,10 @@ const WATCHLIST = [
   {
     id: 'dicebear',
     label: 'DiceBear avatars',
-    where: 'frontend/src/App.js, default avatar images',
+    where: 'frontend/src/App.js, the generated-avatar button on the profile photo sheet',
     usd: 0,
     severity: 'watch',
-    note: 'Free hosted tier, unkeyed.',
+    note: 'Unkeyed, and the hosted API is free for NON-COMMERCIAL use only: DiceBear asks commercial users to run their own instance (dicebear.com HTTP API page, read 2026-09-30). Flock sells subscriptions, so the button is outside those terms until avatars are generated locally (the @dicebear npm packages) or the button goes. Version 7.x, which every stored URL names, reaches end of life on 2028-04-30 and those images stop loading then. Two of the five styles the button picks from (adventurer, personas) are CC BY 4.0 and need attribution.',
   },
   {
     id: 'postgres-images',
@@ -556,7 +561,7 @@ const WATCHLIST = [
     where: 'users.profile_image_url, messages.image_url, stories.image_url',
     usd: null,
     severity: 'growth',
-    note: 'Uploads are stored in the database as base64 data URLs rather than on a volume, at up to 600 KB per message image. Railway bills volume at about $0.22 per GB per month, so this is cheap per gigabyte and grows with message volume rather than with user count. It is the first line that will move if the app gets real traffic.',
+    note: 'Uploads are stored in the database as base64 data URLs rather than on a volume, at up to 600 KB per message image. Railway bills volume at $0.15 per GB per month (docs.railway.com pricing, read 2026-09-30), so this is cheap per gigabyte and grows with message volume rather than with user count. It is the first line that will move if the app gets real traffic.',
   },
 ];
 
@@ -764,8 +769,8 @@ const DEPENDENCIES = [
   {
     id: 'maptiler',
     label: 'MapTiler',
-    what: 'The map on Discover, including the only satellite layer the app has.',
-    where: 'frontend/src/App.js',
+    what: 'The map on Discover, including the only satellite layer the app has, and the landing page\'s live demo map.',
+    where: 'frontend/src/components/map/MapLibreMapView.js and frontend/src/website/LiveDemo.js',
     group: 'metered',
     pricing: { type: 'unknown', rateGroup: 'maptiler' },
     configuredEnv: null,
@@ -774,22 +779,22 @@ const DEPENDENCIES = [
     watchlistId: 'maptiler-satellite',
     usageNote: 'Map loads are not counted anywhere in this repo. Nothing here can say how many of the free plan sessions are left.',
     unknownCost: true,
-    unknownAction: 'Open the MapTiler dashboard and read the session count. That is the only place the number exists.',
+    unknownAction: 'Open the MapTiler dashboard and read the session count and the plan; it is the only place either exists. The Free plan is for non-commercial use and pauses the map until the next month once it passes 5,000 sessions or 100,000 requests (maptiler.com pricing, read 2026-09-30). Flock is commercial, so the plan that fits is Flex at $30 a month, which bills extra traffic instead of pausing.',
   },
   {
     id: 'carto',
     label: 'CARTO basemaps',
     what: 'The light and dark map tiles, used whenever no MapTiler key is set.',
-    where: 'frontend/src/App.js',
+    where: 'frontend/src/components/map/MapLibreMapView.js and frontend/src/website/LiveDemo.js',
     group: 'metered',
     pricing: { type: 'unknown' },
     configuredEnv: null,
-    configuredNote: 'Unkeyed. There is no account and nothing to configure.',
+    configuredNote: 'Unkeyed: no account and no key.',
     observedLineId: null,
     watchlistId: 'carto-basemaps',
     usageNote: 'Tiles are pulled straight from the browser and counted nowhere.',
     unknownCost: true,
-    unknownAction: 'There is no dashboard to read, because there is no account. The exposure here is the attribution terms rather than a bill.',
+    unknownAction: 'CARTO\'s basemap terms of 2026-09-29 require a CARTO-issued key for every use, allow a visible watermark on unkeyed tiles, and cap commercial free use at 1,000,000 tile requests a month (carto.com basemap terms). Production builds set the MapTiler key and never load these, so only keyless builds do (local, contributors, the e2e stack); a production build that lost its MapTiler key would be outside the terms.',
     source: 'https://carto.com/basemaps',
     checked: '2026-08-20',
   },
@@ -830,9 +835,9 @@ const DEPENDENCIES = [
     configuredEnv: null,
     configuredNote: 'Set on the Postgres service rather than the app service, so the app cannot read it.',
     observedLineId: null,
-    usageNote: 'Nothing in this repo set it up and nothing here can size it.',
+    usageNote: 'Railway\'s point-in-time recovery set it up, not this repo, and nothing here can size it.',
     unknownCost: true,
-    unknownAction: 'The endpoint comes from the Railway Postgres template, not from anything in this repo, and no separate invoice for it is known. Check the Railway usage page before assuming it is free.',
+    unknownAction: 'The WAL_ARCHIVE_ variables are set by Railway\'s point-in-time recovery, which writes to a bucket it creates named Postgres-PITR. Railway bills it through two meters it already has, bucket storage and the database service\'s network egress, with no separate PITR fee (docs.railway.com, point-in-time recovery, read 2026-09-30), so it sits inside the Railway line above. The usage page shows the bucket\'s share.',
   },
   {
     id: 'vercel',
@@ -1032,7 +1037,7 @@ const DEPENDENCIES = [
   {
     id: 'apple-sign-in',
     label: 'Sign in with Apple',
-    what: 'Required by App Store rules wherever another social login exists.',
+    what: 'App Store Guideline 4.8: an app that offers a third-party social login must also offer an equivalent login that protects privacy. Sign in with Apple is the usual way to meet it, and the way Flock does.',
     where: 'backend/services/appleAuth.js',
     group: 'free',
     pricing: { type: 'free' },
@@ -1046,8 +1051,8 @@ const DEPENDENCIES = [
   {
     id: 'dicebear',
     label: 'DiceBear',
-    what: 'The default avatar for an account with no photo.',
-    where: 'frontend/src/App.js',
+    what: 'The generated avatar a person can pick on the profile photo sheet; the URL is stored on the account.',
+    where: 'frontend/src/App.js (generateAIAvatar), stored in users.profile_image_url',
     group: 'free',
     pricing: { type: 'free' },
     configuredEnv: null,
@@ -1055,7 +1060,7 @@ const DEPENDENCIES = [
     observedLineId: null,
     watchlistId: 'dicebear',
     usageNote: 'Requests go straight from the browser and are counted nowhere.',
-    costsNothingBecause: 'Free hosted tier, no account, no key.',
+    costsNothingBecause: 'No account and no key, but the hosted API is free only for non-commercial use, so this is a licence exposure rather than a bill: see the watchlist line.',
     source: 'https://www.dicebear.com/',
     checked: '2026-08-20',
   },
@@ -1113,7 +1118,7 @@ const DEPENDENCIES = [
     observedLineId: null,
     watchlistId: 'github-actions',
     usageNote: null,
-    costsNothingBecause: 'Free on repositorysitories, and this one is public.',
+    costsNothingBecause: 'Nothing runs. The workflow lives in the deployment source (the public copy ships without .github/workflows), and since 2026-09-05 every run has stopped before starting on GitHub\'s failed-payment hold. The same scan runs locally in the pre-commit hook.',
   },
   {
     id: 'seatgeek',
@@ -1133,7 +1138,7 @@ const DEPENDENCIES = [
   {
     id: 'besttime-subscription',
     label: 'BestTime.app Pro, Package 100',
-    what: 'The live subscription feeding the hourly collection. A fixed allowance rather than a meter, so the monthly cap governs new venue admissions and ordinary by-id, live and query calls on admitted venues are unlimited. The Venue Filter harvest (scripts/ml/harvestVenueFilter.js) runs on those unlimited query calls and spends no admissions.',
+    what: 'The live subscription feeding the hourly collection. A fixed allowance rather than a meter: the monthly cap governs new venue admissions, by-id and live calls on admitted venues are unlimited, and Venue Filter queries are capped at 200,000 a month. The Venue Filter harvest (scripts/ml/harvestVenueFilter.js) runs on that filter allowance, about 3,200 queries for a whole city, and spends no admissions.',
     where: 'backend/scripts/ml/collectRealtime.js, run hourly at :07 by the Railway BESTTIME cron (7 * * * *)',
     group: 'fixed',
     fixedId: 'besttime-subscription',
