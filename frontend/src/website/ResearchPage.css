@@ -1,0 +1,145 @@
+/* /research. Rides on PrivacyPolicy.css (the .pp page, its tokens, h1/h2/p
+   sizes and dark mode) and adds three things: the paper card, the findings
+   as a ruled list led by their numbers, and two plain bar charts drawn in
+   HTML so they stay sharp on a phone and follow the theme. Design rules
+   (DESIGN-STANDARD): ruled layouts, type carries it, no gradients, no badges, no
+   reveal animations. */
+
+.rs-paper {
+  display: grid;
+  grid-template-columns: 148px minmax(0, 1fr);
+  gap: clamp(18px, 3vw, 28px);
+  align-items: center;
+  max-width: var(--pp-measure);
+  border-top: 1px solid var(--pp-rule);
+  border-bottom: 1px solid var(--pp-rule);
+  padding: clamp(18px, 3vw, 24px) 0;
+  margin: 0 0 clamp(32px, 5vw, 48px);
+}
+.rs-paper-thumb {
+  display: block;
+  border: 0 !important;
+  line-height: 0;
+}
+.rs-paper-thumb img {
+  width: 148px;
+  height: auto;
+  display: block;
+  background: #fff;
+  border: 1px solid var(--pp-rule);
+}
+.rs-paper-kicker {
+  font-size: 13px !important;
+  font-weight: 600;
+  color: var(--pp-ink-3) !important;
+  margin: 0 0 6px !important;
+}
+.rs-paper-title {
+  font-size: clamp(17px, 2.2vw, 20px) !important;
+  font-weight: 700;
+  line-height: 1.3;
+  color: var(--pp-ink) !important;
+  margin: 0 0 6px !important;
+  text-wrap: balance;
+}
+.rs-paper-by {
+  font-size: 14px !important;
+  color: var(--pp-ink-3) !important;
+  margin: 0 0 14px !important;
+}
+.pp a.rs-paper-link {
+  display: inline-block;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--pp-paper);
+  background: var(--pp-ink);
+  border: 0;
+  border-radius: 10px;
+  padding: 10px 16px;
+  text-decoration: none;
+}
+.pp a.rs-paper-link:hover { background: var(--pp-accent); color: var(--pp-paper); }
+
+/* Sections: the About page's spacing, with a rule between them. */
+.rs-section {
+  max-width: var(--pp-measure);
+  border-top: 1px solid var(--pp-rule-soft);
+  padding-top: clamp(26px, 4vw, 36px);
+  margin-bottom: clamp(26px, 4vw, 36px);
+}
+
+/* The findings: number on the left, what it means on the right. */
+.rs-findings {
+  list-style: none;
+  padding: 0 !important;
+  margin: 6px 0 0 !important;
+}
+.rs-findings li {
+  display: grid;
+  grid-template-columns: 9.5rem minmax(0, 1fr);
+  gap: 4px 20px;
+  align-items: baseline;
+  padding: 16px 0;
+  margin: 0 !important;
+  border-top: 1px solid var(--pp-rule-soft);
+}
+.rs-findings li:last-child { border-bottom: 1px solid var(--pp-rule-soft); }
+.rs-findings li::marker { content: none; }
+.rs-big {
+  font-size: clamp(28px, 4vw, 36px);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  color: var(--pp-ink);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.rs-findings p { margin: 0 !important; }
+.rs-findings .rs-src {
+  font-size: 13.5px;
+  color: var(--pp-ink-3);
+  margin-top: 4px !important;
+}
+
+/* Bar charts. Every value is printed as text beside its bar; the bars are
+   decoration (aria-hidden) and carry no information the text does not. */
+.rs-chart {
+  margin: 26px 0 8px;
+}
+.rs-chart h3 { margin: 0 0 4px; }
+.rs-chart-key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  font-size: 13px;
+  color: var(--pp-ink-3);
+  margin: 0 0 12px !important;
+}
+.rs-chart-key span { display: inline-flex; align-items: center; gap: 7px; }
+.rs-sw { width: 12px; height: 12px; display: inline-block; }
+.rs-sw.us { background: var(--pp-ink); }
+.rs-sw.them { background: var(--pp-ink-3); opacity: .45; }
+.rs-rows { display: grid; gap: 12px; }
+.rs-row {
+  display: grid;
+  grid-template-columns: minmax(0, 11rem) minmax(0, 1fr);
+  gap: 4px 16px;
+  align-items: center;
+}
+.rs-row-label { font-size: 14px; line-height: 1.3; color: var(--pp-ink); }
+.rs-row-label small { display: block; font-size: 12.5px; color: var(--pp-ink-3); }
+.rs-bars { display: grid; gap: 4px; }
+.rs-bar { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.rs-fill { height: 12px; flex: none; }
+.rs-fill.us { background: var(--pp-ink); }
+.rs-fill.them { background: var(--pp-ink-3); opacity: .45; height: 9px; }
+.rs-val { font-size: 13px; color: var(--pp-ink-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rs-bar.us .rs-val { color: var(--pp-ink); font-weight: 700; }
+.rs-note { font-size: 13.5px !important; color: var(--pp-ink-3) !important; margin-top: 10px !important; }
+
+@media (max-width: 560px) {
+  .rs-paper { grid-template-columns: 96px minmax(0, 1fr); align-items: start; }
+  .rs-paper-thumb img { width: 96px; }
+  .rs-findings li { grid-template-columns: minmax(0, 1fr); }
+  .rs-row { grid-template-columns: minmax(0, 1fr); }
+}
