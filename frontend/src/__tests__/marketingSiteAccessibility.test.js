@@ -603,6 +603,43 @@ describe('LandingPage motion', () => {
     expect(css).not.toMatch(/\.lp-reveal/);
     expect(readJs('LandingPage.js')).not.toMatch(/lp-reveal|is-revealed/);
   });
+
+  describe('the arrival, menu and link motion', () => {
+    const start = css.indexOf('/* ============ motion: arrival, menu, links ============ */');
+    const motion = css.slice(start);
+    const optIn = motion.slice(motion.indexOf('@media (prefers-reduced-motion: no-preference) {'));
+    const keyframe = (name) => {
+      const at = motion.indexOf(`@keyframes ${name} {`);
+      return at < 0 ? '' : motion.slice(at, motion.indexOf('\n}', at));
+    };
+
+    test('every rule that moves anything is opt-in on no-preference, so "reduce" gets none of it', () => {
+      expect(start).toBeGreaterThan(-1);
+      expect(optIn.length).toBeGreaterThan(0);
+      // Each animated selector and the smooth scroll live inside the opt-in block,
+      // never outside it where reduced motion would still play them.
+      const outside = motion.slice(0, motion.indexOf('@media (prefers-reduced-motion: no-preference) {'));
+      expect(outside).not.toMatch(/animation:|scroll-behavior:/);
+      for (const rule of ['scroll-behavior: smooth', 'lp-rise', 'lp-draw', 'lp-plate', 'lp-row']) {
+        expect(optIn).toContain(rule);
+      }
+    });
+
+    test('the hero plate never starts invisible: it is the largest paint, and opacity 0 would push that back', () => {
+      const plate = keyframe('lp-plate');
+      expect(plate).toMatch(/from \{ opacity: 0\.35;/);
+      expect(plate).not.toMatch(/opacity: 0;/);
+    });
+
+    test('the menu rows animate only while the menu is open, which is a tap, never a scroll', () => {
+      expect(optIn).toMatch(/\.lp-menu\.is-open \.lp-menu-link,\s*\.lp-menu\.is-open \.lp-menu-cta \{\s*animation: lp-row/);
+      expect(optIn).not.toMatch(/(^|[\s,])\.lp-menu-link \{[^}]*animation/);
+    });
+
+    test('nothing in the motion block waits on a script or a scroll position', () => {
+      expect(motion).not.toMatch(/is-visible|is-revealed|in-view|data-reveal/);
+    });
+  });
 });
 
 // ───────────────────────────────────────────────────────────────────────────
