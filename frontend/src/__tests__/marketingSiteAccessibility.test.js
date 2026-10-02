@@ -525,6 +525,10 @@ describe('LandingPage structure and keyboard operation', () => {
       act(() => { listeners[0]({ matches: true }); });
       expect(btn.getAttribute('aria-expanded')).toBe('false');
       expect(document.documentElement.style.overflow).toBe('');
+      // Focus goes to the bar's first section link, the control that replaced
+      // the now-hidden button, rather than to the button, where it would fall
+      // through to the body.
+      expect(document.activeElement).toBe(container.querySelector('.lp-nav-links a'));
       // Closed, the listener is gone with the effect that added it.
       expect(listeners.length).toBe(0);
     } finally {
