@@ -1763,17 +1763,24 @@ html:has(.lp) body { overflow-x: clip; }
    ships blank whenever the handler does not fire. Nothing here waits on
    scroll, and nothing here needs JavaScript.
 
-   1. The hero arrives once, on load. It is pure CSS, so it always plays, and
-      `both` fill means the resting state is the element's own style: a
-      browser that skips the animation shows the finished page, never a blank
-      one. The headline lands first, its second line a beat later, then the
-      rule draws under it and the copy settles.
-   2. The phone plate rises with the headline but never starts invisible: it is
-      the page's largest paint (408 ms on the live site, 2026-10-02), and an
-      element at opacity 0 does not count as painted, so a fade from zero
-      would push that measurement back by the length of the fade.
-   3. The menu's rows follow the panel in when it opens. That runs on a tap,
-      never on scroll, and the rows are where they always are once it ends.
+   1. The hero arrives once, on load, in CSS: the headline settles first, its
+      second line a beat later, then the rule draws under it and the copy
+      settles. TRANSFORM ONLY, NO OPACITY, for the reason PrivacyPolicy.css
+      gives at its own entrance: `both` fill holds the `from` frame for as
+      long as an animation sits at time zero, so anything that applies it
+      without advancing it (an extension or user style pausing animations, a
+      print, a backgrounded tab painted before its timeline moves) would hold
+      the headline, the hero buttons and the menu's links at opacity 0. The
+      first version here did fade from 0, and its comment claimed the opposite
+      until a review caught it (2026-10-02). Held at time zero now, text is
+      fully opaque and at most 14px low; the rule under the headline, which is
+      decoration, is the only thing that can be held undrawn.
+   2. The phone plate rises with the headline, also without a fade. It is the
+      page's largest paint (408 ms on the live site, 2026-10-02), and an
+      element at opacity 0 does not count as painted.
+   3. The menu's rows rise into place, staggered, while the panel itself fades
+      in. That runs on a tap, never on scroll, and like the hero it moves them
+      without hiding them.
    4. Footer links underline from below on hover, and in-page links (the menu,
       "See how it works", the skip link) glide instead of jumping.
 
@@ -1879,18 +1886,18 @@ html:has(.lp) body { overflow-x: clip; }
 }
 
 @keyframes lp-rise {
-  from { opacity: 0; transform: translateY(14px); }
-  to { opacity: 1; transform: none; }
+  from { transform: translateY(14px); }
+  to { transform: none; }
 }
 @keyframes lp-draw {
   from { transform: scaleX(0); }
   to { transform: none; }
 }
 @keyframes lp-plate {
-  from { opacity: 0.35; transform: translateY(22px); }
-  to { opacity: 1; transform: none; }
+  from { transform: translateY(22px); }
+  to { transform: none; }
 }
 @keyframes lp-row {
-  from { opacity: 0; transform: translateY(10px); }
-  to { opacity: 1; transform: none; }
+  from { transform: translateY(10px); }
+  to { transform: none; }
 }

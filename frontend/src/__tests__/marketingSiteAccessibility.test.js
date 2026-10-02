@@ -497,6 +497,41 @@ describe('LandingPage structure and keyboard operation', () => {
     expect(root.style.overflow).toBe('');
   });
 
+  test('an open menu closes when the screen widens to where the menu button is hidden', () => {
+    // From 1200px the bar carries the links and the button is display: none.
+    // A tablet rotated to landscape with the menu open used to keep a
+    // full-screen panel with no X, a locked page, and a Tab trap cycling onto
+    // a button that could not take focus.
+    const listeners = [];
+    const original = window.matchMedia;
+    window.matchMedia = (q) => ({
+      media: q,
+      matches: false,
+      addEventListener: (type, fn) => { if (q === '(min-width: 1200px)') listeners.push(fn); },
+      removeEventListener: (type, fn) => {
+        const i = listeners.indexOf(fn);
+        if (i >= 0) listeners.splice(i, 1);
+      },
+      addListener: () => {},
+      removeListener: () => {},
+    });
+    try {
+      const { container } = render(React.createElement(LandingPage));
+      const btn = container.querySelector('.lp-menu-btn');
+      fireEvent.click(btn);
+      expect(btn.getAttribute('aria-expanded')).toBe('true');
+      expect(listeners.length).toBe(1);
+
+      act(() => { listeners[0]({ matches: true }); });
+      expect(btn.getAttribute('aria-expanded')).toBe('false');
+      expect(document.documentElement.style.overflow).toBe('');
+      // Closed, the listener is gone with the effect that added it.
+      expect(listeners.length).toBe(0);
+    } finally {
+      window.matchMedia = original;
+    }
+  });
+
   test('the page behind the open menu is inert, so a virtual cursor cannot walk into it', () => {
     const { container } = render(React.createElement(LandingPage));
     const main = container.querySelector('main');
@@ -626,10 +661,16 @@ describe('LandingPage motion', () => {
       }
     });
 
-    test('the hero plate never starts invisible: it is the largest paint, and opacity 0 would push that back', () => {
-      const plate = keyframe('lp-plate');
-      expect(plate).toMatch(/from \{ opacity: 0\.35;/);
-      expect(plate).not.toMatch(/opacity: 0;/);
+    test('entrances move content, never hide it: no opacity in any keyframe that carries text or the hero plate', () => {
+      // Held at time zero (a paused-animation extension, a print, a tab painted
+      // before its timeline moves), `both` fill shows the `from` frame. An
+      // opacity there would leave the headline, the hero buttons or the menu's
+      // links invisible; PrivacyPolicy.css documents the same rule.
+      for (const name of ['lp-rise', 'lp-plate', 'lp-row']) {
+        const frames = keyframe(name);
+        expect(frames.length).toBeGreaterThan(0);
+        expect(frames).not.toMatch(/opacity/);
+      }
     });
 
     test('the menu rows animate only while the menu is open, which is a tap, never a scroll', () => {
