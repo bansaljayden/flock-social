@@ -58,7 +58,9 @@ const PAGES = [
   { file: 'TermsOfService.js', route: '/terms', title: 'Terms of Service and EULA | Flock' },
   { file: 'CommunityGuidelines.js', route: '/guidelines', title: 'Community Guidelines | Flock' },
   { file: 'DeleteAccount.js', route: '/delete-account', title: 'Delete your account | Flock' },
-  { file: 'ResearchPage.js', route: '/research', title: 'Research: forecasting and counting crowds | Flock' },
+  // /research is set on the landing page's stylesheet, so its way home is the
+  // wordmark in the top bar (.lp-brand) rather than the paper pages' back link.
+  { file: 'ResearchPage.js', route: '/research', title: 'Research: forecasting and counting crowds | Flock', back: '.lp-brand' },
 ];
 
 const load = (file) => {
@@ -184,9 +186,9 @@ describe('the pages link to the canonical homepage', () => {
   });
 
   test('the back link on every subpage resolves to /', () => {
-    for (const { file } of PAGES) {
+    for (const { file, back: backSelector = '.pp-back' } of PAGES) {
       const { container, unmount } = mount(file);
-      const back = container.querySelector('.pp-back');
+      const back = container.querySelector(backSelector);
       expect(back).not.toBeNull();
       expect(back.getAttribute('href')).toBe('/');
       unmount();
