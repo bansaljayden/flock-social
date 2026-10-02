@@ -270,6 +270,11 @@
       ],
       "destination": "/landing",
       "permanent": false
+    },
+    {
+      "source": "/research/flock-research-paper.pdf",
+      "destination": "/papers/flock-research-paper.pdf",
+      "permanent": true
     }
   ],
   "rewrites": [
