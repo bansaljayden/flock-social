@@ -1,148 +1,186 @@
-/* /research. Rides on PrivacyPolicy.css (the .pp page, its tokens, h1/h2/p
-   sizes and dark mode) and adds three things: the paper card, the findings
-   as a ruled list led by their numbers, and two plain bar charts drawn in
-   HTML so they stay sharp on a phone and follow the theme. Design rules
-   (DESIGN-STANDARD): ruled layouts, type carries it, no gradients, no badges, no
-   reveal animations. */
+/* /research, on the landing page's stylesheet (.lp tokens, Fraunces display,
+   Hanken body, navy chapters on cream stock). This file only adds what the
+   landing page has no part for: the top bar without the menu, the paper card,
+   the stats grid and two plain bar charts drawn in HTML so they stay sharp on
+   a phone. Design rules (DESIGN-STANDARD): ruled layouts, type carries it, no
+   gradients, no badges, no reveal animations. */
 
+.rs { background: var(--paper); color: var(--ink-2); min-height: 100vh; }
+.rs main:focus { outline: none; }
+.rs p + p { margin-top: 1em; }
+
+/* Top bar: the landing nav's look, with the wordmark and the door into the
+   app. No menu here; the menu lives on the landing page. */
+.rs-top {
+  background: var(--navy);
+  border-bottom: 1px solid var(--rule-cream);
+}
+.rs-top-in { display: flex; align-items: center; gap: 16px; height: 64px; }
+.rs-mark { border-radius: 50%; display: block; }
+.rs-open { height: 40px; padding: 0 16px; font-size: 14.5px; }
+
+/* Hero */
+.rs-hero { padding-top: clamp(48px, 7vw, 88px); }
+.rs-hero h1 { max-width: 16ch; margin: 0 0 18px; }
+.rs-hero-lead { margin-bottom: clamp(32px, 5vw, 48px) !important; }
+
+/* The paper card: a printed first page and its citation, on the navy. */
 .rs-paper {
   display: grid;
-  grid-template-columns: 148px minmax(0, 1fr);
-  gap: clamp(18px, 3vw, 28px);
+  grid-template-columns: 150px minmax(0, 1fr);
+  gap: clamp(20px, 3vw, 32px);
   align-items: center;
-  max-width: var(--pp-measure);
-  border-top: 1px solid var(--pp-rule);
-  border-bottom: 1px solid var(--pp-rule);
-  padding: clamp(18px, 3vw, 24px) 0;
-  margin: 0 0 clamp(32px, 5vw, 48px);
+  max-width: 760px;
+  padding-top: clamp(24px, 3.5vw, 32px);
+  border-top: 1px solid var(--rule-cream);
 }
-.rs-paper-thumb {
-  display: block;
-  border: 0 !important;
-  line-height: 0;
-}
-.rs-paper-thumb img {
-  width: 148px;
+.rs-thumb { display: block; line-height: 0; }
+.rs-thumb img {
+  width: 150px;
   height: auto;
   display: block;
-  background: #fff;
-  border: 1px solid var(--pp-rule);
+  background: var(--plate);
+  box-shadow: 0 1px 0 var(--rule-cream);
 }
 .rs-paper-kicker {
-  font-size: 13px !important;
+  font-family: var(--font-display);
+  font-variation-settings: 'opsz' 9;
+  font-size: 14px;
   font-weight: 600;
-  color: var(--pp-ink-3) !important;
-  margin: 0 0 6px !important;
+  color: var(--steel-lift);
+  margin: 0 0 8px;
 }
 .rs-paper-title {
-  font-size: clamp(17px, 2.2vw, 20px) !important;
-  font-weight: 700;
-  line-height: 1.3;
-  color: var(--pp-ink) !important;
-  margin: 0 0 6px !important;
+  font-family: var(--font-display);
+  font-variation-settings: 'opsz' 36;
+  font-weight: 600;
+  font-size: clamp(20px, 2.4vw, 26px);
+  line-height: 1.2;
+  color: var(--cream);
+  margin: 0 0 8px !important;
   text-wrap: balance;
 }
-.rs-paper-by {
-  font-size: 14px !important;
-  color: var(--pp-ink-3) !important;
-  margin: 0 0 14px !important;
-}
-.pp a.rs-paper-link {
-  display: inline-block;
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--pp-paper);
-  background: var(--pp-ink);
-  border: 0;
-  border-radius: 10px;
-  padding: 10px 16px;
-  text-decoration: none;
-}
-.pp a.rs-paper-link:hover { background: var(--pp-accent); color: var(--pp-paper); }
+.rs-paper-by { font-size: 15px; color: var(--cream-2); margin: 0 0 18px !important; }
 
-/* Sections: the About page's spacing, with a rule between them. */
-.rs-section {
-  max-width: var(--pp-measure);
-  border-top: 1px solid var(--pp-rule-soft);
-  padding-top: clamp(26px, 4vw, 36px);
-  margin-bottom: clamp(26px, 4vw, 36px);
-}
+/* Body sections */
+.rs h2 { margin: 0 0 20px; }
+.rs-measure > p, .rs-two p, .rs-end .lp-lead { max-width: 62ch; }
+.rs-measure > p, .rs-two p { font-size: clamp(16px, 1.5vw, 18px); line-height: 1.65; color: var(--ink-2); }
+.rs-two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: clamp(28px, 5vw, 64px); }
+.rs-two h2 { font-size: clamp(24px, 1.2rem + 1.2vw, 34px); }
 
-/* The findings: number on the left, what it means on the right. */
-.rs-findings {
+/* What we found: the number in the display cut, the sentence under it. */
+.rs-stats {
   list-style: none;
-  padding: 0 !important;
-  margin: 6px 0 0 !important;
-}
-.rs-findings li {
+  margin: 8px 0 0;
+  padding: 0;
   display: grid;
-  grid-template-columns: 9.5rem minmax(0, 1fr);
-  gap: 4px 20px;
-  align-items: baseline;
-  padding: 16px 0;
-  margin: 0 !important;
-  border-top: 1px solid var(--pp-rule-soft);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0 clamp(24px, 4vw, 48px);
 }
-.rs-findings li:last-child { border-bottom: 1px solid var(--pp-rule-soft); }
-.rs-findings li::marker { content: none; }
-.rs-big {
-  font-size: clamp(28px, 4vw, 36px);
-  font-weight: 700;
-  letter-spacing: -0.03em;
+.rs-stats li {
+  border-top: 1px solid var(--rule-cream);
+  padding: 26px 0 30px;
+}
+.rs-num {
+  display: block;
+  font-family: var(--font-display);
+  font-variation-settings: 'opsz' 144;
+  font-weight: 600;
+  font-size: clamp(44px, 1.6rem + 3vw, 68px);
   line-height: 1;
-  color: var(--pp-ink);
-  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  font-variant-numeric: lining-nums;
+  color: var(--cream);
+  margin-bottom: 14px;
   white-space: nowrap;
 }
-.rs-findings p { margin: 0 !important; }
-.rs-findings .rs-src {
+.rs-text { font-size: 16px; line-height: 1.55; color: var(--cream-2); }
+.rs .rs-src {
+  margin-top: 10px;
+  font-family: var(--font-display);
+  font-variation-settings: 'opsz' 9;
   font-size: 13.5px;
-  color: var(--pp-ink-3);
-  margin-top: 4px !important;
+  line-height: 1.45;
+  color: var(--cream-3);
 }
 
-/* Bar charts. Every value is printed as text beside its bar; the bars are
-   decoration (aria-hidden) and carry no information the text does not. */
-.rs-chart {
-  margin: 26px 0 8px;
-}
-.rs-chart h3 { margin: 0 0 4px; }
-.rs-chart-key {
+/* Charts */
+.rs-charts { display: grid; gap: clamp(36px, 5vw, 56px); }
+.rs-charts h2 { margin-bottom: 0; }
+.rs-chart { margin: 0; max-width: 820px; }
+.rs-chart h3 { margin: 0 0 8px; color: var(--ink); }
+.rs-key {
   display: flex;
   flex-wrap: wrap;
   gap: 4px 18px;
-  font-size: 13px;
-  color: var(--pp-ink-3);
-  margin: 0 0 12px !important;
+  font-size: 14px;
+  color: var(--ink-3);
+  margin: 0 0 16px !important;
 }
-.rs-chart-key span { display: inline-flex; align-items: center; gap: 7px; }
+.rs-key span { display: inline-flex; align-items: center; gap: 8px; }
 .rs-sw { width: 12px; height: 12px; display: inline-block; }
-.rs-sw.us { background: var(--pp-ink); }
-.rs-sw.them { background: var(--pp-ink-3); opacity: .45; }
-.rs-rows { display: grid; gap: 12px; }
+.rs-sw.us { background: var(--navy); }
+.rs-sw.them { background: var(--field-edge); }
+.rs-rows { display: grid; gap: 14px; }
 .rs-row {
   display: grid;
-  grid-template-columns: minmax(0, 11rem) minmax(0, 1fr);
-  gap: 4px 16px;
+  grid-template-columns: minmax(0, 12rem) minmax(0, 1fr);
+  gap: 6px 20px;
   align-items: center;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--rule);
 }
-.rs-row-label { font-size: 14px; line-height: 1.3; color: var(--pp-ink); }
-.rs-row-label small { display: block; font-size: 12.5px; color: var(--pp-ink-3); }
-.rs-bars { display: grid; gap: 4px; }
-.rs-bar { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.rs-fill { height: 12px; flex: none; }
-.rs-fill.us { background: var(--pp-ink); }
-.rs-fill.them { background: var(--pp-ink-3); opacity: .45; height: 9px; }
-.rs-val { font-size: 13px; color: var(--pp-ink-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.rs-bar.us .rs-val { color: var(--pp-ink); font-weight: 700; }
-.rs-note { font-size: 13.5px !important; color: var(--pp-ink-3) !important; margin-top: 10px !important; }
+.rs-row-label { font-size: 15px; line-height: 1.3; color: var(--ink); font-weight: 600; }
+.rs-row-label small {
+  display: block;
+  margin-top: 2px;
+  font-family: var(--font-display);
+  font-variation-settings: 'opsz' 9;
+  font-weight: 400;
+  font-size: 13px;
+  color: var(--ink-3);
+}
+.rs-bars { display: grid; gap: 6px; }
+.rs-bar { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.rs-fill { height: 14px; flex: none; }
+.rs-fill.us { background: var(--navy); }
+.rs-fill.them { background: var(--field-edge); height: 10px; }
+.rs-val { font-size: 13.5px; color: var(--ink-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rs-bar.us .rs-val { color: var(--ink); font-weight: 700; }
+.rs-note {
+  margin-top: 14px;
+  font-family: var(--font-display);
+  font-variation-settings: 'opsz' 9;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink-3);
+  max-width: 68ch;
+}
 
-@media (max-width: 560px) {
+/* Closing band */
+.rs-end .lp-lead { margin-bottom: 26px; }
+
+/* Footer: the shared legal footer, set on the deep navy. */
+.rs-footer {
+  background: var(--navy-deep);
+  color: var(--cream-3);
+  padding: 28px clamp(20px, 5vw, 40px) 36px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 14px;
+}
+.rs-footer > * { max-width: 1080px; width: 100%; margin: 0 auto; }
+.rs-footer a { text-decoration: underline; text-underline-offset: 2px; }
+
+@media (max-width: 900px) {
+  .rs-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 600px) {
+  .rs-stats { grid-template-columns: minmax(0, 1fr); }
+  .rs-two { grid-template-columns: minmax(0, 1fr); }
   .rs-paper { grid-template-columns: 96px minmax(0, 1fr); align-items: start; }
-  .rs-paper-thumb img { width: 96px; }
-  .rs-findings li { grid-template-columns: minmax(0, 1fr); }
+  .rs-thumb img { width: 96px; }
   .rs-row { grid-template-columns: minmax(0, 1fr); }
 }
-
-/* The card already ends on a rule; the first section must not draw a second. */
-.rs-paper + .rs-section { border-top: 0; padding-top: 0; }
