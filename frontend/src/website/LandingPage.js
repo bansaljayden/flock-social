@@ -3,6 +3,7 @@ import './LandingPage.css';
 import BirdieBird, { WARM_BIRD } from '../components/ui/BirdieBird';
 import SiteFooter from './SiteFooter';
 import frauncesUrl from '../fonts/Fraunces-var.woff2';
+import { NAV_LINKS } from './SiteNav';
 
 /* The live demo is code-split, and this is load-bearing rather than tidiness.
    LiveDemo pulls in maplibre-gl, which webpack emits as a 1.06 MB chunk. As a
@@ -46,21 +47,9 @@ const APP_STORE_LIVE = false;
 // inbox (set up 2026-08-12). Outbound stays on Resend.
 const CONTACT_EMAIL = 'social@flockcorp.com';
 
-/* Every destination in the page menu. The first six are the sections the
-   header used to list inline, all of which exist on this page. /research is
-   the one destination off the page, and the menu is the only place it is
-   linked: it is reference reading for the people who go looking, not part of
-   the pitch, so nothing in the scrolling page or the footer points at it. The
-   page explains the research and links the paper itself. */
-const NAV_LINKS = [
-  { href: '#how', label: 'How it works' },
-  { href: '#try', label: 'Try it live' },
-  { href: '#birdie', label: 'Birdie' },
-  { href: '#money', label: 'Money' },
-  { href: '#safety', label: 'Safety' },
-  { href: '#pricing', label: 'Pricing' },
-  { href: '/research', label: 'Research' },
-];
+/* Every destination in the page menu lives in SiteNav.js, the one list this
+   menu and the other pages' menus both read. */
+
 
 /* The Flock mark: the actual logo (same artwork as the app icon), not a
    hand-drawn stand-in.

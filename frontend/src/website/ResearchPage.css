@@ -1,23 +1,13 @@
 /* /research, on the landing page's stylesheet (.lp tokens, Fraunces display,
-   Hanken body, navy chapters on cream stock). This file only adds what the
-   landing page has no part for: the top bar without the menu, the paper card,
-   the stats grid and two plain bar charts drawn in HTML so they stay sharp on
-   a phone. Design rules (DESIGN-STANDARD): ruled layouts, type carries it, no
+   Hanken body, navy chapters on cream stock); the bar and the menu come from
+   SiteNav.js. This file only adds what the landing page has no part for: the
+   paper card, the stats grid and two plain bar charts drawn in HTML so they
+   stay sharp on a phone. Design rules (DESIGN-STANDARD): ruled layouts, type carries it, no
    gradients, no badges, no reveal animations. */
 
 .rs { background: var(--paper); color: var(--ink-2); min-height: 100vh; }
 .rs main:focus { outline: none; }
 .rs p + p { margin-top: 1em; }
-
-/* Top bar: the landing nav's look, with the wordmark and the door into the
-   app. No menu here; the menu lives on the landing page. */
-.rs-top {
-  background: var(--navy);
-  border-bottom: 1px solid var(--rule-cream);
-}
-.rs-top-in { display: flex; align-items: center; gap: 16px; height: 64px; }
-.rs-mark { border-radius: 50%; display: block; }
-.rs-open { height: 40px; padding: 0 16px; font-size: 14.5px; }
 
 /* Hero */
 .rs-hero { padding-top: clamp(48px, 7vw, 88px); }
