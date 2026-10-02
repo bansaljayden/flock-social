@@ -412,24 +412,18 @@
   gap: 20px;
   height: 64px;
 }
-/* The direct door into the app. The corner block still opens the site menu,
-   but opening Flock no longer requires it (2026-08-27: people should
-   not have to tap the hamburger and then tap again). Anchored to the CORNER,
-   not to the wrap: the first version used margin-left auto inside .lp-nav-in,
-   whose right edge sits under the 64px absolute corner block on a phone, so
-   the button rendered half beneath the hamburger and, with the menu open, its
-   hit area sat on top of the X (reported from a phone screenshot, 2026-08-27).
-   Absolute against the sticky nav puts it a fixed 14px left of the corner at
-   every width, and it hides while the menu is open because the panel carries
-   its own Open Flock CTA and nothing may fight the X. */
+@media (max-width: 400px) { .lp-nav-in { gap: 12px; } }
+/* The direct door into the app (2026-08-27: people should not have to tap
+   the menu and then tap again). It sits in the row now. The old absolute
+   right: 78px existed only to clear a 64px block pinned over the row's right
+   edge; with the menu button back inside the row, flex spacing does that job
+   at every width. Hidden while the menu is open: the panel carries its own
+   Open Flock, and nothing may crowd the close control. */
 .lp-nav-open {
-  position: absolute;
-  right: 78px;
-  top: 50%;
-  transform: translateY(-50%);
-  padding: 9px 16px;
+  flex: none;
+  height: 40px;
+  padding: 0 16px;
   font-size: 14.5px;
-  min-height: 40px;
 }
 .lp-nav.is-menu-open .lp-nav-open { display: none; }
 .lp-brand {
@@ -446,45 +440,71 @@
 }
 .lp-brand svg { display: block; }
 
+/* The section links, in the bar, from 1200px. Below that the menu button
+   takes over: seven links plus the wordmark and Open Flock need about 1,000px
+   of row, and squeezing them into less is how a header starts wrapping onto
+   two lines. */
+.lp-nav-links { display: none; }
+@media (min-width: 1200px) {
+  .lp-nav-links {
+    display: flex;
+    align-items: center;
+    gap: 26px;
+    margin-right: 10px;
+  }
+  .lp-nav-links a {
+    font-size: 14.5px;
+    font-weight: 500;
+    color: var(--cream-2);
+    text-decoration: none;
+    padding: 10px 0;
+    transition: color 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .lp-nav-links a:hover,
+  .lp-nav-links a[aria-current="page"] { color: var(--cream); }
+}
+
 /* ============ corner block + menu panel ============ */
 
-/* A hard-edged square pinned to the top-right corner of the viewport. No
-   radius, no border, no float: it reads as a block cut out of the page. The
-   steel accent is the only token that separates from the navy bar behind it. */
+/* Two cream lines in the row, no fill. It replaced a steel square pinned to
+   the viewport's corner (2026-10-02), which read as a block cut out of the
+   page and broke the bar's line. The button is 44px for the tap target; the
+   negative margin lands the LINES, not the button, on the column's right
+   edge, so they align with everything under them. Two lines rather than
+   three: the middle one only ever existed to fade out of the X. */
 .lp-menu-btn {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 1;
-  width: 64px;
+  flex: none;
+  width: 44px;
+  height: 44px;
+  margin-right: -11px;
   padding: 0;
   border: 0;
-  border-radius: 0;
-  background: var(--steel);
+  border-radius: 10px;
+  background: transparent;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: filter 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: background-color 0.18s cubic-bezier(0.22, 1, 0.36, 1);
 }
-.lp-menu-btn:hover { filter: brightness(1.14); }
+.lp-menu-btn:hover { background: rgba(244, 239, 227, 0.08); }
 
-.lp-menu-bars { position: relative; display: block; width: 26px; height: 14px; }
+.lp-menu-bars { position: relative; display: block; width: 22px; height: 10px; }
 .lp-menu-bar {
   position: absolute;
   left: 0;
   width: 100%;
   height: 2px;
+  border-radius: 1px;
   background: var(--cream);
-  transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.14s linear;
+  transition: transform 0.24s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .lp-menu-bar:nth-child(1) { top: 0; }
-.lp-menu-bar:nth-child(2) { top: 6px; }
-.lp-menu-bar:nth-child(3) { top: 12px; }
-.lp-menu-btn.is-open .lp-menu-bar:nth-child(1) { transform: translateY(6px) rotate(45deg); }
-.lp-menu-btn.is-open .lp-menu-bar:nth-child(2) { opacity: 0; }
-.lp-menu-btn.is-open .lp-menu-bar:nth-child(3) { transform: translateY(-6px) rotate(-45deg); }
+.lp-menu-bar:nth-child(2) { top: 8px; }
+.lp-menu-btn.is-open .lp-menu-bar:nth-child(1) { transform: translateY(4px) rotate(45deg); }
+.lp-menu-btn.is-open .lp-menu-bar:nth-child(2) { transform: translateY(-4px) rotate(-45deg); }
+/* After the button's own rule, which sets display: flex at equal specificity. */
+@media (min-width: 1200px) { .lp-menu-btn { display: none; } }
 
 .lp-menu {
   position: fixed;
@@ -629,17 +649,12 @@
 .lpd-stage button:focus-visible {
   outline-color: var(--steel);
 }
-/* The corner block is pinned to top:0 right:0 bottom:0 of the header, so a
-   3px OUTSIDE ring is drawn at y = -3 (above the viewport) and x = viewport+3
-   (clipped by .lp's overflow-x: clip). Two of its four sides were simply not
-   on screen. Drawn inside instead, where all four sides are, and in --cream:
-   the ring sits on the button's own --steel fill, where --steel-lift measures
-   2.41:1 and cream measures 6.26:1. Three classes deep so it outranks the
-   `.lp-nav button:focus-visible` rule above, which is (0,2,1). */
-.lp-nav .lp-menu-btn:focus-visible {
-  outline-color: var(--cream);
-  outline-offset: -5px;
-}
+/* The menu button sits inside the row now, clear of the viewport's edges, so
+   its ring is the bar's ordinary --steel-lift ring on navy (the rule above),
+   drawn outside like every other control. It used to be pinned to the corner,
+   where an outside ring fell off the screen on two sides and had to be drawn
+   inside instead. The offset is trimmed so the ring hugs the rounded button. */
+.lp-nav .lp-menu-btn:focus-visible { outline-offset: 1px; }
 
 /* ============ sections ============ */
 

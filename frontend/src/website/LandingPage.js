@@ -412,26 +412,35 @@ export default function LandingPage() {
       <header className={`lp-nav${menuOpen ? ' is-menu-open' : ''}`}>
         <div className="lp-wrap lp-nav-in">
           <a className="lp-brand" href="/"><Mark /> Flock</a>
+          {/* Wide screens carry the section links in the bar itself, the way a
+              company site does; the menu button only exists below that width.
+              It used to be the other way round, a steel block pinned to the
+              corner at every width, and before that the inline row vanished
+              under 860px with nothing in its place, which left phones with no
+              menu at all. Now every width has exactly one way in. */}
+          <nav className="lp-nav-links" aria-label="Sections">
+            {NAV_LINKS.map((l) => (
+              <a key={l.href} href={l.href}>{l.label}</a>
+            ))}
+          </nav>
+          {/* Open Flock is the direct door: reaching the app must not require
+              a menu (2026-08-27). */}
           <a className="lp-btn lp-btn-cream lp-nav-open" href="/app">Open Flock</a>
+          <button
+            type="button"
+            ref={menuBtnRef}
+            className={`lp-menu-btn${menuOpen ? ' is-open' : ''}`}
+            aria-label={menuOpen ? 'Close menu' : 'Open menu'}
+            aria-expanded={menuOpen}
+            aria-controls="lp-menu"
+            onClick={() => setMenuOpen((v) => !v)}
+          >
+            <span className="lp-menu-bars" aria-hidden="true">
+              <span className="lp-menu-bar" />
+              <span className="lp-menu-bar" />
+            </span>
+          </button>
         </div>
-        {/* The corner block opens the site menu; Open Flock beside it is the direct door, because reaching the app must not require a menu (2026-08-27). The
-            inline link row used to vanish under 860px, which meant phones had
-            no menu at all. */}
-        <button
-          type="button"
-          ref={menuBtnRef}
-          className={`lp-menu-btn${menuOpen ? ' is-open' : ''}`}
-          aria-label={menuOpen ? 'Close menu' : 'Open menu'}
-          aria-expanded={menuOpen}
-          aria-controls="lp-menu"
-          onClick={() => setMenuOpen((v) => !v)}
-        >
-          <span className="lp-menu-bars" aria-hidden="true">
-            <span className="lp-menu-bar" />
-            <span className="lp-menu-bar" />
-            <span className="lp-menu-bar" />
-          </span>
-        </button>
       </header>
 
       {/* ---------------- menu panel ---------------- */}
