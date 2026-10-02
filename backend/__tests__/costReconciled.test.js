@@ -98,6 +98,17 @@ test('a saved row with no note carries no note, never the code note about anothe
   assert.ok(CODE.lines[0].note, 'the code line does carry a note, so this is not vacuous');
 });
 
+test('every code line names, in its note, the amount the line shows', () => {
+  // The panel prints usdPerMonth beside the note. A note that recounts earlier
+  // readings but never the figure on show reads as a second, contradictory
+  // amount for the same line: the Railway line showed $37.10 on 2026-09-30
+  // under a note that named only $32.96 and $36.05.
+  for (const l of CODE.lines) {
+    const shown = `$${l.usdPerMonth.toFixed(2)}`;
+    assert.ok(l.note.includes(shown), `${l.id} shows ${shown} but its note never says so`);
+  }
+});
+
 test('a row for an unknown line id is ignored rather than invented into the block', async () => {
   rows = [{ line_id: 'not-a-line', usd_per_month: '999', as_of: '2026-09-15', note: null }];
   const r = await costModel.readReconciled(pool);
