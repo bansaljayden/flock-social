@@ -251,12 +251,13 @@ describe('contrast, computed from the shipped tokens', () => {
     expectRatio(lp['--steel'], lp['--paper'], 3, 'ring on cream');
     expectRatio(lp['--steel-lift'], lp['--navy'], 3, 'ring on navy');
     expectRatio(lp['--steel-lift'], lp['--navy-deep'], 3, 'ring in the footer');
-    // The corner block's ring is drawn INSIDE the button, on its own --steel
-    // fill, where --steel-lift would measure 2.41:1.
-    expectRatio(lp['--cream'], lp['--steel'], 3, 'ring inside the menu button');
-    expect(lpCss).toMatch(
-      /\.lp-nav \.lp-menu-btn:focus-visible\s*\{[^}]*outline-color:\s*var\(--cream\)[^}]*outline-offset:\s*-\d/
-    );
+    // The menu button sits in the bar's row now, unfilled, so its ring is the
+    // bar's --steel-lift ring on navy (checked above) and drawn OUTSIDE. It
+    // used to be a --steel block pinned to the viewport corner, where an
+    // outside ring fell off two edges of the screen and had to be drawn inside
+    // in cream; nothing may bring that inside offset back on an unfilled button.
+    expect(lpCss).toMatch(/\.lp-nav \.lp-menu-btn:focus-visible\s*\{\s*outline-offset:\s*1px;\s*\}/);
+    expect(lpCss).not.toMatch(/\.lp-menu-btn \{[^}]*background:\s*var\(--steel\)/);
 
     // The skip link is the first thing a keyboard user ever focuses here, and
     // it floats over navy. The generic --steel ring measures 2.49:1 there, so
