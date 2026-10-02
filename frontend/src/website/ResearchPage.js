@@ -35,7 +35,7 @@ const STATS = [
     text: "named the exact crowd level, against 31.5% for the popular-times chart. The average miss was 17 points, a third smaller than the chart's.",
   },
   {
-    num: '2×',
+    num: '2x',
     text: 'is how far popular-times charts swing, compared with the live readings they are trying to predict.',
   },
   {
