@@ -85,7 +85,7 @@ describe('the paid-invoice form on the Reconciled card', () => {
 
   test('the form has its own note, starting empty, so a new invoice never inherits an old one\'s words', () => {
     // The form used to send no note at all, the server stored NULL, and the
-    // card fell back to the code note about the $31.19 September invoice under
+    // card fell back to the code note about the $31.19 invoice (August's, paid 2026-09-01) under
     // whatever figure was recorded next. The server side of that is pinned in
     // backend/__tests__/costReconciled.test.js; this is the field.
     const form = screen.slice(screen.indexOf('function ReconciledLineForm('), screen.indexOf('// THE MONEY HUB'));

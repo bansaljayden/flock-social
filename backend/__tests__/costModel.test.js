@@ -433,14 +433,16 @@ test('the reconciled block is the only place a billed figure lives, and every li
 test('Railway is a reconciled line at its own estimated bill, and no fixed line carries a Railway figure', async () => {
   // Railway sat on FIXED_MONTHLY at $20.00, the Pro plan's fee. The plan buys
   // $20 of usage credit and everything past it bills on top, so the real bill
-  // ran higher than that line could say: `railway usage` estimated $32.96 on 09-28, $36.05 on 09-29 and $37.10 on 09-30 for
+  // ran higher than that line could say: `railway usage` estimated $32.96 on 09-28, $36.05 on 09-29, $37.10 on 09-30 and $44.66 on 10-02 for
   // the Sep 16 to Oct 16, 2026 period. It is a reconciled line now, recorded
-  // from the dashboard like Google Cloud, and nothing may count it twice.
+  // from the dashboard like Google Cloud, and nothing may count it twice. The
+  // estimate moves with every reading, so this pins what it must be (above the
+  // bare plan fee, dated) rather than one reading of it.
   const railway = cm.RECONCILED.lines.find((l) => l.id === 'railway');
   assert.ok(railway, 'Railway is on the reconciled block');
-  assert.strictEqual(railway.usdPerMonth, 37.10);
+  assert.ok(railway.usdPerMonth > 20, 'the line carries the estimated bill, not the bare $20 plan fee');
   assert.strictEqual(railway.label, 'Railway (backend and Postgres)');
-  assert.match(railway.asOf, /^2026-09-\d{2}$/);
+  assert.match(railway.asOf, /^\d{4}-\d{2}-\d{2}$/);
   assert.match(railway.note, /estimated bill/);
   assert.match(railway.note, /Sep 16 to Oct 16, 2026/);
   assert.match(railway.note, /\$20 Pro plan fee plus/);
@@ -469,7 +471,7 @@ test('Railway is a reconciled line at its own estimated bill, and no fixed line 
   assert.ok(r.editableIds.includes('google-cloud'));
   const line = r.lines.find((l) => l.id === 'railway');
   assert.strictEqual(line.source, 'code');
-  assert.strictEqual(line.usdPerMonth, 37.10);
+  assert.strictEqual(line.usdPerMonth, railway.usdPerMonth);
   assert.strictEqual(line.asOf, railway.asOf);
 
   // The inventory row resolves against the reconciled block, not the fixed one.
