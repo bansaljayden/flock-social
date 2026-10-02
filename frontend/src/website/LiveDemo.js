@@ -277,10 +277,14 @@ function cardSentence(card) {
 function DemoDial({ score, color, textColor, label }) {
   const textRef = useRef(null);
   const canvasRef = useRef(null);
-  // The value the ring last drew. Picking another venue sweeps from the old
-  // reading to the new one, so the motion shows the difference between two
-  // places; it used to count up from zero over 1.2s on every pick, replaying
-  // the same reveal however many times a visitor tapped around the map.
+  // The value the ring last drew. A new reading on a dial that is still on
+  // screen sweeps from the old value to the new one in 450ms. Picking another
+  // venue is NOT that case: the card drops to its loading skeleton first, so
+  // the dial mounts fresh and fills from empty, in 700ms rather than the 1.2s
+  // it used to take on every pick (measured on the live demo, 2026-10-02).
+  // Carrying the last venue's number across that remount would show one
+  // place's reading on another place's card for half a second, so it stays
+  // per mount on purpose.
   const shownRef = useRef(null);
 
   useEffect(() => {
