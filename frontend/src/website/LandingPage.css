@@ -501,12 +501,23 @@
   height: 2px;
   border-radius: 1px;
   background: var(--cream);
-  transition: transform 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+  /* Closing runs the opening backwards: the cross straightens, then the two
+     lines part. */
+  transition: rotate 0.12s cubic-bezier(0.22, 1, 0.36, 1),
+              translate 0.12s cubic-bezier(0.22, 1, 0.36, 1) 0.12s;
 }
 .lp-menu-bar:nth-child(1) { top: 0; }
 .lp-menu-bar:nth-child(2) { top: 8px; }
-.lp-menu-btn.is-open .lp-menu-bar:nth-child(1) { transform: translateY(4px) rotate(45deg); }
-.lp-menu-btn.is-open .lp-menu-bar:nth-child(2) { transform: translateY(-4px) rotate(-45deg); }
+/* Opening: the lines meet in the middle, then cross. One combined transform
+   would rotate them while they are still apart, which reads as the icon
+   tumbling; `translate` and `rotate` as separate properties can each keep
+   their own timing. */
+.lp-menu-btn.is-open .lp-menu-bar {
+  transition: translate 0.12s cubic-bezier(0.22, 1, 0.36, 1),
+              rotate 0.12s cubic-bezier(0.22, 1, 0.36, 1) 0.12s;
+}
+.lp-menu-btn.is-open .lp-menu-bar:nth-child(1) { translate: 0 4px; rotate: 45deg; }
+.lp-menu-btn.is-open .lp-menu-bar:nth-child(2) { translate: 0 -4px; rotate: -45deg; }
 /* After the button's own rule, which sets display: flex at equal specificity. */
 @media (min-width: 1200px) { .lp-menu-btn { display: none; } }
 
@@ -573,7 +584,8 @@
 @media (prefers-reduced-motion: reduce) {
   .lp-menu,
   .lp-menu.is-open { transition: none; transform: none; }
-  .lp-menu-bar { transition: none; }
+  .lp-menu-bar,
+  .lp-menu-btn.is-open .lp-menu-bar { transition: none; }
   .lp-menu-btn { transition: none; }
   /* NOTE: the burger's rotate-into-an-X is deliberately NOT nulled here. It is
      the open/closed state of the control, not decoration, and reduced motion
@@ -891,9 +903,12 @@ html:has(.lp) body { overflow-x: clip; }
   background: var(--cream);
   color: var(--navy);
   text-decoration: none;
-  transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: border-color 0.18s cubic-bezier(0.22, 1, 0.36, 1);
 }
-.lp-appstore:hover { transform: translateY(-1px); }
+/* No lift on hover. Apple's marketing guidelines say not to modify, angle or
+   animate the App Store badge, and a 1px rise is animating it. The border
+   still answers the pointer on the pre-launch version below. */
+.lp-appstore:hover { transform: none; }
 /* Pre-launch: present and clickable (goes to the waitlist), visibly not yet a
    download. Becomes the solid cream download badge on approval. */
 .lp-appstore.is-soon {
@@ -1602,7 +1617,11 @@ html:has(.lp) body { overflow-x: clip; }
 .lpd-live-dot {
   display: inline-block; width: 7px; height: 7px; border-radius: 50%;
   background: var(--crowd-quiet); margin-right: 6px; vertical-align: 1px;
-  animation: lpd-live 2s ease-in-out infinite;
+  /* Twice, then still. It used to pulse forever, and anything that blinks
+     for more than five seconds beside other content needs a way to stop it
+     (WCAG 2.2.2). LiveDemo.js keys the dot on the reading's fetch time, so a
+     new reading pulses it twice again. */
+  animation: lpd-live 2s ease-in-out 2;
 }
 @keyframes lpd-live { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 /* The card sits on a light panel inside the navy section, so it has to opt
@@ -1798,6 +1817,20 @@ html:has(.lp) body { overflow-x: clip; }
   .lp-menu.is-open .lp-menu-link:nth-child(8) { animation-delay: 0.36s; }
   .lp-menu.is-open .lp-menu-cta { animation-delay: 0.4s; }
 
+  /* Hover and press land with the pointer and leave eased. A tint that fades
+     IN trails the cursor and makes the page feel slower than it is; the fade
+     belongs on the way out. Same for the 1px press: down at once, back up over
+     160ms. */
+  .lp-btn {
+    transition: background-color 0.15s cubic-bezier(0.22, 1, 0.36, 1),
+                border-color 0.15s cubic-bezier(0.22, 1, 0.36, 1),
+                transform 0.16s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .lp-btn:hover { transition-duration: 0s, 0s, 0.16s; }
+  .lp-btn:active { transition-duration: 0s; }
+  .lp-nav-links a:hover,
+  .lp-menu-link:hover { transition-duration: 0s; }
+
   /* text-decoration rather than a drawn background line: on touch screens and
      under 820px the footer links carry 13px of vertical padding for their tap
      targets, and a background line would sit at the bottom of the padding,
@@ -1815,6 +1848,34 @@ html:has(.lp) body { overflow-x: clip; }
     text-decoration-color: currentColor;
     text-underline-offset: 3px;
   }
+}
+
+/* The menu's rows, with a mouse: an arrow comes in at each row's right edge
+   on hover, so the list reads as an index of places to go. Only where hover
+   is real; on a phone a tap would leave it stuck on. `/ ""` keeps the glyph
+   out of the link's accessible name, and a browser that does not know that
+   syntax drops the declaration and simply shows no arrow. */
+@media (hover: hover) and (pointer: fine) {
+  .lp-menu-link {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+  }
+  .lp-menu-link::after {
+    content: "\2192" / "";
+    font-family: var(--font-body);
+    font-size: 0.5em;
+    font-weight: 500;
+    opacity: 0;
+  }
+  .lp-menu-link:hover::after { opacity: 1; }
+}
+@media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
+  .lp-menu-link::after {
+    translate: -6px 0;
+    transition: opacity 0.15s linear, translate 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .lp-menu-link:hover::after { translate: 0; }
 }
 
 @keyframes lp-rise {

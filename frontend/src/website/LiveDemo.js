@@ -277,6 +277,11 @@ function cardSentence(card) {
 function DemoDial({ score, color, textColor, label }) {
   const textRef = useRef(null);
   const canvasRef = useRef(null);
+  // The value the ring last drew. Picking another venue sweeps from the old
+  // reading to the new one, so the motion shows the difference between two
+  // places; it used to count up from zero over 1.2s on every pick, replaying
+  // the same reveal however many times a visitor tapped around the map.
+  const shownRef = useRef(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -322,21 +327,28 @@ function DemoDial({ score, color, textColor, label }) {
     if (reducedMotion()) {
       draw(score);
       if (textRef.current) textRef.current.textContent = `${score}%`;
+      shownRef.current = score;
       return;
     }
 
     let raf;
+    const from = shownRef.current == null ? 0 : shownRef.current;
+    // The first reading fills from empty; every later one is a shorter move.
+    const duration = shownRef.current == null ? 700 : 450;
     const start = performance.now();
-    const ease = (t) => 1 - Math.pow(1 - t, 3);
+    const ease = (t) => 1 - Math.pow(1 - t, 4);
     const tick = (now) => {
-      const t = Math.min((now - start) / 1200, 1);
-      const val = ease(t) * score;
+      const t = Math.min((now - start) / duration, 1);
+      const val = from + (score - from) * ease(t);
+      // Kept current every frame, so a pick made mid-sweep starts from where
+      // the ring actually is rather than jumping.
+      shownRef.current = val;
       draw(val);
       if (textRef.current) textRef.current.textContent = `${Math.round(val)}%`;
       if (t < 1) raf = requestAnimationFrame(tick);
     };
-    draw(0);
-    if (textRef.current) textRef.current.textContent = '0%';
+    draw(from);
+    if (textRef.current) textRef.current.textContent = `${Math.round(from)}%`;
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
   }, [score, color]);
@@ -1265,7 +1277,11 @@ export default function LiveDemo() {
               )}
 
               <p className="lpd-note">
-                <span className="lpd-live-dot" aria-hidden />
+                <span
+                  key={`${venueName(selected)}|${selected.fetched_at || ''}`}
+                  className="lpd-live-dot"
+                  aria-hidden
+                />
                 {/* The note sits under the chart, so it is read off the bars
                     drawn when there are any: while a serving switch is on,
                     each bar carries its own source, and the next hour can be
