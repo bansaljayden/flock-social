@@ -526,10 +526,10 @@ const WATCHLIST = [
   {
     id: 'codemagic',
     label: 'Codemagic iOS builds',
-    where: 'codemagic.yaml, the ios-capacitor workflow on a mac_mini_m2',
+    where: 'codemagic.yaml, the ios-capacitor and ios-review-recording workflows, both on a mac_mini_m2',
     usd: null,
     severity: 'usage',
-    note: 'No trigger block, so it runs only when a build is started by hand. Cost is per build rather than per month, and a build takes on the order of twenty minutes on a premium-billed instance. The billing page on 2026-09-30 showed 506 of the 500 free macOS minutes used (mostly the Apple review-recording runs) and a $130.15 balance invoiced on Oct 1. Six minutes past the allowance would be $0.57 at $0.095, so the balance is not that overage; $130.15 is exactly 1,370 minutes at $0.095, and the Oct 1 invoice is what itemizes it. That bill is on the expense list, not here, because it follows builds rather than the calendar.',
+    note: 'No trigger block, so a build runs only when one is started by hand. Every mac_mini_m2 minute past the month\'s 500 free macOS minutes bills at $0.095. The invoice for Sep 2 to Oct 1, 2026, paid on Oct 2, itemized 1,877 minutes: 507 free and 1,370 billed, $130.15 in all, mostly the Apple review-recording runs. A review recording may run up to 120 minutes, which is up to $11.40 once the free minutes are gone. The billing page\'s "506 / 500" counts the free allowance only, which is why it read like six minutes over. That bill is on the expense list, not here, because it follows builds rather than the calendar.',
   },
   {
     id: 'github-actions',
@@ -1096,16 +1096,17 @@ const DEPENDENCIES = [
     label: 'Codemagic',
     what: 'Builds the iOS app.',
     where: 'codemagic.yaml',
-    group: 'free',
+    // Metered since its first invoice: build minutes past the free 500 bill
+    // per minute. It sat in the free group until then.
+    group: 'metered',
     pricing: { type: 'unknown' },
     configuredEnv: null,
     configuredNote: 'Configured in the Codemagic dashboard, not in this repo.',
     observedLineId: null,
     watchlistId: 'codemagic',
-    usageNote: 'Builds are not counted here.',
-    costsNothingBecause: 'There is no trigger block, so nothing runs it on a schedule. It bills per build, and only when a build is started by hand.',
+    usageNote: 'Build minutes are counted on the Codemagic billing page, not here. Nothing runs a build on a schedule; each one is started by hand.',
     unknownCost: true,
-    unknownAction: 'What a build costs depends on the plan. Check the Codemagic billing page if the build count ever climbs.',
+    unknownAction: 'Read the Codemagic billing page: it shows the free macOS minutes used this month and the next invoice date, and each invoice itemizes the billed M2 minutes. The watchlist line says what the last invoice came to.',
   },
   {
     id: 'github-actions',
