@@ -30,6 +30,8 @@ export function useSiteMenu() {
   const menuRef = useRef(null);
   const menuBtnRef = useRef(null);
   const wasMenuOpen = useRef(false);
+  // Set when the menu closed because the screen widened past the button.
+  const closedWideRef = useRef(false);
 
   useEffect(() => {
     if (!menuOpen) return undefined;
@@ -73,7 +75,11 @@ export function useSiteMenu() {
     // Rotating a tablet to landscape does exactly that, so crossing the
     // breakpoint closes the menu. (The 1200 is .lp-nav-links' in the CSS.)
     const wide = typeof window.matchMedia === 'function' ? window.matchMedia('(min-width: 1200px)') : null;
-    const onWide = (e) => { if (e.matches) setMenuOpen(false); };
+    const onWide = (e) => {
+      if (!e.matches) return;
+      closedWideRef.current = true;
+      setMenuOpen(false);
+    };
     if (wide && wide.addEventListener) wide.addEventListener('change', onWide);
     else if (wide && wide.addListener) wide.addListener(onWide);
 
@@ -90,8 +96,14 @@ export function useSiteMenu() {
 
   useEffect(() => {
     if (wasMenuOpen.current && !menuOpen && menuBtnRef.current) {
-      menuBtnRef.current.focus();
+      // Closed by widening, the button is display: none and cannot take focus,
+      // so focus would fall to the body once the panel hides. It goes to the
+      // first section link in the bar instead: the control that replaced it.
+      const bar = closedWideRef.current ? menuBtnRef.current.closest('.lp-nav-in') : null;
+      const link = bar ? bar.querySelector('.lp-nav-links a') : null;
+      (link || menuBtnRef.current).focus();
     }
+    closedWideRef.current = false;
     wasMenuOpen.current = menuOpen;
   }, [menuOpen]);
 
