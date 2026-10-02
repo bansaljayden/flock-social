@@ -1717,3 +1717,100 @@ html:has(.lp) body { overflow-x: clip; }
 .lp-flock-crowd img { width: min(100%, clamp(280px, 46vw, 520px)); }
 .lp-flock-steps img { width: min(100%, clamp(240px, 38vw, 420px)); }
 .lp-flock-money img { width: min(100%, clamp(150px, 20vw, 230px)); }
+
+/* ============ motion: arrival, menu, links ============ */
+
+/* Four kinds of movement, and what each one is NOT. DESIGN-STANDARD A10 and H6 ban
+   reveals: content held back until a scroll handler decides to show it, which
+   ships blank whenever the handler does not fire. Nothing here waits on
+   scroll, and nothing here needs JavaScript.
+
+   1. The hero arrives once, on load. It is pure CSS, so it always plays, and
+      `both` fill means the resting state is the element's own style: a
+      browser that skips the animation shows the finished page, never a blank
+      one. The headline lands first, its second line a beat later, then the
+      rule draws under it and the copy settles.
+   2. The phone plate rises with the headline but never starts invisible: it is
+      the page's largest paint (408 ms on the live site, 2026-10-02), and an
+      element at opacity 0 does not count as painted, so a fade from zero
+      would push that measurement back by the length of the fade.
+   3. The menu's rows follow the panel in when it opens. That runs on a tap,
+      never on scroll, and the rows are where they always are once it ends.
+   4. Footer links underline from below on hover, and in-page links (the menu,
+      "See how it works", the skip link) glide instead of jumping.
+
+   All of it sits behind prefers-reduced-motion: no-preference, so "reduce"
+   gets none of it rather than less of it, the same opt-in shape as the
+   guest page's skeleton. */
+@media (prefers-reduced-motion: no-preference) {
+  html:has(.lp) { scroll-behavior: smooth; }
+
+  .lp-hero-in > h1 {
+    animation: lp-rise 0.9s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  /* inline-block so it can move on its own; it is already nowrap, so the line
+     still breaks before it exactly where it did. */
+  .lp-hero-in > h1 .lp-keep {
+    display: inline-block;
+    animation: lp-rise 0.9s cubic-bezier(0.22, 1, 0.36, 1) 0.16s both;
+  }
+  .lp-hero-rule {
+    transform-origin: left center;
+    animation: lp-draw 1.1s cubic-bezier(0.22, 1, 0.36, 1) 0.3s both;
+  }
+  .lp-hero-copy {
+    animation: lp-rise 0.9s cubic-bezier(0.22, 1, 0.36, 1) 0.42s both;
+  }
+  .lp-hero .lp-phone-wrap {
+    animation: lp-plate 1.1s cubic-bezier(0.22, 1, 0.36, 1) 0.2s both;
+  }
+
+  .lp-menu.is-open .lp-menu-link,
+  .lp-menu.is-open .lp-menu-cta {
+    animation: lp-row 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .lp-menu.is-open .lp-menu-link:nth-child(1) { animation-delay: 0.08s; }
+  .lp-menu.is-open .lp-menu-link:nth-child(2) { animation-delay: 0.12s; }
+  .lp-menu.is-open .lp-menu-link:nth-child(3) { animation-delay: 0.16s; }
+  .lp-menu.is-open .lp-menu-link:nth-child(4) { animation-delay: 0.2s; }
+  .lp-menu.is-open .lp-menu-link:nth-child(5) { animation-delay: 0.24s; }
+  .lp-menu.is-open .lp-menu-link:nth-child(6) { animation-delay: 0.28s; }
+  .lp-menu.is-open .lp-menu-link:nth-child(7) { animation-delay: 0.32s; }
+  .lp-menu.is-open .lp-menu-link:nth-child(8) { animation-delay: 0.36s; }
+  .lp-menu.is-open .lp-menu-cta { animation-delay: 0.4s; }
+
+  /* text-decoration rather than a drawn background line: on touch screens and
+     under 820px the footer links carry 13px of vertical padding for their tap
+     targets, and a background line would sit at the bottom of the padding,
+     13px under the word. The decoration follows the text wherever it is. */
+  .lp-footer a {
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-decoration-color: transparent;
+    text-underline-offset: 7px;
+    transition: color 0.18s cubic-bezier(0.22, 1, 0.36, 1),
+                text-decoration-color 0.25s cubic-bezier(0.22, 1, 0.36, 1),
+                text-underline-offset 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .lp-footer a:hover {
+    text-decoration-color: currentColor;
+    text-underline-offset: 3px;
+  }
+}
+
+@keyframes lp-rise {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes lp-draw {
+  from { transform: scaleX(0); }
+  to { transform: none; }
+}
+@keyframes lp-plate {
+  from { opacity: 0.35; transform: translateY(22px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes lp-row {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
