@@ -129,7 +129,6 @@ export default function ResearchPage() {
       <main id="rs-main" tabIndex={-1}>
         <section className="lp-sec-navy lp-on-navy rs-hero">
           <div className="lp-wrap">
-            <p className="lp-kicker">Research</p>
             <h1>Why we study crowds, and what we found.</h1>
             <p className="lp-lead rs-hero-lead">
               Two studies sit behind the number on every venue card: a forecast
