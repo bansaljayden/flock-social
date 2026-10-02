@@ -184,3 +184,9 @@
   .rs-thumb img { width: 96px; }
   .rs-row { grid-template-columns: minmax(0, 1fr); }
 }
+/* At 320 the card's button beside a 96px page ran 19px past the edge, so the
+   narrowest phones stack the page above its citation. */
+@media (max-width: 420px) {
+  .rs-paper { grid-template-columns: minmax(0, 1fr); }
+  .rs-thumb img { width: 112px; }
+}
