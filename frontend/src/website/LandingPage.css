@@ -419,10 +419,14 @@
    edge; with the menu button back inside the row, flex spacing does that job
    at every width. Hidden while the menu is open: the panel carries its own
    Open Flock, and nothing may crowd the close control. */
-.lp-nav-open {
+/* Two classes deep: .lp-btn is declared further down at equal single-class
+   specificity, so a plain .lp-nav-open rule here loses its height, padding and
+   size to it, and the bar's button rendered at the 46px body size. */
+.lp-nav .lp-nav-open {
   flex: none;
   height: 40px;
-  padding: 0 16px;
+  padding: 0 18px;
+  border-radius: 10px;
   font-size: 14.5px;
 }
 .lp-nav.is-menu-open .lp-nav-open { display: none; }
