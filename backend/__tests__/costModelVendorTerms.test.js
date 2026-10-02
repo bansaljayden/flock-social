@@ -51,10 +51,17 @@ test('GitHub Actions is not called free for being public', () => {
   assert.match(watch('github-actions').note, /deployment source/);
 });
 
-test('the Codemagic balance is not blamed on six minutes of overage', () => {
+test('the Codemagic bill is explained by its invoice, not by six minutes of overage', () => {
+  // The billing page read "506 / 500" on 2026-09-30, which looked like six
+  // minutes over; it counts the free allowance only. The invoice paid on
+  // 2026-10-02 itemized 507 free and 1,370 billed M2 minutes.
   const note = watch('codemagic').note;
-  assert.match(note, /\$0\.57/);
-  assert.match(note, /1,370 minutes/);
+  assert.match(note, /507 free and 1,370 billed/);
+  assert.match(note, /\$130\.15/);
+  assert.match(note, /counts the free allowance only/);
+  // A dependency that has sent an invoice is not a free one.
+  assert.strictEqual(dep('codemagic').group, 'metered');
+  assert.strictEqual(dep('codemagic').costsNothingBecause, undefined);
 });
 
 test('BestTime\'s filter queries are capped, not unlimited', () => {
