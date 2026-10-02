@@ -640,6 +640,26 @@ describe('LandingPage motion', () => {
     test('nothing in the motion block waits on a script or a scroll position', () => {
       expect(motion).not.toMatch(/is-visible|is-revealed|in-view|data-reveal/);
     });
+
+    test('the App Store badge is never animated, per Apple\'s badge guidelines', () => {
+      expect(css).not.toMatch(/\.lp-appstore:hover \{ transform: translateY/);
+      expect(css).not.toMatch(/\.lp-appstore \{[^}]*transition:[^;]*transform/);
+    });
+
+    test('the live dot stops after two pulses instead of blinking forever (WCAG 2.2.2)', () => {
+      expect(css).toMatch(/\.lpd-live-dot \{[^}]*animation: lpd-live 2s ease-in-out 2;/);
+      expect(css).not.toMatch(/lpd-live 2s ease-in-out infinite/);
+    });
+
+    test('hover arrows on the menu rows exist only where hover is real, and stay out of the accessible name', () => {
+      const hoverOnly = css.slice(css.indexOf('@media (hover: hover) and (pointer: fine) {'));
+      expect(hoverOnly).toMatch(/\.lp-menu-link::after \{\s*content: "\\2192" \/ "";/);
+    });
+
+    test('reduced motion stills the menu X in both directions', () => {
+      const reduced = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce)'));
+      expect(reduced).toMatch(/\.lp-menu-bar,\s*\.lp-menu-btn\.is-open \.lp-menu-bar \{ transition: none; \}/);
+    });
   });
 });
 
