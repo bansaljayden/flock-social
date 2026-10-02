@@ -108,23 +108,29 @@ export default function SiteNav({ menu, current }) {
             />
             Flock
           </a>
+          <nav className="lp-nav-links" aria-label="Sections">
+            {links.map((l) => (
+              <a key={l.href} href={l.href} aria-current={l.href === current ? 'page' : undefined}>
+                {l.label}
+              </a>
+            ))}
+          </nav>
           <a className="lp-btn lp-btn-cream lp-nav-open" href="/app">Open Flock</a>
+          <button
+            type="button"
+            ref={menuBtnRef}
+            className={`lp-menu-btn${menuOpen ? ' is-open' : ''}`}
+            aria-label={menuOpen ? 'Close menu' : 'Open menu'}
+            aria-expanded={menuOpen}
+            aria-controls="lp-menu"
+            onClick={() => setMenuOpen((v) => !v)}
+          >
+            <span className="lp-menu-bars" aria-hidden="true">
+              <span className="lp-menu-bar" />
+              <span className="lp-menu-bar" />
+            </span>
+          </button>
         </div>
-        <button
-          type="button"
-          ref={menuBtnRef}
-          className={`lp-menu-btn${menuOpen ? ' is-open' : ''}`}
-          aria-label={menuOpen ? 'Close menu' : 'Open menu'}
-          aria-expanded={menuOpen}
-          aria-controls="lp-menu"
-          onClick={() => setMenuOpen((v) => !v)}
-        >
-          <span className="lp-menu-bars" aria-hidden="true">
-            <span className="lp-menu-bar" />
-            <span className="lp-menu-bar" />
-            <span className="lp-menu-bar" />
-          </span>
-        </button>
       </header>
 
       <div id="lp-menu" ref={menuRef} className={`lp-menu${menuOpen ? ' is-open' : ''}`}>
