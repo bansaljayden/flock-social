@@ -2,6 +2,7 @@ import React, { useEffect } from 'react';
 import './LandingPage.css';
 import './ResearchPage.css';
 import SiteFooter from './SiteFooter';
+import SiteNav, { useSiteMenu } from './SiteNav';
 
 // The paper itself, the full write-up of both studies summarised below, and a
 // picture of its first page. They live in public/papers/, not
@@ -106,6 +107,10 @@ function Chart({ title, usLabel, themLabel, rows, note }) {
 }
 
 export default function ResearchPage() {
+  const menu = useSiteMenu();
+  // Everything behind the open menu goes inert, as on the landing page.
+  const pageInert = menu.menuOpen ? { inert: true } : {};
+
   useEffect(() => {
     document.title = 'Research: forecasting and counting crowds | Flock';
     const meta = document.querySelector('meta[name="description"]');
@@ -116,17 +121,9 @@ export default function ResearchPage() {
     <div className="lp rs">
       <a className="lp-skip" href="#rs-main">Skip to the main content</a>
 
-      <header className="rs-top">
-        <div className="lp-wrap rs-top-in">
-          <a className="lp-brand" href="/">
-            <img src="/marks/logo-64.png" width="32" height="32" alt="" aria-hidden="true" className="rs-mark" />
-            Flock
-          </a>
-          <a className="lp-btn lp-btn-cream rs-open" href="/app">Open Flock</a>
-        </div>
-      </header>
+      <SiteNav menu={menu} current="/research" />
 
-      <main id="rs-main" tabIndex={-1}>
+      <main id="rs-main" tabIndex={-1} {...pageInert}>
         <section className="lp-sec-navy lp-on-navy rs-hero">
           <div className="lp-wrap">
             <h1>Why we study crowds, and what we found.</h1>
@@ -242,11 +239,13 @@ export default function ResearchPage() {
         </section>
       </main>
 
-      <SiteFooter className="rs-footer" linkStyle={{ color: 'var(--cream-2)' }}>
-        <p>
-          Flock &middot; <a href="/" style={{ color: 'var(--cream-2)' }}>flockcorp.com</a>
-        </p>
-      </SiteFooter>
+      <div {...pageInert}>
+        <SiteFooter className="rs-footer" linkStyle={{ color: 'var(--cream-2)' }}>
+          <p>
+            Flock &middot; <a href="/" style={{ color: 'var(--cream-2)' }}>flockcorp.com</a>
+          </p>
+        </SiteFooter>
+      </div>
     </div>
   );
 }
