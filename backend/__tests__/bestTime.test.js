@@ -462,6 +462,18 @@ test('the words about NOW still come from the model score the card prints', () =
   assert.equal(quiet.text, 'Now is good');
 });
 
+// "It stays that way" is a claim about the hours left today, so it follows
+// their level (site audit 2026-10-03: the demo card said it over its own chart
+// dropping to Busy). Each curve below is flat on the ordering axis, so no hour
+// is named and the sentence is the whole answer.
+test('the clause after "Packed now" follows the level of the hours left today', () => {
+  const ask = (entries) => recommendBestTime(dualForecast(20, entries), OPEN_ALL_EVENING, null, null, true,
+    { currentHour: 20, currentScore: 92 }).text;
+  assert.equal(ask([[92, 70], [90, 68], [91, 69]]), 'Packed now, and it stays that way');
+  assert.equal(ask([[92, 70], [79, 68], [80, 69]]), 'Packed now, and busy the rest of the day');
+  assert.equal(ask([[92, 70], [88, 68], [62, 69]]), 'Packed now');
+});
+
 test('user reports move the level and never the shape', () => {
   // Three verified reporters push the published score from 60 to 85. That is a
   // LEVEL correction and it changes the sentence. It must not change which

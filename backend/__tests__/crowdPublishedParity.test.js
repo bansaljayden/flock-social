@@ -246,6 +246,10 @@ function clockAt(hour) {
 
 const GO_NOW = /^Now(, before the rush| is good)$/;
 const PACKED_NOW = 'Packed now, and it stays that way';
+// An owner's live Packed over a forecast of 40 for every later hour. The
+// sentence used to add "and it stays that way" here, over hours this file
+// itself asserts stay at 40; the clause now follows the hours it describes.
+const PACKED_NOW_ONLY = 'Packed now';
 
 // ===========================================================================
 // 1 and 5. The card: best time and method follow the owner's number.
@@ -269,7 +273,7 @@ test('the card picks its best time from the owner\'s number, on a cache hit and 
   assert.strictEqual(cachedOwned.body.score, 90);
   assert.strictEqual(cachedOwned.body.label, 'Packed');
   assert.strictEqual(cachedOwned.body.ownerReport.applied, true);
-  assert.strictEqual(cachedOwned.body.bestTime, PACKED_NOW,
+  assert.strictEqual(cachedOwned.body.bestTime, PACKED_NOW_ONLY,
     '"Now is good" beside the owner\'s Packed is the bug this pins');
   assert.strictEqual(cachedOwned.body.bestIsNow, true);
   assert.strictEqual(cachedOwned.body.predictionMethod, 'owner_report');
@@ -292,7 +296,7 @@ test('the card picks its best time from the owner\'s number, on a cache hit and 
   const freshOwned = await call('GET', `/api/crowd/${id2}`);
   assert.strictEqual(freshOwned.status, 200, freshOwned.text);
   assert.strictEqual(freshOwned.body.score, 90);
-  assert.strictEqual(freshOwned.body.bestTime, PACKED_NOW);
+  assert.strictEqual(freshOwned.body.bestTime, PACKED_NOW_ONLY);
   assert.strictEqual(freshOwned.body.predictionMethod, 'owner_report');
 });
 
@@ -321,7 +325,7 @@ test('Birdie picks its best time from the score it quotes, the owner\'s when one
   const owned = await executeTool('get_crowd_prediction', { place_id: id }, 4102, { includeForecast: true });
   assert.strictEqual(owned.crowd_score, 90);
   assert.strictEqual(owned.crowd_source, 'owner_report');
-  assert.strictEqual(owned.best_time, PACKED_NOW);
+  assert.strictEqual(owned.best_time, PACKED_NOW_ONLY);
 
   delete ownerRows[id];
   const plain = await executeTool('get_crowd_prediction', { place_id: id }, 4102, { includeForecast: true });
@@ -346,7 +350,7 @@ test('Birdie\'s current hour carries the number it quotes, whoever produced it',
   // "Packed now" in its best time and 40 for the same hour.
   ownerRows[id] = liveOwnerRow(id, 90);
   const owned = await ask();
-  assert.strictEqual(owned.best_time, PACKED_NOW);
+  assert.strictEqual(owned.best_time, PACKED_NOW_ONLY);
   assert.deepStrictEqual(nowOf(owned), { score: 90, label: 'Packed', predictionMethod: 'owner_report' });
   assert.strictEqual(owned.hourly_forecast[0].hour, plain.hourly_forecast[0].hour, 'still the current hour');
   assert.strictEqual(owned.hourly_forecast[1].score, 40, 'the hours after now stay the forecast');
