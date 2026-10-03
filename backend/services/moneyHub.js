@@ -887,7 +887,9 @@ function licenceExposures({ lines, expenses, perMonthCents }) {
     let fixed = false;
     if (by.codeLine) {
       const line = lines.find((l) => l.origin !== 'expense' && l.id === by.codeLine);
-      fixed = !!(line && line.amountCents > 0) || expenses.some((x) => paying(x) && x.replacesLine === by.codeLine);
+      // The code line's own figure fixes it only while that figure is what
+      // counts: a line a $0 or one-time row stands in for is out of the burn.
+      fixed = !!(line && line.counted && line.amountCents > 0) || expenses.some((x) => paying(x) && x.replacesLine === by.codeLine);
     }
     // By the vendor's name as well: a Vercel Pro bill recorded without
     // "counts instead of" is already in the burn, and adding Vercel's $20 to
@@ -928,6 +930,14 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
   // Code lines whose month is already paid by a stopped row that replaced
   // them (see THIS MONTH IS WHAT WAS PAID below).
   const coveredThisMonth = new Set();
+  // Code lines an active bill really pays for each month: dollars, not a
+  // credit, above $0, recurring. Only such a row carries the month in place
+  // of a stopped one; a $0 row or a one-time charge linked to the same line
+  // left the stopped bill's real charge in neither figure (review 2026-10-03).
+  const payingReplacers = new Set(expenses
+    .filter((x) => x.active && x.currency === 'USD' && !x.isCredit && x.amountCents > 0
+      && ['monthly', 'quarterly', 'yearly', 'usage'].includes(x.cadence) && x.replacesLine)
+    .map((x) => x.replacesLine));
   for (const c of codeCostLines(reconciled)) {
     const by = replacedBy.get(c.id) || null;
     lines.push({ ...c, counted: !by, replacedBy: by });
@@ -954,7 +964,7 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
     // same recurring line, that row carries this month, and the stopped one
     // adding its charge as well counted the line's month twice.
     const replaced = x.replacesLine ? lines.find((l) => l.origin !== 'expense' && l.id === x.replacesLine) : null;
-    const superseded = !x.active && !!replaced && replaced.cadence !== 'one_time' && replacedBy.has(x.replacesLine);
+    const superseded = !x.active && !!replaced && replaced.cadence !== 'one_time' && payingReplacers.has(x.replacesLine);
     const stoppedButPaidThisMonth = !x.active && inMonth(x.lastChargedOn, month) && !superseded;
     if (stoppedButPaidThisMonth && usd && !x.isCredit && x.amountCents > 0 && replaced && replaced.cadence !== 'one_time') {
       coveredThisMonth.add(replaced.id);

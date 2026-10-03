@@ -1580,5 +1580,7 @@ describe('a truncated expense list', () => {
     await screen.findByText(/These are the first 500/);
     expect(document.body.textContent).toMatch(/Licensing them adds \$20\.00 a month\./);
     expect(document.body.textContent).not.toMatch(/\$220\.78/);
+    // The cost tables are withheld too: their totals would be missing bills.
+    expect(screen.getByText(/Totals withheld until the expense list fits/)).toBeInTheDocument();
   });
 });

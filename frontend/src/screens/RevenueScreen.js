@@ -814,10 +814,20 @@ function HubCosts({ h, colors }) {
         The infrastructure bills in backend/services/costModel.js, the reconciled Google Cloud and Railway bills, and the expense list below, each bill counted once. The Costs tab has the meters behind them.
       </p>
       {c.status === 'error' && <HubNotice status="error" reason={c.reason} />}
-      <p style={{ ...hubStyle.kicker, marginTop: '4px' }}>By kind</p>
-      {table(c.byKind || [], (k) => k.kind, (k) => k.label || HUB_KIND_LABEL[k.kind] || k.kind)}
-      <p style={hubStyle.kicker}>By category</p>
-      {table(c.byCategory || [], (k) => `cat-${k.category}`, (k) => k.category)}
+      {/* A list cut short at the limit is missing bills, so its totals are a
+          smaller number that looks whole: the tables are withheld, as the
+          headline burn is (review 2026-10-03). An unreadable list still shows
+          the code lines, labelled by the notice above. */}
+      {h.expenses && h.expenses.truncated ? (
+        <p style={hubStyle.note}>Totals withheld until the expense list fits: the bills past the first {h.expenses.limit || 500} are not in them.</p>
+      ) : (
+        <>
+          <p style={{ ...hubStyle.kicker, marginTop: '4px' }}>By kind</p>
+          {table(c.byKind || [], (k) => k.kind, (k) => k.label || HUB_KIND_LABEL[k.kind] || k.kind)}
+          <p style={hubStyle.kicker}>By category</p>
+          {table(c.byCategory || [], (k) => `cat-${k.category}`, (k) => k.category)}
+        </>
+      )}
 
       <p style={hubStyle.kicker}>Renewals in the next {c.upcomingWindowDays || 60} days</p>
       {upcoming.length === 0 ? (
