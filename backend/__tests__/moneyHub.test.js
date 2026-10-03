@@ -3190,3 +3190,35 @@ test('an App Store price of $0 falls through to the stated price', () => {
     assert.strictEqual(net.breakEven.proAppStore.smallBusiness.needed, 30);
   }
 });
+
+// Third review of the hub overhaul (2026-10-03).
+test('a $0 or one-time active replacement does not swallow a stopped bill paid this month', () => {
+  const base = moneyHub.buildCostPicture({ expenses: [], month: MONTH });
+  const railway = base.lines.find((l) => l.id === 'railway');
+  const stopped = expense({ id: 1, vendor: 'Railway', amountCents: 4497, active: false, lastChargedOn: MONTH.todayYmd, replacesLine: 'railway' });
+  for (const active of [
+    expense({ id: 2, vendor: 'Railway', amountCents: 0, replacesLine: 'railway' }),
+    expense({ id: 3, vendor: 'Railway', amountCents: 10000, cadence: 'one_time', lastChargedOn: '2026-01-15', replacesLine: 'railway' }),
+  ]) {
+    const pic = moneyHub.buildCostPicture({ expenses: [stopped, active], month: MONTH });
+    // The $44.97 actually paid this month is in this month.
+    assert.strictEqual(pic.totals.thisMonthCents, base.totals.thisMonthCents - railway.thisMonthCents + 4497);
+  }
+});
+
+test('a code line a non-paying row stands in for does not clear its licence exposure', () => {
+  // Vercel's line is $0 today, so the case is the day it is $20 and a $0 row
+  // still names it: that line is out of the burn, so the exposure stays.
+  const cm = require('../services/costModel');
+  const line = cm.FIXED_MONTHLY.find((e) => e.id === 'vercel');
+  const was = line.usd;
+  line.usd = 20;
+  try {
+    const pic = moneyHub.buildCostPicture({ expenses: [expense({ id: 1, vendor: 'Vercel', amountCents: 0, replacesLine: 'vercel' })], month: MONTH });
+    assert.ok(pic.licence.items.some((i) => i.id === 'vercel'), 'a $0 stand-in cleared Vercel');
+    const counted = moneyHub.buildCostPicture({ expenses: [], month: MONTH });
+    assert.ok(!counted.licence.items.some((i) => i.id === 'vercel'), 'a $20 code line that counts is the fix');
+  } finally {
+    line.usd = was;
+  }
+});
