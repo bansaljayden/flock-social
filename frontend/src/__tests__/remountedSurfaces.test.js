@@ -506,11 +506,27 @@ describe('nothing still declared in the render owns anything a remount destroys'
     // satisfied. App.js has had this shape for its whole life and the count
     // only ever moves by one or two, so a run that finds none has broken its
     // traversal rather than fixed the code.
-    expect(mounted.length).toBeGreaterThan(3);
+    // Three handed to screens since 2026-10-03, when the last components
+    // mounted in place became calls; the floor moved with them.
+    expect(mounted.length).toBeGreaterThanOrEqual(3);
     // Both halves separately, because a union hides a half that has stopped
     // matching: the count staying above the floor says nothing about which
     // walk produced it, and each of the two can break on its own.
-    expect(mountedHere.length).toBeGreaterThan(0);
+    // The JSX walk itself is proven on the tags it CAN see: capitalised
+    // components FlockAppInner mounts that are bound outside it. Since
+    // 2026-10-03 nothing declared inside the render is mounted as a tag any
+    // more (AIBubble, Toast and MissingDmPanel, the last three, are called;
+    // nestedComponentsCalled.test.js holds that), so mountedHere is empty by
+    // design and a non-empty walk over outside tags is what shows the
+    // traversal is still working.
+    let outsideTags = 0;
+    FLOCK_APP_INNER.traverse({
+      JSXOpeningElement(p) {
+        if (p.node.name.type === 'JSXIdentifier' && /^[A-Z]/.test(p.node.name.name)) outsideTags += 1;
+      },
+    });
+    expect(outsideTags).toBeGreaterThan(10);
+    expect(mountedHere).toEqual([]);
     expect(handedOver.length).toBeGreaterThan(0);
   });
 

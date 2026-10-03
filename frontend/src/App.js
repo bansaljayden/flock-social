@@ -14740,7 +14740,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // the body), so React remounted the node constantly and no amount of
   // attribute work here could have made it stable.
   //
-  // The region is now the wrapper at the <Toast /> call site, which lives in
+  // The region is now the wrapper at the Toast() call site, which lives in
   // App's own returned tree and therefore keeps one DOM node for the life of
   // the session. Toasts mutate into it. Do not put role or aria-live back on
   // this element: two nested regions announce twice.
@@ -16920,7 +16920,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
       </div>
 
-      <AIBubble />
+      {/* Called, not mounted as <AIBubble />: it is declared inside this
+          render, so as a component it was a NEW type on every app render and
+          React remounted it each time, which dropped a drag in progress
+          (pointer capture goes with the node). SafetyButton and BottomNav
+          beside it were already called for the same reason. */}
+      {AIBubble()}
       {SafetyButton()}
       {BottomNav()}
     </div>
@@ -18979,7 +18984,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // is undefined, and it draws no nav of its own, so a DM push tapped on a
       // cold start, or a partner who deleted their account, left a blank screen
       // with no way out. The flock twin has had MissingFlockPanel for this.
-      if (!selectedDm) return <MissingDmPanel />;
+      if (!selectedDm) return MissingDmPanel();
       // Keyed on the person, for the reason the flock chat above is keyed on
       // the plan: a tap on Bob's notification while Alice's thread was open
       // reused this screen, and the sentence written to Alice was still in the
@@ -20126,7 +20131,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           incidental and should wait for a pause. The wrapper itself never
           paints and never takes space; the toast inside it is position:fixed. */}
       <div role="status" aria-live={toast && toast.type === 'error' ? 'assertive' : 'polite'}>
-        <Toast />
+        {/* Called rather than mounted, so the toast is one node while it is
+            up instead of a fresh one on every app render (see AIBubble). */}
+        {Toast()}
       </div>
       <VerifyEmailSheet {...verifyEmailSheetProps} />
 
