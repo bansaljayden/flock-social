@@ -9115,7 +9115,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [subscriptionPrice, setSubscriptionPrice] = useState(99); // Roost's list price, the one venue plan; a seed off any other price opens the simulator on a plan no venue can buy (it was 67, the midpoint of Roost and the retired middle plan)
   const [eventsPerVenue, setEventsPerVenue] = useState(12);
   const [avgSpend, setAvgSpend] = useState(120);
-  const [takeRate, setTakeRate] = useState(2.5); // pitch deck: 2.5% transaction fee
+  // 0, because Flock takes no cut of anything a group spends: the 2.5% that
+  // stood here came from a pitch deck, and opened the simulator projecting
+  // about $720 a month from a revenue stream the product does not have. The
+  // field stays for a what-if.
+  const [takeRate, setTakeRate] = useState(0);
+  // A placeholder until the money hub's real monthly burn is known: the
+  // Projections tab replaces it with that figure once, unless it was typed
+  // over first (screens/RevenueScreen.js, SIM_OPERATING_COSTS_SEED).
   const [operatingCosts, setOperatingCosts] = useState(2000);
 
   // Read the research analytics when the tab is first opened. Nothing did this:
