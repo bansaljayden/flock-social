@@ -191,7 +191,9 @@ describe('the venue search dropdown names its rows', () => {
 describe('the toast is a live region that outlives its message', () => {
   it('the region is a wrapper in the app tree, not the toast node', () => {
     expect(app).toMatch(
-      /<div role="status" aria-live=\{toast && toast\.type === 'error' \? 'assertive' : 'polite'\}>\s*<Toast \/>\s*<\/div>/
+      // Called as Toast(), not mounted as <Toast />, since 2026-10-03: it is
+      // declared inside the render, so a tag was a new type every render.
+      /<div role="status" aria-live=\{toast && toast\.type === 'error' \? 'assertive' : 'polite'\}>\s*(?:\{\/\*[\s\S]*?\*\/\}\s*)?\{Toast\(\)\}\s*<\/div>/
     );
   });
 

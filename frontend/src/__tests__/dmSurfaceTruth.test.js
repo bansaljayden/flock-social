@@ -14,7 +14,8 @@ const handlers = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'backend
 
 test('a DM screen with no conversation is not a blank dead end', () => {
   expect(app).toMatch(/const MissingDmPanel = \(\) => \(/);
-  expect(app).toMatch(/if \(!selectedDm\) return <MissingDmPanel \/>;/);
+  // Called, not mounted: it is declared inside the app's render (2026-10-03).
+  expect(app).toMatch(/if \(!selectedDm\) return MissingDmPanel\(\);/);
   expect(app).toMatch(/This conversation is not here/);
   expect(app).toMatch(/Back to Messages/);
 });
