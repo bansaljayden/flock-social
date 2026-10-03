@@ -1636,3 +1636,11 @@ describe('the price sheet', () => {
     expect(document.body.textContent).toMatch(/Not checked against a receipt or a pricing page in 60 days: Mystery tool\./);
   });
 });
+
+describe('bills that jumped', () => {
+  test('a bill well above the last one is an attention row with both figures', async () => {
+    await renderHub({ ...CONNECTED, costs: { ...CONNECTED.costs, jumps: [{ id: 'railway', label: 'Railway (backend and Postgres)', fromCents: 2452, fromPeriod: 'Aug 15 to Sep 15, 2026', toCents: 4497, toAsOf: '2026-10-03', pct: 83 }] } });
+    expect(await screen.findByText('Bills up on the last one')).toBeInTheDocument();
+    expect(document.body.textContent).toMatch(/Railway \(backend and Postgres\): \$24\.52 for Aug 15 to Sep 15, 2026, now \$44\.97 as of 2026-10-03 \(up 83%\)\./);
+  });
+});

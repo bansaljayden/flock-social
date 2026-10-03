@@ -486,9 +486,10 @@ async function readReconciled(pool) {
         note: row.note || null,
         readFrom: l.readFrom,
         source: 'dashboard',
+        previous: l.previous || null,
       };
     }
-    return { id: l.id, label: l.label, usdPerMonth: l.usdPerMonth, asOf: l.asOf, note: l.note, readFrom: l.readFrom, source: 'code' };
+    return { id: l.id, label: l.label, usdPerMonth: l.usdPerMonth, asOf: l.asOf, note: l.note, readFrom: l.readFrom, source: 'code', previous: l.previous || null };
   });
   const dates = lines.map((l) => l.asOf).filter((d) => typeof d === 'string').sort();
   return {
@@ -591,6 +592,9 @@ const RECONCILED = {
       label: 'Google Cloud (Places, Vision, Gemini on one bill)',
       usdPerMonth: 18.63,
       asOf: '2026-10-01',
+      // The bill before this one, from its receipt, so the money hub can say
+      // when a bill jumps (moneyHub.js billJumps). Updated with each receipt.
+      previous: { usdPerMonth: 31.19, period: 'August 2026', paidOn: '2026-09-01' },
       readFrom: 'the latest paid invoice on the Google Cloud billing page',
       note: 'September 2026 was paid on 2026-10-01: $18.63 (Google\'s payment receipt, which states the amount and not the line items). August was $31.19, paid on 2026-09-01, the first full billing cycle anyone read off an invoice, and the budget alert of 2026-09-29 (half of a $33 budget) already pointed at a smaller September. Both are paid monthly totals; the $9.00 that stood here from 2026-08-20 was a mid-month snapshot taken on day 20 and was never a monthly figure. The photo budget is the ceiling on the size of this line: PHOTO_BUDGET_USD_PER_YEAR in services/photoStore.js defaults to $300, which is $25.00 a month of paid fetches on top of Google\'s 1,000 free, so a month that spends its photo allowance lands near $25 before Text Search, Place Details and Vision are added. Both months sit inside that envelope rather than outside it. Gemini has billed $0 to date on both callers. To lower it, lower the budget: this is a configured ceiling, not a leak.',
     },
@@ -601,6 +605,7 @@ const RECONCILED = {
       label: 'Railway (backend and Postgres)',
       usdPerMonth: 44.97,
       asOf: '2026-10-03',
+      previous: { usdPerMonth: 24.52, period: 'Aug 15 to Sep 15, 2026', paidOn: '2026-09-15' },
       readFrom: 'the estimated bill `railway usage` prints for the current billing period',
       note: 'Railway\'s own estimated bill for the Sep 16 to Oct 16, 2026 billing period: $44.97 as `railway usage` printed it on 2026-10-03, with $25.95 of usage billed so far. Earlier readings of the same period were $32.96 on 09-28, $36.05 on 09-29, $37.10 on 09-30 and $44.66 on 10-02; the estimate climbs as the period\'s usage comes in. Memory is the bill: $21.08 of the $25.95, against $0.43 of CPU, $3.16 of egress, $0.73 of volume and $0.55 of backups (`railway usage --json`). Over the 7 days to 10-03 Postgres averaged 3.24 GB of memory (peak 4.61), the API 0.39 GB and the BestTime collector 0.18 GB (Railway service metrics), so the database\'s memory is most of what this line costs. The previous period, Aug 15 to Sep 15, was billed $24.52 (Railway\'s receipt of 2026-09-15: $24.52 of usage plus the $20 Pro plan, less the $20 of usage the plan includes). Each bill is the $20 Pro plan fee plus whatever usage runs past the $20 of credit the plan includes, so it moves with compute and volume from one period to the next. Each new period\'s figure is recorded in the reconciled-cost form on the admin dashboard\'s Costs tab, and a saved entry replaces this one.',
     },

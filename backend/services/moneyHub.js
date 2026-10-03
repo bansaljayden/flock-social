@@ -874,6 +874,34 @@ function roundRowsToTotal(rows, field, total) {
   rows.forEach((r, i) => { r[field] = floors[i] || 0; });
 }
 
+// BILLS THAT JUMPED (2026-10-03). A reconciled bill (Railway, Google Cloud)
+// carries the bill before it from its receipt; one running more than a
+// quarter above that is said out loud. Railway went from $24.52 to an
+// estimated $44.97 and nothing on the hub said so.
+const BILL_JUMP_PCT = 25;
+
+function billJumps(reconciled) {
+  const lines = reconciled && Array.isArray(reconciled.lines) ? reconciled.lines : costModel.RECONCILED.lines;
+  const out = [];
+  for (const l of lines) {
+    const prev = l.previous;
+    if (!prev || !(prev.usdPerMonth > 0) || !Number.isFinite(Number(l.usdPerMonth))) continue;
+    const now = Number(l.usdPerMonth);
+    const pct = Math.round(((now - prev.usdPerMonth) / prev.usdPerMonth) * 100);
+    if (pct <= BILL_JUMP_PCT) continue;
+    out.push({
+      id: l.id,
+      label: l.label,
+      fromCents: Math.round(prev.usdPerMonth * 100),
+      fromPeriod: prev.period || null,
+      toCents: Math.round(now * 100),
+      toAsOf: l.asOf || null,
+      pct,
+    });
+  }
+  return out;
+}
+
 // THE PRICE SHEET (2026-10-03): every bill and rate card Flock pays, in one
 // list, each with the date it was last checked against its source, oldest
 // first, so what needs a fresh look is at the top. The code's lines carry
@@ -1239,6 +1267,7 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
     })),
     undatedCodeYearly: lines.filter((l) => l.origin === 'code' && l.cadence === 'yearly' && l.counted).length,
     licence: licenceExposures({ lines, expenses, perMonthCents: perMonthTotal }),
+    jumps: billJumps(reconciled),
   };
 }
 
@@ -3586,6 +3615,7 @@ module.exports = {
   buildUnitCosts,
   expensesCsv,
   buildPriceSheet,
+  billJumps,
   costsLedger,
   readExpenses,
   readHealth,
