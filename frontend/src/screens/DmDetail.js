@@ -408,10 +408,12 @@ export default function DmDetail({
   React.useEffect(() => (imageViewerOpen ? holdStatusBarOverDark() : undefined), [imageViewerOpen]);
   const openImageViewer = (m) => {
     if (m.image_url) { setImageViewer({ src: m.image_url }); return; }
-    setImageViewer({ loading: true });
+    // Only this message's answer replaces this message's loading state: see
+    // the same viewer in ChatDetail.js.
+    setImageViewer({ loading: true, id: m.id });
     getDmMessageImage(m.id)
-      .then((d) => setImageViewer((prev) => (prev && prev.loading ? { src: d.image } : prev)))
-      .catch(() => setImageViewer((prev) => (prev && prev.loading ? { error: "Couldn't load the full photo. Try again." } : prev)));
+      .then((d) => setImageViewer((prev) => (prev && prev.loading && prev.id === m.id ? { src: d.image } : prev)))
+      .catch(() => setImageViewer((prev) => (prev && prev.loading && prev.id === m.id ? { error: "Couldn't load the full photo. Try again." } : prev)));
   };
 
   const [connectionState, setConnectionState] = React.useState(readConnection);

@@ -1052,10 +1052,14 @@ export default function ChatDetail({
     React.useEffect(() => (imageViewerOpen ? holdStatusBarOverDark() : undefined), [imageViewerOpen]);
     const openImageViewer = (m) => {
       if (m.image) { setImageViewer({ src: m.image }); return; }
-      setImageViewer({ loading: true });
+      // The answer is for the photo it was asked for. Open one, close it and
+      // open another, and the first one's late answer used to land in the
+      // second one's viewer (app audit 2026-10-03), so the loading state names
+      // its message and only that message's answer replaces it.
+      setImageViewer({ loading: true, id: m.id });
       getFlockMessageImage(flock.id, m.id)
-        .then((d) => setImageViewer((prev) => (prev && prev.loading ? { src: d.image } : prev)))
-        .catch(() => setImageViewer((prev) => (prev && prev.loading ? { error: "Couldn't load the full photo. Try again." } : prev)));
+        .then((d) => setImageViewer((prev) => (prev && prev.loading && prev.id === m.id ? { src: d.image } : prev)))
+        .catch(() => setImageViewer((prev) => (prev && prev.loading && prev.id === m.id ? { error: "Couldn't load the full photo. Try again." } : prev)));
     };
 
     const [composerHasRealText, setComposerHasRealText] = React.useState(false);
