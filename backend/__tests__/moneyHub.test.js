@@ -3100,3 +3100,47 @@ test('plans outside their terms are listed with what licensing them adds, and a 
   });
   assert.ok(stopped.licence.items.some((i) => i.id === 'maptiler'));
 });
+
+test('category and kind rows add up to the total they sit under', () => {
+  const pic = moneyHub.buildCostPicture({
+    expenses: Array.from({ length: 12 }, (_, i) => expense({ id: 200 + i, vendor: `Tool ${i}`, kind: 'tooling', category: `Cat ${i}`, cadence: 'yearly', amountCents: 10000 })),
+    month: MONTH,
+  });
+  const sum = (rows, f) => rows.reduce((a, r) => a + r[f], 0);
+  assert.strictEqual(sum(pic.byCategory, 'perMonthCents'), pic.totals.perMonthCents);
+  assert.strictEqual(sum(pic.byKind, 'perMonthCents'), pic.totals.perMonthCents);
+  assert.strictEqual(sum(pic.byCategory, 'thisMonthCents'), pic.totals.thisMonthCents);
+  assert.strictEqual(sum(pic.byKind, 'thisMonthCents'), pic.totals.thisMonthCents);
+});
+
+test('the Costs tab ledger withholds a list past the limit, as the Overview does', () => {
+  const rows = [];
+  Object.defineProperty(rows, 'truncated', { value: true, enumerable: false });
+  const ledger = moneyHub.costsLedger({ expenses: rows, reconciled: null, month: MONTH });
+  assert.strictEqual(ledger.status, 'error');
+  assert.match(ledger.readError, /more than \d+ rows/);
+});
+
+test('what each plan leaves, after Stripe fees and both of Apple\'s rates', () => {
+  const nets = moneyHub.buildPlanNets();
+  const of = (product, plan) => nets.find((n) => n.product === product && n.plan === plan);
+  assert.strictEqual(of('pro', 'monthly').web.netPerMonthCents, 355);
+  assert.strictEqual(of('pro', 'monthly').appStore.netPerMonthCents, 279);
+  assert.strictEqual(of('pro', 'monthly').appStore.netPerMonthSmallBusinessCents, 339);
+  assert.strictEqual(of('pro', 'yearly').web.netPerMonthCents, 238);
+  assert.strictEqual(of('roost', 'monthly').web.netPerMonthCents, 9514);
+  assert.strictEqual(of('roost', 'yearly').web.netPerMonthCents, 7951);
+  assert.strictEqual(of('roost', 'founding').web.netPerMonthCents, 5658);
+  assert.strictEqual(of('roost', 'monthly').appStore, null, 'Roost is never sold in the App Store');
+  for (const n of nets) assert.strictEqual(n.web.netPerMonthCents + n.web.feesPerMonthCents, n.grossPerMonthCents);
+});
+
+test('cost per active person and per plan, withheld below the floor and without a burn', () => {
+  const ok = moneyHub.buildUnitCosts({ burnCents: 44581, people: { status: 'ok', active: { last7: 25 }, plans: { madeLast7: 12 } } });
+  assert.strictEqual(ok.perActivePersonCents, 1783);
+  assert.strictEqual(ok.perPlanCents, Math.round(44581 / (12 * 30.4375 / 7)));
+  const few = moneyHub.buildUnitCosts({ burnCents: 44581, people: { status: 'ok', active: { last7: 9 }, plans: { madeLast7: 3 } } });
+  assert.strictEqual(few.perActivePersonCents, null);
+  assert.strictEqual(few.perPlanCents, null);
+  assert.strictEqual(moneyHub.buildUnitCosts({ burnCents: null, people: { status: 'ok' } }).status, 'unavailable');
+});

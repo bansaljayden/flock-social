@@ -794,6 +794,81 @@ function codeCostLines(reconciled) {
   return lines;
 }
 
+// WHAT EACH PLAN LEAVES, a month, after the fees (2026-10-03). Break-even
+// works out the monthly plans only, to count subscribers; this is every plan,
+// so a yearly plan's discount and the founding rate are on the page too. From
+// the stated prices (which the Prices card checks against Stripe and the App
+// Store), through the same Stripe fee arithmetic the break-even uses, and both
+// of Apple's rates for the App Store, since nothing here can see which applies.
+const PLAN_NET_SHAPES = [
+  { product: 'pro', plan: 'monthly', recurring: { interval: 'month', interval_count: 1 }, appStore: true },
+  { product: 'pro', plan: 'yearly', recurring: { interval: 'year', interval_count: 1 }, appStore: true },
+  { product: 'roost', plan: 'monthly', recurring: { interval: 'month', interval_count: 1 }, appStore: false },
+  { product: 'roost', plan: 'yearly', recurring: { interval: 'year', interval_count: 1 }, appStore: false },
+  { product: 'roost', plan: 'founding', recurring: { interval: 'month', interval_count: 1 }, appStore: false },
+];
+
+function buildPlanNets() {
+  const out = [];
+  for (const shape of PLAN_NET_SHAPES) {
+    const stated = STATED_PRICES.find((s) => s.product === shape.product && s.plan === shape.plan);
+    if (!stated || !(stated.usd > 0)) continue;
+    const priceCents = Math.round(stated.usd * 100);
+    const months = monthsPerCharge(shape.recurring);
+    const grossPerMonth = priceCents / months;
+    const webNet = stripeNetMonthlyCents(grossPerMonth, shape.recurring);
+    out.push({
+      product: shape.product,
+      plan: shape.plan,
+      priceCents,
+      interval: shape.recurring.interval,
+      grossPerMonthCents: Math.round(grossPerMonth),
+      // Fees as the difference of the two rounded figures, so the line reads
+      // gross minus fees equals net to the cent.
+      web: { netPerMonthCents: Math.round(webNet), feesPerMonthCents: Math.round(grossPerMonth) - Math.round(webNet) },
+      appStore: shape.appStore ? {
+        standardPct: APPLE_COMMISSION_PCT,
+        netPerMonthCents: Math.round(grossPerMonth * (1 - APPLE_COMMISSION_PCT / 100)),
+        smallBusinessPct: APPLE_SMALL_BUSINESS_PCT,
+        netPerMonthSmallBusinessCents: Math.round(grossPerMonth * (1 - APPLE_SMALL_BUSINESS_PCT / 100)),
+      } : null,
+    });
+  }
+  return out;
+}
+
+// What the business costs per person using it and per plan made, from the
+// burn and the last seven days. Withheld below the same floor every share on
+// the hub uses, where one person more or less swings the figure by double
+// digits, and withheld while the burn is incomplete.
+function buildUnitCosts({ burnCents, people }) {
+  if (!Number.isFinite(burnCents) || !people || people.status !== 'ok') {
+    return { status: 'unavailable', reason: !Number.isFinite(burnCents) ? 'burn' : 'people' };
+  }
+  const active = people.active ? people.active.last7 : 0;
+  const plans = people.plans ? people.plans.madeLast7 : 0;
+  const plansPerMonth = plans * (30.4375 / 7);
+  return {
+    status: 'ok',
+    minPeople: PEOPLE_MIN_FOR_SHARE,
+    activeLast7: active,
+    plansMadeLast7: plans,
+    perActivePersonCents: active >= PEOPLE_MIN_FOR_SHARE ? Math.round(burnCents / active) : null,
+    perPlanCents: plans >= PEOPLE_MIN_FOR_SHARE ? Math.round(burnCents / plansPerMonth) : null,
+  };
+}
+
+// Rounds rows[i][field] to whole cents so they sum to `total` exactly:
+// floor every row, then give the cents left over to the rows that lost the
+// most to the floor. `total` is the rounded sum of the exact values.
+function roundRowsToTotal(rows, field, total) {
+  const floors = rows.map((r) => Math.floor(r[field]));
+  let left = total - floors.reduce((a, b) => a + b, 0);
+  const order = rows.map((r, i) => ({ i, rem: r[field] - floors[i] })).sort((a, b) => b.rem - a.rem || a.i - b.i);
+  for (let k = 0; k < order.length && left > 0; k += 1, left -= 1) floors[order[k].i] += 1;
+  rows.forEach((r, i) => { r[field] = floors[i] || 0; });
+}
+
 // What licensing every plan for commercial use would add (costModel
 // LICENCE_EXPOSURES), with the exposures a recorded bill has already fixed
 // left out. A code line is fixed when its own figure is above $0 or an active
@@ -933,10 +1008,17 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
     perMonthTotal += l.perMonthExact;
   }
   const r0 = (v) => Math.round(v) || 0;
-  for (const k of Object.values(byKind)) { k.thisMonthCents = r0(k.thisMonthCents); k.perMonthCents = r0(k.perMonthCents); }
-  for (const c of byCategory.values()) { c.thisMonthCents = r0(c.thisMonthCents); c.perMonthCents = r0(c.perMonthCents); }
   thisMonthCents = r0(thisMonthCents);
   perMonthTotal = r0(perMonthTotal);
+  // Each table's rows are rounded so they add up to the total they sit under
+  // (largest remainder): rounded one by one, twelve $8.33 rows sat under a
+  // $100.00 total.
+  const kinds = Object.values(byKind);
+  const cats = [...byCategory.values()];
+  for (const [rows, field, total] of [
+    [kinds, 'perMonthCents', perMonthTotal], [kinds, 'thisMonthCents', thisMonthCents],
+    [cats, 'perMonthCents', perMonthTotal], [cats, 'thisMonthCents', thisMonthCents],
+  ]) roundRowsToTotal(rows, field, total);
   for (const l of lines) { delete l.perMonthExact; delete l.thisMonthExact; }
 
   // Renewals in the window, from the expense list. Code lines carry no charge
@@ -1016,9 +1098,12 @@ function costsLedger({ expenses, reconciled, month, readError = null }) {
   const pic = buildCostPicture({ expenses: expenses || [], reconciled, month });
   const usd = (c) => Math.round(c) / 100;
   const kind = (k) => usd((pic.byKind.find((x) => x.kind === k) || { perMonthCents: 0 }).perMonthCents);
+  // A list past the limit is partial (see readExpenses), so it is withheld
+  // here as it is on the Overview, instead of totalling the first 500.
+  const truncated = !!(expenses && expenses.truncated);
   return {
-    status: readError ? 'error' : 'ok',
-    readError: readError || null,
+    status: readError || truncated ? 'error' : 'ok',
+    readError: readError || (truncated ? `The expense list has more than ${EXPENSE_LIST_LIMIT} rows, so its totals would leave bills out.` : null),
     rows: (expenses || []).length,
     activeRows: (expenses || []).filter((x) => x.active).length,
     burnMonthlyUsd: usd(pic.totals.perMonthCents),
@@ -3274,11 +3359,15 @@ async function buildMoneyHub({
     expensesRead: { ok: expensesR.ok, rows: expenses.length },
     revenuecat,
   });
+  const planNets = buildPlanNets();
+  const unitCosts = buildUnitCosts({ burnCents: net.burnCents, people });
   const { boolFlag } = require('./entitlements');
 
   return {
     generatedAt: new Date().toISOString(),
     month: { label: month.label, startYmd: month.startYmd, todayYmd: month.todayYmd, daysInMonth: month.daysInMonth, dayOfMonth: month.dayOfMonth, tz: HUB_TZ },
+    planNets,
+    unitCosts,
     cache: { ttlSeconds: EXTERNAL_TTL_MS / 1000, minRefreshSeconds: MIN_FORCE_REFRESH_MS / 1000 },
     revenue: {
       stripe,
@@ -3339,6 +3428,8 @@ module.exports = {
   buildCostPicture,
   buildPricing,
   buildNet,
+  buildPlanNets,
+  buildUnitCosts,
   costsLedger,
   readExpenses,
   readHealth,

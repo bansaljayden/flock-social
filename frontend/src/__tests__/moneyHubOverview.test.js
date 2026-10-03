@@ -1541,3 +1541,28 @@ test('saving an expense on Overview reloads the costs the other two tabs read', 
   expect(src).toContain('onChanged={() => { load(false); if (onExpensesChanged) onExpensesChanged(); }}');
   expect(src).toContain("<MoneyHub colors={colors} onExpensesChanged={() => fetchCosts(true)} />");
 });
+
+// What each plan leaves, and cost per active person (2026-10-03).
+describe('plan nets and unit costs', () => {
+  const NETS = [
+    { product: 'pro', plan: 'monthly', priceCents: 399, interval: 'month', grossPerMonthCents: 399, web: { netPerMonthCents: 355, feesPerMonthCents: 44 }, appStore: { standardPct: 30, netPerMonthCents: 279, smallBusinessPct: 15, netPerMonthSmallBusinessCents: 339 } },
+    { product: 'roost', plan: 'founding', priceCents: 5900, interval: 'month', grossPerMonthCents: 5900, web: { netPerMonthCents: 5658, feesPerMonthCents: 242 }, appStore: null },
+  ];
+  test('the Prices card says what each plan leaves after fees, with both of Apple\'s rates', async () => {
+    await renderHub({ ...CONNECTED, planNets: NETS, unitCosts: { status: 'ok', minPeople: 10, activeLast7: 25, plansMadeLast7: 12, perActivePersonCents: 1783, perPlanCents: 854 } });
+    expect(screen.getByText('What each plan leaves you, a month')).toBeInTheDocument();
+    // The code-price row carries the same label, so the row with the web net is the one.
+    await screen.findByText('$3.55 web');
+    const pro = screen.getAllByText('Flock Pro, monthly').map((el) => el.parentElement.parentElement).find((r) => /web/.test(r.textContent));
+    expect(pro.textContent).toMatch(/\$3\.55 web/);
+    expect(pro.textContent).toMatch(/\$2\.79 after Apple's 30%, or \$3\.39 at the 15%/);
+    expect(hubRow('Cost per active person').textContent).toMatch(/\$17\.83\/mo/);
+    expect(hubRow('Cost per active person').textContent).toMatch(/each plan costs \$8\.54/);
+  });
+  test('below the floor it says too few, not a figure', async () => {
+    await renderHub({ ...CONNECTED, unitCosts: { status: 'ok', minPeople: 10, activeLast7: 4, plansMadeLast7: 1, perActivePersonCents: null, perPlanCents: null } });
+    // The screen paints the last load first, so wait for this one.
+    await screen.findByText('Too few to say');
+    expect(hubRow('Cost per active person').textContent).toMatch(/Shown from 10 active people a week; 4 were active/);
+  });
+});
