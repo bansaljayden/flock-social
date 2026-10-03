@@ -1953,6 +1953,17 @@ function hubAttention(h) {
   if (h.expenses && h.expenses.status === 'error') {
     add({ key: 'expenses', tone: 'warn', label: 'Expenses', value: 'Not read', note: 'The expense list could not be read, so renewals and bills counted twice were not checked.', card: HUB_CARD.expenses });
   }
+  const jumps = Array.isArray(costs.jumps) ? costs.jumps : [];
+  if (jumps.length > 0) {
+    add({
+      key: 'jumps',
+      tone: 'warn',
+      label: 'Bills up on the last one',
+      value: hubCount(jumps.length),
+      note: `${jumps.map((j) => `${j.label}: ${hubMoney(j.fromCents)}${j.fromPeriod ? ` for ${j.fromPeriod}` : ''}, now ${hubMoney(j.toCents)}${j.toAsOf ? ` as of ${j.toAsOf}` : ''} (up ${j.pct}%)`).join('; ')}.`,
+      card: HUB_CARD.costs,
+    });
+  }
   const ps = h.priceSheet;
   if (ps && ps.stale > 0) {
     add({ key: 'price-sheet', tone: 'warn', label: 'Prices to re-check', value: hubCount(ps.stale), note: `Not checked against a receipt or a pricing page in ${ps.staleAfterDays} days: ${ps.rows.filter((r) => r.stale).map((r) => r.label).join('; ')}.`, card: HUB_CARD.priceSheet });

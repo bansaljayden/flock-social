@@ -3297,3 +3297,18 @@ test('the price sheet lists every bill and rate card once, never checked and old
   const dated = ps.rows.filter((r) => r.checkedOn);
   for (let i = 1; i < dated.length; i += 1) assert.ok(dated[i - 1].checkedOn <= dated[i].checkedOn, 'oldest check first');
 });
+
+// Bills that jumped on the last one (2026-10-03).
+test('a reconciled bill more than a quarter above the last one is flagged, a smaller one is not', () => {
+  const jumps = moneyHub.billJumps(null);
+  const railway = jumps.find((j) => j.id === 'railway');
+  assert.ok(railway, 'Railway went from $24.52 to $44.97 and was not flagged');
+  assert.strictEqual(railway.fromCents, 2452);
+  assert.strictEqual(railway.pct, 83);
+  assert.ok(!jumps.some((j) => j.id === 'google-cloud'), 'a bill that went down is not a jump');
+  // A dashboard figure is compared with the same previous bill.
+  const saved = { lines: [{ id: 'railway', label: 'Railway', usdPerMonth: 26, asOf: '2026-10-16', previous: { usdPerMonth: 24.52, period: 'Aug 15 to Sep 15, 2026' } }] };
+  assert.deepStrictEqual(moneyHub.billJumps(saved), [], 'a 6% rise is not a jump');
+  const pic = moneyHub.buildCostPicture({ expenses: [], month: MONTH });
+  assert.ok(pic.jumps.some((j) => j.id === 'railway'));
+});
