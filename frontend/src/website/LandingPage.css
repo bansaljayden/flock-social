@@ -1607,7 +1607,9 @@ html:has(.lp) body { overflow-x: clip; }
   padding: 1px 7px; border: 2px solid var(--plate); border-radius: 999px;
   /* Black, not white: the badge ground is whichever crowd colour the venue
      scored, and white text measured 2.1:1 on green and amber. Black holds
-     4.5:1 on all four grounds (green 9.8, amber 9.4, red 6.1, slate 4.5). */
+     4.5:1 on all four grounds (green 9.8, amber 9.4, red 6.1, slate 4.86 on the
+     badge's own lighter slate, LiveDemo.js CROWD_CLOSED_BADGE; the ring's
+     #64748B is 4.41 and stays off the badge). */
   color: var(--badge-ink); font: 700 11px 'Hanken Grotesk', sans-serif;
   box-shadow: 0 2px 6px rgba(15, 23, 42, 0.3);
 }
