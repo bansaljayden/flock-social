@@ -252,7 +252,11 @@ describe('empty AND error states carry a bird', () => {
   });
 
   test('incoming flocks: same structure, cobalt bird', () => {
-    const block = before('No flock has you in its vote yet</p>');
+    // A wider window since 2026-10-03: a loading line now sits between the
+    // error check and the empty state, so a read that has not answered yet is
+    // not told it has no flocks.
+    const block = before('No flock has you in its vote yet</p>', 1400);
+    expect(block).toContain('!venueListLoaded.incomingFlocks ? (');
     expect(block).toContain(
       'venueListErrors.incomingFlocks || venueListErrors.incomingFlocksLocked'
     );
