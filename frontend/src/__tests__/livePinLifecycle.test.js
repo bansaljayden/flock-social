@@ -246,6 +246,7 @@ describe('a share moved to another plan ends in the first one the way a stop doe
     sharing = 4,
     chatOnScreen = 5,
     plans = [{ id: 4, status: 'confirmed' }, { id: 5, status: 'voting' }],
+    fix = { lat: 40.7, lng: -74, at: Date.now() },
   } = {}) {
     const calls = [];
     const myTravelRef = { current: null };
@@ -265,7 +266,11 @@ describe('a share moved to another plan ends in the first one the way a stop doe
       stopLocationSharingRef: { current: stop },
       setMyTravel: (v) => calls.push(['travel', v]),
       myTravelRef,
-      userLocation: { lat: 40.7, lng: -74 },
+      // The share sends the device's own fix, never the map's position
+      // (deviceFixRef in App.js); a fresh one by default.
+      deviceFixRef: { current: fix },
+      SHARE_FIX_FRESH_MS: 60 * 1000,
+      stampFix: (lat, lng) => ({ lat, lng, at: Date.now() }),
       emitLocation: (id, lat, lng, travel) => calls.push(['position sent', id, travel]),
       setSharingLocationForFlock: (v) => calls.push(['sharing', v]),
       geolocationAvailable: () => true,
@@ -299,6 +304,22 @@ describe('a share moved to another plan ends in the first one the way a stop doe
     const { calls, start } = startWith({ sharing: null });
     start(5);
     expect(calls).toEqual([['travel', null], ['position sent', 5, null], ['sharing', 5]]);
+  });
+
+  // The map's position can be where the phone was in a previous session
+  // (restored from localStorage) or a launch fix from hours ago, and Share
+  // used to send it straight away, home included (app audit 2026-10-03). A
+  // fix older than a minute, or none, is asked for again before anything goes.
+  test('a stale fix is not sent: a new one is asked for first', () => {
+    const { calls, start } = startWith({ sharing: null, fix: { lat: 1, lng: 2, at: Date.now() - 5 * 60 * 1000 } });
+    start(5);
+    expect(calls).toEqual([['travel', null], ['fix asked']]);
+  });
+
+  test('no fix at all asks for one too', () => {
+    const { calls, start } = startWith({ sharing: null, fix: null });
+    start(5);
+    expect(calls).toEqual([['travel', null], ['fix asked']]);
   });
 
   test('a plan that is over is refused before the running share is touched', () => {

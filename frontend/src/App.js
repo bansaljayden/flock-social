@@ -2680,6 +2680,12 @@ const NOT_CONNECTED_HINT = /connected with/i;
 // chat's history has not been fetched" looks like and is deliberately NOT the
 // same as zero: the caller has to be able to tell "nothing new" from "nothing
 // known", and only the second one may not draw a dot.
+// A device fix, stamped with when it arrived (see deviceFixRef in the app).
+const stampFix = (lat, lng) => ({ lat, lng, at: Date.now() });
+// How old that fix may be and still start a live location share without asking
+// for a new one. A minute: past that, the person may well be somewhere else.
+const SHARE_FIX_FRESH_MS = 60 * 1000;
+
 const newestFromOthers = (messages) => {
   let newest = null;
   for (const m of messages || []) {
@@ -5119,6 +5125,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     if (savedLat && savedLng) return { lat: parseFloat(savedLat), lng: parseFloat(savedLng) };
     return null;
   });
+  // WHERE THE DEVICE ACTUALLY IS, AND WHEN IT SAID SO. userLocation above is
+  // the map's position and may be nothing of the kind: it starts from
+  // localStorage, which is where the phone was in a PREVIOUS session, and the
+  // launch fix it is then replaced with can be hours old by the time anybody
+  // shares. A live location share read it, so tapping Share at the venue could
+  // first send the group where you were when you opened the app, home included
+  // (app audit 2026-10-03). This holds only positions a geolocation call
+  // answered, stamped, and it is the only thing a share sends.
+  const deviceFixRef = useRef(null); // { lat, lng, at }
   const [locationLoading, setLocationLoading] = useState(false);
   // Why the map has no location, in words the user can act on. Empty means
   // nothing has gone wrong. Set on a denied or failed geolocation call, which
@@ -5142,6 +5157,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           (pos) => {
             const { latitude, longitude } = pos.coords;
             setLocationLoading(false);
+            deviceFixRef.current = stampFix(latitude, longitude);
             setUserLocation({ lat: latitude, lng: longitude });
             localStorage.setItem('flock_user_lat', latitude.toString());
             localStorage.setItem('flock_user_lng', longitude.toString());
@@ -9296,6 +9312,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       (pos) => {
         const { latitude, longitude } = pos.coords;
         setLocationLoading(false);
+        deviceFixRef.current = stampFix(latitude, longitude);
         loadVenuesAtLocation(latitude, longitude);
         if (forceRefresh && window.__flockGoToMyLocation) {
           window.__flockGoToMyLocation();
@@ -11697,8 +11714,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     if (running && running !== flockId) stopLocationSharingRef.current();
     setMyTravel(travel);
     myTravelRef.current = travel;
-    if (userLocation) {
-      emitLocation(flockId, userLocation.lat, userLocation.lng, travel);
+    // A device fix from the last minute is where the person is. Anything
+    // else (a position restored from a previous session, a launch fix from
+    // hours ago, no fix at all) is asked for again first, the way a DM share
+    // already asks.
+    const fix = deviceFixRef.current;
+    if (fix && Date.now() - fix.at < SHARE_FIX_FRESH_MS) {
+      emitLocation(flockId, fix.lat, fix.lng, travel);
       setSharingLocationForFlock(flockId);
       return;
     }
@@ -11715,6 +11737,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     getCurrentPosition(
       (pos) => {
         const { latitude, longitude } = pos.coords;
+        deviceFixRef.current = stampFix(latitude, longitude);
         setUserLocation({ lat: latitude, lng: longitude });
         emitLocation(flockId, latitude, longitude, travel);
         setSharingLocationForFlock(flockId);
@@ -11727,7 +11750,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       },
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 30000 }
     );
-  }, [userLocation, showToast]);
+  }, [showToast]);
 
   const stopLocationSharing = useCallback(() => {
     const flockId = sharingLocationForFlock;
@@ -11796,6 +11819,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
            what was just written here. Past the threshold a render does run and
            assigns back this same value. */
         userLocationRef.current = next;
+        deviceFixRef.current = stampFix(next.lat, next.lng);
         setUserLocation((prev) => (movedAtLeast(prev, next, 10) ? next : prev));
       },
       // A watch that stops answering must not stop the share: the last fix is
@@ -11807,12 +11831,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   }, [sharingAnywhere]);
 
   useEffect(() => {
-    if (!sharingLocationForFlock || !userLocation) return;
-    emitLocation(sharingLocationForFlock, userLocation.lat, userLocation.lng, myTravelRef.current);
+    // The device fix, never the map's position: see deviceFixRef.
+    const fix = deviceFixRef.current;
+    if (!sharingLocationForFlock || !fix) return;
+    emitLocation(sharingLocationForFlock, fix.lat, fix.lng, myTravelRef.current);
     // Named in lib/livePins.js, because a receiver's staleness rule is a
     // multiple of it: the two cannot be changed apart.
     const interval = setInterval(() => {
-      const loc = userLocationRef.current;
+      const loc = deviceFixRef.current;
       if (loc) emitLocation(sharingLocationForFlock, loc.lat, loc.lng, myTravelRef.current);
     }, LOCATION_EMIT_MS);
     return () => clearInterval(interval);
@@ -11851,7 +11877,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     const next = travel && typeof travel === 'object' ? travel : null;
     setMyTravel(next);
     myTravelRef.current = next;
-    const loc = userLocationRef.current;
+    const loc = deviceFixRef.current;
     if (sharingLocationForFlock && loc) emitLocation(sharingLocationForFlock, loc.lat, loc.lng, next);
   }, [sharingLocationForFlock]);
 
@@ -15995,6 +16021,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     }
     getCurrentPosition(
       (pos) => {
+        deviceFixRef.current = stampFix(pos.coords.latitude, pos.coords.longitude);
         setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
         setDmSharingLocation(dmId);
       },
@@ -16016,10 +16043,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // toggled off never resumed when it came back on.
   const hasUserLocation = !!userLocation;
   useEffect(() => {
-    if (!dmSharingLocation || !userLocation) return;
-    dmShareLocation(dmSharingLocation, userLocation.lat, userLocation.lng);
+    const fix = deviceFixRef.current;
+    if (!dmSharingLocation || !userLocation || !fix) return;
+    dmShareLocation(dmSharingLocation, fix.lat, fix.lng);
     const interval = setInterval(() => {
-      const loc = userLocationRef.current;
+      const loc = deviceFixRef.current;
       if (loc) dmShareLocation(dmSharingLocation, loc.lat, loc.lng);
     }, 10000);
     return () => clearInterval(interval);
