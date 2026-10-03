@@ -1952,7 +1952,7 @@ router.get('/intelligence', requirePro, async (req, res) => {
       // No control on the venue side writes google_place_id (onboarding
       // requires one, so this is an API-made or legacy row), and "Edit
       // Profile" is a consumer screen. Name the step that exists.
-      return res.json({ available: false, reason: 'No Google listing is linked to this venue yet, so forecasts are off. Write to hello@flockcorp.com to link one.' });
+      return res.json({ available: false, reason: 'No Google listing is linked to this venue yet, so forecasts are off. Write to social@flockcorp.com to link one.' });
     }
     if (!ctx.verified) return res.json({ available: false, unverified: true, reason: unverifiedReason(ctx) });
     // The hour is in the key because `now` below is an hour-granular score:
@@ -2155,7 +2155,7 @@ router.get('/strip', requirePro, async (req, res) => {
   try {
     const ctx = await getVenueCtx(req.user.id);
     if (!ctx?.google_place_id) {
-      return res.json({ available: false, reason: 'No Google listing is linked to this venue yet, so the strip view is off. Write to hello@flockcorp.com to link one.' });
+      return res.json({ available: false, reason: 'No Google listing is linked to this venue yet, so the strip view is off. Write to social@flockcorp.com to link one.' });
     }
     if (!ctx.verified) return res.json({ available: false, unverified: true, reason: unverifiedReason(ctx) });
     // The hour is in the key because `you` and every competitor row below
@@ -2464,7 +2464,7 @@ router.get('/busy-now', async (req, res) => {
   try {
     const ctx = await getVenueCtx(req.user.id);
     if (!ctx?.google_place_id) {
-      return res.json({ available: false, reason: 'No Google listing is linked to this venue yet, so a live number cannot be set. Write to hello@flockcorp.com to link one.' });
+      return res.json({ available: false, reason: 'No Google listing is linked to this venue yet, so a live number cannot be set. Write to social@flockcorp.com to link one.' });
     }
     // The live-number pair, not the forecast one. This route is free on every
     // plan, and the forecast sentence ("forecasts turn on once that clears")
@@ -2509,7 +2509,7 @@ router.post('/busy-now', [
     }
     const ctx = await getVenueCtx(req.user.id);
     if (!ctx?.google_place_id) {
-      return res.status(400).json({ error: 'No Google listing is linked to this venue yet. Write to hello@flockcorp.com to link one.' });
+      return res.status(400).json({ error: 'No Google listing is linked to this venue yet. Write to social@flockcorp.com to link one.' });
     }
     if (!ctx.verified) {
       return res.status(403).json({ error: liveNumberRefusal(ctx) });
@@ -2703,7 +2703,7 @@ router.get('/this-week', requirePro, async (req, res) => {
   try {
     const ctx = await getVenueCtx(req.user.id);
     if (!ctx?.google_place_id) {
-      return res.json({ available: false, reason: 'No Google listing is linked to this venue yet, so the This Week card is off. Write to hello@flockcorp.com to link one.' });
+      return res.json({ available: false, reason: 'No Google listing is linked to this venue yet, so the This Week card is off. Write to social@flockcorp.com to link one.' });
     }
     if (!ctx.verified) return res.json({ available: false, unverified: true, reason: unverifiedReason(ctx) });
     const placeId = ctx.google_place_id;

@@ -182,7 +182,7 @@ test('consolidation: a new signup mails one confirmation through the service, de
       // normalizeEmail lowercased what the person typed; the send goes to the
       // stored address, not the raw one.
       assert.strictEqual(payload.to, 'ava@example.com');
-      assert.strictEqual(payload.from, 'Flock <hello@flockcorp.com>');
+      assert.strictEqual(payload.from, 'Flock <social@flockcorp.com>');
       assert.strictEqual(payload.subject, "You're on the Flock waitlist");
       assert.ok(options && options.signal instanceof AbortSignal,
         'round 12: every send carries an abort signal');

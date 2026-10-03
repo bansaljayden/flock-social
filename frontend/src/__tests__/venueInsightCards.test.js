@@ -381,7 +381,7 @@ describe('Roost: the first-run note', () => {
 
 describe('Roost: envelope and failure states', () => {
   test('an unavailable envelope shows the server reason as a designed answer', async () => {
-    mount({ fetchCards: () => Promise.resolve({ available: false, reason: 'No Google listing is linked to this venue yet, so the advisor is off. Write to hello@flockcorp.com to link one.', cards: [] }) });
+    mount({ fetchCards: () => Promise.resolve({ available: false, reason: 'No Google listing is linked to this venue yet, so the advisor is off. Write to social@flockcorp.com to link one.', cards: [] }) });
     expect(await screen.findByText(/No Google listing is linked/)).toBeInTheDocument();
   });
 

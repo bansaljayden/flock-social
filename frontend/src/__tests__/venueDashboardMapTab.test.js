@@ -152,7 +152,7 @@ describe('the map tab reads what users read', () => {
     expect(loader).toContain("reason: 'no_listing'");
     // "Edit Profile" is a consumer screen and the venue side has no control
     // that links a listing, so the copy names the step that exists.
-    expect(APP).toContain('Write to hello@flockcorp.com to link one and the map fills in.');
+    expect(APP).toContain('Write to social@flockcorp.com to link one and the map fills in.');
     expect(APP).not.toContain('Link your listing in Edit Profile');
     // A failed lookup is not an empty area: it says so and offers a real retry.
     expect(loader).toContain("reason: 'load_failed'");

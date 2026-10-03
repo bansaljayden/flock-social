@@ -1043,7 +1043,7 @@ export default function VenueDashboard({
                       : "The map couldn't load"}
                   </p>
                   <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>
-                    {venueMapState.reason === 'no_listing' ? 'No Google listing is linked, so there is no location to put a pin on. Write to hello@flockcorp.com to link one and the map fills in.'
+                    {venueMapState.reason === 'no_listing' ? 'No Google listing is linked, so there is no location to put a pin on. Write to social@flockcorp.com to link one and the map fills in.'
                       : venueMapState.reason === 'no_coords' ? "Your listing exists but Google returned no location for it, so there is nothing to place a pin on. Users' maps have the same gap."
                       : venueMapState.detail
                         || 'The venue lookup failed. Check your connection and try again.'}
