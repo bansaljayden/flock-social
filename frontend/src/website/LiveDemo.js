@@ -75,6 +75,11 @@ const CROWD_RED = '#EF4444';
 // Shut. Slate rather than a crowd colour, because a closed venue is not quiet,
 // it is unavailable.
 const CROWD_CLOSED = '#64748B';
+// The same slate one step lighter, for the pin badge only, where it is the
+// ground under 11px black type ("Closed", "Sign up"). #64748B measures 4.41:1
+// with black, under AA's 4.5 (site audit 2026-10-03); this is 4.86:1, and the
+// ring keeps the base slate.
+const CROWD_CLOSED_BADGE = '#6B7B90';
 
 // The same four bands again, dark enough to be READ. The bright hues are pigment:
 // they work as a 10px ring, an 18px bar and a pin ring, and they fail badly the
@@ -471,7 +476,7 @@ function buildDemoPin(venue, onClick) {
 
   const badge = document.createElement('span');
   badge.className = 'lpd-pin-badge';
-  badge.style.backgroundColor = ring;
+  badge.style.backgroundColor = (shut || covered) ? CROWD_CLOSED_BADGE : ring;
   badge.textContent = shut ? 'Closed' : (covered ? 'Sign up' : `${score}%`);
   el.appendChild(badge);
 
