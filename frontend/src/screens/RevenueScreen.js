@@ -150,6 +150,9 @@ function ReconciledLineForm({ line, onSaved, colors }) {
 // hub paints at once on return while it reads again. The server holds the
 // vendor answers for a few minutes, so reading again costs Stripe nothing.
 const hubMemo = { data: null };
+// The placeholder FlockAppInner starts the simulator's operating cost at
+// (App.js); the Projections tab swaps it for the hub's burn once.
+const SIM_OPERATING_COSTS_SEED = 2000;
 
 const HUB_KIND_LABEL = {
   infrastructure: 'Running the app',
@@ -2092,6 +2095,19 @@ export default function RevenueScreen({
     // Revenue simulator state lives at FlockAppInner level, next to adminTab
     // and for the same reason. See the note there.
 
+    // The simulator's operating cost starts at the hub's real monthly burn
+    // once the Overview has read it, instead of a round $2,000 nobody chose.
+    // Only while it still holds the placeholder, and only once, so a figure
+    // typed in is never overwritten.
+    const simSeededRef = React.useRef(false);
+    React.useEffect(() => {
+      if (simSeededRef.current || activeTab !== 'projections') return;
+      const burn = hubMemo.data && hubMemo.data.net ? hubMemo.data.net.burnCents : null;
+      if (!Number.isFinite(burn)) return;
+      simSeededRef.current = true;
+      if (operatingCosts === SIM_OPERATING_COSTS_SEED) setOperatingCosts(Math.max(0, Math.round(burn / 100)));
+    }, [activeTab, operatingCosts, setOperatingCosts]);
+
     // Calculate all metrics
     const subscriptionRevenue = calculateSubscriptionRevenue(numVenues, subscriptionPrice);
     const transactionRevenue = calculateTransactionRevenue(numVenues, eventsPerVenue, avgSpend, takeRate);
@@ -2305,7 +2321,7 @@ export default function RevenueScreen({
                   />
                   <span style={{ position: 'absolute', right: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-tertiary)', fontWeight: '600' }}>%</span>
                 </div>
-                <p style={helperStyle}>% of each transaction</p>
+                <p style={helperStyle}>% of each transaction. Flock takes none today; this is a what-if.</p>
               </div>
 
               {/* Operating Costs */}
@@ -2321,7 +2337,7 @@ export default function RevenueScreen({
                     min="0"
                   />
                 </div>
-                <p style={helperStyle}>Fixed monthly expenses</p>
+                <p style={helperStyle}>Starts at the monthly burn the Overview reads; type over it to try another.</p>
               </div>
             </div>
 
