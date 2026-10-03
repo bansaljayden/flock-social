@@ -3074,10 +3074,15 @@ async function buildMoneyHub({
       return { ids: (r.rows || []).map((x) => Number(x.id)), total: Number(c.rows[0] && c.rows[0].n) || 0 };
     }, 'premium accounts'),
     safe(async () => {
+      // PAYING, so not on trial: the same line break-even's "Paying now"
+      // draws (live = active or past_due, trials counted apart). This count
+      // took trials in, so during a Roost trial the Overview and break-even
+      // gave two different numbers for paying venues (money hub audit
+      // 2026-10-03).
       const r = await db.query(
         `SELECT COUNT(*)::int AS n FROM venue_subscriptions
           WHERE granted_reason = 'paid'
-            AND status IN ('active', 'trialing', 'past_due')
+            AND status IN ('active', 'past_due')
             AND (expires_at IS NULL OR expires_at > NOW())`
       );
       return Number(r.rows[0] && r.rows[0].n) || 0;

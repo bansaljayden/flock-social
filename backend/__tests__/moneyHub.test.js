@@ -2982,3 +2982,16 @@ test('the sales tax step reads the checkouts\' own switch, and says what a buyer
     if (saved === undefined) delete process.env.STRIPE_AUTOMATIC_TAX; else process.env.STRIPE_AUTOMATIC_TAX = saved;
   }
 });
+
+// "Paying venues" on the Overview draws the line break-even's "Paying now"
+// draws: a venue on a Roost trial is not paying yet (money hub audit
+// 2026-10-03; it was counted, so the two figures disagreed during a trial).
+test('the paying-venues count leaves trials out, as break-even does', () => {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'services', 'moneyHub.js'), 'utf8');
+  const start = src.indexOf("FROM venue_subscriptions\n          WHERE granted_reason = 'paid'");
+  const at = start > -1 ? start : src.indexOf("FROM venue_subscriptions\r\n          WHERE granted_reason = 'paid'");
+  assert.ok(at > -1, 'the paying-venues read moved');
+  const sql = src.slice(at, at + 220);
+  assert.match(sql, /status IN \('active', 'past_due'\)/);
+  assert.doesNotMatch(sql, /trialing/);
+});
