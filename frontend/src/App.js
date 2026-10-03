@@ -7032,8 +7032,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         setPendingFlockInvites(mapped.filter(f => f.memberStatus === 'invited' && !f.finished && f.status !== 'completed' && f.status !== 'cancelled' && !refused(f)));
         // A declined membership row still comes down on every load. Keep it so
         // the person can find the plan again and re-join, rather than silently
-        // dropping it and leaving no route back in.
-        setDeclinedFlockInvites(mapped.filter(f => f.memberStatus === 'declined' && !refused(f)));
+        // dropping it and leaving no route back in. Not for a plan that is
+        // over, though: there is no way back into one (the server answers 409
+        // on every tap), so a Re-join card there was a button that could only
+        // fail (app audit 2026-10-03). Same gate as the invite cards above.
+        setDeclinedFlockInvites(mapped.filter(f => f.memberStatus === 'declined' && !f.finished && f.status !== 'completed' && f.status !== 'cancelled' && !refused(f)));
         // The list is in state, so the chat has something to render. This is
         // the last step of the trip that started on the invite link.
         // Three outcomes, and the middle one used to be silent. A stranger
@@ -7202,6 +7205,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       if (from) openChatAfterJoin(flockId, from);
     } catch (err) {
       if (needsEmailVerification(err, 'join a flock')) return;
+      // Gone or finished since the list loaded: the row leaves with the
+      // server's sentence, as an invite card does, rather than staying behind
+      // a red toast to be refused again.
+      if (err?.status === 404 || err?.status === 409) {
+        setDeclinedFlockInvites(prev => prev.filter(f => f.id !== flockId));
+        showToast(err.message || 'That plan is no longer open.');
+        return;
+      }
       // The same refusal as on an invite card, and the same answer: the
       // Re-join button would be refused on every tap, so the row leaves.
       if (err?.status === 403 && err?.code === 'CANNOT_JOIN') {

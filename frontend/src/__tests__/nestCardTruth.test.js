@@ -526,13 +526,54 @@ describe('joining from an invite card', () => {
     });
   });
 
+  // A plan that is over has no way back in, so its Re-join could only be
+  // refused: the declined list leaves it out, and a plan that ended after the
+  // list loaded leaves on the server's 409 (app audit 2026-10-03).
+  it('a declined plan that is over offers no Re-join', () => {
+    const load = liftCallback('loadFlocks');
+    expect(load).toMatch(/setDeclinedFlockInvites\(mapped\.filter\(f => f\.memberStatus === 'declined' && !f\.finished && f\.status !== 'completed' && f\.status !== 'cancelled' && !refused\(f\)\)\);/);
+  });
+
+  it('a Re-join refused because the plan ended takes the row away with the server\'s words', () => {
+    let declined = [{ ...PREVIEW, memberStatus: 'declined' }];
+    const toasts = [];
+    // eslint-disable-next-line no-new-func
+    const handler = new Function(
+      'useCallback', 'acceptFlockInvite', 'declinedFlockInvites', 'setDeclinedFlockInvites',
+      'setFlocks', 'showToast', 'loadFlocks', 'needsEmailVerification', 'storedGuestTokens', 'meRef',
+      'refusedInvitesRef', 'acceptingInviteRef', 'setAcceptingInviteId', 'joinNavRef', 'openChatAfterJoin', 'hapticSuccess',
+      `${liftCallback('handleRejoinDeclinedFlock')}\nreturn handleRejoinDeclinedFlock;`
+    )(
+      (fn) => fn,
+      () => Promise.reject(Object.assign(new Error('This plan is finished and cannot be reopened'), { status: 409 })),
+      declined,
+      (fn) => { declined = typeof fn === 'function' ? fn(declined) : fn; },
+      () => { throw new Error('nothing is added to the list on a refusal'); },
+      (message, type) => toasts.push({ message, type }),
+      () => { throw new Error('nothing is refetched on a refusal'); },
+      () => false,
+      () => [],
+      { current: { id: 5, name: 'Sam Rivera' } },
+      { current: new Set() },
+      { current: null },
+      () => {},
+      { current: { screen: 'main', tab: 'chat' } },
+      () => { throw new Error('a refused join opens nothing'); },
+      () => { throw new Error('a refused join does not buzz success'); },
+    );
+    return handler(41).then(() => {
+      expect(declined).toEqual([]);
+      expect(toasts).toEqual([{ message: 'This plan is finished and cannot be reopened', type: undefined }]);
+    });
+  });
+
   it('the list load leaves out what this account was refused, keyed the way the handlers write it', () => {
     // The load is the one place the card could come back from, so it reads
     // the same `${account}:${plan}` key the two handlers add.
     const load = liftCallback('loadFlocks');
     expect(load).toContain('const refused = (f) => refusedInvitesRef.current.has(`${meRef.current?.id}:${f.id}`);');
     expect(load).toMatch(/setPendingFlockInvites\(mapped\.filter\(f => f\.memberStatus === 'invited' [^\n]*&& !refused\(f\)\)\);/);
-    expect(load).toMatch(/setDeclinedFlockInvites\(mapped\.filter\(f => f\.memberStatus === 'declined' && !refused\(f\)\)\);/);
+    expect(load).toMatch(/setDeclinedFlockInvites\(mapped\.filter\(f => f\.memberStatus === 'declined' [^\n]*&& !refused\(f\)\)\);/);
     for (const name of ['handleAcceptFlockInvite', 'handleRejoinDeclinedFlock']) {
       expect(liftCallback(name)).toContain('refusedInvitesRef.current.add(`${meRef.current?.id}:${flockId}`);');
     }
