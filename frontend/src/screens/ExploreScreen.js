@@ -185,6 +185,13 @@ export default function ExploreScreen({
   venueResults,
   venueSearching,
 }) {
+  // WHICH EVENT'S DETAILS WERE ASKED FOR LAST. Open one event's Details, close
+  // it, open another's, and the first answer used to merge into the second
+  // card, its error to land there, and its finally to take the second card's
+  // spinner down (app audit 2026-10-03). Each read writes only while it is
+  // still the newest one.
+  const eventDetailAskRef = React.useRef(0);
+
   // WHETHER THE LIVE EVENTS DRAWER'S CONTENTS EXIST AT ALL.
   //
   // The drawer's wrapper is mounted for the whole session and so was
@@ -779,6 +786,9 @@ export default function ExploreScreen({
                       </button>
                       <button className="hit44 glass-btn glass-secondary" onClick={(e) => {
                         e.stopPropagation();
+                        const ask = eventDetailAskRef.current + 1;
+                        eventDetailAskRef.current = ask;
+                        const current = () => eventDetailAskRef.current === ask;
                         setEventDetailLoading(true);
                         setEventDetailError('');
                         setEventDetail({ ...event, photos: [], venue_details: null });
@@ -789,9 +799,9 @@ export default function ExploreScreen({
                           // into a null prev yields {}, which is truthy, so a read
                           // landing after the user closed the card built a new one
                           // out of nothing and put it back on screen.
-                          .then(data => setEventDetail(prev => (prev ? { ...prev, ...(data?.event || {}), distance_miles: data?.event?.distance_miles ?? prev?.distance_miles ?? null } : null)))
-                          .catch((err) => setEventDetailError(err?.message || 'The rest of this event did not load.'))
-                          .finally(() => setEventDetailLoading(false));
+                          .then(data => { if (current()) setEventDetail(prev => (prev ? { ...prev, ...(data?.event || {}), distance_miles: data?.event?.distance_miles ?? prev?.distance_miles ?? null } : null)); })
+                          .catch((err) => { if (current()) setEventDetailError(err?.message || 'The rest of this event did not load.'); })
+                          .finally(() => { if (current()) setEventDetailLoading(false); });
                       }} style={{ padding: '9px 14px', borderRadius: '10px', border: `2px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
                         {Icons.eye(colors.navy, 13)} Details
                       </button>
