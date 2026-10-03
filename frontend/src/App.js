@@ -9035,6 +9035,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
   // Venue Dashboard (for venue owners)
   const [venueTier, setVenueTier] = useState('free'); // 'free', 'premium', 'pro'
+  // Whether venueTier above came from the server. With billing on, a profile
+  // whose plan check failed arrives with no tier at all, and the 'free' this
+  // starts as then put a paying venue behind the lock and an Upgrade button
+  // (venue audit 2026-10-03). The dashboard gates on this, not on the profile.
+  const [venueTierKnown, setVenueTierKnown] = useState(false);
   // When the plan ends, or null for no end date. The founding-venue offer is six
   // months (VENUE-PRICING.md) and an owner who cannot see the date has to
   // remember it. Server-supplied, from GET /api/venue-profile: the same resolved
@@ -17243,6 +17248,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [showEventModal, setShowEventModal] = useState(false);
   const [editingEvent, setEditingEvent] = useState(null);
   const [venueDashProfileLoaded, setVenueDashProfileLoaded] = useState(false);
+  // A reload ASKED FOR, as a count. A checkout that confirmed while the first
+  // profile read was still out set the loaded flag to false when it already
+  // was false, so nothing re-read the profile and a venue that had just paid
+  // stayed on Free under a "Roost is on." toast (venue audit 2026-10-03). The
+  // count always moves, and the read it starts is the one whose answer counts.
+  const [venueProfileAsk, setVenueProfileAsk] = useState(0);
+  const venueProfileReadRef = useRef(0);
   const [venueInfo, setVenueInfo] = useState({ name: '', address: '', phone: '' });
   // Hardware sensor data for the venue owner dashboard's analytics tab
   const [ownerSensorData, setOwnerSensorData] = useState(null);
@@ -17418,8 +17430,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     getVenueThisWeek().then((d) => { if (!cancelled) setVenueThisWeek(d); }).catch((e) => { if (!cancelled) setVenueThisWeek({ available: false, locked: e?.status === 403 }); });
     }
     return () => { cancelled = true; };
+    // venueTier too: the three Roost reads answer 403 to a free venue, and
+    // after a purchase the tier changes while the tab and the place do not,
+    // so the refusals stayed on screen for a venue that had just paid.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [venueTab, venueProfile?.google_place_id]);
+  }, [venueTab, venueProfile?.google_place_id, venueTier]);
 
   // The Try again behind the forecast failure card. Clearing the state first
   // puts the loading line back, so a tap that is doing something looks like it
@@ -17847,10 +17862,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     }
     if (ret.kind === 'manage') {
       setVenueDashProfileLoaded(false);
+      setVenueProfileAsk((n) => n + 1);
       return;
     }
     settleVenueCheckout({ sessionId: ret.sessionId, confirm: confirmVenueCheckout }).then((outcome) => {
       setVenueDashProfileLoaded(false);
+      setVenueProfileAsk((n) => n + 1);
       if (outcome === 'roost') showToast('Roost is on.');
       else if (outcome === 'pending') showToast('Your payment went through. Roost can take a minute to switch on.', 'info');
       else if (outcome === 'incomplete') showToast('That checkout has not finished. If you paid, Roost will switch on shortly.', 'info');
@@ -17861,7 +17878,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // Load venue profile + all dashboard data when entering
   React.useEffect(() => {
     if (currentScreen === 'venueDashboard' && !venueDashProfileLoaded) {
+      const read = ++venueProfileReadRef.current;
       getVenueProfile().then(async (p) => {
+        // A later read (a reload asked for while this one was out) owns the
+        // answer: this one may describe the plan from before the purchase.
+        if (read !== venueProfileReadRef.current) return;
         setVenueProfile(p);
         setVenueDashProfileLoaded(true);
         if (p) {
@@ -17876,6 +17897,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           // that disagrees with every gated route.
           if (p.tier && ['free', 'premium', 'pro'].includes(p.tier)) {
             setVenueTier(p.tier);
+            setVenueTierKnown(true);
           }
           setVenueTierEndsAt(p.tier_expires_at || null);
           setVenueTierSource(p.tier_source || null);
@@ -17978,6 +18000,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           loadVenueReviews(),
         ]);
       }).catch(() => {
+        if (read !== venueProfileReadRef.current) return;
         setVenueDashProfileLoaded(true);
         // The profile read failing means NONE of the four list reads below it
         // ran. Without this the tabs render their empty states for content
@@ -17990,7 +18013,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         });
       });
     }
-  }, [currentScreen, venueDashProfileLoaded]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [currentScreen, venueDashProfileLoaded, venueProfileAsk]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Pull live sensor data + history for the dashboard analytics tab.
   // Mirrors the venue-detail effect but scoped to the owner's own placeId.
@@ -19152,6 +19175,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         venueThisWeek,
         venueBillingOn,
         venueTier,
+        venueTierKnown,
         venueTierEndsAt,
         venueTierReason,
         venueTierSource,

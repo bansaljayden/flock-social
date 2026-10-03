@@ -680,7 +680,9 @@ describe('venue dashboard list reads', () => {
   test('the confident empty states are suppressed when the read never landed', () => {
     // The unverified branch (2026-09-04) sits between the failed-read guard
     // and the empty state: a feed the server withheld is not an empty feed.
-    expect(appSource).toMatch(/\(venueListErrors\.incomingFlocks \|\| venueListErrors\.incomingFlocksLocked\) \? null : venueListErrors\.incomingFlocksUnverified \? \(/);
+    // And a loading line ahead of it since 2026-10-03: a read that has not
+    // answered yet is not told it has no flocks either.
+    expect(appSource).toMatch(/\(venueListErrors\.incomingFlocks \|\| venueListErrors\.incomingFlocksLocked\) \? null : !venueListLoaded\.incomingFlocks \? \([\s\S]{0,400}?\) : venueListErrors\.incomingFlocksUnverified \? \(/);
     expect(appSource).toContain('venueListErrors.reviews ? (');
   });
 
@@ -697,7 +699,8 @@ describe('venue dashboard list reads', () => {
   test('the analytics tile stops printing a confident zero for a read that failed', () => {
     expect(appSource).toContain(
       // ... and for a feed the server withheld from an unverified venue (2026-09-04).
-      "{(venueListErrors.incomingFlocks || venueListErrors.incomingFlocksLocked || venueListErrors.incomingFlocksUnverified) ? '–' : realIncomingFlocks.length}"
+      // ... and before the read has answered at all (2026-10-03).
+      "{(venueListErrors.incomingFlocks || venueListErrors.incomingFlocksLocked || venueListErrors.incomingFlocksUnverified || !venueListLoaded.incomingFlocks) ? '–' : realIncomingFlocks.length}"
     );
   });
 });

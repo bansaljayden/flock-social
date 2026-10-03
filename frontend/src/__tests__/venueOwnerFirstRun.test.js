@@ -33,7 +33,7 @@ test('billing off is said as one sentence, not a plan the owner holds', () => {
 
 test('an unverified venue is not shown a zero for a feed the server withheld', () => {
   expect(app).toMatch(/incomingFlocksUnverified: unverified/);
-  expect(dash).toMatch(/venueListErrors\.incomingFlocksUnverified\) /);
+  expect(dash).toMatch(/venueListErrors\.incomingFlocksUnverified \|\| !venueListLoaded\.incomingFlocks\) /);
   expect(dash).toMatch(/This feed turns on once your venue is verified\./);
 });
 

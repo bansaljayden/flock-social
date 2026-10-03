@@ -303,6 +303,7 @@ export default function VenueDashboard({
   venueThisWeek,
   venueBillingOn,
   venueTier,
+  venueTierKnown,
   venueTierEndsAt,
   venueTierReason,
   venueTierSource,
@@ -823,7 +824,12 @@ export default function VenueDashboard({
     // profile read fails outright the profile stays null and this tab keeps
     // its placeholder, which is what the Map tab already does in that state,
     // and is still the honest answer: the plan is unknown, not free.
-    const tierKnown = venueProfile != null;
+    //
+    // AND THE PROFILE MUST HAVE CARRIED A TIER. With billing on, a plan check
+    // that failed leaves the tier out of the profile, and reading the 'free'
+    // the tier starts as put a paying venue behind the lock (venue audit
+    // 2026-10-03). venueTierKnown is set only from a tier the server sent.
+    const tierKnown = venueProfile != null && venueTierKnown;
 
     // Locked tab placeholder, shown where the venue's plan does not include
     // the tab. Roost is the one paid plan, so every lock names it, with the
