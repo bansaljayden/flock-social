@@ -167,10 +167,15 @@ function ReconciledLineForm({ line, onSaved, colors }) {
 // The last good payload, kept across a trip to another tab or screen so the
 // hub paints at once on return while it reads again. The server holds the
 // vendor answers for a few minutes, so reading again costs Stripe nothing.
-const hubMemo = { data: null };
-// The placeholder FlockAppInner starts the simulator's operating cost at
-// (App.js); the Projections tab swaps it for the hub's burn once.
-const SIM_OPERATING_COSTS_SEED = 2000;
+const hubMemo = { data: null, subs: new Set() };
+// Tells whoever is listening that the hub's figures changed, so a tab that
+// was open before they arrived (Projections, seeding its operating cost)
+// hears about them; a module object alone re-renders nothing.
+function hubMemoChanged() {
+  for (const fn of hubMemo.subs) {
+    try { fn(); } catch (e) { /* a listener's failure is its own */ }
+  }
+}
 
 const HUB_KIND_LABEL = {
   infrastructure: 'Running the app',
@@ -849,7 +854,7 @@ function HubCosts({ h, colors }) {
       )}
 
       <p style={hubStyle.kicker}>Renewals in the next {c.upcomingWindowDays || 90} days</p>
-      {Array.isArray(c.upcomingTotals) && c.upcomingTotals.some((t) => t.bills > 0) && (
+      {Array.isArray(c.upcomingTotals) && c.upcomingTotals.some((t) => t.bills > 0) && !(h.expenses && h.expenses.truncated) && (
         <p style={hubStyle.note}>{c.upcomingTotals.map((t) => `Next ${t.days} days: ${hubMoney(t.cents)}`).join(' · ')}. Dollar bills on the expense list with a date.</p>
       )}
       {upcoming.length === 0 ? (
@@ -1319,7 +1324,7 @@ function HubPrices({ h, colors }) {
               navy={navy}
               label={`${x.product === 'pro' ? 'Flock Pro' : 'Roost'}, ${HUB_PLAN_LABEL[x.plan] || x.plan}`}
               value={`${hubMoney(x.web.netPerMonthCents)} web`}
-              note={`${hubMoney(x.priceCents)} ${every(x.interval)}, so ${hubMoney(x.grossPerMonthCents)} a month before ${hubMoney(x.web.feesPerMonthCents)} of Stripe fees.${x.appStore ? ` In the App Store, ${hubMoney(x.appStore.netPerMonthCents)} after Apple's ${x.appStore.standardPct}%, or ${hubMoney(x.appStore.netPerMonthSmallBusinessCents)} at the ${x.appStore.smallBusinessPct}% of the Small Business Program and a subscriber's second year.` : ''}`}
+              note={`${hubMoney(x.priceCents)} ${every(x.interval)}${x.source === 'stripe' ? ', the price Stripe charges' : ', the price the code states'}, so ${hubMoney(x.grossPerMonthCents)} a month before ${hubMoney(x.web.feesPerMonthCents)} of Stripe fees.${x.appStore ? ` In the App Store${Number.isFinite(x.appStore.priceCents) && x.appStore.priceCents !== x.priceCents ? ` (${hubMoney(x.appStore.priceCents)} ${every(x.interval)})` : ''}, ${hubMoney(x.appStore.netPerMonthCents)} after Apple's ${x.appStore.standardPct}%, or ${hubMoney(x.appStore.netPerMonthSmallBusinessCents)} at the ${x.appStore.smallBusinessPct}% of the Small Business Program and a subscriber's second year.` : ''}`}
             />
           ))}
         </>
@@ -2089,6 +2094,7 @@ function MoneyHub({ colors, onExpensesChanged }) {
     try {
       const d = await getAdminMoneyHub({ refresh });
       hubMemo.data = d;
+      hubMemoChanged();
       setData(d);
     } catch (e) {
       // A failed read shows no numbers rather than the last ones under a live
@@ -2159,6 +2165,7 @@ export default function RevenueScreen({
   fetchResearchLive,
   numVenues,
   operatingCosts,
+  operatingCostsSource,
   researchDemoMode,
   researchError,
   researchLiveData,
@@ -2168,6 +2175,7 @@ export default function RevenueScreen({
   setEventsPerVenue,
   setNumVenues,
   setOperatingCosts,
+  setOperatingCostsSource,
   setResearchDemoMode,
   setSubscriptionPrice,
   setTakeRate,
@@ -2213,19 +2221,26 @@ export default function RevenueScreen({
     // once the Overview has read it, instead of a round $2,000 nobody chose.
     // Only while it still holds the placeholder, and only once, so a figure
     // typed in is never overwritten.
-    const simSeededRef = React.useRef(false);
-    // Set by the field itself, so a figure typed in (even one equal to the
-    // placeholder) is never replaced (review 2026-10-03).
-    const simTypedRef = React.useRef(false);
+    // Where the operating cost came from lives in FlockAppInner with the value
+    // ('placeholder', 'seeded' or 'typed'), so leaving the console and coming
+    // back cannot forget that a figure was typed (review 2026-10-03). The
+    // seed waits on hubTick, which moves when the hub's figures arrive, so a
+    // burn that lands after Projections opened still seeds it.
+    const [hubTick, setHubTick] = React.useState(0);
     React.useEffect(() => {
-      if (simSeededRef.current || simTypedRef.current || activeTab !== 'projections') return;
+      const fn = () => setHubTick((t) => t + 1);
+      hubMemo.subs.add(fn);
+      return () => { hubMemo.subs.delete(fn); };
+    }, []);
+    React.useEffect(() => {
+      if (operatingCostsSource !== 'placeholder' || activeTab !== 'projections') return;
       const burn = hubMemo.data && hubMemo.data.net ? hubMemo.data.net.burnCents : null;
       if (!Number.isFinite(burn)) return;
-      simSeededRef.current = true;
       // Rounded up to the whole dollar the field holds, so the seeded cost
       // is never below the real burn.
-      if (operatingCosts === SIM_OPERATING_COSTS_SEED) setOperatingCosts(Math.max(0, Math.ceil(burn / 100)));
-    }, [activeTab, operatingCosts, setOperatingCosts]);
+      setOperatingCosts(Math.max(0, Math.ceil(burn / 100)));
+      setOperatingCostsSource('seeded');
+    }, [activeTab, hubTick, operatingCostsSource, setOperatingCosts, setOperatingCostsSource]);
 
     // Calculate all metrics
     const subscriptionRevenue = calculateSubscriptionRevenue(numVenues, subscriptionPrice);
@@ -2451,7 +2466,7 @@ export default function RevenueScreen({
                   <input id="rev-costs"
                     type="number"
                     value={operatingCosts}
-                    onChange={(e) => { simTypedRef.current = true; setOperatingCosts(Math.max(0, parseInt(e.target.value) || 0)); }}
+                    onChange={(e) => { setOperatingCostsSource('typed'); setOperatingCosts(Math.max(0, parseInt(e.target.value) || 0)); }}
                     style={{ ...inputStyle, paddingLeft: '28px' }}
                     min="0"
                   />
@@ -2827,9 +2842,12 @@ export default function RevenueScreen({
             // bill counted once, so the two tabs cannot disagree. A list that
             // could not be read falls back to the code figures and says so.
             const ledger = d.expenses && d.expenses.status === 'ok' ? d.expenses : null;
+            // A list cut short at the limit is missing bills: no all-in figure,
+            // rather than the code's bills alone under the all-in label.
+            const listCutShort = !!(d.expenses && d.expenses.truncated);
             const allInMonthly = ledger
               ? ledger.burnMonthlyUsd
-              : (Number.isFinite(fixed.effectiveMonthlyUsd) ? fixed.effectiveMonthlyUsd + reconciledTotal : null);
+              : (!listCutShort && Number.isFinite(fixed.effectiveMonthlyUsd) ? fixed.effectiveMonthlyUsd + reconciledTotal : null);
 
             return (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -3699,7 +3717,8 @@ export default function RevenueScreen({
                 // Cloud live there, and leaving them out would drop both.
                 const ledger = costsData.expenses && costsData.expenses.status === 'ok' ? costsData.expenses : null;
                 const reconciledMonthly = (costsData.reconciled?.lines || []).reduce((s2, l) => s2 + (Number.isFinite(l.usdPerMonth) ? l.usdPerMonth : 0), 0);
-                const effectiveMonthly = ledger ? ledger.burnMonthlyUsd : fixed.effectiveMonthlyUsd + reconciledMonthly;
+                const listCutShort = !!(costsData.expenses && costsData.expenses.truncated);
+                const effectiveMonthly = ledger ? ledger.burnMonthlyUsd : (listCutShort ? null : fixed.effectiveMonthlyUsd + reconciledMonthly);
                 // What one subscriber actually leaves, from the hub the Overview
                 // loaded (Stripe's fees on the web, Apple's cut in the App
                 // Store), so this tile and the Overview give one answer. Before
@@ -3717,13 +3736,13 @@ export default function RevenueScreen({
                 // In whole cents of burn over unrounded cents per subscriber,
                 // the operands the Overview divides: in dollars, $7,979.31
                 // over $3.546 rounded up one subscriber past the Overview.
-                const burnCents = Math.round(effectiveMonthly * 100);
+                const burnCents = Number.isFinite(effectiveMonthly) ? Math.round(effectiveMonthly * 100) : null;
                 const centsOf = (b, fallbackUsd) => (b && Number.isFinite(b.netPerUnitExactCents) && b.netPerUnitExactCents > 0
                   ? b.netPerUnitExactCents
                   : (b && Number.isFinite(b.netPerUnitCents) && b.netPerUnitCents > 0 ? b.netPerUnitCents : (fallbackUsd ? fallbackUsd * 100 : null)));
                 const webCents = centsOf(hubBe && hubBe.proWeb, PRO_MONTHLY_USD);
                 const appCents = centsOf(hubBe && hubBe.proAppStore, null);
-                const subsToBreakEven = burnCents > 0 ? Math.ceil(burnCents / webCents) : 0;
+                const subsToBreakEven = burnCents === null ? null : (burnCents > 0 ? Math.ceil(burnCents / webCents) : 0);
                 const appSubsToBreakEven = appCents && burnCents > 0 ? Math.ceil(burnCents / appCents) : null;
                 const usd0 = (n) => `$${Math.round(n).toLocaleString()}`;
                 const row = (name, amount, sub) => (
@@ -3739,16 +3758,16 @@ export default function RevenueScreen({
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                       <div>
                         <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Monthly burn</p>
-                        <p style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: colors.navy, margin: '2px 0 0', lineHeight: 1.1 }}>{usd0(effectiveMonthly)}</p>
+                        <p style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: colors.navy, margin: '2px 0 0', lineHeight: 1.1 }}>{effectiveMonthly === null ? 'Not read' : usd0(effectiveMonthly)}</p>
                         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '3px 0 0' }}>
-                          {ledger
+                          {listCutShort ? 'The expense list has more bills than the hub reads at once, so the burn would leave some out and is not shown.' : ledger
                             ? 'Every recurring bill at its monthly rate: the code’s fixed bills, the reconciled bills and the expense list.'
                             : `${usd0(monthlyTotal)}/mo recurring plus ${usd0(annualTotal)}/yr spread over twelve months, plus ${usd0(reconciledMonthly)}/mo of reconciled usage bills. The expense list could not be read, so its bills are not in this.`}
                         </p>
                       </div>
                       <div>
                         <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase', letterSpacing: '0.5px' }}>Target to cover it</p>
-                        <p style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: colors.navy, margin: '2px 0 0', lineHeight: 1.1 }}>{subsToBreakEven}</p>
+                        <p style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: colors.navy, margin: '2px 0 0', lineHeight: 1.1 }}>{subsToBreakEven === null ? 'Not read' : subsToBreakEven}</p>
                         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '3px 0 0' }}>
                           {webNet
                             ? `Flock Pro subscriptions at $${(hubBe && hubBe.proWeb && Number.isFinite(hubBe.proWeb.priceCents) ? hubBe.proWeb.priceCents / 100 : PRO_MONTHLY_USD).toFixed(2)}/mo on the web, after Stripe's fees ($${webNet.toFixed(2)} each).${appSubsToBreakEven !== null ? ` ${appSubsToBreakEven} if they all came through the App Store, after Apple's cut.` : ''}`
@@ -3757,7 +3776,7 @@ export default function RevenueScreen({
                       </div>
                     </div>
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '10px 0 0', paddingTop: '8px', borderTop: '1px solid var(--border-light)' }}>
-                      {subsToBreakEven} is what break-even would take at this price, not a count of anything. Subscribers and revenue are counted on the Overview tab.
+                      {subsToBreakEven === null ? 'Break-even' : subsToBreakEven} is what break-even would take at this price, not a count of anything. Subscribers and revenue are counted on the Overview tab.
                     </p>
                   </div>
                   <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>

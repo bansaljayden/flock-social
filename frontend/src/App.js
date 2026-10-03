@@ -9122,8 +9122,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [takeRate, setTakeRate] = useState(0);
   // A placeholder until the money hub's real monthly burn is known: the
   // Projections tab replaces it with that figure once, unless it was typed
-  // over first (screens/RevenueScreen.js, SIM_OPERATING_COSTS_SEED).
+  // over first (screens/RevenueScreen.js, operatingCostsSource).
   const [operatingCosts, setOperatingCosts] = useState(2000);
+  // 'placeholder' until the hub's burn replaces it once ('seeded'), or the
+  // owner types a figure ('typed'), which nothing then overwrites.
+  const [operatingCostsSource, setOperatingCostsSource] = useState('placeholder');
 
   // Read the research analytics when the tab is first opened. Nothing did this:
   // not a mount effect, not a tab-change effect, nothing. The panel simply
@@ -19252,6 +19255,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         fetchResearchLive,
         numVenues,
         operatingCosts,
+        operatingCostsSource,
         researchDemoMode,
         researchError,
         researchLiveData,
@@ -19261,6 +19265,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         setEventsPerVenue,
         setNumVenues,
         setOperatingCosts,
+        setOperatingCostsSource,
         setResearchDemoMode,
         setSubscriptionPrice,
         setTakeRate,
