@@ -171,7 +171,32 @@ export default function ConsentBanner({ onAnswer }) {
   );
 }
 
+// THE PAGE KEEPS CLEAR OF THE BAR WHILE IT IS OPEN. These rules ship inside the
+// bar, so they exist exactly as long as it does, and --cb-height (measured
+// above) is the bar's whole footprint. Until 2026-10-03 no site page made room
+// for it: a keyboard walk at 375px put focus fully under the bar on every
+// page (the hero App Store badge, Sign in on /pro, every legal page's footer
+// links, Delete your account among them), which fails WCAG 2.2 2.4.11 Focus
+// Not Obscured, and /tap, exactly one screen tall, could not scroll its link
+// clear at all.
+//
+// scroll-margin, not scroll-padding on the root: LandingPage.css says why
+// (root padding makes Chrome re-centre the sticky header's own controls on
+// every focus). It goes on the things that get scrolled to. The Privacy page's
+// sticky contents list is shortened by the bar's height as well, which keeps
+// every entry, margin included, inside the viewport while the list is stuck,
+// so a focus there never asks the root to scroll a sticky box it cannot move
+// (the shape of that Chrome bug). The 8px past the bar is room for a focus
+// ring, which is drawn outside the element. The padding lets the last line
+// of a page scroll above the bar.
 const CSS = `
+#root:has(.lp, .pp, .gi, .tap, .rs) { padding-bottom: var(--cb-height, 0px); }
+.lp main *, .lp footer *, .pp *, .gi *, .tap *, .rs * {
+  scroll-margin-bottom: calc(var(--cb-height, 0px) + 8px);
+}
+@media (min-width: 960px) {
+  .pp-toc-inner { max-height: calc(100vh - 80px - var(--cb-height, 0px)); }
+}
 .cb-wrap {
   position: fixed;
   left: 12px;

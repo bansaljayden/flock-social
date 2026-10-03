@@ -96,3 +96,32 @@ test('the auth column pads its bottom by that footprint, so the footer links sta
   expect(bar).toMatch(/style\.setProperty\(HEIGHT_VAR/);
   expect(bar).toMatch(/style\.removeProperty\(HEIGHT_VAR\)/);
 });
+
+// Site pages keep focus clear of the bar (site audit 2026-10-03). A keyboard
+// walk at 375px used to put focus fully under it on every page, a WCAG 2.2
+// 2.4.11 failure, and the bar sat two Tab stops ahead of every skip link.
+// Re-walked in Chromium at 375 and 1440 over eleven pages: zero stops covered.
+describe('the page keeps clear of the bar while it is open', () => {
+  test('the rules ship inside the bar, so they last exactly as long as it does', () => {
+    const { container } = render(<ConsentBanner />);
+    const css = container.querySelector('style').textContent;
+    expect(css).toContain('#root:has(.lp, .pp, .gi, .tap, .rs) { padding-bottom: var(--cb-height, 0px); }');
+    expect(css).toMatch(/\.lp main \*, \.lp footer \*, \.pp \*, \.gi \*, \.tap \*, \.rs \* \{\s*scroll-margin-bottom: calc\(var\(--cb-height, 0px\) \+ 8px\);/);
+    // The sticky contents list is shortened rather than left under the bar.
+    expect(css).toMatch(/@media \(min-width: 960px\) \{\s*\.pp-toc-inner \{ max-height: calc\(100vh - 80px - var\(--cb-height, 0px\)\); \}/);
+  });
+
+  test('never scroll-padding on the root, which re-centres the sticky header on every focus', () => {
+    const { container } = render(<ConsentBanner />);
+    expect(container.querySelector('style').textContent).not.toMatch(/scroll-padding/);
+  });
+
+  test('index.js mounts the site bar after the page, so the skip link is the first Tab stop', () => {
+    const fs = require('fs');
+    const path = require('path');
+    const src = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
+    const start = src.indexOf('if (page) {');
+    const block = src.slice(start, src.indexOf('} else if', start));
+    expect(block.indexOf('<ConsentBanner')).toBeGreaterThan(block.indexOf('</ErrorBoundary>'));
+  });
+});

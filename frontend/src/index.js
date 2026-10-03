@@ -1055,9 +1055,6 @@ if (page) {
   const { Loading } = page;
   root.render(
     <React.StrictMode>
-      {/* The website's ask, on every route but the app's. Renders nothing
-          once answered, and declining is remembered. */}
-      <ConsentBanner onAnswer={startAnalytics} />
       {/* Outside Suspense on purpose: this also catches a chunk that 404s
           against a stale cached index.html after a deploy, which is a real
           production failure mode and, unhandled, is the same white screen as
@@ -1073,6 +1070,12 @@ if (page) {
           <HashLanding />
         </React.Suspense>
       </ErrorBoundary>
+      {/* The website's ask, on every route but the app's. Renders nothing
+          once answered, and declining is remembered. After the page in the
+          document, though it is drawn on top of it: first, it put two Tab
+          stops ahead of every page's "Skip to the main content" link. Nothing
+          is counted before an answer, so nothing is lost by asking second. */}
+      <ConsentBanner onAnswer={startAnalytics} />
     </React.StrictMode>
   );
 } else if (path === '/reset-password') {
