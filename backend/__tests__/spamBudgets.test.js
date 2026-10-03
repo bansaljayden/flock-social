@@ -117,6 +117,9 @@ pool.query = async (text, params = []) => {
   const has = (frag) => sql.includes(frag);
   if (/^(INSERT|UPDATE|DELETE)/i.test(sql)) writes.push({ sql, params });
 
+  // utils/ownAvatar.js: the joiner's own photo for the live join event.
+  if (has('END AS url') && has('FROM users WHERE id = $1')) return { rows: [{ url: null }], rowCount: 1 };
+
   // middleware/auth.js
   if (has('is_banned, token_version FROM users WHERE id = $1')) {
     const u = AUTHED[params[0]];

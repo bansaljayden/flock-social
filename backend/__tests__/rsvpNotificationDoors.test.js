@@ -60,7 +60,12 @@ let handlers = [];
 let log = [];
 let unknownSql = [];
 
+const JOINER_PHOTO = 'data:image/png;base64,QUFB';
 function dispatch(sql, params) {
+  // utils/ownAvatar.js: the joiner's own photo for the live join event.
+  if (/END AS url FROM users WHERE id = \$1/.test(String(sql).replace(/\s+/g, ' '))) {
+    return Promise.resolve({ rows: [{ url: JOINER_PHOTO }], rowCount: 1 });
+  }
   // The join and update routes read the plan's status first, and the update and
   // delete fan-outs reach invitees (lifecycle audit, 2026-09-05). Every plan in
   // this file is open and nobody holds an invite, so both default quietly.

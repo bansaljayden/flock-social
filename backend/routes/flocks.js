@@ -78,6 +78,7 @@ function inviteBase() {
   return baseWebUrl();
 }
 const { pushIfOffline, pushIfOfflineDebounced, isPushConfigured } = require('../services/pushHelper');
+const { ownAvatar } = require('../utils/ownAvatar');
 
 const router = express.Router();
 
@@ -2649,13 +2650,14 @@ router.post('/:id/join', requireVerified, param('id').isInt({ min: 1, max: INT4_
         // connect, so it is a superset of the flock room and still delivers
         // exactly once. Block-aware, so an accepted RSVP does not carry the
         // joiner's name and photo to someone who blocked them.
-        emitToFlockExcludingBlocked(io, flockId, req.user.id, 'flock_invite_responded', {
+        // The photo is read here: req.user never carries one (utils/ownAvatar).
+        ownAvatar(req.user.id).then((userImage) => emitToFlockExcludingBlocked(io, flockId, req.user.id, 'flock_invite_responded', {
           flockId: parseInt(flockId),
           userId: req.user.id,
           userName: req.user.name,
-          userImage: req.user.profile_image_url || null,
+          userImage,
           action: 'accepted',
-        }).catch(() => {});
+        })).catch(() => {});
       }
     }
 

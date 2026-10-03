@@ -45,6 +45,7 @@ const { reconfirmState, RECONFIRM_GUEST_WRITE_SQL, answeredWindow } = require('.
 // no way to ask anyone what happened, so the window it names has to be the real
 // one. See utils/retryAfter.js.
 const { waitPhrase, refusalBody } = require('../utils/retryAfter');
+const { ownAvatar } = require('../utils/ownAvatar');
 
 const router = express.Router();
 
@@ -2304,7 +2305,8 @@ router.post('/:token/join',
             flockId: link.flock_id,
             userId: req.user.id,
             userName: req.user.name,
-            userImage: req.user.profile_image_url || null,
+            // req.user never carries the photo (utils/ownAvatar).
+            userImage: await ownAvatar(req.user.id),
             action: 'accepted',
           });
         }
