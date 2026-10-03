@@ -180,6 +180,7 @@
       "source": "/app",
       "headers": [
         { "key": "X-Robots-Tag", "value": "noindex" },
+        { "key": "Link", "value": "<https://accounts.google.com>; rel=preconnect" },
         { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }
       ]
     },
@@ -187,6 +188,7 @@
       "source": "/app/(.*)",
       "headers": [
         { "key": "X-Robots-Tag", "value": "noindex" },
+        { "key": "Link", "value": "<https://accounts.google.com>; rel=preconnect" },
         { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }
       ]
     },
@@ -194,6 +196,7 @@
       "source": "/signup",
       "headers": [
         { "key": "X-Robots-Tag", "value": "noindex" },
+        { "key": "Link", "value": "<https://accounts.google.com>; rel=preconnect" },
         { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }
       ]
     },
