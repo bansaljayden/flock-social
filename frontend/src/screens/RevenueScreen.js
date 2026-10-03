@@ -847,7 +847,10 @@ function HubCosts({ h, colors }) {
         </>
       )}
 
-      <p style={hubStyle.kicker}>Renewals in the next {c.upcomingWindowDays || 60} days</p>
+      <p style={hubStyle.kicker}>Renewals in the next {c.upcomingWindowDays || 90} days</p>
+      {Array.isArray(c.upcomingTotals) && c.upcomingTotals.some((t) => t.bills > 0) && (
+        <p style={hubStyle.note}>{c.upcomingTotals.map((t) => `Next ${t.days} days: ${hubMoney(t.cents)}`).join(' · ')}. Dollar bills on the expense list with a date.</p>
+      )}
       {upcoming.length === 0 ? (
         <p style={hubStyle.note}>None dated. A bill on the expense list shows here once it has a renewal or last-charge date; the code's lines carry no dates.</p>
       ) : upcoming.map((u) => (
