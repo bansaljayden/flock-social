@@ -11,7 +11,13 @@
 
 /* Hero */
 .rs-hero { padding-top: clamp(48px, 7vw, 88px); }
-.rs-hero h1 { max-width: 16ch; margin: 0 0 18px; }
+/* em, not ch. `ch` is the width of the "0" in whatever face is painting, so a
+   16ch measure was 369px in Fraunces but 294px in the metric-matched fallback
+   the headline waits in (LandingPage.css): at 412px the h1 wrapped to three
+   lines, snapped to two when the font arrived, and everything under it jumped
+   39px, the page's whole 0.03 CLS (measured 2026-10-03). 9.8em is the same
+   369px in Fraunces, and em does not change on a font swap. */
+.rs-hero h1 { max-width: 9.8em; margin: 0 0 18px; }
 .rs-hero-lead { margin-bottom: clamp(32px, 5vw, 48px) !important; }
 
 /* The paper card: a printed first page and its citation, on the navy. */

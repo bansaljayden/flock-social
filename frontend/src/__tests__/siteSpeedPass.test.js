@@ -116,6 +116,19 @@ describe('the research paper thumbnail is served near the size it paints', () =>
   });
 });
 
+describe('no headline above the fold is measured in ch', () => {
+  // `ch` follows whichever face is painting, so a ch measure changes width on
+  // the font swap and re-wraps the headline: /research's h1 at 16ch moved the
+  // whole page 39px (CLS 0.03) when Fraunces replaced its fallback.
+  test('the /research h1 measure is in em', () => {
+    const css = read('src/website/ResearchPage.css');
+    const rule = /\.rs-hero h1 \{([^}]*)\}/.exec(css);
+    expect(rule).not.toBeNull();
+    expect(rule[1]).toMatch(/max-width:\s*[\d.]+em/);
+    expect(rule[1]).not.toMatch(/\bch\b/);
+  });
+});
+
 describe('the demo map waits for the scroll to pause', () => {
   const demo = read('src/website/LiveDemo.js');
 
