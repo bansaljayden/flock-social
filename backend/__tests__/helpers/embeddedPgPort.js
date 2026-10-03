@@ -151,6 +151,9 @@ const SUITE_SLOTS = {
   venueReplyReportRealDb: 67,    // new in 2026-10-03; an owner's reply
                                  // reported, hidden and replaced through the
                                  // real routes and migration 114.
+  reviewSeedBudgetRealDb: 68,    // new in 2026-10-03; the App Review seed
+                                 // run for real, then the budget route shows
+                                 // the reviewer a ceiling.
 };
 
 // Two suites sharing a slot would silently reintroduce exactly the collision the
