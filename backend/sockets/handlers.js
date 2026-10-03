@@ -1349,9 +1349,17 @@ async function markDmDelivered(io, receiverId, senderId, upToId, opts = {}) {
   if (!opts.blockChecked && await isBlockedBetween(receiverId, senderId)) return [];
   const upTo = upToId == null ? null : asId(upToId);
   if (upToId != null && upTo === null) return [];
+  // `opened_at IS NULL` adds no filtering: markDmOpened is the only writer of
+  // opened_at and sets delivered_at with it, so an undelivered row is always
+  // unopened. It is here for the planner. idx_dm_receipts_pending (migration
+  // 065) is partial on `opened_at IS NULL`, and Postgres cannot infer that
+  // predicate from `delivered_at IS NULL`, so without it this sweep, which
+  // runs on every send_dm, dm_ack and thread read, walked the whole one-way
+  // thread (2,718 buffers against 11 with it, measured on a local Postgres,
+  // 2026-10-03).
   const result = await pool.query(
     `UPDATE direct_messages SET delivered_at = NOW()
-      WHERE ${DM_RECEIPT_SCOPE} AND delivered_at IS NULL
+      WHERE ${DM_RECEIPT_SCOPE} AND delivered_at IS NULL AND opened_at IS NULL
       RETURNING id`,
     [receiverId, senderId, upTo]
   );

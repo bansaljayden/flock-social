@@ -478,6 +478,11 @@ test('reading a DM thread marks delivery, tells the sender, and marks no open', 
   await settle();
 
   assert.match(deliverSql, /delivered_at IS NULL/, 'idempotent: a second read writes nothing');
+  // The redundant opened_at predicate is what lets the planner use the partial
+  // idx_dm_receipts_pending (065, WHERE opened_at IS NULL): without it the
+  // sweep walked the whole one-way thread on every read and send.
+  assert.match(deliverSql, /delivered_at IS NULL AND opened_at IS NULL/,
+    'the delivery sweep must carry the index predicate');
   assert.match(deliverSql, /COALESCE\(is_hidden, false\) = false AND sender_deleted_at IS NULL/,
     'a taken-down or unsent message is gone from every read path and must not receipt either');
 
