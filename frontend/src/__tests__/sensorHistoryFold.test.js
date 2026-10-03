@@ -39,3 +39,11 @@ test('both venue screens fold the reading instead of replacing the bucket', () =
   expect(app).toContain('setSensorHistory(prev => foldSensorReading(prev, payload, 48));');
   expect(app).toContain('setOwnerSensorHistory(prev => foldSensorReading(prev, payload, 72));');
 });
+
+test('a numeric string from the history endpoint takes part in the average', () => {
+  // noise_db is a Postgres numeric, which node-pg hands over as a string.
+  const history = [{ recorded_at: HOUR, sample_count: 3, ir_beam_count: 10, noise_db: '70.00' }];
+  const next = foldSensorReading(history, { recorded_at: at(30), ir_beam_count: 2, noise_db: 74 }, 48);
+  expect(next[0].noise_db).toBe(71);
+  expect(next[0].ir_beam_count).toBe(12);
+});
