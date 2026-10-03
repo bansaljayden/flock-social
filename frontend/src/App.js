@@ -5774,18 +5774,27 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
   // Invite user search with debounce
   const inviteTimerRef = useRef(null);
+  const inviteSeqRef = useRef(0);
   const handleInviteSearch = useCallback((val) => {
     setInviteSearch(val);
     if (inviteTimerRef.current) clearTimeout(inviteTimerRef.current);
-    if (val.trim().length < 1) { setInviteResults([]); setInviteSearchError(''); return; }
+    // Every keystroke, the clearing ones included, starts a new sequence:
+    // emptying the box used to cancel the pending timer but leave the
+    // spinner flag on, so New Message and Add Friends sat on "Searching"
+    // until the next search, and a slow answer for an older query could
+    // land on top of a newer one. Only the latest query's answer counts.
+    const mine = ++inviteSeqRef.current;
+    if (val.trim().length < 1) { setInviteResults([]); setInviteSearchError(''); setInviteSearching(false); return; }
     setInviteSearching(true);
     setInviteSearchError('');
     inviteTimerRef.current = setTimeout(async () => {
       try {
         const data = await searchUsers(val.trim());
+        if (mine !== inviteSeqRef.current) return;
         setInviteResults(data.users || []);
         setInviteSearchError('');
       } catch (err) {
+        if (mine !== inviteSeqRef.current) return;
         // A network or server failure is not the same fact as "nobody by that
         // name", and drawing the empty state over it told the person their
         // friend does not exist. Surface the real sentence, the way the venue
@@ -5793,7 +5802,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         setInviteResults([]);
         setInviteSearchError(err?.message || 'Search is not responding. Try again in a moment.');
       }
-      finally { setInviteSearching(false); }
+      finally { if (mine === inviteSeqRef.current) setInviteSearching(false); }
     }, 400);
   }, []);
 
@@ -5807,23 +5816,28 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
   // Connect panel search with debounce
   const connectTimerRef = useRef(null);
+  const connectSeqRef = useRef(0);
   const handleConnectSearch = useCallback((val) => {
     setConnectSearch(val);
     if (connectTimerRef.current) clearTimeout(connectTimerRef.current);
-    if (val.trim().length < 1) { setConnectResults([]); setConnectSearchError(''); return; }
+    // See handleInviteSearch: only the latest query's answer counts.
+    const mine = ++connectSeqRef.current;
+    if (val.trim().length < 1) { setConnectResults([]); setConnectSearchError(''); setConnectSearching(false); return; }
     setConnectSearching(true);
     setConnectSearchError('');
     connectTimerRef.current = setTimeout(async () => {
       try {
         const data = await searchUsers(val.trim());
+        if (mine !== connectSeqRef.current) return;
         setConnectResults(data.users || []);
         setConnectSearchError('');
       } catch (err) {
+        if (mine !== connectSeqRef.current) return;
         // See handleInviteSearch: a failed search is not an empty result.
         setConnectResults([]);
         setConnectSearchError(err?.message || 'Search is not responding. Try again in a moment.');
       }
-      finally { setConnectSearching(false); }
+      finally { if (mine === connectSeqRef.current) setConnectSearching(false); }
     }, 400);
   }, []);
 
@@ -5903,18 +5917,23 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
   // Add Friends screen handlers
   const addFriendsTimerRef = useRef(null);
+  const addFriendsSeqRef = useRef(0);
   const handleAddFriendsSearch = useCallback((val) => {
     setAddFriendsSearch(val);
     if (addFriendsTimerRef.current) clearTimeout(addFriendsTimerRef.current);
-    if (val.trim().length < 1) { setAddFriendsResults([]); setAddFriendsError(''); return; }
+    // See handleInviteSearch: only the latest query's answer counts.
+    const mine = ++addFriendsSeqRef.current;
+    if (val.trim().length < 1) { setAddFriendsResults([]); setAddFriendsError(''); setAddFriendsSearching(false); return; }
     setAddFriendsSearching(true);
     setAddFriendsError('');
     addFriendsTimerRef.current = setTimeout(async () => {
       try {
         const data = await searchUsers(val.trim());
+        if (mine !== addFriendsSeqRef.current) return;
         setAddFriendsResults(data.users || []);
         setAddFriendsError('');
       } catch (err) {
+        if (mine !== addFriendsSeqRef.current) return;
         // See handleInviteSearch: a failed search is not an empty result. The
         // Add Friends screen lives in screens/AddFriends.js; this value reaches
         // it through addFriendsProps and it renders it in place of "No users
@@ -5922,7 +5941,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         setAddFriendsResults([]);
         setAddFriendsError(err?.message || 'Search is not responding. Try again in a moment.');
       }
-      finally { setAddFriendsSearching(false); }
+      finally { if (mine === addFriendsSeqRef.current) setAddFriendsSearching(false); }
     }, 400);
   }, []);
 
@@ -14886,18 +14905,23 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [dmSearchError, setDmSearchError] = useState('');
   const dmModalTimerRef = useRef(null);
 
+  const dmModalSeqRef = useRef(0);
   const handleDmSearch = useCallback((val) => {
     setDmSearchText(val);
     if (dmModalTimerRef.current) clearTimeout(dmModalTimerRef.current);
-    if (val.trim().length < 1) { setDmModalResults([]); setDmSearchError(''); return; }
+    // See handleInviteSearch: only the latest query's answer counts.
+    const mine = ++dmModalSeqRef.current;
+    if (val.trim().length < 1) { setDmModalResults([]); setDmSearchError(''); setDmModalSearching(false); return; }
     setDmModalSearching(true);
     setDmSearchError('');
     dmModalTimerRef.current = setTimeout(async () => {
       try {
         const data = await searchUsers(val.trim());
+        if (mine !== dmModalSeqRef.current) return;
         setDmModalResults(data.users || []);
         setDmSearchError('');
       } catch (err) {
+        if (mine !== dmModalSeqRef.current) return;
         // See handleInviteSearch: a failed search is not an empty result. The
         // New Message sheet lives in components/NewDmModal.js; this value
         // reaches it through newDmModalProps and it renders it in place of
@@ -14905,7 +14929,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         setDmModalResults([]);
         setDmSearchError(err?.message || 'Search is not responding. Try again in a moment.');
       }
-      finally { setDmModalSearching(false); }
+      finally { if (mine === dmModalSeqRef.current) setDmModalSearching(false); }
     }, 400);
   }, []);
 
