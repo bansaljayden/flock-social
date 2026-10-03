@@ -13696,7 +13696,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       showToast("That photo couldn't be read. Pick another.", 'error');
       return;
     }
-    // Preview immediately
+    // Preview immediately, remembering what it replaces: a failed upload puts
+    // that back. It used to leave the preview up, so the app showed a photo
+    // the server never took, until the next reload swapped the old one back
+    // in without a word (app audit 2026-10-03).
+    const before = profilePicRef.current;
     setProfilePic(encoded);
     setCropImageSrc(null);
 
@@ -13709,6 +13713,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       showToast('Profile picture updated.', 'success');
     } catch (err) {
       console.error('Profile pic upload failed:', err);
+      // Only if the failed preview is still what is showing: a later pick
+      // that went through must not be undone by this one's failure.
+      setProfilePic((cur) => (cur === encoded ? before : cur));
       showToast(err?.message || "That photo didn't upload. Try again.", 'error');
     }
   }, [cropImageSrc, cropZoom, showToast]); // eslint-disable-line react-hooks/exhaustive-deps
