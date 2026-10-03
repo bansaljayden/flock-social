@@ -35,7 +35,11 @@ import React from 'react';
 import { AnimatePresence } from 'framer-motion';
 import { BirdieStill, BirdNote, BIRDIE, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
-import VenueInsightCards from '../components/VenueInsightCards';
+// clearAdvisorCards drops the cards' held answer after a settings save: most
+// cards refuse by asking for a value in Settings, and one held for its minute
+// repeated that refusal to an owner who had just entered the value (venue audit
+// 2026-10-03; the card file's own comment says the dashboard does this).
+import VenueInsightCards, { clearAdvisorCards } from '../components/VenueInsightCards';
 import VenueAdvisorChat from '../components/VenueAdvisorChat';
 import { hourlySourcePhrase, peersSourcePhrase, stripPeakBars, stripRowMethod } from '../lib/crowd';
 import VenueBillingControl, { VenueBillingStatus, roostPlanPriceLabel } from '../components/venue/VenueBillingControl';
@@ -2178,6 +2182,7 @@ export default function VenueDashboard({
                         // (venue audit 2026-10-03).
                         const saved = await updateVenueProfile({ businessName: venueInfo.name, location: venueInfo.address, phone: venueInfo.phone });
                         setVenueProfile((prev) => mergeSavedProfile(prev, saved));
+                        clearAdvisorCards();
                         setEditingVenueInfo(false);
                       } catch (e) {
                         showToast(e?.message || "Those details didn't save. Try again.", 'error');
@@ -2252,6 +2257,7 @@ export default function VenueDashboard({
                         try {
                           const saved = await updateVenueProfile(venueIntakeDraft);
                           setVenueProfile((prev) => mergeSavedProfile(prev, saved));
+                          clearAdvisorCards();
                           setVenueIntakeDraft(null);
                           showToast('Saved.', 'success');
                         } catch (e) {
@@ -2838,6 +2844,7 @@ export default function VenueDashboard({
                   <button className="hit44" onClick={async () => {
                     try {
                       await updateVenueProfile({ operatingHours });
+                      clearAdvisorCards();
                       setShowHoursModal(false);
                     } catch (e) {
                       showToast(e?.message || "Those hours didn't save. Try again.", 'error');
