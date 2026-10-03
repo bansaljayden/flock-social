@@ -498,7 +498,7 @@ async function recordTap({ userId, placeId, ip, source, io }) {
       // row back.
       const q = await pool.query(
         `INSERT INTO venue_checkins (venue_place_id, user_id, checkin_source)
-         SELECT $1::text, $2, $3
+         SELECT $1::text, $2, $3::text
          WHERE NOT EXISTS (
            SELECT 1 FROM venue_checkins
            WHERE venue_place_id = $1::text
