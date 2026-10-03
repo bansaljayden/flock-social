@@ -508,7 +508,7 @@ const srv = (id, text, { senderId = ME, name = 'Ava', type = 'text', thumb = nul
 
 // loadFlockMessages, lifted and run, with the request left open until a test
 // answers it: reads[n] is the nth read's { resolve, reject }.
-function liftedFlockLoader(flocks = [{ id: 7, messages: [], pins: [] }], { atTop = {} } = {}) {
+function liftedFlockLoader(flocks = [{ id: 7, messages: [], pins: [] }], { atTop = {}, spinner = null } = {}) {
   const state = { flocks, errors: [], acks: [], atTop };
   const reads = [];
   const retractionsRef = { current: { seq: 0, log: [] } };
@@ -517,7 +517,7 @@ function liftedFlockLoader(flocks = [{ id: 7, messages: [], pins: [] }], { atTop
     historyReadAtRef: { current: {} },
     historyReadSeqRef: { current: {} },
     retractionsRef,
-    setMessagesLoading: () => {},
+    setMessagesLoading: (v) => { if (spinner) spinner.push(v); },
     setMessagesError: (e) => { if (e) state.errors.push(e); },
     getMessages: () => new Promise((resolve, reject) => { reads.push({ resolve, reject }); }),
     mapFlockRow: H.mapFlockRow,
@@ -2451,5 +2451,55 @@ describe('a catch-up after more than a page of messages leaves no hidden hole', 
     c.runCatchUp();
     expect(c.reads).toHaveLength(0);
     expect(c.refs.catchUpOwedRef.current).toBe(false);
+  });
+});
+
+// The two flags a chat screen reads are single values; the reads are per
+// conversation. A slow read of the chat you left used to print "This
+// conversation did not load" over the one you opened, and its finally took
+// down the new chat's spinner mid-read, flashing its empty state (app audit
+// 2026-10-03).
+describe('the chat flags belong to the conversation on screen', () => {
+  test('a slow read of the chat you left touches neither flag of the chat you opened', async () => {
+    const spinner = [];
+    const { state, reads, load } = liftedFlockLoader([{ id: 7, messages: [], pins: [] }, { id: 8, messages: [], pins: [] }], { spinner });
+    const left = load(7, { showSpinner: true });
+    const opened = load(8, { showSpinner: true });
+    reads[0].reject(new Error('the read of 7 failed'));
+    await left;
+    expect(state.errors).toEqual([]);
+    expect(spinner).toEqual([true, true]);
+    reads[1].resolve({ messages: [] });
+    await opened;
+    expect(spinner).toEqual([true, true, false]);
+  });
+
+  test("the open chat's own failure is still said, and its spinner still comes down", async () => {
+    const spinner = [];
+    const { state, reads, load } = liftedFlockLoader(undefined, { spinner });
+    const read = load(7, { showSpinner: true });
+    reads[0].reject(new Error('Server error'));
+    await read;
+    expect(state.errors).toEqual(['Server error']);
+    expect(spinner).toEqual([true, false]);
+  });
+
+  test('a catch-up read with no spinner does not leave an earlier spinner up', async () => {
+    const spinner = [];
+    const { reads, load } = liftedFlockLoader(undefined, { spinner });
+    const entry = load(7, { showSpinner: true });
+    const catchUp = load(7, { keepOlder: true });
+    reads[1].resolve({ messages: [] });
+    await catchUp;
+    reads[0].resolve({ messages: [] });
+    await entry;
+    expect(spinner).toEqual([true, false]);
+  });
+
+  test('the DM loader holds its flags the same way', () => {
+    const dm = between(appSource, 'const loadDmMessages = useCallback', '/* The Try again behind a failed history read');
+    expect(dm).toMatch(/if \(spin\) \{ historyReadSeqRef\.current\['spinner:dm'\] = spin; setDmMessagesLoading\(true\); \}/);
+    expect(dm).toMatch(/if \(historyReadSeqRef\.current\['last:dm'\] === `dm:\$\{userId\}`\) \{\s*setDmMessagesError\(/);
+    expect(dm).toMatch(/\.finally\(\(\) => \{ if \(spin && historyReadSeqRef\.current\['spinner:dm'\] === spin\) setDmMessagesLoading\(false\); \}\);/);
   });
 });
