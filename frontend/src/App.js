@@ -4156,6 +4156,7 @@ const TAKEDOWN_HANDLED = {
   venue_promotion: 'ownerRow',    // keep it listed, mark it removed
   venue_event: 'ownerRow',        // same
   venue_review: 'venueReviews',   // drop it from the venue card's review list
+  venue_reply: 'venueReviews',    // clear the owner's reply, keep the review
   // Stories have no UI in this client at all: no story state, no story screen,
   // and the story reader in services/api.js has zero callers anywhere. The
   // server emits this one to the author, who has nowhere to see it. 'none' is a
@@ -4299,6 +4300,19 @@ const dropContentById = (rows, contentId) => {
   if (!Array.isArray(rows) || contentId == null) return rows;
   const kept = rows.filter((r) => !sameContentId(r.id, contentId));
   return kept.length === rows.length ? rows : kept;
+};
+
+// A venue owner's reply lives on its review's row (migration 114), so taking
+// the reply down clears it from that row and leaves the review standing.
+const dropReplyById = (rows, contentId) => {
+  if (!Array.isArray(rows) || contentId == null) return rows;
+  let changed = false;
+  const next = rows.map((r) => {
+    if (!r || !sameContentId(r.id, contentId) || r.venue_reply == null) return r;
+    changed = true;
+    return { ...r, venue_reply: null };
+  });
+  return changed ? next : rows;
 };
 
 // A DOUBLE TAP ON CREATE USED TO POST THE DEAL (OR THE EVENT) TWICE. onSave
@@ -17820,6 +17834,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         case 'venue_review':
           if (hidden) setVenueDetailReviews(prev => dropContentById(prev, ev.contentId));
           break;
+        case 'venue_reply':
+          if (hidden) setVenueDetailReviews(prev => dropReplyById(prev, ev.contentId));
+          break;
         default:
           // 'story' lands here, and so does any type added to admin.js later.
           // Doing nothing is correct for a type this client does not render and
@@ -20008,6 +20025,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                   // while a reported message vanished, which is the promise this
                   // handler makes for every type.
                   if (ev.contentType === 'venue_review') setVenueDetailReviews(prev => dropContentById(prev, ev.contentId));
+                  if (ev.contentType === 'venue_reply') setVenueDetailReviews(prev => dropReplyById(prev, ev.contentId));
                   if (ev.contentType === 'venue_promotion') setVenueDetailPromos(prev => dropContentById(prev, ev.contentId));
                 }}
               />

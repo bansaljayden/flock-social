@@ -457,7 +457,15 @@ const VenueDetailSheet = ({
                       by its own surface and an indent instead. */}
                   {r.venue_reply && (
                     <div style={{ marginTop: '6px', marginLeft: '10px', padding: '8px 10px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
-                      <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.steel, margin: '0 0 1px' }}>Owner Reply</p>
+                      {/* Its own Report (migration 114). The review's flag
+                          reports the reviewer; this one reaches the owner who
+                          wrote the reply, and a takedown removes the reply
+                          alone. The server finds the author from the row, so
+                          no account id leaves this card. */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.steel, margin: '0 0 1px' }}>Owner Reply</p>
+                        <button aria-label="Report owner reply" className="hit44" onClick={() => setModerationTarget({ userName: 'this venue', contentType: 'venue_reply', contentId: r.id })} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px', flexShrink: 0, fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }} title="Report owner reply">{Icons.flag('currentColor', 13)}</button>
+                      </div>
                       <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>{r.venue_reply}</p>
                     </div>
                   )}

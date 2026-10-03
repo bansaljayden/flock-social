@@ -1204,7 +1204,7 @@ test('the webhook and the return to the app running together send one acknowledg
   } finally { restore(); mail.restore(); }
 });
 
-// code review's review of the claim (2026-10-03): the path that stood aside had
+// Review of the claim (2026-10-03): the path that stood aside had
 // finished by the time the claimer's send failed and gave the claim back, so a
 // provider error at that moment meant no acknowledgment at all. The path that
 // stands aside now looks again later, and sends if the claim was given back.

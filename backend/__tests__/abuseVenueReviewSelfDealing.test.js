@@ -238,12 +238,15 @@ async function dispatch(sql, params) {
     // And only while its AUTHOR is the verified owner (migration 083), when
     // the statement asks that rather than "some verified claim exists".
     const authored = /vp\.user_id = vr\.venue_reply_user_id/.test(flat);
+    // And only while moderation has not taken it down (migration 114).
+    const hiddenGate = /AND vr\.venue_reply_hidden = false/.test(flat);
     const claimOk = (r) => !gated || (authored
       ? world.profiles.some((x) => x.google_place_id === r.google_place_id && x.verified === true && x.user_id === r.venue_reply_user_id)
       : hasVerifiedProfile(r.google_place_id));
     const rows = visibleReviews(p[0], flat).slice(0, limit).map((r) => {
       const shown = claimOk(r)
-        && (!liveReplyOnly || r.venue_replied_at !== null);
+        && (!liveReplyOnly || r.venue_replied_at !== null)
+        && !(hiddenGate && r.venue_reply_hidden === true);
       return {
         id: r.id, rating: r.rating, text: r.text,
         venue_reply: shown ? r.venue_reply : null,

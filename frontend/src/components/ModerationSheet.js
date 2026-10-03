@@ -44,6 +44,7 @@ const NOUNS = {
   dm: 'this message',
   story: 'this story',
   venue_review: 'this review',
+  venue_reply: 'this reply',
   venue_promotion: 'this promotion',
   venue_event: 'this event',
   guest_rsvp: 'this guest name',

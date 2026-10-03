@@ -19,6 +19,8 @@ const TYPE_LABEL = {
   flock_message: 'Flock message', dm: 'Direct message', story: 'Story',
   profile: 'Profile', venue_review: 'Venue review', venue_promotion: 'Venue promotion',
   guest_rsvp: 'Guest RSVP', venue_event: 'Venue event',
+  // A venue owner's reply to a review, reported on its own (migration 114).
+  venue_reply: 'Venue owner reply',
 };
 // Types that appear in the AUDIT LOG only, never in the queue. A separate map
 // on purpose: TYPE_LABEL is pinned to VALID_CONTENT_TYPES both ways (a queue
@@ -62,6 +64,8 @@ const PRIOR_ACTION_LABEL = {
 const HIDEABLE = {
   flock_message: true, dm: true, story: true, profile: false,
   venue_review: true, venue_promotion: true, guest_rsvp: true, venue_event: true,
+  // Hiding a reply takes the reply down and leaves the review (migration 114).
+  venue_reply: true,
 };
 // The queue serves 'open' and (via the duplicate-report check) 'under_review'.
 // Both are unhandled; resolved and dismissed are finished.

@@ -35,8 +35,12 @@ test('the promotions tab says deals publish only once the venue is verified', ()
 
 test('a retired reply shows as retired and the Reply button comes back', () => {
   const dash = read('screens/VenueDashboard.js');
-  expect(dash).toMatch(/replied: !!r\.venue_reply && !r\.reply_needs_review,/);
+  expect(dash).toMatch(/replied: !!r\.venue_reply && !r\.reply_needs_review && !r\.reply_hidden_by_moderation,/);
   expect(dash).toMatch(/replyRetired: !!r\.reply_needs_review,/);
+  // A reply moderation took down (migration 114) gives the button back too,
+  // and says why.
+  expect(dash).toMatch(/replyRemoved: !!r\.reply_hidden_by_moderation,/);
+  expect(dash).toMatch(/A moderator took this reply off your card after a report\. Reply again to post a new one\./);
   expect(dash).toMatch(/The review was edited after this, so it is off your card\. Reply again to publish a new one\./);
 });
 

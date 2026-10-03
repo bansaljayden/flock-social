@@ -285,6 +285,9 @@ const CONTENT_TEXT_SQL = {
   dm: (t) => `NULLIF(CONCAT_WS(chr(10), NULLIF(${t}.message_text, ''), ${venueCardSql(t)}), '')`,
   story: (t) => `NULLIF(${t}.caption, '')`,
   venue_review: (t) => `NULLIF(CONCAT_WS(chr(10), NULLIF(${t}.text, ''), ('Owner reply: ' || NULLIF(${t}.venue_reply, ''))), '')`,
+  // The reply reported on its own (migration 114): the owner's words first,
+  // since they are what the report is about, then the review they answer.
+  venue_reply: (t) => `NULLIF(CONCAT_WS(chr(10), ('Owner reply: ' || NULLIF(${t}.venue_reply, '')), ('In answer to: ' || NULLIF(${t}.text, ''))), '')`,
   // time_slot and days are not decoration. GET /public-promotions serves all
   // FOUR of these columns to every user who opens the venue card — round 20's
   // own note in routes/venueDashboard.js records "Fri <slur>" being published
@@ -727,6 +730,12 @@ router.get('/reports', async (req, res) => {
          SELECT ${CONTENT_TEXT_SQL.venue_review('vr')}, NULL, vr.user_id, vr.created_at, COALESCE(vr.is_hidden, false), false
          FROM venue_reviews vr WHERE r.content_type = 'venue_review' AND vr.id = r.content_id
          UNION ALL
+         -- A reply's author is venue_reply_user_id, and it counts as hidden
+         -- when it was taken down or the review under it was.
+         SELECT ${CONTENT_TEXT_SQL.venue_reply('vy')}, NULL, vy.venue_reply_user_id, vy.created_at,
+                (COALESCE(vy.is_hidden, false) OR vy.venue_reply_hidden), false
+         FROM venue_reviews vy WHERE r.content_type = 'venue_reply' AND vy.id = r.content_id
+         UNION ALL
          -- Guest RSVPs have no Flock account behind them, so author_id is NULL;
          -- the reported content IS the guest's self-chosen display name.
          SELECT ${CONTENT_TEXT_SQL.guest_rsvp('gr')}, NULL, NULL, gr.created_at, COALESCE(gr.is_hidden, false), false
@@ -974,6 +983,7 @@ const REPORT_TEXT_SOURCES = {
   dm: { table: 'direct_messages' },
   story: { table: 'stories' },
   venue_review: { table: 'venue_reviews' },
+  venue_reply: { table: 'venue_reviews' },
   venue_promotion: { table: 'venue_promotions' },
   venue_event: { table: 'venue_events' },
   guest_rsvp: { table: 'guest_rsvps' },
@@ -1157,6 +1167,10 @@ const TAKEDOWN_TARGETS = {
   // and it is read out of the row being hidden rather than off the report, so
   // it names the venue the content is actually attached to.
   venue_review: { table: 'venue_reviews', audience: 'NULL::int AS flock_id, user_id AS notify_a, NULL::int AS notify_b, google_place_id AS place_id' },
+  // A reply (migration 114) lives on the review's row, so its takedown flips
+  // `column` rather than is_hidden: the reply leaves every card and the review
+  // stays. Its author, the owner, is the one told.
+  venue_reply: { table: 'venue_reviews', audience: 'NULL::int AS flock_id, venue_reply_user_id AS notify_a, NULL::int AS notify_b, google_place_id AS place_id', column: 'venue_reply_hidden' },
   venue_promotion: { table: 'venue_promotions', audience: 'NULL::int AS flock_id, venue_user_id AS notify_a, NULL::int AS notify_b, google_place_id AS place_id' },
   // venue_event: is_hidden added by migration 019. Nothing serves venue events
   // publicly yet, so no report can be filed against one from a real screen
@@ -1510,7 +1524,7 @@ router.put('/reports/:id', async (req, res) => {
           // again. Ban has refused exactly this since it was written; Hide and
           // Restore now refuse it the same way.
           const changed = await client.query(
-            `UPDATE ${target.table} SET is_hidden = $1${target.alsoSet ? `, ${target.alsoSet}` : ''} WHERE id = $2 AND (COALESCE(is_hidden, false) IS DISTINCT FROM $1${target.alsoDue ? ` OR ${target.alsoDue}` : ''}) RETURNING ${target.audience}`,
+            `UPDATE ${target.table} SET ${target.column || 'is_hidden'} = $1${target.alsoSet ? `, ${target.alsoSet}` : ''} WHERE id = $2 AND (COALESCE(${target.column || 'is_hidden'}, false) IS DISTINCT FROM $1${target.alsoDue ? ` OR ${target.alsoDue}` : ''}) RETURNING ${target.audience}`,
             [hiding, report.content_id]
           );
           const stillThere = changed.rowCount === 0
