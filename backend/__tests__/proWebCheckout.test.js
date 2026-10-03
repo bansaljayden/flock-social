@@ -1152,7 +1152,7 @@ test('a completed web checkout sends one acknowledgment to the payer, with the r
   } finally { restore(); mail.restore(); }
 });
 
-test('an acknowledgment that fails to send never fails the Pro write, and records nothing so it is tried again', async () => {
+test('an acknowledgment that fails to send never fails the Pro write, and gives its claim back so it is tried again', async () => {
   setEnv(ON);
   rcEntitlement = { expires_date: new Date(Date.now() + 30 * 864e5).toISOString() };
   for (const impl of [() => ({ sent: false, error: 'provider down' }), () => { throw new Error('boom'); }]) {
@@ -1160,15 +1160,55 @@ test('an acknowledgment that fails to send never fails the Pro write, and record
     const { calls, restore } = stubPool(async (sql) => {
       if (sql.includes('SELECT 1 FROM users')) return { rows: [{ '?column?': 1 }] };
       if (sql.includes('SELECT name, email FROM users')) return { rows: [{ name: 'Sam', email: 'sam@example.com' }] };
+      if (sql.includes('INSERT INTO pro_purchase_acknowledgments')) return { rows: [], rowCount: 1 };
       return null;
     });
     try {
       const res = await postWebhook({ type: 'checkout.session.completed', data: { object: completedSession() } }, 't=1,v1=good');
       assert.strictEqual(res.status, 200);
       assert.deepStrictEqual(calls.find((c) => c.text.includes('SET is_premium')).params, [true, 7]);
-      assert.ok(!calls.some((c) => c.text.includes('INSERT INTO pro_purchase_acknowledgments')));
+      assert.strictEqual(mail.sent.length, 1, 'the send was attempted under the claim');
+      assert.ok(calls.some((c) => /DELETE FROM pro_purchase_acknowledgments/.test(c.text)), 'the claim was kept after a failed send');
+      assert.ok(!calls.some((c) => c.text.includes('SET emailed_at = NOW()')), 'a failed send was stamped as sent');
     } finally { restore(); mail.restore(); }
   }
+});
+
+// The webhook and the buyer's return to the app usually run within a second or
+// two of each other. Both used to find no row, both sent, and the buyer got the
+// same email twice (backend audit 2026-10-03). The row is claimed first now, and
+// only the path whose claim it is sends.
+test('the webhook and the return to the app running together send one acknowledgment', async () => {
+  setEnv(ON);
+  const { acknowledgePurchase } = require('../services/proAcknowledgment');
+  const mail = stubSend();
+  let row = null;
+  const { restore } = stubPool(async (sql) => {
+    if (sql.includes('SELECT name, email FROM users')) return { rows: [{ name: 'Sam', email: 'sam@example.com' }] };
+    if (sql.includes('INSERT INTO pro_purchase_acknowledgments')) {
+      if (row) return { rows: [], rowCount: 0 };
+      row = { emailed: false };
+      return { rows: [], rowCount: 1 };
+    }
+    if (sql.includes('SET emailed_at = NOW()')) { row.emailed = true; return { rows: [], rowCount: 1 }; }
+    // Both paths read before either has claimed, which is the race.
+    if (sql.includes('FROM pro_purchase_acknowledgments')) return { rows: [] };
+    return null;
+  });
+  try {
+    const session = completedSession();
+    const [a, b] = await Promise.all([acknowledgePurchase(7, session), acknowledgePurchase(7, session)]);
+    assert.strictEqual(mail.sent.length, 1);
+    assert.deepStrictEqual([a, b].map((r) => r.sent === true || r.skipped).sort(), [true, 'already'].sort());
+    assert.strictEqual(row.emailed, true);
+  } finally { restore(); mail.restore(); }
+});
+
+test('a claim left by a sender that died is taken over once it is stale', () => {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'services', 'proAcknowledgment.js'), 'utf8');
+  assert.match(src, /ON CONFLICT \(session_id\) DO UPDATE SET created_at = NOW\(\)\s+WHERE pro_purchase_acknowledgments\.emailed_at = '-infinity'::timestamptz\s+AND pro_purchase_acknowledgments\.created_at < NOW\(\) - make_interval\(mins => \$3::int\)/);
+  assert.match(src, /OR created_at >= NOW\(\) - make_interval\(mins => \$2::int\)/,
+    'a stale claim must not read as already acknowledged, or nothing would ever take it over');
 });
 
 test('the return to the app is a second chance for the acknowledgment', async () => {
@@ -1178,6 +1218,7 @@ test('the return to the app is a second chance for the acknowledgment', async ()
   const mail = stubSend();
   const { restore } = stubPool(async (sql) => {
     if (sql.includes('SELECT name, email FROM users')) return { rows: [{ name: 'Sam', email: 'sam@example.com' }] };
+    if (sql.includes('INSERT INTO pro_purchase_acknowledgments')) return { rows: [], rowCount: 1 };
     return null;
   });
   try {
