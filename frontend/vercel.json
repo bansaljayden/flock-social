@@ -74,7 +74,7 @@
     {
       "source": "/",
       "headers": [
-        { "key": "Link", "value": "<https://www.flockcorp.com/>; rel=\"canonical\"" },
+        { "key": "Link", "value": "<https://www.flockcorp.com/>; rel=\"canonical\", </screenshots/nest-dark@2x.webp>; rel=preload; as=image; type=\"image/webp\"; fetchpriority=high" },
         { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }
       ]
     },
