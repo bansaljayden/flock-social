@@ -1218,3 +1218,13 @@ test('the inventory still arrives when every ledger is down', async () => {
   assert.ok(res.body.dependencies.total >= 30);
   assert.strictEqual(res.body.googleQuotas.lines.length, 4);
 });
+
+// A ceiling is priced over the longest month (review 2026-10-03): the
+// average month put "at most" under what the same daily cap costs in October.
+test('the advisor ceiling is a 31-day month', () => {
+  const v = cm.buildVenueUnitEconomics(VENUE_ARGS);
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'services', 'costModel.js'), 'utf8');
+  assert.match(src, /const CEILING_DAYS_PER_MONTH = 31;/);
+  assert.match(src, /priceTokens\(cap, share, rate\) \* CEILING_DAYS_PER_MONTH/);
+  assert.ok(v.ceilingMonthlyUsdHigh === null || v.ceilingMonthlyUsdHigh > 0);
+});

@@ -358,7 +358,9 @@ function HubSummary({ h, colors, loading, onRefresh }) {
     // The App Store part is read from the accounts that are Pro now, which is
     // not every App Store sale this month (backend/services/moneyHub.js,
     // WHERE THE APP STORE FIGURES COME FROM), so it is never shown as that.
-    revenueNote = `Stripe after refunds, disputes and fees, plus App Store charges after Apple's ${n.appleCommissionPct}%.${n.appStoreFrom === 'current_pro_accounts' ? ' The App Store part counts current Pro accounts only: a subscriber who deleted their account is not in it.' : ''}`;
+    // Apple's cut is an assumption: the standard rate, because the hub cannot
+    // see the Small Business Program or how long each subscriber has stayed.
+    revenueNote = `Stripe after refunds, disputes and fees, plus App Store charges after Apple's ${n.appleCommissionPct}%, an estimate: Apple takes ${n.appleSmallBusinessPct || 15}% under the Small Business Program and from a subscriber's second year.${n.appStoreFrom === 'current_pro_accounts' ? ' The App Store part counts current Pro accounts only: a subscriber who deleted their account is not in it.' : ''}`;
   }
   const net = n.netThisMonthCents;
   const netBurn = n.netBurnCents;
@@ -435,7 +437,7 @@ function HubSummary({ h, colors, loading, onRefresh }) {
           navy={navy}
           label="Break-even, Flock Pro"
           value={burnMissing.length > 0 ? 'Not read' : `${needed(be.proWeb)} web, ${needed(be.proAppStore)} App Store`}
-          note={`Subscribers needed to cover the burn on their own, at ${priceWords(be.proWeb)}. After Stripe fees on the web, after Apple's ${n.appleCommissionPct}% in the App Store.${burnMissing.length > 0 ? ` ${hubGapSentence(burnMissing)}` : ''} Paying now: ${payingWords(be.payingPro, be.payingProMissing)}.`}
+          note={`Subscribers needed to cover the burn on their own, at ${priceWords(be.proWeb)}. After Stripe fees on the web, after Apple's ${n.appleCommissionPct}% in the App Store${be.proAppStore && be.proAppStore.smallBusiness && Number.isFinite(be.proAppStore.smallBusiness.needed) ? ` (${be.proAppStore.smallBusiness.needed} at the ${be.proAppStore.smallBusiness.commissionPct}% Apple takes under the Small Business Program)` : ''}.${burnMissing.length > 0 ? ` ${hubGapSentence(burnMissing)}` : ''} Paying now: ${payingWords(be.payingPro, be.payingProMissing)}.`}
         />
         <HubRow
           navy={navy}
@@ -2706,7 +2708,8 @@ export default function RevenueScreen({
                     // Overview loaded, so this and the Overview agree; the list
                     // price until it has.
                     const roostBe = hubMemo.data && hubMemo.data.net && hubMemo.data.net.breakEven && hubMemo.data.net.breakEven.roost;
-                    const roostNet = roostBe && Number.isFinite(roostBe.netPerUnitCents) && roostBe.netPerUnitCents > 0 ? roostBe.netPerUnitCents / 100 : null;
+                    const roostCents = roostBe ? (Number.isFinite(roostBe.netPerUnitExactCents) ? roostBe.netPerUnitExactCents : roostBe.netPerUnitCents) : null;
+                    const roostNet = Number.isFinite(roostCents) && roostCents > 0 ? roostCents / 100 : null;
                     const price = roostNet || listPrice;
                     const venuesFor = (usd) => (price && Number.isFinite(usd) ? Math.max(0, Math.ceil(usd / price)) : null);
                     const infraVenues = venuesFor(infra);
@@ -3509,7 +3512,13 @@ export default function RevenueScreen({
                 // the Overview has loaded, the plain price is used and the line
                 // under the figure says so.
                 const hubBe = hubMemo.data && hubMemo.data.net && hubMemo.data.net.breakEven;
-                const perUnit = (b) => (b && Number.isFinite(b.netPerUnitCents) && b.netPerUnitCents > 0 ? b.netPerUnitCents / 100 : null);
+                // Unrounded where the hub sends it: dividing the burn by a
+                // per-subscriber figure already rounded to the cent gave 100
+                // where the Overview, from the same burn, said 101.
+                const perUnit = (b) => {
+                  const c = b && Number.isFinite(b.netPerUnitExactCents) ? b.netPerUnitExactCents : (b ? b.netPerUnitCents : null);
+                  return Number.isFinite(c) && c > 0 ? c / 100 : null;
+                };
                 const webNet = perUnit(hubBe && hubBe.proWeb);
                 const appNet = perUnit(hubBe && hubBe.proAppStore);
                 const subsToBreakEven = effectiveMonthly > 0 ? Math.ceil(effectiveMonthly / (webNet || PRO_MONTHLY_USD)) : 0;

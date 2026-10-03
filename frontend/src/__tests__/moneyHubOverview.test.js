@@ -507,7 +507,9 @@ describe('everything connected: the numbers, each with its source', () => {
     // through Apple this month and then deleted their account is not in it.
     await renderHub(CONNECTED);
     const revenueBlock = screen.getByText('Revenue this month').parentElement;
-    expect(revenueBlock.textContent).toMatch(/plus App Store charges after Apple's 30%\. The App Store part counts current Pro accounts only: a subscriber who deleted their account is not in it\./);
+    // Apple's 30% is named as an estimate, with the 15% case beside it
+    // (review 2026-10-03).
+    expect(revenueBlock.textContent).toMatch(/plus App Store charges after Apple's 30%, an estimate: Apple takes 15% under the Small Business Program and from a subscriber's second year\. The App Store part counts current Pro accounts only: a subscriber who deleted their account is not in it\./);
     expect(hubRow('App Store charged this month').textContent).toMatch(/Counted from current Pro accounts only: a subscriber who deleted their account is not in it\./);
     expect(hubRow('App Store recurring revenue').textContent).toMatch(/Counted from current Pro accounts only/);
   });
