@@ -122,7 +122,9 @@ test('cancelling a declined request reads, to its requester, exactly like cancel
   for (const other of [bo, cy]) {
     // eslint-disable-next-line no-await-in-loop
     const st = await call('GET', `/api/friends/status/${other.id}`, ada);
-    assert.strictEqual(st.body.status, 'none', `status toward ${other.name}`);
+    // The whole body, not just its status: a requester_id beside 'none' was
+    // the decline showing through (review 2026-10-03).
+    assert.deepStrictEqual(st.body, { status: 'none' }, `status toward ${other.name}`);
     // eslint-disable-next-line no-await-in-loop
     const again = await call('DELETE', `/api/friends/${other.id}`, ada);
     assert.strictEqual(again.status, 404, `a second cancel toward ${other.name}`);

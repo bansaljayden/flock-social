@@ -730,11 +730,17 @@ router.get('/reports', async (req, res) => {
          SELECT ${CONTENT_TEXT_SQL.venue_review('vr')}, NULL, vr.user_id, vr.created_at, COALESCE(vr.is_hidden, false), false
          FROM venue_reviews vr WHERE r.content_type = 'venue_review' AND vr.id = r.content_id
          UNION ALL
-         -- A reply's author is venue_reply_user_id, and it counts as hidden
-         -- when it was taken down or the review under it was.
+         -- A reply's author is venue_reply_user_id. Its hidden state is its
+         -- own flag only: Hide and Restore on this report write that flag, so
+         -- a reply under a review taken down on another report still offers
+         -- Hide, which is what keeps it down when the review is restored.
          SELECT ${CONTENT_TEXT_SQL.venue_reply('vy')}, NULL, vy.venue_reply_user_id, vy.created_at,
-                (COALESCE(vy.is_hidden, false) OR vy.venue_reply_hidden), false
+                vy.venue_reply_hidden, false
          FROM venue_reviews vy WHERE r.content_type = 'venue_reply' AND vy.id = r.content_id
+           -- The reply the report was filed about: once a different author
+           -- has answered the review (the venue changed hands), the reported
+           -- words are gone and the card says so.
+           AND vy.venue_reply_user_id IS NOT DISTINCT FROM r.reported_user_id
          UNION ALL
          -- Guest RSVPs have no Flock account behind them, so author_id is NULL;
          -- the reported content IS the guest's self-chosen display name.
@@ -983,7 +989,9 @@ const REPORT_TEXT_SOURCES = {
   dm: { table: 'direct_messages' },
   story: { table: 'stories' },
   venue_review: { table: 'venue_reviews' },
-  venue_reply: { table: 'venue_reviews' },
+  // sameAuthor: read only while the reply's author is still the one the
+  // report named, the same binding the queue and the takedown use.
+  venue_reply: { table: 'venue_reviews', sameAuthor: 'venue_reply_user_id' },
   venue_promotion: { table: 'venue_promotions' },
   venue_event: { table: 'venue_events' },
   guest_rsvp: { table: 'guest_rsvps' },
@@ -1028,7 +1036,11 @@ router.get('/reports/:id/content', async (req, res) => {
     const textOf = `SELECT LEFT(${bodySql('t')}, ${FULL_TEXT_MAX}) AS body,
               (COALESCE(LENGTH(${bodySql('t')}), 0) > ${FULL_TEXT_MAX}) AS clipped,
               COALESCE(LENGTH(${bodySql('t')}), 0) AS total_length`;
-    let found = await pool.query(`${textOf} FROM ${source.table} t WHERE t.id = $1`, [rowId]);
+    const authorBound = source.sameAuthor ? ` AND t.${source.sameAuthor} IS NOT DISTINCT FROM $2::int` : '';
+    let found = await pool.query(
+      `${textOf} FROM ${source.table} t WHERE t.id = $1${authorBound}`,
+      source.sameAuthor ? [rowId, report.reported_user_id] : [rowId]
+    );
     if (found.rows.length === 0) found = await readPreservedCopy(report, rowId, textOf);
     if (found.rows.length === 0) {
       // Distinct from "no text": the row is gone, which is also the answer to
@@ -1170,7 +1182,9 @@ const TAKEDOWN_TARGETS = {
   // A reply (migration 114) lives on the review's row, so its takedown flips
   // `column` rather than is_hidden: the reply leaves every card and the review
   // stays. Its author, the owner, is the one told.
-  venue_reply: { table: 'venue_reviews', audience: 'NULL::int AS flock_id, venue_reply_user_id AS notify_a, NULL::int AS notify_b, google_place_id AS place_id', column: 'venue_reply_hidden' },
+  // `sameAuthor` binds the takedown to the reply the report named: a reply a
+  // later owner wrote over it is somebody else's words, and reads as gone.
+  venue_reply: { table: 'venue_reviews', audience: 'NULL::int AS flock_id, venue_reply_user_id AS notify_a, NULL::int AS notify_b, google_place_id AS place_id', column: 'venue_reply_hidden', sameAuthor: 'venue_reply_user_id' },
   venue_promotion: { table: 'venue_promotions', audience: 'NULL::int AS flock_id, venue_user_id AS notify_a, NULL::int AS notify_b, google_place_id AS place_id' },
   // venue_event: is_hidden added by migration 019. Nothing serves venue events
   // publicly yet, so no report can be filed against one from a real screen
@@ -1524,11 +1538,14 @@ router.put('/reports/:id', async (req, res) => {
           // again. Ban has refused exactly this since it was written; Hide and
           // Restore now refuse it the same way.
           const changed = await client.query(
-            `UPDATE ${target.table} SET ${target.column || 'is_hidden'} = $1${target.alsoSet ? `, ${target.alsoSet}` : ''} WHERE id = $2 AND (COALESCE(${target.column || 'is_hidden'}, false) IS DISTINCT FROM $1${target.alsoDue ? ` OR ${target.alsoDue}` : ''}) RETURNING ${target.audience}`,
-            [hiding, report.content_id]
+            `UPDATE ${target.table} SET ${target.column || 'is_hidden'} = $1${target.alsoSet ? `, ${target.alsoSet}` : ''} WHERE id = $2 AND (COALESCE(${target.column || 'is_hidden'}, false) IS DISTINCT FROM $1${target.alsoDue ? ` OR ${target.alsoDue}` : ''})${target.sameAuthor ? ` AND ${target.sameAuthor} IS NOT DISTINCT FROM $3::int` : ''} RETURNING ${target.audience}`,
+            target.sameAuthor ? [hiding, report.content_id, report.reported_user_id] : [hiding, report.content_id]
           );
           const stillThere = changed.rowCount === 0
-            ? (await client.query(`SELECT 1 FROM ${target.table} WHERE id = $1`, [report.content_id])).rows.length > 0
+            ? (await client.query(
+              `SELECT 1 FROM ${target.table} WHERE id = $1${target.sameAuthor ? ` AND ${target.sameAuthor} IS NOT DISTINCT FROM $2::int` : ''}`,
+              target.sameAuthor ? [report.content_id, report.reported_user_id] : [report.content_id]
+            )).rows.length > 0
             : false;
           if (changed.rowCount === 0 && stillThere) {
             refusal = hiding

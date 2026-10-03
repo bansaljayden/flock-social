@@ -739,8 +739,12 @@ router.post('/:flockId/create',
           // Neither can be put right by arithmetic here, because the money
           // really did go to Alice, so the payer stays who they are once any
           // payment is on record. They can still correct the total.
+          //
+          // A $0 share is settled because it owes nothing, never because
+          // anybody paid, so it is not a payment here (or in the two checks
+          // below that ask the same question).
           if (formerPayerId !== null && shareResult.rows.some((row) => row.user_id !== formerPayerId
-              && (row.settled === true || Number(row.paid_amount) > 0))) {
+              && ((row.settled === true && Number(row.amount) > 0) || Number(row.paid_amount) > 0))) {
             return refuse(409, {
               error: 'Someone has already marked a payment to you on this bill, so it cannot be handed to someone else now. You can still correct the total.',
               code: 'PAYMENTS_RECORDED',
@@ -760,7 +764,7 @@ router.post('/:flockId/create',
           // a payer, so nothing on it is a payment and it posts as before, and
           // so does this bill while nobody has paid anything on it.
           if (prevPayer === null && existingBill.rows[0].had_payer === true
-              && shareResult.rows.some((row) => row.settled === true || Number(row.paid_amount) > 0)) {
+              && shareResult.rows.some((row) => (row.settled === true && Number(row.amount) > 0) || Number(row.paid_amount) > 0)) {
             return refuse(409, {
               error: 'Someone has already marked a payment on this bill to the person who paid it. That person has deleted their account, so the bill cannot be handed to someone else.',
               code: 'PAYMENTS_RECORDED',
@@ -843,7 +847,7 @@ router.post('/:flockId/create',
               // carries a credit, and every kept row ends the rewrite settled:
               // it already was, or it is restated to its credit just under
               // the DELETE. Counted here for the tallies on the response.
-              if (rowSettled || creditCents > 0) retainedRowCount += 1;
+              if ((rowSettled && amountCents > 0) || creditCents > 0) retainedRowCount += 1;
               // Somebody who has paid and is not on the new split keeps their
               // row, because that row is the only record that they paid. What
               // they paid is money this bill has already collected, so it is
@@ -1046,7 +1050,7 @@ router.post('/:flockId/create',
         await client.query(
           `DELETE FROM bill_split_shares
            WHERE bill_id = $1 AND user_id <> ALL($2::int[])
-             AND ($3::boolean OR (settled = false AND paid_amount = 0))`,
+             AND ($3::boolean OR ((settled = false OR amount = 0) AND paid_amount = 0))`,
           [billId, keepIds, !hadRealPayer]
         );
         for (const rewrite of retainedRewrites) {

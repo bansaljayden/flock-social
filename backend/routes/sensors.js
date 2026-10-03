@@ -694,7 +694,20 @@ router.get('/:placeId/history',
            ROUND(AVG(occupancy_low))::int AS occupancy_low,
            ROUND(AVG(occupancy_high))::int AS occupancy_high,
            ROUND(AVG(dwell_minutes))::int AS dwell_minutes,
-           COUNT(*)::int AS sample_count
+           COUNT(*)::int AS sample_count,
+           -- [sum, non-null count] per averaged figure. A live reading is
+           -- folded into this hour on the client (frontend/src/lib/
+           -- sensorHistory.js); from the rounded average and the row count it
+           -- drifted (every fold rounded away a steady change) and divided by
+           -- readings that carried no value for that figure.
+           json_build_object(
+             'thermal_headcount', json_build_array(SUM(thermal_headcount), COUNT(thermal_headcount)),
+             'noise_db', json_build_array(SUM(noise_db), COUNT(noise_db)),
+             'occupancy', json_build_array(SUM(occupancy), COUNT(occupancy)),
+             'occupancy_low', json_build_array(SUM(occupancy_low), COUNT(occupancy_low)),
+             'occupancy_high', json_build_array(SUM(occupancy_high), COUNT(occupancy_high)),
+             'dwell_minutes', json_build_array(SUM(dwell_minutes), COUNT(dwell_minutes))
+           ) AS totals
          FROM venue_sensor_data
          WHERE venue_place_id = $1
            AND recorded_at >= NOW() - INTERVAL '1 hour' * $2

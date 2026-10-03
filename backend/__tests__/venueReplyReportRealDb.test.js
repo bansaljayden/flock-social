@@ -92,8 +92,8 @@ async function call(method, url, who, body) {
   return { status: res.status, body: json };
 }
 
-async function publicReview(who, reviewId) {
-  const r = await call('GET', `/api/venue-dashboard/public-reviews/${PLACE}`, who);
+async function publicReview(who, reviewId, place = PLACE) {
+  const r = await call('GET', `/api/venue-dashboard/public-reviews/${place}`, who);
   assert.strictEqual(r.status, 200, JSON.stringify(r.body));
   const list = Array.isArray(r.body) ? r.body : (r.body.reviews || []);
   return list.find((x) => x.id === reviewId) || null;
@@ -166,6 +166,106 @@ test('an owner reply is reported, taken down alone, and answered again', async (
   assert.strictEqual(fresh.body.venue_reply_hidden, false);
   assert.strictEqual((await publicReview(stranger, reviewId)).venue_reply, 'Sorry about the wait, come back soon');
 
+});
+
+test('the reviewer re-submitting their review gets no hidden reply back', async () => {
+  const owner = await user('Owner4', 'venue_owner');
+  const reviewer = await user('Reviewer4');
+  const place = 'ChIJreplyReport000004';
+  await pool.query(
+    `INSERT INTO venue_profiles (user_id, business_name, google_place_id, verified) VALUES ($1, 'Fourth Bar', $2, true)`,
+    [owner.id, place]
+  );
+  await pool.query(
+    `INSERT INTO venue_reviews (google_place_id, user_id, rating, text, venue_reply, venue_replied_at, venue_reply_user_id, venue_reply_hidden)
+     VALUES ($1, $2, 3, 'Fine', 'Hidden words', NOW(), $3, true)`,
+    [place, reviewer.id, owner.id]
+  );
+  const again = await call('POST', '/api/venue-dashboard/submit-review', reviewer, { googlePlaceId: place, rating: 3, text: 'Fine' });
+  // Whatever the presence rules answer, a body never carries the reply.
+  assert.ok(!JSON.stringify(again.body || {}).includes('Hidden words'), JSON.stringify(again.body));
+  assert.ok(!('venue_reply_hidden' in (again.body || {})));
+  assert.ok(!('venue_reply_user_id' in (again.body || {})));
+});
+
+test('a report on one owner\'s reply cannot act on the next owner\'s', async () => {
+  const first = await user('FirstOwner', 'venue_owner');
+  const second = await user('SecondOwner', 'venue_owner');
+  const reviewer = await user('Reviewer5');
+  const admin = await user('Admin5', 'admin');
+  const place = 'ChIJreplyReport000005';
+  const reviewId = (await pool.query(
+    `INSERT INTO venue_reviews (google_place_id, user_id, rating, text, venue_reply, venue_replied_at, venue_reply_user_id)
+     VALUES ($1, $2, 2, 'Meh', 'First owner words', NOW(), $3) RETURNING id`,
+    [place, reviewer.id, first.id]
+  )).rows[0].id;
+  await pool.query(
+    `INSERT INTO venue_profiles (user_id, business_name, google_place_id, verified) VALUES ($1, 'Fifth Bar', $2, true)`,
+    [first.id, place]
+  );
+  const filed = await call('POST', '/api/reports', reviewer, { content_type: 'venue_reply', content_id: reviewId, reason: 'harassment' });
+  assert.strictEqual(filed.status, 201, JSON.stringify(filed.body));
+  const report = (await pool.query(
+    `SELECT id, reported_user_id FROM content_reports WHERE content_type = 'venue_reply' AND content_id = $1`, [reviewId]
+  )).rows[0];
+  assert.strictEqual(report.reported_user_id, first.id);
+
+  // The place changes hands and the new owner answers the same review.
+  await pool.query('DELETE FROM venue_profiles WHERE user_id = $1', [first.id]);
+  await pool.query(
+    `INSERT INTO venue_profiles (user_id, business_name, google_place_id, verified) VALUES ($1, 'Fifth Bar', $2, true)`,
+    [second.id, place]
+  );
+  const answered = await call('POST', `/api/venue-dashboard/reviews/${reviewId}/reply`, second, { reply: 'Second owner words' });
+  assert.strictEqual(answered.status, 200, JSON.stringify(answered.body));
+
+  const content = await call('GET', `/api/admin/reports/${report.id}/content`, admin);
+  assert.ok(!JSON.stringify(content.body || {}).includes('Second owner words'), 'the old report reads the new owner\'s words');
+  const queue = await call('GET', '/api/admin/reports', admin);
+  const rows = Array.isArray(queue.body) ? queue.body : (queue.body.reports || []);
+  assert.ok(!JSON.stringify(rows.find((r) => r.id === report.id) || {}).includes('Second owner words'));
+
+  const hide = await call('PUT', `/api/admin/reports/${report.id}`, admin, { action: 'hide' });
+  assert.strictEqual(hide.status, 404, JSON.stringify(hide.body));
+  const flags = (await pool.query('SELECT venue_reply, venue_reply_hidden FROM venue_reviews WHERE id = $1', [reviewId])).rows[0];
+  assert.deepStrictEqual(flags, { venue_reply: 'Second owner words', venue_reply_hidden: false });
+});
+
+// A review taken down on its own report is a different takedown from the
+// reply's. The reply's card keeps offering Hide, and a reply hidden there stays
+// hidden when the review is restored (review 2026-10-03).
+test('a reply under a hidden review still offers Hide, and stays down when the review comes back', async () => {
+  const owner = await user('Owner6', 'venue_owner');
+  const reviewer = await user('Reviewer6');
+  const stranger = await user('Stranger6');
+  const admin = await user('Admin6', 'admin');
+  const place = 'ChIJreplyReport000006';
+  await pool.query(
+    `INSERT INTO venue_profiles (user_id, business_name, google_place_id, verified) VALUES ($1, 'Sixth Bar', $2, true)`,
+    [owner.id, place]
+  );
+  const reviewId = (await pool.query(
+    `INSERT INTO venue_reviews (google_place_id, user_id, rating, text, venue_reply, venue_replied_at, venue_reply_user_id)
+     VALUES ($1, $2, 1, 'Rude words', 'Rude reply', NOW(), $3) RETURNING id`,
+    [place, reviewer.id, owner.id]
+  )).rows[0].id;
+  assert.strictEqual((await call('POST', '/api/reports', stranger, { content_type: 'venue_reply', content_id: reviewId, reason: 'harassment' })).status, 201);
+  assert.strictEqual((await call('POST', '/api/reports', owner, { content_type: 'venue_review', content_id: reviewId, reason: 'harassment' })).status, 201);
+  const ids = Object.fromEntries((await pool.query(
+    'SELECT content_type, id FROM content_reports WHERE content_id = $1', [reviewId]
+  )).rows.map((r) => [r.content_type, r.id]));
+
+  assert.strictEqual((await call('PUT', `/api/admin/reports/${ids.venue_review}`, admin, { action: 'hide' })).status, 200);
+  const queue = await call('GET', '/api/admin/reports', admin);
+  const rows = Array.isArray(queue.body) ? queue.body : (queue.body.reports || []);
+  const replyCard = rows.find((r) => r.id === ids.venue_reply);
+  assert.strictEqual(replyCard.content_is_hidden, false, 'the reply card reads as taken down when only the review was');
+
+  assert.strictEqual((await call('PUT', `/api/admin/reports/${ids.venue_reply}`, admin, { action: 'hide' })).status, 200);
+  assert.strictEqual((await call('PUT', `/api/admin/reports/${ids.venue_review}`, admin, { action: 'unhide' })).status, 200);
+  const after = await publicReview(stranger, reviewId, place);
+  assert.ok(after, 'the restored review is back on the card');
+  assert.strictEqual(after.venue_reply, null, 'restoring the review brought the hidden reply back');
 });
 
 test('reporting the review still reaches the reviewer, not the owner', async () => {
