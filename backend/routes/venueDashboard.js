@@ -830,26 +830,42 @@ function reviewPageSize(raw) {
 // and the list continues strictly below it in the same (created_at, id) order
 // the page is sorted in, so a review written while the owner reads cannot
 // shift a row onto two pages or off both. Malformed is read as absent.
+//
+// THE TIME KEEPS ITS MICROSECONDS (backend audit 2026-10-03). Postgres stores
+// created_at to the microsecond and a JS Date holds milliseconds, so a cursor
+// built through one was up to 999 microseconds EARLIER than the row it named:
+// every row in the same millisecond as a page's last row then sorted above
+// the cursor and was never shown (five rows inserted together, paged two at a
+// time, left three unreachable). Rows written in one statement, a bulk import
+// or the seed, share a millisecond. The time is read out of Postgres as text
+// at full precision (REVIEW_CURSOR_AT) and handed back unchanged; a cursor
+// from before this, with three digits, still parses.
+const REVIEW_CURSOR_AT_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?Z$/;
 function reviewCursor(raw) {
   if (typeof raw !== 'string' || !raw) return null;
   const comma = raw.lastIndexOf(',');
   if (comma < 1) return null;
-  const when = new Date(raw.slice(0, comma));
+  const at = raw.slice(0, comma);
   const id = parseInt(raw.slice(comma + 1), 10);
-  if (Number.isNaN(when.getTime()) || !Number.isInteger(id) || id < 1) return null;
-  return { at: when.toISOString(), id };
+  if (!REVIEW_CURSOR_AT_RE.test(at) || Number.isNaN(new Date(at).getTime())) return null;
+  if (!Number.isInteger(id) || id < 1) return null;
+  return { at, id };
 }
+// The page's own time, at the precision the cursor compares in. Selected by
+// both review lists and taken off every row before the response.
+const REVIEW_CURSOR_AT = `to_char(vr.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS created_at_cursor`;
 // One row more than the page is asked for, so `hasMore` is a fact about the
 // rows below the page rather than a guess from the total, which paging past
 // takedowns and blocks would get wrong.
 function reviewPage(page, limit) {
   const hasMore = page.length > limit;
-  const rows = hasMore ? page.slice(0, limit) : page;
-  const last = rows[rows.length - 1];
+  const kept = hasMore ? page.slice(0, limit) : page;
+  const last = kept[kept.length - 1];
+  const at = last && (last.created_at_cursor || new Date(last.created_at).toISOString());
   return {
-    rows,
+    rows: kept.map(({ created_at_cursor: _cursor, ...row }) => row),
     hasMore,
-    nextBefore: hasMore && last ? `${new Date(last.created_at).toISOString()},${last.id}` : null,
+    nextBefore: hasMore && last ? `${at},${last.id}` : null,
   };
 }
 
@@ -1022,7 +1038,8 @@ router.get('/reviews', async (req, res) => {
       // before the response: it decides whether this caller sees the reply.
       `SELECT vr.id, vr.rating, vr.text, vr.venue_reply, vr.venue_replied_at,
               vr.created_at, vr.user_id, vr.venue_reply_user_id, u.name,
-              (vr.venue_reply IS NOT NULL AND vr.venue_replied_at IS NULL) AS reply_needs_review
+              (vr.venue_reply IS NOT NULL AND vr.venue_replied_at IS NULL) AS reply_needs_review,
+              ${REVIEW_CURSOR_AT}
        FROM venue_reviews vr
        JOIN users u ON u.id = vr.user_id AND u.is_banned IS NOT TRUE
        WHERE vr.google_place_id = $1
@@ -1480,7 +1497,8 @@ router.get('/public-reviews/:placeId', placeIdParam, async (req, res) => {
               -- URL up to MAX_AVATAR_DATA_URL_BYTES on a page of up to
               -- REVIEW_PAGE_MAX rows. vr.user_id stays: the report control on
               -- each review row is addressed to it.
-              vr.created_at, vr.user_id, u.name
+              vr.created_at, vr.user_id, u.name,
+              ${REVIEW_CURSOR_AT}
        FROM venue_reviews vr
        JOIN users u ON u.id = vr.user_id AND u.is_banned IS NOT TRUE
        WHERE vr.google_place_id = $1

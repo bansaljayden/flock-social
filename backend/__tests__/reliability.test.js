@@ -725,3 +725,35 @@ test('a malformed cursor is read as the first page, and the public card pages th
   assert.strictEqual(p2.hasMore, false);
   assert.strictEqual(p2.total, 60);
 });
+
+// Postgres keeps created_at to the microsecond; a JS Date keeps milliseconds.
+// A cursor built through a Date was up to 999us EARLIER than the row it named,
+// so every row in the same millisecond as a page's last row sorted above it
+// and was never shown (backend audit 2026-10-03: five rows inserted together,
+// paged two at a time, left three unreachable). The time now comes out of
+// Postgres as text and goes back in unchanged.
+test('the review cursor carries the row\'s time at full precision, and never shows it', async () => {
+  seedReviews(3, () => 4);
+  reviews = reviews.map((r, i) => ({
+    ...r,
+    created_at: '2026-10-03T18:00:00.123Z',
+    created_at_cursor: `2026-10-03T18:00:00.12345${9 - i}Z`,
+  }));
+  queries = [];
+  const first = await (await call('GET', '/api/venue-dashboard/reviews?limit=2', 'alice')).json();
+  assert.strictEqual(first.nextBefore, '2026-10-03T18:00:00.123458Z,2');
+  for (const r of first.reviews) assert.strictEqual(r.created_at_cursor, undefined, 'the cursor column leaked');
+  const list = queries.find((q) => /FROM venue_reviews vr JOIN users u/.test(q.sql) && !/AVG\(/.test(q.sql));
+  assert.match(list.sql, /to_char\(vr\.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS\.US"Z"'\) AS created_at_cursor/);
+
+  queries = [];
+  await call('GET', `/api/venue-dashboard/reviews?limit=2&before=${encodeURIComponent(first.nextBefore)}`, 'alice');
+  const next = queries.find((q) => /\(vr\.created_at, vr\.id\) </.test(q.sql));
+  assert.ok(next, 'the second page was not keyset-paged');
+  assert.ok(next.params.includes('2026-10-03T18:00:00.123458Z'), `the cursor reached SQL as ${JSON.stringify(next.params)}`);
+
+  // A cursor handed out before this change, with three digits, still pages.
+  queries = [];
+  await call('GET', `/api/venue-dashboard/reviews?before=${encodeURIComponent('2026-10-03T18:00:00.123Z,2')}`, 'alice');
+  assert.ok(queries.some((q) => q.params.includes('2026-10-03T18:00:00.123Z')));
+});
