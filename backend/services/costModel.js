@@ -383,8 +383,9 @@ const FIXED_MONTHLY = [
     usd: 9.00,
     verified: true,
     kind: 'infrastructure',
-    checked: '2026-09-01',
-    source: null,
+    // Re-read 2026-10-03 on the pricing page: Single Developer $9/month.
+    checked: '2026-10-03',
+    source: 'https://www.thesportsdb.com/pricing',
     note: 'Dedicated key, commercial use permitted. Bought monthly rather than at the $90 annual rate because only a three-month test was committed. Feeds scripts/ml/collectSportsSchedules.js, which the hourly collector runs about once a day.',
   },
   {
