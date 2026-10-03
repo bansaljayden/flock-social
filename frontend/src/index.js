@@ -10,6 +10,7 @@ import FloppyBird from './components/ui/FloppyBird';
 // The website's analytics bar. The app routes do not mount it: there, the
 // signed-in account's own setting decides (followAccountForAnalytics below).
 import ConsentBanner from './components/ConsentBanner';
+import HashLanding from './website/hashLanding';
 import { hasAnalyticsConsent, onConsentChange, followAccountForAnalytics } from './services/analyticsConsent';
 import { detectNativeShell } from './lib/nativeShell';
 // Bearer tokens and live coordinates are scrubbed from every analytics and
@@ -1066,6 +1067,10 @@ if (page) {
       <ErrorBoundary label={page.id} fallback={pageErrorFallback}>
         <React.Suspense fallback={<Loading />}>
           <Page />
+          {/* After the page, so its effect finds the page's sections. A section
+              link like /#pricing used to land at the top: the id did not
+              exist yet when the browser looked for it. */}
+          <HashLanding />
         </React.Suspense>
       </ErrorBoundary>
     </React.StrictMode>

@@ -1515,14 +1515,28 @@ html:has(.lp) body { overflow-x: clip; }
 
 /* The holder the demo mounts into. It carries the demo's top margin and its
    measured height, so the box is identical before and after the map arrives
-   and nothing under it moves. Numbers are measured, not guessed: .lpd renders
-   526px at 1280 (50px control row + 14px + a 462px stage) and 778px below
-   860px, where the stage stacks into a 320px map over the card. If the real
-   thing ends up a few px taller it simply grows — min-height, and by then it
-   is still a screen below the viewport. */
-.lpd-hold { margin-top: 34px; min-height: 526px; }
+   and nothing under it moves. Numbers are measured, not guessed, and they went
+   stale once already: the card grew a chart, and the old 526px / 780px left
+   every section below the demo jumping 195-414px down when it loaded, which
+   is what made the menu's #birdie, #money and #pricing links stop short.
+
+   Measured on the live site 2026-10-03, demo loaded, at 24 widths. The card's
+   chart scales with the column, so the height is a line in the viewport width,
+   not a constant:
+     above 860px  699 (861) 709 (900) 720 (1024) 739 (1100) 754 (1200+, capped
+                  by the container)
+     860 and down the stage stacks a 320px map over the card, which runs about
+                  half a pixel per pixel of width: 1068 (520) 1129 (640)
+                  1201 (820) 1224 (860)
+     480 and down the search row wraps to two lines and adds 54px: 1050 (340)
+                  1068 (375) 1103 (480)
+   Each formula sits at or a few px under every sample, so the box can only
+   grow by a little, never leave a gap. Content varies with the venue on show;
+   website/hashLanding.js re-aligns a section link if what remains moves it. */
+.lpd-hold { margin-top: 34px; min-height: clamp(696px, calc(550px + 16.5vw), 750px); }
 .lpd-hold > .lpd { margin-top: 0; }
-@media (max-width: 860px) { .lpd-hold { min-height: 780px; } }
+@media (max-width: 860px) { .lpd-hold { min-height: calc(790px + 50vw); } }
+@media (max-width: 480px) { .lpd-hold { min-height: calc(860px + 50vw); } }
 
 .lpd { margin-top: 34px; }
 
