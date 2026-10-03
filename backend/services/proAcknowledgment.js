@@ -41,17 +41,36 @@ const SESSION_RE = /^cs_[A-Za-z0-9_]+$/;
 
 const CLAIM_STALE_MINUTES = 5;
 
-// Sent, or being sent right now by the other path. A stale claim is neither.
-async function alreadyAcknowledged(sessionId) {
+// 'sent', 'claimed' (the other path is sending it right now) or 'open' (no
+// row, or a stale claim anybody may take over).
+async function acknowledgmentState(sessionId) {
   const r = await pool.query(
-    `SELECT 1 FROM pro_purchase_acknowledgments
-      WHERE session_id = $1::text
-        AND (emailed_at > '-infinity'::timestamptz
-             OR created_at >= NOW() - make_interval(mins => $2::int))`,
+    `SELECT CASE WHEN emailed_at > '-infinity'::timestamptz THEN 'sent'
+                 WHEN created_at >= NOW() - make_interval(mins => $2::int) THEN 'claimed'
+                 ELSE 'open' END AS state
+       FROM pro_purchase_acknowledgments
+      WHERE session_id = $1::text`,
     [sessionId, CLAIM_STALE_MINUTES]
   );
-  return !!(r && Array.isArray(r.rows) && r.rows.length);
+  const row = r && Array.isArray(r.rows) ? r.rows[0] : null;
+  return (row && row.state) || 'open';
 }
+
+// A PATH THAT STOOD ASIDE COMES BACK TO CHECK (review 2026-10-03). The path
+// holding the claim gives it back when its send fails, but the path that saw
+// the claim and skipped had already finished: the webhook had answered 200,
+// so Stripe would not ask again, and the confirm runs once. A provider error
+// at that moment meant no acknowledgment at all. So the one that stands aside
+// looks again later: after a minute, by which time the other send has either
+// stamped the row or given it back, and once more past the stale window, for
+// a sender that died holding it. In process, so a restart in between loses
+// the second look; the webhook redelivery and the next confirm still cover
+// that case.
+const RECHECK_DELAYS_MS = [60 * 1000, (CLAIM_STALE_MINUTES + 1) * 60 * 1000];
+let scheduleRecheck = (fn, ms) => {
+  const t = setTimeout(fn, ms);
+  if (t && typeof t.unref === 'function') t.unref();
+};
 
 // True when this call now holds the session's claim: a fresh row, or a stale
 // claim taken over. False when the email went out already or the other path
@@ -77,13 +96,25 @@ function release(sessionId) {
 }
 
 // -> { sent: true } | { sent: false } | { skipped: reason }
-async function acknowledgePurchase(userId, session) {
+async function acknowledgePurchase(userId, session, attempt = 0) {
   const sessionId = session && typeof session.id === 'string' ? session.id : '';
   if (!SESSION_RE.test(sessionId)) return { skipped: 'no_session' };
   if (session.status && session.status !== 'complete') return { skipped: 'not_complete' };
   if (session.mode && session.mode !== 'subscription') return { skipped: 'not_subscription' };
-  if (await alreadyAcknowledged(sessionId)) return { skipped: 'already' };
-  if (!(await claim(sessionId, userId))) return { skipped: 'already' };
+  const standAside = () => {
+    if (attempt < RECHECK_DELAYS_MS.length) {
+      scheduleRecheck(() => {
+        acknowledgePurchase(userId, session, attempt + 1).catch((err) => {
+          console.warn('[pro] acknowledgment recheck failed:', err && err.message);
+        });
+      }, RECHECK_DELAYS_MS[attempt]);
+    }
+    return { skipped: 'already' };
+  };
+  const state = await acknowledgmentState(sessionId);
+  if (state === 'sent') return { skipped: 'already' };
+  if (state === 'claimed') return standAside();
+  if (!(await claim(sessionId, userId))) return standAside();
 
   let sent = false;
   try {
@@ -141,3 +172,8 @@ async function sendAcknowledgment(userId, session) {
 }
 
 module.exports = { acknowledgePurchase };
+// Tests replace the timer so a recheck can be run on demand.
+module.exports.__test = {
+  setScheduler(fn) { scheduleRecheck = fn; },
+  RECHECK_DELAYS_MS,
+};
