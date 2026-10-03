@@ -117,6 +117,41 @@ const clockParams = () => {
 const reducedMotion = () =>
   typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
+// Resolves once the page has stopped scrolling for `quietMs` (or after `maxMs`
+// at most, so the map is always built), then waits for an idle slice. Building
+// the map is three long tasks back to back (WebGL setup, style parse, first
+// frame): about 245 ms of main thread at a 6x CPU slowdown, measured on the
+// live page 2026-10-02. WhenNear mounts this section 700px early, which is
+// exactly while a visitor is still scrolling towards it, so those tasks landed
+// mid-scroll as dropped frames. The engine still downloads at mount; only the
+// construction waits for the scroll to pause.
+function whenScrollSettles(quietMs = 150, maxMs = 1500) {
+  return new Promise((resolve) => {
+    if (typeof window === 'undefined') { resolve(); return; }
+    let quiet = null;
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(quiet);
+      clearTimeout(cap);
+      window.removeEventListener('scroll', onScroll, { capture: true });
+      if (typeof window.requestIdleCallback === 'function') {
+        window.requestIdleCallback(() => resolve(), { timeout: 300 });
+      } else {
+        resolve();
+      }
+    };
+    const onScroll = () => {
+      clearTimeout(quiet);
+      quiet = setTimeout(finish, quietMs);
+    };
+    const cap = setTimeout(finish, maxMs);
+    window.addEventListener('scroll', onScroll, { passive: true, capture: true });
+    quiet = setTimeout(finish, quietMs);
+  });
+}
+
 // --- honest failures -------------------------------------------------------
 // Every one of these used to reach the page as `e.message`, which is how a
 // visitor with flaky wifi read "Failed to fetch" and a visitor past the demo's
@@ -631,6 +666,7 @@ export default function LiveDemo() {
       return;
     }
     await styleSheetReady;
+    await whenScrollSettles();
     // The chunk can land after the visitor has navigated away. Building a WebGL
     // map into a detached container leaks the context for the life of the tab.
     if (!aliveRef.current) return;

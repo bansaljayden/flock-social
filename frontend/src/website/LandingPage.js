@@ -607,7 +607,15 @@ export default function LandingPage() {
                 box over the cream. 121.7 KB of PNG, 76.5 KB of WebP. */}
             <figure className="lp-flock lp-flock-steps">
               <picture>
-                <source type="image/webp" srcSet="/marks/mark-steps-400.webp" />
+                {/* Width candidates, website only (the app's EmptyMark keeps the
+                    -400 files as they are). The 432w is 29 KB against the 76 KB
+                    864w, and any screen that paints the slot at 1x density takes
+                    it. `sizes` mirrors .lp-flock-steps img in LandingPage.css. */}
+                <source
+                  type="image/webp"
+                  srcSet="/marks/mark-steps-432.webp 432w, /marks/mark-steps-400.webp 864w"
+                  sizes="(min-width: 1106px) 420px, (min-width: 632px) 38vw, 240px"
+                />
                 <img src="/marks/mark-steps-400.png" alt="" width="864" height="290" loading="lazy" decoding="async" fetchPriority="low" />
               </picture>
             </figure>
@@ -664,7 +672,15 @@ export default function LandingPage() {
                   white ground would be unmissable. 300.6 KB PNG, 129.7 KB WebP. */}
               <figure className="lp-flock lp-flock-crowd">
                 <picture>
-                  <source type="image/webp" srcSet="/marks/mark-crowd-400.webp" />
+                  {/* 520w is 46 KB; the 1024w is mark-crowd.webp, the same
+                      1024x498 cutout as the -400 at 119 KB rather than 129. Both
+                      keep the alpha channel (VP8X + ALPH). `sizes` mirrors
+                      .lp-flock-crowd img. */}
+                  <source
+                    type="image/webp"
+                    srcSet="/marks/mark-crowd-520.webp 520w, /marks/mark-crowd.webp 1024w"
+                    sizes="(min-width: 1131px) 520px, (min-width: 609px) 46vw, 280px"
+                  />
                   <img src="/marks/mark-crowd-400.png" alt="" width="1024" height="498" loading="lazy" decoding="async" fetchPriority="low" />
                 </picture>
               </figure>
@@ -868,7 +884,15 @@ export default function LandingPage() {
                 424.6 KB PNG, 57.3 KB WebP, the biggest single win on the page. */}
             <figure className="lp-flock lp-flock-money">
               <picture>
-                <source type="image/webp" srcSet="/marks/mark-money-400.webp" />
+                {/* The slot never paints past 230 CSS px, so the 1024px file was
+                    four times the width even at 2x. 240w is 5 KB and 480w 16 KB,
+                    both opaque "VP8 " like the -400 (see above for why that is
+                    right for this mark only). `sizes` mirrors .lp-flock-money img. */}
+                <source
+                  type="image/webp"
+                  srcSet="/marks/mark-money-240.webp 240w, /marks/mark-money-480.webp 480w, /marks/mark-money-400.webp 1024w"
+                  sizes="(min-width: 1150px) 230px, (min-width: 750px) 20vw, 150px"
+                />
                 <img src="/marks/mark-money-400.png" alt="" width="1024" height="1024" loading="lazy" decoding="async" fetchPriority="low" />
               </picture>
             </figure>
