@@ -44,8 +44,9 @@ describe('DM live location', () => {
 
   test('the emitter re-runs when a position first exists, without per-fix churn', () => {
     const eff = block(app, 'const hasUserLocation = !!userLocation;', '[dmSharingLocation, hasUserLocation]);');
-    expect(eff).toMatch(/if \(!dmSharingLocation \|\| !userLocation\) return;/);
-    expect(eff).toMatch(/const loc = userLocationRef\.current;/);
+    // The device's own fix, never the map's position (deviceFixRef).
+    expect(eff).toMatch(/if \(!dmSharingLocation \|\| !userLocation \|\| !fix\) return;/);
+    expect(eff).toMatch(/const loc = deviceFixRef\.current;/);
   });
 });
 
