@@ -55,7 +55,11 @@ test('the analytics tab waits for the plan instead of opening on the paywall', (
   // the tab drew the Premium lock on that default, then snapped to the real
   // tab. venueProfile is null until the same response, so it is the signal.
   const dash = read('screens/VenueDashboard.js');
-  expect(dash).toMatch(/const tierKnown = venueProfile != null;/);
+  // And the profile must have carried a tier (2026-10-03): with billing on, a
+  // failed plan check sends none, and the 'free' default is not an answer.
+  expect(dash).toMatch(/const tierKnown = venueProfile != null && venueTierKnown;/);
+  const app = read('App.js');
+  expect(app).toMatch(/setVenueTier\(p\.tier\);\s*setVenueTierKnown\(true\);/);
   expect(dash).toMatch(/venueTab === 'analytics' && !tierKnown && \(/);
   expect(dash).toMatch(/venueTab === 'analytics' && !can\.analytics && tierKnown && \(/);
   expect(dash).toMatch(/venueTab === 'analytics' && can\.analytics && tierKnown && \(<>/);
