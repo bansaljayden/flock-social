@@ -1031,8 +1031,9 @@ function HubExpenseRow({ x, codeLines, colors, onEdit, onChanged }) {
       </div>
       <p style={hubStyle.note}>{facts.charAt(0).toUpperCase() + facts.slice(1)}.{x.note ? ` ${x.note}` : ''}</p>
       <div style={{ display: 'flex', gap: '16px' }}>
-        <button className="hit44" type="button" onClick={onEdit} style={hubStyle.textButton}>Edit</button>
-        <button className="hit44" type="button" disabled={busy} onClick={toggle} style={hubStyle.textButton}>
+        {/* Named for the bill, since every row's buttons read the same. */}
+        <button className="hit44" type="button" aria-label={`Edit ${label}`} onClick={onEdit} style={hubStyle.textButton}>Edit</button>
+        <button className="hit44" type="button" aria-label={busy ? undefined : `${x.active ? 'Mark as stopped' : 'Mark as charged again'}: ${label}`} disabled={busy} onClick={toggle} style={hubStyle.textButton}>
           {busy ? 'Saving' : x.active ? 'Mark as stopped' : 'Mark as charged again'}
         </button>
       </div>
@@ -1842,6 +1843,13 @@ function hubJump(id) {
     const still = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
       && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     el.scrollIntoView({ behavior: still ? 'auto' : 'smooth', block: 'start' });
+    // And focus follows, so a keyboard or screen reader user lands on the card
+    // the link named instead of staying on the link with the page moved under
+    // them (money hub audit 2026-10-03).
+    if (typeof el.focus === 'function') {
+      if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '-1');
+      el.focus({ preventScroll: true });
+    }
   };
 }
 

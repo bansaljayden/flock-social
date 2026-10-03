@@ -1395,7 +1395,7 @@ describe('the expense list writes through the API and then re-reads the hub', ()
     await renderHub(NOT_CONNECTED);
     api.updateAdminExpense.mockResolvedValue({ success: true });
     const row = screen.getByText('Example Tool, Team').closest('div').parentElement;
-    fireEvent.click(within(row).getByRole('button', { name: 'Mark as stopped' }));
+    fireEvent.click(within(row).getByRole('button', { name: /^Mark as stopped/ }));
     await waitFor(() => expect(api.updateAdminExpense).toHaveBeenCalledTimes(1));
     const [id, body] = api.updateAdminExpense.mock.calls[0];
     expect(id).toBe(1);
@@ -1491,7 +1491,7 @@ describe('quarterly bills and credits', () => {
     await renderHub(WITH_CREDIT);
     api.updateAdminExpense.mockResolvedValue({ success: true });
     const row = (await screen.findByText('Example Host, Refund')).closest('div').parentElement;
-    fireEvent.click(within(row).getByRole('button', { name: 'Mark as stopped' }));
+    fireEvent.click(within(row).getByRole('button', { name: /^Mark as stopped/ }));
     await waitFor(() => expect(api.updateAdminExpense).toHaveBeenCalledTimes(1));
     expect(api.updateAdminExpense.mock.calls[0][1]).toMatchObject({ amount: '12.50', isCredit: true, active: false });
   });

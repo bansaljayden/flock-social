@@ -1587,7 +1587,7 @@ export default function VenueDashboard({
             )}
             <div style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
               {['Happy Hour', 'Late Night', 'Weekend', 'All Day'].map(slot => (
-                <button key={slot} className="hit44 glass-btn glass-secondary" onClick={() => setDealTimeSlot(slot)} style={{ padding: '6px 10px', borderRadius: '16px', border: `1px solid ${dealTimeSlot === slot ? colors.navy : colors.creamDark}`, backgroundColor: dealTimeSlot === slot ? colors.navyBg : 'var(--bg-card-solid)', color: dealTimeSlot === slot ? 'white' : colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer' }}>
+                <button key={slot} aria-pressed={dealTimeSlot === slot} className="hit44 glass-btn glass-secondary" onClick={() => setDealTimeSlot(slot)} style={{ padding: '6px 10px', borderRadius: '16px', border: `1px solid ${dealTimeSlot === slot ? colors.navy : colors.creamDark}`, backgroundColor: dealTimeSlot === slot ? colors.navyBg : 'var(--bg-card-solid)', color: dealTimeSlot === slot ? 'white' : colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer' }}>
                   {slot}
                 </button>
               ))}
@@ -1768,7 +1768,7 @@ export default function VenueDashboard({
                             cannot succeed does not render; the notice below
                             says why and names the two things that do work. */}
                         {!hidden && (
-                          <button aria-label="Edit" className="hit44" onClick={() => openPromoModal(promo)} style={{ padding: '6px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer' }}>{Icons.edit(colors.navy, 14)}</button>
+                          <button aria-label={promo.title ? `Edit ${promo.title}` : 'Edit this deal'} className="hit44" onClick={() => openPromoModal(promo)} style={{ padding: '6px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer' }}>{Icons.edit(colors.navy, 14)}</button>
                         )}
                         <button aria-label={promo.title ? `Delete ${promo.title}` : 'Delete this deal'} className="hit44" onClick={() => deletePromo(promo.id, promo.title)} style={{ padding: '6px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer' }}>{Icons.trash(colors.red, 14)}</button>
                       </div>
@@ -1941,7 +1941,7 @@ export default function VenueDashboard({
                             render. Delete still works on a hidden row, which is
                             why it stays. */}
                         {!hidden && (
-                          <button aria-label="Edit" className="hit44" onClick={() => openEventModal(event)} style={{ padding: '6px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer' }}>{Icons.edit(colors.navy, 14)}</button>
+                          <button aria-label={event.title ? `Edit ${event.title}` : 'Edit this event'} className="hit44" onClick={() => openEventModal(event)} style={{ padding: '6px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer' }}>{Icons.edit(colors.navy, 14)}</button>
                         )}
                         <button aria-label={event.title ? `Delete ${event.title}` : 'Delete this event'} className="hit44" onClick={() => deleteEvent(event.id, event.title)} style={{ padding: '6px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer' }}>{Icons.trash(colors.red, 14)}</button>
                       </div>
