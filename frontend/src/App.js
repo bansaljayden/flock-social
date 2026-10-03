@@ -63,6 +63,7 @@ import { AVATAR_EDGE, AVATAR_REFIT_MARKER_KEY, encodeAvatar, dataUrlToBlob, need
 // When a member's live pin comes off this device, and the emit interval the
 // staleness rule is measured in. See lib/livePins.js.
 import { LOCATION_EMIT_MS, withoutFlockPins, withoutPersonPin, withoutStalePins } from './lib/livePins';
+import { foldSensorReading } from './lib/sensorHistory';
 // Whether the viewer's own Tonight pulse is still on. See lib/pulse.js.
 import { livePulse, pulseEndsAt, pulseTapAction } from './lib/pulse';
 // PaywallSheet is NOT imported here; it is fetched, at the lazy block below.
@@ -7803,14 +7804,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     });
 
     joinVenueRoom(pid);
-    // History is hourly-bucketed by the backend. On each live push we either
-    // overwrite the current hour's bucket (last reading wins for "this hour")
-    // or append a new bucket if we've crossed an hour boundary.
-    const sameHour = (tsA, tsB) => {
-      const a = new Date(tsA), b = new Date(tsB);
-      return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() &&
-             a.getDate() === b.getDate() && a.getHours() === b.getHours();
-    };
+    // History is hourly-bucketed by the backend: a SUM of door counts and an
+    // average of everything else per hour. Each live push is folded into the
+    // current hour's bucket the same way, or opens the next hour's
+    // (lib/sensorHistory.js says why replacing the bucket was wrong).
     const offUpdate = onVenueSensorUpdate((payload) => {
       if (!payload || payload.venue_place_id !== pid) return;
       setSensorData(prev => ({
@@ -7827,25 +7824,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         },
         recent_checkins: prev?.recent_checkins || 0,
       }));
-      setSensorHistory(prev => {
-        const last = prev[prev.length - 1];
-        const incoming = {
-          recorded_at: payload.recorded_at,
-          thermal_headcount: payload.thermal_headcount,
-          occupancy: payload.occupancy ?? null,
-          occupancy_low: payload.occupancy_low ?? null,
-          occupancy_high: payload.occupancy_high ?? null,
-          dwell_minutes: payload.dwell_minutes ?? null,
-          ir_beam_count: payload.ir_beam_count,
-          noise_db: payload.noise_db,
-        };
-        if (last && sameHour(last.recorded_at, payload.recorded_at)) {
-          // Same hour: replace the bucket with the latest reading
-          return [...prev.slice(0, -1), incoming];
-        }
-        // New hour: append. Cap at 48 buckets so memory doesn't grow unbounded.
-        return [...prev, incoming].slice(-48);
-      });
+      setSensorHistory(prev => foldSensorReading(prev, payload, 48));
     });
     const offCheckin = onVenueCheckin((payload) => {
       if (!payload || payload.venue_place_id !== pid) return;
@@ -18010,11 +17989,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       setOwnerSensorHistory(history?.readings || []);
     });
     joinVenueRoom(pid);
-    const sameHour = (tsA, tsB) => {
-      const a = new Date(tsA), b = new Date(tsB);
-      return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() &&
-             a.getDate() === b.getDate() && a.getHours() === b.getHours();
-    };
+    // Each live push is folded into the hour's bucket the way the server
+    // builds it (lib/sensorHistory.js).
     const offUpdate = onVenueSensorUpdate((payload) => {
       if (!payload || payload.venue_place_id !== pid) return;
       setOwnerSensorData(prev => ({
@@ -18031,25 +18007,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         },
         recent_checkins: prev?.recent_checkins || 0,
       }));
-      // Hourly-bucketed history: replace current-hour bucket with latest reading
-      // or append a new bucket on hour rollover. Cap at 72 hours of memory.
-      setOwnerSensorHistory(prev => {
-        const last = prev[prev.length - 1];
-        const incoming = {
-          recorded_at: payload.recorded_at,
-          thermal_headcount: payload.thermal_headcount,
-          occupancy: payload.occupancy ?? null,
-          occupancy_low: payload.occupancy_low ?? null,
-          occupancy_high: payload.occupancy_high ?? null,
-          dwell_minutes: payload.dwell_minutes ?? null,
-          ir_beam_count: payload.ir_beam_count,
-          noise_db: payload.noise_db,
-        };
-        if (last && sameHour(last.recorded_at, payload.recorded_at)) {
-          return [...prev.slice(0, -1), incoming];
-        }
-        return [...prev, incoming].slice(-72);
-      });
+      // Folded into the hour's bucket, or a new bucket on the hour; 72 hours kept.
+      setOwnerSensorHistory(prev => foldSensorReading(prev, payload, 72));
     });
     const offCheckin = onVenueCheckin((payload) => {
       if (!payload || payload.venue_place_id !== pid) return;
