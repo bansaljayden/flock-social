@@ -435,7 +435,9 @@ test('hiding what is already hidden, or restoring what is already back, is refus
 
 test('the takedown only matches a row whose state it changes, and a retired guest row still counts as due', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'routes', 'admin.js'), 'utf8');
-  assert.match(src, /WHERE id = \$2 AND \(COALESCE\(is_hidden, false\) IS DISTINCT FROM \$1\$\{target\.alsoDue \? ` OR \$\{target\.alsoDue\}` : ''\}\)/);
+  // The column is the target's own since migration 114: a venue reply is
+  // hidden through venue_reply_hidden on the review's row.
+  assert.match(src, /WHERE id = \$2 AND \(COALESCE\(\$\{target\.column \|\| 'is_hidden'\}, false\) IS DISTINCT FROM \$1\$\{target\.alsoDue \? ` OR \$\{target\.alsoDue\}` : ''\}\)/);
   assert.match(src, /alsoSet: 'retired_at = NULL', alsoDue: 'retired_at IS NOT NULL'/);
 });
 

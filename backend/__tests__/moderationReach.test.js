@@ -293,13 +293,20 @@ test('019 gives venue_events the takedown column its siblings have', () => {
   assert.match(sql, /ALTER TABLE venue_events ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN DEFAULT false/);
 });
 
-test('019 widens the report CHECK to include venue_event, keeping all seven older types', () => {
-  const sql = sqlBody(MIGRATION_019);
+test('the newest report CHECK accepts every type the route accepts, keeping every older type', () => {
+  // The newest migration that re-adds the constraint is the one in force: 019
+  // added venue_event, 114 venue_reply.
+  const dir = path.join(__dirname, '..', 'migrations');
+  const latest = fs.readdirSync(dir).filter((f) => f.endsWith('.sql')).sort()
+    .filter((f) => sqlBody(path.join(dir, f)).includes('ADD CONSTRAINT content_reports_content_type_check'))
+    .pop();
+  const sql = sqlBody(path.join(dir, latest));
   const check = sql.slice(sql.indexOf('ADD CONSTRAINT content_reports_content_type_check'));
   const values = new Set([...check.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]));
   for (const t of VALID_CONTENT_TYPES) {
-    assert.ok(values.has(t), `${t} is accepted by the route and refused by 019's constraint`);
+    assert.ok(values.has(t), `${t} is accepted by the route and refused by ${latest}'s constraint`);
   }
+  assert.ok(values.has('venue_event'), 'venue_event must not be dropped');
   // A narrowing constraint would fail on rows that already exist.
   for (const kept of ['flock_message', 'dm', 'profile', 'story', 'venue_review', 'venue_promotion', 'guest_rsvp']) {
     assert.ok(values.has(kept), `${kept} must not be dropped`);

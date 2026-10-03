@@ -148,6 +148,9 @@ const SUITE_SLOTS = {
   friendWithdrawnRealDb: 66,     // new in 2026-10-03; a declined request,
                                  // cancelled, through the real friends router
                                  // and migration 113's widened CHECK.
+  venueReplyReportRealDb: 67,    // new in 2026-10-03; an owner's reply
+                                 // reported, hidden and replaced through the
+                                 // real routes and migration 114.
 };
 
 // Two suites sharing a slot would silently reintroduce exactly the collision the

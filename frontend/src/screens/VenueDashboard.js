@@ -341,9 +341,12 @@ export default function VenueDashboard({
       // A reply the server has retired (the review was edited after it, so it
       // is off the public card) is not a reply any more: the button comes
       // back, and the old words are shown as retired rather than as live.
-      replied: !!r.venue_reply && !r.reply_needs_review,
+      // A reply moderation took down (migration 114) is off the card too, so
+      // the same holds for it, with its own line saying why.
+      replied: !!r.venue_reply && !r.reply_needs_review && !r.reply_hidden_by_moderation,
       reply: r.venue_reply || null,
       replyRetired: !!r.reply_needs_review,
+      replyRemoved: !!r.reply_hidden_by_moderation,
     }));
     const reviewStats = venueReviewsData.stats;
 
@@ -591,6 +594,9 @@ export default function VenueDashboard({
             // flag, so it is rebuilt here from the same two columns the list
             // read derives it from.
             reply_needs_review: updated.venue_reply != null && updated.venue_replied_at == null,
+            // A new reply replaces one moderation took down and is live; the
+            // row comes back with the column, so the flag follows it.
+            reply_hidden_by_moderation: updated.venue_reply_hidden === true,
           } : r)
         }));
         setReplyingToReview(null);
@@ -2088,9 +2094,11 @@ export default function VenueDashboard({
                       <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '8px 0 0', lineHeight: '1.4' }}>{review.text}</p>
                       {review.reply && (
                         <div style={{ marginTop: '8px', padding: '8px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '8px', border: '1px solid var(--border-default)' }}>
-                          <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.steel, margin: '0 0 2px' }}>{review.replyRetired ? 'Your earlier reply' : 'Owner Reply'}</p>
+                          <p style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.steel, margin: '0 0 2px' }}>{review.replyRemoved ? 'Your removed reply' : review.replyRetired ? 'Your earlier reply' : 'Owner Reply'}</p>
                           <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>{review.reply}</p>
-                          {review.replyRetired && (
+                          {review.replyRemoved ? (
+                            <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '6px 0 0', lineHeight: 1.4 }}>A moderator took this reply off your card after a report. Reply again to post a new one.</p>
+                          ) : review.replyRetired && (
                             <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '6px 0 0', lineHeight: 1.4 }}>The review was edited after this, so it is off your card. Reply again to publish a new one.</p>
                           )}
                         </div>

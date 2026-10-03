@@ -956,7 +956,7 @@ const REPLY_BY_CURRENT_OWNER = `EXISTS (
 function ownReplyOnly(row, venue, userId) {
   const { venue_reply_user_id: author, ...rest } = row;
   if (venue && venue.verified === true && author != null && Number(author) === Number(userId)) return rest;
-  return { ...rest, venue_reply: null, venue_replied_at: null, reply_needs_review: false };
+  return { ...rest, venue_reply: null, venue_replied_at: null, reply_needs_review: false, reply_hidden_by_moderation: false };
 }
 
 // GET /api/venue-dashboard/reviews — get Flock reviews for this venue
@@ -1050,6 +1050,10 @@ router.get('/reviews', async (req, res) => {
       `SELECT vr.id, vr.rating, vr.text, vr.venue_reply, vr.venue_replied_at,
               vr.created_at, vr.user_id, vr.venue_reply_user_id, u.name,
               (vr.venue_reply IS NOT NULL AND vr.venue_replied_at IS NULL) AS reply_needs_review,
+              -- A reply moderation took down (migration 114) is still the
+              -- owner's to read, flagged, so the dashboard can say why the
+              -- public card no longer shows it.
+              vr.venue_reply_hidden AS reply_hidden_by_moderation,
               ${REVIEW_CURSOR_AT}
        FROM venue_reviews vr
        JOIN users u ON u.id = vr.user_id AND u.is_banned IS NOT TRUE
@@ -1126,8 +1130,15 @@ router.post('/reviews/:id/reply', [
     // venue_reply_user_id is written with the text (migration 083): the card
     // publishes a reply only while its author is the current verified owner
     // (REPLY_BY_CURRENT_OWNER above).
+    //
+    // A NEW REPLY REPLACES ONE MODERATION TOOK DOWN, and is live (migration
+    // 114). There is no route to delete a reply, so refusing an edit here, the
+    // way a hidden promotion refuses one, would leave the review with no reply
+    // this owner could ever give. The new text is new speech, screened like the
+    // first, and reportable like the first; a moderator who sees the same words
+    // again has Warn and Ban for its author.
     const { rows } = await pool.query(
-      `UPDATE venue_reviews vr SET venue_reply = $1, venue_replied_at = NOW(), venue_reply_user_id = $4
+      `UPDATE venue_reviews vr SET venue_reply = $1, venue_replied_at = NOW(), venue_reply_user_id = $4, venue_reply_hidden = false
        WHERE vr.id = $2 AND vr.google_place_id = $3
          AND COALESCE(vr.is_hidden, false) = false
          AND NOT EXISTS (SELECT 1 FROM users bu WHERE bu.id = vr.user_id AND bu.is_banned IS TRUE)
@@ -1499,9 +1510,11 @@ router.get('/public-reviews/:placeId', placeIdParam, async (req, res) => {
               -- The reply is the business speaking in public; a banned owner
               -- no longer speaks (see the promotions read), and neither does
               -- one who no longer holds the place. Both CASEs.
-              CASE WHEN vr.venue_replied_at IS NOT NULL AND ${REPLY_BY_CURRENT_OWNER}
+              -- And a reply moderation took down (migration 114) is withheld
+              -- like one its author no longer stands behind.
+              CASE WHEN vr.venue_replied_at IS NOT NULL AND ${REPLY_BY_CURRENT_OWNER} AND vr.venue_reply_hidden = false
                 THEN vr.venue_reply ELSE NULL END AS venue_reply,
-              CASE WHEN ${REPLY_BY_CURRENT_OWNER}
+              CASE WHEN ${REPLY_BY_CURRENT_OWNER} AND vr.venue_reply_hidden = false
                 THEN vr.venue_replied_at ELSE NULL END AS venue_replied_at,
               -- No avatar column: the card draws (name || '?').charAt(0) in a
               -- circle, never an image, and this one is an uncapped base64 data

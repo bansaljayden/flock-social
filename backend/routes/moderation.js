@@ -62,7 +62,11 @@ const INT4_MAX = 2147483647;
 // on the day somebody adds `GET /api/venues/:placeId/events` costs a Guideline
 // 1.2 rejection, because that release ships user-generated content with no
 // takedown path at all. Migration 019 is the schema half.
-const VALID_CONTENT_TYPES = ['flock_message', 'dm', 'profile', 'story', 'venue_review', 'venue_promotion', 'guest_rsvp', 'venue_event'];
+// 'venue_reply' (migration 114) is a venue owner's reply to a review, reported
+// on its own: content_id is the review's id and the reported user is the
+// reply's author. Before it, reporting a reply meant reporting the review,
+// which named the reviewer.
+const VALID_CONTENT_TYPES = ['flock_message', 'dm', 'profile', 'story', 'venue_review', 'venue_promotion', 'guest_rsvp', 'venue_event', 'venue_reply'];
 const VALID_REASONS = ['spam', 'harassment', 'hate', 'sexual', 'violence', 'self_harm', 'other'];
 
 // Every report is answered with this exact string, whether it created a row,
@@ -245,6 +249,21 @@ router.post('/reports',
           const r = await pool.query(
             `SELECT user_id AS sender_id, COALESCE(is_hidden, false) AS is_hidden FROM venue_reviews
              WHERE id = $1`,
+            [content_id]
+          );
+          row = r.rows[0] || null;
+        } else if (content_type === 'venue_reply') {
+          // The owner's answer under a review, public like the review. Only a
+          // published reply can be reported: one retired by a rewritten review
+          // (venue_replied_at cleared) is not on any screen. Its author is
+          // venue_reply_user_id, which is who Warn and Ban must reach; a reply
+          // from before that column existed resolves to nobody and can still be
+          // hidden. A reply under a hidden review is gone with it.
+          const r = await pool.query(
+            `SELECT venue_reply_user_id AS sender_id,
+                    (COALESCE(is_hidden, false) OR venue_reply_hidden) AS is_hidden
+               FROM venue_reviews
+              WHERE id = $1 AND venue_reply IS NOT NULL AND venue_replied_at IS NOT NULL`,
             [content_id]
           );
           row = r.rows[0] || null;
