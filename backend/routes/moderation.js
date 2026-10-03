@@ -372,7 +372,12 @@ router.post('/reports',
            AND reported_user_id IS NOT DISTINCT FROM $4::int
            AND status IN ('open', 'under_review')
          LIMIT 1`,
-        [req.user.id, content_type, content_id || null, reported_user_id || null]
+        // The SAME reported user the insert below stores: the one the client
+        // named, or the author the content resolved to. Matched on the request
+        // alone, a report that named nobody (a promotion's public read carries
+        // no owner id) looked for a NULL the stored row never has, so filing
+        // it twice inserted it twice and paged moderators twice (2026-10-03).
+        [req.user.id, content_type, content_id || null, reported_user_id || contentAuthorId || null]
       );
       if (dupe.rows.length > 0) {
         return res.status(201).json({ message: REPORT_ACCEPTED, report: dupe.rows[0] });
