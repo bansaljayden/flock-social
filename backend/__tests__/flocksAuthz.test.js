@@ -740,6 +740,31 @@ test('create: ghost mode cannot be switched on without a budget', async () => {
   assertQueriesUnderstood();
 });
 
+// isBoolean() accepts the STRING "false", and the insert reads !!flag, so a
+// "false" used to store a budget that was on (backend audit 2026-10-03).
+test('create: the string "false" switches a flag off, not on', async () => {
+  const res = await call('POST', '/api/flocks', 'mallory', {
+    name: 'Strings', budget_enabled: 'false', ghost_mode_enabled: 'true',
+  });
+  assert.strictEqual(res.status, 201);
+  const { flock } = await res.json();
+  assert.strictEqual(flock.budget_enabled, false);
+  assert.strictEqual(flock.ghost_mode_enabled, false, 'ghost mode still needs the budget on');
+  const on = await (await call('POST', '/api/flocks', 'mallory', { name: 'On', budget_enabled: 'true', ghost_mode_enabled: '1' })).json();
+  assert.strictEqual(on.flock.budget_enabled, true);
+  assert.strictEqual(on.flock.ghost_mode_enabled, true);
+  assertQueriesUnderstood();
+});
+
+// flocks.venue_rating is NUMERIC(2,1): 10 overflowed it and answered 500.
+test('create and update: a rating off the 0 to 5 scale is a 400, never a 500', async () => {
+  const created = await call('POST', '/api/flocks', 'mallory', { name: 'Rated', venue_rating: 10 });
+  assert.strictEqual(created.status, 400);
+  const updated = await call('PUT', '/api/flocks/10', 'alice', { venue_rating: 12.5 });
+  assert.strictEqual(updated.status, 400);
+  assertQueriesUnderstood();
+});
+
 // ═══════════════════════════════════════════════════════════════════════════
 // 3. GET /api/flocks/activity
 // ═══════════════════════════════════════════════════════════════════════════

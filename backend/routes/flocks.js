@@ -886,16 +886,20 @@ router.post('/',
     scalarOnly(body('venue_id').optional({ checkFalsy: true }), 'venue id').trim().custom(isPlaceIdShaped).withMessage('Invalid venue id'),
     scalarOnly(body('venue_latitude').optional(), 'latitude').isFloat(),
     scalarOnly(body('venue_longitude').optional(), 'longitude').isFloat(),
-    scalarOnly(body('venue_rating').optional(), 'rating').isFloat(),
+    // 0 to 5, the scale every rating here comes from. flocks.venue_rating is
+    // NUMERIC(2,1), so 10 or more overflowed it and answered 500, not 400.
+    scalarOnly(body('venue_rating').optional(), 'rating').isFloat({ min: 0, max: 5 }),
     scalarOnly(body('venue_photo_url').optional(), 'photo url').trim(),
     scalarOnly(body('event_time').optional(), 'event time').isISO8601().withMessage('Invalid event time'),
     body('invited_user_ids').optional().isArray({ max: 25 }).withMessage('invited_user_ids must be an array'),
-    scalarOnly(body('budget_enabled').optional(), 'budget flag').isBoolean(),
+    // toBoolean(true): isBoolean accepts the STRING "false", and the insert
+    // below reads `!!budget_enabled`, which made "false" a budget that was on.
+    scalarOnly(body('budget_enabled').optional(), 'budget flag').isBoolean().toBoolean(true),
     // Free text: it is shown to every member above the budget prompt, so it
     // gets the same treatment as the name (it was the one create-route text
     // field that skipped the sanitizer).
     freeText(body('budget_context').optional(), 'budget note').isLength({ max: BUDGET_CONTEXT_MAX }).withMessage('Budget note is too long'),
-    scalarOnly(body('ghost_mode_enabled').optional(), 'ghost mode flag').isBoolean(),
+    scalarOnly(body('ghost_mode_enabled').optional(), 'ghost mode flag').isBoolean().toBoolean(true),
   ],
   async (req, res) => {
     try {
@@ -1559,7 +1563,9 @@ router.put('/:id',
     scalarOnly(body('venue_id').optional({ checkFalsy: true }), 'venue id').trim().custom(isPlaceIdShaped).withMessage('Invalid venue id'),
     scalarOnly(body('venue_latitude').optional(), 'latitude').isFloat(),
     scalarOnly(body('venue_longitude').optional(), 'longitude').isFloat(),
-    scalarOnly(body('venue_rating').optional(), 'rating').isFloat(),
+    // 0 to 5, the scale every rating here comes from. flocks.venue_rating is
+    // NUMERIC(2,1), so 10 or more overflowed it and answered 500, not 400.
+    scalarOnly(body('venue_rating').optional(), 'rating').isFloat({ min: 0, max: 5 }),
     scalarOnly(body('venue_photo_url').optional(), 'photo url').trim(),
     scalarOnly(body('event_time').optional(), 'event time').isISO8601(),
     // isIn() coerces too — `{"status": ["planning"]}` passed it and then went
