@@ -71,6 +71,23 @@ describe('the hero screenshot preload lives on / only', () => {
   });
 });
 
+describe('the app routes open the Google sign-in connection early', () => {
+  // /app's sign-in screen loads accounts.google.com/gsi/client; Lighthouse
+  // measured ~310 ms of connection setup on its critical path (2026-10-03).
+  // A preconnect hint changes no sign-in logic, and it is scoped to the app
+  // routes so the marketing pages, which never load Google, do not pay it.
+  const vercel = JSON.parse(read('vercel.json'));
+  test('/app, /app/* and /signup preconnect to accounts.google.com; / does not', () => {
+    for (const src of ['/app', '/app/(.*)', '/signup']) {
+      const h = vercel.headers.find((x) => x.source === src && !x.has);
+      const link = h && h.headers.find((x) => x.key === 'Link');
+      expect(`${src} ${link && link.value}`).toBe(`${src} <https://accounts.google.com>; rel=preconnect`);
+    }
+    const home = vercel.headers.find((x) => x.source === '/' && !x.has);
+    expect(home.headers.find((x) => x.key === 'Link').value).not.toContain('accounts.google.com');
+  });
+});
+
 describe('every section-mark candidate is the width it claims', () => {
   const lp = read('src/website/LandingPage.js');
   const sets = [...lp.matchAll(/srcSet="([^"]*\/marks\/mark-[^"]*)"/g)].map((m) => m[1]);
