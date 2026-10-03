@@ -3579,7 +3579,6 @@ export default function RevenueScreen({
                   return Number.isFinite(c) && c > 0 ? c / 100 : null;
                 };
                 const webNet = perUnit(hubBe && hubBe.proWeb);
-                const appNet = perUnit(hubBe && hubBe.proAppStore);
                 // In whole cents of burn over unrounded cents per subscriber,
                 // the operands the Overview divides: in dollars, $7,979.31
                 // over $3.546 rounded up one subscriber past the Overview.
