@@ -5923,6 +5923,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [showQrScanner, setShowQrScanner] = useState(false);
   const [qrScanError, setQrScanError] = useState('');
   const qrScannerRef = useRef(null);
+  // WHICH OPENING OF THE SCANNER IS LIVE. Starting it takes a 300ms wait, a
+  // fetched library and a camera prompt, and Close (or leaving the screen)
+  // during any of that found no running scanner to stop: stop() threw on a
+  // scanner still starting, the ref was cleared, and then start() resolved
+  // and the camera stayed on behind a closed screen with nothing left to turn
+  // it off (app audit 2026-10-03). Every start and every stop takes a number;
+  // a start that finishes after its number moved on stops itself.
+  const qrSessionRef = useRef(0);
   const qrScannerDivId = 'flock-qr-scanner';
 
   /* OPTIMISTIC, WITH A ROLLBACK, like updateFlockVotes. This waited for the
@@ -6175,10 +6183,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   }, [myFriendCode]);
 
   const startQrScanner = useCallback(async () => {
+    const session = qrSessionRef.current + 1;
+    qrSessionRef.current = session;
+    const stillOpen = () => qrSessionRef.current === session;
     setShowQrScanner(true);
     setQrScanError('');
     // Small delay to let the DOM render the scanner div
     setTimeout(async () => {
+      if (!stillOpen()) return;
       try {
         // Fetched on the tap, not at launch. This library carries its own
         // barcode decoding engine, and holding it as a static import put the
@@ -6198,6 +6210,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // check their camera permissions when the real problem was the network
         // sends them to the wrong settings screen.
         const { Html5Qrcode } = await import('html5-qrcode');
+        if (!stillOpen()) return;
         const scanner = new Html5Qrcode(qrScannerDivId);
         qrScannerRef.current = scanner;
         await scanner.start(
@@ -6232,7 +6245,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           },
           () => {} // ignore scan failures (no QR in frame)
         );
+        // Closed while the camera was coming up: turn it straight back off.
+        if (!stillOpen()) {
+          try { await scanner.stop(); } catch {}
+          if (qrScannerRef.current === scanner) qrScannerRef.current = null;
+        }
       } catch (err) {
+        if (!stillOpen()) return;
         console.error('[QR Scanner] Start error:', err);
         // A chunk that fails to load is a network problem, not a camera one.
         // Naming the camera here would send somebody into their permission
@@ -6249,6 +6268,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   }, [showToast, needsEmailVerification]);
 
   const stopQrScanner = useCallback(async () => {
+    // Moving the number on is what reaches a start still in flight.
+    qrSessionRef.current += 1;
     if (qrScannerRef.current) {
       try { await qrScannerRef.current.stop(); } catch {}
       qrScannerRef.current = null;
@@ -6256,6 +6277,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setShowQrScanner(false);
     setQrScanError('');
   }, []);
+  // Leaving Add Friends any way at all (a push tap, the back gesture, a deep
+  // link) turns the camera off; Close was the only way that used to.
+  useEffect(() => {
+    if (currentScreen !== 'addFriends' && (showQrScanner || qrScannerRef.current)) stopQrScanner();
+  }, [currentScreen]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Flock invites
   const [pendingFlockInvites, setPendingFlockInvites] = useState([]);
