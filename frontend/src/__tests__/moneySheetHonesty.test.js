@@ -126,7 +126,10 @@ test('a settled share does not survive being asked for more money', () => {
   expect(billing).toMatch(/const existingPaidCents = new Map\(\);/);
   expect(billing).toMatch(/if \(paidCents > 0\) existingPaidCents\.set\(row\.user_id, paidCents\);/);
   expect(billing).toMatch(/const coveredByCredit = carriedCents > 0 && carriedCents >= newCents;/);
-  expect(billing).toMatch(/share\.settled = isPayer \|\| coveredByCredit;/);
+  // A $0 share owes nothing, so it is square from the start too (2026-10-03);
+  // only a share the credit does not cover, with money on it, is left owing.
+  expect(billing).toMatch(/const owesNothing = !isPayer && !coveredByCredit && newCents === 0;/);
+  expect(billing).toMatch(/share\.settled = isPayer \|\| coveredByCredit \|\| owesNothing;/);
   expect(billing).toMatch(/share\.paidAmount = carriedCents \/ 100;/);
   expect(billing).toMatch(/share\.outstanding = share\.settled \? 0 : \(newCents - carriedCents\) \/ 100;/);
   // And the sheet reads the two figures rather than the whole share.
