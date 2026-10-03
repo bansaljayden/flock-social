@@ -1566,3 +1566,19 @@ describe('plan nets and unit costs', () => {
     expect(hubRow('Cost per active person').textContent).toMatch(/Shown from 10 active people a week; 4 were active/);
   });
 });
+
+// A list past the limit (review 2026-10-03): said so on the list, and no
+// partial dollar figure is quoted beside the licence exposures.
+describe('a truncated expense list', () => {
+  const LIC = { items: [{ id: 'vercel', vendor: 'Vercel', plan: 'Hobby (free)', why: 'Non-commercial.', fix: 'Vercel Pro', fixCentsPerMonth: 2000, source: 'https://vercel.com', checked: '2026-09-29' }], toComplyPerMonthCents: 2000, licensedPerMonthCents: 22078 };
+  test('the list says it was cut short, and no partial burn is quoted for the licences', async () => {
+    await renderHub({
+      ...CONNECTED,
+      costs: { ...CONNECTED.costs, status: 'error', reason: 'The expense list has more than 500 rows.', licence: LIC },
+      expenses: { ...CONNECTED.expenses, truncated: true, limit: 500 },
+    });
+    await screen.findByText(/These are the first 500/);
+    expect(document.body.textContent).toMatch(/Licensing them adds \$20\.00 a month\./);
+    expect(document.body.textContent).not.toMatch(/\$220\.78/);
+  });
+});

@@ -876,17 +876,23 @@ function roundRowsToTotal(rows, field, total) {
 // names the vendor.
 function licenceExposures({ lines, expenses, perMonthCents }) {
   const items = [];
+  // A bill that fixes an exposure is one in the dollar run rate: active, in
+  // dollars, recurring, above $0 and not a credit. A euro row, a one-time
+  // charge or a stopped row is not a plan being paid for (review 2026-10-03).
+  const paying = (x) => x.active && !x.isCredit && x.currency === 'USD' && x.amountCents > 0
+    && ['monthly', 'quarterly', 'yearly', 'usage'].includes(x.cadence);
+  const vendorIs = (x, needle) => String(x.vendor || '').toLowerCase().includes(String(needle).toLowerCase());
   for (const e of costModel.LICENCE_EXPOSURES || []) {
     const by = e.resolvedBy || {};
     let fixed = false;
     if (by.codeLine) {
       const line = lines.find((l) => l.origin !== 'expense' && l.id === by.codeLine);
-      const paidRow = expenses.some((x) => x.active && !x.isCredit && x.replacesLine === by.codeLine && x.amountCents > 0);
-      fixed = !!(line && line.amountCents > 0) || paidRow;
-    } else if (by.expenseVendor) {
-      const needle = String(by.expenseVendor).toLowerCase();
-      fixed = expenses.some((x) => x.active && !x.isCredit && x.amountCents > 0 && String(x.vendor || '').toLowerCase().includes(needle));
+      fixed = !!(line && line.amountCents > 0) || expenses.some((x) => paying(x) && x.replacesLine === by.codeLine);
     }
+    // By the vendor's name as well: a Vercel Pro bill recorded without
+    // "counts instead of" is already in the burn, and adding Vercel's $20 to
+    // the licensed figure on top of it counted the plan twice.
+    if (!fixed && by.expenseVendor) fixed = expenses.some((x) => paying(x) && vendorIs(x, by.expenseVendor));
     if (fixed) continue;
     items.push({
       id: e.id,
@@ -943,9 +949,14 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
     // 1st and then stopped read as the code's $119. Now the row's own charge
     // counts this month, the code line adds nothing to this month, and the
     // code line still comes back for the run rate from here on.
+    // Two limits (review 2026-10-03): a $0 stopped row pays for nothing, so
+    // it covers nothing; and when an active row already stands in for the
+    // same recurring line, that row carries this month, and the stopped one
+    // adding its charge as well counted the line's month twice.
     const replaced = x.replacesLine ? lines.find((l) => l.origin !== 'expense' && l.id === x.replacesLine) : null;
-    const stoppedButPaidThisMonth = !x.active && inMonth(x.lastChargedOn, month);
-    if (stoppedButPaidThisMonth && usd && !x.isCredit && replaced && replaced.cadence !== 'one_time') {
+    const superseded = !x.active && !!replaced && replaced.cadence !== 'one_time' && replacedBy.has(x.replacesLine);
+    const stoppedButPaidThisMonth = !x.active && inMonth(x.lastChargedOn, month) && !superseded;
+    if (stoppedButPaidThisMonth && usd && !x.isCredit && x.amountCents > 0 && replaced && replaced.cadence !== 'one_time') {
       coveredThisMonth.add(replaced.id);
     }
     lines.push({
@@ -2881,8 +2892,8 @@ function buildNet({ stripe, revenuecat, costs, costsComplete = true, appStoreCom
   // web price, which would be wrong the day the two differ).
   const appPriceFor = (plan) => {
     const row = (pricing.appStore || []).find((a) => a.plan === plan);
-    if (row && Number.isFinite(row.listCents)) return { cents: row.listCents, source: 'app_store' };
-    if (row && Number.isFinite(row.lastChargedCents)) return { cents: row.lastChargedCents, source: 'app_store_charge' };
+    if (row && Number.isFinite(row.listCents) && row.listCents > 0) return { cents: row.listCents, source: 'app_store' };
+    if (row && Number.isFinite(row.lastChargedCents) && row.lastChargedCents > 0) return { cents: row.lastChargedCents, source: 'app_store_charge' };
     const stated = STATED_PRICES.find((s) => s.product === 'pro' && s.plan === plan);
     return stated ? { cents: Math.round(stated.usd * 100), source: 'stated', statedBecause: 'app_store_price_unread' } : null;
   };
@@ -3400,6 +3411,7 @@ async function buildMoneyHub({
     expenses: {
       status: expensesR.ok ? 'ok' : 'error',
       rows: expenses,
+      truncated: !!(expensesR.ok && expensesR.value.truncated),
       limit: EXPENSE_LIST_LIMIT,
       kinds: EXPENSE_KINDS,
       cadences: EXPENSE_CADENCES,
