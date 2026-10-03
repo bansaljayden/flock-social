@@ -325,12 +325,29 @@ test('an explicit null is treated as absent wherever the handler already does', 
   }
 });
 
-test('a null capacity becomes the default, never a NULL column', async () => {
+// No capacity given is no capacity (2026-10-03). It used to become 50, which
+// the owner's list then showed as "Capacity 50" for an event that never had
+// one; nothing reads an event's capacity except that list, which leaves a
+// missing one out. A real number still goes through.
+test('a null capacity stays empty instead of becoming a 50 nobody typed', async () => {
   venueExists();
   let insert = null;
   handlers.push([/^INSERT INTO venue_events/, (p) => { insert = p; return { rows: [{ id: 1 }] }; }]);
   await call('POST', '/api/venue-dashboard/events', { title: 'Quiz night', capacity: null });
-  assert.strictEqual(insert[5], 50, `capacity reached pg as ${JSON.stringify(insert[5])}`);
+  assert.strictEqual(insert[5], null, `capacity reached pg as ${JSON.stringify(insert[5])}`);
+  await call('POST', '/api/venue-dashboard/events', { title: 'Quiz night', capacity: 80 });
+  assert.strictEqual(insert[5], 80);
+});
+
+test('an edit clears the fields it sends empty and keeps the ones it leaves out', async () => {
+  venueExists();
+  let update = null;
+  handlers.push([/UPDATE venue_events SET/, (p) => { update = p; return { rows: [{ id: 2, target_hidden: false }] }; }]);
+  await call('PUT', '/api/venue-dashboard/events/2', { title: 'Quiz night', eventDate: '', capacity: null });
+  // [title, date, time, capacity, id, owner, sentDate, sentTime, sentCapacity]
+  assert.deepStrictEqual(update.slice(6), [true, false, true]);
+  assert.strictEqual(update[1], null);
+  assert.strictEqual(update[3], null);
 });
 
 // ── int4, the id-range guard's twin ────────────────────────────────────────

@@ -445,10 +445,15 @@ router.post('/events', [
     if (!venue) return res.status(404).json({ error: 'No venue profile found' });
 
     const { title, eventDate, eventTime, capacity } = req.body;
+    // No capacity given is no capacity. This bound `capacity || 50`, so an
+    // event created without one was listed as "Capacity 50" and its edit form
+    // opened pre-filled with a number the owner never typed (venue audit
+    // 2026-10-03). Nothing reads an event's capacity but that list, which
+    // already leaves a missing one out.
     const { rows } = await pool.query(
       `INSERT INTO venue_events (venue_user_id, google_place_id, title, event_date, event_time, capacity)
        VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [req.user.id, venue.google_place_id, title, eventDate || null, eventTime || null, capacity || 50]
+      [req.user.id, venue.google_place_id, title, eventDate || null, eventTime || null, capacity == null ? null : capacity]
     );
     res.status(201).json(rows[0]);
   } catch (err) {
@@ -495,6 +500,11 @@ router.put('/events/:id', [
     // down" (a row whose UPDATE half is missing) with no window between the
     // check and the write.
     const { title, eventDate, eventTime, capacity } = req.body;
+    // A field the edit SENDS empty is cleared; a field it leaves out is kept.
+    // Each used to go through COALESCE, so clearing a date, a time or a
+    // capacity in the edit form saved, answered 200, and kept the old value
+    // (venue audit 2026-10-03). The title stays COALESCE: it cannot be empty.
+    const sent = (k) => Object.prototype.hasOwnProperty.call(req.body, k);
     const { rows } = await pool.query(
       `WITH target AS (
          SELECT id, COALESCE(is_hidden, false) AS is_hidden
@@ -503,9 +513,9 @@ router.put('/events/:id', [
        upd AS (
          UPDATE venue_events SET
            title = COALESCE($1, title),
-           event_date = COALESCE($2, event_date),
-           event_time = COALESCE($3, event_time),
-           capacity = COALESCE($4, capacity),
+           event_date = CASE WHEN $7::boolean THEN $2 ELSE event_date END,
+           event_time = CASE WHEN $8::boolean THEN $3 ELSE event_time END,
+           capacity = CASE WHEN $9::boolean THEN $4 ELSE capacity END,
            updated_at = NOW()
          WHERE id = $5 AND venue_user_id = $6
            AND EXISTS (SELECT 1 FROM target t WHERE t.is_hidden = false)
@@ -513,7 +523,8 @@ router.put('/events/:id', [
        )
        SELECT t.is_hidden AS target_hidden, u.*
        FROM target t LEFT JOIN upd u ON true`,
-      [title || null, eventDate || null, eventTime || null, capacity || null, req.params.id, req.user.id]
+      [title || null, eventDate || null, eventTime || null, capacity == null ? null : capacity, req.params.id, req.user.id,
+        sent('eventDate'), sent('eventTime'), sent('capacity')]
     );
     if (rows.length === 0) return res.status(404).json({ error: 'Event not found' });
     const row = rows[0];
