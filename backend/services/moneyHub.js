@@ -874,6 +874,65 @@ function roundRowsToTotal(rows, field, total) {
   rows.forEach((r, i) => { r[field] = floors[i] || 0; });
 }
 
+// THE PRICE SHEET (2026-10-03): every bill and rate card Flock pays, in one
+// list, each with the date it was last checked against its source, oldest
+// first, so what needs a fresh look is at the top. The code's lines carry
+// their own checked dates (costModel.js); a reconciled bill, the date it was
+// read; a rate card, the date its pricing page was read; a bill on the
+// expense list, its last charge when it is marked checked against a receipt,
+// and no date when it is not.
+const PRICE_SHEET_STALE_DAYS = 60;
+const RATE_LABEL = {
+  gemini: 'Google Gemini (Birdie)', places: 'Google Places', vision: 'Google Cloud Vision',
+  weather: 'OpenWeatherMap', ticketmaster: 'Ticketmaster', resend: 'Resend (email)',
+  maptiler: 'MapTiler', posthog: 'PostHog', sentry: 'Sentry', revenuecat: 'RevenueCat',
+  stripe: 'Stripe fees', push: 'Firebase push', stores: 'App Store commission',
+};
+
+function daysBetweenYmd(a, b) {
+  if (!isYmd(a) || !isYmd(b)) return null;
+  return Math.round((Date.UTC(...b.split('-').map((n, i) => (i === 1 ? Number(n) - 1 : Number(n))))
+    - Date.UTC(...a.split('-').map((n, i) => (i === 1 ? Number(n) - 1 : Number(n))))) / 86400000);
+}
+
+function buildPriceSheet({ expenses = [], reconciled = null, todayYmd }) {
+  const rows = [];
+  const unitOf = { monthly: 'a month', yearly: 'a year', one_time: 'once', quarterly: 'a quarter', usage: 'a month, metered' };
+  for (const [list, cadence] of [[costModel.FIXED_MONTHLY, 'monthly'], [costModel.FIXED_ANNUAL, 'yearly'], [costModel.ONE_TIME, 'one_time']]) {
+    for (const e of list) {
+      rows.push({ id: `code-${e.id}`, label: e.label, priceCents: Math.round(Number(e.usd) * 100), unit: unitOf[cadence], checkedOn: e.checked || null, source: e.source || null, from: 'code' });
+    }
+  }
+  const recLines = reconciled && Array.isArray(reconciled.lines) ? reconciled.lines : costModel.RECONCILED.lines;
+  for (const l of recLines) {
+    rows.push({ id: `rec-${l.id}`, label: l.label, priceCents: Math.round(Number(l.usdPerMonth) * 100), unit: 'a month, from the bill', checkedOn: l.asOf || null, source: l.readFrom || null, from: 'reconciled' });
+  }
+  for (const [key, r] of Object.entries(costModel.RATES || {})) {
+    rows.push({ id: `rate-${key}`, label: RATE_LABEL[key] || key, priceCents: null, unit: 'rate card', checkedOn: r.checked || null, source: r.source || null, from: 'rate' });
+  }
+  for (const x of expenses) {
+    if (!x.active) continue;
+    rows.push({
+      id: `expense-${x.id}`,
+      label: x.product ? `${x.vendor}, ${x.product}` : x.vendor,
+      priceCents: x.currency === 'USD' ? (x.isCredit ? -1 : 1) * x.amountCents : null,
+      unit: unitOf[x.cadence] || x.cadence,
+      checkedOn: x.verified && x.lastChargedOn ? x.lastChargedOn : null,
+      source: x.verified ? 'a receipt' : null,
+      from: 'expense',
+    });
+  }
+  for (const r of rows) {
+    r.ageDays = r.checkedOn ? daysBetweenYmd(r.checkedOn, todayYmd) : null;
+    r.stale = r.ageDays === null || r.ageDays > PRICE_SHEET_STALE_DAYS;
+  }
+  // Never checked first, then the oldest check.
+  rows.sort((a, b) => (a.checkedOn === null) - (b.checkedOn === null) === 0
+    ? (a.checkedOn || '').localeCompare(b.checkedOn || '') || a.label.localeCompare(b.label)
+    : (a.checkedOn === null ? -1 : 1));
+  return { staleAfterDays: PRICE_SHEET_STALE_DAYS, rows, stale: rows.filter((r) => r.stale).length };
+}
+
 // THE EXPENSE LIST AS A SPREADSHEET, for an accountant or a tax return
 // (2026-10-03). Every row, stopped ones included, since a stopped bill was
 // still paid. Amounts in dollars with two decimals; dates as typed.
@@ -3452,6 +3511,7 @@ async function buildMoneyHub({
     revenuecat,
   });
   const planNets = buildPlanNets();
+  const priceSheet = buildPriceSheet({ expenses, reconciled, todayYmd: month.todayYmd });
   const unitCosts = buildUnitCosts({ burnCents: net.burnCents, people });
   const { boolFlag } = require('./entitlements');
 
@@ -3460,6 +3520,7 @@ async function buildMoneyHub({
     month: { label: month.label, startYmd: month.startYmd, todayYmd: month.todayYmd, daysInMonth: month.daysInMonth, dayOfMonth: month.dayOfMonth, tz: HUB_TZ },
     planNets,
     unitCosts,
+    priceSheet,
     cache: { ttlSeconds: EXTERNAL_TTL_MS / 1000, minRefreshSeconds: MIN_FORCE_REFRESH_MS / 1000 },
     revenue: {
       stripe,
@@ -3524,6 +3585,7 @@ module.exports = {
   buildPlanNets,
   buildUnitCosts,
   expensesCsv,
+  buildPriceSheet,
   costsLedger,
   readExpenses,
   readHealth,

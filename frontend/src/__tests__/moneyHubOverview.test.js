@@ -1617,3 +1617,22 @@ describe('renewal totals', () => {
     expect(screen.getByText('Renewals in the next 90 days')).toBeInTheDocument();
   });
 });
+
+describe('the price sheet', () => {
+  const SHEET = {
+    staleAfterDays: 60,
+    stale: 1,
+    rows: [
+      { id: 'expense-2', label: 'Mystery tool', priceCents: 500, unit: 'a month', checkedOn: null, source: null, from: 'expense', ageDays: null, stale: true },
+      { id: 'code-sportsdb', label: 'TheSportsDB Single Developer', priceCents: 900, unit: 'a month', checkedOn: '2026-09-01', source: null, from: 'code', ageDays: 32, stale: false },
+    ],
+  };
+  test('lists each price with its checked date, and an unchecked one asks to be re-checked', async () => {
+    await renderHub({ ...CONNECTED, priceSheet: SHEET });
+    expect(await screen.findByText('Price sheet')).toBeInTheDocument();
+    expect(screen.getByText('1 price not checked in 60 days')).toBeInTheDocument();
+    expect(hubRow('TheSportsDB Single Developer').textContent).toMatch(/\$9\.00 a month.*Checked 2026-09-01, 32 days ago\./);
+    expect(document.body.textContent).toMatch(/Prices to re-check/);
+    expect(document.body.textContent).toMatch(/Not checked against a receipt or a pricing page in 60 days: Mystery tool\./);
+  });
+});

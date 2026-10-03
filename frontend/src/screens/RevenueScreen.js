@@ -222,6 +222,7 @@ const HUB_CARD = {
   costs: { id: 'hub-costs', link: 'Go to Costs' },
   expenses: { id: 'hub-expenses', link: 'Go to the expense list' },
   prices: { id: 'hub-prices', link: 'Go to Prices' },
+  priceSheet: { id: 'hub-price-sheet', link: 'Go to the price sheet' },
   crowd: { id: 'hub-crowd', link: 'Go to Crowd data' },
   model: { id: 'hub-model', link: 'Go to Model' },
   health: { id: 'hub-health', link: 'Go to Health' },
@@ -1246,6 +1247,33 @@ const HUB_VERDICT = {
 };
 const HUB_VERDICT_ORDER = ['mismatch', 'missing', 'unset', 'unchecked', 'unsold', 'match'];
 
+// Every bill and rate card in one list, oldest check first (moneyHub.js
+// buildPriceSheet).
+function HubPriceSheet({ h, colors }) {
+  const ps = h.priceSheet;
+  if (!ps || !Array.isArray(ps.rows) || ps.rows.length === 0) return null;
+  const navy = colors.navy;
+  return (
+    <div id={HUB_CARD.priceSheet.id} style={hubStyle.card}>
+      <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: navy, margin: '0 0 2px' }}>Price sheet</h3>
+      <p style={hubStyle.sub}>Every bill and rate card Flock pays, with the day each was last checked against its source. Never checked and oldest first.</p>
+      <p style={{ fontSize: 'var(--t-label)', fontWeight: '700', margin: '0 0 4px', color: ps.stale > 0 ? 'var(--accent-amber-text)' : 'var(--accent-green-text)' }}>
+        {ps.stale > 0 ? `${hubPlural(ps.stale, 'price', 'prices')} not checked in ${ps.staleAfterDays} days` : `Every price checked in the last ${ps.staleAfterDays} days`}
+      </p>
+      {ps.rows.map((r) => (
+        <HubRow
+          key={r.id}
+          navy={navy}
+          label={r.label}
+          tone={r.stale ? 'warn' : undefined}
+          value={Number.isFinite(r.priceCents) ? `${hubMoney(r.priceCents)} ${r.unit}` : r.unit}
+          note={`${r.checkedOn ? `Checked ${r.checkedOn}${Number.isFinite(r.ageDays) ? `, ${hubPlural(r.ageDays, 'day', 'days')} ago` : ''}` : 'Never checked against a receipt or a pricing page'}${r.source ? `, from ${r.source}` : ''}.`}
+        />
+      ))}
+    </div>
+  );
+}
+
 function HubPrices({ h, colors }) {
   const p = h.pricing || {};
   const s = (h.revenue && h.revenue.stripe) || {};
@@ -1925,6 +1953,10 @@ function hubAttention(h) {
   if (h.expenses && h.expenses.status === 'error') {
     add({ key: 'expenses', tone: 'warn', label: 'Expenses', value: 'Not read', note: 'The expense list could not be read, so renewals and bills counted twice were not checked.', card: HUB_CARD.expenses });
   }
+  const ps = h.priceSheet;
+  if (ps && ps.stale > 0) {
+    add({ key: 'price-sheet', tone: 'warn', label: 'Prices to re-check', value: hubCount(ps.stale), note: `Not checked against a receipt or a pricing page in ${ps.staleAfterDays} days: ${ps.rows.filter((r) => r.stale).map((r) => r.label).join('; ')}.`, card: HUB_CARD.priceSheet });
+  }
   const lic = costs.licence;
   if (lic && Array.isArray(lic.items) && lic.items.length > 0) {
     add({
@@ -2078,6 +2110,7 @@ function MoneyHub({ colors, onExpensesChanged }) {
           tabs cannot disagree (money hub audit 2026-10-03). Both reload. */}
       <HubExpenses h={data} colors={colors} onChanged={() => { load(false); if (onExpensesChanged) onExpensesChanged(); }} />
       <HubPrices h={data} colors={colors} />
+      <HubPriceSheet h={data} colors={colors} />
       <HubCrowdData h={data} colors={colors} />
       <HubModel h={data} colors={colors} />
       <HubHealth h={data} colors={colors} />
