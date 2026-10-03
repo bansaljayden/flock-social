@@ -1176,7 +1176,11 @@ const TAKEDOWN_TARGETS = {
   // already, and the name guard reads a hidden row as a takedown only when it
   // was not retired, so a moderator hiding it would otherwise have taken down
   // nothing. A row brought back is a live answer again, not a retired one.
-  guest_rsvp: { table: 'guest_rsvps', audience: 'flock_id, NULL::int AS notify_a, NULL::int AS notify_b, NULL::text AS place_id', alsoSet: 'retired_at = NULL' },
+  //
+  // `alsoDue` is the same fact from the other side: a retired row is hidden
+  // and still due a moderator's hide, so the already-in-that-state guard on
+  // the UPDATE below must not count it as done.
+  guest_rsvp: { table: 'guest_rsvps', audience: 'flock_id, NULL::int AS notify_a, NULL::int AS notify_b, NULL::text AS place_id', alsoSet: 'retired_at = NULL', alsoDue: 'retired_at IS NOT NULL' },
 };
 
 // ---------------------------------------------------------------------------
@@ -1498,11 +1502,25 @@ router.put('/reports/:id', async (req, res) => {
           // afterwards would be reading a world the takedown has already
           // changed (a DM's receiver, a message's flock), and on a rollback it
           // would name people about an event that never happened.
+          // ONLY WHEN IT CHANGES SOMETHING (2026-10-03). The UPDATE used to
+          // match the row whatever it already said, so a second Hide (a card
+          // not yet refreshed, a second tab, a double click) resolved the
+          // report again, wrote a second content_hidden audit row, mailed the
+          // reporter their follow-up a second time and sent the takedown event
+          // again. Ban has refused exactly this since it was written; Hide and
+          // Restore now refuse it the same way.
           const changed = await client.query(
-            `UPDATE ${target.table} SET is_hidden = $1${target.alsoSet ? `, ${target.alsoSet}` : ''} WHERE id = $2 RETURNING ${target.audience}`,
+            `UPDATE ${target.table} SET is_hidden = $1${target.alsoSet ? `, ${target.alsoSet}` : ''} WHERE id = $2 AND (COALESCE(is_hidden, false) IS DISTINCT FROM $1${target.alsoDue ? ` OR ${target.alsoDue}` : ''}) RETURNING ${target.audience}`,
             [hiding, report.content_id]
           );
-          if (changed.rowCount === 0) {
+          const stillThere = changed.rowCount === 0
+            ? (await client.query(`SELECT 1 FROM ${target.table} WHERE id = $1`, [report.content_id])).rows.length > 0
+            : false;
+          if (changed.rowCount === 0 && stillThere) {
+            refusal = hiding
+              ? { status: 409, error: 'That content is already hidden. Dismiss the report instead.' }
+              : { status: 409, error: 'That content is not hidden, so there is nothing to restore. Dismiss the report instead.' };
+          } else if (changed.rowCount === 0) {
             refusal = hiding
               ? { status: 404, error: 'That content no longer exists. Dismiss the report instead.' }
               // Every refusal on this route leaves the moderator an action they

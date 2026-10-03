@@ -165,6 +165,9 @@ function moderationHandlers(contentType, table, audienceRow, over = {}) {
         ? { rows: [], rowCount: 0 }
         : { rows: [audienceRow], rowCount: 1 }
     )],
+    // Asked only when the UPDATE changed nothing, to tell "gone" from "already
+    // in that state". A null audience row stands for content that is gone.
+    [new RegExp(`^SELECT 1 FROM ${table} WHERE id = \\$1$`), () => (over.alreadyThere ? { rows: [{ '?column?': 1 }], rowCount: 1 } : { rows: [], rowCount: 0 })],
     [/UPDATE content_reports SET status/, () => ({ rows: [], rowCount: 1 })],
     [/INSERT INTO moderation_actions/, () => ({ rows: [{ id: 1 }], rowCount: 1 })],
     [/SELECT user_id FROM flock_members/, () => ({ rows: [{ user_id: 11 }, { user_id: 12 }], rowCount: 2 })],
@@ -407,6 +410,33 @@ test('unhide of content that no longer exists is a 404 and audits nothing', asyn
   assert.strictEqual(ran(/INSERT INTO moderation_actions/).length, 0);
   assert.ok(timeline().includes('ROLLBACK'));
   assert.strictEqual(emitted.length, 0, 'a rolled-back action must tell nobody');
+});
+
+// A second Hide on content already hidden (a stale card, a second tab), or a
+// Restore on content already back, used to resolve the report again, write a
+// second audit row and mail the reporter again. Ban has always refused that;
+// Hide and Restore now do too, and leave the moderator Dismiss (2026-10-03).
+test('hiding what is already hidden, or restoring what is already back, is refused and changes nothing', async () => {
+  for (const [action, words] of [['hide', /already hidden/], ['unhide', /not hidden/]]) {
+    handlers = moderationHandlers('venue_review', 'venue_reviews', null, { alreadyThere: true });
+    log = [];
+    emitted = [];
+    // eslint-disable-next-line no-await-in-loop
+    const res = await call('PUT', '/api/admin/reports/7', { action });
+    assert.strictEqual(res.status, 409, `${action}: ${res.text}`);
+    assert.match(res.body.error, words);
+    assert.match(res.body.error, /Dismiss the report/);
+    assert.strictEqual(ran(/INSERT INTO moderation_actions/).length, 0, action);
+    assert.strictEqual(ran(/UPDATE content_reports SET status/).length, 0, action);
+    assert.strictEqual(emitted.length, 0, action);
+    assert.ok(timeline().includes('ROLLBACK'), action);
+  }
+});
+
+test('the takedown only matches a row whose state it changes, and a retired guest row still counts as due', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'routes', 'admin.js'), 'utf8');
+  assert.match(src, /WHERE id = \$2 AND \(COALESCE\(is_hidden, false\) IS DISTINCT FROM \$1\$\{target\.alsoDue \? ` OR \$\{target\.alsoDue\}` : ''\}\)/);
+  assert.match(src, /alsoSet: 'retired_at = NULL', alsoDue: 'retired_at IS NOT NULL'/);
 });
 
 test('the takedown table is chosen from the fixed map, never from the request', async () => {
