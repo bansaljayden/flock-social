@@ -26,8 +26,10 @@ import { isNativeShell } from '../lib/nativeShell';
    THE TABLE LISTS ONLY WHAT THE SERVER ENFORCES. Birdie: FREE_DAILY_LIMIT and
    PREMIUM_DAILY_LIMIT in backend/services/birdieUsage.js. Forecasts:
    FREE_MONTHLY_FORECASTS in backend/services/forecastUsage.js, with no meter
-   at all for Pro. If either number moves there, it moves here, and nothing
-   else goes in the table until the code enforces it (DESIGN-STANDARD C1).
+   at all for Pro. Crowd alerts: backend/services/crowdAlerts.js sends them
+   only to subscribers while the paywall is on. If any of these moves there,
+   it moves here, and nothing else goes in the table until the code enforces
+   it (DESIGN-STANDARD C1).
 
    AND IT IS SHOWN ONLY WHILE PRO IS ON SALE. The free column is a limit the
    server applies only with the paywall on; with it off every account already
@@ -404,6 +406,11 @@ export default function ProPage() {
                 <th scope="row">Venues with crowd levels and forecasts, a month</th>
                 <td>{FORECASTS_FREE_MONTHLY}</td>
                 <td>No limit</td>
+              </tr>
+              <tr>
+                <th scope="row">A push before your spot gets packed</th>
+                <td>No</td>
+                <td>Yes</td>
               </tr>
             </tbody>
           </table>

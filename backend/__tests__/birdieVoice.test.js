@@ -324,7 +324,7 @@ test('the flock and friend context rules survive', () => {
   assert.match(prompt, /anonymous budget matching/, 'the budget-matching description is gone');
   assert.match(prompt, /only ever sees the ceiling, never anyone's number, and only after 3\+ people submit/,
     'the budget privacy invariant was reworded; this sentence is what stops Birdie speculating about amounts');
-  assert.match(prompt, /bill splitting after \(Venmo\/Cash App\/Zelle links, marked paid manually\)/,
+  assert.match(prompt, /bill splitting after \(Venmo\/Cash App links and Zelle instructions, marked paid manually\)/,
     'the bill-splitting description is gone');
   assert.match(prompt, /guest invite links/, 'the guest-invite description is gone');
   assert.match(prompt, /venue voting/, 'the venue-voting description is gone');

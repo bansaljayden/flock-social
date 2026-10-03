@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import './PrivacyPolicy.css';
 import SiteFooter from './SiteFooter';
 
-const EFFECTIVE_DATE = 'September 30, 2026';
+const EFFECTIVE_DATE = 'October 3, 2026';
 const CONTACT_EMAIL = 'social@flockcorp.com';
 
 // THE OPERATOR IS A REGISTERED COMPANY NOW, and this name is its legal name.
@@ -655,7 +655,7 @@ export default function PrivacyPolicy() {
               <ul>
                 <li><strong>Google Places</strong> returns venue search results, venue details, nearby venues for a venue owner's competitor view, and venue photos. We send the search text and the map area, never your account.</li>
                 <li><strong>OpenWeatherMap</strong> returns the weather for an area, which the crowd model reads as an input. No personal information is sent.</li>
-                <li><strong>Ticketmaster</strong> returns ticketed events near an area, which the crowd model also reads. We send the search area, not your account.</li>
+                <li><strong>Ticketmaster</strong> returns ticketed events near an area, which the crowd model also reads. We send the search area, not your account. An event's picture loads from Ticketmaster's image servers, which see your device's IP address the way any website you load a picture from does.</li>
               </ul>
 
               <h3>They receive nothing about anyone</h3>
@@ -671,7 +671,7 @@ export default function PrivacyPolicy() {
                     so it sits beside SeatGeek. Check this list against that
                     inventory when a dependency is added. */}
                 <li><strong>TheSportsDB</strong> supplies the game schedules those same offline scripts read. No server code reads it either.</li>
-                <li><strong>Venmo, Cash App and Zelle</strong> are opened as links from your phone. There is no integration and no account. Flock builds a web address and your phone opens it. No money and no payment detail moves through Flock.</li>
+                <li><strong>Venmo and Cash App</strong> are opened as links from your phone, and <strong>Zelle</strong> is a written instruction you follow in your banking app. There is no integration and no account. For Venmo and Cash App, Flock builds a web address and your phone opens it. No money and no payment detail moves through Flock.</li>
                 <li><strong>Codemagic</strong> builds the iOS app, <strong>GitHub Actions</strong> scans our code for leaked secrets, and the development tools we write Flock with never touch the product. None of them receives user data.</li>
               </ul>
 

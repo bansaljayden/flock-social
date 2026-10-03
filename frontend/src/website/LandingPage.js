@@ -214,6 +214,7 @@ function ProOfferCard({ offer }) {
         <li>Everything in Free</li>
         <li>150 Birdie messages a day instead of 10</li>
         <li>Crowd levels and forecasts for every venue, not just 30 a month</li>
+        <li>A heads-up push before your spot gets packed</li>
       </ul>
       <a className="lp-btn lp-btn-navy" href="/pro">Get Flock Pro</a>
     </div>
@@ -920,7 +921,7 @@ export default function LandingPage() {
             <ul className="lp-list">
               <li>No number until everyone going has answered or the plan's creator locks it, with at least three members' amounts in, and then it is a rounded band, not anyone's figure</li>
               <li>Venue picks stay under the group’s ceiling</li>
-              <li>Split the bill and send Venmo, Cash App, or Zelle links</li>
+              <li>Split the bill with Venmo and Cash App links, or Zelle instructions</li>
             </ul>
           </div>
 

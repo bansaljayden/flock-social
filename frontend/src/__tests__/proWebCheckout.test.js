@@ -171,7 +171,8 @@ describe('the Free and Pro table shows only while Pro is on sale', () => {
     const { container } = render(<ProPage />);
     await waitFor(() => expect(table()).not.toBeNull());
     const cells = [...table().querySelectorAll('td')].map((td) => td.textContent);
-    expect(cells).toEqual(['10', '150', '30', 'No limit']);
+    // Crowd alerts are the third limit the server enforces (crowdAlerts.js).
+    expect(cells).toEqual(['10', '150', '30', 'No limit', 'No', 'Yes']);
     expect(container.textContent).toContain('Only the limits in the table go back to Free.');
   });
 

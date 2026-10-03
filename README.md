@@ -33,7 +33,7 @@ product invariant (see below, including what it does not cover).
 | Crowd intelligence | Flock's own trained model in production (XGBoost v2.6.0, served in-process as ONNX, ship-gated against the popular-times baseline; see below). A rule engine covers venues with no baseline yet, and the response says which one answered |
 | Birdie | AI assistant for venue ideas ("somewhere quiet and cheap nearby") |
 | Venue sensor | Flux: a Raspberry Pi with a thermal camera, a doorway counter and a microphone. Counts people on the device with Owl, Flock's own trained vision model (see below), and sends counts only |
-| Safety | Live location inside a flock (off by default, never background), one-tap SOS to trusted contacts, report + block, account deletion in-app (with re-authentication) |
+| Safety | Live location inside a flock (off by default, never background), two-tap SOS to trusted contacts, report + block, account deletion in-app (with re-authentication) |
 | Venues | Venue dashboard on two plans. Free: profile, deals, events, reviews with owner reply, the incoming-flocks demand feed and the live busyness report. Roost: the venue's own forecast, the strip against nearby venues, the weekly summary, and Roost's cards and answers. The plan gate is server-side and switched off, and no venue has been charged |
 | Social | Friends (codes + search), DMs, post-hangout feedback |
 | Accounts | Email + Google + Sign in with Apple (iOS only), DOB age gate at 13, email verification, disposable-domain blocking |
@@ -57,8 +57,16 @@ are all real.
 
 ## The crowd model
 
-**Flock runs its own trained crowd model in production. It beats the busy-times
-chart it replaces on every measure the card is scored on.**
+**What the app serves today is each venue's own weekly curve plus its trailing
+live offset, with the newest live reading blended in (`CROWD_SERVE_MODE=curve_offset`,
+`CROWD_NOWCAST_ENABLED=true`).** Tested against 4,183 live readings it had not seen
+(2026-09-06 to 08), 78.8% of its numbers landed within one crowd level and 53.8%
+within 10 points (`backend/services/servedAccuracy.json`). The trained model below
+is not in that serving path; the table is the model's own evaluation, kept for
+the next retrain.
+
+**The trained model beats the busy-times chart on every measure the card is
+scored on.**
 
 The card gives you one of five words: Quiet, Not Busy, Steady, Busy, Packed.
 Getting that word right is the whole job. Here is Flock against the usual
