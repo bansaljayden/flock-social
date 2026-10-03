@@ -2677,6 +2677,16 @@ async function boot() {
 // then exit 0. A deadline backstops the drain, because a drain that never
 // completes only moves the mid-flight kill to Railway's SIGKILL — minus the
 // log line saying it happened.
+// THIS HANDLER NEVER RAN IN PRODUCTION UNTIL 2026-10-03. Railway started the
+// service with `npm start`, and npm handed SIGTERM to the `sh -c node server.js`
+// it spawns, which died without passing it on, so node was SIGKILLed with this
+// code unrun on every deploy (a week of logs held npm's 'signal SIGTERM' and no
+// '[shutdown]' line). Railway's draining time was also its default of 0 seconds.
+// The Flock-app- service now starts with `node server.js` and drains for 10 s,
+// both as SERVICE settings. They are deliberately not in backend/railway.json:
+// the BESTTIME cron service builds from the same root directory, so a
+// startCommand there would replace its collector with a second API server.
+// Keep SHUTDOWN_DEADLINE_MS under the draining time.
 const SHUTDOWN_DEADLINE_MS = 8000; // under Railway's kill window, far above any legit request
 
 let shuttingDown = false;
