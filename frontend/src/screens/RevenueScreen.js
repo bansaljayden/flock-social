@@ -1324,7 +1324,7 @@ function HubPrices({ h, colors }) {
               navy={navy}
               label={`${x.product === 'pro' ? 'Flock Pro' : 'Roost'}, ${HUB_PLAN_LABEL[x.plan] || x.plan}`}
               value={`${hubMoney(x.web.netPerMonthCents)} web`}
-              note={`${hubMoney(x.priceCents)} ${every(x.interval)}${x.source === 'stripe' ? ', the price Stripe charges' : ', the price the code states'}, so ${hubMoney(x.grossPerMonthCents)} a month before ${hubMoney(x.web.feesPerMonthCents)} of Stripe fees.${x.appStore ? ` In the App Store${Number.isFinite(x.appStore.priceCents) && x.appStore.priceCents !== x.priceCents ? ` (${hubMoney(x.appStore.priceCents)} ${every(x.interval)})` : ''}, ${hubMoney(x.appStore.netPerMonthCents)} after Apple's ${x.appStore.standardPct}%, or ${hubMoney(x.appStore.netPerMonthSmallBusinessCents)} at the ${x.appStore.smallBusinessPct}% of the Small Business Program and a subscriber's second year.` : ''}`}
+              note={`${hubMoney(x.priceCents)} ${every(x.interval)}${x.source === 'stripe' ? ', the price Stripe charges' : ', the price the code states'}, so ${hubMoney(x.grossPerMonthCents)} a month before ${hubMoney(x.web.feesPerMonthCents)} of Stripe fees.${x.appStore ? ` In the App Store (${hubMoney(x.appStore.priceCents)} ${every(x.interval)}, ${x.appStore.source === 'app_store' ? 'the price RevenueCat reports' : x.appStore.source === 'app_store_charge' ? 'the newest App Store charge' : 'the price the code states, because no App Store price was read'}), ${hubMoney(x.appStore.netPerMonthCents)} after Apple's ${x.appStore.standardPct}%, or ${hubMoney(x.appStore.netPerMonthSmallBusinessCents)} at the ${x.appStore.smallBusinessPct}% of the Small Business Program and a subscriber's second year.` : ''}`}
             />
           ))}
         </>
@@ -2911,9 +2911,11 @@ export default function RevenueScreen({
                       break-even is computed at render time rather than typed
                       in, so it cannot drift when a bill changes. */}
                   {(() => {
+                    // Withheld with the all-in figure when the list is cut
+                    // short: its infrastructure bills are missing from it too.
                     const infra = ledger
                       ? ledger.infrastructureMonthlyUsd
-                      : (Number.isFinite(fixed.infrastructureMonthlyUsd) ? fixed.infrastructureMonthlyUsd + reconciledTotal : null);
+                      : (!listCutShort && Number.isFinite(fixed.infrastructureMonthlyUsd) ? fixed.infrastructureMonthlyUsd + reconciledTotal : null);
                     const tooling = ledger ? ledger.toolingMonthlyUsd : null;
                     const listPrice = Number.isFinite(d.venues?.priceUsd) && d.venues.priceUsd > 0 ? d.venues.priceUsd : null;
                     // What a venue leaves after Stripe's fees, from the hub the

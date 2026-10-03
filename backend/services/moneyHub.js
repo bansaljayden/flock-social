@@ -823,10 +823,12 @@ function buildPlanNets(pricing = {}) {
   const out = [];
   for (const shape of PLAN_NET_SHAPES) {
     const stated = STATED_PRICES.find((s) => s.product === shape.product && s.plan === shape.plan);
+    // A live price of $0 is a price (break-even takes it), so only a missing
+    // one falls back to the stated price.
     const live = (pricing.stated || []).find((s) => s.product === shape.product && s.plan === shape.plan
-      && Number.isFinite(s.liveCents) && s.liveCents > 0 && s.liveUsable === true);
+      && Number.isFinite(s.liveCents) && s.liveCents >= 0 && s.liveUsable === true);
     const webCents = live ? live.liveCents : (stated && stated.usd > 0 ? Math.round(stated.usd * 100) : null);
-    if (!webCents) continue;
+    if (webCents === null) continue;
     const months = monthsPerCharge(shape.recurring);
     const grossPerMonth = webCents / months;
     const webNet = stripeNetMonthlyCents(grossPerMonth, shape.recurring);
