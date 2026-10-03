@@ -640,3 +640,21 @@ describe('what was left silent, and why it is safe', () => {
     expect(APP).not.toMatch(/You have no status set/);
   });
 });
+
+// The cropped-photo upload had the honest toast but no rollback: a refused
+// upload left its preview up as if it had saved (app audit 2026-10-03). It
+// now puts back what it replaced, and only while its own preview is showing.
+describe('a cropped photo that did not upload', () => {
+  const crop = () => region(APP, 'const confirmCrop = useCallback', 'const avatarRefitTriedRef = useRef(false);');
+
+  test('goes back to the picture it replaced, unless a later pick has replaced it since', () => {
+    const fn = crop();
+    const captured = fn.indexOf('const before = profilePicRef.current;');
+    const optimistic = fn.indexOf('setProfilePic(encoded);');
+    expect(captured).toBeGreaterThan(-1);
+    expect(optimistic).toBeGreaterThan(captured);
+    const failure = fn.slice(fn.indexOf('catch (err)'));
+    expect(failure).toMatch(/setProfilePic\(\(cur\) => \(cur === encoded \? before : cur\)\);/);
+    expect(failure).toMatch(/That photo didn't upload\. Try again\./);
+  });
+});
