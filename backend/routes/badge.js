@@ -184,6 +184,14 @@ function badgeRetryMs(req) {
   return Math.max(1, hits[hits.length - BADGE_IP_HOURLY] + BADGE_IP_WINDOW_MS - now);
 }
 
+//
+// THE DAY'S COUNT IS NOT SPENT HERE (backend audit 2026-10-03). It used to be,
+// before the route had asked whether the id is a verified venue at all, so a
+// handful of addresses at 120 an hour each with shaped junk ids spent the
+// whole 600 and every real venue's badge read "Live status paused" until UTC
+// midnight. The day's count is a ceiling on Google spend, and only a verified
+// venue reaches Google: chargeBadgeDay below spends it, after that check. This
+// gate still READS it, so a spent day refuses before the Postgres lookup too.
 function allowBadgeMiss(req) {
   const today = new Date().toISOString().slice(0, 10);
   if (today !== badgeDayKey) { badgeDayKey = today; badgeDayCount = 0; }
@@ -196,6 +204,16 @@ function allowBadgeMiss(req) {
   hits.push(now);
   badgeIpHits.set(ip, hits);
   if (badgeIpHits.size > BADGE_IP_MAX_ENTRIES) evictBadgeIpHits(now);
+  return true;
+}
+
+// One unit of the day's badge count, for a miss on a verified venue, which is
+// the miss that goes on to a paid Place Details call. False when the day is
+// spent.
+function chargeBadgeDay() {
+  const today = new Date().toISOString().slice(0, 10);
+  if (today !== badgeDayKey) { badgeDayKey = today; badgeDayCount = 0; }
+  if (badgeDayCount >= BADGE_DAILY) return false;
   badgeDayCount++;
   return true;
 }
@@ -356,6 +374,12 @@ router.get('/:placeId.svg',
       );
       if (!claimed.rows.length) return res.status(404).send('');
       if (!GOOGLE_KEY) return res.status(503).send('');
+      if (!chargeBadgeDay()) {
+        setRetryAfter(res, msUntilUtcMidnight());
+        res.set('Content-Type', 'image/svg+xml');
+        res.set('Cache-Control', 'no-store');
+        return res.status(429).send(svgBadge('Live status paused', '#98937f'));
+      }
 
       // The claimed-and-verified check plus the 15-minute cache are a fine rate
       // limit, but they are not a spending limit: this is a PAID Place Details
@@ -465,6 +489,8 @@ module.exports.__test = {
   getBadge,
   setBadge,
   allowBadgeMiss,
+  chargeBadgeDay,
+  badgeDaySpent: () => badgeDayCount,
   cacheSize: () => cache.size,
   resetBadgeBudget({ clearIps = true } = {}) {
     badgeDayKey = new Date().toISOString().slice(0, 10);
