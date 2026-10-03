@@ -915,7 +915,11 @@ router.put('/', [
         location = COALESCE($3, location),
         description = COALESCE($4, description),
         goals = COALESCE($5, goals),
-        phone = COALESCE($6, phone),
+        -- An EMPTY phone ($12) clears it. Venue Information is the only
+        -- screen that sends a phone it lets the owner edit, and an emptied
+        -- field went through COALESCE, saved, and kept the old number (venue
+        -- audit 2026-10-03). An absent or null phone still leaves it alone.
+        phone = CASE WHEN $12::boolean THEN NULL ELSE COALESCE($6, phone) END,
         operating_hours = COALESCE($7, operating_hours),
         -- Merge, do not replace. jsonb_typeof rather than a bare COALESCE on
         -- the left: concatenating an object with a jsonb scalar raises
@@ -953,7 +957,8 @@ router.put('/', [
        // venue-card paths store. The validator above guarantees this is non-null
        // for any non-empty photoUrl that got this far.
        photoUrl ? safeVenuePhotoUrl(photoUrl) : null,
-       req.user.id]
+       req.user.id,
+       phone === '']
     );
 
     if (result.rows.length === 0) {

@@ -389,3 +389,19 @@ test('structural pins: one shared allowlist helper, and the stored value never c
   assert.ok(!/\$\{req\.(query|params|body)/.test(ADMIN_SRC),
     'a request value is interpolated into SQL somewhere in routes/admin.js');
 });
+
+// Venue Information is the one screen that sends a phone the owner can edit,
+// and an emptied field used to go through COALESCE and keep the old number
+// (venue audit 2026-10-03). An empty phone clears it; absent or null leaves it.
+test('an emptied phone clears it, and a missing one leaves it alone', async () => {
+  for (const [body, clears] of [[{ phone: '' }, true], [{ businessName: 'Kome' }, false], [{ phone: null }, false], [{ phone: '610-555-0100' }, false]]) {
+    handlers = venueUpdateHandlers();
+    log = [];
+    // eslint-disable-next-line no-await-in-loop
+    const res = await call('PUT', '/api/venue-profile', body);
+    assert.strictEqual(res.status, 200, `${JSON.stringify(body)}: ${res.text}`);
+    const upd = ran(/UPDATE venue_profiles SET/)[0];
+    assert.match(upd.sql, /phone = CASE WHEN \$12::boolean THEN NULL ELSE COALESCE\(\$6, phone\) END/);
+    assert.strictEqual(upd.params[11], clears, JSON.stringify(body));
+  }
+});

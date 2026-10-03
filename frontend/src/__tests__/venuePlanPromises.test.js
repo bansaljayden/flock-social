@@ -160,9 +160,12 @@ describe('a save does not forget what the server worked out', () => {
     expect(mergeSavedProfile(fromGet, null)).toBe(fromGet);
   });
 
-  test('both Settings saves merge rather than replace', () => {
+  // Three since 2026-10-03: Venue Information merges its answer too, so a
+  // rename reaches the header the dashboard reads.
+  test('every Settings save merges rather than replaces', () => {
     expect(DASH).not.toMatch(/setVenueProfile\(saved\)/);
-    expect((DASH.match(/setVenueProfile\(\(prev\) => mergeSavedProfile\(prev, saved\)\)/g) || []).length).toBe(2);
+    expect((DASH.match(/setVenueProfile\(\(prev\) => mergeSavedProfile\(prev, saved\)\)/g) || []).length).toBe(3);
+    expect(DASH).toMatch(/const saved = await updateVenueProfile\(\{ businessName: venueInfo\.name, location: venueInfo\.address, phone: venueInfo\.phone \}\);\s*setVenueProfile\(\(prev\) => mergeSavedProfile\(prev, saved\)\);/);
   });
 });
 

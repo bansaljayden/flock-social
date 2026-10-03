@@ -2172,7 +2172,12 @@ export default function VenueDashboard({
                       // The editor stays open with the owner's text now, and
                       // the toast is the server's own sentence.
                       try {
-                        await updateVenueProfile({ businessName: venueInfo.name, location: venueInfo.address, phone: venueInfo.phone });
+                        // And the answer goes into the profile, which the
+                        // header reads: a renamed venue kept its old name at
+                        // the top of the dashboard for the rest of the session
+                        // (venue audit 2026-10-03).
+                        const saved = await updateVenueProfile({ businessName: venueInfo.name, location: venueInfo.address, phone: venueInfo.phone });
+                        setVenueProfile((prev) => mergeSavedProfile(prev, saved));
                         setEditingVenueInfo(false);
                       } catch (e) {
                         showToast(e?.message || "Those details didn't save. Try again.", 'error');
