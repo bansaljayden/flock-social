@@ -3271,3 +3271,29 @@ test('a monthly bill is every charge inside the window, so three in the next 90 
   assert.strictEqual(by[90].cents, 60000);
   assert.strictEqual(by[90].bills, 1, 'the euro bill has no dollar figure to add');
 });
+
+// The price sheet (2026-10-03).
+test('the price sheet lists every bill and rate card once, never checked and oldest first', () => {
+  const cm = require('../services/costModel');
+  const ps = moneyHub.buildPriceSheet({
+    expenses: [
+      expense({ id: 1, vendor: 'Anthropic', product: 'Max', kind: 'tooling', amountCents: 20000, verified: true, lastChargedOn: '2026-09-13' }),
+      expense({ id: 2, vendor: 'Mystery', kind: 'tooling', amountCents: 500, verified: false }),
+      expense({ id: 3, vendor: 'Old', kind: 'tooling', amountCents: 500, verified: true, lastChargedOn: '2026-06-01', active: false }),
+    ],
+    todayYmd: '2026-10-03',
+  });
+  const ids = ps.rows.map((r) => r.id);
+  assert.strictEqual(new Set(ids).size, ids.length, 'a line appears twice');
+  for (const e of [...cm.FIXED_MONTHLY, ...cm.FIXED_ANNUAL, ...cm.ONE_TIME]) assert.ok(ids.includes(`code-${e.id}`), e.id);
+  for (const l of cm.RECONCILED.lines) assert.ok(ids.includes(`rec-${l.id}`), l.id);
+  for (const k of Object.keys(cm.RATES)) assert.ok(ids.includes(`rate-${k}`), k);
+  assert.ok(!ids.includes('expense-3'), 'a stopped bill is not a price paid now');
+  assert.strictEqual(ps.rows[0].id, 'expense-2', 'never checked comes first');
+  assert.strictEqual(ps.rows[0].stale, true);
+  const max = ps.rows.find((r) => r.id === 'expense-1');
+  assert.strictEqual(max.ageDays, 20);
+  assert.strictEqual(max.stale, false);
+  const dated = ps.rows.filter((r) => r.checkedOn);
+  for (let i = 1; i < dated.length; i += 1) assert.ok(dated[i - 1].checkedOn <= dated[i].checkedOn, 'oldest check first');
+});
