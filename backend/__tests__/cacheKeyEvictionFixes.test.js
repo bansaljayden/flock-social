@@ -351,6 +351,34 @@ test('a badge miss is metered per address, and a cache hit is free', async () =>
   assert.strictEqual(googleCalls.length, 1, 'a cache hit must not reach Google');
 });
 
+// The day's 600 is a ceiling on Google spend, and only a verified venue
+// reaches Google. Spent before the verified check, a few addresses spraying
+// shaped junk ids used it all and every real badge read "Live status paused"
+// until UTC midnight (backend audit 2026-10-03).
+test("misses on ids no venue has claimed do not spend the day's badge count", async () => {
+  badge.resetBadgeBudget();
+  const unknown = await getBadgeRoute('/api/badge/PLACE_NOT_CLAIMED_1.svg');
+  assert.strictEqual(unknown.status, 404);
+  assert.strictEqual(badge.badgeDaySpent(), 0, 'an unclaimed id spent a unit of the day');
+  assert.deepStrictEqual(googleCalls, []);
+
+  dbHandlers.push([/FROM venue_profiles/, () => ({ rows: [{ x: 1 }], rowCount: 1 })]);
+  const real = await getBadgeRoute('/api/badge/PLACE_BADGE_DAY.svg');
+  assert.strictEqual(real.status, 200);
+  assert.strictEqual(badge.badgeDaySpent(), 1, "a verified venue's miss is the one that counts");
+});
+
+test('a spent day still refuses before the Postgres lookup, with the paused badge', async () => {
+  badge.resetBadgeBudget();
+  for (let i = 0; i < badge.BADGE_DAILY; i++) assert.strictEqual(badge.chargeBadgeDay(), true);
+  assert.strictEqual(badge.chargeBadgeDay(), false);
+  const res = await getBadgeRoute('/api/badge/PLACE_AFTER_SPENT.svg');
+  assert.strictEqual(res.status, 429);
+  assert.match(res.body, /Live status paused/);
+  assert.deepStrictEqual(queries, [], 'a spent day still bought a Postgres lookup');
+  badge.resetBadgeBudget();
+});
+
 test('one address cannot walk the badge surface without limit', () => {
   badge.resetBadgeBudget();
   const req = { ip: '198.51.100.9' };
