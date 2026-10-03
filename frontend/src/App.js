@@ -20694,10 +20694,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           box-shadow: 0 0 0 4px rgba(13,40,71,0.1), 0 2px 8px rgba(13,40,71,0.1) !important;
           transition: all 0.2s ease;
         }
-        /* Smooth scroll behavior */
-        * {
-          scroll-behavior: smooth;
-        }
+        /* NO BLANKET SMOOTH SCROLL. This was * { scroll-behavior: smooth },
+           and it turned every programmatic scroll in the app into an
+           animation: opening a chat glided through its whole history to the
+           newest message, the correction that keeps your place when older
+           messages load above it slid instead of holding still, the keyboard
+           lift lagged behind the keyboard, a tab's restored scroll position
+           rode into place, and ChatDetail's jump-to-message, whose own comment
+           says "No smooth scroll", animated anyway (app audit 2026-10-03). A
+           scroll that should glide asks for it: the new-messages pill and the
+           tab's back-to-top pass behavior: 'smooth' themselves. */
         /* Link hover underline animation */
         .link-hover {
           position: relative;
@@ -20805,9 +20811,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         ::-webkit-scrollbar-thumb:hover {
           background: rgba(13,40,71,0.10);
         }
-        /* Smooth scroll containers */
+        /* Momentum scrolling on the older iOS WebViews. Not smooth scrolling:
+           see the note on the blanket rule above. */
         [style*="overflow"] {
-          scroll-behavior: smooth;
           -webkit-overflow-scrolling: touch;
         }
         /* Loading indicator */
