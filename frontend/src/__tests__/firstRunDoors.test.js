@@ -128,3 +128,15 @@ test('the empty calendar has a next action', () => {
   expect(plans).toMatch(/setCurrentTab\('home'\); setCurrentScreen\('create'\);/);
   expect(plans).toMatch(/Start a flock/);
 });
+
+// Opening Birdie asks for location only on a device that has never answered.
+// requestUserLocation reloads the map's default venues, so calling it on a
+// device that already had a location replaced a Discover search with
+// "popular nearby" every time Birdie opened (app audit 2026-10-03).
+test('opening Birdie does not reload the map on a device that already has a location', () => {
+  const app = require('fs').readFileSync(require('path').join(__dirname, '..', 'App.js'), 'utf8');
+  const start = app.indexOf("if (aiChatMode !== 'panel' && aiChatMode !== 'fullscreen') return;");
+  expect(start).toBeGreaterThan(-1);
+  const effect = app.slice(start, app.indexOf('}, [aiChatMode]);', start));
+  expect(effect).toMatch(/if \(userLocation \|\| localStorage\.getItem\('flock_user_lat'\) !== null\) return;\s*requestUserLocation\(\);/);
+});
