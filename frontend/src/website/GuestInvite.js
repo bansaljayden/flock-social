@@ -536,6 +536,9 @@ export default function GuestInvite() {
   // Which phase the last committed render used, so a phase CHANGE can be told
   // apart from the phase this page happened to open on.
   const lastPhase = useRef(null);
+  // Whether the page has shown an answer yet, loading aside. See the focus
+  // effect below.
+  const settledOnce = useRef(false);
   // WHICH ANSWER THE PAGE IS SHOWING, as a number that only goes up. Anything
   // that decides this page's state takes one before it commits, and a reply may
   // only commit while the number it took is still the newest. Loads take one,
@@ -670,13 +673,21 @@ export default function GuestInvite() {
   //
   // Moving focus to the heading covers both: it is announced, and Tab resumes
   // from the message rather than from nowhere. Deliberately NOT done on the
-  // first render: stealing focus from someone who just opened a link is the
-  // bug this is meant to avoid, not a fix for it.
+  // first answer the page shows: stealing focus from someone who just opened a
+  // link is the bug this is meant to avoid, not a fix for it. The page opens on
+  // 'loading', so "the first render" was the wrong test: loading -> closed
+  // counted as a change, and every expired or partial link opened with a focus
+  // ring around its headline (site audit, 2026-10-03). A change counts only
+  // once an answer has been on screen, which still covers both cases above,
+  // since each replaces an answer the person was already looking at.
   useEffect(() => {
     const changed = lastPhase.current !== null && lastPhase.current !== phase;
     lastPhase.current = phase;
-    if (!changed) return;
-    if (phase === 'ready' || phase === 'loading') return;
+    if (phase === 'loading') return;
+    const first = !settledOnce.current;
+    settledOnce.current = true;
+    if (!changed || first) return;
+    if (phase === 'ready') return;
     if (deadEndRef.current) deadEndRef.current.focus();
   }, [phase]);
 

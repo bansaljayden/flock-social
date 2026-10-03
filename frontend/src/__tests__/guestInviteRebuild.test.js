@@ -397,6 +397,28 @@ describe('GuestInvite: the rebuilt screen', () => {
     expect(screen.queryByRole('button', { name: /try again/i })).toBeNull();
   });
 
+  // Opening a link is not a change of state. The page starts on 'loading', and
+  // loading -> closed used to count as one, so every expired or partial link
+  // opened with focus (and its ring) on the headline (site audit 2026-10-03).
+  test('a link that is closed on arrival does not move focus', async () => {
+    mount(() => Promise.resolve({ ok: false, status: 404, json: () => Promise.resolve({}) }));
+    const h1 = await screen.findByRole('heading', { level: 1, name: /this invite has closed/i });
+    expect(document.activeElement).not.toBe(h1);
+  });
+
+  test('a retry that fails again still hands focus to the message', async () => {
+    let calls = 0;
+    mount(() => {
+      calls += 1;
+      return Promise.reject(new Error('offline'));
+    });
+    const retry = await screen.findByRole('button', { name: /try again/i });
+    expect(document.activeElement).not.toBe(screen.getByRole('heading', { level: 1 }));
+    await act(async () => { fireEvent.click(retry); });
+    await waitFor(() => expect(calls).toBeGreaterThan(1));
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole('heading', { level: 1 })));
+  });
+
   test('a plan with no time and no venue says so rather than leaving a blank', async () => {
     const { container } = mount(okWith({ ...PLAN, venues: [] }));
     await screen.findByRole('heading', { level: 1, name: /friday night out/i });
