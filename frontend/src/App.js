@@ -10166,9 +10166,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // the reader has already seen survives closing and reopening Birdie.
   const aiMsgCountRef = useRef(0);
 
-  // Auto-scroll chat to bottom when messages change
+  // No `|| flocks[0]` fallback here either (see getSelectedFlock). The read
+  // cursor and the Opened receipt below take their message id from this, and
+  // with the fallback a plan opened from a notification before the list held
+  // it sent the FIRST plan's newest message id as this plan's read and opened
+  // mark: other members saw "Opened" on messages the person never saw, and the
+  // cursor jumped past unread ones. Missing, the effects find no message and
+  // send nothing until the list catches up.
   const selectedFlock = useMemo(
-    () => flocks.find(f => f.id === selectedFlockId) || flocks[0],
+    () => flocks.find(f => f.id === selectedFlockId),
     [flocks, selectedFlockId]
   );
   // Shared budget-filtered venue list — used in search results overlay and share-to-chat modal.
