@@ -1124,7 +1124,7 @@ test('a completed web checkout sends one acknowledgment to the payer, with the r
   let acknowledged = false;
   const { calls, restore } = stubPool(async (sql) => {
     if (sql.includes('SELECT 1 FROM users')) return { rows: [{ '?column?': 1 }] };
-    if (sql.includes('FROM pro_purchase_acknowledgments')) return { rows: acknowledged ? [{ '?column?': 1 }] : [] };
+    if (sql.includes('FROM pro_purchase_acknowledgments')) return { rows: acknowledged ? [{ state: 'sent' }] : [] };
     if (sql.includes('SELECT name, email FROM users')) return { rows: [{ name: 'Sam Rivera', email: 'sam@example.com' }] };
     if (sql.includes('INSERT INTO pro_purchase_acknowledgments')) { acknowledged = true; return { rows: [], rowCount: 1 }; }
     return null;
@@ -1204,11 +1204,56 @@ test('the webhook and the return to the app running together send one acknowledg
   } finally { restore(); mail.restore(); }
 });
 
+// code review's review of the claim (2026-10-03): the path that stood aside had
+// finished by the time the claimer's send failed and gave the claim back, so a
+// provider error at that moment meant no acknowledgment at all. The path that
+// stands aside now looks again later, and sends if the claim was given back.
+test('a path that stood aside sends on its recheck when the other send failed', async () => {
+  setEnv(ON);
+  const ack = require('../services/proAcknowledgment');
+  const rechecks = [];
+  ack.__test.setScheduler((fn, ms) => rechecks.push({ fn, ms }));
+  let failNext = true;
+  const mail = stubSend(() => {
+    if (failNext) { failNext = false; return { sent: false, error: 'provider down' }; }
+    return { sent: true, id: 'em_2' };
+  });
+  let row = null;
+  const { restore } = stubPool(async (sql) => {
+    if (sql.includes('SELECT name, email FROM users')) return { rows: [{ name: 'Sam', email: 'sam@example.com' }] };
+    if (sql.includes('INSERT INTO pro_purchase_acknowledgments')) {
+      if (row) return { rows: [], rowCount: 0 };
+      row = { emailed: false };
+      return { rows: [], rowCount: 1 };
+    }
+    if (sql.includes('DELETE FROM pro_purchase_acknowledgments')) { row = null; return { rows: [], rowCount: 1 }; }
+    if (sql.includes('SET emailed_at = NOW()')) { row.emailed = true; return { rows: [], rowCount: 1 }; }
+    if (sql.includes('FROM pro_purchase_acknowledgments')) return { rows: [] };
+    return null;
+  });
+  try {
+    const session = completedSession();
+    const [a, b] = await Promise.all([ack.acknowledgePurchase(7, session), ack.acknowledgePurchase(7, session)]);
+    assert.deepStrictEqual([a, b].map((r) => r.sent === false || r.skipped).sort(), [true, 'already'].sort());
+    assert.strictEqual(row, null, 'the failed send gave its claim back');
+    assert.strictEqual(rechecks.length, 1, 'the path that stood aside did not schedule a recheck');
+    assert.strictEqual(rechecks[0].ms, ack.__test.RECHECK_DELAYS_MS[0]);
+    await rechecks[0].fn();
+    await new Promise((r) => setTimeout(r, 10));
+    assert.strictEqual(mail.sent.length, 2, 'the recheck never sent');
+    assert.strictEqual(row && row.emailed, true);
+  } finally {
+    restore();
+    mail.restore();
+    ack.__test.setScheduler((fn, ms) => { const t = setTimeout(fn, ms); if (t.unref) t.unref(); });
+  }
+});
+
 test('a claim left by a sender that died is taken over once it is stale', () => {
   const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'services', 'proAcknowledgment.js'), 'utf8');
   assert.match(src, /ON CONFLICT \(session_id\) DO UPDATE SET created_at = NOW\(\)\s+WHERE pro_purchase_acknowledgments\.emailed_at = '-infinity'::timestamptz\s+AND pro_purchase_acknowledgments\.created_at < NOW\(\) - make_interval\(mins => \$3::int\)/);
-  assert.match(src, /OR created_at >= NOW\(\) - make_interval\(mins => \$2::int\)/,
-    'a stale claim must not read as already acknowledged, or nothing would ever take it over');
+  assert.match(src, /WHEN created_at >= NOW\(\) - make_interval\(mins => \$2::int\) THEN 'claimed'\s+ELSE 'open' END AS state/,
+    'a stale claim must read as open, or nothing would ever take it over');
 });
 
 test('the return to the app is a second chance for the acknowledgment', async () => {
