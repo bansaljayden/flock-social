@@ -1894,7 +1894,7 @@ function HubAttention({ h, colors }) {
   );
 }
 
-function MoneyHub({ colors }) {
+function MoneyHub({ colors, onExpensesChanged }) {
   const [data, setData] = React.useState(hubMemo.data);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState('');
@@ -1947,7 +1947,12 @@ function MoneyHub({ colors }) {
       <HubOwnerActions h={data} colors={colors} />
       <HubRevenue h={data} colors={colors} />
       <HubCosts h={data} colors={colors} />
-      <HubExpenses h={data} colors={colors} onChanged={() => load(false)} />
+      {/* An expense saved here is also in the Costs tab's all-in figure and
+          the Projections burn, which read the separate costs payload. That
+          payload was fetched once per session, so after adding a bill here
+          Costs still showed the old total while its own comment says the two
+          tabs cannot disagree (money hub audit 2026-10-03). Both reload. */}
+      <HubExpenses h={data} colors={colors} onChanged={() => { load(false); if (onExpensesChanged) onExpensesChanged(); }} />
       <HubPrices h={data} colors={colors} />
       <HubCrowdData h={data} colors={colors} />
       <HubModel h={data} colors={colors} />
@@ -2142,7 +2147,7 @@ export default function RevenueScreen({
         <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
 
           {/* OVERVIEW TAB: the money hub, defined above this component. */}
-          {activeTab === 'overview' && <MoneyHub colors={colors} />}
+          {activeTab === 'overview' && <MoneyHub colors={colors} onExpensesChanged={() => fetchCosts(true)} />}
 
           {/* THE WHAT-IF SIMULATOR, at the top of the Projections tab. It was
               the Revenue tab until 2026-09-25, when real revenue got a tab of
