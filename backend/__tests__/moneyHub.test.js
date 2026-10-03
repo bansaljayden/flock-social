@@ -3345,3 +3345,44 @@ test('the price sheet keeps a euro amount and leaves out a line an expense stand
   assert.ok(!ps.rows.some((r) => r.id === 'rec-railway'), 'the replaced Railway line still showed beside its replacement');
   assert.ok(ps.rows.some((r) => r.id === 'expense-2'));
 });
+
+// code review of the afternoon's money work (2026-10-03, round 4).
+test('a bill charged today is not due again this week', () => {
+  const pic = moneyHub.buildCostPicture({
+    expenses: [expense({ id: 1, vendor: 'Tool', kind: 'tooling', cadence: 'monthly', amountCents: 10000, lastChargedOn: MONTH.todayYmd })],
+    month: MONTH,
+  });
+  const by = Object.fromEntries(pic.upcomingTotals.map((t) => [t.days, t]));
+  assert.strictEqual(by[7].cents, 0, 'a bill paid today read as due this week');
+  assert.strictEqual(by[90].charges, 2, 'next month and the month after');
+});
+
+test('a rise of 25.49% is a jump, though it rounds to 25', () => {
+  const jumps = moneyHub.billJumps({ lines: [{ id: 'x', label: 'X', usdPerMonth: 125.49, asOf: '2026-10-03', previous: { usdPerMonth: 100 } }] });
+  assert.strictEqual(jumps.length, 1);
+  assert.strictEqual(jumps[0].pct, 25);
+});
+
+test('what each plan leaves is worked from the live Stripe and App Store prices when they were read', () => {
+  const nets = moneyHub.buildPlanNets({
+    stated: [{ product: 'pro', plan: 'monthly', liveCents: 599, liveUsable: true }],
+    appStore: [{ plan: 'monthly', listCents: 999 }],
+  });
+  const pro = nets.find((n) => n.product === 'pro' && n.plan === 'monthly');
+  assert.strictEqual(pro.priceCents, 599);
+  assert.strictEqual(pro.source, 'stripe');
+  assert.strictEqual(pro.appStore.priceCents, 999);
+  assert.strictEqual(pro.appStore.source, 'app_store');
+  assert.strictEqual(pro.appStore.netPerMonthCents, Math.round(999 * 0.7));
+  // A plan Stripe did not answer for stays at the stated price, and says so.
+  const yearly = nets.find((n) => n.product === 'pro' && n.plan === 'yearly');
+  assert.strictEqual(yearly.source, 'stated');
+  assert.strictEqual(yearly.priceCents, 2999);
+});
+
+test('the Costs tab ledger names a partial list as partial', () => {
+  const rows = [];
+  Object.defineProperty(rows, 'truncated', { value: true, enumerable: false });
+  assert.strictEqual(moneyHub.costsLedger({ expenses: rows, reconciled: null, month: MONTH }).truncated, true);
+  assert.strictEqual(moneyHub.costsLedger({ expenses: [], reconciled: null, month: MONTH }).truncated, false);
+});

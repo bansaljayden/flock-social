@@ -813,30 +813,51 @@ const PLAN_NET_SHAPES = [
   { product: 'roost', plan: 'founding', recurring: { interval: 'month', interval_count: 1 }, appStore: false },
 ];
 
-function buildPlanNets() {
+// At the prices the hub reads, the way break-even takes them (review
+// 2026-10-03: this used the stated prices while the Overview used Stripe's
+// and the App Store's, so the two cards could disagree). The web price is
+// Stripe's when it bills in dollars on that plan's period; the App Store's
+// is what RevenueCat reports, then the newest charge; each falls back to the
+// stated price and says so.
+function buildPlanNets(pricing = {}) {
   const out = [];
   for (const shape of PLAN_NET_SHAPES) {
     const stated = STATED_PRICES.find((s) => s.product === shape.product && s.plan === shape.plan);
-    if (!stated || !(stated.usd > 0)) continue;
-    const priceCents = Math.round(stated.usd * 100);
+    const live = (pricing.stated || []).find((s) => s.product === shape.product && s.plan === shape.plan
+      && Number.isFinite(s.liveCents) && s.liveCents > 0 && s.liveUsable === true);
+    const webCents = live ? live.liveCents : (stated && stated.usd > 0 ? Math.round(stated.usd * 100) : null);
+    if (!webCents) continue;
     const months = monthsPerCharge(shape.recurring);
-    const grossPerMonth = priceCents / months;
+    const grossPerMonth = webCents / months;
     const webNet = stripeNetMonthlyCents(grossPerMonth, shape.recurring);
+    let appStore = null;
+    if (shape.appStore) {
+      const row = (pricing.appStore || []).find((a) => a.plan === shape.plan);
+      const appCents = row && row.listCents > 0 ? row.listCents
+        : (row && row.lastChargedCents > 0 ? row.lastChargedCents : (stated && stated.usd > 0 ? Math.round(stated.usd * 100) : null));
+      if (appCents) {
+        const appPerMonth = appCents / months;
+        appStore = {
+          priceCents: appCents,
+          source: row && row.listCents > 0 ? 'app_store' : (row && row.lastChargedCents > 0 ? 'app_store_charge' : 'stated'),
+          standardPct: APPLE_COMMISSION_PCT,
+          netPerMonthCents: Math.round(appPerMonth * (1 - APPLE_COMMISSION_PCT / 100)),
+          smallBusinessPct: APPLE_SMALL_BUSINESS_PCT,
+          netPerMonthSmallBusinessCents: Math.round(appPerMonth * (1 - APPLE_SMALL_BUSINESS_PCT / 100)),
+        };
+      }
+    }
     out.push({
       product: shape.product,
       plan: shape.plan,
-      priceCents,
+      priceCents: webCents,
+      source: live ? 'stripe' : 'stated',
       interval: shape.recurring.interval,
       grossPerMonthCents: Math.round(grossPerMonth),
       // Fees as the difference of the two rounded figures, so the line reads
       // gross minus fees equals net to the cent.
       web: { netPerMonthCents: Math.round(webNet), feesPerMonthCents: Math.round(grossPerMonth) - Math.round(webNet) },
-      appStore: shape.appStore ? {
-        standardPct: APPLE_COMMISSION_PCT,
-        netPerMonthCents: Math.round(grossPerMonth * (1 - APPLE_COMMISSION_PCT / 100)),
-        smallBusinessPct: APPLE_SMALL_BUSINESS_PCT,
-        netPerMonthSmallBusinessCents: Math.round(grossPerMonth * (1 - APPLE_SMALL_BUSINESS_PCT / 100)),
-      } : null,
+      appStore,
     });
   }
   return out;
@@ -887,8 +908,11 @@ function billJumps(reconciled) {
     const prev = l.previous;
     if (!prev || !(prev.usdPerMonth > 0) || !Number.isFinite(Number(l.usdPerMonth))) continue;
     const now = Number(l.usdPerMonth);
-    const pct = Math.round(((now - prev.usdPerMonth) / prev.usdPerMonth) * 100);
-    if (pct <= BILL_JUMP_PCT) continue;
+    // Compared unrounded and rounded only for the words: 25.49% read as 25
+    // and stayed quiet (review 2026-10-03).
+    const exactPct = ((now - prev.usdPerMonth) / prev.usdPerMonth) * 100;
+    if (exactPct <= BILL_JUMP_PCT) continue;
+    const pct = Math.round(exactPct);
     out.push({
       id: l.id,
       label: l.label,
@@ -1070,7 +1094,10 @@ function renewalTotals(expenses, todayYmd) {
       // one too many in a window (review 2026-10-03).
       const anchor = x.renewsOn || x.lastChargedOn;
       if (!anchor) continue;
-      for (let k = 0; k <= 240; k += 1) {
+      // A renewal date is a charge still to come, so it counts itself; a last
+      // charge date is one already paid, so counting starts a step after it
+      // (review 2026-10-03: a bill charged today read as due this week).
+      for (let k = x.renewsOn ? 0 : 1; k <= 240; k += 1) {
         const on = addMonthsYmd(anchor, k * step);
         if (on < todayYmd) continue;
         if (on > until) break;
@@ -1299,6 +1326,7 @@ function costsLedger({ expenses, reconciled, month, readError = null }) {
   return {
     status: readError || truncated ? 'error' : 'ok',
     readError: readError || (truncated ? `The expense list has more than ${EXPENSE_LIST_LIMIT} rows, so its totals would leave bills out.` : null),
+    truncated,
     rows: (expenses || []).length,
     activeRows: (expenses || []).filter((x) => x.active).length,
     burnMonthlyUsd: usd(pic.totals.perMonthCents),
@@ -3554,7 +3582,7 @@ async function buildMoneyHub({
     expensesRead: { ok: expensesR.ok, rows: expenses.length },
     revenuecat,
   });
-  const planNets = buildPlanNets();
+  const planNets = buildPlanNets(pricing);
   const priceSheet = buildPriceSheet({ expenses, reconciled, todayYmd: month.todayYmd });
   const unitCosts = buildUnitCosts({ burnCents: net.burnCents, people });
   const { boolFlag } = require('./entitlements');

@@ -61,8 +61,8 @@ describe('the paid-invoice form on the Reconciled card', () => {
   });
 
   test('without the expense list, the burn still adds the reconciled lines, so Railway is not dropped', () => {
-    expect(screen).toContain('const effectiveMonthly = ledger ? ledger.burnMonthlyUsd : fixed.effectiveMonthlyUsd + reconciledMonthly;');
-    expect(screen).toContain('? ledger.burnMonthlyUsd\n              : (Number.isFinite(fixed.effectiveMonthlyUsd) ? fixed.effectiveMonthlyUsd + reconciledTotal : null);');
+    expect(screen).toContain('const effectiveMonthly = ledger ? ledger.burnMonthlyUsd : (listCutShort ? null : fixed.effectiveMonthlyUsd + reconciledMonthly);');
+    expect(screen).toContain('? ledger.burnMonthlyUsd\n              : (!listCutShort && Number.isFinite(fixed.effectiveMonthlyUsd) ? fixed.effectiveMonthlyUsd + reconciledTotal : null);');
   });
 
   test('a failed read of saved entries is named, not silently shown as the code figure', () => {
