@@ -269,6 +269,7 @@ test('a takedown that changed nothing sweeps nothing', async () => {
   handlers = [
     reportLookup(reportRow()),
     [/UPDATE messages SET is_hidden/, () => ({ rows: [], rowCount: 0 })],
+    [/^SELECT 1 FROM messages WHERE id = \$1$/, () => ({ rows: [], rowCount: 0 })],
   ];
   const res = await call('PUT', '/api/admin/reports/7', { action: 'hide' });
   assert.strictEqual(res.status, 404, res.text);

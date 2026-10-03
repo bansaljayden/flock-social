@@ -181,6 +181,8 @@ function script(contentType, table, returning) {
     [new RegExp(`UPDATE ${table} SET is_hidden`), () => (
       returning ? { rows: [returning], rowCount: 1 } : { rows: [], rowCount: 0 }
     )],
+    // The gone-or-already-so read after an UPDATE that changed nothing: gone.
+    [new RegExp(`^SELECT 1 FROM ${table} WHERE id = \\$1$`), () => ({ rows: [], rowCount: 0 })],
     [/SELECT user_id FROM flock_members/, () => ({ rows: [{ user_id: 11 }, { user_id: 12 }] })],
     [/UPDATE content_reports SET status/, () => ({ rows: [], rowCount: 1 })],
     [/INSERT INTO moderation_actions/, () => ({ rows: [{ id: 1 }], rowCount: 1 })],
@@ -505,7 +507,7 @@ function takedownTargets() {
   const out = new Map();
   // `alsoSet` is the guest row's extra column on a hide or restore (the
   // retired stamp, migration 098), so it may follow the audience.
-  for (const m of body.matchAll(/^ {2}([a-z_]+): \{ table: '([a-z_]+)', audience: '([^']+)'(?:, alsoSet: '[^']+')? \},$/gm)) {
+  for (const m of body.matchAll(/^ {2}([a-z_]+): \{ table: '([a-z_]+)', audience: '([^']+)'(?:, alsoSet: '[^']+')?(?:, alsoDue: '[^']+')? \},$/gm)) {
     out.set(m[1], { table: m[2], audience: m[3] });
   }
   return out;
