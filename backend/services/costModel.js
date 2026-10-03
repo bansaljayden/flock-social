@@ -2060,7 +2060,7 @@ function buildVenueUnitEconomics(args = {}) {
   // January is not a margin anyone should plan on.
   const later = geminiRate(a.advisorModel, '2099-01-01');
   const laterCeilingMonthlyHigh =
-    cap === null || !later ? null : round(priceTokens(cap, shareHigh, later) * DAYS_PER_MONTH, 2);
+    cap === null || !later ? null : round(priceTokens(cap, shareHigh, later) * CEILING_DAYS_PER_MONTH, 2);
 
   const observedTokens = Number.isFinite(a.observedTokensMonth) && a.observedTokensMonth >= 0
     ? a.observedTokensMonth

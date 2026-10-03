@@ -1226,5 +1226,6 @@ test('the advisor ceiling is a 31-day month', () => {
   const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'services', 'costModel.js'), 'utf8');
   assert.match(src, /const CEILING_DAYS_PER_MONTH = 31;/);
   assert.match(src, /priceTokens\(cap, share, rate\) \* CEILING_DAYS_PER_MONTH/);
+  assert.match(src, /priceTokens\(cap, shareHigh, later\) \* CEILING_DAYS_PER_MONTH/, 'the post-promotion ceiling is a ceiling too');
   assert.ok(v.ceilingMonthlyUsdHigh === null || v.ceilingMonthlyUsdHigh > 0);
 });
