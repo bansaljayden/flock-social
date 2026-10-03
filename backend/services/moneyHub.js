@@ -869,6 +869,45 @@ function roundRowsToTotal(rows, field, total) {
   rows.forEach((r, i) => { r[field] = floors[i] || 0; });
 }
 
+// THE EXPENSE LIST AS A SPREADSHEET, for an accountant or a tax return
+// (2026-10-03). Every row, stopped ones included, since a stopped bill was
+// still paid. Amounts in dollars with two decimals; dates as typed.
+//
+// Every cell is quoted, and a cell that a spreadsheet would read as a
+// formula (one starting with =, +, -, @, a tab or a carriage return) gets a
+// leading apostrophe, so a vendor name typed as "=HYPERLINK(...)" opens as
+// text and never runs (CSV injection, OWASP).
+const EXPENSE_CSV_COLUMNS = [
+  ['Vendor', (x) => x.vendor],
+  ['Product', (x) => x.product],
+  ['Kind', (x) => KIND_LABEL[x.kind] || x.kind],
+  ['Category', (x) => x.category],
+  ['How often', (x) => x.cadence],
+  // Made here from integer cents, never typed, so it is the one column the
+  // formula guard leaves alone: a credit's -5.00 stays a number.
+  ['Amount', (x) => (Number.isFinite(x.amountCents) ? ((x.isCredit ? -1 : 1) * x.amountCents / 100).toFixed(2) : ''), { number: true }],
+  ['Currency', (x) => x.currency],
+  ['Last charged', (x) => x.lastChargedOn],
+  ['Renews', (x) => x.renewsOn],
+  ['Still charged', (x) => (x.active ? 'yes' : 'no')],
+  ['Checked against a receipt', (x) => (x.verified ? 'yes' : 'no')],
+  ['Counts instead of', (x) => x.replacesLine],
+  ['Note', (x) => x.note],
+];
+
+function csvCell(v, opts = {}) {
+  let s = v === null || v === undefined ? '' : String(v);
+  if (!opts.number && /^[=+\-@\t\r]/.test(s)) s = `'${s}`;
+  return `"${s.replace(/"/g, '""')}"`;
+}
+
+function expensesCsv(rows) {
+  const lines = [EXPENSE_CSV_COLUMNS.map(([h]) => csvCell(h)).join(',')];
+  for (const x of rows || []) lines.push(EXPENSE_CSV_COLUMNS.map(([, f, opts]) => csvCell(f(x), opts)).join(','));
+  // CRLF, the line ending RFC 4180 names and Excel expects.
+  return `${lines.join('\r\n')}\r\n`;
+}
+
 // What licensing every plan for commercial use would add (costModel
 // LICENCE_EXPOSURES), with the exposures a recorded bill has already fixed
 // left out. A code line is fixed when its own figure is above $0 or an active
@@ -3452,6 +3491,7 @@ module.exports = {
   buildNet,
   buildPlanNets,
   buildUnitCosts,
+  expensesCsv,
   costsLedger,
   readExpenses,
   readHealth,
