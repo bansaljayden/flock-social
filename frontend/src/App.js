@@ -9446,11 +9446,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   //
   // Tapping an assistant whose whole job is what is open and busy nearby is as
   // context-ful as tapping Explore, which already prompts. The opt-out is still
-  // honoured, and requestUserLocation is a no-op when a coordinate is already
-  // stored, so a device that has answered never sees anything.
+  // honoured, and a device that already has a location asks nothing.
+  //
+  // That last part used to be claimed here and not done: requestUserLocation
+  // is NOT a no-op with a coordinate stored. It reloads the map's "popular
+  // nearby" venues from the stored point and then again from a fresh fix, so
+  // every time Birdie opened, a search the person had run on Discover was
+  // replaced by the default pins behind their back (app audit 2026-10-03).
+  // The ask is for a device that has never answered; one that has gets
+  // nothing from opening Birdie.
   useEffect(() => {
     if (aiChatMode !== 'panel' && aiChatMode !== 'fullscreen') return;
     if (localStorage.getItem('flock_location_enabled') === 'false') return;
+    if (userLocation || localStorage.getItem('flock_user_lat') !== null) return;
     requestUserLocation();
   }, [aiChatMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
