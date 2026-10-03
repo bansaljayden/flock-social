@@ -41,15 +41,28 @@ describe('the draft card creates only on tap, through the normal create call', (
     expect(fn).toContain("setAiChatMode('bubble');");
   });
 
-  test('the double-tap guard wraps the create', () => {
-    expect(fn).toContain('if (birdieActionBusy || !draft?.name) return;');
+  // The guard reads a ref, not the state: two taps landing before React
+  // re-renders both read the state from their own render, saw false, and
+  // created two plans (app audit 2026-10-03).
+  test('the double-tap guard wraps the create, and reads a ref the second tap can see', () => {
+    expect(fn).toContain('if (birdieBusyRef.current || !draft?.name || draft.startedFlockId) return;');
+    expect(fn).toContain('birdieBusyRef.current = true;');
     expect(fn).toContain('setBirdieActionBusy(true);');
+    expect(fn).toMatch(/finally \{\s*birdieBusyRef\.current = false;\s*setBirdieActionBusy\(false\);/);
+  });
+
+  test('a card that started its plan remembers it and opens it instead of starting another', () => {
+    expect(fn).toContain('setAiMessages(prev => prev.map(m => (m.flockDraft === draft ? { ...m, flockDraft: { ...draft, startedFlockId: f.id } } : m)));');
+    const card = APP.slice(APP.indexOf('{msg.flockDraft && ('), APP.indexOf('{msg.voteStage && ('));
+    expect(card).toContain('{msg.flockDraft.startedFlockId ? (');
+    expect(card).toContain("setSelectedFlockId(msg.flockDraft.startedFlockId); setCurrentScreen('chatDetail'); closeAiChat();");
+    expect(card).toContain('Started. Open it');
   });
 });
 
 describe('the vote card votes only on tap, through the normal vote call', () => {
   const start = APP.indexOf('const confirmBirdieVoteStage');
-  const fn = APP.slice(start, APP.indexOf('}, [birdieActionBusy, loadFlockVotes, showToast]);', start));
+  const fn = APP.slice(start, APP.indexOf('}, [loadFlockVotes, showToast]);', start));
 
   test('the confirm calls voteForVenue with the staged venue', () => {
     expect(fn).toContain('await voteForVenue(stage.flock_id, stage.venue.name, stage.venue.place_id || null);');
@@ -57,6 +70,11 @@ describe('the vote card votes only on tap, through the normal vote call', () => 
 
   test('the vote list refreshes so the panel tells the truth immediately', () => {
     expect(fn).toContain('loadFlockVotes(stage.flock_id);');
+  });
+
+  test('the same ref guards the vote', () => {
+    expect(fn).toContain('if (birdieBusyRef.current || !stage?.flock_id || !stage?.venue?.name) return;');
+    expect(fn).toMatch(/finally \{\s*birdieBusyRef\.current = false;/);
   });
 });
 

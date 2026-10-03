@@ -6675,6 +6675,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // One confirm at a time across every Birdie action card, so a double tap
   // cannot create two flocks or cast two votes.
   const [birdieActionBusy, setBirdieActionBusy] = useState(false);
+  // The same flag, read synchronously. The state above is what the buttons
+  // draw, but a handler reads it from its own render: two taps landing before
+  // React re-renders both saw `false`, so a fast double tap on "Start this
+  // flock" created two plans (app audit 2026-10-03).
+  const birdieBusyRef = useRef(false);
   const [recapSharing, setRecapSharing] = useState(false);
   const [aiInputHasText, setAiInputHasText] = useState(false);
   const aiInputHasTextRef = useRef(false);
@@ -9578,7 +9583,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // other button uses. Same success path as handleRerunFlock below: the new
   // flock lands in state and its chat opens.
   const confirmBirdieDraft = useCallback(async (draft) => {
-    if (birdieActionBusy || !draft?.name) return;
+    // A card that already started its plan does not start another. It stays in
+    // the transcript, and reopening Birdie and tapping it again used to.
+    if (birdieBusyRef.current || !draft?.name || draft.startedFlockId) return;
+    birdieBusyRef.current = true;
     setBirdieActionBusy(true);
     try {
       const data = await apiCreateFlock({
@@ -9630,6 +9638,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       hapticSuccess();
       newlyCreatedFlockRef.current = f.id;
       setFlocks(prev => [...prev, newFlock]);
+      // The card remembers the plan it started, and offers to open it instead.
+      setAiMessages(prev => prev.map(m => (m.flockDraft === draft ? { ...m, flockDraft: { ...draft, startedFlockId: f.id } } : m)));
       setSelectedFlockId(f.id);
       setCurrentScreen('chatDetail');
       setAiChatMode('bubble');
@@ -9637,12 +9647,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     } catch (err) {
       if (!needsEmailVerification(err, 'start a flock')) showToast(err.message || "That didn't get set up. Try again.", 'error');
     } finally {
+      birdieBusyRef.current = false;
       setBirdieActionBusy(false);
     }
-  }, [birdieActionBusy, authUser, needsEmailVerification, showToast]);
+  }, [authUser, needsEmailVerification, showToast]);
 
   const confirmBirdieVoteStage = useCallback(async (stage) => {
-    if (birdieActionBusy || !stage?.flock_id || !stage?.venue?.name) return;
+    if (birdieBusyRef.current || !stage?.flock_id || !stage?.venue?.name) return;
+    birdieBusyRef.current = true;
     setBirdieActionBusy(true);
     try {
       await voteForVenue(stage.flock_id, stage.venue.name, stage.venue.place_id || null);
@@ -9654,9 +9666,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     } catch (err) {
       showToast(err.message || "That vote didn't land. Try again.", 'error');
     } finally {
+      birdieBusyRef.current = false;
       setBirdieActionBusy(false);
     }
-  }, [birdieActionBusy, loadFlockVotes, showToast]);
+  }, [loadFlockVotes, showToast]);
 
   // A vote is a claim about a person: the tile puts "You" under a venue and
   // everyone else in the flock plans around it.
