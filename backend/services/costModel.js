@@ -128,6 +128,8 @@ const { VISION_UNIT_PRICE_USD } = require('../utils/visionBudget');
 // month. 365.25/12. One constant so the monthly numbers on the dashboard all
 // agree with each other.
 const DAYS_PER_MONTH = 30.4375;
+// The longest month, for a figure that claims to be a ceiling.
+const CEILING_DAYS_PER_MONTH = 31;
 
 // ---------------------------------------------------------------------------
 // THE RATE CARD
@@ -2040,9 +2042,12 @@ function buildVenueUnitEconomics(args = {}) {
   const shareAdvice = outputShareOf(a.advisorAdvicePromptTokens, a.advisorAdviceMaxOutputTokens);
   const shareHigh = Math.max(shareChip, shareAdvice);
 
+  // A ceiling holds in the longest month, so it is priced over 31 days. The
+  // average month (DAYS_PER_MONTH) put "at most" $0.19 under what the same
+  // daily cap costs in October (review 2026-10-03).
   const perMonth = (share) => {
     if (cap === null || !rate) return null;
-    return round(priceTokens(cap, share, rate) * DAYS_PER_MONTH, 2);
+    return round(priceTokens(cap, share, rate) * CEILING_DAYS_PER_MONTH, 2);
   };
 
   // The low end of the band uses a pure-input call (share 0), which is the

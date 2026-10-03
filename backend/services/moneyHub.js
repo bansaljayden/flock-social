@@ -118,6 +118,7 @@ const RC_MIN_KEY_LENGTH = 16;
 // and nothing here can see whether the account is enrolled, so a net figure
 // assumes the standard rate rather than flattering itself.
 const APPLE_COMMISSION_PCT = costModel.RATES.stores.appleStandardPct;
+const APPLE_SMALL_BUSINESS_PCT = costModel.RATES.stores.appleSmallBusinessPct;
 
 const EXPENSE_KINDS = ['infrastructure', 'tooling', 'legal', 'other'];
 const EXPENSE_CADENCES = ['monthly', 'quarterly', 'yearly', 'usage', 'one_time'];
@@ -428,9 +429,16 @@ async function readExpenses(db = pool) {
             active, verified, note, replaces_line, is_credit, updated_at
        FROM business_expenses
       ORDER BY active DESC, kind, lower(vendor), id
-      LIMIT ${EXPENSE_LIST_LIMIT}`
+      LIMIT ${EXPENSE_LIST_LIMIT + 1}`
   );
-  return (r.rows || []).map(expenseFromRow);
+  // One row past the limit is read so a longer list is KNOWN to be longer.
+  // The list shown stops at the limit, and `truncated` tells the hub its
+  // totals would be missing bills (review 2026-10-03: 501 rows used to
+  // total as 500 with nothing said).
+  const all = (r.rows || []).map(expenseFromRow);
+  const rows = all.slice(0, EXPENSE_LIST_LIMIT);
+  Object.defineProperty(rows, 'truncated', { value: all.length > EXPENSE_LIST_LIMIT, enumerable: false });
+  return rows;
 }
 
 // The words people type for a kind or a cadence, folded onto the four the
@@ -802,6 +810,9 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
   }
 
   const lines = [];
+  // Code lines whose month is already paid by a stopped row that replaced
+  // them (see THIS MONTH IS WHAT WAS PAID below).
+  const coveredThisMonth = new Set();
   for (const c of codeCostLines(reconciled)) {
     const by = replacedBy.get(c.id) || null;
     lines.push({ ...c, counted: !by, replacedBy: by });
@@ -816,9 +827,18 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
     // the exception: that code line is back in the totals and covers the month.
     // The exception holds only for a RECURRING code line: a one-time code line
     // carries no charge date and adds nothing to this month, so it covers none.
+    //
+    // THIS MONTH IS WHAT WAS PAID (review 2026-10-03). A stopped row that had
+    // replaced a recurring code line used to drop out of this month and leave
+    // the code line's figure in its place: a $149 BestTime bill paid on the
+    // 1st and then stopped read as the code's $119. Now the row's own charge
+    // counts this month, the code line adds nothing to this month, and the
+    // code line still comes back for the run rate from here on.
     const replaced = x.replacesLine ? lines.find((l) => l.origin !== 'expense' && l.id === x.replacesLine) : null;
-    const stoppedButPaidThisMonth = !x.active && inMonth(x.lastChargedOn, month)
-      && (!x.replacesLine || !replaced || replaced.cadence === 'one_time');
+    const stoppedButPaidThisMonth = !x.active && inMonth(x.lastChargedOn, month);
+    if (stoppedButPaidThisMonth && usd && !x.isCredit && replaced && replaced.cadence !== 'one_time') {
+      coveredThisMonth.add(replaced.id);
+    }
     lines.push({
       id: `expense-${x.id}`,
       origin: 'expense',
@@ -848,10 +868,15 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
     // The run rate is what keeps coming: a stopped expense row adds nothing
     // to it, only to the month it was paid in. Code lines always run.
     const forward = l.origin === 'expense' && !l.recurring ? 0 : run;
+    const month0 = l.origin !== 'expense' && coveredThisMonth.has(l.id);
     // Rounded before the sign goes on, so a credit and a charge of the same
     // amount cancel to exactly zero (Math.round(-0.5) is 0, not -1).
     l.perMonthCents = sign * Math.round(forward) || 0;
-    l.thisMonthCents = sign * Math.round(run + once) || 0;
+    l.thisMonthCents = month0 ? 0 : (sign * Math.round(run + once) || 0);
+    // The unrounded shares, which the totals sum and round once: twelve $100
+    // yearly bills are $100.00 a month, not twelve roundings of $8.33.
+    l.perMonthExact = sign * forward || 0;
+    l.thisMonthExact = month0 ? 0 : (sign * (run + once) || 0);
   }
 
   const byKind = {};
@@ -862,17 +887,23 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
   for (const l of lines) {
     if (!l.counted) continue;
     const k = byKind[l.kind] || byKind.other;
-    k.thisMonthCents += l.thisMonthCents;
-    k.perMonthCents += l.perMonthCents;
+    k.thisMonthCents += l.thisMonthExact;
+    k.perMonthCents += l.perMonthExact;
     k.lines += 1;
     if (!byCategory.has(l.category)) byCategory.set(l.category, { category: l.category, thisMonthCents: 0, perMonthCents: 0, lines: 0 });
     const c = byCategory.get(l.category);
-    c.thisMonthCents += l.thisMonthCents;
-    c.perMonthCents += l.perMonthCents;
+    c.thisMonthCents += l.thisMonthExact;
+    c.perMonthCents += l.perMonthExact;
     c.lines += 1;
-    thisMonthCents += l.thisMonthCents;
-    perMonthTotal += l.perMonthCents;
+    thisMonthCents += l.thisMonthExact;
+    perMonthTotal += l.perMonthExact;
   }
+  const r0 = (v) => Math.round(v) || 0;
+  for (const k of Object.values(byKind)) { k.thisMonthCents = r0(k.thisMonthCents); k.perMonthCents = r0(k.perMonthCents); }
+  for (const c of byCategory.values()) { c.thisMonthCents = r0(c.thisMonthCents); c.perMonthCents = r0(c.perMonthCents); }
+  thisMonthCents = r0(thisMonthCents);
+  perMonthTotal = r0(perMonthTotal);
+  for (const l of lines) { delete l.perMonthExact; delete l.thisMonthExact; }
 
   // Renewals in the window, from the expense list. Code lines carry no charge
   // dates, and the panel says so rather than guessing one. A credit is money
@@ -1071,19 +1102,23 @@ function subscriptionMonthly(sub, coupons, nowSec) {
     currency = currency || p.currency || null;
     recurring = recurring || p.recurring || null;
   }
-  let factor = 1;
-  let amountOff = 0;
-  let unreadableDiscount = false;
+  // Stacked discounts apply one after another in the order Stripe lists
+  // them (review 2026-10-03: $20 off then 50% off a $100 plan is $40, and
+  // this used to take every percentage first and read $30). A discount on a
+  // single item is not modelled, so a subscription carrying one is counted
+  // as unpriced rather than at a figure that ignores it.
+  let unreadableDiscount = items.some((it) => it && Array.isArray(it.discounts) && it.discounts.length > 0);
+  let cents = base;
   for (const d of (sub && Array.isArray(sub.discounts) ? sub.discounts : [])) {
     if (typeof d === 'string') { unreadableDiscount = true; continue; }
     if (d && Number.isFinite(d.end) && d.end <= nowSec) continue;
     const c = couponOf(d, coupons);
     if (!c) { unreadableDiscount = true; continue; }
     if (c.duration === 'once') continue;
-    if (Number.isFinite(c.percent_off)) factor *= Math.max(0, 1 - c.percent_off / 100);
-    else if (Number.isFinite(c.amount_off)) amountOff += c.amount_off / monthsPerCharge(recurring);
+    if (Number.isFinite(c.percent_off)) cents *= Math.max(0, 1 - c.percent_off / 100);
+    else if (Number.isFinite(c.amount_off)) cents -= c.amount_off / monthsPerCharge(recurring);
+    cents = Math.max(0, cents);
   }
-  const cents = Math.max(0, base * factor - amountOff);
   return { cents, currency: currency ? String(currency).toLowerCase() : null, recurring, unpriced, unreadableDiscount };
 }
 
@@ -1126,11 +1161,12 @@ function summarizeSubscriptions(subs, { roles, coupons = new Map(), nowSec = Mat
       if (m.unpriced || m.unreadableDiscount || (m.currency && m.currency !== 'usd')) {
         s.notPriced += 1;
       } else {
-        const cents = Math.round(m.cents);
-        s.mrrCents += cents;
-        p.mrrCents += cents;
-        s.mrrNetCents += stripeNetMonthlyCents(cents, m.recurring);
-        if (cents === 0) s.freeViaCode += 1;
+        // Summed unrounded and rounded once below: 1,000 yearly plans at
+        // $29.99 are $2,499.17 a month, not 1,000 roundings of $2.50.
+        s.mrrCents += m.cents;
+        p.mrrCents += m.cents;
+        s.mrrNetCents += stripeNetMonthlyCents(m.cents, m.recurring);
+        if (m.cents < 0.5) s.freeViaCode += 1;
       }
     } else {
       continue;
@@ -1140,7 +1176,11 @@ function summarizeSubscriptions(subs, { roles, coupons = new Map(), nowSec = Mat
       webProAccounts.add(Number(sub.metadata.app_user_id));
     }
   }
-  for (const key of Object.keys(out)) out[key].mrrNetCents = Math.round(out[key].mrrNetCents);
+  for (const key of Object.keys(out)) {
+    out[key].mrrNetCents = Math.round(out[key].mrrNetCents);
+    out[key].mrrCents = Math.round(out[key].mrrCents);
+    for (const p of Object.values(out[key].byPlan)) p.mrrCents = Math.round(p.mrrCents);
+  }
   return { ...out, webProAccounts };
 }
 
@@ -1227,12 +1267,17 @@ function summarizeInvoices(invoices, { roles, month }) {
     other: { paidCents: 0, invoices: 0, zeroInvoices: 0 },
   };
   let nonUsd = 0;
+  let outOfBand = 0;
   let taxCents = 0;
   for (const inv of invoices) {
     if (!inv || inv.status !== 'paid') continue;
     const paidAt = inv.status_transitions && inv.status_transitions.paid_at;
     if (!Number.isFinite(paidAt) || paidAt < month.startUnix) continue;
     if (String(inv.currency || '').toLowerCase() !== 'usd') { nonUsd += 1; continue; }
+    // Marked paid outside Stripe: the money never entered the balance this
+    // revenue is read from, so subtracting its tax took tax that was never
+    // added (review 2026-10-03: a $108 invoice paid by check read as -$8).
+    if (inv.paid_out_of_band === true) { outOfBand += 1; continue; }
     const b = byProduct[invoiceProduct(inv, roles)];
     const paid = Number(inv.amount_paid) || 0;
     b.paidCents += paid;
@@ -1240,7 +1285,7 @@ function summarizeInvoices(invoices, { roles, month }) {
     if (paid === 0) b.zeroInvoices += 1;
     taxCents += invoiceTaxCents(inv);
   }
-  return { byProduct, nonUsd, taxCents };
+  return { byProduct, nonUsd, outOfBand, taxCents };
 }
 
 function summarizePromotionCodes(codes, coupons) {
@@ -2710,10 +2755,27 @@ function buildNet({ stripe, revenuecat, costs, costsComplete = true, appStoreCom
   // Credits can put a month's burn below zero, and no count below zero is
   // needed to cover it.
   const need = (netPerUnit) => (burnCents !== null && netPerUnit > 0 ? Math.max(0, Math.ceil(burnCents / netPerUnit)) : null);
+  // The App Store price, which Apple sets apart from the web one: the price
+  // RevenueCat reports, else the newest App Store charge, else the code's
+  // stated price (review 2026-10-03: the App Store count was worked from the
+  // web price, which would be wrong the day the two differ).
+  const appPriceFor = (plan) => {
+    const row = (pricing.appStore || []).find((a) => a.plan === plan);
+    if (row && Number.isFinite(row.listCents)) return { cents: row.listCents, source: 'app_store' };
+    if (row && Number.isFinite(row.lastChargedCents)) return { cents: row.lastChargedCents, source: 'app_store_charge' };
+    const stated = STATED_PRICES.find((s) => s.product === 'pro' && s.plan === plan);
+    return stated ? { cents: Math.round(stated.usd * 100), source: 'stated', statedBecause: 'app_store_price_unread' } : null;
+  };
   const proPrice = priceFor('pro', 'monthly');
+  const proAppPrice = appPriceFor('monthly');
   const roostPrice = priceFor('roost', 'monthly');
   const proWebNet = proPrice ? stripeNetMonthlyCents(proPrice.cents, { interval: 'month', interval_count: 1 }) : null;
-  const proAppNet = proPrice ? proPrice.cents * keep : null;
+  const proAppNet = proAppPrice ? proAppPrice.cents * keep : null;
+  // Apple takes 15% under the Small Business Program, and from a
+  // subscriber's second year on either way. Nothing here can see which
+  // applies, so the conservative 30% leads and this sits beside it.
+  const keepSmall = 1 - APPLE_SMALL_BUSINESS_PCT / 100;
+  const proAppNetSmall = proAppPrice ? proAppPrice.cents * keepSmall : null;
   const roostNet = roostPrice ? stripeNetMonthlyCents(roostPrice.cents, { interval: 'month', interval_count: 1 }) : null;
 
   // Paying Pro subscribers live in two stores, so the count needs both.
@@ -2736,10 +2798,19 @@ function buildNet({ stripe, revenuecat, costs, costsComplete = true, appStoreCom
     netBurnCents: recurringCents === null || burnCents === null ? null : burnCents - recurringCents,
     netBurnMissing: gaps(...recurringMissing, costGap),
     appleCommissionPct: APPLE_COMMISSION_PCT,
+    appleSmallBusinessPct: APPLE_SMALL_BUSINESS_PCT,
     breakEven: {
-      proWeb: proPrice ? { priceCents: proPrice.cents, source: proPrice.source, statedBecause: proPrice.statedBecause || null, netPerUnitCents: Math.round(proWebNet), needed: need(proWebNet) } : null,
-      proAppStore: proPrice ? { priceCents: proPrice.cents, source: proPrice.source, statedBecause: proPrice.statedBecause || null, netPerUnitCents: Math.round(proAppNet), needed: need(proAppNet) } : null,
-      roost: roostPrice ? { priceCents: roostPrice.cents, source: roostPrice.source, statedBecause: roostPrice.statedBecause || null, netPerUnitCents: Math.round(roostNet), needed: need(roostNet) } : null,
+      proWeb: proPrice ? { priceCents: proPrice.cents, source: proPrice.source, statedBecause: proPrice.statedBecause || null, netPerUnitCents: Math.round(proWebNet), netPerUnitExactCents: proWebNet, needed: need(proWebNet) } : null,
+      proAppStore: proAppPrice ? {
+        priceCents: proAppPrice.cents,
+        source: proAppPrice.source,
+        statedBecause: proAppPrice.statedBecause || null,
+        netPerUnitCents: Math.round(proAppNet),
+        netPerUnitExactCents: proAppNet,
+        needed: need(proAppNet),
+        smallBusiness: { commissionPct: APPLE_SMALL_BUSINESS_PCT, netPerUnitCents: Math.round(proAppNetSmall), needed: need(proAppNetSmall) },
+      } : null,
+      roost: roostPrice ? { priceCents: roostPrice.cents, source: roostPrice.source, statedBecause: roostPrice.statedBecause || null, netPerUnitCents: Math.round(roostNet), netPerUnitExactCents: roostNet, needed: need(roostNet) } : null,
       burnMissing: gaps(costGap),
       payingPro: payingProMissing.length > 0 ? null : subs.pro.live - subs.pro.freeViaCode + (appStore ? appStore.live : 0),
       payingProMissing,
@@ -3157,7 +3228,9 @@ async function buildMoneyHub({
     stripe,
     revenuecat,
     costs,
-    costsComplete: expensesR.ok,
+    // A list longer than the limit is a partial list, so the totals are
+    // missing bills and say so rather than read as whole.
+    costsComplete: expensesR.ok && !expensesR.value.truncated,
     appStoreComplete: !!(revenuecat && revenuecat.subscribers && revenuecat.subscribers.complete === true),
     pricing,
   });
@@ -3189,8 +3262,10 @@ async function buildMoneyHub({
       },
     },
     costs: {
-      status: expensesR.ok ? 'ok' : 'error',
-      reason: expensesR.ok ? null : 'The expense list could not be read, so only the code lines and the reconciled bills are counted.',
+      status: expensesR.ok && !expensesR.value.truncated ? 'ok' : 'error',
+      reason: !expensesR.ok
+        ? 'The expense list could not be read, so only the code lines and the reconciled bills are counted.'
+        : (expensesR.value.truncated ? `The expense list has more than ${EXPENSE_LIST_LIMIT} rows, so only the first ${EXPENSE_LIST_LIMIT} are counted and the totals are left unread.` : null),
       ...costs,
       reconciledReadError: reconciled && reconciled.readError ? 'The saved reconciled figures could not be read, so the code figures stand in.' : null,
       googleMeteredThisMonth: photoR.ok && photoR.value ? {

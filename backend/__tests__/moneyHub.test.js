@@ -2812,17 +2812,53 @@ test('a bill stopped this month still counts what it cost this month, and nothin
   });
   assert.strictEqual(stopped.totals.thisMonthCents, base.totals.thisMonthCents + 52000, 'a $500 bill paid and then marked stopped vanished from this month');
   assert.strictEqual(stopped.totals.perMonthCents, base.totals.perMonthCents, 'a stopped bill adds nothing to the run rate');
-  // Last charged before this month, or standing in for a code line (which is
-  // back in the totals and covers the month): not counted.
+  // Last charged before this month: not counted.
   const notThisMonth = moneyHub.buildCostPicture({
     expenses: [
       expense({ id: 3, vendor: 'Old tool', cadence: 'monthly', amountCents: 2000, active: false, lastChargedOn: '2000-01-15' }),
-      expense({ id: 4, vendor: 'Railway', kind: 'infrastructure', cadence: 'monthly', amountCents: 2500, active: false, lastChargedOn: today, replacesLine: 'railway' }),
     ],
     month: MONTH,
   });
   assert.strictEqual(notThisMonth.totals.thisMonthCents, base.totals.thisMonthCents);
   assert.strictEqual(notThisMonth.totals.perMonthCents, base.totals.perMonthCents);
+  // Standing in for a code line, paid this month and then stopped: this month
+  // is what the row paid, in place of the code line's figure, and the code
+  // line is back for the run rate (review 2026-10-03; it used to read the
+  // code's figure this month instead of the bill actually paid).
+  const railwayLine = base.lines.find((l) => l.id === 'railway');
+  const replacedThenStopped = moneyHub.buildCostPicture({
+    expenses: [
+      expense({ id: 4, vendor: 'Railway', kind: 'infrastructure', cadence: 'monthly', amountCents: 2500, active: false, lastChargedOn: today, replacesLine: 'railway' }),
+    ],
+    month: MONTH,
+  });
+  assert.strictEqual(replacedThenStopped.totals.thisMonthCents, base.totals.thisMonthCents - railwayLine.thisMonthCents + 2500);
+  assert.strictEqual(replacedThenStopped.totals.perMonthCents, base.totals.perMonthCents, 'the code line is back for the run rate');
+});
+
+// Review 2026-10-03, each with the numbers the review gave.
+test('twelve $100 yearly bills total $100.00 a month, not twelve roundings', () => {
+  const base = moneyHub.buildCostPicture({ expenses: [], month: MONTH });
+  const pic = moneyHub.buildCostPicture({
+    expenses: Array.from({ length: 12 }, (_, i) => expense({ id: 100 + i, vendor: `Tool ${i}`, kind: 'tooling', cadence: 'yearly', amountCents: 10000 })),
+    month: MONTH,
+  });
+  assert.strictEqual(pic.totals.perMonthCents - base.totals.perMonthCents, 10000);
+});
+
+test('stacked discounts apply in order: $20 off then 50% off a $100 plan is $40', () => {
+  const sub = {
+    items: { data: [{ price: { unit_amount: 10000, currency: 'usd', recurring: { interval: 'month', interval_count: 1 } }, quantity: 1 }] },
+    discounts: [
+      { coupon: { duration: 'forever', amount_off: 2000 } },
+      { coupon: { duration: 'forever', percent_off: 50 } },
+    ],
+  };
+  const m = moneyHub.__test.subscriptionMonthly(sub, new Map(), Math.floor(Date.now() / 1000));
+  assert.strictEqual(Math.round(m.cents), 4000);
+  // A discount on one item is not modelled, so the plan reads as unpriced.
+  const itemDiscount = { ...sub, discounts: [], items: { data: [{ ...sub.items.data[0], discounts: ['di_1'] }] } };
+  assert.strictEqual(moneyHub.__test.subscriptionMonthly(itemDiscount, new Map(), 0).unreadableDiscount, true);
 });
 
 test('a row linked to the wrong code line is still flagged beside the line it doubles', () => {
@@ -2994,4 +3030,47 @@ test('the paying-venues count leaves trials out, as break-even does', () => {
   const sql = src.slice(at, at + 220);
   assert.match(sql, /status IN \('active', 'past_due'\)/);
   assert.doesNotMatch(sql, /trialing/);
+});
+
+test('an invoice marked paid outside Stripe takes no tax out of Stripe revenue', () => {
+  const out = moneyHub.__test.summarizeInvoices([
+    { status: 'paid', paid_out_of_band: true, currency: 'usd', amount_paid: 10800, status_transitions: { paid_at: MONTH.startUnix + 60 }, tax: 800 },
+  ], { roles: new Map(), month: MONTH });
+  assert.strictEqual(out.taxCents, 0, 'tax on money that never entered the balance was subtracted from it');
+  assert.strictEqual(out.outOfBand, 1);
+});
+
+test('an expense list longer than the limit is flagged, so the totals are not read as whole', async () => {
+  const row = (id) => ({ id, vendor: `V${id}`, product: null, category: null, kind: 'tooling', amount_cents: 1000, currency: 'USD', cadence: 'monthly', last_charged_on: null, renews_on: null, active: true, verified: true, note: null, replaces_line: null, is_credit: false, updated_at: null });
+  const n = moneyHub.EXPENSE_LIST_LIMIT;
+  const long = await moneyHub.readExpenses({ query: async () => ({ rows: Array.from({ length: n + 1 }, (_, i) => row(i + 1)) }) });
+  assert.strictEqual(long.length, n);
+  assert.strictEqual(long.truncated, true);
+  const short = await moneyHub.readExpenses({ query: async () => ({ rows: [row(1)] }) });
+  assert.strictEqual(short.truncated, false);
+});
+
+test('the App Store break-even uses the App Store price, with the 15% case beside the 30% one', () => {
+  const net = moneyHub.buildNet({
+    stripe: null,
+    revenuecat: null,
+    costs: { totals: { thisMonthCents: 10000, perMonthCents: 10000 } },
+    pricing: { stated: [], appStore: [{ plan: 'monthly', listCents: 399 }] },
+  });
+  const app = net.breakEven.proAppStore;
+  assert.strictEqual(app.priceCents, 399);
+  assert.strictEqual(app.source, 'app_store');
+  // $100 of burn at $3.99 less 30% ($2.793) is 36; at 15% ($3.3915) is 30.
+  assert.strictEqual(app.needed, 36);
+  assert.strictEqual(app.smallBusiness.commissionPct, 15);
+  assert.strictEqual(app.smallBusiness.needed, 30);
+  assert.strictEqual(net.appleSmallBusinessPct, 15);
+  // An App Store price that differs from the web one is the one used.
+  const dearer = moneyHub.buildNet({
+    stripe: null, revenuecat: null,
+    costs: { totals: { thisMonthCents: 10000, perMonthCents: 10000 } },
+    pricing: { stated: [], appStore: [{ plan: 'monthly', listCents: 999 }] },
+  });
+  assert.strictEqual(dearer.breakEven.proAppStore.priceCents, 999);
+  assert.ok(Number.isFinite(dearer.breakEven.proAppStore.netPerUnitExactCents));
 });
