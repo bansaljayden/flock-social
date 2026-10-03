@@ -1600,10 +1600,12 @@ router.put('/:id',
 
       // A finished or cancelled plan does not reopen (lifecycle audit,
       // 2026-09-05): the route accepted completed -> planning from anyone with
-      // the creator's token.
+      // the creator's token. The status it had is kept for the pushes below,
+      // which announce a CHANGE of status and not a repeat of one.
+      let wasStatus;
       if (status !== undefined && status !== null) {
         const was = await pool.query('SELECT status FROM flocks WHERE id = $1', [flockId]);
-        const wasStatus = was.rows[0] && was.rows[0].status;
+        wasStatus = was.rows[0] && was.rows[0].status;
         if ((wasStatus === 'completed' || wasStatus === 'cancelled') && status !== wasStatus) {
           return res.status(409).json({ error: 'This plan is finished and cannot be reopened' });
         }
@@ -1943,7 +1945,13 @@ router.put('/:id',
       // Its own try/catch, not the outer one: the response has been sent, so a
       // throw reaching the handler's catch would try to send a second one
       // (ERR_HTTP_HEADERS_SENT) instead of logging the real failure.
-      if (status === 'confirmed') {
+      //
+      // Only when the plan BECOMES confirmed. A PUT that repeats
+      // status: 'confirmed' on a plan already locked in (a retry, a client
+      // resending the whole row with a new name) pushed "It's happening!" to
+      // every member again each time (backend audit 2026-10-03).
+      const newlyConfirmed = status === 'confirmed' && wasStatus !== 'confirmed';
+      if (newlyConfirmed) {
         try {
           const membersResult = await pool.query(
             "SELECT user_id FROM flock_members WHERE flock_id = $1 AND status = 'accepted' AND user_id != $2",
@@ -2002,11 +2010,15 @@ router.put('/:id',
       // one notification. `flock_updated` was already a declared type on all
       // three deep-link tables with nothing that emitted it; this is what it
       // was reserved for.
-      const cancelled = status === 'cancelled';
+      // The same rule for "Plan cancelled": once, when the plan becomes
+      // cancelled, not again on every repeat of the status.
+      const cancelled = status === 'cancelled' && wasStatus !== 'cancelled';
       // A confirm that also carries the final time is ONE announcement, not
-      // two. "It's happening!" below already says the time and the venue, so a
-      // second "Plan updated" behind it would be the same news twice.
-      const moved = !cancelled && status !== 'confirmed'
+      // two. "It's happening!" above already says the time and the venue, so a
+      // second "Plan updated" behind it would be the same news twice. A plan
+      // that was already confirmed gets no second "It's happening!", so an
+      // edit to it is announced as the edit it is.
+      const moved = status !== 'cancelled' && !newlyConfirmed
         && (event_time !== undefined || venue_name !== undefined || name !== undefined);
       if ((cancelled || moved) && isPushConfigured()) {
         try {
