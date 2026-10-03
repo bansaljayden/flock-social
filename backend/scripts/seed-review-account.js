@@ -122,6 +122,12 @@ async function upsertUser(email, name, password, dob) {
   try {
     const reviewer = await upsertUser('review@flockcorp.com', 'App Reviewer', REVIEWER_PASSWORD, '2000-01-01');
     const buddy = await upsertUser('buddy@flockcorp.com', 'Sam Buddy', BUDDY_PASSWORD, '1999-05-05');
+    // A third member, so the budget can be shown working. No group figure is
+    // published until every accepted member has answered and at least three
+    // have shared an amount (routes/budget.js), so with two members a reviewer
+    // could never see one. Sam and Jordan have both shared an amount; the
+    // reviewer's own answer is the one that publishes the ceiling.
+    const third = await upsertUser('jordan@flockcorp.com', 'Jordan Lee', BUDDY_PASSWORD, '2000-03-14');
 
     // Friendship (accepted) so the reviewer has someone to block.
     await pool.query(
@@ -132,11 +138,20 @@ async function upsertUser(email, name, password, dob) {
 
     // Fresh flock owned by reviewer (idempotent: clear prior seed flock first).
     await pool.query(`DELETE FROM flocks WHERE creator_id = $1 AND name = 'Friday Night Out'`, [reviewer]);
-    const f = await pool.query(`INSERT INTO flocks (name, creator_id) VALUES ($1, $2) RETURNING id`, ['Friday Night Out', reviewer]);
+    // Budget matching on, as a creator turns it on at creation (routes/flocks.js);
+    // without it every budget route answers "not enabled for this flock".
+    const f = await pool.query(
+      `INSERT INTO flocks (name, creator_id, budget_enabled, budget_context) VALUES ($1, $2, true, $3) RETURNING id`,
+      ['Friday Night Out', reviewer, 'Dinner and drinks']
+    );
     const flockId = f.rows[0].id;
     await pool.query(
-      `INSERT INTO flock_members (flock_id, user_id, status) VALUES ($1,$2,'accepted'),($1,$3,'accepted')`,
-      [flockId, reviewer, buddy]
+      `INSERT INTO flock_members (flock_id, user_id, status) VALUES ($1,$2,'accepted'),($1,$3,'accepted'),($1,$4,'accepted')`,
+      [flockId, reviewer, buddy, third]
+    );
+    await pool.query(
+      `INSERT INTO budget_submissions (flock_id, user_id, amount, skipped) VALUES ($1,$2,40,false),($1,$3,60,false)`,
+      [flockId, buddy, third]
     );
 
     // Reportable content from the buddy: flock messages + a DM.
@@ -155,7 +170,8 @@ async function upsertUser(email, name, password, dob) {
     console.log('Seeded review account:');
     console.log('  reviewer  : review@flockcorp.com / ' + REVIEWER_PASSWORD + '   (id ' + reviewer + ')');
     console.log('  buddy     : buddy@flockcorp.com  (block/report this user) (id ' + buddy + ')');
-    console.log('  flock #' + flockId + ' "Friday Night Out": 2 reportable messages + 1 DM from buddy');
+    console.log('  third     : jordan@flockcorp.com (id ' + third + ')');
+    console.log('  flock #' + flockId + ' "Friday Night Out": 3 members, 2 budget amounts in (the reviewer\'s publishes the ceiling), 2 reportable messages + 1 DM from buddy');
     console.log('  admin console: log in as the admin account, open /admin/moderation');
     process.exit(0);
   } catch (e) {
