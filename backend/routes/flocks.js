@@ -1810,24 +1810,50 @@ router.put('/:id',
         // straight to the person who blocked them every time the plan changed.
         // Same helper the RSVP/leave events already use. Guarded: a fan-out
         // failure must not 500 an update that already committed.
-        await emitToFlockExcludingBlocked(io, flockId, req.user.id, 'flock_updated', {
-          flockId: parseInt(flockId),
-          name: updated.name,
-          venue_name: updated.venue_name,
-          venue_address: updated.venue_address,
-          venue_id: updated.venue_id,
-          venue_latitude: updated.venue_latitude,
-          venue_longitude: updated.venue_longitude,
-          venue_rating: updated.venue_rating,
-          venue_photo_url: updated.venue_photo_url,
-          event_time: updated.event_time,
-          status: updated.status,
-          updatedBy: req.user.name,
-          // True only when this edit closed a night-of window. Every update
-          // carries event_time, so a client cannot infer "the time moved"
-          // from its presence; it has to be told.
-          reconfirm_reset: reconfirmReset,
-        }, { includeInvited: true }).catch((e) => console.error('flock_updated fan-out failed:', e.message));
+        //
+        // TWO PAYLOADS, ONE AUDIENCE READ. Members get the whole venue block.
+        // A person still holding an invite gets what their invite card already
+        // shows and nothing more: this one event used to hand every invitee
+        // the venue's address, coordinates, rating, place id and the plan's
+        // status on every rename or venue pick, the very fields the invite
+        // card withholds (flocksAuthz.test.js PRIVATE_FLOCK_FIELDS). Status
+        // rides along for an invitee only once the plan has finished, which is
+        // the same fact the card's `finished` flag states, so an app that
+        // still filters its invites on status keeps dropping a dead card.
+        try {
+          const audience = await readFlockAudience(flockId, req.user.id, { includeInvited: true });
+          const finished = updated.status === 'completed' || updated.status === 'cancelled';
+          await emitToFlockExcludingBlocked(io, flockId, req.user.id, 'flock_updated', {
+            flockId: parseInt(flockId),
+            name: updated.name,
+            venue_name: updated.venue_name,
+            venue_address: updated.venue_address,
+            venue_id: updated.venue_id,
+            venue_latitude: updated.venue_latitude,
+            venue_longitude: updated.venue_longitude,
+            venue_rating: updated.venue_rating,
+            venue_photo_url: updated.venue_photo_url,
+            event_time: updated.event_time,
+            status: updated.status,
+            updatedBy: req.user.name,
+            // True only when this edit closed a night-of window. Every update
+            // carries event_time, so a client cannot infer "the time moved"
+            // from its presence; it has to be told.
+            reconfirm_reset: reconfirmReset,
+          }, { audience: { ...audience, invited: [] } });
+          await emitToFlockExcludingBlocked(io, flockId, req.user.id, 'flock_updated', {
+            flockId: parseInt(flockId),
+            name: updated.name,
+            venue_name: updated.venue_name,
+            event_time: updated.event_time,
+            finished,
+            ...(finished ? { status: updated.status } : {}),
+            updatedBy: req.user.name,
+            reconfirm_reset: reconfirmReset,
+          }, { audience: { ...audience, members: [] } });
+        } catch (e) {
+          console.error('flock_updated fan-out failed:', e.message);
+        }
       }
 
       // Auto-populate research analytics on completion or cancellation
