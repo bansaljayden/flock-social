@@ -462,9 +462,18 @@ export default function BirdiePanel({
                           the card (routes/ai.js draft_flock, validation only),
                           and this button calls the same create route the
                           create screen calls. */}
-                      <button className="hit44" disabled={birdieActionBusy} onClick={() => confirmBirdieDraft(msg.flockDraft)} style={{ marginTop: '10px', width: '100%', padding: '10px', borderRadius: '10px', border: 'none', background: '#1e293b', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: birdieActionBusy ? 'wait' : 'pointer', opacity: birdieActionBusy ? 0.6 : 1 }}>
-                        {birdieActionBusy ? 'Starting\u2026' : 'Start this flock'}
-                      </button>
+                      {/* Once it has started its plan the card opens that plan.
+                          It used to stay "Start this flock", and a second tap
+                          after reopening Birdie made a second plan. */}
+                      {msg.flockDraft.startedFlockId ? (
+                        <button className="hit44" onClick={() => { setSelectedFlockId(msg.flockDraft.startedFlockId); setCurrentScreen('chatDetail'); closeAiChat(); }} style={{ marginTop: '10px', width: '100%', padding: '10px', borderRadius: '10px', border: '1px solid var(--border-default)', background: 'transparent', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>
+                          Started. Open it
+                        </button>
+                      ) : (
+                        <button className="hit44" disabled={birdieActionBusy} onClick={() => confirmBirdieDraft(msg.flockDraft)} style={{ marginTop: '10px', width: '100%', padding: '10px', borderRadius: '10px', border: 'none', background: '#1e293b', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: birdieActionBusy ? 'wait' : 'pointer', opacity: birdieActionBusy ? 0.6 : 1 }}>
+                          {birdieActionBusy ? 'Starting\u2026' : 'Start this flock'}
+                        </button>
+                      )}
                     </div>
                   )}
                   {msg.voteStage && (
