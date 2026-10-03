@@ -794,6 +794,40 @@ function codeCostLines(reconciled) {
   return lines;
 }
 
+// What licensing every plan for commercial use would add (costModel
+// LICENCE_EXPOSURES), with the exposures a recorded bill has already fixed
+// left out. A code line is fixed when its own figure is above $0 or an active
+// bill above $0 stands in for it; a vendor fix, when an active bill above $0
+// names the vendor.
+function licenceExposures({ lines, expenses, perMonthCents }) {
+  const items = [];
+  for (const e of costModel.LICENCE_EXPOSURES || []) {
+    const by = e.resolvedBy || {};
+    let fixed = false;
+    if (by.codeLine) {
+      const line = lines.find((l) => l.origin !== 'expense' && l.id === by.codeLine);
+      const paidRow = expenses.some((x) => x.active && !x.isCredit && x.replacesLine === by.codeLine && x.amountCents > 0);
+      fixed = !!(line && line.amountCents > 0) || paidRow;
+    } else if (by.expenseVendor) {
+      const needle = String(by.expenseVendor).toLowerCase();
+      fixed = expenses.some((x) => x.active && !x.isCredit && x.amountCents > 0 && String(x.vendor || '').toLowerCase().includes(needle));
+    }
+    if (fixed) continue;
+    items.push({
+      id: e.id,
+      vendor: e.vendor,
+      plan: e.plan,
+      why: e.why,
+      fix: e.fix,
+      fixCentsPerMonth: Math.round(Number(e.fixUsdPerMonth || 0) * 100),
+      source: e.source,
+      checked: e.checked,
+    });
+  }
+  const toComplyCents = items.reduce((sum, i) => sum + i.fixCentsPerMonth, 0);
+  return { items, toComplyPerMonthCents: toComplyCents, licensedPerMonthCents: perMonthCents + toComplyCents };
+}
+
 function buildCostPicture({ expenses = [], reconciled = null, month }) {
   // Only a row that is itself counted may take a code line out of the total:
   // active, and in dollars. A euro bill linked to Railway would otherwise
@@ -971,6 +1005,7 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
       isCredit: l.isCredit === true,
     })),
     undatedCodeYearly: lines.filter((l) => l.origin === 'code' && l.cadence === 'yearly' && l.counted).length,
+    licence: licenceExposures({ lines, expenses, perMonthCents: perMonthTotal }),
   };
 }
 
