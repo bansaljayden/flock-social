@@ -157,7 +157,8 @@ test('the Edit control does not render on a taken-down promotion or event', () =
   // types, and refuse it on Save. This project treats a control that cannot
   // succeed as a defect.
   for (const [what, body] of [['promotion', promoListBody], ['event', eventListBody]]) {
-    const edit = /\{!hidden && \(\s*<button aria-label="Edit"/.exec(body);
+    // The label names the deal or event since 2026-10-03 (`Edit ${title}`).
+    const edit = /\{!hidden && \(\s*<button aria-label=\{(?:promo|event)\.title \? `Edit /.exec(body);
     assert.ok(
       edit,
       `the ${what} Edit button is not gated on the takedown flag. It renders on a row ` +
