@@ -596,10 +596,10 @@ const RECONCILED = {
       // expense row whose replaces_line is 'railway' still stands in for it.
       id: 'railway',
       label: 'Railway (backend and Postgres)',
-      usdPerMonth: 44.66,
-      asOf: '2026-10-02',
+      usdPerMonth: 44.97,
+      asOf: '2026-10-03',
       readFrom: 'the estimated bill `railway usage` prints for the current billing period',
-      note: 'Railway\'s own estimated bill for the Sep 16 to Oct 16, 2026 billing period: $44.66 as `railway usage` printed it on 2026-10-02, with $23.80 of usage billed so far. Earlier readings of the same period were $32.96 on 09-28, $36.05 on 09-29 and $37.10 on 09-30; the estimate climbs as the period\'s usage comes in. It is the $20 Pro plan fee plus whatever usage runs past the $20 of credit the plan includes, so it moves with compute and volume from one period to the next. Each new period\'s figure is recorded in the reconciled-cost form on the admin dashboard\'s Costs tab, and a saved entry replaces this one.',
+      note: 'Railway\'s own estimated bill for the Sep 16 to Oct 16, 2026 billing period: $44.97 as `railway usage` printed it on 2026-10-03, with $25.95 of usage billed so far. Earlier readings of the same period were $32.96 on 09-28, $36.05 on 09-29, $37.10 on 09-30 and $44.66 on 10-02; the estimate climbs as the period\'s usage comes in. Memory is the bill: $21.08 of the $25.95, against $0.43 of CPU, $3.16 of egress, $0.73 of volume and $0.55 of backups (`railway usage --json`). Over the 7 days to 10-03 Postgres averaged 3.24 GB of memory (peak 4.61), the API 0.39 GB and the BestTime collector 0.18 GB (Railway service metrics), so the database\'s memory is most of what this line costs. The previous period, Aug 16 to Sep 16, came to $29.21. It is the $20 Pro plan fee plus whatever usage runs past the $20 of credit the plan includes, so it moves with compute and volume from one period to the next. Each new period\'s figure is recorded in the reconciled-cost form on the admin dashboard\'s Costs tab, and a saved entry replaces this one.',
     },
   ],
   note: 'Read off the vendor billing pages by hand. Nothing in the app can verify this, so each line is only as current as the date beside it.',
