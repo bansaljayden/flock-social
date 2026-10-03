@@ -135,7 +135,18 @@ export default function ResearchPage() {
 
             <div className="rs-paper">
               <a className="rs-thumb" href={PAPER_URL} target="_blank" rel="noopener noreferrer" aria-hidden="true" tabIndex={-1}>
-                <img src={PAPER_THUMB} width="520" height="673" alt="" />
+                {/* The slot paints 96 to 150 CSS px, so the 520px PNG (89 KB)
+                    was 3.5x its width at 1x. WebP candidates at 300w (16 KB)
+                    and 520w; `sizes` mirrors .rs-thumb img in ResearchPage.css.
+                    The PNG stays as the fallback for browsers without WebP. */}
+                <picture>
+                  <source
+                    type="image/webp"
+                    srcSet="/papers/flock-research-paper-p1-300.webp 300w, /papers/flock-research-paper-p1-520.webp 520w"
+                    sizes="(max-width: 420px) 112px, (max-width: 600px) 96px, 150px"
+                  />
+                  <img src={PAPER_THUMB} width="520" height="673" alt="" />
+                </picture>
               </a>
               <div>
                 <p className="rs-paper-kicker">Paper &middot; October 2026 &middot; {PAPER_PAGES} pages</p>
