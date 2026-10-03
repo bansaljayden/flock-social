@@ -101,8 +101,8 @@ export default function CommunityGuidelines() {
       <section>
         <h2>How to report or block</h2>
         <p>
-          Tap a message in a flock chat or a direct message and use the flag to{' '}
-          <strong>Report</strong> it. The{' '}
+          Press and hold a message in a flock chat or a direct message and choose{' '}
+          <strong>Report</strong>. The{' '}
           {/* ⋯ (U+22EF) is an icon rendered as a character. Screen readers at
               their default punctuation level say nothing for it, so this
               sentence lost its subject and became "The menu at the top of a

@@ -156,7 +156,7 @@ test('/about, its crawler copy and llms.txt name Flock Pro as a paid plan that i
   for (const rel of ['website/AboutPage.js', '../api/marketing-page.js', '../public/llms.txt']) {
     const body = read(rel).replace(/\s+/g, ' ');
     expect(body).not.toMatch(/the one paid plan/i);
-    expect(body).toMatch(/Flock Pro, with more Birdie and more crowd forecasts/);
+    expect(body).toMatch(/Flock Pro, with more Birdie, more crowd forecasts and crowd alerts/);
     expect(body).toMatch(/not on sale to the public today/);
   }
 });

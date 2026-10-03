@@ -72,8 +72,8 @@ export default function AboutPage() {
           Start a flock, invite your people, and vote on where to go. Enter what you
           can spend privately: the group only ever sees a ceiling everyone can
           afford, never anyone's number, so money stops being the silent veto. Check
-          how busy a place is before you leave. Split the bill and send Venmo, Cash
-          App, or Zelle links. Share live location with your group while the night
+          how busy a place is before you leave. Split the bill with Venmo and Cash
+          App links, or Zelle instructions. Share live location with your group while the night
           is on, with two-tap SOS to trusted contacts. Planning a night out with
           friends costs nothing, and the app has no ads and no feed.
         </p>
@@ -101,7 +101,7 @@ export default function AboutPage() {
           flock, so a yes is on the record instead of buried in a thread. The
           group votes on where to go. Budgets go in privately and only a
           ceiling everyone can afford comes back. When the bill lands, it
-          splits into Venmo, Cash App, or Zelle links, and showing up counts:
+          splits into Venmo and Cash App links, or Zelle instructions, and showing up counts:
           your reliability score is built from the plans you joined and the
           ones you kept.
         </p>
@@ -181,7 +181,7 @@ export default function AboutPage() {
           friends, and Roost, the paid plan for venues, adds the venue's own
           hour-by-hour demand curve and the week ahead from the same crowd
           numbers the app shows. No venue is being charged today. There is a paid plan for
-          people as well, Flock Pro, with more Birdie and more crowd forecasts,
+          people as well, Flock Pro, with more Birdie, more crowd forecasts and crowd alerts,
           and it is not on sale to the public today. If you run a venue and
           want in early, email{' '}
           <a href={`mailto:${CONTACT_EMAIL}?subject=Flock%20for%20venues`}>{CONTACT_EMAIL}</a>.

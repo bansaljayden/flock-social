@@ -34,10 +34,10 @@ Updated: September 27, 2026.
   figure but not toward the three. What is published then is a rounded-down band,
   once.
 - Bill splitting: after the night, the total splits across the group and Flock
-  generates Venmo, Cash App, and Zelle links.
-- Crowd levels: Flock estimates how busy a venue will be tonight from the hour, the
-  weather, and how busy that place usually runs, so a group can see how packed
-  somewhere is before leaving. It gives an hour by hour read and a best time to
+  generates Venmo and Cash App links, and instructions for Zelle.
+- Crowd levels: Flock estimates how busy a venue will be tonight from how busy that
+  place usually runs at that hour, moved by its newest live readings, so a group can
+  see how packed somewhere is before leaving. It gives an hour by hour read and a best time to
   arrive.
 - Birdie: an in-app assistant that answers plain-language questions like "where's
   poppin rn" and returns real venues near the user with the same crowd numbers used
@@ -92,8 +92,8 @@ Flock is free for users. There is no card required, and unlimited flocks, friend
 venue voting, group chat, crowd levels, budget matching, bill splitting, and SOS are
 all included at no cost.
 
-There is also a paid plan for people, Flock Pro, with more Birdie and more crowd
-forecasts. It is not on sale to the public today.
+There is also a paid plan for people, Flock Pro, with more Birdie, more crowd
+forecasts and crowd alerts. It is not on sale to the public today.
 
 Venues are the side Flock is built to charge. Roost, the venue plan, will be $99
 a month or $990 a year per location, sold on flockcorp.com with a 14-day free
