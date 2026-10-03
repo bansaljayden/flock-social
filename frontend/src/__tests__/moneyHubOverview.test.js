@@ -1526,3 +1526,13 @@ describe('every price the registry lists is where it says, at the amount it says
     expect(new Set(STATED_TRIALS.map((t) => t.days)).size).toBe(1);
   });
 });
+
+// An expense saved on Overview reloads the costs payload too, so the Costs
+// tab's all-in figure and the Projections burn move with it (money hub audit
+// 2026-10-03: the payload was read once per session and went stale).
+test('saving an expense on Overview reloads the costs the other two tabs read', () => {
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'screens', 'RevenueScreen.js'), 'utf8');
+  expect(src).toContain('function MoneyHub({ colors, onExpensesChanged }) {');
+  expect(src).toContain('onChanged={() => { load(false); if (onExpensesChanged) onExpensesChanged(); }}');
+  expect(src).toContain("<MoneyHub colors={colors} onExpensesChanged={() => fetchCosts(true)} />");
+});
