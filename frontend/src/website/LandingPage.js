@@ -264,8 +264,6 @@ export default function LandingPage() {
   const menuRef = useRef(null);
   const menuBtnRef = useRef(null);
   const wasMenuOpen = useRef(false);
-  // Set when the menu closed because the screen widened past the button.
-  const closedWideRef = useRef(false);
 
   // While the panel is open: page scroll is locked, Escape closes, and Tab
   // cycles inside the panel (the corner block is part of that cycle, since it
@@ -320,25 +318,9 @@ export default function LandingPage() {
       next.focus();
     };
 
-    // From 1200px the bar carries the section links and the menu button is
-    // display: none, so a menu still open at that width has no close control,
-    // and the Tab trap below cycles onto a button that cannot take focus.
-    // Rotating a tablet to landscape does exactly that, so crossing the
-    // breakpoint closes the menu. (The 1200 is .lp-nav-links' in the CSS.)
-    const wide = typeof window.matchMedia === 'function' ? window.matchMedia('(min-width: 1200px)') : null;
-    const onWide = (e) => {
-      if (!e.matches) return;
-      closedWideRef.current = true;
-      setMenuOpen(false);
-    };
-    if (wide && wide.addEventListener) wide.addEventListener('change', onWide);
-    else if (wide && wide.addListener) wide.addListener(onWide);
-
     document.addEventListener('keydown', onKey);
     return () => {
       document.removeEventListener('keydown', onKey);
-      if (wide && wide.removeEventListener) wide.removeEventListener('change', onWide);
-      else if (wide && wide.removeListener) wide.removeListener(onWide);
       root.style.overflow = prevOverflow;
       document.body.style.paddingRight = prevPad;
       document.body.style.removeProperty('--lp-scrollbar');
@@ -348,14 +330,8 @@ export default function LandingPage() {
   // Closing hands focus back to the block that opened it.
   useEffect(() => {
     if (wasMenuOpen.current && !menuOpen && menuBtnRef.current) {
-      // Closed by widening, the button is display: none and cannot take focus,
-      // so focus would fall to the body once the panel hides. It goes to the
-      // first section link in the bar instead: the control that replaced it.
-      const bar = closedWideRef.current ? menuBtnRef.current.closest('.lp-nav-in') : null;
-      const link = bar ? bar.querySelector('.lp-nav-links a') : null;
-      (link || menuBtnRef.current).focus();
+      menuBtnRef.current.focus();
     }
-    closedWideRef.current = false;
     wasMenuOpen.current = menuOpen;
   }, [menuOpen]);
 
@@ -436,12 +412,11 @@ export default function LandingPage() {
       <header className={`lp-nav${menuOpen ? ' is-menu-open' : ''}`}>
         <div className="lp-wrap lp-nav-in">
           <a className="lp-brand" href="/"><Mark /> Flock</a>
-          {/* Wide screens carry the section links in the bar itself, the way a
-              company site does; the menu button only exists below that width.
-              It used to be the other way round, a steel block pinned to the
-              corner at every width, and before that the inline row vanished
-              under 860px with nothing in its place, which left phones with no
-              menu at all. Now every width has exactly one way in. */}
+          {/* Wide screens also carry the section links in the bar itself, the
+              way a company site does, and the menu button stays beside them at
+              every width. (Before: a steel block pinned to the corner; before
+              that, an inline row that vanished under 860px with nothing in its
+              place, which left phones with no menu at all.) */}
           <nav className="lp-nav-links" aria-label="Sections">
             {NAV_LINKS.map((l) => (
               <a key={l.href} href={l.href}>{l.label}</a>

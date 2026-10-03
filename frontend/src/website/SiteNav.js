@@ -30,8 +30,6 @@ export function useSiteMenu() {
   const menuRef = useRef(null);
   const menuBtnRef = useRef(null);
   const wasMenuOpen = useRef(false);
-  // Set when the menu closed because the screen widened past the button.
-  const closedWideRef = useRef(false);
 
   useEffect(() => {
     if (!menuOpen) return undefined;
@@ -69,25 +67,9 @@ export function useSiteMenu() {
       next.focus();
     };
 
-    // From 1200px the bar carries the section links and the menu button is
-    // display: none, so a menu still open at that width has no close control,
-    // and the Tab trap below cycles onto a button that cannot take focus.
-    // Rotating a tablet to landscape does exactly that, so crossing the
-    // breakpoint closes the menu. (The 1200 is .lp-nav-links' in the CSS.)
-    const wide = typeof window.matchMedia === 'function' ? window.matchMedia('(min-width: 1200px)') : null;
-    const onWide = (e) => {
-      if (!e.matches) return;
-      closedWideRef.current = true;
-      setMenuOpen(false);
-    };
-    if (wide && wide.addEventListener) wide.addEventListener('change', onWide);
-    else if (wide && wide.addListener) wide.addListener(onWide);
-
     document.addEventListener('keydown', onKey);
     return () => {
       document.removeEventListener('keydown', onKey);
-      if (wide && wide.removeEventListener) wide.removeEventListener('change', onWide);
-      else if (wide && wide.removeListener) wide.removeListener(onWide);
       root.style.overflow = prevOverflow;
       document.body.style.paddingRight = prevPad;
       document.body.style.removeProperty('--lp-scrollbar');
@@ -96,14 +78,8 @@ export function useSiteMenu() {
 
   useEffect(() => {
     if (wasMenuOpen.current && !menuOpen && menuBtnRef.current) {
-      // Closed by widening, the button is display: none and cannot take focus,
-      // so focus would fall to the body once the panel hides. It goes to the
-      // first section link in the bar instead: the control that replaced it.
-      const bar = closedWideRef.current ? menuBtnRef.current.closest('.lp-nav-in') : null;
-      const link = bar ? bar.querySelector('.lp-nav-links a') : null;
-      (link || menuBtnRef.current).focus();
+      menuBtnRef.current.focus();
     }
-    closedWideRef.current = false;
     wasMenuOpen.current = menuOpen;
   }, [menuOpen]);
 

@@ -444,10 +444,10 @@
 }
 .lp-brand svg { display: block; }
 
-/* The section links, in the bar, from 1200px. Below that the menu button
-   takes over: seven links plus the wordmark and Open Flock need about 1,000px
-   of row, and squeezing them into less is how a header starts wrapping onto
-   two lines. */
+/* The section links, in the bar, from 1200px: seven links plus the wordmark,
+   Open Flock and the menu button need about 1,000px of row, and squeezing
+   them into less is how a header starts wrapping onto two lines. The menu
+   button stays beside them at every width (see its rule below). */
 .lp-nav-links { display: none; }
 @media (min-width: 1200px) {
   .lp-nav-links {
@@ -518,8 +518,9 @@
 }
 .lp-menu-btn.is-open .lp-menu-bar:nth-child(1) { translate: 0 4px; rotate: 45deg; }
 .lp-menu-btn.is-open .lp-menu-bar:nth-child(2) { translate: 0 -4px; rotate: -45deg; }
-/* After the button's own rule, which sets display: flex at equal specificity. */
-@media (min-width: 1200px) { .lp-menu-btn { display: none; } }
+/* At every width, including beside the inline links from 1200px. It was
+   hidden there for a day (2026-10-02), and on a desktop that read as the
+   menu having disappeared. */
 
 .lp-menu {
   position: fixed;

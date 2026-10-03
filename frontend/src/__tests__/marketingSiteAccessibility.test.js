@@ -497,43 +497,10 @@ describe('LandingPage structure and keyboard operation', () => {
     expect(root.style.overflow).toBe('');
   });
 
-  test('an open menu closes when the screen widens to where the menu button is hidden', () => {
-    // From 1200px the bar carries the links and the button is display: none.
-    // A tablet rotated to landscape with the menu open used to keep a
-    // full-screen panel with no X, a locked page, and a Tab trap cycling onto
-    // a button that could not take focus.
-    const listeners = [];
-    const original = window.matchMedia;
-    window.matchMedia = (q) => ({
-      media: q,
-      matches: false,
-      addEventListener: (type, fn) => { if (q === '(min-width: 1200px)') listeners.push(fn); },
-      removeEventListener: (type, fn) => {
-        const i = listeners.indexOf(fn);
-        if (i >= 0) listeners.splice(i, 1);
-      },
-      addListener: () => {},
-      removeListener: () => {},
-    });
-    try {
-      const { container } = render(React.createElement(LandingPage));
-      const btn = container.querySelector('.lp-menu-btn');
-      fireEvent.click(btn);
-      expect(btn.getAttribute('aria-expanded')).toBe('true');
-      expect(listeners.length).toBe(1);
-
-      act(() => { listeners[0]({ matches: true }); });
-      expect(btn.getAttribute('aria-expanded')).toBe('false');
-      expect(document.documentElement.style.overflow).toBe('');
-      // Focus goes to the bar's first section link, the control that replaced
-      // the now-hidden button, rather than to the button, where it would fall
-      // through to the body.
-      expect(document.activeElement).toBe(container.querySelector('.lp-nav-links a'));
-      // Closed, the listener is gone with the effect that added it.
-      expect(listeners.length).toBe(0);
-    } finally {
-      window.matchMedia = original;
-    }
+  test('the menu button is never hidden at any width, beside the inline links included', () => {
+    // It was display: none from 1200px for a day (2026-10-02) and on a desktop
+    // that read as the menu having disappeared.
+    expect(readCss('LandingPage.css')).not.toMatch(/\.lp-menu-btn \{ display: none; \}/);
   });
 
   test('the page behind the open menu is inert, so a virtual cursor cannot walk into it', () => {
