@@ -266,6 +266,37 @@ test('confirming a plan is one announcement, not two', async () => {
   assert.strictEqual(pushCalls.filter((p) => p.data.type === 'flock_confirmed').length, 2);
 });
 
+// A retry, or a client resending the whole row, repeats status: 'confirmed'
+// on a plan already locked in. That pushed "It's happening!" to everybody
+// again every time (backend audit 2026-10-03). A repeat is not news; an edit
+// riding along with it is announced as the edit it is.
+test('a plan already confirmed is not announced as happening again', async () => {
+  scriptFlockUpdate({ status: 'confirmed' });
+  on(/^SELECT status FROM flocks WHERE id = \$1$/, () => ({ rows: [{ status: 'confirmed' }] }));
+  const res = await call('PUT', '/api/flocks/42', { status: 'confirmed' });
+  assert.strictEqual(res.status, 200);
+  await settle();
+  assert.strictEqual(pushCalls.length, 0);
+
+  pushCalls = [];
+  handlers = [];
+  scriptFlockUpdate({ status: 'confirmed', name: 'Late dinner' });
+  on(/^SELECT status FROM flocks WHERE id = \$1$/, () => ({ rows: [{ status: 'confirmed' }] }));
+  await call('PUT', '/api/flocks/42', { status: 'confirmed', name: 'Late dinner' });
+  await settle();
+  assert.strictEqual(pushCalls.filter((p) => p.data.type === 'flock_confirmed').length, 0);
+  assert.strictEqual(pushCalls.filter((p) => p.data.type === 'flock_updated').length, 2);
+});
+
+test('a plan already cancelled is not announced as cancelled again', async () => {
+  scriptFlockUpdate({ status: 'cancelled' });
+  on(/^SELECT status FROM flocks WHERE id = \$1$/, () => ({ rows: [{ status: 'cancelled' }] }));
+  const res = await call('PUT', '/api/flocks/42', { status: 'cancelled' });
+  assert.strictEqual(res.status, 200);
+  await settle();
+  assert.strictEqual(pushCalls.length, 0);
+});
+
 // ---------------------------------------------------------------------------
 // 2. A plan that is off
 // ---------------------------------------------------------------------------
