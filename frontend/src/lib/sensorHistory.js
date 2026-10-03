@@ -13,7 +13,14 @@
 
 const AVERAGED = ['thermal_headcount', 'occupancy', 'occupancy_low', 'occupancy_high', 'dwell_minutes', 'noise_db'];
 
-const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+// A number, or a numeric STRING: the history endpoint returns its rows as node-pg
+// reads them, and noise_db there is a Postgres numeric, which arrives as "70.00".
+// Read as a number only, the hour's average looked missing and the first live
+// reading replaced it outright (review 2026-10-03).
+const num = (v) => {
+  const n = typeof v === 'string' && v.trim() !== '' ? Number(v) : v;
+  return typeof n === 'number' && Number.isFinite(n) ? n : null;
+};
 
 // Same local hour. The server buckets on date_trunc('hour'), which agrees with
 // a local hour in every whole-hour time zone.
