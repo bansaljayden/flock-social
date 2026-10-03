@@ -790,9 +790,21 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       // worse than no switch, because the person believes they have already
       // handled it. UNKNOWN_LOCATION_VIEW is the same fallback a denied prompt
       // gets, so the map opens rather than sitting blank.
+      //
+      // AND A PLACE THE APP ALREADY KNOWS IS NOT WAITED ON. The map used to be
+      // built only once a FRESH high-accuracy fix came back (maximumAge 0, an
+      // 8 s timeout, then the location service's coarse retry), so indoors
+      // "Loading map" could sit there for about twenty seconds while the app
+      // was holding the position it had a moment ago (app audit 2026-10-03).
+      // With one, the map opens there at once and eases to the fresh fix when
+      // it lands, unless the person has already moved it themselves.
+      const known = (!initialCenter && locationAllowed && userLocation
+        && Number.isFinite(userLocation.lat) && Number.isFinite(userLocation.lng))
+        ? { lat: userLocation.lat, lng: userLocation.lng }
+        : null;
       const located = (initialCenter || !locationAllowed)
         ? (initialCenter ? { lat: initialCenter.lat, lng: initialCenter.lng } : null)
-        : await getUserLocation();
+        : (known || await getUserLocation());
       const userLoc = located || UNKNOWN_LOCATION_VIEW;
       if (cancelled) return;
       // Same expression as the mapType useState above, and it has to stay the
@@ -951,6 +963,20 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         mapLoadedRef.current = true;
         setMapReady(true);
       });
+
+      // The fresh fix behind a map that opened at a known place (see `known`).
+      // A drag or a pinch is the person choosing where to look, and the fix
+      // does not take that back; nor does it move the map for the width of a
+      // street.
+      if (known) {
+        let personMoved = false;
+        map.on('movestart', (e) => { if (e && e.originalEvent) personMoved = true; });
+        getUserLocation().then((fix) => {
+          if (cancelled || !fix || personMoved || mapInstanceRef.current !== map) return;
+          if (Math.abs(fix.lat - known.lat) + Math.abs(fix.lng - known.lng) < 0.0003) return;
+          mapEase(map, { center: [fix.lng, fix.lat] });
+        });
+      }
 
       // Re-apply both on style swap (roadmap ↔ satellite)
       map.on('styledata', () => {
