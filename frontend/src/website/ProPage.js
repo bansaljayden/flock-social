@@ -124,6 +124,9 @@ export default function ProPage() {
   // Signed out: the public offer, so a visitor sees what Pro costs before
   // being asked to sign in (the homepage already prints the same prices).
   const [offer, setOffer] = useState(null);
+  // Whether that offer has answered, and how: 'checking', 'on', 'off', or
+  // 'unreachable' when the request itself failed.
+  const [offerStatus, setOfferStatus] = useState('checking');
 
   useEffect(() => {
     if (native) return;
@@ -163,8 +166,16 @@ export default function ProPage() {
     let live = true;
     fetch(`${API}/api/pro-offer`)
       .then((r) => (r.ok ? r.json() : null))
-      .then((d) => { if (live && d && d.available && Array.isArray(d.plans) && d.plans.length) setOffer(d); })
-      .catch(() => {});
+      .then((d) => {
+        if (!live) return;
+        if (d && d.available && Array.isArray(d.plans) && d.plans.length) {
+          setOffer(d);
+          setOfferStatus('on');
+        } else {
+          setOfferStatus(d ? 'off' : 'unreachable');
+        }
+      })
+      .catch(() => { if (live) setOfferStatus('unreachable'); });
     return () => { live = false; };
   }, [native, signedIn]);
 
@@ -228,7 +239,24 @@ export default function ProPage() {
   };
 
   let purchase;
-  if (!signedIn) {
+  if (!signedIn && offerStatus === 'checking') {
+    // Nothing until the offer answers, so the payment terms below cannot
+    // flash up and vanish for a visitor the answer turns out to be "off" for.
+    purchase = null;
+  } else if (!signedIn && offerStatus === 'off') {
+    // Signing in cannot put Pro on sale: /api/pro-offer and the signed-in
+    // status read the same switch (webCheckout().ready). This page used to
+    // show "Before you pay" and "Sign in to continue" anyway, and the reward
+    // for signing in was this same sentence. The sign-in stays for the one
+    // person it does serve, somebody with a subscription to manage, which is
+    // where the Terms send a subscriber to cancel.
+    purchase = (
+      <>
+        <p className="pro-note">Flock Pro is not on sale on the web yet.</p>
+        <a className="pro-cta pro-cta-quiet" href="/app" onClick={() => rememberReturnAfterSignIn('/pro')}>Sign in to manage a subscription</a>
+      </>
+    );
+  } else if (!signedIn) {
     const offerPlans = Array.isArray(offer?.plans) ? offer.plans : [];
     const offerSavings = planSavingsPercent(offerPlans.find((p) => p.id === 'monthly'), offerPlans.find((p) => p.id === 'yearly'));
     const offerTax = offer?.taxAdded ? ' plus tax' : '';
