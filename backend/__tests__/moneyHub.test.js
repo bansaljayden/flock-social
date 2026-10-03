@@ -3074,3 +3074,29 @@ test('the App Store break-even uses the App Store price, with the 15% case besid
   assert.strictEqual(dearer.breakEven.proAppStore.priceCents, 999);
   assert.ok(Number.isFinite(dearer.breakEven.proAppStore.netPerUnitExactCents));
 });
+
+// Licence exposures as data (2026-10-03): what licensing every plan for
+// commercial use adds, and a recorded fix clearing its line.
+test('plans outside their terms are listed with what licensing them adds, and a recorded fix clears them', () => {
+  const pic = moneyHub.buildCostPicture({ expenses: [], month: MONTH });
+  const ids = pic.licence.items.map((i) => i.id);
+  for (const id of ['vercel', 'maptiler', 'dicebear', 'carto']) assert.ok(ids.includes(id), `${id} is missing`);
+  assert.strictEqual(pic.licence.toComplyPerMonthCents, 5000, 'Vercel Pro $20 and MapTiler Flex $30');
+  assert.strictEqual(pic.licence.licensedPerMonthCents, pic.totals.perMonthCents + 5000);
+  for (const i of pic.licence.items) assert.match(i.checked, /^\d{4}-\d{2}-\d{2}$/);
+  const fixed = moneyHub.buildCostPicture({
+    expenses: [
+      expense({ id: 1, vendor: 'Vercel', product: 'Pro', kind: 'infrastructure', amountCents: 2000, replacesLine: 'vercel' }),
+      expense({ id: 2, vendor: 'MapTiler', product: 'Flex', kind: 'infrastructure', amountCents: 3000 }),
+    ],
+    month: MONTH,
+  });
+  assert.deepStrictEqual(fixed.licence.items.map((i) => i.id).sort(), ['carto', 'dicebear']);
+  assert.strictEqual(fixed.licence.toComplyPerMonthCents, 0);
+  // A stopped or free row fixes nothing.
+  const stopped = moneyHub.buildCostPicture({
+    expenses: [expense({ id: 3, vendor: 'MapTiler', product: 'Flex', kind: 'infrastructure', amountCents: 3000, active: false })],
+    month: MONTH,
+  });
+  assert.ok(stopped.licence.items.some((i) => i.id === 'maptiler'));
+});

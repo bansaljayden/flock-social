@@ -2097,7 +2097,67 @@ function buildVenueUnitEconomics(args = {}) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// LICENCE EXPOSURES. Plans and services Flock uses outside their terms today.
+// ---------------------------------------------------------------------------
+// Each was prose in the notes above, where nothing could count it. As data,
+// the money hub can say what licensing everything properly would add to the
+// monthly burn, and stop saying it the day the fix is recorded. Flock is a
+// commercial product (Flock Social LLC sells Flock Pro and Roost), so a
+// non-commercial plan is outside its terms whether or not anything is on sale
+// yet. `resolvedBy` names how the hub notices a fix: a code line whose figure
+// is above $0 or that an active bill above $0 stands in for, or an active
+// bill whose vendor matches. Exposures fixed in code leave this list with the
+// change that fixes them.
+const LICENCE_EXPOSURES = [
+  {
+    id: 'vercel',
+    vendor: 'Vercel',
+    plan: 'Hobby (free)',
+    why: 'Hobby is for non-commercial, personal use under Vercel\'s fair use guidelines, and flockcorp.com is a commercial site.',
+    fix: 'Vercel Pro',
+    fixUsdPerMonth: 20,
+    resolvedBy: { codeLine: 'vercel' },
+    source: 'https://vercel.com/docs/limits/fair-use-guidelines',
+    checked: '2026-09-29',
+  },
+  {
+    id: 'maptiler',
+    vendor: 'MapTiler',
+    plan: 'Free',
+    why: 'The Free plan is for non-commercial use, and it pauses the map for the rest of the month past 5,000 sessions or 100,000 requests.',
+    fix: 'MapTiler Flex',
+    fixUsdPerMonth: 30,
+    resolvedBy: { expenseVendor: 'maptiler' },
+    source: 'https://www.maptiler.com/cloud/pricing/',
+    checked: '2026-09-30',
+  },
+  {
+    id: 'dicebear',
+    vendor: 'DiceBear',
+    plan: 'Hosted API (free)',
+    why: 'The hosted avatar API is for non-commercial use; DiceBear asks commercial users to run it themselves.',
+    fix: 'Generate the avatars in the app with the DiceBear npm packages, or remove the button',
+    fixUsdPerMonth: 0,
+    resolvedBy: null,
+    source: 'https://www.dicebear.com/how-to-use/http-api/',
+    checked: '2026-09-30',
+  },
+  {
+    id: 'carto',
+    vendor: 'CARTO',
+    plan: 'Basemap tiles without a key',
+    why: 'Since 2026-09-29 CARTO\'s basemaps need a CARTO key for every use. The map only reaches them when a build has no MapTiler key.',
+    fix: 'Keep REACT_APP_MAPTILER_KEY set in every build, or get a CARTO key',
+    fixUsdPerMonth: 0,
+    resolvedBy: null,
+    source: 'https://carto.com/basemaps',
+    checked: '2026-09-29',
+  },
+];
+
 module.exports = {
+  LICENCE_EXPOSURES,
   readReconciled,
   RATES,
   GOOGLE_QUOTAS,

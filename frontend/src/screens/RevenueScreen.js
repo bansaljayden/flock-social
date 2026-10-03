@@ -812,6 +812,22 @@ function HubCosts({ h, colors }) {
         />
       ))}
 
+      {c.licence && Array.isArray(c.licence.items) && c.licence.items.length > 0 && (
+        <>
+          <p style={hubStyle.kicker}>Plans outside their terms</p>
+          {c.licence.items.map((i) => (
+            <HubRow
+              key={`lic-${i.id}`}
+              navy={navy}
+              label={`${i.vendor}, ${i.plan}`}
+              value={i.fixCentsPerMonth > 0 ? `+${hubMoney(i.fixCentsPerMonth)}/mo` : 'No cost'}
+              note={`${i.why} Fix: ${i.fix}. Checked ${i.checked}.`}
+            />
+          ))}
+          <p style={hubStyle.foot}>With every plan licensed for commercial use, the monthly burn would be {hubMoney(c.licence.licensedPerMonthCents)}. Recording the paid plan on the expense list clears its line here.</p>
+        </>
+      )}
+
       {(c.replaced || []).length > 0 && (
         <p style={hubStyle.foot}>Counted from the expense list instead of the code: {c.replaced.map((x) => x.label).join(', ')}.</p>
       )}
@@ -1823,6 +1839,17 @@ function hubAttention(h) {
   }
   if (h.expenses && h.expenses.status === 'error') {
     add({ key: 'expenses', tone: 'warn', label: 'Expenses', value: 'Not read', note: 'The expense list could not be read, so renewals and bills counted twice were not checked.', card: HUB_CARD.expenses });
+  }
+  const lic = costs.licence;
+  if (lic && Array.isArray(lic.items) && lic.items.length > 0) {
+    add({
+      key: 'licence',
+      tone: 'warn',
+      label: 'Plans outside their terms',
+      value: hubCount(lic.items.length),
+      note: `${lic.items.map((i) => `${i.vendor} ${i.plan}`).join('; ')}. Licensed for commercial use, the burn is ${hubMoney(lic.licensedPerMonthCents)} a month (${hubMoney(lic.toComplyPerMonthCents)} more).`,
+      card: HUB_CARD.costs,
+    });
   }
 
   // Worst first; the order each was added in breaks a tie.

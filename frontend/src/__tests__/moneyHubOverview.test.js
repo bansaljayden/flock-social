@@ -1326,6 +1326,9 @@ describe('needs attention: every live problem at the top, each linking to its ca
       'RevenueCat', 'Not read', /RevenueCat answered 500\. Pro accounts with nothing live were not checked\./, 'hub-revenue'],
     ['an expense list that could not be read', { ...QUIET, expenses: { ...EXPENSES, status: 'error', rows: [] } },
       'Expenses', 'Not read', /renewals and bills counted twice were not checked\./, 'hub-expenses'],
+    // Licence exposures as data (2026-10-03).
+    ['a plan used outside its terms', { ...QUIET, costs: { ...COSTS, licence: { items: [{ id: 'vercel', vendor: 'Vercel', plan: 'Hobby (free)', why: 'Hobby is for non-commercial use.', fix: 'Vercel Pro', fixCentsPerMonth: 2000, source: 'https://vercel.com', checked: '2026-09-29' }], toComplyPerMonthCents: 2000, licensedPerMonthCents: 22078 } } },
+      'Plans outside their terms', '1', /Vercel Hobby \(free\)\. Licensed for commercial use, the burn is \$220\.78 a month \(\$20\.00 more\)\./, 'hub-costs'],
   ];
 
   test.each(TRIGGERS)('%s is a row that says so', async (_why, payload, label, value, note, target) => {
