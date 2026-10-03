@@ -793,6 +793,17 @@ router.post('/:flockId/create',
             // the DELETE so that statement sees the same thing this loop did.
             const payerArtifact = row.user_id === prevPayer && prevPayer !== payerId;
             const rowSettled = row.settled && !payerArtifact;
+            // THE PAYER WHO STAYS PAYER, LEFT OFF THE NEW SPLIT (backend audit
+            // 2026-10-03). Their row's flag is the same artifact: settled
+            // because they paid the venue, never a debt paid to anyone. Read as
+            // a payment by somebody who left, it was banked as money collected:
+            // Ava re-posting her $90 as Ben $45 / Cy $45 was refused with "must
+            // add up to $60.00", and only $30 / $30 went through, with her old
+            // row kept beside them. Nothing on it can be real money either: a
+            // payer change is refused once anyone has paid (PAYMENTS_RECORDED
+            // above), so the payer's own row never carries a payment. Skipped
+            // here, and cleared before the DELETE so that statement drops it.
+            if (row.user_id === payerId && !plannedShareIds.has(row.user_id)) continue;
             // A SETTLED FLAG ON A BILL NOBODY PAID IS NOT A PAYMENT (bill split
             // audit 2026-08-26). `settled` means "this person paid the payer
             // back", and a bill with paid_by NULL has no payer to have paid
@@ -1017,6 +1028,15 @@ router.post('/:flockId/create',
           await client.query(
             'UPDATE bill_split_shares SET settled_at = NULL, settled = false WHERE bill_id = $1 AND user_id = $2',
             [billId, formerPayerId]
+          );
+        }
+        // The same for the payer's own row when they have left themselves off
+        // the split (see the loop): it goes with the rewrite instead of
+        // surviving on its flag.
+        if (hadRealPayer && payerId !== null && !keepIds.includes(payerId)) {
+          await client.query(
+            'UPDATE bill_split_shares SET settled_at = NULL, settled = false, paid_amount = 0 WHERE bill_id = $1 AND user_id = $2',
+            [billId, payerId]
           );
         }
         await client.query(

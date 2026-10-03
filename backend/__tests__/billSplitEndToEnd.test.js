@@ -756,6 +756,39 @@ test('what a member who left already paid comes off the total, so the sheet stil
   assert.strictEqual(cents, 12000, `the bill's rows come to ${cents} cents against a $120 total`);
 });
 
+// The payer's own row is settled because they paid the venue, not because
+// they paid anybody back. Ava, still the payer, re-posts her $90 dinner as
+// Ben $45 / Cy $45 and leaves herself off. Her old auto-settled $30 row was
+// read as money a departed member had paid: the post was refused with "must
+// add up to $60.00", only $30 / $30 went through, and her row survived the
+// DELETE beside them (backend audit 2026-10-03).
+test('a payer who leaves themselves off a re-posted split is not counted as having paid into it', async () => {
+  CURRENT_USER = { id: 1, name: 'Ava', role: 'user' };
+  scriptCreate(THREE, {
+    existingBill: { id: 7, paid_by: 1, had_payer: true, quarantined: false },
+    existingShares: [
+      { user_id: 1, committed: false, settled: true, settled_at: new Date(), amount: '30.00', paid_amount: '0.00' },
+      { user_id: 2, committed: false, settled: false, settled_at: null, amount: '30.00', paid_amount: '0.00' },
+      { user_id: 3, committed: false, settled: false, settled_at: null, amount: '30.00', paid_amount: '0.00' },
+    ],
+  });
+
+  const res = await call('POST', '/api/billing/42/create', {
+    totalAmount: 90, tipPercent: 0, splitType: 'custom',
+    customShares: [{ userId: 2, amount: 45 }, { userId: 3, amount: 45 }],
+  });
+  assert.strictEqual(res.status, 201, res.text);
+  assert.deepStrictEqual(res.body.bill.shares.map((s) => [s.userId, s.amount]), [[2, 45], [3, 45]]);
+
+  // Her row loses its artifact flag before the DELETE that keeps settled rows,
+  // so it goes with the rewrite instead of surviving beside the new split.
+  const clear = log.findIndex((q) => /UPDATE bill_split_shares SET settled_at = NULL, settled = false, paid_amount = 0/.test(q.sql));
+  const keepSettled = log.findIndex((q) => /DELETE FROM bill_split_shares WHERE bill_id = \$1 AND user_id <> ALL/.test(q.sql));
+  assert.ok(clear >= 0, 'the payer\'s own row kept its settled flag');
+  assert.deepStrictEqual(log[clear].params, [7, 1]);
+  assert.ok(clear < keepSettled, 'the flag was cleared after the DELETE that reads it');
+});
+
 test('a quarantined bill is never rewritten, and its shares are not even read', async () => {
   // Migration 089. Every credit, banked payment and settled flag a rewrite
   // reads could carry a budget answer an early ghost commit copied in, so
