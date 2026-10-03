@@ -692,7 +692,7 @@ function HubRevenue({ h, colors }) {
           {recurringRows(subs.roost, 'Roost')}
         </>
       )}
-      <HubRow navy={navy} label="Paying venues in Flock" value={Number.isFinite(db.payingVenues) ? hubCount(db.payingVenues) : 'Not read'} note="venue_subscriptions granted as paid and still running." />
+      <HubRow navy={navy} label="Paying venues in Flock" value={Number.isFinite(db.payingVenues) ? hubCount(db.payingVenues) : 'Not read'} note="venue_subscriptions granted as paid and still running. A venue on a trial is not counted until it pays." />
 
       <p style={hubStyle.kicker}>Collected this month, whole Stripe account</p>
       {!stripeReady && <HubNotice status={s.status} reason={s.reason} />}
