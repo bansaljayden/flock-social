@@ -61,16 +61,42 @@ describe('ProPage never hardcodes a price', () => {
   const realFetch = global.fetch;
   afterEach(() => { global.fetch = realFetch; });
 
-  test('signed out with Pro not on sale: no price anywhere, no status call, and the button is a login link', async () => {
+  // Signing in cannot put Pro on sale (the offer and the signed-in status read
+  // one switch), so the page says so up front instead of showing payment terms
+  // and a sign-in whose reward was this same sentence (site audit 2026-10-03).
+  // The sign-in stays, named for the person it serves: a subscriber the Terms
+  // send here to cancel.
+  test('signed out with Pro not on sale: the plain sentence, no payment terms, and a sign-in to manage', async () => {
     global.fetch = offerFetch({ available: false, plans: [] });
     getToken.mockReturnValue(null);
+    window.sessionStorage.clear();
     const { container } = render(<ProPage />);
-    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(1));
+    await screen.findByText('Flock Pro is not on sale on the web yet.');
     expect(getProStatus).not.toHaveBeenCalled();
     expect(container.textContent).not.toMatch(/\$\s?\d/);
-    const link = screen.getByRole('link', { name: 'Sign in to continue' });
+    expect(container.textContent).not.toContain('Before you pay');
+    expect(screen.queryByRole('link', { name: 'Sign in to continue' })).toBeNull();
+    const link = screen.getByRole('link', { name: 'Sign in to manage a subscription' });
     expect(link.getAttribute('href')).toBe('/app');
+    link.addEventListener('click', (e) => e.preventDefault());
+    act(() => { link.click(); });
+    expect(JSON.parse(window.sessionStorage.getItem('flock_return_after_sign_in')).path).toBe('/pro');
     expect(screen.queryByRole('button', { name: /Get Pro/ })).toBeNull();
+  });
+
+  test('signed out while the offer is still answering: no payment terms flash up', () => {
+    global.fetch = jest.fn(() => new Promise(() => {}));
+    getToken.mockReturnValue(null);
+    const { container } = render(<ProPage />);
+    expect(container.textContent).not.toContain('Before you pay');
+    expect(screen.queryByRole('link', { name: /Sign in/ })).toBeNull();
+  });
+
+  test('signed out and the offer could not be asked: signing in is still the way to find out', async () => {
+    global.fetch = jest.fn(() => Promise.reject(new Error('offline')));
+    getToken.mockReturnValue(null);
+    render(<ProPage />);
+    await screen.findByRole('link', { name: 'Sign in to continue' });
   });
 
   test('signed out with Pro on sale: the public prices, and signing in comes back here', async () => {
