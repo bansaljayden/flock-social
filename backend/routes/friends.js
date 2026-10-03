@@ -100,14 +100,26 @@ async function reRequestDeclined(rowId, requesterId, addresseeId) {
     // answers exactly as it answers a request that is already pending, so
     // the refusal itself says nothing about a decline. Naive column, so the
     // window is read the way every other naive window in the codebase is.
+    //
+    // A WITHDRAWN row (migration 113) is a declined one its requester
+    // cancelled, and it revives on the same terms. Inside the cooldown the
+    // requester's new tap turns it back into 'declined', which reads to them as
+    // the pending request they just sent, the answer a cancelled-then-resent
+    // pending request gets. Left withdrawn it would read as no request at all
+    // straight after "sent", which is its own tell.
     const r = await pool.query(
       `UPDATE friendships SET status = 'pending', requester_id = $1, addressee_id = $2, created_at = NOW()
-        WHERE id = $3 AND status = 'declined'
+        WHERE id = $3 AND status IN ('declined', 'withdrawn')
           AND created_at < (NOW() AT TIME ZONE 'UTC') - INTERVAL '24 hours'
         RETURNING id`,
       [requesterId, addresseeId, rowId]
     );
-    return r.rows.length > 0;
+    if (r.rows.length > 0) return true;
+    await pool.query(
+      "UPDATE friendships SET status = 'declined' WHERE id = $1 AND status = 'withdrawn' AND requester_id = $2",
+      [rowId, requesterId]
+    );
+    return false;
   } catch (err) {
     // 23505: the direction flip collided with an OPPOSITE-ordered row for the
     // same pair (a crossed pair where both rows ended up declined; the decline
@@ -237,7 +249,7 @@ async function collapseToOneFriendship(a, b) {
     await pool.query(
       `DELETE FROM friendships
         WHERE ((requester_id = $1 AND addressee_id = $2) OR (requester_id = $2 AND addressee_id = $1))
-          AND (status = 'pending' OR status = 'declined'
+          AND (status = 'pending' OR status = 'declined' OR status = 'withdrawn'
                OR (status = 'accepted' AND id <> (
                      SELECT MIN(f2.id) FROM friendships f2
                       WHERE ((f2.requester_id = $1 AND f2.addressee_id = $2) OR (f2.requester_id = $2 AND f2.addressee_id = $1))
@@ -273,7 +285,12 @@ const PAIR_LOOKUP_SQL =
 // requester of a declined row.
 function maskedStatus(row, callerId) {
   if (!row) return 'none';
-  if (row.status === 'declined' && Number(row.requester_id) === Number(callerId)) return 'pending';
+  const mine = Number(row.requester_id) === Number(callerId);
+  if (row.status === 'declined' && mine) return 'pending';
+  // A withdrawn request (migration 113) is no request to the person who
+  // cancelled it, as a cancelled pending one is, and the decline it still is
+  // to the person who declined it.
+  if (row.status === 'withdrawn') return mine ? 'none' : 'declined';
   return row.status;
 }
 
@@ -336,7 +353,7 @@ router.post('/request',
       // An existing row is not charged, because it is not a probe, with one
       // exception: reviving a DECLINED row is a fresh request to somebody who
       // said no, and it is metered like any other (friends audit, 2026-09-05).
-      const untouched = existing.rows.length > 0 && !existing.rows.some((r) => r.status === 'declined');
+      const untouched = existing.rows.length > 0 && !existing.rows.some((r) => r.status === 'declined' || r.status === 'withdrawn');
       const withinBudget = untouched || friendProbeBudget.allow(req.user.id);
 
       // Deliberately queried even when the budget is spent, so the exhausted
@@ -707,7 +724,7 @@ router.delete('/:userId', async (req, res) => {
     const result = await pool.query(
       `DELETE FROM friendships
        WHERE ((requester_id = $1 AND addressee_id = $2) OR (requester_id = $2 AND addressee_id = $1))
-         AND NOT (status = 'declined' AND requester_id = $1)
+         AND NOT (status IN ('declined', 'withdrawn') AND requester_id = $1)
        RETURNING id`,
       [req.user.id, userId]
     );
@@ -717,11 +734,19 @@ router.delete('/:userId', async (req, res) => {
       // it must answer as cancelling a pending one does; the 404 here was a
       // decline oracle (hardening review round 3, 2026-09-05). The row stays, because it
       // carries the one-a-day revive cooldown.
-      const masked = await pool.query(
-        "SELECT 1 FROM friendships WHERE requester_id = $1 AND addressee_id = $2 AND status = 'declined'",
+      //
+      // AND IT LEAVES SENT REQUESTS, as a cancelled pending one does. It used
+      // to stay there, masked as pending, so cancelling told the requester
+      // which of their requests had been declined: the pending ones vanished
+      // and the declined ones did not (backend audit 2026-10-03). It becomes
+      // 'withdrawn' (migration 113), which /outgoing does not list and the
+      // mask reads to them as no request at all. Only the first cancel says
+      // "Removed": a second one finds nothing, as it would for a pending one.
+      const withdrawn = await pool.query(
+        "UPDATE friendships SET status = 'withdrawn' WHERE requester_id = $1 AND addressee_id = $2 AND status = 'declined' RETURNING id",
         [req.user.id, userId]
       );
-      if (masked.rows.length > 0) return res.json({ message: 'Removed' });
+      if (withdrawn.rows.length > 0) return res.json({ message: 'Removed' });
       return res.status(404).json({ error: 'No friendship found' });
     }
 
@@ -924,7 +949,7 @@ router.post('/add-by-code',
       // An existing row is not charged, because it is not a probe, with one
       // exception: reviving a DECLINED row is a fresh request to somebody who
       // said no, and it is metered like any other (friends audit, 2026-09-05).
-      const untouched = existing.rows.length > 0 && !existing.rows.some((r) => r.status === 'declined');
+      const untouched = existing.rows.length > 0 && !existing.rows.some((r) => r.status === 'declined' || r.status === 'withdrawn');
       const withinBudget = untouched || friendProbeBudget.allow(req.user.id);
 
       // Same single miss for no code, a banned account and a spent budget. See

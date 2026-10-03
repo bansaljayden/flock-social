@@ -145,6 +145,9 @@ const SUITE_SLOTS = {
   harvestedIsolation: 65,        // new in 2026-09-28; harvested venues change
                                  // no other venue's neighbour features or score,
                                  // and the export leaves them out by default.
+  friendWithdrawnRealDb: 66,     // new in 2026-10-03; a declined request,
+                                 // cancelled, through the real friends router
+                                 // and migration 113's widened CHECK.
 };
 
 // Two suites sharing a slot would silently reintroduce exactly the collision the
