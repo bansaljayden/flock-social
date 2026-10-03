@@ -98,6 +98,13 @@
  *    24px downward. Then the field is blurred, which is the only lever there
  *    is.
  *
+ *    PINNED WHEN THE FINGER CAME DOWN, not during the move. A downward drag
+ *    scrolls the list up toward older messages, so by the time the finger has
+ *    travelled 24px the list is about 24px off the bottom; read on the move,
+ *    the check only ever passed on a thread too short to scroll, and in every
+ *    real conversation the keyboard could not be dragged away at all (app
+ *    audit 2026-10-03). The touchstart records where the list was.
+ *
  * 9. `prefers-reduced-motion` snaps with no transition at all. The global rule
  *    in index.css already collapses transition durations, but this hook also
  *    skips the timer, so the layout commits on the same tick instead of a
@@ -690,7 +697,10 @@ export default function useKeyboardComposer(options = {}) {
     const y = touch && typeof touch.clientY === 'number' ? touch.clientY : null;
 
     if (type === 'touchstart' || type === 'pointerdown' || type === 'mousedown') {
-      dragStartRef.current = y;
+      const startList = listRef.current;
+      const atBottom = !!startList
+        && startList.scrollHeight - startList.scrollTop - startList.clientHeight <= BOTTOM_EPSILON;
+      dragStartRef.current = y == null ? null : { y, atBottom };
       return false;
     }
     if (
@@ -700,13 +710,10 @@ export default function useKeyboardComposer(options = {}) {
       dragStartRef.current = null;
       return false;
     }
-    if (dragStartRef.current == null || y == null) return false;
-    if (y - dragStartRef.current <= DRAG_DISMISS_PX) return false;
-
-    const list = listRef.current;
-    if (!list) return false;
-    const fromBottom = list.scrollHeight - list.scrollTop - list.clientHeight;
-    if (fromBottom > BOTTOM_EPSILON) return false;
+    const start = dragStartRef.current;
+    if (start == null || y == null) return false;
+    if (!start.atBottom) return false;
+    if (y - start.y <= DRAG_DISMISS_PX) return false;
 
     dragStartRef.current = null;
     hideKeyboard();
