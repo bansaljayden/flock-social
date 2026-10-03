@@ -789,6 +789,26 @@ test('a payer who leaves themselves off a re-posted split is not counted as havi
   assert.ok(clear < keepSettled, 'the flag was cleared after the DELETE that reads it');
 });
 
+// A $0 share (the designated driver) owes nothing. It used to be stored
+// unsettled, read as owing on the sheet, keep the bill from ever being fully
+// settled, and be pushed "You owe Ava $0.00" (backend audit 2026-10-03).
+test('a $0 custom share is square from the start, and nobody is told they owe $0.00', async () => {
+  CURRENT_USER = { id: 1, name: 'Ava', role: 'user' };
+  scriptCreate(THREE);
+  const res = await call('POST', '/api/billing/42/create', {
+    totalAmount: 100, tipPercent: 0, splitType: 'custom',
+    customShares: [{ userId: 1, amount: 60 }, { userId: 2, amount: 40 }, { userId: 3, amount: 0 }],
+  });
+  assert.strictEqual(res.status, 201, res.text);
+  const cy = res.body.bill.shares.find((s) => s.userId === 3);
+  assert.strictEqual(cy.settled, true);
+  assert.strictEqual(cy.outstanding, 0);
+  const insert = log.find((q) => /INSERT INTO bill_split_shares/.test(q.sql) && q.params[1] === 3);
+  assert.strictEqual(insert.params[4], true, 'the $0 row was stored as owing');
+  await drain();
+  assert.deepStrictEqual(pushCalls.map((p) => p.userId), [2], 'only the person who owes money is told they do');
+});
+
 test('a quarantined bill is never rewritten, and its shares are not even read', async () => {
   // Migration 089. Every credit, banked payment and settled flag a rewrite
   // reads could carry a budget answer an early ghost commit copied in, so

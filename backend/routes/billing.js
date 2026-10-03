@@ -1078,8 +1078,13 @@ router.post('/:flockId/create',
           // venue, and they are not a debtor on their own bill.
           const carriedCents = isPayer ? 0 : (existingPaidCents.get(share.userId) || 0);
           const coveredByCredit = carriedCents > 0 && carriedCents >= newCents;
-          const settledAt = isPayer ? new Date() : (coveredByCredit ? (existingSettled.get(share.userId) || null) : null);
-          share.settled = isPayer || coveredByCredit; // response mirrors DB truth (round 3)
+          // A $0 share (the designated driver on a custom split) owes nothing,
+          // so it is square from the start. Stored unsettled, it sat on the
+          // sheet as owing, held the bill short of fully settled, and was
+          // pushed "You owe Ava $0.00" (backend audit 2026-10-03).
+          const owesNothing = !isPayer && !coveredByCredit && newCents === 0;
+          const settledAt = (isPayer || owesNothing) ? new Date() : (coveredByCredit ? (existingSettled.get(share.userId) || null) : null);
+          share.settled = isPayer || coveredByCredit || owesNothing; // response mirrors DB truth (round 3)
           share.committed = wasCommitted;
           share.paidAmount = carriedCents / 100;
           share.outstanding = share.settled ? 0 : (newCents - carriedCents) / 100;
@@ -1852,6 +1857,12 @@ router.post('/:flockId/unsettle',
           return res.status(404).json({ error: 'No share found for you on this bill' });
         }
         const row = existing.rows[0];
+        if (row.settled && Number(row.amount) === 0) {
+          return res.status(409).json({
+            error: 'Your share of this bill is $0.00, so there is nothing to mark unpaid.',
+            reason: 'zero_share',
+          });
+        }
         if (row.settled && outstandingOn(row.amount, row.paid_amount, false) === 0) {
           return res.status(409).json({
             error: 'What you paid on an earlier version of this bill already covers your share, so there is nothing to mark unpaid.',
@@ -2008,7 +2019,8 @@ router.post('/:flockId/remind',
         `SELECT bss.user_id
            FROM bill_split_shares bss
            JOIN flock_members fm ON fm.flock_id = $2 AND fm.user_id = bss.user_id AND fm.status = 'accepted'
-          WHERE bss.bill_id = $1 AND bss.settled IS NOT TRUE AND bss.user_id <> $3`,
+          WHERE bss.bill_id = $1 AND bss.settled IS NOT TRUE AND bss.user_id <> $3
+            AND bss.amount > COALESCE(bss.paid_amount, 0)`,
         [bill.id, flockId, userId]
       );
       if (owing.rows.length === 0) {
