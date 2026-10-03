@@ -46,9 +46,9 @@ test('safety: the audience is written before the alarm, and empty snapshots are 
 
 test('moderation and friends: a block keeps the decline cooldown, cancel is not an oracle, banned actors are gone', () => {
   const mod = read('routes/moderation.js');
-  assert.match(mod, /DELETE FROM friendships\n\s+WHERE \(\(requester_id = \$1 AND addressee_id = \$2\)\n\s+OR \(requester_id = \$2 AND addressee_id = \$1\)\)\n\s+AND status <> 'declined'/);
+  assert.match(mod, /DELETE FROM friendships\r?\n\s+WHERE \(\(requester_id = \$1 AND addressee_id = \$2\)\r?\n\s+OR \(requester_id = \$2 AND addressee_id = \$1\)\)\r?\n\s+AND status NOT IN \('declined', 'withdrawn'\)/);
   const fr = read('routes/friends.js');
-  assert.match(fr, /if \(masked\.rows\.length > 0\) return res\.json\(\{ message: 'Removed' \}\);/);
+  assert.match(fr, /if \(withdrawn\.rows\.length > 0\) return res\.json\(\{ message: 'Removed' \}\);/);
   const msgs = read('routes/messages.js');
   // Same guard, asked a cheaper way: the thread read puts the ban question to
   // the ONE counterparty instead of pulling the product's whole invisible set

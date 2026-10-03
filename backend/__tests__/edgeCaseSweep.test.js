@@ -835,7 +835,7 @@ test('friends / TWO AT ONCE: re-requesting must not demote a friendship accepted
   }]);
   const res = await post('/api/friends/request', { user_id: 2 });
   assert.ok(updateWhere, 'the re-request never ran an UPDATE');
-  assert.match(updateWhere, /status = 'declined'/,
+  assert.match(updateWhere, /status IN \('declined', 'withdrawn'\)/,
     'the re-request UPDATE is not guarded by the status it read');
   assert.notStrictEqual(res.body.status, 'pending',
     'reported a pending request over a friendship that already exists');

@@ -14,7 +14,11 @@ test('a decline keeps its row, so the next request cannot insert fresh and push 
 
 test('the declined requester cannot remove the record to start over', () => {
   const remove = src.slice(src.indexOf("router.delete('/:userId'"), src.indexOf("router.get('/outgoing'"));
-  assert.match(remove, /AND NOT \(status = 'declined' AND requester_id = \$1\)/);
+  // Nor a withdrawn one (migration 113): it carries the same cooldown.
+  assert.match(remove, /AND NOT \(status IN \('declined', 'withdrawn'\) AND requester_id = \$1\)/);
+  // The first cancel of a declined request withdraws it, so it leaves Sent
+  // requests the way a cancelled pending request does.
+  assert.match(remove, /SET status = 'withdrawn' WHERE requester_id = \$1 AND addressee_id = \$2 AND status = 'declined' RETURNING id/);
 });
 
 test('reviving a declined request never pushes', () => {
@@ -60,7 +64,9 @@ test('a decline is masked on every read the requester can make, and a revive is 
   assert.match(src, /AND created_at < \(NOW\(\) AT TIME ZONE 'UTC'\) - INTERVAL '24 hours'/);
   assert.match(src, /SET status = 'pending', requester_id = \$1, addressee_id = \$2, created_at = NOW\(\)/);
   // And it is charged like a probe.
-  assert.match(src, /const untouched = existing\.rows\.length > 0 && !existing\.rows\.some\(\(r\) => r\.status === 'declined'\);/);
+  // A withdrawn row (migration 113) revives on the same terms and is charged
+  // the same way.
+  assert.strictEqual((src.match(/const untouched = existing\.rows\.length > 0 && !existing\.rows\.some\(\(r\) => r\.status === 'declined' \|\| r\.status === 'withdrawn'\);/g) || []).length, 2);
 });
 
 test('maskedStatus hides a decline from the requester and from nobody else', () => {
@@ -73,4 +79,8 @@ test('maskedStatus hides a decline from the requester and from nobody else', () 
   assert.strictEqual(maskedStatus({ status: 'declined', requester_id: 4 }, 9), 'declined');
   assert.strictEqual(maskedStatus({ status: 'pending', requester_id: 4 }, 4), 'pending');
   assert.strictEqual(maskedStatus(null, 4), 'none');
+  // Withdrawn (migration 113): no request to the requester who cancelled it,
+  // the decline it still is to the person who declined it.
+  assert.strictEqual(maskedStatus({ status: 'withdrawn', requester_id: 4 }, 4), 'none');
+  assert.strictEqual(maskedStatus({ status: 'withdrawn', requester_id: 4 }, 9), 'declined');
 });
