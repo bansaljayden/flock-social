@@ -151,7 +151,9 @@ const CODE_LINE_LOOKALIKE = {
   'besttime-subscription': /best ?time/i,
   sportsdb: /sports ?db/i,
   'apple-developer': /apple developer|developer program/i,
-  domain: /flockcorp|porkbun|\bdomain\b/i,
+  // Cloudflare is the registrar (RDAP, 2026-09-29); Porkbun stays for a row
+  // typed before that was checked.
+  domain: /flockcorp|porkbun|cloudflare|\bdomain\b/i,
   'google-cloud': /google cloud|\bgcp\b|cloud billing/i,
 };
 
