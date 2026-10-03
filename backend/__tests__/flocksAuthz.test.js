@@ -893,6 +893,40 @@ test('update: venue selection is creator-only on REST, exactly as it is on the s
   assertQueriesUnderstood();
 });
 
+// The live twin of the invite card. flock_updated reaches invitees too
+// (lifecycle audit), and it used to hand them the whole venue block and the
+// status on every rename or venue pick: exactly the fields the card withholds.
+test('update: an invitee hears the change through the card\'s own fields; members get the venue block', async () => {
+  const emitted = [];
+  app.set('io', { to: (room) => ({ emit: (event, payload) => emitted.push({ room, event, payload }) }) });
+  try {
+    const res = await call('PUT', '/api/flocks/10', 'alice', {
+      venue_name: 'The Other Fig', venue_address: '9 Hidden Lane', venue_id: 'ChIJotherfig000000000',
+      venue_latitude: 40.1, venue_longitude: -75.2, venue_rating: 4.5,
+    });
+    assert.strictEqual(res.status, 200);
+    const to = (uid) => emitted.filter((e) => e.room === `user:${uid}` && e.event === 'flock_updated');
+
+    const [carol] = to(3);
+    assert.ok(carol, 'the invitee was not told the plan changed');
+    assert.strictEqual(carol.payload.venue_name, 'The Other Fig');
+    for (const field of PRIVATE_FLOCK_FIELDS) {
+      assert.strictEqual(carol.payload[field], undefined, `flock_updated leaked ${field} to an invitee`);
+    }
+    assert.strictEqual(carol.payload.finished, false);
+
+    const [bob] = to(2);
+    assert.ok(bob, 'a member was not told the plan changed');
+    assert.strictEqual(bob.payload.venue_address, '9 Hidden Lane');
+    assert.strictEqual(bob.payload.venue_id, 'ChIJotherfig000000000');
+    assert.strictEqual(to(1).length, 0, 'the editor heard their own change');
+    assert.strictEqual(to(5).length, 0, 'a declined row heard the change');
+  } finally {
+    app.set('io', undefined);
+  }
+  assertQueriesUnderstood();
+});
+
 // ── MASS ASSIGNMENT ─────────────────────────────────────────────────────────
 // One field at a time, then all together. The UPDATE has a fixed SET list, so
 // the answer is "nothing outside that list is writable" — this is what pins it.
