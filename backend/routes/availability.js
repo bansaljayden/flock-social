@@ -6,6 +6,7 @@ const { rejectIfProfane } = require('../utils/moderation');
 // Shape before content — see validators/shape.js.
 const { scalarOnly, freeText } = require('../validators/shape');
 const { pushIfOffline, isPushConfigured } = require('../services/pushHelper');
+const { ownAvatar } = require('../utils/ownAvatar');
 
 const router = express.Router();
 router.use(authenticate);
@@ -189,7 +190,9 @@ router.post('/',
           name: req.user.name,
           // The client reads this key off the live event and got null every
           // time, so a pulse that arrived live lost its face until a refetch.
-          profile_image_url: req.user.profile_image_url || null,
+          // And req.user never carries one (utils/ownAvatar), so it was null
+          // on the server side too.
+          profile_image_url: await ownAvatar(req.user.id),
           status: pulse.status,
           note: pulse.note,
           setAt: pulse.set_at,

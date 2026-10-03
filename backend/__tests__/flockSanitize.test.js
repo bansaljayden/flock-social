@@ -83,6 +83,9 @@ pool.query = async (text, params = []) => {
 
   if (/^(BEGIN|COMMIT|ROLLBACK)$/i.test(sql)) return { rows: [], rowCount: 0 };
 
+  // utils/ownAvatar.js: the joiner's own photo for the live join event.
+  if (has('END AS url') && has('FROM users WHERE id = $1')) return { rows: [{ url: null }], rowCount: 1 };
+
   // middleware/auth.js
   if (has('is_banned, token_version FROM users WHERE id = $1')) {
     const u = users[params[0]];

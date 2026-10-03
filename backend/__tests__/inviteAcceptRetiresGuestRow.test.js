@@ -41,7 +41,12 @@ let handlers = [];
 let log = [];
 let unknown = [];
 
+const JOINER_PHOTO = 'data:image/png;base64,QUFB';
 function dispatch(sql, params) {
+  // utils/ownAvatar.js: the joiner's own photo for the live join event.
+  if (/END AS url FROM users WHERE id = \$1/.test(String(sql).replace(/\s+/g, ' '))) {
+    return Promise.resolve({ rows: [{ url: JOINER_PHOTO }], rowCount: 1 });
+  }
   // The accept asks whether anybody on the roster has a block with the joiner
   // (utils/blocks.js). Nobody in this file has one.
   if (sql === ROSTER_BLOCK_SQL) return Promise.resolve({ rows: [], rowCount: 0 });
@@ -188,6 +193,9 @@ test('open clients drop the guest entry before they hear about the join', async 
   assert.ok(removed > -1, 'the takedown-shaped removal is sent');
   assert.deepStrictEqual(emits[removed].payload, { contentType: 'guest_rsvp', contentId: 77, flockId: FLOCK });
   assert.ok(joined > removed, 'and it lands first, so no count passes through the doubled state');
+  // With the joiner's face. req.user never carries the photo, so this was null
+  // on every join until it was read for the event (utils/ownAvatar.js).
+  assert.strictEqual(emits[joined].payload.userImage, JOINER_PHOTO);
 });
 
 test('the retired row\'s vote comes across as one vote, under the vote routes\' lock', async () => {
