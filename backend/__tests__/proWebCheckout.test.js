@@ -1249,6 +1249,37 @@ test('a path that stood aside sends on its recheck when the other send failed', 
   }
 });
 
+test('a recheck that hits a database error still leaves the later recheck scheduled', async () => {
+  setEnv(ON);
+  const ack = require('../services/proAcknowledgment');
+  const rechecks = [];
+  ack.__test.setScheduler((fn, ms) => rechecks.push({ fn, ms }));
+  let stateCalls = 0;
+  const { restore } = stubPool(async (sql) => {
+    if (sql.includes('FROM pro_purchase_acknowledgments') && !sql.includes('INSERT') && !sql.includes('DELETE') && !sql.includes('UPDATE')) {
+      stateCalls += 1;
+      if (stateCalls === 1) return { rows: [{ state: 'claimed' }] };
+      throw new Error('connection reset');
+    }
+    return null;
+  });
+  try {
+    const out = await ack.acknowledgePurchase(7, completedSession());
+    assert.strictEqual(out.skipped, 'already');
+    assert.strictEqual(rechecks.length, 1);
+    rechecks[0].fn();
+    await new Promise((r) => setTimeout(r, 20));
+    assert.strictEqual(rechecks.length, 2, 'the error spent the last recheck');
+    assert.strictEqual(rechecks[1].ms, ack.__test.RECHECK_DELAYS_MS[1]);
+    rechecks[1].fn();
+    await new Promise((r) => setTimeout(r, 20));
+    assert.strictEqual(rechecks.length, 2, 'rechecks must stop after the last delay');
+  } finally {
+    restore();
+    ack.__test.setScheduler((fn, ms) => { const t = setTimeout(fn, ms); if (t.unref) t.unref(); });
+  }
+});
+
 test('a claim left by a sender that died is taken over once it is stale', () => {
   const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'services', 'proAcknowledgment.js'), 'utf8');
   assert.match(src, /ON CONFLICT \(session_id\) DO UPDATE SET created_at = NOW\(\)\s+WHERE pro_purchase_acknowledgments\.emailed_at = '-infinity'::timestamptz\s+AND pro_purchase_acknowledgments\.created_at < NOW\(\) - make_interval\(mins => \$3::int\)/);

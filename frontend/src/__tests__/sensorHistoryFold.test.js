@@ -22,6 +22,32 @@ test('a reading in the same hour adds its door count and moves the averages', ()
   expect(next[0].occupancy).toBe(60); // a missing reading keeps the average
 });
 
+// The history sends each hour's exact [sum, non-null count] per averaged
+// figure, and the fold works from those (review 2026-10-03).
+test('a steady change is not rounded away one reading at a time', () => {
+  // 60 readings averaging 100, then 60 readings of 120: the server says 110.
+  let history = [{ recorded_at: HOUR, sample_count: 60, thermal_headcount: 100, totals: { thermal_headcount: [6000, 60] } }];
+  for (let i = 0; i < 60; i += 1) history = foldSensorReading(history, { recorded_at: at(30), thermal_headcount: 120 }, 48);
+  expect(history[0].thermal_headcount).toBe(110);
+  expect(history[0].totals.thermal_headcount).toEqual([13200, 120]);
+});
+
+test('readings with no value for a figure do not dilute its average', () => {
+  // 59 readings without a dwell time and one of 10; a reading of 30 makes 20,
+  // as Postgres's null-skipping AVG does.
+  const history = [{ recorded_at: HOUR, sample_count: 60, dwell_minutes: 10, totals: { dwell_minutes: [10, 1] } }];
+  const next = foldSensorReading(history, { recorded_at: at(30), dwell_minutes: 30 }, 48);
+  expect(next[0].dwell_minutes).toBe(20);
+  expect(next[0].sample_count).toBe(61);
+});
+
+test('an hour with no value yet for a figure starts from the first one', () => {
+  const history = [{ recorded_at: HOUR, sample_count: 5, noise_db: null, totals: { noise_db: [null, 0] } }];
+  const next = foldSensorReading(history, { recorded_at: at(30), noise_db: '72.50' }, 48);
+  expect(next[0].noise_db).toBe(72.5);
+  expect(next[0].totals.noise_db).toEqual([72.5, 1]);
+});
+
 test('a reading in a new hour opens a bucket of one, and the list stays capped', () => {
   const history = Array.from({ length: 48 }, (_, i) => ({ recorded_at: new Date(2026, 9, 1, i).toISOString(), sample_count: 1, ir_beam_count: 1 }));
   const next = foldSensorReading(history, { recorded_at: at(5), ir_beam_count: 7, thermal_headcount: 10 }, 48);

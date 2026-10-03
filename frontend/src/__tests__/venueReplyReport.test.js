@@ -19,6 +19,13 @@ test('the owner reply carries its own Report, which names no account', () => {
   expect(at).toBeGreaterThan(sheet.indexOf('{r.venue_reply && ('));
 });
 
+test('a takedown or restore marks the owner\'s own Reviews tab live', () => {
+  expect(app).toMatch(/case 'venue_reply':\s+if \(hidden\) setVenueDetailReviews\(prev => dropReplyById\(prev, ev\.contentId\)\);\s+setVenueReviewsData\(prev => markReplyModeration\(prev, ev\.contentId, hidden\)\);/);
+  const start = app.indexOf('const markReplyModeration = ');
+  const body = app.slice(start, app.indexOf('\n};', start));
+  expect(body).toMatch(/reply_hidden_by_moderation: hidden/);
+});
+
 test('a reported or taken-down reply leaves the card and the review stays', () => {
   expect(app).toMatch(/venue_reply: 'venueReviews',/);
   expect(app).toMatch(/case 'venue_reply':\s+if \(hidden\) setVenueDetailReviews\(prev => dropReplyById\(prev, ev\.contentId\)\);/);

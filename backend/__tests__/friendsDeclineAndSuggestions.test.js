@@ -43,8 +43,10 @@ test('a decline is masked on every read the requester can make, and a revive is 
   const path = require('node:path');
   const src = fs.readFileSync(path.join(__dirname, '..', 'routes', 'friends.js'), 'utf8');
   assert.match(src, /function maskedStatus\(row, callerId\) \{/);
-  assert.match(src, /res\.json\(\{ status: maskedStatus\(result\.rows\[0\], req\.user\.id\), requester_id: result\.rows\[0\]\.requester_id \}\);/);
-  assert.match(src, /friendshipMap\[f\.friend_id\] = maskedStatus\(f, req\.user\.id\);/);
+  assert.match(src, /const status = maskedStatus\(result\.rows\[0\], req\.user\.id\);\s+if \(status === 'none'\) return res\.json\(\{ status: 'none' \}\);\s+res\.json\(\{ status, requester_id: result\.rows\[0\]\.requester_id \}\);/);
+  // A row that masks to no relationship answers exactly like no row: no
+  // requester_id on /status, and null (never 'none') in contact discovery.
+  assert.match(src, /const status = maskedStatus\(f, req\.user\.id\);\s+if \(status !== 'none'\) friendshipMap\[f\.friend_id\] = status;/);
   // Both revive responses say what a pending row says.
   // The two fresh-request sites keep "sent to <name>"; neither revive site
   // may, or the requester learns which one they were. add-by-code names the

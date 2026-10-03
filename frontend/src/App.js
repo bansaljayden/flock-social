@@ -4302,6 +4302,21 @@ const dropContentById = (rows, contentId) => {
   return kept.length === rows.length ? rows : kept;
 };
 
+// The owner's own Reviews tab keeps a hidden reply and flags it (the server's
+// GET /reviews sends reply_hidden_by_moderation), so a takedown or a restore
+// marks the row live: the removal notice and the Reply button appear without a
+// reload (review 2026-10-03).
+const markReplyModeration = (data, contentId, hidden) => {
+  if (!data || !Array.isArray(data.reviews) || contentId == null) return data;
+  let changed = false;
+  const reviews = data.reviews.map((r) => {
+    if (!r || !sameContentId(r.id, contentId) || !!r.reply_hidden_by_moderation === hidden) return r;
+    changed = true;
+    return { ...r, reply_hidden_by_moderation: hidden };
+  });
+  return changed ? { ...data, reviews } : data;
+};
+
 // A venue owner's reply lives on its review's row (migration 114), so taking
 // the reply down clears it from that row and leaves the review standing.
 const dropReplyById = (rows, contentId) => {
@@ -17836,6 +17851,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           break;
         case 'venue_reply':
           if (hidden) setVenueDetailReviews(prev => dropReplyById(prev, ev.contentId));
+          setVenueReviewsData(prev => markReplyModeration(prev, ev.contentId, hidden));
           break;
         default:
           // 'story' lands here, and so does any type added to admin.js later.

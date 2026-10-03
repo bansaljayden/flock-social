@@ -353,7 +353,9 @@ test('every reportable type can be opened in full, and each reads its own table'
     assert.strictEqual(res.body.text, `full ${type} text`, type);
     const q = ran(new RegExp(`FROM ${src.table} t WHERE`));
     assert.strictEqual(q.length, 1, `${type} did not read ${src.table}`);
-    assert.deepStrictEqual(q[0].params, [keyed ? 3 : 55], `${type} keyed off the wrong column`);
+    // A reply report also binds the read to the reply's author, the reported
+    // user (migration 114), so it carries that id second.
+    assert.deepStrictEqual(q[0].params, src.sameAuthor ? [55, 3] : [keyed ? 3 : 55], `${type} keyed off the wrong column`);
   }
 });
 

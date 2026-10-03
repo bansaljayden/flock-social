@@ -1419,8 +1419,20 @@ router.post('/submit-review', requireVerified, [
     // read one back: the reviewer gets their own row without the business's
     // unpublished words in it. Same reasoning as the reply route's refusal to
     // hand back a hidden review.
+    //
+    // A reply moderation took down (migration 114) is withheld the same way,
+    // and the reply's author id and the moderation flag are not this
+    // reviewer's to read at all. Without this, re-submitting an unchanged
+    // review handed back the hidden reply word for word.
     const saved = rows[0];
-    if (saved && saved.venue_replied_at === null) saved.venue_reply = null;
+    if (saved) {
+      if (saved.venue_replied_at === null || saved.venue_reply_hidden === true) {
+        saved.venue_reply = null;
+        saved.venue_replied_at = null;
+      }
+      delete saved.venue_reply_hidden;
+      delete saved.venue_reply_user_id;
+    }
     res.status(201).json(saved);
   } catch (err) {
     console.error('Submit review error:', err);

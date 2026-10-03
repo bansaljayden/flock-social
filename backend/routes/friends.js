@@ -1209,7 +1209,12 @@ router.post('/find-by-phone',
         );
         // A declined row reads as pending to the person declined; see
         // maskedStatus.
-        friendships.rows.forEach(f => { friendshipMap[f.friend_id] = maskedStatus(f, req.user.id); });
+        // A row that reads as no relationship is left out, so it answers
+        // null exactly like a person with no row.
+        friendships.rows.forEach(f => {
+          const status = maskedStatus(f, req.user.id);
+          if (status !== 'none') friendshipMap[f.friend_id] = status;
+        });
       }
 
       const users = result.rows.map(u => ({
@@ -1261,8 +1266,13 @@ router.get('/status/:userId', async (req, res) => {
     if (result.rows.length === 0) {
       return res.json({ status: 'none' });
     }
-    // Masked for the requester of a declined row; see maskedStatus.
-    res.json({ status: maskedStatus(result.rows[0], req.user.id), requester_id: result.rows[0].requester_id });
+    // Masked for the requester of a declined row; see maskedStatus. A row
+    // that reads as no relationship (a withdrawn request, to the person who
+    // cancelled it) answers exactly as a missing row does, with no
+    // requester_id beside it, or the extra field would mark the decline.
+    const status = maskedStatus(result.rows[0], req.user.id);
+    if (status === 'none') return res.json({ status: 'none' });
+    res.json({ status, requester_id: result.rows[0].requester_id });
   } catch (err) {
     console.error('Friend status error:', err);
     res.status(500).json({ error: 'Failed to check friendship status' });

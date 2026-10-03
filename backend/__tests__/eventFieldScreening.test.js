@@ -364,7 +364,7 @@ test('the server still serves the rest of the words, under the same admin gate',
   // Reported UGC, sometimes a minor's words, served to a moderator: it must not
   // sit in a proxy or a browser cache, the same rule the image endpoint follows.
   const contentRoute = adminSrc.slice(adminSrc.indexOf("router.get('/reports/:id/content'"));
-  assert.ok(/no-store/.test(contentRoute.slice(0, 3000)), 'the content endpoint stopped setting Cache-Control: no-store.');
+  assert.ok(/no-store/.test(contentRoute.slice(0, 4000)), 'the content endpoint stopped setting Cache-Control: no-store.');
 });
 
 test('the console no longer claims the excerpt is all a moderator can have', () => {

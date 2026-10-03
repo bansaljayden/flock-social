@@ -101,14 +101,20 @@ async function acknowledgePurchase(userId, session, attempt = 0) {
   if (!SESSION_RE.test(sessionId)) return { skipped: 'no_session' };
   if (session.status && session.status !== 'complete') return { skipped: 'not_complete' };
   if (session.mode && session.mode !== 'subscription') return { skipped: 'not_subscription' };
+  // Recheck number `n` (1-based) runs after RECHECK_DELAYS_MS[n - 1]. One that
+  // throws, a database blip at the moment it runs, schedules the next, so a
+  // single transient error cannot spend every remaining chance at once.
+  const recheck = (n) => {
+    if (n > RECHECK_DELAYS_MS.length) return;
+    scheduleRecheck(() => {
+      acknowledgePurchase(userId, session, n).catch((err) => {
+        console.warn('[pro] acknowledgment recheck failed:', err && err.message);
+        recheck(n + 1);
+      });
+    }, RECHECK_DELAYS_MS[n - 1]);
+  };
   const standAside = () => {
-    if (attempt < RECHECK_DELAYS_MS.length) {
-      scheduleRecheck(() => {
-        acknowledgePurchase(userId, session, attempt + 1).catch((err) => {
-          console.warn('[pro] acknowledgment recheck failed:', err && err.message);
-        });
-      }, RECHECK_DELAYS_MS[attempt]);
-    }
+    recheck(attempt + 1);
     return { skipped: 'already' };
   };
   const state = await acknowledgmentState(sessionId);

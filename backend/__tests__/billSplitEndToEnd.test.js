@@ -809,6 +809,31 @@ test('a $0 custom share is square from the start, and nobody is told they owe $0
   assert.deepStrictEqual(pushCalls.map((p) => p.userId), [2], 'only the person who owes money is told they do');
 });
 
+// The $0 row is settled because it owes nothing, and nobody has paid the
+// payer anything yet, so the bill can still be handed to somebody else; and a
+// $0 member left off a re-post is not kept as somebody who paid (review
+// 2026-10-03).
+test('a settled $0 share is not a payment: the payer can still change, and it is not kept as paid', async () => {
+  CURRENT_USER = { id: 1, name: 'Ava', role: 'user' };
+  scriptCreate(THREE, {
+    existingBill: { id: 7, paid_by: 1, had_payer: true, quarantined: false },
+    existingShares: [
+      { user_id: 1, committed: false, settled: true, settled_at: new Date(), amount: '60.00', paid_amount: '0.00' },
+      { user_id: 2, committed: false, settled: false, settled_at: null, amount: '40.00', paid_amount: '0.00' },
+      { user_id: 3, committed: false, settled: true, settled_at: new Date(), amount: '0.00', paid_amount: '0.00' },
+    ],
+  });
+  const res = await call('POST', '/api/billing/42/create', {
+    totalAmount: 100, tipPercent: 0, splitType: 'custom', paidBy: 2,
+    customShares: [{ userId: 1, amount: 50 }, { userId: 2, amount: 50 }],
+  });
+  assert.notStrictEqual(res.body && res.body.code, 'PAYMENTS_RECORDED', res.text);
+  assert.strictEqual(res.status, 201, res.text);
+  assert.deepStrictEqual(res.body.bill.shares.map((s) => s.userId).sort(), [1, 2]);
+  const keep = log.find((q) => /DELETE FROM bill_split_shares\s+WHERE bill_id = \$1 AND user_id <> ALL/.test(q.sql));
+  assert.match(keep.sql, /\(settled = false OR amount = 0\) AND paid_amount = 0/);
+});
+
 test('a quarantined bill is never rewritten, and its shares are not even read', async () => {
   // Migration 089. Every credit, banked payment and settled flag a rewrite
   // reads could carry a budget answer an early ghost commit copied in, so
