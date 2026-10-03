@@ -123,7 +123,12 @@ const APPLE_SMALL_BUSINESS_PCT = costModel.RATES.stores.appleSmallBusinessPct;
 const EXPENSE_KINDS = ['infrastructure', 'tooling', 'legal', 'other'];
 const EXPENSE_CADENCES = ['monthly', 'quarterly', 'yearly', 'usage', 'one_time'];
 const EXPENSE_LIST_LIMIT = 500;
-const RENEWAL_WINDOW_DAYS = 60;
+// A quarter ahead: a yearly bill shows up three months out, not two
+// (2026-10-03, was 60).
+const RENEWAL_WINDOW_DAYS = 90;
+// The totals under the renewals list: what is due in the next week, month
+// and quarter, in dollars.
+const RENEWAL_BUCKETS_DAYS = [7, 30, 90];
 
 // The collector runs hourly at :07 (collectRealtime.js on the Railway BESTTIME
 // cron). Two and a half hours without a row means at least one run is missing.
@@ -950,6 +955,32 @@ function licenceExposures({ lines, expenses, perMonthCents }) {
   return { items, toComplyPerMonthCents: toComplyCents, licensedPerMonthCents: perMonthCents + toComplyCents };
 }
 
+// What falls due in the next week, month and quarter, in dollars. Every
+// charge inside each window counts, so a monthly bill is three charges in the
+// next 90 days, not one. Dollars only: a euro bill has no dollar figure to
+// add, and is named as left out (nonUsd) beside it.
+function renewalTotals(expenses, todayYmd) {
+  return RENEWAL_BUCKETS_DAYS.map((days) => {
+    const until = addDaysYmd(todayYmd, days);
+    let cents = 0;
+    let charges = 0;
+    const bills = new Set();
+    for (const x of expenses) {
+      if (!x.active || x.isCredit || x.currency !== 'USD') continue;
+      const step = { monthly: 1, quarterly: 3, yearly: 12 }[x.cadence];
+      if (!step) continue;
+      const next = nextChargeOn(x, todayYmd);
+      if (!next) continue;
+      for (let k = 0, on = next.on; on <= until && k < 24; k += 1, on = addMonthsYmd(next.on, k * step)) {
+        cents += x.amountCents;
+        charges += 1;
+        bills.add(x.id);
+      }
+    }
+    return { days, cents, charges, bills: bills.size };
+  });
+}
+
 function buildCostPicture({ expenses = [], reconciled = null, month }) {
   // Only a row that is itself counted may take a code line out of the total:
   // active, and in dollars. A euro bill linked to Railway would otherwise
@@ -1136,6 +1167,7 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
     totals: { thisMonthCents, perMonthCents: perMonthTotal },
     upcoming,
     upcomingWindowDays: RENEWAL_WINDOW_DAYS,
+    upcomingTotals: renewalTotals(expenses, month.todayYmd),
     possibleDoubles,
     replaced,
     nonUsd: lines.filter((l) => l.nonUsd && !l.inactive).map((l) => ({

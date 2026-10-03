@@ -1609,3 +1609,11 @@ describe('downloading the expense list', () => {
     }
   });
 });
+
+describe('renewal totals', () => {
+  test('the Costs card says what is due in the next week, month and quarter', async () => {
+    await renderHub({ ...CONNECTED, costs: { ...CONNECTED.costs, upcomingWindowDays: 90, upcomingTotals: [{ days: 7, cents: 0, charges: 0, bills: 0 }, { days: 30, cents: 20000, charges: 1, bills: 1 }, { days: 90, cents: 69900, charges: 4, bills: 2 }] } });
+    expect(await screen.findByText(/Next 7 days: \$0\.00 · Next 30 days: \$200\.00 · Next 90 days: \$699\.00\./)).toBeInTheDocument();
+    expect(screen.getByText('Renewals in the next 90 days')).toBeInTheDocument();
+  });
+});

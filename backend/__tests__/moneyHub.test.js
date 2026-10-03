@@ -3252,3 +3252,22 @@ test('the export route sends the list as CSV text with a dated file name, and re
   assert.strictEqual(r.status, 409);
   assert.match(r.body.error, /would leave some out/);
 });
+
+// Renewal totals for the next week, month and quarter (2026-10-03).
+test('a monthly bill is every charge inside the window, so three in the next 90 days', () => {
+  const today = MONTH.todayYmd;
+  const in10 = moneyHub.__test.addMonthsYmd(today, 0);
+  const pic = moneyHub.buildCostPicture({
+    expenses: [
+      expense({ id: 1, vendor: 'Anthropic', product: 'Max', kind: 'tooling', cadence: 'monthly', amountCents: 20000, renewsOn: in10 }),
+      expense({ id: 2, vendor: 'Euro tool', kind: 'tooling', cadence: 'monthly', amountCents: 1000, currency: 'EUR', renewsOn: in10 }),
+    ],
+    month: MONTH,
+  });
+  const by = Object.fromEntries(pic.upcomingTotals.map((t) => [t.days, t]));
+  assert.strictEqual(pic.upcomingWindowDays, 90);
+  assert.strictEqual(by[7].cents, 20000);
+  assert.strictEqual(by[90].charges, 3, 'a monthly bill renews three times in 90 days');
+  assert.strictEqual(by[90].cents, 60000);
+  assert.strictEqual(by[90].bills, 1, 'the euro bill has no dollar figure to add');
+});
