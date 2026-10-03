@@ -17313,7 +17313,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
      The sentences are described rather than quoted on purpose: a sweep in the
      frontend suite finds them by indexOf across App.js and the screens, and a
      comment holding the literal text becomes the first match. */
-  const [venueListLoaded, setVenueListLoaded] = useState({ promotions: false, events: false });
+  // incomingFlocks joined 2026-10-03: the In Their Vote tile printed 0 and the
+  // Events tab said no flock had the venue in its vote during the seconds
+  // before that read answered, which can wait behind a Places lookup.
+  const [venueListLoaded, setVenueListLoaded] = useState({ promotions: false, events: false, incomingFlocks: false });
   /* `loaded` IS SEPARATE FROM `stats`, and it has to be. The empty state under
      this list says "No reviews yet. Reviews from Flock users will appear here",
      which a venue owner reads as "nobody has reviewed us" -- a claim about
@@ -17683,6 +17686,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     try {
       const d = await getIncomingFlocks();
       setRealIncomingFlocks(d?.flocks || []);
+      setVenueListLoaded(prev => (prev.incomingFlocks ? prev : { ...prev, incomingFlocks: true }));
       // The route answers 200 { flocks: [], unverified: true } for a venue it
       // will not serve yet; that used to render as a confident 0 and "No
       // flock has you in its vote yet".

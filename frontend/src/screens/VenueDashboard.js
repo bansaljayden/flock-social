@@ -1185,7 +1185,7 @@ export default function VenueDashboard({
                   this grid already print '–' when the model has nothing to say;
                   this one printed a confident 0 for a request that 403'd or
                   timed out, and 0 here is the number a venue would act on. */}
-              <p style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: colors.navy, margin: '4px 0 0' }}>{(venueListErrors.incomingFlocks || venueListErrors.incomingFlocksLocked || venueListErrors.incomingFlocksUnverified) ? '–' : realIncomingFlocks.length}</p>
+              <p style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: colors.navy, margin: '4px 0 0' }}>{(venueListErrors.incomingFlocks || venueListErrors.incomingFlocksLocked || venueListErrors.incomingFlocksUnverified || !venueListLoaded.incomingFlocks) ? '–' : realIncomingFlocks.length}</p>
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0 0' }}>flocks, now and the week ahead</p>
             </div>
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
@@ -1874,7 +1874,9 @@ export default function VenueDashboard({
                   // Flock users, and he is their bird. The "Your Events" card
                   // below shares this screen and stays bird-free on purpose —
                   // one mark per screen, and this is the card about people.
-                  (venueListErrors.incomingFlocks || venueListErrors.incomingFlocksLocked) ? null : venueListErrors.incomingFlocksUnverified ? (
+                  (venueListErrors.incomingFlocks || venueListErrors.incomingFlocksLocked) ? null : !venueListLoaded.incomingFlocks ? (
+                    <p aria-busy="true" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', textAlign: 'center', margin: 0, padding: '14px 0' }}>Loading the flocks voting on you…</p>
+                  ) : venueListErrors.incomingFlocksUnverified ? (
                     <div style={{ padding: '14px 4px 8px' }}>
                       <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>This feed turns on once your venue is verified.</p>
                       {renderVerificationAsk()}
