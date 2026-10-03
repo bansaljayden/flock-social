@@ -2683,6 +2683,11 @@ export async function deleteAdminExpense(id) {
   return request(`/api/admin/expenses/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 
+// The expense list as CSV text, with the file name to save it under.
+export async function exportAdminExpenses() {
+  return request('/api/admin/expenses/export');
+}
+
 // A pasted list, all or nothing: the server checks every row before it writes
 // any, and a bill already on the list is updated rather than added twice.
 export async function importAdminExpenses(expenses) {

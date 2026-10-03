@@ -3251,6 +3251,25 @@ router.get('/expenses', async (req, res) => {
   }
 });
 
+// The list as a CSV, for taxes and an accountant. Sent as JSON ({ filename,
+// csv }) so it rides the same signed-in request as every other admin read and
+// the page builds the file; a bare file link would carry no sign-in. A list
+// past the limit is refused rather than exported short.
+router.get('/expenses/export', async (req, res) => {
+  try {
+    const rows = await moneyHub.readExpenses(pool);
+    res.set('Cache-Control', 'no-store');
+    if (rows.truncated) {
+      return res.status(409).json({ error: `The list has more than ${moneyHub.EXPENSE_LIST_LIMIT} bills, so an export would leave some out.` });
+    }
+    const today = moneyHub.ymdIn(moneyHub.HUB_TZ);
+    res.json({ filename: `flock-expenses-${today}.csv`, rows: rows.length, csv: moneyHub.expensesCsv(rows) });
+  } catch (err) {
+    console.error('Export expenses error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // The same vendor, product and cadence, and the same side (charge or credit),
 // is the same bill (business_expenses_bill_key, migrations 080 and 096). A
 // second copy typed into the add or edit form is a conflict to show the

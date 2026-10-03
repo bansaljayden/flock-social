@@ -47,6 +47,7 @@ jest.mock('../services/api', () => ({
   updateAdminExpense: jest.fn(),
   deleteAdminExpense: jest.fn(),
   importAdminExpenses: jest.fn(),
+  exportAdminExpenses: jest.fn(),
 }));
 
 const api = require('../services/api');
@@ -1582,5 +1583,29 @@ describe('a truncated expense list', () => {
     expect(document.body.textContent).not.toMatch(/\$220\.78/);
     // The cost tables are withheld too: their totals would be missing bills.
     expect(screen.getByText(/Totals withheld until the expense list fits/)).toBeInTheDocument();
+  });
+});
+
+// The expense list as a CSV file (2026-10-03).
+describe('downloading the expense list', () => {
+  test('the button saves the CSV the server sends and says what it saved', async () => {
+    const created = [];
+    const origCreate = URL.createObjectURL;
+    const origRevoke = URL.revokeObjectURL;
+    URL.createObjectURL = (blob) => { created.push(blob); return 'blob:flock'; };
+    URL.revokeObjectURL = () => {};
+    api.exportAdminExpenses.mockResolvedValue({ filename: 'flock-expenses-2026-10-03.csv', rows: 2, csv: '"Vendor"\r\n"Vercel"\r\n' });
+    try {
+      await renderHub(CONNECTED);
+      const button = await screen.findByRole('button', { name: 'Download CSV' });
+      fireEvent.click(button);
+      expect(await screen.findByText('Saved flock-expenses-2026-10-03.csv, 2 bills.')).toBeInTheDocument();
+      expect(api.exportAdminExpenses).toHaveBeenCalledTimes(1);
+      expect(created).toHaveLength(1);
+      expect(created[0].type).toBe('text/csv;charset=utf-8');
+    } finally {
+      URL.createObjectURL = origCreate;
+      URL.revokeObjectURL = origRevoke;
+    }
   });
 });

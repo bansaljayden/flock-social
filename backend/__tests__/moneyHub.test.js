@@ -3222,3 +3222,33 @@ test('a code line a non-paying row stands in for does not clear its licence expo
     line.usd = was;
   }
 });
+
+// The expense list as a CSV (2026-10-03).
+test('the CSV quotes every cell, keeps a typed formula as text, and keeps a credit a number', () => {
+  const csv = moneyHub.expensesCsv([
+    { vendor: '=HYPERLINK("http://x")', product: 'Pro "plan"', kind: 'tooling', cadence: 'monthly', amountCents: 2000, currency: 'USD', lastChargedOn: '2026-10-01', active: true, verified: true, note: '+1 seat', isCredit: false },
+    { vendor: 'Refund', kind: 'other', cadence: 'one_time', amountCents: 500, currency: 'USD', active: false, verified: false, note: '@sum', isCredit: true },
+  ]);
+  const [head, a, b] = csv.split('\r\n');
+  assert.match(head, /^"Vendor","Product","Kind"/);
+  assert.ok(a.startsWith('"\'=HYPERLINK(""http://x"")","Pro ""plan""",'), a);
+  assert.match(a, /"20\.00","USD","2026-10-01"/);
+  assert.ok(a.endsWith('"\'+1 seat"'), a);
+  assert.match(b, /"-5\.00"/, 'a credit is a negative number, not text');
+  assert.ok(b.endsWith('"\'@sum"'), b);
+  assert.ok(csv.endsWith('\r\n'));
+});
+
+test('the export route sends the list as CSV text with a dated file name, and refuses a partial list', async () => {
+  handlers = [[/FROM business_expenses/, () => ({ rows: [dbRow({ id: 1, vendor: 'Vercel', kind: 'infrastructure', amount_cents: 2000, cadence: 'monthly' })] })]];
+  let r = await req('GET', '/api/admin/expenses/export');
+  assert.strictEqual(r.status, 200, r.text);
+  assert.match(r.body.filename, /^flock-expenses-\d{4}-\d{2}-\d{2}\.csv$/);
+  assert.strictEqual(r.body.rows, 1);
+  assert.match(r.body.csv, /"Vercel"/);
+  const many = Array.from({ length: moneyHub.EXPENSE_LIST_LIMIT + 1 }, (_, i) => dbRow({ id: i + 1, vendor: `V${i}`, kind: 'tooling', amount_cents: 100, cadence: 'monthly' }));
+  handlers = [[/FROM business_expenses/, () => ({ rows: many })]];
+  r = await req('GET', '/api/admin/expenses/export');
+  assert.strictEqual(r.status, 409);
+  assert.match(r.body.error, /would leave some out/);
+});

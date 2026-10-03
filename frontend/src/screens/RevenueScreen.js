@@ -71,10 +71,28 @@ import { saveAdminReconciled } from '../services/api';
 import {
   createAdminExpense,
   deleteAdminExpense,
+  exportAdminExpenses,
   getAdminMoneyHub,
   importAdminExpenses,
   updateAdminExpense,
 } from '../services/api';
+
+// Saves the expense list as a CSV file. The server sends the text inside its
+// usual signed-in JSON answer, and the file is made here, so no file link
+// has to carry a sign-in.
+async function downloadExpensesCsv() {
+  const r = await exportAdminExpenses();
+  const blob = new Blob([r.csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = r.filename || 'flock-expenses.csv';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  return r;
+}
 
 // One reconciled line's save form. Amount, date, and a note that is optional
 // and short. Saving posts through the admin route and then the parent refetches
@@ -1169,7 +1187,17 @@ function HubExpenses({ h, colors, onChanged }) {
   const cadences = Array.isArray(e.cadences) ? e.cadences : Object.keys(HUB_CADENCE_LABEL);
   const codeLines = Array.isArray(e.codeLines) ? e.codeLines : [];
   const [editing, setEditing] = React.useState(null);
+  const [exportNote, setExportNote] = React.useState('');
   const done = () => { setEditing(null); onChanged(); };
+  const exportCsv = async () => {
+    setExportNote('');
+    try {
+      const r = await downloadExpensesCsv();
+      setExportNote(`Saved ${r.filename}, ${hubPlural(r.rows, 'bill', 'bills')}.`);
+    } catch (err) {
+      setExportNote((err && err.message) || 'The list could not be exported.');
+    }
+  };
   return (
     <div id={HUB_CARD.expenses.id} style={hubStyle.card}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '10px' }}>
@@ -1177,10 +1205,16 @@ function HubExpenses({ h, colors, onChanged }) {
           <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 2px' }}>Expense list</h3>
           <p style={hubStyle.sub}>Bills the code does not carry, from your own invoices: the tools the app is built with, company and legal costs, anything else. Stored in the database, never in the published source.</p>
         </div>
-        {editing !== 'new' && (
-          <button className="hit44" type="button" onClick={() => setEditing('new')} style={{ ...hubStyle.textButton, flexShrink: 0 }}>Add a bill</button>
-        )}
+        <div style={{ display: 'flex', gap: '12px', flexShrink: 0 }}>
+          {e.status === 'ok' && rows.length > 0 && !e.truncated && (
+            <button className="hit44" type="button" onClick={exportCsv} style={{ ...hubStyle.textButton, flexShrink: 0 }}>Download CSV</button>
+          )}
+          {editing !== 'new' && (
+            <button className="hit44" type="button" onClick={() => setEditing('new')} style={{ ...hubStyle.textButton, flexShrink: 0 }}>Add a bill</button>
+          )}
+        </div>
       </div>
+      {exportNote && <p role="status" style={hubStyle.foot}>{exportNote}</p>}
       {e.status === 'error' && <HubNotice status="error" reason="The list could not be read. The costs above count the code lines and the reconciled bills only." />}
       {e.truncated && <HubNotice status="error" reason={`The list has more than ${e.limit || 500} bills. These are the first ${e.limit || 500}, and the totals above are left unread because bills are missing from them.`} />}
       {editing === 'new' && (
