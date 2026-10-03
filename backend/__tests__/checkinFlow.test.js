@@ -240,6 +240,39 @@ test('the GET and the POST tap share one dedupe window, not one each', async () 
   assert.strictEqual(insertQueries().length, 1);
 });
 
+// A signed tap is the only proof of presence feedback trusts, so nothing
+// weaker may swallow it. An app check-in, or an unsigned tag read, followed by
+// a real tag tap inside the window used to answer 'deduped' and write no 'nfc'
+// row, and that person's crowd report then read as unverified (backend audit
+// 2026-10-03). The reverse stays a duplicate: after a signed tap, a manual
+// check-in proves nothing new.
+test('a signed tap after a manual check-in is still recorded, and only signed taps dedupe it', async () => {
+  reset();
+  scriptHappyPath();
+  const token = tokenFor(1);
+
+  const manual = await call('POST', `/api/checkin/${KNOWN}`, { token });
+  const unsigned = await call('POST', `/api/checkin/${KNOWN}/tap`, { token });
+  const signed = await call('POST', `/api/checkin/${KNOWN}/tap?sig=${sigFor(KNOWN)}`, { token });
+  const signedAgain = await call('POST', `/api/checkin/${KNOWN}/tap?sig=${sigFor(KNOWN)}`, { token });
+  const manualAfter = await call('POST', `/api/checkin/${KNOWN}`, { token });
+
+  assert.strictEqual(manual.body.deduped, undefined);
+  assert.strictEqual(unsigned.body.deduped, true, 'an unsigned read proves nothing the manual one did not');
+  assert.strictEqual(signed.body.deduped, undefined, 'the signed tap was swallowed by the manual check-in');
+  assert.strictEqual(signedAgain.body.deduped, true);
+  assert.strictEqual(manualAfter.body.deduped, true);
+  assert.deepStrictEqual(insertQueries().map((q) => q.params[2]), ['manual', 'nfc']);
+});
+
+test('after a restart, the SQL half applies the same rule', async () => {
+  reset();
+  scriptHappyPath();
+  await call('POST', `/api/checkin/${KNOWN}/tap?sig=${sigFor(KNOWN)}`, { token: tokenFor(1) });
+  assert.match(insertQueries()[0].sql, /AND \(\$3::text <> 'nfc' OR checkin_source = 'nfc'\)/,
+    'a signed tap must look only for an earlier signed tap');
+});
+
 test('a check-in response is never cacheable', async () => {
   // A GET that writes is a GET a shared cache would happily store and serve
   // again. It should not be a GET at all; while it is one, it must at least say

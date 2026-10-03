@@ -247,7 +247,7 @@ async function markFlockAttendance(userId, placeId) {
 // for the one gap neither closes.
 // ---------------------------------------------------------------------------
 const TAP_DEDUPE_MS = 30 * 60 * 1000;
-const tapCache = new Map(); // "u:<id>|place" or "ip:<addr>|place" -> last tap ms
+const tapCache = new Map(); // "u:<id>|place|nfc|any" or "ip:<addr>|place|..." -> last tap ms
 
 // flockcorp.com has no DNS pointed at the app yet, so tapping an NFC tag would
 // land on a dead domain. Overridable once DNS is live.
@@ -277,17 +277,30 @@ function emitVenueCheckin(io, placeId, createdAt) {
 // True when this identity already checked in at this venue inside the window.
 // Identity is the user id when we have one, so rotating IPs (or sitting behind
 // the same proxy as everyone else) changes nothing for a logged-in caller.
-function tapKey(userId, placeId, ip) {
-  return userId ? `u:${userId}|${placeId}` : `ip:${ip}|${placeId}`;
+//
+// A SIGNED TAP IS A DUPLICATE ONLY OF A SIGNED TAP (backend audit 2026-10-03).
+// 'nfc' is the one source that proves somebody was at the door, and it is what
+// routes/feedback.js VERIFIED_PRESENCE_SQL asks for. Deduped against any source,
+// an app check-in, or an unsigned tag read, followed by a real tag tap within
+// the window answered 'deduped' and wrote no 'nfc' row, so that person's crowd
+// report then read as unverified. Signed taps keep their own key; anything else
+// is still a duplicate of any earlier tap, a signed one included.
+function tapKey(userId, placeId, ip, signed = false) {
+  const who = userId ? `u:${userId}|${placeId}` : `ip:${ip}|${placeId}`;
+  return `${who}|${signed ? 'nfc' : 'any'}`;
 }
 
 const TAP_CACHE_MAX = 10000;
 
-function tapIsDuplicate(userId, placeId, ip) {
-  const key = tapKey(userId, placeId, ip);
+function tapIsDuplicate(userId, placeId, ip, source) {
+  const signed = source === 'nfc';
+  const key = tapKey(userId, placeId, ip, signed);
   const now = Date.now();
-  const last = tapCache.get(key);
-  if (last && now - last < TAP_DEDUPE_MS) return true;
+  const recent = (k) => {
+    const last = tapCache.get(k);
+    return !!last && now - last < TAP_DEDUPE_MS;
+  };
+  if (recent(key) || (!signed && recent(tapKey(userId, placeId, ip, true)))) return true;
 
   // Round 16 (reliability audit): this was `tapCache.clear()`, which dropped
   // all ten thousand entries at once — so crossing the bound re-opened the
@@ -316,8 +329,8 @@ function tapIsDuplicate(userId, placeId, ip) {
 // insert then failed, so a single database error locked that person out of
 // checking in at that venue for the next 30 minutes and left no row behind to
 // show for it. On the failure path the claim is given back.
-function forgetTap(userId, placeId, ip) {
-  tapCache.delete(tapKey(userId, placeId, ip));
+function forgetTap(userId, placeId, ip, source) {
+  tapCache.delete(tapKey(userId, placeId, ip, source === 'nfc'));
 }
 
 // ---------------------------------------------------------------------------
@@ -461,11 +474,11 @@ function refundAnonTap(ip) {
 // below) — so a duplicate anonymous row is ML noise and nothing else.
 // ---------------------------------------------------------------------------
 async function recordTap({ userId, placeId, ip, source, io }) {
-  if (tapIsDuplicate(userId, placeId, ip)) return { status: 'deduped' };
+  if (tapIsDuplicate(userId, placeId, ip, source)) return { status: 'deduped' };
 
   const allowed = userId ? tapBudget.allow(userId) : anonTapAllowed(ip);
   if (!allowed) {
-    forgetTap(userId, placeId, ip); // a refused tap must not burn the window
+    forgetTap(userId, placeId, ip, source); // a refused tap must not burn the window
     return { status: 'rate_limited' };
   }
 
@@ -475,7 +488,8 @@ async function recordTap({ userId, placeId, ip, source, io }) {
       // Conditional INSERT — one statement, one round trip. The row is written
       // only when this account has no check-in at this venue inside the same
       // window the Map enforces, and the window is passed as a PARAMETER so the
-      // two halves cannot drift apart.
+      // two halves cannot drift apart. A signed tap looks only for an earlier
+      // signed tap, the same rule as tapKey above.
       //
       // RETURNING therefore yields exactly one row when something was written
       // and NO rows when the write was suppressed, which is the whole dedupe
@@ -490,6 +504,7 @@ async function recordTap({ userId, placeId, ip, source, io }) {
            WHERE venue_place_id = $1::text
              AND user_id = $2
              AND created_at > NOW() - (INTERVAL '1 millisecond' * $4::double precision)
+             AND ($3::text <> 'nfc' OR checkin_source = 'nfc')
          )
          RETURNING created_at`,
         [placeId, userId, source, TAP_DEDUPE_MS]
@@ -522,7 +537,7 @@ async function recordTap({ userId, placeId, ip, source, io }) {
     // is a small, self-healing loss and the conservative direction, so this is
     // not worth a second budget implementation — but do not read the line below
     // as covering both paths, because it does not.
-    forgetTap(userId, placeId, ip);
+    forgetTap(userId, placeId, ip, source);
     if (!userId) refundAnonTap(ip);
     throw insertErr;
   }
