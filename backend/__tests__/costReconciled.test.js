@@ -167,7 +167,10 @@ test('Railway is accepted, so its real bill is recorded from the dashboard like 
   // owner could not record the plan fee plus the usage billed on top of it.
   const r = await post({ id: 'railway', usdPerMonth: 32.96, asOf: '2026-09-16', note: 'railway usage estimate, Sep 16 to Oct 16' });
   assert.equal(r.status, 200, JSON.stringify(r.body));
-  assert.deepEqual(writes, [['railway', 32.96, '2026-09-16', 'railway usage estimate, Sep 16 to Oct 16', 7]]);
+  // The last two are the figure this save replaces when there is no saved
+  // row yet: the code's own (migration 115).
+  const railwayCode = CODE.lines.find((l) => l.id === 'railway');
+  assert.deepEqual(writes, [['railway', 32.96, '2026-09-16', 'railway usage estimate, Sep 16 to Oct 16', 7, railwayCode.usdPerMonth, railwayCode.asOf]]);
   assert.ok(r.body.reconciled.editableIds.includes('railway'));
   assert.ok(r.body.reconciled.lines.some((l) => l.id === 'railway'), 'the merged block carries the Railway line');
 }));
@@ -192,6 +195,16 @@ test('a valid entry upserts the row for that line, stamped by the admin, and ret
   const r = await post({ id: firstId, usdPerMonth: '31.19', asOf: '2026-09-01', note: '  paid  ' });
   assert.equal(r.status, 200, JSON.stringify(r.body));
   assert.equal(writes.length, 1);
-  assert.deepEqual(writes[0], [firstId, 31.19, '2026-09-01', 'paid', 7]);
+  const firstCode = CODE.lines.find((l) => l.id === firstId);
+  assert.deepEqual(writes[0], [firstId, 31.19, '2026-09-01', 'paid', 7, firstCode.usdPerMonth, firstCode.asOf]);
   assert.ok(r.body.reconciled && Array.isArray(r.body.reconciled.lines), 'the response carries the merged block');
 }));
+
+// Migration 115: a saved figure's previous one is the figure it replaced.
+test('a saved figure carries the figure it replaced, never the code receipt', () => {
+  const cm = require('../services/costModel');
+  const SQL = /UPDATE[\s\S]*SET previous_usd_per_month = cost_reconciled\.usd_per_month,\s+previous_as_of = cost_reconciled\.as_of,/;
+  const src = require('fs').readFileSync(require('path').join(__dirname, '..', 'routes', 'admin.js'), 'utf8');
+  assert.match(src, SQL, 'the save no longer keeps the figure it replaces');
+  assert.ok(cm.RECONCILED.lines.find((l) => l.id === 'railway').previous, 'the code line carries its last receipt');
+});

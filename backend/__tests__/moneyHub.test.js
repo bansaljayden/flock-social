@@ -3312,3 +3312,36 @@ test('a reconciled bill more than a quarter above the last one is flagged, a sma
   const pic = moneyHub.buildCostPicture({ expenses: [], month: MONTH });
   assert.ok(pic.jumps.some((j) => j.id === 'railway'));
 });
+
+// Review of the new hub features (2026-10-03).
+test('renewal totals step from the bill\'s own date, so the 31st is not pulled to the 30th', () => {
+  const totals = (today, x) => Object.fromEntries(moneyHub.buildCostPicture({ expenses: [x], month: moneyHub.monthOf(today) }).upcomingTotals.map((t) => [t.days, t]));
+  const m = totals('2026-04-30', expense({ id: 1, vendor: 'A', kind: 'tooling', cadence: 'monthly', amountCents: 10000, renewsOn: '2026-03-31' }));
+  assert.strictEqual(m[30].charges, 1, 'Apr 30 then May 31: one charge in the 30 days to May 30');
+  assert.strictEqual(m[30].cents, 10000);
+  const q = totals('2026-02-28', expense({ id: 2, vendor: 'B', kind: 'tooling', cadence: 'quarterly', amountCents: 30000, renewsOn: '2025-11-30' }));
+  assert.strictEqual(q[90].charges, 1);
+});
+
+test('a figure saved from the dashboard is compared with the one it replaced', () => {
+  const saved = (now, prev) => ({ lines: [{ id: 'railway', label: 'Railway', usdPerMonth: now, asOf: '2026-10-16', previous: prev }] });
+  assert.deepStrictEqual(moneyHub.billJumps(saved(50, { usdPerMonth: 44.97, period: null, paidOn: '2026-10-03' })), [], 'an 11% rise on the figure it replaced is not a jump');
+  assert.strictEqual(moneyHub.billJumps(saved(24, { usdPerMonth: 18.63, period: null, paidOn: '2026-10-01' }))[0].pct, 29);
+  assert.deepStrictEqual(moneyHub.billJumps(saved(50, null)), [], 'a row saved before migration 115 sits out');
+});
+
+test('the price sheet keeps a euro amount and leaves out a line an expense stands in for', () => {
+  const ps = moneyHub.buildPriceSheet({
+    expenses: [
+      expense({ id: 1, vendor: 'Euro tool', kind: 'tooling', amountCents: 2000, currency: 'EUR', verified: true, lastChargedOn: '2026-09-20' }),
+      expense({ id: 2, vendor: 'Railway', kind: 'infrastructure', amountCents: 2500, replacesLine: 'railway', verified: true, lastChargedOn: '2026-09-15' }),
+    ],
+    todayYmd: '2026-10-03',
+  });
+  const euro = ps.rows.find((r) => r.id === 'expense-1');
+  assert.strictEqual(euro.priceCents, null);
+  assert.strictEqual(euro.amountCents, 2000);
+  assert.strictEqual(euro.currency, 'EUR');
+  assert.ok(!ps.rows.some((r) => r.id === 'rec-railway'), 'the replaced Railway line still showed beside its replacement');
+  assert.ok(ps.rows.some((r) => r.id === 'expense-2'));
+});

@@ -1,0 +1,22 @@
+-- 115: a reconciled bill keeps the figure it replaced.
+--
+-- ASCII only, like 094 and 100-102: the embedded server the boot-safety suite
+-- runs is WIN1252.
+--
+-- WHY. The money hub flags a Railway or Google Cloud bill that runs more than
+-- a quarter above the one before it (services/moneyHub.js billJumps). A figure
+-- recorded from the dashboard replaced the row's amount outright, so the only
+-- "before" left was the receipt written into costModel.js, which can be two
+-- periods old: a saved $50.00 Railway estimate read as up 104% on August's
+-- $24.52 when the figure it replaced was $44.97, 11% (review 2026-10-03).
+--
+-- Each save now copies the figure it replaces into these two columns (the
+-- first save copies the code's figure), and the comparison reads them.
+--
+-- ADDITIVE. Two nullable columns, no default: a catalog change, no rewrite and
+-- no scan. A row saved before this reads as having no previous figure and is
+-- left out of the comparison until its next save.
+-- @requires column cost_reconciled.previous_usd_per_month
+-- @requires column cost_reconciled.previous_as_of
+ALTER TABLE cost_reconciled ADD COLUMN IF NOT EXISTS previous_usd_per_month NUMERIC(10, 2);
+ALTER TABLE cost_reconciled ADD COLUMN IF NOT EXISTS previous_as_of DATE;

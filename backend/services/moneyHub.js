@@ -925,14 +925,19 @@ function daysBetweenYmd(a, b) {
 
 function buildPriceSheet({ expenses = [], reconciled = null, todayYmd }) {
   const rows = [];
+  // A line an active dollar bill stands in for is not a price paid: the bill
+  // is, and it is on the sheet in its place (the rule buildCostPicture uses).
+  const replaced = new Set(expenses.filter((x) => x.active && x.currency === 'USD' && x.replacesLine && !x.isCredit).map((x) => x.replacesLine));
   const unitOf = { monthly: 'a month', yearly: 'a year', one_time: 'once', quarterly: 'a quarter', usage: 'a month, metered' };
   for (const [list, cadence] of [[costModel.FIXED_MONTHLY, 'monthly'], [costModel.FIXED_ANNUAL, 'yearly'], [costModel.ONE_TIME, 'one_time']]) {
     for (const e of list) {
+      if (replaced.has(e.id)) continue;
       rows.push({ id: `code-${e.id}`, label: e.label, priceCents: Math.round(Number(e.usd) * 100), unit: unitOf[cadence], checkedOn: e.checked || null, source: e.source || null, from: 'code' });
     }
   }
   const recLines = reconciled && Array.isArray(reconciled.lines) ? reconciled.lines : costModel.RECONCILED.lines;
   for (const l of recLines) {
+    if (replaced.has(l.id)) continue;
     rows.push({ id: `rec-${l.id}`, label: l.label, priceCents: Math.round(Number(l.usdPerMonth) * 100), unit: 'a month, from the bill', checkedOn: l.asOf || null, source: l.readFrom || null, from: 'reconciled' });
   }
   for (const [key, r] of Object.entries(costModel.RATES || {})) {
@@ -944,6 +949,9 @@ function buildPriceSheet({ expenses = [], reconciled = null, todayYmd }) {
       id: `expense-${x.id}`,
       label: x.product ? `${x.vendor}, ${x.product}` : x.vendor,
       priceCents: x.currency === 'USD' ? (x.isCredit ? -1 : 1) * x.amountCents : null,
+      // A bill in another currency keeps its own amount, shown as typed.
+      amountCents: (x.isCredit ? -1 : 1) * x.amountCents,
+      currency: x.currency,
       unit: unitOf[x.cadence] || x.cadence,
       checkedOn: x.verified && x.lastChargedOn ? x.lastChargedOn : null,
       source: x.verified ? 'a receipt' : null,
@@ -1056,9 +1064,16 @@ function renewalTotals(expenses, todayYmd) {
       if (!x.active || x.isCredit || x.currency !== 'USD') continue;
       const step = { monthly: 1, quarterly: 3, yearly: 12 }[x.cadence];
       if (!step) continue;
-      const next = nextChargeOn(x, todayYmd);
-      if (!next) continue;
-      for (let k = 0, on = next.on; on <= until && k < 24; k += 1, on = addMonthsYmd(next.on, k * step)) {
+      // Stepped from the bill's own anchor, the way nextChargeOn steps:
+      // stepping from a month-end date already clamped into a short month
+      // (Mar 31 -> Apr 30) put every later charge on the 30th and counted
+      // one too many in a window (review 2026-10-03).
+      const anchor = x.renewsOn || x.lastChargedOn;
+      if (!anchor) continue;
+      for (let k = 0; k <= 240; k += 1) {
+        const on = addMonthsYmd(anchor, k * step);
+        if (on < todayYmd) continue;
+        if (on > until) break;
         cents += x.amountCents;
         charges += 1;
         bills.add(x.id);

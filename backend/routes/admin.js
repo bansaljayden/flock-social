@@ -2687,16 +2687,23 @@ router.post('/costs/reconciled', async (req, res) => {
       return res.status(400).json({ error: 'asOf cannot be in the future' });
     }
     const cleanNote = typeof note === 'string' && note.trim() ? note.trim().slice(0, 500) : null;
+    // The figure this save replaces is kept beside it (migration 115), so the
+    // hub compares a new bill with the one before it: on the first save, the
+    // code's figure; after that, the row's own.
+    const codeLine = costModel.RECONCILED.lines.find((l) => l.id === id);
     await pool.query(
-      `INSERT INTO cost_reconciled (line_id, usd_per_month, as_of, note, updated_at, updated_by)
-       VALUES ($1, $2, $3, $4, NOW(), $5)
+      `INSERT INTO cost_reconciled (line_id, usd_per_month, as_of, note, updated_at, updated_by, previous_usd_per_month, previous_as_of)
+       VALUES ($1, $2, $3, $4, NOW(), $5, $6::numeric, $7::date)
        ON CONFLICT (line_id) DO UPDATE
-         SET usd_per_month = EXCLUDED.usd_per_month,
+         SET previous_usd_per_month = cost_reconciled.usd_per_month,
+             previous_as_of = cost_reconciled.as_of,
+             usd_per_month = EXCLUDED.usd_per_month,
              as_of = EXCLUDED.as_of,
              note = EXCLUDED.note,
              updated_at = NOW(),
              updated_by = EXCLUDED.updated_by`,
-      [id, Math.round(usd * 100) / 100, asOf, cleanNote, req.user.id]
+      [id, Math.round(usd * 100) / 100, asOf, cleanNote, req.user.id,
+        codeLine ? codeLine.usdPerMonth : null, codeLine ? codeLine.asOf : null]
     );
     const reconciled = await costModel.readReconciled(pool);
     res.json({ success: true, reconciled });
