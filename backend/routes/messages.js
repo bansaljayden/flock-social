@@ -531,9 +531,15 @@ router.post('/flocks/:id/pins',
         // the bar. If the ban is lifted the pin shows again and the bar can
         // hold four until somebody unpins one, which is rare and recoverable;
         // a seat nobody can free is neither.
+        //
+        // AND NOT THIS MESSAGE'S OWN PIN. Pinning a message that is already
+        // pinned is a no-op (ON CONFLICT DO NOTHING below), but it was counted
+        // against itself: with it and two others up, a second tap on Pin, or a
+        // retry, answered "Only 3" (backend audit 2026-10-03).
         const existing = await client.query(
           `SELECT COUNT(*)::int AS n FROM pinned_messages
             WHERE flock_id = $1
+              AND pinned_messages.message_id <> $2
               AND EXISTS (SELECT 1 FROM messages m
                            WHERE m.id = pinned_messages.message_id
                              AND m.is_hidden IS NOT TRUE
@@ -542,7 +548,7 @@ router.post('/flocks/:id/pins',
                                SELECT 1 FROM users su
                                 WHERE su.id = m.sender_id AND su.is_banned IS TRUE
                              ))`,
-          [flockId]
+          [flockId, messageId]
         );
         if (existing.rows[0].n >= MAX_PINS) {
           full = true;

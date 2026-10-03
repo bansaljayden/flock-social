@@ -160,6 +160,18 @@ test('pinning something already pinned is a no-op, not a 500', async () => {
   assert.match(insert.sql, /ON CONFLICT \(flock_id, message_id\) DO NOTHING/);
 });
 
+// Pinning a message that is already pinned is a no-op, so its own pin is not
+// a seat it competes for. Counted against itself, a second tap on Pin with it
+// and two others up answered "Only 3" (backend audit 2026-10-03).
+test('the ceiling leaves out the pin of the message being pinned', async () => {
+  scriptPin({ count: 2, pins: [PIN_ROW] });
+  const res = await call('POST', '/api/flocks/7/pins', { message_id: 5 });
+  assert.strictEqual(res.status, 201, res.text);
+  const count = log.find((q) => /COUNT\(\*\)::int AS n FROM pinned_messages/.test(q.sql));
+  assert.match(count.sql, /pinned_messages\.message_id <> \$2/);
+  assert.deepStrictEqual(count.params.map(Number), [7, 5]);
+});
+
 test('the count and the insert run under the flock row lock', async () => {
   /* THE COMMENT THAT USED TO STAND HERE WAS WRONG, and this test exists
      because of it. It claimed the unique index made the count safe under a
