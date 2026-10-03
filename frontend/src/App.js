@@ -2680,6 +2680,24 @@ const NOT_CONNECTED_HINT = /connected with/i;
 // chat's history has not been fetched" looks like and is deliberately NOT the
 // same as zero: the caller has to be able to tell "nothing new" from "nothing
 // known", and only the second one may not draw a dot.
+// The map's venue list with one venue's crowd reading applied, or the SAME
+// list when every copy of that venue already shows it. Each pin tap and each
+// venue sheet re-reads the crowd and wrote prev.map(...) whatever came back,
+// so a reading identical to the one on screen still handed the map a new
+// array, and MapLibreMapView rebuilt every marker in the middle of the 600ms
+// ease toward the pin that was tapped (app audit 2026-10-03).
+const withVenueCrowd = (list, placeId, score, label) => {
+  let changed = false;
+  const next = list.map((v) => {
+    if (v.place_id !== placeId) return v;
+    const nextLabel = label || v.crowdLabel;
+    if (v.crowd === score && v.crowdLabel === nextLabel) return v;
+    changed = true;
+    return { ...v, crowd: score, crowdLabel: nextLabel };
+  });
+  return changed ? next : list;
+};
+
 // A device fix, stamped with when it arrived (see deviceFixRef in the app).
 const stampFix = (lat, lng) => ({ lat, lng, at: Date.now() });
 // How old that fix may be and still start a live location share without asking
@@ -5741,7 +5759,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // the map behind it kept quoting whatever they had (or nothing). Write it
       // back to the same two places the map-pin path writes to.
       if (crowd && typeof crowd.score === 'number') {
-        setAllVenues(prev => prev.map(v => v.place_id === placeId ? { ...v, crowd: crowd.score, crowdLabel: crowd.label || v.crowdLabel } : v));
+        setAllVenues(prev => withVenueCrowd(prev, placeId, crowd.score, crowd.label));
         setCrowdPredictions(prev => ({ ...prev, [placeId]: { ...(prev[placeId] || {}), placeId, score: crowd.score, label: crowd.label, confidenceBasis: crowd.confidenceBasis || null, ownerReport: crowd.ownerReport || null, fetchedAt: Date.now() } }));
       } else if (crowd && crowd.forecastAccess?.locked === true) {
         // Covered: the pin and the list lose the number too, not only the card.
@@ -7686,7 +7704,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         if (data?.weather) setLiveWeather(data.weather);
         if (data && typeof data.score === 'number') {
           // Sync fresh score into the venue list so the map heatmap matches the dial
-          setAllVenues(prev => prev.map(v => v.place_id === pid ? { ...v, crowd: data.score, crowdLabel: data.label || v.crowdLabel } : v));
+          setAllVenues(prev => withVenueCrowd(prev, pid, data.score, data.label));
           setCrowdPredictions(prev => ({ ...prev, [pid]: { ...(prev[pid] || {}), placeId: pid, score: data.score, label: data.label, confidenceBasis: data.confidenceBasis || null, ownerReport: data.ownerReport || null, fetchedAt: Date.now() } }));
         } else if (data && data.forecastAccess?.locked === true) {
           // Covered: the pin under the card loses its number too
@@ -17411,7 +17429,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       const data = await getCrowdPrediction(pid);
       if (data && typeof data.score === 'number') {
         setCrowdPredictions(prev => ({ ...prev, [pid]: { ...(prev[pid] || {}), placeId: pid, score: data.score, label: data.label, confidenceBasis: data.confidenceBasis || null, ownerReport: data.ownerReport || null, fetchedAt: Date.now() } }));
-        setAllVenues(prev => prev.map(v => v.place_id === pid ? { ...v, crowd: data.score, crowdLabel: data.label || v.crowdLabel } : v));
+        setAllVenues(prev => withVenueCrowd(prev, pid, data.score, data.label));
       }
       if (activeVenue?.place_id === pid) setCrowdData(data ? { ...data, forPlaceId: pid } : null);
     } catch { /* the next card open refetches anyway */ }
