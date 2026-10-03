@@ -1515,11 +1515,25 @@ function withDayPrefix(label, dayOffset) {
 // The single place "go now" becomes words. It reads the same score the card
 // puts on the dial, so a packed venue can never be sold as a good time to show
 // up. No claim here reaches past the end of today.
-function nowCopy(currentScore, rushAhead) {
+//
+// `restLevels` is the level of every open hour left today. "It stays that way"
+// is a claim about those hours, and it used to be made from the current score
+// alone: this branch is reached whenever no later hour beats now on the
+// ordering axis by the floor, which says nothing about their LEVEL, so the
+// demo card read "Packed now, and it stays that way" over its own chart
+// dropping to Busy at 11 AM (site audit, 2026-10-03), and an owner's live
+// Packed over a forecast of 40 for the rest of the night said it too. The
+// clause now follows the bars it describes, on the same ladder.
+function nowCopy(currentScore, rushAhead, restLevels = []) {
   // Cuts follow the ladder (re-cut 2026-08-28): Packed talk starts where
   // Packed starts, busy talk where Busy starts. A Steady 65 is a normal
   // evening and may honestly be called good.
-  if (currentScore > 84) return 'Packed now, and it stays that way';
+  if (currentScore > 84) {
+    const rest = restLevels.filter((n) => Number.isFinite(n));
+    if (rest.length && rest.every((n) => n > 84)) return 'Packed now, and it stays that way';
+    if (rest.length && rest.every((n) => n > 69)) return 'Packed now, and busy the rest of the day';
+    return 'Packed now';
+  }
   if (currentScore > 69) return "Now, but it's busy";
   if (rushAhead) return 'Now, before the rush';
   return 'Now is good';
@@ -1618,7 +1632,7 @@ function recommendBestTime(hourlyForecast, venue, peakStartIdx, peakEndIdx, isOp
     orderingMinGap: HOUR_ORDERING_MIN_GAP,
   });
   const stayPut = (rushAhead) => ({
-    text: nowCopy(currentScore, rushAhead),
+    text: nowCopy(currentScore, rushAhead, openToday.map((e) => e.score)),
     hourLabel: null,
     index: Math.max(0, nowIdx),
     dayOffset: 0,
