@@ -2705,6 +2705,11 @@ const stampFix = (lat, lng) => ({ lat, lng, at: Date.now() });
 // for a new one. A minute: past that, the person may well be somewhere else.
 const SHARE_FIX_FRESH_MS = 60 * 1000;
 
+// The values the promotion editor's two selects offer (see the select for why
+// a value outside them is still shown).
+const PROMO_TIME_SLOTS = ['Happy Hour', 'Late Night', 'Weekend', 'Weekend Brunch', 'All Day'];
+const PROMO_DAYS = ['Daily', 'Weekdays', 'Weekends', 'Mon-Fri', 'Fri-Sun'];
+
 const newestFromOthers = (messages) => {
   let newest = null;
   for (const m of messages || []) {
@@ -4360,14 +4365,23 @@ export const PromoModal = React.memo(function PromoModal({ editing, onSave, onCa
           <div><label style={label}>Description</label>
             <input aria-label="Deal description" type="text" value={form.desc} onChange={(e) => setForm(f => ({ ...f, desc: e.target.value }))} placeholder="e.g., 50% off all appetizers" style={input} /></div>
           <div><label style={label} htmlFor="promo-time-slot">Time Slot</label>
+            {/* "Weekend" is what the dashboard's quick-deal chips save, and it was
+                not here: a quick deal opened in Edit showing Happy Hour, the
+                select's first option, and choosing Happy Hour then changed
+                nothing because the select already claimed it (venue audit
+                2026-10-03). A stored value this list does not name is shown as
+                itself rather than as whatever comes first. */}
             <select id="promo-time-slot" value={form.time} onChange={(e) => setForm(f => ({ ...f, time: e.target.value }))} style={input}>
               <option value="Happy Hour">Happy Hour (4-7pm)</option>
               <option value="Late Night">Late Night (10pm-close)</option>
+              <option value="Weekend">Weekend</option>
               <option value="Weekend Brunch">Weekend Brunch (10am-2pm)</option>
               <option value="All Day">All Day</option>
+              {form.time && !PROMO_TIME_SLOTS.includes(form.time) && <option value={form.time}>{form.time}</option>}
             </select></div>
           <div><label style={label} htmlFor="promo-days-active">Days Active</label>
             <select id="promo-days-active" value={form.days} onChange={(e) => setForm(f => ({ ...f, days: e.target.value }))} style={input}>
+              {form.days && !PROMO_DAYS.includes(form.days) && <option value={form.days}>{form.days}</option>}
               <option value="Daily">Daily</option>
               <option value="Weekdays">Weekdays</option>
               <option value="Weekends">Weekends</option>
