@@ -1644,3 +1644,11 @@ describe('bills that jumped', () => {
     expect(document.body.textContent).toMatch(/Railway \(backend and Postgres\): \$24\.52 for Aug 15 to Sep 15, 2026, now \$44\.97 as of 2026-10-03 \(up 83%\)\./);
   });
 });
+
+describe('a jumped bill on the Costs card', () => {
+  test('the card the attention row links to shows the jump too', async () => {
+    await renderHub({ ...CONNECTED, costs: { ...CONNECTED.costs, jumps: [{ id: 'railway', label: 'Railway (backend and Postgres)', fromCents: 2452, fromPeriod: 'Aug 15 to Sep 15, 2026', toCents: 4497, toAsOf: '2026-10-03', pct: 83 }] } });
+    expect(await screen.findByText('Up on the last bill')).toBeInTheDocument();
+    expect(screen.getByText('up 83%')).toBeInTheDocument();
+  });
+});

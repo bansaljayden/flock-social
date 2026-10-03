@@ -456,7 +456,8 @@ async function readReconciled(pool) {
   let readError = null;
   try {
     const r = await pool.query(
-      `SELECT line_id, usd_per_month, as_of::text AS as_of, note, updated_at
+      `SELECT line_id, usd_per_month, as_of::text AS as_of, note, updated_at,
+              previous_usd_per_month, previous_as_of::text AS previous_as_of
          FROM cost_reconciled`
     );
     for (const row of r.rows) {
@@ -465,6 +466,9 @@ async function readReconciled(pool) {
         asOf: String(row.as_of).slice(0, 10),
         note: row.note || null,
         updatedAt: row.updated_at || null,
+        previous: row.previous_usd_per_month === null || row.previous_usd_per_month === undefined
+          ? null
+          : { usdPerMonth: Number(row.previous_usd_per_month), period: null, paidOn: row.previous_as_of ? String(row.previous_as_of).slice(0, 10) : null },
       });
     }
   } catch (err) {
@@ -486,7 +490,10 @@ async function readReconciled(pool) {
         note: row.note || null,
         readFrom: l.readFrom,
         source: 'dashboard',
-        previous: l.previous || null,
+        // The figure this saved one replaced (migration 115), never the code's
+        // older receipt: that can be two periods back. A row saved before 115
+        // has none and sits out the comparison until its next save.
+        previous: row.previous,
       };
     }
     return { id: l.id, label: l.label, usdPerMonth: l.usdPerMonth, asOf: l.asOf, note: l.note, readFrom: l.readFrom, source: 'code', previous: l.previous || null };

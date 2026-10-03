@@ -864,6 +864,22 @@ function HubCosts({ h, colors }) {
         />
       ))}
 
+      {Array.isArray(c.jumps) && c.jumps.length > 0 && (
+        <>
+          <p style={hubStyle.kicker}>Up on the last bill</p>
+          {c.jumps.map((j) => (
+            <HubRow
+              key={`jump-${j.id}`}
+              navy={navy}
+              label={j.label}
+              tone="warn"
+              value={`up ${j.pct}%`}
+              note={`${hubMoney(j.fromCents)}${j.fromPeriod ? ` for ${j.fromPeriod}` : ''}, now ${hubMoney(j.toCents)}${j.toAsOf ? ` as of ${j.toAsOf}` : ''}.`}
+            />
+          ))}
+        </>
+      )}
+
       {c.licence && Array.isArray(c.licence.items) && c.licence.items.length > 0 && (
         <>
           <p style={hubStyle.kicker}>Plans outside their terms</p>
@@ -1266,7 +1282,9 @@ function HubPriceSheet({ h, colors }) {
           navy={navy}
           label={r.label}
           tone={r.stale ? 'warn' : undefined}
-          value={Number.isFinite(r.priceCents) ? `${hubMoney(r.priceCents)} ${r.unit}` : r.unit}
+          value={Number.isFinite(r.priceCents)
+            ? `${hubMoney(r.priceCents)} ${r.unit}`
+            : (Number.isFinite(r.amountCents) && r.currency ? `${(r.amountCents / 100).toFixed(2)} ${r.currency} ${r.unit}` : r.unit)}
           note={`${r.checkedOn ? `Checked ${r.checkedOn}${Number.isFinite(r.ageDays) ? `, ${hubPlural(r.ageDays, 'day', 'days')} ago` : ''}` : 'Never checked against a receipt or a pricing page'}${r.source ? `, from ${r.source}` : ''}.`}
         />
       ))}
