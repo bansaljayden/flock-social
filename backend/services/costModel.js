@@ -2117,7 +2117,7 @@ const LICENCE_EXPOSURES = [
     why: 'Hobby is for non-commercial, personal use under Vercel\'s fair use guidelines, and flockcorp.com is a commercial site.',
     fix: 'Vercel Pro',
     fixUsdPerMonth: 20,
-    resolvedBy: { codeLine: 'vercel' },
+    resolvedBy: { codeLine: 'vercel', expenseVendor: 'vercel' },
     source: 'https://vercel.com/docs/limits/fair-use-guidelines',
     checked: '2026-09-29',
   },

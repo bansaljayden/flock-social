@@ -3144,3 +3144,49 @@ test('cost per active person and per plan, withheld below the floor and without 
   assert.strictEqual(few.perPlanCents, null);
   assert.strictEqual(moneyHub.buildUnitCosts({ burnCents: null, people: { status: 'ok' } }).status, 'unavailable');
 });
+
+// Second review of the hub overhaul (2026-10-03), each with its numbers.
+test('only a dollar, recurring, paid bill clears a licence exposure', () => {
+  const ids = (expenses) => moneyHub.buildCostPicture({ expenses, month: MONTH }).licence.items.map((i) => i.id);
+  // A euro MapTiler bill is not in the dollar burn, so it fixes nothing.
+  assert.ok(ids([expense({ id: 1, vendor: 'MapTiler', amountCents: 3000, currency: 'EUR' })]).includes('maptiler'));
+  // Nor does a one-time charge.
+  assert.ok(ids([expense({ id: 2, vendor: 'MapTiler', amountCents: 3000, cadence: 'one_time', lastChargedOn: MONTH.todayYmd })]).includes('maptiler'));
+  // A Vercel Pro bill recorded without "counts instead of" clears Vercel, so
+  // its $20 is not added again on top of the burn it is already in.
+  const pic = moneyHub.buildCostPicture({ expenses: [expense({ id: 3, vendor: 'Vercel', product: 'Pro', amountCents: 2000 })], month: MONTH });
+  assert.ok(!pic.licence.items.some((i) => i.id === 'vercel'));
+  assert.strictEqual(pic.licence.toComplyPerMonthCents, 3000);
+});
+
+test('a $0 stopped row does not take a code line out of this month', () => {
+  const base = moneyHub.buildCostPicture({ expenses: [], month: MONTH });
+  const pic = moneyHub.buildCostPicture({
+    expenses: [expense({ id: 1, vendor: 'Railway', amountCents: 0, active: false, lastChargedOn: MONTH.todayYmd, replacesLine: 'railway' })],
+    month: MONTH,
+  });
+  assert.strictEqual(pic.totals.thisMonthCents, base.totals.thisMonthCents);
+});
+
+test('a stopped row and the active row that replaced it do not both count this month', () => {
+  const base = moneyHub.buildCostPicture({ expenses: [], month: MONTH });
+  const railway = base.lines.find((l) => l.id === 'railway');
+  const pic = moneyHub.buildCostPicture({
+    expenses: [
+      expense({ id: 1, vendor: 'Railway', amountCents: 4497, active: false, lastChargedOn: MONTH.todayYmd, replacesLine: 'railway' }),
+      expense({ id: 2, vendor: 'Railway', product: 'Pro', amountCents: 5000, replacesLine: 'railway' }),
+    ],
+    month: MONTH,
+  });
+  assert.strictEqual(pic.totals.thisMonthCents, base.totals.thisMonthCents - railway.thisMonthCents + 5000);
+  assert.strictEqual(pic.totals.perMonthCents, base.totals.perMonthCents - railway.perMonthCents + 5000);
+});
+
+test('an App Store price of $0 falls through to the stated price', () => {
+  for (const row of [{ plan: 'monthly', listCents: 0 }, { plan: 'monthly', lastChargedCents: 0 }]) {
+    const net = moneyHub.buildNet({ stripe: null, revenuecat: null, costs: { totals: { thisMonthCents: 10000, perMonthCents: 10000 } }, pricing: { stated: [], appStore: [row] } });
+    assert.strictEqual(net.breakEven.proAppStore.source, 'stated');
+    assert.strictEqual(net.breakEven.proAppStore.needed, 36);
+    assert.strictEqual(net.breakEven.proAppStore.smallBusiness.needed, 30);
+  }
+});

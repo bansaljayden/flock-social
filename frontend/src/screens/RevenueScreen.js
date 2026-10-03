@@ -844,7 +844,9 @@ function HubCosts({ h, colors }) {
               note={`${i.why} Fix: ${i.fix}. Checked ${i.checked}.`}
             />
           ))}
-          <p style={hubStyle.foot}>With every plan licensed for commercial use, the monthly burn would be {hubMoney(c.licence.licensedPerMonthCents)}. Recording the paid plan on the expense list clears its line here.</p>
+          <p style={hubStyle.foot}>{c.status === 'ok'
+            ? `With every plan licensed for commercial use, the monthly burn would be ${hubMoney(c.licence.licensedPerMonthCents)}.`
+            : `Licensing them adds ${hubMoney(c.licence.toComplyPerMonthCents)} a month.`} Recording the paid plan on the expense list clears its line here.</p>
         </>
       )}
 
@@ -1170,6 +1172,7 @@ function HubExpenses({ h, colors, onChanged }) {
         )}
       </div>
       {e.status === 'error' && <HubNotice status="error" reason="The list could not be read. The costs above count the code lines and the reconciled bills only." />}
+      {e.truncated && <HubNotice status="error" reason={`The list has more than ${e.limit || 500} bills. These are the first ${e.limit || 500}, and the totals above are left unread because bills are missing from them.`} />}
       {editing === 'new' && (
         <HubExpenseForm kinds={kinds} cadences={cadences} codeLines={codeLines} colors={colors} onDone={done} onCancel={() => setEditing(null)} />
       )}
@@ -1882,7 +1885,9 @@ function hubAttention(h) {
       tone: 'warn',
       label: 'Plans outside their terms',
       value: hubCount(lic.items.length),
-      note: `${lic.items.map((i) => `${i.vendor} ${i.plan}`).join('; ')}. Licensed for commercial use, the burn is ${hubMoney(lic.licensedPerMonthCents)} a month (${hubMoney(lic.toComplyPerMonthCents)} more).`,
+      note: `${lic.items.map((i) => `${i.vendor} ${i.plan}`).join('; ')}. ${costs.status === 'ok'
+        ? `Licensed for commercial use, the burn is ${hubMoney(lic.licensedPerMonthCents)} a month (${hubMoney(lic.toComplyPerMonthCents)} more).`
+        : `Licensing them adds ${hubMoney(lic.toComplyPerMonthCents)} a month.`}`,
       card: HUB_CARD.costs,
     });
   }
@@ -2100,12 +2105,17 @@ export default function RevenueScreen({
     // Only while it still holds the placeholder, and only once, so a figure
     // typed in is never overwritten.
     const simSeededRef = React.useRef(false);
+    // Set by the field itself, so a figure typed in (even one equal to the
+    // placeholder) is never replaced (review 2026-10-03).
+    const simTypedRef = React.useRef(false);
     React.useEffect(() => {
-      if (simSeededRef.current || activeTab !== 'projections') return;
+      if (simSeededRef.current || simTypedRef.current || activeTab !== 'projections') return;
       const burn = hubMemo.data && hubMemo.data.net ? hubMemo.data.net.burnCents : null;
       if (!Number.isFinite(burn)) return;
       simSeededRef.current = true;
-      if (operatingCosts === SIM_OPERATING_COSTS_SEED) setOperatingCosts(Math.max(0, Math.round(burn / 100)));
+      // Rounded up to the whole dollar the field holds, so the seeded cost
+      // is never below the real burn.
+      if (operatingCosts === SIM_OPERATING_COSTS_SEED) setOperatingCosts(Math.max(0, Math.ceil(burn / 100)));
     }, [activeTab, operatingCosts, setOperatingCosts]);
 
     // Calculate all metrics
@@ -2332,7 +2342,7 @@ export default function RevenueScreen({
                   <input id="rev-costs"
                     type="number"
                     value={operatingCosts}
-                    onChange={(e) => setOperatingCosts(Math.max(0, parseInt(e.target.value) || 0))}
+                    onChange={(e) => { simTypedRef.current = true; setOperatingCosts(Math.max(0, parseInt(e.target.value) || 0)); }}
                     style={{ ...inputStyle, paddingLeft: '28px' }}
                     min="0"
                   />
