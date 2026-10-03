@@ -748,3 +748,21 @@ test('a report naming only a user, or only content, is still accepted', async ()
   assert.strictEqual(ran(/INSERT INTO content_reports/).length, 1,
     'a guest RSVP has no account behind it; the guard must not have made this unreportable');
 });
+
+// The dedupe looks for the reported user the insert stores. A report that named
+// nobody resolves to the content's author on insert, and the dedupe used to look
+// for NULL instead, so the second filing of the same promotion report never
+// matched the first and was inserted and paged again (2026-10-03).
+test('a report that names nobody is deduped on the author it resolved to', async () => {
+  handlers = [
+    [/FROM venue_promotions/, () => ({ rows: [{ sender_id: 12, is_hidden: false }], rowCount: 1 })],
+    [/SELECT id, status, created_at FROM content_reports/, () => ({ rows: [] })],
+    [/INSERT INTO content_reports/, () => ({ rows: [{ id: 1, status: 'open', created_at: 'now' }], rowCount: 1 })],
+  ];
+  const res = await call('POST', '/api/reports', { content_type: 'venue_promotion', content_id: 55, reason: 'spam' });
+  assert.strictEqual(res.status, 201, res.text);
+  const dupe = ran(/SELECT id, status, created_at FROM content_reports/)[0];
+  const insert = ran(/INSERT INTO content_reports/)[0];
+  assert.strictEqual(dupe.params[3], 12, 'the dedupe looked for a different reported user than the insert stores');
+  assert.strictEqual(insert.params[1], 12);
+});
