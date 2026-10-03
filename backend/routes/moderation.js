@@ -126,8 +126,11 @@ router.post('/reports',
     // .toInt() does NOT rescue the array case: it writes back `[5]`, still an
     // array, which then reached `WHERE m.id = $1` on an int4 column as '{5}'
     // (22P02, another 500). The shape has to be settled before the conversion.
-    scalarOnly(body('content_id').optional({ values: 'null' }), 'content id').isInt({ min: 1 }).withMessage('Invalid content id').toInt(),
-    scalarOnly(body('reported_user_id').optional({ values: 'null' }), 'user id').isInt({ min: 1 }).withMessage('Invalid user id').toInt(),
+    //
+    // Bounded to int4 too: every id these name is a SERIAL, and 2147483648
+    // reached `WHERE id = $1` as an out-of-range value, 22003, a 500.
+    scalarOnly(body('content_id').optional({ values: 'null' }), 'content id').isInt({ min: 1, max: 2147483647 }).withMessage('Invalid content id').toInt(),
+    scalarOnly(body('reported_user_id').optional({ values: 'null' }), 'user id').isInt({ min: 1, max: 2147483647 }).withMessage('Invalid user id').toInt(),
     // `details` is free text a reporter types and a moderator reads in the
     // console; as an array it kept its markup past stripHtml and was stored.
     freeText(body('details').optional(), 'details').isLength({ max: 1000 }),

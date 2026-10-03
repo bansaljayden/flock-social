@@ -550,7 +550,13 @@ router.post('/contacts', authenticate, async (req, res) => {
 // trusted_contacts.id is an integer key. A non-numeric :id reached Postgres and
 // came back as a 500; these are 404s, and a 500 on a safety screen reads to the
 // user as "the app is broken" rather than "that contact is gone".
-const contactId = (raw) => (/^\d+$/.test(String(raw)) ? parseInt(raw, 10) : null);
+// Past int4 is the same 404: a SERIAL holds no such id, and 2147483648 reached
+// Postgres as an out-of-range value (22003), a 500.
+const contactId = (raw) => {
+  if (!/^\d{1,10}$/.test(String(raw))) return null;
+  const id = parseInt(raw, 10);
+  return id >= 1 && id <= 2147483647 ? id : null;
+};
 
 router.put('/contacts/:id', authenticate, async (req, res) => {
   try {

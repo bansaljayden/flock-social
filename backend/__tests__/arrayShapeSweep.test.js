@@ -392,6 +392,21 @@ test('an array cannot turn a bad request into a 500 from Postgres', async () => 
   }
 });
 
+// Past int4 is the same kind of 500 by another door: every id a report names
+// is a SERIAL, and 2147483648 reached `WHERE id = $1` as out of range (22003).
+test('an id past int4 is refused before Postgres, not answered with a 500', async () => {
+  await refusedBeforeSql('POST', '/api/reports',
+    { content_type: 'dm', reason: 'spam', content_id: 2147483648 }, 'report content_id past int4');
+  await refusedBeforeSql('POST', '/api/reports',
+    { content_type: 'profile', reason: 'spam', reported_user_id: 2147483648 }, 'report user id past int4');
+  // A trusted contact that cannot exist is "not found", like any other.
+  routeQueries.length = 0;
+  const res = await call('PUT', '/api/safety/contacts/2147483648', { name: 'Mum' });
+  assert.strictEqual(res.status, 404, res.text);
+  assert.deepStrictEqual(routeQueries.map((q) => q.sql).filter((q) => /trusted_contacts/.test(q)), [],
+    'a contact id past int4 reached the database');
+});
+
 // ── optional() skips undefined, not null ────────────────────────────────────
 //
 // routes/feedback.js was found 400-ing every honest submission because
