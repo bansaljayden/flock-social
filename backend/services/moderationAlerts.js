@@ -65,7 +65,7 @@ try {
 // Used only when no operator-configured address and no admin row exists, so
 // that "a report reaches a human" is true out of the box instead of true only
 // once someone remembers to set an environment variable.
-const MODERATION_INBOX = 'hello@flockcorp.com';
+const MODERATION_INBOX = 'social@flockcorp.com';
 
 // ---------------------------------------------------------------------------
 // Child-safety reports — 18 U.S.C. § 2258A.
@@ -393,7 +393,7 @@ async function alertModerators(io, rawReport = {}) {
     // and this branch is what that looks like from the outside: the report is
     // mailed to a hardcoded address, and every line below names that address
     // without ever saying it is the last resort standing in for a setting
-    // nobody made. An operator reading "Email went to hello@flockcorp.com
+    // nobody made. An operator reading "Email went to social@flockcorp.com
     // (1 delivered)" cannot tell a configured deployment from an unconfigured
     // one, which is the same silent-no-op this whole file exists to stop. The
     // zero-admins case has named ADMIN_USER_IDS since round 18; this is the

@@ -367,7 +367,7 @@ async function bridgeFactBlock(userId, intentId) {
     return {
       intent: intentId,
       facts: [],
-      refusals: [`${FEATURE_NAME} reads facts about your venue and does not know which venue is yours yet. No Google listing is linked to this venue. Write to hello@flockcorp.com to link one.`],
+      refusals: [`${FEATURE_NAME} reads facts about your venue and does not know which venue is yours yet. No Google listing is linked to this venue. Write to social@flockcorp.com to link one.`],
     };
   }
   if (!ctx.profile.verified) {
@@ -489,7 +489,7 @@ router.get('/cards', authenticate, requirePro, async (req, res) => {
     const userId = req.user.id;
     const ctx = await advisorFacts.getVenueContext(userId);
     if (!ctx || !ctx.profile.google_place_id) {
-      return res.json({ available: false, reason: `No Google listing is linked to this venue yet, so ${FEATURE_NAME} is off. Write to hello@flockcorp.com to link one.`, cards: [] });
+      return res.json({ available: false, reason: `No Google listing is linked to this venue yet, so ${FEATURE_NAME} is off. Write to social@flockcorp.com to link one.`, cards: [] });
     }
     if (!ctx.profile.verified) {
       return res.json({ available: false, unverified: true, reason: unverifiedReason(ctx.profile), cards: [] });

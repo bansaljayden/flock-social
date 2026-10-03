@@ -49,10 +49,12 @@ const PROD_API_URL = 'https://api.flockcorp.com';
 // Where a reply lands. The reasoning is at safeReplyTo inside sendEmail; the
 // short version is that several of these messages ask the reader to reply, one
 // of them is sent From an address with no inbound route, and nothing had ever
-// set a Reply-To. This address is the one the product already publishes as the
-// way to reach a person, so if it ever stops being routed in Cloudflare, this
-// constant and routes/users.js change together.
-const DEFAULT_REPLY_TO = 'hello@flockcorp.com';
+// set a Reply-To. This address is the one the product publishes as the way to
+// reach a person (the site, the legal pages, routes/users.js): one address
+// everywhere since 2026-10-03, when hello@ was folded into it. If it ever stops
+// being routed in Cloudflare, this constant and routes/users.js change
+// together.
+const DEFAULT_REPLY_TO = 'social@flockcorp.com';
 
 // True for anything that would produce a dead or downgraded link: a non-https
 // scheme, a loopback / link-local / .local host, or junk that does not parse.
@@ -672,7 +674,7 @@ function deriveTextFromHtml(html) {
   return safeTextBody(s);
 }
 
-async function sendEmail({ to, subject, html, text, replyTo, from = 'Flock <hello@flockcorp.com>', headers, category = 'transactional' }) {
+async function sendEmail({ to, subject, html, text, replyTo, from = 'Flock <social@flockcorp.com>', headers, category = 'transactional' }) {
   if (!isMailableAddress(to)) {
     console.error('[email] refusing a recipient that is not one deliverable address:', maskAddress(to));
     return { sent: false, error: 'invalid recipient', refused: true };
@@ -758,9 +760,9 @@ async function sendEmail({ to, subject, html, text, replyTo, from = 'Flock <hell
   // discover that.
   //
   // So every message carries a Reply-To that a person reads, unless its caller
-  // names a better one. hello@flockcorp.com is the address the product already
-  // publishes as the way to reach a human (routes/users.js) and already sends
-  // most of its mail from. Sanitised exactly like `from` and `subject`,
+  // names a better one. social@flockcorp.com is the address the product
+  // publishes as the way to reach a human (routes/users.js) and sends its mail
+  // from. Sanitised exactly like `from` and `subject`,
   // because it is a header too.
   const safeReplyTo = String(replyTo == null ? DEFAULT_REPLY_TO : replyTo).replace(/[\r\n]+/g, ' ').trim();
   const extraHeaders = safeHeaders(headers);
