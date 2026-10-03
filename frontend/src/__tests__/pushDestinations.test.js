@@ -106,6 +106,20 @@ describe('a chat screen opened for a flock we do not have is honest about it', (
     expect(line).toMatch(/flocks\.find\(f => f\.id === selectedFlockId\)/);
   });
 
+  test('the selectedFlock the read cursor and Opened receipt use has no fallback either', () => {
+    // The receipts take their message id from this memo. With `|| flocks[0]`
+    // a plan opened from a push before the list held it sent the FIRST plan's
+    // newest message id as this plan's read and opened marks (2026-10-03).
+    const start = APP.indexOf('const selectedFlock = useMemo(');
+    expect(start).toBeGreaterThan(-1);
+    const memo = APP.slice(start, APP.indexOf(');', start));
+    expect(memo).not.toMatch(/\|\|\s*flocks\[0\]/);
+    expect(memo).toMatch(/flocks\.find\(f => f\.id === selectedFlockId\)/);
+    // And no other line in App.js reintroduces the fallback in code.
+    const code = APP.split('\n').filter((l) => !l.trim().startsWith('//'));
+    expect(code.filter((l) => /\|\|\s*flocks\[0\]/.test(l))).toEqual([]);
+  });
+
   test('the empty state does not call a plan deleted while the list is still loading', () => {
     // With no fallback, a tap during a cold start reaches this panel for a
     // second or two while GET /api/flocks is in flight, and "it was deleted" is
