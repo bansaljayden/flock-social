@@ -10534,6 +10534,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // a block starts is the usual newer one, so a slow read from before the
   // block brought the blocked person's pinned and quoted words back. An answer
   // a later read has overtaken now changes nothing.
+  //
+  // It also holds who owns the two flags each chat screen shares, because the
+  // flags are single values while the reads are per conversation (app audit
+  // 2026-10-03). 'spinner:flock' / 'spinner:dm' name the read whose spinner is
+  // up, so a slow read of the chat you left cannot take down the spinner of the
+  // one you opened and flash its empty state. 'last:flock' / 'last:dm' name the
+  // conversation read most recently, so that chat's late failure cannot print
+  // "This conversation did not load" over the one now on screen.
   const historyReadSeqRef = useRef({});
 
   // EVERY UNSEND, TAKEDOWN AND BLOCK THIS SESSION HAS SEEN, numbered. A history
@@ -10563,7 +10571,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // (`anchor`, heldBeforeDrop), since `held` by now includes live rows
     // above the hole.
     const reach = anchor || held;
-    if (showSpinner) setMessagesLoading(true);
+    // This read owns the flags from here (see historyReadSeqRef).
+    const spin = showSpinner ? `flock:${flockId}#${turn}` : null;
+    if (spin) { historyReadSeqRef.current['spinner:flock'] = spin; setMessagesLoading(true); }
+    historyReadSeqRef.current['last:flock'] = `flock:${flockId}`;
     setMessagesError('');
     return getMessages(flockId)
       .then((data) => {
@@ -10662,10 +10673,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // or a reconnect into a still-broken backend would be rate-limited
         // out of the retry it actually needs.
         historyReadAtRef.current[`flock:${flockId}`] = 0;
-        // And it must not look like an empty one to the reader either.
-        setMessagesError(err?.message || 'This conversation did not load.');
+        // And it must not look like an empty one to the reader either, as
+        // long as the reader is still on this conversation.
+        if (historyReadSeqRef.current['last:flock'] === `flock:${flockId}`) {
+          setMessagesError(err?.message || 'This conversation did not load.');
+        }
       })
-      .finally(() => { if (showSpinner) setMessagesLoading(false); });
+      .finally(() => { if (spin && historyReadSeqRef.current['spinner:flock'] === spin) setMessagesLoading(false); });
   }, []);
 
   // ONE UNREAD PLAN, READ AHEAD WHILE NOBODY IS WAITING. The plan list arrives
@@ -10747,7 +10761,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // The flock twin's `held` and `reach`, for the same two rules.
     const held = heldServerIds((directMessagesRef.current.find(d => d.userId === userId) || {}).messages);
     const reach = anchor || held;
-    if (showSkeleton) setDmMessagesLoading(true);
+    // The flock twin's flag ownership (see historyReadSeqRef).
+    const spin = showSkeleton ? `dm:${userId}#${turn}` : null;
+    if (spin) { historyReadSeqRef.current['spinner:dm'] = spin; setDmMessagesLoading(true); }
+    historyReadSeqRef.current['last:dm'] = `dm:${userId}`;
     setDmMessagesError('');
     return getDMs(userId)
       .then((data) => {
@@ -10835,9 +10852,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       .catch((err) => {
         if (overtaken()) return;
         historyReadAtRef.current[`dm:${userId}`] = 0;
-        setDmMessagesError(err?.message || 'This conversation did not load.');
+        if (historyReadSeqRef.current['last:dm'] === `dm:${userId}`) {
+          setDmMessagesError(err?.message || 'This conversation did not load.');
+        }
       })
-      .finally(() => { if (showSkeleton) setDmMessagesLoading(false); });
+      .finally(() => { if (spin && historyReadSeqRef.current['spinner:dm'] === spin) setDmMessagesLoading(false); });
   }, []);
 
   /* The Try again behind a failed history read, one per surface.
