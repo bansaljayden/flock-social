@@ -3386,3 +3386,11 @@ test('the Costs tab ledger names a partial list as partial', () => {
   assert.strictEqual(moneyHub.costsLedger({ expenses: rows, reconciled: null, month: MONTH }).truncated, true);
   assert.strictEqual(moneyHub.costsLedger({ expenses: [], reconciled: null, month: MONTH }).truncated, false);
 });
+
+test('a live Stripe price of $0 is the price, not a reason to fall back', () => {
+  const pro = moneyHub.buildPlanNets({ stated: [{ product: 'pro', plan: 'monthly', liveCents: 0, liveUsable: true }] })
+    .find((n) => n.product === 'pro' && n.plan === 'monthly');
+  assert.strictEqual(pro.priceCents, 0);
+  assert.strictEqual(pro.source, 'stripe');
+  assert.strictEqual(pro.web.netPerMonthCents, 0);
+});

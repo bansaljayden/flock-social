@@ -1546,7 +1546,7 @@ test('saving an expense on Overview reloads the costs the other two tabs read', 
 // What each plan leaves, and cost per active person (2026-10-03).
 describe('plan nets and unit costs', () => {
   const NETS = [
-    { product: 'pro', plan: 'monthly', priceCents: 399, interval: 'month', grossPerMonthCents: 399, web: { netPerMonthCents: 355, feesPerMonthCents: 44 }, appStore: { standardPct: 30, netPerMonthCents: 279, smallBusinessPct: 15, netPerMonthSmallBusinessCents: 339 } },
+    { product: 'pro', plan: 'monthly', priceCents: 399, interval: 'month', grossPerMonthCents: 399, web: { netPerMonthCents: 355, feesPerMonthCents: 44 }, appStore: { priceCents: 399, source: 'stated', standardPct: 30, netPerMonthCents: 279, smallBusinessPct: 15, netPerMonthSmallBusinessCents: 339 } },
     { product: 'roost', plan: 'founding', priceCents: 5900, interval: 'month', grossPerMonthCents: 5900, web: { netPerMonthCents: 5658, feesPerMonthCents: 242 }, appStore: null },
   ];
   test('the Prices card says what each plan leaves after fees, with both of Apple\'s rates', async () => {
@@ -1557,6 +1557,8 @@ describe('plan nets and unit costs', () => {
     const pro = screen.getAllByText('Flock Pro, monthly').map((el) => el.parentElement.parentElement).find((r) => /web/.test(r.textContent));
     expect(pro.textContent).toMatch(/\$3\.55 web/);
     expect(pro.textContent).toMatch(/\$2\.79 after Apple's 30%, or \$3\.39 at the 15%/);
+    // An App Store figure from the stated price says so (review 2026-10-03).
+    expect(pro.textContent).toMatch(/the price the code states, because no App Store price was read/);
     expect(hubRow('Cost per active person').textContent).toMatch(/\$17\.83\/mo/);
     expect(hubRow('Cost per active person').textContent).toMatch(/each plan costs \$8\.54/);
   });
