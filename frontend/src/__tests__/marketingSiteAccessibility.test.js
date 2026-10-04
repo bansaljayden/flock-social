@@ -627,7 +627,7 @@ describe('LandingPage motion', () => {
       // never outside it where reduced motion would still play them.
       const outside = motion.slice(0, motion.indexOf('@media (prefers-reduced-motion: no-preference) {'));
       expect(outside).not.toMatch(/animation:|scroll-behavior:/);
-      for (const rule of ['scroll-behavior: smooth', 'lp-rise', 'lp-draw', 'lp-plate', 'lp-row']) {
+      for (const rule of ['scroll-behavior: smooth', 'lp-rise', 'lp-plate', 'lp-row']) {
         expect(optIn).toContain(rule);
       }
     });

@@ -352,7 +352,7 @@
    losing to this line and computing to 0. Measured before the fix, all dead:
 
      .lp-kicker margin-bottom 12    .lp-hero-note margin-top 22
-     .lp-demo-proof 44/0/20         .lp-steps-after margin-top 20
+     .lp-steps-after margin-top 20
      .lp-form-msg margin-top 12     .lp-footer-blurb margin-top 12
      .lp-sos-headline 0 0 10        .lp-sos-link 0 0 10
      .lp-sos-cap 16 0 0             .lpd-best 16 0 0
@@ -729,7 +729,7 @@ html:has(.lp) body { overflow-x: clip; }
    app is approved, and #try is the menu's "Try it live". Without this they
    scrolled to a point 64px under an opaque sticky navbar, so the line you
    jumped for was the one thing you could not see. */
-.lp-cta, .lp-demo-proof { scroll-margin-top: 76px; }
+.lp-cta, #try { scroll-margin-top: 76px; }
 /* The navy sections are the page's chapter breaks, so they get more air than
    the cream ones they interrupt — every section carrying identical top and
    bottom padding is the thing that makes a long page read as one undivided
@@ -750,7 +750,6 @@ html:has(.lp) body { overflow-x: clip; }
    and where two cream sections do sit next to each other they are separated by
    a hairline, which is what a printed page does. --paper-2 survives as a token
    because the chat bubbles are built on it. */
-.lp-sec-ruled { border-top: 1px solid var(--rule); }
 
 /* The kicker is the field guide's plate label, so it is set in the serif's
    text cut (opsz 9) rather than as another 14px sans eyebrow. It also appears
@@ -810,21 +809,13 @@ html:has(.lp) body { overflow-x: clip; }
 }
 @media (min-width: 940px) {
   .lp-hero-in { grid-template-columns: minmax(0, 1fr) minmax(0, 300px); }
-  .lp-hero-in > h1,
-  .lp-hero-rule { grid-column: 1 / -1; }
+  .lp-hero-in > h1 { grid-column: 1 / -1; }
 }
 
 /* The rule under the chapter title. It is also what replaced .lp-hero-glow: a
    pair of rotated, blurred radial blobs behind the headline. Nothing in a
    printed field guide glows, and a soft luminous blob behind hero text is the
    single most generic thing a dark hero can do. */
-.lp-hero-rule {
-  height: 0;
-  width: 100%;
-  margin: 0;
-  border: 0;
-  border-top: 1px solid var(--rule-cream);
-}
 
 /* .lp-badge removed: the pill badge above the hero H1 is a named AI-site
    tell (DESIGN-STANDARD.md A4). The DECA proof line lives in .lp-hero-note now. */
@@ -954,19 +945,18 @@ html:has(.lp) body { overflow-x: clip; }
 
 /* ============ steps ============ */
 
+/* Open columns with air between them. The steps used to sit in one box cut
+   into panels by hairlines, the stock four-up grid of a template site
+   (2026-10-03: the dividers came off the whole page). */
 .lp-steps {
   display: grid;
-  gap: 1px;
-  background: var(--rule);
-  border: 1px solid var(--rule);
-  border-radius: 18px;
-  overflow: hidden;
+  gap: clamp(24px, 4vw, 44px);
   margin-top: clamp(32px, 5vw, 52px);
 }
 @media (min-width: 760px) { .lp-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 @media (min-width: 1060px) { .lp-steps { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 
-.lp-step { background: var(--paper); padding: clamp(22px, 3vw, 30px); }
+.lp-step { padding: 0; }
 .lp-step-n {
   font-size: 13px;
   font-weight: 700;
@@ -1085,19 +1075,7 @@ html:has(.lp) body { overflow-x: clip; }
     grid-column: 1 / -1;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     column-gap: clamp(32px, 5vw, 64px);
-    margin-top: 0;
-    padding-top: clamp(18px, 2.5vw, 26px);
-    border-top: 1px solid var(--rule-cream);
-  }
-  /* In one column the rule sits between consecutive items. In two it must sit
-     between consecutive ROWS, or the top-right item gets a rule over it with
-     nothing above it to divide. The band's own border-top is the divider for
-     row one; items three and four carry the divider for row two. Both selectors
-     are written through .lp-sec-navy so they outrank the (0,2,2) navy recolour
-     of `.lp-list li + li` further up the file. */
-  .lp-sec-navy .lp-safety-rules li + li { border-top-width: 0; }
-  .lp-sec-navy .lp-safety-rules li:nth-child(n + 3) {
-    border-top: 1px solid var(--rule-cream);
+    margin-top: clamp(18px, 2.5vw, 26px);
   }
 }
 
@@ -1111,13 +1089,10 @@ html:has(.lp) body { overflow-x: clip; }
 .lp-plan-venue .lp-venue-signin { color: var(--cream-2); opacity: 1; }
 .lp-list li { list-style: none; font-size: 15.5px; color: var(--ink-2); line-height: 1.5; }
 .lp-sec-navy .lp-list li { color: var(--cream-2); }
-/* Ruled rows, no glyphs. A column of checkmarks is the single most
-   template-looking thing a marketing page can do; the rule + rhythm carries
-   the list instead (drop 20 §H, §I). */
-.lp-list li + li { border-top: 1px solid var(--rule); }
-.lp-list li { padding: 11px 0; }
-.lp-sec-navy .lp-list li + li,
-.lp-plan-venue .lp-list li + li { border-top-color: var(--rule-cream); }
+/* Plain rows, no glyphs and no rules. A column of checkmarks is the single
+   most template-looking thing a marketing page can do, and a hairline between
+   every row was its cousin; spacing carries the list (2026-10-03). */
+.lp-list li { padding: 6px 0; }
 
 /* split / money vignette */
 .lp-split {
@@ -1308,7 +1283,8 @@ html:has(.lp) body { overflow-x: clip; }
   .lpd-map .maplibregl-ctrl-group button { width: 44px; height: 44px; }
 }
 
-/* .lp-hero-glow deleted along with its markup. See .lp-hero-rule above.
+/* .lp-hero-glow deleted along with its markup; the rule under the hero
+   headline went with the page's other divider lines on 2026-10-03.
    .lp-grid / .lp-card deleted with the "In the app" section they belonged to. */
 
 .lp-hero-in { position: relative; z-index: 1; }
@@ -1391,12 +1367,10 @@ html:has(.lp) body { overflow-x: clip; }
 }
 
 /* One line closing the steps, carrying the two things the deleted "In the app"
-   grid actually added. Ruled off the block above so it reads as a footnote to
-   the four steps rather than a fifth one. */
+   grid actually added, set apart by space so it reads as a footnote to the four
+   steps rather than a fifth one. */
 .lp-steps-after {
-  margin-top: 20px;
-  padding-top: 16px;
-  border-top: 1px solid var(--rule);
+  margin-top: clamp(28px, 4vw, 40px);
   font-size: 15.5px;
   max-width: 62ch;
   color: var(--ink-2);
@@ -1501,17 +1475,6 @@ html:has(.lp) body { overflow-x: clip; }
   .lp-demo-head .lp-list { margin-top: 0; }
 }
 .lp-demo-head h2 { margin-bottom: 16px; }
-
-/* The line that turns the demo from a widget into evidence. Ruled top and set
-   at lead size so it reads as a statement about what follows, not a caption. */
-.lp-demo-proof {
-  margin: clamp(32px, 4vw, 44px) 0 20px;
-  padding-top: 20px;
-  border-top: 1px solid var(--rule-cream);
-  font-size: clamp(16px, 1.5vw, 18px);
-  max-width: 62ch;
-  color: var(--cream-2);
-}
 
 /* The holder the demo mounts into. It carries the demo's top margin and its
    measured height, so the box is identical before and after the map arrives
@@ -1816,10 +1779,6 @@ html:has(.lp) body { overflow-x: clip; }
     display: inline-block;
     animation: lp-rise 0.9s cubic-bezier(0.22, 1, 0.36, 1) 0.16s both;
   }
-  .lp-hero-rule {
-    transform-origin: left center;
-    animation: lp-draw 1.1s cubic-bezier(0.22, 1, 0.36, 1) 0.3s both;
-  }
   .lp-hero-copy {
     animation: lp-rise 0.9s cubic-bezier(0.22, 1, 0.36, 1) 0.42s both;
   }
@@ -1904,10 +1863,6 @@ html:has(.lp) body { overflow-x: clip; }
 
 @keyframes lp-rise {
   from { transform: translateY(14px); }
-  to { transform: none; }
-}
-@keyframes lp-draw {
-  from { transform: scaleX(0); }
   to { transform: none; }
 }
 @keyframes lp-plate {

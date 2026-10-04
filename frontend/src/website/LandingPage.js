@@ -132,7 +132,7 @@ const AppStoreBadge = () => {
 
    No IntersectionObserver (old Safari, and any prerender) means render now. A
    visitor on a browser without it gets the old behaviour, not a blank page. */
-function WhenNear({ margin = '700px', className, hold, children }) {
+function WhenNear({ margin = '700px', className, hold, id, children }) {
   const ref = useRef(null);
   const [near, setNear] = useState(typeof IntersectionObserver !== 'function');
 
@@ -165,7 +165,7 @@ function WhenNear({ margin = '700px', className, hold, children }) {
   }, [near, margin]);
 
   return (
-    <div ref={ref} className={className} style={hold}>
+    <div ref={ref} id={id} className={className} style={hold}>
       {near ? children : null}
     </div>
   );
@@ -492,7 +492,6 @@ export default function LandingPage() {
               auto all break this sentence 4+1 at phone widths and leave
               "happen." alone on line four. */}
           <h1 id="lp-h-hero">Nurturing friendship, <span className="lp-keep">one night at a time.</span></h1>
-          <hr className="lp-hero-rule" aria-hidden="true" />
 
           <div className="lp-hero-copy">
             <p className="lp-lead">
@@ -581,7 +580,7 @@ export default function LandingPage() {
       </section>
 
       {/* ---------------- how it works ---------------- */}
-      <section className="lp-sec lp-sec-paper lp-sec-ruled" id="how" aria-labelledby="lp-h-how">
+      <section className="lp-sec lp-sec-paper" id="how" aria-labelledby="lp-h-how">
         <div className="lp-wrap">
           <div>
             {/* Two birds already on the wire and a third flying in: the plans
@@ -712,59 +711,12 @@ export default function LandingPage() {
             </ul>
           </div>
 
-          {/* The accuracy figures are the most checkable thing this site owns,
-              and they belong here, one line above the demo that is about to
-              serve real numbers in front of you: "the numbers are live" is an
-              assertion, and a measured hit rate on readings the system had not
-              seen is the reason to believe it.
-
-              This line used to cite the model's training corpus (1.9 million
-              venue-hour observations across 30 cities). With the serving
-              configuration production runs (CROWD_SERVE_MODE=curve_offset,
-              CROWD_NOWCAST_ENABLED=true) the number on a pin is the venue's own
-              weekly pattern moved by its live readings, and the trained model
-              does not enter it, so crediting the pins to the model's corpus
-              named the wrong source. The corpus figures stay on /about, beside
-              the model they describe.
-
-              Both numbers are read straight out of
-              backend/services/servedAccuracy.json (rows 4,183, within_one_band
-              78.8) and are pinned against that file in landingPageClaims.test.js.
-              If the serving configuration is re-measured, that test goes red
-              and this sentence gets corrected rather than quietly becoming a
-              lie. "within one crowd level" is the band metric; do not round it
-              into "accurate", which is a different claim.
-
-              THIS LINE IS READ BY TWO AUDIENCES AND ONE OF THEM HAS NO MAP.
-              It used to open "Everything below is live" and close "Pick a pin",
-              both of which point at the demo underneath. api/marketing-page.js
-              serves this same paragraph to AI crawlers with LiveDemo stubbed
-              out, so the bot document promised a map, then went straight to the
-              Birdie heading: a claim about a feature that is not in the
-              document, which is the one thing that file exists not to do.
-
-              Two fixes were available. Excluding the paragraph from the bot
-              document (the rationale the synthetic mocks get) was rejected: the
-              corpus figures are the most checkable thing this site owns, /about
-              is the page nobody reads, and an answer engine asked why Flock's
-              crowd numbers should be believed would get no answer. The
-              exclusion list in aiCrawlerSurface.test.js already records
-              `.lp-appstore` being stripped and leaving the bot document silent
-              on availability, which is the same mistake. So the deixis goes
-              instead. What is left is a claim about where Flock's map, pins and
-              numbers come from, which is true whether or not a map follows it,
-              and the human still reads it directly above a live one. */}
-          <p className="lp-demo-proof" id="try">
-            The map, the pins, and the numbers are live, made the same way they
-            are in the app. Tested against 4,183 real live readings they had not
-            seen, 78.8% of Flock's crowd numbers landed within one crowd level
-            and 53.8% within 10 points.
-          </p>
           {/* 800px of lead: the demo is loading and drawing before it reaches
               the screen, so arriving here still feels like it was always
               there. The holder is the demo's own height, so nothing shifts
-              when it mounts, and #try above still lands in the right place. */}
-          <WhenNear className="lpd-hold" margin="800px">
+              when it mounts. The holder is #try, the menu's "Try it live",
+              so the link lands on the demo itself. */}
+          <WhenNear id="try" className="lpd-hold" margin="800px">
             <Suspense fallback={null}><LiveDemo /></Suspense>
           </WhenNear>
         </div>
@@ -872,7 +824,7 @@ export default function LandingPage() {
           The old headline was "Money kills more plans than distance", the third
           plans-die construction on one page after the hero and Birdie. The
           section's best line was buried in the lead; it is the headline now. */}
-      <section className="lp-sec lp-sec-paper lp-sec-ruled" id="money" aria-labelledby="lp-h-money">
+      <section className="lp-sec lp-sec-paper" id="money" aria-labelledby="lp-h-money">
         <div className="lp-wrap lp-row lp-row-flip">
           <div>
             {/* The one mark whose WebP is a plain "VP8 " chunk with no ALPH,

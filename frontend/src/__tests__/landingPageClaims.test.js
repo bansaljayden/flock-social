@@ -164,23 +164,14 @@ describe('the page only sells things that exist', () => {
     expect(app).toMatch(/getVenueIntelligence\(/);
   });
 
-  test('the accuracy figures in the demo proof line match what the serving configuration measured', () => {
-    // The same pinning AboutPage's figures get, because these two are on the
-    // highest-traffic page on the site. A re-measurement that changes them
-    // must change this sentence.
-    const served = JSON.parse(fs.readFileSync(
-      path.join(REPO, 'backend', 'services', 'servedAccuracy.json'),
-      'utf8'
-    ));
+  test('the home page goes from the crowd list straight to the live demo', () => {
+    // The accuracy line that sat between them was cut on 2026-10-03, and the
+    // menu's "Try it live" now lands on the demo itself. The measured figures
+    // stay on /about, pinned there against servedAccuracy.json.
     const copy = visible.replace(/\s+/g, ' ');
-
-    expect(served.rows).toBe(4183);
-    expect(copy).toMatch(/Tested against 4,183 real live readings they had not seen/);
-    expect(copy).toContain(`${served.within_one_band}% of Flock's crowd numbers landed within one crowd level`);
-    // The pins are the served numbers, and with the configuration production
-    // runs the trained model does not make them, so the line must not credit
-    // them to the model's training corpus.
+    expect(copy).not.toMatch(/real live readings they had not seen/);
     expect(copy).not.toMatch(/same model that ships inside Flock/);
+    expect(visible).toMatch(/<WhenNear id="try" className="lpd-hold"/);
   });
 
   test('the in-their-vote list has one honest name on every surface', () => {
@@ -367,10 +358,20 @@ describe('structural fingerprint', () => {
   test('Safety puts its guarantees across the full width, not in a sidebar', () => {
     expect(visible).toMatch(/className="lp-list lp-safety-rules"/);
     expect(CSS).toMatch(/\.lp-safety-rules \{[\s\S]{0,400}?grid-column: 1 \/ -1;/);
-    // Two columns, so the divider has to move from "between items" to "between
-    // rows" or the top-right item gets a rule with nothing above it.
-    expect(CSS).toMatch(/\.lp-sec-navy \.lp-safety-rules li \+ li \{ border-top-width: 0; \}/);
-    expect(CSS).toMatch(/\.lp-sec-navy \.lp-safety-rules li:nth-child\(n \+ 3\)/);
+  });
+
+  test('no hairline dividers: lists, steps, sections and the hero carry no rules', () => {
+    // 2026-10-03: the page was cut into panels by 1px lines, between list rows,
+    // between the four steps, above sections and under the hero headline, which
+    // is the look of a site built from a template. Space does that work now.
+    expect(CSS).not.toMatch(/\.lp-list li \+ li \{[^}]*border/);
+    expect(CSS).not.toMatch(/\.lp-sec-ruled\b/);
+    expect(CSS).not.toMatch(/\.lp-hero-rule\b/);
+    expect(visible).not.toMatch(/lp-hero-rule|lp-sec-ruled/);
+    const steps = CSS.match(/\.lp-steps \{[^}]*\}/)[0];
+    expect(steps).not.toMatch(/border|background/);
+    const after = CSS.match(/\.lp-steps-after \{[^}]*\}/)[0];
+    expect(after).not.toMatch(/border/);
   });
 
   test('eyebrows are capped at two', () => {
