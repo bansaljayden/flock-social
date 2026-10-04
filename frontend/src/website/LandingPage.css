@@ -394,15 +394,14 @@
   /* Above the menu panel (60) so the wordmark and the corner block stay put
      while the panel is open. */
   z-index: 70;
-  background: rgba(15, 23, 42, 0.86);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  /* Solid, the top edge of the page. A translucent bar blurring the page
+     beneath it is the stock site-builder header (2026-10-03), and the blur was
+     a full-width filter repainted on every scroll frame. */
+  background: var(--navy);
 }
 /* Open: the bar itself gets out of the way, so the panel reads full screen. */
 .lp-nav.is-menu-open {
   background: transparent;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
 }
 .lp-nav-in {
   display: flex;
@@ -851,7 +850,8 @@ html:has(.lp) body { overflow-x: clip; }
   margin: 0 auto;
   border-radius: 30px;
   border: 1px solid rgba(22, 40, 61, 0.14);
-  box-shadow: 0 26px 60px rgba(10, 17, 32, 0.28);
+  /* No drop shadow. A device floating on a soft shadow is the stock mockup
+     frame; the plate sits on the page like a printed one (2026-10-03). */
   background: var(--paper);
 }
 .lp-shot-hero {
@@ -860,7 +860,6 @@ html:has(.lp) body { overflow-x: clip; }
      costs 22px of hero height. */
   width: min(284px, 78vw);
   border-color: rgba(244, 239, 227, 0.16);
-  box-shadow: 0 34px 80px rgba(0, 0, 0, 0.5);
 }
 /* The copy block runs ~270px and a whole 390x844 phone runs ~615px, which left
    a 340px hole under the buttons. Centring the copy against the plate only
@@ -1672,7 +1671,6 @@ html:has(.lp) body { overflow-x: clip; }
    a specimen, not a widget. Nothing inside .lpd-stage is retinted. */
 .lp-sec-navy .lpd-stage {
   border-color: rgba(244, 239, 227, 0.14);
-  box-shadow: 0 28px 64px rgba(5, 10, 20, 0.45);
 }
 .lp-sec-navy .lpd-input {
   background: var(--field-fill);
