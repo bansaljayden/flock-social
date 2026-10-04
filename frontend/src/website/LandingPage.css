@@ -653,8 +653,7 @@
 .lp-sec-navy a:focus-visible,
 .lp-sec-navy button:focus-visible,
 .lp-sec-navy input:focus-visible,
-.lp-footer a:focus-visible,
-.lp-plan-venue a:focus-visible {
+.lp-footer a:focus-visible {
   outline-color: var(--steel-lift);
 }
 /* The demo stage is a white plate even when its section is navy. */
@@ -1075,20 +1074,17 @@ html:has(.lp) body { overflow-x: clip; }
   }
 }
 
-.lp-list { display: grid; gap: 12px; margin-top: 20px; }
+.lp-list { display: grid; gap: 0; margin-top: 20px; }
 /* The venues card's sign-in line, under the mailto button. Inherits the
    card's ink so it reads as a footnote, not a second button. */
 .lp-venue-signin { margin: 14px 0 0; font-size: 0.9em; opacity: 0.85; }
 .lp-venue-signin a { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
-/* The card is navy, and the line inherited the page's navy ink: navy on navy,
-   close to invisible. Cream like the rest of the card's small print. */
-.lp-plan-venue .lp-venue-signin { color: var(--cream-2); opacity: 1; }
 .lp-list li { list-style: none; font-size: 15.5px; color: var(--ink-2); line-height: 1.5; }
 .lp-sec-navy .lp-list li { color: var(--cream-2); }
 /* Plain rows, no glyphs and no rules. A column of checkmarks is the single
    most template-looking thing a marketing page can do, and a hairline between
    every row was its cousin; spacing carries the list (2026-10-03). */
-.lp-list li { padding: 6px 0; }
+.lp-list li { padding: 5px 0; }
 
 /* split / money vignette */
 .lp-split {
@@ -1120,9 +1116,14 @@ html:has(.lp) body { overflow-x: clip; }
 
 /* ============ pricing ============ */
 
+/* A rate sheet, not a row of cards. The plans used to be bordered, rounded
+   boxes with the venue one inverted to navy, which is the stock pricing block
+   of a template site (2026-10-03). Now each plan is an open column on the
+   page: the name, the price set in the display face, the terms, the button.
+   Space between the columns does the separating. */
 .lp-plans {
   display: grid;
-  gap: clamp(16px, 2.4vw, 24px);
+  gap: clamp(40px, 5vw, 64px);
   margin-top: clamp(32px, 5vw, 52px);
   /* min(300px, 100%): a bare 300px floor overflowed the wrap at 320px, and
      .lp's overflow-x clip then CUT OFF the card's right edge instead of
@@ -1142,28 +1143,18 @@ html:has(.lp) body { overflow-x: clip; }
   .lp-plans.lp-plans-3 { grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) minmax(0, 1fr); }
 }
 .lp-plan {
-  background: var(--plate);
-  border: 1px solid var(--rule);
-  border-radius: 18px;
-  padding: clamp(24px, 3vw, 32px);
   display: flex;
   flex-direction: column;
 }
-.lp-plan-venue { background: var(--navy); border-color: transparent; }
-.lp-plan-venue h3,
-.lp-plan-venue .lp-plan-price { color: var(--cream); }
-.lp-plan-venue .lp-plan-price small,
-.lp-plan-venue .lp-plan-note { color: var(--cream-3); }
-.lp-plan-venue .lp-list li { color: var(--cream-2); }
-.lp-plan-venue .lp-btn-navy { background: var(--cream); color: var(--navy); }
-.lp-plan-venue .lp-btn-navy:hover { background: var(--cream-hi); }
 
 .lp-plan-price {
-  font-size: clamp(30px, 3.4vw, 38px);
-  font-weight: 700;
+  font-family: var(--font-display);
+  font-size: clamp(34px, 3.8vw, 44px);
+  font-weight: 600;
   color: var(--ink);
-  letter-spacing: -0.03em;
-  margin: 14px 0 6px;
+  letter-spacing: -0.01em;
+  line-height: 1.05;
+  margin: 10px 0 8px;
   display: flex;
   align-items: baseline;
   gap: 9px;

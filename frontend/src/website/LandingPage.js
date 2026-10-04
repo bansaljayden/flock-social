@@ -1030,7 +1030,7 @@ export default function LandingPage() {
 
             {proOffer && <ProOfferCard offer={proOffer} />}
 
-            <div className="lp-plan lp-plan-venue">
+            <div className="lp-plan">
               <h3>For venues</h3>
               <div className="lp-plan-price">Let’s talk<small>bars, clubs, restaurants</small></div>
               {/* EVERY LINE IN THIS CARD WAS RE-CHECKED AGAINST THE BACKEND on

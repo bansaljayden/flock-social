@@ -374,6 +374,17 @@ describe('structural fingerprint', () => {
     expect(after).not.toMatch(/border/);
   });
 
+  test('pricing is a rate sheet: open columns, no boxed or inverted cards', () => {
+    // The plans were bordered, rounded cards with the venue one inverted to
+    // navy, the stock pricing block of a template site (2026-10-03).
+    const plan = CSS.match(/\.lp-plan \{[^}]*\}/)[0];
+    expect(plan).not.toMatch(/border|background|border-radius|box-shadow/);
+    expect(CSS).not.toMatch(/\.lp-plan-venue\b/);
+    expect(visible).not.toMatch(/lp-plan-venue/);
+    const price = CSS.match(/\.lp-plan-price \{[^}]*\}/)[0];
+    expect(price).toMatch(/font-family: var\(--font-display\)/);
+  });
+
   test('eyebrows are capped at two', () => {
     // An eyebrow is an ordinal device. This page had four, over headings that
     // in two cases already stated the subject ("How it works" above a band
