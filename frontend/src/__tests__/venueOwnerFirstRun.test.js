@@ -83,4 +83,8 @@ test('the admin and venue links are read once per page load, not on every profil
   // reads ?admin=true / ?venue=true depends on it (review 2026-10-04).
   expect(app).toMatch(/const urlModeHandledRef = useRef\(false\);\s*useEffect\(\(\) => \{\s*if \(urlModeHandledRef\.current \|\| !authUser\) return;\s*urlModeHandledRef\.current = true;/);
   expect(app).toMatch(/urlParams\.delete\('admin'\);/);
+  // A saved Venue mode's profile read cannot swap the console out, and a bare
+  // /?admin=true is rewritten to /app so a reload stays in the app.
+  expect(app).toMatch(/if \(wantsAdmin && authUser\?\.role === 'admin'\) \{[\s\S]{0,600}?launchChoseScreenRef\.current = true;/);
+  expect(app).toMatch(/const path = onWebRoot \? '\/app' : window\.location\.pathname;/);
 });

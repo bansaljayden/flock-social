@@ -9191,16 +9191,26 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     const wantsAdmin = urlParams.get('admin') === 'true';
     if (wantsAdmin) {
       // Off the address bar, so a reload after leaving the console does not
-      // open it again. Other parameters and the hash are kept.
+      // open it again. Other parameters and the hash are kept. On the web "/"
+      // with no app parameter is the marketing site (index.js
+      // APP_INTENT_PARAMS), so a bare /?admin=true becomes /app rather than a
+      // URL whose reload leaves the app; the native shell boots the app at "/".
       try {
         urlParams.delete('admin');
         const query = urlParams.toString();
+        const onWebRoot = window.location.pathname === '/' && !window.Capacitor?.isNativePlatform?.();
+        const path = onWebRoot ? '/app' : window.location.pathname;
         if (window.history && typeof window.history.replaceState === 'function') {
-          window.history.replaceState(window.history.state, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash || ''}`);
+          window.history.replaceState(window.history.state, '', `${path}${query ? `?${query}` : ''}${window.location.hash || ''}`);
         }
       } catch { /* the console still opens; only the tidy-up is lost */ }
     }
     if (wantsAdmin && authUser?.role === 'admin') {
+      // The link chose this launch's screen, so the saved-mode routing must
+      // leave it alone: an admin whose last mode was Venue already has
+      // getVenueProfile in flight, and its answer used to swap the console for
+      // the venue dashboard or onboarding (review 2026-10-04).
+      launchChoseScreenRef.current = true;
       // The link asks for the console by name, so it is the same choice as the
       // mode picker's Admin Dashboard and Access (handleAdminModeSelect).
       // Without this, a browser that had never picked a mode opened the picker
