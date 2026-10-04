@@ -87,4 +87,8 @@ test('the admin and venue links are read once per page load, not on every profil
   // /?admin=true is rewritten to /app so a reload stays in the app.
   expect(app).toMatch(/if \(wantsAdmin && authUser\?\.role === 'admin'\) \{[\s\S]{0,600}?launchChoseScreenRef\.current = true;/);
   expect(app).toMatch(/const path = onWebRoot \? '\/app' : window\.location\.pathname;/);
+  // Picking a mode yourself ends the launch's choice, so venue onboarding can
+  // still open for an admin who came in by the link and then chose Venue.
+  expect(app).toMatch(/const switchMode = \(\) => \{[\s\S]{0,600}?launchChoseScreenRef\.current = false;\s*venueBootRoutedRef\.current = false;/);
+  expect(app).toMatch(/const openVenueDashboard = useCallback\(\(\) => \{\s*setUserMode\('venue'\);[\s\S]{0,300}?launchChoseScreenRef\.current = false;\s*venueBootRoutedRef\.current = false;/);
 });
