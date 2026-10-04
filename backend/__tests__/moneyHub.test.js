@@ -3259,7 +3259,7 @@ test('a monthly bill is every charge inside the window, so three in the next 90 
   const in10 = moneyHub.__test.addMonthsYmd(today, 0);
   const pic = moneyHub.buildCostPicture({
     expenses: [
-      expense({ id: 1, vendor: 'Anthropic', product: 'Max', kind: 'tooling', cadence: 'monthly', amountCents: 20000, renewsOn: in10 }),
+      expense({ id: 1, vendor: 'Design suite', product: 'Team', kind: 'tooling', cadence: 'monthly', amountCents: 20000, renewsOn: in10 }),
       expense({ id: 2, vendor: 'Euro tool', kind: 'tooling', cadence: 'monthly', amountCents: 1000, currency: 'EUR', renewsOn: in10 }),
     ],
     month: MONTH,
@@ -3277,7 +3277,7 @@ test('the price sheet lists every bill and rate card once, never checked and old
   const cm = require('../services/costModel');
   const ps = moneyHub.buildPriceSheet({
     expenses: [
-      expense({ id: 1, vendor: 'Anthropic', product: 'Max', kind: 'tooling', amountCents: 20000, verified: true, lastChargedOn: '2026-09-13' }),
+      expense({ id: 1, vendor: 'Design suite', product: 'Team', kind: 'tooling', amountCents: 20000, verified: true, lastChargedOn: '2026-09-13' }),
       expense({ id: 2, vendor: 'Mystery', kind: 'tooling', amountCents: 500, verified: false }),
       expense({ id: 3, vendor: 'Old', kind: 'tooling', amountCents: 500, verified: true, lastChargedOn: '2026-06-01', active: false }),
     ],
@@ -3291,9 +3291,9 @@ test('the price sheet lists every bill and rate card once, never checked and old
   assert.ok(!ids.includes('expense-3'), 'a stopped bill is not a price paid now');
   assert.strictEqual(ps.rows[0].id, 'expense-2', 'never checked comes first');
   assert.strictEqual(ps.rows[0].stale, true);
-  const max = ps.rows.find((r) => r.id === 'expense-1');
-  assert.strictEqual(max.ageDays, 20);
-  assert.strictEqual(max.stale, false);
+  const paid = ps.rows.find((r) => r.id === 'expense-1');
+  assert.strictEqual(paid.ageDays, 20);
+  assert.strictEqual(paid.stale, false);
   const dated = ps.rows.filter((r) => r.checkedOn);
   for (let i = 1; i < dated.length; i += 1) assert.ok(dated[i - 1].checkedOn <= dated[i].checkedOn, 'oldest check first');
 });
@@ -3346,7 +3346,7 @@ test('the price sheet keeps a euro amount and leaves out a line an expense stand
   assert.ok(ps.rows.some((r) => r.id === 'expense-2'));
 });
 
-// code review of the afternoon's money work (2026-10-03, round 4).
+// Hardening review of the afternoon's money work (2026-10-03, round 4).
 test('a bill charged today is not due again this week', () => {
   const pic = moneyHub.buildCostPicture({
     expenses: [expense({ id: 1, vendor: 'Tool', kind: 'tooling', cadence: 'monthly', amountCents: 10000, lastChargedOn: MONTH.todayYmd })],
