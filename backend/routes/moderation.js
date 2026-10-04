@@ -383,37 +383,61 @@ router.post('/reports',
       // is still unhandled, answer the same success without a second row or a
       // second alert. The response is identical either way, so a reporter
       // learns nothing about what is already in the queue.
-      const dupe = await pool.query(
-        `SELECT id, status, created_at FROM content_reports
-         WHERE reporter_id = $1
-           AND content_type = $2
-           AND content_id IS NOT DISTINCT FROM $3::int
-           AND reported_user_id IS NOT DISTINCT FROM $4::int
-           AND status IN ('open', 'under_review')
-         LIMIT 1`,
-        // The SAME reported user the insert below stores: the one the client
-        // named, or the author the content resolved to. Matched on the request
-        // alone, a report that named nobody (a promotion's public read carries
-        // no owner id) looked for a NULL the stored row never has, so filing
-        // it twice inserted it twice and paged moderators twice (2026-10-03).
-        [req.user.id, content_type, content_id || null, reported_user_id || contentAuthorId || null]
-      );
-      if (dupe.rows.length > 0) {
-        return res.status(201).json({ message: REPORT_ACCEPTED, report: dupe.rows[0] });
-      }
+      //
+      // The check and the insert run under one advisory lock keyed on exactly
+      // what the check matches. Without it, two taps that arrive together (a
+      // double-tap, or the client retrying a slow request) both read "no open
+      // report" before either row exists, and both insert and page. A unique
+      // index would need the duplicates already in the table cleaned first; the
+      // lock closes the window with no migration.
+      const reportedId = reported_user_id || contentAuthorId || null;
+      const client = await pool.connect();
+      let result;
+      try {
+        await client.query('BEGIN');
+        await client.query(
+          "SELECT pg_advisory_xact_lock(hashtext('content_report:' || $1::text || ':' || $2::text || ':' || $3::text || ':' || $4::text))",
+          [String(req.user.id), content_type, String(content_id || ''), String(reportedId || '')]
+        );
+        const dupe = await client.query(
+          `SELECT id, status, created_at FROM content_reports
+           WHERE reporter_id = $1
+             AND content_type = $2
+             AND content_id IS NOT DISTINCT FROM $3::int
+             AND reported_user_id IS NOT DISTINCT FROM $4::int
+             AND status IN ('open', 'under_review')
+           LIMIT 1`,
+          // The SAME reported user the insert below stores: the one the client
+          // named, or the author the content resolved to. Matched on the request
+          // alone, a report that named nobody (a promotion's public read carries
+          // no owner id) looked for a NULL the stored row never has, so filing
+          // it twice inserted it twice and paged moderators twice (2026-10-03).
+          [req.user.id, content_type, content_id || null, reportedId]
+        );
+        if (dupe.rows.length > 0) {
+          await client.query('COMMIT');
+          return res.status(201).json({ message: REPORT_ACCEPTED, report: dupe.rows[0] });
+        }
 
-      const result = await pool.query(
-        `INSERT INTO content_reports (reporter_id, reported_user_id, content_type, content_id, reason, details)
-         VALUES ($1, $2, $3, $4, $5, $6)
-         RETURNING id, status, created_at`,
-        // The author the content row resolved to, when the client could not
-        // name one: the public promotion read carries no owner id, so a
-        // promotion report reached the queue with no reported user, no prior
-        // history, and neither Warn nor Ban to press (UGC-loop audit,
-        // 2026-09-05). The author-mismatch check above already holds the two
-        // consistent when both are present; a guest row resolves to null.
-        [req.user.id, reported_user_id || contentAuthorId, content_type, content_id || null, reason, details || null]
-      );
+        result = await client.query(
+          `INSERT INTO content_reports (reporter_id, reported_user_id, content_type, content_id, reason, details)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           RETURNING id, status, created_at`,
+          // The author the content row resolved to, when the client could not
+          // name one: the public promotion read carries no owner id, so a
+          // promotion report reached the queue with no reported user, no prior
+          // history, and neither Warn nor Ban to press (UGC-loop audit,
+          // 2026-09-05). The author-mismatch check above already holds the two
+          // consistent when both are present; a guest row resolves to null.
+          [req.user.id, reportedId, content_type, content_id || null, reason, details || null]
+        );
+        await client.query('COMMIT');
+      } catch (txErr) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw txErr;
+      } finally {
+        client.release();
+      }
 
       // Alert moderators (A6 — push/email). Fire-and-forget; never block the reporter.
       try {
