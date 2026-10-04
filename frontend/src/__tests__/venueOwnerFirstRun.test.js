@@ -69,3 +69,11 @@ test('the promised door exists under You, and the website has one too', () => {
   expect(app).toMatch(/get\('venue'\) === 'true'\) return 'venue-login';/);
   expect(onboarding).toMatch(/Pick all that apply\. You can change this later in Settings\./);
 });
+
+test('an admin gets its own door back to the console under You', () => {
+  // The welcome screen offers three modes; You reopened only the venue one.
+  expect(app).toMatch(/const openAdminDashboard = useCallback\(\(\) => \{\s*if \(authUser\?\.role !== 'admin'\) return;/);
+  expect(app).toMatch(/>Change this later under You, then Admin dashboard<\/p>/);
+  expect(profile).toMatch(/authUser\?\.role === 'admin' \? \[\{ l: 'Admin dashboard', s: 'admin', icon: Icons\.barChart \}\]/);
+  expect(profile).toMatch(/if \(m\.s === 'admin'\) \{ openAdminDashboard\(\); return; \}/);
+});

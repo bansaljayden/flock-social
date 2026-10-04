@@ -16445,6 +16445,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setShowModeSelection(false);
     setCurrentScreen('venueDashboard');
   }, []);
+  // The same door for the admin console. The welcome screen offers three modes
+  // and You reopened only the venue one, so an admin who picked I'm Going Out
+  // got back to the console through the venue dashboard's back arrow and the
+  // picker. The role check is the one handleAdminModeSelect makes.
+  const openAdminDashboard = useCallback(() => {
+    if (authUser?.role !== 'admin') return;
+    setUserMode('admin');
+    try { localStorage.setItem('flockUserMode', 'admin'); } catch (e) { /* storage blocked */ }
+    setShowModeSelection(false);
+    setCurrentScreen('adminRevenue');
+  }, [authUser]);
   // Birdie in the flock chat. The note from the TestFlight pass: the
   // chat needs Birdie present. The panel mounts at the root, so it opens over
   // the chat; the context effect already hands the model this flock while
@@ -16634,7 +16645,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           </div>
         </div>
 
-        <p style={{ fontSize: 'var(--t-meta)', color: 'rgba(148,163,184,0.3)', textAlign: 'center', margin: '0 0 16px', position: 'relative', zIndex: 1 }}>Change this later under You, then Venue dashboard</p>
+        {/* An admin's door back is its own row under You (openAdminDashboard). */}
+        {authUser?.role === 'admin'
+          ? <p style={{ fontSize: 'var(--t-meta)', color: 'rgba(148,163,184,0.3)', textAlign: 'center', margin: '0 0 16px', position: 'relative', zIndex: 1 }}>Change this later under You, then Admin dashboard</p>
+          : <p style={{ fontSize: 'var(--t-meta)', color: 'rgba(148,163,184,0.3)', textAlign: 'center', margin: '0 0 16px', position: 'relative', zIndex: 1 }}>Change this later under You, then Venue dashboard</p>}
       </div>
     );
   };
@@ -19434,6 +19448,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // throw.
         const profileSettingsProps = {
           openVenueDashboard,
+          openAdminDashboard,
           onUserUpdated,
           DialogBehavior,
           ListSkeleton,
