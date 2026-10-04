@@ -204,7 +204,9 @@ describe('every type the app declares has somewhere to go', () => {
   test('a moderation alert reaches the moderation surface', () => {
     expect(intentFromData({ type: 'moderation_report', reportId: '3' }))
       .toEqual({ screen: 'admin', type: 'moderation_report' });
-    expect(intentFromUrl('/?admin=true')).toEqual({ screen: 'admin', type: 'link' });
+    // The address-bar form opens the admin console (App.js), not the queue:
+    // as an intent it redirected to /admin/moderation and beat the console.
+    expect(intentFromUrl('/?admin=true')).toBeNull();
   });
 
   test('an SOS tap opens the alert modal from its own payload, with the location it carries', () => {

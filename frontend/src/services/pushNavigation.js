@@ -352,7 +352,14 @@ export function intentFromUrl(rawUrl) {
   }
   const dmQ = asId(q.get('dm'));
   if (dmQ) return { screen: 'dm', userId: dmQ, type: 'link' };
-  if (q.get('admin') === 'true') return { screen: 'admin', type: 'link' };
+  // `?admin=true` is NOT a moderation link. It once was the URL a moderation
+  // alert carried, and mapping it here made every boot with it in the
+  // address bar a moderation tap: App.js redirects an admin intent to
+  // /admin/moderation with a full navigation, so it beat the effect that
+  // opens the money hub for the same URL, and the admin console's own link
+  // landed on the reports queue. Alerts now link to /admin/moderation itself
+  // (firebaseService) and a tap resolves from its data type
+  // (moderation_report), so the URL form belongs to the console again.
   const tab = q.get('tab');
   if (tab === 'you' || tab === 'profile') return { screen: 'friends', tab: 'profile', type: 'link' };
   if (tab === 'home') return { screen: 'home', type: 'link' };

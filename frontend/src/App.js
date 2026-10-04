@@ -9180,6 +9180,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     if (urlParams.get('admin') === 'true' && authUser?.role === 'admin') {
+      // The link asks for the console by name, so it is the same choice as the
+      // mode picker's Admin Dashboard and Access (handleAdminModeSelect).
+      // Without this, a browser that had never picked a mode opened the picker
+      // over the console, and the link took three taps to arrive.
+      lsSet('flockUserMode', 'admin');
+      setUserMode('admin');
+      setShowModeSelection(false);
       setCurrentScreen('adminRevenue');
     }
     if (urlParams.get('venue') === 'true' && (authUser?.role === 'venue_owner' || authUser?.role === 'admin')) {
