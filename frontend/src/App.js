@@ -16472,6 +16472,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // dashboard's own arrow, which an owner in the consumer app cannot reach.
   const openVenueDashboard = useCallback(() => {
     setUserMode('venue');
+    // An explicit choice, like switchMode: the launch's own choice is over,
+    // so the venue routing can still open onboarding for an account with no
+    // venue profile.
+    launchChoseScreenRef.current = false;
+    venueBootRoutedRef.current = false;
     try { localStorage.setItem('flockUserMode', 'venue'); } catch (e) { /* storage blocked */ }
     setShowModeSelection(false);
     setCurrentScreen('venueDashboard');
@@ -16600,6 +16605,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   };
 
   const switchMode = () => {
+    // Choosing a mode again starts over: the screen a launch link chose
+    // (launchChoseScreenRef) no longer holds, and the saved-mode venue routing
+    // may run for the new choice. Without this an admin who arrived by
+    // ?admin=true and then picked Venue Dashboard never saw venue onboarding,
+    // so could not create a venue profile that session (review 2026-10-04).
+    launchChoseScreenRef.current = false;
+    venueBootRoutedRef.current = false;
     localStorage.removeItem('flockUserMode');
     setUserMode(null);
     setShowModeSelection(true);
