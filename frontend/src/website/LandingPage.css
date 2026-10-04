@@ -737,14 +737,16 @@ html:has(.lp) body { overflow-x: clip; }
   padding: clamp(64px, 9vw, 108px) 0 clamp(76px, 11vw, 128px);
 }
 .lp-sec-paper { background: var(--paper); }
-
-/* There used to be a second cream, --paper-2, alternating section by section.
-   It is a 6% lightness step: too small to signal a chapter, too visible to be
-   nothing, so it read as stripes. Navy now does all the chaptering (it means
-   "the night", and it lands on the hero, the crowd demo, safety and the CTA),
-   and where two cream sections do sit next to each other they are separated by
-   a hairline, which is what a printed page does. --paper-2 survives as a token
-   because the chat bubbles are built on it. */
+/* No two sections that sit next to each other share a background, so a new
+   topic always starts on a new colour (2026-10-03). Navy keeps the chapters it
+   means, "the night": the hero, the crowd demo, safety and the CTA. Where two
+   cream sections fall between navy ones, the second is set on --paper-2. The
+   money section stays on --paper because its mark is a flat image painted on
+   --paper. Every ink and the steel accent clear 4.5:1 on --paper-2 (lowest is
+   --ink-3 at 4.62). The hairlines that used to divide cream from cream are
+   gone. landingPageClaims.test.js checks neighbouring sections on this page
+   and on /research. */
+.lp-sec-sand { background: var(--paper-2); }
 
 /* The kicker is the field guide's plate label, so it is set in the serif's
    text cut (opsz 9) rather than as another 14px sans eyebrow. It also appears

@@ -580,7 +580,7 @@ export default function LandingPage() {
       </section>
 
       {/* ---------------- how it works ---------------- */}
-      <section className="lp-sec lp-sec-paper" id="how" aria-labelledby="lp-h-how">
+      <section className="lp-sec lp-sec-sand" id="how" aria-labelledby="lp-h-how">
         <div className="lp-wrap">
           <div>
             {/* Two birds already on the wire and a third flying in: the plans
@@ -730,7 +730,7 @@ export default function LandingPage() {
           the way the hero treats the same asset, and the text runs at a reading
           measure rather than filling half a page. Text first in the DOM, so a
           phone gets the heading before the screenshot instead of after it. */}
-      <section className="lp-sec lp-sec-paper" id="birdie" aria-labelledby="lp-h-birdie">
+      <section className="lp-sec lp-sec-sand" id="birdie" aria-labelledby="lp-h-birdie">
         <div className="lp-wrap lp-birdie">
           <div>
             {/* The character himself, not a linocut plate of him. This is the
