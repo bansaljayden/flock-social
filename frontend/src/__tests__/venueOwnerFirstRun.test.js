@@ -77,3 +77,10 @@ test('an admin gets its own door back to the console under You', () => {
   expect(profile).toMatch(/authUser\?\.role === 'admin' \? \[\{ l: 'Admin dashboard', s: 'admin', icon: Icons\.barChart \}\]/);
   expect(profile).toMatch(/if \(m\.s === 'admin'\) \{ openAdminDashboard\(\); return; \}/);
 });
+
+test('the admin and venue links are read once per page load, not on every profile save', () => {
+  // authUser is a new object after every profile save, and the effect that
+  // reads ?admin=true / ?venue=true depends on it (review 2026-10-04).
+  expect(app).toMatch(/const urlModeHandledRef = useRef\(false\);\s*useEffect\(\(\) => \{\s*if \(urlModeHandledRef\.current \|\| !authUser\) return;\s*urlModeHandledRef\.current = true;/);
+  expect(app).toMatch(/urlParams\.delete\('admin'\);/);
+});
