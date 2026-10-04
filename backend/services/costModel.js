@@ -146,7 +146,7 @@ const RATES = {
   // Roost's whole variable cost is this model, so that date is a real event for
   // this business and both rate cards are carried rather than only today's.
   gemini: {
-    checked: '2026-09-30',
+    checked: '2026-10-03',
     source: 'https://ai.google.dev/gemini-api/docs/pricing',
     models: {
       'gemini-3.7-flash': {
@@ -175,7 +175,7 @@ const RATES = {
   // The tier names are Google's and they are decided by the FIELD MASK, not by
   // the endpoint. See the correction in the header.
   places: {
-    checked: '2026-09-30',
+    checked: '2026-10-03',
     source: 'https://developers.google.com/maps/billing-and-pricing/sku-details',
     skus: {
       textSearchEnterprise: { label: 'Text Search (Enterprise fields)', perThousand: 35.00, freePerMonth: 1000 },
@@ -201,7 +201,7 @@ const RATES = {
   // imported from utils/visionBudget.js, which already owns it and already
   // prints it in its own log lines. Two copies of a price is how they drift.
   vision: {
-    checked: '2026-09-30',
+    checked: '2026-10-03',
     source: 'https://cloud.google.com/vision/pricing',
     perThousand: VISION_UNIT_PRICE_USD * 1000,
     freePerMonth: 1000,
@@ -214,7 +214,7 @@ const RATES = {
   // allowance. This is $0 and stays $0 until the call volume grows by a factor
   // of thirty.
   weather: {
-    checked: '2026-09-30',
+    checked: '2026-10-03',
     source: 'https://openweathermap.org/price',
     freePerMonth: 1000000,
     freePerMinute: 60,
@@ -238,7 +238,7 @@ const RATES = {
   // which is the difference between "nowhere near" and "within one more
   // surface of it". A fourth ledger is now a decision rather than an accident.
   ticketmaster: {
-    checked: '2026-09-30',
+    checked: '2026-10-03',
     source: 'https://developer.ticketmaster.com/products-and-docs/apis/getting-started/',
     freePerDay: 5000,
     perCallOverFree: null,
@@ -248,7 +248,7 @@ const RATES = {
   // digest is one email per venue per week, so the daily cap is the binding one
   // and it is not close to binding.
   resend: {
-    checked: '2026-09-30',
+    checked: '2026-10-03',
     source: 'https://resend.com/pricing',
     freePerMonth: 3000,
     freePerDay: 100,
@@ -259,7 +259,7 @@ const RATES = {
   // MapTiler. The frontend's map styles. Metered in SESSIONS (one map load),
   // not tiles.
   maptiler: {
-    checked: '2026-09-30',
+    checked: '2026-10-03',
     source: 'https://www.maptiler.com/cloud/pricing/',
     freeSessionsPerMonth: 5000,
     freeApiRequestsPerMonth: 100000,
@@ -268,7 +268,7 @@ const RATES = {
 
   // PostHog. Product analytics events.
   posthog: {
-    checked: '2026-09-30',
+    checked: '2026-10-03',
     source: 'https://posthog.com/pricing',
     freeEventsPerMonth: 1000000,
     perEventOverFree: 0.00005,
@@ -277,7 +277,7 @@ const RATES = {
   // Sentry. SENTRY_DSN is unset on the Railway service, so nothing is being
   // sent and the free tier is not even being consumed.
   sentry: {
-    checked: '2026-09-30',
+    checked: '2026-10-03',
     source: 'https://sentry.io/pricing/',
     freeErrorsPerMonth: 5000,
     nextTierUsd: 26.00,
@@ -287,7 +287,7 @@ const RATES = {
   // RevenueCat. Free under $2,500 monthly tracked revenue, then 1% of it. The
   // paywall has never been switched on, so tracked revenue is $0.
   revenuecat: {
-    checked: '2026-09-30',
+    checked: '2026-10-03',
     source: 'https://www.revenuecat.com/pricing/',
     freeMonthlyTrackedRevenueUsd: 2500,
     percentOverFree: 1.0,
@@ -297,7 +297,7 @@ const RATES = {
   // Billing share on a subscription. Stripe Tax adds its own share only where a
   // tax registration exists. Nothing has been charged, so this costs $0.
   stripe: {
-    checked: '2026-09-23',
+    checked: '2026-10-03',
     source: 'https://stripe.com/pricing',
     percent: 2.9,
     fixedUsd: 0.30,
@@ -319,7 +319,7 @@ const RATES = {
   // Store commissions. Not a cost today (nothing is purchasable) but the number
   // that decides what a subscription is actually worth when it is.
   stores: {
-    checked: '2026-09-30',
+    checked: '2026-10-03',
     source: 'https://developer.apple.com/app-store/small-business-program/',
     appleStandardPct: 30,
     appleSmallBusinessPct: 15,
@@ -373,8 +373,8 @@ const FIXED_MONTHLY = [
     usd: 119.00,
     verified: true,
     kind: 'infrastructure',
-    checked: '2026-09-01',
-    source: null,
+    checked: '2026-10-03',
+    source: 'https://besttime.app/subscription/pricing',
     note: 'Live recurring cost since 2026-09-01, when collection restarted after a 106-day freeze. Package 100 is a fixed allowance rather than metered: by-id and live calls are unlimited on venues already admitted, the 100 is the monthly cap on new venue admissions, and the pricing page also caps Venue Filter queries at 200,000 a month and searches by query at 5,000 (besttime.app pricing, read 2026-09-30). The commitment runs roughly five months, so this line is expected through early 2027 and ends by cancelling the subscription, not by a code change. The puller is a Railway cron on the BESTTIME service running scripts/ml/collectRealtime.js HOURLY at :07 (cron 7 * * * *, verified against the service config 2026-09-06). This note said 02:00 UTC nightly until then, which was the cadence at the 2026-09-01 check and had not been true for days; none of the cost above moves with it, because Package 100 meters new admissions and not calls.',
   },
   {
@@ -394,7 +394,7 @@ const FIXED_MONTHLY = [
     usd: 0,
     verified: true,
     kind: 'infrastructure',
-    checked: '2026-09-29',
+    checked: '2026-10-03',
     source: 'https://vercel.com/docs/plans/hobby',
     note: 'Hobby, which is free: the Vercel billing API has no charges at all for the team (costs_not_found, read 2026-09-29). Hobby is restricted to non-commercial, personal use by Vercel\'s fair use guidelines, and the site sells Flock Pro, so the plan that fits is Pro: a $20 monthly platform fee that includes one deploying seat and $20 of usage credit. Moving to it is a purchase, and this line changes to 20 the day it happens.',
   },
@@ -407,7 +407,7 @@ const FIXED_ANNUAL = [
     usd: 99.00,
     verified: true,
     kind: 'infrastructure',
-    checked: '2026-09-30',
+    checked: '2026-10-03',
     source: 'https://developer.apple.com/support/enrollment/',
     note: 'Also covers APNs, which has no separate price.',
   },
@@ -417,7 +417,7 @@ const FIXED_ANNUAL = [
     usd: 11.17,
     verified: false,
     kind: 'infrastructure',
-    checked: '2026-09-29',
+    checked: '2026-10-03',
     source: 'https://www.cloudflare.com/products/registrar/',
     note: 'Registered at Cloudflare Registrar (the .com registry record names Cloudflare, Inc.) on 2026-02-28, renewing 2027-02-28. Cloudflare charges the registry fee at cost: Verisign\'s wholesale price plus ICANN\'s $0.20 fee (raised from $0.18 on 2025-07-01, ICANN FY26 registrar fees), about $10.46 when this was registered and $11.17 from 2026-11-01 when the wholesale price rises to $10.97, so the next renewal is $11.17. Not verified because no Cloudflare invoice is on file; set verified from the renewal receipt.',
   },
