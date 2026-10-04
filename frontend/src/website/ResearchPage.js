@@ -25,35 +25,6 @@ const PAPER_PAGES = 39;
 // the real test sets (paper Section 13).
 const DESCRIPTION = 'Why Flock studies how busy places get, what the research found, and the full paper.';
 
-const STATS = [
-  {
-    num: '78.8%',
-    text: "of Flock's crowd numbers landed within one of five crowd levels of the live reading.",
-    src: '4,183 live readings the model had not seen, September 6 to 8, 2026.',
-  },
-  {
-    num: '56.0%',
-    text: "named the exact crowd level, against 31.5% for the popular-times chart. The average miss was 17 points, a third smaller than the chart's.",
-  },
-  {
-    num: '2x',
-    text: 'is how far popular-times charts swing, compared with the live readings they are trying to predict.',
-  },
-  {
-    num: '3 hours',
-    text: "is about how long a venue's departure from its usual pattern lasts, so the newest reading counts most.",
-  },
-  {
-    num: '82–96%',
-    text: 'of frames counted exactly by Owl, the people counter inside Flux, on five real test sets. The heat rule it replaced managed 9 to 77%.',
-    src: '14 to 16 ms a frame on a Raspberry Pi 5. Only the count leaves the device.',
-  },
-  {
-    num: '0%',
-    text: 'of real frames counted exactly when Owl learned only from generated scenes. Licensed real footage fixed that; a wider network did not.',
-  },
-];
-
 // Share of readings or frames, in percent. `us` is Flock's number, `them` the
 // thing it is measured against on the same data.
 const FORECAST = [
@@ -179,22 +150,7 @@ export default function ResearchPage() {
           </div>
         </section>
 
-        <section className="lp-sec lp-sec-navy lp-on-navy">
-          <div className="lp-wrap">
-            <h2>What we found</h2>
-            <ul className="rs-stats">
-              {STATS.map((s) => (
-                <li key={s.num}>
-                  <span className="rs-num">{s.num}</span>
-                  <p className="rs-text">{s.text}</p>
-                  {s.src ? <p className="rs-src">{s.src}</p> : null}
-                </li>
-              ))}
-            </ul>
-          </div>
-        </section>
-
-        <section className="lp-sec lp-sec-paper">
+        <section className="lp-sec lp-sec-sand">
           <div className="lp-wrap rs-charts">
             <h2>The numbers side by side</h2>
             <Chart

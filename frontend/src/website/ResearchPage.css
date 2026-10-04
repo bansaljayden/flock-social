@@ -64,41 +64,6 @@
 .rs-two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: clamp(28px, 5vw, 64px); }
 .rs-two h2 { font-size: clamp(24px, 1.2rem + 1.2vw, 34px); }
 
-/* What we found: the number in the display cut, the sentence under it. */
-.rs-stats {
-  list-style: none;
-  margin: 8px 0 0;
-  padding: 0;
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0 clamp(24px, 4vw, 48px);
-}
-.rs-stats li {
-  padding: 26px 0 30px;
-}
-.rs-num {
-  display: block;
-  font-family: var(--font-display);
-  font-variation-settings: 'opsz' 144;
-  font-weight: 600;
-  font-size: clamp(44px, 1.6rem + 3vw, 68px);
-  line-height: 1;
-  letter-spacing: -0.02em;
-  font-variant-numeric: lining-nums;
-  color: var(--cream);
-  margin-bottom: 14px;
-  white-space: nowrap;
-}
-.rs-text { font-size: 16px; line-height: 1.55; color: var(--cream-2); }
-.rs .rs-src {
-  margin-top: 10px;
-  font-family: var(--font-display);
-  font-variation-settings: 'opsz' 9;
-  font-size: 13.5px;
-  line-height: 1.45;
-  color: var(--cream-3);
-}
-
 /* Charts */
 .rs-charts { display: grid; gap: clamp(36px, 5vw, 56px); }
 .rs-charts h2 { margin-bottom: 0; }
@@ -167,11 +132,7 @@
 .rs-footer > * { max-width: 1080px; width: 100%; margin: 0 auto; }
 .rs-footer a { text-decoration: underline; text-underline-offset: 2px; }
 
-@media (max-width: 900px) {
-  .rs-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
 @media (max-width: 600px) {
-  .rs-stats { grid-template-columns: minmax(0, 1fr); }
   .rs-two { grid-template-columns: minmax(0, 1fr); }
   .rs-paper { grid-template-columns: 96px minmax(0, 1fr); align-items: start; }
   .rs-thumb img { width: 96px; }

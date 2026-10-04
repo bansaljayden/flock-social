@@ -374,6 +374,28 @@ describe('structural fingerprint', () => {
     expect(after).not.toMatch(/border/);
   });
 
+  test('no two neighbouring sections share a background, here or on /research', () => {
+    // A new topic should always start on a new colour (2026-10-03).
+    const bands = (src) => [...src.matchAll(/<section className="([^"]+)"/g)].map(([, cls]) => {
+      if (/\b(lp-sec-navy|lp-hero|lp-cta|rs-hero|rs-end)\b/.test(cls)) return 'navy';
+      if (/\blp-sec-sand\b/.test(cls)) return 'sand';
+      if (/\blp-sec-paper\b/.test(cls)) return 'paper';
+      return `unknown:${cls}`;
+    });
+    const research = fs.readFileSync(path.join(WEBSITE, 'ResearchPage.js'), 'utf8');
+    for (const [name, src] of [['landing', visible], ['research', research]]) {
+      const seq = bands(src);
+      expect(seq.length).toBeGreaterThan(3);
+      expect(seq.filter((b) => b.startsWith('unknown'))).toEqual([]);
+      for (let i = 1; i < seq.length; i++) {
+        expect(`${name} ${i}: ${seq[i - 1]} -> ${seq[i]}`).not.toMatch(/: (\w+) -> \1$/);
+      }
+    }
+    expect(CSS).toMatch(/\.lp-sec-sand \{ background: var\(--paper-2\); \}/);
+    // The "What we found" stats band was cut from /research.
+    expect(research).not.toMatch(/What we found|rs-stats|const STATS/);
+  });
+
   test('pricing is a rate sheet: open columns, no boxed or inverted cards', () => {
     // The plans were bordered, rounded cards with the venue one inverted to
     // navy, the stock pricing block of a template site (2026-10-03).
