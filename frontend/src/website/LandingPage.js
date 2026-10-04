@@ -68,7 +68,7 @@ const CONTACT_EMAIL = 'social@flockcorp.com';
    request that no longer blocks anything the reader is looking at. */
 const Mark = ({ size = 32, lazy = false }) => (
   <img
-    src="/marks/logo-64.png"
+    src="/marks/logo-64.png?v=2"
     width={size} height={size}
     alt=""
     aria-hidden="true"

@@ -99,7 +99,7 @@ export default function SiteNav({ menu, current }) {
         <div className="lp-wrap lp-nav-in">
           <a className="lp-brand" href="/">
             <img
-              src="/marks/logo-64.png"
+              src="/marks/logo-64.png?v=2"
               width="32"
               height="32"
               alt=""
