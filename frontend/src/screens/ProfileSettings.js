@@ -229,6 +229,7 @@ export default function ProfileSettings({
   notifStatus,
   onLogout,
   openVenueDashboard,
+  openAdminDashboard,
   onUserUpdated,
   paymentSaving,
   pendingRequests,
@@ -832,6 +833,8 @@ export default function ProfileSettings({
                 { l: 'Edit Profile', s: 'edit', icon: Icons.edit },
                 // The door the welcome screen promised. Owners and admins only.
                 ...((authUser?.role === 'venue_owner' || authUser?.role === 'admin') ? [{ l: 'Venue dashboard', s: 'venue', icon: Icons.mapPin }] : []),
+                // And the admin console, for the one account that has it.
+                ...(authUser?.role === 'admin' ? [{ l: 'Admin dashboard', s: 'admin', icon: Icons.barChart }] : []),
                 { l: 'Interests', s: 'interests', icon: Icons.target, v: userInterests.length > 0 ? `${userInterests.length} interests` : 'None yet' },
                 { l: 'Payment', s: 'payment', icon: Icons.creditCard, v: [authUser?.venmo_username && 'Venmo', authUser?.cashapp_cashtag && 'Cash App', authUser?.zelle_identifier && 'Zelle'].filter(Boolean).join(', ') || 'Not set' },
               ],
@@ -860,7 +863,7 @@ export default function ProfileSettings({
               <h4 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-tertiary)', margin: '0 0 6px' }}>{group.g}</h4>
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', boxShadow: 'var(--card-shadow-sm)', overflow: 'hidden' }}>
                 {group.rows.map((m, i) => (
-                  <button key={m.s} className="hit44 glass-btn glass-secondary" onClick={() => { if (m.s === 'venue') { openVenueDashboard(); return; } setProfileScreen(m.s); if (m.s === 'safety') loadTrustedContacts(); if (m.s === 'blocked') { setUnblockTarget(null); loadBlockedUsers(); } if (m.s === 'payment') { setVenmoUsername(authUser?.venmo_username || ''); setCashappCashtag(authUser?.cashapp_cashtag || ''); setZelleIdentifier(authUser?.zelle_identifier || ''); } if (m.s === 'phonediscovery') { setPhoneDiscoveryError(''); setPhoneDiscoveryNeedsNumber(false); loadPhoneDiscovery(); } }} style={{ width: '100%', padding: '12px', textAlign: 'left', borderBottom: i < group.rows.length - 1 ? '1px solid var(--border-light)' : 'none', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', border: 'none', cursor: 'pointer' }}>
+                  <button key={m.s} className="hit44 glass-btn glass-secondary" onClick={() => { if (m.s === 'venue') { openVenueDashboard(); return; } if (m.s === 'admin') { openAdminDashboard(); return; } setProfileScreen(m.s); if (m.s === 'safety') loadTrustedContacts(); if (m.s === 'blocked') { setUnblockTarget(null); loadBlockedUsers(); } if (m.s === 'payment') { setVenmoUsername(authUser?.venmo_username || ''); setCashappCashtag(authUser?.cashapp_cashtag || ''); setZelleIdentifier(authUser?.zelle_identifier || ''); } if (m.s === 'phonediscovery') { setPhoneDiscoveryError(''); setPhoneDiscoveryNeedsNumber(false); loadPhoneDiscovery(); } }} style={{ width: '100%', padding: '12px', textAlign: 'left', borderBottom: i < group.rows.length - 1 ? '1px solid var(--border-light)' : 'none', display: 'flex', alignItems: 'center', gap: '12px', backgroundColor: 'var(--bg-card-solid)', border: 'none', cursor: 'pointer' }}>
                     <div style={{ width: '32px', height: '32px', borderRadius: '8px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{m.icon(colors.navy, 18)}</div>
                     <span style={{ flex: 1, fontWeight: '600', fontSize: 'var(--t-body)', color: colors.navy }}>{m.l}</span>
                     {m.v && <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', maxWidth: '45%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{m.v}</span>}
