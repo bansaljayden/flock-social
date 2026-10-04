@@ -9176,10 +9176,31 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     fetchCosts(true);
   }, [adminTab, fetchCosts]);
 
-  // Check URL for admin/venue mode on mount — gated by role
+  // Check URL for admin/venue mode on mount — gated by role.
+  // ONCE per page load, and `?admin=true` leaves the address bar once read.
+  // The effect depends on authUser, and every profile save hands down a new
+  // authUser object, so it used to run again on each one: an admin who opened
+  // the console by link, switched to I'm Going Out and saved a payment handle
+  // was thrown back into the console and admin mode (review 2026-10-04). The
+  // venue branch had the same re-run.
+  const urlModeHandledRef = useRef(false);
   useEffect(() => {
+    if (urlModeHandledRef.current || !authUser) return;
+    urlModeHandledRef.current = true;
     const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.get('admin') === 'true' && authUser?.role === 'admin') {
+    const wantsAdmin = urlParams.get('admin') === 'true';
+    if (wantsAdmin) {
+      // Off the address bar, so a reload after leaving the console does not
+      // open it again. Other parameters and the hash are kept.
+      try {
+        urlParams.delete('admin');
+        const query = urlParams.toString();
+        if (window.history && typeof window.history.replaceState === 'function') {
+          window.history.replaceState(window.history.state, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash || ''}`);
+        }
+      } catch { /* the console still opens; only the tidy-up is lost */ }
+    }
+    if (wantsAdmin && authUser?.role === 'admin') {
       // The link asks for the console by name, so it is the same choice as the
       // mode picker's Admin Dashboard and Access (handleAdminModeSelect).
       // Without this, a browser that had never picked a mode opened the picker
