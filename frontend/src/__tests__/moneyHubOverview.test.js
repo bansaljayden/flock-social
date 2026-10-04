@@ -981,9 +981,11 @@ describe('only you can do these: the operator\'s own steps', () => {
   test('to do and done side by side: the public proxy with its round trip and its fix, under a summary, right after the month and its people', async () => {
     await renderHub(CONNECTED);
     const card = stepsCard();
-    // Straight after the month's figures and the people behind them.
-    expect(card.previousSibling).toBe(screen.getByRole('heading', { name: 'People' }).parentElement);
-    expect(card.previousSibling.previousSibling.textContent).toMatch(/^September 2026/);
+    // Straight after the month's figures and the people behind them. Each
+    // card sits in its own cell of the hub's columns, so the cells line up.
+    const cell = card.parentElement;
+    expect(cell.previousSibling).toBe(screen.getByRole('heading', { name: 'People' }).parentElement.parentElement);
+    expect(cell.previousSibling.previousSibling.textContent).toMatch(/^September 2026/);
     expect(within(card).getByText('Checked by the server')).toBeInTheDocument();
     expect(within(card).getByText('2 to do, 1 optional step not done, 2 done.')).toBeInTheDocument();
 
@@ -1114,7 +1116,7 @@ describe('people: signups, first weeks, the active and their plans', () => {
   test('right after the month, every figure with what it counts, and a bar for each New York day', async () => {
     await renderHub(CONNECTED);
     const card = peopleCard();
-    expect(card.previousSibling.textContent).toMatch(/^September 2026/);
+    expect(card.parentElement.previousSibling.textContent).toMatch(/^September 2026/);
     expect(card.textContent).toMatch(/People accounts only: not venue owners, admins or banned accounts\./);
 
     // Fourteen bars, the busiest one full height, a day with nobody new a
@@ -1250,9 +1252,12 @@ describe('needs attention: every live problem at the top, each linking to its ca
     expect(card.children).toHaveLength(1);
     expect(within(card).queryByRole('link')).toBeNull();
     expect(screen.queryByRole('heading', { name: /needs? you$/ })).toBeNull();
-    // First on the page, above the month.
-    expect(card.nextSibling.textContent).toMatch(/^September 2026/);
-    expect(card.parentElement.firstChild).toBe(card);
+    // First on the page, above the month. Each card sits in its own cell of
+    // the hub's grid (two columns on a wide console), so the cells are what
+    // line up.
+    const cell = card.parentElement;
+    expect(cell.nextSibling.textContent).toMatch(/^September 2026/);
+    expect(cell.parentElement.firstChild).toBe(cell);
   });
 
   test('each problem is a row with its own words, worst first, and each jumps to its card', async () => {

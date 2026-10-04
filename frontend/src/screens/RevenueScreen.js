@@ -2130,25 +2130,35 @@ function MoneyHub({ colors, onExpensesChanged }) {
   // The attention list goes first, above the month. On a phone the month's
   // card alone is taller than the screen under the console's header and tabs,
   // so anything below it is already a scroll away.
+  //
+  // On a desktop browser the console is wide (App.js consoleContainer), so
+  // the cards run in two columns; on a phone the 440px floor leaves one, in
+  // the order written here. Columns rather than a grid: a grid row is as tall
+  // as its taller card, and "Only you can do these" beside People left most
+  // of a screen blank. Each column stacks on its own. The attention list, the
+  // month, the expense list and crowd data read across a row, so they span
+  // both columns.
+  const cell = { breakInside: 'avoid', marginBottom: '12px', minWidth: 0 };
+  const full = { columnSpan: 'all', marginBottom: '12px', minWidth: 0 };
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-      <HubAttention h={data} colors={colors} />
-      <HubSummary h={data} colors={colors} loading={loading} onRefresh={() => load(true)} />
-      <HubPeople h={data} colors={colors} />
-      <HubOwnerActions h={data} colors={colors} />
-      <HubRevenue h={data} colors={colors} />
-      <HubCosts h={data} colors={colors} />
+    <div style={{ columns: '2 440px', columnGap: '12px' }}>
+      <div style={full}><HubAttention h={data} colors={colors} /></div>
+      <div style={full}><HubSummary h={data} colors={colors} loading={loading} onRefresh={() => load(true)} /></div>
+      <div style={cell}><HubPeople h={data} colors={colors} /></div>
+      <div style={cell}><HubOwnerActions h={data} colors={colors} /></div>
+      <div style={cell}><HubRevenue h={data} colors={colors} /></div>
+      <div style={cell}><HubCosts h={data} colors={colors} /></div>
       {/* An expense saved here is also in the Costs tab's all-in figure and
           the Projections burn, which read the separate costs payload. That
           payload was fetched once per session, so after adding a bill here
           Costs still showed the old total while its own comment says the two
           tabs cannot disagree (money hub audit 2026-10-03). Both reload. */}
-      <HubExpenses h={data} colors={colors} onChanged={() => { load(false); if (onExpensesChanged) onExpensesChanged(); }} />
-      <HubPrices h={data} colors={colors} />
-      <HubPriceSheet h={data} colors={colors} />
-      <HubCrowdData h={data} colors={colors} />
-      <HubModel h={data} colors={colors} />
-      <HubHealth h={data} colors={colors} />
+      <div style={full}><HubExpenses h={data} colors={colors} onChanged={() => { load(false); if (onExpensesChanged) onExpensesChanged(); }} /></div>
+      <div style={cell}><HubPrices h={data} colors={colors} /></div>
+      <div style={cell}><HubPriceSheet h={data} colors={colors} /></div>
+      <div style={full}><HubCrowdData h={data} colors={colors} /></div>
+      <div style={cell}><HubModel h={data} colors={colors} /></div>
+      <div style={cell}><HubHealth h={data} colors={colors} /></div>
     </div>
   );
 }
