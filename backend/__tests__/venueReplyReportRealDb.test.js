@@ -290,6 +290,56 @@ test('reporting the review still reaches the reviewer, not the owner', async () 
   assert.strictEqual(row.reported_user_id, reviewer.id);
 });
 
+// The duplicate check and the insert used to be two statements with nothing
+// between them, so identical reports landing together each read "no open
+// report" and each inserted. A double-tap filed two rows and paged twice.
+test('the same report filed five times at once is one row', async () => {
+  const reviewer = await user('Reviewer7');
+  const stranger = await user('Stranger7');
+  const place = 'ChIJreplyReport000007';
+  const reviewId = (await pool.query(
+    `INSERT INTO venue_reviews (google_place_id, user_id, rating, text) VALUES ($1, $2, 1, 'Spam spam') RETURNING id`,
+    [place, reviewer.id]
+  )).rows[0].id;
+  // Requests this small finish one after another, so the gap is widened on
+  // purpose: every duplicate check waits 300 ms before it answers. Without a
+  // lock, all five read "no open report" inside that wait and all five insert.
+  const origQuery = pool.query;
+  const origConnect = pool.connect;
+  const isDupeCheck = (text) => /SELECT id, status, created_at FROM content_reports/.test(String(text));
+  const slowed = (run) => async (text, params) => {
+    const out = await run(text, params);
+    if (isDupeCheck(text)) await new Promise((r) => setTimeout(r, 300));
+    return out;
+  };
+  pool.query = slowed((text, params) => origQuery.call(pool, text, params));
+  // pg's own pool.query calls connect(callback); only the route's promise
+  // form gets the slowed client.
+  pool.connect = function connect(cb) {
+    if (typeof cb === 'function') return origConnect.call(pool, cb);
+    return origConnect.call(pool).then((client) => ({
+      query: slowed((text, params) => client.query(text, params)),
+      release: (err) => client.release(err),
+    }));
+  };
+  let answers;
+  try {
+    answers = await Promise.all(Array.from({ length: 5 }, () =>
+      call('POST', '/api/reports', stranger, { content_type: 'venue_review', content_id: reviewId, reason: 'spam' })
+    ));
+  } finally {
+    pool.query = origQuery;
+    pool.connect = origConnect;
+  }
+  assert.deepStrictEqual(answers.map((a) => a.status), [201, 201, 201, 201, 201], JSON.stringify(answers.map((a) => a.body)));
+  const rows = (await pool.query(
+    `SELECT id FROM content_reports WHERE reporter_id = $1 AND content_type = 'venue_review' AND content_id = $2`,
+    [stranger.id, reviewId]
+  )).rows;
+  assert.strictEqual(rows.length, 1, `${rows.length} report rows for one report filed at once`);
+  assert.ok(answers.every((a) => a.body.report && a.body.report.id === rows[0].id), 'every answer names the one row');
+});
+
 test('a reply retired by an edited review cannot be reported', async () => {
   const owner = await user('Owner3', 'venue_owner');
   const reviewer = await user('Reviewer3');

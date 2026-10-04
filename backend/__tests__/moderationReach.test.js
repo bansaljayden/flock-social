@@ -63,7 +63,7 @@ function dispatch(sql, params) {
 pool.query = (sql, params) => dispatch(sql, params);
 pool.connect = async () => ({
   query: (sql, params) => {
-    if (/^\s*(BEGIN|COMMIT|ROLLBACK)/i.test(sql)) {
+    if (/^\s*(BEGIN|COMMIT|ROLLBACK)/i.test(sql) || String(sql).includes('pg_advisory_xact_lock')) {
       log.push({ sql: String(sql).trim(), params: null });
       return Promise.resolve({ rows: [] });
     }
