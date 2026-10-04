@@ -3939,6 +3939,26 @@ const makeStyles = (c, isDark, fullBleed = isFullBleedNow()) => ({
       : '0 25px 80px -12px rgba(0, 0, 0, 0.4), 0 10px 30px rgba(13,40,71,0.10), inset 0 1px 0 rgba(255,255,255,0.1)',
     position: 'relative',
   },
+  // The admin console in a desktop browser. The bezel above previews the app
+  // at phone size, which is right for the app and wrong for the console: the
+  // money hub is a dozen cards of tables, lists and a bill form, and at 375px
+  // every one of them scrolled inside a phone-sized window on a monitor. The
+  // console takes the width of the window instead, up to a readable 1240px.
+  // Only off-device (fullBleed false); a phone already runs it full width.
+  consoleContainer: {
+    width: 'min(1240px, calc(100vw - 40px))',
+    height: 'calc(100vh - 40px)',
+    paddingBottom: 'var(--cb-height, 0px)',
+    boxSizing: 'border-box',
+    margin: '20px auto',
+    borderRadius: '16px',
+    border: `1px solid ${isDark ? '#1e293b' : 'rgba(13,40,71,0.18)'}`,
+    overflow: 'hidden',
+    display: 'flex',
+    flexDirection: 'column',
+    backgroundColor: 'var(--bg-primary)',
+    position: 'relative',
+  },
   // Full-bleed: the fake notch becomes a real safe-area spacer so content
   // clears the actual status bar / Dynamic Island (viewport-fit=cover).
   notch: fullBleed ? {
@@ -19984,12 +20004,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           100% { opacity: 0; }
         }
       `}</style>
-      <div style={styles.phoneContainer}>
+      <div style={!fullBleed && currentScreen === 'adminRevenue' ? styles.consoleContainer : styles.phoneContainer}>
         {/* On the device the spacer takes the colour of the header under it
-            (topIsNavy above). The desktop bezel keeps its own fake notch. */}
-        <div style={fullBleed && topIsNavy ? { ...styles.notch, backgroundColor: colors.navyBg } : styles.notch}>
-          <div style={styles.notchInner} />
-        </div>
+            (topIsNavy above). The desktop bezel keeps its own fake notch; the
+            wide desktop console (consoleContainer) is not a phone and has none. */}
+        {(fullBleed || currentScreen !== 'adminRevenue') && (
+          <div style={fullBleed && topIsNavy ? { ...styles.notch, backgroundColor: colors.navyBg } : styles.notch}>
+            <div style={styles.notchInner} />
+          </div>
+        )}
         <div style={styles.content}>
           {/* Persistent map layer. Mounted on the first visit to Discover and
               never unmounted after that; see exploreMounted above for why it is
