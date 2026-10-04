@@ -135,10 +135,10 @@ export default function SiteNav({ menu, current }) {
 
       <div id="lp-menu" ref={menuRef} className={`lp-menu${menuOpen ? ' is-open' : ''}`}>
         <nav className="lp-menu-in" aria-label="Site menu">
-          {links.map((l, i) => (
+          {links.map((l) => (
             <a
               key={l.href}
-              className={`lp-menu-link${i === links.length - 1 ? ' is-last' : ''}`}
+              className="lp-menu-link"
               href={l.href}
               aria-current={l.href === current ? 'page' : undefined}
               onClick={close}

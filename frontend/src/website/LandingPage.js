@@ -454,10 +454,10 @@ export default function LandingPage() {
             would hide it from screen readers. Escape and the focus trap give
             the modal behaviour instead. */}
         <nav className="lp-menu-in" aria-label="Site menu">
-          {NAV_LINKS.map((l, i) => (
+          {NAV_LINKS.map((l) => (
             <a
               key={l.href}
-              className={`lp-menu-link${i === NAV_LINKS.length - 1 ? ' is-last' : ''}`}
+              className="lp-menu-link"
               href={l.href}
               onClick={() => setMenuOpen(false)}
             >
