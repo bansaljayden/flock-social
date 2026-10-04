@@ -214,7 +214,7 @@ export default function ResearchPage() {
           </div>
         </section>
 
-        <section className="lp-sec lp-sec-paper lp-sec-ruled">
+        <section className="lp-sec lp-sec-paper">
           <div className="lp-wrap rs-two">
             <div>
               <h2>Where it falls short</h2>
