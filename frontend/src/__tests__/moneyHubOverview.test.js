@@ -1637,10 +1637,10 @@ describe('the price sheet', () => {
   test('lists each price with its checked date, and an unchecked one asks to be re-checked', async () => {
     await renderHub({ ...CONNECTED, priceSheet: SHEET });
     expect(await screen.findByText('Price sheet')).toBeInTheDocument();
-    expect(screen.getByText('1 price not checked in 60 days')).toBeInTheDocument();
+    expect(screen.getByText('1 price due for a check')).toBeInTheDocument();
     expect(hubRow('TheSportsDB Single Developer').textContent).toMatch(/\$9\.00 a month.*Checked 2026-09-01, 32 days ago\./);
     expect(document.body.textContent).toMatch(/Prices to re-check/);
-    expect(document.body.textContent).toMatch(/Not checked against a receipt or a pricing page in 60 days: Mystery tool\./);
+    expect(document.body.textContent).toMatch(/Due for a check against a receipt or a pricing page: Mystery tool\./);
   });
 });
 

@@ -3394,3 +3394,28 @@ test('a live Stripe price of $0 is the price, not a reason to fall back', () => 
   assert.strictEqual(pro.source, 'stripe');
   assert.strictEqual(pro.web.netPerMonthCents, 0);
 });
+
+test('a check falls due by what was checked: a yearly bill after a year, a one-time charge never', () => {
+  // 2026-10-04: the Apple Developer Program, charged in June, sat in the
+  // attention list as a price to re-check, and every past one-time payment
+  // would have joined it 60 days after it was made.
+  const ps = moneyHub.buildPriceSheet({
+    expenses: [
+      expense({ id: 1, vendor: 'Apple', product: 'Developer Program', kind: 'infrastructure', cadence: 'yearly', amountCents: 9900, verified: true, lastChargedOn: '2026-06-15' }),
+      expense({ id: 2, vendor: 'Filing', kind: 'company', cadence: 'one_time', amountCents: 12500, verified: true, lastChargedOn: '2026-01-10' }),
+      expense({ id: 3, vendor: 'Monthly tool', kind: 'tooling', cadence: 'monthly', amountCents: 2000, verified: true, lastChargedOn: '2026-07-20' }),
+      expense({ id: 4, vendor: 'Old yearly', kind: 'tooling', cadence: 'yearly', amountCents: 5000, verified: true, lastChargedOn: '2025-09-01' }),
+      expense({ id: 5, vendor: 'Unread receipt', kind: 'tooling', cadence: 'one_time', amountCents: 700, verified: false, lastChargedOn: '2026-09-30' }),
+    ],
+    todayYmd: '2026-10-04',
+  });
+  const row = (id) => ps.rows.find((r) => r.id === id);
+  assert.strictEqual(row('expense-1').stale, false, 'a yearly bill 111 days after its charge is not due');
+  assert.strictEqual(row('expense-2').stale, false, 'a one-time charge is never due');
+  assert.strictEqual(row('expense-3').stale, true, 'a monthly bill with no charge for 76 days is due');
+  assert.strictEqual(row('expense-4').stale, true, 'a yearly bill past its renewal with no new charge is due');
+  assert.strictEqual(row('expense-5').stale, true, 'a bill never checked against a receipt is due');
+  const cm = require('../services/costModel');
+  for (const e of cm.ONE_TIME) assert.strictEqual(row(`code-${e.id}`).dueAfterDays, null, e.id);
+  for (const e of cm.FIXED_ANNUAL) assert.strictEqual(row(`code-${e.id}`).dueAfterDays, 60, e.id);
+});

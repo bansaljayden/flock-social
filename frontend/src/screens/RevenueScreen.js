@@ -1277,9 +1277,9 @@ function HubPriceSheet({ h, colors }) {
   return (
     <div id={HUB_CARD.priceSheet.id} style={hubStyle.card}>
       <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: navy, margin: '0 0 2px' }}>Price sheet</h3>
-      <p style={hubStyle.sub}>Every bill and rate card Flock pays, with the day each was last checked against its source. Never checked and oldest first.</p>
+      <p style={hubStyle.sub}>Every bill and rate card Flock pays, with the day each was last checked against its source. Never checked and oldest first. A price read off a vendor's page or bill is due again after {ps.staleAfterDays} days; a bill on the expense list is due once its next charge should have landed, so a yearly one after a year; a one-time charge never is.</p>
       <p style={{ fontSize: 'var(--t-label)', fontWeight: '700', margin: '0 0 4px', color: ps.stale > 0 ? 'var(--accent-amber-text)' : 'var(--accent-green-text)' }}>
-        {ps.stale > 0 ? `${hubPlural(ps.stale, 'price', 'prices')} not checked in ${ps.staleAfterDays} days` : `Every price checked in the last ${ps.staleAfterDays} days`}
+        {ps.stale > 0 ? `${hubPlural(ps.stale, 'price', 'prices')} due for a check` : 'Every price is within its check'}
       </p>
       {ps.rows.map((r) => (
         <HubRow
@@ -1989,7 +1989,7 @@ function hubAttention(h) {
   }
   const ps = h.priceSheet;
   if (ps && ps.stale > 0) {
-    add({ key: 'price-sheet', tone: 'warn', label: 'Prices to re-check', value: hubCount(ps.stale), note: `Not checked against a receipt or a pricing page in ${ps.staleAfterDays} days: ${ps.rows.filter((r) => r.stale).map((r) => r.label).join('; ')}.`, card: HUB_CARD.priceSheet });
+    add({ key: 'price-sheet', tone: 'warn', label: 'Prices to re-check', value: hubCount(ps.stale), note: `Due for a check against a receipt or a pricing page: ${ps.rows.filter((r) => r.stale).map((r) => r.label).join('; ')}.`, card: HUB_CARD.priceSheet });
   }
   const lic = costs.licence;
   if (lic && Array.isArray(lic.items) && lic.items.length > 0) {
