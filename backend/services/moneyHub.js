@@ -936,6 +936,16 @@ function billJumps(reconciled) {
 // expense list, its last charge when it is marked checked against a receipt,
 // and no date when it is not.
 const PRICE_SHEET_STALE_DAYS = 60;
+// When a check falls due depends on what was checked (2026-10-04). A price
+// read off a vendor's page or bill can change any day, so it is due after
+// PRICE_SHEET_STALE_DAYS. A bill on the expense list is checked by its own
+// next charge, so it is due once that charge should have landed: a yearly
+// bill's receipt is naturally up to a year old, and flagging it at 60 days put
+// the Apple Developer Program in the attention list until the next June. A
+// one-time charge is a payment that already happened, and nothing about it
+// can go out of date, so it is never due (the code's ONE_TIME lines alike).
+// null = never due.
+const DUE_AFTER_BY_CADENCE = { monthly: 60, usage: 60, quarterly: 105, yearly: 380, one_time: null };
 const RATE_LABEL = {
   gemini: 'Google Gemini (Birdie)', places: 'Google Places', vision: 'Google Cloud Vision',
   weather: 'OpenWeatherMap', ticketmaster: 'Ticketmaster', resend: 'Resend (email)',
@@ -958,16 +968,16 @@ function buildPriceSheet({ expenses = [], reconciled = null, todayYmd }) {
   for (const [list, cadence] of [[costModel.FIXED_MONTHLY, 'monthly'], [costModel.FIXED_ANNUAL, 'yearly'], [costModel.ONE_TIME, 'one_time']]) {
     for (const e of list) {
       if (replaced.has(e.id)) continue;
-      rows.push({ id: `code-${e.id}`, label: e.label, priceCents: Math.round(Number(e.usd) * 100), unit: unitOf[cadence], checkedOn: e.checked || null, source: e.source || null, from: 'code' });
+      rows.push({ id: `code-${e.id}`, label: e.label, priceCents: Math.round(Number(e.usd) * 100), unit: unitOf[cadence], checkedOn: e.checked || null, source: e.source || null, from: 'code', dueAfterDays: cadence === 'one_time' ? null : PRICE_SHEET_STALE_DAYS });
     }
   }
   const recLines = reconciled && Array.isArray(reconciled.lines) ? reconciled.lines : costModel.RECONCILED.lines;
   for (const l of recLines) {
     if (replaced.has(l.id)) continue;
-    rows.push({ id: `rec-${l.id}`, label: l.label, priceCents: Math.round(Number(l.usdPerMonth) * 100), unit: 'a month, from the bill', checkedOn: l.asOf || null, source: l.readFrom || null, from: 'reconciled' });
+    rows.push({ id: `rec-${l.id}`, label: l.label, priceCents: Math.round(Number(l.usdPerMonth) * 100), unit: 'a month, from the bill', checkedOn: l.asOf || null, source: l.readFrom || null, from: 'reconciled', dueAfterDays: PRICE_SHEET_STALE_DAYS });
   }
   for (const [key, r] of Object.entries(costModel.RATES || {})) {
-    rows.push({ id: `rate-${key}`, label: RATE_LABEL[key] || key, priceCents: null, unit: 'rate card', checkedOn: r.checked || null, source: r.source || null, from: 'rate' });
+    rows.push({ id: `rate-${key}`, label: RATE_LABEL[key] || key, priceCents: null, unit: 'rate card', checkedOn: r.checked || null, source: r.source || null, from: 'rate', dueAfterDays: PRICE_SHEET_STALE_DAYS });
   }
   for (const x of expenses) {
     if (!x.active) continue;
@@ -982,11 +992,13 @@ function buildPriceSheet({ expenses = [], reconciled = null, todayYmd }) {
       checkedOn: x.verified && x.lastChargedOn ? x.lastChargedOn : null,
       source: x.verified ? 'a receipt' : null,
       from: 'expense',
+      dueAfterDays: Object.prototype.hasOwnProperty.call(DUE_AFTER_BY_CADENCE, x.cadence) ? DUE_AFTER_BY_CADENCE[x.cadence] : PRICE_SHEET_STALE_DAYS,
     });
   }
   for (const r of rows) {
     r.ageDays = r.checkedOn ? daysBetweenYmd(r.checkedOn, todayYmd) : null;
-    r.stale = r.ageDays === null || r.ageDays > PRICE_SHEET_STALE_DAYS;
+    // Never checked is always due; otherwise only past the row's own date.
+    r.stale = r.ageDays === null || (r.dueAfterDays !== null && r.ageDays > r.dueAfterDays);
   }
   // Never checked first, then the oldest check.
   rows.sort((a, b) => (a.checkedOn === null) - (b.checkedOn === null) === 0
