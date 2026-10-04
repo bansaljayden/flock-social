@@ -67,8 +67,16 @@ WORDMARK_TOP = 296                  # top of the cap height
 # Below 128px the word is set wider and tighter instead, which puts more ink
 # into fewer, better-defined pixels. Verified by rendering at 48 and 64 rather
 # than by shrinking a large one.
+#
+# The 64px mark is the one the site's header shows, clipped to a circle. At
+# 88% of the disc the word's bottom corners sit on the disc's edge (the text
+# runs below the centre, where the disc is narrower), so the clip cut the F and
+# the K. It is set at 76% instead, which clears the edge and stays as heavy.
+# The favicon sizes keep 88%: a tab does not clip them, and there the extra ink
+# is what keeps the word from breaking up.
 LETTERING = {
     "large": {"min_dia": 128, "width": 0.74, "tracking": 26},
+    "mid":   {"min_dia": 56,  "width": 0.76, "tracking": 8},
     "small": {"min_dia": 0,   "width": 0.88, "tracking": 6},
 }
 
@@ -133,7 +141,8 @@ def build(dia, source_birds):
 
     draw = ImageDraw.Draw(img)
     word = "FLOCK"
-    rule = LETTERING["large"] if dia >= LETTERING["large"]["min_dia"] else LETTERING["small"]
+    rule = next(r for r in (LETTERING["large"], LETTERING["mid"], LETTERING["small"])
+                if dia >= r["min_dia"])
     tracking = max(1, int(rule["tracking"] * k))
     target = dia * rule["width"]
     # Tracking is fixed first and the SIZE solved to hit the target width, so
