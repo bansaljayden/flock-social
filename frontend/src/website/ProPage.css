@@ -134,11 +134,9 @@
 }
 .pro .pro-prices li {
   margin: 0;
-  padding: 10px 0;
-  border-bottom: 1px solid var(--pp-rule);
+  padding: 6px 0;
   color: var(--pp-ink-2);
 }
-.pro .pro-prices li:first-child { border-top: 1px solid var(--pp-rule); }
 
 /* ---------- before you pay ---------- */
 
