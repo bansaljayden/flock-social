@@ -396,6 +396,18 @@ describe('structural fingerprint', () => {
     expect(research).not.toMatch(/What we found|rs-stats|const STATS/);
   });
 
+  test('a solid bar and printed plates: no frosted header, no floating shadows', () => {
+    // The translucent blurred bar and the soft drop shadows under the phone
+    // screenshots and the demo are the stock site-builder look (2026-10-03).
+    const nav = CSS.match(/\.lp-nav \{[^}]*\}/)[0];
+    expect(nav).not.toMatch(/backdrop-filter|rgba\(/);
+    expect(nav).toMatch(/background: var\(--navy\);/);
+    for (const sel of ['\\.lp-shot', '\\.lp-shot-hero', '\\.lp-sec-navy \\.lpd-stage']) {
+      const rule = CSS.match(new RegExp(`${sel} \\{[^}]*\\}`))[0];
+      expect(rule).not.toMatch(/box-shadow/);
+    }
+  });
+
   test('pricing is a rate sheet: open columns, no boxed or inverted cards', () => {
     // The plans were bordered, rounded cards with the venue one inverted to
     // navy, the stock pricing block of a template site (2026-10-03).
