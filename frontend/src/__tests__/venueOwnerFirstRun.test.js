@@ -89,6 +89,10 @@ test('the admin and venue links are read once per page load, not on every profil
   expect(app).toMatch(/const path = onWebRoot \? '\/app' : window\.location\.pathname;/);
   // Picking a mode yourself ends the launch's choice, so venue onboarding can
   // still open for an admin who came in by the link and then chose Venue.
-  expect(app).toMatch(/const switchMode = \(\) => \{[\s\S]{0,600}?launchChoseScreenRef\.current = false;\s*venueBootRoutedRef\.current = false;/);
-  expect(app).toMatch(/const openVenueDashboard = useCallback\(\(\) => \{\s*setUserMode\('venue'\);[\s\S]{0,300}?launchChoseScreenRef\.current = false;\s*venueBootRoutedRef\.current = false;/);
+  expect(app).toMatch(/const switchMode = \(\) => \{[\s\S]{0,600}?launchChoseScreenRef\.current = false;\s*venueBootRoutedRef\.current = false;\s*venueRouteGenRef\.current \+= 1;/);
+  // The You-tab row reads the profile itself (the boot routing does not run
+  // again when the mode is already venue), under its own routing count.
+  expect(app).toMatch(/const openVenueDashboard = useCallback\(\(\) => \{\s*setUserMode\('venue'\);[\s\S]{0,600}?const gen = \+\+venueRouteGenRef\.current;\s*getVenueProfile\(\)\.then\(\(p\) => \{\s*if \(gen !== venueRouteGenRef\.current\) return;\s*setShowVenueOnboarding\(!\(p && p\.business_name\)\);/);
+  // A profile read answers only while no newer choice has been made.
+  expect((app.match(/if \(launchChoseScreenRef\.current \|\| gen !== venueRouteGenRef\.current\) return;/g) || []).length).toBe(2);
 });
