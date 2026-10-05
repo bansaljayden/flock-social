@@ -21,6 +21,7 @@ jest.mock('../services/api', () => ({
 jest.mock('../services/purchases', () => ({
   isPurchasesAvailable: jest.fn(),
   getProOffering: jest.fn(),
+  introEligibleProducts: jest.fn(),
   purchase: jest.fn(),
   restore: jest.fn(),
 }));
@@ -30,7 +31,7 @@ import PaywallSheet from '../components/PaywallSheet';
 // eslint-disable-next-line import/first
 import { getProStatus, startProCheckout } from '../services/api';
 // eslint-disable-next-line import/first
-import { isPurchasesAvailable, getProOffering } from '../services/purchases';
+import { isPurchasesAvailable, getProOffering, introEligibleProducts, restore } from '../services/purchases';
 
 const MONTHLY = { id: 'monthly', unitAmount: 399, currency: 'USD', interval: 'month', label: '$3.99' };
 const YEARLY = { id: 'yearly', unitAmount: 2999, currency: 'USD', interval: 'year', label: '$29.99' };
@@ -103,7 +104,8 @@ describe('inside the app', () => {
 
   test('a trial is only promised when the store product carries one', async () => {
     isPurchasesAvailable.mockReturnValue(true);
-    const pkg = (type, priceString, price, introPrice) => ({ packageType: type, product: { priceString, price, introPrice } });
+    introEligibleProducts.mockResolvedValue(new Set(['pro_annual', 'pro_monthly']));
+    const pkg = (type, priceString, price, introPrice) => ({ packageType: type, product: { identifier: type === 'ANNUAL' ? 'pro_annual' : 'pro_monthly', priceString, price, introPrice } });
     getProOffering.mockResolvedValue([pkg('MONTHLY', '$3.99', 3.99, null), pkg('ANNUAL', '$29.99', 29.99, null)]);
     const { container, unmount } = render(<PaywallSheet open trigger="settings" onClose={() => {}} />);
     await screen.findByRole('button', { name: MONTHLY_CTA });
@@ -123,6 +125,35 @@ describe('inside the app', () => {
     expect(screen.getByRole('button', { name: MONTHLY_CTA })).toBeTruthy();
     await act(async () => { screen.getByRole('button', { name: /Yearly/ }).click(); });
     expect(screen.getByRole('button', { name: 'Start 1-week free trial' })).toBeTruthy();
+  });
+
+  test('an Apple ID that has used its trial is shown the plain price, not the trial', async () => {
+    isPurchasesAvailable.mockReturnValue(true);
+    introEligibleProducts.mockResolvedValue(new Set());
+    getProOffering.mockResolvedValue([
+      { packageType: 'MONTHLY', product: { identifier: 'pro_monthly', priceString: '$3.99', price: 3.99, introPrice: null } },
+      { packageType: 'ANNUAL', product: { identifier: 'pro_annual', priceString: '$29.99', price: 29.99, introPrice: { price: 0, periodNumberOfUnits: 1, periodUnit: 'WEEK' } } },
+    ]);
+    const { container } = render(<PaywallSheet open trigger="settings" onClose={() => {}} />);
+    await screen.findByRole('button', { name: MONTHLY_CTA });
+    expect(introEligibleProducts).toHaveBeenCalledWith(['pro_annual']);
+    await act(async () => { screen.getByRole('button', { name: /Yearly/ }).click(); });
+    expect(screen.getByRole('button', { name: 'Get Pro, $29.99/year' })).toBeTruthy();
+    expect(container.textContent).not.toMatch(/free trial/i);
+    expect(container.textContent).toContain('Renews at $29.99 every year until you cancel in your App Store settings.');
+  });
+
+  test('plans that fail to load still leave Restore, so a paid customer can get Pro back', async () => {
+    isPurchasesAvailable.mockReturnValue(true);
+    getProOffering.mockResolvedValue(null);
+    restore.mockResolvedValue({ success: true, isPro: true });
+    const onUpgraded = jest.fn();
+    render(<PaywallSheet open trigger="settings" onClose={() => {}} onUpgraded={onUpgraded} showToast={() => {}} />);
+    await screen.findByText("Flock Pro can't be bought in the app yet.");
+    expect(screen.queryByRole('button', { name: /Get Pro/ })).toBeNull();
+    await act(async () => { screen.getByRole('button', { name: 'Restore purchases' }).click(); });
+    expect(restore).toHaveBeenCalled();
+    expect(onUpgraded).toHaveBeenCalled();
   });
 
   test('App Store fine print, Restore, and nothing that names the website', async () => {

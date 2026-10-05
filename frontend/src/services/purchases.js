@@ -221,6 +221,32 @@ export const getProOffering = async () => {
   }
 };
 
+// RevenueCat's INTRO_ELIGIBILITY_STATUS_ELIGIBLE. The plugin is loaded lazily
+// (loadPlugin), so its enum is not in scope here.
+const INTRO_ELIGIBLE = 2;
+
+/**
+ * Which of these App Store products this Apple ID can still start a free
+ * trial on. A product carrying an introductory offer says nothing about the
+ * customer: somebody whose trial in the subscription group is used up is
+ * charged at once. Answers a Set of the eligible product ids; ineligible and
+ * unknown are left out, so the sheet shows the plain price, which is what
+ * RevenueCat advises for unknown. Never throws: a failed check is an empty set.
+ */
+export const introEligibleProducts = async (productIds) => {
+  const ids = Array.isArray(productIds) ? productIds.filter((id) => typeof id === 'string' && id) : [];
+  const Purchases = await loadPlugin();
+  if (!Purchases || !ids.length) return new Set();
+  try {
+    await configureOnce(Purchases);
+    const answer = await Purchases.checkTrialOrIntroductoryPriceEligibility({ productIdentifiers: ids });
+    return new Set(ids.filter((id) => answer?.[id]?.status === INTRO_ELIGIBLE));
+  } catch (err) {
+    console.warn('introEligibleProducts failed:', err?.message || err);
+    return new Set();
+  }
+};
+
 /**
  * Purchase a RevenueCat package (as returned by getProOffering()).
  * Returns { success, isPro }. User cancellation and errors both resolve

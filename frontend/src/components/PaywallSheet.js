@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useTheme } from '../context/ThemeContext';
-import { isPurchasesAvailable, getProOffering, purchase, restore } from '../services/purchases';
+import { isPurchasesAvailable, getProOffering, purchase, restore, introEligibleProducts } from '../services/purchases';
 import { getProStatus, startProCheckout, trackPaywallShown, trackPurchaseCompleted } from '../services/api';
 import { yearlySavingsPercent, planSavingsPercent, perMonthLabel, storePerMonthLabel } from '../lib/proPricing';
 import { birdieBackText, forecastBackText } from '../lib/meterResets';
@@ -130,9 +130,13 @@ const pickPackage = (packages, kind) => {
 // sheet used to promise "7-day free trial" on the yearly plan in three places
 // whatever the product said, and the App Store products are created without
 // an introductory offer (PAYWALL.md 1c), so the promise would have been false
-// on the day it could first be read.
+// on the day it could first be read. The product carrying one is not enough
+// either: an Apple ID that has used its trial is charged at once, so the
+// label also needs the store to say this customer is eligible (eligible, a
+// Set of product ids from introEligibleProducts).
 const UNIT_WORDS = { DAY: 'day', WEEK: 'week', MONTH: 'month', YEAR: 'year' };
-function freeTrialLabel(pkg) {
+function freeTrialLabel(pkg, eligible) {
+  if (eligible && !eligible.has(pkg?.product?.identifier)) return null;
   const intro = pkg?.product?.introPrice;
   if (!intro || Number(intro.price) !== 0) return null;
   const n = Number(intro.periodNumberOfUnits);
@@ -158,6 +162,8 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger, birdieRes
   // Web:    'web-loading' | 'web-ready' | 'web-off' | 'web-pro' | 'web-error'
   const [loadState, setLoadState] = useState('loading');
   const [packages, setPackages] = useState(null);
+  // Product ids whose free trial this Apple ID can still take (freeTrialLabel).
+  const [trialEligible, setTrialEligible] = useState(() => new Set());
   const [webStatus, setWebStatus] = useState(null);
   const [actionError, setActionError] = useState('');
 
@@ -203,9 +209,16 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger, birdieRes
       return undefined;
     }
     setLoadState('loading');
-    getProOffering().then((pkgs) => {
+    setTrialEligible(new Set());
+    getProOffering().then(async (pkgs) => {
       if (cancelled) return;
       if (pkgs && (pickPackage(pkgs, 'yearly') || pickPackage(pkgs, 'monthly'))) {
+        // Asked before the plans show, so a trial cannot appear (or vanish)
+        // under somebody's finger, and only when a product carries one.
+        const offered = pkgs.filter((p) => freeTrialLabel(p)).map((p) => p?.product?.identifier).filter(Boolean);
+        const eligible = offered.length ? await introEligibleProducts(offered) : new Set();
+        if (cancelled) return;
+        setTrialEligible(eligible);
         setPackages(pkgs);
         setLoadState('ready');
       } else {
@@ -295,8 +308,8 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger, birdieRes
   // in: a typed-in percentage outlived the price pair it was true for.
   const numericPrice = (pkg) => (typeof pkg?.product?.price === 'number' ? pkg.product.price : null);
   const nativeSavePct = yearlySavingsPercent(numericPrice(monthlyPkg), numericPrice(yearlyPkg));
-  const yearlyTrial = freeTrialLabel(yearlyPkg);
-  const monthlyTrial = freeTrialLabel(monthlyPkg);
+  const yearlyTrial = freeTrialLabel(yearlyPkg, trialEligible);
+  const monthlyTrial = freeTrialLabel(monthlyPkg, trialEligible);
   const selectedTrial = selected === 'yearly' ? yearlyTrial : monthlyTrial;
   const selectedPkg = selected === 'yearly' ? yearlyPkg : monthlyPkg;
 
@@ -381,6 +394,18 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger, birdieRes
       setActionError(err?.message || 'Could not start checkout. Try again.');
     }
   };
+
+  const restoreButton = (
+    <button
+      type="button"
+      className="hit44"
+      onClick={handleRestore}
+      disabled={busy || restoring}
+      style={{ display: 'block', width: '100%', marginTop: '6px', padding: '8px', border: 'none', background: 'none', fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)', cursor: 'pointer', fontFamily: FONT }}
+    >
+      {restoring ? 'Restoring…' : 'Restore purchases'}
+    </button>
+  );
 
   // One plan. The billed price is the biggest thing on it; the yearly plan
   // adds what it comes to a month and the saving, smaller, underneath. A free
@@ -532,15 +557,7 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger, birdieRes
                   : `Renews at ${nativePrice} every ${periodOf(selected)} until you cancel in your App Store settings. `}
                 {legalLinks}
               </p>
-              <button
-                type="button"
-                className="hit44"
-                onClick={handleRestore}
-                disabled={busy || restoring}
-                style={{ display: 'block', width: '100%', marginTop: '6px', padding: '8px', border: 'none', background: 'none', fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)', cursor: 'pointer', fontFamily: FONT }}
-              >
-                {restoring ? 'Restoring…' : 'Restore purchases'}
-              </button>
+              {restoreButton}
             </>
           )}
 
@@ -553,6 +570,10 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger, birdieRes
           {native && loadState === 'unavailable' && (
             <p style={quiet}>Flock Pro can't be bought in the app yet.</p>
           )}
+          {/* Restoring needs the store, not the plans: somebody who already
+              paid must be able to get Pro back on this account even when the
+              plans failed to load (App Store guideline 3.1.1). */}
+          {native && loadState === 'unavailable' && isPurchasesAvailable() && restoreButton}
 
           {/* ---------------- web: Stripe ---------------- */}
           {!native && loadState === 'web-loading' && (
