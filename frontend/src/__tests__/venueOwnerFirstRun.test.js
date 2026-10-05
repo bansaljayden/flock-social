@@ -96,3 +96,13 @@ test('the admin and venue links are read once per page load, not on every profil
   // A profile read answers only while no newer choice has been made.
   expect((app.match(/if \(launchChoseScreenRef\.current \|\| gen !== venueRouteGenRef\.current\) return;/g) || []).length).toBe(2);
 });
+
+test('one door per mode under You, admin choices end a venue read in flight, and onboarding closing reloads the dashboard', () => {
+  // The dashed Admin and Venue Dashboard buttons duplicated the Account rows,
+  // and the venue one skipped the profile read (review 2026-10-04).
+  expect(profile).not.toMatch(/onClick=\{\(\) => setShowAdminPrompt\(true\)\}/);
+  expect(profile).not.toMatch(/onClick=\{\(\) => setCurrentScreen\('venueDashboard'\)\}/);
+  expect(app).toMatch(/const openAdminDashboard = useCallback\(\(\) => \{[\s\S]{0,400}?venueRouteGenRef\.current \+= 1;/);
+  expect(app).toMatch(/const handleAdminModeSelect = \(\) => \{[\s\S]{0,300}?venueRouteGenRef\.current \+= 1;/);
+  expect(app).toMatch(/if \(venueOnboardingWasOpenRef\.current && !showVenueOnboarding\) setVenueDashProfileLoaded\(false\);/);
+});
