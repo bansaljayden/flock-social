@@ -15107,6 +15107,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // Handler for admin mode — verified via user role from backend
   const handleAdminModeSelect = () => {
     if (authUser?.role === 'admin') {
+      // Same as openAdminDashboard: a venue read in flight no longer answers.
+      venueRouteGenRef.current += 1;
       localStorage.setItem('flockUserMode', 'admin');
       setUserMode('admin');
       setShowModeSelection(false);
@@ -16506,6 +16508,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // picker. The role check is the one handleAdminModeSelect makes.
   const openAdminDashboard = useCallback(() => {
     if (authUser?.role !== 'admin') return;
+    // A venue profile read still in flight from a saved Venue mode must not
+    // take the console away when it lands (venueRouteGenRef).
+    venueRouteGenRef.current += 1;
     setUserMode('admin');
     try { localStorage.setItem('flockUserMode', 'admin'); } catch (e) { /* storage blocked */ }
     setShowModeSelection(false);
@@ -18162,6 +18167,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     }
   }, [currentScreen, venueDashProfileLoaded, venueProfileAsk]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Onboarding can open over a dashboard that already tried to load: the mode
+  // picker and the You tab's Venue dashboard row show the dashboard before the
+  // profile read answers. That load failed for want of a profile, and the flag
+  // it set kept the loader from trying again once onboarding had created one,
+  // so the new owner landed on Analytics skeletons and couldn't-load errors
+  // (review 2026-10-04). Onboarding closing lets the dashboard load afresh.
+  const venueOnboardingWasOpenRef = useRef(false);
+  useEffect(() => {
+    if (venueOnboardingWasOpenRef.current && !showVenueOnboarding) setVenueDashProfileLoaded(false);
+    venueOnboardingWasOpenRef.current = showVenueOnboarding;
+  }, [showVenueOnboarding]);
+
   // Pull live sensor data + history for the dashboard analytics tab.
   // Mirrors the venue-detail effect but scoped to the owner's own placeId.
   React.useEffect(() => {
@@ -19613,7 +19630,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           setProfileScreen,
           setSafetyEnabled,
           setShowAddContact,
-          setShowAdminPrompt,
           setShowDeleteAccount,
           setShowExportData,
           setShowPicModal,

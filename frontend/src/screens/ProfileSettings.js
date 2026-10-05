@@ -275,7 +275,6 @@ export default function ProfileSettings({
   setProfileScreen,
   setSafetyEnabled,
   setShowAddContact,
-  setShowAdminPrompt,
   setShowDeleteAccount,
   setShowExportData,
   setShowPicModal,
@@ -1257,52 +1256,11 @@ export default function ProfileSettings({
             </div>
           )}
 
-          {/* Admin Access Button - Small and subtle at bottom */}
-          {/* Admin Access — admin role only */}
-          {authUser?.role === 'admin' && (
-            <button className="hit44"
-              onClick={() => setShowAdminPrompt(true)}
-              style={{
-                marginTop: '16px',
-                padding: '8px 12px',
-                borderRadius: '8px',
-                border: `1px dashed ${colors.creamDark}`,
-                backgroundColor: 'transparent',
-                color: 'var(--text-tertiary)',
-                fontSize: 'var(--t-meta)',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px',
-                justifyContent: 'center'
-              }}
-            >
-              {Icons.settings(colors.textTertiary, 12)} Admin
-            </button>
-          )}
-
-          {/* Venue Dashboard — venue_owner or admin only */}
-          {(authUser?.role === 'venue_owner' || authUser?.role === 'admin') && (
-            <button className="hit44"
-              onClick={() => setCurrentScreen('venueDashboard')}
-              style={{
-                marginTop: '8px',
-                padding: '8px 12px',
-                borderRadius: '8px',
-                border: `1px dashed ${colors.creamDark}`,
-                backgroundColor: 'transparent',
-                color: 'var(--text-tertiary)',
-                fontSize: 'var(--t-meta)',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '4px',
-                justifyContent: 'center'
-              }}
-            >
-              {Icons.home(colors.textTertiary, 12)} Venue Dashboard
-            </button>
-          )}
+          {/* The Admin and Venue Dashboard doors are rows under Account above
+              (openAdminDashboard, openVenueDashboard). Two small dashed
+              buttons here duplicated them, and the venue one only set the
+              screen, so an account with no venue profile never got
+              onboarding (review 2026-10-04). */}
 
           {/* Switch Mode Button — only show if user has multiple modes */}
           {userMode && (authUser?.role === 'venue_owner' || authUser?.role === 'admin') && (
