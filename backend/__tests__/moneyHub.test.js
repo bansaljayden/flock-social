@@ -3302,9 +3302,14 @@ test('the price sheet lists every bill and rate card once, never checked and old
 test('a reconciled bill more than a quarter above the last one is flagged, a smaller one is not', () => {
   const jumps = moneyHub.billJumps(null);
   const railway = jumps.find((j) => j.id === 'railway');
-  assert.ok(railway, 'Railway went from $24.52 to $44.97 and was not flagged');
+  // Read from the seed rather than pinned: the estimate is re-read through
+  // the period ($44.97 on 10-03, $45.47 on 10-05), and every reading is far
+  // above the $24.52 the last bill was.
+  const seed = require('../services/costModel').RECONCILED.lines.find((l) => l.id === 'railway');
+  assert.ok(railway, `Railway went from $24.52 to $${seed.usdPerMonth} and was not flagged`);
   assert.strictEqual(railway.fromCents, 2452);
-  assert.strictEqual(railway.pct, 83);
+  assert.strictEqual(railway.pct, Math.round(((seed.usdPerMonth - 24.52) / 24.52) * 100));
+  assert.ok(railway.pct > 25);
   assert.ok(!jumps.some((j) => j.id === 'google-cloud'), 'a bill that went down is not a jump');
   // A dashboard figure is compared with the same previous bill.
   const saved = { lines: [{ id: 'railway', label: 'Railway', usdPerMonth: 26, asOf: '2026-10-16', previous: { usdPerMonth: 24.52, period: 'Aug 15 to Sep 15, 2026' } }] };
