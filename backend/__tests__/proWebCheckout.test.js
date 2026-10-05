@@ -391,30 +391,68 @@ test('sync after an App Store restore writes what RevenueCat says for the signed
   } finally { restore(); }
 });
 
-test('a burst of syncs from one account shares one RevenueCat read and one connection', async () => {
-  setEnv(ON);
-  rcEntitlement = { expires_date: new Date(Date.now() + 30 * 864e5).toISOString() };
+// Holds the first RevenueCat subscriber read open until release() is called.
+// The answer is taken when the read is made, so a change to rcEntitlement
+// afterwards is what a LATER read sees, the way a purchase landing mid-read is.
+function holdFirstSubscriberRead() {
   const realGlobalFetch = global.fetch;
   let release;
   const gate = new Promise((r) => { release = r; });
+  let first = true;
   global.fetch = async (url, init) => {
-    if (String(url).includes('/subscribers/')) await gate;
-    return realGlobalFetch(url, init);
+    const res = await realGlobalFetch(url, init);
+    if (first && String(url).includes('/subscribers/')) { first = false; await gate; }
+    return res;
   };
-  const { restore } = stubPool(async () => null);
+  return { release, undo: () => { global.fetch = realGlobalFetch; } };
+}
+
+function countConnections() {
   const realConnect = pool.connect;
-  let connections = 0;
-  pool.connect = async () => { connections += 1; return realConnect(); };
+  const seen = { open: 0, most: 0, total: 0 };
+  pool.connect = async () => {
+    const client = await realConnect();
+    seen.open += 1; seen.total += 1; seen.most = Math.max(seen.most, seen.open);
+    return { ...client, release() { seen.open -= 1; client.release(); } };
+  };
+  return { seen, undo: () => { pool.connect = realConnect; } };
+}
+
+test('a burst of syncs from one account holds one connection at a time and reads RevenueCat at most twice', async () => {
+  setEnv(ON);
+  rcEntitlement = { expires_date: new Date(Date.now() + 30 * 864e5).toISOString() };
+  const held = holdFirstSubscriberRead();
+  const { restore } = stubPool(async () => null);
+  const conns = countConnections();
   try {
     const burst = Array.from({ length: 5 }, () => call('/api/pro', proRoutes, 'POST', '/api/pro/sync'));
-    // Let all five requests reach the route before the one read answers.
+    // Let all five requests reach the route before the first read answers.
     await new Promise((r) => setTimeout(r, 150));
-    release();
+    held.release();
     const answers = await Promise.all(burst);
     for (const res of answers) assert.deepStrictEqual(res.body, { isPremium: true });
-    assert.strictEqual(rcCalls.filter((c) => c[0].includes('/subscribers/7')).length, 1);
-    assert.strictEqual(connections, 1);
-  } finally { pool.connect = realConnect; restore(); global.fetch = realGlobalFetch; }
+    // The read in flight, then one fresh read shared by the four that waited.
+    assert.strictEqual(rcCalls.filter((c) => c[0].includes('/subscribers/7')).length, 2);
+    assert.strictEqual(conns.seen.most, 1);
+    assert.strictEqual(conns.seen.total, 2);
+  } finally { conns.undo(); restore(); held.undo(); }
+});
+
+test('a sync asked for after a purchase lands never gets the answer of a read taken before it', async () => {
+  setEnv(ON);
+  rcEntitlement = null; // not Pro yet
+  const held = holdFirstSubscriberRead();
+  const { restore } = stubPool(async () => null);
+  try {
+    const before = call('/api/pro', proRoutes, 'POST', '/api/pro/sync');
+    await new Promise((r) => setTimeout(r, 100)); // the first read has answered "no" and is held
+    rcEntitlement = { expires_date: new Date(Date.now() + 30 * 864e5).toISOString() }; // the purchase lands
+    const after = call('/api/pro', proRoutes, 'POST', '/api/pro/sync');
+    await new Promise((r) => setTimeout(r, 50));
+    held.release();
+    assert.deepStrictEqual((await before).body, { isPremium: false });
+    assert.deepStrictEqual((await after).body, { isPremium: true });
+  } finally { restore(); held.undo(); }
 });
 
 test('sync with no RevenueCat key, or a failed read, answers 503 and writes nothing', async () => {

@@ -232,20 +232,37 @@ router.post('/confirm', [
 // write the webhook makes (routes/revenuecat.js). The account is the
 // authenticated one; the client sends nothing, so it can claim nothing.
 //
-// One sync per account at a time from here. syncPremiumFromRevenueCat checks
-// out a pooled connection before it waits on the account's lock, so a burst
-// of requests from one account (the limiter lets 30 a minute through) could
-// hold every connection in the pool while a single RevenueCat read ran, and
-// stall everybody else's requests. A request that arrives while one is in
-// flight shares its answer instead of queueing a connection of its own. The
-// database lock still orders this against the webhook's writes.
-const syncsInFlight = new Map();
-function syncOnce(userId) {
-  const running = syncsInFlight.get(userId);
-  if (running) return running;
-  const sync = syncPremiumFromRevenueCat(userId).finally(() => syncsInFlight.delete(userId));
-  syncsInFlight.set(userId, sync);
-  return sync;
+// One sync per account at a time from here, and every caller gets a read
+// that started after it asked. syncPremiumFromRevenueCat checks out a pooled
+// connection before it waits on the account's lock, so a burst of requests
+// from one account (the limiter lets 30 a minute through) could hold every
+// connection in the pool while a single RevenueCat read ran, and stall
+// everybody else's requests. Sharing the read already in flight fixed that
+// but answered a request made just after a purchase with a read taken just
+// before it. So a request that finds a read running waits for one more read,
+// queued behind it and shared by everybody who arrives before it starts: at
+// most one read runs and one waits, per account. The database lock still
+// orders these against the webhook's writes.
+const syncQueues = new Map();
+const settle = () => {};
+function syncFresh(userId) {
+  let queue = syncQueues.get(userId);
+  if (queue && queue.waiting) return queue.waiting;
+  if (!queue) {
+    queue = { tail: null, waiting: null };
+    syncQueues.set(userId, queue);
+  }
+  const before = queue.tail;
+  const read = (before ? before.then(settle, settle) : Promise.resolve())
+    .then(() => {
+      // Started: anybody who asks from now on needs the read after this one.
+      if (queue.waiting === read) queue.waiting = null;
+      return syncPremiumFromRevenueCat(userId);
+    })
+    .finally(() => { if (queue.tail === read) syncQueues.delete(userId); });
+  queue.tail = read;
+  if (before) queue.waiting = read;
+  return read;
 }
 
 router.post('/sync', async (req, res) => {
@@ -254,7 +271,7 @@ router.post('/sync', async (req, res) => {
     if (!billing.revenueCatApiConfigured()) {
       return res.status(503).json({ error: 'Could not check your plan just now. Try again.', code: 'SYNC_OFF' });
     }
-    const isPremium = await syncOnce(req.user.id);
+    const isPremium = await syncFresh(req.user.id);
     res.json({ isPremium });
   } catch (err) {
     // Nothing was written (the sync rolls back), and the webhook may still
