@@ -251,13 +251,16 @@ describe('App.js', () => {
     expect(APP).toMatch(/const launchChoseScreenRef = useRef\(\s*typeof window !== 'undefined' && \/\^\\\/checkin\\\/\[\^\/\?#\]\+\/\.test\(window\.location\?\.pathname \|\| ''\)\s*\);/);
     // Both venue routes check it before they move anyone.
     const saved = APP.slice(APP.indexOf('const venueBootRoutedRef = useRef(false);'), APP.indexOf('}, [userMode, authUser?.role, venueLoginFlag]);'));
-    expect(saved.indexOf('if (launchChoseScreenRef.current) return;')).toBeGreaterThan(-1);
-    expect(saved.indexOf('if (launchChoseScreenRef.current) return;')).toBeLessThan(saved.indexOf("setCurrentScreen('venueDashboard');"));
-    expect(saved).toContain('.catch(() => { if (!launchChoseScreenRef.current) setShowVenueOnboarding(true); });');
+    // And each read answers only while no newer mode choice has been made
+    // (venueRouteGenRef, review 2026-10-04).
+    const GUARD = 'if (launchChoseScreenRef.current || gen !== venueRouteGenRef.current) return;';
+    expect(saved.indexOf(GUARD)).toBeGreaterThan(-1);
+    expect(saved.indexOf(GUARD)).toBeLessThan(saved.indexOf("setCurrentScreen('venueDashboard');"));
+    expect(saved).toContain('.catch(() => { if (!launchChoseScreenRef.current && gen === venueRouteGenRef.current) setShowVenueOnboarding(true); });');
     const login = APP.slice(APP.indexOf('// If user came from venue login'), APP.indexOf('}, [venueLoginFlag]);'));
-    expect(login.indexOf('if (launchChoseScreenRef.current) return;')).toBeGreaterThan(-1);
-    expect(login.indexOf('if (launchChoseScreenRef.current) return;')).toBeLessThan(login.indexOf("setCurrentScreen('venueDashboard');"));
-    expect(login).toContain('if (!launchChoseScreenRef.current) setShowVenueOnboarding(true);');
+    expect(login.indexOf(GUARD)).toBeGreaterThan(-1);
+    expect(login.indexOf(GUARD)).toBeLessThan(login.indexOf("setCurrentScreen('venueDashboard');"));
+    expect(login).toContain('if (!launchChoseScreenRef.current && gen === venueRouteGenRef.current) setShowVenueOnboarding(true);');
   });
 });
 
