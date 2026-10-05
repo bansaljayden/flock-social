@@ -104,5 +104,5 @@ test('one door per mode under You, admin choices end a venue read in flight, and
   expect(profile).not.toMatch(/onClick=\{\(\) => setCurrentScreen\('venueDashboard'\)\}/);
   expect(app).toMatch(/const openAdminDashboard = useCallback\(\(\) => \{[\s\S]{0,400}?venueRouteGenRef\.current \+= 1;/);
   expect(app).toMatch(/const handleAdminModeSelect = \(\) => \{[\s\S]{0,300}?venueRouteGenRef\.current \+= 1;/);
-  expect(app).toMatch(/if \(venueOnboardingWasOpenRef\.current && !showVenueOnboarding\) setVenueDashProfileLoaded\(false\);/);
+  expect(app).toMatch(/if \(venueOnboardingWasOpenRef\.current && !showVenueOnboarding\) \{\s*venueProfileReadRef\.current \+= 1;\s*setVenueDashProfileLoaded\(false\);\s*setVenueProfileAsk\(\(n\) => n \+ 1\);/);
 });
