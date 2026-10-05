@@ -231,13 +231,30 @@ router.post('/confirm', [
 // RevenueCat for the signed-in account's whole state and writes that, the same
 // write the webhook makes (routes/revenuecat.js). The account is the
 // authenticated one; the client sends nothing, so it can claim nothing.
+//
+// One sync per account at a time from here. syncPremiumFromRevenueCat checks
+// out a pooled connection before it waits on the account's lock, so a burst
+// of requests from one account (the limiter lets 30 a minute through) could
+// hold every connection in the pool while a single RevenueCat read ran, and
+// stall everybody else's requests. A request that arrives while one is in
+// flight shares its answer instead of queueing a connection of its own. The
+// database lock still orders this against the webhook's writes.
+const syncsInFlight = new Map();
+function syncOnce(userId) {
+  const running = syncsInFlight.get(userId);
+  if (running) return running;
+  const sync = syncPremiumFromRevenueCat(userId).finally(() => syncsInFlight.delete(userId));
+  syncsInFlight.set(userId, sync);
+  return sync;
+}
+
 router.post('/sync', async (req, res) => {
   try {
     res.set('Cache-Control', 'no-store');
     if (!billing.revenueCatApiConfigured()) {
       return res.status(503).json({ error: 'Could not check your plan just now. Try again.', code: 'SYNC_OFF' });
     }
-    const isPremium = await syncPremiumFromRevenueCat(req.user.id);
+    const isPremium = await syncOnce(req.user.id);
     res.json({ isPremium });
   } catch (err) {
     // Nothing was written (the sync rolls back), and the webhook may still

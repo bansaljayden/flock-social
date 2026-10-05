@@ -391,6 +391,32 @@ test('sync after an App Store restore writes what RevenueCat says for the signed
   } finally { restore(); }
 });
 
+test('a burst of syncs from one account shares one RevenueCat read and one connection', async () => {
+  setEnv(ON);
+  rcEntitlement = { expires_date: new Date(Date.now() + 30 * 864e5).toISOString() };
+  const realGlobalFetch = global.fetch;
+  let release;
+  const gate = new Promise((r) => { release = r; });
+  global.fetch = async (url, init) => {
+    if (String(url).includes('/subscribers/')) await gate;
+    return realGlobalFetch(url, init);
+  };
+  const { restore } = stubPool(async () => null);
+  const realConnect = pool.connect;
+  let connections = 0;
+  pool.connect = async () => { connections += 1; return realConnect(); };
+  try {
+    const burst = Array.from({ length: 5 }, () => call('/api/pro', proRoutes, 'POST', '/api/pro/sync'));
+    // Let all five requests reach the route before the one read answers.
+    await new Promise((r) => setTimeout(r, 150));
+    release();
+    const answers = await Promise.all(burst);
+    for (const res of answers) assert.deepStrictEqual(res.body, { isPremium: true });
+    assert.strictEqual(rcCalls.filter((c) => c[0].includes('/subscribers/7')).length, 1);
+    assert.strictEqual(connections, 1);
+  } finally { pool.connect = realConnect; restore(); global.fetch = realGlobalFetch; }
+});
+
 test('sync with no RevenueCat key, or a failed read, answers 503 and writes nothing', async () => {
   setEnv({ ...ON, REVENUECAT_SECRET_API_KEY: undefined });
   let { calls, restore } = stubPool(async () => null);
