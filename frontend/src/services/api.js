@@ -2163,6 +2163,15 @@ export async function getProStatus() {
   return request('/api/pro/status');
 }
 
+// POST /api/pro/sync -> { isPremium }. After an App Store purchase or restore:
+// the server asks RevenueCat for this account's state and writes it, so a
+// purchase whose webhook never arrived is still put right. A 503 means "not
+// yet"; the caller keeps polling /api/entitlements either way.
+export async function syncProFromStore() {
+  if (!(process.env.REACT_APP_PURCHASES !== 'off')) return purchasesOffInThisBuild();
+  return request('/api/pro/sync', { method: 'POST', retry: false });
+}
+
 // POST /api/pro/checkout { plan } -> { url } of a Stripe hosted checkout.
 // 409 ALREADY_PRO / ALREADY_SUBSCRIBED and 503 CHECKOUT_OFF arrive as
 // err.code. retry: false because a replay would open a second session.

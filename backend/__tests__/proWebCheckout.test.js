@@ -375,6 +375,46 @@ test('confirm hands the subscription to RevenueCat and writes what RevenueCat sa
   } finally { restore(); }
 });
 
+test('sync after an App Store restore writes what RevenueCat says for the signed-in account only', async () => {
+  setEnv(ON);
+  rcEntitlement = { expires_date: new Date(Date.now() + 30 * 864e5).toISOString() };
+  const { calls, restore } = stubPool(async () => null);
+  try {
+    // A user id in the body is ignored: the account is the token's.
+    const res = await call('/api/pro', proRoutes, 'POST', '/api/pro/sync', { userId: 99 });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    assert.deepStrictEqual(res.body, { isPremium: true });
+    assert.ok(rcCalls.some((c) => c[0].includes('/subscribers/7')), 'RevenueCat was asked about account 7');
+    assert.ok(!rcCalls.some((c) => c[0].includes('/subscribers/99')), 'never about the id in the body');
+    const write = calls.find((c) => c.text.includes('SET is_premium'));
+    assert.deepStrictEqual(write.params, [true, 7]);
+  } finally { restore(); }
+});
+
+test('sync with no RevenueCat key, or a failed read, answers 503 and writes nothing', async () => {
+  setEnv({ ...ON, REVENUECAT_SECRET_API_KEY: undefined });
+  let { calls, restore } = stubPool(async () => null);
+  try {
+    const res = await call('/api/pro', proRoutes, 'POST', '/api/pro/sync');
+    assert.strictEqual(res.status, 503);
+    assert.strictEqual(res.body.code, 'SYNC_OFF');
+    assert.ok(!calls.some((c) => c.text.includes('SET is_premium')));
+  } finally { restore(); }
+
+  setEnv(ON);
+  const realGlobalFetch = global.fetch;
+  global.fetch = async (url, init) => (String(url).startsWith('https://api.revenuecat.com/')
+    ? new Response('{}', { status: 500 })
+    : realGlobalFetch(url, init));
+  ({ calls, restore } = stubPool(async () => null));
+  try {
+    const res = await call('/api/pro', proRoutes, 'POST', '/api/pro/sync');
+    assert.strictEqual(res.status, 503);
+    assert.strictEqual(res.body.retryable, true);
+    assert.ok(!calls.some((c) => c.text.includes('SET is_premium')));
+  } finally { restore(); global.fetch = realGlobalFetch; }
+});
+
 test('the webhook writes RevenueCat state, so an Apple EXPIRATION cannot switch off a paid web subscriber', async () => {
   setEnv(ON);
   rcEntitlement = { expires_date: new Date(Date.now() + 10 * 864e5).toISOString() };

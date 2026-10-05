@@ -18,6 +18,8 @@
 //                   the invoices.
 //   POST /confirm   { sessionId } after the redirect back: checks the session
 //                   is this account's, tells RevenueCat, re-reads Pro.
+//   POST /sync      after an App Store purchase or restore in the app: asks
+//                   RevenueCat for this account's state and writes it.
 //
 // Nothing here writes users.is_premium. See services/proBilling.js for why the
 // one record of who is Pro lives in RevenueCat, and routes/revenuecat.js for
@@ -218,6 +220,31 @@ router.post('/confirm', [
     res.json({ complete: true, isPremium });
   } catch (err) {
     sendError(res, err, 'Could not confirm your purchase yet. It can take a minute.');
+  }
+});
+
+// After an App Store purchase or restore in the app. The account only becomes
+// Pro when RevenueCat's webhook reaches us, and a restore of a purchase this
+// account already holds sends no new event: a webhook missed while the server
+// was down stayed missed once RevenueCat stopped retrying, and the paying
+// account stayed free with nothing in the app able to correct it. This asks
+// RevenueCat for the signed-in account's whole state and writes that, the same
+// write the webhook makes (routes/revenuecat.js). The account is the
+// authenticated one; the client sends nothing, so it can claim nothing.
+router.post('/sync', async (req, res) => {
+  try {
+    res.set('Cache-Control', 'no-store');
+    if (!billing.revenueCatApiConfigured()) {
+      return res.status(503).json({ error: 'Could not check your plan just now. Try again.', code: 'SYNC_OFF' });
+    }
+    const isPremium = await syncPremiumFromRevenueCat(req.user.id);
+    res.json({ isPremium });
+  } catch (err) {
+    // Nothing was written (the sync rolls back), and the webhook may still
+    // arrive, so this is a "not yet" the app rides out by polling.
+    console.warn('[pro] sync could not reach RevenueCat:', err?.message || err);
+    res.set('Retry-After', '5');
+    res.status(503).json({ error: 'Could not check your plan just now. Try again.', retryable: true });
   }
 });
 

@@ -74,7 +74,7 @@ import { livePulse, pulseEndsAt, pulseTapAction } from './lib/pulse';
 // effect, and the RevenueCat wrapper it lives in is a no-op everywhere except
 // the native shell, so it has no business being downloaded before the Nest
 // paints.
-import { trackScreenView, trackLocationError, trackEmailVerified, trackFlockMessageSent, trackDmSent, getEntitlements, getVenueIntelligence, getVenueStrip, getFlockVotes, voteForVenue, clearVenueVote, getBlockedUsers, unblockUser, blockUser, saveFlockVenue, setFlockStatus, setFlockEventTime, getUserCard, getFlockHistory, rerunFlock, getProStatus, confirmProCheckout, confirmVenueCheckout } from './services/api';
+import { trackScreenView, trackLocationError, trackEmailVerified, trackFlockMessageSent, trackDmSent, getEntitlements, getVenueIntelligence, getVenueStrip, getFlockVotes, voteForVenue, clearVenueVote, getBlockedUsers, unblockUser, blockUser, saveFlockVenue, setFlockStatus, setFlockEventTime, getUserCard, getFlockHistory, rerunFlock, getProStatus, confirmProCheckout, confirmVenueCheckout, syncProFromStore } from './services/api';
 import { readProReturn, settleProCheckout } from './lib/proReturn';
 // One message's reactions, re-read when a second device's tap turns out to have
 // been beaten by the first (see addReactionToMessage).
@@ -8667,7 +8667,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // A purchase only becomes premium once RevenueCat's webhook reaches our
   // backend, which can land after the app asks. One request could lose that
   // race and leave a paying user locked out, so retry on a short, finite
-  // schedule and stop the moment premium shows up.
+  // schedule and stop the moment premium shows up. Before the first read the
+  // server is asked to read RevenueCat itself (POST /api/pro/sync): a restore
+  // sends no new webhook, so a purchase whose webhook was missed would
+  // otherwise never become Pro however long this polled.
   const upgradePollRef = useRef(null);
   const confirmUpgrade = useCallback(() => {
     const delays = [0, 1500, 3000, 5000, 8000]; // 5 tries over ~17s, then stop
@@ -8689,7 +8692,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         .catch(() => again());
     };
     clearTimeout(upgradePollRef.current);
-    check();
+    syncProFromStore().catch(() => {}).then(check);
   }, [applyEntitlements]);
   useEffect(() => () => clearTimeout(upgradePollRef.current), []);
   // Back from a web checkout or the billing portal (PRO_RETURN, read at the
