@@ -8667,10 +8667,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // A purchase only becomes premium once RevenueCat's webhook reaches our
   // backend, which can land after the app asks. One request could lose that
   // race and leave a paying user locked out, so retry on a short, finite
-  // schedule and stop the moment premium shows up. Before the first read the
+  // schedule and stop the moment premium shows up. Before every read the
   // server is asked to read RevenueCat itself (POST /api/pro/sync): a restore
   // sends no new webhook, so a purchase whose webhook was missed would
-  // otherwise never become Pro however long this polled.
+  // otherwise never become Pro however long this polled. Every try, not only
+  // the first, so one sync that fails on a RevenueCat hiccup is tried again
+  // instead of leaving the rest of the poll reading an account nothing will
+  // update.
   const upgradePollRef = useRef(null);
   const confirmUpgrade = useCallback(() => {
     const delays = [0, 1500, 3000, 5000, 8000]; // 5 tries over ~17s, then stop
@@ -8681,18 +8684,23 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       upgradePollRef.current = setTimeout(check, delays[attempt]);
     };
     const check = () => {
-      const seq = ++entitlementsSentRef.current;
-      getEntitlements()
-        .then((data) => {
-          applyEntitlements(seq, data);
-          // Keeps asking on its own answer even when a newer one was applied
-          // first: the poll stops only on a Pro answer it read itself.
-          if (!data?.isPremium) again();
+      syncProFromStore()
+        .catch(() => {})
+        .then(() => {
+          // Numbered when it is sent, after the sync, so it outranks any read
+          // sent while the sync ran.
+          const seq = ++entitlementsSentRef.current;
+          return getEntitlements().then((data) => {
+            applyEntitlements(seq, data);
+            // Keeps asking on its own answer even when a newer one was applied
+            // first: the poll stops only on a Pro answer it read itself.
+            if (!data?.isPremium) again();
+          });
         })
         .catch(() => again());
     };
     clearTimeout(upgradePollRef.current);
-    syncProFromStore().catch(() => {}).then(check);
+    check();
   }, [applyEntitlements]);
   useEffect(() => () => clearTimeout(upgradePollRef.current), []);
   // Back from a web checkout or the billing portal (PRO_RETURN, read at the
