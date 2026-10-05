@@ -18173,9 +18173,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // it set kept the loader from trying again once onboarding had created one,
   // so the new owner landed on Analytics skeletons and couldn't-load errors
   // (review 2026-10-04). Onboarding closing lets the dashboard load afresh.
+  // A load still in flight was asked before the profile existed, so its answer
+  // is dropped (the read count moves on) and a new read is asked for: now, if
+  // the dashboard is showing, or when it next opens. Clearing the flag alone
+  // did nothing while it was already clear, and the stale 404 then marked the
+  // dashboard failed for the session (fifth review).
   const venueOnboardingWasOpenRef = useRef(false);
   useEffect(() => {
-    if (venueOnboardingWasOpenRef.current && !showVenueOnboarding) setVenueDashProfileLoaded(false);
+    if (venueOnboardingWasOpenRef.current && !showVenueOnboarding) {
+      venueProfileReadRef.current += 1;
+      setVenueDashProfileLoaded(false);
+      setVenueProfileAsk((n) => n + 1);
+    }
     venueOnboardingWasOpenRef.current = showVenueOnboarding;
   }, [showVenueOnboarding]);
 
