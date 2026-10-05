@@ -341,6 +341,18 @@ const INVENTORY = [
     why: 'Charged on hits and misses alike, and the exhausted answer is the same 404 body a missing row and a banned row get, so the refusal is not a new oracle. Limits sit above the friend probe on purpose: this is a safety control, and the worst legitimate hour is blocking every stranger in a 50-person link-joined flock.',
   },
 
+  // ── routes/pro.js ─────────────────────────────────────────────────────────
+  {
+    file: 'routes/pro.js', name: 'syncQueues', kind: 'inflight',
+    key: 'the authenticated account id (req.user.id)',
+    callerControls: 'nothing but being signed in: the key is the caller\'s own account',
+    protects: 'the database pool: each RevenueCat sync checks out a pooled connection before it waits on the account lock, so a burst of POST /api/pro/sync from one account could hold every connection while one read ran',
+    denominator: 'n/a, a per-account queue of at most one running and one waiting read, not a counter',
+    bound: 'one entry per account with a sync running right now; the entry deletes itself when the last queued read settles, success or failure, and /api/pro is behind the 30-per-minute proLimiter',
+    verdict: 'SAFE',
+    why: 'It only orders one account\'s own syncs, so a caller can queue behind nobody but themselves, and every caller still gets a read that began after it asked. Empty at rest; proven in proWebCheckout.test.js (five at once: one connection at a time, two reads).',
+  },
+
   // ── routes/publicCrowd.js ─────────────────────────────────────────────────
   {
     file: 'routes/publicCrowd.js', name: 'ipHits', kind: 'counter',
