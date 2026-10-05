@@ -5020,6 +5020,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const launchChoseScreenRef = useRef(
     typeof window !== 'undefined' && /^\/checkin\/[^/?#]+/.test(window.location?.pathname || '')
   );
+  // Which venue routing is current. Each explicit choice (switchMode, the You
+  // tab's Venue dashboard row, the admin link) moves it on, and a profile read
+  // acts on its answer only if the count it started under is still current.
+  // Without it a read still in flight from an earlier launch landed after the
+  // person had picked another mode and repainted the dashboard or onboarding
+  // over their choice (review 2026-10-04).
+  const venueRouteGenRef = useRef(0);
 
   // If user came from venue login, check if they already have a profile
   React.useEffect(() => {
@@ -5028,9 +5035,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       setShowModeSelection(false);
       localStorage.setItem('flockUserMode', 'venue');
       // Check if venue profile already exists — skip onboarding if so
+      const gen = venueRouteGenRef.current;
       getVenueProfile().then(p => {
-        // A screen the launch already chose stays (launchChoseScreenRef).
-        if (launchChoseScreenRef.current) return;
+        // A screen the launch already chose stays (launchChoseScreenRef), and
+        // so does one the person chose since this read started.
+        if (launchChoseScreenRef.current || gen !== venueRouteGenRef.current) return;
         if (p && p.business_name) {
           // Already onboarded — go straight to dashboard
           setShowVenueOnboarding(false);
@@ -5041,7 +5050,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         }
       }).catch(() => {
         // No profile found — show onboarding
-        if (!launchChoseScreenRef.current) setShowVenueOnboarding(true);
+        if (!launchChoseScreenRef.current && gen === venueRouteGenRef.current) setShowVenueOnboarding(true);
       });
     }
   }, [venueLoginFlag]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -5068,18 +5077,20 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     if (authUser?.role !== 'venue_owner' && authUser?.role !== 'admin') return;
     if (venueLoginFlag) return;
     venueBootRoutedRef.current = true;
+    const gen = venueRouteGenRef.current;
     getVenueProfile().then((p) => {
       // A deep link, a notification tap or a tag URL chose where this launch
       // opens (launchChoseScreenRef). The saved mode answers "where do I
-      // start" only when nothing else already has.
-      if (launchChoseScreenRef.current) return;
+      // start" only when nothing else already has, and only while no newer
+      // choice has been made (venueRouteGenRef).
+      if (launchChoseScreenRef.current || gen !== venueRouteGenRef.current) return;
       if (p && p.business_name) {
         setShowVenueOnboarding(false);
         setCurrentScreen('venueDashboard');
       } else {
         setShowVenueOnboarding(true);
       }
-    }).catch(() => { if (!launchChoseScreenRef.current) setShowVenueOnboarding(true); });
+    }).catch(() => { if (!launchChoseScreenRef.current && gen === venueRouteGenRef.current) setShowVenueOnboarding(true); });
   }, [userMode, authUser?.role, venueLoginFlag]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Navigation
@@ -9211,6 +9222,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // getVenueProfile in flight, and its answer used to swap the console for
       // the venue dashboard or onboarding (review 2026-10-04).
       launchChoseScreenRef.current = true;
+      venueRouteGenRef.current += 1;
       // The link asks for the console by name, so it is the same choice as the
       // mode picker's Admin Dashboard and Access (handleAdminModeSelect).
       // Without this, a browser that had never picked a mode opened the picker
@@ -16472,11 +16484,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // dashboard's own arrow, which an owner in the consumer app cannot reach.
   const openVenueDashboard = useCallback(() => {
     setUserMode('venue');
-    // An explicit choice, like switchMode: the launch's own choice is over,
-    // so the venue routing can still open onboarding for an account with no
-    // venue profile.
+    // An explicit choice, like switchMode: the launch's own choice is over and
+    // an earlier profile read still in flight no longer answers. The row reads
+    // the profile itself rather than leaning on the boot routing, which does
+    // not run again when the saved mode is already venue, so an account with
+    // no venue profile still gets onboarding.
     launchChoseScreenRef.current = false;
-    venueBootRoutedRef.current = false;
+    venueBootRoutedRef.current = true;
+    const gen = ++venueRouteGenRef.current;
+    getVenueProfile().then((p) => {
+      if (gen !== venueRouteGenRef.current) return;
+      setShowVenueOnboarding(!(p && p.business_name));
+    }).catch(() => { if (gen === venueRouteGenRef.current) setShowVenueOnboarding(true); });
     try { localStorage.setItem('flockUserMode', 'venue'); } catch (e) { /* storage blocked */ }
     setShowModeSelection(false);
     setCurrentScreen('venueDashboard');
@@ -16612,6 +16631,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // so could not create a venue profile that session (review 2026-10-04).
     launchChoseScreenRef.current = false;
     venueBootRoutedRef.current = false;
+    venueRouteGenRef.current += 1;
     localStorage.removeItem('flockUserMode');
     setUserMode(null);
     setShowModeSelection(true);
