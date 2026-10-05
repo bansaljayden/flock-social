@@ -51,6 +51,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { createRequire } = require('module');
+const net = require('net');
 
 // Resolve backend dependencies the way the backend itself would. A plain
 // path.join into backend/node_modules assumes nothing was hoisted, and both
@@ -81,7 +82,33 @@ async function waitFor(fn, ms, what) {
   throw new Error(`timed out waiting for ${what}`);
 }
 
+// True when something already listens on 127.0.0.1:port.
+function portTaken(port) {
+  return new Promise((resolve) => {
+    const socket = net.connect({ host: '127.0.0.1', port });
+    socket.setTimeout(800);
+    socket.once('connect', () => { socket.destroy(); resolve(true); });
+    socket.once('timeout', () => { socket.destroy(); resolve(false); });
+    socket.once('error', () => resolve(false));
+  });
+}
+
 async function main() {
+  // A stack left running from an earlier run holds these ports, and the next
+  // one used to die inside postgres with "could not create any TCP/IP
+  // sockets", which names neither the port nor the cause. That earlier stack
+  // also still holds its own database, so a run against it is not the fresh
+  // one this suite assumes. Say which port is taken and stop.
+  const taken = [];
+  for (const [name, port] of [['postgres', PG_PORT], ['api', API_PORT], ['web', WEB_PORT]]) {
+    if (await portTaken(port)) taken.push(`${name} ${port}`);
+  }
+  if (taken.length) {
+    log(`port already in use: ${taken.join(', ')}. Another stack is probably still running;`);
+    log('stop it (ctrl-c in its window, or end the node process listening on those ports) and start again.');
+    process.exit(1);
+  }
+
   if (!fs.existsSync(path.join(BUILD_DIR, 'index.html'))) {
     log('No build found. Run: node tools/e2e/build.js');
     process.exit(1);
