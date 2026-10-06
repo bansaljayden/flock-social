@@ -1525,13 +1525,23 @@ function buildContextDataLine(ctx) {
 // both switches that configuration names are on. With either off the numbers
 // are made another way, these figures describe nothing being served, and the
 // line is left out rather than stated about numbers it was not measured on.
-// It is a figure about the numbers overall; the per-number `confidence` rule
-// above it still stands.
+// The per-number `confidence` rule above it still stands.
+//
+// WHAT IT WAS MEASURED ON TRAVELS WITH IT. This line used to end by telling
+// Birdie the figure "describes Flock's numbers overall", and it does not. The
+// readings it was scored against are held-out live readings from venues in the
+// Lehigh Valley and Miami that have live readings (servedAccuracy.json,
+// `population`), so a venue with no live reading, or a city with none, was
+// never in it, and Birdie now says so when it quotes it. And within one level
+// never goes out alone: it is the metric that rewards hedging on this target,
+// where a constant "Not Busy" beats every served configuration
+// (scripts/ml/MODEL-METRICS.md), so the exact-level rate and the average miss
+// are in the same sentence and Birdie is told to keep them there.
 function servedAccuracyRule() {
   const h = typeof mlPredictor.servedAccuracyHeadline === 'function' ? mlPredictor.servedAccuracyHeadline() : null;
   if (!h) return '';
   const pct = (v) => `${Math.round(v)}%`;
-  return `\n- If someone asks how accurate Flock's crowd levels are, answer from these measured figures and nothing else. Tested against ${h.rows.toLocaleString('en-US')} real live readings it had not seen (September 6 to 8, 2026), ${pct(h.within_one_band)} of Flock's crowd numbers landed within one crowd level of the reading, and the average miss was ${Math.round(h.mae)} points. When a venue had a live reading from the hour before, ${pct(h.reading_one_hour_earlier.within_one_band)} landed within one level. Say it plainly and once. It describes Flock's numbers overall, never how sure one number is.`;
+  return `\n- If someone asks how accurate Flock's crowd levels are, answer from these measured figures and nothing else. Tested against ${h.rows.toLocaleString('en-US')} real live readings it had not seen (September 6 to 8, 2026), all from venues in the Lehigh Valley and Miami that have live readings, ${pct(h.band_exact)} of Flock's crowd numbers matched the reading's crowd level exactly, ${pct(h.within_one_band)} landed within one crowd level of the reading, and the average miss was ${Math.round(h.mae)} points. When a venue had a live reading from the hour before, ${pct(h.reading_one_hour_earlier.within_one_band)} landed within one level. Never give the within-one-level figure without the exact match and the average miss beside it. Say it plainly and once, and say what it was measured on. It describes venues with live readings in those two places, not every venue or city Flock covers, and never how sure one number is.`;
 }
 
 function buildSystemPrompt(userName, ctx, { ageBracket, freeTier, salesOff = false } = {}) {
