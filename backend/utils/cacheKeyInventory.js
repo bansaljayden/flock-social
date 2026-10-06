@@ -951,6 +951,30 @@ const INVENTORY = [
       + 'a poisoned promise behind for the next caller to await.',
   },
   {
+    file: 'services/mlPredictor.js', name: 'curvePresenceCache', kind: 'cache',
+    key: 'placeId alone: whether ml_venue_baselines holds any row for that venue',
+    callerControls: 'the whole placeId, the same 256-char field POST /api/crowd/batch '
+      + 'passes. allowVenueLookup re-imposes utils/places.js isPlaceIdShaped in front of '
+      + 'the query, so an unshaped id is refused for free and a shaped id that names '
+      + 'nothing reads no row',
+    protects: 'one indexed SELECT 1 ... LIMIT 1 on ml_venue_baselines on the 20-connection '
+      + 'primary pool, asked at the no-baseline exit and only while CROWD_NO_CURVE_FALLBACK '
+      + 'is on, after every gate that needs no query has passed',
+    denominator: 'uncached presence probes, charged to the same crowd-venue-lookup budget '
+      + 'as the slot lookup in front of it (1500/hr, 5000/day per account). A hit is '
+      + 'answered above the gate and costs nothing',
+    bound: 'boundedSet at PREDICTOR_CACHE_MAX = 2000, delete-then-set, oldest-first; a '
+      + 'yes is held BASELINE_CACHE_TTL (24h), a no one hour',
+    verdict: 'SAFE',
+    why: 'Same key, same gate and same ceiling as baselineCache, which it is only ever read '
+      + 'beside, so it cannot grow faster or cost more than that cache already does. A '
+      + 'refused or failed probe writes nothing and answers unknown, which keeps the rule '
+      + 'engine, so an account that cannot query can neither evict a real venue\'s answer '
+      + 'nor buy a category value for one. The no is held an hour rather than a day because '
+      + 'a stale no is the answer that could put a category value over a venue that has '
+      + 'since gained a curve of its own.',
+  },
+  {
     file: 'services/mlPredictor.js', name: 'eventUserBudget', kind: 'counter',
     key: "createUserBudget name:'crowd-events' — authenticated user id (200/hr, 400/day)",
     callerControls: 'nothing',
