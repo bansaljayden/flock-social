@@ -42,6 +42,7 @@ function FakeStripe() {
     customers: {
       create: async (args, opts) => { stripeCalls.push(['customers.create', args, opts]); return { id: 'cus_VENUE1' }; },
       del: async (id) => { stripeCalls.push(['customers.del', id]); return { id, deleted: true }; },
+      retrieve: async (id) => { stripeCalls.push(['customers.retrieve', id]); return { id }; },
     },
     subscriptions: {
       list: async (args) => { stripeCalls.push(['subscriptions.list', args]); return { data: stripeState.subscriptions }; },

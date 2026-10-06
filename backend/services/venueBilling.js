@@ -268,6 +268,17 @@ async function latestVenueSubscription(userId, customerIds, requestOptions) {
 // EVERY CUSTOMER ON RECORD, not only the profile's (venueCustomerIdsFor): a
 // plan sold by hand lives on a customer checkout never made, and the deletion
 // used to skip it and leave its card billed for an account that was gone.
+//
+// NOTHING IS FORGOTTEN HERE. This used to clear venue_profiles.stripe_customer_id
+// in a write of its own, committed before the deletion's transaction began. When
+// that transaction then rolled back, the account stayed with no customer on
+// file, and the trial asked only the next checkout's NEW customer whether it
+// had ever subscribed: a second 14 days for the same venue. The ids go with the
+// account's rows when its deletion commits (venue_profiles and the subscription
+// record are ON DELETE CASCADE), and stay on file when it does not. A customer
+// on file that Stripe has deleted is replaced at the next checkout
+// (ensureVenueCustomer), and the trial is read from the venue's record of
+// subscriptions (venueTrialUsed), not from whichever customer is current.
 async function closeVenueCustomer(userId) {
   const customerIds = await venueCustomerIdsFor(userId);
   if (customerIds.length === 0) return false;
@@ -276,19 +287,46 @@ async function closeVenueCustomer(userId) {
     if (!closed) {
       throw refusal(503, `Roost Stripe customer ${customerId} was not cancelled; Stripe is not configured`, 'STRIPE_NOT_CONFIGURED');
     }
-    await pool.query(
-      'UPDATE venue_profiles SET stripe_customer_id = NULL WHERE user_id = $1 AND stripe_customer_id = $2::text',
-      [userId, customerId]
-    );
   }
   return true;
 }
 
+const missingAtStripe = (err) => !!err && (err.code === 'resource_missing' || err.statusCode === 404);
+
 // The venue's Stripe customer, created once. Same idempotency reasoning as
 // proBilling.ensureCustomer, with its own key prefix so the two products can
 // never be handed each other's customer.
+//
+// A CUSTOMER ON FILE CAN BE ONE STRIPE HAS DELETED. Account deletion closes
+// the customer before its own transaction and no longer forgets it
+// (closeVenueCustomer), so a deletion that then failed leaves the account
+// holding a customer that cannot take a checkout. It is replaced here: a new
+// customer, swapped in only over the dead one. Its idempotency key names the
+// customer it replaces, because the hourly key that made the first one could
+// still hand that deleted customer back. A new customer is not a new trial
+// (venueTrialUsed).
 async function ensureVenueCustomer(user, profile) {
-  if (profile.stripe_customer_id) return profile.stripe_customer_id;
+  if (profile.stripe_customer_id) {
+    const onFile = profile.stripe_customer_id;
+    const existing = await stripe().customers.retrieve(onFile).catch((err) => {
+      if (missingAtStripe(err)) return { id: onFile, deleted: true };
+      throw err;
+    });
+    if (!existing || existing.deleted !== true) return onFile;
+    const replacement = await stripe().customers.create({
+      email: user.email || undefined,
+      name: profile.business_name || user.name || undefined,
+      metadata: { kind: KIND, flock_venue_user_id: String(user.id) },
+    }, { idempotencyKey: `flock-venue-customer-${user.id}-replaces-${onFile}` });
+    const swapped = await pool.query(
+      `UPDATE venue_profiles SET stripe_customer_id = $1
+        WHERE user_id = $2 AND stripe_customer_id = $3
+        RETURNING stripe_customer_id`,
+      [replacement.id, user.id, onFile]
+    );
+    if (swapped.rows[0]) return swapped.rows[0].stripe_customer_id;
+    return venueCustomerIdFor(user.id);
+  }
   const customer = await stripe().customers.create({
     email: user.email || undefined,
     name: profile.business_name || user.name || undefined,

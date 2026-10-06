@@ -3553,7 +3553,12 @@ async function deleteAccount(req, res) {
     // under the same rule: if it cannot be cancelled, refuse rather than delete
     // the only record of which customer to cancel. closeVenueCustomer throws
     // whenever a customer is on file and was not closed, a missing Stripe key
-    // included; with no customer on file there is nothing to cancel.
+    // included; with no customer on file there is nothing to cancel. It closes
+    // every customer a Roost plan is on record with (a plan sold by hand has
+    // its own), and unlike the Pro half it forgets none of them: the ids go
+    // with the account's rows in the transaction below, and stay on file if
+    // that transaction rolls back, so the venue's record of its trial does
+    // too (services/venueBilling.js closeVenueCustomer).
     try {
       await closeVenueCustomer(req.user.id);
     } catch (err) {
