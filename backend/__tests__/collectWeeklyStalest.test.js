@@ -43,6 +43,8 @@ delete process.env.BESTTIME_API_KEY;
 const EVENTS = [];
 // Venue names BestTime has no forecast for. Every other venue gets a week.
 const NO_FORECAST = new Set();
+// Venue names whose ask fails, each with what the stub throws for it.
+const FAILS = new Map();
 // The id a by-name lookup is answered with.
 let byNameAnswer = null;
 
@@ -56,6 +58,7 @@ const WEEK = [0, 1, 2, 3, 4, 5, 6].map((dayInt) => ({
 stubModule('../scripts/ml/bestTimeService', {
   fetchWeeklyForecast: async (name, _address, venueId) => {
     EVENTS.push(['call', name]);
+    if (FAILS.has(name)) throw await FAILS.get(name)();
     if (NO_FORECAST.has(name)) return null;
     return { venueId: venueId || byNameAnswer, days: WEEK, epochAnalysis: 1786000000 };
   },
@@ -230,4 +233,79 @@ test('a miss and a duplicate are paced like a refresh', async () => {
     [city]
   );
   assert.deepStrictEqual(twin, { besttime_venue_id: null, besttime_status: 'duplicate' });
+});
+
+// What bestTimeService throws for a 503, and for a call cut by its deadline.
+const throttle = () => Object.assign(new Error('BestTime 503 (weekly)'), { transient: true });
+const timeout = () => Object.assign(new Error('This operation was aborted'), { name: 'AbortError' });
+
+test('a venue asked by id moves back when its ask draws a 503 or fails', async () => {
+  // Only an answer used to stamp the ask. A 503 or a failed call stamped
+  // nothing, so under this order those venues kept their old place while
+  // every venue around them moved back, and after one pass they opened every
+  // piece. On 2026-10-06 the same seven lehigh venues drew a 503 every time
+  // they were asked, each one followed by a 60 s wait.
+  const city = 'stalest_failures';
+  FAILS.set('Always 503', throttle);
+  FAILS.set('Always Times Out', timeout);
+  await addVenue(city, 'Always 503', 'ven_fail_503');
+  await addVenue(city, 'Always Times Out', 'ven_fail_timeout');
+  const older = await addVenue(city, 'Curve 20 Days', 'ven_fail_20d', '20 days');
+  await addWeek(older, '20 days');
+  const newer = await addVenue(city, 'Curve 10 Days', 'ven_fail_10d', '10 days');
+  await addWeek(newer, '10 days');
+
+  const args = [`--city=${city}`, '--only-found', '--order=stalest', '--limit=2'];
+  assert.deepStrictEqual(await piece(args), ['Always 503', 'Always Times Out']);
+  // The old code asked these two again here, and in every piece after.
+  assert.deepStrictEqual(await piece(args), ['Curve 20 Days', 'Curve 10 Days']);
+  assert.deepStrictEqual(await piece(args), ['Always 503', 'Always Times Out']);
+
+  // Stamped as asked and nothing else. Neither failure says anything about
+  // the venue, so neither is marked 404, and neither has a curve.
+  const { rows } = await pool.query(
+    `SELECT name, besttime_status, besttime_attempted_at IS NOT NULL AS asked, last_collected_at
+       FROM ml_venues WHERE city = $1 AND name LIKE 'Always %' ORDER BY name`,
+    [city]
+  );
+  assert.deepStrictEqual(rows, [
+    { name: 'Always 503', besttime_status: null, asked: true, last_collected_at: null },
+    { name: 'Always Times Out', besttime_status: null, asked: true, last_collected_at: null },
+  ]);
+});
+
+test('a 503 on a by-name ask, or on a row unmapped while it was asked, stamps nothing', async () => {
+  // A by-name venue keeps its NULL stamp, so --skip-attempted still offers
+  // its admission. A row the venue repair unmaps mid-run keeps the stamp the
+  // repair preserved, the same way the found stamp is held to the id the
+  // forecast was bought with.
+  const city = 'stalest_unstamped';
+  FAILS.set('By Name 503', throttle);
+  FAILS.set('Unmapped While Asked', async () => {
+    // What repairBestTimeDiscoveredVenues.js writes on a rival row.
+    await pool.query(
+      `UPDATE ml_venues
+          SET besttime_venue_id = NULL, besttime_status = 'duplicate',
+              besttime_attempted_at = COALESCE(besttime_attempted_at, NOW())
+        WHERE name = 'Unmapped While Asked'`
+    );
+    return throttle();
+  });
+  await addVenue(city, 'By Name 503', null);
+  await addVenue(city, 'Unmapped While Asked', 'ven_unmapped_mid_ask', '40 days');
+
+  assert.deepStrictEqual(
+    await piece([`--city=${city}`, '--max-new=1']),
+    ['By Name 503', 'Unmapped While Asked']
+  );
+  const { rows } = await pool.query(
+    `SELECT name, besttime_attempted_at IS NULL AS never_asked,
+            besttime_attempted_at < NOW() - interval '39 days' AS old_stamp_kept
+       FROM ml_venues WHERE city = $1 ORDER BY name`,
+    [city]
+  );
+  assert.deepStrictEqual(rows, [
+    { name: 'By Name 503', never_asked: true, old_stamp_kept: null },
+    { name: 'Unmapped While Asked', never_asked: false, old_stamp_kept: true },
+  ]);
 });

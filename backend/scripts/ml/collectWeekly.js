@@ -209,11 +209,12 @@ const ORDER_BY_SERVED = `(SELECT COUNT(*) FROM served_predictions sp
 // --order=stalest is for a by-id refresh (--only-found). A venue's place in
 // line is the later of two stamps on its own row, oldest first:
 // last_collected_at, which this collector and the harvest set when weekly rows
-// land, and besttime_attempted_at, which this collector sets on every ask,
-// misses included. GREATEST skips a NULL and is NULL only when both are, so a
-// venue with neither comes before all of them: one never asked and with no
-// curve, or one whose curve only discoverBestTime.js wrote (it stamps
-// neither; the first refresh does).
+// land, and besttime_attempted_at, which this collector sets on every ask by
+// id whatever came back, a 503 or a failed call included (stampFailedAsk; only
+// a key-level failure, which ends the run, leaves it). GREATEST skips a NULL
+// and is NULL only when both are, so a venue with neither comes before all of
+// them: one never asked and with no curve, or one whose curve only
+// discoverBestTime.js wrote (it stamps neither; the first refresh does).
 //
 // The order used to read the newest weekly row alone. A miss writes no rows,
 // so the venues BestTime has no forecast for kept their place at the head of
@@ -450,6 +451,29 @@ async function collectWeekly() {
       }
     }
     throw lastErr;
+  };
+
+  // A venue asked by id whose ask drew a 503 or failed on the way is stamped
+  // as asked all the same, because --order=stalest reads the stamp. Unstamped,
+  // such a venue kept its old place while every venue around it moved back,
+  // and after one pass it opened every piece: on 2026-10-06 the same seven
+  // lehigh venues drew a 503 every time they were asked, each with its 60 s
+  // wait. Nothing else is written, since a failure says nothing about the
+  // venue. A by-name venue is left alone so --skip-attempted still offers its
+  // admission, and so is a row that no longer holds the id it was asked by
+  // (the repair can unmap it mid-run). This runs inside the loop's catch, so
+  // a failed stamp is logged and never thrown.
+  const stampFailedAsk = async (venue) => {
+    if (!venue.besttime_venue_id) return;
+    try {
+      await safeQuery(
+        `UPDATE ml_venues SET besttime_attempted_at = NOW()
+          WHERE id = $1 AND besttime_venue_id = $2`,
+        [venue.id, venue.besttime_venue_id]
+      );
+    } catch (err) {
+      console.error(`  Could not stamp the attempt: ${describeDbError(err)}`);
+    }
   };
 
   let consecutiveErrors = 0;
@@ -867,6 +891,7 @@ async function collectWeekly() {
         console.error(`  [FATAL] ${describeError(err)} — aborting run immediately`);
         break;
       }
+      await stampFailedAsk(venue);
       // A 503 is BestTime asking for space, so it gets its OWN budget. The
       // first cooldown counted a throttle as a per-venue error before
       // waiting, so ten throttles still ended the run, just nine minutes
