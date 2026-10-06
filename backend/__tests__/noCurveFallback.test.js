@@ -24,7 +24,11 @@
 //     name one of its categories (an airport, a hotel or no types at all is
 //     not given the catch-all restaurant row);
 //   * the presence probe: cached (a no for an hour, a yes for a day), charged
-//     to the venue-lookup budget, and silent on a refusal or a failure;
+//     to the venue-lookup budget, silent on a refusal or a failure, and
+//     answered by a strip's own whole-curve read, so a cached no older than
+//     the rows that strip just read never puts the table beside them;
+//   * the name: a rule_engine one, so app builds already shipped never show
+//     it as LIVE, and still read by its exact name;
 //   * the strip, the coverage counter, and the words crowdEngine gives it.
 //
 // __tests__/noCurveFallbackSurfaces.test.js takes the same number through the

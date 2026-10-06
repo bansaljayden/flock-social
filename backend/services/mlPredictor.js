@@ -4163,8 +4163,8 @@ function servedConfidence({ accuracy, qmapApplied, hasWeather, curveOffset, nowc
 // 'rule_engine_category_table': never 'ml', which services/moneyHub.js and the
 // coverage counter read as the venue's own data. It starts with rule_engine
 // because that prefix is what the iOS builds already shipped read as "a
-// category prior, not LIVE" (ConsumerVenueCard isLiveNow before only 'ml' could
-// be LIVE), and they cannot be updated; the note at the constant in
+// category prior, not LIVE" (ConsumerVenueCard isLiveNow, before it let only
+// 'ml' be LIVE), and they cannot be updated; the note at the constant in
 // crowdEngine says why that is true of this number. The coverage counter still
 // gives it a leg of its own, by the exact name. modelVersion is null because no
 // model ran. crowdEngine.describePredictionSupport hedges it like any category
@@ -4214,8 +4214,9 @@ const NO_CURVE_FALLBACK_TYPES_READ = 3;
 // Re-read on the study's own rows with this gate: the published policy's
 // within-15 on the 4,248 score-window rows is 41.29 against 41.34 without it,
 // so the published 41.3 stands. The gate sends about 2 in 100 of the 200+
-// review rows back to the rule engine: bars typed only bar_and_grill,
-// gastropub and sports_bar, wineries, tea houses, a sporting goods store.
+// review rows back to the rule engine: bars whose first three types are kinds
+// of bar guessCategory does not name (bar_and_grill, gastropub, sports_bar),
+// wineries, tea houses, a chocolate shop, a sporting goods store.
 function noCurveFallbackCategory(types) {
   if (!types.length) return null;
   const category = guessCategory(types);
