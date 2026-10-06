@@ -309,3 +309,31 @@ test('a 503 on a by-name ask, or on a row unmapped while it was asked, stamps no
     { name: 'Unmapped While Asked', never_asked: false, old_stamp_kept: true },
   ]);
 });
+
+test('the throttle budget counts 503s in a row, not 503s in a run', async () => {
+  // The count was never reset, so a run stopped at its fortieth 503 however
+  // many answers came between them, and said "40 consecutive throttles". The
+  // 10-06 passes drew their 503s from the same venues every time, seven in
+  // lehigh and twelve in philly, each one between answers.
+  const between = 'throttle_between';
+  for (let n = 10; n <= 50; n++) {
+    FAILS.set(`Between 503 ${n}`, throttle);
+    NO_FORECAST.add(`Between Answer ${n}`);
+    await addVenue(between, `Between 503 ${n}`, `ven_between_503_${n}`);
+    await addVenue(between, `Between Answer ${n}`, `ven_between_answer_${n}`);
+  }
+  // 41 throttles, each followed by an answer: the run reaches the end.
+  const asked = await piece([`--city=${between}`, '--only-found']);
+  assert.strictEqual(asked.length, 82, `the run stopped after ${asked.at(-1)}`);
+
+  // Forty in a row still stop it.
+  const wall = 'throttle_wall';
+  for (let n = 10; n <= 50; n++) {
+    FAILS.set(`Wall 503 ${n}`, throttle);
+    await addVenue(wall, `Wall 503 ${n}`, `ven_wall_503_${n}`);
+  }
+  await addVenue(wall, 'After The Wall', 'ven_after_the_wall');
+  const walled = await piece([`--city=${wall}`, '--only-found']);
+  assert.strictEqual(walled.length, 40);
+  assert.strictEqual(walled.at(-1), 'Wall 503 49');
+});

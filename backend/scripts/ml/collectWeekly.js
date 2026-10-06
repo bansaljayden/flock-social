@@ -477,7 +477,8 @@ async function collectWeekly() {
   };
 
   let consecutiveErrors = 0;
-  // Throttles are counted apart from errors: see the catch block below.
+  // Throttles are counted apart from errors (see the catch block below), and
+  // any answer from BestTime starts the count over.
   let consecutiveThrottles = 0;
   for (let i = 0; i < venues.length; i++) {
     const venue = venues[i];
@@ -486,6 +487,12 @@ async function collectWeekly() {
     try {
       // Fetch BestTime weekly forecast
       const forecast = await fetchWeeklyForecast(venue.name, venue.address, venue.besttime_venue_id);
+      // BestTime answered, with a week or without one, so any throttles
+      // before this were not in a row. The count used to last the whole run,
+      // which stopped it at its fortieth 503 however many answers came
+      // between them (the 10-06 passes drew theirs from the same few venues,
+      // each one between answers).
+      consecutiveThrottles = 0;
       if (!forecast) {
         await safeQuery(
           `UPDATE ml_venues
