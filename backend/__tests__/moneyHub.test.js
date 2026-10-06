@@ -3600,6 +3600,31 @@ test('a usage bill is billed after the use, so its last bill after the end date 
   assert.strictEqual(moneyHub.__test.endOf({ ...metered, cadence: 'monthly' }, '2026-10-06'), 'renewed');
 });
 
+test('a usage bill still charged long after its end date outran it: it runs, and is named so the date is cleared', () => {
+  // Review 2026-10-06: set to end Sep 30 and still paid on Dec 2, it had left
+  // the burn, the price sheet and the CSV, its licence came back as unpaid,
+  // and nothing named the date.
+  const flex = expense({ id: 4, vendor: 'MapTiler', product: 'Flex', kind: 'infrastructure', cadence: 'usage', amountCents: 3000, lastChargedOn: '2026-12-02', endsOn: '2026-09-30' });
+  assert.strictEqual(moneyHub.__test.endOf(flex, '2026-12-10'), 'renewed');
+  const base = pictureOn('2026-12-10', []);
+  const pic = pictureOn('2026-12-10', [flex]);
+  assert.strictEqual(pic.totals.perMonthCents - base.totals.perMonthCents, 3000, 'a bill still being paid left the burn');
+  assert.deepStrictEqual(pic.chargedPastEnd, [{ expenseId: 4, label: 'MapTiler, Flex', endsOn: '2026-09-30', lastChargedOn: '2026-12-02' }]);
+  assert.ok(!pic.licence.items.some((i) => i.id === 'maptiler'), 'a plan being paid for read as unlicensed');
+  assert.ok(moneyHub.buildPriceSheet({ expenses: [flex], todayYmd: '2026-12-10' }).rows.some((r) => r.id === 'expense-4'));
+  assert.match(moneyHub.expensesCsv([flex], '2026-12-10').split('\r\n')[1], /"2026-09-30","yes"/);
+  assert.strictEqual(moneyHub.costsLedger({ expenses: [flex], month: moneyHub.monthOf('2026-12-10') }).activeRows, 1);
+  // Two months on, from the first of the month.
+  assert.strictEqual(moneyHub.__test.endOf({ ...flex, endsOn: '2026-10-01', lastChargedOn: '2026-12-01' }, '2026-12-10'), 'renewed');
+
+  // Its last bill has a month and a week: the cycle that holds Sep 30 closes
+  // by Oct 30, and the vendor may take a few days to bill it.
+  assert.strictEqual(moneyHub.__test.endOf({ ...flex, lastChargedOn: '2026-11-06' }, '2026-12-10'), 'ended');
+  assert.strictEqual(moneyHub.__test.endOf({ ...flex, lastChargedOn: '2026-11-07' }, '2026-12-10'), 'renewed');
+  // A stopped row is out either way, so there is nothing to clear.
+  assert.deepStrictEqual(pictureOn('2026-12-10', [{ ...flex, active: false }]).chargedPastEnd, []);
+});
+
 // Review of the forecast (2026-10-06): the burn after a bill ends is worked
 // out by the burn's own rules on that day, not as the burn less the bill.
 test('a bill that stood in for a code line gives it back the day it ends, and the forecast counts it', () => {
