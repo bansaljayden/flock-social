@@ -45,8 +45,10 @@ const paidWith = {};
 const refundsMade = [];
 // Checkout sessions that completed, by id, for a confirm.
 const completedSessions = {};
-// Every cancel Stripe was asked for, in order, with its request options.
+// Every cancel Stripe was asked for, in order, with its request options, and
+// the subscriptions whose next cancel Stripe fails.
 const cancels = [];
+const failNextCancel = new Set();
 // Every customer deleted, in order (account deletion closes them), and the
 // ones Stripe refuses to delete.
 const deletedCustomers = [];
@@ -106,6 +108,10 @@ function FakeStripe() {
         return answer;
       },
       cancel: async (id, params, options) => {
+        if (failNextCancel.has(id)) {
+          failNextCancel.delete(id);
+          throw Object.assign(new Error('simulated Stripe outage'), { statusCode: 500 });
+        }
         cancels.push({ id, options: options || null });
         if (subs[id]) subs[id].status = 'canceled';
         return { id, status: 'canceled' };
@@ -840,6 +846,26 @@ test('a later event that still reads the refunded subscription as active cannot 
   await venueBilling.revokeRefundedSubscription({ object: 'charge', id: 'ch_refund_durable' });
   const rows = await testPool.query("SELECT 1 FROM stripe_subscription_endings WHERE stripe_subscription_id = 'sub_refund_durable'");
   assert.strictEqual(rows.rows.length, 1);
+});
+
+test('a refund whose cancel failed is finished on the retry, even after the subscription made another invoice', async () => {
+  // The ending was recorded, the cancel failed, the webhook answered 500, and
+  // before Stripe sent the event again the subscription had a newer invoice.
+  // The retry no longer matched the current period and gave up, and Stripe
+  // went on billing a subscription the writer refuses to grant for good.
+  const id = await yearlySubscriber('sub_refund_retry', 'in_refund_retry');
+  paidBy('ch_refund_retry', 'in_refund_retry', 'sub_refund_retry', 99000);
+  refunds.ch_refund_retry = [{ id: 're_retry', status: 'succeeded', amount: 99000 }];
+  failNextCancel.add('sub_refund_retry');
+  await assert.rejects(venueBilling.revokeRefundedSubscription({ object: 'charge', id: 'ch_refund_retry' }));
+  assert.ok(!cancels.some((c) => c.id === 'sub_refund_retry'));
+  subs.sub_refund_retry.latest_invoice = 'in_after_refund';
+  const retry = await venueBilling.revokeRefundedSubscription({ object: 'charge', id: 'ch_refund_retry' });
+  assert.deepStrictEqual(retry.revoked, ['sub_refund_retry'], `the retry gave up: ${JSON.stringify(retry)}`);
+  assert.ok(cancels.some((c) => c.id === 'sub_refund_retry'), 'a recorded refund was never cancelled at Stripe');
+  const s = await state(id);
+  assert.strictEqual(s.grant.status, 'refunded');
+  assert.strictEqual(s.served, 'free');
 });
 
 test('a partial refund is a credit, not an ending: Roost stays and nothing is cancelled', async () => {
