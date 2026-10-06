@@ -4146,8 +4146,9 @@ function servedConfidence({ accuracy, qmapApplied, hasWeather, curveOffset, nowc
 //   * no ml_venue_baselines row for the venue at all (venueHasCurve). A venue
 //     whose own curve is zero at this hour is closed or empty by its own
 //     pattern, and its category's typical level must not be put over that;
-//   * a finite value in the table for guessCategory(venue.types) at the
-//     weekday and hour buildFeatureMap reads off the same timestamp.
+//   * a finite value in the table for guessCategory over the venue's first
+//     three Google types (NO_CURVE_FALLBACK_TYPES_READ) at the weekday and
+//     hour buildFeatureMap reads off the same timestamp.
 //
 // WHAT IT IS CALLED, everywhere. predictionMethod NO_CURVE_FALLBACK_METHOD:
 // never 'ml', which services/moneyHub.js and the coverage counter read as the
@@ -4179,6 +4180,16 @@ const NO_CURVE_FALLBACK_FITTED_ON = '2.6.0-starling';
 const NO_CURVE_FALLBACK_POPULATION = 'live readings 2026-09-06..08 (Lehigh and Miami, local 2026-09-08 export), each venue scored with its own curve withheld; this table for venues with 200+ Google reviews, the rule engine below';
 const NO_CURVE_FALLBACK_MEASURED = Object.freeze({ within15: 41.3, rows: 4248 });
 
+// THE FIRST THREE GOOGLE TYPES, because those are the types the table was
+// measured on. The study read each venue's category with guessCategory over
+// google_type_1..3, which train/export_training_data.js writes as types[0..2]
+// of ml_venues.google_types: the same Places (New) array, in the same order,
+// that the card and the vote list hand this function whole. A type further
+// down that array can change the row. ['american_restaurant', 'restaurant',
+// 'food', 'bar'] was measured as a restaurant, 39 ("Not Busy") on a Friday at
+// 10 PM, and read whole it is a bar, 66. So the row is read off the same three.
+const NO_CURVE_FALLBACK_TYPES_READ = 3;
+
 let unknownNoCurveFallbackLogged = false;
 
 // "category_curve" and nothing else. A switch that is off by default must not
@@ -4201,7 +4212,8 @@ function noCurveFallbackValue(venue, ts) {
   if (!metadata || metadata.model_version !== NO_CURVE_FALLBACK_FITTED_ON) return null;
   const reviews = storedNumber(venue.user_ratings_total ?? venue.review_count);
   if (reviews === null || reviews < NO_CURVE_FALLBACK_MIN_REVIEWS) return null;
-  const category = guessCategory(Array.isArray(venue.types) ? venue.types : []);
+  const types = Array.isArray(venue.types) ? venue.types.slice(0, NO_CURVE_FALLBACK_TYPES_READ) : [];
+  const category = guessCategory(types);
   const raw = storedNumber((metadata.category_baselines || {})[`${category}_${ts.getDay()}_${ts.getHours()}`]);
   if (raw === null) return null;
   return Math.max(0, Math.min(100, Math.round(raw)));
@@ -5300,6 +5312,7 @@ module.exports = {
     NO_CURVE_FALLBACK_METHOD,
     NO_CURVE_FALLBACK_MIN_REVIEWS,
     NO_CURVE_FALLBACK_FITTED_ON,
+    NO_CURVE_FALLBACK_TYPES_READ,
     NO_CURVE_FALLBACK_MEASURED,
     NO_CURVE_FALLBACK_POPULATION,
     CURVE_ABSENT_CACHE_TTL,
