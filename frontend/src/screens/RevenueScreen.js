@@ -412,6 +412,14 @@ function HubSummary({ h, colors, loading, onRefresh }) {
   const payingWords = (count, missing) => (Number.isFinite(count)
     ? hubCount(count)
     : `not known, waiting on ${[...new Set(hubGaps(missing).map((g) => HUB_GAP_SOURCE[g] || g))].join(' and ') || 'a read'}`);
+  // Where the burn goes once the bills set to end have ended (moneyHub.js,
+  // THE END OF A BILL), worked out on the server from the same lines.
+  const after = h.costs && h.costs.afterEnding;
+  const endingWords = Number.isFinite(n.burnCents) && after && Number.isFinite(after.burnCents) && after.changeCents
+    ? ` It ${after.changeCents < 0 ? 'falls' : 'rises'} to ${hubMoney(after.burnCents)} ${after.bills === 1 && after.label
+      ? `on ${hubDay(after.by)}, when ${after.label} ends`
+      : `by ${hubDay(after.by)}, once the ${hubCount(after.bills)} bills set to end have ended`}.`
+    : '';
   const cachedAge = stripe.cached && Number.isFinite(stripe.cachedAgeSeconds) ? stripe.cachedAgeSeconds : null;
   return (
     <div style={hubStyle.card}>
@@ -454,7 +462,7 @@ function HubSummary({ h, colors, loading, onRefresh }) {
           value={hubMoney(n.burnCents) || 'Not read'}
           note={costsMissing.length > 0
             ? 'Not totalled, because the expense list could not be read.'
-            : 'Every recurring cost at its monthly rate. One-time charges are left out.'}
+            : `Every recurring cost at its monthly rate. One-time charges are left out.${endingWords}`}
         />
         <HubRow
           navy={navy}
@@ -831,6 +839,8 @@ function HubCosts({ h, colors }) {
     </div>
   );
   const upcoming = c.upcoming || [];
+  const truncated = !!(h.expenses && h.expenses.truncated);
+  const ending = Array.isArray(c.ending) ? c.ending : [];
   return (
     <div id={HUB_CARD.costs.id} style={hubStyle.card}>
       <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: navy, margin: '0 0 2px' }}>Costs</h3>
@@ -842,7 +852,7 @@ function HubCosts({ h, colors }) {
           smaller number that looks whole: the tables are withheld, as the
           headline burn is (review 2026-10-03). An unreadable list still shows
           the code lines, labelled by the notice above. */}
-      {h.expenses && h.expenses.truncated ? (
+      {truncated ? (
         <p style={hubStyle.note}>Totals withheld until the expense list fits: the bills past the first {h.expenses.limit || 500} are not in them.</p>
       ) : (
         <>
@@ -854,7 +864,7 @@ function HubCosts({ h, colors }) {
       )}
 
       <p style={hubStyle.kicker}>Renewals in the next {c.upcomingWindowDays || 90} days</p>
-      {Array.isArray(c.upcomingTotals) && c.upcomingTotals.some((t) => t.bills > 0) && !(h.expenses && h.expenses.truncated) && (
+      {Array.isArray(c.upcomingTotals) && c.upcomingTotals.some((t) => t.bills > 0) && !truncated && (
         <p style={hubStyle.note}>{c.upcomingTotals.map((t) => `Next ${t.days} days: ${hubMoney(t.cents)}`).join(' · ')}. Dollar bills on the expense list with a date.</p>
       )}
       {upcoming.length === 0 ? (
@@ -868,6 +878,23 @@ function HubCosts({ h, colors }) {
           note={u.estimated ? 'Worked out from the last charge date.' : null}
         />
       ))}
+
+      {/* Bills whose renewal is turned off (moneyHub.js, THE END OF A BILL):
+          the day each stops, and what the burn does then. */}
+      {ending.length > 0 && (
+        <>
+          <p style={hubStyle.kicker}>Set to end</p>
+          {ending.map((e) => (
+            <HubRow
+              key={`end-${e.expenseId}`}
+              navy={navy}
+              label={`${hubDay(e.endsOn)}, ${e.label}`}
+              value={`${hubExpenseAmount(e)} ${HUB_CADENCE_LABEL[e.cadence] || e.cadence}`}
+              note={hubEndingWords(e)}
+            />
+          ))}
+        </>
+      )}
 
       {Array.isArray(c.jumps) && c.jumps.length > 0 && (
         <>
@@ -936,9 +963,22 @@ function hubExpenseAmount(x) {
   return `${x.isCredit ? '−' : ''}${(x.amountCents / 100).toFixed(2)} ${x.currency}`;
 }
 
+// What the burn does on the day a bill set to end stops (moneyHub.js, THE END
+// OF A BILL): down by its share a month for a charge, up for a credit. null
+// for a bill in another currency, which was never in the dollar burn.
+function hubBurnMove(e) {
+  if (!Number.isFinite(e.perMonthCents) || e.perMonthCents === 0) return null;
+  return `the burn ${e.perMonthCents > 0 ? 'falls' : 'rises'} by ${hubMoney(Math.abs(e.perMonthCents))} a month`;
+}
+
+function hubEndingWords(e) {
+  const move = hubBurnMove(e);
+  return `No ${e.isCredit ? 'credit' : 'charge'} on or after this day.${move ? ` Then ${move}.` : ''}`;
+}
+
 const HUB_EMPTY_EXPENSE = {
   vendor: '', product: '', category: '', kind: 'tooling', amount: '', currency: 'USD', cadence: 'monthly',
-  lastChargedOn: '', renewsOn: '', replacesLine: '', verified: false, active: true, isCredit: false, note: '',
+  lastChargedOn: '', renewsOn: '', endsOn: '', replacesLine: '', verified: false, active: true, isCredit: false, note: '',
 };
 
 function hubFormFromExpense(x) {
@@ -952,6 +992,7 @@ function hubFormFromExpense(x) {
     cadence: x.cadence || 'monthly',
     lastChargedOn: x.lastChargedOn || '',
     renewsOn: x.renewsOn || '',
+    endsOn: x.endsOn || '',
     replacesLine: x.replacesLine || '',
     verified: !!x.verified,
     active: x.active !== false,
@@ -973,6 +1014,8 @@ function hubBodyFromForm(f) {
     cadence: f.cadence,
     lastChargedOn: f.lastChargedOn || null,
     renewsOn: f.renewsOn || null,
+    // A one-time charge has nothing to end; the server refuses the pair.
+    endsOn: f.cadence === 'one_time' ? null : (f.endsOn || null),
     // A credit never stands in for a code line; the server refuses the pair.
     replacesLine: f.isCredit ? null : (f.replacesLine || null),
     verified: !!f.verified,
@@ -1045,6 +1088,7 @@ function HubExpenseForm({ expense, kinds, cadences, codeLines, colors, onDone, o
         ))}
         {field('lastChargedOn', 'Last charged', <input id={`${uid}-lastChargedOn`} style={I} type="date" max={localToday()} value={form.lastChargedOn} onChange={set('lastChargedOn')} />)}
         {field('renewsOn', 'Renews', <input id={`${uid}-renewsOn`} style={I} type="date" value={form.renewsOn} onChange={set('renewsOn')} />)}
+        {field('endsOn', 'Ends on', <input id={`${uid}-endsOn`} style={I} type="date" value={form.cadence === 'one_time' ? '' : form.endsOn} onChange={set('endsOn')} disabled={form.cadence === 'one_time'} />)}
         {field('replacesLine', 'Counts instead of', (
           <select id={`${uid}-replacesLine`} style={I} value={form.isCredit ? '' : form.replacesLine} onChange={set('replacesLine')} disabled={form.isCredit}>
             <option value="">No code line</option>
@@ -1065,6 +1109,7 @@ function HubExpenseForm({ expense, kinds, cadences, codeLines, colors, onDone, o
         </label>
       </div>
       {form.isCredit && <p style={hubStyle.note}>Type the amount as a plain number. It is taken off the totals instead of added.</p>}
+      {form.endsOn && form.cadence !== 'one_time' && <p style={hubStyle.note}>For a bill whose renewal is turned off. Nothing is charged on or after that day and the hub stops counting it then, so leave Still being charged ticked.</p>}
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '12px', marginTop: '10px' }}>
         <button className="hit44" type="button" disabled={busy || !form.vendor.trim() || String(form.amount).trim() === ''} onClick={save}
           style={{ padding: '8px 14px', borderRadius: '8px', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: busy ? 'default' : 'pointer' }}>
@@ -1102,23 +1147,34 @@ function HubExpenseRow({ x, codeLines, colors, onEdit, onChanged }) {
   const label = x.product ? `${x.vendor}, ${x.product}` : x.vendor;
   const line = x.replacesLine ? (codeLines.find((l) => l.id === x.replacesLine) || {}).label || x.replacesLine : null;
   const amount = hubExpenseAmount(x);
+  // Where the row stands against its end date, as the server read it today
+  // (moneyHub.js, THE END OF A BILL). A renewal on or after the end date
+  // never comes, so the end is said in its place.
+  const end = x.endState || null;
+  const stops = (end === 'ending' || end === 'ended') && x.endsOn;
+  const running = x.active && end !== 'ended';
   const facts = [
     HUB_KIND_LABEL[x.kind] || x.kind,
     x.category,
-    x.renewsOn ? `renews ${hubDay(x.renewsOn)}` : null,
+    x.renewsOn && !(stops && x.renewsOn >= x.endsOn) ? `renews ${hubDay(x.renewsOn)}` : null,
     x.lastChargedOn ? `last charged ${hubDay(x.lastChargedOn)}` : null,
+    end === 'ending' ? `ends ${hubDay(x.endsOn)}` : null,
+    end === 'ended' ? `ended ${hubDay(x.endsOn)}` : null,
+    end === 'renewed' ? `charged on or after its end date of ${hubDay(x.endsOn)}, so it counts as running until the date is cleared` : null,
     line ? `counts instead of ${line} in the code` : null,
   ].filter(Boolean).join(', ');
   return (
     <div style={{ padding: '8px 0', borderTop: '1px solid var(--border-light)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '10px' }}>
-        <span style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: x.active ? colors.navy : 'var(--text-tertiary)', minWidth: 0, overflowWrap: 'anywhere' }}>
+        <span style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: running ? colors.navy : 'var(--text-tertiary)', minWidth: 0, overflowWrap: 'anywhere' }}>
           {label}
           {x.isCredit && <span style={hubTag('good')}>Credit</span>}
           {!x.verified && <span style={hubTag('warn')}>Unverified</span>}
+          {x.active && end === 'ending' && <span style={hubTag('muted')}>Ending</span>}
+          {x.active && end === 'ended' && <span style={hubTag('muted')}>Ended</span>}
           {!x.active && <span style={hubTag('muted')}>Stopped</span>}
         </span>
-        <span style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: x.active ? colors.navy : 'var(--text-tertiary)', whiteSpace: 'nowrap', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
+        <span style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: running ? colors.navy : 'var(--text-tertiary)', whiteSpace: 'nowrap', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
           {amount} {HUB_CADENCE_LABEL[x.cadence] || x.cadence}
         </span>
       </div>
@@ -1177,7 +1233,7 @@ function HubExpenseImport({ colors, onImported }) {
       {open && (
         <div style={{ marginTop: '6px' }}>
           <p style={hubStyle.note}>
-            One object per bill. Required: vendor, kind (infrastructure, tooling, legal or other), cadence (monthly, quarterly, yearly, usage or one_time) and amount in dollars. Optional: product, category, currency, lastChargedOn, renewsOn, verified, note, replacesLine to count a bill instead of a code line, and isCredit: true for a refund or credit, with the amount still a plain number. A bill already on the list with the same vendor, product, cadence and isCredit is updated, and a field left out keeps what is stored. Up to 200 at a time; one bad row saves nothing.
+            One object per bill. Required: vendor, kind (infrastructure, tooling, legal or other), cadence (monthly, quarterly, yearly, usage or one_time) and amount in dollars. Optional: product, category, currency, lastChargedOn, renewsOn, endsOn for a bill whose renewal is turned off, verified, note, replacesLine to count a bill instead of a code line, and isCredit: true for a refund or credit, with the amount still a plain number. A bill already on the list with the same vendor, product, cadence and isCredit is updated, and a field left out keeps what is stored. Up to 200 at a time; one bad row saves nothing.
           </p>
           <pre style={{ ...hubStyle.note, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', whiteSpace: 'pre-wrap', background: 'var(--bg-tertiary)', borderRadius: '8px', padding: '8px', margin: '6px 0' }}>{HUB_IMPORT_EXAMPLE}</pre>
           <textarea
@@ -1813,6 +1869,9 @@ function HubPeople({ h, colors }) {
 // that went wrong.
 const HUB_SEVERITY = { bad: 0, warn: 1 };
 const HUB_SOON_DAYS = 7;
+// A bill set to end is listed a month ahead, not a week: that is the time
+// there is to turn its renewal back on if it should go on.
+const HUB_ENDING_DAYS = 30;
 
 // Whole calendar days from one YYYY-MM-DD to another, or null. Both are New
 // York dates from the server, so no zone is involved.
@@ -1973,6 +2032,20 @@ function hubAttention(h) {
   if (doubles.length > 0) {
     add({ key: 'doubles', tone: 'warn', label: 'Bills possibly counted twice', value: hubCount(doubles.length), note: `${doubles.map((d) => `${d.expenseLabel} on the list and ${d.codeLabel} in the code`).join('; ')}.`, card: HUB_CARD.costs });
   }
+  // A bill charged on or after the day it was set to end renewed after all
+  // (moneyHub.js, THE END OF A BILL). The hub counts it as running; the date
+  // on the row is the thing that is wrong.
+  const pastEnd = Array.isArray(costs.chargedPastEnd) ? costs.chargedPastEnd : [];
+  if (pastEnd.length > 0) {
+    add({
+      key: 'past-end',
+      tone: 'warn',
+      label: 'Charged after the end date',
+      value: hubCount(pastEnd.length),
+      note: `${pastEnd.map((x) => `${x.label}, set to end ${hubDay(x.endsOn)} and charged ${hubDay(x.lastChargedOn)}`).join('; ')}. A charge on or after the end date means it renewed, so it counts as running. Clear the end date, or set the new one.`,
+      card: HUB_CARD.expenses,
+    });
+  }
   if (h.expenses && h.expenses.status === 'error') {
     add({ key: 'expenses', tone: 'warn', label: 'Expenses', value: 'Not read', note: 'The expense list could not be read, so renewals and bills counted twice were not checked.', card: HUB_CARD.expenses });
   }
@@ -2012,7 +2085,12 @@ function hubAttention(h) {
   const soon = (Array.isArray(costs.upcoming) ? costs.upcoming : [])
     .map((u) => ({ ...u, inDays: hubDaysUntil(today, u.on) }))
     .filter((u) => u.inDays !== null && u.inDays >= 0 && u.inDays <= HUB_SOON_DAYS);
-  return { problems, soon };
+  // Bills set to end within the month, listed apart like the renewals: a
+  // bill that stops is something to know, and to undo if it should not.
+  const ending = (Array.isArray(costs.ending) ? costs.ending : [])
+    .map((e) => ({ ...e, inDays: hubDaysUntil(today, e.endsOn) }))
+    .filter((e) => e.inDays !== null && e.inDays >= 0 && e.inDays <= HUB_ENDING_DAYS);
+  return { problems, soon, ending };
 }
 
 // Moves the Overview to a card without touching the address bar, where a hash
@@ -2037,11 +2115,11 @@ function hubJump(id) {
 
 function HubAttention({ h, colors }) {
   const navy = colors.navy;
-  const { problems, soon } = hubAttention(h);
+  const { problems, soon, ending } = hubAttention(h);
   const at = hubTime(h.generatedAt);
   const checked = at ? `Checked at ${at}.` : '';
   // The quiet morning is one line, and says when it was true.
-  if (problems.length === 0 && soon.length === 0) {
+  if (problems.length === 0 && soon.length === 0 && ending.length === 0) {
     return (
       <div style={hubStyle.card}>
         <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--accent-green-text)', margin: 0 }}>{`Nothing needs you. ${checked}`.trim()}</p>
@@ -2076,6 +2154,20 @@ function HubAttention({ h, colors }) {
               label={u.label}
               value={u.currency === 'USD' ? hubMoney(u.amountCents) : `${(u.amountCents / 100).toFixed(2)} ${u.currency}`}
               note={withJump(`Renews ${when(u.inDays)}, ${hubDay(u.on)}.${u.estimated ? ' Worked out from the last charge date.' : ''}`, HUB_CARD.costs)}
+            />
+          ))}
+        </>
+      )}
+      {ending.length > 0 && (
+        <>
+          <p style={hubStyle.kicker}>Ending in the next {HUB_ENDING_DAYS} days</p>
+          {ending.map((e) => (
+            <HubRow
+              key={`ending-${e.expenseId}`}
+              navy={navy}
+              label={e.label}
+              value={`${hubExpenseAmount(e)} ${HUB_CADENCE_LABEL[e.cadence] || e.cadence}`}
+              note={withJump(`Ends ${when(e.inDays)}, ${hubDay(e.endsOn)}${hubBurnMove(e) ? `, and ${hubBurnMove(e)}` : ''}.`, HUB_CARD.costs)}
             />
           ))}
         </>

@@ -337,6 +337,7 @@ function dbRow(x) {
     note: x.note || null,
     replaces_line: x.replaces_line || null,
     is_credit: x.is_credit === true,
+    ends_on: x.ends_on || null,
     updated_at: new Date('2026-09-20T12:00:00Z'),
   };
 }
@@ -831,7 +832,7 @@ function writeHandlers() {
     inserted,
     handlers: [
       [/^INSERT INTO business_expenses/, (p) => {
-        const row = { id: nextId++, vendor: p[0], product: p[1], category: p[2], kind: p[3], amount_cents: p[4], currency: p[5], cadence: p[6], last_charged_on: p[7], renews_on: p[8], active: p[9], verified: p[10], note: p[11], replaces_line: p[12], is_credit: p[13] };
+        const row = { id: nextId++, vendor: p[0], product: p[1], category: p[2], kind: p[3], amount_cents: p[4], currency: p[5], cadence: p[6], last_charged_on: p[7], renews_on: p[8], active: p[9], verified: p[10], note: p[11], replaces_line: p[12], is_credit: p[13], ends_on: p[14] };
         inserted.push({ params: p, row });
         return { rows: [dbRow(row)], rowCount: 1 };
       }],
@@ -877,8 +878,12 @@ test('POST /expenses validates shape first and stores cents, stamped by the admi
   assert.strictEqual(p[9], true, 'a new bill is active unless it says otherwise');
   assert.strictEqual(p[12], 'domain');
   assert.strictEqual(p[13], false, 'a bill is a charge unless it says it is a credit');
-  assert.strictEqual(p[14], 9, 'updated_by is the admin who wrote it');
+  // Migration 117 put ends_on last among the row's fields, so updated_by
+  // moved from p[14] to p[15].
+  assert.strictEqual(p[14], null, 'a bill renews unless it says the day it ends');
+  assert.strictEqual(p[15], 9, 'updated_by is the admin who wrote it');
   assert.strictEqual(ok.body.expense.amountCents, 1108);
+  assert.strictEqual(ok.body.expense.endsOn, null);
 });
 
 test('PUT and DELETE settle the id first and answer 404 for a row that is not there', async () => {
@@ -963,7 +968,9 @@ test('import: pasting the list again updates the matching bill, and keeps what t
   assert.strictEqual(u[12], 'typed on the screen', 'so is the note');
   assert.strictEqual(u[11], true, 'and the verified mark');
   assert.strictEqual(u[14], false, 'still a charge');
-  assert.strictEqual(u[15], 9, 'stamped by the admin');
+  // ends_on (migration 117) sits after is_credit, so the admin moved to u[16].
+  assert.strictEqual(u[15], null, 'no end date was stored, and the paste named none');
+  assert.strictEqual(u[16], 9, 'stamped by the admin');
 });
 
 test('import: a failed write rolls the whole paste back', async () => {
@@ -3425,4 +3432,210 @@ test('a check falls due by what was checked: a yearly bill after a year, a one-t
   const cm = require('../services/costModel');
   for (const e of cm.ONE_TIME) assert.strictEqual(row(`code-${e.id}`).dueAfterDays, null, e.id);
   for (const e of cm.FIXED_ANNUAL) assert.strictEqual(row(`code-${e.id}`).dueAfterDays, 60, e.id);
+});
+
+// ===========================================================================
+// A BILL THAT ENDS RATHER THAN RENEWS (migration 117, 2026-10-06). An App
+// Store subscription with its renewal turned off showed as a renewal on the
+// day it ended, counted in the next 30 days of charges, and stayed in the
+// burn for good; marked stopped early, it left a month it was still running
+// in. Each test runs on fixed dates, so none depends on the day it runs.
+// ===========================================================================
+
+// Charged Sep 20 for a month, renewal turned off, so it ends Oct 20: the
+// renewal date it carried.
+const ENDING = {
+  id: 1, vendor: 'Store tool', product: 'Plus', kind: 'tooling', category: 'Tools', cadence: 'monthly',
+  amountCents: 3180, lastChargedOn: '2026-09-20', renewsOn: '2026-10-20', endsOn: '2026-10-20',
+};
+const pictureOn = (today, expenses) => moneyHub.buildCostPicture({ expenses, month: moneyHub.monthOf(today) });
+
+test('a bill set to end counts until its end date, renews only before it, and counts nowhere after', () => {
+  const sub = expense(ENDING);
+  const base = (today) => pictureOn(today, []);
+
+  // Before the end: in the burn and in this month, and no renewal on the day
+  // it ends, in the list or in any of the totals.
+  let pic = pictureOn('2026-10-06', [sub]);
+  assert.strictEqual(pic.totals.perMonthCents - base('2026-10-06').totals.perMonthCents, 3180);
+  assert.strictEqual(pic.totals.thisMonthCents - base('2026-10-06').totals.thisMonthCents, 3180);
+  assert.deepStrictEqual(pic.upcoming, [], 'the renewal on the day it ends was listed');
+  for (const t of pic.upcomingTotals) assert.strictEqual(t.cents, 0, `the next ${t.days} days counted a charge that never comes`);
+  assert.deepStrictEqual(pic.ending, [{
+    expenseId: 1, label: 'Store tool, Plus', endsOn: '2026-10-20', amountCents: 3180, currency: 'USD', cadence: 'monthly', isCredit: false, perMonthCents: 3180,
+  }]);
+  assert.deepStrictEqual(pic.afterEnding, {
+    burnCents: base('2026-10-06').totals.perMonthCents, changeCents: -3180, by: '2026-10-20', bills: 1, label: 'Store tool, Plus',
+  });
+  const line = pic.lines.find((l) => l.expenseId === 1);
+  assert.strictEqual(line.endsOn, '2026-10-20');
+  assert.strictEqual(line.ended, false);
+
+  // From the day it ends: out of the burn, and still in the month it ran in.
+  pic = pictureOn('2026-10-20', [sub]);
+  assert.strictEqual(pic.totals.perMonthCents, base('2026-10-20').totals.perMonthCents);
+  assert.strictEqual(pic.totals.thisMonthCents - base('2026-10-20').totals.thisMonthCents, 3180, 'October still carries a bill that ran into it');
+  assert.deepStrictEqual(pic.ending, []);
+  assert.strictEqual(pic.afterEnding, null);
+  assert.strictEqual(pic.lines.find((l) => l.expenseId === 1).ended, true);
+
+  // The month after: nowhere, and still no renewal worked out past the end.
+  pic = pictureOn('2026-11-05', [sub]);
+  assert.strictEqual(pic.totals.thisMonthCents, base('2026-11-05').totals.thisMonthCents);
+  assert.strictEqual(pic.totals.perMonthCents, base('2026-11-05').totals.perMonthCents);
+  assert.deepStrictEqual(pic.upcoming, []);
+  assert.strictEqual(moneyHub.__test.nextChargeOn(sub, '2026-11-05'), null);
+});
+
+test('marking a bill stopped as well keeps the month it ran in, and a stopped bill with no end date keeps the old rule', () => {
+  const base = pictureOn('2026-10-25', []);
+  // Ended on Oct 20 and then marked stopped: October ran it, so October keeps it.
+  const both = pictureOn('2026-10-25', [expense({ ...ENDING, active: false })]);
+  assert.strictEqual(both.totals.thisMonthCents - base.totals.thisMonthCents, 3180);
+  assert.strictEqual(both.totals.perMonthCents, base.totals.perMonthCents);
+  // The same bill stopped with no end date counts in the month it was last
+  // charged, which was September.
+  const plain = pictureOn('2026-10-25', [expense({ ...ENDING, active: false, endsOn: null })]);
+  assert.strictEqual(plain.totals.thisMonthCents, base.totals.thisMonthCents);
+});
+
+test('a bill charged on or after its end date renewed after all: it runs, and is named so the date is cleared', () => {
+  // One App Store "expiring" notice was followed by a renewal and a receipt.
+  const renewed = expense({ ...ENDING, lastChargedOn: '2026-10-20', renewsOn: '2026-11-20' });
+  assert.strictEqual(moneyHub.__test.endOf(renewed, '2026-10-25'), 'renewed');
+  const base = pictureOn('2026-10-25', []);
+  const pic = pictureOn('2026-10-25', [renewed]);
+  assert.strictEqual(pic.totals.perMonthCents - base.totals.perMonthCents, 3180, 'a bill still being paid left the burn');
+  assert.deepStrictEqual(pic.upcoming.map((u) => u.on), ['2026-11-20']);
+  assert.deepStrictEqual(pic.ending, []);
+  assert.deepStrictEqual(pic.chargedPastEnd, [{ expenseId: 1, label: 'Store tool, Plus', endsOn: '2026-10-20', lastChargedOn: '2026-10-20' }]);
+  // A stopped row is out either way, so there is nothing to clear.
+  assert.deepStrictEqual(pictureOn('2026-10-25', [expense({ ...ENDING, lastChargedOn: '2026-10-20', active: false })]).chargedPastEnd, []);
+});
+
+test('the renewal totals count a bill set to end up to the day before it, and a credit set to end raises the burn', () => {
+  const totals = (x) => Object.fromEntries(pictureOn('2026-10-06', [x]).upcomingTotals.map((t) => [t.days, t]));
+  const monthly = { id: 2, vendor: 'Host', kind: 'infrastructure', cadence: 'monthly', amountCents: 10000, renewsOn: '2026-10-15' };
+  assert.strictEqual(totals(expense(monthly))[90].charges, 3, 'Oct 15, Nov 15 and Dec 15 with no end');
+  const ends = totals(expense({ ...monthly, endsOn: '2026-12-15' }));
+  assert.strictEqual(ends[90].charges, 2, 'nothing is charged on the day it ends');
+  assert.strictEqual(ends[90].cents, 20000);
+  // A credit set to end: the burn rises by it on its end date.
+  const credit = expense({ id: 3, vendor: 'Host', product: 'Startup credit', kind: 'infrastructure', cadence: 'monthly', amountCents: 1500, isCredit: true, endsOn: '2026-11-01' });
+  const pic = pictureOn('2026-10-06', [credit]);
+  assert.deepStrictEqual(pic.ending.map((e) => [e.expenseId, e.isCredit, e.perMonthCents]), [[3, true, -1500]]);
+  assert.strictEqual(pic.afterEnding.changeCents, 1500);
+  assert.strictEqual(pic.afterEnding.burnCents, pic.totals.perMonthCents + 1500);
+  // A euro bill set to end is listed, and leaves nothing in a dollar burn.
+  const euro = pictureOn('2026-10-06', [expense({ ...ENDING, currency: 'EUR' })]);
+  assert.strictEqual(euro.ending[0].perMonthCents, null);
+  assert.strictEqual(euro.afterEnding, null);
+});
+
+test('a bill past its end date clears no licence, stands in for no code line, and is off the price sheet and the running count', () => {
+  const maptiler = { id: 4, vendor: 'MapTiler', product: 'Flex', kind: 'infrastructure', cadence: 'monthly', amountCents: 3000, verified: true, lastChargedOn: '2026-09-01' };
+  const lic = (today, x) => pictureOn(today, [expense(x)]).licence.items.map((i) => i.id);
+  assert.ok(!lic('2026-10-06', { ...maptiler, endsOn: '2026-11-01' }).includes('maptiler'), 'a plan paid until November is licensed now');
+  assert.ok(lic('2026-11-02', { ...maptiler, endsOn: '2026-11-01' }).includes('maptiler'), 'the plan lapsed with the bill');
+
+  const railway = { id: 5, vendor: 'Railway', product: 'Pro', kind: 'infrastructure', cadence: 'monthly', amountCents: 4500, lastChargedOn: '2026-09-15', replacesLine: 'railway', endsOn: '2026-10-15' };
+  assert.deepStrictEqual(pictureOn('2026-10-06', [expense(railway)]).replaced.map((r) => r.id), ['railway']);
+  const after = pictureOn('2026-10-16', [expense(railway)]);
+  assert.deepStrictEqual(after.replaced, [], 'a bill that ended stood in for the code line');
+  assert.strictEqual(after.lines.find((l) => l.id === 'railway').counted, true);
+
+  const sheet = (today) => moneyHub.buildPriceSheet({ expenses: [expense({ ...maptiler, endsOn: '2026-11-01' })], todayYmd: today }).rows.map((r) => r.id);
+  assert.ok(sheet('2026-10-06').includes('expense-4'));
+  assert.ok(!sheet('2026-11-02').includes('expense-4'), 'a bill no longer paid has no price to check');
+
+  const running = (today) => moneyHub.costsLedger({ expenses: [expense({ ...maptiler, endsOn: '2026-11-01' })], month: moneyHub.monthOf(today) }).activeRows;
+  assert.strictEqual(running('2026-10-06'), 1);
+  assert.strictEqual(running('2026-11-02'), 0);
+});
+
+test('the add form takes the day a bill ends, refuses one on a one-time charge, and the import keeps a stored one', async () => {
+  const w = writeHandlers();
+  handlers = w.handlers;
+  const bill = { vendor: 'Store tool', product: 'Plus', kind: 'tooling', cadence: 'monthly', amount: '31.80', lastChargedOn: '2026-09-20', renewsOn: '2026-10-20' };
+  for (const [body, re] of [
+    [{ ...bill, endsOn: '2026-02-30' }, /endsOn must be a date, YYYY-MM-DD/],
+    [{ ...bill, cadence: 'one_time', endsOn: '2026-10-20' }, /a one-time charge has nothing to end; leave endsOn empty/],
+    // The everyday word is folded first, so it is refused the same way.
+    [{ ...bill, cadence: 'once', ends_on: '2026-10-20' }, /a one-time charge has nothing to end/],
+  ]) {
+    const r = await req('POST', '/api/admin/expenses', body);
+    assert.strictEqual(r.status, 400, `expected 400 for ${JSON.stringify(body)}: ${r.text}`);
+    assert.match(r.body.error, re);
+  }
+  assert.strictEqual(w.inserted.length, 0);
+
+  let r = await req('POST', '/api/admin/expenses', { ...bill, ends_on: '2026-10-20' });
+  assert.strictEqual(r.status, 201, r.text);
+  assert.strictEqual(w.inserted[0].params[14], '2026-10-20', 'ends_on is stored from its snake_case spelling');
+  assert.strictEqual(r.body.expense.endsOn, '2026-10-20');
+  r = await req('POST', '/api/admin/expenses', { ...bill, product: 'Pro', endsOn: '' });
+  assert.strictEqual(r.status, 201, r.text);
+  assert.strictEqual(w.inserted[1].params[14], null, 'an empty date is no date');
+
+  // A paste that leaves the date out keeps the stored one; one that names
+  // null clears it.
+  const updates = [];
+  handlers = [
+    [/^SELECT .* FROM business_expenses WHERE lower\(vendor\)/, () => ({
+      rows: [dbRow({ id: 21, vendor: 'Store tool', product: 'Plus', kind: 'tooling', amount_cents: 3180, cadence: 'monthly', renews_on: '2026-10-20', ends_on: '2026-10-20' })], rowCount: 1,
+    })],
+    [/^UPDATE business_expenses SET vendor/, (p) => {
+      updates.push(p);
+      return { rows: [dbRow({ id: p[0], vendor: p[1], product: p[2], kind: p[4], amount_cents: p[5], cadence: p[7], ends_on: p[15] })], rowCount: 1 };
+    }],
+  ];
+  r = await req('POST', '/api/admin/expenses/import', [{ vendor: 'store tool', product: 'plus', kind: 'tooling', cadence: 'monthly', amount: 31.8 }]);
+  assert.strictEqual(r.status, 200, r.text);
+  assert.strictEqual(updates[0][15], '2026-10-20', 'a re-paste without the date erased it');
+  assert.strictEqual(r.body.expenses[0].endsOn, '2026-10-20');
+  r = await req('POST', '/api/admin/expenses/import', [{ vendor: 'store tool', product: 'plus', kind: 'tooling', cadence: 'monthly', amount: 31.8, endsOn: null }]);
+  assert.strictEqual(r.status, 200, r.text);
+  assert.strictEqual(updates[1][15], null, 'a paste that names no end date clears it');
+});
+
+test('migration 117 adds the end date and refuses one on a one-time charge', () => {
+  const sql = fs.readFileSync(path.join(__dirname, '..', 'migrations', '117_business_expense_ends_on.sql'), 'utf8');
+  assert.match(sql, /ADD COLUMN IF NOT EXISTS ends_on DATE;/);
+  assert.match(sql, /business_expenses_ends_on_check\s+CHECK \(ends_on IS NULL OR cadence <> 'one_time'\)/);
+  assert.match(sql, /^-- @requires column business_expenses\.ends_on\r?$/m);
+  assert.ok(/^[\x00-\x7F]*$/.test(sql), 'the embedded server the boot suite runs is WIN1252, so the file is ASCII');
+  // Every read and write of the table carries the column.
+  for (const s of [moneyHub.EXPENSE_INSERT_SQL, moneyHub.EXPENSE_UPDATE_SQL, moneyHub.EXPENSE_IMPORT_INSERT_SQL]) {
+    assert.match(s, /ends_on/);
+  }
+});
+
+test('the CSV carries the end date, and a bill past it reads as no longer charged', () => {
+  const rows = [expense(ENDING)];
+  const [head, before] = moneyHub.expensesCsv(rows, '2026-10-06').split('\r\n');
+  assert.match(head, /"Renews","Ends","Still charged"/);
+  assert.match(before, /"2026-10-20","2026-10-20","yes"/);
+  const [, after] = moneyHub.expensesCsv(rows, '2026-10-21').split('\r\n');
+  assert.match(after, /"2026-10-20","2026-10-20","no"/);
+});
+
+test('the hub says where each row stands against its end date, and carries the bills ending and the burn after them', async () => {
+  const today = MONTH.todayYmd;
+  const later = moneyHub.__test.addMonthsYmd(today, 1);
+  const earlier = moneyHub.__test.addMonthsYmd(today, -1);
+  expenseRows = [
+    { id: 1, vendor: 'Ending', kind: 'tooling', amount_cents: 3000, cadence: 'monthly', ends_on: later },
+    { id: 2, vendor: 'Ended', kind: 'tooling', amount_cents: 2000, cadence: 'monthly', ends_on: earlier },
+    { id: 3, vendor: 'Renewed', kind: 'tooling', amount_cents: 1000, cadence: 'monthly', last_charged_on: today, ends_on: earlier },
+    { id: 4, vendor: 'Renews', kind: 'tooling', amount_cents: 500, cadence: 'monthly' },
+  ];
+  handlers = hubHandlers();
+  const r = await req('GET', '/api/admin/money');
+  assert.strictEqual(r.status, 200, r.text);
+  const state = Object.fromEntries(r.body.expenses.rows.map((x) => [x.vendor, x.endState]));
+  assert.deepStrictEqual(state, { Ending: 'ending', Ended: 'ended', Renewed: 'renewed', Renews: null });
+  assert.deepStrictEqual(r.body.costs.ending.map((e) => e.label), ['Ending']);
+  assert.strictEqual(r.body.costs.afterEnding.changeCents, -3000);
+  assert.strictEqual(r.body.costs.afterEnding.burnCents, r.body.net.burnCents - 3000);
+  assert.deepStrictEqual(r.body.costs.chargedPastEnd.map((x) => x.label), ['Renewed']);
 });
