@@ -1179,6 +1179,16 @@ async function succeededRefundTotal(chargeId) {
 //   out, and a subscription left open would bill again at its next renewal.
 //   Last, the grant is written from Stripe as usual, which revokes it now.
 //
+//   A RECORDED ENDING IS FINISHED FIRST, whatever came after it. When the
+//   cancel failed after the ending was recorded, the webhook answered 500 and
+//   Stripe sent the event again, but by then the subscription could have made
+//   another invoice, the period check below no longer matched, and the retry
+//   answered not_current_roost_period without cancelling: Stripe went on
+//   billing a subscription the writer refuses to grant for good. Every
+//   subscription already recorded for this charge is cancelled and written
+//   again before anything is decided anew, the way a recorded dispute is
+//   (proBilling.cancelDisputedSubscriptions).
+//
 // A Pro subscription is left alone: RevenueCat reads Stripe's refunds itself
 // and revokes on its own path (routes/revenuecat.js).
 async function revokeRefundedSubscription(obj) {
@@ -1186,14 +1196,25 @@ async function revokeRefundedSubscription(obj) {
     ? (typeof obj.id === 'string' ? obj.id : null)
     : (typeof (obj && obj.charge) === 'string' ? obj.charge : obj && obj.charge && obj.charge.id) || null;
   if (!chargeId) return { ignored: 'no_charge' };
+  const revoked = [];
+  const recorded = await billing.endingsRecordedFor('refund', chargeId);
+  for (const r of recorded) {
+    if (revoked.includes(r.stripe_subscription_id)) continue;
+    const sub = await stripe().subscriptions.retrieve(r.stripe_subscription_id);
+    if (!isVenueObject(sub)) continue;
+    await cancelNow(sub, `flock-refund-cancel-${sub.id}`);
+    await syncVenueSubscription(sub.id);
+    revoked.push(sub.id);
+  }
+  const answer = (ignored) => (revoked.length ? { revoked } : { ignored });
   const charge = await stripe().charges.retrieve(chargeId);
   const amount = charge && Number.isFinite(charge.amount) ? charge.amount : 0;
-  if (!(amount > 0)) return { ignored: 'no_payment' };
-  if ((await succeededRefundTotal(chargeId)) < amount) return { ignored: 'partial_refund' };
+  if (!(amount > 0)) return answer('no_payment');
+  if ((await succeededRefundTotal(chargeId)) < amount) return answer('partial_refund');
   const { funded } = await billing.subscriptionsFundedBy(charge);
-  if (funded.length === 0) return { ignored: 'no_subscription' };
-  const revoked = [];
+  if (funded.length === 0) return answer('no_subscription');
   for (const f of funded) {
+    if (recorded.some((r) => r.stripe_subscription_id === f.subscriptionId)) continue;
     const sub = await stripe().subscriptions.retrieve(f.subscriptionId);
     if (!isVenueObject(sub)) continue;
     const latest = typeof sub.latest_invoice === 'string' ? sub.latest_invoice : sub.latest_invoice && sub.latest_invoice.id;
@@ -1206,8 +1227,7 @@ async function revokeRefundedSubscription(obj) {
     await syncVenueSubscription(sub.id);
     revoked.push(sub.id);
   }
-  if (revoked.length === 0) return { ignored: 'not_current_roost_period' };
-  return { revoked };
+  return answer('not_current_roost_period');
 }
 
 // ---------------------------------------------------------------------------
