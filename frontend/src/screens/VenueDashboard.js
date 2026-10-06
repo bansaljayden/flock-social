@@ -137,11 +137,95 @@ export function verificationLine({ verified, pending, onRoost }) {
 // as well as after. `tier_notice_until` is set only once that email has been
 // sent, so without it there is no email to point at and no date; the line
 // under this one says the email is still to come.
-export function roostNoticeLine(profile) {
+//
+// A VENUE THAT HAS SUBSCRIBED INSIDE ITS WINDOW HAS A CHARGE SCHEDULED, and
+// was still told "Nothing is being charged". `plan` is the Stripe plan still
+// running (runningRoostPlan below); with one that is set to bill, the line
+// says a charge is coming, and the line under it names the day.
+export function roostNoticeLine(profile, plan = null) {
   if (!profile || profile.tier_notice_window !== true) return null;
+  if (plan && !plan.cancelAt) return 'Everything you had stays on until your Roost plan starts billing.';
   return profile.tier_notice_until
     ? 'Everything you had stays on while the notice we emailed you runs. Nothing is being charged.'
     : 'Everything you had stays on, and nothing is being charged.';
+}
+
+// THE PLAN BILLED THROUGH STRIPE, AND ITS REAL DATES. The card used to name
+// tier_expires_at, which for a Stripe plan was the period end plus the three
+// days of grace the server allows a late renewal webhook: a trial read
+// "Runs until" three days after Stripe charged at its end, and a renewing
+// plan and one set to end showed the same offset. The server now sends
+// Stripe's own dates, from /api/venue-billing/status on the web and from the
+// profile everywhere (inside the app, and until the status answers), and the
+// card names the one it means.
+//
+// The Stripe plan still running (active, trialing, past due or unpaid), or
+// null. The status, when it has answered, is the authority: it read Stripe a
+// moment ago.
+const RUNNING_PLAN_STATUSES = ['active', 'trialing', 'past_due', 'unpaid'];
+export function runningRoostPlan(profile, status) {
+  if (status && typeof status === 'object' && 'subscriptionStatus' in status) {
+    return status.subscriptionStatus
+      ? { status: status.subscriptionStatus, trialEnd: status.trialEnd || null, currentPeriodEnd: status.currentPeriodEnd || null, cancelAt: status.cancelAt || null }
+      : null;
+  }
+  if (profile && profile.tier_source === 'stripe' && RUNNING_PLAN_STATUSES.includes(profile.tier_status)) {
+    return {
+      status: profile.tier_status,
+      trialEnd: profile.tier_trial_end || null,
+      currentPeriodEnd: profile.tier_current_period_end || null,
+      cancelAt: profile.tier_cancel_at || null,
+    };
+  }
+  return null;
+}
+
+function planDate(iso) {
+  const d = iso ? new Date(iso) : null;
+  return d && !Number.isNaN(d.getTime())
+    ? d.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })
+    : null;
+}
+
+// The two lines the Subscription card shows for a Stripe plan: what it is,
+// and the date that matters. A trial names the day it is charged, a renewing
+// plan the day it renews, and a plan set to end the day it ends.
+export function stripePlanLines(plan) {
+  if (!plan) return { line: 'Billed through Stripe.', date: null };
+  const ends = planDate(plan.cancelAt);
+  if (ends) {
+    return {
+      line: plan.status === 'trialing' ? 'On the free trial. It ends without a charge.' : 'Billed through Stripe. Set to end, so nothing more is charged.',
+      date: `Ends on ${ends}`,
+    };
+  }
+  if (plan.status === 'trialing') {
+    const charge = planDate(plan.trialEnd);
+    return { line: 'On the free trial.', date: charge ? `First charge on ${charge}` : null };
+  }
+  if (plan.status === 'past_due' || plan.status === 'unpaid') {
+    return { line: 'The last payment did not go through. Update your card in Manage billing.', date: null };
+  }
+  const renews = planDate(plan.currentPeriodEnd);
+  return { line: 'Billed through Stripe.', date: renews ? `Renews on ${renews}` : null };
+}
+
+// The date line under it, for every plan. Inside the notice window a Stripe
+// plan set to bill names its first charge; any other Stripe plan names its own
+// date; everything else keeps what this line always said.
+export function roostPlanDateLine({ profile, plan, endsAt }) {
+  const inWindow = profile?.tier_notice_window === true;
+  if (plan) {
+    if (inWindow && !plan.cancelAt) {
+      const first = planDate(plan.trialEnd || plan.currentPeriodEnd);
+      if (first) return `First charge on ${first}`;
+    }
+    const { date } = stripePlanLines(plan);
+    if (date) return date;
+  }
+  const shown = planDate(inWindow ? profile?.tier_notice_until : endsAt);
+  if (shown) return `Runs until ${shown}`;
+  return inWindow ? 'We will email you at least 30 days before this changes' : 'No end date';
 }
 
 // THE MONDAY EMAIL'S SWITCH SHOWS ONLY WHERE THE EMAIL GOES.
@@ -2493,15 +2577,18 @@ export default function VenueDashboard({
                         charged yet) and leaves the plan itself to Manage
                         billing, where Stripe shows it. A paid plan with no
                         Stripe behind it was sold by hand, on terms agreed in
-                        writing (Terms 9.6). */}
+                        writing (Terms 9.6). A Stripe plan's line comes from
+                        its real state (stripePlanLines), and inside the
+                        notice window a plan set to bill says a charge is
+                        coming (roostNoticeLine with the plan). */}
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>
                       {venueTier === 'free'
                         ? 'No charge. Your listing, your hours, your replies.'
                         : venueProfile?.tier_notice_window === true
-                          ? roostNoticeLine(venueProfile)
+                          ? <VenueBillingStatus>{({ status }) => roostNoticeLine(venueProfile, runningRoostPlan(venueProfile, status))}</VenueBillingStatus>
                         : venueTierReason === 'paid'
                           ? (venueTierSource === 'stripe'
-                            ? <VenueBillingStatus>{({ status }) => (status?.status === 'trialing' ? 'On the free trial. Nothing is charged until it ends.' : 'Billed through Stripe.')}</VenueBillingStatus>
+                            ? <VenueBillingStatus>{({ status }) => stripePlanLines(runningRoostPlan(venueProfile, status)).line}</VenueBillingStatus>
                             : 'Billed as agreed with us.')
                           : venueTierReason === 'founding_comp'
                             ? 'Comped as a founding venue. Nothing is being charged.'
@@ -2518,22 +2605,14 @@ export default function VenueDashboard({
                         date nears, and not a prompt to buy. DESIGN-STANDARD: an
                         interface that manufactures urgency about its own
                         billing is the dark pattern, not the information. A date
-                        is the information. */}
+                        is the information. Inside the notice window (Terms
+                        9.6) the date is the one the notice email named, and
+                        with no email sent yet there is no end date to give;
+                        a Stripe plan names its own real date, never the
+                        grace (roostPlanDateLine). */}
                     {venueTier !== 'free' && (
                       <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>
-                        {(() => {
-                          // Inside the notice window (Terms 9.6) the date is
-                          // the one the notice email named, and with no email
-                          // sent yet there is no end date to give.
-                          const inWindow = venueProfile?.tier_notice_window === true;
-                          const source = inWindow ? venueProfile?.tier_notice_until : venueTierEndsAt;
-                          const endsAt = source ? new Date(source) : null;
-                          return endsAt && !Number.isNaN(endsAt.getTime())
-                            ? `Runs until ${endsAt.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}`
-                            : inWindow
-                              ? 'We will email you at least 30 days before this changes'
-                              : 'No end date';
-                        })()}
+                        <VenueBillingStatus>{({ status }) => roostPlanDateLine({ profile: venueProfile, plan: runningRoostPlan(venueProfile, status), endsAt: venueTierEndsAt })}</VenueBillingStatus>
                       </p>
                     )}
                   </div>

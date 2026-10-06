@@ -445,6 +445,53 @@ test('Manage billing is for a plan still running: active, trialing, past due or 
   } finally { restore(); }
 });
 
+// ---- the dates the plans card names come from Stripe -----------------------
+
+test('the status names the trial\'s charge date, the renewal date and a scheduled end', async () => {
+  setEnv(ON);
+  const trialEnds = Math.floor(Date.now() / 1000) + 9 * 86400;
+  stripeState.subscriptions = [{
+    ...roostSub('sub_dated', 'trialing', 1700000000),
+    trial_end: trialEnds, cancel_at: null, cancel_at_period_end: false,
+    items: { data: [{ price: { id: 'price_roost_month' }, current_period_end: trialEnds }] },
+  }];
+  let db = stubPool(venueDb({ customer: 'cus_VENUE1', trialUsed: true }));
+  try {
+    const status = await call(venueBillingRoutes, 'GET', '/api/venue-billing/status');
+    assert.strictEqual(status.status, 200, JSON.stringify(status.body));
+    assert.strictEqual(status.body.subscriptionStatus, 'trialing');
+    assert.strictEqual(status.body.trialEnd, new Date(trialEnds * 1000).toISOString(), 'the status does not say when the trial is charged');
+    assert.strictEqual(status.body.currentPeriodEnd, new Date(trialEnds * 1000).toISOString());
+    assert.strictEqual(status.body.cancelAt, null);
+  } finally { db.restore(); }
+
+  // Set to end at the period end: the end date is the period end.
+  const periodEnds = Math.floor(Date.now() / 1000) + 25 * 86400;
+  stripeState.subscriptions = [{
+    ...roostSub('sub_dated', 'active', 1700000000),
+    trial_end: null, cancel_at: null, cancel_at_period_end: true,
+    items: { data: [{ price: { id: 'price_roost_month' }, current_period_end: periodEnds }] },
+  }];
+  db = stubPool(venueDb({ customer: 'cus_VENUE1', trialUsed: true }));
+  try {
+    const status = await call(venueBillingRoutes, 'GET', '/api/venue-billing/status');
+    assert.strictEqual(status.body.subscriptionStatus, 'active');
+    assert.strictEqual(status.body.trialEnd, null);
+    assert.strictEqual(status.body.cancelAt, new Date(periodEnds * 1000).toISOString());
+  } finally { db.restore(); }
+
+  // Nothing running: no dates at all.
+  stripeState.subscriptions = [roostSub('sub_dated', 'canceled', 1700000000)];
+  db = stubPool(venueDb({ customer: 'cus_VENUE1', trialUsed: true }));
+  try {
+    const status = await call(venueBillingRoutes, 'GET', '/api/venue-billing/status');
+    assert.strictEqual(status.body.subscriptionStatus, null);
+    assert.strictEqual(status.body.trialEnd, null);
+    assert.strictEqual(status.body.currentPeriodEnd, null);
+    assert.strictEqual(status.body.cancelAt, null);
+  } finally { db.restore(); }
+});
+
 test('a venue that has subscribed before gets no second trial; a live subscription blocks a second checkout', async () => {
   setEnv(ON);
   const { restore } = stubPool(venueDb({ customer: 'cus_VENUE1' }));

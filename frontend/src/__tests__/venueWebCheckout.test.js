@@ -137,6 +137,36 @@ test('a venue inside its window that already subscribed sees Manage billing, not
   expect(screen.queryByText(/Free until/)).toBeNull();
 });
 
+// Under Manage billing, the date the running plan is at, from Stripe's own
+// dates in the status, never the plan's expiresAt (three days of grace past
+// the day Stripe charges).
+test('Manage billing names the charge a subscriber inside the notice window has scheduled', async () => {
+  getVenueBillingStatus.mockResolvedValue({
+    ...ON_SALE, canManage: true, inNoticeWindow: true, freeUntil: '2026-10-25T15:00:00.000Z',
+    subscriptionStatus: 'trialing', trialEnd: '2026-10-25T15:00:00.000Z', currentPeriodEnd: '2026-10-25T15:00:00.000Z', cancelAt: null,
+    expiresAt: '2026-10-28T15:00:00.000Z',
+  });
+  render(<VenueBillingControl current />);
+  expect(await screen.findByText('First charge on October 25, 2026.')).toBeTruthy();
+  expect(screen.queryByText(/October 28/)).toBeNull();
+});
+
+test('Manage billing names the renewal, or the end of a plan set to end', async () => {
+  getVenueBillingStatus.mockResolvedValue({
+    ...ON_SALE, canManage: true, subscriptionStatus: 'active', trialEnd: null,
+    currentPeriodEnd: '2026-12-02T15:00:00.000Z', cancelAt: null, expiresAt: '2026-12-05T15:00:00.000Z',
+  });
+  const { unmount } = render(<VenueBillingControl current />);
+  expect(await screen.findByText('Renews on December 2, 2026.')).toBeTruthy();
+  unmount();
+  getVenueBillingStatus.mockResolvedValue({
+    ...ON_SALE, canManage: true, subscriptionStatus: 'active', trialEnd: null,
+    currentPeriodEnd: '2026-12-02T15:00:00.000Z', cancelAt: '2026-12-02T15:00:00.000Z',
+  });
+  render(<VenueBillingControl current />);
+  expect(await screen.findByText('Ends on December 2, 2026. Nothing more is charged.')).toBeTruthy();
+});
+
 describe('the return from Stripe', () => {
   const fakeWindow = (search) => {
     const win = {

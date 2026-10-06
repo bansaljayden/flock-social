@@ -111,7 +111,12 @@ describe('Settings says how a paid plan is billed, never a cadence nobody sent',
   });
 
   test('a Stripe plan names Stripe, or its free trial; a plan sold by hand says so', () => {
-    expect(DASH).toContain("status?.status === 'trialing' ? 'On the free trial. Nothing is charged until it ends.' : 'Billed through Stripe.'");
+    // The Stripe line comes from the plan's real state (stripePlanLines in
+    // VenueDashboard.js, walked in venuePlanPromises.test.js). It used to say
+    // "Nothing is charged until it ends" over a date three days after the
+    // trial was charged.
+    expect(DASH).toContain('<VenueBillingStatus>{({ status }) => stripePlanLines(runningRoostPlan(venueProfile, status)).line}</VenueBillingStatus>');
+    expect(visible(DASH)).not.toContain('Nothing is charged until it ends.');
     expect(DASH).toContain(": 'Billed as agreed with us.')");
   });
 });

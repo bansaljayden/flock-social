@@ -1177,6 +1177,65 @@ test('a revocation whose billing Stripe will not stop says so, and sending it ag
   assert.ok(cancels.some((c) => c.id === 'sub_revoke_fails'));
 });
 
+// ---------------------------------------------------------------------------
+// THE PLAN'S DATE IS STRIPE'S DATE, NOT THE GRACE.
+//
+// A live grant's expires_at is the period end plus three days of grace, so a
+// webhook that arrives late does not lock a paying venue out. That is the
+// resolver's business. The profile handed the same column to the dashboard
+// as the date the plan runs until, so a trial read "Runs until" three days
+// after Stripe charges, and a renewing plan and one set to end showed the same
+// three-day offset.
+// ---------------------------------------------------------------------------
+
+test('the profile names the trial\'s charge date, the renewal date and a scheduled end, never the grace', async () => {
+  const [PLACE] = placePair();
+  const id = await venue({ verified: true, placeId: PLACE });
+  const trialEnds = Math.floor(Date.now() / 1000) + 10 * DAY_S;
+  await venueBilling.syncVenueSubscription(sub('sub_dates', id, 'trialing', {
+    metadata: boundTo(PLACE)(id), trial_end: trialEnds, ...period('price_roost_month', trialEnds),
+  }));
+  let res = await profileCall('GET', '/api/venue-profile', { as: id });
+  assert.strictEqual(res.status, 200, res.text);
+  assert.strictEqual(res.body.tier, 'pro');
+  assert.strictEqual(res.body.tier_status, 'trialing');
+  assert.strictEqual(res.body.tier_trial_end, new Date(trialEnds * 1000).toISOString(), 'the card cannot name the day the trial is charged');
+  assert.strictEqual(new Date(res.body.tier_expires_at).getTime(), trialEnds * 1000,
+    'the date shown is three days after Stripe charges at the end of the trial');
+  // The grace is still there, for the resolver: Roost stays on through it.
+  const stored = await testPool.query('SELECT expires_at FROM venue_subscriptions WHERE user_id = $1', [id]);
+  assert.strictEqual(new Date(stored.rows[0].expires_at).getTime(), trialEnds * 1000 + venueBilling.__test.GRACE_MS);
+
+  // Renewing: the renewal date.
+  const periodEnds = Math.floor(Date.now() / 1000) + 30 * DAY_S;
+  await venueBilling.syncVenueSubscription(sub('sub_dates', id, 'active', { metadata: boundTo(PLACE)(id), ...period('price_roost_month', periodEnds) }));
+  res = await profileCall('GET', '/api/venue-profile', { as: id });
+  assert.strictEqual(res.body.tier_status, 'active');
+  assert.strictEqual(res.body.tier_current_period_end, new Date(periodEnds * 1000).toISOString());
+  assert.strictEqual(res.body.tier_cancel_at, null);
+  assert.strictEqual(new Date(res.body.tier_expires_at).getTime(), periodEnds * 1000);
+
+  // Set to end: the day it ends.
+  await venueBilling.syncVenueSubscription(sub('sub_dates', id, 'active', {
+    metadata: boundTo(PLACE)(id), ...period('price_roost_month', periodEnds), cancel_at: periodEnds, cancel_at_period_end: true,
+  }));
+  res = await profileCall('GET', '/api/venue-profile', { as: id });
+  assert.strictEqual(res.body.tier_cancel_at, new Date(periodEnds * 1000).toISOString());
+  assert.strictEqual(new Date(res.body.tier_expires_at).getTime(), periodEnds * 1000);
+});
+
+test('a comp keeps its own end date on the card', async () => {
+  const [PLACE] = placePair();
+  const id = await venue({ verified: true, placeId: PLACE });
+  const adminId = await admin();
+  const comp = await adminCall('POST', `/api/admin/venues/${id}/tier`, { as: adminId, body: { tier: 'pro', grantReason: 'admin', durationDays: 20 } });
+  assert.strictEqual(comp.status, 200, comp.text);
+  const res = await profileCall('GET', '/api/venue-profile', { as: id });
+  assert.strictEqual(res.body.tier_expires_at, comp.body.expires_at);
+  assert.strictEqual(res.body.tier_trial_end, null);
+  assert.strictEqual(res.body.tier_current_period_end, null);
+});
+
 test('verifying a claim, or declining one that never paid, touches no billing', async () => {
   const [PLACE] = placePair();
   const id = await venue({ verified: false, placeId: PLACE });
