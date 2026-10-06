@@ -342,9 +342,9 @@ function dbRow(x) {
   };
 }
 
-// The served-forecast check's one row, as Postgres answers it: four counts and
+// The served-forecast check's one row, as Postgres answers it: five counts and
 // the model versions seen. The default is a quiet month with nothing paired.
-const QUIET_ACCURACY = { served: 0, matched: 0, days: 0, within_one_band: 0, versions: [] };
+const QUIET_ACCURACY = { served: 0, matched: 0, days: 0, within_one_band: 0, from_curve: 0, versions: [] };
 
 // The five people statements' rows, as Postgres answers them. The default is a
 // quiet fortnight: nobody new, nobody active, no plans.
@@ -2027,11 +2027,12 @@ test('the BestTime answer is held like the vendor reads: five minutes after a go
 });
 
 // ===========================================================================
-// 9. THE MODEL: which one is serving, and how its served forecasts are doing
+// 9. THE MODEL: what makes the numbers, and how the served ones are doing
 // ===========================================================================
 
-// 261 of 412 venue-hours within one band: 63.35%, shown as 63.3.
-const MEASURED = { served: 1280, matched: 412, days: 26, within_one_band: 261, versions: ['2.6.0-starling'] };
+// 261 of 412 venue-hours within one band: 63.35%, shown as 63.3. 300 of the
+// 412 pairs the venue's own curve made, the other 112 the trained model.
+const MEASURED = { served: 1280, matched: 412, days: 26, within_one_band: 261, from_curve: 300, versions: ['2.6.0-starling', '2.6.0-starling+curve_offset'] };
 const servedChecks = () => log.filter((q) => /FROM served_predictions sp/.test(q.sql));
 
 test('the model block: the loaded version, within one band from the database with its sample, the goal and the gap', async () => {
@@ -2052,7 +2053,8 @@ test('the model block: the loaded version, within one band from the database wit
   assert.strictEqual(a.minDays, 5);
   assert.strictEqual(a.withinOneBand, 261);
   assert.strictEqual(a.percent, 63.3);
-  assert.deepStrictEqual(a.versions, ['2.6.0-starling']);
+  assert.strictEqual(a.fromCurve, 300, 'how many of the pairs the curve made, so the card can say what was scored');
+  assert.deepStrictEqual(a.versions, ['2.6.0-starling', '2.6.0-starling+curve_offset']);
   assert.deepStrictEqual(m.goal, { percent: 85, metric: 'within_one_band' });
   assert.strictEqual(m.gapPoints, 21.7);
   assert.deepStrictEqual(m.bands, [
@@ -2063,6 +2065,8 @@ test('the model block: the loaded version, within one band from the database wit
     { label: 'Packed', upTo: null },
   ]);
   assert.deepStrictEqual(m.cache, { ttlSeconds: 3600 });
+  // The stub predictor names no switches, so the arithmetic is not claimed.
+  assert.deepStrictEqual(m.serving, { mode: null, nowcast: null });
   // Asked the window, crowdEngine's cuts and the pairing window, and nothing else.
   const q = servedChecks();
   assert.strictEqual(q.length, 1);
@@ -2075,10 +2079,10 @@ test('under the minimum the share is withheld, count and all, so no noisy percen
   assert.strictEqual(moneyHub.__test.MODEL_MIN_SAMPLE, 100);
   assert.strictEqual(moneyHub.__test.MODEL_MIN_DAYS, 5);
   const cases = [
-    [{ served: 300, matched: 99, days: 12, within_one_band: 99, versions: [] }, false, 'one venue-hour short'],
-    [{ served: 900, matched: 400, days: 4, within_one_band: 300, versions: [] }, false, 'plenty of venue-hours, too few days'],
-    [{ served: 0, matched: 0, days: 0, within_one_band: 0, versions: [] }, false, 'nothing paired at all'],
-    [{ served: 400, matched: 100, days: 5, within_one_band: 62, versions: [] }, true, 'exactly at both floors'],
+    [{ served: 300, matched: 99, days: 12, within_one_band: 99, from_curve: 99, versions: [] }, false, 'one venue-hour short'],
+    [{ served: 900, matched: 400, days: 4, within_one_band: 300, from_curve: 0, versions: [] }, false, 'plenty of venue-hours, too few days'],
+    [{ served: 0, matched: 0, days: 0, within_one_band: 0, from_curve: 0, versions: [] }, false, 'nothing paired at all'],
+    [{ served: 400, matched: 100, days: 5, within_one_band: 62, from_curve: 100, versions: [] }, true, 'exactly at both floors'],
   ];
   for (const [row, enough, why] of cases) {
     moneyHub.__test.resetCache();
@@ -2090,6 +2094,8 @@ test('under the minimum the share is withheld, count and all, so no noisy percen
     assert.strictEqual(a.matched, row.matched, why);
     assert.strictEqual(a.days, row.days, why);
     assert.strictEqual(a.served, row.served, why);
+    // What made the pairs says nothing of how well they did, so it stands.
+    assert.strictEqual(a.fromCurve, row.from_curve, why);
     if (enough) {
       assert.strictEqual(a.percent, 62, why);
       assert.strictEqual(a.withinOneBand, 62, why);
@@ -2124,7 +2130,7 @@ test('a check the database could not finish is an error with no figure and no ga
   const m = r.body.model;
   assert.strictEqual(m.accuracy.status, 'error');
   assert.match(m.accuracy.reason, /did not finish the check of served forecasts/);
-  for (const field of ['percent', 'matched', 'withinOneBand', 'served']) {
+  for (const field of ['percent', 'matched', 'withinOneBand', 'served', 'fromCurve']) {
     assert.strictEqual(m.accuracy[field], undefined, `a failed check carried ${field}`);
   }
   assert.strictEqual(m.gapPoints, null);
@@ -2166,6 +2172,24 @@ test('with no model loaded, the version is the artifact on disk, labelled as not
   }
 });
 
+// Review of the public copy (2026-10-06): prediction_method 'ml' is the
+// venue's own curve and live readings in curve_offset mode, where no model
+// runs, so the card is told which arithmetic is serving.
+test('the model block says which arithmetic makes the numbers, from the predictor\'s own switches', async () => {
+  handlers = hubHandlers();
+  const curve = { predictionCoverage: () => ({ modelLoaded: true, modelVersion: '2.6.0-starling', serveMode: 'curve_offset', nowcastEnabled: true }) };
+  let h = await moneyHub.buildMoneyHub({ db: pool, predictor: curve });
+  assert.deepStrictEqual(h.model.serving, { mode: 'curve_offset', nowcast: true });
+  assert.strictEqual(h.model.version.value, '2.6.0-starling', 'the version is still read, loaded and not serving');
+  const model = { predictionCoverage: () => ({ modelLoaded: true, modelVersion: '2.6.0-starling', serveMode: 'model', nowcastEnabled: false }) };
+  h = await moneyHub.buildMoneyHub({ db: pool, predictor: model });
+  assert.deepStrictEqual(h.model.serving, { mode: 'model', nowcast: false });
+  // A mode this file does not know, or a predictor that throws, claims nothing.
+  assert.deepStrictEqual(moneyHub.__test.readServing({ predictor: { predictionCoverage: () => ({ serveMode: 'other', nowcastEnabled: 'yes' }) } }), { mode: null, nowcast: null });
+  const { result } = await capturingLogs(async () => moneyHub.__test.readServing({ predictor: { predictionCoverage: () => { throw new Error('not ready'); } } }));
+  assert.deepStrictEqual(result, { mode: null, nowcast: null });
+});
+
 test('the band ladder is crowdEngine\'s own, and a score\'s band is how many cuts it exceeds', () => {
   const { getLabel } = require('../services/crowdEngine');
   const ladder = moneyHub.crowdBandLadder();
@@ -2178,9 +2202,9 @@ test('the band ladder is crowdEngine\'s own, and a score\'s band is how many cut
   }
 });
 
-test('the check pairs model forecasts with live readings of the same venue and hour, once per venue-hour', () => {
+test('the check pairs forecasts made from a venue\'s own data with live readings of the same venue and hour, once per venue-hour', () => {
   const sql = moneyHub.SERVED_BAND_ACCURACY_SQL.replace(/\s+/g, ' ');
-  assert.match(sql, /sp\.prediction_method = 'ml'/, 'only forecasts the model made');
+  assert.match(sql, /sp\.prediction_method = 'ml'/, 'only forecasts made from a venue\'s own data, never the rule engine\'s');
   assert.match(sql, /t\.label_source = 'live'/, 'only readings that are observations, never the vendor\'s forecast');
   assert.match(sql, /t\.collection_mode = 'realtime'/);
   assert.match(sql, /t\.day_of_week = s\.local_day AND t\.hour = s\.local_hour/, 'the same weekday and hour');
@@ -2188,25 +2212,35 @@ test('the check pairs model forecasts with live readings of the same venue and h
     'inside the window where that weekday and hour can only be the same day');
   assert.match(sql, /DISTINCT ON \(t\.venue_id, t\.observed_date, t\.hour\)/, 'one pair per venue and hour');
   assert.match(sql, /abs\(b\.served_band - b\.observed_band\) <= 1/, 'within one band, not the exact band');
+  // prediction_method 'ml' is the curve's number in curve_offset mode; the
+  // row's version says which, so the pairs are split by it. strpos, since a
+  // LIKE pattern's _ matches any character.
+  assert.match(sql, /COUNT\(\*\) FILTER \(WHERE strpos\(p\.model_version, '\+curve_offset'\) > 0\)::int AS from_curve/);
+  // The qualifier searched for is the one the predictor writes, and only the
+  // curve writes it.
+  const I = mlPredictor._internals;
+  assert.ok(I.servedModelVersion('2.6.0-starling', true, null).includes('+curve_offset'));
+  assert.ok(I.servedModelVersion('2.6.0-starling', true, { bucket: 1 }).includes('+curve_offset'));
+  assert.ok(!I.servedModelVersion('2.6.0-starling', false, { bucket: 1 }).includes('+curve_offset'), 'the nowcast on the model\'s number is still the model\'s');
   assert.ok(!/\$\{/.test(moneyHub.SERVED_BAND_ACCURACY_SQL), 'static, so the sqlParameterTypes suite prepares it');
   // The pairing window is short of the week that separates two of the same
   // weekday and hour, by a wide margin.
   assert.ok(moneyHub.__test.MODEL_PAIR_WINDOW_HOURS * 2 < 7 * 24);
 });
 
-// How often the model answers at all: the week's serves, by what answered
-// each, from served_predictions. Sorted as the statement sorts them, most
-// served first.
+// What answered: the week's serves, by what answered each, from
+// served_predictions. Sorted as the statement sorts them, most served first.
+// 1,290 of the 1,310 'ml' serves the venue's own curve made.
 const COVERAGE = [
-  { method: 'ml', served: 1310, venues: 80 },
-  { method: 'rule_engine_no_baseline', served: 1204, venues: 212 },
-  { method: 'owner_report', served: 40, venues: 3 },
-  { method: 'rule_engine_fallback', served: 12, venues: 9 },
-  { method: 'unknown', served: 3, venues: 2 },
+  { method: 'ml', served: 1310, venues: 80, from_curve: 1290 },
+  { method: 'rule_engine_no_baseline', served: 1204, venues: 212, from_curve: 0 },
+  { method: 'owner_report', served: 40, venues: 3, from_curve: 0 },
+  { method: 'rule_engine_fallback', served: 12, venues: 9, from_curve: 0 },
+  { method: 'unknown', served: 3, venues: 2, from_curve: 0 },
 ];
 const coverageChecks = () => log.filter((q) => /AS method, COUNT\(\*\)::int AS served/.test(q.sql));
 
-test('how often the model answers: the week\'s serves by what answered them, the share from the model, the most common fallback', async () => {
+test('what answered: the week\'s serves by what answered them, the share from a venue\'s own data split by what made it, the most common fallback', async () => {
   handlers = hubHandlers({ accuracy: MEASURED, coverage: COVERAGE });
   const r = await req('GET', '/api/admin/money');
   assert.strictEqual(r.status, 200, r.text);
@@ -2217,11 +2251,12 @@ test('how often the model answers: the week\'s serves by what answered them, the
   // Every serve counted once, the ones with no method recorded included.
   assert.strictEqual(c.total, 2569);
   assert.strictEqual(c.ml, 1310);
+  assert.strictEqual(c.mlFromCurve, 1290, 'the curve made these; the other 20 the trained model made');
   assert.strictEqual(c.mlPercent, 51);
-  assert.deepStrictEqual(c.byMethod, COVERAGE);
+  assert.deepStrictEqual(c.byMethod, COVERAGE.map((m) => ({ method: m.method, served: m.served, venues: m.venues })));
   assert.deepStrictEqual(c.topFallback, { method: 'rule_engine_no_baseline', served: 1204, venues: 212 });
   // Asked the window and the ceiling on methods, once, beside the accuracy
-  // check, which still scores model serves only.
+  // check, which still scores serves made from a venue's own data only.
   const q = coverageChecks();
   assert.strictEqual(q.length, 1);
   assert.deepStrictEqual(q[0].params, [7, 20]);
@@ -2241,15 +2276,22 @@ test('the owner\'s report and an unrecorded method are never the fallback, and a
   assert.deepStrictEqual(c.topFallback, { method: 'rule_engine', served: 5, venues: 5 });
   assert.strictEqual(c.total, 1005);
   assert.strictEqual(c.mlPercent, 10);
+  assert.strictEqual(c.mlFromCurve, 0, 'a row with no curve count is no curve serves');
 
-  c = await moneyHub.readModelCoverage({ query: async () => ({ rows: [{ method: 'ml', served: 42, venues: 7 }] }) });
-  assert.strictEqual(c.topFallback, null, 'every serve came from the model');
+  c = await moneyHub.readModelCoverage({ query: async () => ({ rows: [{ method: 'ml', served: 42, venues: 7, from_curve: 42 }] }) });
+  assert.strictEqual(c.topFallback, null, 'every serve came from a venue\'s own data');
   assert.strictEqual(c.mlPercent, 100);
+  assert.strictEqual(c.mlFromCurve, 42);
+
+  // A curve count larger than the serves it is part of is held to them.
+  c = await moneyHub.readModelCoverage({ query: async () => ({ rows: [{ method: 'ml', served: 10, venues: 2, from_curve: 11 }] }) });
+  assert.strictEqual(c.mlFromCurve, 10);
 
   c = await moneyHub.readModelCoverage({ query: async () => ({ rows: [] }) });
   assert.strictEqual(c.total, 0);
   assert.strictEqual(c.mlPercent, null, 'nothing served is no share, not 0%');
   assert.strictEqual(c.topFallback, null);
+  assert.strictEqual(c.mlFromCurve, 0);
 });
 
 test('the coverage read is held for the hour with the check, and a failure is words with no numbers', async () => {
@@ -2272,7 +2314,7 @@ test('the coverage read is held for the hour with the check, and a failure is wo
   const c = r.body.model.coverage;
   assert.strictEqual(c.status, 'error');
   assert.match(c.reason, /did not finish counting what answered each forecast served/);
-  for (const field of ['total', 'ml', 'mlPercent', 'byMethod', 'topFallback']) {
+  for (const field of ['total', 'ml', 'mlFromCurve', 'mlPercent', 'byMethod', 'topFallback']) {
     assert.strictEqual(c[field], undefined, `a failed read carried ${field}`);
   }
   assert.strictEqual(r.body.model.accuracy.status, 'ok', 'the accuracy check is its own read');
@@ -2284,6 +2326,8 @@ test('the coverage statement counts cards served, names nobody, and is static', 
   assert.match(sql, /COALESCE\(sv\.prediction_method, 'unknown'\) AS method/);
   assert.match(sql, /GROUP BY 1/);
   assert.match(sql, /LIMIT \$2::int/);
+  assert.match(sql, /COUNT\(\*\) FILTER \(WHERE strpos\(sv\.model_version, '\+curve_offset'\) > 0\)::int AS from_curve/,
+    'the serves the curve made, by the qualifier mlPredictor writes on them');
   assert.ok(!/user_id/.test(sql), 'who was served is not read');
   assert.ok(!/sp\b/.test(sql), 'the accuracy check\'s alias would make the two reads indistinguishable in a log');
   assert.ok(!moneyHub.MODEL_COVERAGE_SQL.includes('${'), 'static, so the sqlParameterTypes suite prepares it');

@@ -168,9 +168,11 @@ const CROWD_DATA = {
   },
 };
 
-// 261 of 412 venue-hours within one band, over 26 days, out of 1,280 serves.
+// 261 of 412 venue-hours within one band, over 26 days, out of 1,280 serves,
+// every one of them made by the venue's own curve, as production serves.
 const MODEL = {
   version: { status: 'ok', value: '2.6.0-starling', source: 'loaded', loaded: true },
+  serving: { mode: 'curve_offset', nowcast: true },
   accuracy: {
     status: 'ok',
     asOf: '2026-09-25T13:10:00.000Z',
@@ -185,7 +187,8 @@ const MODEL = {
     minDays: 5,
     withinOneBand: 261,
     percent: 63.3,
-    versions: ['2.6.0-starling'],
+    fromCurve: 412,
+    versions: ['2.6.0-starling+curve_offset+nowcast'],
   },
   goal: { percent: 85, metric: 'within_one_band' },
   gapPoints: 21.7,
@@ -804,27 +807,39 @@ describe('crowd data: what BestTime says, beside the plan the code records', () 
 });
 
 // ---------------------------------------------------------------------------
-// THE MODEL. The share is the server's, over served model forecasts that got a
-// live reading in the same venue-hour. Under the minimum sample the server
-// sends no share, and the card must say so in words and print no percentage,
-// even if a share arrives anyway.
+// THE MODEL. The share is the server's, over served forecasts made from a
+// venue's own data that got a live reading in the same venue-hour. Under the
+// minimum sample the server sends no share, and the card must say so in words
+// and print no percentage, even if a share arrives anyway.
+//
+// prediction_method ml is the venue's own curve and live readings in
+// curve_offset mode, which production serves and where no model runs. The
+// card names what made the numbers and never calls the curve's the model's.
 // ---------------------------------------------------------------------------
-describe('the model: which one is serving, and its served forecasts against the goal', () => {
+describe('the model: what makes the numbers, and the served ones against the goal', () => {
   const modelCard = () => screen.getByRole('heading', { name: 'Model' }).parentElement;
   const percentsIn = (el) => el.textContent.match(/\d+(\.\d+)?%/g);
   const withModel = (over) => ({ ...CONNECTED, model: { ...MODEL, ...over } });
+  // Any wording that hands the curve's numbers to the model.
+  const MODEL_CLAIM = /model forecasts|from the model|crowd model|the model answers|Live model/i;
 
-  test('the loaded version, the share within one band with its window and n, the goal and the gap', async () => {
+  test('what makes the numbers, the loaded version, the share within one band with its window and n, the goal and the gap', async () => {
     await renderHub(CONNECTED);
     const card = modelCard();
-    expect(within(hubRow('Live model')).getByText('2.6.0-starling')).toBeInTheDocument();
-    expect(hubRow('Live model').textContent).toMatch(/The version this server loaded, from its model_metadata\.json\./);
-    expect(within(hubRow('Live model')).queryByText('Not loaded')).toBeNull();
+    expect(card.textContent).toMatch(/What makes Flock's crowd numbers now, and how the served ones held up against what the collector measured in the same hour\./);
+    const madeBy = hubRow('Made by');
+    expect(within(madeBy).getByText("Venue's own curve")).toBeInTheDocument();
+    expect(madeBy.textContent).toMatch(/Serve mode is curve_offset: each venue's own weekly curve plus its live offset, with no model run\. The nowcast is on: a venue read live in an earlier hour has that reading blended into its number\./);
+    expect(within(hubRow('Model version')).getByText('2.6.0-starling')).toBeInTheDocument();
+    expect(hubRow('Model version').textContent).toMatch(/The version this server loaded, from its model_metadata\.json\. Serve mode curve_offset does not run it\. A venue's own data answers only while it is loaded\./);
+    expect(within(hubRow('Model version')).queryByText('Not loaded')).toBeNull();
     expect(within(card).getByText('Within one crowd band, last 30 days')).toBeInTheDocument();
     expect(within(card).getByText('63.3%')).toBeInTheDocument();
     // n and its count are held together by non-breaking spaces, so a narrow
     // screen never strands "n" at the end of a line.
-    expect(card.textContent).toMatch(/of served model forecasts landed in the live reading's crowd band or the one next to it\. n = 412 venue-hours over 26 days, 261 of them within one band, from 1,280 forecasts served in the window\./);
+    expect(card.textContent).toMatch(/of forecasts made from a venue's own data landed in the live reading's crowd band or the one next to it\. n = 412 venue-hours over 26 days, 261 of them within one band, from 1,280 forecasts served in the window\./);
+    expect(card.textContent).toMatch(/Counts forecasts made from a venue's own data \(served_predictions, prediction_method ml\) on the venue card and the vote list\. Of the 412 venue-hours scored, all came from the venue's own curve and live readings\. Each is paired/);
+    expect(card.textContent).not.toMatch(MODEL_CLAIM);
     expect(within(hubRow('Goal')).getByText('85%')).toBeInTheDocument();
     expect(hubRow('Goal').textContent).toMatch(/Of served forecasts within one crowd band\. Not the blended training figure/);
     const gap = hubRow('Gap to goal');
@@ -834,7 +849,50 @@ describe('the model: which one is serving, and its served forecasts against the 
     expect(card.textContent).toMatch(/held for an hour; this answer is 17 minutes old\./);
     expect(percentsIn(card)).toEqual(['63.3%', '85%']);
     expect(card.textContent).not.toMatch(/85\.1|87\.3/);
-    expect(card.textContent).not.toMatch(/mixes forecasts/);
+    expect(card.textContent).not.toMatch(/window mixes/);
+  });
+
+  test('in model mode the trained model is named, and a window that mixes the two says how many each made', async () => {
+    await renderHub(withModel({
+      serving: { mode: 'model', nowcast: false },
+      accuracy: { ...MODEL.accuracy, fromCurve: 300, versions: ['2.6.0-starling', '2.6.0-starling+curve_offset'] },
+    }));
+    // The screen paints the last load first, so wait for this one.
+    expect(await screen.findByText('Trained model')).toBeInTheDocument();
+    const card = modelCard();
+    const madeBy = hubRow('Made by');
+    expect(within(madeBy).getByText('Trained model')).toBeInTheDocument();
+    expect(madeBy.textContent).toMatch(/Serve mode is model: the trained model makes each venue's number\./);
+    expect(madeBy.textContent).not.toMatch(/nowcast/);
+    expect(hubRow('Model version').textContent).toMatch(/The version this server loaded, from its model_metadata\.json\.$/);
+    expect(card.textContent).toMatch(/Of the 412 venue-hours scored, 300 came from the venue's own curve and live readings, 112 from the trained model\./);
+    expect(screen.getByText('This window mixes 2 served versions: 2.6.0-starling, 2.6.0-starling+curve_offset. A +curve_offset or +nowcast ending names a switch that changed the number.')).toBeInTheDocument();
+  });
+
+  test('a window the model made alone says so, and a serve mode the server could not read is not guessed', async () => {
+    await renderHub(withModel({
+      serving: { mode: null, nowcast: null },
+      accuracy: { ...MODEL.accuracy, fromCurve: 0, versions: ['2.6.0-starling'] },
+    }));
+    expect(await screen.findByText('The server did not say which serve mode it runs.')).toBeInTheDocument();
+    const card = modelCard();
+    const madeBy = hubRow('Made by');
+    expect(within(madeBy).getByText('Not read')).toBeInTheDocument();
+    expect(madeBy.textContent).toMatch(/The server did not say which serve mode it runs\./);
+    expect(card.textContent).toMatch(/Of the 412 venue-hours scored, all came from the trained model\./);
+    expect(card.textContent).not.toMatch(/curve_offset does not run it/);
+  });
+
+  test('a server that sends no serve mode and no split draws no row for it and claims nothing about what made the numbers', async () => {
+    const accuracy = { ...MODEL.accuracy };
+    delete accuracy.fromCurve;
+    await renderHub(withModel({ serving: undefined, accuracy }));
+    await waitFor(() => expect(screen.queryByText('Made by')).toBeNull());
+    const card = modelCard();
+    expect(within(card).queryByText('Made by')).toBeNull();
+    expect(card.textContent).not.toMatch(/venue-hours scored/);
+    expect(card.textContent).not.toMatch(/the trained model|own curve/);
+    expect(card.textContent).toMatch(/on the venue card and the vote list\. Each is paired/);
   });
 
   test('under the minimum it says not enough observations yet, and prints no share and no gap', async () => {
@@ -842,6 +900,8 @@ describe('the model: which one is serving, and its served forecasts against the 
       gapPoints: null,
       accuracy: { ...MODEL.accuracy, served: 310, matched: 37, days: 3, enough: false, withinOneBand: null, percent: null },
     }));
+    // The screen paints the last load first, so wait for this one.
+    await within(modelCard()).findByText(/^37 venue-hours over 3 days so far/);
     const card = modelCard();
     expect(within(card).getByText('Not enough observations yet')).toBeInTheDocument();
     expect(card.textContent).toMatch(/37 venue-hours over 3 days so far, from 310 forecasts served\. The share shows from 100 venue-hours across at least 5 days; below that it mostly measures chance\./);
@@ -858,6 +918,8 @@ describe('the model: which one is serving, and its served forecasts against the 
       gapPoints: 72.5,
       accuracy: { ...MODEL.accuracy, served: 40, matched: 8, days: 1, enough: false, withinOneBand: 1, percent: 12.5 },
     }));
+    // The screen paints the last load first, so wait for this one.
+    await within(modelCard()).findByText(/^8 venue-hours over 1 day so far/);
     const card = modelCard();
     expect(within(card).getByText('Not enough observations yet')).toBeInTheDocument();
     expect(within(card).queryByText('12.5%')).toBeNull();
@@ -872,6 +934,8 @@ describe('the model: which one is serving, and its served forecasts against the 
       gapPoints: null,
       accuracy: { status: 'error', reason: "The database did not finish the check of served forecasts against the collector's readings, so there is no figure to show.", cached: false, cachedAgeSeconds: 0 },
     }));
+    // The screen paints the last load first, so wait for this one.
+    await within(modelCard()).findByText('Could not load');
     const card = modelCard();
     expect(within(card).getByText('Could not load')).toBeInTheDocument();
     expect(within(card).getByText(/did not finish the check of served forecasts against the collector's readings/)).toBeInTheDocument();
@@ -879,22 +943,27 @@ describe('the model: which one is serving, and its served forecasts against the 
     expect(within(hubRow('Gap to goal')).getByText('Not measured yet')).toBeInTheDocument();
     expect(hubRow('Gap to goal').textContent).toMatch(/Waits for the check above to answer\./);
     expect(percentsIn(card)).toEqual(['85%']);
-    // The version is its own read and still stands.
-    expect(within(hubRow('Live model')).getByText('2.6.0-starling')).toBeInTheDocument();
+    // The version is its own read and still stands, and so does the serve mode.
+    expect(within(hubRow('Model version')).getByText('2.6.0-starling')).toBeInTheDocument();
+    expect(within(hubRow('Made by')).getByText("Venue's own curve")).toBeInTheDocument();
+    // With no pairs read there is nothing to say about what made them.
+    expect(card.textContent).not.toMatch(/venue-hours scored/);
   });
 
   test('an artifact that is not loaded is labelled so, and a window that mixes versions says which', async () => {
     await renderHub(withModel({
       version: { status: 'ok', value: '2.6.0-starling', source: 'artifact', loaded: false },
-      accuracy: { ...MODEL.accuracy, versions: ['2.6.0-starling', '2.7.0-swift'] },
+      accuracy: { ...MODEL.accuracy, versions: ['2.6.0-starling+curve_offset', '2.7.0-swift+curve_offset'] },
     }));
-    const row = hubRow('Live model');
+    // The screen paints the last load first, so wait for this one.
+    expect(await screen.findByText('This window mixes 2 served versions: 2.6.0-starling+curve_offset, 2.7.0-swift+curve_offset. A +curve_offset or +nowcast ending names a switch that changed the number.')).toBeInTheDocument();
+    const row = hubRow('Model version');
     expect(within(row).getByText('Not loaded')).toBeInTheDocument();
     expect(row.textContent).toMatch(/No model is loaded in this server process yet, so this is the version of the artifact on disk/);
-    expect(screen.getByText('This window mixes forecasts from 2 model versions: 2.6.0-starling, 2.7.0-swift.')).toBeInTheDocument();
   });
 
-  // How often the model answers at all, from the week's serves.
+  // What answered, from the week's serves: 1,290 of the 1,310 from a venue's
+  // own data the venue's curve made, the other 20 the trained model.
   const COVERAGE = {
     status: 'ok',
     asOf: '2026-09-25T13:10:00.000Z',
@@ -903,6 +972,7 @@ describe('the model: which one is serving, and its served forecasts against the 
     windowDays: 7,
     total: 2569,
     ml: 1310,
+    mlFromCurve: 1290,
     mlPercent: 51,
     byMethod: [
       { method: 'ml', served: 1310, venues: 80 },
@@ -914,49 +984,77 @@ describe('the model: which one is serving, and its served forecasts against the 
     topFallback: { method: 'rule_engine_no_baseline', served: 1204, venues: 212 },
   };
 
-  test('beside the share, how often the model answers at all, with its denominator and the most common fallback in words', async () => {
+  test('beside the share, what answered at all, with its denominator, what made the share from a venue\'s own data, and the most common fallback in words', async () => {
     await renderHub(withModel({ coverage: COVERAGE }));
+    // The screen paints the last load first, so wait for this one.
+    await within(modelCard()).findByText('What answered, last 7 days');
     const card = modelCard();
-    expect(within(card).getByText('How often it answers, last 7 days')).toBeInTheDocument();
-    const share = hubRow('Forecasts people saw from the model');
+    expect(within(card).getByText('What answered, last 7 days')).toBeInTheDocument();
+    const share = hubRow("Forecasts from a venue's own data");
     expect(within(share).getByText('51% of 2,569')).toBeInTheDocument();
-    expect(share.textContent).toMatch(/1,310 of 2,569 forecasts served to signed-in people, counted once per card served, from served_predictions\. The Costs tab counts forecast hours since the last deploy instead, so the two differ\./);
+    expect(share.textContent).toMatch(/1,310 of 2,569 forecasts served to signed-in people, counted once per card served, from served_predictions\. Of those, 1,290 came from the venue's own curve and live readings, 20 from the trained model\. The Costs tab counts forecast hours since the last deploy instead, so the two differ\./);
     const fallback = hubRow('Most common fallback');
     expect(within(fallback).getByText('1,204')).toBeInTheDocument();
-    expect(fallback.textContent).toMatch(/The venue has no baseline yet, across 212 venues\. The model answers for a venue once the collector has read it\./);
-    expect(within(card).getByText("By what answered: the model 1,310; the venue has no baseline yet 1,204; the venue owner's live report 40; the model failed on the request 12; not recorded 3. Held for an hour with the check above.")).toBeInTheDocument();
+    expect(fallback.textContent).toMatch(/The venue has no baseline yet, across 212 venues\. A venue gets numbers from its own data once the collector has read it\./);
+    expect(within(card).getByText("By what answered: the venue's own curve and live readings 1,290; the trained model 20; the venue has no baseline yet 1,204; the venue owner's live report 40; an error on the request 12; not recorded 3. Held for an hour with the check above.")).toBeInTheDocument();
     // The accuracy share and the goal are untouched; the split adds one.
     expect(percentsIn(card)).toEqual(['63.3%', '85%', '51%']);
     expect(card.textContent).not.toMatch(/rule_engine/);
+    expect(card.textContent).not.toMatch(MODEL_CLAIM);
   });
 
-  test('a fallback this screen has no words for is shown by its own name, and one from the model alone has no fallback row', async () => {
-    await renderHub(withModel({ coverage: { ...COVERAGE, byMethod: [{ method: 'rule_engine_new_reason', served: 9, venues: 1 }], topFallback: { method: 'rule_engine_new_reason', served: 9, venues: 1 }, total: 9, ml: 0, mlPercent: 0 } }));
-    expect(within(hubRow('Forecasts people saw from the model')).getByText('0% of 9')).toBeInTheDocument();
+  test('a week the curve made alone names only the curve', async () => {
+    await renderHub(withModel({ coverage: { ...COVERAGE, mlFromCurve: 1310 } }));
+    // The screen paints the last load first, so wait for this one.
+    expect(await screen.findByText(/^By what answered: the venue's own curve and live readings 1,310; the venue has no baseline yet 1,204;/)).toBeInTheDocument();
+    expect(hubRow("Forecasts from a venue's own data").textContent).toMatch(/Of those, all came from the venue's own curve and live readings\./);
+    expect(modelCard().textContent).not.toMatch(/the trained model \d/);
+  });
+
+  test('a server that did not split the count names a venue\'s own data and claims nothing about what made it', async () => {
+    const unsplit = { ...COVERAGE };
+    delete unsplit.mlFromCurve;
+    await renderHub(withModel({ coverage: unsplit }));
+    expect(await screen.findByText(/^By what answered: a venue's own data 1,310; the venue has no baseline yet 1,204;/)).toBeInTheDocument();
+    expect(hubRow("Forecasts from a venue's own data").textContent).not.toMatch(/Of those/);
+  });
+
+  test('a fallback this screen has no words for is shown by its own name, and one from a venue\'s own data alone has no fallback row', async () => {
+    await renderHub(withModel({ coverage: { ...COVERAGE, byMethod: [{ method: 'rule_engine_new_reason', served: 9, venues: 1 }], topFallback: { method: 'rule_engine_new_reason', served: 9, venues: 1 }, total: 9, ml: 0, mlFromCurve: 0, mlPercent: 0 } }));
+    // The screen paints the last load first, so wait for this one.
+    await screen.findByText('0% of 9');
+    expect(within(hubRow("Forecasts from a venue's own data")).getByText('0% of 9')).toBeInTheDocument();
     expect(hubRow('Most common fallback').textContent).toMatch(/Rule_engine_new_reason, across 1 venue\./);
+    // Nothing from a venue's own data, so nothing to say about what made it.
+    expect(hubRow("Forecasts from a venue's own data").textContent).not.toMatch(/Of those/);
   });
 
   test('a week with nothing served says so, with no share and no fallback', async () => {
-    await renderHub(withModel({ coverage: { ...COVERAGE, total: 0, ml: 0, mlPercent: null, byMethod: [], topFallback: null } }));
+    await renderHub(withModel({ coverage: { ...COVERAGE, total: 0, ml: 0, mlFromCurve: 0, mlPercent: null, byMethod: [], topFallback: null } }));
+    // The screen paints the last load first, so wait for this one.
+    await within(modelCard()).findByText('None served');
     const card = modelCard();
     expect(percentsIn(card)).toEqual(['63.3%', '85%']);
-    expect(within(hubRow('Forecasts people saw from the model')).getByText('None served')).toBeInTheDocument();
+    expect(within(hubRow("Forecasts from a venue's own data")).getByText('None served')).toBeInTheDocument();
     expect(within(card).queryByText('Most common fallback')).toBeNull();
     expect(within(card).queryByText(/^By what answered/)).toBeNull();
   });
 
   test('a failed count says could not load with the reason, and the share above still stands', async () => {
     await renderHub(withModel({ coverage: { status: 'error', reason: 'The database did not finish counting what answered each forecast served, so there is no split to show.', cached: false, cachedAgeSeconds: 0 } }));
+    // The screen paints the last load first, so wait for this one.
+    await within(modelCard()).findByText('Could not load');
     const card = modelCard();
     expect(within(card).getByText('Could not load')).toBeInTheDocument();
     expect(within(card).getByText(/did not finish counting what answered each forecast served/)).toBeInTheDocument();
-    expect(within(card).queryByText('Forecasts people saw from the model')).toBeNull();
+    expect(within(card).queryByText("Forecasts from a venue's own data")).toBeNull();
     expect(within(card).getByText('63.3%')).toBeInTheDocument();
   });
 
   test('a server from before the count draws none of it', async () => {
     await renderHub(CONNECTED);
-    expect(within(modelCard()).queryByText(/How often it answers/)).toBeNull();
+    // The screen paints the last load first, so wait for this one.
+    await waitFor(() => expect(within(modelCard()).queryByText(/What answered, last/)).toBeNull());
   });
 
   test('a version that could not be read says why, and a goal already met is not a negative gap', async () => {
@@ -965,11 +1063,71 @@ describe('the model: which one is serving, and its served forecasts against the 
       gapPoints: -1.2,
       accuracy: { ...MODEL.accuracy, withinOneBand: 355, percent: 86.2 },
     }));
-    const row = hubRow('Live model');
+    // The screen paints the last load first, so wait for this one.
+    await within(modelCard()).findByText('Met');
+    const row = hubRow('Model version');
     expect(within(row).getByText('Not read')).toBeInTheDocument();
     expect(row.textContent).toMatch(/this server has no model_metadata\.json to read a version from\./);
     expect(within(hubRow('Gap to goal')).getByText('Met')).toBeInTheDocument();
     expect(hubRow('Gap to goal').textContent).not.toMatch(/−|-1\.2/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE COSTS TAB'S COUNTER of what answered since the last deploy
+// (mlPredictor.predictionCoverage). Its ml count is the curve's in
+// curve_offset mode, so the panel names what made the share from the
+// predictor's own split, curveOffsetAnswers, and the serve mode under it.
+// ---------------------------------------------------------------------------
+describe('the Costs tab: what answered the forecasts', () => {
+  const COUNTER = {
+    since: Date.parse('2026-10-06T12:00:00Z'),
+    total: 2569,
+    ml: 1310,
+    ruleEngine: 1259,
+    modelShare: 1310 / 2569,
+    byMethod: { ml: 1310, rule_engine_no_baseline: 1259 },
+    modelVersion: '2.6.0-starling',
+    modelLoaded: true,
+    serveMode: 'curve_offset',
+    nowcastEnabled: true,
+    curveOffsetAnswers: 1310,
+    nowcastAnswersByLag: { 1: 400, 2: 0, 3: 0, 4: 0 },
+    inMemory: true,
+  };
+  const panel = () => screen.getByRole('heading', { name: 'What answered the forecasts' }).parentElement;
+  const show = (p) => render(React.createElement(RevenueScreen, screenProps({ adminTab: 'costs', costsData: { predictionCoverage: p } })));
+
+  test('in curve_offset mode the share is from a venue\'s own data, all of it the curve, and none of it is handed to the model', () => {
+    show(COUNTER);
+    const card = panel();
+    expect(within(card).getByText("From a venue's own data")).toBeInTheDocument();
+    expect(within(card).getByText('51%')).toBeInTheDocument();
+    expect(card.textContent).toMatch(/1,310 of 2,569 forecasts\. The rest came from the rule engine\. Of the 1,310, all came from the venue's own curve and live readings\./);
+    expect(card.textContent).toMatch(/The ONNX model is in memory\. Serve mode curve_offset does not run it\. A venue's own data answers only while it is loaded\./);
+    expect(card.textContent).toMatch(/Serve mode is curve_offset: each venue's own weekly curve plus its live offset, with no model run\. The nowcast is on: a venue read live in an earlier hour has that reading blended into its number\./);
+    expect(card.textContent).not.toMatch(/Answered by the model|Crowd model|the trained model/);
+  });
+
+  test('in model mode the model is named, and a count that mixes the two says how many each made', () => {
+    show({ ...COUNTER, serveMode: 'model', nowcastEnabled: false, curveOffsetAnswers: 10 });
+    const card = panel();
+    expect(card.textContent).toMatch(/Of the 1,310, 10 came from the venue's own curve and live readings, 1,300 from the trained model\./);
+    expect(card.textContent).toMatch(/The ONNX model is in memory and available to serve\./);
+    expect(card.textContent).toMatch(/Serve mode is model: the trained model makes each venue's number\./);
+    expect(card.textContent).not.toMatch(/nowcast/);
+  });
+
+  test('a server from before the split claims nothing about what made the share, and no model loaded says so', () => {
+    const older = { ...COUNTER, modelLoaded: false, ml: 0, total: 40, modelShare: 0, byMethod: { rule_engine: 40 } };
+    delete older.curveOffsetAnswers;
+    delete older.serveMode;
+    delete older.nowcastEnabled;
+    show(older);
+    const card = panel();
+    expect(card.textContent).toMatch(/0 of 40 forecasts\. The rest came from the rule engine\./);
+    expect(card.textContent).not.toMatch(/Of the 0|Serve mode/);
+    expect(card.textContent).toMatch(/Every forecast is coming from the rule engine\. That is the designed fallback and the product still works, but no forecast is made from a venue's own data\./);
   });
 });
 
