@@ -1387,7 +1387,10 @@ describe('needs attention: every live problem at the top, each linking to its ca
 
   test('a bill ending within the month is listed apart, with what the burn does, and is not counted as a problem', async () => {
     const ending = [
-      { expenseId: 7, label: 'Store tool, Plus', endsOn: '2026-10-05', amountCents: 3180, currency: 'USD', cadence: 'monthly', isCredit: false, perMonthCents: 3180 },
+      // Stands in for a $119 code line, so the burn falls by $30 when it ends,
+      // not by its own $149 (review 2026-10-06): the server's burnChangeCents.
+      { expenseId: 7, label: 'Store tool, Plus', endsOn: '2026-10-05', amountCents: 14900, currency: 'USD', cadence: 'monthly', isCredit: false, perMonthCents: 14900, burnChangeCents: -3000, restores: ['BestTime.app Pro, Package 100'] },
+      // A payload from before burnChangeCents: the bill's own share.
       { expenseId: 9, label: 'Host, Startup credit', endsOn: '2026-10-20', amountCents: 1500, currency: 'USD', cadence: 'monthly', isCredit: true, perMonthCents: -1500 },
       // Past the month: on the Costs card only.
       { expenseId: 10, label: 'Yearly tool', endsOn: '2027-01-15', amountCents: 12000, currency: 'USD', cadence: 'yearly', isCredit: false, perMonthCents: 1000 },
@@ -1397,8 +1400,8 @@ describe('needs attention: every live problem at the top, each linking to its ca
     const card = attentionCard();
     expect(within(card).getByRole('heading', { name: 'Nothing needs you' })).toBeInTheDocument();
     const row = within(card).getByText('Store tool, Plus').parentElement.parentElement;
-    expect(within(row).getByText('$31.80 a month')).toBeInTheDocument();
-    expect(row.textContent).toMatch(/Ends in 10 days, Oct 5(, 2026)?, and the burn falls by \$31\.80 a month\./);
+    expect(within(row).getByText('$149.00 a month')).toBeInTheDocument();
+    expect(row.textContent).toMatch(/Ends in 10 days, Oct 5(, 2026)?, and the burn falls by \$30\.00 a month\./);
     expect(within(row).getByRole('link', { name: 'Go to Costs' })).toHaveAttribute('href', '#hub-costs');
     const credit = within(card).getByText('Host, Startup credit').parentElement.parentElement;
     expect(within(credit).getByText('−$15.00 a month')).toBeInTheDocument();
@@ -1711,7 +1714,7 @@ describe('a bill that ends rather than renews', () => {
     lastChargedOn: '2026-09-05', renewsOn: '2026-10-05', endsOn: '2026-10-05', active: true, verified: true, note: null, replacesLine: null, isCredit: false, endState: 'ending',
   };
   const ENDED_ROW = { ...ENDING_ROW, id: 8, product: 'Old plan', lastChargedOn: '2026-08-10', renewsOn: null, endsOn: '2026-09-10', endState: 'ended' };
-  const ENDING = { expenseId: 7, label: 'Store tool, Plus', endsOn: '2026-10-05', amountCents: 3180, currency: 'USD', cadence: 'monthly', isCredit: false, perMonthCents: 3180 };
+  const ENDING = { expenseId: 7, label: 'Store tool, Plus', endsOn: '2026-10-05', amountCents: 3180, currency: 'USD', cadence: 'monthly', isCredit: false, perMonthCents: 3180, burnChangeCents: -3180, restores: [] };
   const WITH_ENDING = {
     ...CONNECTED,
     costs: { ...COSTS, ending: [ENDING], afterEnding: { burnCents: 17664, changeCents: -3180, by: '2026-10-05', bills: 1, label: 'Store tool, Plus' } },
@@ -1781,8 +1784,8 @@ describe('a bill that ends rather than renews', () => {
   });
 
   test('several set to end, a credit among them, or one in another currency, each read right', async () => {
-    const credit = { expenseId: 9, label: 'Host, Startup credit', endsOn: '2026-11-01', amountCents: 1500, currency: 'USD', cadence: 'monthly', isCredit: true, perMonthCents: -1500 };
-    const euro = { expenseId: 11, label: 'Abroad tool', endsOn: '2026-12-01', amountCents: 900, currency: 'EUR', cadence: 'monthly', isCredit: false, perMonthCents: null };
+    const credit = { expenseId: 9, label: 'Host, Startup credit', endsOn: '2026-11-01', amountCents: 1500, currency: 'USD', cadence: 'monthly', isCredit: true, perMonthCents: -1500, burnChangeCents: 1500, restores: [] };
+    const euro = { expenseId: 11, label: 'Abroad tool', endsOn: '2026-12-01', amountCents: 900, currency: 'EUR', cadence: 'monthly', isCredit: false, perMonthCents: null, burnChangeCents: null, restores: [] };
     await renderHub({
       ...CONNECTED,
       costs: { ...COSTS, ending: [ENDING, credit, euro], afterEnding: { burnCents: 19164, changeCents: -1680, by: '2026-11-01', bills: 2, label: null } },
@@ -1795,6 +1798,20 @@ describe('a bill that ends rather than renews', () => {
     const euroRow = within(costs).getByText(/Abroad tool$/).parentElement.parentElement;
     expect(within(euroRow).getByText('9.00 EUR a month')).toBeInTheDocument();
     expect(euroRow.textContent).toMatch(/No charge on or after this day\.$/);
+  });
+
+  test('a bill that stood in for a code line says the line comes back, and the burn moves by the difference', async () => {
+    // $149 in place of the code's $119 BestTime line (review 2026-10-06).
+    const stand = { ...ENDING, expenseId: 12, label: 'BestTime, Package 100', amountCents: 14900, perMonthCents: 14900, burnChangeCents: -3000, restores: ['BestTime.app Pro, Package 100'] };
+    await renderHub({
+      ...CONNECTED,
+      costs: { ...COSTS, ending: [stand], afterEnding: { burnCents: 17844, changeCents: -3000, by: '2026-10-05', bills: 1, label: 'BestTime, Package 100' } },
+    });
+    const costs = document.getElementById('hub-costs');
+    const row = (await within(costs).findByText(/BestTime, Package 100$/)).parentElement.parentElement;
+    expect(within(row).getByText('$149.00 a month')).toBeInTheDocument();
+    expect(row.textContent).toMatch(/No charge on or after this day\. Then the burn falls by \$30\.00 a month, as the code's BestTime\.app Pro, Package 100 counts again\./);
+    expect(hubRow('Burn a month').textContent).toMatch(/It falls to \$178\.44 on Oct 5(, 2026)?, when BestTime, Package 100 ends\./);
   });
 
   test('a server from before migration 117 draws none of it', async () => {

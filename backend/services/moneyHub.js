@@ -1190,6 +1190,30 @@ function renewalTotals(expenses, todayYmd) {
 // How many bills the Costs card ranks by size before it sums the rest.
 const BIGGEST_BILLS_SHOWN = 5;
 
+// THE BURN ON A DAY TO COME (review 2026-10-06). The burn after a bill ends
+// is not the burn less that bill: a bill that stood in for a code line hands
+// the line back the day it ends. A $149 BestTime bill in place of the code's
+// $119 line, ending on the 20th, forecast the burn falling from $231.28 to
+// $82.28, when on the 20th it is $201.28. So the forecast runs the burn's own
+// rules again with only the bills still running: each code line counts unless
+// a running dollar bill (not a credit) stands in for it, and each running
+// dollar bill counts at its monthly share, a credit taken off. Unrounded, and
+// added in the order buildCostPicture adds them, so with every running bill
+// in it is the burn itself. `replaced` is the code lines stood in for, so a
+// step can say which line came back.
+function runRateWith(codeLines, expenses, running) {
+  const replaced = new Set();
+  for (const x of expenses) {
+    if (running(x) && x.currency === 'USD' && x.replacesLine && !x.isCredit) replaced.add(x.replacesLine);
+  }
+  let exact = 0;
+  for (const c of codeLines) if (!replaced.has(c.id)) exact += perMonthCents(c.cadence, c.amountCents);
+  for (const x of expenses) {
+    if (running(x) && x.currency === 'USD') exact += (x.isCredit ? -1 : 1) * perMonthCents(x.cadence, x.amountCents);
+  }
+  return { exact, replaced };
+}
+
 function buildCostPicture({ expenses = [], reconciled = null, month }) {
   // Still being charged today: active, and not past an end date (THE END OF A
   // BILL). Everywhere below that asked whether a row was active asks this.
@@ -1338,39 +1362,60 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
     [cats, 'perMonthCents', perMonthTotal], [cats, 'thisMonthCents', thisMonthCents],
   ]) roundRowsToTotal(rows, field, total);
 
-  // THE BILLS SET TO END, soonest first (THE END OF A BILL), each with the run
-  // rate that leaves with it: the screen says what the burn becomes once they
-  // have gone. A credit set to end is listed too, because the burn rises when
-  // it goes. Worked from the unrounded shares, so the burn after is the total
-  // less exactly what leaves.
-  const ending = [];
-  const leaving = [];
-  for (const l of lines) {
-    if (l.origin !== 'expense' || l.inactive || !l.endsOn) continue;
-    // A euro bill was never in the dollar burn, so nothing leaves it.
-    const inBurn = !l.nonUsd && l.perMonthCents !== 0;
-    ending.push({
-      expenseId: l.expenseId,
-      label: l.label,
-      endsOn: l.endsOn,
-      amountCents: l.amountCents,
-      currency: l.currency,
-      cadence: l.cadence,
-      isCredit: l.isCredit === true,
-      perMonthCents: l.nonUsd ? null : l.perMonthCents,
+  // THE BILLS SET TO END, soonest first (THE END OF A BILL), each with what the
+  // burn does the day it goes, and the burn once they have all gone. A credit
+  // set to end is listed too, because the burn rises when it goes.
+  //
+  // The change is never just the bill's own share (review 2026-10-06): at each
+  // end date in turn the burn is worked out again by its own rules
+  // (runRateWith), so a code line comes back when the last bill standing in
+  // for it ends. Bills ending on the same day go in label order. Each change is
+  // the rounded burn after it less the rounded burn before it, so the changes
+  // add up to the change in the burn to the cent. A euro bill was never in the
+  // dollar burn, so it moves nothing and says so with a null.
+  const labelOf = (x) => (x.product ? `${x.vendor}, ${x.product}` : x.vendor);
+  const codeLines = lines.filter((l) => l.origin !== 'expense');
+  const codeLabel = new Map(codeLines.map((l) => [l.id, l.label]));
+  const endingRows = expenses
+    .filter((x) => running(x) && stopsOn(x, today))
+    .sort((a, b) => (a.endsOn < b.endsOn ? -1 : a.endsOn > b.endsOn ? 1 : labelOf(a).localeCompare(labelOf(b)) || a.id - b.id));
+  const gone = new Set();
+  let step = runRateWith(codeLines, expenses, running);
+  const steps = new Map();
+  for (const x of endingRows) {
+    gone.add(x.id);
+    const next = runRateWith(codeLines, expenses, (y) => running(y) && !gone.has(y.id));
+    steps.set(x.id, {
+      burnChangeCents: x.currency === 'USD' ? r0(next.exact) - r0(step.exact) : null,
+      // The code lines this bill was the last stand-in for.
+      restores: [...step.replaced].filter((id) => !next.replaced.has(id)).map((id) => codeLabel.get(id) || id),
     });
-    if (inBurn) leaving.push(l);
+    step = next;
   }
-  ending.sort((a, b) => (a.endsOn < b.endsOn ? -1 : a.endsOn > b.endsOn ? 1 : a.label.localeCompare(b.label)));
-  const burnAfter = r0(perMonthExactTotal - leaving.reduce((s, l) => s + l.perMonthExact, 0));
-  const afterEnding = leaving.length === 0 ? null : {
-    burnCents: burnAfter,
-    changeCents: burnAfter - perMonthTotal,
-    // The day the last of them ends.
-    by: leaving.reduce((d, l) => (l.endsOn > d ? l.endsOn : d), leaving[0].endsOn),
-    bills: leaving.length,
+  const ending = endingRows.map((x) => {
+    const l = lines.find((y) => y.origin === 'expense' && y.expenseId === x.id);
+    return {
+      expenseId: x.id,
+      label: labelOf(x),
+      endsOn: x.endsOn,
+      amountCents: x.amountCents,
+      currency: x.currency,
+      cadence: x.cadence,
+      isCredit: x.isCredit === true,
+      // The bill's own monthly share; what the burn does is burnChangeCents.
+      perMonthCents: x.currency === 'USD' && l ? l.perMonthCents : null,
+      ...steps.get(x.id),
+    };
+  });
+  const moved = ending.filter((e) => e.burnChangeCents);
+  const afterEnding = moved.length === 0 ? null : {
+    burnCents: r0(step.exact),
+    changeCents: r0(step.exact) - perMonthTotal,
+    // The day the last of the ones that move it ends.
+    by: moved[moved.length - 1].endsOn,
+    bills: moved.length,
     // Named when it is the only one, so the screen can say which.
-    label: leaving.length === 1 ? leaving[0].label : null,
+    label: moved.length === 1 ? moved[0].label : null,
   };
 
   // MONTHLY BILLS THE RENEWAL TOTALS CANNOT DATE (2026-10-06). The totals
