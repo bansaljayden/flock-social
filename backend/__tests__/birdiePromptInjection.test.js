@@ -74,7 +74,8 @@ const pool = require('../config/database');
 let dbVoteMembership = [];
 let allSql = [];
 // The zone the account's device last registered for push
-// (services/pushHelper.js recipientZone), or null for none.
+// (services/pushHelper.js recipientZone), or null for none. The route must
+// never read it (section 9); it is set so a test can show that it does not.
 let dbDeviceZone = null;
 pool.query = (sql) => {
   const flat = String(sql).replace(/\s+/g, ' ').trim();
@@ -1215,19 +1216,46 @@ test("the Now line is the user's wall clock, and says UTC when the zone is unkno
   assert.ok(known.indexOf('- Now: ') > known.indexOf('Hard rules:'));
 });
 
-test('a zone this runtime cannot use falls back to the one the device registered for push', async () => {
+// THE ZONE IS ONLY EVER THE ONE THIS CLIENT SENT. Only a client that shows the
+// consent copy naming the time zone sends one, so a turn without it comes from
+// a build whose copy never mentioned it (the installed iOS build, a stale web
+// tab). Reading that account's push zone instead put its zone and local time
+// in front of Gemini under copy that did not list them.
+const readsDeviceZone = () => allSql.some((q) => /FROM device_tokens/.test(q));
+
+test('a zone this runtime cannot use is unknown, not swapped for the push zone', async () => {
   dbDeviceZone = 'Europe/London';
   const r = await chat({ messages: [{ role: 'user', text: 'tonight?' }], timeZone: 'Mars/Olympus_Mons' });
   assert.strictEqual(r.status, 200);
-  assert.match(nowLine(), /, Europe\/London time, where the user is\.$/);
+  assert.match(nowLine(), /^- Now: .* UTC\.$/);
+  assert.match(systemPrompt(), /You do not know the user's time zone/);
   assert.ok(!systemPrompt().includes('Mars'), 'a zone ICU refused reached the prompt');
+  assert.ok(!everythingSentToGemini().includes('Europe/London'), 'the push zone reached Gemini');
+  assert.ok(!readsDeviceZone(), 'the turn read the push zone');
 });
 
-test('an older client that sends no zone is read in its push zone', async () => {
+test('an older client that sends no zone gets the UTC line, whatever zone it registered for push', async () => {
   dbDeviceZone = 'America/Chicago';
   const r = await chat();
   assert.strictEqual(r.status, 200);
-  assert.match(nowLine(), /America\/Chicago time/);
+  assert.match(nowLine(), /^- Now: .* UTC\.$/);
+  assert.match(systemPrompt(), /You do not know the user's time zone/);
+  assert.ok(!everythingSentToGemini().includes('America/Chicago'), 'the push zone reached Gemini');
+  assert.ok(!readsDeviceZone(), 'the turn read the push zone');
+});
+
+test("an older client's plan times stay in UTC, and draft_flock still refuses a zone-less time", async () => {
+  dbDeviceZone = 'America/Chicago';
+  dbFlocks = [{ id: 4, name: 'Friday', venue_name: 'Oakwood', event_time: '2026-10-10T00:00:00Z', status: 'confirmed', member_count: 3 }];
+  sendImpl = oneToolCall('get_user_flocks', {});
+  await chat({ messages: [{ role: 'user', text: "what's friday" }] });
+  assert.strictEqual(sendCalls[1].message[0].functionResponse.response.flocks[0].event_time, 'Saturday, October 10, 2026, 12:00 AM UTC');
+
+  sendCalls = [];
+  sendImpl = draftCall('2030-07-05T20:00:00');
+  const r = await chat({ messages: [{ role: 'user', text: 'friday at 8' }] });
+  assert.strictEqual(r.body.flock_draft, undefined, 'a time was placed on the push zone');
+  assert.match(draftResult().error, /time zone/);
 });
 
 test('with no usable zone anywhere, Birdie gets the time in UTC and is told the zone is unknown', async () => {

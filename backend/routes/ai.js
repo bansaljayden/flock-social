@@ -62,9 +62,6 @@ const { upstreamSignal } = require('../utils/upstream');
 // module checks the user's zone and reads a plan time on it (WHOSE CLOCK
 // BIRDIE PLANS ON, below).
 const { placeTimeZone, validTimeZone, instantForWallClock } = require('../utils/venueZone');
-// The zone an account's device last registered for push, the fallback for a
-// client that sends none (routes/users.js /stats reads it the same way).
-const { recipientZone } = require('../services/pushHelper');
 const { waitPhrase, refusalBody, msUntilUtcMidnight } = require('../utils/retryAfter');
 const {
   checkUserRateLimit,
@@ -834,11 +831,12 @@ function lockForecastResult(result, { salesOff = false } = {}) {
 //
 // The zone is the device's own IANA name, sent on every turn (sendAiChat in
 // the frontend's services/api.js) and used only once ICU accepts it
-// (utils/venueZone.js validTimeZone). A build from before it was sent, or a
-// runtime that cannot answer, is read in the zone its device last registered
-// for push, the fallback routes/users.js /stats already uses. Failing both the
-// zone is unknown, and Birdie is told so rather than handed UTC as if it were
-// theirs.
+// (utils/venueZone.js validTimeZone). It is only ever the zone this client
+// sent. Only a client that shows consent copy naming the time zone sends one;
+// a build from before it (the installed iOS build, a stale web tab) showed
+// copy that did not, so its turns are never read in the zone its device
+// registered for push. With no usable zone it is unknown, and Birdie is told
+// so rather than handed UTC as if it were theirs.
 
 // A moment as somebody in `zone` reads it: "Friday, October 9, 2026, 8:00 PM".
 // Put together from parts, because the joined form moves between ICU versions
@@ -2026,9 +2024,9 @@ router.post('/chat',
     body('localDay').optional().isInt({ min: 0, max: 6 }),
     // The device's IANA zone name (WHOSE CLOCK BIRDIE PLANS ON). Shape and
     // length are held here, 64 like device_tokens.timezone; whether it is a
-    // zone at all is ICU's call in the handler, where one it refuses falls
-    // back instead of costing the user their message. Nullable, and absent
-    // from every build older than this field.
+    // zone at all is ICU's call in the handler, where one it refuses is read
+    // as no zone instead of costing the user their message. Nullable, and
+    // absent from every build older than this field.
     scalarOnly(body('timeZone').optional({ values: 'null' }), 'time zone').isString().isLength({ max: 64 }),
     // Sent only by a client built to sell nothing (see SALES COPY OFF in
     // buildSystemPrompt). One accepted value.
@@ -2202,10 +2200,9 @@ router.post('/chat',
       }
 
       // The user's clock (WHOSE CLOCK BIRDIE PLANS ON): the zone this client
-      // sent if ICU accepts it, else the one its device last registered for
-      // push, else unknown. The push read only runs for a client that sent no
-      // usable zone, which is every build older than the field.
-      const userZone = validTimeZone(req.body.timeZone) || validTimeZone(await recipientZone(userId)) || null;
+      // sent if ICU accepts it, else unknown. Never the push zone: a client
+      // that sends no zone is a build whose consent copy does not list it.
+      const userZone = validTimeZone(req.body.timeZone) || null;
       const clock = { nowMs: Date.now(), timeZone: userZone };
 
       // Build Gemini chat history (must start with 'user' role, no consecutive same-role)
