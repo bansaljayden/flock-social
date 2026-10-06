@@ -31,10 +31,10 @@ test('the route charges once, marks it, and refunds on every path that delivers 
   assert.match(src, /function refundChirp\(res\) \{/);
   assert.match(src, /if \(e\?\.geminiBudget\) \{ refundChirp\(res\); return birdieRefusal\(res, e\.leg\); \}/);
   assert.match(src, /const blockReason = response\.promptFeedback\?\.blockReason/);
-  // Every finish reason but STOP and MAX_TOKENS is a withheld reply, not just
-  // SAFETY (birdiePromptInjection.test.js drives each one through the route).
+  // The policy stops are withheld replies, not just SAFETY; other endings take
+  // the empty-turn path (birdiePromptInjection.test.js drives each through the route).
   assert.match(src, /\|\| withheldFinishReason\(candidate\?\.finishReason\);/);
-  assert.match(src, /return finishReason === 'STOP' \|\| finishReason === 'MAX_TOKENS' \? null : finishReason;/);
+  assert.match(src, /const POLICY_FINISH_REASONS = new Set\(\['SAFETY', 'BLOCKLIST', 'PROHIBITED_CONTENT', 'SPII', 'RECITATION', 'IMAGE_SAFETY'\]\);/);
   assert.doesNotMatch(src, /candidate\?\.finishReason === 'SAFETY'/);
   assert.match(src, /text: "not something i'll help with\. ask me something else", venues: \[\], remaining: rateCheck\.remaining \+ 1/);
   // The empty-answer refund is for a turn that delivered NOTHING: no words,

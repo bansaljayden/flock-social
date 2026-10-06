@@ -759,17 +759,18 @@ test('an empty reply from a finished turn does still ask for a rephrase', async 
   assert.strictEqual(r.body.text, 'say that one more time?');
 });
 
-// EVERY WAY GEMINI STOPS A TURN IS A REFUSAL, EXCEPT FINISHING. Only SAFETY was
-// read as one, so a reply withheld as PROHIBITED_CONTENT, BLOCKLIST or SPII
-// came back as "say that one more time?", which asks for the repeat that is
-// withheld again. STOP and MAX_TOKENS are the two endings that mean the model
-// wrote what it wrote; no finish reason at all says nothing either way.
+// A POLICY STOP IS A REFUSAL; A GLITCH IS NOT. Only SAFETY was read as one, so a
+// reply withheld as PROHIBITED_CONTENT, BLOCKLIST or SPII came back as "say that
+// one more time?", which asks for the repeat that is withheld again. The other
+// endings (a fumbled tool call, OTHER, LANGUAGE) say nothing about the request,
+// so they ask again and cost nothing; telling the user Birdie refuses them
+// would be false.
 const REFUSAL_TEXT = "not something i'll help with. ask me something else";
 const endsWith = (finishReason) => () => ({ candidates: [{ content: { parts: [] }, finishReason }] });
 // What the meter says is left, which is what `remaining` must report.
 const left = () => birdieUsage.PREMIUM_DAILY_LIMIT - birdieUsage.getUsedToday(CURRENT_USER.id);
 
-for (const reason of ['SAFETY', 'PROHIBITED_CONTENT', 'BLOCKLIST', 'SPII', 'RECITATION', 'OTHER', 'MALFORMED_FUNCTION_CALL']) {
+for (const reason of ['SAFETY', 'PROHIBITED_CONTENT', 'BLOCKLIST', 'SPII', 'RECITATION', 'IMAGE_SAFETY']) {
   test(`a turn Gemini ends with ${reason} is answered as a refusal and costs no chirp`, async () => {
     sendImpl = endsWith(reason);
     const r = await chat();
@@ -786,6 +787,17 @@ for (const reason of ['STOP', 'MAX_TOKENS', undefined]) {
     const r = await chat();
     assert.strictEqual(r.status, 200);
     assert.strictEqual(r.body.text, 'say that one more time?');
+  });
+}
+
+for (const reason of ['OTHER', 'MALFORMED_FUNCTION_CALL', 'LANGUAGE', 'SOMETHING_GOOGLE_ADDS_LATER']) {
+  test(`an empty turn that ends with ${reason} is not called a refusal, and costs no chirp`, async () => {
+    sendImpl = endsWith(reason);
+    const r = await chat();
+    assert.strictEqual(r.status, 200);
+    assert.strictEqual(r.body.text, 'say that one more time?', `${reason} told the user Birdie refuses the request`);
+    assert.strictEqual(birdieUsage.getUsedToday(CURRENT_USER.id), 0, 'an empty glitch cost a chirp');
+    assert.strictEqual(r.body.remaining, left());
   });
 }
 
