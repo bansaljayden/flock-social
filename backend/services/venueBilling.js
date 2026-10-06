@@ -1252,8 +1252,8 @@ async function paysCurrentPeriod(invoice, sub) {
 //
 //   A RECORDED ENDING IS FINISHED FIRST, whatever came after it. When the
 //   cancel failed after the ending was recorded, the webhook answered 500 and
-//   Stripe sent the event again, but by then the subscription could have made
-//   another invoice, the period check below no longer matched, and the retry
+//   Stripe sent the event again, but by then the subscription could have
+//   renewed, the period check below no longer matched, and the retry
 //   answered not_current_roost_period without cancelling: Stripe went on
 //   billing a subscription the writer refuses to grant for good. Every
 //   subscription already recorded for this charge is cancelled and written
