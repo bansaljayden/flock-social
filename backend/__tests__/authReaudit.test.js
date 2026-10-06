@@ -701,7 +701,7 @@ test('the bump assertion is load-bearing on the clause, not on the fake', async 
     id: 9, email: 'me@gmail.com', password: PASSWORD_HASH,
     email_verified: true, verified_email: 'me@gmail.com', token_version: 3,
   });
-  await pool.query(mutated, ['g-mutant', null, 9]);
+  await pool.query(mutated, ['g-mutant', 9]);
   assert.strictEqual(userById(9).token_version, 3,
     'without the clause the version does NOT move — so the tests above are testing the clause');
   assert.strictEqual(userById(9).oauth_id, 'g-mutant', 'and the rest of the statement still ran');
@@ -712,7 +712,7 @@ test('the bump assertion is load-bearing on the clause, not on the fake', async 
     id: 10, email: 'me@gmail.com', password: PASSWORD_HASH,
     email_verified: true, verified_email: 'me@gmail.com', token_version: 3,
   });
-  await pool.query(claimSql, ['g-real', null, 10]);
+  await pool.query(claimSql, ['g-real', 10]);
   assert.strictEqual(userById(10).token_version, 4);
 });
 

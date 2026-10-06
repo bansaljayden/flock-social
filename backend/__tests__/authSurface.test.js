@@ -143,13 +143,10 @@ pool.query = async (text, params = []) => {
     return { rows: [row] };
   }
   if (sql.startsWith("UPDATE users SET oauth_provider = 'google'")) {
-    const row = users.find((u) => u.id === params[2]);
+    const row = users.find((u) => u.id === params[1]);
     row.oauth_provider = 'google';
     row.oauth_id = params[0];
     if (clause(sql, /\bpassword = NULL\b/)) row.password = null;
-    if (clause(sql, /profile_image_url = COALESCE\(profile_image_url, \$2\)/)) {
-      row.profile_image_url = row.profile_image_url ?? params[1];
-    }
     if (clause(sql, /\bemail_verified = TRUE\b/)) row.email_verified = true;
     if (clause(sql, /\bverified_email = email\b/)) row.verified_email = row.email;
     if (clause(sql, /token_version = token_version \+ 1/)) row.token_version += 1;

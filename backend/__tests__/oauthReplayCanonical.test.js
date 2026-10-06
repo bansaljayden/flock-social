@@ -185,8 +185,8 @@ pool.query = async (text, params = []) => {
       ? {
         id: nextUserId++, token_version: 0, is_banned: false, password: null,
         email: params[0], name: params[1], oauth_provider: 'google', oauth_id: params[2],
-        profile_image_url: params[3], date_of_birth: params[4],
-        email_verified: true, verified_email: params[5],
+        profile_image_url: null, date_of_birth: params[3],
+        email_verified: true, verified_email: params[4],
       }
       : {
         id: nextUserId++, token_version: 0, is_banned: false, password: null,

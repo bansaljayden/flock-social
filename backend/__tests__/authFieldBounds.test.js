@@ -1030,7 +1030,7 @@ test('a Google display name wider than the column is clamped, not 22001', async 
     [/^INSERT INTO users/, (params) => ({
       rows: [{
         id: 92, email: params[0], name: params[1], oauth_provider: 'google',
-        date_of_birth: params[5], email_verified: true, token_version: 0,
+        date_of_birth: params[3], email_verified: true, token_version: 0,
       }],
     })],
   ];
