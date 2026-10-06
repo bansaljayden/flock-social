@@ -713,9 +713,19 @@ router.get('/', async (req, res) => {
       digest_enabled: digestEnabled(),
       ...(entitlement ? {
         tier: entitlement.tier,
+        // For a plan billed through Stripe this is Stripe's own end (a
+        // scheduled end, else the period end), never the three days of grace
+        // the gate allows a late webhook (services/venueEntitlements.js).
         tier_expires_at: entitlement.expiresAt,
         tier_source: entitlement.source,
         tier_reason: entitlement.reason,
+        // The plan's state and Stripe's dates, so the card can name the date
+        // it means: the day a trial is charged, the day the plan renews, or
+        // the day a plan set to end ends. Null for a plan we set up by hand.
+        tier_status: entitlement.status,
+        tier_trial_end: entitlement.trialEnd,
+        tier_current_period_end: entitlement.currentPeriodEnd,
+        tier_cancel_at: entitlement.cancelAt,
         // A venue account from before Roost had a price keeps everything
         // until the date its notice email named, or with no end yet while
         // that email has not gone out (Terms 9.6).

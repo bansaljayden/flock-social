@@ -240,6 +240,24 @@ async function venueCustomerIdsFor(userId) {
 // second checkout (LIVE_STATUSES), and the ones a venue manages in the portal.
 const stillBilling = (sub) => !!(sub && LIVE_STATUSES.has(sub.status));
 
+// The dates a plans card names, from the subscription itself: when a trial is
+// charged, when the current period ends (the renewal), and when a plan set to
+// end ends, as ISO strings. A plan set to end at its period end can say so
+// with cancel_at_period_end alone, so that is its end date. None of them is
+// the grant's expires_at, which carries the grace a late webhook is allowed.
+const isoFromUnix = (s) => (Number.isFinite(s) && s > 0 ? new Date(s * 1000).toISOString() : null);
+function subscriptionDates(sub) {
+  if (!sub) return null;
+  const item = sub.items && Array.isArray(sub.items.data) ? sub.items.data[0] : null;
+  const periodEnd = (item && item.current_period_end) || sub.current_period_end || null;
+  return {
+    status: typeof sub.status === 'string' ? sub.status : null,
+    trialEnd: sub.status === 'trialing' ? isoFromUnix(sub.trial_end) : null,
+    currentPeriodEnd: isoFromUnix(periodEnd),
+    cancelAt: isoFromUnix(sub.cancel_at || (sub.cancel_at_period_end ? periodEnd : null)),
+  };
+}
+
 // The newest Roost subscription this account holds, on any of its customers,
 // with the customer it is on, or null. Only subscriptions naming this account.
 async function latestVenueSubscription(userId, customerIds, requestOptions) {
@@ -1139,6 +1157,7 @@ module.exports = {
   venueCustomerIdsFor,
   latestVenueSubscription,
   stillBilling,
+  subscriptionDates,
   venueTrialUsed,
   closeVenueCustomer,
   venueCheckoutKey,

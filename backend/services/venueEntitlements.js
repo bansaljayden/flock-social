@@ -185,7 +185,14 @@ function resolveGrantedTier(row, now) {
 // ONE LINE, ON PURPOSE. Several suites drive this module against a scripted pg
 // fake that matches on the raw SQL text, and a multi-line template literal
 // arrives at those matchers with newlines in it.
-const TIER_SQL = 'SELECT vp.tier, vs.tier AS grant_tier, vs.status AS grant_status, vs.source AS grant_source, vs.granted_reason, vs.granted_at, vs.expires_at, (vp.created_at IS NULL OR vp.created_at < $2::timestamptz) AS roost_legacy, vn.charge_not_before AS roost_notice_until, vs.google_place_id AS grant_place_id, vp.google_place_id AS place_id FROM venue_profiles vp LEFT JOIN venue_subscriptions vs ON vs.user_id = vp.user_id LEFT JOIN venue_roost_notices vn ON vn.user_id = vp.user_id WHERE vp.user_id = $1';
+const TIER_SQL = 'SELECT vp.tier, vs.tier AS grant_tier, vs.status AS grant_status, vs.source AS grant_source, vs.granted_reason, vs.granted_at, vs.expires_at, (vp.created_at IS NULL OR vp.created_at < $2::timestamptz) AS roost_legacy, vn.charge_not_before AS roost_notice_until, vs.google_place_id AS grant_place_id, vp.google_place_id AS place_id, vs.current_period_end, vs.cancel_at, vs.trial_end FROM venue_profiles vp LEFT JOIN venue_subscriptions vs ON vs.user_id = vp.user_id LEFT JOIN venue_roost_notices vn ON vn.user_id = vp.user_id WHERE vp.user_id = $1';
+
+// A date column as ISO, or null.
+function isoOrNull(v) {
+  if (v === null || v === undefined) return null;
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
 
 // The full entitlement, for the surfaces that have to SAY what a venue holds
 // and until when (GET /api/venue-profile). Same resolution as the gate, so the
@@ -216,6 +223,22 @@ async function getVenueEntitlement(userId) {
   const paidTier = enabled ? resolveGrantedTier(row, now) : 'pro';
   const inNoticeWindow = enabled && noticeWindowOpen(row, now);
   const tier = inNoticeWindow ? 'pro' : paidTier;
+  // THE DATE A PLAN IS SHOWN WITH IS STRIPE'S, NEVER THE GRACE. A Stripe
+  // grant's expires_at is its period end plus three days (GRACE_MS in
+  // services/venueBilling.js), so a renewal webhook that arrives late does not
+  // lock a paying venue out at midnight. That margin is the resolver's
+  // business, and it stays in expires_at, which only resolveGrantedTier reads.
+  // This answer is what the dashboard SHOWS, and it handed the same column
+  // over as the date the plan runs until: a trial read "Runs until" three
+  // days after Stripe charged at its end, and a renewing plan and one set to
+  // end showed the same offset. So a Stripe grant reports its scheduled end
+  // if it has one, else its period end, both Stripe's own facts kept on the
+  // row (migration 040), and the three of them separately, for a card that
+  // has to say which date it is naming.
+  const stripeGrant = row?.grant_source === 'stripe';
+  const shownEnd = stripeGrant
+    ? (row.cancel_at ?? row.current_period_end ?? row.expires_at ?? null)
+    : (row?.expires_at ?? null);
   return {
     tier,
     paidTier,
@@ -235,7 +258,13 @@ async function getVenueEntitlement(userId) {
     source: row?.grant_source ?? null,
     reason: row?.granted_reason ?? null,
     grantedAt: row?.granted_at ?? null,
-    expiresAt: row?.expires_at ?? null,
+    expiresAt: shownEnd,
+    // Stripe's own dates for a Stripe grant (null for any other): when a
+    // trial is charged, when the current period ends (and the plan renews),
+    // and when a plan set to end ends.
+    trialEnd: stripeGrant ? isoOrNull(row.trial_end) : null,
+    currentPeriodEnd: stripeGrant ? isoOrNull(row.current_period_end) : null,
+    cancelAt: stripeGrant ? isoOrNull(row.cancel_at) : null,
     status: row?.grant_status ?? null,
     // True only when there IS an end date and it has passed. A permanent grant
     // is not expired and neither is a venue with no grant at all.

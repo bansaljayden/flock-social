@@ -89,6 +89,11 @@ router.get('/status', async (req, res) => {
         canManage = !!(latest && venueBilling.stillBilling(latest.subscription));
       }
     }
+    // The plan still running, with Stripe's dates for the card: the day a
+    // trial is charged, the day it renews, or the day a plan set to end ends.
+    // Never the grant's expires_at, which carries the three days of grace the
+    // gate allows a late webhook.
+    const running = canManage ? venueBilling.subscriptionDates(latest.subscription) : null;
     // A price lookup that fails hides the offer, not the page, so a
     // subscriber can still reach Manage while Stripe is slow.
     let plans = [];
@@ -135,6 +140,10 @@ router.get('/status', async (req, res) => {
       status: ent.status,
       expiresAt: ent.expiresAt,
       canManage,
+      subscriptionStatus: running ? running.status : null,
+      trialEnd: running ? running.trialEnd : null,
+      currentPeriodEnd: running ? running.currentPeriodEnd : null,
+      cancelAt: running ? running.cancelAt : null,
     });
   } catch (err) {
     sendError(res, err, 'Could not load venue billing just now.');

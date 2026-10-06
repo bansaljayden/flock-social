@@ -30,6 +30,9 @@ const path = require('path');
 const {
   verificationLine,
   roostNoticeLine,
+  runningRoostPlan,
+  stripePlanLines,
+  roostPlanDateLine,
   weeklyDigestOffered,
   WEEKLY_DIGEST_DESCRIPTION,
   mergeSavedProfile,
@@ -99,8 +102,100 @@ describe('the Roost notice line says only what has happened', () => {
   });
 
   test('the Subscription card uses it, and the line under it still names the date or the email to come', () => {
-    expect(DASH).toMatch(/venueProfile\?\.tier_notice_window === true\s*\? roostNoticeLine\(venueProfile\)/);
+    expect(DASH).toMatch(/venueProfile\?\.tier_notice_window === true\s*\? <VenueBillingStatus>\{\(\{ status \}\) => roostNoticeLine\(venueProfile, runningRoostPlan\(venueProfile, status\)\)\}<\/VenueBillingStatus>/);
     expect(DASH).toContain("'We will email you at least 30 days before this changes'");
+  });
+
+  test('a venue that subscribed inside its window is told a charge is coming, not that nothing is charged', () => {
+    // It subscribed, so Stripe will charge on the day its notice named, and
+    // the line used to say "Nothing is being charged" all the same.
+    const profile = { tier_notice_window: true, tier_notice_until: '2026-10-25T04:00:00.000Z' };
+    const plan = { status: 'trialing', trialEnd: '2026-10-25T04:00:00.000Z', currentPeriodEnd: '2026-10-25T04:00:00.000Z', cancelAt: null };
+    const line = roostNoticeLine(profile, plan);
+    expect(line).toBe('Everything you had stays on until your Roost plan starts billing.');
+    expect(line).not.toMatch(/Nothing is being charged/);
+    const named = new Date(plan.trialEnd).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' });
+    expect(roostPlanDateLine({ profile, plan, endsAt: null })).toBe(`First charge on ${named}`);
+    // A plan set to end inside the window charges nothing, and says the old line.
+    expect(roostNoticeLine(profile, { ...plan, cancelAt: '2026-10-25T04:00:00.000Z' }))
+      .toBe('Everything you had stays on while the notice we emailed you runs. Nothing is being charged.');
+  });
+});
+
+// The Subscription card named tier_expires_at, which for a Stripe plan was
+// the period end plus three days of grace: a trial read "Runs until" three
+// days after Stripe charged at its end, and so did a renewing plan and one set
+// to end. It now names Stripe's own date, the one it means.
+describe('a Stripe plan names its real date, never the grace', () => {
+  const day = (iso) => new Date(iso).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' });
+  const TRIAL_END = '2026-11-02T15:00:00.000Z';
+  const PERIOD_END = '2026-12-02T15:00:00.000Z';
+  const GRACE_END = '2026-12-05T15:00:00.000Z';
+
+  test('a trial names the day it is charged', () => {
+    const lines = stripePlanLines({ status: 'trialing', trialEnd: TRIAL_END, currentPeriodEnd: TRIAL_END, cancelAt: null });
+    expect(lines.line).toBe('On the free trial.');
+    expect(lines.date).toBe(`First charge on ${day(TRIAL_END)}`);
+  });
+
+  test('a renewing plan names the day it renews', () => {
+    const lines = stripePlanLines({ status: 'active', trialEnd: null, currentPeriodEnd: PERIOD_END, cancelAt: null });
+    expect(lines.line).toBe('Billed through Stripe.');
+    expect(lines.date).toBe(`Renews on ${day(PERIOD_END)}`);
+  });
+
+  test('a plan set to end names the day it ends, trial or not', () => {
+    expect(stripePlanLines({ status: 'active', trialEnd: null, currentPeriodEnd: PERIOD_END, cancelAt: PERIOD_END }).date).toBe(`Ends on ${day(PERIOD_END)}`);
+    const trial = stripePlanLines({ status: 'trialing', trialEnd: TRIAL_END, currentPeriodEnd: TRIAL_END, cancelAt: TRIAL_END });
+    expect(trial.line).toBe('On the free trial. It ends without a charge.');
+    expect(trial.date).toBe(`Ends on ${day(TRIAL_END)}`);
+  });
+
+  test('a failed payment is said, with no date that suggests all is well', () => {
+    expect(stripePlanLines({ status: 'past_due', trialEnd: null, currentPeriodEnd: PERIOD_END, cancelAt: null }))
+      .toEqual({ line: 'The last payment did not go through. Update your card in Manage billing.', date: null });
+  });
+
+  test('the date line takes the plan\'s date over the grace-carrying end the profile also sends', () => {
+    const plan = { status: 'active', trialEnd: null, currentPeriodEnd: PERIOD_END, cancelAt: null };
+    expect(roostPlanDateLine({ profile: {}, plan, endsAt: GRACE_END })).toBe(`Renews on ${day(PERIOD_END)}`);
+    // A plan we set up by hand keeps "Runs until" its own date.
+    expect(roostPlanDateLine({ profile: {}, plan: null, endsAt: GRACE_END })).toBe(`Runs until ${day(GRACE_END)}`);
+    expect(roostPlanDateLine({ profile: {}, plan: null, endsAt: null })).toBe('No end date');
+  });
+
+  test('the running plan comes from the status on the web, and from the profile inside the app', () => {
+    const profile = {
+      tier_source: 'stripe', tier_status: 'trialing', tier_trial_end: TRIAL_END,
+      tier_current_period_end: TRIAL_END, tier_cancel_at: null,
+    };
+    expect(runningRoostPlan(profile, null)).toEqual({ status: 'trialing', trialEnd: TRIAL_END, currentPeriodEnd: TRIAL_END, cancelAt: null });
+    const status = { subscriptionStatus: 'active', trialEnd: null, currentPeriodEnd: PERIOD_END, cancelAt: null };
+    expect(runningRoostPlan(profile, status)).toEqual({ status: 'active', trialEnd: null, currentPeriodEnd: PERIOD_END, cancelAt: null });
+    // The status read Stripe a moment ago: nothing running is nothing running.
+    expect(runningRoostPlan(profile, { subscriptionStatus: null })).toBeNull();
+    // A comp, or a plan that has ended, is not a running Stripe plan.
+    expect(runningRoostPlan({ ...profile, tier_source: 'comp' }, null)).toBeNull();
+    expect(runningRoostPlan({ ...profile, tier_status: 'canceled' }, null)).toBeNull();
+  });
+
+  test('the card reads both lines from the plan', () => {
+    expect(DASH).toContain('<VenueBillingStatus>{({ status }) => roostPlanDateLine({ profile: venueProfile, plan: runningRoostPlan(venueProfile, status), endsAt: venueTierEndsAt })}</VenueBillingStatus>');
+  });
+
+  test('no line carries an em dash', () => {
+    const plans = [
+      { status: 'trialing', trialEnd: TRIAL_END, currentPeriodEnd: TRIAL_END, cancelAt: null },
+      { status: 'trialing', trialEnd: TRIAL_END, currentPeriodEnd: TRIAL_END, cancelAt: TRIAL_END },
+      { status: 'active', trialEnd: null, currentPeriodEnd: PERIOD_END, cancelAt: null },
+      { status: 'active', trialEnd: null, currentPeriodEnd: PERIOD_END, cancelAt: PERIOD_END },
+      { status: 'past_due', trialEnd: null, currentPeriodEnd: PERIOD_END, cancelAt: null },
+    ];
+    for (const p of plans) {
+      const { line, date } = stripePlanLines(p);
+      expect(line).not.toMatch(/—/);
+      if (date) expect(date).not.toMatch(/—/);
+    }
   });
 });
 

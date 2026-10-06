@@ -116,6 +116,29 @@ function longDate(iso) {
     : null;
 }
 
+// THE DATE A RUNNING PLAN IS AT, under Manage billing, from Stripe's own dates
+// in the status (trialEnd, currentPeriodEnd, cancelAt). Never the plan's
+// expiresAt, which for a Stripe plan carries three days of grace past the
+// date Stripe charges. Inside the notice window a plan set to bill names its
+// first charge: a venue that subscribed there has a charge scheduled, and was
+// told nothing about it.
+export function runningPlanNote(status) {
+  if (!status || !status.subscriptionStatus) return null;
+  if (status.cancelAt) {
+    const ends = longDate(status.cancelAt);
+    return ends ? `Ends on ${ends}. Nothing more is charged.` : null;
+  }
+  if (status.subscriptionStatus === 'trialing' || status.inNoticeWindow) {
+    const first = longDate(status.trialEnd || status.currentPeriodEnd);
+    return first ? `First charge on ${first}.` : null;
+  }
+  if (status.subscriptionStatus === 'active') {
+    const renews = longDate(status.currentPeriodEnd);
+    return renews ? `Renews on ${renews}.` : null;
+  }
+  return null;
+}
+
 export default function VenueBillingControl({ current = false, fallback = null }) {
   const { native, status, failed } = useVenueBillingStatus();
   const [busy, setBusy] = useState(null);
@@ -150,11 +173,13 @@ export default function VenueBillingControl({ current = false, fallback = null }
   };
 
   if (status.canManage) {
+    const note = runningPlanNote(status);
     return (
       <>
         <button className="hit44" disabled={!!busy} onClick={() => go('portal', openVenuePortal)} style={buttonStyle(!current)}>
           {busy === 'portal' ? 'Opening billing…' : 'Manage billing'}
         </button>
+        {note && <p style={noteStyle}>{note}</p>}
         {error && <p role="alert" style={noteStyle}>{error}</p>}
       </>
     );
