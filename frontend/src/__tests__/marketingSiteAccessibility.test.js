@@ -1041,13 +1041,36 @@ describe('copy rules (DESIGN-STANDARD)', () => {
     const copy = readJs('AboutPage.js').replace(/\s+/g, ' ');
 
     expect(served.rows).toBe(4183);
-    expect(copy).toMatch(/Tested against 4,183 real live readings it had not seen, from September 6 to 8, 2026/);
+    expect(copy).toMatch(/Tested against 4,183 real live readings it had not seen, from September 6 to 8, 2026, at venues in the Lehigh Valley and Miami/);
+    expect(served.population).toMatch(/Lehigh and Miami/);
     // The exact level sits beside within-one because within-one alone flatters
     // a lazy answer: a constant "Not Busy" scores high on it (MODEL-METRICS.md).
     expect(copy).toContain(`${served.band_exact.toFixed(1)}% of Flock's crowd numbers named the exact crowd level of the reading, ${served.within_one_band}% landed within one level, and ${served.within_10}% within 10 points`);
-    expect(copy).toContain(`The average miss was ${Math.round(served.mae)} points, with no lean high or low`);
+    expect(copy).toContain(`with an average miss of ${Math.round(served.mae)} points and no lean high or low`);
     expect(Math.abs(served.bias)).toBeLessThan(2);
     expect(copy).toContain(`${served.reading_one_hour_earlier.band_exact.toFixed(1)}% named the exact level and ${served.reading_one_hour_earlier.within_one_band}% landed within one`);
     expect(copy).toContain(`scored ${served.before.band_exact.toFixed(1)}% on the exact level and ${served.before.within_one_band}% within one`);
+  });
+
+  // WHICH READINGS EACH FIGURE WAS MEASURED ON. The pre-upgrade figures were
+  // scored on all 4,183 readings and nobody scored the hour-before subset under
+  // the old arithmetic, but the page put "the same readings scored 32.2%" right
+  // after the subset's 86.1%, which read as that subset going from 32.2 to 86.1.
+  test('/about puts the pre-upgrade figures on the readings they were measured on', () => {
+    const served = JSON.parse(fs.readFileSync(
+      path.join(__dirname, '..', '..', '..', 'backend', 'services', 'servedAccuracy.json'),
+      'utf8'
+    ));
+    const copy = readJs('AboutPage.js').replace(/\s+/g, ' ');
+    const count = (n) => n.toLocaleString('en-US');
+    expect(served.before.rows).toBe(served.rows);
+    // Beside the full set's figures, naming that set.
+    expect(copy).toContain(`and ${served.within_10}% within 10 points, with an average miss of ${Math.round(served.mae)} points and no lean high or low. `
+      + `Before the September upgrade, those same ${count(served.before.rows)} readings scored ${served.before.band_exact.toFixed(1)}% on the exact level and ${served.before.within_one_band}% within one.`);
+    // The subset says how many readings it is, and comes after.
+    const subset = `On the ${count(served.reading_one_hour_earlier.rows)} of them where the venue had a live reading from the hour before, ${served.reading_one_hour_earlier.band_exact.toFixed(1)}% named the exact level`;
+    expect(copy).toContain(subset);
+    expect(copy.indexOf(subset)).toBeGreaterThan(copy.indexOf('Before the September upgrade'));
+    expect(copy).not.toMatch(/the same readings scored/);
   });
 });

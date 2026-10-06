@@ -394,6 +394,20 @@ describe('llms.txt stays true to the shipped model', () => {
     expect(flat).toContain(`average miss was ${served.mae.toFixed(1)} points, down from ${served.before.mae.toFixed(1)}`);
     expect(Math.abs(served.bias)).toBeLessThan(2);
     expect(flat).toContain(`${served.reading_one_hour_earlier.band_exact.toFixed(1)}% of numbers named the exact crowd level and ${served.reading_one_hour_earlier.within_one_band}% landed within one`);
+    // The hour-before figures are on a subset, and say how big it is; the
+    // pre-upgrade figures are on the whole set, as /about now says too.
+    expect(flat).toContain(`which ${served.reading_one_hour_earlier.rows.toLocaleString('en-US')} of those 4,183 readings did`);
+    expect(flat).toContain('4,183 real live readings at venues in the Lehigh Valley and Miami');
+  });
+
+  // A venue with no pattern is answered by the rule engine, and one with a
+  // pattern but no live readings is its pattern alone, so neither sentence
+  // that describes every venue's number may say it moves with live readings.
+  test('the crowd sentences limit live readings to the venues Flock has them for', () => {
+    const flat = llms.replace(/\s+/g, ' ');
+    expect(flat).not.toMatch(/Each venue's number/);
+    expect(flat).toContain("A venue's number is its own usual pattern for that hour, moved by its newest live readings where Flock has them.");
+    expect(flat).toContain('moved by its newest live readings where Flock has them, so a group can see how packed somewhere is before leaving. A place Flock has no pattern for yet gets an estimate from what is typical for its kind.');
   });
 
   // AUDIT 2026-08-26. The five figures above were pinned; the sentence that
