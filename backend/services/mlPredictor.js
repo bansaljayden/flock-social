@@ -270,7 +270,10 @@ function allowEventFetch(userId, opts) {
 // four are honest refusals that return crowdEngine's category curve, and the
 // most common of them by a wide margin is `rule_engine_no_baseline`: a delta
 // model reconstructs score = baseline + clamp(delta), so a venue with no row in
-// ml_venue_baselines cannot be scored by it at all.
+// ml_venue_baselines cannot be scored by it at all. With
+// CROWD_NO_CURVE_FALLBACK on, that exit answers some of those venues from the
+// artifact's category table instead (NO_CURVE_FALLBACK_METHOD), which is
+// neither the model nor the rule engine and is counted as its own leg.
 //
 // HOW THAT SET GROWS. There are exactly two ways a venue acquires a baseline
 // row. One is the BestTime collector, and the paragraph here used to say it was
@@ -4441,7 +4444,9 @@ async function predictBusyness(venue, weather, timestamp, options = {}, slotInst
     // score = baseline + clamp(delta, ±30). With baseline 0 that caps the
     // score at ~30 ("Not Busy") no matter how packed the venue really is —
     // strictly worse than the rule engine. Only venues with NO stored
-    // baseline AND no popular_times land here; the rule engine answers.
+    // baseline AND no popular_times land here; the rule engine answers, or,
+    // with CROWD_NO_CURVE_FALLBACK on and no curve at all, the category table
+    // (see the corpus-gap branch below).
     // (Retrain plan: teach the model an absolute head so this path dies.)
     // The two-head candidate's profile head takes the stored baseline as an
     // input and was trained only on venues that have one, so it is held to
