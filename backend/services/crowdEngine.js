@@ -90,7 +90,8 @@ function hedgeLabel(label) {
 //   predictionMethod — as set by services/mlPredictor.js: 'ml' when the trained
 //     model produced the number, 'rule_engine*' for any of the honest refusals
 //     (no model on disk, ship gate failed, no baseline, no climatology,
-//     inference threw).
+//     inference threw), and NO_CURVE_FALLBACK_METHOD for the category table's
+//     typical level at a venue with no curve of its own (CROWD_NO_CURVE_FALLBACK).
 //   verifiedReports — how many distinct verified reporters
 //     buildCalibrationAdjustment actually blended in. Below
 //     MIN_CALIBRATION_REPORTERS it is 0 influence and therefore 0 evidence.
@@ -159,6 +160,14 @@ const ML_BASELINE_AXIS_VERIFIED = true;
 // same either way. What changes is `basis`, which is what an operator reads to
 // know WHY a number was trusted. Reporting 'model_holdout' for a venue three
 // people just walked out of would be the less true of two true answers.
+//
+// THE NO-CURVE FALLBACK'S METHOD. services/mlPredictor.js serves it, behind
+// CROWD_NO_CURVE_FALLBACK, for a venue with no curve of its own: the shipped
+// artifact's category_baselines value for the venue's category, weekday and
+// hour. One name for it, defined here beside the rule that decides what it may
+// claim, and read by the predictor that produces it.
+const NO_CURVE_FALLBACK_METHOD = 'category_curve_no_baseline';
+
 function describePredictionSupport(predictionMethod, verifiedReports) {
   const reports = Number.isFinite(verifiedReports) ? verifiedReports : 0;
   if (reports >= MIN_CALIBRATION_REPORTERS) {
@@ -178,6 +187,15 @@ function describePredictionSupport(predictionMethod, verifiedReports) {
     // artifact was rolled back to a pre-2026-08-18 model whose weights sit on
     // the old axis. Kept so that rollback degrades to honesty automatically.
     return { basis: 'model_unverified_axis', supported: false, confidenceMeans: 'input_completeness' };
+  }
+  if (predictionMethod === NO_CURVE_FALLBACK_METHOD) {
+    // What is typical for the venue's category at this hour, for a venue with
+    // no curve of its own. A category prior like the rule engine's, so it is
+    // hedged the same way ("Usually busy") and claims nothing about this
+    // building. What differs is the confidence integer beside it: mlPredictor
+    // publishes this arithmetic's within-15, measured on held-out live
+    // readings, not the metadata ladder, so that is what it means.
+    return { basis: 'category_pattern', supported: false, confidenceMeans: 'measured_accuracy' };
   }
   return { basis: 'category_pattern', supported: false, confidenceMeans: 'input_completeness' };
 }
@@ -204,17 +222,27 @@ function describePredictionSupport(predictionMethod, verifiedReports) {
 //                         changed (offsetChangedBySwitch)
 //   'model_alone'         the model's number where a switch took away the
 //                         offset the stored median would have added
+//   'category_typical'    not a model-path number at all: the no-curve
+//                         fallback (NO_CURVE_FALLBACK_METHOD), what is typical
+//                         for the venue's category at that weekday and hour,
+//                         for a venue with no curve of its own. Named here so
+//                         every surface that reads this one function words it
+//                         as typical for that kind of place, never as the
+//                         venue's pattern, the model or a live reading
 //   null                  anything else: the attribution predictionMethod
 //                         already gives is the true one
 //
-// Null for every response with both switches off, because mlPredictor only
+// Null for every response with every switch off, because mlPredictor only
 // adds serveMode, nowcast and offsetChangedBySwitch to a response while a
-// switch is on. Surfaces publish the value only when it is not null, so a
-// switched-off payload keeps exactly the keys it had. It names the arithmetic
-// and at most a reading's age, never a reading or an offset: those stay on
-// the server (a venue's recent level).
+// switch is on, and serves NO_CURVE_FALLBACK_METHOD only while
+// CROWD_NO_CURVE_FALLBACK is. Surfaces publish the value only when it is not
+// null, so a switched-off payload keeps exactly the keys it had. It names the
+// arithmetic and at most a reading's age, never a reading or an offset: those
+// stay on the server (a venue's recent level).
 function describeServedArithmetic(result) {
-  if (!result || result.predictionMethod !== 'ml') return null;
+  if (!result) return null;
+  if (result.predictionMethod === NO_CURVE_FALLBACK_METHOD) return 'category_typical';
+  if (result.predictionMethod !== 'ml') return null;
   const nowcast = result.nowcast;
   if (nowcast && nowcast.weight >= 1 && Number.isInteger(nowcast.lagHours) && nowcast.lagHours >= 1) {
     return `live_reading_${nowcast.lagHours}h`;
@@ -2193,6 +2221,9 @@ module.exports = {
   describePredictionSupport,
   describeServedArithmetic,
   describePublishedArithmetic,
+  // The no-curve fallback's predictionMethod, so the predictor that serves it
+  // and every surface that branches on it read one spelling.
+  NO_CURVE_FALLBACK_METHOD,
   publishedConfidence,
   publishedLabel,
   hedgeLabel,
