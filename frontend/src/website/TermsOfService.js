@@ -4,7 +4,10 @@ import SiteFooter from './SiteFooter';
 
 // Moved to September 27 when 9.6 renamed "the Monday digest" to "the Monday
 // email", the name the venue dashboard's switch uses. The words moved, so the
-// date does (DESIGN-STANDARD §Q4).
+// date does (DESIGN-STANDARD §Q4). October 6 covers 6, 7 and 9.4 as rewritten that
+// day, and 7 and 9.5 corrected later the same day: a venue's own reading
+// replaces the estimate rather than adjusting it, and the dashboard is built
+// from Flock's crowd numbers, not "our model".
 const EFFECTIVE_DATE = 'October 6, 2026';
 const SUPPORT_EMAIL = 'social@flockcorp.com';
 
@@ -253,8 +256,9 @@ export default function TermsOfService() {
           blended with or replaced by a recent live busyness reading when there is one. A
           venue with no pattern yet gets an estimate from what is typical for its kind of
           place at that time, which can include the weather. For some venues, recent reports
-          from people who were there, or the venue's own reading, adjust it. It is not a
-          measurement of
+          from people who were there adjust it. While a venue's own live reading stands, it
+          is shown in place of our estimate and labelled as the venue's, unless enough users
+          have reported to take precedence (see 9.4). It is not a measurement of
           the room you are about to walk into, and it is not a promise. A venue can be empty
           when Flock says it is busy, and packed when Flock says it is quiet. Opening hours,
           prices, addresses and event listings come from third parties and from venues
@@ -393,9 +397,9 @@ export default function TermsOfService() {
 
         <h3>9.5 What the dashboard gives you, and what it does not</h3>
         <p>
-          The dashboard shows analytics built from Flock activity and from our model:
-          consideration counts, check-in counts, busyness curves, and the Roost cards and
-          answers. All of it is estimates, subject to section 7. Aggregated activity shown to
+          The dashboard shows analytics built from Flock activity and from Flock's crowd
+          numbers: consideration counts, check-in counts, busyness curves, and the Roost
+          cards and answers. All of it is estimates, subject to section 7. Aggregated activity shown to
           you is anonymised: you do not receive individual users' identities, their budgets,
           their locations, or their messages.
         </p>
