@@ -3240,10 +3240,23 @@ const aiResetsAtFromReply = (reply) => (reply && reply.remaining === 0
 // Bubbles flagged `error` are the app talking (a refusal, a dead network).
 // They used to go back to the model as its own words, so the next turn was
 // told it had previously said "Couldn't reach Flock".
+//
+// The fold says what the card said. is_open is null when Google has no hours
+// for the place (backend routes/ai.js), and the card hides its badge then; the
+// fold read null as false and told the model, in its own turn, that the place
+// was closed. And the names are business listings anyone can suggest edits to,
+// written inside a bracketed line the model reads as its own words, so each
+// one is escaped the way the server's context line escapes the names it
+// carries (routes/ai.js buildContextDataLine): one line, the server's 120
+// character bound, and the brackets and quotes that could end the line or the
+// name swapped for characters that cannot.
 const toAiWireMessages = (messages) => (Array.isArray(messages) ? messages : []).filter((m) => !m?.error).map((m) => {
   let text = typeof m?.text === 'string' ? m.text : '';
   if (m?.role === 'assistant' && Array.isArray(m.venues) && m.venues.length > 0) {
-    text += '\n[Venues shown: ' + m.venues.map(v => `${v.name} (${v.crowd_label || 'crowd unknown'}, ${v.is_open ? 'open' : 'closed'})`).join(', ') + ']';
+    const fold = (value) => (typeof value === 'string' ? value : '').replace(/\s+/g, ' ').trim().slice(0, 120)
+      .split('[').join('(').split(']').join(')').split('"').join("'");
+    const hours = (v) => (v.is_open === true ? 'open' : v.is_open === false ? 'closed' : 'hours unknown');
+    text += '\n[Venues shown: ' + m.venues.map(v => `${fold(v.name)} (${fold(v.crowd_label) || 'crowd unknown'}, ${hours(v)})`).join(', ') + ']';
   }
   return {
     role: m?.role,
