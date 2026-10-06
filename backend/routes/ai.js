@@ -1341,17 +1341,17 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
           label: publishedLabel(h.score, describePredictionSupport(h.predictionMethod, 0)),
           score: h.score,
           predictionMethod: h.predictionMethod || null,
-          // WHAT MADE THIS HOUR, per hour, while a serving switch is on.
-          // predictionMethod stays 'ml' for an hour made from the venue's
-          // weekly pattern with no model run, and a switch can change one
-          // hour's arithmetic and not the next (the nowcast has a reading for
-          // the next hour and none for an evening eight hours out), so the
-          // headline's crowd_method says nothing about these. crowd_method
-          // uses the headline's vocabulary (crowdEngine
-          // .describeServedArithmetic, which predictHourlyForecast names as
-          // numberSource) and live_readings is the forecast's own yes or no.
-          // predictHourlyForecast sends neither key with both switches off,
-          // so a switched-off hour keeps exactly its four keys.
+          // WHAT MADE THIS HOUR, per hour, while a switch is on (a serving
+          // switch, or CROWD_NO_CURVE_FALLBACK). predictionMethod stays 'ml'
+          // for an hour made from the venue's weekly pattern with no model
+          // run, and a switch can change one hour's arithmetic and not the
+          // next (the nowcast has a reading for the next hour and none for an
+          // evening eight hours out), so the headline's crowd_method says
+          // nothing about these. crowd_method uses the headline's vocabulary
+          // (crowdEngine.describeServedArithmetic, which predictHourlyForecast
+          // names as numberSource) and live_readings is the forecast's own yes
+          // or no. predictHourlyForecast sends neither key with every switch
+          // off, so a switched-off hour keeps exactly its four keys.
           ...(h.numberSource ? { crowd_method: h.numberSource } : {}),
           ...(typeof h.liveReadings === 'boolean' ? { live_readings: h.liveReadings } : {}),
         }));
@@ -1369,8 +1369,11 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
           // gains no key. While one is on, the hour takes the headline's
           // crowd_method, which already ends in '_adjusted' after a reporters'
           // blend and is absent under an owner reading, and the headline's
-          // own live-readings answer. An owner's number carries neither,
-          // because predictionMethod 'owner_report' names its source.
+          // own live-readings answer, read the way predictHourlyForecast reads
+          // every other hour's (mlPredictor.liveReadingsReached), so the
+          // stored offset in a model number with the serving switches off is
+          // a yes here too. An owner's number carries neither, because
+          // predictionMethod 'owner_report' names its source.
           //
           // A REPORTERS' BLEND IS MARKED WHATEVER THE SWITCHES SAY. With both
           // switches off the hour has no crowd_method to carry the adjusted
@@ -1393,7 +1396,7 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
             predictionMethod: ownerLive ? 'owner_report' : (crowdResult.predictionMethod || null),
             ...(!ownerLive && reportsBlended && result.crowd_source === 'user_reports' ? { crowd_source: 'user_reports' } : {}),
             ...(switched && !ownerLive && result.crowd_method ? { crowd_method: result.crowd_method } : {}),
-            ...(switched && !ownerLive ? { live_readings: crowdResult.usedLiveReadings === true } : {}),
+            ...(switched && !ownerLive ? { live_readings: mlPredictor.liveReadingsReached(crowdResult) } : {}),
           };
         }
       } else {
@@ -1721,13 +1724,15 @@ function buildContextDataLine(ctx) {
 
 // WHAT A NUMBER FROM THE CATEGORY TABLE IS, for the venue with no curve of its
 // own (mlPredictor CROWD_NO_CURVE_FALLBACK). Its crowd_method is
-// "category_typical" (crowdEngine.describeServedArithmetic), and an hour of the
-// strip can carry its predictionMethod with no crowd_method beside it: the
-// first hour takes the headline's attribution only while a serving switch is
-// on, and that switch can be off while this one is on. So Birdie is told both
-// names. Only while the fallback can serve, the way servedAccuracyRule is only
-// there while its figures describe the numbers: with it off no number carries
-// either name, and the prompt is exactly what it was.
+// "category_typical" (crowdEngine.describeServedArithmetic), and while this
+// switch is on every hour of the strip carries it, the first included: the
+// strip's hours say what made them while any switch is on, this one counts
+// (mlPredictor hourlyAttributionOn), and the first hour then takes the
+// headline's. Birdie is told the predictionMethod as well, so an hour read by
+// its method alone is described the same way. Only while the fallback can
+// serve, the way servedAccuracyRule is only there while its figures describe
+// the numbers: with it off no number carries either name, and the prompt is
+// exactly what it was.
 function categoryCurveRule() {
   const on = typeof mlPredictor.noCurveFallbackEnabled === 'function' && mlPredictor.noCurveFallbackEnabled();
   if (!on) return '';

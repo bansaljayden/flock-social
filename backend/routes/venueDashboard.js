@@ -2281,8 +2281,11 @@ router.get('/strip', requirePro, async (req, res) => {
         // pattern with no model run, so the caption is read off these
         // instead (lib/crowd hourlySourcePhrase). Gated on the forecast's
         // own live-readings yes or no, which predictHourlyForecast sends on
-        // every hour exactly while a switch is on, so a switched-off row
-        // keeps exactly the keys it had.
+        // every hour exactly while a switch is on, CROWD_NO_CURVE_FALLBACK
+        // included (mlPredictor hourlyAttributionOn): a peak the category
+        // table made is then named as typical for its category, never
+        // captioned as the crowd model's. A switched-off row keeps exactly
+        // the keys it had.
         ...(typeof peak.liveReadings === 'boolean' ? {
           peakMethod: peak.predictionMethod || null,
           peakLiveReadings: peak.liveReadings,
@@ -2380,10 +2383,11 @@ const STRIP_ORDERING_MIN_GAP = 25;
 // about the categories, not about tonight — and a prior against a model score
 // is a comparison of two different kinds of number wearing one axis.
 // The claim is about the PEAKS, so it asks what made each peak. While a
-// serving switch is on a row says so (peakMethod, sent exactly then), and a
-// row whose current hour is the model's can still draw an evening peak the
-// rule engine made for want of a pattern hour. With both switches off no row
-// carries peakMethod and the current method decides, exactly as before.
+// switch is on (a serving switch or CROWD_NO_CURVE_FALLBACK) a row says so
+// (peakMethod, sent exactly then), and a row whose current hour is the model's
+// can still draw an evening peak the rule engine made for want of a pattern
+// hour. With every switch off no row carries peakMethod and the current method
+// decides, exactly as before.
 function stripPeakMethod(row) {
   return typeof row.peakLiveReadings === 'boolean' ? row.peakMethod : row.method;
 }
