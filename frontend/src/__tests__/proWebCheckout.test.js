@@ -527,6 +527,7 @@ describe('the You tab Flock Pro row', () => {
     expect(native).toMatch(/window\.open\(APPLE_SUBSCRIPTIONS_URL/);
     // By the live subscription, not by a Stripe customer that ever existed
     // (purchaseSurfacesTruth.test.js renders both).
-    expect(native).toMatch(/const fromApple = !!status && !status\.hasWebSubscription;/);
+    // And only on a known "none": null means Stripe could not be asked.
+    expect(native).toMatch(/const fromApple = !!status && status\.hasWebSubscription === false;/);
   });
 });

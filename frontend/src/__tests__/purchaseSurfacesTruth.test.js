@@ -218,6 +218,16 @@ describe('the You tab Flock Pro row inside the app', () => {
     expect(await screen.findByRole('button', { name: 'Manage' })).toBeTruthy();
   });
 
+  test('a web subscription Stripe could not be asked about is not sent there either', async () => {
+    // /status sends null when its Stripe read failed (routes/pro.js), which
+    // used to arrive as false, the answer that means "billed somewhere else".
+    getProStatus.mockResolvedValue(status({ canManageWeb: true, hasWebSubscription: null }));
+    render(row());
+    await screen.findByText('Flock Pro is on');
+    await act(async () => {});
+    expect(screen.queryByRole('button', { name: 'Manage' })).toBeNull();
+  });
+
   test('a live web subscription is never sent to Apple\'s screen', async () => {
     getProStatus.mockResolvedValue(status({ canManageWeb: true, hasWebSubscription: true, periodEnd: '2026-10-24T12:00:00.000Z' }));
     const { container } = render(row());

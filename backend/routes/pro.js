@@ -76,9 +76,20 @@ router.get('/status', async (req, res) => {
     }
     const checkout = billing.webCheckout(req.user.id);
     const customerId = await billing.customerIdFor(req.user.id);
+    // WHETHER STRIPE ANSWERED. With no Stripe customer there is no web
+    // subscription, and that is known. With one, it is known only once Stripe
+    // has been asked and has answered; until then hasWebSubscription goes out
+    // as null below rather than false. The app reads false as "Pro is not
+    // billed on the web" and offers Apple's subscriptions screen, which can
+    // neither show nor cancel a Stripe subscription.
+    let webKnown = !customerId;
     let canManageWeb = false;
     if (customerId && billing.stripeConfigured()) {
-      canManageWeb = await billing.hasEverSubscribed(customerId).catch(() => false);
+      webKnown = true;
+      canManageWeb = await billing.hasEverSubscribed(customerId).catch(() => {
+        webKnown = false;
+        return false;
+      });
     }
     // Whether the live web subscription is already set to end, and when, so
     // the page offers Keep Pro instead of Cancel. A failed read shows neither
@@ -88,6 +99,7 @@ router.get('/status', async (req, res) => {
     if (canManageWeb) {
       subscription = await billing.webSubscriptionState(req.user.id).catch((err) => {
         console.warn('[pro] status could not read the web subscription:', err?.message || err);
+        webKnown = false;
         return null;
       });
     }
@@ -116,8 +128,11 @@ router.get('/status', async (req, res) => {
       // True once this account has ever been a Stripe customer, which is when
       // the portal has something to show.
       canManageWeb,
-      // A live web subscription: true when it is set to end at periodEnd.
-      hasWebSubscription: !!subscription,
+      // A live web subscription: true when there is one (set to end at
+      // periodEnd when cancelAtPeriodEnd), false when Stripe says there is
+      // none, and null when Stripe could not be asked (webKnown above). A
+      // reader that only tests it for truth reads null as it read false.
+      hasWebSubscription: subscription ? true : (webKnown ? false : null),
       cancelAtPeriodEnd: subscription ? subscription.cancelAtPeriodEnd : false,
       periodEnd: subscription ? subscription.periodEnd : null,
     });

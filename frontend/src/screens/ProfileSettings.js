@@ -1478,7 +1478,11 @@ function ProRowInner({ isPro, entitlements, colors, setPaywallTrigger, showToast
       // It goes by where the LIVE subscription is: canManageWeb is true for
       // anybody who ever had a Stripe customer, so an App Store subscriber
       // who once paid on the web, and cancelled, never saw Manage at all.
-      const fromApple = !!status && !status.hasWebSubscription;
+      // And only on a known "none": /status sends hasWebSubscription null
+      // when Stripe could not be asked (routes/pro.js), and a web subscriber
+      // must not be sent to Apple's screen because one read failed. A server
+      // from before null existed sends a plain false, read as before.
+      const fromApple = !!status && status.hasWebSubscription === false;
       return (
         <div style={{ ...rowStyle, flexWrap: 'wrap' }}>
           {icon}

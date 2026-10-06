@@ -1326,6 +1326,92 @@ test('/status says when a web subscription is set to end, so the page offers Kee
   } finally { restore(); }
 });
 
+// hasWebSubscription has three answers. False is "Stripe says there is no
+// live web subscription", and the app reads it as "Pro is billed somewhere
+// else" and offers Apple's subscriptions screen, which can neither show nor
+// cancel a Stripe subscription. So a read that FAILED has to say so: null,
+// which every reader that only tests the field for truth reads as before.
+test('/status sends null, not false, when Stripe could not say whether a web subscription is live', async () => {
+  setEnv(ON);
+  const Stripe = require.cache[require.resolve('stripe')];
+  const prevExports = Stripe.exports;
+  // hasEverSubscribed asks for one subscription, webSubscriptionState for ten.
+  let failWhen = () => false;
+  Stripe.exports = function Patched() {
+    const c = prevExports();
+    const list = c.subscriptions.list;
+    c.subscriptions.list = async (args, opts) => {
+      if (failWhen(args || {})) throw new Error('Stripe is down');
+      return list(args, opts);
+    };
+    return c;
+  };
+  stripeState.subscriptions = [
+    { id: 'sub_mine', status: 'active', cancel_at_period_end: false, metadata: { app_user_id: '7' } },
+  ];
+  const { restore } = withCustomer();
+  const status = async () => {
+    billing.__test.resetStripe();
+    const res = await call('/api/pro', proRoutes, 'GET', '/api/pro/status');
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    return res.body;
+  };
+  try {
+    // The live subscription could not be read.
+    failWhen = (args) => args.limit === 10;
+    let body = await status();
+    assert.strictEqual(body.canManageWeb, true);
+    assert.strictEqual(body.hasWebSubscription, null);
+    assert.strictEqual(body.cancelAtPeriodEnd, false);
+    assert.strictEqual(body.periodEnd, null);
+
+    // Nor could whether this customer ever subscribed.
+    failWhen = () => true;
+    body = await status();
+    assert.strictEqual(body.canManageWeb, false);
+    assert.strictEqual(body.hasWebSubscription, null);
+
+    // Stripe answering again gives a boolean again, either way.
+    failWhen = () => false;
+    body = await status();
+    assert.strictEqual(body.hasWebSubscription, true);
+    stripeState.subscriptions = [{ id: 'sub_old', status: 'canceled', metadata: { app_user_id: '7' } }];
+    body = await status();
+    assert.strictEqual(body.canManageWeb, true);
+    assert.strictEqual(body.hasWebSubscription, false);
+  } finally {
+    restore();
+    Stripe.exports = prevExports;
+    billing.__test.resetStripe();
+  }
+});
+
+test('/status: no Stripe customer is a known no, and a customer Stripe cannot be asked about is not', async () => {
+  setEnv(ON);
+  // Never a Stripe customer: there is no web subscription to find.
+  let { restore } = stubPool(async (sql) => {
+    if (sql.includes('SELECT is_premium')) return { rows: [{ is_premium: true }] };
+    if (sql.includes('SELECT stripe_customer_id')) return { rows: [{ stripe_customer_id: null }] };
+    return null;
+  });
+  try {
+    const res = await call('/api/pro', proRoutes, 'GET', '/api/pro/status');
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.hasWebSubscription, false);
+    assert.strictEqual(stripeCalls.filter((c) => c[0] === 'subscriptions.list').length, 0, 'nothing to ask Stripe');
+  } finally { restore(); }
+
+  // A customer on file while the Stripe key is missing: nothing could ask.
+  setEnv({ ...ON, STRIPE_SECRET_KEY: undefined });
+  ({ restore } = withCustomer());
+  try {
+    const res = await call('/api/pro', proRoutes, 'GET', '/api/pro/status');
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.canManageWeb, false);
+    assert.strictEqual(res.body.hasWebSubscription, null);
+  } finally { restore(); }
+});
+
 // The acknowledgment email (California's automatic renewal law).
 const emailService = require('../services/emailService');
 const completedSession = (over = {}) => ({

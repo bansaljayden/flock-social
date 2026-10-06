@@ -2165,9 +2165,11 @@ function purchasesOffInThisBuild() {
 // agree once the purchase has been told to RevenueCat.
 //
 // GET /api/pro/status -> { isPremium, checkoutAvailable, plans, trialDays,
-// taxAdded, canManageWeb }. plans is empty whenever checkout is off, and the
-// page must then show no price at all. A 503 with retryable means the plan
-// state is unknown, which the GET retry above already rides out.
+// taxAdded, canManageWeb, hasWebSubscription, cancelAtPeriodEnd, periodEnd }.
+// plans is empty whenever checkout is off, and the page must then show no
+// price at all. hasWebSubscription is null, not false, when Stripe could not
+// be asked. A 503 with retryable means the plan state is unknown, which the
+// GET retry above already rides out.
 export async function getProStatus() {
   if (!(process.env.REACT_APP_PURCHASES !== 'off')) return purchasesOffInThisBuild();
   return request('/api/pro/status');
