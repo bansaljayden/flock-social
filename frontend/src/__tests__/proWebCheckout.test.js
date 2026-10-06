@@ -525,6 +525,8 @@ describe('the You tab Flock Pro row', () => {
     const native = row.slice(row.indexOf('if (native) {'), row.indexOf('// Manage shows whenever'));
     expect(src).toMatch(/const APPLE_SUBSCRIPTIONS_URL = 'https:\/\/apps\.apple\.com\/account\/subscriptions';/);
     expect(native).toMatch(/window\.open\(APPLE_SUBSCRIPTIONS_URL/);
-    expect(native).toMatch(/const fromApple = !!status && !status\.canManageWeb;/);
+    // By the live subscription, not by a Stripe customer that ever existed
+    // (purchaseSurfacesTruth.test.js renders both).
+    expect(native).toMatch(/const fromApple = !!status && !status\.hasWebSubscription;/);
   });
 });

@@ -1475,7 +1475,10 @@ function ProRowInner({ isPro, entitlements, colors, setPaywallTrigger, showToast
       // Apple expects an app that sells a subscription to lead there. The
       // button waits for /status so a web subscriber, whose subscription Apple
       // does not know about, is never sent to a screen that cannot show it.
-      const fromApple = !!status && !status.canManageWeb;
+      // It goes by where the LIVE subscription is: canManageWeb is true for
+      // anybody who ever had a Stripe customer, so an App Store subscriber
+      // who once paid on the web, and cancelled, never saw Manage at all.
+      const fromApple = !!status && !status.hasWebSubscription;
       return (
         <div style={{ ...rowStyle, flexWrap: 'wrap' }}>
           {icon}

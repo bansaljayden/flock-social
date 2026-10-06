@@ -1,5 +1,5 @@
 /**
- * Five small ways a purchase surface said or did something untrue.
+ * Six small ways a purchase surface said or did something untrue.
  *
  *   - The Pro sheet's backdrop closed it while web checkout was starting, and
  *     the redirect to Stripe still happened from a sheet that was gone. Escape
@@ -9,6 +9,8 @@
  *     pixel of the fine print.
  *   - The You tab's Flock Pro row swallowed a failed /api/pro/status read, so a
  *     web subscriber saw "Active" with no Cancel and nothing to say why.
+ *   - Inside the app the same row hid Manage from an App Store subscriber who
+ *     had ever had a Stripe customer, cancelled or not.
  *   - Roost's buy control rendered nothing while its status loaded, which took
  *     the email request off the sheet for as long as the read took.
  *   - /pro said a code from a shared link was already in the checkout price,
@@ -178,6 +180,66 @@ describe('the You tab Flock Pro row after a failed status read', () => {
     const { container } = render(row({ isPro: false }));
     await act(async () => {});
     expect(container.textContent).toBe('');
+  });
+});
+
+// Inside the app the row's Manage opens Apple's subscriptions screen, and it
+// is held back from a web subscriber, whose subscription Apple cannot show.
+// It used to be held back from anybody who EVER had a Stripe customer
+// (canManageWeb), so an App Store subscriber who once paid on the web and
+// cancelled had no way from the app to the subscription they pay for now.
+describe('the You tab Flock Pro row inside the app', () => {
+  const APPLE = 'https://apps.apple.com/account/subscriptions';
+  const row = () => (
+    <ProRow isPro entitlements={{ paywallEnabled: true }} colors={{ navy: '#0d2847' }} setPaywallTrigger={() => {}} showToast={() => {}} />
+  );
+  const status = (extra) => ({
+    isPremium: true, checkoutAvailable: false, plans: [], trialDays: 0, taxAdded: false,
+    canManageWeb: false, hasWebSubscription: false, cancelAtPeriodEnd: false, periodEnd: null, ...extra,
+  });
+  let open;
+  beforeEach(() => {
+    nativeBridge();
+    open = jest.spyOn(window, 'open').mockImplementation(() => null);
+  });
+  afterEach(() => { open.mockRestore(); });
+
+  test('an App Store subscriber gets Manage, which opens Apple\'s screen', async () => {
+    getProStatus.mockResolvedValue(status());
+    render(row());
+    const manage = await screen.findByRole('button', { name: 'Manage' });
+    manage.click();
+    expect(open).toHaveBeenCalledWith(APPLE, '_blank', 'noopener,noreferrer');
+  });
+
+  test('an App Store subscriber who once had a web subscription gets it too', async () => {
+    getProStatus.mockResolvedValue(status({ canManageWeb: true, hasWebSubscription: false }));
+    render(row());
+    expect(await screen.findByRole('button', { name: 'Manage' })).toBeTruthy();
+  });
+
+  test('a live web subscription is never sent to Apple\'s screen', async () => {
+    getProStatus.mockResolvedValue(status({ canManageWeb: true, hasWebSubscription: true, periodEnd: '2026-10-24T12:00:00.000Z' }));
+    const { container } = render(row());
+    await screen.findByText('Flock Pro is on');
+    await act(async () => {});
+    expect(screen.queryByRole('button', { name: 'Manage' })).toBeNull();
+    expect(container.textContent).not.toMatch(/flockcorp|website/i);
+  });
+
+  test('before the status answers, and after it fails, there is no Manage to guess with', async () => {
+    let answer;
+    getProStatus.mockReturnValueOnce(new Promise((resolve) => { answer = resolve; }));
+    const { unmount } = render(row());
+    expect(screen.queryByRole('button', { name: 'Manage' })).toBeNull();
+    await act(async () => { answer(status()); });
+    expect(screen.getByRole('button', { name: 'Manage' })).toBeTruthy();
+    unmount();
+
+    getProStatus.mockRejectedValueOnce(new Error('offline'));
+    render(row());
+    expect((await screen.findByRole('alert')).textContent).toContain('Could not load your subscription just now.');
+    expect(screen.queryByRole('button', { name: 'Manage' })).toBeNull();
   });
 });
 
