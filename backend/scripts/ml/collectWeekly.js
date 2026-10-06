@@ -205,17 +205,29 @@ const ORDER_BY_SERVED = `(SELECT COUNT(*) FROM served_predictions sp
                            WHERE sp.venue_place_id = ml_venues.google_place_id
                              AND sp.served_at > NOW() - INTERVAL '60 days') DESC,
                          review_count DESC NULLS LAST, id`;
+
+// --order=stalest is for a by-id refresh (--only-found): the venues whose
+// newest weekly curve is oldest come first, and a venue with no curve before
+// all of them. A refresh writes in place and moves collected_at forward, so a
+// refresh run in pieces between the hourly live runs (which BestTime throttles
+// when both call at once; seen 2026-10-06) picks up where the last piece
+// stopped. The third fixed string; nothing from argv reaches the SQL.
+const ORDER_BY_STALEST = `(SELECT MAX(t.collected_at) FROM ml_training_data t
+                            WHERE t.venue_id = ml_venues.id AND t.collection_mode = 'weekly') ASC NULLS FIRST,
+                          id`;
+
 function selectionOptions(argv) {
   const orderArg = argv.find((a) => a.startsWith('--order='));
   const order = orderArg ? orderArg.slice('--order='.length) : null;
-  if (order !== null && order !== 'reviews' && order !== 'served') {
-    return { error: `--order must be "reviews" or "served", got "${order}".` };
+  if (order !== null && order !== 'reviews' && order !== 'served' && order !== 'stalest') {
+    return { error: `--order must be "reviews", "served" or "stalest", got "${order}".` };
   }
   return {
     withoutWeekly: argv.includes('--without-weekly'),
     orderBy: order === 'reviews' ? 'review_count DESC NULLS LAST, id'
       : order === 'served' ? ORDER_BY_SERVED
-        : 'city, id',
+        : order === 'stalest' ? ORDER_BY_STALEST
+          : 'city, id',
   };
 }
 
