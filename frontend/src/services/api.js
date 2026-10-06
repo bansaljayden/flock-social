@@ -26,6 +26,9 @@ import { isNativeShell } from '../lib/nativeShell';
 // sign-out below empties them (lib/flockDrafts.js says why they cannot live in
 // the chat screen, where this file could not reach them).
 import { clearFlockDrafts } from '../lib/flockDrafts';
+// A Google photo link in a reply is read as no avatar (lib/avatarImage.js,
+// GOOGLE'S PHOTO HOST IS NOT AN AVATAR). See parseBody.
+import { withoutGooglePhotoLinks } from '../lib/avatarImage';
 
 // api.flockcorp.com, not the up.railway.app domain, since 2026-08-27: school
 // and work network filters block *.railway.app wholesale while allowing this
@@ -1093,8 +1096,15 @@ async function parseBody(res, onProgress) {
   if (!contentType.includes('application/json')) return text;
   // A body that dies mid-download, or a proxy error page mislabeled as JSON,
   // must not surface as a SyntaxError.
+  //
+  // A Google photo link comes out of the reply as null, so whoever it belonged
+  // to is drawn with their initial (lib/avatarImage.js says why). Only a body
+  // that names the host pays for the reviver; once the server is current, none
+  // does.
   try {
-    return JSON.parse(text);
+    return /googleusercontent\.com/i.test(text)
+      ? JSON.parse(text, withoutGooglePhotoLinks)
+      : JSON.parse(text);
   } catch (_) {
     return PARSE_FAILED;
   }

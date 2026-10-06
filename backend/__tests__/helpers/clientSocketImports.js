@@ -25,6 +25,10 @@
 //   travelFields, sameSignIn the real functions. lib/travel.js and
 //                            lib/sessionIdentity.js have no imports of their
 //                            own, so they load the same way socket.js does.
+//   dropGooglePhotoLinks     the real function, from lib/avatarImage.js, which
+//                            has no imports either. Its browser-only helpers
+//                            (atob, Blob, Image) are only touched when called,
+//                            and nothing here calls them.
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -70,6 +74,7 @@ function clientSocketImports({ io, getToken, BASE_URL }) {
   const src = fs.readFileSync(SOCKET_FILE, 'utf8');
   const { travelFields } = loadPureModule(path.join('lib', 'travel.js'), ['travelFields']);
   const { sameSignIn } = loadPureModule(path.join('lib', 'sessionIdentity.js'), ['sameSignIn']);
+  const { dropGooglePhotoLinks } = loadPureModule(path.join('lib', 'avatarImage.js'), ['dropGooglePhotoLinks']);
   const provided = {
     io,
     getToken,
@@ -77,6 +82,7 @@ function clientSocketImports({ io, getToken, BASE_URL }) {
     storedSessionIsThisTabs: () => true,
     travelFields,
     sameSignIn,
+    dropGooglePhotoLinks,
   };
   const needed = importedNames(src, 'services/socket.js');
   const missing = needed.filter((n) => !(n in provided));
