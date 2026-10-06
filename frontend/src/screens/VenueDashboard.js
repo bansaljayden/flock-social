@@ -194,8 +194,10 @@ function planDate(iso) {
 
 // The two lines the Subscription card shows for a Stripe plan: what it is,
 // and the date that matters. A trial names the day it is charged, a renewing
-// plan the day it renews, and a plan set to end the day it ends.
-export function stripePlanLines(plan) {
+// plan the day it renews, and a plan set to end the day it ends. Inside the
+// app (`native`) nothing names Manage billing, which the app does not show:
+// a card problem goes to the email route, like changing or cancelling.
+export function stripePlanLines(plan, { native = false } = {}) {
   if (!plan) return { line: 'Billed through Stripe.', date: null };
   const ends = planDate(plan.cancelAt);
   if (ends) {
@@ -209,7 +211,12 @@ export function stripePlanLines(plan) {
     return { line: 'On the free trial.', date: charge ? `First charge on ${charge}` : null };
   }
   if (plan.status === 'past_due' || plan.status === 'unpaid') {
-    return { line: 'The last payment did not go through. Update your card in Manage billing.', date: null };
+    return {
+      line: native
+        ? 'The last payment did not go through. Write to social@flockcorp.com and we will help you update your card.'
+        : 'The last payment did not go through. Update your card in Manage billing.',
+      date: null,
+    };
   }
   const renews = planDate(plan.currentPeriodEnd);
   return { line: 'Billed through Stripe.', date: renews ? `Renews on ${renews}` : null };
@@ -2604,7 +2611,7 @@ export default function VenueDashboard({
                           ? <VenueBillingStatus>{({ status }) => roostNoticeLine(venueProfile, runningRoostPlan(venueProfile, status))}</VenueBillingStatus>
                         : venueTierReason === 'paid'
                           ? (venueTierSource === 'stripe'
-                            ? <VenueBillingStatus>{({ status }) => stripePlanLines(runningRoostPlan(venueProfile, status)).line}</VenueBillingStatus>
+                            ? <VenueBillingStatus>{({ status }) => stripePlanLines(runningRoostPlan(venueProfile, status), { native: isNativeShell() }).line}</VenueBillingStatus>
                             : 'Billed as agreed with us.')
                           : venueTierReason === 'founding_comp'
                             ? 'Comped as a founding venue. Nothing is being charged.'
