@@ -1677,10 +1677,17 @@ const HUB_METHOD_WORDS = {
   rule_engine_baseline_error: "the venue's baseline could not be read",
   rule_engine_no_weather_norm: 'there was no weather reading and no usual weather to stand in',
   rule_engine_fallback: 'an error on the request',
+  // The server's no-curve fallback (CROWD_NO_CURVE_FALLBACK): a venue with no
+  // baseline and 200+ reviews, given its category's typical level instead of
+  // the rule engine. Named by what it is, never as the venue's own data.
+  category_curve_no_baseline: "the venue has no baseline yet, so its category's typical level for the hour",
   owner_report: "the venue owner's live report",
   unknown: 'not recorded',
 };
 const hubMethodWords = (m) => HUB_METHOD_WORDS[m] || m;
+// The two fallbacks for a venue with no baseline, both of which end once the
+// collector has read the venue.
+const HUB_NO_BASELINE_METHODS = ['rule_engine_no_baseline', 'category_curve_no_baseline'];
 
 // The two things that make a forecast from a venue's own data.
 const HUB_FROM_CURVE = "the venue's own curve and live readings";
@@ -1695,6 +1702,19 @@ function hubMadeBy(fromCurve, total) {
   if (curve === total) return `all came from ${HUB_FROM_CURVE}`;
   if (curve === 0) return `all came from ${HUB_FROM_MODEL}`;
   return `${hubCount(curve)} came from ${HUB_FROM_CURVE}, ${hubCount(total - curve)} from ${HUB_FROM_MODEL}`;
+}
+
+// The forecasts that were not from a venue's own data, read after "N of M
+// forecasts.": the rule engine's, and, when the server's no-curve fallback
+// answered any (mlPredictor predictionCoverage categoryCurve), the category's
+// typical level for the hour. None of those, or a server from before the
+// count, keeps the sentence this panel has always had.
+function hubRestWords(total, ml, categoryCurve) {
+  const typical = Number.isFinite(categoryCurve) && categoryCurve > 0 ? categoryCurve : 0;
+  if (typical === 0) return 'The rest came from the rule engine.';
+  const rule = Math.max(0, total - ml - typical);
+  const words = `${hubCount(typical)} came from the typical level for the venue's category at that hour, at venues with no baseline yet`;
+  return rule > 0 ? `${words}, and the rest from the rule engine.` : `${words}.`;
 }
 
 // The serve mode in words, for the Overview and the Costs tab alike.
@@ -1861,7 +1881,7 @@ function HubModel({ h, colors }) {
                     navy={navy}
                     label="Most common fallback"
                     value={hubCount(cov.topFallback.served)}
-                    note={`${hubMethodWords(cov.topFallback.method).replace(/^./, (ch) => ch.toUpperCase())}, across ${hubPlural(cov.topFallback.venues, 'venue', 'venues')}.${cov.topFallback.method === 'rule_engine_no_baseline' ? ' A venue gets numbers from its own data once the collector has read it.' : ''}`}
+                    note={`${hubMethodWords(cov.topFallback.method).replace(/^./, (ch) => ch.toUpperCase())}, across ${hubPlural(cov.topFallback.venues, 'venue', 'venues')}.${HUB_NO_BASELINE_METHODS.includes(cov.topFallback.method) ? ' A venue gets numbers from its own data once the collector has read it.' : ''}`}
                   />
                 )}
                 <p style={hubStyle.foot}>By what answered: {parts.join('; ')}. Held for an hour with the check above.</p>
@@ -3748,7 +3768,7 @@ export default function RevenueScreen({
                               ? 'The meter could not be read, which says nothing either way.'
                               : total === 0
                                 ? 'Nothing has asked for a forecast since the last deploy, so nothing has answered.'
-                                : `${count(ml)} of ${count(total)} forecast${total === 1 ? '' : 's'}. The rest came from the rule engine.${madeBy ? ` Of the ${count(ml)}, ${madeBy}.` : ''}`}
+                                : `${count(ml)} of ${count(total)} forecast${total === 1 ? '' : 's'}. ${hubRestWords(total, ml, p.categoryCurve)}${madeBy ? ` Of the ${count(ml)}, ${madeBy}.` : ''}`}
                           </p>
                         </div>
                         <div>
@@ -3765,6 +3785,9 @@ export default function RevenueScreen({
                       </div>
                       {modeWords && (
                         <p style={{ ...sub, margin: '10px 0 0' }}>{modeWords}</p>
+                      )}
+                      {p.noCurveFallback === true && (
+                        <p style={{ ...sub, margin: '10px 0 0' }}>The no-curve fallback is on: a venue with no baseline and 200 or more Google reviews gets its category&apos;s typical level for the hour instead of the rule engine.</p>
                       )}
                       {p.since && (
                         <p style={{ ...sub, margin: '10px 0 0' }}>Counting since {new Date(p.since).toLocaleString()}.</p>

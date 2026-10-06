@@ -1046,6 +1046,20 @@ describe('the model: what makes the numbers, and the served ones against the goa
     expect(hubRow("Forecasts from a venue's own data").textContent).not.toMatch(/Of those/);
   });
 
+  test('the category table\'s typical level at a venue with no baseline is a fallback in words, never by its method name', async () => {
+    // CROWD_NO_CURVE_FALLBACK on: a venue with no baseline and 200+ reviews
+    // gets its category's typical level for the hour instead of the rule
+    // engine. It is not the venue's own data, so it is a fallback.
+    const typical = { method: 'category_curve_no_baseline', served: 900, venues: 150 };
+    await renderHub(withModel({ coverage: { ...COVERAGE, byMethod: [COVERAGE.byMethod[0], typical, ...COVERAGE.byMethod.slice(1)], topFallback: typical, total: COVERAGE.total + 900 } }));
+    expect(await screen.findByText(/^By what answered: the venue's own curve and live readings 1,290; the trained model 20; the venue has no baseline yet, so its category's typical level for the hour 900; the venue has no baseline yet 1,204;/)).toBeInTheDocument();
+    const fallback = hubRow('Most common fallback');
+    expect(within(fallback).getByText('900')).toBeInTheDocument();
+    expect(fallback.textContent).toMatch(/The venue has no baseline yet, so its category's typical level for the hour, across 150 venues\. A venue gets numbers from its own data once the collector has read it\./);
+    expect(modelCard().textContent).not.toMatch(/category_curve|rule_engine/);
+    expect(modelCard().textContent).not.toMatch(MODEL_CLAIM);
+  });
+
   test('a fallback this screen has no words for is shown by its own name, and one from a venue\'s own data alone has no fallback row', async () => {
     await renderHub(withModel({ coverage: { ...COVERAGE, byMethod: [{ method: 'rule_engine_new_reason', served: 9, venues: 1 }], topFallback: { method: 'rule_engine_new_reason', served: 9, venues: 1 }, total: 9, ml: 0, mlFromCurve: 0, mlPercent: 0 } }));
     // The screen paints the last load first, so wait for this one.
@@ -1144,6 +1158,33 @@ describe('the Costs tab: what answered the forecasts', () => {
     expect(card.textContent).toMatch(/The ONNX model is in memory and available to serve\./);
     expect(card.textContent).toMatch(/Serve mode is model: the trained model makes each venue's number\./);
     expect(card.textContent).not.toMatch(/nowcast/);
+  });
+
+  test('with the no-curve fallback on, its answers are named apart from the rule engine\'s, and the switch says so', () => {
+    show({
+      ...COUNTER,
+      categoryCurve: 300,
+      ruleEngine: 959,
+      byMethod: { ml: 1310, category_curve_no_baseline: 300, rule_engine_no_baseline: 959 },
+      noCurveFallback: true,
+    });
+    const card = panel();
+    expect(card.textContent).toMatch(/1,310 of 2,569 forecasts\. 300 came from the typical level for the venue's category at that hour, at venues with no baseline yet, and the rest from the rule engine\. Of the 1,310, all came from the venue's own curve and live readings\./);
+    expect(card.textContent).toMatch(/The no-curve fallback is on: a venue with no baseline and 200 or more Google reviews gets its category's typical level for the hour instead of the rule engine\./);
+  });
+
+  test('when every answer that was not a venue\'s own data was the table\'s, no rest is handed to the rule engine', () => {
+    show({ ...COUNTER, categoryCurve: 1259, ruleEngine: 0, noCurveFallback: true });
+    expect(panel().textContent)
+      .toMatch(/1,310 of 2,569 forecasts\. 1,259 came from the typical level for the venue's category at that hour, at venues with no baseline yet\. Of the 1,310/);
+    expect(panel().textContent).not.toMatch(/rest from the rule engine|The rest came/);
+  });
+
+  test('with the no-curve fallback off, the panel reads exactly as it did', () => {
+    show({ ...COUNTER, categoryCurve: 0, noCurveFallback: false });
+    const card = panel();
+    expect(card.textContent).toMatch(/1,310 of 2,569 forecasts\. The rest came from the rule engine\. Of the 1,310/);
+    expect(card.textContent).not.toMatch(/no-curve fallback|typical level/);
   });
 
   test('a server from before the split claims nothing about what made the share, and no model loaded says so', () => {
