@@ -31,9 +31,16 @@ test('the route charges once, marks it, and refunds on every path that delivers 
   assert.match(src, /function refundChirp\(res\) \{/);
   assert.match(src, /if \(e\?\.geminiBudget\) \{ refundChirp\(res\); return birdieRefusal\(res, e\.leg\); \}/);
   assert.match(src, /const blockReason = response\.promptFeedback\?\.blockReason/);
-  assert.match(src, /candidate\?\.finishReason === 'SAFETY'/);
+  // Every finish reason but STOP and MAX_TOKENS is a withheld reply, not just
+  // SAFETY (birdiePromptInjection.test.js drives each one through the route).
+  assert.match(src, /\|\| withheldFinishReason\(candidate\?\.finishReason\);/);
+  assert.match(src, /return finishReason === 'STOP' \|\| finishReason === 'MAX_TOKENS' \? null : finishReason;/);
+  assert.doesNotMatch(src, /candidate\?\.finishReason === 'SAFETY'/);
   assert.match(src, /text: "not something i'll help with\. ask me something else", venues: \[\], remaining: rateCheck\.remaining \+ 1/);
-  assert.match(src, /if \(textParts\.length === 0 && !budgetStopped && !cutShort\) refundChirp\(res\);/);
+  // The empty-answer refund is for a turn that delivered NOTHING: no words,
+  // no cards, no button, no staged card. And the count it reports says so.
+  assert.match(src, /if \(textParts\.length === 0 && !budgetStopped && !cutShort && !deliveredSomething\) \{\n\s+refundChirp\(res\);\n\s+remaining \+= 1;/);
+  assert.match(src, /const deliveredSomething = venueCards\.length > 0\n\s+\|\| Boolean\(navigationAction \|\| flockDraftAction \|\| venueVoteAction\);/);
   assert.match(src, /console\.error\('\[AI\] Chat error:', err\);\n\s+refundChirp\(res\);/);
   assert.match(src, /error: "birdie's offline right now\. try again in a bit"/);
   assert.ok(!src.includes("error: 'hold up, gimme a sec'"), 'the permanent outage no longer reads as a moment');

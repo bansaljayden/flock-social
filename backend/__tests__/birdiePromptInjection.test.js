@@ -752,6 +752,74 @@ test('an empty reply from a finished turn does still ask for a rephrase', async 
   assert.strictEqual(r.body.text, 'say that one more time?');
 });
 
+// EVERY WAY GEMINI STOPS A TURN IS A REFUSAL, EXCEPT FINISHING. Only SAFETY was
+// read as one, so a reply withheld as PROHIBITED_CONTENT, BLOCKLIST or SPII
+// came back as "say that one more time?", which asks for the repeat that is
+// withheld again. STOP and MAX_TOKENS are the two endings that mean the model
+// wrote what it wrote; no finish reason at all says nothing either way.
+const REFUSAL_TEXT = "not something i'll help with. ask me something else";
+const endsWith = (finishReason) => () => ({ candidates: [{ content: { parts: [] }, finishReason }] });
+// What the meter says is left, which is what `remaining` must report.
+const left = () => birdieUsage.PREMIUM_DAILY_LIMIT - birdieUsage.getUsedToday(CURRENT_USER.id);
+
+for (const reason of ['SAFETY', 'PROHIBITED_CONTENT', 'BLOCKLIST', 'SPII', 'RECITATION', 'OTHER', 'MALFORMED_FUNCTION_CALL']) {
+  test(`a turn Gemini ends with ${reason} is answered as a refusal and costs no chirp`, async () => {
+    sendImpl = endsWith(reason);
+    const r = await chat();
+    assert.strictEqual(r.status, 200);
+    assert.strictEqual(r.body.text, REFUSAL_TEXT, `${reason} fell through to a sentence asking for the same message again`);
+    assert.strictEqual(birdieUsage.getUsedToday(CURRENT_USER.id), 0, 'a withheld reply cost a chirp');
+    assert.strictEqual(r.body.remaining, left(), 'the reply reports a count the meter does not hold');
+  });
+}
+
+for (const reason of ['STOP', 'MAX_TOKENS', undefined]) {
+  test(`an empty turn that ends with ${reason || 'no finish reason'} still asks for a rephrase`, async () => {
+    sendImpl = endsWith(reason);
+    const r = await chat();
+    assert.strictEqual(r.status, 200);
+    assert.strictEqual(r.body.text, 'say that one more time?');
+  });
+}
+
+// THE EMPTY-ANSWER REFUND IS FOR A TURN THAT DELIVERED NOTHING. A turn whose
+// final round wrote no words can still have produced venue cards, a "Take me
+// there" button or a staged card, and those are what the chirp bought.
+test('an empty answer that delivered nothing hands the chirp back and says so in `remaining`', async () => {
+  sendImpl = () => ({ candidates: [{ content: { parts: [] } }] });
+  const r = await chat();
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(birdieUsage.getUsedToday(CURRENT_USER.id), 0, 'nothing was delivered and the chirp was kept');
+  assert.strictEqual(r.body.remaining, left(),
+    'the chirp came back but the reply counted it as spent, so the app shows one fewer than the meter holds');
+});
+
+test('an empty answer that came with venue cards keeps its chirp', async () => {
+  sendImpl = oneToolCall('search_venues', { query: 'bars' }, '');
+  const r = await chat({ messages: [{ role: 'user', text: 'bars near me' }] });
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(r.body.venues.length, 1, 'precondition: the turn delivered a card');
+  assert.strictEqual(birdieUsage.getUsedToday(CURRENT_USER.id), 1, 'a turn that delivered cards was handed back for free');
+  assert.strictEqual(r.body.remaining, left());
+});
+
+test('an empty answer that came with a navigation button keeps its chirp', async () => {
+  sendImpl = oneToolCall('navigate_app', { tab: 'profile', profile_section: 'safety' }, '');
+  const r = await chat({ messages: [{ role: 'user', text: 'where is SOS' }] });
+  assert.strictEqual(r.status, 200);
+  assert.ok(r.body.navigate, 'precondition: the turn delivered a button');
+  assert.strictEqual(birdieUsage.getUsedToday(CURRENT_USER.id), 1, 'a turn that delivered a button was handed back for free');
+  assert.strictEqual(r.body.remaining, left());
+});
+
+test('an empty answer that came with a staged plan keeps its chirp', async () => {
+  sendImpl = oneToolCall('draft_flock', { name: 'Friday tacos' }, '');
+  const r = await chat({ messages: [{ role: 'user', text: 'set up friday' }] });
+  assert.strictEqual(r.status, 200);
+  assert.ok(r.body.flock_draft, 'precondition: the turn delivered a card');
+  assert.strictEqual(birdieUsage.getUsedToday(CURRENT_USER.id), 1, 'a turn that staged a card was handed back for free');
+});
+
 test('an empty message is refused with something a user can act on', async () => {
   const r = await chat({ messages: [{ role: 'user', text: '   ' }] });
   assert.strictEqual(r.status, 400);
