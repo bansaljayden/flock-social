@@ -46,6 +46,11 @@ import VenueBillingControl, { VenueBillingStatus, roostPlanPriceLabel } from '..
 // REACT_APP_PURCHASES=off (the App Store build): no plan badge, no plans
 // sheet, no prices, no upgrade buttons and no Subscription card. A tab the
 // server withholds says so without offering anything. lib/purchasesBuild.js.
+//
+// With purchases on, the native app still shows no Roost price, no upgrade
+// button and no plans sheet: Roost is sold on the website only. Native is
+// lib/nativeShell.js's answer, the one VenueBillingControl's buttons ask.
+import { isNativeShell } from '../lib/nativeShell';
 import {
   BASE_URL,
   askAdvisor,
@@ -921,10 +926,21 @@ export default function VenueDashboard({
     // 2026-10-03). venueTierKnown is set only from a tier the server sent.
     const tierKnown = venueProfile != null && venueTierKnown;
 
+    // ROOST IS NOT SOLD INSIDE THE APP. This dashboard ships in the iOS binary
+    // (VENUE-BILLING.md finding 4), and the purchases flag stops hiding the
+    // plans once that build sells Flock Pro. A Roost price, an upgrade button
+    // or the plans sheet in the native shell would be a paid plan offered
+    // outside in-app purchase, which App Review reads under guideline 3.1.1.
+    // Roost is bought on the website, so inside the app all of them stay off
+    // and a locked tab says what the build that sells nothing says. The name
+    // Roost stays wherever it names a feature or the plan a venue holds.
+    const native = isNativeShell();
+
     // Locked tab placeholder, shown where the venue's plan does not include
     // the tab. Roost is the one paid plan, so every lock names it, with the
     // price the Roost card prints: Stripe's while Roost is on sale on the web,
-    // otherwise the one constant in App.js.
+    // otherwise the one constant in App.js. Inside the app it names no price
+    // and offers no upgrade (`native` above).
     const LockedTab = ({ featureName, description }) => (
       <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', padding: '32px 20px', textAlign: 'center', margin: '12px 0', border: '2px dashed #2d5a87' }}>
         {/* The last hand-drawn icon on this surface. It was a padlock with
@@ -937,7 +953,7 @@ export default function VenueDashboard({
         </div>
         <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 6px' }}>{featureName}</h3>
         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: '1.5' }}>{description}</p>
-        {(process.env.REACT_APP_PURCHASES !== 'off') ? (<>
+        {(process.env.REACT_APP_PURCHASES !== 'off') && !native ? (<>
         <p style={{ fontSize: 'var(--t-micro)', color: 'var(--accent-purple-text)', fontWeight: '700', margin: '0 0 12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Requires Roost · <VenueBillingStatus>{({ status }) => roostPlanPriceLabel(status) || venuePlanPriceLabel('pro')}</VenueBillingStatus></p>
         <button className="hit44 glass-btn glass-primary" onClick={() => setShowUpgradeModal(true)} style={{ padding: '10px 20px', borderRadius: '10px', border: 'none', background: '#2d5a87', color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>
           Upgrade to Roost
@@ -1935,7 +1951,7 @@ export default function VenueDashboard({
                 {venueListErrors.incomingFlocksLocked && (
                   <div style={{ padding: '10px', marginBottom: '8px', borderRadius: '8px', backgroundColor: 'var(--bg-tertiary)' }}>
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px' }}>Your plan does not include this list.</p>
-                    {(process.env.REACT_APP_PURCHASES !== 'off') && <button className="hit44" onClick={() => setShowUpgradeModal(true)} style={{ padding: '8px 16px', borderRadius: '8px', border: 'none', backgroundColor: '#2d5a87', color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>See plans</button>}
+                    {(process.env.REACT_APP_PURCHASES !== 'off') && !native && <button className="hit44" onClick={() => setShowUpgradeModal(true)} style={{ padding: '8px 16px', borderRadius: '8px', border: 'none', backgroundColor: '#2d5a87', color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>See plans</button>}
                   </div>
                 )}
                 {incomingFlocks.length > 0 ? incomingFlocks.map(flock => (
@@ -2616,7 +2632,9 @@ export default function VenueDashboard({
                       </p>
                     )}
                   </div>
-                  {!onRoost && (
+                  {/* The plan held is said inside the app too; the way to
+                      another one is not (`native`, at the plans above). */}
+                  {!onRoost && !native && (
                     <button className="hit44" onClick={() => setShowUpgradeModal(true)} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', background: '#2d5a87', color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', flexShrink: 0 }}>
                       Upgrade
                     </button>
@@ -2657,7 +2675,9 @@ export default function VenueDashboard({
                     on the line stops saying there is nothing to sign up with.
                     Inside the app, and until the status answers, it says what it
                     always said, which is true there: the app has no billing
-                    switch at all. */}
+                    switch at all. Inside the app there is no See plans and
+                    pricing either (`native`, at the plans above); the email
+                    route to change or cancel stays. */}
                 {venueTier !== 'free' && venueProfile?.tier_notice_window !== true && (
                   <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid var(--divider)' }}>
                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
@@ -2670,9 +2690,11 @@ export default function VenueDashboard({
                       }} style={{ flex: '1 1 150px', minWidth: 0, padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>
                         Change or cancel this plan
                       </button>
+                      {!native && (
                       <button className="hit44" onClick={() => setShowUpgradeModal(true)} style={{ flex: '1 1 130px', minWidth: 0, padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>
                         See plans and pricing
                       </button>
+                      )}
                     </div>
                     <VenueBillingStatus>
                       {({ status }) => (
@@ -2714,8 +2736,9 @@ export default function VenueDashboard({
             </div>
           )}
 
-          {/* Upgrade Modal */}
-          {showUpgradeModal && (process.env.REACT_APP_PURCHASES !== 'off') && (
+          {/* Upgrade Modal. Never inside the app, whatever opened it: every
+              button that opens it is gone there too (`native` above). */}
+          {showUpgradeModal && (process.env.REACT_APP_PURCHASES !== 'off') && !native && (
             <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
             <DialogBehavior onClose={() => setShowUpgradeModal(false)} label="Upgrade" />
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '20px', width: '100%', maxWidth: '320px', maxHeight: '80%', overflowY: 'auto' }}>
@@ -2738,8 +2761,8 @@ export default function VenueDashboard({
                     subscription. With Roost on sale on the web its price is
                     Stripe's, from the same status the buttons below read, so
                     the card cannot name a figure checkout does not charge.
-                    Otherwise (billing off, inside the app, no status yet) it
-                    is the one constant in App.js, as before. The free card
+                    Otherwise (billing off, no status yet) it is the one
+                    constant in App.js, as before. The free card
                     above lists everything free, so this one does not open
                     with "everything in" another plan. */}
                 <div style={{ border: '2px solid #2d5a87', borderRadius: '12px', padding: '12px', marginBottom: '16px', backgroundColor: 'var(--accent-purple-bg)' }}>
@@ -2751,8 +2774,9 @@ export default function VenueDashboard({
                     {features.roost.map(f => <li key={f} style={{ marginBottom: '2px' }}>{f}</li>)}
                   </ul>
                   {/* Roost is bought on the web (components/venue/VenueBillingControl.js).
-                      Inside the iOS shell, or while it is not on sale, the
-                      control hands back the email request below unchanged. */}
+                      While it is not on sale, the control hands back the
+                      email request below unchanged. This sheet never opens
+                      inside the iOS shell. */}
                   {venueBillingOn && onRoost ? <><span style={{ display: 'block', textAlign: 'center', fontSize: 'var(--t-meta)', color: 'var(--accent-purple-text)', fontWeight: '500', marginTop: '8px' }}>Current plan</span><VenueBillingControl current /></> : <VenueBillingControl fallback={<button className="hit44" onClick={() => requestTierUpgrade('Roost')} style={{ width: '100%', padding: '8px', borderRadius: '8px', border: 'none', background: '#2d5a87', color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', marginTop: '8px' }}>Email us about Roost</button>} />}
                 </div>
 

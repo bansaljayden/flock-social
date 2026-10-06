@@ -316,9 +316,11 @@ describe('the venue dashboard', () => {
   test('plan badge, plans sheet, upgrade buttons, prices and Subscription card are gated', () => {
     const src = read('screens', 'VenueDashboard.js');
     expect(src).toContain(`{venueBillingOn && ${ON} && (`);
-    expect(src).toContain(`{showUpgradeModal && ${ON} && (`);
-    expect(src).toContain(`{${ON} && <button className="hit44" onClick={() => setShowUpgradeModal(true)}`);
-    expect(src).toContain(`{${ON} ? (<>\n        <p style={{ fontSize: 'var(--t-micro)', color: 'var(--accent-purple-text)', fontWeight: '700', margin: '0 0 12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Requires Roost`);
+    // The flag leads, so an off build drops these; `!native` keeps them out
+    // of the app with purchases on (roostNotSoldInApp.test.js renders both).
+    expect(src).toContain(`{showUpgradeModal && ${ON} && !native && (`);
+    expect(src).toContain(`{${ON} && !native && <button className="hit44" onClick={() => setShowUpgradeModal(true)}`);
+    expect(src).toContain(`{${ON} && !native ? (<>\n        <p style={{ fontSize: 'var(--t-micro)', color: 'var(--accent-purple-text)', fontWeight: '700', margin: '0 0 12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Requires Roost`);
     expect(src).toContain('This is not turned on for your venue.');
     const card = src.indexOf('{Icons.creditCard(colors.navy, 14)} Subscription</h3>');
     expect(src.slice(card - 400, card)).toContain(`{${ON} && (`);
@@ -340,7 +342,7 @@ describe('the venue dashboard', () => {
 
   test('the fallback venue price is gone when off', () => {
     const app = read('App.js');
-    expect(app).toContain(`${ON} && VENUE_PLAN_PRICE[tier] ? \`$\${VENUE_PLAN_PRICE[tier]}/\${per}\` : null;`);
+    expect(app).toContain(`${ON} && !isNativeShell() && VENUE_PLAN_PRICE[tier] ? \`$\${VENUE_PLAN_PRICE[tier]}/\${per}\` : null;`);
   });
 });
 

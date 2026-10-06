@@ -115,6 +115,10 @@ describe('every surface that sells asks the one module', () => {
     ['website/ProPage.js', "from '../lib/nativeShell'"],
     ['screens/ProfileSettings.js', "from '../lib/nativeShell'"],
     ['components/venue/VenueBillingControl.js', "from '../../lib/nativeShell'"],
+    // Roost's plans sheet, prices and upgrade buttons, and the price App.js
+    // hands them (roostNotSoldInApp.test.js).
+    ['screens/VenueDashboard.js', "from '../lib/nativeShell'"],
+    ['App.js', "from './lib/nativeShell'"],
   ];
 
   test.each(SURFACES)('%s imports isNativeShell and keeps no check of its own', (file, from) => {

@@ -81,6 +81,9 @@ import { readProReturn, settleProCheckout } from './lib/proReturn';
 import { getFlockMessageReactions } from './services/api';
 import { takeReturnAfterSignIn } from './lib/returnAfterSignIn';
 import { readVenueBillingReturn, settleVenueCheckout } from './lib/venueBillingReturn';
+// Whether this is the native app, the one answer every surface that sells
+// asks. Here it keeps Roost's price off every screen inside the app.
+import { isNativeShell } from './lib/nativeShell';
 // AnimatePresence is NOT imported here any more. Its last mount in this file
 // was the presence wrapper around the venue card on Discover, and that went to
 // screens/ExploreScreen.js on 2026-09-13, which imports it for itself.
@@ -3806,14 +3809,16 @@ const NavIcon = ({ id }) => {
 // While Roost is on sale on the web, the plans sheet and every lock print
 // Stripe's own price instead (roostPlanPriceLabel over
 // /api/venue-billing/status, components/venue/VenueBillingControl.js). This
-// constant is what they fall back to with billing off, inside the app, and
-// before the status answers, so it has to equal Stripe's monthly price and
+// constant is what they fall back to with billing off and before the status
+// answers, so it has to equal Stripe's monthly price and
 // `VENUE_PRICE_USD` in backend/routes/admin.js;
 // backend/services/statedPrices.js lists it so the money hub flags a drift.
 const VENUE_PLAN_PRICE = { pro: 99 };
-// No price at all in a REACT_APP_PURCHASES=off build (lib/purchasesBuild.js).
+// No price at all in a REACT_APP_PURCHASES=off build (lib/purchasesBuild.js),
+// and none inside the app in any build: Roost is sold on the website only
+// (screens/VenueDashboard.js says why, at `native`).
 const venuePlanPriceLabel = (tier, per = 'mo') =>
-  (process.env.REACT_APP_PURCHASES !== 'off') && VENUE_PLAN_PRICE[tier] ? `$${VENUE_PLAN_PRICE[tier]}/${per}` : null;
+  (process.env.REACT_APP_PURCHASES !== 'off') && !isNativeShell() && VENUE_PLAN_PRICE[tier] ? `$${VENUE_PLAN_PRICE[tier]}/${per}` : null;
 
 // The NFC check-in screen. Mounted (not called) by the screen slot, so its
 // hooks live in a component of their own.

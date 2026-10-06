@@ -3,13 +3,16 @@
 // index.js asks it once at boot to decide whether "/" is the marketing site or
 // the app. Every surface that can sell something asks it too, before it shows a
 // price: the Pro sheet (components/PaywallSheet.js), the You tab's Flock Pro row
-// (screens/ProfileSettings.js), /pro (website/ProPage.js) and Roost's buy and
-// manage buttons (components/venue/VenueBillingControl.js). Inside the iOS app a
-// Stripe price, a link to /pro or a Roost buy button is an App Review 3.1.1
-// problem, so none of those may answer "web" in a shell the boot check called
-// native. They each used to ask window.Capacitor.isNativePlatform() alone, which
-// is one of the signals below, so a shell booted as native by its protocol, or
-// by a bridge that only half answers, could still have been sold to as a browser.
+// (screens/ProfileSettings.js), /pro (website/ProPage.js), Roost's buy and
+// manage buttons (components/venue/VenueBillingControl.js), and the venue
+// dashboard's plans sheet, Roost prices and upgrade buttons
+// (screens/VenueDashboard.js, with the price from App.js). Inside the iOS app a
+// Stripe price, a link to /pro or a Roost price or buy button is an App Review
+// 3.1.1 problem, so none of those may answer "web" in a shell the boot check
+// called native. They each used to ask window.Capacitor.isNativePlatform()
+// alone, which is one of the signals below, so a shell booted as native by its
+// protocol, or by a bridge that only half answers, could still have been sold
+// to as a browser.
 // The App Store behind the sheet asks it as well (services/purchases.js, and the
 // RevenueCat sign-out in services/api.js), so the sheet never offers a store
 // that the purchase code then says is not there.
