@@ -342,9 +342,9 @@ function dbRow(x) {
   };
 }
 
-// The served-forecast check's one row, as Postgres answers it: five counts and
+// The served-forecast check's one row, as Postgres answers it: six counts and
 // the model versions seen. The default is a quiet month with nothing paired.
-const QUIET_ACCURACY = { served: 0, matched: 0, days: 0, within_one_band: 0, from_curve: 0, versions: [] };
+const QUIET_ACCURACY = { served: 0, matched: 0, days: 0, within_one_band: 0, exact_band: 0, from_curve: 0, versions: [] };
 
 // The five people statements' rows, as Postgres answers them. The default is a
 // quiet fortnight: nobody new, nobody active, no plans.
@@ -2030,9 +2030,10 @@ test('the BestTime answer is held like the vendor reads: five minutes after a go
 // 9. THE MODEL: what makes the numbers, and how the served ones are doing
 // ===========================================================================
 
-// 261 of 412 venue-hours within one band: 63.35%, shown as 63.3. 300 of the
-// 412 pairs the venue's own curve made, the other 112 the trained model.
-const MEASURED = { served: 1280, matched: 412, days: 26, within_one_band: 261, from_curve: 300, versions: ['2.6.0-starling', '2.6.0-starling+curve_offset'] };
+// 261 of 412 venue-hours within one band: 63.35%, shown as 63.3; 169 of them
+// at the exact band: 41.02%, shown as 41.0. 300 of the 412 pairs the venue's
+// own curve made, the other 112 the trained model.
+const MEASURED = { served: 1280, matched: 412, days: 26, within_one_band: 261, exact_band: 169, from_curve: 300, versions: ['2.6.0-starling', '2.6.0-starling+curve_offset'] };
 const servedChecks = () => log.filter((q) => /FROM served_predictions sp/.test(q.sql));
 
 test('the model block: the loaded version, within one band from the database with its sample, the goal and the gap', async () => {
@@ -2053,6 +2054,9 @@ test('the model block: the loaded version, within one band from the database wit
   assert.strictEqual(a.minDays, 5);
   assert.strictEqual(a.withinOneBand, 261);
   assert.strictEqual(a.percent, 63.3);
+  // The exact band on the same pairs, so the share is never read alone.
+  assert.strictEqual(a.exactBand, 169);
+  assert.strictEqual(a.exactPercent, 41);
   assert.strictEqual(a.fromCurve, 300, 'how many of the pairs the curve made, so the card can say what was scored');
   assert.deepStrictEqual(a.versions, ['2.6.0-starling', '2.6.0-starling+curve_offset']);
   assert.deepStrictEqual(m.goal, { percent: 85, metric: 'within_one_band' });
@@ -2079,10 +2083,10 @@ test('under the minimum the share is withheld, count and all, so no noisy percen
   assert.strictEqual(moneyHub.__test.MODEL_MIN_SAMPLE, 100);
   assert.strictEqual(moneyHub.__test.MODEL_MIN_DAYS, 5);
   const cases = [
-    [{ served: 300, matched: 99, days: 12, within_one_band: 99, from_curve: 99, versions: [] }, false, 'one venue-hour short'],
-    [{ served: 900, matched: 400, days: 4, within_one_band: 300, from_curve: 0, versions: [] }, false, 'plenty of venue-hours, too few days'],
-    [{ served: 0, matched: 0, days: 0, within_one_band: 0, from_curve: 0, versions: [] }, false, 'nothing paired at all'],
-    [{ served: 400, matched: 100, days: 5, within_one_band: 62, from_curve: 100, versions: [] }, true, 'exactly at both floors'],
+    [{ served: 300, matched: 99, days: 12, within_one_band: 99, exact_band: 60, from_curve: 99, versions: [] }, false, 'one venue-hour short'],
+    [{ served: 900, matched: 400, days: 4, within_one_band: 300, exact_band: 120, from_curve: 0, versions: [] }, false, 'plenty of venue-hours, too few days'],
+    [{ served: 0, matched: 0, days: 0, within_one_band: 0, exact_band: 0, from_curve: 0, versions: [] }, false, 'nothing paired at all'],
+    [{ served: 400, matched: 100, days: 5, within_one_band: 62, exact_band: 31, from_curve: 100, versions: [] }, true, 'exactly at both floors'],
   ];
   for (const [row, enough, why] of cases) {
     moneyHub.__test.resetCache();
@@ -2099,13 +2103,33 @@ test('under the minimum the share is withheld, count and all, so no noisy percen
     if (enough) {
       assert.strictEqual(a.percent, 62, why);
       assert.strictEqual(a.withinOneBand, 62, why);
+      assert.strictEqual(a.exactPercent, 31, why);
+      assert.strictEqual(a.exactBand, 31, why);
       assert.strictEqual(r.body.model.gapPoints, 23, why);
     } else {
       assert.strictEqual(a.percent, null, why);
       assert.strictEqual(a.withinOneBand, null, `${why}: the count would let anyone work the share out`);
+      assert.strictEqual(a.exactPercent, null, why);
+      assert.strictEqual(a.exactBand, null, `${why}: the exact count is withheld with the rest`);
       assert.strictEqual(r.body.model.gapPoints, null, why);
     }
   }
+});
+
+// Review of the public copy (2026-10-06): within one band alone flatters a
+// forecast that always names the same level. MODEL-METRICS.md measured a
+// constant "Not Busy" at 75.8% within one band and 14.4% exact on live
+// readings, so the check reports both, from the same pairs.
+test('the exact band comes from the same pairs as within one, so a forecast that hedges shows as one', async () => {
+  const hedge = { served: 1000, matched: 1000, days: 8, within_one_band: 758, exact_band: 144, from_curve: 0, versions: [] };
+  const a = await moneyHub.readServedBandAccuracy({ query: async () => ({ rows: [hedge] }) }, { cuts: [20, 39, 69, 84] });
+  assert.strictEqual(a.percent, 75.8);
+  assert.strictEqual(a.exactPercent, 14.4, 'the figure that gives the hedge away');
+  assert.strictEqual(a.exactBand, 144);
+  // An exact count can never pass the within-one count it is part of.
+  const odd = await moneyHub.readServedBandAccuracy({ query: async () => ({ rows: [{ ...hedge, exact_band: 900 }] }) }, { cuts: [20, 39, 69, 84] });
+  assert.strictEqual(odd.exactBand, 758);
+  assert.strictEqual(odd.exactPercent, 75.8);
 });
 
 test('the served-forecast check is held for an hour, not the five minutes a vendor read is', async () => {
@@ -2130,7 +2154,7 @@ test('a check the database could not finish is an error with no figure and no ga
   const m = r.body.model;
   assert.strictEqual(m.accuracy.status, 'error');
   assert.match(m.accuracy.reason, /did not finish the check of served forecasts/);
-  for (const field of ['percent', 'matched', 'withinOneBand', 'served', 'fromCurve']) {
+  for (const field of ['percent', 'matched', 'withinOneBand', 'served', 'fromCurve', 'exactBand', 'exactPercent']) {
     assert.strictEqual(m.accuracy[field], undefined, `a failed check carried ${field}`);
   }
   assert.strictEqual(m.gapPoints, null);
@@ -2212,6 +2236,8 @@ test('the check pairs forecasts made from a venue\'s own data with live readings
     'inside the window where that weekday and hour can only be the same day');
   assert.match(sql, /DISTINCT ON \(t\.venue_id, t\.observed_date, t\.hour\)/, 'one pair per venue and hour');
   assert.match(sql, /abs\(b\.served_band - b\.observed_band\) <= 1/, 'within one band, not the exact band');
+  // And the exact band on the same pairs, counted beside it.
+  assert.match(sql, /COUNT\(\*\) FILTER \(WHERE b\.served_band = b\.observed_band\)::int AS exact_band/);
   // prediction_method 'ml' is the curve's number in curve_offset mode; the
   // row's version says which, so the pairs are split by it. strpos, since a
   // LIKE pattern's _ matches any character.

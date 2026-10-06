@@ -2961,6 +2961,15 @@ function statedBestTimePlan(now = new Date()) {
 // weekly rows whose label equals the baseline by construction; nothing here
 // reads that figure.
 //
+// THE EXACT LEVEL BESIDE IT (review 2026-10-06). Within one band rewards
+// hedging on this target: MODEL-METRICS.md ("Within one band on live
+// readings") measured a constant "Not Busy" beating every served
+// configuration on it, and says never to quote it alone. So the same pairs
+// are also counted when the band is the observed band itself (band_exact),
+// withheld under the minimum with the rest, and the card prints the two
+// together, the way the site does ("named the exact crowd level of the
+// reading, ... landed within one level").
+//
 // WHAT COUNTS. A served_predictions row made from the venue's own data
 // (prediction_method 'ml'). That label is the corpus path whichever arithmetic
 // ran: with CROWD_SERVE_MODE=curve_offset, which production serves, it is the
@@ -3048,7 +3057,7 @@ function safeLadder() {
 }
 
 // $1 the window in days, $2 the ladder's cuts, $3 the pairing window in hours.
-// Postgres pairs and counts; five counts and the model versions seen are all
+// Postgres pairs and counts; six counts and the model versions seen are all
 // that leave the database. strpos rather than LIKE, whose _ would match any
 // character.
 const SERVED_BAND_ACCURACY_SQL = `WITH served AS MATERIALIZED (
@@ -3085,6 +3094,7 @@ const SERVED_BAND_ACCURACY_SQL = `WITH served AS MATERIALIZED (
             COUNT(*)::int AS matched,
             COUNT(DISTINCT p.observed_date)::int AS days,
             COUNT(*) FILTER (WHERE abs(b.served_band - b.observed_band) <= 1)::int AS within_one_band,
+            COUNT(*) FILTER (WHERE b.served_band = b.observed_band)::int AS exact_band,
             COUNT(*) FILTER (WHERE strpos(p.model_version, '+curve_offset') > 0)::int AS from_curve,
             COALESCE(array_remove(array_agg(DISTINCT p.model_version), NULL), '{}'::text[]) AS versions
        FROM paired p
@@ -3110,6 +3120,8 @@ async function readServedBandAccuracy(db = pool, { windowDays = MODEL_WINDOW_DAY
   const matched = count(row.matched);
   const days = count(row.days);
   const within = Math.min(count(row.within_one_band), matched);
+  // A pair at the exact band is within one of it too, so never more.
+  const exact = Math.min(count(row.exact_band), within);
   const enough = matched >= MODEL_MIN_SAMPLE && days >= MODEL_MIN_DAYS;
   return {
     status: 'ok',
@@ -3125,6 +3137,10 @@ async function readServedBandAccuracy(db = pool, { windowDays = MODEL_WINDOW_DAY
     // downstream can print the noisy percentage the floor exists to stop.
     withinOneBand: enough ? within : null,
     percent: enough ? Math.round((within / matched) * 1000) / 10 : null,
+    // The exact band on the same pairs, withheld the same way. Printed beside
+    // the share above, never after it alone: see THE EXACT LEVEL BESIDE IT.
+    exactBand: enough ? exact : null,
+    exactPercent: enough ? Math.round((exact / matched) * 1000) / 10 : null,
     // How many of the pairs the venue's own curve made (curve_offset); the
     // rest the trained model made. Says what was scored, not how well, so it
     // stands under the minimum like matched does.
