@@ -3234,6 +3234,19 @@ const aiMemoryCutIndex = (count, max = AI_CHAT_MAX_MESSAGES) => {
 const aiResetsAtFromReply = (reply) => (reply && reply.remaining === 0
   && typeof reply.resetsAt === 'string' && Number.isFinite(Date.parse(reply.resetsAt)) ? reply.resetsAt : null);
 
+// How long the timer that opens Birdie's box waits before it reads the meter:
+// until just past the reset time, and once that has passed, half a minute.
+// The timer does not clear the reset time itself. It used to, so a read that
+// still said zero (a phone clock ahead of the server's, so the server's day
+// had not turned yet, or a read that failed) left the box shut with no timer
+// at all. Now it reads again every AI_RESET_RECHECK_MS until a read says the
+// chirps are back, which clears the time and ends it.
+const AI_RESET_RECHECK_MS = 30000;
+const aiResetWaitMs = (resetsAt, nowMs) => {
+  const ms = Date.parse(resetsAt) - nowMs;
+  return ms > 0 ? Math.min(ms + 1000, 2147483647) : AI_RESET_RECHECK_MS;
+};
+
 // What actually goes on the wire: {role, text}. The venue names Birdie showed
 // are folded into its own turns so it remembers what it recommended.
 //
@@ -6882,7 +6895,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // race the first answer into the transcript out of order.
   const aiSendingRef = useRef(false);
   const [aiRemaining, setAiRemaining] = useState(null); // free-tier daily chirps left, from the last reply
-  const [aiResetsAt, setAiResetsAt] = useState(null); // ISO, from the 429 that closed the box
+  const [aiResetsAt, setAiResetsAt] = useState(null); // ISO, when a spent day's box opens: from the 429, the reply that spent it, or the snapshot
   const outOfChirpsRef = useRef(false);
   const [aiChatMode, setAiChatMode] = useState('bubble'); // 'bubble' | 'panel' | 'fullscreen'
   const [aiShareVenue, setAiShareVenue] = useState(null); // venue to share to flock/DM
@@ -8718,7 +8731,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     proAppliedRef.current = data?.isPremium === true;
     // The boot fetch never seeded the meter, so the "chirps left" line was
     // hidden until the first reply of every session.
-    if (typeof data?.birdie?.remaining === 'number') setAiRemaining(data.birdie.remaining);
+    if (typeof data?.birdie?.remaining === 'number') {
+      setAiRemaining(data.birdie.remaining);
+      // And when the box opens again. A spent day carries its reset time
+      // (backend services/entitlements.js), which arms the unlock timer after
+      // a relaunch, when no reply or 429 is there to arm it; a box closed with
+      // no time stayed shut past the reset. Chirps left clears the time. A
+      // zero with no time keeps the one a reply or a 429 gave.
+      if (data.birdie.remaining > 0) setAiResetsAt(null);
+      else {
+        const at = aiResetsAtFromReply(data.birdie);
+        if (at) setAiResetsAt(at);
+      }
+    }
   }, []);
   const refreshEntitlements = useCallback(() => {
     const seq = ++entitlementsSentRef.current;
@@ -16562,13 +16587,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const outOfChirps = !!entitlements?.paywallEnabled && !isPro && aiRemaining === 0
     && (!aiResetsAt || Date.now() < Date.parse(aiResetsAt));
   outOfChirpsRef.current = outOfChirps;
+  // The unlock timer (aiResetWaitMs says how long it waits). Each wake reads
+  // the meter and counts itself, which re-renders the box against the clock
+  // and arms the next wake; the reset time stays until a read clears it.
+  const [aiResetChecks, setAiResetChecks] = useState(0);
   useEffect(() => {
     if (!aiResetsAt) return undefined;
-    const ms = Date.parse(aiResetsAt) - Date.now();
-    if (!(ms > 0)) { setAiResetsAt(null); refreshEntitlements(); return undefined; }
-    const t = setTimeout(() => { setAiResetsAt(null); refreshEntitlements(); }, Math.min(ms + 1000, 2147483647));
+    const t = setTimeout(() => { refreshEntitlements(); setAiResetChecks((n) => n + 1); }, aiResetWaitMs(aiResetsAt, Date.now()));
     return () => clearTimeout(t);
-  }, [aiResetsAt, refreshEntitlements]);
+  }, [aiResetsAt, aiResetChecks, refreshEntitlements]);
   const canSendAi = aiInputHasText && !aiTyping && !outOfChirps;
   const closeAiChat = () => setAiChatMode('bubble');
   // The door from You to the venue dashboard. The welcome screen promised a
