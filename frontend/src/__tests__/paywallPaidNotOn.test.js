@@ -144,6 +144,8 @@ describe('the store charged and RevenueCat did not grant Pro', () => {
     const cta = await screen.findByRole('button', { name: MONTHLY_CTA });
     await act(async () => { cta.click(); });
     await waitFor(() => expect(onUpgraded).toHaveBeenCalledTimes(1));
+    // Told it was a purchase, the one kind of poll that may end in the toast.
+    expect(onUpgraded).toHaveBeenCalledWith('purchase');
     expect(showToast).toHaveBeenCalledWith('Welcome to Flock Pro', 'success');
     expect(screen.queryByRole('alert')).toBeNull();
   });
@@ -219,8 +221,8 @@ function poll({ answers, purchases }) {
   };
   // eslint-disable-next-line no-new-func
   const lifted = new Function(...Object.keys(scope), `${APPLY_SRC}\n${CONFIRM_SRC}\nreturn { applyEntitlements, confirmUpgrade };`)(...Object.values(scope));
-  const runToEnd = async () => {
-    lifted.confirmUpgrade();
+  const runToEnd = async (after) => {
+    lifted.confirmUpgrade(after);
     await settle();
     while (timers.length) {
       timers.shift()();
@@ -234,14 +236,14 @@ function poll({ answers, purchases }) {
 describe('the poll after an App Store purchase', () => {
   test('when the server never says Pro, it says so once, as an error that stays up', async () => {
     const p = poll({ answers: [] });
-    await p.runToEnd();
+    await p.runToEnd('purchase');
     expect(p.scope.getEntitlements).toHaveBeenCalledTimes(5);
     expect(p.toasts).toEqual([[NOT_ON_TOAST, 'error']]);
   });
 
   test('when Pro lands on the third read, it stops there and says nothing', async () => {
     const p = poll({ answers: [{ isPremium: false }, new Error('offline'), { isPremium: true }] });
-    await p.runToEnd();
+    await p.runToEnd('purchase');
     expect(p.scope.getEntitlements).toHaveBeenCalledTimes(3);
     expect(p.toasts).toEqual([]);
   });
@@ -252,19 +254,37 @@ describe('the poll after an App Store purchase', () => {
     const p = poll({ answers: [new Error('offline'), new Error('offline'), new Error('offline'), new Error('offline'), new Error('offline')] });
     p.scope.entitlementsSentRef.current = 100;
     p.applyEntitlements(100, { isPremium: true });
-    await p.runToEnd();
+    await p.runToEnd('purchase');
     expect(p.toasts).toEqual([]);
   });
 
   test('a build that sells nothing never says it', async () => {
     const p = poll({ answers: [], purchases: 'off' });
-    await p.runToEnd();
+    await p.runToEnd('purchase');
+    expect(p.toasts).toEqual([]);
+  });
+
+  // The sentence says a payment went through. Only a purchase took one: a
+  // restore polls the same way and gives up without it, and anything that
+  // does not say what happened is not a purchase.
+  test.each([['a restore', 'restore'], ['a call that names nothing', undefined]])('after %s it polls and gives up without the sentence', async (_label, after) => {
+    const p = poll({ answers: [] });
+    await p.runToEnd(after);
+    expect(p.scope.getEntitlements).toHaveBeenCalledTimes(5);
     expect(p.toasts).toEqual([]);
   });
 
   test('the sentence follows the copy rules and the gate is the literal flag', () => {
     expect(NOT_ON_TOAST).not.toMatch(/—|https?:|website/);
-    expect(CONFIRM_SRC).toContain("if ((process.env.REACT_APP_PURCHASES !== 'off') && !proAppliedRef.current) {");
+    expect(CONFIRM_SRC).toContain("if ((process.env.REACT_APP_PURCHASES !== 'off') && after === 'purchase' && !proAppliedRef.current) {");
     expect(CONFIRM_SRC).toMatch(/\}, \[applyEntitlements, showToast\]\);$/);
+  });
+
+  test('an account the sheet finds already Pro is re-read once, never polled', () => {
+    // The sheet's onAlreadyPro is the plain re-read, so the purchase poll and
+    // its sentence cannot follow a sheet that says the account has Pro.
+    const mount = appSource.slice(appSource.indexOf('<PaywallSheet'), appSource.indexOf('/>', appSource.indexOf('<PaywallSheet')));
+    expect(mount).toContain('onUpgraded={confirmUpgrade}');
+    expect(mount).toContain('onAlreadyPro={refreshEntitlements}');
   });
 });

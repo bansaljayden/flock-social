@@ -8706,14 +8706,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // instead of leaving the rest of the poll reading an account nothing will
   // update.
   //
-  // AND IT SAYS SO WHEN IT GIVES UP. The sheet has already said "Welcome to
-  // Flock Pro" by the time this runs, so a poll that ended quietly left a
-  // person who had just paid still metered, with nothing on screen to say why
-  // or what to do. An error toast stays until it is closed, and Restore
-  // purchases, in the sheet the You tab's Flock Pro row opens, is the fix to
-  // try first.
+  // AND IT SAYS SO WHEN IT GIVES UP AFTER A PURCHASE. The Pro sheet calls this
+  // with what the App Store just did: 'purchase' after a purchase, and
+  // 'restore' after a restore that found Pro. A poll that ended quietly after
+  // a purchase left a person who had just paid still metered, with nothing on
+  // screen to say why or what to do, so that one ends in an error toast that
+  // stays until it is closed; Restore purchases, in the sheet the You tab's
+  // Flock Pro row opens, is the fix to try first. A restore took no payment,
+  // so it never ends in that sentence, and an account the server already
+  // counts as Pro never comes here at all (the sheet's onAlreadyPro is
+  // refreshEntitlements, one read and no poll).
   const upgradePollRef = useRef(null);
-  const confirmUpgrade = useCallback(() => {
+  const confirmUpgrade = useCallback((after) => {
     const delays = [0, 1500, 3000, 5000, 8000]; // 5 tries over ~17s, then stop
     let attempt = 0;
     const again = () => {
@@ -8721,7 +8725,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       if (attempt >= delays.length) {
         // The flag spelled out, so a build that sells nothing carries none of
         // this sentence (lib/purchasesBuild.js); nothing there runs the poll.
-        if ((process.env.REACT_APP_PURCHASES !== 'off') && !proAppliedRef.current) {
+        if ((process.env.REACT_APP_PURCHASES !== 'off') && after === 'purchase' && !proAppliedRef.current) {
           showToast("Your Flock Pro is paid for, but it isn't on for this account yet. In a minute, open Flock Pro in You and tap Restore purchases. If it still isn't on, write to social@flockcorp.com.", 'error');
         }
         return;
@@ -20379,6 +20383,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                 onClose={() => { setPaywallTrigger(null); setPaywallPlace(null); }}
                 showToast={showToast}
                 onUpgraded={confirmUpgrade}
+                onAlreadyPro={refreshEntitlements}
               />
             </React.Suspense>
           )}

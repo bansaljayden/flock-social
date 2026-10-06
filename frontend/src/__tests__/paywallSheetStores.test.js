@@ -154,7 +154,8 @@ describe('inside the app', () => {
     expect(screen.queryByRole('button', { name: /Get Pro/ })).toBeNull();
     await act(async () => { screen.getByRole('button', { name: 'Restore purchases' }).click(); });
     expect(restore).toHaveBeenCalled();
-    expect(onUpgraded).toHaveBeenCalled();
+    // A restore, which App.js polls for without the paid-but-not-on line.
+    expect(onUpgraded).toHaveBeenCalledWith('restore');
   });
 
   // Monthly is the plan the sheet opens on. When the store loads the yearly
@@ -194,16 +195,20 @@ describe('inside the app', () => {
       { packageType: 'ANNUAL', product: { identifier: 'pro_annual', priceString: '$29.99', price: 29.99, introPrice: null } },
     ];
 
-    test('is told it has Pro, offered nothing to buy, and the app catches up', async () => {
+    test('is told it has Pro, offered nothing to buy, and the app re-reads its copy', async () => {
       isPurchasesAvailable.mockReturnValue(true);
       getProOffering.mockResolvedValue(bothPlans());
       getEntitlements.mockResolvedValue({ isPremium: true, paywallEnabled: true });
       const onUpgraded = jest.fn();
-      const { container } = render(<PaywallSheet open trigger="birdie" onClose={() => {}} onUpgraded={onUpgraded} />);
+      const onAlreadyPro = jest.fn();
+      const { container } = render(<PaywallSheet open trigger="birdie" onClose={() => {}} onUpgraded={onUpgraded} onAlreadyPro={onAlreadyPro} />);
       await screen.findByText('You already have Flock Pro on this account.');
       expect(screen.queryByRole('button', { name: /Get Pro|Yearly|Monthly|Restore/ })).toBeNull();
       expect(container.textContent).not.toMatch(/\$\s?\d/);
-      expect(onUpgraded).toHaveBeenCalledTimes(1);
+      expect(onAlreadyPro).toHaveBeenCalledTimes(1);
+      // Not the purchase poll: nothing was bought, so nothing may later say a
+      // payment has not switched Pro on (paywallPaidNotOn.test.js runs it).
+      expect(onUpgraded).not.toHaveBeenCalled();
       // Asked of our server, not of the web's prices.
       expect(getProStatus).not.toHaveBeenCalled();
     });
@@ -213,10 +218,12 @@ describe('inside the app', () => {
       getProOffering.mockResolvedValue(bothPlans());
       getEntitlements.mockResolvedValue({ isPremium: false, paywallEnabled: true });
       const onUpgraded = jest.fn();
-      render(<PaywallSheet open trigger="birdie" onClose={() => {}} onUpgraded={onUpgraded} />);
+      const onAlreadyPro = jest.fn();
+      render(<PaywallSheet open trigger="birdie" onClose={() => {}} onUpgraded={onUpgraded} onAlreadyPro={onAlreadyPro} />);
       await screen.findByRole('button', { name: MONTHLY_CTA });
       expect(screen.queryByText('You already have Flock Pro on this account.')).toBeNull();
       expect(onUpgraded).not.toHaveBeenCalled();
+      expect(onAlreadyPro).not.toHaveBeenCalled();
     });
 
     test('a read that fails shows the plans: it says nothing about Pro', async () => {
