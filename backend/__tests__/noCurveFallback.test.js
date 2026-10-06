@@ -591,6 +591,52 @@ test('the presence probe: a no is held an hour and a yes a day, and a refusal or
   });
 });
 
+test('a strip that has just read the venue\'s rows is not overruled by a cached no from before they existed', async () => {
+  // 13:30, a card: no rows, so the probe says no and the no is held an hour.
+  // 14:05, the collector writes the venue's rows. 14:20, a card again, with
+  // its strip: the whole-curve read primes every slot the curve has, and the
+  // hours the curve says zero still take the no-baseline exit. They must keep
+  // the rule engine, not get the category's level beside the venue's own bars.
+  const v = venue();
+  const curves = {};
+  const db = scriptedDb({ curves });
+  await withPredictor({ db, env: { [SWITCH]: ON, CROWD_SERVE_MODE: 'curve_offset' } }, async (p) => {
+    const I = p._internals;
+    const realNow = Date.now;
+    let shift = 0;
+    Date.now = () => realNow() + shift;
+    try {
+      assert.equal((await p.predictBusyness(v, WX, TS)).predictionMethod, METHOD, 'no rows yet');
+      assert.equal(db.presence().length, 1);
+      // Busy until 9 PM, then closed by the venue's own curve.
+      curves[v.place_id] = {
+        [`${DOW}_18`]: 40, [`${DOW}_19`]: 55, [`${DOW}_20`]: 60, [`${DOW}_21`]: 0, [`${DOW}_22`]: 0, [`${DOW}_23`]: 0,
+      };
+      shift = 50 * 60 * 1000; // inside the hour the no is held
+      const strip = await p.predictHourlyForecast(v, WX, 18, 6, TS);
+      const byHour = Object.fromEntries(strip.map((h) => [h.hour, h.predictionMethod]));
+      for (const [hour, method] of Object.entries(byHour)) {
+        assert.notEqual(method, METHOD, `${hour}: the venue has a curve now`);
+      }
+      assert.equal(byHour['6 PM'], 'ml', 'its own curve, where it has one');
+      // 10 and 11 PM blend to zero on the venue's own curve: today's answer.
+      assert.equal(byHour['10 PM'], 'rule_engine_no_baseline');
+      assert.equal(byHour['11 PM'], 'rule_engine_no_baseline');
+      // The read answered the question, so nothing was probed for it.
+      assert.equal(db.presence().length, 1);
+      assert.equal(await I.venueHasCurve(v.place_id), true);
+      assert.equal(db.presence().length, 1);
+    } finally {
+      Date.now = realNow;
+    }
+  });
+  // With the switch off the read writes nothing: the map is the fallback's.
+  await withPredictor({ db: scriptedDb({ curves: { [v.place_id]: { [`${DOW}_20`]: 60 } } }) }, async (p) => {
+    await p.predictHourlyForecast(v, WX, 18, 6, TS);
+    assert.equal(p._internals.curvePresenceCacheSize(), 0);
+  });
+});
+
 test('a probe is charged to the account like the slot lookup it follows', async () => {
   await withPredictor({ env: { [SWITCH]: ON } }, async (p) => {
     const I = p._internals;
