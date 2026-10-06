@@ -11,7 +11,13 @@ import useSheetDrag from '../hooks/useSheetDrag';
 // (overlay, 440px max, 20px top radius, a grabber that pulls it closed,
 // sheetRise).
 //
-// Props: { open, onClose, showToast, onUpgraded, trigger, birdieResetsAt, place }
+// Props: { open, onClose, showToast, onUpgraded, onAlreadyPro, trigger, birdieResetsAt, place }
+//   onUpgraded(kind): the App Store has just given Pro by a 'purchase' or a
+//          'restore'. App.js polls until the server agrees (confirmUpgrade),
+//          and only after a purchase does it say so when the server never does.
+//   onAlreadyPro: the server already counts this account as Pro. App.js
+//          re-reads its own copy (refreshEntitlements), with no poll and no
+//          message, because nothing was bought here.
 //   trigger ∈ 'birdie' | 'forecast' | 'settings' | null: which limit opened it.
 //   birdieResetsAt: the reset time the server sent with Birdie's refusal.
 //   place: the venue a forecast was locked on, so the trip back from Stripe
@@ -152,7 +158,7 @@ function freeTrialLabel(pkg, eligible) {
   return `${n}-${unit} free trial`;
 }
 
-const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger, birdieResetsAt, place }) => {
+const PaywallSheet = ({ open, onClose, showToast, onUpgraded, onAlreadyPro, trigger, birdieResetsAt, place }) => {
   const { isDark } = useTheme();
   const accent = isDark ? '#6d9ac3' : '#2d5a87';
   // lib/nativeShell.js's answer, the one index.js boots on, so a shell booted
@@ -237,7 +243,10 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger, birdieRes
         setPackages(null);
         setLoadState('pro');
         // The rest of the app catches up now rather than on its next read.
-        onUpgraded?.();
+        // A plain re-read: this used to start the purchase poll, whose
+        // give-up line says a payment has not switched Pro on, under a sheet
+        // saying the account already has it, when nothing was bought here.
+        onAlreadyPro?.();
         return;
       }
       if (pkgs && (pickPackage(pkgs, 'yearly') || pickPackage(pkgs, 'monthly'))) {
@@ -260,7 +269,7 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger, birdieRes
     });
     return () => { cancelled = true; };
     // `native` is fixed for the life of the page; loadWeb is stable, and so is
-    // onUpgraded (App.js's confirmUpgrade).
+    // onAlreadyPro (App.js's refreshEntitlements).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -369,7 +378,7 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger, birdieRes
       if (success && isPro) {
         trackPurchaseCompleted('app_store', selected);
         showToast?.('Welcome to Flock Pro', 'success');
-        onUpgraded?.();
+        onUpgraded?.('purchase');
         onClose?.();
       } else if (reason === 'account') {
         // services/purchases.js would not send the buy to the App Store
@@ -396,7 +405,7 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger, birdieRes
       const { success, isPro, reason } = await restore();
       if (success && isPro) {
         showToast?.('Welcome to Flock Pro', 'success');
-        onUpgraded?.();
+        onUpgraded?.('restore');
         onClose?.();
       } else if (success) {
         showToast?.('No previous purchases found', 'error');
