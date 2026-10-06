@@ -920,6 +920,22 @@ test('a hand-made subscription with no listing in its metadata is bound to the l
   assert.strictEqual((await state(id)).served, 'free', 'the binding moved with the claim');
 });
 
+test('a hand-made subscription first seen on a claim with no listing binds to the first listing the claim names, and stays there', async () => {
+  const [PLACE_A, PLACE_B] = placePair();
+  const id = await venue({ verified: true });
+  await venueBilling.syncVenueSubscription(sub('sub_bound_late', id, 'active'));
+  // The claim gains its listing and is verified for it.
+  await repointAndVerify(id, PLACE_A);
+  await venueBilling.syncVenueSubscription('sub_bound_late');
+  assert.strictEqual((await state(id)).served, 'pro');
+  const rec = await testPool.query('SELECT google_place_id FROM venue_stripe_subscriptions WHERE stripe_subscription_id = $1', ['sub_bound_late']);
+  assert.strictEqual(rec.rows[0].google_place_id, PLACE_A);
+  // And it does not follow the claim on to the next one.
+  await repointAndVerify(id, PLACE_B);
+  await venueBilling.syncVenueSubscription('sub_bound_late');
+  assert.strictEqual((await state(id)).served, 'free');
+});
+
 test('moving a plan to another listing is an explicit step: the subscription is re-bound in its metadata', async () => {
   const [PLACE_A, PLACE_B] = placePair();
   const id = await venue({ verified: true, placeId: PLACE_A });
@@ -1222,6 +1238,13 @@ test('the profile names the trial\'s charge date, the renewal date and a schedul
   res = await profileCall('GET', '/api/venue-profile', { as: id });
   assert.strictEqual(res.body.tier_cancel_at, new Date(periodEnds * 1000).toISOString());
   assert.strictEqual(new Date(res.body.tier_expires_at).getTime(), periodEnds * 1000);
+
+  // Cancelled at once: the plan ended today, not at the period end it never
+  // reached.
+  await venueBilling.syncVenueSubscription(sub('sub_dates', id, 'canceled', { metadata: boundTo(PLACE)(id), ...period('price_roost_month', periodEnds) }));
+  res = await profileCall('GET', '/api/venue-profile', { as: id });
+  assert.strictEqual(res.body.tier, 'free');
+  assert.ok(new Date(res.body.tier_expires_at).getTime() <= Date.now() + 1000, `an ended plan was said to run until ${res.body.tier_expires_at}`);
 });
 
 test('a comp keeps its own end date on the card', async () => {

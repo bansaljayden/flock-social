@@ -655,7 +655,8 @@ function grantFromSubscription(sub, now = Date.now(), { unknownPriceIsRoost = fa
 //            written, never to a paid tier for an unverified profile, and
 //            never to a paid tier for a claim that names a different listing
 //            from the one the subscription is bound to ($13, ONE VENUE PER
-//            PLAN at the top of this file).
+//            PLAN at the top of this file). A subscription bound to no
+//            listing binds nothing, as in the resolver.
 //   audit    one tier_changed row per actual change, none per renewal.
 const SYNC_SQL = `WITH old AS (
     SELECT user_id, tier, verified, google_place_id FROM venue_profiles WHERE user_id = $1::int
@@ -706,7 +707,7 @@ const SYNC_SQL = `WITH old AS (
        AND EXISTS (SELECT 1 FROM granted)
        AND old.tier IS DISTINCT FROM $12::text
        AND ($12::text = 'free' OR old.verified = true)
-       AND ($12::text = 'free' OR old.google_place_id IS NOT DISTINCT FROM $13::varchar)
+       AND ($12::text = 'free' OR $13::varchar IS NULL OR old.google_place_id IS NOT DISTINCT FROM $13::varchar)
     RETURNING venue_profiles.id, venue_profiles.tier, old.tier AS old_tier
   ),
   audit AS (
@@ -726,10 +727,11 @@ const SYNC_SQL = `WITH old AS (
 // transaction, before the grant. The binding is the listing in the
 // subscription's metadata whenever it names one, so an operator moving a plan
 // to another listing is one metadata change; a subscription made by hand
-// without one keeps the listing its claim named when it first arrived, read
-// from the row and never from whatever the claim names later. Nothing is
-// recorded for an account that no longer exists (a deletion's own cancel
-// event), and the binding then comes from the metadata alone.
+// without one keeps the listing its claim named when it first arrived (or,
+// for a claim with no listing then, the first one it names), read from the
+// row and never from whatever the claim names later. Nothing is recorded for
+// an account that no longer exists (a deletion's own cancel event), and the
+// binding then comes from the metadata alone.
 const RECORD_SUBSCRIPTION_SQL = `INSERT INTO venue_stripe_subscriptions (stripe_subscription_id, user_id, stripe_customer_id, google_place_id)
   SELECT $1::text, u.id, $3::text, COALESCE($4::varchar, vp.google_place_id)
     FROM users u
@@ -738,7 +740,7 @@ const RECORD_SUBSCRIPTION_SQL = `INSERT INTO venue_stripe_subscriptions (stripe_
   ON CONFLICT (stripe_subscription_id) DO UPDATE SET
     user_id = EXCLUDED.user_id,
     stripe_customer_id = COALESCE(EXCLUDED.stripe_customer_id, venue_stripe_subscriptions.stripe_customer_id),
-    google_place_id = CASE WHEN $4::varchar IS NOT NULL THEN $4::varchar ELSE venue_stripe_subscriptions.google_place_id END
+    google_place_id = COALESCE($4::varchar, venue_stripe_subscriptions.google_place_id, EXCLUDED.google_place_id)
   RETURNING google_place_id`;
 
 // THE CUSTOMER GOES WHERE THE PORTAL LOOKS FIRST. Checkout was the only
@@ -876,7 +878,8 @@ async function syncVenueSubscription(subscriptionId) {
     await client.query('COMMIT');
     const row = r.rows[0] || {};
     if (!row.profiles) return { ignored: 'no_venue_profile' };
-    const otherListing = (boundPlace || null) !== (row.place_id || null);
+    // Bound to no listing binds nothing (the resolver's rule too).
+    const otherListing = !!boundPlace && boundPlace !== (row.place_id || null);
     if (g.live && otherListing) {
       console.error(`[venue-billing] venue user ${userId} holds a live Roost subscription (${sub.id}) bought for listing ${boundPlace || 'none'}, but the claim names ${row.place_id || 'no listing'}, so it is not served there. To move the plan, set flock_venue_place_id on the subscription in Stripe to the listing the claim names; otherwise cancel it.`);
     }

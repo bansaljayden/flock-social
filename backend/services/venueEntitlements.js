@@ -231,12 +231,13 @@ async function getVenueEntitlement(userId) {
   // This answer is what the dashboard SHOWS, and it handed the same column
   // over as the date the plan runs until: a trial read "Runs until" three
   // days after Stripe charged at its end, and a renewing plan and one set to
-  // end showed the same offset. So a Stripe grant reports its scheduled end
-  // if it has one, else its period end, both Stripe's own facts kept on the
-  // row (migration 040), and the three of them separately, for a card that
-  // has to say which date it is naming.
+  // end showed the same offset. So a live Stripe grant reports its scheduled
+  // end if it has one, else its period end, both Stripe's own facts kept on
+  // the row (migration 040), and the three of them separately, for a card
+  // that has to say which date it is naming. A Stripe grant that has ended
+  // reports the day it ended, which is what expires_at holds for it.
   const stripeGrant = row?.grant_source === 'stripe';
-  const shownEnd = stripeGrant
+  const shownEnd = stripeGrant && GRANT_LIVE_STATUSES.has(row.grant_status)
     ? (row.cancel_at ?? row.current_period_end ?? row.expires_at ?? null)
     : (row?.expires_at ?? null);
   return {
