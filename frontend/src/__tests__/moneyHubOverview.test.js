@@ -1840,3 +1840,52 @@ describe('the monthly bills the renewals cannot date', () => {
     expect(screen.queryByText('Monthly bills with no date')).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// WHERE THE MONEY GOES (2026-10-06): every bill in the burn ranked by size,
+// with its share.
+// ---------------------------------------------------------------------------
+describe('the biggest bills', () => {
+  const BIGGEST = {
+    lines: [
+      { id: 'besttime-subscription', label: 'BestTime.app Pro, Package 100', kind: 'infrastructure', cadence: 'monthly', perMonthCents: 11900, pct: 57 },
+      { id: 'apple-developer', label: 'Apple Developer Program', kind: 'infrastructure', cadence: 'yearly', perMonthCents: 825, pct: 4 },
+      { id: 'domain', label: 'flockcorp.com', kind: 'infrastructure', cadence: 'yearly', perMonthCents: 93, pct: 0 },
+    ],
+    restBills: 2,
+    restPerMonthCents: 2900,
+    chargesPerMonthCents: 20844,
+    beforeCredits: false,
+  };
+
+  test('the biggest bills come largest first, each with its share of the burn', async () => {
+    await renderHub({ ...CONNECTED, costs: { ...COSTS, biggest: BIGGEST } });
+    const costs = document.getElementById('hub-costs');
+    expect(await within(costs).findByText('Biggest bills')).toBeInTheDocument();
+    const best = hubRow('BestTime.app Pro, Package 100');
+    expect(within(best).getByText('$119.00 a month')).toBeInTheDocument();
+    expect(best.textContent).toMatch(/57% of the burn\.$/);
+    expect(hubRow('Apple Developer Program').textContent).toMatch(/4% of the burn\. A yearly bill, at a twelfth\./);
+    // A share that rounds to nothing is not printed as a free 0%.
+    expect(hubRow('flockcorp.com').textContent).toMatch(/Under 1% of the burn\./);
+    expect(within(costs).getByText('2 smaller bills, $29.00 a month in all.')).toBeInTheDocument();
+    expect(costs.textContent).not.toMatch(/—/);
+  });
+
+  test('with a credit in the burn, a share is of the bills before credits', async () => {
+    await renderHub({ ...CONNECTED, costs: { ...COSTS, biggest: { ...BIGGEST, beforeCredits: true, restBills: 0 } } });
+    expect(await screen.findByText('57% of the bills before credits.')).toBeInTheDocument();
+    expect(hubRow('BestTime.app Pro, Package 100').textContent).toMatch(/57% of the bills before credits\./);
+    expect(screen.queryByText(/smaller bill/)).toBeNull();
+  });
+
+  test('a list cut short withholds them with the totals', async () => {
+    await renderHub({
+      ...CONNECTED,
+      costs: { ...COSTS, status: 'error', reason: 'The expense list has more than 500 rows.', biggest: BIGGEST },
+      expenses: { ...EXPENSES, truncated: true, limit: 500 },
+    });
+    await screen.findByText(/Totals withheld until the expense list fits/);
+    expect(screen.queryByText('Biggest bills')).toBeNull();
+  });
+});

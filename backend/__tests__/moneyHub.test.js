@@ -3673,3 +3673,41 @@ test('the renewal totals name the monthly bills they cannot date, with what they
   const railwayCents = Math.round(cm.RECONCILED.lines.find((l) => l.id === 'railway').usdPerMonth * 100);
   assert.strictEqual(pic.undatedMonthly.perMonthCents, codeMonthly - railwayCents + 1500 + 700);
 });
+
+// Where the money goes, largest first (2026-10-06).
+test('the biggest bills are every dollar charge in the burn, largest first, with its share', () => {
+  // Both rows are larger than any code line, so they rank first whatever the
+  // code's own figures are re-read as.
+  const pic = moneyHub.buildCostPicture({
+    expenses: [
+      expense({ id: 1, vendor: 'Big tool', kind: 'tooling', amountCents: 30000 }),
+      expense({ id: 2, vendor: 'Filing service', kind: 'legal', cadence: 'yearly', amountCents: 240000 }),
+      expense({ id: 3, vendor: 'Stopped', kind: 'tooling', amountCents: 90000, active: false }),
+      expense({ id: 4, vendor: 'Abroad', kind: 'tooling', amountCents: 90000, currency: 'EUR' }),
+      expense({ id: 5, vendor: 'One-off', kind: 'other', cadence: 'one_time', amountCents: 90000, lastChargedOn: MONTH.startYmd }),
+    ],
+    month: MONTH,
+  });
+  const b = pic.biggest;
+  const n = moneyHub.__test.BIGGEST_BILLS_SHOWN;
+  const charges = pic.lines.filter((l) => l.perMonthCents > 0 && !l.isCredit);
+  assert.strictEqual(b.lines.length, Math.min(n, charges.length));
+  assert.strictEqual(b.restBills, charges.length - b.lines.length);
+  assert.deepStrictEqual(b.lines.slice(0, 2).map((l) => [l.label, l.perMonthCents]), [['Big tool', 30000], ['Filing service', 20000]], 'a yearly bill ranks at its twelfth');
+  for (const label of ['Stopped', 'Abroad', 'One-off']) assert.ok(!b.lines.some((l) => l.label === label), `${label} is not in the burn`);
+  for (let i = 1; i < b.lines.length; i += 1) assert.ok(b.lines[i - 1].perMonthCents >= b.lines[i].perMonthCents, 'largest first');
+  // With no credit the shares are of the burn itself.
+  assert.strictEqual(b.beforeCredits, false);
+  assert.strictEqual(b.chargesPerMonthCents, pic.totals.perMonthCents);
+  assert.strictEqual(b.lines[0].pct, Math.round((30000 / pic.totals.perMonthCents) * 100));
+  const listed = b.lines.reduce((s, l) => s + l.perMonthCents, 0) + b.restPerMonthCents;
+  assert.ok(Math.abs(listed - b.chargesPerMonthCents) <= n, 'the shown bills and the rest add up to the charges');
+  // A credit is never ranked, and the shares are then of the charges before it.
+  const withCredit = moneyHub.buildCostPicture({
+    expenses: [expense({ id: 1, vendor: 'Big tool', kind: 'tooling', amountCents: 20000 }), expense({ id: 6, vendor: 'Big tool', product: 'Credit', kind: 'tooling', amountCents: 5000, isCredit: true })],
+    month: MONTH,
+  }).biggest;
+  assert.strictEqual(withCredit.beforeCredits, true);
+  assert.ok(!withCredit.lines.some((l) => l.label === 'Big tool, Credit'));
+  assert.strictEqual(withCredit.chargesPerMonthCents, moneyHub.buildCostPicture({ expenses: [expense({ id: 1, vendor: 'Big tool', kind: 'tooling', amountCents: 20000 })], month: MONTH }).totals.perMonthCents);
+});

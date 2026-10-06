@@ -261,6 +261,9 @@ function hubMoney(cents, { sign = false } = {}) {
 
 const hubCount = (n) => (Number.isFinite(n) ? n.toLocaleString('en-US') : null);
 const hubPlural = (n, one, many) => `${hubCount(n)} ${n === 1 ? one : many}`;
+// A whole-percent share from the server. One that rounds to 0 reads as under
+// 1%, never as a 0% that looks free.
+const hubShare = (pct) => (Number.isFinite(pct) ? (pct < 1 ? 'Under 1%' : `${pct}%`) : 'An unknown share');
 const hubTime = (iso) => (iso ? new Date(iso).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : null);
 // A stretch of minutes in the unit a person would say it in.
 const hubAgo = (min) => (min < 60 ? hubPlural(min, 'minute', 'minutes') : min < 48 * 60 ? hubPlural(Math.round(min / 60), 'hour', 'hours') : hubPlural(Math.round(min / 1440), 'day', 'days'));
@@ -840,6 +843,7 @@ function HubCosts({ h, colors }) {
   );
   const upcoming = c.upcoming || [];
   const truncated = !!(h.expenses && h.expenses.truncated);
+  const biggest = c.biggest && Array.isArray(c.biggest.lines) ? c.biggest : null;
   const undated = c.undatedMonthly && Array.isArray(c.undatedMonthly.lines) ? c.undatedMonthly : null;
   const ending = Array.isArray(c.ending) ? c.ending : [];
   return (
@@ -861,6 +865,26 @@ function HubCosts({ h, colors }) {
           {table(c.byKind || [], (k) => k.kind, (k) => k.label || HUB_KIND_LABEL[k.kind] || k.kind)}
           <p style={hubStyle.kicker}>By category</p>
           {table(c.byCategory || [], (k) => `cat-${k.category}`, (k) => k.category)}
+          {/* Every bill in the burn, largest first (moneyHub.js, THE BIGGEST
+              BILLS): the code's lines and the expense list in one ranking,
+              which neither table above gives. */}
+          {biggest && biggest.lines.length > 0 && (
+            <>
+              <p style={hubStyle.kicker}>Biggest bills</p>
+              {biggest.lines.map((b) => (
+                <HubRow
+                  key={`big-${b.id}`}
+                  navy={navy}
+                  label={b.label}
+                  value={`${hubMoney(b.perMonthCents)} a month`}
+                  note={`${hubShare(b.pct)} of ${biggest.beforeCredits ? 'the bills before credits' : 'the burn'}.${b.cadence === 'yearly' ? ' A yearly bill, at a twelfth.' : b.cadence === 'quarterly' ? ' A quarterly bill, at a third.' : ''}`}
+                />
+              ))}
+              {biggest.restBills > 0 && (
+                <p style={hubStyle.foot}>{hubPlural(biggest.restBills, 'smaller bill', 'smaller bills')}, {hubMoney(biggest.restPerMonthCents)} a month in all.</p>
+              )}
+            </>
+          )}
         </>
       )}
 
