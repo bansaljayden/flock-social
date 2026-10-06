@@ -1187,6 +1187,45 @@ test('a failed account deletion keeps the customer on file, and the next checkou
   assert.strictEqual(now.rows[0].stripe_customer_id, session.customer);
 });
 
+// ONE TRIAL PER VENUE OUTLIVES THE ACCOUNT THAT USED IT. The trial was read
+// from two tables keyed on the account, both ON DELETE CASCADE, so an owner
+// who took the trial, deleted the account and claimed the same listing from a
+// new one was handed another 14 days on every cycle.
+test('a deleted account takes its trial with it no more: a new account on the same listing starts without one', async () => {
+  const [PLACE] = placePair();
+  const first = await venue({ verified: true, placeId: PLACE });
+  await venueBilling.syncVenueSubscription(sub('sub_trial_deleted', first, 'trialing', { customer: 'cus_TRIAL_DELETED', metadata: boundTo(PLACE)(first) }));
+  // The account is deleted: its Stripe customer is closed and its rows go.
+  await venueBilling.closeVenueCustomer(first);
+  await testPool.query('DELETE FROM users WHERE id = $1', [first]);
+  // Stripe's cancel event for the closed customer arrives after the account is gone.
+  subs.sub_trial_deleted.status = 'canceled';
+  await venueBilling.syncVenueSubscription('sub_trial_deleted');
+
+  const again = await venue({ verified: true, placeId: PLACE });
+  assert.strictEqual(await venueBilling.venueTrialUsed(again, PLACE), true, 'the listing\'s trial went with the account that used it');
+  const before = sessionsMade.length;
+  await venueBilling.createVenueCheckout({ id: again, email: `owner-new-${again}@example.com`, name: 'Owner' }, 'monthly');
+  const session = sessionsMade[before];
+  assert.ok(session, 'no checkout was made');
+  assert.ok(!('trial_period_days' in session.subscription_data), 'a deleted account handed its listing a second 14-day trial');
+  assert.ok(!('trial_end' in session.subscription_data));
+  // What is kept names the listing and nothing about anyone.
+  const kept = await testPool.query('SELECT * FROM roost_trial_listings WHERE google_place_id = $1', [PLACE]);
+  assert.deepStrictEqual(Object.keys(kept.rows[0]).sort(), ['first_seen_at', 'google_place_id']);
+});
+
+test('a trial bought a moment before the account was deleted is on the listing\'s record from the cancel event alone', async () => {
+  // The deletion's own cancel event can be the first event the writer sees.
+  const [PLACE] = placePair();
+  const gone = await venue({ verified: true, placeId: PLACE });
+  sub('sub_trial_unseen', gone, 'canceled', { customer: 'cus_TRIAL_UNSEEN', metadata: boundTo(PLACE)(gone) });
+  await testPool.query('DELETE FROM users WHERE id = $1', [gone]);
+  await venueBilling.syncVenueSubscription('sub_trial_unseen');
+  const again = await venue({ verified: true, placeId: PLACE });
+  assert.strictEqual(await venueBilling.venueTrialUsed(again, PLACE), true);
+});
+
 // ---------------------------------------------------------------------------
 // A REVOKED CLAIM STOPS BEING CHARGED.
 //

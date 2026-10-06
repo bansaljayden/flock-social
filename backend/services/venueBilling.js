@@ -195,8 +195,16 @@ async function venueProfileFor(userId) {
 // named a subscription. Stripe's own answer for the customer is still asked
 // as well, for a subscription made a moment ago whose first event has not
 // arrived yet.
+//
+// THE LISTING'S RECORD OUTLIVES THE ACCOUNT. Both of those tables are keyed on
+// the account and go with it when it is deleted, so an owner who took the
+// trial, deleted the account and claimed the same listing again was handed
+// another 14 days. roost_trial_listings (migration 121) keeps the listings a
+// Roost subscription was ever bought for, with no account in it, and the
+// writer adds to it whenever it binds a subscription to a listing.
 const TRIAL_USED_SQL = `SELECT (EXISTS (SELECT 1 FROM venue_stripe_subscriptions WHERE user_id = $1::int OR google_place_id = $2::varchar)
-     OR EXISTS (SELECT 1 FROM venue_subscriptions WHERE user_id = $1::int AND stripe_subscription_id IS NOT NULL)) AS used`;
+     OR EXISTS (SELECT 1 FROM venue_subscriptions WHERE user_id = $1::int AND stripe_subscription_id IS NOT NULL)
+     OR EXISTS (SELECT 1 FROM roost_trial_listings WHERE google_place_id = $2::varchar)) AS used`;
 
 async function venueTrialUsed(userId, placeId) {
   const r = await pool.query(TRIAL_USED_SQL, [userId, placeId || null]);
@@ -771,6 +779,12 @@ const RECORD_SUBSCRIPTION_SQL = `INSERT INTO venue_stripe_subscriptions (stripe_
     google_place_id = COALESCE($4::varchar, venue_stripe_subscriptions.google_place_id, EXCLUDED.google_place_id)
   RETURNING google_place_id`;
 
+// The listing's trial is used, whoever's account bought the plan (migration
+// 121, TRIAL_USED_SQL). Written for an account that no longer exists too, from
+// the listing in the metadata: a deletion's own cancel event can be the first
+// event a trial bought a moment before it ever sends.
+const RECORD_TRIAL_LISTING_SQL = 'INSERT INTO roost_trial_listings (google_place_id) VALUES ($1::varchar) ON CONFLICT (google_place_id) DO NOTHING';
+
 // THE CUSTOMER GOES WHERE THE PORTAL LOOKS FIRST. Checkout was the only
 // writer of venue_profiles.stripe_customer_id, so a plan sold by hand left it
 // empty. The writer fills it from the subscription's customer when the
@@ -899,6 +913,7 @@ async function syncVenueSubscription(subscriptionId) {
     const boundPlace = recorded && Array.isArray(recorded.rows) && recorded.rows[0]
       ? recorded.rows[0].google_place_id
       : metaPlace;
+    if (boundPlace) await client.query(RECORD_TRIAL_LISTING_SQL, [boundPlace]);
     if (customerId) await client.query(FILL_CUSTOMER_SQL, [userId, customerId]);
     const r = await client.query(SYNC_SQL, [
       userId, g.grantTier, g.status, g.expiresAt, customerId || null, sub.id, g.priceId,
