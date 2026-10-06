@@ -574,6 +574,46 @@ test('a plan set to end for a listing the claim has left neither blocks a new pl
   } finally { db.restore(); }
 });
 
+// Stripe invoices a plan every period until its cancel date, so a cancel date
+// past the period the plan is in (a dashboard "cancel on a date", a fixed-term
+// founding plan) has not ended anything yet. Left with a listing the claim
+// moved away from, such a plan was skipped as if it had: checkout sold the new
+// listing a second plan and the card hid the one still charging.
+test('a plan whose cancel date is past its current period still renews: it blocks a new plan and stays on the card', async () => {
+  setEnv(ON);
+  const now = Math.floor(Date.now() / 1000);
+  const renews = now + 20 * 86400;
+  const cancellingOn = (cancelAt) => ({
+    ...roostSub('sub_cancels_later', 'active', 1700000000),
+    items: { data: [{ price: { id: 'price_roost_month' }, current_period_end: renews }] },
+    cancel_at: cancelAt, cancel_at_period_end: false,
+    metadata: { kind: 'venue', flock_venue_user_id: String(ME.id), flock_venue_place_id: 'ChIJtheListingLeftBehind2' },
+  });
+  stripeState.subscriptions = [cancellingOn(now + 330 * 86400)];
+  let db = stubPool(venueDb({ customer: 'cus_VENUE1', trialUsed: true }));
+  try {
+    const status = await call(venueBillingRoutes, 'GET', '/api/venue-billing/status');
+    assert.strictEqual(status.status, 200, JSON.stringify(status.body));
+    assert.strictEqual(status.body.canManage, true, 'the card hid a plan Stripe goes on charging');
+    const res = await call(venueBillingRoutes, 'POST', '/api/venue-billing/checkout', { plan: 'monthly' });
+    assert.strictEqual(res.status, 409, `a second plan was sold while the first still renews: ${JSON.stringify(res.body)}`);
+    assert.strictEqual(res.body.code, 'ALREADY_SUBSCRIBED');
+    assert.ok(!stripeCalls.some(([n]) => n === 'checkout.create'));
+  } finally { db.restore(); }
+
+  // A cancel date inside the current period ends the plan there: nothing more
+  // is invoiced, so the listing the claim names now can buy its own.
+  stripeState.subscriptions = [cancellingOn(renews - 86400)];
+  stripeCalls.length = 0;
+  db = stubPool(venueDb({ customer: 'cus_VENUE1', trialUsed: true }));
+  try {
+    const status = await call(venueBillingRoutes, 'GET', '/api/venue-billing/status');
+    assert.strictEqual(status.body.canManage, false);
+    const res = await call(venueBillingRoutes, 'POST', '/api/venue-billing/checkout', { plan: 'monthly' });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+  } finally { db.restore(); }
+});
+
 // ---- the dates the plans card names come from Stripe -----------------------
 
 test('the status names the trial\'s charge date, the renewal date and a scheduled end', async () => {

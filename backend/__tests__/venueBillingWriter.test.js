@@ -1119,6 +1119,30 @@ test('a claim paying for Roost cannot be re-pointed at another listing until the
   assert.strictEqual((await state(id)).served, 'free');
 });
 
+test('a plan whose cancel date is past its current period still renews, so it still holds the claim', async () => {
+  // Stripe invoices every period until the cancel date, so a cancel date
+  // months out (a dashboard "cancel on a date", a fixed-term founding plan)
+  // has not set the plan to end. Any cancel date let the claim move, and the
+  // plan went on renewing for a listing the claim had left.
+  const [PLACE_A, PLACE_B] = placePair();
+  const id = await venue({ verified: true, placeId: PLACE_A });
+  const renews = Math.floor(Date.now() / 1000) + 20 * DAY_S;
+  const cancellingOn = (cancelAt) => ({
+    metadata: boundTo(PLACE_A)(id), ...period('price_roost_month', renews), cancel_at: cancelAt, cancel_at_period_end: false,
+  });
+  await venueBilling.syncVenueSubscription(sub('sub_cancels_later', id, 'active', cancellingOn(renews + 300 * DAY_S)));
+  const moved = await profileCall('PUT', '/api/venue-profile', { as: id, body: { googlePlaceId: PLACE_B } });
+  assert.strictEqual(moved.status, 409, `a plan renewing in twenty days let its claim move: ${moved.text}`);
+  assert.strictEqual(moved.body.code, 'ROOST_ON_LISTING');
+  const reclaimed = await profileCall('POST', '/api/venue-profile', { as: id, body: { businessName: 'The Owl', googlePlaceId: PLACE_B } });
+  assert.strictEqual(reclaimed.status, 409, reclaimed.text);
+
+  // A cancel date at the period end ends the plan there, and the claim can move.
+  await venueBilling.syncVenueSubscription(sub('sub_cancels_later', id, 'active', cancellingOn(renews)));
+  const after = await profileCall('PUT', '/api/venue-profile', { as: id, body: { googlePlaceId: PLACE_B } });
+  assert.strictEqual(after.status, 200, after.text);
+});
+
 test('a hand-made plan bound to no listing lets its claim name a first listing, and then holds the claim there', async () => {
   // NULL IS DISTINCT FROM the requested listing was true, so a renewing plan
   // made for a claim with no listing refused every first listing with "Your
