@@ -492,6 +492,9 @@ test('every route file that takes a body was actually looked at', () => {
     // as routes/pro.js: `plan` is one of two fixed strings, `sessionId` is
     // capped at 200 chars, the portal POST reads no body. The default ceiling.
     'venueBilling',
+    // routes/avatars.js enrolled 2026-10-05: the drawn avatars, one public
+    // GET (style in the path, seed in the query string); no body is read.
+    'avatars',
     // routes/clientCrash.js enrolled 2026-09-27: the crash screen's report
     // button. Short identifiers, a message clamped to 200 characters and at
     // most eight component names, under 1KB; the router refuses past 4KB with

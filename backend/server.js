@@ -984,6 +984,7 @@ const JSON_STRING_BYTES_PER_CHAR = 4;
 //     RFC 8058 one-click POST does carry a fixed `List-Unsubscribe=One-Click`
 //     form body, which the urlencoded parser below buffers under the same
 //     64KB ceiling and the router never looks at.
+//   * routes/avatars.js — GET /api/avatars/:style/svg only; no body is read.
 //   * routes/clientCrash.js — POST /api/client-crash, the crash screen's
 //     report: a label, an error name, a message the client clamps to 200
 //     characters, eight component names and a build tag. Well under 1KB, and

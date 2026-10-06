@@ -2419,7 +2419,7 @@ router.put('/profile-image',
       // http as well as https: a local build names its API over plain http.
       // Nothing the client sends is stored but the style and the seed
       // (canonicalAvatarUrl below rebuilds the link on our own origin).
-      .isURL({ protocols: ['https', 'http'], require_protocol: true }).withMessage('Valid URL required'),
+      .isURL({ protocols: ['https', 'http'], require_protocol: true, require_tld: false }).withMessage('Valid URL required'),
   ],
   async (req, res) => {
     try {
