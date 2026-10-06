@@ -14,7 +14,7 @@ const { allowGlobalPlacesCall, GLOBAL_DAILY } = require('../utils/placesBudget')
 // Outage detection for the public venue badge. See utils/placesHealth.js.
 const { recordPlacesResult, isPlaceNotFoundAnswer } = require('../utils/placesHealth');
 const { setRetryAfter, msUntilUtcMidnight } = require('../utils/retryAfter');
-const { weekdayOffset, venueLocalNow } = require('../services/crowdEngine');
+const { weekdayOffset, venueLocalNow, hedgeLabel, NO_CURVE_FALLBACK_METHOD } = require('../services/crowdEngine');
 // The venue's IANA zone off the Places payload (utils/venueZone.js).
 const { placeTimeZone } = require('../utils/venueZone');
 
@@ -308,10 +308,13 @@ function venueLocalTime(lat, lng, now = new Date(), timeZone = null) {
   return { localHour, localDay, offsetHours, scoreTime };
 }
 
-function svgBadge(text, dotColor) {
+// `live: false` for a pill that is not a reading of the venue (the category's
+// typical level, see the route below), so its spoken label does not call it
+// live either. Every other pill reads exactly as it always has.
+function svgBadge(text, dotColor, { live = true } = {}) {
   // Simple pill: dot + status + wordmark. Width fits the text loosely.
   const width = 150 + text.length * 6;
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="36" role="img" aria-label="${text} - live from Flock">
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="36" role="img" aria-label="${text} - ${live ? 'live from' : 'from'} Flock">
   <rect width="${width}" height="36" rx="18" fill="#f1ede0" stroke="#16283d" stroke-opacity="0.15"/>
   <circle cx="20" cy="18" r="5" fill="${dotColor}"/>
   <text x="33" y="23" font-family="Georgia, 'Times New Roman', serif" font-size="14" font-weight="600" fill="#16283d">${text}</text>
@@ -454,7 +457,14 @@ router.get('/:placeId.svg',
         );
         const pred = await mlPredictor.predictBusyness(venue, weather, scoreTime, ANON);
         const [dot, text] = LABEL_COLORS[pred.label] || ['#2d5a87', `${pred.label} right now`];
-        svg = svgBadge(text, dot);
+        // THE NO-CURVE FALLBACK IS NOT A READING OF THIS VENUE (mlPredictor
+        // CROWD_NO_CURVE_FALLBACK). It is what is typical for this kind of
+        // place at this hour, so the pill hedges it the way the card does,
+        // "Usually busy at this hour", says nothing about right now, and
+        // keeps the band's colour. Never served with that switch off.
+        svg = pred.predictionMethod === NO_CURVE_FALLBACK_METHOD
+          ? svgBadge(`${hedgeLabel(pred.label)} at this hour`, dot, { live: false })
+          : svgBadge(text, dot);
       }
 
       setBadge(placeId, svg);
