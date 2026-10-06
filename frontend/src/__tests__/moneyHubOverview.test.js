@@ -2001,6 +2001,18 @@ describe('a bill that ends rather than renews', () => {
     expect(api.createAdminExpense.mock.calls[1][0]).toMatchObject({ vendor: 'Filing', cadence: 'one_time', endsOn: null });
   });
 
+  test('the form says a usage bill set to end still has a last bill to come after the day', async () => {
+    // A usage bill is billed after the use, so "nothing is charged on or after
+    // that day" would make its last bill, which the hub expects after the
+    // end date, look like a renewal (second review 2026-10-06).
+    await renderHub(NOT_CONNECTED);
+    fireEvent.click(screen.getByRole('button', { name: 'Add a bill' }));
+    fireEvent.change(screen.getByLabelText('How often'), { target: { value: 'usage' } });
+    fireEvent.change(screen.getByLabelText('Ends on'), { target: { value: '2026-10-01' } });
+    expect(screen.getByText('For a usage bill that stops on that day. Its last bill comes after, for the use up to then, and the hub stops counting it on that day, so leave Still being charged ticked.')).toBeInTheDocument();
+    expect(screen.queryByText(/Nothing is charged on or after that day/)).toBeNull();
+  });
+
   test('the import says how to paste one', async () => {
     await renderHub(NOT_CONNECTED);
     fireEvent.click(screen.getByRole('button', { name: 'Import a list' }));
