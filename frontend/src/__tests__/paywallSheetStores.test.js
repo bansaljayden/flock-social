@@ -13,6 +13,7 @@ import { render, screen, waitFor, act } from '@testing-library/react';
 
 jest.mock('../context/ThemeContext', () => ({ useTheme: () => ({ isDark: false }) }));
 jest.mock('../services/api', () => ({
+  getEntitlements: jest.fn(),
   getProStatus: jest.fn(),
   startProCheckout: jest.fn(),
   trackPaywallShown: jest.fn(),
@@ -29,7 +30,7 @@ jest.mock('../services/purchases', () => ({
 // eslint-disable-next-line import/first
 import PaywallSheet from '../components/PaywallSheet';
 // eslint-disable-next-line import/first
-import { getProStatus, startProCheckout } from '../services/api';
+import { getEntitlements, getProStatus, startProCheckout } from '../services/api';
 // eslint-disable-next-line import/first
 import { isPurchasesAvailable, getProOffering, introEligibleProducts, restore } from '../services/purchases';
 
@@ -182,6 +183,57 @@ describe('inside the app', () => {
     const cta = await screen.findByRole('button', { name: MONTHLY_CTA });
     expect(cta.disabled).toBe(false);
     expect(screen.queryByRole('button', { name: /Yearly/ })).toBeNull();
+  });
+
+  // The app's own copy of Pro can be half a minute behind, so somebody who
+  // had just subscribed on the web and switched back was shown the App Store
+  // plans and could pay twice. The sheet asks the server as it opens.
+  describe('an account the server already counts as Pro', () => {
+    const bothPlans = () => [
+      { packageType: 'MONTHLY', product: { identifier: 'pro_monthly', priceString: '$3.99', price: 3.99, introPrice: null } },
+      { packageType: 'ANNUAL', product: { identifier: 'pro_annual', priceString: '$29.99', price: 29.99, introPrice: null } },
+    ];
+
+    test('is told it has Pro, offered nothing to buy, and the app catches up', async () => {
+      isPurchasesAvailable.mockReturnValue(true);
+      getProOffering.mockResolvedValue(bothPlans());
+      getEntitlements.mockResolvedValue({ isPremium: true, paywallEnabled: true });
+      const onUpgraded = jest.fn();
+      const { container } = render(<PaywallSheet open trigger="birdie" onClose={() => {}} onUpgraded={onUpgraded} />);
+      await screen.findByText('You already have Flock Pro on this account.');
+      expect(screen.queryByRole('button', { name: /Get Pro|Yearly|Monthly|Restore/ })).toBeNull();
+      expect(container.textContent).not.toMatch(/\$\s?\d/);
+      expect(onUpgraded).toHaveBeenCalledTimes(1);
+      // Asked of our server, not of the web's prices.
+      expect(getProStatus).not.toHaveBeenCalled();
+    });
+
+    test('an account that is not Pro gets the plans as before', async () => {
+      isPurchasesAvailable.mockReturnValue(true);
+      getProOffering.mockResolvedValue(bothPlans());
+      getEntitlements.mockResolvedValue({ isPremium: false, paywallEnabled: true });
+      const onUpgraded = jest.fn();
+      render(<PaywallSheet open trigger="birdie" onClose={() => {}} onUpgraded={onUpgraded} />);
+      await screen.findByRole('button', { name: MONTHLY_CTA });
+      expect(screen.queryByText('You already have Flock Pro on this account.')).toBeNull();
+      expect(onUpgraded).not.toHaveBeenCalled();
+    });
+
+    test('a read that fails shows the plans: it says nothing about Pro', async () => {
+      isPurchasesAvailable.mockReturnValue(true);
+      getProOffering.mockResolvedValue(bothPlans());
+      getEntitlements.mockRejectedValue(Object.assign(new Error('Could not check your plan just now. Try again.'), { status: 503 }));
+      render(<PaywallSheet open trigger="settings" onClose={() => {}} />);
+      await screen.findByRole('button', { name: MONTHLY_CTA });
+      expect(screen.queryByText('You already have Flock Pro on this account.')).toBeNull();
+    });
+
+    test('with no App Store to buy from, nothing is asked at all', async () => {
+      isPurchasesAvailable.mockReturnValue(false);
+      render(<PaywallSheet open trigger="settings" onClose={() => {}} />);
+      await screen.findByText("Flock Pro can't be bought in the app yet.");
+      expect(getEntitlements).not.toHaveBeenCalled();
+    });
   });
 
   test('App Store fine print, Restore, and nothing that names the website', async () => {

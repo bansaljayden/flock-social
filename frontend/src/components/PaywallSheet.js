@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useTheme } from '../context/ThemeContext';
 import { isPurchasesAvailable, getProOffering, purchase, restore, introEligibleProducts } from '../services/purchases';
-import { getProStatus, startProCheckout, trackPaywallShown, trackPurchaseCompleted } from '../services/api';
+import { getEntitlements, getProStatus, startProCheckout, trackPaywallShown, trackPurchaseCompleted } from '../services/api';
 import { yearlySavingsPercent, planSavingsPercent, perMonthLabel, storePerMonthLabel } from '../lib/proPricing';
 import { birdieBackText, forecastBackText } from '../lib/meterResets';
 import { isNativeShell } from '../lib/nativeShell';
@@ -165,7 +165,7 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger, birdieRes
   const [selected, setSelected] = useState('monthly');
   const [busy, setBusy] = useState(false);
   const [restoring, setRestoring] = useState(false);
-  // Native: 'loading' | 'ready' | 'unavailable'
+  // Native: 'loading' | 'ready' | 'unavailable' | 'pro'
   // Web:    'web-loading' | 'web-ready' | 'web-off' | 'web-pro' | 'web-error'
   const [loadState, setLoadState] = useState('loading');
   const [packages, setPackages] = useState(null);
@@ -217,8 +217,29 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger, birdieRes
     }
     setLoadState('loading');
     setTrialEligible(new Set());
-    getProOffering().then(async (pkgs) => {
+    // ALREADY PRO, ASKED AS THE SHEET OPENS. The app's own copy of Pro can be
+    // half a minute behind (App.js re-reads it on the way back to the
+    // foreground at most that often), so somebody who had just subscribed on
+    // the web and switched back was offered the App Store plans, and could
+    // pay twice. The server is asked beside the store's plans, and an account
+    // it says has Pro is told so instead of being sold to. A failed read
+    // shows the plans as before: it says nothing about Pro either way.
+    const alreadyPro = (async () => {
+      try {
+        return (await getEntitlements())?.isPremium === true;
+      } catch {
+        return false;
+      }
+    })();
+    Promise.all([getProOffering(), alreadyPro]).then(async ([pkgs, isPremium]) => {
       if (cancelled) return;
+      if (isPremium) {
+        setPackages(null);
+        setLoadState('pro');
+        // The rest of the app catches up now rather than on its next read.
+        onUpgraded?.();
+        return;
+      }
       if (pkgs && (pickPackage(pkgs, 'yearly') || pickPackage(pkgs, 'monthly'))) {
         // Asked before the plans show, so a trial cannot appear (or vanish)
         // under somebody's finger, and only when a product carries one.
@@ -238,7 +259,8 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger, birdieRes
       }
     });
     return () => { cancelled = true; };
-    // `native` is fixed for the life of the page; loadWeb is stable.
+    // `native` is fixed for the life of the page; loadWeb is stable, and so is
+    // onUpgraded (App.js's confirmUpgrade).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
@@ -578,6 +600,12 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger, birdieRes
 
           {native && loadState === 'loading' && (
             <p style={quiet} role="status">Loading plans…</p>
+          )}
+
+          {/* The server says this account has Pro, wherever it was bought, so
+              there is nothing here to buy (the effect above says why it asks). */}
+          {native && loadState === 'pro' && (
+            <p style={quiet}>You already have Flock Pro on this account.</p>
           )}
 
           {/* Inside the app, with no App Store product to sell. One plain
