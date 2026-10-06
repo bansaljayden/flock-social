@@ -190,7 +190,11 @@ function instantForWallClock(wall, zone, nowMs = Date.now()) {
   const found = wallClockInstants(year, month, day, hour, minute, zone);
   if (found.length === 1) return found[0];
   if (found.length > 1) {
-    const unfinished = found.find((t) => t + HOUR_MS > nowMs);
+    // A showing's hour is the clock hour it falls in, from its top. Counting an
+    // hour from the minute asked for kept the first 1:30 "unfinished" until
+    // 2:30 on the first clock, half way into the second 1 AM, so at 1:20 the
+    // second time round a plan for 1:30 resolved to 50 minutes ago.
+    const unfinished = found.find((t) => t - minute * 60000 + HOUR_MS > nowMs);
     return unfinished != null ? unfinished : found[0];
   }
   const w = wallNumber(year, month, day, hour, minute);
