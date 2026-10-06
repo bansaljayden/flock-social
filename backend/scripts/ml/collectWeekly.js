@@ -265,6 +265,22 @@ function newVenueCheck(venues, argv) {
   return { byName, refusal: head + next };
 }
 
+// The run's credit ceiling: 2,500 unless --max-credits= names another, in
+// digits only. parseInt read "3k" as a ceiling of 3 and "1e3" as 1, so a typo
+// quietly set a different ceiling. Read with the other flags, before the venue
+// SELECT, so a bad value refuses before anything is read.
+const DEFAULT_MAX_CREDITS = 2500;
+function maxCreditsFrom(argv) {
+  const arg = argv.find((a) => a.startsWith('--max-credits='));
+  if (!arg) return { value: DEFAULT_MAX_CREDITS };
+  const raw = arg.slice('--max-credits='.length);
+  const value = /^\d+$/.test(raw) ? Number(raw) : NaN;
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    return { error: `--max-credits must be a positive integer, got "${raw}".` };
+  }
+  return { value };
+}
+
 async function collectWeekly() {
   await ensureAxisColumn();
   await requireSlotIndex(pool, WEEKLY_SLOT_INDEX);
@@ -305,7 +321,8 @@ async function collectWeekly() {
 
   const createdAfter = createdAfterFrom(process.argv);
   const selection = selectionOptions(process.argv);
-  const argError = createdAfter.error || selection.error;
+  const credits = maxCreditsFrom(process.argv);
+  const argError = createdAfter.error || selection.error || credits.error;
   if (argError) {
     console.error(`[ML:Weekly] ${argError}`);
     process.exitCode = 1;
@@ -380,13 +397,7 @@ async function collectWeekly() {
   // moment before the money leaves is a receipt, not a guard. A full PA
   // by-id refresh is ~1,915 credits, so the default admits the real job and
   // refuses the accident.
-  const maxCreditsArg = process.argv.find((a) => a.startsWith('--max-credits='));
-  const maxCredits = maxCreditsArg ? parseInt(maxCreditsArg.split('=')[1], 10) : 2500;
-  if (!Number.isInteger(maxCredits) || maxCredits <= 0) {
-    console.error('[ML:Weekly] --max-credits must be a positive integer.');
-    await pool.end();
-    return;
-  }
+  const maxCredits = credits.value;
   if (estCredits > maxCredits) {
     console.error(
       `[ML:Weekly] REFUSED: this run would spend ~${estCredits} credits `
@@ -396,6 +407,10 @@ async function collectWeekly() {
       + `--only-found, --limit=...) or raise the ceiling on purpose with `
       + `--max-credits=${estCredits}.`
     );
+    // Non-zero, like every other refusal here and collectRealtime's ceiling:
+    // run_besttime_go_chain.cmd moves on to its next stage on exit 0, and a
+    // refused run collected nothing.
+    process.exitCode = 1;
     await pool.end();
     return;
   }
@@ -872,6 +887,7 @@ module.exports = {
   run,
   bestTimeSlotToLocal,
   createdAfterFrom,
+  maxCreditsFrom,
   newVenueCheck,
   selectionOptions,
   venueCalendar,
