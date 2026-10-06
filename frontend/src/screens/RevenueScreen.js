@@ -1558,7 +1558,7 @@ function HubCrowdData({ h, colors }) {
   return (
     <div id={HUB_CARD.crowd.id} style={hubStyle.card}>
       <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: navy, margin: '0 0 2px' }}>Crowd data</h3>
-      <p style={hubStyle.sub}>BestTime, the paid feed behind the crowd model. Only its key endpoint is asked, which admits no venue and spends nothing.</p>
+      <p style={hubStyle.sub}>BestTime, the paid feed behind Flock&apos;s crowd numbers. Only its key endpoint is asked, which admits no venue and spends nothing.</p>
       {!ready && <HubNotice status={b.status} reason={b.reason} />}
       {ready && (
         <HubRow
@@ -1649,30 +1649,63 @@ function HubCrowdData({ h, colors }) {
   );
 }
 
-// THE MODEL: the version serving now, and its served forecasts against the
-// goal. The share is the server's (backend/services/moneyHub.js, THE MODEL):
-// model forecasts served in the window, each paired with the collector's live
-// reading of the same venue in the same hour of the same day, one pair per
-// venue and hour, counted when its crowd band is the reading's or the next one
-// over. Under the minimum the server sends no share at all, and this card says
-// there are not enough observations yet rather than printing a noisy one.
+// THE MODEL: what makes the crowd numbers now, and how the served ones did
+// against the goal. The share is the server's (backend/services/moneyHub.js,
+// THE MODEL): forecasts made from a venue's own data (prediction_method ml)
+// served in the window, each paired with the collector's live reading of the
+// same venue in the same hour of the same day, one pair per venue and hour,
+// counted when its crowd band is the reading's or the next one over. Under the
+// minimum the server sends no share at all, and this card says there are not
+// enough observations yet rather than printing a noisy one.
+//
+// prediction_method ml is the venue's own curve and live readings in
+// curve_offset mode, where no model runs, and the trained model's number in
+// model mode. The server counts which from each row's version, so the card
+// names what made the numbers and never calls the curve's the model's.
 const hubPct = (n) => `${n.toFixed(1)}%`;
 
 // What answered a forecast, in words, keyed by the prediction_method
 // services/mlPredictor.js and routes/crowd.js write on each serve. A method
-// not listed here is shown by its own name rather than guessed at.
+// not listed here is shown by its own name rather than guessed at. ml is
+// named by what made it where the server counted that (hubMadeBy).
 const HUB_METHOD_WORDS = {
-  ml: 'the model',
+  ml: "a venue's own data",
   rule_engine: 'no model was loaded on the server',
   rule_engine_no_baseline: 'the venue has no baseline yet',
   rule_engine_baseline_refused: "the person's venue lookups for the moment were used up",
   rule_engine_baseline_error: "the venue's baseline could not be read",
   rule_engine_no_weather_norm: 'there was no weather reading and no usual weather to stand in',
-  rule_engine_fallback: 'the model failed on the request',
+  rule_engine_fallback: 'an error on the request',
   owner_report: "the venue owner's live report",
   unknown: 'not recorded',
 };
 const hubMethodWords = (m) => HUB_METHOD_WORDS[m] || m;
+
+// The two things that make a forecast from a venue's own data.
+const HUB_FROM_CURVE = "the venue's own curve and live readings";
+const HUB_FROM_MODEL = 'the trained model';
+
+// What made `total` forecasts from a venue's own data, given how many of them
+// the venue's curve made; the rest the trained model made. Read after "Of
+// those, ". Null when the split is not known, so nothing is claimed.
+function hubMadeBy(fromCurve, total) {
+  if (!Number.isFinite(fromCurve) || !Number.isFinite(total) || total <= 0) return null;
+  const curve = Math.min(Math.max(fromCurve, 0), total);
+  if (curve === total) return `all came from ${HUB_FROM_CURVE}`;
+  if (curve === 0) return `all came from ${HUB_FROM_MODEL}`;
+  return `${hubCount(curve)} came from ${HUB_FROM_CURVE}, ${hubCount(total - curve)} from ${HUB_FROM_MODEL}`;
+}
+
+// The serve mode in words, for the Overview and the Costs tab alike.
+function hubServeModeWords(mode, nowcast) {
+  let words = null;
+  if (mode === 'curve_offset') words = "Serve mode is curve_offset: each venue's own weekly curve plus its live offset, with no model run.";
+  else if (mode === 'model') words = "Serve mode is model: the trained model makes each venue's number.";
+  if (!words) return null;
+  return nowcast === true
+    ? `${words} The nowcast is on: a venue read live in an earlier hour has that reading blended into its number.`
+    : words;
+}
 
 function HubModel({ h, colors }) {
   const m = h.model;
@@ -1681,6 +1714,9 @@ function HubModel({ h, colors }) {
   const a = m.accuracy || {};
   // A server from before the coverage read sends none: no rows, not empty ones.
   const cov = m.coverage || null;
+  // Likewise the serve mode: no row from a server that does not send it.
+  const serving = m.serving || null;
+  const servingWords = serving ? hubServeModeWords(serving.mode, serving.nowcast) : null;
   const goal = m.goal || {};
   const navy = colors.navy;
   const ready = a.status === 'ok';
@@ -1694,8 +1730,14 @@ function HubModel({ h, colors }) {
   const age = cachedAge === null ? '' : `; this answer is ${cachedAge < 120 ? `${cachedAge} seconds` : `${Math.round(cachedAge / 60)} minutes`} old`;
   let versionNote;
   if (v.status !== 'ok') versionNote = v.reason || 'The version could not be read.';
-  else if (v.loaded) versionNote = 'The version this server loaded, from its model_metadata.json.';
-  else versionNote = 'No model is loaded in this server process yet, so this is the version of the artifact on disk, scripts/ml/models/model_metadata.json.';
+  else if (v.loaded) {
+    versionNote = serving && serving.mode === 'curve_offset'
+      ? "The version this server loaded, from its model_metadata.json. Serve mode curve_offset does not run it. A venue's own data answers only while it is loaded."
+      : 'The version this server loaded, from its model_metadata.json.';
+  } else versionNote = 'No model is loaded in this server process yet, so this is the version of the artifact on disk, scripts/ml/models/model_metadata.json.';
+  // What made the venue-hours scored below: the venue's curve, the trained
+  // model, or some of each, as the server counted them.
+  const scoredMadeBy = ready && Number.isFinite(a.matched) ? hubMadeBy(a.fromCurve, a.matched) : null;
   let gapValue = 'Not measured yet';
   let gapTone = 'muted';
   let gapNote = ready ? 'Waits for enough observations to measure the share.' : 'Waits for the check above to answer.';
@@ -1709,10 +1751,19 @@ function HubModel({ h, colors }) {
   return (
     <div id={HUB_CARD.model.id} style={hubStyle.card}>
       <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: navy, margin: '0 0 2px' }}>Model</h3>
-      <p style={hubStyle.sub}>The crowd model serving now, and how its forecasts held up against what the collector measured in the same hour.</p>
+      <p style={hubStyle.sub}>What makes Flock&apos;s crowd numbers now, and how the served ones held up against what the collector measured in the same hour.</p>
+      {serving && (
+        <HubRow
+          navy={navy}
+          label="Made by"
+          value={serving.mode === 'curve_offset' ? "Venue's own curve" : serving.mode === 'model' ? 'Trained model' : 'Not read'}
+          tone={servingWords ? undefined : 'muted'}
+          note={servingWords || 'The server did not say which serve mode it runs.'}
+        />
+      )}
       <HubRow
         navy={navy}
-        label="Live model"
+        label="Model version"
         tag={v.status === 'ok' && v.loaded === false ? { tone: 'warn', text: 'Not loaded' } : null}
         value={v.status === 'ok' ? v.value : 'Not read'}
         tone={v.status === 'ok' ? undefined : 'muted'}
@@ -1724,7 +1775,7 @@ function HubModel({ h, colors }) {
         <>
           <p style={{ ...hubStyle.big, color: navy }}>{hubPct(a.percent)}</p>
           <p style={hubStyle.note}>
-            of served model forecasts landed in the live reading&apos;s crowd band or the one next to it. n&nbsp;=&nbsp;{hubCount(a.matched)} venue-hours over {hubPlural(a.days, 'day', 'days')}{Number.isFinite(a.withinOneBand) ? `, ${hubCount(a.withinOneBand)} of them within one band` : ''}, from {hubPlural(a.served, 'forecast', 'forecasts')} served in the window.
+            of forecasts made from a venue&apos;s own data landed in the live reading&apos;s crowd band or the one next to it. n&nbsp;=&nbsp;{hubCount(a.matched)} venue-hours over {hubPlural(a.days, 'day', 'days')}{Number.isFinite(a.withinOneBand) ? `, ${hubCount(a.withinOneBand)} of them within one band` : ''}, from {hubPlural(a.served, 'forecast', 'forecasts')} served in the window.
           </p>
         </>
       )}
@@ -1746,41 +1797,52 @@ function HubModel({ h, colors }) {
         <HubRow navy={navy} label="Gap to goal" value={gapValue} tone={gapTone} note={gapNote} />
       </div>
       {versions.length > 1 && (
-        <p style={hubStyle.foot}>This window mixes forecasts from {versions.length} model versions: {versions.join(', ')}.</p>
+        <p style={hubStyle.foot}>This window mixes {versions.length} served versions: {versions.join(', ')}. A +curve_offset or +nowcast ending names a switch that changed the number.</p>
       )}
       <p style={hubStyle.foot}>
-        Counts forecasts the model made (served_predictions, prediction_method ml) on the venue card and the vote list. Each is paired with the collector&apos;s live reading of the same venue in the same hour of the same day (ml_training_data), one pair per venue and hour, and scored on the bands the app prints{ladder ? `: ${ladder}` : ''}. Checked on the server and held for {holdMinutes === 60 ? 'an hour' : `${holdMinutes} minutes`}{age}.
+        Counts forecasts made from a venue&apos;s own data (served_predictions, prediction_method ml) on the venue card and the vote list.{scoredMadeBy ? ` Of the ${hubPlural(a.matched, 'venue-hour', 'venue-hours')} scored, ${scoredMadeBy}.` : ''} Each is paired with the collector&apos;s live reading of the same venue in the same hour of the same day (ml_training_data), one pair per venue and hour, and scored on the bands the app prints{ladder ? `: ${ladder}` : ''}. Checked on the server and held for {holdMinutes === 60 ? 'an hour' : `${holdMinutes} minutes`}{age}.
       </p>
-      {/* HOW OFTEN IT ANSWERS. The share above scores the model's own
-          forecasts only, so on its own it cannot say whether the model
-          answered most of what people saw or almost none of it. This is that
-          split, from the same table, beside it. */}
+      {/* WHAT ANSWERED. The share above scores forecasts made from a venue's
+          own data only, so on its own it cannot say whether those were most
+          of what people saw or almost none of it, the rest coming from the
+          rule engine. This is that split, from the same table, beside it. */}
       {cov && (
         <>
-          <p style={hubStyle.kicker}>How often it answers, last {Number.isFinite(cov.windowDays) ? cov.windowDays : 7} days</p>
+          <p style={hubStyle.kicker}>What answered, last {Number.isFinite(cov.windowDays) ? cov.windowDays : 7} days</p>
           {cov.status !== 'ok' && <HubNotice status={cov.status} reason={cov.reason} />}
           {cov.status === 'ok' && cov.total === 0 && (
-            <HubRow navy={navy} label="Forecasts people saw from the model" value="None served" tone="muted" note="No forecast was served to a signed-in person in this window." />
+            <HubRow navy={navy} label="Forecasts from a venue's own data" value="None served" tone="muted" note="No forecast was served to a signed-in person in this window." />
           )}
-          {cov.status === 'ok' && cov.total > 0 && (
-            <>
-              <HubRow
-                navy={navy}
-                label="Forecasts people saw from the model"
-                value={`${Math.round(cov.mlPercent)}% of ${hubCount(cov.total)}`}
-                note={`${hubCount(cov.ml)} of ${hubPlural(cov.total, 'forecast', 'forecasts')} served to signed-in people, counted once per card served, from served_predictions. The Costs tab counts forecast hours since the last deploy instead, so the two differ.`}
-              />
-              {cov.topFallback && (
+          {cov.status === 'ok' && cov.total > 0 && (() => {
+            const madeBy = hubMadeBy(cov.mlFromCurve, cov.ml);
+            // The ml count named by what made it, where the server split it.
+            const parts = cov.byMethod.flatMap((x) => {
+              if (x.method !== 'ml' || !Number.isFinite(cov.mlFromCurve)) return [`${hubMethodWords(x.method)} ${hubCount(x.served)}`];
+              const curve = Math.min(Math.max(cov.mlFromCurve, 0), x.served);
+              return [[HUB_FROM_CURVE, curve], [HUB_FROM_MODEL, x.served - curve]]
+                .filter(([, n]) => n > 0)
+                .map(([words, n]) => `${words} ${hubCount(n)}`);
+            });
+            return (
+              <>
                 <HubRow
                   navy={navy}
-                  label="Most common fallback"
-                  value={hubCount(cov.topFallback.served)}
-                  note={`${hubMethodWords(cov.topFallback.method).replace(/^./, (ch) => ch.toUpperCase())}, across ${hubPlural(cov.topFallback.venues, 'venue', 'venues')}.${cov.topFallback.method === 'rule_engine_no_baseline' ? ' The model answers for a venue once the collector has read it.' : ''}`}
+                  label="Forecasts from a venue's own data"
+                  value={`${Math.round(cov.mlPercent)}% of ${hubCount(cov.total)}`}
+                  note={`${hubCount(cov.ml)} of ${hubPlural(cov.total, 'forecast', 'forecasts')} served to signed-in people, counted once per card served, from served_predictions.${madeBy ? ` Of those, ${madeBy}.` : ''} The Costs tab counts forecast hours since the last deploy instead, so the two differ.`}
                 />
-              )}
-              <p style={hubStyle.foot}>By what answered: {cov.byMethod.map((x) => `${hubMethodWords(x.method)} ${hubCount(x.served)}`).join('; ')}. Held for an hour with the check above.</p>
-            </>
-          )}
+                {cov.topFallback && (
+                  <HubRow
+                    navy={navy}
+                    label="Most common fallback"
+                    value={hubCount(cov.topFallback.served)}
+                    note={`${hubMethodWords(cov.topFallback.method).replace(/^./, (ch) => ch.toUpperCase())}, across ${hubPlural(cov.topFallback.venues, 'venue', 'venues')}.${cov.topFallback.method === 'rule_engine_no_baseline' ? ' A venue gets numbers from its own data once the collector has read it.' : ''}`}
+                  />
+                )}
+                <p style={hubStyle.foot}>By what answered: {parts.join('; ')}. Held for an hour with the check above.</p>
+              </>
+            );
+          })()}
         </>
       )}
     </div>
@@ -3620,41 +3682,48 @@ export default function RevenueScreen({
                   );
                 })()}
 
-                {/* THE MODEL VERSUS THE FALLBACK.
+                {/* WHAT ANSWERED THE FORECASTS.
                     routes/admin.js has served this block since 2026-08-26 and
                     nothing rendered it, which is the same half-finished shape
                     the push ledger above was in: the number that answers "is
-                    the trained model actually doing the work" was computed,
+                    a venue's own data actually doing the work" was computed,
                     carried across the wire, pinned by two server tests, and
                     shown to nobody.
-                    It answers the one question the ONNX model exists to be
-                    judged on. services/crowdEngine.js is the rule-based
-                    fallback and it is used whenever the model files are
-                    missing, the ship gate fails, features mismatch, a venue has
-                    no baseline, or inference throws. Every one of those is
-                    silent. A model that loaded and then served nothing looks
-                    identical, from outside, to a model that is working. */}
+                    It answers whether a venue's own data or the rule engine
+                    made each forecast, and of the first, whether the venue's
+                    curve (serve mode curve_offset, no model run) or the ONNX
+                    model did; mlPredictor counts both under ml on purpose.
+                    services/crowdEngine.js is the rule-based fallback and it
+                    is used whenever the model files are missing, the ship gate
+                    fails, features mismatch, a venue has no baseline, or the
+                    request throws. Every one of those is silent. A server that
+                    loaded and then served nothing looks identical, from
+                    outside, to one that is working. */}
                 {d.predictionCoverage && (() => {
                   const p = d.predictionCoverage;
                   const total = Number.isFinite(p.total) ? p.total : null;
                   const ml = Number.isFinite(p.ml) ? p.ml : 0;
                   const share = Number.isFinite(p.modelShare) ? Math.round(p.modelShare * 100) : null;
+                  // The curve made curveOffsetAnswers of the ml answers and
+                  // the trained model the rest; unsplit from an older server.
+                  const madeBy = hubMadeBy(p.curveOffsetAnswers, ml);
+                  const modeWords = hubServeModeWords(p.serveMode, p.nowcastEnabled);
                   return (
                     <div key="prediction-coverage" style={{ ...card, border: p.modelLoaded === false ? `1px solid ${colors.amber}` : undefined }}>
-                      <h3 style={h3}>Crowd model versus the fallback</h3>
+                      <h3 style={h3}>What answered the forecasts</h3>
                       <p style={sub}>
-                        Which engine actually answered. This counter lives in the server's memory, so it starts again from nothing on every deploy and reads the time since the last restart rather than all time. A small number here is not evidence the model is unused.
+                        Whether a venue&apos;s own data or the rule engine made each forecast. This counter lives in the server&apos;s memory, so it starts again from nothing on every deploy and reads the time since the last restart rather than all time. A small number here is not evidence that a venue&apos;s own data goes unused.
                       </p>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                         <div>
-                          <p style={kicker}>Answered by the model</p>
+                          <p style={kicker}>From a venue&apos;s own data</p>
                           <p style={big}>{share === null ? 'Not measured' : `${share}%`}</p>
                           <p style={{ ...sub, margin: '3px 0 0' }}>
                             {total === null
                               ? 'The meter could not be read, which says nothing either way.'
                               : total === 0
-                                ? 'Nothing has asked for a forecast since the last deploy, so neither engine has run.'
-                                : `${count(ml)} of ${count(total)} forecast${total === 1 ? '' : 's'}. The rest came from the rule engine.`}
+                                ? 'Nothing has asked for a forecast since the last deploy, so nothing has answered.'
+                                : `${count(ml)} of ${count(total)} forecast${total === 1 ? '' : 's'}. The rest came from the rule engine.${madeBy ? ` Of the ${count(ml)}, ${madeBy}.` : ''}`}
                           </p>
                         </div>
                         <div>
@@ -3662,18 +3731,15 @@ export default function RevenueScreen({
                           <p style={big}>{p.modelLoaded ? (p.modelVersion || 'Loaded') : 'Not loaded'}</p>
                           <p style={{ ...sub, margin: '3px 0 0' }}>
                             {p.modelLoaded
-                              ? 'The ONNX model is in memory and available to serve.'
-                              : 'Every forecast is coming from the rule engine. That is the designed fallback and the product still works, but the trained model is earning nothing.'}
+                              ? (p.serveMode === 'curve_offset'
+                                ? "The ONNX model is in memory. Serve mode curve_offset does not run it. A venue's own data answers only while it is loaded."
+                                : 'The ONNX model is in memory and available to serve.')
+                              : "Every forecast is coming from the rule engine. That is the designed fallback and the product still works, but no forecast is made from a venue's own data."}
                           </p>
                         </div>
                       </div>
-                      {(p.serveMode === 'curve_offset' || p.nowcastEnabled === true) && (
-                        <p style={{ ...sub, margin: '10px 0 0' }}>
-                          {p.serveMode === 'curve_offset'
-                            ? `Serve mode is curve_offset: of the answers above, ${count(Number.isFinite(p.curveOffsetAnswers) ? p.curveOffsetAnswers : 0)} are the venue's own curve plus its live offset, with no model adjustment.`
-                            : 'Serve mode is model.'}
-                          {p.nowcastEnabled === true ? ' The nowcast is on: a venue read live in an earlier hour has that reading blended into its number.' : ''}
-                        </p>
+                      {modeWords && (
+                        <p style={{ ...sub, margin: '10px 0 0' }}>{modeWords}</p>
                       )}
                       {p.since && (
                         <p style={{ ...sub, margin: '10px 0 0' }}>Counting since {new Date(p.since).toLocaleString()}.</p>

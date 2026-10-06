@@ -2948,7 +2948,7 @@ function statedBestTimePlan(now = new Date()) {
 }
 
 // ---------------------------------------------------------------------------
-// THE MODEL: which one is serving, and how its served forecasts are doing
+// THE MODEL: what makes the crowd numbers, and how the served ones are doing
 // ---------------------------------------------------------------------------
 //
 // THE METRIC. The share of served forecasts within one crowd band of what was
@@ -2961,8 +2961,16 @@ function statedBestTimePlan(now = new Date()) {
 // weekly rows whose label equals the baseline by construction; nothing here
 // reads that figure.
 //
-// WHAT COUNTS. A served_predictions row the model produced (prediction_method
-// 'ml'), from the venue card or the vote list, paired with the collector's
+// WHAT COUNTS. A served_predictions row made from the venue's own data
+// (prediction_method 'ml'). That label is the corpus path whichever arithmetic
+// ran: with CROWD_SERVE_MODE=curve_offset, which production serves, it is the
+// venue's own weekly curve plus its live offset and the nowcast, and no model
+// runs; only in model mode is it the trained model's number. mlPredictor keeps
+// the one label on purpose, and qualifies the row's model_version instead
+// ('2.6.0-starling+curve_offset', servedModelVersion), so the check counts how
+// many of its pairs the curve made (from_curve) and the card names what made
+// them rather than calling every 'ml' row the model's. From the venue card or
+// the vote list, paired with the collector's
 // live reading (ml_training_data, realtime, label_source 'live') of the same
 // venue at the same venue-local weekday and hour, taken within
 // MODEL_PAIR_WINDOW_HOURS of the serve. The same weekday and hour recur only a
@@ -3040,8 +3048,9 @@ function safeLadder() {
 }
 
 // $1 the window in days, $2 the ladder's cuts, $3 the pairing window in hours.
-// Postgres pairs and counts; four counts and the model versions seen are all
-// that leave the database.
+// Postgres pairs and counts; five counts and the model versions seen are all
+// that leave the database. strpos rather than LIKE, whose _ would match any
+// character.
 const SERVED_BAND_ACCURACY_SQL = `WITH served AS MATERIALIZED (
        SELECT sp.id, sp.venue_place_id, sp.score, sp.model_version,
               sp.local_day, sp.local_hour, sp.served_at
@@ -3076,6 +3085,7 @@ const SERVED_BAND_ACCURACY_SQL = `WITH served AS MATERIALIZED (
             COUNT(*)::int AS matched,
             COUNT(DISTINCT p.observed_date)::int AS days,
             COUNT(*) FILTER (WHERE abs(b.served_band - b.observed_band) <= 1)::int AS within_one_band,
+            COUNT(*) FILTER (WHERE strpos(p.model_version, '+curve_offset') > 0)::int AS from_curve,
             COALESCE(array_remove(array_agg(DISTINCT p.model_version), NULL), '{}'::text[]) AS versions
        FROM paired p
       CROSS JOIN LATERAL (
@@ -3115,31 +3125,40 @@ async function readServedBandAccuracy(db = pool, { windowDays = MODEL_WINDOW_DAY
     // downstream can print the noisy percentage the floor exists to stop.
     withinOneBand: enough ? within : null,
     percent: enough ? Math.round((within / matched) * 1000) / 10 : null,
+    // How many of the pairs the venue's own curve made (curve_offset); the
+    // rest the trained model made. Says what was scored, not how well, so it
+    // stands under the minimum like matched does.
+    fromCurve: Math.min(count(row.from_curve), matched),
     versions: Array.isArray(row.versions)
       ? row.versions.filter((v) => typeof v === 'string' && v).slice(0, 5).map((v) => v.slice(0, 60))
       : [],
   };
 }
 
-// HOW OFTEN THE MODEL ANSWERS. The share above scores only forecasts the model
-// made, so it cannot say whether that is nine in ten of the forecasts people
-// see or one in twenty. served_predictions records what answered every card it
-// served to a signed-in person (routes/crowd.js recordServedPredictions), so
-// the split is one GROUP BY over the rows it already keeps, on its served_at
-// index. The Costs tab's counter (mlPredictor.predictionCoverage) answers a
-// different question: it counts every hour of a forecast strip, in memory,
-// since the last deploy. This counts cards served, over a week that survives a
-// deploy, and the screen says which is which. Held for MODEL_TTL_MS with the
-// check above, for the same reason: it is a dashboard read over a week of rows.
+// HOW OFTEN A VENUE'S OWN DATA ANSWERS. The share above scores only the numbers
+// made from the venue's own data ('ml', see WHAT COUNTS), so it cannot say
+// whether that is nine in ten of the numbers people see or one in twenty, the
+// rest coming from the rule engine. served_predictions records what answered
+// every card it served to a signed-in person (routes/crowd.js
+// recordServedPredictions), so the split is one GROUP BY over the rows it
+// already keeps, on its served_at index. The Costs tab's counter
+// (mlPredictor.predictionCoverage) answers a different question: it counts
+// every hour of a forecast strip, in memory, since the last deploy. This
+// counts cards served, over a week that survives a deploy, and the screen says
+// which is which. Held for MODEL_TTL_MS with the check above, for the same
+// reason: it is a dashboard read over a week of rows.
 const MODEL_COVERAGE_DAYS = 7;
 const MODEL_COVERAGE_METHODS_MAX = 20;
 
 // $1 the window in days, $2 the most methods to name. A method nobody wrote
 // down is named 'unknown' rather than dropped, so the parts add up to the
 // whole. Counts, and how many venues each touched, are all that leave.
+// from_curve is how many of a method's serves the venue's own curve made (see
+// WHAT COUNTS); only 'ml' rows carry the qualifier.
 const MODEL_COVERAGE_SQL = `SELECT COALESCE(sv.prediction_method, 'unknown') AS method,
               COUNT(*)::int AS served,
-              COUNT(DISTINCT sv.venue_place_id)::int AS venues
+              COUNT(DISTINCT sv.venue_place_id)::int AS venues,
+              COUNT(*) FILTER (WHERE strpos(sv.model_version, '+curve_offset') > 0)::int AS from_curve
          FROM served_predictions sv
         WHERE sv.served_at >= NOW() - make_interval(days => $1::int)
         GROUP BY 1
@@ -3168,9 +3187,10 @@ async function readModelCoverage(db = pool, { windowDays = MODEL_COVERAGE_DAYS }
     .filter((m) => m.served > 0);
   const total = byMethod.reduce((sum, m) => sum + m.served, 0);
   const ml = (byMethod.find((m) => m.method === 'ml') || { served: 0 }).served;
-  // A fallback is the rule engine standing in for the model. The owner's own
-  // live report is not one (it outranks the model on purpose), and neither is
-  // a serve whose method was not recorded.
+  const mlRow = rows.find((row) => String(row.method || 'unknown').slice(0, 60) === 'ml');
+  // A fallback is the rule engine standing in for the venue's own data. The
+  // owner's own live report is not one (it outranks the venue's data on
+  // purpose), and neither is a serve whose method was not recorded.
   const fallbacks = byMethod.filter((m) => !['ml', 'owner_report', 'unknown'].includes(m.method));
   return {
     status: 'ok',
@@ -3178,6 +3198,9 @@ async function readModelCoverage(db = pool, { windowDays = MODEL_COVERAGE_DAYS }
     windowDays,
     total,
     ml,
+    // Of those, the serves the venue's own curve made; the rest of ml the
+    // trained model made.
+    mlFromCurve: mlRow ? Math.min(count(mlRow.from_curve), ml) : 0,
     mlPercent: total > 0 ? Math.round((ml / total) * 1000) / 10 : null,
     byMethod,
     topFallback: fallbacks.length > 0 ? fallbacks[0] : null,
@@ -3223,12 +3246,35 @@ async function readModelVersion({ predictor = null, metaPath = MODEL_META_PATH }
   }
 }
 
-function buildModelBlock({ version, accuracy, ladder, coverage = null }) {
+// WHICH ARITHMETIC MAKES THE NUMBERS NOW (review 2026-10-06): the two serving
+// switches as the predictor reads them (mlPredictor.predictionCoverage, the
+// same in-memory read readModelVersion makes). mode is 'curve_offset' (the
+// venue's own curve and live offset, no model run), 'model' (the trained
+// model's number) or null when the predictor could not say; nowcast says
+// whether the newest earlier reading is blended in. Configuration, not a
+// meter, so it is read on every build like the version.
+function readServing({ predictor = null } = {}) {
+  try {
+    const p = predictor || require('./mlPredictor');
+    const c = p && typeof p.predictionCoverage === 'function' ? p.predictionCoverage() : null;
+    return {
+      mode: c && (c.serveMode === 'curve_offset' || c.serveMode === 'model') ? c.serveMode : null,
+      nowcast: c && typeof c.nowcastEnabled === 'boolean' ? c.nowcastEnabled : null,
+    };
+  } catch (err) {
+    console.error('[money] serving mode read failed:', err && err.message ? err.message : err);
+    return { mode: null, nowcast: null };
+  }
+}
+
+function buildModelBlock({ version, accuracy, ladder, coverage = null, serving = null }) {
   const measured = !!accuracy && accuracy.status === 'ok' && accuracy.enough === true && Number.isFinite(accuracy.percent);
   return {
     version,
+    // What makes the numbers now: see readServing.
+    serving,
     accuracy,
-    // What answered the forecasts people were served, over the last week.
+    // What answered the numbers people were served, over the last week.
     coverage,
     goal: { percent: MODEL_GOAL_PCT, metric: 'within_one_band' },
     // Points short of the goal; zero or less means the goal is met. Only ever
@@ -3900,7 +3946,7 @@ async function buildMoneyHub({
       besttime: besttimeRead,
       plan: statedBestTimePlan(now),
     },
-    model: buildModelBlock({ version: modelVersion, accuracy: modelAccuracy, ladder, coverage: modelCoverage }),
+    model: buildModelBlock({ version: modelVersion, accuracy: modelAccuracy, ladder, coverage: modelCoverage, serving: readServing({ predictor }) }),
     health,
     // See ONLY YOU CAN DO THESE above. Whether each variable is set, never
     // its value.
@@ -3963,6 +4009,7 @@ module.exports = {
     nextChargeOn,
     endOf,
     isRunning,
+    readServing,
     addMonthsYmd,
     zonedMidnightMs,
     stripeNetMonthlyCents,
