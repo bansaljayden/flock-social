@@ -267,7 +267,7 @@ export default function PrivacyPolicy() {
                 <li><strong>Plans and votes:</strong> flocks you create or join, RSVPs, venue votes, budget submissions, check-ins (including NFC taps at a venue), and the venues you pin or vote on inside a direct message.</li>
                 <li><strong>Your calendar entries:</strong> anything you add to your Flock calendar (title, venue, date, time) is stored on our servers so it is there on your next device. It is yours alone; nobody else is shown it.</li>
                 <li><strong>Availability status:</strong> if you set "down tonight" or similar, we store that status, the note you attach, and when it expires. Your friends can see it until it expires or you clear it.</li>
-                <li><strong>Crowd reports:</strong> when you tell us how busy a venue actually is, we store that report with your account, the venue, and the time. We use it to correct our crowd predictions and to train the model that makes them. Other people see the corrected prediction, never that you were the one who reported.</li>
+                <li><strong>Crowd reports:</strong> when you tell us how busy a venue actually is, we store that report with your account, the venue, and the time. We use it to correct our crowd predictions and to train Flock's crowd model. Other people see the corrected prediction, never that you were the one who reported.</li>
                 <li><strong>Reports and blocks:</strong> if you report content or block someone, we store what you reported, who you blocked, and what we did about it. Blocking is mutual, and it also ends the friendship if you had one.</li>
                 <li><strong>Guest RSVPs:</strong> if someone opens a flock invite link without a Flock account, we store the display name they type, the venues they vote for, and the budget amount they enter if they choose to share one, tied to a random link token. Like a member's, that amount is never shown to anyone else. No email, no phone, no account is created for them.</li>
                 <li><strong>Bill splits:</strong> if your group splits a bill, we store the total, the tip, who paid, each person's share, and whether a share has been marked settled. The people in that flock see it. No money moves through Flock: paying someone back happens in Venmo, Cash App, or Zelle.</li>
@@ -570,7 +570,7 @@ export default function PrivacyPolicy() {
               <p>
                 Your occupancy readings do three things. They set the live number users see
                 at your venue while they are fresh. They become training labels for the crowd
-                model, which serves every venue, not only yours. And once enough venues in one
+                model, which learns from every venue, not only yours. And once enough venues in one
                 city and category are reporting, they contribute to a cohort figure that
                 answers the question every operator asks: was it just us, or was everyone slow.
               </p>
