@@ -926,7 +926,8 @@ function HubCosts({ h, colors }) {
       )}
 
       {/* Bills whose renewal is turned off (moneyHub.js, THE END OF A BILL):
-          the day each stops, and what the burn does then. */}
+          the day each stops, and what the burn does then, which a list cut
+          short leaves out with the totals. */}
       {ending.length > 0 && (
         <>
           <p style={hubStyle.kicker}>Set to end</p>
@@ -936,7 +937,7 @@ function HubCosts({ h, colors }) {
               navy={navy}
               label={`${hubDay(e.endsOn)}, ${e.label}`}
               value={`${hubExpenseAmount(e)} ${HUB_CADENCE_LABEL[e.cadence] || e.cadence}`}
-              note={hubEndingWords(e)}
+              note={hubEndingWords(e, truncated)}
             />
           ))}
         </>
@@ -1014,16 +1015,20 @@ function hubExpenseAmount(x) {
 // gives that line back, so a $149 bill in place of a $119 line takes $30 off,
 // not $149 (review 2026-10-06). A payload from before burnChangeCents has only
 // the bill's own share. null for a bill in another currency, which was never
-// in the dollar burn.
-function hubBurnMove(e) {
+// in the dollar burn. null too when the expense list was cut short at the
+// limit: a bill past the first 500 can stand in for the same code line, so a
+// change worked from the partial list is withheld with the totals (review
+// 2026-10-06: $30 quoted where the burn would fall by $149).
+function hubBurnMove(e, listCutShort) {
+  if (listCutShort) return null;
   const change = Number.isFinite(e.burnChangeCents) ? e.burnChangeCents
     : (Number.isFinite(e.perMonthCents) ? -e.perMonthCents : null);
   if (!Number.isFinite(change) || change === 0) return null;
   return `the burn ${change < 0 ? 'falls' : 'rises'} by ${hubMoney(Math.abs(change))} a month`;
 }
 
-function hubEndingWords(e) {
-  const move = hubBurnMove(e);
+function hubEndingWords(e, listCutShort) {
+  const move = hubBurnMove(e, listCutShort);
   const back = Array.isArray(e.restores) && e.restores.length > 0
     ? `, as the code's ${hubAnd(e.restores)} ${e.restores.length === 1 ? 'counts' : 'count'} again`
     : '';
@@ -2251,9 +2256,12 @@ function hubAttention(h) {
     .map((u) => ({ ...u, inDays: hubDaysUntil(today, u.on) }))
     .filter((u) => u.inDays !== null && u.inDays >= 0 && u.inDays <= HUB_SOON_DAYS);
   // Bills set to end within the month, listed apart like the renewals: a
-  // bill that stops is something to know, and to undo if it should not.
+  // bill that stops is something to know, and to undo if it should not. What
+  // the burn does then is left out when the list was cut short, as it is on
+  // the Costs card.
+  const listCutShort = !!(h.expenses && h.expenses.truncated);
   const ending = (Array.isArray(costs.ending) ? costs.ending : [])
-    .map((e) => ({ ...e, inDays: hubDaysUntil(today, e.endsOn) }))
+    .map((e) => ({ ...e, inDays: hubDaysUntil(today, e.endsOn), burnMove: hubBurnMove(e, listCutShort) }))
     .filter((e) => e.inDays !== null && e.inDays >= 0 && e.inDays <= HUB_ENDING_DAYS);
   return { problems, soon, ending };
 }
@@ -2332,7 +2340,7 @@ function HubAttention({ h, colors }) {
               navy={navy}
               label={e.label}
               value={`${hubExpenseAmount(e)} ${HUB_CADENCE_LABEL[e.cadence] || e.cadence}`}
-              note={withJump(`Ends ${when(e.inDays)}, ${hubDay(e.endsOn)}${hubBurnMove(e) ? `, and ${hubBurnMove(e)}` : ''}.`, HUB_CARD.costs)}
+              note={withJump(`Ends ${when(e.inDays)}, ${hubDay(e.endsOn)}${e.burnMove ? `, and ${e.burnMove}` : ''}.`, HUB_CARD.costs)}
             />
           ))}
         </>
