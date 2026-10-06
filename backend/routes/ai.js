@@ -370,6 +370,20 @@ function birdieRefusal(res, leg) {
     `lot of chatter right now, and we've hit the day's limit. i'm back ${waitPhrase(ms)}`));
 }
 
+// WHETHER GEMINI WITHHELD THE REPLY, read off why the turn ended. Only SAFETY
+// used to count, so a reply stopped as PROHIBITED_CONTENT, BLOCKLIST or SPII
+// fell through to "say that one more time?" and asked for the repeat that is
+// stopped again. The test runs the other way now: STOP (the model was done) and
+// MAX_TOKENS (it ran out of room) are the two endings in which the model wrote
+// what it wrote, and every other reason is a reply that was stopped, including
+// any reason Google adds after this was written. No reason at all, or the
+// enum's own FINISH_REASON_UNSPECIFIED, says nothing either way and is not
+// read as one. Returns the reason when it is a refusal, else null.
+function withheldFinishReason(finishReason) {
+  if (typeof finishReason !== 'string' || finishReason === '' || finishReason === 'FINISH_REASON_UNSPECIFIED') return null;
+  return finishReason === 'STOP' || finishReason === 'MAX_TOKENS' ? null : finishReason;
+}
+
 // How many characters a payload puts on the wire. The SDK holds no server-side
 // session, so the WHOLE conversation is re-sent on every call; the caller of
 // this adds the result to a running total rather than measuring one message.
@@ -2283,9 +2297,10 @@ router.post('/chat',
       // candidates or finishReason SAFETY. It used to fall through to "say
       // that one more time?", which asks for the repeat that gets refused
       // again, charging a chirp each time (chat audit, 2026-09-05). Say so
-      // once, in voice, and hand the chirp back.
+      // once, in voice, and hand the chirp back. SAFETY was only one of the
+      // ways a reply is withheld; see withheldFinishReason.
       const blockReason = response.promptFeedback?.blockReason
-        || (candidate?.finishReason === 'SAFETY' ? 'SAFETY' : null);
+        || withheldFinishReason(candidate?.finishReason);
       if (blockReason && textParts.length === 0) {
         refundChirp(res);
         return res.json({ text: "not something i'll help with. ask me something else", venues: [], remaining: rateCheck.remaining + 1 });
@@ -2316,9 +2331,6 @@ router.post('/chat',
         ? budgetCutText
         : (cutShort ? BIRDIE_BUSY_MESSAGE : 'say that one more time?');
       const responseText = textParts.map(p => p.text).join('') || fallbackText;
-      // An empty answer that is not a budget or tool cut delivered nothing;
-      // the chirp comes back so "say that one more time?" is free to obey.
-      if (textParts.length === 0 && !budgetStopped && !cutShort) refundChirp(res);
 
       // Collect venue data from tool results to send as cards
       const venueCards = [];
@@ -2343,7 +2355,22 @@ router.post('/chat',
         }
       }
 
-      const result = { text: responseText, venues: venueCards, remaining: rateCheck.remaining };
+      // An empty answer that is not a budget or tool cut, and that carries
+      // nothing else either, delivered nothing; the chirp comes back so "say
+      // that one more time?" is free to obey. A turn whose last round wrote no
+      // words can still have produced venue cards, a "Take me there" button or
+      // a staged card, and those are what the chirp paid for, so it keeps it.
+      // When it does come back, `remaining` says so, the way the refusal above
+      // does: the app reads this number to decide whether the box is closed.
+      const deliveredSomething = venueCards.length > 0
+        || Boolean(navigationAction || flockDraftAction || venueVoteAction);
+      let remaining = rateCheck.remaining;
+      if (textParts.length === 0 && !budgetStopped && !cutShort && !deliveredSomething) {
+        refundChirp(res);
+        remaining += 1;
+      }
+
+      const result = { text: responseText, venues: venueCards, remaining };
       if (navigationAction) result.navigate = navigationAction;
       if (flockDraftAction) result.flock_draft = flockDraftAction;
       if (venueVoteAction) result.vote_stage = venueVoteAction;
