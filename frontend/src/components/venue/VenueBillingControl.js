@@ -12,7 +12,10 @@ import { isNativeShell } from '../../lib/nativeShell';
 // anything. On the web it asks /api/venue-billing/status and shows the first
 // true thing, in this order:
 //
-//   1. the venue has a Stripe subscription, now or before: Manage billing;
+//   1. the venue has a Stripe subscription still running (canManage: active,
+//      trialing, past due or unpaid): Manage billing. One that has ended
+//      does not count, because the portal cannot start a new one, and the
+//      venue gets the plans again with trialDays 0 (its trial was used);
 //   2. the venue is inside its notice window (an account from before Roost
 //      had a price, Terms 9.6): it holds everything until a date, so it is
 //      shown the plans that keep Roost after it, with that date;

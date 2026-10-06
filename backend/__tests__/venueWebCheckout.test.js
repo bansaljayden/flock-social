@@ -398,6 +398,53 @@ test('one trial per venue: a venue with a Roost subscription on record starts wi
   } finally { restore(); }
 });
 
+// ---- after a plan ends, the venue can buy again ----------------------------
+//
+// canManage was true for any customer that had EVER had a subscription, and
+// the plans control then showed Manage billing alone. Stripe's portal cannot
+// start a new subscription, so a venue that cancelled and came back had no
+// way to buy. Manage billing is for a plan that is still running.
+
+const roostSub = (id, status, created) => ({ id, status, created, customer: 'cus_VENUE1', metadata: { kind: 'venue', flock_venue_user_id: String(ME.id) } });
+
+test('a venue whose plan has ended is offered the plans again, without a second trial', async () => {
+  setEnv(ON);
+  stripeState.subscriptions = [roostSub('sub_ended', 'canceled', 1700000000)];
+  const { restore } = stubPool(venueDb({ customer: 'cus_VENUE1', trialUsed: true }));
+  try {
+    const status = await call(venueBillingRoutes, 'GET', '/api/venue-billing/status');
+    assert.strictEqual(status.status, 200, JSON.stringify(status.body));
+    assert.strictEqual(status.body.canManage, false, 'a venue whose plan ended was shown only Manage billing, which cannot sell it a new one');
+    assert.strictEqual(status.body.checkoutAvailable, true);
+    assert.deepStrictEqual(status.body.plans.map((p) => p.id), ['monthly', 'yearly']);
+    assert.strictEqual(status.body.trialDays, 0, 'the trial was used once already');
+    // And checkout lets it buy.
+    const res = await call(venueBillingRoutes, 'POST', '/api/venue-billing/checkout', { plan: 'yearly' });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+  } finally { restore(); }
+});
+
+test('Manage billing is for a plan still running: active, trialing, past due or unpaid', async () => {
+  setEnv(ON);
+  for (const live of ['active', 'trialing', 'past_due', 'unpaid']) {
+    // The newest subscription decides, whatever is older on the customer.
+    stripeState.subscriptions = [roostSub('sub_old_one', 'canceled', 1600000000), roostSub('sub_now', live, 1700000000)];
+    const { restore } = stubPool(venueDb({ customer: 'cus_VENUE1', trialUsed: true }));
+    try {
+      const status = await call(venueBillingRoutes, 'GET', '/api/venue-billing/status');
+      assert.strictEqual(status.body.canManage, true, `a ${live} plan was not offered Manage billing`);
+      assert.strictEqual(status.body.trialDays, 0);
+    } finally { restore(); }
+  }
+  // A plan that has ended after a newer one was bought and ended too.
+  stripeState.subscriptions = [roostSub('sub_first', 'active', 1600000000), roostSub('sub_latest', 'incomplete_expired', 1700000000)];
+  const { restore } = stubPool(venueDb({ customer: 'cus_VENUE1', trialUsed: true }));
+  try {
+    const status = await call(venueBillingRoutes, 'GET', '/api/venue-billing/status');
+    assert.strictEqual(status.body.canManage, false);
+  } finally { restore(); }
+});
+
 test('a venue that has subscribed before gets no second trial; a live subscription blocks a second checkout', async () => {
   setEnv(ON);
   const { restore } = stubPool(venueDb({ customer: 'cus_VENUE1' }));

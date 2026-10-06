@@ -236,6 +236,10 @@ async function venueCustomerIdsFor(userId) {
   return ids;
 }
 
+// Whether Stripe may still bill this subscription: the statuses that block a
+// second checkout (LIVE_STATUSES), and the ones a venue manages in the portal.
+const stillBilling = (sub) => !!(sub && LIVE_STATUSES.has(sub.status));
+
 // The newest Roost subscription this account holds, on any of its customers,
 // with the customer it is on, or null. Only subscriptions naming this account.
 async function latestVenueSubscription(userId, customerIds, requestOptions) {
@@ -1134,6 +1138,7 @@ module.exports = {
   venueCustomerIdFor,
   venueCustomerIdsFor,
   latestVenueSubscription,
+  stillBilling,
   venueTrialUsed,
   closeVenueCustomer,
   venueCheckoutKey,
