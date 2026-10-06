@@ -772,15 +772,18 @@ function perMonthCents(cadence, amountCents) {
 // would charge and a place in the burn for good, or, marked stopped early, a
 // month it was still running in that no longer showed it.
 //
-// A charge recorded on or after the end date means the bill renewed after all
-// (one App Store "expiring" notice was followed by a renewal), so the date is
-// out of date. Rather than drop a bill that is still being paid, the hub
-// counts it as running and names it (chargedPastEnd) so the date gets cleared.
+// A subscription is paid ahead, so a charge recorded on or after its end date
+// means it renewed after all (one App Store "expiring" notice was followed by
+// a renewal), and the date is out of date. Rather than drop a bill that is
+// still being paid, the hub counts it as running and names it
+// (chargedPastEnd) so the date gets cleared. A usage bill is paid after the
+// use, so its last bill can land on or after the day it ends, and that is not
+// a renewal.
 //
 // A one-time charge has nothing to end, and the table refuses the pair.
 function endOf(x, todayYmd) {
   if (!x || !isYmd(x.endsOn) || x.cadence === 'one_time') return 'none';
-  if (isYmd(x.lastChargedOn) && x.lastChargedOn >= x.endsOn) return 'renewed';
+  if (x.cadence !== 'usage' && isYmd(x.lastChargedOn) && x.lastChargedOn >= x.endsOn) return 'renewed';
   return x.endsOn <= todayYmd ? 'ended' : 'ending';
 }
 
