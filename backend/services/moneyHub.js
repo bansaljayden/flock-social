@@ -1367,12 +1367,32 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
     label: leaving.length === 1 ? leaving[0].label : null,
   };
 
+  // MONTHLY BILLS THE RENEWAL TOTALS CANNOT DATE (2026-10-06). The totals
+  // below count bills the hub can date: rows on the expense list with a
+  // renewal or last-charge date. The code's monthly lines (BestTime,
+  // TheSportsDB), the reconciled usage bills (Railway, Google Cloud), a usage
+  // row and a monthly row typed with no date are charged every month all the
+  // same, on days nothing here records, so "next 30 days" read as everything
+  // going out while the code's own monthly bills were in none of it. They are
+  // named beside the totals with what they come to a month, and never folded
+  // into a window they may or may not fall in. Dollar charges in the run rate
+  // only; a $0 line is not a charge.
+  const undatedLines = lines
+    .filter((l) => l.perMonthExact > 0 && !l.isCredit && (l.cadence === 'monthly' || l.cadence === 'usage')
+      && (l.origin !== 'expense' || l.cadence === 'usage' || (!l.renewsOn && !l.lastChargedOn)))
+    .sort((a, b) => b.perMonthExact - a.perMonthExact || a.label.localeCompare(b.label));
+  const undatedMonthly = {
+    perMonthCents: r0(undatedLines.reduce((s, l) => s + l.perMonthExact, 0)),
+    lines: undatedLines.map((l) => ({ id: l.id, label: l.label, cadence: l.cadence, perMonthCents: l.perMonthCents })),
+  };
+
   for (const l of lines) { delete l.perMonthExact; delete l.thisMonthExact; }
 
   // Renewals in the window, from the expense list. Code lines carry no charge
-  // dates, and the panel says so rather than guessing one. A credit is money
-  // coming back, not a charge to plan for, so it is not listed. A bill set to
-  // end renews only before the day it ends.
+  // dates, and the panel says so rather than guessing one; the monthly ones
+  // are named with what they come to (undatedMonthly above). A credit is
+  // money coming back, not a charge to plan for, so it is not listed. A bill
+  // set to end renews only before the day it ends.
   const horizon = addDaysYmd(month.todayYmd, RENEWAL_WINDOW_DAYS);
   const upcoming = [];
   for (const x of expenses) {
@@ -1438,6 +1458,7 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
     upcoming,
     upcomingWindowDays: RENEWAL_WINDOW_DAYS,
     upcomingTotals: renewalTotals(expenses, month.todayYmd),
+    undatedMonthly,
     ending,
     afterEnding,
     chargedPastEnd,
