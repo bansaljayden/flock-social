@@ -168,3 +168,20 @@ test('the owner slider names the scale it is asking about', () => {
   expect(dash).toMatch(/aria-label="How full is your venue compared to its capacity, 0 to 100 percent"/);
   expect(dash).not.toMatch(/>How full are you right now\?<\/h3>/);
 });
+
+test('the badge embed code never tells a screen reader the pill is live', () => {
+  const dash = fs.readFileSync(path.join(REPO, 'frontend', 'src', 'screens', 'VenueDashboard.js'), 'utf8');
+  // For an SVG embedded through <img>, assistive tech reads the img alt and
+  // never the SVG's own label, and this alt is copied once and pasted onto the
+  // venue's site. The pill can read "Usually busy at this hour", what is
+  // typical for that kind of place, when the venue has no crowd curve of its
+  // own, so the alt names no state and calls nothing live.
+  const snippet = /const snippet = `<img src="\$\{BASE_URL\}\/api\/badge\/\$\{venueProfile\.google_place_id\}\.svg" alt="([^"]*)" height="36">`;/.exec(dash);
+  expect(snippet).not.toBeNull();
+  expect(snippet[1]).toBe('How busy is ${venueData.name}? From Flock');
+  expect(snippet[1]).not.toMatch(/\blive\b/i);
+  // The words the owner reads over the button do not promise it either.
+  expect(dash).toMatch(/>A "how busy is it" badge, updated every 15 minutes from Flock's crowd numbers\./);
+  expect(dash).not.toMatch(/>Live Badge for Your Website</);
+  expect(dash).not.toMatch(/A live "how busy is it" badge/);
+});
