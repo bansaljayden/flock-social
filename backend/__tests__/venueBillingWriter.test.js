@@ -793,11 +793,24 @@ test('an event from the same paid period hands a grant lifted to that period bac
 
 // The charge for `invoiceId`, paid through a PaymentIntent the way a
 // subscription invoice is paid (Stripe API 2025-03-31 basil and later).
-function paidBy(chargeId, invoiceId, subscriptionId, amount) {
+// The invoice carries a line for what it paid: the subscription's own item for
+// a period ending at periodEnd (the subscription's current period unless the
+// test names another), or, with proration, an adjustment.
+function paidBy(chargeId, invoiceId, subscriptionId, amount, { periodEnd = null, proration = false } = {}) {
   const pi = `pi_${chargeId}`;
   charges[chargeId] = { id: chargeId, object: 'charge', amount, customer: 'cus_W', payment_intent: pi };
   invoicePayments[pi] = [invoiceId];
-  invoices[invoiceId] = { id: invoiceId, parent: { type: 'subscription_details', subscription_details: { subscription: subscriptionId } } };
+  const end = periodEnd || subs[subscriptionId].items.data[0].current_period_end;
+  invoices[invoiceId] = {
+    id: invoiceId,
+    parent: { type: 'subscription_details', subscription_details: { subscription: subscriptionId } },
+    lines: { data: [periodLine(subscriptionId, end, proration)], has_more: false },
+  };
+}
+function periodLine(subscriptionId, end, proration = false) {
+  return proration
+    ? { period: { start: end - 30 * DAY_S, end }, parent: { type: 'invoice_item_details', invoice_item_details: { subscription: subscriptionId, proration: true } } }
+    : { period: { start: end - YEAR_S, end }, parent: { type: 'subscription_item_details', subscription_item_details: { subscription: subscriptionId, proration: false } } };
 }
 
 async function yearlySubscriber(subId, invoiceId) {
@@ -900,12 +913,39 @@ test('a full refund of an earlier period leaves the period being paid for now', 
   // A goodwill refund of last month, after this month was paid: the money
   // that paid for today was not returned.
   const id = await yearlySubscriber('sub_refund_old', 'in_refund_now');
-  paidBy('ch_refund_old', 'in_refund_last', 'sub_refund_old', 9900);
+  const lastYearEnded = subs.sub_refund_old.items.data[0].current_period_end - YEAR_S;
+  paidBy('ch_refund_old', 'in_refund_last', 'sub_refund_old', 9900, { periodEnd: lastYearEnded });
   refunds.ch_refund_old = [{ id: 're_old', status: 'succeeded', amount: 9900 }];
   const result = await venueBilling.revokeRefundedSubscription({ object: 'charge', id: 'ch_refund_old' });
   assert.ok(result.ignored, JSON.stringify(result));
   assert.strictEqual((await state(id)).served, 'pro');
   assert.ok(!cancels.some((c) => c.id === 'sub_refund_old'));
+});
+
+// The subscription's latest invoice is only the newest one made. A mid-period
+// change makes a proration invoice that becomes the latest, so a full refund
+// of a $10 adjustment cancelled a yearly plan whose $990 was still paid, and a
+// full refund of the $990 itself, after a proration, left the year standing.
+test('a full refund of a proration invoice is an adjustment: the paid year it came after stands', async () => {
+  const id = await yearlySubscriber('sub_refund_prorate', 'in_refund_prorate_year');
+  paidBy('ch_refund_prorate', 'in_refund_prorate', 'sub_refund_prorate', 1000, { proration: true });
+  subs.sub_refund_prorate.latest_invoice = 'in_refund_prorate';
+  refunds.ch_refund_prorate = [{ id: 're_prorate', status: 'succeeded', amount: 1000 }];
+  const result = await venueBilling.revokeRefundedSubscription({ object: 'charge', id: 'ch_refund_prorate' });
+  assert.strictEqual(result.ignored, 'not_current_roost_period', JSON.stringify(result));
+  assert.strictEqual((await state(id)).served, 'pro', 'refunding a $10 adjustment took away a paid year');
+  assert.ok(!cancels.some((c) => c.id === 'sub_refund_prorate'), 'a paid yearly plan was cancelled over an adjustment');
+  assert.strictEqual((await testPool.query("SELECT 1 FROM stripe_subscription_endings WHERE stripe_subscription_id = 'sub_refund_prorate'")).rows.length, 0);
+});
+
+test('a full refund of the year\'s payment ends it, even after a later proration invoice', async () => {
+  const id = await yearlySubscriber('sub_refund_year_then_prorate', 'in_year_then_prorate');
+  paidBy('ch_year_then_prorate', 'in_year_then_prorate', 'sub_refund_year_then_prorate', 99000);
+  subs.sub_refund_year_then_prorate.latest_invoice = 'in_later_proration';
+  refunds.ch_year_then_prorate = [{ id: 're_year_then_prorate', status: 'succeeded', amount: 99000 }];
+  const result = await venueBilling.revokeRefundedSubscription({ object: 'charge', id: 'ch_year_then_prorate' });
+  assert.deepStrictEqual(result.revoked, ['sub_refund_year_then_prorate'], `a year refunded in full stood behind an adjustment: ${JSON.stringify(result)}`);
+  assert.strictEqual((await state(id)).served, 'free');
 });
 
 // ---------------------------------------------------------------------------

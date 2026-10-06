@@ -971,7 +971,14 @@ function refundedInFull(subId, { amount = 99000, refunded = amount } = {}) {
   stripeState.subById[subId] = sub({ id: subId, status: 'active', latest_invoice: `in_${subId}` });
   stripeState.charges[`ch_${subId}`] = { id: `ch_${subId}`, object: 'charge', amount, customer: 'cus_VENUE1', payment_intent: `pi_${subId}` };
   stripeState.invoicePayments[`pi_${subId}`] = [`in_${subId}`];
-  stripeState.invoices[`in_${subId}`] = { id: `in_${subId}`, parent: { type: 'subscription_details', subscription_details: { subscription: subId } } };
+  // The invoice's line for the subscription's own item, for the period being
+  // served now: the payment for today.
+  const periodEnd = stripeState.subById[subId].items.data[0].current_period_end;
+  stripeState.invoices[`in_${subId}`] = {
+    id: `in_${subId}`,
+    parent: { type: 'subscription_details', subscription_details: { subscription: subId } },
+    lines: { data: [{ period: { start: periodEnd - 30 * 86400, end: periodEnd }, parent: { type: 'subscription_item_details', subscription_item_details: { subscription: subId, proration: false } } }], has_more: false },
+  };
   stripeState.refunds[`ch_${subId}`] = [{ id: `re_${subId}`, status: 'succeeded', amount: refunded }];
 }
 
