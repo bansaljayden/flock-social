@@ -19,11 +19,16 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const issued = [];
+// What the venue SELECT answers with: nothing, unless a test hands selectsFor
+// a list to price against the credit ceiling.
+let venueRows = [];
+let bestTimeCalls = 0;
 class RecordingPool {
   async query(sql, params) {
     issued.push({ sql: String(sql).replace(/\s+/g, ' ').trim(), params });
     // requireSlotIndex asks whether the upsert's unique index is valid.
     if (/indisvalid/.test(sql)) return { rows: [{ indisvalid: true }] };
+    if (/^\s*SELECT \* FROM ml_venues/.test(sql)) return { rows: venueRows };
     return { rows: [] };
   }
   async end() {}
@@ -36,26 +41,40 @@ function stubModule(request, exports) {
 }
 stubModule('pg', { Pool: RecordingPool });
 stubModule('../scripts/ml/bestTimeService', {
-  fetchWeeklyForecast: async () => { throw new Error('these tests never call BestTime'); },
+  // Counted, then thrown as a key-level failure, so a run that gets as far as
+  // its first call stops there instead of working through the list.
+  fetchWeeklyForecast: async () => {
+    bestTimeCalls++;
+    throw Object.assign(new Error('these tests never call BestTime'), { fatal: true });
+  },
 });
 
-const { newVenueCheck, createdAfterFrom, selectionOptions, run } = require('../scripts/ml/collectWeekly');
+const {
+  newVenueCheck, createdAfterFrom, maxCreditsFrom, selectionOptions, run,
+} = require('../scripts/ml/collectWeekly');
 
 // Runs the real collector with exactly these flags and returns the venue
 // SELECTs it issued (with no venues returned, it ends right after the SELECT).
-async function selectsFor(args) {
+async function selectsFor(args, venues = []) {
   const savedArgv = process.argv;
   const savedExit = process.exitCode;
   issued.length = 0;
+  venueRows = venues;
+  bestTimeCalls = 0;
   process.argv = [savedArgv[0], savedArgv[1], ...args];
   try {
     await run();
   } finally {
     process.argv = savedArgv;
+    venueRows = [];
   }
   const exitCode = process.exitCode;
   process.exitCode = savedExit;
-  return { exitCode, selects: issued.filter((q) => q.sql.startsWith('SELECT * FROM ml_venues')) };
+  return {
+    exitCode,
+    bestTimeCalls,
+    selects: issued.filter((q) => q.sql.startsWith('SELECT * FROM ml_venues')),
+  };
 }
 
 const WEEKLY = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ml', 'collectWeekly.js'), 'utf8');
@@ -167,6 +186,32 @@ test('the collector refuses a bad --order before it selects a single venue', asy
   const { exitCode, selects } = await selectsFor(['--city=philly', '--order=rating', '--max-new=5']);
   assert.strictEqual(exitCode, 1);
   assert.strictEqual(selects.length, 0, 'a refused run must not read the venue list');
+});
+
+// run_besttime_go_chain.cmd checks each refresh stage with `if errorlevel 1`.
+// The ceiling refusal used to end with a bare return, so a refused stage
+// exited 0 and the chain went on to the next one as if it had run.
+test('a run over the credit ceiling exits non-zero before the first call', async () => {
+  const over = await selectsFor(['--city=philly', '--only-found'], byId(2501));
+  assert.strictEqual(over.exitCode, 1, '2,501 by-id credits against the default 2,500');
+  assert.strictEqual(over.bestTimeCalls, 0);
+  const raised = await selectsFor(['--city=philly', '--only-found', '--max-credits=2501'], byId(2501));
+  assert.notStrictEqual(raised.exitCode, 1, 'a ceiling raised to cover the run lets it start');
+  assert.strictEqual(raised.bestTimeCalls, 1);
+});
+
+test('a malformed --max-credits exits non-zero before the venue list is read', async () => {
+  // parseInt read "3k" as a ceiling of 3 and "1e3" as 1, and a value it could
+  // not read at all printed its error and exited 0.
+  for (const bad of ['3k', '1e3', 'abc', '', '0', '-5', '4.5', '9'.repeat(400)]) {
+    const r = await selectsFor(['--city=philly', '--only-found', `--max-credits=${bad}`], byId(2));
+    assert.strictEqual(r.exitCode, 1, bad);
+    assert.strictEqual(r.selects.length, 0, `--max-credits=${bad} reached the venue SELECT`);
+    assert.strictEqual(r.bestTimeCalls, 0, bad);
+    assert.match(maxCreditsFrom([`--max-credits=${bad}`]).error, /--max-credits must be a positive integer/, bad);
+  }
+  assert.deepStrictEqual(maxCreditsFrom([]), { value: 2500 });
+  assert.deepStrictEqual(maxCreditsFrom(['--max-credits=40']), { value: 40 });
 });
 
 test('the month-end command selects uncovered, never-tried venues, most reviewed first', async () => {
