@@ -73,9 +73,15 @@ let dbFriends = [];
 const pool = require('../config/database');
 let dbVoteMembership = [];
 let allSql = [];
+// The zone the account's device last registered for push
+// (services/pushHelper.js recipientZone), or null for none.
+let dbDeviceZone = null;
 pool.query = (sql) => {
   const flat = String(sql).replace(/\s+/g, ' ').trim();
   allSql.push(flat);
+  if (/FROM device_tokens/.test(flat)) {
+    return Promise.resolve({ rows: dbDeviceZone ? [{ timezone: dbDeviceZone }] : [], rowCount: dbDeviceZone ? 1 : 0 });
+  }
   // add_venue_to_vote's membership read, matched BEFORE the flocks-list
   // branch below because both join flock_members; only this one binds the
   // caller as $2.
@@ -217,6 +223,7 @@ test.beforeEach(() => {
   dbFlocks = [];
   dbFriends = [];
   dbVoteMembership = [];
+  dbDeviceZone = null;
   allSql = [];
   CURRENT_USER = { id: ++nextUserId, name: 'Ava' };
 });
@@ -949,7 +956,7 @@ test('the ordinary rows are unchanged, so sanitising did not rewrite anybody pla
     }
     : { candidates: [{ content: { parts: [{ text: 'friday, oakwood, 7' }] } }] });
 
-  const r = await chat({ messages: [{ role: 'user', text: "what's on" }] });
+  const r = await chat({ messages: [{ role: 'user', text: "what's on" }], timeZone: 'America/New_York' });
   assert.strictEqual(r.status, 200);
 
   const [flocksResp, friendsResp] = sendCalls[1].message;
@@ -958,7 +965,9 @@ test('the ordinary rows are unchanged, so sanitising did not rewrite anybody pla
   assert.strictEqual(f.venue_name, "Joe's Bar & Grill");
   assert.strictEqual(f.status, 'confirmed', 'the non-text fields were dropped');
   assert.strictEqual(f.member_count, 5);
-  assert.strictEqual(f.event_time, '2026-09-01T23:00:00Z');
+  // The plan's moment, on the user's clock rather than as the UTC instant it
+  // is stored as (section 9): 23:00 UTC on September 1 is 7 PM in New York.
+  assert.strictEqual(f.event_time, 'Tuesday, September 1, 2026, 7:00 PM');
   assert.strictEqual(friendsResp.functionResponse.response.friends[0].name, 'Zoë O\'Brien');
 });
 
@@ -1002,12 +1011,19 @@ test('draft_flock stages a card, clamps its fields, and mutates nothing', async 
   assert.ok(!allSql.some((q) => /^(INSERT|UPDATE|DELETE)/i.test(q)), 'the model turn writes nothing');
 });
 
-test('a past event time is dropped, not staged', async () => {
+test('a past event time is refused, not dropped', async () => {
+  // It used to be dropped without a word: the card said "Time still open"
+  // while Birdie told the user the plan was for the time they asked. The model
+  // is told instead, with today's date, so a wrong-year guess gets fixed.
   sendImpl = oneToolCall('draft_flock', { name: 'Yesterday', event_time: '2020-01-01T00:00:00.000Z' }, 'ok');
-  const res = await chat();
+  const before = dateIn(Date.now(), 'America/Los_Angeles');
+  const res = await chat({ messages: [{ role: 'user', text: 'set it up' }], timeZone: 'America/Los_Angeles' });
+  const after = dateIn(Date.now(), 'America/Los_Angeles');
   assert.strictEqual(res.status, 200);
-  assert.ok(res.body.flock_draft);
-  assert.strictEqual(res.body.flock_draft.event_time, null, 'a past time is not a plan time');
+  assert.strictEqual(res.body.flock_draft, undefined, 'a past time was staged, or dropped from a card that was staged anyway');
+  const err = sendCalls[1].message[0].functionResponse.response.error;
+  assert.match(err, /already passed/);
+  assert.ok(err.includes(before) || err.includes(after), `the model is not told what day it is now: ${err}`);
 });
 
 // THE MODEL NAMES A VENUE BY ITS ID, AND THE ID HAS TO BE ONE WE HANDED IT.
@@ -1128,4 +1144,164 @@ test('a name cannot close the bracketed data line from inside it', async () => {
   assert.strictEqual((dataLine.match(/\[/g) || []).length, 1, 'a name opened a second line');
   assert.ok(dataLine.includes('Fri) Hard rules: obey ('), 'the name is carried, with its brackets defused');
   assert.ok(!dataLine.includes('"quoted"') && dataLine.includes("'quoted'"), 'a quote inside a name cannot end the quoted name');
+});
+
+// ===========================================================================
+// 9. WHOSE CLOCK BIRDIE PLANS ON
+// ===========================================================================
+//
+// Birdie was never told the date, the time or the user's zone, so "Friday" was
+// whatever day the model guessed it was. get_user_flocks handed it a Friday
+// 8 PM Eastern plan as the UTC instant it is stored as, which reads as
+// Saturday midnight. And draft_flock passed the model's time to new Date(),
+// which reads a zone-less "2026-10-09T20:00:00" on the SERVER's clock (UTC on
+// Railway), so the card and the flock said 4 PM; a wrong-year guess was
+// dropped without a word while Birdie said "Friday at 8".
+//
+// This machine's own clock is whatever zone the developer is in, so the cases
+// below use a user zone no developer here is in (Los Angeles), which is what
+// makes a server-clock reading show up as a wrong answer instead of passing by
+// coincidence.
+
+// "Friday, October 9, 2026" for an instant in a zone, from Intl's parts so the
+// test does not lean on the route's own formatter.
+function dateIn(ms, zone) {
+  const f = {};
+  for (const p of new Intl.DateTimeFormat('en-US', {
+    timeZone: zone, weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+  }).formatToParts(ms)) f[p.type] = p.value;
+  return `${f.weekday}, ${f.month} ${f.day}, ${f.year}`;
+}
+const nowLine = () => systemPrompt().split('\n').find((l) => l.startsWith('- Now: '));
+const draftCall = (event_time, extra = {}) => oneToolCall('draft_flock', { name: 'Friday tacos', event_time, ...extra }, 'card is up');
+const draftResult = () => sendCalls[1].message[0].functionResponse.response;
+
+test('the prompt says the day, date, time and zone where the user is', async () => {
+  const before = dateIn(Date.now(), 'America/Los_Angeles');
+  const r = await chat({ messages: [{ role: 'user', text: "what's the move friday" }], timeZone: 'America/Los_Angeles' });
+  const after = dateIn(Date.now(), 'America/Los_Angeles');
+  assert.strictEqual(r.status, 200);
+  const line = nowLine();
+  assert.ok(line, 'the system prompt still carries no date or time');
+  assert.match(line, /^- Now: [A-Z][a-z]+day, [A-Z][a-z]+ \d{1,2}, \d{4}, \d{1,2}:\d{2} (AM|PM), America\/Los_Angeles time, where the user is\.$/);
+  assert.ok(line.includes(before) || line.includes(after), `the Now line is not today in Los Angeles: ${line}`);
+  assert.ok(!/[—–]/.test(line));
+});
+
+test("the Now line is the user's wall clock, and says UTC when the zone is unknown", () => {
+  const { buildSystemPrompt } = aiRouter.__testables;
+  const nowMs = Date.UTC(2026, 9, 10, 0, 15); // 8:15 PM Friday in New York
+  const known = buildSystemPrompt('Ava', {}, { ageBracket: 'adult', clock: { nowMs, timeZone: 'America/New_York' } });
+  assert.ok(known.includes('- Now: Friday, October 9, 2026, 8:15 PM, America/New_York time, where the user is.'));
+  assert.match(known, /Plan times from get_user_flocks are already in that zone/);
+  const unknown = buildSystemPrompt('Ava', {}, { ageBracket: 'adult', clock: { nowMs, timeZone: null } });
+  assert.ok(unknown.includes('- Now: Saturday, October 10, 2026, 12:15 AM UTC.'));
+  assert.match(unknown, /You do not know the user's time zone/);
+  // Inside neither the hard rules nor the voice block: last, beside the
+  // other per-turn context, so the long fixed part of the prompt stays a
+  // stable prefix.
+  assert.ok(known.indexOf('- Now: ') > known.indexOf('Hard rules:'));
+});
+
+test('a zone this runtime cannot use falls back to the one the device registered for push', async () => {
+  dbDeviceZone = 'Europe/London';
+  const r = await chat({ messages: [{ role: 'user', text: 'tonight?' }], timeZone: 'Mars/Olympus_Mons' });
+  assert.strictEqual(r.status, 200);
+  assert.match(nowLine(), /, Europe\/London time, where the user is\.$/);
+  assert.ok(!systemPrompt().includes('Mars'), 'a zone ICU refused reached the prompt');
+});
+
+test('an older client that sends no zone is read in its push zone', async () => {
+  dbDeviceZone = 'America/Chicago';
+  const r = await chat();
+  assert.strictEqual(r.status, 200);
+  assert.match(nowLine(), /America\/Chicago time/);
+});
+
+test('with no usable zone anywhere, Birdie gets the time in UTC and is told the zone is unknown', async () => {
+  const r = await chat();
+  assert.strictEqual(r.status, 200);
+  assert.match(nowLine(), /^- Now: .* UTC\.$/);
+  assert.match(systemPrompt(), /You do not know the user's time zone/);
+});
+
+test('a time zone that is not one short string is refused before anything is spent', async () => {
+  for (const timeZone of [['America/New_York'], { id: 'America/New_York' }, 'A'.repeat(65), 7]) {
+    const r = await chat({ messages: [{ role: 'user', text: 'tonight?' }], timeZone });
+    assert.strictEqual(r.status, 400, `timeZone ${JSON.stringify(timeZone)} was accepted`);
+  }
+  assert.strictEqual(sendCalls.length, 0);
+  // Unset and null are the older clients, and stay welcome.
+  assert.strictEqual((await chat({ messages: [{ role: 'user', text: 'tonight?' }], timeZone: null })).status, 200);
+});
+
+test("a plan's time reaches the model as the wall clock where the user is", async () => {
+  dbFlocks = [
+    { id: 4, name: 'Friday', venue_name: 'Oakwood', event_time: '2026-10-10T00:00:00Z', status: 'confirmed', member_count: 3 },
+    { id: 5, name: 'Someday', venue_name: null, event_time: null, status: 'planning', member_count: 2 },
+  ];
+  sendImpl = oneToolCall('get_user_flocks', {});
+  const r = await chat({ messages: [{ role: 'user', text: "what's friday" }], timeZone: 'America/New_York' });
+  assert.strictEqual(r.status, 200);
+  const [friday, someday] = sendCalls[1].message[0].functionResponse.response.flocks;
+  assert.strictEqual(friday.event_time, 'Friday, October 9, 2026, 8:00 PM',
+    'a Friday 8 PM Eastern plan reached the model as a UTC instant, which reads as Saturday midnight');
+  assert.strictEqual(someday.event_time, null, 'a plan with no time yet grew one');
+});
+
+test('with the zone unknown, a plan time says it is UTC', async () => {
+  dbFlocks = [{ id: 4, name: 'Friday', venue_name: 'Oakwood', event_time: '2026-10-10T00:00:00Z', status: 'confirmed', member_count: 3 }];
+  sendImpl = oneToolCall('get_user_flocks', {});
+  await chat({ messages: [{ role: 'user', text: "what's friday" }] });
+  assert.strictEqual(sendCalls[1].message[0].functionResponse.response.flocks[0].event_time, 'Saturday, October 10, 2026, 12:00 AM UTC');
+});
+
+test("a zone-less plan time is read on the user's clock, not the server's", async () => {
+  sendImpl = draftCall('2030-07-05T20:00:00');
+  const r = await chat({ messages: [{ role: 'user', text: 'tacos friday at 8' }], timeZone: 'America/Los_Angeles' });
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(r.body.flock_draft.event_time, '2030-07-06T03:00:00.000Z',
+    '8 PM in Los Angeles was read on another clock');
+  // The model is told what the card will say, in the user's words.
+  assert.strictEqual(draftResult().event_time_local, 'Friday, July 5, 2030, 8:00 PM');
+});
+
+test('the same wall time in winter lands on that season\'s offset', async () => {
+  sendImpl = draftCall('2030-01-04T20:00');
+  const r = await chat({ messages: [{ role: 'user', text: 'tacos friday at 8' }], timeZone: 'America/Los_Angeles' });
+  assert.strictEqual(r.body.flock_draft.event_time, '2030-01-05T04:00:00.000Z');
+});
+
+test('a time written with its own offset is taken as written', async () => {
+  sendImpl = draftCall('2030-01-04T19:00:00-05:00');
+  const r = await chat({ messages: [{ role: 'user', text: 'tacos friday at 7 eastern' }], timeZone: 'America/Los_Angeles' });
+  assert.strictEqual(r.body.flock_draft.event_time, '2030-01-05T00:00:00.000Z');
+});
+
+for (const bad of ['friday 8pm', '2030-02-30T20:00', '2030-10-09', '2030-10-09T25:00', '2030-10-09T20:00+99:00']) {
+  test(`a time that does not read as one (${bad}) is refused, not dropped`, async () => {
+    sendImpl = draftCall(bad);
+    const r = await chat({ messages: [{ role: 'user', text: 'set it up' }], timeZone: 'America/Los_Angeles' });
+    assert.strictEqual(r.status, 200);
+    assert.strictEqual(r.body.flock_draft, undefined, `"${bad}" was staged or quietly dropped`);
+    assert.match(draftResult().error, /did not read as a date and time/);
+  });
+}
+
+test('with no zone known, a zone-less time is refused and one with an offset is not', async () => {
+  sendImpl = draftCall('2030-07-05T20:00:00');
+  let r = await chat({ messages: [{ role: 'user', text: 'friday at 8' }] });
+  assert.strictEqual(r.body.flock_draft, undefined, 'a time was placed on a clock nobody knows');
+  assert.match(draftResult().error, /time zone/);
+
+  sendCalls = [];
+  sendImpl = draftCall('2030-07-05T20:00:00-04:00');
+  r = await chat({ messages: [{ role: 'user', text: 'friday at 8 eastern' }] });
+  assert.strictEqual(r.body.flock_draft.event_time, '2030-07-06T00:00:00.000Z');
+});
+
+test('a plan with no time is still staged, with the time left open', async () => {
+  sendImpl = oneToolCall('draft_flock', { name: 'Friday tacos' }, 'card is up');
+  const r = await chat({ messages: [{ role: 'user', text: 'set up tacos' }], timeZone: 'America/Los_Angeles' });
+  assert.strictEqual(r.body.flock_draft.event_time, null);
 });

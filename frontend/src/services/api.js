@@ -3608,6 +3608,16 @@ export async function sendAiChat(messages, location, currentContext) {
   // routes/ai.js, WHO IS HELD TO IT). Never behind a condition: a turn
   // without it skips the server's check.
   body.consentFlow = 'ask';
+  // The device's own zone, so Birdie knows the date and reads "Friday at 8"
+  // as 8 PM here rather than on the server's clock (backend routes/ai.js,
+  // WHOSE CLOCK BIRDIE PLANS ON). Left off when the runtime cannot answer, or
+  // answers with something no zone name is; the server then falls back on the
+  // zone this account's device last registered for push, and failing that
+  // tells Birdie the zone is unknown. 64 is the server's bound, as for push.
+  try {
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (typeof zone === 'string' && zone.length > 0 && zone.length <= 64) body.timeZone = zone;
+  } catch { /* no Intl zone */ }
   try {
     data = await request('/api/ai/chat', {
       method: 'POST',

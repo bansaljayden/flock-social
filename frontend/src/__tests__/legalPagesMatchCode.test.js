@@ -580,6 +580,12 @@ describe('privacy claims that depend on how the code behaves', () => {
     expect(ai).toMatch(/toFixed\(2\)/);                      // ~1km rounding
     expect(privacy).toMatch(/your first name, your age bracket/);
     expect(privacy).toMatch(/rounded to about a kilometer/);
+    // The device's time zone rides every turn and the date and time there go
+    // into Birdie's instructions (routes/ai.js, WHOSE CLOCK BIRDIE PLANS ON),
+    // so the list of what goes to Google names them.
+    expect(ai).toMatch(/validTimeZone\(req\.body\.timeZone\)/);
+    expect(ai).toMatch(/- Now: \$\{now\}, \$\{zone\} time, where the user is\./);
+    expect(privacy).toMatch(/your messages in that conversation, your time zone with\s+the date and time it is there,/);
     // Rosters and message bodies are deliberately not in the payload.
     expect(ai).toMatch(/member COUNT instead of/);
     expect(privacy).toMatch(/we don't send your email, exact coordinates, or messages/);
