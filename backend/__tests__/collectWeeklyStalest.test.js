@@ -43,6 +43,8 @@ delete process.env.BESTTIME_API_KEY;
 const EVENTS = [];
 // Venue names BestTime has no forecast for. Every other venue gets a week.
 const NO_FORECAST = new Set();
+// The id a by-name lookup is answered with.
+let byNameAnswer = null;
 
 function stubModule(request, exports) {
   const filename = require.resolve(request);
@@ -55,7 +57,7 @@ stubModule('../scripts/ml/bestTimeService', {
   fetchWeeklyForecast: async (name, _address, venueId) => {
     EVENTS.push(['call', name]);
     if (NO_FORECAST.has(name)) return null;
-    return { venueId, days: WEEK, epochAnalysis: 1786000000 };
+    return { venueId: venueId || byNameAnswer, days: WEEK, epochAnalysis: 1786000000 };
   },
 });
 // The one-second pacing is load-bearing in production and pure latency here,
@@ -188,4 +190,44 @@ test('each piece moves past the venues the last one asked, misses included', asy
     { name: 'No Forecast 3', weekly: 0 },
     { name: 'No Forecast 4', weekly: 0 },
   ]);
+});
+
+// The BestTime calls that were not followed by the one-second pause before
+// the next call, or before the end of the run.
+function unpaced(events) {
+  const out = [];
+  events.forEach(([kind, name], k) => {
+    if (kind !== 'call') return;
+    const after = events.slice(k + 1);
+    const nextCall = after.findIndex(([next]) => next === 'call');
+    const between = nextCall === -1 ? after : after.slice(0, nextCall);
+    if (!between.some(([next, ms]) => next === 'sleep' && ms >= 1000)) out.push(name);
+  });
+  return out;
+}
+
+test('a miss and a duplicate are paced like a refresh', async () => {
+  // Both went straight on to the next venue, so a run of misses went out back
+  // to back at network speed: one 2026-10-06 window made sixteen failed calls
+  // in a row, most of them unpaced, and drew a 503 right after.
+  const city = 'stalest_pacing';
+  NO_FORECAST.add('Pacing Miss A');
+  NO_FORECAST.add('Pacing Miss B');
+  await addVenue(city, 'Pacing Miss A', 'ven_pacing_a');
+  await addVenue(city, 'Pacing Miss B', 'ven_pacing_b');
+  // No BestTime id, so a by-name lookup, answered with the id the next row
+  // already holds.
+  byNameAnswer = 'ven_pacing_holder';
+  await addVenue(city, 'Pacing Twin', null);
+  await addVenue(city, 'Pacing Holder', 'ven_pacing_holder');
+
+  const asked = await piece([`--city=${city}`, '--max-new=1']);
+  assert.deepStrictEqual(asked, ['Pacing Miss A', 'Pacing Miss B', 'Pacing Twin', 'Pacing Holder']);
+  assert.deepStrictEqual(unpaced(EVENTS), []);
+  // The twin went down the duplicate branch: left unmapped and marked.
+  const { rows: [twin] } = await pool.query(
+    `SELECT besttime_venue_id, besttime_status FROM ml_venues WHERE city = $1 AND name = 'Pacing Twin'`,
+    [city]
+  );
+  assert.deepStrictEqual(twin, { besttime_venue_id: null, besttime_status: 'duplicate' });
 });

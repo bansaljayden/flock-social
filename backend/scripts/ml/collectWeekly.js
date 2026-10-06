@@ -473,6 +473,10 @@ async function collectWeekly() {
         console.log('  Skipped — no BestTime data (marked 404)');
         skipped++;
         consecutiveErrors = 0;
+        // Paced like every other venue, because the call was made. Without
+        // it a run of misses went out back to back at network speed (one
+        // 2026-10-06 window: sixteen failed calls in a row, then a 503).
+        await sleep(1000);
         continue;
       }
 
@@ -566,6 +570,8 @@ async function collectWeekly() {
           );
           skipped++;
           consecutiveErrors = 0;
+          // Paced as well: the lookup that revealed the id was a call.
+          await sleep(1000);
           continue;
         }
       } else {
