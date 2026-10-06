@@ -746,6 +746,10 @@ function stubQuery(text, params = []) {
       ? { rows: [{ stripe_customer_id: roostCustomer }], rowCount: 1 }
       : { rows: [], rowCount: 0 };
   }
+  // Whether another account has the Roost customer on record too (shared
+  // customers are kept, services/venueBilling.js customersOnRecordElsewhere).
+  // None here.
+  if (has('FROM unnest($2::text[]) AS c(id)')) return { rows: [], rowCount: 0 };
   // Every deletion records the identity it proved for the first-week rule
   // (migration 076), after the COMMIT and best-effort.
   if (has('INSERT INTO grace_spent_identities')) return { rows: [], rowCount: 1 };
@@ -978,11 +982,17 @@ function withStripe(fn, { refuse = false } = {}) {
   require.cache[stripePath] = {
     id: stripePath, filename: stripePath, loaded: true,
     exports: function FakeStripe() {
-      return { customers: { del: async (id) => {
-        if (refuse) throw Object.assign(new Error('simulated Stripe outage'), { statusCode: 500 });
-        deleted.push(id);
-        return { id, deleted: true };
-      } } };
+      return {
+        customers: { del: async (id) => {
+          if (refuse) throw Object.assign(new Error('simulated Stripe outage'), { statusCode: 500 });
+          deleted.push(id);
+          return { id, deleted: true };
+        } },
+        // A Roost customer's subscriptions are read before it is closed, to
+        // tell one this account alone holds from one shared with another
+        // venue (services/venueBilling.js closeVenueCustomer). None here.
+        subscriptions: { list: async () => ({ data: [], has_more: false }) },
+      };
     },
   };
   process.env.STRIPE_SECRET_KEY = ['sk', 'test', 'd'.repeat(24)].join('_');

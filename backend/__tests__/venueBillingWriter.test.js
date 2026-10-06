@@ -1170,6 +1170,97 @@ test('deleting the account closes every customer a Roost plan was recorded on, n
 });
 
 // ---------------------------------------------------------------------------
+// A CUSTOMER TWO VENUES SHARE BELONGS TO NEITHER.
+//
+// An operator may make two venues' plans on one Stripe customer, and the
+// writer allows it. Every customer on record was then treated as one account's
+// alone: deleting either account deleted the customer, which cancels the other
+// venue's plan too; Manage billing opened Stripe's portal on it, which lists
+// and can cancel the other venue's plan and card; a revocation expired the
+// other venue's open checkout.
+// ---------------------------------------------------------------------------
+
+async function twoVenuesOneCustomer(customer, tag) {
+  const holder = await venue({ verified: true });
+  const other = await venue({ verified: true });
+  await testPool.query('UPDATE venue_profiles SET stripe_customer_id = $2 WHERE user_id = $1', [holder, customer]);
+  await venueBilling.syncVenueSubscription(foundingSub(`sub_${tag}_holder`, holder, customer));
+  await venueBilling.syncVenueSubscription(foundingSub(`sub_${tag}_other`, other, customer));
+  return { holder, other };
+}
+
+test('deleting either account on a shared customer cancels only that account\'s plan, and keeps the customer', async () => {
+  process.env.STRIPE_PRICE_ROOST_FOUNDING = 'price_roost_founding';
+  try {
+    const { holder, other } = await twoVenuesOneCustomer('cus_SHARED_DELETE', 'shared_delete');
+    const deletedBefore = deletedCustomers.length;
+    await venueBilling.closeVenueCustomer(other);
+    assert.deepStrictEqual(deletedCustomers.slice(deletedBefore), [], 'a customer another venue pays through was deleted');
+    assert.strictEqual(subs.sub_shared_delete_other.status, 'canceled', 'the departing venue\'s own plan was left billing');
+    assert.strictEqual(subs.sub_shared_delete_holder.status, 'active', 'the other venue\'s plan was cancelled with the account');
+    // The venue whose profile holds the customer, the same way round.
+    await venueBilling.closeVenueCustomer(holder);
+    assert.deepStrictEqual(deletedCustomers.slice(deletedBefore), []);
+    assert.strictEqual(subs.sub_shared_delete_holder.status, 'canceled');
+  } finally {
+    delete process.env.STRIPE_PRICE_ROOST_FOUNDING;
+  }
+});
+
+test('a customer is shared when Stripe holds a plan on it for another account, recorded or not', async () => {
+  process.env.STRIPE_PRICE_ROOST_FOUNDING = 'price_roost_founding';
+  try {
+    const id = await venue({ verified: true });
+    await venueBilling.syncVenueSubscription(foundingSub('sub_unrecorded_mine', id, 'cus_UNRECORDED_SHARE'));
+    // A plan on the same customer naming an account this database has no row for.
+    sub('sub_unrecorded_theirs', 999999, 'active', { customer: 'cus_UNRECORDED_SHARE' });
+    const deletedBefore = deletedCustomers.length;
+    await venueBilling.closeVenueCustomer(id);
+    assert.deepStrictEqual(deletedCustomers.slice(deletedBefore), []);
+    assert.strictEqual(subs.sub_unrecorded_mine.status, 'canceled');
+    assert.strictEqual(subs.sub_unrecorded_theirs.status, 'active');
+  } finally {
+    delete process.env.STRIPE_PRICE_ROOST_FOUNDING;
+  }
+});
+
+test('Manage billing never opens the portal on a shared customer, for either venue', async () => {
+  process.env.STRIPE_PRICE_ROOST_FOUNDING = 'price_roost_founding';
+  try {
+    const { holder, other } = await twoVenuesOneCustomer('cus_SHARED_PORTAL', 'shared_portal');
+    for (const who of [other, holder]) {
+      await assert.rejects(venueBilling.createVenuePortal(who), (err) => {
+        assert.strictEqual(err.status, 409);
+        assert.strictEqual(err.code, 'SHARED_BILLING');
+        assert.match(err.message, /social@flockcorp\.com/);
+        assert.ok(!/—/.test(err.message));
+        return true;
+      }, 'the portal opened on a customer that holds another venue\'s plan and card');
+    }
+  } finally {
+    delete process.env.STRIPE_PRICE_ROOST_FOUNDING;
+  }
+});
+
+test('revoking one venue\'s claim leaves the other venue\'s open checkout on a shared customer payable', async () => {
+  process.env.STRIPE_PRICE_ROOST_FOUNDING = 'price_roost_founding';
+  try {
+    const { holder, other } = await twoVenuesOneCustomer('cus_SHARED_REVOKE', 'shared_revoke');
+    const adminId = await admin();
+    openSessions.push({ id: 'cs_shared_holder_open', customer: 'cus_SHARED_REVOKE', status: 'open', metadata: { kind: 'venue', flock_venue_user_id: String(holder) } });
+    const res = await adminCall('PUT', `/api/admin/venues/${await profileIdOf(other)}/verify`, { as: adminId, body: { verified: false } });
+    assert.strictEqual(res.status, 200, res.text);
+    assert.ok(!expiredSessions.includes('cs_shared_holder_open'), 'a revocation expired another venue\'s checkout');
+    assert.strictEqual(subs.sub_shared_revoke_other.status, 'canceled');
+    assert.strictEqual(subs.sub_shared_revoke_holder.status, 'active');
+  } finally {
+    delete process.env.STRIPE_PRICE_ROOST_FOUNDING;
+    const i = openSessions.findIndex((s) => s.id === 'cs_shared_holder_open');
+    if (i >= 0) openSessions.splice(i, 1);
+  }
+});
+
+// ---------------------------------------------------------------------------
 // A DELETION THAT FAILS DOES NOT HAND THE VENUE A SECOND TRIAL.
 //
 // routes/users.js closes the Roost customer before its deletion transaction,
