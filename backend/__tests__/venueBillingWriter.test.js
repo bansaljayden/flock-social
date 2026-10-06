@@ -1307,6 +1307,61 @@ test('the profile names the trial\'s charge date, the renewal date and a schedul
   assert.ok(new Date(res.body.tier_expires_at).getTime() <= Date.now() + 1000, `an ended plan was said to run until ${res.body.tier_expires_at}`);
 });
 
+// AN ENDED PLAN KEEPS THE DAY IT ENDED. A plan that is not live was written as
+// ending now whenever its period end was still ahead, so a yearly plan
+// cancelled at once one day and replayed the next was said to have ended the
+// next day, and every later event moved the date again.
+test('a plan Stripe ended keeps the day it ended on every replay, and the card names that day', async () => {
+  const [PLACE] = placePair();
+  const id = await venue({ verified: true, placeId: PLACE });
+  const yearEnds = Math.floor(Date.now() / 1000) + 300 * DAY_S;
+  await venueBilling.syncVenueSubscription(sub('sub_ended_day', id, 'active', { metadata: boundTo(PLACE)(id), ...period('price_roost_year', yearEnds) }));
+  // Cancelled at once yesterday; its event is handled today, then replayed.
+  const endedAt = Math.floor(Date.now() / 1000) - DAY_S;
+  await venueBilling.syncVenueSubscription(sub('sub_ended_day', id, 'canceled', {
+    metadata: boundTo(PLACE)(id), ...period('price_roost_year', yearEnds), ended_at: endedAt, canceled_at: endedAt,
+  }));
+  assert.strictEqual(new Date((await state(id)).grant.expires_at).getTime(), endedAt * 1000,
+    'the plan was said to end the day its event was handled, not the day it ended');
+  await venueBilling.syncVenueSubscription('sub_ended_day');
+  assert.strictEqual(new Date((await state(id)).grant.expires_at).getTime(), endedAt * 1000, 'a replay moved the end date');
+  const res = await profileCall('GET', '/api/venue-profile', { as: id });
+  assert.strictEqual(new Date(res.body.tier_expires_at).getTime(), endedAt * 1000);
+});
+
+test('a plan that stopped with no end date from Stripe keeps the first day it was seen stopped', async () => {
+  const [PLACE] = placePair();
+  const id = await venue({ verified: true, placeId: PLACE });
+  const yearEnds = Math.floor(Date.now() / 1000) + 300 * DAY_S;
+  await venueBilling.syncVenueSubscription(sub('sub_unpaid_day', id, 'active', { metadata: boundTo(PLACE)(id), ...period('price_roost_year', yearEnds) }));
+  await venueBilling.syncVenueSubscription(sub('sub_unpaid_day', id, 'unpaid', { metadata: boundTo(PLACE)(id), ...period('price_roost_year', yearEnds) }));
+  // As if that event had been handled yesterday.
+  const yesterday = new Date(Date.now() - DAY_S * 1000);
+  await testPool.query('UPDATE venue_subscriptions SET expires_at = $2 WHERE user_id = $1', [id, yesterday]);
+  await venueBilling.syncVenueSubscription('sub_unpaid_day');
+  assert.strictEqual(new Date((await state(id)).grant.expires_at).getTime(), yesterday.getTime(), 'a replay moved the day the plan stopped');
+  // Paid again, it is live again, with its period end.
+  await venueBilling.syncVenueSubscription(sub('sub_unpaid_day', id, 'active', { metadata: boundTo(PLACE)(id), ...period('price_roost_year', yearEnds) }));
+  const s = await state(id);
+  assert.strictEqual(new Date(s.grant.expires_at).getTime(), yearEnds * 1000 + venueBilling.__test.GRACE_MS);
+  assert.strictEqual(s.served, 'pro');
+});
+
+test('a plan we ended over a refund keeps the day the refund was recorded', async () => {
+  const id = await yearlySubscriber('sub_refund_day', 'in_refund_day');
+  paidBy('ch_refund_day', 'in_refund_day', 'sub_refund_day', 99000);
+  refunds.ch_refund_day = [{ id: 're_day', status: 'succeeded', amount: 99000 }];
+  await venueBilling.revokeRefundedSubscription({ object: 'charge', id: 'ch_refund_day' });
+  // Recorded two days ago; a later event still reads the subscription active.
+  const recorded = new Date(Date.now() - 2 * DAY_S * 1000);
+  await testPool.query("UPDATE stripe_subscription_endings SET created_at = $1 WHERE stripe_subscription_id = 'sub_refund_day'", [recorded]);
+  subs.sub_refund_day.status = 'active';
+  await venueBilling.syncVenueSubscription('sub_refund_day');
+  const s = await state(id);
+  assert.strictEqual(s.grant.status, 'refunded');
+  assert.strictEqual(new Date(s.grant.expires_at).getTime(), recorded.getTime(), 'a refunded plan was said to end on the day of its latest event');
+});
+
 test('a comp keeps its own end date on the card', async () => {
   const [PLACE] = placePair();
   const id = await venue({ verified: true, placeId: PLACE });

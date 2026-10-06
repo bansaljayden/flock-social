@@ -571,14 +571,33 @@ function toDate(unixSeconds) {
   return Number.isFinite(unixSeconds) && unixSeconds > 0 ? new Date(unixSeconds * 1000) : null;
 }
 
+// The earliest of the dates given that has already passed, or null.
+function earliestPast(dates, now) {
+  let found = null;
+  for (const d of dates) {
+    if (!(d instanceof Date) || Number.isNaN(d.getTime()) || d.getTime() > now) continue;
+    if (!found || d.getTime() < found.getTime()) found = d;
+  }
+  return found;
+}
+
 // What one Stripe subscription means for the grant. Pure, so a test can walk
 // every status through it. unknownPriceIsRoost is for a subscription Stripe is
 // still billing on a price missing from the configuration (see
 // syncVenueSubscription): it counts that price as Roost. endedBy is the cause
 // recorded for a subscription we ended early (a full refund, a dispute): it
 // is never live, whatever Stripe's status says, and its status is written as
-// that cause (endingStatus above).
-function grantFromSubscription(sub, now = Date.now(), { unknownPriceIsRoost = false, endedBy = null } = {}) {
+// that cause (endingStatus above). endedAt is when that ending was recorded.
+//
+// AN ENDED PLAN'S DATE IS THE DAY IT ENDED, ON EVERY READ. A plan that is not
+// live used to be written as ending now whenever its period end was still
+// ahead, so a yearly plan cancelled at once on one day and replayed the next
+// was said to have ended the next day, and every later event moved the date
+// again. It is the earliest of the moments it really stopped: Stripe's
+// ended_at, the day we recorded ending it, and a period end already past.
+// Only a plan with none of those (unpaid, paused) is written as ending now,
+// and SYNC_SQL keeps the first such date on a replay.
+function grantFromSubscription(sub, now = Date.now(), { unknownPriceIsRoost = false, endedBy = null, endedAt = null } = {}) {
   const item = sub && sub.items && Array.isArray(sub.items.data) ? sub.items.data[0] : null;
   const priceId = item && item.price ? item.price.id : null;
   const priceOk = !!priceId && (unknownPriceIsRoost || recognisedPrices().has(priceId));
@@ -592,7 +611,8 @@ function grantFromSubscription(sub, now = Date.now(), { unknownPriceIsRoost = fa
     // resolver, and a subscription always has one.
     expiresAt = new Date((periodEnd ? periodEnd.getTime() : now) + GRACE_MS);
   } else {
-    expiresAt = periodEnd && periodEnd.getTime() < now ? periodEnd : new Date(now);
+    const endedByUs = endedBy && endedAt ? new Date(endedAt) : null;
+    expiresAt = earliestPast([toDate(sub.ended_at), endedByUs, periodEnd], now) || new Date(now);
   }
   return {
     live,
@@ -678,7 +698,15 @@ const SYNC_SQL = `WITH old AS (
       granted_at = CASE WHEN venue_subscriptions.stripe_subscription_id IS DISTINCT FROM EXCLUDED.stripe_subscription_id
                         THEN NOW() ELSE venue_subscriptions.granted_at END,
       granted_by = NULL,
-      expires_at = EXCLUDED.expires_at,
+      -- An ended plan keeps the day it ended (grantFromSubscription): a dead
+      -- event of the same subscription over a row already ended never moves
+      -- that day later.
+      expires_at = CASE WHEN NOT $11::boolean
+                         AND venue_subscriptions.source = 'stripe'
+                         AND venue_subscriptions.stripe_subscription_id = EXCLUDED.stripe_subscription_id
+                         AND venue_subscriptions.status NOT IN ('active', 'trialing', 'past_due')
+                         AND venue_subscriptions.expires_at < EXCLUDED.expires_at
+                        THEN venue_subscriptions.expires_at ELSE EXCLUDED.expires_at END,
       stripe_customer_id = EXCLUDED.stripe_customer_id,
       stripe_subscription_id = EXCLUDED.stripe_subscription_id,
       stripe_price_id = EXCLUDED.stripe_price_id,
@@ -807,7 +835,7 @@ const LOCKED_READ = { timeout: 5000, maxNetworkRetries: 0 };
 // and every event re-reads Stripe, so without this read a later
 // customer.subscription.updated wrote the year of Roost straight back. Read on
 // the locked transaction, with the subscription it is about.
-const ENDED_SQL = 'SELECT cause FROM stripe_subscription_endings WHERE stripe_subscription_id = $1::text ORDER BY id LIMIT 1';
+const ENDED_SQL = 'SELECT cause, created_at FROM stripe_subscription_endings WHERE stripe_subscription_id = $1::text ORDER BY id LIMIT 1';
 
 // Re-reads the subscription from Stripe and writes what it says. Events arrive
 // out of order and can be replayed, so the event body is never the source:
@@ -851,8 +879,9 @@ async function syncVenueSubscription(subscriptionId) {
       throw new Error(`Roost subscription ${subscriptionId} named venue user ${userId} and then ${owner ? `venue user ${owner}` : 'no venue account'} on the read under the lock. Nothing was written; Stripe's retry reads it again.`);
     }
     const ended = await client.query(ENDED_SQL, [sub.id]);
-    const endedBy = ended && Array.isArray(ended.rows) && ended.rows[0] ? ended.rows[0].cause : null;
-    let g = grantFromSubscription(sub, Date.now(), { endedBy });
+    const endingRow = ended && Array.isArray(ended.rows) && ended.rows[0] ? ended.rows[0] : null;
+    const endedBy = endingRow ? endingRow.cause : null;
+    let g = grantFromSubscription(sub, Date.now(), { endedBy, endedAt: endingRow ? endingRow.created_at : null });
     if (!g.priceOk && KEEP_STATUSES.has(sub.status) && !endedBy) {
       console.error(`[venue-billing] subscription ${sub.id} is ${g.status} on price ${g.priceId}, which is not a configured Roost price. Stripe is billing it, so Roost is kept through the period being billed. If the price is real, set it in STRIPE_PRICE_ROOST_* (a price no longer sold goes in STRIPE_PRICE_ROOST_LEGACY).`);
       g = grantFromSubscription(sub, Date.now(), { unknownPriceIsRoost: true });
