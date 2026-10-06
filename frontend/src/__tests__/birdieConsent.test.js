@@ -349,6 +349,6 @@ describe('Settings: the answer can be taken back', () => {
   });
 
   test('the screen behind it lists what is sent the way the panel does, time zone included', () => {
-    expect(settings).toContain('it sends Google your messages to Birdie, your first name, your age range, your time zone and what you have open in Flock.');
+    expect(settings).toContain('it sends Google your messages to Birdie, your first name, your age range, your time zone with the date and time it is there, and what you have open in Flock.');
   });
 });

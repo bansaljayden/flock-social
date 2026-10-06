@@ -387,15 +387,17 @@ function chargeDayEndsAt(chargeDay) {
 // WHETHER GEMINI WITHHELD THE REPLY, read off why the turn ended. Only SAFETY
 // used to count, so a reply stopped as PROHIBITED_CONTENT, BLOCKLIST or SPII
 // fell through to "say that one more time?" and asked for the repeat that is
-// stopped again. The test runs the other way now: STOP (the model was done) and
-// MAX_TOKENS (it ran out of room) are the two endings in which the model wrote
-// what it wrote, and every other reason is a reply that was stopped, including
-// any reason Google adds after this was written. No reason at all, or the
-// enum's own FINISH_REASON_UNSPECIFIED, says nothing either way and is not
-// read as one. Returns the reason when it is a refusal, else null.
+// stopped again. These are the policy stops, the ones where Google decided the
+// reply may not be given, and only these get "not something i'll help with".
+// The other endings are not refusals: MALFORMED_FUNCTION_CALL is the model
+// fumbling a tool call, OTHER and LANGUAGE say nothing about the request, and
+// telling someone Birdie refuses what they asked over a glitch is false. Those
+// take the empty-turn path below, which asks again and hands the chirp back
+// when the turn delivered nothing. Returns the reason when it is a refusal,
+// else null.
+const POLICY_FINISH_REASONS = new Set(['SAFETY', 'BLOCKLIST', 'PROHIBITED_CONTENT', 'SPII', 'RECITATION', 'IMAGE_SAFETY']);
 function withheldFinishReason(finishReason) {
-  if (typeof finishReason !== 'string' || finishReason === '' || finishReason === 'FINISH_REASON_UNSPECIFIED') return null;
-  return finishReason === 'STOP' || finishReason === 'MAX_TOKENS' ? null : finishReason;
+  return typeof finishReason === 'string' && POLICY_FINISH_REASONS.has(finishReason) ? finishReason : null;
 }
 
 // How many characters a payload puts on the wire. The SDK holds no server-side
@@ -1737,7 +1739,7 @@ function servedAccuracyRule() {
   const h = typeof mlPredictor.servedAccuracyHeadline === 'function' ? mlPredictor.servedAccuracyHeadline() : null;
   if (!h) return '';
   const pct = (v) => `${Math.round(v)}%`;
-  return `\n- If someone asks how accurate Flock's crowd levels are, answer from these measured figures and nothing else. Tested against ${h.rows.toLocaleString('en-US')} real live readings it had not seen (September 6 to 8, 2026), all from venues in the Lehigh Valley and Miami that have live readings, ${pct(h.band_exact)} of Flock's crowd numbers named the exact crowd level of the reading and ${pct(h.within_one_band)} landed within one level, and the average miss was ${Math.round(h.mae)} points. When a venue had a live reading from the hour before, ${pct(h.reading_one_hour_earlier.band_exact)} named the exact level and ${pct(h.reading_one_hour_earlier.within_one_band)} landed within one. Never give the within-one-level figure without the exact-level figure and the average miss beside it. Say it plainly and once, and say what it was measured on. It describes venues with live readings in those two places, not every venue or city Flock covers, and never how sure one number is.`;
+  return `\n- If someone asks how accurate Flock's crowd levels are, answer from these measured figures and nothing else. Tested against ${h.rows.toLocaleString('en-US')} real live readings it had not seen (September 6 to 8, 2026), all from venues in the Lehigh Valley and Miami that have live readings, ${pct(h.band_exact)} of Flock's crowd numbers named the exact crowd level of the reading and ${pct(h.within_one_band)} landed within one level, and the average miss was ${Math.round(h.mae)} points. When a venue had a live reading from the hour before, ${pct(h.reading_one_hour_earlier.band_exact)} named the exact level and ${pct(h.reading_one_hour_earlier.within_one_band)} landed within one, and the average miss was ${Math.round(h.reading_one_hour_earlier.mae)} points. Never give the within-one-level figure without the exact-level figure and the average miss beside it. Say it plainly and once, and say what it was measured on. It describes venues with live readings in those two places, not every venue or city Flock covers, and never how sure one number is.`;
 }
 
 function buildSystemPrompt(userName, ctx, { ageBracket, freeTier, salesOff = false, clock = null } = {}) {

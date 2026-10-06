@@ -667,7 +667,7 @@ export default function ProfileSettings({
                         panel asks again the next time it opens. */}
                     <Toggle label="Let Birdie use Google's Gemini" on={birdieConsented} onChange={() => { if (!birdieConsentBusy) answerBirdieConsent(!birdieConsented); }} />
                   </div>
-                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px', lineHeight: '1.5' }}>Birdie runs on Google's Gemini. To answer you, it sends Google your messages to Birdie, your first name, your age range, your time zone and what you have open in Flock. If location is on, your area goes too, rounded to about a kilometer. If you ask about your plans or friends, your plans and your friends' names go as well.</p>
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px', lineHeight: '1.5' }}>Birdie runs on Google's Gemini. To answer you, it sends Google your messages to Birdie, your first name, your age range, your time zone with the date and time it is there, and what you have open in Flock. If location is on, your area goes too, rounded to about a kilometer. If you ask about your plans or friends, your plans and your friends' names go as well.</p>
                   <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: '1.5' }}>Off means Birdie sends nothing and cannot answer. The rest of Flock works the same either way.</p>
                   {birdieConsentError && (
                     <div role="alert" style={{ marginTop: '12px', padding: '10px 12px', borderRadius: '10px', backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)' }}>
