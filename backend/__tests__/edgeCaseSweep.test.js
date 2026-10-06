@@ -422,8 +422,11 @@ test('events / WRONG THING: a real coordinate still reaches Ticketmaster', async
   const res = await get('/api/events/search?location=39.74,-104.98');
   assert.strictEqual(res.status, 200, res.text);
   assert.strictEqual(tmCalls.length, 1, 'the search never went upstream');
-  assert.ok(tmCalls[0].includes('latlong=39.74%2C-104.98') || tmCalls[0].includes('latlong=39.74,-104.98'),
-    `coordinate did not survive: ${tmCalls[0]}`);
+  // As the centre of its 0.1-degree cell, which is what the cached answer is
+  // shared across (THE CELL, NOT THE CALLER in routes/events.js), not as the
+  // caller's own point.
+  assert.ok(tmCalls[0].includes('latlong=39.7%2C-105.0') || tmCalls[0].includes('latlong=39.7,-105.0'),
+    `coordinate did not survive as its cell: ${tmCalls[0]}`);
 });
 
 test('events / WRONG THING: an event id is a format, not a free string in an upstream URL', async () => {

@@ -428,7 +428,18 @@ function mapEvent(e) {
     seatmap_url: e.seatmap?.staticUrl || null,
     info: e.info || null,
     please_note: e.pleaseNote || null,
-    distance_miles: e.distance || null,
+    // The venue's own zone. `date` and `time` above are the wall clock at the
+    // venue, and the app needs the zone to say so when that is not the clock
+    // the viewer is on.
+    timezone: e.dates?.timezone || null,
+    // No distance (2026-10-06). Ticketmaster measures its `distance` from the
+    // point it was asked about, and an answer here is cached for everyone in a
+    // cell (see THE CELL, NOT THE CALLER in /search), so it was nobody's
+    // distance. It used to be the first caller's, which showed everyone else
+    // in the cell, for an hour, how far that person stood from every venue.
+    // The app measures from where the viewer is, on the list card and on the
+    // detail screen alike. A build that still reads distance_miles finds none
+    // and leaves the line out.
   };
 }
 
@@ -473,6 +484,13 @@ router.get('/search',
       const radiusMiles = parseInt(req.query.radius) || 50;
       const categoryFilter = (req.query.category || '').slice(0, 40);
 
+      // THE CELL, NOT THE CALLER (2026-10-06). The answer is cached for
+      // everyone whose position rounds to this 0.1-degree cell, so the question
+      // has to be about the cell: Ticketmaster is asked at its centre, which is
+      // the rounded coordinate the key is built from, the same string. It used
+      // to be asked at the exact point of whoever missed the cache first, so
+      // for the next hour everyone else in the cell, up to about 14 km away,
+      // got a list centred on that one person.
       const coarseLoc = `${lat.toFixed(1)},${lng.toFixed(1)}`;
       const cacheKey = `events:${coarseLoc}|${searchQuery}|${radiusMiles}|${categoryFilter}`;
       const cached = getCached(cacheKey);
@@ -490,7 +508,7 @@ router.get('/search',
           return upstreamRefusal(res, req.user.id,
             { plural: 'Event search comes back' }, searchQuery ? 2 : 1);
         }
-        flight = runSearch({ lat, lng, searchQuery, radiusMiles, categoryFilter, cacheKey });
+        flight = runSearch({ latlong: coarseLoc, searchQuery, radiusMiles, categoryFilter, cacheKey });
         inflight.set(cacheKey, flight);
         flight.then(() => inflight.delete(cacheKey));
       }
@@ -506,12 +524,13 @@ router.get('/search',
 // The worker behind GET /search. NEVER rejects — it resolves to
 // { status, body }, so a failure reaches every coalesced waiter as the same
 // clean response (see the inflight note above).
-async function runSearch({ lat, lng, searchQuery, radiusMiles, categoryFilter, cacheKey }) {
+async function runSearch({ latlong, searchQuery, radiusMiles, categoryFilter, cacheKey }) {
   try {
-    // Search with location bias
+    // Search with location bias, at the cell's centre (THE CELL, NOT THE
+    // CALLER, above).
     const localParams = new URLSearchParams({
       apikey: TM_API_KEY,
-      latlong: `${lat},${lng}`,
+      latlong,
       radius: radiusMiles,
       unit: 'miles',
       size: 20,
@@ -644,6 +663,9 @@ router.get('/featured',
       //
       // The length cap is not decoration either: an unbounded key is an
       // unbounded Map entry, and the eviction below counts entries, not bytes.
+      //
+      // And the call is made at the cell's centre, not at the caller's point,
+      // for the reason /search gives (THE CELL, NOT THE CALLER).
       const coarseLoc = `${lat.toFixed(1)},${lng.toFixed(1)}`;
       const normalizedInterests = [...new Set(
         interests.toLowerCase().split(',').map((i) => i.trim()).filter(Boolean)
@@ -662,7 +684,7 @@ router.get('/featured',
         // The leader's id rides into the flight so the optional top-up inside it
         // charges the same account that paid for the first call. Joiners are
         // charged nothing, because no second upstream call happens for them.
-        flight = runFeatured({ lat, lng, normalizedInterests, cacheKey, userId: req.user.id });
+        flight = runFeatured({ latlong: coarseLoc, normalizedInterests, cacheKey, userId: req.user.id });
         inflight.set(cacheKey, flight);
         flight.then(() => inflight.delete(cacheKey));
       }
@@ -677,7 +699,7 @@ router.get('/featured',
 
 // The worker behind GET /featured. NEVER rejects — resolves to
 // { status, body } for every coalesced waiter (see the inflight note).
-async function runFeatured({ lat, lng, normalizedInterests, cacheKey, userId }) {
+async function runFeatured({ latlong, normalizedInterests, cacheKey, userId }) {
   try {
     // Map user interests to Ticketmaster classification keywords.
     // (Indented one level deeper than its surroundings on purpose:
@@ -712,9 +734,11 @@ async function runFeatured({ lat, lng, normalizedInterests, cacheKey, userId }) 
     const endDate = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
     const fmt = (d) => d.toISOString().replace(/\.\d{3}Z$/, 'Z');
 
+    // The cell's centre, the same string as the cache key's (THE CELL, NOT
+    // THE CALLER, in /search).
     const params = new URLSearchParams({
       apikey: TM_API_KEY,
-      latlong: `${lat},${lng}`,
+      latlong,
       radius: 30,
       unit: 'miles',
       size: 20,
@@ -916,9 +940,9 @@ async function runDetails(eventId, cacheKey) {
           url: a.url || null,
           image_url: getBestImage({ images: a.images || [], _embedded: {} }),
         })),
+        // timezone comes with mapEvent above, the same field the list carries.
         date_end: e.dates?.end?.localDate || null,
         time_end: e.dates?.end?.localTime || null,
-        timezone: e.dates?.timezone || null,
         on_sale: e.dates?.status?.code === 'onsale',
         ticketing: e.ticketing ? {
           safe_tix: e.ticketing.safeTix?.enabled || false,
