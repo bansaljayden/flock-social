@@ -43,12 +43,31 @@ const invoices = {};
 const cancels = [];
 // Every customer deleted, in order (account deletion closes them).
 const deletedCustomers = [];
+// Checkout, for the tests that buy: customers made, sessions made.
+let customersMade = 0;
+const sessionsMade = [];
 function FakeStripe() {
   return {
     customers: {
       del: async (id) => { deletedCustomers.push(id); return { id, deleted: true }; },
+      create: async (args, opts) => { customersMade += 1; return { id: `cus_MADE_${customersMade}`, metadata: args.metadata, idempotencyKey: opts && opts.idempotencyKey }; },
+      // A deleted customer still answers, the way Stripe's does: deleted: true.
+      retrieve: async (id) => (deletedCustomers.includes(id) ? { id, deleted: true } : { id }),
+    },
+    prices: {
+      retrieve: async (id) => ({ id, unit_amount: id === 'price_roost_year' ? 99000 : 9900, currency: 'usd', recurring: { interval: id === 'price_roost_year' ? 'year' : 'month' } }),
+    },
+    checkout: {
+      sessions: {
+        list: async () => ({ data: [] }),
+        create: async (args) => { sessionsMade.push(args); return { id: `cs_made_${sessionsMade.length}`, url: 'https://checkout.stripe.com/c/pay/made' }; },
+      },
     },
     subscriptions: {
+      // A deleted customer's subscriptions went with it.
+      list: async ({ customer }) => ({
+        data: deletedCustomers.includes(customer) ? [] : Object.values(subs).filter((s) => s && s.customer === customer).map((s) => ({ ...s })),
+      }),
       retrieve: async (id, params, options) => {
         const answer = subs[id] ? JSON.parse(JSON.stringify(subs[id])) : subs[id];
         reads.push({ id, status: answer ? answer.status : null, options: options || null });
@@ -1032,11 +1051,51 @@ test('deleting the account closes every customer a Roost plan was recorded on, n
     const id = await venue({ verified: true });
     await testPool.query("UPDATE venue_profiles SET stripe_customer_id = 'cus_CHECKOUT_4' WHERE user_id = $1", [id]);
     await venueBilling.syncVenueSubscription(foundingSub('sub_founding_4', id, 'cus_FOUNDING_4'));
-    deletedCustomers.length = 0;
+    const before = deletedCustomers.length;
     await venueBilling.closeVenueCustomer(id);
-    assert.deepStrictEqual([...deletedCustomers].sort(), ['cus_CHECKOUT_4', 'cus_FOUNDING_4'],
+    assert.deepStrictEqual(deletedCustomers.slice(before).sort(), ['cus_CHECKOUT_4', 'cus_FOUNDING_4'],
       'the hand-sold plan\'s customer was left billing after the account went');
   } finally {
     delete process.env.STRIPE_PRICE_ROOST_FOUNDING;
   }
+});
+
+// ---------------------------------------------------------------------------
+// A DELETION THAT FAILS DOES NOT HAND THE VENUE A SECOND TRIAL.
+//
+// routes/users.js closes the Roost customer before its deletion transaction,
+// and closeVenueCustomer cleared venue_profiles.stripe_customer_id in a write
+// of its own, committed. When DELETE FROM users then rolled back, the account
+// stayed with no customer on file, the next checkout made a new one, and the
+// trial asked only that new customer whether it had ever subscribed: a second
+// 14 days, where Terms 9.6 promise one per venue.
+// ---------------------------------------------------------------------------
+
+test('a failed account deletion keeps the customer on file, and the next checkout starts with no trial', async () => {
+  const [PLACE] = placePair();
+  const id = await venue({ verified: true, placeId: PLACE });
+  await testPool.query("UPDATE venue_profiles SET stripe_customer_id = 'cus_TRIAL_USED' WHERE user_id = $1", [id]);
+  // The trial it had, and its end.
+  await venueBilling.syncVenueSubscription(sub('sub_trial_used', id, 'trialing', { customer: 'cus_TRIAL_USED', metadata: boundTo(PLACE)(id) }));
+  await venueBilling.syncVenueSubscription(sub('sub_trial_used', id, 'canceled', { customer: 'cus_TRIAL_USED', metadata: boundTo(PLACE)(id) }));
+
+  // The deletion: Stripe closes the customer, then the transaction fails and
+  // the account is still here.
+  await venueBilling.closeVenueCustomer(id);
+  assert.ok(deletedCustomers.includes('cus_TRIAL_USED'));
+  const kept = await testPool.query('SELECT stripe_customer_id FROM venue_profiles WHERE user_id = $1', [id]);
+  assert.strictEqual(kept.rows[0].stripe_customer_id, 'cus_TRIAL_USED',
+    'the customer was cleared outside the deletion transaction, so a rollback lost the record of it');
+
+  // The owner comes back and subscribes.
+  const before = sessionsMade.length;
+  await venueBilling.createVenueCheckout({ id, email: `owner-again-${id}@example.com`, name: 'Owner' }, 'monthly');
+  const session = sessionsMade[before];
+  assert.ok(session, 'no checkout was made');
+  assert.ok(!('trial_period_days' in session.subscription_data), 'a failed deletion handed the venue a second 14-day trial');
+  assert.ok(!('trial_end' in session.subscription_data));
+  // On a customer Stripe can still bill: the deleted one is replaced.
+  assert.notStrictEqual(session.customer, 'cus_TRIAL_USED');
+  const now = await testPool.query('SELECT stripe_customer_id FROM venue_profiles WHERE user_id = $1', [id]);
+  assert.strictEqual(now.rows[0].stripe_customer_id, session.customer);
 });
