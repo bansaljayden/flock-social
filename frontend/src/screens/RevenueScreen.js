@@ -1027,11 +1027,17 @@ function hubBurnMove(e, listCutShort) {
   return `the burn ${change < 0 ? 'falls' : 'rises'} by ${hubMoney(Math.abs(change))} a month`;
 }
 
+// A usage bill is billed after the use, so its last bill comes after the day
+// it ends (moneyHub.js, THE END OF A BILL), and "no charge on or after this
+// day" would be wrong for it.
 function hubEndingWords(e, listCutShort) {
   const move = hubBurnMove(e, listCutShort);
   const back = Array.isArray(e.restores) && e.restores.length > 0
     ? `, as the code's ${hubAnd(e.restores)} ${e.restores.length === 1 ? 'counts' : 'count'} again`
     : '';
+  if (e.cadence === 'usage' && !e.isCredit) {
+    return `Use stops on this day, and its last bill comes after.${move ? ` From this day ${move}${back}.` : ''}`;
+  }
   return `No ${e.isCredit ? 'credit' : 'charge'} on or after this day.${move ? ` Then ${move}${back}.` : ''}`;
 }
 

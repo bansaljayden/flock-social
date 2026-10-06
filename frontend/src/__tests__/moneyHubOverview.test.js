@@ -2046,6 +2046,25 @@ describe('a bill that ends rather than renews', () => {
     expect(euroRow.textContent).toMatch(/No charge on or after this day\.$/);
   });
 
+  test('a usage bill set to end says its last bill comes after the day', async () => {
+    // A usage bill is billed after the use, and the hub waits for that last
+    // bill before it reads a later charge as a renewal (second review
+    // 2026-10-06), so "no charge on or after this day" is wrong for it.
+    const metered = { ...ENDING, expenseId: 18, label: 'Build service', endsOn: '2026-10-01', amountCents: 13015, cadence: 'usage', perMonthCents: 13015, burnChangeCents: -13015 };
+    await renderHub({
+      ...CONNECTED,
+      costs: { ...COSTS, ending: [ENDING, metered], afterEnding: { burnCents: 4649, changeCents: -16195, by: '2026-10-05', bills: 2, label: null } },
+    });
+    const costs = document.getElementById('hub-costs');
+    const row = (await within(costs).findByText(/^Oct 1(, 2026)?, Build service$/)).parentElement.parentElement;
+    expect(within(row).getByText('$130.15 a month, usage')).toBeInTheDocument();
+    expect(row.textContent).toMatch(/Use stops on this day, and its last bill comes after\. From this day the burn falls by \$130\.15 a month\.$/);
+    expect(row.textContent).not.toMatch(/No charge/);
+    // A bill paid ahead keeps its words.
+    const plus = within(costs).getByText(/^Oct 5(, 2026)?, Store tool, Plus$/).parentElement.parentElement;
+    expect(plus.textContent).toMatch(/No charge on or after this day\. Then the burn falls by \$31\.80 a month\./);
+  });
+
   test('a bill that stood in for a code line says the line comes back, and the burn moves by the difference', async () => {
     // $149 in place of the code's $119 BestTime line (review 2026-10-06).
     const stand = { ...ENDING, expenseId: 12, label: 'BestTime, Package 100', amountCents: 14900, perMonthCents: 14900, burnChangeCents: -3000, restores: ['BestTime.app Pro, Package 100'] };
