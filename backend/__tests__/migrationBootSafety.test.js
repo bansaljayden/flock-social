@@ -1650,6 +1650,39 @@ test('098 stamps a guest row a join hid before it, leaves every row a moderator 
   await pool.query(`DELETE FROM users WHERE email LIKE '%098@example.com'`);
 });
 
+// ---------------------------------------------------------------------------
+// 117: the day a bill on the expense list ends. A nullable column every row
+// already on the list reads as NULL (a bill that renews), and a CHECK that a
+// one-time charge carries none. The CHECK is added under a fixed name, so a
+// replay meets duplicate_object and moves nothing.
+// ---------------------------------------------------------------------------
+
+test('117 lets a recurring bill carry the day it ends, refuses one on a one-time charge, and a replay moves nothing', async () => {
+  const add = (vendor, cadence, endsOn) => pool.query(
+    `INSERT INTO business_expenses (vendor, kind, amount_cents, cadence, ends_on)
+     VALUES ($1, 'tooling', 3180, $2, $3) RETURNING id`,
+    [vendor, cadence, endsOn]
+  );
+  await add('Boot117 Ending', 'monthly', '2026-10-20');
+  await add('Boot117 Renews', 'monthly', null);
+  let refused = null;
+  try { await add('Boot117 Once', 'one_time', '2026-10-20'); } catch (err) { refused = { code: err.code, constraint: err.constraint }; }
+  assert.deepEqual(refused, { code: '23514', constraint: 'business_expenses_ends_on_check' }, 'a one-time charge has nothing to end');
+
+  const snapshot = async () => (await pool.query(
+    `SELECT vendor, cadence, ends_on::text AS ends_on FROM business_expenses
+      WHERE vendor LIKE 'Boot117%' ORDER BY id`
+  )).rows;
+  const before = await snapshot();
+  assert.deepEqual(before.map((r) => r.ends_on), ['2026-10-20', null]);
+
+  await pool.query(`DELETE FROM schema_migrations WHERE name = '117_business_expense_ends_on.sql'`);
+  await migrate(pool);
+  assert.deepEqual(await snapshot(), before, 'a replay of 117 moved an expense row');
+
+  await pool.query(`DELETE FROM business_expenses WHERE vendor LIKE 'Boot117%'`);
+});
+
 test('every migration file declares post-conditions the runner can actually parse', async () => {
   // parseRequirements throws on a line that looks like a declaration and is
   // not: mis-cased, schema-mangled, malformed, or buried in a $$ body, a block

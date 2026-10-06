@@ -423,6 +423,9 @@ function expenseFromRow(r) {
     // amount is stored positive like every other row and subtracted from
     // every total it lands in.
     isCredit: r.is_credit === true,
+    // Migration 117. The day a bill whose renewal is turned off stops: see
+    // THE END OF A BILL below.
+    endsOn: r.ends_on ? String(r.ends_on).slice(0, 10) : null,
     updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : null,
   };
 }
@@ -431,7 +434,7 @@ async function readExpenses(db = pool) {
   const r = await db.query(
     `SELECT id, vendor, product, category, kind, amount_cents, currency, cadence,
             last_charged_on::text AS last_charged_on, renews_on::text AS renews_on,
-            active, verified, note, replaces_line, is_credit, updated_at
+            active, verified, note, replaces_line, is_credit, ends_on::text AS ends_on, updated_at
        FROM business_expenses
       ORDER BY active DESC, kind, lower(vendor), id
       LIMIT ${EXPENSE_LIST_LIMIT + 1}`
@@ -486,6 +489,7 @@ function normalizeExpenseAliases(raw) {
   alias('replaces_line', 'replacesLine');
   alias('is_credit', 'isCredit');
   alias('credit', 'isCredit');
+  alias('ends_on', 'endsOn');
   if (has(out, 'kind')) out.kind = foldWord(out.kind, KIND_WORDS);
   if (has(out, 'cadence')) out.cadence = foldWord(out.cadence, CADENCE_WORDS);
   if (typeof out.currency === 'string') out.currency = out.currency.trim().toUpperCase();
@@ -495,7 +499,7 @@ function normalizeExpenseAliases(raw) {
       if (has(BOOL_WORDS, k)) out[b] = BOOL_WORDS[k];
     }
   }
-  for (const d of ['lastChargedOn', 'renewsOn', 'replacesLine', 'product', 'category', 'note', 'currency']) {
+  for (const d of ['lastChargedOn', 'renewsOn', 'endsOn', 'replacesLine', 'product', 'category', 'note', 'currency']) {
     if (typeof out[d] === 'string' && out[d].trim() === '') out[d] = null;
   }
   return out;
@@ -544,25 +548,28 @@ function expenseRowFromInput(raw) {
     note: text(raw.note, 500),
     replacesLine: raw.replacesLine || null,
     isCredit: raw.isCredit === true,
+    endsOn: raw.endsOn || null,
   };
 }
 
+// ends_on is the last parameter rather than beside renews_on, so every
+// position before it is the one it was before migration 117.
 function expenseParams(row) {
   return [
     row.vendor, row.product, row.category, row.kind, row.amountCents, row.currency,
     row.cadence, row.lastChargedOn, row.renewsOn, row.active, row.verified, row.note,
-    row.replacesLine, row.isCredit === true,
+    row.replacesLine, row.isCredit === true, row.endsOn || null,
   ];
 }
 
 const EXPENSE_INSERT_SQL = `INSERT INTO business_expenses
        (vendor, product, category, kind, amount_cents, currency, cadence,
         last_charged_on, renews_on, active, verified, note, replaces_line, is_credit,
-        updated_at, updated_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), $15)
+        ends_on, updated_at, updated_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), $16)
      RETURNING id, vendor, product, category, kind, amount_cents, currency, cadence,
                last_charged_on::text AS last_charged_on, renews_on::text AS renews_on,
-               active, verified, note, replaces_line, is_credit, updated_at`;
+               active, verified, note, replaces_line, is_credit, ends_on::text AS ends_on, updated_at`;
 
 // A whole-row write by id. The admin PUT route and the import both use it, so
 // an edit on the screen and a corrected paste store a bill the same way.
@@ -570,11 +577,11 @@ const EXPENSE_UPDATE_SQL = `UPDATE business_expenses
         SET vendor = $2, product = $3, category = $4, kind = $5, amount_cents = $6,
             currency = $7, cadence = $8, last_charged_on = $9, renews_on = $10,
             active = $11, verified = $12, note = $13, replaces_line = $14,
-            is_credit = $15, updated_at = NOW(), updated_by = $16
+            is_credit = $15, ends_on = $16, updated_at = NOW(), updated_by = $17
       WHERE id = $1
       RETURNING id, vendor, product, category, kind, amount_cents, currency, cadence,
                 last_charged_on::text AS last_charged_on, renews_on::text AS renews_on,
-                active, verified, note, replaces_line, is_credit, updated_at`;
+                active, verified, note, replaces_line, is_credit, ends_on::text AS ends_on, updated_at`;
 
 // The import's insert. The same vendor, product, cadence and charge-or-credit
 // is the same bill, and migrations 080 and 096 make that a unique key
@@ -585,12 +592,12 @@ const EXPENSE_UPDATE_SQL = `UPDATE business_expenses
 const EXPENSE_IMPORT_INSERT_SQL = `INSERT INTO business_expenses
        (vendor, product, category, kind, amount_cents, currency, cadence,
         last_charged_on, renews_on, active, verified, note, replaces_line, is_credit,
-        updated_at, updated_by)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), $15)
+        ends_on, updated_at, updated_by)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, NOW(), $16)
      ON CONFLICT (lower(vendor), lower(COALESCE(product, '')), cadence, is_credit) DO NOTHING
      RETURNING id, vendor, product, category, kind, amount_cents, currency, cadence,
                last_charged_on::text AS last_charged_on, renews_on::text AS renews_on,
-               active, verified, note, replaces_line, is_credit, updated_at`;
+               active, verified, note, replaces_line, is_credit, ends_on::text AS ends_on, updated_at`;
 
 // The import's match: the same vendor, product and cadence, ignoring case, and
 // the same side (a charge or a credit), is the same bill, so pasting the list
@@ -599,7 +606,7 @@ const EXPENSE_IMPORT_INSERT_SQL = `INSERT INTO business_expenses
 // reads the row before it writes it.
 const EXPENSE_MATCH_SQL = `SELECT id, vendor, product, category, kind, amount_cents, currency, cadence,
             last_charged_on::text AS last_charged_on, renews_on::text AS renews_on,
-            active, verified, note, replaces_line, is_credit, updated_at
+            active, verified, note, replaces_line, is_credit, ends_on::text AS ends_on, updated_at
        FROM business_expenses
       WHERE lower(vendor) = lower($1)
         AND lower(COALESCE(product, '')) = lower(COALESCE($2, ''))
@@ -618,6 +625,7 @@ const IMPORT_FIELD_KEYS = {
   currency: ['currency'],
   lastChargedOn: ['lastChargedOn'],
   renewsOn: ['renewsOn'],
+  endsOn: ['endsOn'],
   active: ['active'],
   verified: ['verified'],
   note: ['note'],
@@ -636,6 +644,7 @@ function mergeIntoStored(stored, item) {
     cadence: stored.cadence,
     lastChargedOn: stored.lastChargedOn,
     renewsOn: stored.renewsOn,
+    endsOn: stored.endsOn,
     active: stored.active,
     verified: stored.verified,
     note: stored.note,
@@ -709,7 +718,8 @@ async function importExpenses(items, userId, db = pool) {
 //   * the reconciled bills (cost_reconciled over costModel.RECONCILED, today
 //     Google Cloud and Railway): the same, each a usage bill read as this much
 //     a month.
-//   * expense rows: counted while active and in USD.
+//   * expense rows: counted while active and in USD, and a bill set to end
+//     until the day it ends (THE END OF A BILL, below).
 //
 // Two figures come out of every line:
 //   perMonth   the run rate. Monthly and usage bills in full, quarterly bills
@@ -747,16 +757,56 @@ function perMonthCents(cadence, amountCents) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// THE END OF A BILL (migration 117, 2026-10-06)
+// ---------------------------------------------------------------------------
+//
+// A subscription with its renewal turned off carries the day it stops
+// (endsOn). An App Store "ends on Oct 20" is that day: nothing is charged on
+// or after it. Until then the bill runs like any other, in the burn and in
+// this month, with its renewals listed up to the day before. From that day it
+// counts the way a stopped bill does: no run rate, no renewal, no licence
+// fixed by it and no code line stood in for. It still counts in the months it
+// ran in, so the month it ends in carries it and the next one does not. Before
+// 117 such a bill was one of two wrong pictures: a renewal on a date nobody
+// would charge and a place in the burn for good, or, marked stopped early, a
+// month it was still running in that no longer showed it.
+//
+// A charge recorded on or after the end date means the bill renewed after all
+// (one App Store "expiring" notice was followed by a renewal), so the date is
+// out of date. Rather than drop a bill that is still being paid, the hub
+// counts it as running and names it (chargedPastEnd) so the date gets cleared.
+//
+// A one-time charge has nothing to end, and the table refuses the pair.
+function endOf(x, todayYmd) {
+  if (!x || !isYmd(x.endsOn) || x.cadence === 'one_time') return 'none';
+  if (isYmd(x.lastChargedOn) && x.lastChargedOn >= x.endsOn) return 'renewed';
+  return x.endsOn <= todayYmd ? 'ended' : 'ending';
+}
+
+// The day nothing more is charged, or null for a bill that renews.
+function stopsOn(x, todayYmd) {
+  const end = endOf(x, todayYmd);
+  return end === 'ending' || end === 'ended' ? x.endsOn : null;
+}
+
+// Still being charged: marked so, and not past its end date.
+function isRunning(x, todayYmd) {
+  return !!x && x.active === true && endOf(x, todayYmd) !== 'ended';
+}
+
 // The next charge date of a recurring expense, and whether it was typed or
-// worked out from the last charge.
+// worked out from the last charge. None on or after the day a bill ends.
 function nextChargeOn(x, todayYmd) {
-  if (x.renewsOn && x.renewsOn >= todayYmd) return { on: x.renewsOn, estimated: false };
+  const stop = stopsOn(x, todayYmd);
+  const before = (on) => !stop || on < stop;
+  if (x.renewsOn && x.renewsOn >= todayYmd) return before(x.renewsOn) ? { on: x.renewsOn, estimated: false } : null;
   const step = { monthly: 1, quarterly: 3, yearly: 12 }[x.cadence] || null;
   const base = x.renewsOn || x.lastChargedOn;
   if (!step || !base) return null;
   for (let k = 1; k <= 240; k += 1) {
     const next = addMonthsYmd(base, k * step);
-    if (next >= todayYmd) return { on: next, estimated: true };
+    if (next >= todayYmd) return before(next) ? { on: next, estimated: true } : null;
   }
   return null;
 }
@@ -963,7 +1013,10 @@ function buildPriceSheet({ expenses = [], reconciled = null, todayYmd }) {
   const rows = [];
   // A line an active dollar bill stands in for is not a price paid: the bill
   // is, and it is on the sheet in its place (the rule buildCostPicture uses).
-  const replaced = new Set(expenses.filter((x) => x.active && x.currency === 'USD' && x.replacesLine && !x.isCredit).map((x) => x.replacesLine));
+  // A bill past its end date stands in for nothing and is no longer paid, so
+  // it is off the sheet like a stopped one.
+  const running = (x) => isRunning(x, todayYmd);
+  const replaced = new Set(expenses.filter((x) => running(x) && x.currency === 'USD' && x.replacesLine && !x.isCredit).map((x) => x.replacesLine));
   const unitOf = { monthly: 'a month', yearly: 'a year', one_time: 'once', quarterly: 'a quarter', usage: 'a month, metered' };
   for (const [list, cadence] of [[costModel.FIXED_MONTHLY, 'monthly'], [costModel.FIXED_ANNUAL, 'yearly'], [costModel.ONE_TIME, 'one_time']]) {
     for (const e of list) {
@@ -980,7 +1033,7 @@ function buildPriceSheet({ expenses = [], reconciled = null, todayYmd }) {
     rows.push({ id: `rate-${key}`, label: RATE_LABEL[key] || key, priceCents: null, unit: 'rate card', checkedOn: r.checked || null, source: r.source || null, from: 'rate', dueAfterDays: PRICE_SHEET_STALE_DAYS });
   }
   for (const x of expenses) {
-    if (!x.active) continue;
+    if (!running(x)) continue;
     rows.push({
       id: `expense-${x.id}`,
       label: x.product ? `${x.vendor}, ${x.product}` : x.vendor,
@@ -1027,7 +1080,11 @@ const EXPENSE_CSV_COLUMNS = [
   ['Currency', (x) => x.currency],
   ['Last charged', (x) => x.lastChargedOn],
   ['Renews', (x) => x.renewsOn],
-  ['Still charged', (x) => (x.active ? 'yes' : 'no')],
+  // Migration 117: the day a bill set to end stops.
+  ['Ends', (x) => x.endsOn],
+  // As of the day of the export: a bill past its end date is no longer
+  // charged, whether or not it was marked stopped.
+  ['Still charged', (x, today) => (isRunning(x, today) ? 'yes' : 'no')],
   ['Checked against a receipt', (x) => (x.verified ? 'yes' : 'no')],
   ['Counts instead of', (x) => x.replacesLine],
   ['Note', (x) => x.note],
@@ -1039,9 +1096,9 @@ function csvCell(v, opts = {}) {
   return `"${s.replace(/"/g, '""')}"`;
 }
 
-function expensesCsv(rows) {
+function expensesCsv(rows, todayYmd = ymdIn(HUB_TZ)) {
   const lines = [EXPENSE_CSV_COLUMNS.map(([h]) => csvCell(h)).join(',')];
-  for (const x of rows || []) lines.push(EXPENSE_CSV_COLUMNS.map(([, f, opts]) => csvCell(f(x), opts)).join(','));
+  for (const x of rows || []) lines.push(EXPENSE_CSV_COLUMNS.map(([, f, opts]) => csvCell(f(x, todayYmd), opts)).join(','));
   // CRLF, the line ending RFC 4180 names and Excel expects.
   return `${lines.join('\r\n')}\r\n`;
 }
@@ -1051,12 +1108,13 @@ function expensesCsv(rows) {
 // left out. A code line is fixed when its own figure is above $0 or an active
 // bill above $0 stands in for it; a vendor fix, when an active bill above $0
 // names the vendor.
-function licenceExposures({ lines, expenses, perMonthCents }) {
+function licenceExposures({ lines, expenses, perMonthCents, todayYmd }) {
   const items = [];
   // A bill that fixes an exposure is one in the dollar run rate: active, in
   // dollars, recurring, above $0 and not a credit. A euro row, a one-time
-  // charge or a stopped row is not a plan being paid for (review 2026-10-03).
-  const paying = (x) => x.active && !x.isCredit && x.currency === 'USD' && x.amountCents > 0
+  // charge or a stopped row is not a plan being paid for (review 2026-10-03),
+  // and neither is one past its end date: the plan lapsed with it.
+  const paying = (x) => isRunning(x, todayYmd) && !x.isCredit && x.currency === 'USD' && x.amountCents > 0
     && ['monthly', 'quarterly', 'yearly', 'usage'].includes(x.cadence);
   const vendorIs = (x, needle) => String(x.vendor || '').toLowerCase().includes(String(needle).toLowerCase());
   for (const e of costModel.LICENCE_EXPOSURES || []) {
@@ -1099,7 +1157,7 @@ function renewalTotals(expenses, todayYmd) {
     let charges = 0;
     const bills = new Set();
     for (const x of expenses) {
-      if (!x.active || x.isCredit || x.currency !== 'USD') continue;
+      if (!isRunning(x, todayYmd) || x.isCredit || x.currency !== 'USD') continue;
       const step = { monthly: 1, quarterly: 3, yearly: 12 }[x.cadence];
       if (!step) continue;
       // Stepped from the bill's own anchor, the way nextChargeOn steps:
@@ -1108,13 +1166,15 @@ function renewalTotals(expenses, todayYmd) {
       // one too many in a window (review 2026-10-03).
       const anchor = x.renewsOn || x.lastChargedOn;
       if (!anchor) continue;
+      // Nothing is charged on or after the day a bill ends.
+      const stop = stopsOn(x, todayYmd);
       // A renewal date is a charge still to come, so it counts itself; a last
       // charge date is one already paid, so counting starts a step after it
       // (review 2026-10-03: a bill charged today read as due this week).
       for (let k = x.renewsOn ? 0 : 1; k <= 240; k += 1) {
         const on = addMonthsYmd(anchor, k * step);
         if (on < todayYmd) continue;
-        if (on > until) break;
+        if (on > until || (stop && on >= stop)) break;
         cents += x.amountCents;
         charges += 1;
         bills.add(x.id);
@@ -1125,15 +1185,19 @@ function renewalTotals(expenses, todayYmd) {
 }
 
 function buildCostPicture({ expenses = [], reconciled = null, month }) {
+  // Still being charged today: active, and not past an end date (THE END OF A
+  // BILL). Everywhere below that asked whether a row was active asks this.
+  const today = month.todayYmd;
+  const running = (x) => isRunning(x, today);
   // Only a row that is itself counted may take a code line out of the total:
-  // active, and in dollars. A euro bill linked to Railway would otherwise
+  // running, and in dollars. A euro bill linked to Railway would otherwise
   // remove the Railway figure and add nothing, since nothing here converts
   // currencies.
   // Nor may a credit: it has no code figure to stand in for (096 refuses the
   // pair in the table as well).
   const replacedBy = new Map();
   for (const x of expenses) {
-    if (x.active && x.currency === 'USD' && x.replacesLine && !x.isCredit) {
+    if (running(x) && x.currency === 'USD' && x.replacesLine && !x.isCredit) {
       if (!replacedBy.has(x.replacesLine)) replacedBy.set(x.replacesLine, []);
       replacedBy.get(x.replacesLine).push(x.id);
     }
@@ -1148,7 +1212,7 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
   // of a stopped one; a $0 row or a one-time charge linked to the same line
   // left the stopped bill's real charge in neither figure (review 2026-10-03).
   const payingReplacers = new Set(expenses
-    .filter((x) => x.active && x.currency === 'USD' && !x.isCredit && x.amountCents > 0
+    .filter((x) => running(x) && x.currency === 'USD' && !x.isCredit && x.amountCents > 0
       && ['monthly', 'quarterly', 'yearly', 'usage'].includes(x.cadence) && x.replacesLine)
     .map((x) => x.replacesLine));
   for (const c of codeCostLines(reconciled)) {
@@ -1176,9 +1240,18 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
     // it covers nothing; and when an active row already stands in for the
     // same recurring line, that row carries this month, and the stopped one
     // adding its charge as well counted the line's month twice.
+    //
+    // A BILL SET TO END (migration 117) counts in every month it ran in, so
+    // in this month when its end date falls after the 1st, whether it was
+    // left as charged or marked stopped as well: marking it stopped after it
+    // ended must not take it out of a month it ran in. From its end date on
+    // it is not running, so the rules above hold for it as for a stopped one.
+    const live = running(x);
+    const stop = stopsOn(x, today);
+    const ranThisMonth = !!stop && stop > month.startYmd;
     const replaced = x.replacesLine ? lines.find((l) => l.origin !== 'expense' && l.id === x.replacesLine) : null;
-    const superseded = !x.active && !!replaced && replaced.cadence !== 'one_time' && payingReplacers.has(x.replacesLine);
-    const stoppedButPaidThisMonth = !x.active && inMonth(x.lastChargedOn, month) && !superseded;
+    const superseded = !live && !!replaced && replaced.cadence !== 'one_time' && payingReplacers.has(x.replacesLine);
+    const stoppedButPaidThisMonth = !live && (inMonth(x.lastChargedOn, month) || ranThisMonth) && !superseded;
     if (stoppedButPaidThisMonth && usd && !x.isCredit && x.amountCents > 0 && replaced && replaced.cadence !== 'one_time') {
       coveredThisMonth.add(replaced.id);
     }
@@ -1197,9 +1270,13 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
       renewsOn: x.renewsOn,
       replacesLine: x.replacesLine,
       isCredit: x.isCredit === true,
-      counted: usd && (x.active || stoppedButPaidThisMonth),
-      recurring: usd && x.active,
-      inactive: !x.active,
+      // The day it stops, while that day is still to come or has passed; null
+      // for a bill that renews, and for one a later charge renewed.
+      endsOn: stop,
+      ended: endOf(x, today) === 'ended',
+      counted: usd && (live || stoppedButPaidThisMonth),
+      recurring: usd && live,
+      inactive: !live,
       nonUsd: !usd,
     });
   }
@@ -1242,6 +1319,7 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
     perMonthTotal += l.perMonthExact;
   }
   const r0 = (v) => Math.round(v) || 0;
+  const perMonthExactTotal = perMonthTotal;
   thisMonthCents = r0(thisMonthCents);
   perMonthTotal = r0(perMonthTotal);
   // Each table's rows are rounded so they add up to the total they sit under
@@ -1253,15 +1331,52 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
     [kinds, 'perMonthCents', perMonthTotal], [kinds, 'thisMonthCents', thisMonthCents],
     [cats, 'perMonthCents', perMonthTotal], [cats, 'thisMonthCents', thisMonthCents],
   ]) roundRowsToTotal(rows, field, total);
+
+  // THE BILLS SET TO END, soonest first (THE END OF A BILL), each with the run
+  // rate that leaves with it: the screen says what the burn becomes once they
+  // have gone. A credit set to end is listed too, because the burn rises when
+  // it goes. Worked from the unrounded shares, so the burn after is the total
+  // less exactly what leaves.
+  const ending = [];
+  const leaving = [];
+  for (const l of lines) {
+    if (l.origin !== 'expense' || l.inactive || !l.endsOn) continue;
+    // A euro bill was never in the dollar burn, so nothing leaves it.
+    const inBurn = !l.nonUsd && l.perMonthCents !== 0;
+    ending.push({
+      expenseId: l.expenseId,
+      label: l.label,
+      endsOn: l.endsOn,
+      amountCents: l.amountCents,
+      currency: l.currency,
+      cadence: l.cadence,
+      isCredit: l.isCredit === true,
+      perMonthCents: l.nonUsd ? null : l.perMonthCents,
+    });
+    if (inBurn) leaving.push(l);
+  }
+  ending.sort((a, b) => (a.endsOn < b.endsOn ? -1 : a.endsOn > b.endsOn ? 1 : a.label.localeCompare(b.label)));
+  const burnAfter = r0(perMonthExactTotal - leaving.reduce((s, l) => s + l.perMonthExact, 0));
+  const afterEnding = leaving.length === 0 ? null : {
+    burnCents: burnAfter,
+    changeCents: burnAfter - perMonthTotal,
+    // The day the last of them ends.
+    by: leaving.reduce((d, l) => (l.endsOn > d ? l.endsOn : d), leaving[0].endsOn),
+    bills: leaving.length,
+    // Named when it is the only one, so the screen can say which.
+    label: leaving.length === 1 ? leaving[0].label : null,
+  };
+
   for (const l of lines) { delete l.perMonthExact; delete l.thisMonthExact; }
 
   // Renewals in the window, from the expense list. Code lines carry no charge
   // dates, and the panel says so rather than guessing one. A credit is money
-  // coming back, not a charge to plan for, so it is not listed.
+  // coming back, not a charge to plan for, so it is not listed. A bill set to
+  // end renews only before the day it ends.
   const horizon = addDaysYmd(month.todayYmd, RENEWAL_WINDOW_DAYS);
   const upcoming = [];
   for (const x of expenses) {
-    if (!x.active || x.isCredit || !['monthly', 'quarterly', 'yearly'].includes(x.cadence)) continue;
+    if (!running(x) || x.isCredit || !['monthly', 'quarterly', 'yearly'].includes(x.cadence)) continue;
     const next = nextChargeOn(x, month.todayYmd);
     if (!next || next.on > horizon) continue;
     upcoming.push({
@@ -1303,6 +1418,18 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
     .filter((l) => l.origin !== 'expense' && !l.counted)
     .map((l) => ({ id: l.id, label: l.label, byExpenseIds: l.replacedBy || [] }));
 
+  // A bill still marked as charged whose last charge is on or after its end
+  // date renewed after all (THE END OF A BILL). It is counted as running,
+  // and named so the stale date is cleared or moved.
+  const chargedPastEnd = expenses
+    .filter((x) => x.active && endOf(x, today) === 'renewed')
+    .map((x) => ({
+      expenseId: x.id,
+      label: x.product ? `${x.vendor}, ${x.product}` : x.vendor,
+      endsOn: x.endsOn,
+      lastChargedOn: x.lastChargedOn,
+    }));
+
   return {
     lines,
     byKind: EXPENSE_KINDS.map((k) => byKind[k]),
@@ -1311,6 +1438,9 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
     upcoming,
     upcomingWindowDays: RENEWAL_WINDOW_DAYS,
     upcomingTotals: renewalTotals(expenses, month.todayYmd),
+    ending,
+    afterEnding,
+    chargedPastEnd,
     possibleDoubles,
     replaced,
     nonUsd: lines.filter((l) => l.nonUsd && !l.inactive).map((l) => ({
@@ -1322,7 +1452,7 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
       isCredit: l.isCredit === true,
     })),
     undatedCodeYearly: lines.filter((l) => l.origin === 'code' && l.cadence === 'yearly' && l.counted).length,
-    licence: licenceExposures({ lines, expenses, perMonthCents: perMonthTotal }),
+    licence: licenceExposures({ lines, expenses, perMonthCents: perMonthTotal, todayYmd: today }),
     jumps: billJumps(reconciled),
   };
 }
@@ -1342,7 +1472,8 @@ function costsLedger({ expenses, reconciled, month, readError = null }) {
     readError: readError || (truncated ? `The expense list has more than ${EXPENSE_LIST_LIMIT} rows, so its totals would leave bills out.` : null),
     truncated,
     rows: (expenses || []).length,
-    activeRows: (expenses || []).filter((x) => x.active).length,
+    // Still charged today: a bill past its end date is not, whatever its flag.
+    activeRows: (expenses || []).filter((x) => isRunning(x, month.todayYmd)).length,
     burnMonthlyUsd: usd(pic.totals.perMonthCents),
     infrastructureMonthlyUsd: kind('infrastructure'),
     toolingMonthlyUsd: kind('tooling'),
@@ -3638,7 +3769,13 @@ async function buildMoneyHub({
     },
     expenses: {
       status: expensesR.ok ? 'ok' : 'error',
-      rows: expenses,
+      // Each row says where it stands against its end date today (THE END OF
+      // A BILL): 'ending', 'ended', 'renewed' when a later charge outran the
+      // date, or null for a bill that renews.
+      rows: expenses.map((x) => {
+        const end = endOf(x, month.todayYmd);
+        return { ...x, endState: end === 'none' ? null : end };
+      }),
       truncated: !!(expensesR.ok && expensesR.value.truncated),
       limit: EXPENSE_LIST_LIMIT,
       kinds: EXPENSE_KINDS,
@@ -3716,6 +3853,8 @@ module.exports = {
     subscriptionMonthly,
     tallySubscribers,
     nextChargeOn,
+    endOf,
+    isRunning,
     addMonthsYmd,
     zonedMidnightMs,
     stripeNetMonthlyCents,

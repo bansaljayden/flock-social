@@ -3213,6 +3213,11 @@ function expenseRules(prefix) {
     f('renewsOn')
       .optional({ values: 'null' })
       .custom(moneyHub.isYmd).withMessage('renewsOn must be a date, YYYY-MM-DD'),
+    // The day a bill set to end stops (migration 117). Any date: a bill that
+    // already ended is recorded as one.
+    f('endsOn')
+      .optional({ values: 'null' })
+      .custom(moneyHub.isYmd).withMessage('endsOn must be a date, YYYY-MM-DD'),
     f('active').optional({ values: 'null' }).custom((v) => typeof v === 'boolean').withMessage('active must be true or false'),
     f('verified').optional({ values: 'null' }).custom((v) => typeof v === 'boolean').withMessage('verified must be true or false'),
     // Money back rather than a charge (migration 096). The amount stays a
@@ -3228,6 +3233,11 @@ function expenseRules(prefix) {
     whole()
       .custom((item) => !(isPlainObject(item) && item.isCredit === true && item.replacesLine))
       .withMessage('a credit cannot count instead of a code line; leave replacesLine empty'),
+    // A one-time charge was paid once and has nothing to end; the table
+    // refuses the pair too (business_expenses_ends_on_check).
+    whole()
+      .custom((item) => !(isPlainObject(item) && item.cadence === 'one_time' && item.endsOn))
+      .withMessage('a one-time charge has nothing to end; leave endsOn empty'),
   ];
 }
 
@@ -3270,7 +3280,7 @@ router.get('/expenses/export', async (req, res) => {
       return res.status(409).json({ error: `The list has more than ${moneyHub.EXPENSE_LIST_LIMIT} bills, so an export would leave some out.` });
     }
     const today = moneyHub.ymdIn(moneyHub.HUB_TZ);
-    res.json({ filename: `flock-expenses-${today}.csv`, rows: rows.length, csv: moneyHub.expensesCsv(rows) });
+    res.json({ filename: `flock-expenses-${today}.csv`, rows: rows.length, csv: moneyHub.expensesCsv(rows, today) });
   } catch (err) {
     console.error('Export expenses error:', err);
     res.status(500).json({ error: 'Server error' });

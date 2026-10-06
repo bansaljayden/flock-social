@@ -1343,6 +1343,10 @@ describe('needs attention: every live problem at the top, each linking to its ca
     // Licence exposures as data (2026-10-03).
     ['a plan used outside its terms', { ...QUIET, costs: { ...COSTS, licence: { items: [{ id: 'vercel', vendor: 'Vercel', plan: 'Hobby (free)', why: 'Hobby is for non-commercial use.', fix: 'Vercel Pro', fixCentsPerMonth: 2000, source: 'https://vercel.com', checked: '2026-09-29' }], toComplyPerMonthCents: 2000, licensedPerMonthCents: 22078 } } },
       'Plans outside their terms', '1', /Vercel Hobby \(free\)\. Licensed for commercial use, the burn is \$220\.78 a month \(\$20\.00 more\)\./, 'hub-costs'],
+    // A bill charged on or after the day it was set to end renewed after all
+    // (migration 117): the date on the row is what is wrong.
+    ['a bill charged after the day it was set to end', { ...QUIET, costs: { ...COSTS, chargedPastEnd: [{ expenseId: 7, label: 'Store tool, Plus', endsOn: '2026-09-20', lastChargedOn: '2026-09-20' }] } },
+      'Charged after the end date', '1', /Store tool, Plus, set to end Sep 20(, 2026)? and charged Sep 20(, 2026)?\. A charge on or after the end date means it renewed, so it counts as running\. Clear the end date, or set the new one\./, 'hub-expenses'],
   ];
 
   test.each(TRIGGERS)('%s is a row that says so', async (_why, payload, label, value, note, target) => {
@@ -1379,6 +1383,28 @@ describe('needs attention: every live problem at the top, each linking to its ca
     expect(within(row).getByRole('link', { name: 'Go to Costs' })).toHaveAttribute('href', '#hub-costs');
     // Oct 16 is 21 days out, past the week, and stays on the Costs card only.
     expect(within(card).queryByText('Example Tool, Team')).toBeNull();
+  });
+
+  test('a bill ending within the month is listed apart, with what the burn does, and is not counted as a problem', async () => {
+    const ending = [
+      { expenseId: 7, label: 'Store tool, Plus', endsOn: '2026-10-05', amountCents: 3180, currency: 'USD', cadence: 'monthly', isCredit: false, perMonthCents: 3180 },
+      { expenseId: 9, label: 'Host, Startup credit', endsOn: '2026-10-20', amountCents: 1500, currency: 'USD', cadence: 'monthly', isCredit: true, perMonthCents: -1500 },
+      // Past the month: on the Costs card only.
+      { expenseId: 10, label: 'Yearly tool', endsOn: '2027-01-15', amountCents: 12000, currency: 'USD', cadence: 'yearly', isCredit: false, perMonthCents: 1000 },
+    ];
+    await renderHub({ ...QUIET, costs: { ...COSTS, ending } });
+    expect(await screen.findByText('Ending in the next 30 days')).toBeInTheDocument();
+    const card = attentionCard();
+    expect(within(card).getByRole('heading', { name: 'Nothing needs you' })).toBeInTheDocument();
+    const row = within(card).getByText('Store tool, Plus').parentElement.parentElement;
+    expect(within(row).getByText('$31.80 a month')).toBeInTheDocument();
+    expect(row.textContent).toMatch(/Ends in 10 days, Oct 5(, 2026)?, and the burn falls by \$31\.80 a month\./);
+    expect(within(row).getByRole('link', { name: 'Go to Costs' })).toHaveAttribute('href', '#hub-costs');
+    const credit = within(card).getByText('Host, Startup credit').parentElement.parentElement;
+    expect(within(credit).getByText('−$15.00 a month')).toBeInTheDocument();
+    expect(credit.textContent).toMatch(/Ends in 25 days, Oct 20(, 2026)?, and the burn rises by \$15\.00 a month\./);
+    expect(within(card).queryByText('Yearly tool')).toBeNull();
+    expect(card.textContent).not.toMatch(/—/);
   });
 });
 
@@ -1670,5 +1696,111 @@ describe('a jumped bill on the Costs card', () => {
     await renderHub({ ...CONNECTED, costs: { ...CONNECTED.costs, jumps: [{ id: 'railway', label: 'Railway (backend and Postgres)', fromCents: 2452, fromPeriod: 'Aug 15 to Sep 15, 2026', toCents: 4497, toAsOf: '2026-10-03', pct: 83 }] } });
     expect(await screen.findByText('Up on the last bill')).toBeInTheDocument();
     expect(screen.getByText('up 83%')).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A BILL THAT ENDS RATHER THAN RENEWS (migration 117). The server works out
+// where each row stands against its end date and what leaves the burn
+// (backend/services/moneyHub.js, THE END OF A BILL); the screen says it, on
+// the row, on the Costs card and beside the burn, and the form sets it.
+// ---------------------------------------------------------------------------
+describe('a bill that ends rather than renews', () => {
+  const ENDING_ROW = {
+    id: 7, vendor: 'Store tool', product: 'Plus', category: 'Tools', kind: 'tooling', amountCents: 3180, currency: 'USD', cadence: 'monthly',
+    lastChargedOn: '2026-09-05', renewsOn: '2026-10-05', endsOn: '2026-10-05', active: true, verified: true, note: null, replacesLine: null, isCredit: false, endState: 'ending',
+  };
+  const ENDED_ROW = { ...ENDING_ROW, id: 8, product: 'Old plan', lastChargedOn: '2026-08-10', renewsOn: null, endsOn: '2026-09-10', endState: 'ended' };
+  const ENDING = { expenseId: 7, label: 'Store tool, Plus', endsOn: '2026-10-05', amountCents: 3180, currency: 'USD', cadence: 'monthly', isCredit: false, perMonthCents: 3180 };
+  const WITH_ENDING = {
+    ...CONNECTED,
+    costs: { ...COSTS, ending: [ENDING], afterEnding: { burnCents: 17664, changeCents: -3180, by: '2026-10-05', bills: 1, label: 'Store tool, Plus' } },
+    expenses: { ...EXPENSES, rows: [...EXPENSES.rows, ENDING_ROW, ENDED_ROW] },
+  };
+  // The hub paints the last payload first, so each look waits for this one.
+  const expenseRow = async (label) => (await within(document.getElementById('hub-expenses')).findByText(label)).closest('div').parentElement;
+
+  test('the row says when it ends in place of a renewal that never comes, and an ended one says so', async () => {
+    await renderHub(WITH_ENDING);
+    const row = await expenseRow('Store tool, Plus');
+    expect(within(row).getByText('Ending')).toBeInTheDocument();
+    expect(row.textContent).toMatch(/last charged Sep 5(, 2026)?, ends Oct 5(, 2026)?\./);
+    expect(row.textContent).not.toMatch(/renews/);
+    const ended = await expenseRow('Store tool, Old plan');
+    expect(within(ended).getByText('Ended')).toBeInTheDocument();
+    expect(ended.textContent).toMatch(/ended Sep 10(, 2026)?/);
+    expect(within(ended).queryByText('Stopped')).toBeNull();
+  });
+
+  test('stopping it sends the end date back with the rest of the row', async () => {
+    await renderHub(WITH_ENDING);
+    api.updateAdminExpense.mockResolvedValue({ success: true });
+    fireEvent.click(within(await expenseRow('Store tool, Plus')).getByRole('button', { name: /^Mark as stopped/ }));
+    await waitFor(() => expect(api.updateAdminExpense).toHaveBeenCalledTimes(1));
+    expect(api.updateAdminExpense.mock.calls[0]).toEqual([7, expect.objectContaining({ endsOn: '2026-10-05', renewsOn: '2026-10-05', active: false })]);
+  });
+
+  test('the form sets the day a bill ends, and a one-time charge cannot carry one', async () => {
+    await renderHub(NOT_CONNECTED);
+    api.createAdminExpense.mockResolvedValue({ success: true });
+    fireEvent.click(screen.getByRole('button', { name: 'Add a bill' }));
+    fireEvent.change(screen.getByLabelText('Vendor'), { target: { value: 'Store tool' } });
+    fireEvent.change(screen.getByLabelText('Amount, dollars'), { target: { value: '31.80' } });
+    fireEvent.change(screen.getByLabelText('Ends on'), { target: { value: '2026-10-20' } });
+    expect(screen.getByText('For a bill whose renewal is turned off. Nothing is charged on or after that day and the hub stops counting it then, so leave Still being charged ticked.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(api.createAdminExpense).toHaveBeenCalledTimes(1));
+    expect(api.createAdminExpense.mock.calls[0][0]).toMatchObject({ vendor: 'Store tool', cadence: 'monthly', endsOn: '2026-10-20' });
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Add a bill' }));
+    fireEvent.change(screen.getByLabelText('Vendor'), { target: { value: 'Filing' } });
+    fireEvent.change(screen.getByLabelText('Amount, dollars'), { target: { value: '50' } });
+    fireEvent.change(screen.getByLabelText('Ends on'), { target: { value: '2026-10-20' } });
+    fireEvent.change(screen.getByLabelText('How often'), { target: { value: 'one_time' } });
+    expect(screen.getByLabelText('Ends on')).toBeDisabled();
+    expect(screen.queryByText(/For a bill whose renewal is turned off/)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(api.createAdminExpense).toHaveBeenCalledTimes(2));
+    expect(api.createAdminExpense.mock.calls[1][0]).toMatchObject({ vendor: 'Filing', cadence: 'one_time', endsOn: null });
+  });
+
+  test('the import says how to paste one', async () => {
+    await renderHub(NOT_CONNECTED);
+    fireEvent.click(screen.getByRole('button', { name: 'Import a list' }));
+    expect(screen.getByText(/renewsOn, endsOn for a bill whose renewal is turned off, verified/)).toBeInTheDocument();
+  });
+
+  test('the Costs card lists it under Set to end, and the burn says where it goes', async () => {
+    await renderHub(WITH_ENDING);
+    const costs = document.getElementById('hub-costs');
+    expect(await within(costs).findByText('Set to end')).toBeInTheDocument();
+    const row = within(costs).getByText(/^Oct 5(, 2026)?, Store tool, Plus$/).parentElement.parentElement;
+    expect(within(row).getByText('$31.80 a month')).toBeInTheDocument();
+    expect(row.textContent).toMatch(/No charge on or after this day\. Then the burn falls by \$31\.80 a month\./);
+    expect(hubRow('Burn a month').textContent).toMatch(/One-time charges are left out\. It falls to \$176\.64 on Oct 5(, 2026)?, when Store tool, Plus ends\./);
+  });
+
+  test('several set to end, a credit among them, or one in another currency, each read right', async () => {
+    const credit = { expenseId: 9, label: 'Host, Startup credit', endsOn: '2026-11-01', amountCents: 1500, currency: 'USD', cadence: 'monthly', isCredit: true, perMonthCents: -1500 };
+    const euro = { expenseId: 11, label: 'Abroad tool', endsOn: '2026-12-01', amountCents: 900, currency: 'EUR', cadence: 'monthly', isCredit: false, perMonthCents: null };
+    await renderHub({
+      ...CONNECTED,
+      costs: { ...COSTS, ending: [ENDING, credit, euro], afterEnding: { burnCents: 19164, changeCents: -1680, by: '2026-11-01', bills: 2, label: null } },
+    });
+    const costs = document.getElementById('hub-costs');
+    const creditRow = (await within(costs).findByText(/Host, Startup credit$/)).parentElement.parentElement;
+    expect(hubRow('Burn a month').textContent).toMatch(/It falls to \$191\.64 by Nov 1(, 2026)?, once the 2 bills set to end have ended\./);
+    expect(within(creditRow).getByText('−$15.00 a month')).toBeInTheDocument();
+    expect(creditRow.textContent).toMatch(/No credit on or after this day\. Then the burn rises by \$15\.00 a month\./);
+    const euroRow = within(costs).getByText(/Abroad tool$/).parentElement.parentElement;
+    expect(within(euroRow).getByText('9.00 EUR a month')).toBeInTheDocument();
+    expect(euroRow.textContent).toMatch(/No charge on or after this day\.$/);
+  });
+
+  test('a server from before migration 117 draws none of it', async () => {
+    await renderHub(CONNECTED);
+    await waitFor(() => expect(screen.queryByText('Set to end')).toBeNull());
+    expect(hubRow('Burn a month').textContent).toMatch(/One-time charges are left out\.$/);
+    expect(within(document.getElementById('hub-expenses')).queryByText('Ending')).toBeNull();
   });
 });
