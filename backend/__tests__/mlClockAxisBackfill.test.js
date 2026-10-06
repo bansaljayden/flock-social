@@ -77,6 +77,10 @@ const CONN = `postgresql://postgres:postgres@127.0.0.1:${PG_PORT}/flock_axis_tes
 // because pg reads it even when a connection string is passed.
 process.env.DATABASE_URL = CONN;
 process.env.PGSSLMODE = 'disable';
+// collectWeekly refuses to start without a BestTime key. The service is
+// stubbed below, so this one is never sent, and pinning it keeps the real one
+// out of the suite.
+process.env.BESTTIME_API_KEY = 'not-a-real-key';
 
 // Both collectors destructure their dependencies at require time, so the stubs
 // have to be in the module cache BEFORE the requires below. Nothing here

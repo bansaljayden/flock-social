@@ -33,10 +33,12 @@ const CONN = `postgresql://postgres:postgres@127.0.0.1:${PG_PORT}/flock_stalest_
 
 // scripts/ml/* call dotenv.config() on backend/.env, which points at the LIVE
 // Railway database, and dotenv never overwrites an already-set variable. These
-// lines before the requires keep this suite on its own instance.
+// lines before the requires keep this suite on its own instance, and keep the
+// real BestTime key out of it: the collector refuses to start without a key,
+// and this one is never sent, because BestTime is stubbed below.
 process.env.DATABASE_URL = CONN;
 process.env.PGSSLMODE = 'disable';
-delete process.env.BESTTIME_API_KEY;
+process.env.BESTTIME_API_KEY = 'not-a-real-key';
 
 // What the collector did, in order: ['call', venue name] for each BestTime
 // call and ['sleep', ms] for each pause.

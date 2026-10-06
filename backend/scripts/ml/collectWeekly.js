@@ -8,6 +8,7 @@ require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '.e
 
 const { Pool } = require('pg');
 const { fetchWeeklyForecast } = require('./bestTimeService');
+const { configuredKey } = require('../../services/besttimeAccount');
 const { describeError, describeDbError } = require('./logSafe');
 const { bestTimeDayToJsDay, getLocalTime, getSeason, sleep, withCorpusWriteLock } = require('./config');
 
@@ -339,6 +340,21 @@ async function collectWeekly() {
   const argError = createdAfter.error || selection.error || credits.error;
   if (argError) {
     console.error(`[ML:Weekly] ${argError}`);
+    process.exitCode = 1;
+    await pool.end();
+    return;
+  }
+
+  // No key, no run. fetchWeeklyForecast answers null without one, and the
+  // loop files a null as "no forecast": the venue is stamped as asked and,
+  // if it had no status, marked 404. A run whose key went missing (the
+  // refresh windows read it out of backend/.env) would do that to every
+  // venue it selected without one call, and --order=stalest would then put
+  // them all behind every other venue. A blank key is no key, as
+  // besttimeAccount reads it.
+  if (!configuredKey()) {
+    console.error('[ML:Weekly] BESTTIME_API_KEY is not set. Without it every venue would be '
+      + 'stamped as asked and none asked, so nothing runs.');
     process.exitCode = 1;
     await pool.end();
     return;
