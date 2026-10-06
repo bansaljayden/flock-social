@@ -381,6 +381,9 @@ async function runVenueDigestSweep(now = new Date()) {
       `SELECT vp.id, vp.user_id, vp.business_name, vp.tier, vp.google_place_id,
               vp.notification_prefs,
               vs.tier AS grant_tier, vs.status AS grant_status, vs.expires_at,
+              -- Which listing the grant is for, and which the claim names
+              -- (migration 119): a grant for another venue is not this one's.
+              vs.google_place_id AS grant_place_id, vp.google_place_id AS place_id,
               (vp.created_at IS NULL OR vp.created_at < $1::timestamptz) AS roost_legacy,
               vn.charge_not_before AS roost_notice_until,
               u.email, u.email_verified, u.is_banned,

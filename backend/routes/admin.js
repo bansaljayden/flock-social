@@ -2423,12 +2423,16 @@ router.post('/venues/:userId/tier', async (req, res) => {
            AND ($1 = 'free' OR old.verified = true)
            AND NOT ($10::boolean AND EXISTS (SELECT 1 FROM lapsed))
            AND NOT ($10::boolean AND NOT EXISTS (SELECT 1 FROM live))
-         RETURNING venue_profiles.id, venue_profiles.business_name, venue_profiles.tier, old.tier AS old_tier
+         RETURNING venue_profiles.id, venue_profiles.business_name, venue_profiles.tier, old.tier AS old_tier,
+                   venue_profiles.google_place_id
        ),
+       -- The grant is for the listing the claim names now (migration 119): a
+       -- comp given to one venue is not served to the next venue the claim is
+       -- re-pointed at (services/venueEntitlements.js grantForAnotherListing).
        granted AS (
          INSERT INTO venue_subscriptions
-           (user_id, tier, source, status, granted_reason, granted_at, granted_by, expires_at, updated_at)
-         SELECT $2, $1, $9, 'active', $8, NOW(), $3, $5::timestamptz, NOW() FROM upd
+           (user_id, tier, source, status, granted_reason, granted_at, granted_by, expires_at, google_place_id, updated_at)
+         SELECT $2, $1, $9, 'active', $8, NOW(), $3, $5::timestamptz, upd.google_place_id, NOW() FROM upd
          ON CONFLICT (user_id) DO UPDATE SET
            tier = EXCLUDED.tier,
            source = EXCLUDED.source,
@@ -2436,6 +2440,7 @@ router.post('/venues/:userId/tier', async (req, res) => {
            granted_reason = EXCLUDED.granted_reason,
            granted_at = NOW(),
            granted_by = EXCLUDED.granted_by,
+           google_place_id = EXCLUDED.google_place_id,
            expires_at = CASE
              WHEN $1 = 'free' THEN NULL
              -- An explicit null is a grant with no end date. GREATEST skips a

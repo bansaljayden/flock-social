@@ -133,9 +133,11 @@ function noticeWindowOpen(row, now) {
 //      world (a hand-granted tier with no end date agreed) and the local e2e
 //      harness, which drives venue_profiles.tier directly. Not a bypass: a row
 //      with no grant has no expiry to have missed.
-//   2. A GRANT ROW THAT IS DEAD — lapsed, or in a status that revokes — is the
-//      free tier, whatever the cached column still says. This is the whole
-//      point: the column is never trusted over the grant.
+//   2. A GRANT ROW THAT IS DEAD — lapsed, or in a status that revokes, or
+//      bought or given for another listing than the one the claim names now
+//      (grantForAnotherListing below) — is the free tier, whatever the cached
+//      column still says. This is the whole point: the column is never
+//      trusted over the grant.
 //   3. A GRANT ROW THAT IS LIVE gives the LOWER of the two tiers. One statement
 //      writes both, so they agree; if they ever disagree, the disagreement is a
 //      bug and the fail-closed reading of a bug is the smaller entitlement.
@@ -146,11 +148,30 @@ function noticeWindowOpen(row, now) {
 // `now` is the app clock rather than NOW() in the query, so this is a pure
 // function a test can walk across a boundary. Both clocks are NTP-synced and a
 // tier expiry is a date, not a microsecond fence.
+// A GRANT BELONGS TO ONE VENUE (migration 119). venue_subscriptions is keyed on
+// the owner's account, and a claim can be re-pointed at another Google listing
+// (PUT /api/venue-profile resets verified, and the new listing can be verified
+// in turn). A plan bought, or a comp given, for venue A was then served to
+// venue B, because nothing on the grant said which venue it was for. Now
+// venue_subscriptions.google_place_id says, and a grant is dead for any claim
+// that names another listing. Only rows from a query that selects both
+// columns (grant_place_id and place_id) are judged: a read that does not
+// select them is the old answer, never a wider one, and a grant bound to no
+// listing (written before the column, or for a claim with none) binds nothing.
+function grantForAnotherListing(row) {
+  if (!row || !Object.prototype.hasOwnProperty.call(row, 'grant_place_id')
+    || !Object.prototype.hasOwnProperty.call(row, 'place_id')) return false;
+  const bound = row.grant_place_id;
+  if (bound === null || bound === undefined) return false;
+  return bound !== (row.place_id ?? null);
+}
+
 function resolveGrantedTier(row, now) {
   // Unknown / null / garbage tier is free, never a bypass.
   const cached = rankOf(row?.tier) === null ? 'free' : row.tier;
   if (!row || row.grant_tier === null || row.grant_tier === undefined) return planOf(cached);
   if (!GRANT_LIVE_STATUSES.has(row.grant_status)) return 'free';
+  if (grantForAnotherListing(row)) return 'free';
   if (row.expires_at !== null && row.expires_at !== undefined) {
     const endsAt = new Date(row.expires_at).getTime();
     // NaN from an unparseable date fails this test and revokes, which is the
@@ -164,7 +185,7 @@ function resolveGrantedTier(row, now) {
 // ONE LINE, ON PURPOSE. Several suites drive this module against a scripted pg
 // fake that matches on the raw SQL text, and a multi-line template literal
 // arrives at those matchers with newlines in it.
-const TIER_SQL = 'SELECT vp.tier, vs.tier AS grant_tier, vs.status AS grant_status, vs.source AS grant_source, vs.granted_reason, vs.granted_at, vs.expires_at, (vp.created_at IS NULL OR vp.created_at < $2::timestamptz) AS roost_legacy, vn.charge_not_before AS roost_notice_until FROM venue_profiles vp LEFT JOIN venue_subscriptions vs ON vs.user_id = vp.user_id LEFT JOIN venue_roost_notices vn ON vn.user_id = vp.user_id WHERE vp.user_id = $1';
+const TIER_SQL = 'SELECT vp.tier, vs.tier AS grant_tier, vs.status AS grant_status, vs.source AS grant_source, vs.granted_reason, vs.granted_at, vs.expires_at, (vp.created_at IS NULL OR vp.created_at < $2::timestamptz) AS roost_legacy, vn.charge_not_before AS roost_notice_until, vs.google_place_id AS grant_place_id, vp.google_place_id AS place_id FROM venue_profiles vp LEFT JOIN venue_subscriptions vs ON vs.user_id = vp.user_id LEFT JOIN venue_roost_notices vn ON vn.user_id = vp.user_id WHERE vp.user_id = $1';
 
 // The full entitlement, for the surfaces that have to SAY what a venue holds
 // and until when (GET /api/venue-profile). Same resolution as the gate, so the
@@ -218,7 +239,10 @@ async function getVenueEntitlement(userId) {
     status: row?.grant_status ?? null,
     // True only when there IS an end date and it has passed. A permanent grant
     // is not expired and neither is a venue with no grant at all.
-    expired: tier === 'free' && !!row?.expires_at && rankOf(row?.grant_tier) > 0,
+    expired: tier === 'free' && !!row?.expires_at && rankOf(row?.grant_tier) > 0 && !grantForAnotherListing(row),
+    // True when the grant on file was bought or given for another listing
+    // than the one the claim names now, which is why it is not served.
+    forAnotherListing: grantForAnotherListing(row),
   };
 }
 
