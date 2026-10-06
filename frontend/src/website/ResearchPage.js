@@ -99,9 +99,9 @@ export default function ResearchPage() {
           <div className="lp-wrap">
             <h1>Why we study crowds, and what we found.</h1>
             <p className="lp-lead rs-hero-lead">
-              Two studies sit behind the number on every venue card: a forecast
-              of how busy a place will be, and a sensor that counts the people
-              actually there.
+              The forecast behind the number on every venue card says how busy
+              a place will be. The second study, a sensor that counts the people
+              actually there, has so far been tested on research footage.
             </p>
 
             <div className="rs-paper">

@@ -30,7 +30,7 @@ product invariant (see below, including what it does not cover).
 |---|---|
 | Planning | Flocks, invites, RSVP, venue voting, group chat with venue cards, plans calendar |
 | Money | Anonymous budget matching (aggregate ceiling only), bill splitting with Venmo and Cash App deep links, Zelle by instructions (it has no shared URL scheme to open) |
-| Crowd intelligence | Flock's own trained model in production (XGBoost v2.6.0, served in-process as ONNX, ship-gated against the popular-times baseline; see below). A rule engine covers venues with no baseline yet, and the response says which one answered |
+| Crowd intelligence | Each venue's own weekly curve, moved by its newest live readings (`CROWD_SERVE_MODE=curve_offset` with the nowcast on; see below). Flock's own trained model (XGBoost v2.6.0, run in-process as ONNX) is ship-gated and serves again only when a retrain beats that. A rule engine covers venues with no baseline yet, and the response says which one answered |
 | Birdie | AI assistant for venue ideas ("somewhere quiet and cheap nearby") |
 | Venue sensor | Flux: a Raspberry Pi with a thermal camera, a doorway counter and a microphone. Counts people on the device with Owl, Flock's own trained vision model (see below), and sends counts only |
 | Safety | Live location inside a flock (off by default, never background), two-tap SOS to trusted contacts, report + block, account deletion in-app (with re-authentication) |
@@ -60,8 +60,9 @@ are all real.
 **What the app serves today is each venue's own weekly curve plus its trailing
 live offset, with the newest live reading blended in (`CROWD_SERVE_MODE=curve_offset`,
 `CROWD_NOWCAST_ENABLED=true`).** Tested against 4,183 live readings it had not seen
-(2026-09-06 to 08), 78.8% of its numbers landed within one crowd level and 53.8%
-within 10 points (`backend/services/servedAccuracy.json`). The trained model below
+(2026-09-06 to 08), 56.0% of its numbers named the exact crowd level, 78.8%
+landed within one level and 53.8% within 10 points, and the average miss was
+17.1 points (`backend/services/servedAccuracy.json`). The trained model below
 is not in that serving path; the table is the model's own evaluation, kept for
 the next retrain.
 
@@ -72,8 +73,8 @@ The card gives you one of five words: Quiet, Not Busy, Steady, Busy, Packed.
 Getting that word right is the whole job. Here is Flock against the usual
 approach, which is to show the venue's typical pattern for that hour, the same
 kind of thing a popular-times graph gives you. Both were scored on 67,249 live
-crowd readings in three cities the model never trained on (Miami, Tokyo,
-Barcelona), which is the population production serves:
+crowd readings, the kind of reading the card is judged against, in three cities
+the model never trained on (Miami, Tokyo, Barcelona):
 
 | | the typical-times chart | **Flock** |
 |---|---|---|
@@ -123,7 +124,8 @@ features, so the floor rises whenever the incumbent improves.
 holding out three whole cities and keeping the rows with a usable baseline, that
 is **1.93 million training rows across 30 cities**. The model reads **106
 features**: time patterns, weather, nearby events, holiday calendars, venue
-category and popularity, and per-venue baselines. It predicts a *delta*, how far
+category and popularity, and the typical level for that kind of venue and for
+its neighbors at that hour. It predicts a *delta*, how far
 a venue will sit from its own typical value for that hour, and the served score
 is the baseline plus that delta, clamped and clipped to 0 to 100. Training runs
 on CPU with pinned threads and is **bit-reproducible**: given the same data and
@@ -141,7 +143,8 @@ above.
 
 **The corpus grows every hour.** A collector runs on an hourly cron across the
 served geography, Philadelphia and the Lehigh Valley, served venues first, and
-adds about 1,550 provenance-verified live readings a day. Every row it writes
+adds a few thousand provenance-verified live readings a day: each run stores
+one for every venue the vendor has a live reading for at that hour. Every row it writes
 records whether its label is a live reading or the vendor's forecast, with the
 vendor's forecast for the same moment kept beside it, and each run reads back
 what it wrote and refuses to exit clean if any row it committed is unlabelled.
@@ -151,7 +154,7 @@ A venue the model has no baseline for is answered by the rule engine in
 names the engine behind it and no rule-engine answer is ever presented as a
 model output.
 
-**Where the next gain comes from.** Every figure above is scored on three
+**Where the next gain comes from.** Every model figure above is scored on three
 cities held out of training entirely, rather than on the cities the product
 serves, which is the harder of the two readings and the one worth publishing.
 The binding input today is evidence density: about 26 live readings per venue
