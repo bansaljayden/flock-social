@@ -973,43 +973,113 @@ test('the ordinary rows are unchanged, so sanitising did not rewrite anybody pla
 // else's plan, and clamps drop off-shape ids the same way navigate_app
 // drops off-enum screens.
 
+// A turn that runs a venue search, then one staging tool, then answers. The
+// staging tools take a venue only by a place id a search in the same turn
+// returned, so every staged-venue case starts with one. The staging tool's own
+// result is the third call's first part.
+const searchThen = (name, args, finalText = 'card is up') => (_p, call) => {
+  if (call === 1) {
+    return { candidates: [{ content: { parts: [{ functionCall: { id: 'c1', name: 'search_venues', args: { query: 'bars' } } }] } }] };
+  }
+  if (call === 2) {
+    return { candidates: [{ content: { parts: [{ functionCall: { id: 'c2', name, args } }] } }] };
+  }
+  return { candidates: [{ content: { parts: [{ text: finalText }] } }] };
+};
+const stagingResult = () => sendCalls[2].message[0].functionResponse.response;
+
 test('draft_flock stages a card, clamps its fields, and mutates nothing', async () => {
-  sendImpl = (_p, call) => (call === 1
-    ? { candidates: [{ content: { parts: [{ functionCall: { id: 'c1', name: 'draft_flock', args: {
-        name: '  Friday tacos  ', event_time: '2030-01-04T23:00:00.000Z',
-        venue_place_id: 'PLACE_CLEAN', venue_name: 'Oakwood', venue_address: '1 Main St',
-      } } }] } }] }
-    : { candidates: [{ content: { parts: [{ text: 'card is up' }] } }] });
+  sendImpl = searchThen('draft_flock', {
+    name: '  Friday tacos  ', event_time: '2030-01-04T23:00:00.000Z', venue_place_id: 'PLACE_CLEAN',
+  });
   const res = await chat();
   assert.strictEqual(res.status, 200);
   assert.ok(res.body.flock_draft, 'the staged draft rides the response');
   assert.strictEqual(res.body.flock_draft.name, 'Friday tacos');
   assert.strictEqual(res.body.flock_draft.event_time, '2030-01-04T23:00:00.000Z');
-  assert.strictEqual(res.body.flock_draft.venue.place_id, 'PLACE_CLEAN');
+  assert.deepStrictEqual(res.body.flock_draft.venue,
+    { place_id: 'PLACE_CLEAN', name: 'Oakwood', address: '1 Main St, Denver, CO' });
   assert.ok(!allSql.some((q) => /^(INSERT|UPDATE|DELETE)/i.test(q)), 'the model turn writes nothing');
 });
 
-test('a past event time and an off-shape place id are dropped, not staged', async () => {
-  sendImpl = (_p, call) => (call === 1
-    ? { candidates: [{ content: { parts: [{ functionCall: { id: 'c1', name: 'draft_flock', args: {
-        name: 'Yesterday', event_time: '2020-01-01T00:00:00.000Z',
-        venue_place_id: 'not a place id', venue_name: 'Fake',
-      } } }] } }] }
-    : { candidates: [{ content: { parts: [{ text: 'ok' }] } }] });
+test('a past event time is dropped, not staged', async () => {
+  sendImpl = oneToolCall('draft_flock', { name: 'Yesterday', event_time: '2020-01-01T00:00:00.000Z' }, 'ok');
   const res = await chat();
   assert.strictEqual(res.status, 200);
   assert.ok(res.body.flock_draft);
   assert.strictEqual(res.body.flock_draft.event_time, null, 'a past time is not a plan time');
-  assert.strictEqual(res.body.flock_draft.venue, null, 'an off-shape id stages no venue');
+});
+
+// THE MODEL NAMES A VENUE BY ITS ID, AND THE ID HAS TO BE ONE WE HANDED IT.
+// The staging tools took the venue's name, address, rating and price from the
+// model's own arguments, and the id only had to pass a shape check, so a
+// model steered by a hostile listing or flock name could stage a real place
+// under a made-up name, or a made-up id under a real one. The card is now
+// built from the Places row a search in the same turn returned.
+test("a staged plan's venue is the Places row, whatever the model calls it", async () => {
+  sendImpl = searchThen('draft_flock', {
+    name: 'Friday', venue_place_id: 'PLACE_CLEAN', venue_name: 'Bad Bar', venue_address: '12 Nowhere Rd',
+  });
+  const res = await chat();
+  assert.strictEqual(res.status, 200);
+  assert.deepStrictEqual(res.body.flock_draft.venue,
+    { place_id: 'PLACE_CLEAN', name: 'Oakwood', address: '1 Main St, Denver, CO' },
+    'the card carries a name or address the model typed rather than the one Google returned');
+  assert.ok(!JSON.stringify(res.body).includes('Bad Bar'));
+});
+
+test("a staged vote's venue is the Places row, rating and price included", async () => {
+  dbVoteMembership = [{ name: 'Taco Tuesday', status: 'planning' }];
+  sendImpl = searchThen('add_venue_to_vote', {
+    flock_id: 42, place_id: 'PLACE_CLEAN', venue_name: 'Bad Bar', venue_address: '12 Nowhere Rd', rating: 5, price_level: 0,
+  });
+  const res = await chat();
+  assert.strictEqual(res.status, 200);
+  assert.deepStrictEqual(res.body.vote_stage.venue, {
+    place_id: 'PLACE_CLEAN', name: 'Oakwood', address: '1 Main St, Denver, CO', rating: 4.4, price_level: 2,
+  }, 'the vote card carries details the model typed rather than the ones Google returned');
+});
+
+for (const [label, id] of [['a well-shaped id no search returned', 'ChIJN1t_tDeuEmsRUsoyG83frY4'], ['an off-shape id', 'not a place id']]) {
+  test(`${label} stages no plan and tells the model why`, async () => {
+    sendImpl = searchThen('draft_flock', { name: 'Friday', venue_place_id: id });
+    const res = await chat();
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.flock_draft, undefined, 'a venue no search returned went onto the card');
+    assert.match(stagingResult().error, /search_venues/, 'the model is not told how to get a usable id');
+  });
+
+  test(`${label} stages no vote and tells the model why`, async () => {
+    dbVoteMembership = [{ name: 'Taco Tuesday', status: 'planning' }];
+    sendImpl = searchThen('add_venue_to_vote', { flock_id: 42, place_id: id });
+    const res = await chat();
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(res.body.vote_stage, undefined, 'a venue no search returned went onto the vote card');
+    assert.match(stagingResult().error, /search_venues/);
+  });
+}
+
+test('a search in an earlier turn does not vouch for an id in this one', async () => {
+  // The server keeps nothing between turns: the history comes back as text,
+  // with names and no ids. An id is only good in the turn whose search
+  // returned it, and a later turn searches again (free for five minutes, from
+  // the search cache) to get one.
+  sendImpl = oneToolCall('search_venues', { query: 'bars' }, 'oakwood');
+  await chat({ messages: [{ role: 'user', text: 'bars near me' }] });
+  sendCalls = [];
+  sendImpl = oneToolCall('draft_flock', { name: 'Friday', venue_place_id: 'PLACE_CLEAN' }, 'ok');
+  const res = await chat({ messages: [
+    { role: 'user', text: 'bars near me' },
+    { role: 'assistant', text: 'oakwood' },
+    { role: 'user', text: 'set it up there friday' },
+  ] });
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(res.body.flock_draft, undefined);
 });
 
 test("add_venue_to_vote stages only onto the caller's own votable plan", async () => {
   dbVoteMembership = [{ name: 'Taco Tuesday', status: 'voting' }];
-  sendImpl = (_p, call) => (call === 1
-    ? { candidates: [{ content: { parts: [{ functionCall: { id: 'c1', name: 'add_venue_to_vote', args: {
-        flock_id: 42, place_id: 'PLACE_CLEAN', venue_name: 'Oakwood',
-      } } }] } }] }
-    : { candidates: [{ content: { parts: [{ text: 'card is up' }] } }] });
+  sendImpl = searchThen('add_venue_to_vote', { flock_id: 42, place_id: 'PLACE_CLEAN' });
   const res = await chat();
   assert.strictEqual(res.status, 200);
   assert.ok(res.body.vote_stage);
@@ -1019,19 +1089,20 @@ test("add_venue_to_vote stages only onto the caller's own votable plan", async (
 });
 
 test('a plan the caller is not in, or one already finished, stages nothing', async () => {
+  // The venue is one this turn's search returned, so what refuses here is the
+  // membership read and nothing else.
   dbVoteMembership = [];
-  sendImpl = (_p, call) => (call === 1
-    ? { candidates: [{ content: { parts: [{ functionCall: { id: 'c1', name: 'add_venue_to_vote', args: {
-        flock_id: 999, place_id: 'PLACE_CLEAN', venue_name: 'Oakwood',
-      } } }] } }] }
-    : { candidates: [{ content: { parts: [{ text: 'ok' }] } }] });
+  sendImpl = searchThen('add_venue_to_vote', { flock_id: 999, place_id: 'PLACE_CLEAN' }, 'ok');
   let res = await chat();
   assert.strictEqual(res.status, 200);
   assert.strictEqual(res.body.vote_stage, undefined, 'no membership, no card');
+  assert.strictEqual(stagingResult().error, 'That plan is not one of yours.');
 
   dbVoteMembership = [{ name: 'Old Night', status: 'completed' }];
+  sendCalls = [];
   res = await chat();
   assert.strictEqual(res.body.vote_stage, undefined, 'a finished plan takes no new votes');
+  assert.strictEqual(stagingResult().error, 'Old Night already finished.');
 });
 
 
