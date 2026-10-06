@@ -3222,6 +3222,15 @@ const aiMemoryCutIndex = (count, max = AI_CHAT_MAX_MESSAGES) => {
   return count - (limit - 1);
 };
 
+// When the box a reply closed opens again. backend/routes/ai.js answers the
+// message that spends the day's last chirp with remaining: 0 and the same
+// resetsAt its 429 carries. The box closes on that zero, and it used to learn
+// when to open only from the 429, so a box a successful reply closed stayed
+// shut past the reset until a relaunch. A reply with chirps left, or without a
+// time that parses, arms nothing.
+const aiResetsAtFromReply = (reply) => (reply && reply.remaining === 0
+  && typeof reply.resetsAt === 'string' && Number.isFinite(Date.parse(reply.resetsAt)) ? reply.resetsAt : null);
+
 // What actually goes on the wire: {role, text}. The venue names Birdie showed
 // are folded into its own turns so it remembers what it recommended.
 //
@@ -10260,7 +10269,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         outgoing = trimAiHistory(outgoing, serverMax);
         response = await sendAiChat(toAiWireMessages(outgoing), location, currentContext);
       }
-      if (typeof response.remaining === 'number') setAiRemaining(response.remaining);
+      if (typeof response.remaining === 'number') {
+        setAiRemaining(response.remaining);
+        // The same timer the 429 below arms, from the reply that spent the
+        // last chirp; any other reply clears it.
+        setAiResetsAt(aiResetsAtFromReply(response));
+      }
       setAiMessages(prev => [...prev, { role: 'assistant', text: response.text, venues: response.venues || [], navigate: response.navigate || null, flockDraft: response.flock_draft || null, voteStage: response.vote_stage || null }]);
     } catch (err) {
       if (err?.code === 'UPGRADE_REQUIRED') {

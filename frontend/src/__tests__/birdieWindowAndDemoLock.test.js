@@ -474,6 +474,43 @@ describe('sendAiMessage wiring', () => {
   });
 });
 
+// ───────────────────────────────────────────────────────────────────────────
+// 5b. The reply that spends the last free chirp. backend/routes/ai.js answers
+// the tenth free message with remaining: 0 and, since this change, the same
+// resetsAt its 429 carries. The box closes on that zero, and it used to learn
+// when to open again only from the 429, so a box a successful reply closed
+// stayed shut past the reset until a relaunch.
+// ───────────────────────────────────────────────────────────────────────────
+describe('a reply that spends the last chirp arms the unlock timer', () => {
+  // Lifted per test rather than at load, so on a tree without the helper only
+  // these tests fail and the rest of the file still runs.
+  const lift = () => evaluate([extractDeclaration(appSource, 'aiResetsAtFromReply')], ['aiResetsAtFromReply']).aiResetsAtFromReply;
+
+  test('remaining 0 with a reset time hands that time on', () => {
+    const at = '2026-10-07T00:00:00.000Z';
+    expect(lift()({ remaining: 0, resetsAt: at, text: 'go at 9' })).toBe(at);
+  });
+
+  test('a reply with chirps left, or with no usable time, arms nothing', () => {
+    const aiResetsAtFromReply = lift();
+    expect(aiResetsAtFromReply({ remaining: 3, resetsAt: '2026-10-07T00:00:00.000Z' })).toBeNull();
+    for (const bad of [undefined, null, '', 'tomorrow', 7, {}]) {
+      expect(aiResetsAtFromReply({ remaining: 0, resetsAt: bad })).toBeNull();
+    }
+    for (const bad of [null, undefined, 'x', 7]) expect(aiResetsAtFromReply(bad)).toBeNull();
+  });
+
+  test('the success path sets the reset off the reply, beside the count it came with', () => {
+    const start = appSource.indexOf('const sendAiMessage = useCallback');
+    const send = appSource.slice(start, appSource.indexOf('const fillAiInput = useCallback', start));
+    const success = send.slice(send.indexOf('if (typeof response.remaining === \'number\') {'), send.indexOf('} catch (err) {\n      if (err?.code'));
+    expect(success).toContain('setAiRemaining(response.remaining);');
+    expect(success).toContain('setAiResetsAt(aiResetsAtFromReply(response));');
+    // The timer it arms is the one the 429 already arms.
+    expect(appSource).toContain('const t = setTimeout(() => { setAiResetsAt(null); refreshEntitlements(); }, Math.min(ms + 1000, 2147483647));');
+  });
+});
+
 describe('the input box has one source of truth', () => {
   test('every setAiInputHasText call sits next to the matching ref write', () => {
     const lines = appSource.split('\n');

@@ -323,6 +323,39 @@ test('known-not-premium keeps exactly today\'s behavior: the meter runs, the loc
     'the paywall refusal now claims to be retryable; that is the outage\'s word, and a locked user retrying gets the same lock');
 });
 
+// THE LAST FREE CHIRP SAYS WHEN THE NEXT ONE COMES. The tenth message of a
+// free day is a 200 with remaining: 0, and the app closes the box on that
+// zero. It only ever learned when to open it again from a 429's resetsAt, so
+// the box a successful tenth reply closed stayed closed past the reset.
+test('the reply that spends the free day\'s last chirp says when they come back', async () => {
+  process.env.PAYWALL_ENABLED = 'true';
+  const uid = CURRENT_USER.id;
+  notPremium();
+  for (let i = 0; i < FREE_DAILY_LIMIT - 1; i++) {
+    assert.strictEqual(checkUserRateLimit(uid, FREE_DAILY_LIMIT).allowed, true);
+  }
+  const last = await call('POST', '/api/ai/chat', chatBody);
+  assert.strictEqual(last.status, 200, last.text);
+  assert.strictEqual(last.body.remaining, 0, 'precondition: this reply spent the last free chirp');
+  assert.strictEqual(typeof last.body.resetsAt, 'string',
+    'the reply that closed the box does not say when it opens, so the app has nothing to arm its timer with');
+  assert.ok(Date.parse(last.body.resetsAt) > Date.now(), 'the reset it names is not ahead');
+  // The same instant the refusal that follows names, so the two ways of
+  // closing the box open it at one time.
+  const refused = await call('POST', '/api/ai/chat', chatBody);
+  assert.strictEqual(refused.status, 429, refused.text);
+  assert.strictEqual(last.body.resetsAt, refused.body.resetsAt);
+});
+
+test('a reply with chirps left names no reset', async () => {
+  process.env.PAYWALL_ENABLED = 'true';
+  notPremium();
+  const ok = await call('POST', '/api/ai/chat', chatBody);
+  assert.strictEqual(ok.status, 200, ok.text);
+  assert.strictEqual(ok.body.remaining, FREE_DAILY_LIMIT - 1);
+  assert.ok(!('resetsAt' in ok.body), 'a reply that closes nothing carries a reset time');
+});
+
 test('a subscriber whose lookup works is untouched by any of this', async () => {
   process.env.PAYWALL_ENABLED = 'true';
   isPremiumUser();
