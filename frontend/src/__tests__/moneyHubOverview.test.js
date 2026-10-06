@@ -2041,6 +2041,22 @@ describe('a bill that ends rather than renews', () => {
     expect(hubRow('Burn a month').textContent).toMatch(/It falls to \$178\.44 on Oct 5(, 2026)?, when BestTime, Package 100 ends\./);
   });
 
+  test('a row charged on or after its end date says it counts as running only while it is still charged', async () => {
+    // Renewed after an "expiring" notice, then cancelled for real and marked
+    // stopped with the date left on (review 2026-10-06). The server keeps a
+    // stopped row out of the burn and off the charged-after-the-end list, so
+    // its row must not say it counts.
+    const renewed = { ...ENDING_ROW, id: 13, product: 'Renewed', lastChargedOn: '2026-09-20', renewsOn: null, endsOn: '2026-09-20', endState: 'renewed' };
+    const cancelled = { ...renewed, id: 14, product: 'Cancelled', active: false };
+    await renderHub({ ...CONNECTED, expenses: { ...EXPENSES, rows: [...EXPENSES.rows, renewed, cancelled] } });
+    const running = await expenseRow('Store tool, Renewed');
+    expect(running.textContent).toMatch(/last charged Sep 20(, 2026)?, charged on or after its end date of Sep 20(, 2026)?, so it counts as running until the date is cleared\./);
+    const stopped = await expenseRow('Store tool, Cancelled');
+    expect(within(stopped).getByText('Stopped')).toBeInTheDocument();
+    expect(stopped.textContent).toMatch(/last charged Sep 20(, 2026)?, charged on or after its end date of Sep 20(, 2026)?\./);
+    expect(stopped.textContent).not.toMatch(/counts as running/);
+  });
+
   test('a server from before migration 117 draws none of it', async () => {
     await renderHub(CONNECTED);
     await waitFor(() => expect(screen.queryByText('Set to end')).toBeNull());
