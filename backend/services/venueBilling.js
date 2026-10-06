@@ -1146,6 +1146,38 @@ async function succeededRefundTotal(chargeId) {
   return total;
 }
 
+// THE INVOICE THAT PAID FOR THE PERIOD BEING SERVED. This used to be "the
+// subscription's latest invoice", which is only the most recent invoice made,
+// not the one paying for the period. A mid-period change makes a proration
+// invoice that becomes the latest, so refunding a $10 adjustment in full
+// cancelled a yearly plan whose $990 was still paid, and a full refund of the
+// $990 itself, once a proration had come after it, left the year of Roost
+// standing. The invoice that pays for the period carries a line for the
+// subscription's own item, not a proration, covering that period: its period
+// ends when the subscription's current period ends. A proration line, an
+// invoice item, or a period that has since been renewed past does not count.
+function linePaysPeriod(line, subscriptionId, periodEnd) {
+  if (!line || !line.period || line.period.end !== periodEnd) return false;
+  const details = line.parent && line.parent.type === 'subscription_item_details' ? line.parent.subscription_item_details : null;
+  // An invoice rendered before Stripe's 2025-03-31 API names the line's kind
+  // on the line itself.
+  const subscriptionLine = details ? true : line.type === 'subscription';
+  const proration = details ? details.proration === true : line.proration === true;
+  const lineSub = details ? idOf(details.subscription) : idOf(line.subscription);
+  return subscriptionLine && !proration && (!lineSub || lineSub === subscriptionId);
+}
+
+async function paysCurrentPeriod(invoice, sub) {
+  const item = sub && sub.items && Array.isArray(sub.items.data) ? sub.items.data[0] : null;
+  const periodEnd = (item && item.current_period_end) || sub.current_period_end || null;
+  if (!invoice || !periodEnd) return false;
+  const lines = invoice.lines && Array.isArray(invoice.lines.data) ? invoice.lines.data : [];
+  if (lines.some((l) => linePaysPeriod(l, sub.id, periodEnd))) return true;
+  if (!invoice.lines || !invoice.lines.has_more || !invoice.id) return false;
+  const rest = await listAll((p, o) => stripe().invoices.listLineItems(invoice.id, p, o), {});
+  return rest.some((l) => linePaysPeriod(l, sub.id, periodEnd));
+}
+
 // A FULL REFUND ENDS WHAT IT PAID FOR. The webhook used to acknowledge every
 // refund event as ignored, and the subscription stayed the one authority for
 // the grant, so a venue whose $990 for the year was refunded in full kept the
@@ -1166,10 +1198,10 @@ async function succeededRefundTotal(chargeId) {
 //   (proBilling.subscriptionsFundedBy), never through the customer: a customer
 //   outlives a subscription.
 //
-//   ONLY THE CURRENT PERIOD. The refunded invoice has to be the subscription's
-//   latest, the one paying for today. A full refund of last month, after this
-//   month was paid, returned nothing that pays for today, so today's grant
-//   stands.
+//   ONLY THE CURRENT PERIOD. The refunded invoice has to be the one that paid
+//   for the period being served now (paysCurrentPeriod). A full refund of
+//   last month, after this month was paid, returned nothing that pays for
+//   today, so today's grant stands.
 //
 //   DURABLY. The decision is recorded (stripe_subscription_endings, migration
 //   118) before anything else, and the writer reads that on every sync, so a
@@ -1217,9 +1249,8 @@ async function revokeRefundedSubscription(obj) {
     if (recorded.some((r) => r.stripe_subscription_id === f.subscriptionId)) continue;
     const sub = await stripe().subscriptions.retrieve(f.subscriptionId);
     if (!isVenueObject(sub)) continue;
-    const latest = typeof sub.latest_invoice === 'string' ? sub.latest_invoice : sub.latest_invoice && sub.latest_invoice.id;
-    if (latest !== f.invoiceId) {
-      console.log(`[venue-billing] charge ${chargeId} was refunded in full, but it paid invoice ${f.invoiceId}, not the one paying for subscription ${sub.id}'s current period (${latest || 'none'}), so Roost stands.`);
+    if (!(await paysCurrentPeriod(f.invoice, sub))) {
+      console.log(`[venue-billing] charge ${chargeId} was refunded in full, but invoice ${f.invoiceId} did not pay for subscription ${sub.id}'s current period (an earlier period, or an adjustment), so Roost stands.`);
       continue;
     }
     await billing.recordEnding({ cause: 'refund', sourceId: chargeId, subscriptionId: sub.id, invoiceId: f.invoiceId, chargeId });

@@ -695,8 +695,9 @@ async function closeCustomer(customerId) {
 //
 // Takes a charge id, or a charge this server has just read from Stripe (never
 // one out of an event body). Answers { charge, customerId, funded:
-// [{ invoiceId, subscriptionId }] }. `funded` is empty for a charge that paid
-// no subscription invoice, and holds more than one entry only when one
+// [{ invoiceId, subscriptionId, invoice }] }, invoice being the invoice as
+// Stripe answered it. `funded` is empty for a charge that paid no
+// subscription invoice, and holds more than one entry only when one
 // PaymentIntent paid several invoices.
 const idOf = (ref) => (typeof ref === 'string' && ref ? ref : ref && typeof ref.id === 'string' ? ref.id : null);
 
@@ -738,7 +739,7 @@ async function subscriptionsFundedBy(chargeOrId) {
     const invoice = await stripe().invoices.retrieve(invoiceId);
     const details = invoice && invoice.parent ? invoice.parent.subscription_details : null;
     const subscriptionId = idOf(details && details.subscription) || idOf(invoice && invoice.subscription);
-    if (subscriptionId && !funded.some((f) => f.subscriptionId === subscriptionId)) funded.push({ invoiceId, subscriptionId });
+    if (subscriptionId && !funded.some((f) => f.subscriptionId === subscriptionId)) funded.push({ invoiceId, subscriptionId, invoice });
   }
   return { charge, customerId, funded };
 }
