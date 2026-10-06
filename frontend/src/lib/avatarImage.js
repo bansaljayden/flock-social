@@ -116,3 +116,38 @@ export function refitAvatar(dataUrl) {
     } catch { resolve(null); }
   });
 }
+
+/* GOOGLE'S PHOTO HOST IS NOT AN AVATAR (2026-10-06).
+   Google sign-in used to store the account's Google photo link as its avatar,
+   unscreened. The server stopped (backend/routes/auth.js, NOT THE PICTURE),
+   migration 120 cleared the links it had stored, and the page's policy no
+   longer lets that host load (public/index.html, vercel.json). A link that
+   still arrives, from a server that has not finished deploying or a reply that
+   sat somewhere on the way, would draw as an empty circle. So it is read as no
+   avatar at the two places data comes in, services/api.js for replies and
+   services/socket.js for live events, and every surface draws the person's
+   initial instead, as it does for anyone without a photo. Nothing else the
+   app shows comes from that host: venue photos come through the API's own
+   proxy. */
+const GOOGLE_PHOTO_LINK = /^https?:\/\/([a-z0-9-]+\.)*googleusercontent\.com([/:?#]|$)/i;
+
+export const isGooglePhotoLink = (value) => typeof value === 'string' && GOOGLE_PHOTO_LINK.test(value);
+
+// For JSON.parse: a Google photo link becomes null wherever it sits.
+export const withoutGooglePhotoLinks = (_key, value) => (isGooglePhotoLink(value) ? null : value);
+
+// The same for something already parsed (a socket event), in place. A live
+// event is a few levels deep, so the walk stops at six. It must not throw: it
+// runs ahead of every listener, and a throw there would lose the event.
+export function dropGooglePhotoLinks(value, depth = 0) {
+  if (!value || typeof value !== 'object' || depth > 6) return;
+  try {
+    for (const key of Object.keys(value)) {
+      const v = value[key];
+      if (isGooglePhotoLink(v)) value[key] = null;
+      else if (v && typeof v === 'object') dropGooglePhotoLinks(v, depth + 1);
+    }
+  } catch {
+    // A frozen payload is left as it came.
+  }
+}

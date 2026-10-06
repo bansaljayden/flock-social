@@ -2,6 +2,7 @@ import { io } from 'socket.io-client';
 import { travelFields } from '../lib/travel';
 import { getToken, BASE_URL, storedSessionIsThisTabs } from './api';
 import { sameSignIn } from '../lib/sessionIdentity';
+import { dropGooglePhotoLinks } from '../lib/avatarImage';
 
 let socket = null;
 let socketToken = null;
@@ -293,6 +294,19 @@ function createSocket(token) {
   instance.on('error', (data) => {
     console.warn('Socket error:', data?.message);
   });
+
+  // A Google photo link in a live event is read as no avatar before any
+  // listener sees it, the twin of parseBody in api.js (lib/avatarImage.js says
+  // why). socket.io runs onAny listeners first, with the same payload objects
+  // the named listeners then get. It must never throw: a throw here would lose
+  // the event for every listener after it.
+  if (typeof instance.onAny === 'function') {
+    instance.onAny((_event, ...payload) => {
+      for (const part of payload) {
+        try { dropGooglePhotoLinks(part); } catch { /* left as it came */ }
+      }
+    });
+  }
 
   applyRegistry(instance);
   return instance;
