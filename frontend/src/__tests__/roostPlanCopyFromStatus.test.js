@@ -122,10 +122,18 @@ describe('Settings says how a paid plan is billed, never a cadence nobody sent',
 });
 
 describe('the line under Settings\' plan buttons', () => {
-  const block = DASH.slice(DASH.indexOf("{venueTierSource === 'stripe' && status?.canManage"), DASH.indexOf('</VenueBillingStatus>', DASH.indexOf("{venueTierSource === 'stripe' && status?.canManage")));
+  const START = "{!native && venueTierSource === 'stripe' && status?.canManage";
+  const block = DASH.slice(DASH.indexOf(START), DASH.indexOf('</VenueBillingStatus>', DASH.indexOf(START)));
 
   test('a Stripe subscriber is sent to Manage billing, the Terms 9.6 path', () => {
+    expect(DASH.indexOf(START)).toBeGreaterThan(-1);
     expect(block).toMatch(/Cancel it from See plans and pricing, then Manage billing\. It takes a few clicks and needs no email\./);
+  });
+
+  test('inside the app the line never names See plans and pricing or Manage billing', () => {
+    // Neither is in the app (roostNotSoldInApp.test.js renders it), so both
+    // branches that rest on the web's status are the web's alone.
+    expect(block).toMatch(/: !native && venueTierSource !== 'stripe' && status\?\.checkoutAvailable/);
   });
 
   test('with checkout on, a plan we set up still changes by email, and signing up is not denied', () => {

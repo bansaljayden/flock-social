@@ -2677,7 +2677,12 @@ export default function VenueDashboard({
                     always said, which is true there: the app has no billing
                     switch at all. Inside the app there is no See plans and
                     pricing either (`native`, at the plans above); the email
-                    route to change or cancel stays. */}
+                    route to change or cancel stays. So inside the app the line
+                    is that email route whatever the plan's source, and never
+                    sends the owner to See plans and pricing or Manage billing,
+                    which are not there. It is gated on `native` here rather
+                    than left to the status read, which happens not to run in
+                    the app today. */}
                 {venueTier !== 'free' && venueProfile?.tier_notice_window !== true && (
                   <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid var(--divider)' }}>
                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
@@ -2699,9 +2704,9 @@ export default function VenueDashboard({
                     <VenueBillingStatus>
                       {({ status }) => (
                         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '8px 0 0', lineHeight: 1.5 }}>
-                          {venueTierSource === 'stripe' && status?.canManage
+                          {!native && venueTierSource === 'stripe' && status?.canManage
                             ? <>Cancel it from See plans and pricing, then Manage billing. It takes a few clicks and needs no email. You can also write to {VENUE_SALES_EMAIL} and we will cancel it for you.</>
-                            : venueTierSource !== 'stripe' && status?.checkoutAvailable
+                            : !native && venueTierSource !== 'stripe' && status?.checkoutAvailable
                               ? <>We set this plan up for you, so it changes by email. Write to {VENUE_SALES_EMAIL} and we will change or stop it and email you back to confirm.</>
                               : <>There is no switch for this in the app yet, and there is no switch to sign up with either. Write to {VENUE_SALES_EMAIL} and we will change or stop the plan and email you back to confirm.</>}
                         </p>
