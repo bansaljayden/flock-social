@@ -2057,6 +2057,45 @@ describe('a bill that ends rather than renews', () => {
     expect(stopped.textContent).not.toMatch(/counts as running/);
   });
 
+  test('with the list cut short the end dates are listed, and no burn change worked from the partial list is quoted', async () => {
+    // Review 2026-10-06: a second stand-in for the same code line, past the
+    // first 500 rows, keeps the line replaced, so the $30 the partial list
+    // works out is not what the burn does on the day.
+    const stand = { ...ENDING, expenseId: 12, label: 'BestTime, Package 100', amountCents: 14900, perMonthCents: 14900, burnChangeCents: -3000, restores: ['BestTime.app Pro, Package 100'] };
+    await renderHub({
+      ...CONNECTED,
+      costs: { ...COSTS, status: 'error', reason: 'The expense list has more than 500 rows.', ending: [stand], afterEnding: { burnCents: 17844, changeCents: -3000, by: '2026-10-05', bills: 1, label: 'BestTime, Package 100' } },
+      expenses: { ...EXPENSES, truncated: true, limit: 500 },
+      // What the server sends for a list past the limit: no burn.
+      net: {
+        ...CONNECTED.net,
+        costsThisMonthCents: null,
+        costsMissing: ['expenses'],
+        netThisMonthCents: null,
+        netMissing: ['expenses'],
+        burnCents: null,
+        netBurnCents: null,
+        netBurnMissing: ['expenses'],
+        breakEven: { ...CONNECTED.net.breakEven, burnMissing: ['expenses'] },
+      },
+    });
+    const costs = document.getElementById('hub-costs');
+    expect(await within(costs).findByText('Set to end')).toBeInTheDocument();
+    const row = within(costs).getByText(/^Oct 5(, 2026)?, BestTime, Package 100$/).parentElement.parentElement;
+    expect(within(row).getByText('$149.00 a month')).toBeInTheDocument();
+    expect(row.textContent).toMatch(/No charge on or after this day\.$/);
+    // The attention list names the day it ends, and nothing about the burn.
+    const attention = screen.getByText('Ending in the next 30 days').parentElement;
+    const soon = within(attention).getByText('BestTime, Package 100').parentElement.parentElement;
+    expect(soon.textContent).toMatch(/Ends in 10 days, Oct 5(, 2026)?\./);
+    for (const card of [costs, attention]) {
+      expect(card.textContent).not.toMatch(/(falls|rises) by/);
+      expect(card.textContent).not.toMatch(/counts? again\b/);
+    }
+    // And the burn line, which the server's null burn already withholds.
+    expect(hubRow('Burn a month').textContent).not.toMatch(/It (falls|rises) to/);
+  });
+
   test('a server from before migration 117 draws none of it', async () => {
     await renderHub(CONNECTED);
     await waitFor(() => expect(screen.queryByText('Set to end')).toBeNull());
