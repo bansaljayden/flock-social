@@ -47,9 +47,20 @@
  * The body below is the old block verbatim, including its original
  * indentation, so it can be diffed against the deleted lines character for
  * character. No hooks were called inside it, then or now.
+ *
+ * WHAT CHANGED SINCE, 2026-10-06
+ *
+ * The distance line read `distance_miles` off the server, which was measured
+ * from whoever first asked the server about that area, up to about 14 km from
+ * the viewer, under a card that had worked out its own. It is now measured
+ * here, from `userLocation` (a fifteenth prop) to the venue, by the same
+ * function the card uses, and the server sends no distance at all. The time
+ * also says the venue's zone when the venue's clock is not the viewer's. Both
+ * come from lib/eventWhereWhen.js, which says why.
  */
 import React from 'react';
 import Icons from './ui/Icons';
+import { eventDistanceKm, formatEventDistance, eventTimeZoneLabel } from '../lib/eventWhereWhen';
 import { getEventDetails } from '../services/api';
 
 export default function EventDetailOverlay({
@@ -71,7 +82,11 @@ export default function EventDetailOverlay({
   setEventDetailLoading,
   setSelectedVenueForCreate,
   setShowEventsView,
+  userLocation,
 }) {
+  // Measured from the viewer, the way the event card measures it.
+  const distanceKm = eventDistanceKm(eventDetail, userLocation);
+  const timeZoneLabel = eventDetail.time ? eventTimeZoneLabel(eventDetail) : null;
   return (
         <div style={{ position: 'fixed', inset: 0, zIndex: 200, backgroundColor: 'var(--bg-primary)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           {/* An opaque full-bleed overlay with the whole app still tabbable
@@ -121,7 +136,7 @@ export default function EventDetailOverlay({
                   {Icons.calendar(colors.navy, 18)}
                   <div>
                     <p style={{ margin: 0, fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy }}>{new Date(eventDetail.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}</p>
-                    {eventDetail.time && <p style={{ margin: '2px 0 0', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', fontWeight: '500' }}>{new Date('2000-01-01T' + eventDetail.time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}{eventDetail.time_end ? ` – ${new Date('2000-01-01T' + eventDetail.time_end).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}` : ''}</p>}
+                    {eventDetail.time && <p style={{ margin: '2px 0 0', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', fontWeight: '500' }}>{new Date('2000-01-01T' + eventDetail.time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}{eventDetail.time_end ? ` – ${new Date('2000-01-01T' + eventDetail.time_end).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}` : ''}{timeZoneLabel ? ` ${timeZoneLabel}` : ''}</p>}
                   </div>
                 </div>
               )}
@@ -178,12 +193,12 @@ export default function EventDetailOverlay({
             {eventDetailError && (
               <p role="alert" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 12px', lineHeight: 1.5 }}>
                 {eventDetailError}{' '}
-                <button className="hit44" onClick={() => { if (!eventDetail?.id) return; setEventDetailLoading(true); setEventDetailError(''); getEventDetails(eventDetail.id).then(data => setEventDetail(prev => (prev ? { ...prev, ...(data?.event || {}), distance_miles: data?.event?.distance_miles ?? prev?.distance_miles ?? null } : null))).catch((err) => setEventDetailError(err?.message || 'The rest of this event did not load.')).finally(() => setEventDetailLoading(false)); }} style={{ background: 'none', border: 'none', padding: 0, color: colors.navy, fontWeight: '600', fontSize: 'inherit', cursor: 'pointer', textDecoration: 'underline' }}>Try again</button>
+                <button className="hit44" onClick={() => { if (!eventDetail?.id) return; setEventDetailLoading(true); setEventDetailError(''); getEventDetails(eventDetail.id).then(data => setEventDetail(prev => (prev ? { ...prev, ...(data?.event || {}), location: data?.event?.location ?? prev?.location ?? null } : null))).catch((err) => setEventDetailError(err?.message || 'The rest of this event did not load.')).finally(() => setEventDetailLoading(false)); }} style={{ background: 'none', border: 'none', padding: 0, color: colors.navy, fontWeight: '600', fontSize: 'inherit', cursor: 'pointer', textDecoration: 'underline' }}>Try again</button>
               </p>
             )}
-            {/* Distance */}
-            {eventDetail.distance_miles != null && Number.isFinite(Number(eventDetail.distance_miles)) && (
-              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', fontWeight: '500', marginBottom: '16px' }}>{Icons.mapPin(colors.steel, 12)} {(Number(eventDetail.distance_miles) * 1.609).toFixed(1)} km away</p>
+            {/* Distance, from the viewer to the venue, the same number the card shows */}
+            {distanceKm != null && (
+              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', fontWeight: '500', marginBottom: '16px' }}>{Icons.mapPin(colors.steel, 12)} {formatEventDistance(distanceKm)} away</p>
             )}
           </div>
 

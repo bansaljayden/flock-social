@@ -87,6 +87,7 @@ import { AnimatePresence } from 'framer-motion';
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
 import { onVenuePhotoError } from '../lib/venuePhoto';
+import { eventDistanceKm, formatEventDistance, eventTimeZoneLabel } from '../lib/eventWhereWhen';
 import { getEventDetails } from '../services/api';
 
 export default function ExploreScreen({
@@ -681,6 +682,10 @@ export default function ExploreScreen({
               const eventDate = event.date ? new Date(event.date + 'T' + (event.time || '00:00:00')) : null;
               const dateStr = eventDate ? eventDate.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) : '';
               const timeStr = event.time ? new Date('2000-01-01T' + event.time).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '';
+              // The venue's clock, so the venue's zone when that is not the
+              // viewer's clock (lib/eventWhereWhen.js). Start Flock shows the
+              // same moment on the device's own clock.
+              const timeZoneLabel = timeStr ? eventTimeZoneLabel(event) : null;
               const categoryColors = { concert: '#4a7ba7', sports: '#22C55E', arts: '#EC4899', comedy: '#F59E0B', festival: '#EF4444', film: '#3B82F6', other: colors.navy };
               const catColor = categoryColors[event.category] || colors.navy;
               // Only an absolute http(s) URL with no quote or bracket may reach
@@ -691,12 +696,9 @@ export default function ExploreScreen({
                 && !/["'()\\\s]/.test(event.image_url)
                 ? event.image_url
                 : null;
-              const dist = event.location && userLocation ? (() => {
-                const dLat = (event.location.latitude - userLocation.lat) * Math.PI / 180;
-                const dLng = (event.location.longitude - userLocation.lng) * Math.PI / 180;
-                const a = Math.sin(dLat/2)**2 + Math.cos(userLocation.lat*Math.PI/180)*Math.cos(event.location.latitude*Math.PI/180)*Math.sin(dLng/2)**2;
-                return 6371 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-              })() : null;
+              // From where the viewer is, by the same arithmetic the detail
+              // screen uses (lib/eventWhereWhen.js).
+              const dist = eventDistanceKm(event, userLocation);
 
               return (
                 <div
@@ -756,13 +758,13 @@ export default function ExploreScreen({
                         </span>
                       )}
                       {dist != null && (
-                        <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.steel }}>{dist < 1 ? `${Math.round(dist*1000)}m` : `${dist.toFixed(1)}km`}</span>
+                        <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.steel }}>{formatEventDistance(dist)}</span>
                       )}
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                       {timeStr && (
                         <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, display: 'flex', alignItems: 'center', gap: '3px' }}>
-                          {Icons.clock(colors.navy, 12)} {timeStr}
+                          {Icons.clock(colors.navy, 12)} {timeStr}{timeZoneLabel ? ` ${timeZoneLabel}` : ''}
                         </span>
                       )}
                       {event.genre && event.genre !== event.category && (
@@ -793,13 +795,15 @@ export default function ExploreScreen({
                         setEventDetailError('');
                         setEventDetail({ ...event, photos: [], venue_details: null });
                         getEventDetails(event.id)
-                          // Merge, and keep the list's distance: the single-event
-                          // payload has none, so the miles line used to vanish.
+                          // Merge, and keep the list's venue position: the detail
+                          // screen measures its distance from the viewer to it
+                          // (lib/eventWhereWhen.js), so a read that came back
+                          // without one must not take the line away.
                           // AND ONLY INTO AN OVERLAY THAT IS STILL OPEN. Spreading
                           // into a null prev yields {}, which is truthy, so a read
                           // landing after the user closed the card built a new one
                           // out of nothing and put it back on screen.
-                          .then(data => { if (current()) setEventDetail(prev => (prev ? { ...prev, ...(data?.event || {}), distance_miles: data?.event?.distance_miles ?? prev?.distance_miles ?? null } : null)); })
+                          .then(data => { if (current()) setEventDetail(prev => (prev ? { ...prev, ...(data?.event || {}), location: data?.event?.location ?? prev?.location ?? null } : null)); })
                           .catch((err) => { if (current()) setEventDetailError(err?.message || 'The rest of this event did not load.'); })
                           .finally(() => { if (current()) setEventDetailLoading(false); });
                       }} style={{ padding: '9px 14px', borderRadius: '10px', border: `2px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
