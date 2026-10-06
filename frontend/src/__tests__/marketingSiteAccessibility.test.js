@@ -1052,6 +1052,17 @@ describe('copy rules (DESIGN-STANDARD)', () => {
     expect(copy).toContain(`scored ${served.before.band_exact.toFixed(1)}% on the exact level and ${served.before.within_one_band}% within one`);
   });
 
+  // The Research page charts the served figures on those readings as "Flock".
+  // Its lead put that forecast behind "every venue card", but a venue with no
+  // weekly pattern is scored by the rule engine, which the study does not
+  // chart as Flock's number, and the readings come from two places.
+  test('/research limits the charted forecast to the venues and readings it was measured on', () => {
+    const page = readJs('ResearchPage.js').replace(/\s+/g, ' ');
+    expect(page).not.toMatch(/every venue card/);
+    expect(page).toContain("behind the number on a venue card wherever Flock knows that venue's weekly pattern. A venue without one gets an estimate from what is typical for its kind.");
+    expect(page).toContain('note="Share of the same 4,183 held-out live readings, at venues in the Lehigh Valley and Miami. Higher is better."');
+  });
+
   // WHICH READINGS EACH FIGURE WAS MEASURED ON. The pre-upgrade figures were
   // scored on all 4,183 readings and nobody scored the hour-before subset under
   // the old arithmetic, but the page put "the same readings scored 32.2%" right
