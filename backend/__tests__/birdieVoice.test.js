@@ -424,10 +424,11 @@ test('with curve_offset and the nowcast on, Birdie can quote the measured accura
   assert.match(prompt, /not every venue or city Flock covers/);
   // WITHIN ONE LEVEL NEVER TRAVELS ALONE (scripts/ml/MODEL-METRICS.md: a
   // constant "Not Busy" beats every served configuration on it). The
-  // exact-level rate and the average miss sit beside it, from the same file.
-  assert.ok(prompt.includes(`${Math.round(served.band_exact)}% of Flock's crowd numbers matched the reading's crowd level exactly, ${Math.round(served.within_one_band)}% landed within one crowd level of the reading, and the average miss was ${Math.round(served.mae)} points`),
+  // exact-level rate and the average miss sit beside it, from the same file,
+  // in the words the site uses for the same figures.
+  assert.ok(prompt.includes(`${Math.round(served.band_exact)}% of Flock's crowd numbers named the exact crowd level of the reading and ${Math.round(served.within_one_band)}% landed within one level, and the average miss was ${Math.round(served.mae)} points.`),
     'the within-one-level figure is quoted without the exact-level rate and the average miss beside it, or not as servedAccuracy.json records them');
-  assert.match(prompt, /Never give the within-one-level figure without the exact match and the average miss beside it\./);
+  assert.match(prompt, /Never give the within-one-level figure without the exact-level figure and the average miss beside it\./);
   assert.ok(prompt.includes(`${Math.round(served.reading_one_hour_earlier.within_one_band)}% landed within one level`));
   assert.match(prompt, /never how sure one number is\./);
   // Inside the hard rules, beside the confidence rule it qualifies.
@@ -440,6 +441,6 @@ test('with either switch off, the prompt states no accuracy figure', () => {
   for (const [mode, nowcast] of [[undefined, undefined], ['curve_offset', undefined], [undefined, 'true'], ['model', 'true']]) {
     const prompt = withServeEnv(mode, nowcast, adult);
     assert.ok(!prompt.includes('how accurate Flock'), `accuracy line present with CROWD_SERVE_MODE=${mode} CROWD_NOWCAST_ENABLED=${nowcast}`);
-    assert.ok(!/78\.8|79%/.test(prompt));
+    assert.ok(!/78\.8|79%|56%/.test(prompt));
   }
 });
