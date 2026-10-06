@@ -10,7 +10,7 @@ import SiteFooter from './SiteFooter';
 // revocation) and an undated commitment is one nobody can tell has changed.
 // It moves on its own, not with the other three, because its words move on
 // their own. Bump it in the same edit that changes what this page promises.
-const EFFECTIVE_DATE = 'September 27, 2026';
+const EFFECTIVE_DATE = 'September 29, 2026';
 const SUPPORT_EMAIL = 'social@flockcorp.com';
 
 // Public account-deletion page (Google Play requires a public URL where users

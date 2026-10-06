@@ -1042,7 +1042,9 @@ describe('copy rules (DESIGN-STANDARD)', () => {
 
     expect(served.rows).toBe(4183);
     expect(copy).toMatch(/Tested against 4,183 real live readings it had not seen, from September 6 to 8, 2026/);
-    expect(copy).toContain(`${served.within_one_band}% of Flock's crowd numbers landed within one crowd level of the reading and ${served.within_10}% within 10 points`);
+    // The exact level sits beside within-one because within-one alone flatters
+    // a lazy answer: a constant "Not Busy" scores high on it (MODEL-METRICS.md).
+    expect(copy).toContain(`${served.band_exact.toFixed(1)}% of Flock's crowd numbers named the exact crowd level of the reading, ${served.within_one_band}% landed within one level, and ${served.within_10}% within 10 points`);
     expect(copy).toContain(`The average miss was ${Math.round(served.mae)} points, with no lean high or low`);
     expect(Math.abs(served.bias)).toBeLessThan(2);
     expect(copy).toContain(`${Math.round(served.reading_one_hour_earlier.within_one_band)}% landed within one level`);

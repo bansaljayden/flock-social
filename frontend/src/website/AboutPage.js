@@ -118,11 +118,12 @@ export default function AboutPage() {
           how that venue usually runs at that hour. The number you see moves with
           the venue's newest readings, so a slow Friday or a sudden rush shows up
           the same night. Tested against 4,183 real live readings it had not seen,
-          from September 6 to 8, 2026, 78.8% of Flock's crowd numbers landed within
-          one crowd level of the reading and 53.8% within 10 points. The average
-          miss was 17 points, with no lean high or low. When a venue had a live
-          reading from the hour before, 92% landed within one level. The same
-          readings scored 58.5% within one level before the September upgrade.
+          from September 6 to 8, 2026, 56.0% of Flock's crowd numbers named the
+          exact crowd level of the reading, 78.8% landed within one level, and
+          53.8% within 10 points. The average miss was 17 points, with no lean
+          high or low. When a venue had a live reading from the hour before, 92%
+          landed within one level. The same readings scored 58.5% within one level
+          before the September upgrade.
         </p>
         <p>
           Flock also trains its own machine-learning crowd model. The current

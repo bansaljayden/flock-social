@@ -380,7 +380,7 @@ MODEL_VERSION=2.8.0-starling python export_model.py
 
 # 7. Band gate: writes ship_gate.band_gate, sets overall_pass = point AND band.
 #    The incumbent is scored as production serves it: curve_offset + nowcast
-#    since 2026-09-25. Beating the model alone is not the bar.
+#    since 2026-09-26. Beating the model alone is not the bar.
 node bandEval.js --gate --incumbent-serve=curve_offset+nowcast --out=band_gate_report.json
 
 # 8. Verify the artifact the way production reads it, then read the verdict.

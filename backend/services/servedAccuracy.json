@@ -14,6 +14,7 @@
     "rows": 4183,
     "within_one_band": 58.5,
     "within_10": 28.6,
+    "band_exact": 32.2,
     "mae": 30.61
   },
   "reading_one_hour_earlier": {

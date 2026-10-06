@@ -113,11 +113,11 @@ test('real doc: every computed count matches the doc-declared count, zero valida
   assert.equal(listing.name.length, listing.declaredCounts.name.chars);
   assert.equal(listing.subtitle, 'Get the flock out the door');
   assert.equal(listing.subtitle.length, 26);
-  assert.equal(listing.description.length, 2139);
+  assert.equal(listing.description.length, 2599);
   assert.equal(Buffer.byteLength(listing.keywords, 'utf8'), 98);
   assert.equal(listing.promotionalText.length, 157);
   assert.equal(listing.whatsNew.length, 177);
-  assert.equal(listing.copyright, '2026 Flock Corp.');
+  assert.equal(listing.copyright, '2026 Flock Social LLC');
 });
 
 test('real doc: fields are within Apple limits with the researched values', () => {
@@ -194,7 +194,7 @@ test('mutation: an em dash in listing copy fails, naming the copy standard', () 
 test('mutation: copy changed without its recorded count fails as doc drift', () => {
   const mutated = DOC.replace('Get the flock out the door.', 'Get the flock out the door'); // one char shorter
   const errors = validateListing(parseSubmissionDoc(mutated));
-  const drift = errors.find((e) => e.field === 'description' && /Doc drift.*declares.*2139.*2138.*FIX/s.test(e.message));
+  const drift = errors.find((e) => e.field === 'description' && /Doc drift.*declares.*2599.*2598.*FIX/s.test(e.message));
   assert.ok(drift, `expected a doc-drift error, got: ${JSON.stringify(errors)}`);
 });
 
@@ -304,7 +304,7 @@ test('first run (empty remote): plan creates version, localization, set; no dele
   assert.ok(!kinds.includes('delete-screenshot'));
   const createLoc = steps.find((s) => s.kind === 'create-version-localization');
   assert.equal(createLoc.body.attributes.locale, 'en-US');
-  assert.equal(createLoc.body.attributes.description.length, 2139);
+  assert.equal(createLoc.body.attributes.description.length, 2599);
   assert.equal(createLoc.body.attributes.supportUrl, 'https://www.flockcorp.com/support');
 });
 

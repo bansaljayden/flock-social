@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import './PrivacyPolicy.css';
 import SiteFooter from './SiteFooter';
 
-const EFFECTIVE_DATE = 'October 3, 2026';
+const EFFECTIVE_DATE = 'October 6, 2026';
 const CONTACT_EMAIL = 'social@flockcorp.com';
 
 // THE OPERATOR IS A REGISTERED COMPANY NOW, and this name is its legal name.
@@ -223,7 +223,7 @@ export default function PrivacyPolicy() {
               <li>Budget amounts are never shown to other people. The group only sees a shared ceiling.</li>
               <li>Photos you upload have their hidden camera data, including any GPS fix, removed before we store them.</li>
               <li>Two features send text to Google's Gemini: Birdie, the assistant in the app, and Roost, the advisor for venue owners. Each has its own paragraph below saying exactly what leaves.</li>
-              <li>A few venues have a Flock sensor at the door. It counts bodies and cannot identify anyone. Section 3 says exactly what it measures.</li>
+              <li>A venue can install a Flock sensor at its door. It counts bodies and cannot identify anyone. Section 3 says exactly what it measures.</li>
               <li>You can delete your account from inside the app. It's a real delete, not a deactivation.</li>
             </ul>
             <p>
