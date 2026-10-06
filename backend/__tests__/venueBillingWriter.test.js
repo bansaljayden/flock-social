@@ -1021,6 +1021,38 @@ test('a claim paying for Roost cannot be re-pointed at another listing until the
   assert.strictEqual((await state(id)).served, 'free');
 });
 
+test('a hand-made plan bound to no listing lets its claim name a first listing, and then holds the claim there', async () => {
+  // NULL IS DISTINCT FROM the requested listing was true, so a renewing plan
+  // made for a claim with no listing refused every first listing with "Your
+  // Roost plan is for the Google listing your venue has now", for a venue
+  // that had none, and the bind-to-first-listing rule could never run.
+  const [PLACE_A, PLACE_B] = placePair();
+  const id = await venue({ verified: true });
+  await venueBilling.syncVenueSubscription(sub('sub_unbound_first', id, 'active'));
+  const bound = async () => (await testPool.query('SELECT google_place_id FROM venue_stripe_subscriptions WHERE stripe_subscription_id = $1', ['sub_unbound_first'])).rows[0].google_place_id;
+  assert.strictEqual(await bound(), null);
+
+  const first = await profileCall('PUT', '/api/venue-profile', { as: id, body: { googlePlaceId: PLACE_A } });
+  assert.strictEqual(first.status, 200, `a renewing plan bound to nothing refused the first listing: ${first.text}`);
+  // Before Stripe's next event writes the binding down, the plan already
+  // holds the claim on that first listing, on both write paths.
+  const moved = await profileCall('PUT', '/api/venue-profile', { as: id, body: { googlePlaceId: PLACE_B } });
+  assert.strictEqual(moved.status, 409, `the plan followed the claim to a second listing: ${moved.text}`);
+  assert.strictEqual(moved.body.code, 'ROOST_ON_LISTING');
+  const reclaimed = await profileCall('POST', '/api/venue-profile', { as: id, body: { businessName: 'The Owl', googlePlaceId: PLACE_B } });
+  assert.strictEqual(reclaimed.status, 409, reclaimed.text);
+  // The next event binds the record to the listing the claim named first.
+  await venueBilling.syncVenueSubscription('sub_unbound_first');
+  assert.strictEqual(await bound(), PLACE_A);
+
+  // Re-onboarding is the other door to a first listing.
+  const [PLACE_C] = placePair();
+  const other = await venue({ verified: true });
+  await venueBilling.syncVenueSubscription(sub('sub_unbound_post', other, 'active'));
+  const created = await profileCall('POST', '/api/venue-profile', { as: other, body: { businessName: 'The Owl', googlePlaceId: PLACE_C } });
+  assert.strictEqual(created.status, 201, created.text);
+});
+
 test('with venue billing switched off the listing guard is off too, on both write paths', async () => {
   // Nothing is enforced while VENUE_BILLING_ENABLED is off, and a profile
   // save that answered ROOST_ON_LISTING then changed a route's behaviour for

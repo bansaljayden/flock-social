@@ -312,6 +312,11 @@ const CLAIMED_MSG = 'That business is already claimed by a verified owner. If it
 // the rest of its period stays with the old listing) or ours: we re-bind the
 // plan in Stripe, after which moving the claim to its new listing is allowed.
 // Comps never block a move; they stay with the listing they were given for.
+// A plan bound to no listing (one made by hand for a claim that had none)
+// binds to the first listing the claim names, the way the Stripe writer binds
+// it: it never stops a claim from naming its first listing, and from then on
+// it holds the claim there like any other plan, even before Stripe's next
+// event has written that binding down.
 // Only while venue billing is on (VENUE_BILLING_ENABLED, bound into both
 // statements): with it off no plan is enforced anywhere, so a profile save
 // behaves exactly as it did before Roost had a price.
@@ -579,7 +584,8 @@ router.post('/', requireVerified, [
                                  AND vs.status IN ('active', 'trialing', 'past_due')
                                  AND vs.expires_at > NOW()
                                  AND vs.cancel_at IS NULL
-                                 AND vs.google_place_id IS DISTINCT FROM EXCLUDED.google_place_id))
+                                 AND COALESCE(vs.google_place_id, venue_profiles.google_place_id) IS NOT NULL
+                                 AND COALESCE(vs.google_place_id, venue_profiles.google_place_id) IS DISTINCT FROM EXCLUDED.google_place_id))
        RETURNING *`,
       [req.user.id, businessName, category || null, location || null, description || null, goals || [], googlePlaceId || null,
        venueBillingEnabled()]
@@ -1007,7 +1013,8 @@ router.put('/', [
                                 AND vs.status IN ('active', 'trialing', 'past_due')
                                 AND vs.expires_at > NOW()
                                 AND vs.cancel_at IS NULL
-                                AND vs.google_place_id IS DISTINCT FROM $9::varchar))
+                                AND COALESCE(vs.google_place_id, venue_profiles.google_place_id) IS NOT NULL
+                                AND COALESCE(vs.google_place_id, venue_profiles.google_place_id) IS DISTINCT FROM $9::varchar))
       RETURNING *`,
       [businessName || null, category || null, location || null, description || null, goals || null,
        phone || null, operatingHours ? JSON.stringify(operatingHours) : null,
