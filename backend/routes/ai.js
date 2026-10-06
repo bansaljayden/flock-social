@@ -543,6 +543,35 @@ function promptSafe(value, maxChars) {
 // no INSERT and no UPDATE, and the injection suite pins that.
 const { isPlaceIdShaped } = require('../utils/places');
 
+// VENUES THE HANDS MAY NAME. Both hands used to take the venue's name, address,
+// rating and price from the model's own arguments, with the id held only to
+// isPlaceIdShaped, which is a shape and not a place. A model steered by a
+// hostile listing or flock name could stage a real place under a name it made
+// up, or an id nobody searched for under a real name, and the vote card writes
+// that name into the flock for everyone in it. So a hand takes a venue only by
+// an id a search_venues call in the SAME TURN returned, and builds the card
+// from that Places row, flattened and bounded where the search built it. It is
+// the confinement the venue cards have always had: they come from the rows the
+// turn's own searches returned, never from what the model wrote.
+//
+// The same turn, because that is all the server can vouch for. Nothing is kept
+// between messages, and the history the client sends back is text with names
+// and no ids, so a plan set up in a later message searches again, which is free
+// for five minutes from the search cache when the words repeat.
+const UNSEARCHED_VENUE_ERROR = 'That venue did not come from a search_venues result while answering this message, so it cannot go on the card. Run search_venues for it and pass the place_id that comes back.';
+
+// The Places row for a venue a hand was asked to stage, or the error the model
+// is handed instead. `opts.searchedPlaces` is the turn's own map, place id to
+// the row its searches returned.
+function stagedVenue(placeId, opts) {
+  const places = opts && opts.searchedPlaces;
+  const row = typeof placeId === 'string' && placeId && places instanceof Map ? places.get(placeId) : null;
+  if (!row) return { error: UNSEARCHED_VENUE_ERROR };
+  // A name is what both cards print and what the vote route requires.
+  if (!row.name) return { error: 'Google has no name for that venue, so it cannot go on the card.' };
+  return { row };
+}
+
 const toolDeclarations = [
   {
     name: 'search_venues',
@@ -628,9 +657,9 @@ const toolDeclarations = [
       properties: {
         name: { type: 'STRING', description: 'Short plan name, e.g. "Friday tacos"' },
         event_time: { type: 'STRING', description: 'ISO 8601 datetime for the plan, only if the user gave a time' },
-        venue_name: { type: 'STRING', description: 'Venue name, only if the user picked one' },
-        venue_place_id: { type: 'STRING', description: 'Google place id for that venue, from search_venues' },
-        venue_address: { type: 'STRING', description: 'Venue address, for the card' },
+        // No name, address, rating or price: the card takes those from the
+        // Places row the id names (VENUES THE HANDS MAY NAME, above).
+        venue_place_id: { type: 'STRING', description: 'place_id of the venue, only if the user picked one, from a search_venues result you got while answering this message. The card takes the venue\'s name and address from that result.' },
       },
       required: ['name'],
     },
@@ -642,13 +671,9 @@ const toolDeclarations = [
       type: 'OBJECT',
       properties: {
         flock_id: { type: 'NUMBER', description: 'The flock id, from get_user_flocks' },
-        place_id: { type: 'STRING', description: 'Google place id of the venue' },
-        venue_name: { type: 'STRING', description: 'Venue name' },
-        venue_address: { type: 'STRING', description: 'Venue address, for the card' },
-        rating: { type: 'NUMBER', description: 'Google rating, if known' },
-        price_level: { type: 'NUMBER', description: 'Price level 0-4, if known' },
+        place_id: { type: 'STRING', description: 'place_id of the venue, from a search_venues result you got while answering this message. The card takes the venue\'s name, address, rating and price from that result.' },
       },
-      required: ['flock_id', 'place_id', 'venue_name'],
+      required: ['flock_id', 'place_id'],
     },
   },
 ];
@@ -1377,14 +1402,14 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
         const d = new Date(toolInput.event_time);
         if (!Number.isNaN(d.getTime()) && d.getTime() > Date.now()) eventTime = d.toISOString();
       }
+      // The venue is a Places row this turn's search returned, or the card is
+      // not staged and the model is told how to get one (VENUES THE HANDS MAY
+      // NAME). Nothing about the venue is taken from the model but its id.
       let venue = null;
-      if (typeof toolInput.venue_place_id === 'string' && isPlaceIdShaped(toolInput.venue_place_id)
-          && typeof toolInput.venue_name === 'string' && toolInput.venue_name.trim()) {
-        venue = {
-          place_id: toolInput.venue_place_id,
-          name: toolInput.venue_name.trim().slice(0, 80),
-          address: typeof toolInput.venue_address === 'string' ? toolInput.venue_address.trim().slice(0, 120) : null,
-        };
+      if (toolInput.venue_place_id != null && toolInput.venue_place_id !== '') {
+        const picked = stagedVenue(toolInput.venue_place_id, opts);
+        if (picked.error) return { error: picked.error };
+        venue = { place_id: picked.row.place_id, name: picked.row.name, address: picked.row.address || null };
       }
       return { drafted: true, name: rawName.slice(0, 60), event_time: eventTime, venue };
     }
@@ -1397,9 +1422,10 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
       // never to anything the model said.
       const flockId = parseInt(toolInput.flock_id, 10);
       if (!Number.isInteger(flockId) || flockId <= 0 || flockId > 2147483647) return { error: 'No such plan.' };
-      if (typeof toolInput.place_id !== 'string' || !isPlaceIdShaped(toolInput.place_id)) return { error: 'That venue id is not usable.' };
-      const stagedName = typeof toolInput.venue_name === 'string' ? toolInput.venue_name.trim().slice(0, 80) : '';
-      if (!stagedName) return { error: 'The venue needs a name.' };
+      // The venue before the read, so a card that cannot be staged spends no
+      // query. Its name, address, rating and price are the Places row's.
+      const picked = stagedVenue(toolInput.place_id, opts);
+      if (picked.error) return { error: picked.error };
       const membership = await pool.query(
         `SELECT f.name, f.status
            FROM flocks f
@@ -1416,11 +1442,11 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
         flock_id: flockId,
         flock_name: membership.rows[0].name,
         venue: {
-          place_id: toolInput.place_id,
-          name: stagedName,
-          address: typeof toolInput.venue_address === 'string' ? toolInput.venue_address.trim().slice(0, 120) : null,
-          rating: Number.isFinite(toolInput.rating) ? toolInput.rating : null,
-          price_level: Number.isInteger(toolInput.price_level) && toolInput.price_level >= 0 && toolInput.price_level <= 4 ? toolInput.price_level : null,
+          place_id: picked.row.place_id,
+          name: picked.row.name,
+          address: picked.row.address || null,
+          rating: Number.isFinite(picked.row.rating) ? picked.row.rating : null,
+          price_level: Number.isInteger(picked.row.price_level) ? picked.row.price_level : null,
         },
       };
     }
@@ -1663,6 +1689,7 @@ How to answer:
 - "How do I..." or "where is..." → one-line answer, then USE navigate_app to take them there. Don't just describe the path.
 - "Set up a plan" / "get us somewhere Saturday" → gather what you can (search_venues for the place, get_user_flocks for existing plans), then USE draft_flock. The card does the creating; you never claim the flock exists, because it does not until they tap Start.
 - "Add that to the vote" → USE add_venue_to_vote with the flock id from get_user_flocks. Same rule: the card does it, you never claim it happened.
+- Both cards take a venue only by a place_id from a search_venues result you got while answering this message. A venue from an earlier message has to be searched again first.
 - Vague asks ("what's the move", "where's poppin") → they want somewhere fun nearby. Search real categories (bars, food, activities), never the slang words themselves.
 - Slang decoder: "the move" = what to do; "link"/"pull up" = meet up; "dead" = empty; "lit"/"poppin" = busy and fun; "lowkey" = quiet or casual; "bet" = ok; "no cap" = seriously.
 - Crowds: translate numbers into advice. "68% and climbing, go now or wait till 11" beats reciting the data. Mention best time when it helps.
@@ -2135,6 +2162,11 @@ router.post('/chat',
       }
       let iterations = 0;
       const collectedVenues = []; // Track venues for card display
+      // The Places rows this turn's searches returned, by place id, as the
+      // model was handed them: the only venues draft_flock and
+      // add_venue_to_vote may stage (VENUES THE HANDS MAY NAME). It lives and
+      // dies with this request.
+      const searchedPlaces = new Map();
       let navigationAction = null; // Track navigation commands
       let flockDraftAction = null;  // draft_flock card, at most one per turn
       let venueVoteAction = null;   // add_venue_to_vote card, at most one
@@ -2194,7 +2226,7 @@ router.post('/chat',
           // tool-backed turns come back empty (round 6).
           const { name, args, id } = part.functionCall;
           try {
-            const toolOpts = { localHour: req.body.localHour, localDay: req.body.localDay, salesOff };
+            const toolOpts = { localHour: req.body.localHour, localDay: req.body.localDay, salesOff, searchedPlaces };
             // The exact string the tool fetches, so the meter and Google agree
             // on which venue this is. No id means every lookup counts, which is
             // the metered direction.
@@ -2239,6 +2271,7 @@ router.post('/chat',
             if (name === 'search_venues' && result.venues) {
               for (const v of result.venues) {
                 const id = v && v.place_id;
+                if (typeof id === 'string' && id && !searchedPlaces.has(id)) searchedPlaces.set(id, { ...v });
                 if (typeof id === 'string' && id && collectedVenues.some((c) => c.place_id === id)) continue;
                 collectedVenues.push({ ...v });
               }
