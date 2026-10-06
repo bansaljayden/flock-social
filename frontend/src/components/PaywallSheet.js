@@ -225,6 +225,10 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger, birdieRes
         const offered = pkgs.filter((p) => freeTrialLabel(p)).map((p) => p?.product?.identifier).filter(Boolean);
         const eligible = offered.length ? await introEligibleProducts(offered) : new Set();
         if (cancelled) return;
+        // Only a plan that loaded can be the one selected, as on the web
+        // (loadWeb). With the yearly product alone, monthly stayed selected
+        // and the button read "Get Pro, /month" and could not be pressed.
+        if (!pickPackage(pkgs, 'monthly')) setSelected('yearly');
         setTrialEligible(eligible);
         setPackages(pkgs);
         setLoadState('ready');

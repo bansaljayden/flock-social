@@ -156,6 +156,34 @@ describe('inside the app', () => {
     expect(onUpgraded).toHaveBeenCalled();
   });
 
+  // Monthly is the plan the sheet opens on. When the store loads the yearly
+  // product alone, that left a selection with no product behind it: the button
+  // read "Get Pro, /month" and was disabled. The web half already picked a plan
+  // that loaded; the App Store half does the same now.
+  test('with only the yearly product loaded, yearly is selected and the button charges it', async () => {
+    isPurchasesAvailable.mockReturnValue(true);
+    getProOffering.mockResolvedValue([
+      { packageType: 'ANNUAL', product: { identifier: 'pro_annual', priceString: '$29.99', price: 29.99, introPrice: null } },
+    ]);
+    const { container } = render(<PaywallSheet open trigger="settings" onClose={() => {}} />);
+    const cta = await screen.findByRole('button', { name: 'Get Pro, $29.99/year' });
+    expect(cta.disabled).toBe(false);
+    expect(screen.getByRole('button', { name: /Yearly/ }).getAttribute('aria-pressed')).toBe('true');
+    expect(container.textContent).toContain('Renews at $29.99 every year until you cancel in your App Store settings.');
+    expect(container.textContent).not.toMatch(/\/month|Monthly/);
+  });
+
+  test('with only the monthly product loaded, monthly stays selected', async () => {
+    isPurchasesAvailable.mockReturnValue(true);
+    getProOffering.mockResolvedValue([
+      { packageType: 'MONTHLY', product: { identifier: 'pro_monthly', priceString: '$3.99', price: 3.99, introPrice: null } },
+    ]);
+    render(<PaywallSheet open trigger="settings" onClose={() => {}} />);
+    const cta = await screen.findByRole('button', { name: MONTHLY_CTA });
+    expect(cta.disabled).toBe(false);
+    expect(screen.queryByRole('button', { name: /Yearly/ })).toBeNull();
+  });
+
   test('App Store fine print, Restore, and nothing that names the website', async () => {
     isPurchasesAvailable.mockReturnValue(true);
     const pkg = (type, priceString, price) => ({ packageType: type, product: { priceString, price, introPrice: null } });
