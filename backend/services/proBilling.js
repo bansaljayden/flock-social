@@ -674,27 +674,141 @@ async function closeCustomer(customerId) {
   return true;
 }
 
+// ---------------------------------------------------------------------------
+// From a charge to the subscription it paid for
+// ---------------------------------------------------------------------------
+//
+// A dispute and a refund each name a CHARGE, and a Stripe customer outlives
+// any one subscription on it, so "the customer's subscriptions" is the wrong
+// question to ask about either. The charge's INVOICE is the one link to the
+// subscription that money paid for, and it never changes afterwards.
+//
+// In the API version this client is pinned to (stripe-node 22, 2026-08-26
+// dahlia; every version since 2025-03-31 basil) a Charge no longer carries
+// `invoice`. An invoice's payments are InvoicePayment objects, listed by the
+// charge's PaymentIntent, and that is the lookup Stripe documents for exactly
+// this (docs.stripe.com/billing/subscriptions/webhooks, "Handle refund,
+// dispute, and early fraud warning events"): every paid InvoicePayment for the
+// PaymentIntent, then each invoice's parent.subscription_details.subscription.
+// A charge that does carry `invoice` (an object rendered at an older version)
+// is read directly, and so is an invoice's old top-level `subscription`.
+//
+// Answers { charge, customerId, funded: [{ invoiceId, subscriptionId }] }.
+// `funded` is empty for a charge that paid no subscription invoice, and holds
+// more than one entry only when one PaymentIntent paid several invoices.
+const idOf = (ref) => (typeof ref === 'string' && ref ? ref : ref && typeof ref.id === 'string' ? ref.id : null);
+
+// Pages of InvoicePayments read for one PaymentIntent, at most. A subscription
+// invoice is paid by its own PaymentIntent, so the first page is the whole
+// answer in practice; the cap only stops a malformed answer looping.
+const MAX_INVOICE_PAYMENT_PAGES = 5;
+
+async function invoicesPaidBy(charge) {
+  const legacy = idOf(charge && charge.invoice);
+  if (legacy) return [legacy];
+  const paymentIntent = idOf(charge && charge.payment_intent);
+  if (!paymentIntent) return [];
+  const ids = [];
+  let after = null;
+  for (let page = 0; page < MAX_INVOICE_PAYMENT_PAGES; page += 1) {
+    const list = await stripe().invoicePayments.list({
+      payment: { type: 'payment_intent', payment_intent: paymentIntent },
+      status: 'paid',
+      limit: 100,
+      ...(after ? { starting_after: after } : {}),
+    });
+    const data = list && Array.isArray(list.data) ? list.data : [];
+    for (const p of data) {
+      const invoiceId = idOf(p && p.invoice);
+      if (invoiceId && !ids.includes(invoiceId)) ids.push(invoiceId);
+    }
+    if (!list || !list.has_more || data.length === 0) break;
+    after = data[data.length - 1].id;
+  }
+  return ids;
+}
+
+async function subscriptionsFundedBy(chargeId) {
+  const charge = await stripe().charges.retrieve(chargeId);
+  const customerId = idOf(charge && charge.customer);
+  const funded = [];
+  for (const invoiceId of await invoicesPaidBy(charge)) {
+    const invoice = await stripe().invoices.retrieve(invoiceId);
+    const details = invoice && invoice.parent ? invoice.parent.subscription_details : null;
+    const subscriptionId = idOf(details && details.subscription) || idOf(invoice && invoice.subscription);
+    if (subscriptionId && !funded.some((f) => f.subscriptionId === subscriptionId)) funded.push({ invoiceId, subscriptionId });
+  }
+  return { charge, customerId, funded };
+}
+
+// What ended a subscription early, recorded once per cause and source
+// (migration 118). The Roost writer reads it on every sync, so a subscription
+// recorded here stays revoked whatever its next event says.
+const ENDINGS_FOR_SOURCE_SQL = 'SELECT stripe_subscription_id, stripe_invoice_id FROM stripe_subscription_endings WHERE cause = $1::text AND source_id = $2::text ORDER BY id';
+const RECORD_ENDING_SQL = `INSERT INTO stripe_subscription_endings (cause, source_id, stripe_subscription_id, stripe_invoice_id, stripe_charge_id)
+  VALUES ($1::text, $2::text, $3::text, $4::text, $5::text)
+  ON CONFLICT (cause, source_id, stripe_subscription_id) DO NOTHING`;
+
+async function endingsRecordedFor(cause, sourceId) {
+  const r = await pool.query(ENDINGS_FOR_SOURCE_SQL, [cause, sourceId]);
+  return r && Array.isArray(r.rows) ? r.rows : [];
+}
+
+function recordEnding({ cause, sourceId, subscriptionId, invoiceId = null, chargeId = null }) {
+  return pool.query(RECORD_ENDING_SQL, [cause, sourceId, subscriptionId, invoiceId, chargeId]);
+}
+
+// Ours: made by this server for a Pro account (app_user_id) or for a venue
+// (kind=venue). A subscription made by hand for something else is not.
+const isOurSubscription = (s) => !!(s && s.metadata && (s.metadata.app_user_id || s.metadata.kind === 'venue'));
+
 // A CHARGEBACK ENDS WHAT IT PAID FOR. A dispute takes the money back by force,
 // and without this the subscription it paid for ran on to the end of its
-// period, a year on the yearly plan. Every live subscription our server made
-// for the disputed charge's customer (Pro carries app_user_id, Roost carries
-// kind=venue; a customer holds one product) is cancelled now, and the deleted
-// event that follows revokes it through the usual path. A refund is left to
-// whoever issues it: Stripe's refund dialog offers to cancel in the same step,
-// and a partial refund is often a goodwill credit, not an ending.
+// period, a year on the yearly plan. That subscription, and only that one, is
+// cancelled now, and the deleted event that follows revokes it through the
+// usual path (Pro and Roost alike).
+//
+// ONLY THE SUBSCRIPTION THE CHARGE PAID FOR. This used to list the disputed
+// charge's customer and cancel every live subscription on it. A customer
+// outlives a subscription: a venue whose plan a dispute ended could buy again
+// on the same customer, and a replay of the old dispute (Stripe resends an
+// event it has no answer for, and anyone can resend one from the dashboard)
+// then cancelled the NEW plan for a charge it never made. The charge now
+// resolves through its invoice (subscriptionsFundedBy), and the result is
+// recorded against the dispute before anything is cancelled, so a replay acts
+// on the recorded subscription and never resolves again. A dispute over a
+// charge that paid no subscription invoice ends nothing.
+//
+// A refund is not handled here: Stripe's refund dialog offers to cancel in the
+// same step, and a partial refund is often a goodwill credit, not an ending.
 async function cancelDisputedSubscriptions(dispute) {
-  const chargeId = dispute && (typeof dispute.charge === 'string' ? dispute.charge : dispute.charge && dispute.charge.id);
+  const disputeId = dispute && typeof dispute.id === 'string' && dispute.id ? dispute.id : null;
+  const chargeId = idOf(dispute && dispute.charge);
   if (!chargeId) return { ignored: 'no_charge' };
-  const charge = await stripe().charges.retrieve(chargeId);
-  const customerId = charge && (typeof charge.customer === 'string' ? charge.customer : charge.customer && charge.customer.id);
-  if (!customerId) return { ignored: 'no_customer' };
-  const list = await stripe().subscriptions.list({ customer: customerId, status: 'all', limit: 20 });
-  const ours = (list.data || []).filter((s) => LIVE_STATUSES.has(s.status)
-    && s.metadata && (s.metadata.app_user_id || s.metadata.kind === 'venue'));
-  for (const s of ours) {
-    await stripe().subscriptions.cancel(s.id, {}, { idempotencyKey: `flock-dispute-cancel-${s.id}` });
+  const recorded = disputeId ? await endingsRecordedFor('dispute', disputeId) : [];
+  let targets = recorded.map((r) => ({ subscriptionId: r.stripe_subscription_id, invoiceId: r.stripe_invoice_id }));
+  if (targets.length === 0) {
+    const { customerId, funded } = await subscriptionsFundedBy(chargeId);
+    if (!customerId) return { ignored: 'no_customer' };
+    if (funded.length === 0) return { ignored: 'no_subscription' };
+    targets = funded;
   }
-  return { cancelled: ours.length };
+  const ended = [];
+  let cancelled = 0;
+  for (const t of targets) {
+    const sub = await stripe().subscriptions.retrieve(t.subscriptionId);
+    if (!isOurSubscription(sub)) continue;
+    // Recorded before the cancel, so a cancel that fails (the webhook then
+    // answers 500 and Stripe sends the dispute again) is retried on this
+    // subscription and no other.
+    if (disputeId) await recordEnding({ cause: 'dispute', sourceId: disputeId, subscriptionId: sub.id, invoiceId: t.invoiceId, chargeId });
+    ended.push(sub.id);
+    if (!LIVE_STATUSES.has(sub.status)) continue;
+    await stripe().subscriptions.cancel(sub.id, {}, { idempotencyKey: `flock-dispute-cancel-${sub.id}` });
+    cancelled += 1;
+  }
+  if (ended.length === 0) return { ignored: 'not_ours' };
+  return { cancelled, subscriptions: ended };
 }
 
 module.exports = {
@@ -708,6 +822,9 @@ module.exports = {
   postStripeReceipt,
   createCheckout,
   cancelDisputedSubscriptions,
+  subscriptionsFundedBy,
+  endingsRecordedFor,
+  recordEnding,
   cancelAtPeriodEnd,
   resumeSubscription,
   webSubscriptionState,
