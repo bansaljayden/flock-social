@@ -115,7 +115,7 @@ describe('Settings says how a paid plan is billed, never a cadence nobody sent',
     // VenueDashboard.js, walked in venuePlanPromises.test.js). It used to say
     // "Nothing is charged until it ends" over a date three days after the
     // trial was charged.
-    expect(DASH).toContain('<VenueBillingStatus>{({ status }) => stripePlanLines(runningRoostPlan(venueProfile, status)).line}</VenueBillingStatus>');
+    expect(DASH).toContain('<VenueBillingStatus>{({ status }) => stripePlanLines(runningRoostPlan(venueProfile, status), { native: isNativeShell() }).line}</VenueBillingStatus>');
     expect(visible(DASH)).not.toContain('Nothing is charged until it ends.');
     expect(DASH).toContain(": 'Billed as agreed with us.')");
   });

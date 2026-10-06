@@ -138,6 +138,15 @@ describe('a Stripe plan names its real date, never the grace', () => {
     expect(lines.date).toBe(`First charge on ${day(TRIAL_END)}`);
   });
 
+  test('a payment that did not go through: Manage billing on the web, the email route inside the app', () => {
+    const plan = { status: 'past_due', trialEnd: null, currentPeriodEnd: PERIOD_END, cancelAt: null };
+    expect(stripePlanLines(plan).line).toBe('The last payment did not go through. Update your card in Manage billing.');
+    const inApp = stripePlanLines(plan, { native: true }).line;
+    expect(inApp).toBe('The last payment did not go through. Write to social@flockcorp.com and we will help you update your card.');
+    expect(inApp).not.toMatch(/Manage billing|flockcorp\.com\/|See plans/);
+    expect(stripePlanLines({ ...plan, status: 'unpaid' }, { native: true }).line).toBe(inApp);
+  });
+
   test('a renewing plan names the day it renews', () => {
     const lines = stripePlanLines({ status: 'active', trialEnd: null, currentPeriodEnd: PERIOD_END, cancelAt: null });
     expect(lines.line).toBe('Billed through Stripe.');
