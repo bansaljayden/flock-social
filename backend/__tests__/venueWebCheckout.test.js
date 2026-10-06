@@ -216,17 +216,25 @@ test.beforeEach(() => {
 test.afterEach(() => resetEnv());
 test.after(() => { global.fetch = realFetch; });
 
+// The listing this venue's claim names.
+const PLACE = 'ChIJvenueWebCheckout001';
+
 // The venue profile and grant rows, answered the way the real queries shape them.
-function venueDb({ verified = true, customer = null, grant = null, cachedTier = 'free', legacy = undefined, noticeUntil = null } = {}) {
+// trialUsed: the account, or the venue under any account, already has a Roost
+// subscription on record (venue_stripe_subscriptions, migration 119).
+function venueDb({ verified = true, customer = null, grant = null, cachedTier = 'free', legacy = undefined, noticeUntil = null, placeId = PLACE, trialUsed = false } = {}) {
   return async (sql) => {
-    if (sql.includes('SELECT id, verified, business_name, stripe_customer_id FROM venue_profiles')) {
-      return { rows: [{ id: 9, verified, business_name: 'The Owl', stripe_customer_id: customer }] };
+    if (sql.includes('SELECT id, verified, business_name, stripe_customer_id') && sql.includes('FROM venue_profiles')) {
+      return { rows: [{ id: 9, verified, business_name: 'The Owl', stripe_customer_id: customer, google_place_id: placeId }] };
+    }
+    if (sql.includes('FROM venue_stripe_subscriptions') && sql.includes('AS used')) {
+      return { rows: [{ used: trialUsed }] };
     }
     if (sql.includes('SELECT stripe_customer_id FROM venue_profiles WHERE user_id = $1')) {
       return { rows: [{ stripe_customer_id: customer }] };
     }
-    if (sql.includes('SELECT verified, stripe_customer_id FROM venue_profiles')) {
-      return { rows: [{ verified, stripe_customer_id: customer }] };
+    if (sql.includes('SELECT verified, stripe_customer_id') && sql.includes('FROM venue_profiles')) {
+      return { rows: [{ verified, stripe_customer_id: customer, google_place_id: placeId }] };
     }
     if (sql.startsWith('SELECT vp.tier, vs.tier AS grant_tier')) {
       return { rows: [{
@@ -323,6 +331,52 @@ test('a Roost session: venue metadata twice, never app_user_id, a first-time car
     assert.match(args.success_url, /\/app\?venue_billing=success&session_id=\{CHECKOUT_SESSION_ID\}$/);
     const [, customerArgs] = stripeCalls.find(([n]) => n === 'customers.create');
     assert.ok(!('app_user_id' in customerArgs.metadata));
+  } finally { restore(); }
+});
+
+test('a Roost session names the venue it is bought for, not only the account', async () => {
+  // The metadata named the account alone, so a subscription bought for one
+  // venue followed the claim to whichever venue it named next.
+  setEnv(ON);
+  const { restore } = stubPool(venueDb());
+  try {
+    const res = await call(venueBillingRoutes, 'POST', '/api/venue-billing/checkout', { plan: 'monthly' });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    const [, args] = stripeCalls.find(([n]) => n === 'checkout.create');
+    for (const md of [args.metadata, args.subscription_data.metadata]) {
+      assert.strictEqual(md.flock_venue_place_id, PLACE, 'the subscription does not say which venue it pays for');
+      assert.strictEqual(md.flock_venue_profile_id, '9');
+    }
+  } finally { restore(); }
+});
+
+test('a verified claim with no Google listing cannot buy Roost: there is no venue to bind it to', async () => {
+  setEnv(ON);
+  const { restore } = stubPool(venueDb({ placeId: null }));
+  try {
+    const res = await call(venueBillingRoutes, 'POST', '/api/venue-billing/checkout', { plan: 'monthly' });
+    assert.strictEqual(res.status, 409, JSON.stringify(res.body));
+    assert.strictEqual(res.body.code, 'NO_LISTING');
+    assert.ok(!stripeCalls.some(([n]) => n === 'checkout.create' || n === 'customers.create'));
+  } finally { restore(); }
+});
+
+test('one trial per venue: a venue with a Roost subscription on record starts without one, on a brand new customer too', async () => {
+  // The trial asked only the CURRENT Stripe customer whether it had ever
+  // subscribed. A venue on a new customer (another account claiming it, or
+  // the same account after its customer was deleted) was handed a second 14
+  // days. Terms 9.6: 14 days free, once per venue.
+  setEnv(ON);
+  const { restore } = stubPool(venueDb({ trialUsed: true }));
+  try {
+    const res = await call(venueBillingRoutes, 'POST', '/api/venue-billing/checkout', { plan: 'monthly' });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    const [, args] = stripeCalls.find(([n]) => n === 'checkout.create');
+    assert.ok(!('trial_period_days' in args.subscription_data), 'a venue that had its trial was given another');
+    assert.ok(!('trial_end' in args.subscription_data));
+    assert.doesNotMatch(args.custom_text.terms_of_service_acceptance.message, /free for 14 days/);
+    const status = await call(venueBillingRoutes, 'GET', '/api/venue-billing/status');
+    assert.strictEqual(status.body.trialDays, 0, 'the plans offered a trial checkout would not give');
   } finally { restore(); }
 });
 

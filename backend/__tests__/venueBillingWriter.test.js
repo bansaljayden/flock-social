@@ -157,10 +157,10 @@ test.after(async () => {
 });
 
 let n = 0;
-async function venue({ verified }) {
+async function venue({ verified, placeId = null }) {
   n += 1;
   const u = await testPool.query(
-    "INSERT INTO users (email, password, name, role) VALUES ($1, 'x', 'Owner', 'venue_owner') RETURNING id",
+    "INSERT INTO users (email, password, name, role, email_verified) VALUES ($1, 'x', 'Owner', 'venue_owner', true) RETURNING id",
     [`owner${n}@example.com`]
   );
   const id = u.rows[0].id;
@@ -168,8 +168,8 @@ async function venue({ verified }) {
   // notice window and the grant alone decides: that is what this suite tests.
   // The window itself is services/roostNotice.js's, in roostNotice.test.js.
   await testPool.query(
-    "INSERT INTO venue_profiles (user_id, business_name, verified, tier, created_at) VALUES ($1, 'The Owl', $2, 'free', '2026-10-01T12:00:00Z')",
-    [id, verified]
+    "INSERT INTO venue_profiles (user_id, business_name, verified, tier, created_at, google_place_id) VALUES ($1, 'The Owl', $2, 'free', '2026-10-01T12:00:00Z', $3)",
+    [id, verified, placeId]
   );
   return id;
 }
@@ -816,4 +816,156 @@ test('a full refund of an earlier period leaves the period being paid for now', 
   assert.ok(result.ignored, JSON.stringify(result));
   assert.strictEqual((await state(id)).served, 'pro');
   assert.ok(!cancels.some((c) => c.id === 'sub_refund_old'));
+});
+
+// ---------------------------------------------------------------------------
+// A ROOST GRANT BELONGS TO ONE VENUE.
+//
+// venue_subscriptions is keyed on the owner's account and the subscription's
+// metadata named only the account, while the venue a claim names can change:
+// PUT /api/venue-profile re-points it at another listing and resets verified.
+// An owner who subscribed for venue A, re-pointed the claim at venue B and got
+// B verified was served the Roost A's subscription paid for. A grant is now
+// bound to the listing it was bought or given for (migration 119).
+// ---------------------------------------------------------------------------
+
+// Two listings of its own for each test: one verified claim per listing is a
+// unique index (migration 002), and these tests verify claims on both.
+let placePairs = 0;
+function placePair() {
+  placePairs += 1;
+  const tail = String(placePairs).padStart(4, '0');
+  return [`ChIJbindingVenueA${tail}`, `ChIJbindingVenueB${tail}`];
+}
+
+// What PUT /api/venue-profile does to a claim re-pointed at another listing,
+// then an admin's verify of the new one.
+async function repointAndVerify(userId, placeId) {
+  await testPool.query(
+    'UPDATE venue_profiles SET google_place_id = $2, verified = false, verification_requested_at = NULL WHERE user_id = $1',
+    [userId, placeId]
+  );
+  await testPool.query('UPDATE venue_profiles SET verified = true WHERE user_id = $1', [userId]);
+}
+
+function boundTo(placeId) {
+  return (userId) => ({ kind: 'venue', flock_venue_user_id: String(userId), flock_venue_place_id: placeId });
+}
+
+test('a subscription bought for one venue is not served to the next venue the claim names', async () => {
+  const [PLACE_A, PLACE_B] = placePair();
+  const id = await venue({ verified: true, placeId: PLACE_A });
+  await venueBilling.syncVenueSubscription(sub('sub_bound_a', id, 'active', { metadata: boundTo(PLACE_A)(id) }));
+  assert.strictEqual((await state(id)).served, 'pro');
+
+  await repointAndVerify(id, PLACE_B);
+  assert.strictEqual((await state(id)).served, 'free', 'venue B was served the Roost venue A paid for');
+
+  // The subscription's next event changes nothing: it still pays for A.
+  await venueBilling.syncVenueSubscription('sub_bound_a');
+  const s = await state(id);
+  assert.strictEqual(s.served, 'free');
+  const g = await testPool.query('SELECT google_place_id FROM venue_subscriptions WHERE user_id = $1', [id]);
+  assert.strictEqual(g.rows[0].google_place_id, PLACE_A, 'the grant records the venue it was bought for');
+
+  // Back on the listing it was bought for, it is served again.
+  await repointAndVerify(id, PLACE_A);
+  assert.strictEqual((await state(id)).served, 'pro');
+});
+
+test('a hand-made subscription with no listing in its metadata is bound to the listing the claim named when it arrived', async () => {
+  const [PLACE_A, PLACE_B] = placePair();
+  const id = await venue({ verified: true, placeId: PLACE_A });
+  await venueBilling.syncVenueSubscription(sub('sub_bound_hand', id, 'active'));
+  assert.strictEqual((await state(id)).served, 'pro');
+  const rec = await testPool.query('SELECT user_id, google_place_id FROM venue_stripe_subscriptions WHERE stripe_subscription_id = $1', ['sub_bound_hand']);
+  assert.deepStrictEqual(rec.rows, [{ user_id: id, google_place_id: PLACE_A }]);
+  await repointAndVerify(id, PLACE_B);
+  await venueBilling.syncVenueSubscription('sub_bound_hand');
+  assert.strictEqual((await state(id)).served, 'free', 'the binding moved with the claim');
+});
+
+test('moving a plan to another listing is an explicit step: the subscription is re-bound in its metadata', async () => {
+  const [PLACE_A, PLACE_B] = placePair();
+  const id = await venue({ verified: true, placeId: PLACE_A });
+  await venueBilling.syncVenueSubscription(sub('sub_moved_plan', id, 'active', { metadata: boundTo(PLACE_A)(id) }));
+  await repointAndVerify(id, PLACE_B);
+  assert.strictEqual((await state(id)).served, 'free');
+  // An operator moves the plan: the subscription's metadata names B now.
+  subs.sub_moved_plan.metadata = boundTo(PLACE_B)(id);
+  await venueBilling.syncVenueSubscription('sub_moved_plan');
+  assert.strictEqual((await state(id)).served, 'pro');
+});
+
+test('a comp is given to a venue, not to the account: it does not follow the claim to another listing', async () => {
+  const [PLACE_A, PLACE_B] = placePair();
+  const id = await venue({ verified: true, placeId: PLACE_A });
+  const adminId = await admin();
+  const comp = await adminCall('POST', `/api/admin/venues/${id}/tier`, {
+    as: adminId, body: { tier: 'pro', grantReason: 'founding_comp', reason: 'founding cohort' },
+  });
+  assert.strictEqual(comp.status, 200, comp.text);
+  assert.strictEqual((await state(id)).served, 'pro');
+  await repointAndVerify(id, PLACE_B);
+  assert.strictEqual((await state(id)).served, 'free', 'a founding comp given to venue A was served to venue B');
+});
+
+// The profile routes, mounted the way server.js mounts them.
+let profileServer = null;
+let profileBase = null;
+async function profileCall(method, urlPath, { as, body } = {}) {
+  if (!profileServer) {
+    const http = require('node:http');
+    const express = require('express');
+    const app = express();
+    app.use(express.json());
+    app.use('/api/venue-profile', require('../routes/venueProfile'));
+    profileServer = http.createServer(app);
+    await new Promise((r) => profileServer.listen(0, '127.0.0.1', r));
+    profileBase = `http://127.0.0.1:${profileServer.address().port}`;
+  }
+  const { signUserToken } = require('../middleware/auth');
+  const res = await fetch(profileBase + urlPath, {
+    method,
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${signUserToken({ id: as, token_version: 0 })}` },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const text = await res.text();
+  let json = null;
+  try { json = JSON.parse(text); } catch { /* not JSON */ }
+  return { status: res.status, body: json, text };
+}
+test.after(async () => {
+  if (profileServer) await new Promise((r) => profileServer.close(r));
+});
+
+test('a claim paying for Roost cannot be re-pointed at another listing until the plan is ended or moved', async () => {
+  const [PLACE_A, PLACE_B] = placePair();
+  const id = await venue({ verified: true, placeId: PLACE_A });
+  await venueBilling.syncVenueSubscription(sub('sub_listing_lock', id, 'active', { metadata: boundTo(PLACE_A)(id) }));
+
+  const moved = await profileCall('PUT', '/api/venue-profile', { as: id, body: { googlePlaceId: PLACE_B } });
+  assert.strictEqual(moved.status, 409, `a paying claim was re-pointed at another listing: ${moved.text}`);
+  assert.strictEqual(moved.body.code, 'ROOST_ON_LISTING');
+  assert.ok(!/—/.test(moved.body.error), 'no em dash in what the owner reads');
+  const p = await testPool.query('SELECT google_place_id, verified FROM venue_profiles WHERE user_id = $1', [id]);
+  assert.deepStrictEqual(p.rows[0], { google_place_id: PLACE_A, verified: true }, 'the refused change still reset the claim');
+
+  // Re-onboarding is the other door to the same column.
+  const reclaimed = await profileCall('POST', '/api/venue-profile', { as: id, body: { businessName: 'The Owl', googlePlaceId: PLACE_B } });
+  assert.strictEqual(reclaimed.status, 409, reclaimed.text);
+  assert.strictEqual(reclaimed.body.code, 'ROOST_ON_LISTING');
+
+  // Saving the same listing, or anything else, still works.
+  const same = await profileCall('PUT', '/api/venue-profile', { as: id, body: { googlePlaceId: PLACE_A, phone: '555 0100' } });
+  assert.strictEqual(same.status, 200, same.text);
+
+  // A plan set to end at its period end is the owner's decision made: the
+  // listing can move, and the rest of the period is not carried with it.
+  sub('sub_listing_lock', id, 'active', { metadata: boundTo(PLACE_A)(id), cancel_at: Math.floor(Date.now() / 1000) + 14 * 86400, cancel_at_period_end: true });
+  await venueBilling.syncVenueSubscription('sub_listing_lock');
+  const after = await profileCall('PUT', '/api/venue-profile', { as: id, body: { googlePlaceId: PLACE_B } });
+  assert.strictEqual(after.status, 200, after.text);
+  await testPool.query('UPDATE venue_profiles SET verified = true WHERE user_id = $1', [id]);
+  assert.strictEqual((await state(id)).served, 'free');
 });

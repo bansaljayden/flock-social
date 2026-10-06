@@ -299,6 +299,21 @@ const placeIdRule = scalarOnly(body('googlePlaceId').optional({ nullable: true }
 // verification lands between this check and the write.
 const CLAIMED_MSG = 'That business is already claimed by a verified owner. If it is yours, email social@flockcorp.com and we will sort it out.';
 
+// A CLAIM PAYING FOR ROOST KEEPS ITS LISTING. A Roost plan is bought for one
+// Google listing (services/venueBilling.js, ONE VENUE PER PLAN), and the grant
+// is served only while the claim names it. Re-pointing a claim used to carry
+// the plan along: the new listing, once verified, was served the Roost the old
+// one paid for. Now the plan stays with its listing, so re-pointing a claim
+// whose plan renews would leave the owner paying every month for a venue they
+// no longer claim. Both write paths below refuse that move, inside the same
+// statement, while a Stripe plan that is set to renew is bound to another
+// listing than the one asked for. The explicit steps are the owner's
+// cancellation in Manage billing (a plan set to end lets the claim move, and
+// the rest of its period stays with the old listing) or ours: we re-bind the
+// plan in Stripe, after which moving the claim to its new listing is allowed.
+// Comps never block a move; they stay with the listing they were given for.
+const ROOST_LISTING_MSG = 'Your Roost plan is for the Google listing your venue has now. Cancel it from Manage billing first, or write to social@flockcorp.com and we will move it to the new listing.';
+
 async function claimedByAnother(placeId, userId) {
   if (!placeId) return false;
   const { rows } = await pool.query(
@@ -549,9 +564,24 @@ router.post('/', requireVerified, [
                           AND EXCLUDED.google_place_id IS DISTINCT FROM venue_profiles.google_place_id
                          THEN NULL ELSE venue_profiles.verification_requested_at END,
          updated_at = NOW()
+       -- A claim paying for Roost keeps its listing (ROOST_LISTING_MSG above):
+       -- a refused re-claim updates nothing and returns no row.
+       WHERE NOT (EXCLUDED.google_place_id IS NOT NULL
+                  AND EXCLUDED.google_place_id IS DISTINCT FROM venue_profiles.google_place_id
+                  AND EXISTS (SELECT 1 FROM venue_subscriptions vs
+                               WHERE vs.user_id = venue_profiles.user_id
+                                 AND vs.source = 'stripe'
+                                 AND vs.status IN ('active', 'trialing', 'past_due')
+                                 AND vs.expires_at > NOW()
+                                 AND vs.cancel_at IS NULL
+                                 AND vs.google_place_id IS DISTINCT FROM EXCLUDED.google_place_id))
        RETURNING *`,
       [req.user.id, businessName, category || null, location || null, description || null, goals || [], googlePlaceId || null]
     );
+    // Only the refusal above returns no row: the INSERT path always writes one.
+    if (result.rows.length === 0) {
+      return res.status(409).json({ error: ROOST_LISTING_MSG, code: 'ROOST_ON_LISTING' });
+    }
 
     // forceCorpus: a claim is the moment the place id is captured, so whatever
     // answer an earlier claim left behind is about a different venue.
@@ -948,6 +978,19 @@ router.put('/', [
         photo_url = COALESCE($10, photo_url),
         updated_at = NOW()
       WHERE user_id = $11
+        -- A claim paying for Roost keeps its listing (ROOST_LISTING_MSG
+        -- above). Decided here, against the row being written, so a plan
+        -- that starts while this waits is still seen. Cast here because
+        -- Postgres reads the WHERE before the SET, and a bare IS NOT NULL
+        -- gives a parameter no type.
+        AND NOT ($9::varchar IS NOT NULL AND $9::varchar IS DISTINCT FROM google_place_id
+                 AND EXISTS (SELECT 1 FROM venue_subscriptions vs
+                              WHERE vs.user_id = venue_profiles.user_id
+                                AND vs.source = 'stripe'
+                                AND vs.status IN ('active', 'trialing', 'past_due')
+                                AND vs.expires_at > NOW()
+                                AND vs.cancel_at IS NULL
+                                AND vs.google_place_id IS DISTINCT FROM $9::varchar))
       RETURNING *`,
       [businessName || null, category || null, location || null, description || null, goals || null,
        phone || null, operatingHours ? JSON.stringify(operatingHours) : null,
@@ -962,6 +1005,12 @@ router.put('/', [
     );
 
     if (result.rows.length === 0) {
+      // Nothing was written, which is "no profile" or, only when this request
+      // named a listing, the refusal above. A re-read tells them apart.
+      if (googlePlaceId) {
+        const exists = await pool.query('SELECT 1 FROM venue_profiles WHERE user_id = $1', [req.user.id]);
+        if (exists.rows.length > 0) return res.status(409).json({ error: ROOST_LISTING_MSG, code: 'ROOST_ON_LISTING' });
+      }
       return res.status(404).json({ error: 'No venue profile found' });
     }
 

@@ -33,6 +33,19 @@
 // recorded there as that person's consumer purchase. The webhook routes on
 // kind, so the Pro path never sees a venue event.
 //
+// ONE VENUE PER PLAN. The account is not the venue: a claim can be re-pointed
+// at another Google listing (PUT /api/venue-profile), and a plan whose
+// metadata named only the account was served to whichever venue the claim
+// named next. So every session and subscription also carries
+// flock_venue_place_id, the listing it is bought for, and flock_venue_profile_id,
+// the claim. The writer binds each subscription to that listing (or, for one
+// made by hand without it, to the listing the claim named when it first
+// arrived), records the binding in venue_stripe_subscriptions and on the grant
+// (migration 119), and the resolver serves a grant only while the claim still
+// names its listing. Moving a plan to another listing is an explicit step: an
+// operator changes the subscription's flock_venue_place_id in Stripe, and the
+// next event re-binds it.
+//
 // OFF UNTIL EVERY PART EXISTS. checkoutState() is ready only when venue
 // billing is switched on (VENUE_BILLING_ENABLED, which also turns the tier
 // gates on), Stripe has a key, the monthly Roost price is configured, and the
@@ -146,6 +159,15 @@ function venueUserIdFrom(metadata) {
   return n >= 1 && n <= 2147483647 ? n : null;
 }
 
+// The listing a subscription is bought for (ONE VENUE PER PLAN above). Width
+// is the column's, venue_profiles.google_place_id; anything wider names no
+// listing a claim could hold.
+const MAX_PLACE_ID = 255;
+function venuePlaceIdFrom(metadata) {
+  const raw = metadata && typeof metadata.flock_venue_place_id === 'string' ? metadata.flock_venue_place_id.trim() : '';
+  return raw && raw.length <= MAX_PLACE_ID ? raw : null;
+}
+
 function isVenueObject(obj) {
   return !!(obj && obj.metadata && obj.metadata.kind === KIND);
 }
@@ -156,11 +178,30 @@ function isVenueObject(obj) {
 
 async function venueProfileFor(userId) {
   const r = await pool.query(
-    'SELECT id, verified, business_name, stripe_customer_id FROM venue_profiles WHERE user_id = $1',
+    'SELECT id, verified, business_name, stripe_customer_id, google_place_id FROM venue_profiles WHERE user_id = $1',
     [userId]
   );
   const rows = r && Array.isArray(r.rows) ? r.rows : [];
   return rows[0] || null;
+}
+
+// ONE TRIAL PER VENUE (Terms 9.6: "14 days free, once per venue"). The trial
+// used to be decided by asking the CURRENT Stripe customer whether it had
+// ever held a subscription, which is a question about a customer, not a
+// venue: another account claiming the same venue, or this account on a new
+// customer, started a second 14 days. The record of every Roost subscription
+// the writer has seen (venue_stripe_subscriptions, migration 119) answers it
+// for the venue and for the account, and so does a grant row that has ever
+// named a subscription. Stripe's own answer for the customer is still asked
+// as well, for a subscription made a moment ago whose first event has not
+// arrived yet.
+const TRIAL_USED_SQL = `SELECT (EXISTS (SELECT 1 FROM venue_stripe_subscriptions WHERE user_id = $1::int OR google_place_id = $2::varchar)
+     OR EXISTS (SELECT 1 FROM venue_subscriptions WHERE user_id = $1::int AND stripe_subscription_id IS NOT NULL)) AS used`;
+
+async function venueTrialUsed(userId, placeId) {
+  const r = await pool.query(TRIAL_USED_SQL, [userId, placeId || null]);
+  const row = r && Array.isArray(r.rows) ? r.rows[0] : null;
+  return !!(row && row.used === true);
 }
 
 async function venueCustomerIdFor(userId) {
@@ -271,6 +312,12 @@ async function buildVenueCheckout(user, plan) {
   if (profile.verified !== true) {
     throw refusal(409, 'Your venue has to be verified before Roost can be bought. Settings has the request.', 'VENUE_NOT_VERIFIED');
   }
+  // A plan is bought for a listing (ONE VENUE PER PLAN), and a claim the
+  // admin verified with no listing has none to bind it to. Roost's forecast
+  // needs one anyway (routes/venueDashboard.js /intelligence).
+  if (!profile.google_place_id) {
+    throw refusal(409, 'Roost is bought for your Google listing, and none is linked to this venue yet. Write to social@flockcorp.com to link one.', 'NO_LISTING');
+  }
   // A venue already holding a live paid grant from us (a founding comp, a
   // hand-sold plan) must not be walked into a second, paid one on top. The
   // GRANT decides this, not the served tier: a venue inside its notice window
@@ -286,7 +333,7 @@ async function buildVenueCheckout(user, plan) {
   if (await hasLiveSubscription(customerId)) {
     throw refusal(409, 'You already have Roost. Manage it from billing.', 'ALREADY_SUBSCRIBED');
   }
-  const trial = !(await hasEverSubscribed(customerId));
+  const trial = !(await venueTrialUsed(user.id, profile.google_place_id)) && !(await hasEverSubscribed(customerId));
   // THE NOTICE FLOOR. A venue account from before Roost had a price is not
   // charged before the date its notice email named (Terms 9.6,
   // services/roostNotice.js). If the notice has not gone out yet it is sent
@@ -313,7 +360,13 @@ async function buildVenueCheckout(user, plan) {
   const every = price.interval === 'year' ? 'year' : 'month';
   const tax = billing.taxEnabled();
   const web = billing.webBase();
-  const meta = { kind: KIND, flock_venue_user_id: String(user.id), plan };
+  const meta = {
+    kind: KIND,
+    flock_venue_user_id: String(user.id),
+    flock_venue_place_id: profile.google_place_id,
+    flock_venue_profile_id: String(profile.id),
+    plan,
+  };
   // NO client_reference_id. RevenueCat's Stripe integration reads a Checkout
   // Session's client_reference_id as the app user id, exactly as it reads
   // app_user_id in metadata (the header of this file says why that key is kept
@@ -449,19 +502,27 @@ function grantFromSubscription(sub, now = Date.now(), { unknownPriceIsRoost = fa
 //            before our grant ends carries a date past it. A later admin edit
 //            that shortens a grant already written over a subscription is not
 //            covered: the row no longer says whether that subscription is
-//            still live, because its events were not written.
+//            still live, because its events were not written. Nor does a
+//            subscription ever take the row from a live grant WE wrote for a
+//            different listing, whatever its dates: a plan for venue A is not
+//            a reason to end a comp given to venue B.
 //   upd      moves the cache only when it changes, only when the grant was
-//            written, and never to a paid tier for an unverified profile.
+//            written, never to a paid tier for an unverified profile, and
+//            never to a paid tier for a claim that names a different listing
+//            from the one the subscription is bound to ($13, ONE VENUE PER
+//            PLAN at the top of this file).
 //   audit    one tier_changed row per actual change, none per renewal.
 const SYNC_SQL = `WITH old AS (
-    SELECT user_id, tier, verified FROM venue_profiles WHERE user_id = $1::int
+    SELECT user_id, tier, verified, google_place_id FROM venue_profiles WHERE user_id = $1::int
   ),
   granted AS (
     INSERT INTO venue_subscriptions
       (user_id, tier, source, status, granted_reason, granted_at, granted_by, expires_at,
-       stripe_customer_id, stripe_subscription_id, stripe_price_id, current_period_end, cancel_at, trial_end, updated_at)
+       stripe_customer_id, stripe_subscription_id, stripe_price_id, current_period_end, cancel_at, trial_end,
+       google_place_id, updated_at)
     SELECT $1::int, $2::text, 'stripe', $3::text, 'paid', NOW(), NULL, $4::timestamptz,
-           $5::text, $6::text, $7::text, $8::timestamptz, $9::timestamptz, $10::timestamptz, NOW()
+           $5::text, $6::text, $7::text, $8::timestamptz, $9::timestamptz, $10::timestamptz,
+           $13::varchar, NOW()
       FROM old
     ON CONFLICT (user_id) DO UPDATE SET
       tier = EXCLUDED.tier,
@@ -478,6 +539,7 @@ const SYNC_SQL = `WITH old AS (
       current_period_end = EXCLUDED.current_period_end,
       cancel_at = EXCLUDED.cancel_at,
       trial_end = EXCLUDED.trial_end,
+      google_place_id = EXCLUDED.google_place_id,
       updated_at = NOW()
     WHERE (venue_subscriptions.stripe_subscription_id IS NULL
        OR venue_subscriptions.stripe_subscription_id = EXCLUDED.stripe_subscription_id
@@ -488,7 +550,8 @@ const SYNC_SQL = `WITH old AS (
        AND venue_subscriptions.status IN ('active', 'trialing', 'past_due')
        AND (venue_subscriptions.expires_at IS NULL OR venue_subscriptions.expires_at > NOW())
        AND NOT ($11::boolean AND venue_subscriptions.expires_at IS NOT NULL
-                AND EXCLUDED.expires_at >= venue_subscriptions.expires_at))
+                AND EXCLUDED.expires_at >= venue_subscriptions.expires_at
+                AND venue_subscriptions.google_place_id IS NOT DISTINCT FROM EXCLUDED.google_place_id))
     RETURNING user_id
   ),
   upd AS (
@@ -498,6 +561,7 @@ const SYNC_SQL = `WITH old AS (
        AND EXISTS (SELECT 1 FROM granted)
        AND old.tier IS DISTINCT FROM $12::text
        AND ($12::text = 'free' OR old.verified = true)
+       AND ($12::text = 'free' OR old.google_place_id IS NOT DISTINCT FROM $13::varchar)
     RETURNING venue_profiles.id, venue_profiles.tier, old.tier AS old_tier
   ),
   audit AS (
@@ -509,7 +573,28 @@ const SYNC_SQL = `WITH old AS (
   )
   SELECT (SELECT COUNT(*) FROM old)::int AS profiles,
          (SELECT COUNT(*) FROM granted)::int AS written,
-         (SELECT old.verified FROM old) AS verified`;
+         (SELECT old.verified FROM old) AS verified,
+         (SELECT old.google_place_id FROM old) AS place_id`;
+
+// EVERY ROOST SUBSCRIPTION ON RECORD, AND THE LISTING IT IS BOUND TO
+// (venue_stripe_subscriptions, migration 119). Written on the sync's locked
+// transaction, before the grant. The binding is the listing in the
+// subscription's metadata whenever it names one, so an operator moving a plan
+// to another listing is one metadata change; a subscription made by hand
+// without one keeps the listing its claim named when it first arrived, read
+// from the row and never from whatever the claim names later. Nothing is
+// recorded for an account that no longer exists (a deletion's own cancel
+// event), and the binding then comes from the metadata alone.
+const RECORD_SUBSCRIPTION_SQL = `INSERT INTO venue_stripe_subscriptions (stripe_subscription_id, user_id, stripe_customer_id, google_place_id)
+  SELECT $1::text, u.id, $3::text, COALESCE($4::varchar, vp.google_place_id)
+    FROM users u
+    LEFT JOIN venue_profiles vp ON vp.user_id = u.id
+   WHERE u.id = $2::int
+  ON CONFLICT (stripe_subscription_id) DO UPDATE SET
+    user_id = EXCLUDED.user_id,
+    stripe_customer_id = COALESCE(EXCLUDED.stripe_customer_id, venue_stripe_subscriptions.stripe_customer_id),
+    google_place_id = CASE WHEN $4::varchar IS NOT NULL THEN $4::varchar ELSE venue_stripe_subscriptions.google_place_id END
+  RETURNING google_place_id`;
 
 // ONE SYNC PER VENUE AT A TIME, AND THE LAST ONE READS LAST. Every caller (the
 // webhook, once per subscription event, and the confirm route after the
@@ -620,13 +705,23 @@ async function syncVenueSubscription(subscriptionId) {
       console.error(`[venue-billing] subscription ${sub.id} is ${g.status} on price ${g.priceId}, which is not a configured Roost price. It is not live, so the grant is revoked as for any ended subscription.`);
     }
     const customerId = typeof sub.customer === 'string' ? sub.customer : sub.customer && sub.customer.id;
+    // The listing this subscription pays for (ONE VENUE PER PLAN).
+    const metaPlace = venuePlaceIdFrom(sub.metadata);
+    const recorded = await client.query(RECORD_SUBSCRIPTION_SQL, [sub.id, userId, customerId || null, metaPlace]);
+    const boundPlace = recorded && Array.isArray(recorded.rows) && recorded.rows[0]
+      ? recorded.rows[0].google_place_id
+      : metaPlace;
     const r = await client.query(SYNC_SQL, [
       userId, g.grantTier, g.status, g.expiresAt, customerId || null, sub.id, g.priceId,
-      g.periodEnd, g.cancelAt, g.trialEnd, g.live, g.cachedTier,
+      g.periodEnd, g.cancelAt, g.trialEnd, g.live, g.cachedTier, boundPlace || null,
     ]);
     await client.query('COMMIT');
     const row = r.rows[0] || {};
     if (!row.profiles) return { ignored: 'no_venue_profile' };
+    const otherListing = (boundPlace || null) !== (row.place_id || null);
+    if (g.live && otherListing) {
+      console.error(`[venue-billing] venue user ${userId} holds a live Roost subscription (${sub.id}) bought for listing ${boundPlace || 'none'}, but the claim names ${row.place_id || 'no listing'}, so it is not served there. To move the plan, set flock_venue_place_id on the subscription in Stripe to the listing the claim names; otherwise cancel it.`);
+    }
     // Live and not written can only be the rule in SYNC_SQL that keeps a
     // grant we wrote: Stripe is billing a venue that already holds Roost from
     // us for longer than this period. Nothing is taken from the venue, but
@@ -637,7 +732,8 @@ async function syncVenueSubscription(subscriptionId) {
     if (g.live && row.verified !== true) {
       console.error(`[venue-billing] venue user ${userId} holds a live Roost subscription (${sub.id}) but the profile is not verified, so no tier is served. Verify the claim or refund it.`);
     }
-    return { userId, tier: g.live ? g.cachedTier : 'free', status: g.status, written: row.written > 0 };
+    const served = g.live && row.verified === true && !otherListing;
+    return { userId, tier: served ? g.cachedTier : 'free', status: g.status, written: row.written > 0 };
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     throw err;
@@ -793,6 +889,7 @@ module.exports = {
   handleVenueEvent,
   revokeRefundedSubscription,
   venueCustomerIdFor,
+  venueTrialUsed,
   closeVenueCustomer,
   venueCheckoutKey,
   grantFromSubscription,

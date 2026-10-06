@@ -58,7 +58,7 @@ router.get('/status', async (req, res) => {
   try {
     res.set('Cache-Control', 'no-store');
     const r = await pool.query(
-      'SELECT verified, stripe_customer_id FROM venue_profiles WHERE user_id = $1',
+      'SELECT verified, stripe_customer_id, google_place_id FROM venue_profiles WHERE user_id = $1',
       [req.user.id]
     );
     const profile = r.rows[0];
@@ -81,6 +81,11 @@ router.get('/status', async (req, res) => {
         sellable = false;
       }
     }
+    // One trial per venue and per account, the same answer checkout acts on
+    // (venueBilling.venueTrialUsed). A lookup that fails offers none: the
+    // page must not promise 14 days checkout may not give.
+    const trialAvailable = sellable && !canManage
+      && !(await venueBilling.venueTrialUsed(req.user.id, profile.google_place_id).catch(() => true));
     // A venue account from before Roost had a price keeps everything, and
     // cannot be charged, until the date its notice named (Terms 9.6). freeUntil
     // is the earliest first charge a checkout started now would carry; with no
@@ -88,7 +93,7 @@ router.get('/status', async (req, res) => {
     let freeUntil = null;
     if (ent.inNoticeWindow) {
       const floor = ent.noticeUntil ? Date.parse(ent.noticeUntil) : Date.now() + roostNotice.NOTICE_MS;
-      const trialEnd = sellable && !canManage ? Date.now() + venueBilling.TRIAL_DAYS * 24 * 60 * 60 * 1000 : 0;
+      const trialEnd = trialAvailable ? Date.now() + venueBilling.TRIAL_DAYS * 24 * 60 * 60 * 1000 : 0;
       freeUntil = new Date(Math.max(floor, trialEnd)).toISOString();
     }
     res.json({
@@ -99,9 +104,10 @@ router.get('/status', async (req, res) => {
       freeUntil,
       plans,
       // One trial per venue: an owner who has ever subscribed (which is also
-      // exactly when there is a portal to manage) is offered none, matching
-      // what createVenueCheckout will actually do.
-      trialDays: sellable && !canManage ? venueBilling.TRIAL_DAYS : 0,
+      // exactly when there is a portal to manage), and a venue that has had a
+      // Roost subscription under any account, is offered none, matching what
+      // createVenueCheckout will actually do.
+      trialDays: trialAvailable ? venueBilling.TRIAL_DAYS : 0,
       taxAdded: sellable ? billing.taxEnabled() : false,
       verified: profile.verified === true,
       tier: ent.tier,
