@@ -1620,7 +1620,12 @@ describe('downloading the expense list', () => {
       expect(created[0].type).toBe('text/csv;charset=utf-8');
     } finally {
       URL.createObjectURL = origCreate;
-      URL.revokeObjectURL = origRevoke;
+      // jsdom has no revokeObjectURL, and the download frees its URL a second
+      // after the click, once this test has ended. Putting the missing
+      // function back made that timer throw inside whichever test was running
+      // a second later (2026-10-06: the first test added after this one), so
+      // a stand-in stays where jsdom has none.
+      URL.revokeObjectURL = origRevoke || (() => {});
     }
   });
 });
