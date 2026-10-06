@@ -64,8 +64,8 @@ held out from September 6 to 8, 2026:
   the September 2026 upgrade the same readings scored 32.2%, 58.5% and 28.6%.
 - The average miss was 17.1 points, down from 30.6, with no systematic lean
   high or low.
-- Where the venue had a live reading from the hour before, 91.7% of numbers
-  landed within one crowd level.
+- Where the venue had a live reading from the hour before, 86.1% of numbers
+  named the exact crowd level and 91.7% landed within one.
 - When Flock has no pattern for a venue yet, a rule-based engine answers and
   the number is tagged with the engine that produced it.
 

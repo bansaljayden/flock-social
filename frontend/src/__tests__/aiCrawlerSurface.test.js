@@ -393,7 +393,7 @@ describe('llms.txt stays true to the shipped model', () => {
     expect(flat).toContain(`scored ${served.before.band_exact.toFixed(1)}%, ${served.before.within_one_band}% and ${served.before.within_10}%`);
     expect(flat).toContain(`average miss was ${served.mae.toFixed(1)} points, down from ${served.before.mae.toFixed(1)}`);
     expect(Math.abs(served.bias)).toBeLessThan(2);
-    expect(flat).toContain(`${served.reading_one_hour_earlier.within_one_band}% of numbers landed within one crowd level`);
+    expect(flat).toContain(`${served.reading_one_hour_earlier.band_exact.toFixed(1)}% of numbers named the exact crowd level and ${served.reading_one_hour_earlier.within_one_band}% landed within one`);
   });
 
   // AUDIT 2026-08-26. The five figures above were pinned; the sentence that
