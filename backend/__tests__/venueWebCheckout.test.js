@@ -534,6 +534,46 @@ test('another venue\'s plan, or a Flock Pro plan, on the same customer does not 
   } finally { restore(); }
 });
 
+// ---- a plan left with the listing the claim moved away from -----------------
+//
+// ROOST_LISTING_MSG tells an owner to end the plan before moving the claim.
+// That plan is active at Stripe until its period ends, so it blocked checkout
+// and was the only thing the card offered, Manage billing, whose Renew bills
+// for the listing the claim left.
+
+test('a plan set to end for a listing the claim has left neither blocks a new plan nor fills the card', async () => {
+  setEnv(ON);
+  const ends = Math.floor(Date.now() / 1000) + 200 * 86400;
+  const forListing = (place) => ({
+    ...roostSub('sub_set_to_end', 'active', 1700000000),
+    cancel_at: ends, cancel_at_period_end: true,
+    metadata: { kind: 'venue', flock_venue_user_id: String(ME.id), flock_venue_place_id: place },
+  });
+  stripeState.subscriptions = [forListing('ChIJtheListingLeftBehind1')];
+  let db = stubPool(venueDb({ customer: 'cus_VENUE1', trialUsed: true }));
+  try {
+    const status = await call(venueBillingRoutes, 'GET', '/api/venue-billing/status');
+    assert.strictEqual(status.status, 200, JSON.stringify(status.body));
+    assert.strictEqual(status.body.canManage, false, 'the card offered only the plan of a listing the claim has left');
+    assert.deepStrictEqual(status.body.plans.map((p) => p.id), ['monthly', 'yearly']);
+    assert.strictEqual(status.body.trialDays, 0);
+    const res = await call(venueBillingRoutes, 'POST', '/api/venue-billing/checkout', { plan: 'monthly' });
+    assert.strictEqual(res.status, 200, `the listing the claim names now could not buy Roost: ${JSON.stringify(res.body)}`);
+  } finally { db.restore(); }
+
+  // The same plan set to end for the listing the claim names is the claim's plan.
+  stripeState.subscriptions = [forListing(PLACE)];
+  stripeCalls.length = 0;
+  db = stubPool(venueDb({ customer: 'cus_VENUE1', trialUsed: true }));
+  try {
+    const status = await call(venueBillingRoutes, 'GET', '/api/venue-billing/status');
+    assert.strictEqual(status.body.canManage, true);
+    const res = await call(venueBillingRoutes, 'POST', '/api/venue-billing/checkout', { plan: 'monthly' });
+    assert.strictEqual(res.status, 409);
+    assert.strictEqual(res.body.code, 'ALREADY_SUBSCRIBED');
+  } finally { db.restore(); }
+});
+
 // ---- the dates the plans card names come from Stripe -----------------------
 
 test('the status names the trial\'s charge date, the renewal date and a scheduled end', async () => {

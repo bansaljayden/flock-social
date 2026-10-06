@@ -1148,6 +1148,37 @@ test('a hand-made plan bound to no listing lets its claim name a first listing, 
   assert.strictEqual(created.status, 201, created.text);
 });
 
+test('after the documented move, the listing the claim names now can buy its own plan', async () => {
+  // End the plan, move the claim, get the new listing verified: the steps
+  // ROOST_LISTING_MSG gives. The old plan is active at Stripe until its year
+  // ends, and checkout refused the new listing as already subscribed until then.
+  const [PLACE_A, PLACE_B] = placePair();
+  const id = await venue({ verified: true, placeId: PLACE_A });
+  const adminId = await admin();
+  await testPool.query("UPDATE venue_profiles SET stripe_customer_id = 'cus_MOVED_ON' WHERE user_id = $1", [id]);
+  const yearEnds = Math.floor(Date.now() / 1000) + 300 * DAY_S;
+  const plan = (extra = {}) => ({ customer: 'cus_MOVED_ON', metadata: boundTo(PLACE_A)(id), ...period('price_roost_year', yearEnds), ...extra });
+  await venueBilling.syncVenueSubscription(sub('sub_moved_on', id, 'active', plan()));
+  await venueBilling.syncVenueSubscription(sub('sub_moved_on', id, 'active', plan({ cancel_at: yearEnds, cancel_at_period_end: true })));
+  const moved = await profileCall('PUT', '/api/venue-profile', { as: id, body: { googlePlaceId: PLACE_B } });
+  assert.strictEqual(moved.status, 200, moved.text);
+  const verified = await adminCall('PUT', `/api/admin/venues/${await profileIdOf(id)}/verify`, { as: adminId, body: { verified: true, googlePlaceId: PLACE_B } });
+  assert.strictEqual(verified.status, 200, verified.text);
+
+  const owner = { id, email: `owner-moved-${id}@example.com`, name: 'Owner' };
+  const before = sessionsMade.length;
+  await venueBilling.createVenueCheckout(owner, 'monthly');
+  const session = sessionsMade[before];
+  assert.ok(session, 'the new listing could not buy Roost until the old plan ran out');
+  assert.strictEqual(session.metadata.flock_venue_place_id, PLACE_B);
+  assert.ok(!('trial_period_days' in session.subscription_data), 'the account had its trial');
+
+  // Back on the listing the old plan is for, that plan is the claim's again.
+  await profileCall('PUT', '/api/venue-profile', { as: id, body: { googlePlaceId: PLACE_A } });
+  await adminCall('PUT', `/api/admin/venues/${await profileIdOf(id)}/verify`, { as: adminId, body: { verified: true, googlePlaceId: PLACE_A } });
+  await assert.rejects(venueBilling.createVenueCheckout(owner, 'monthly'), (err) => err.code === 'ALREADY_SUBSCRIBED');
+});
+
 test('with venue billing switched off the listing guard is off too, on both write paths', async () => {
   // Nothing is enforced while VENUE_BILLING_ENABLED is off, and a profile
   // save that answered ROOST_ON_LISTING then changed a route's behaviour for
