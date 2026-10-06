@@ -607,7 +607,64 @@ describe('a reply that spends the last chirp arms the unlock timer', () => {
     expect(success).toContain('setAiRemaining(response.remaining);');
     expect(success).toContain('setAiResetsAt(aiResetsAtFromReply(response));');
     // The timer it arms is the one the 429 already arms.
-    expect(appSource).toContain('const t = setTimeout(() => { setAiResetsAt(null); refreshEntitlements(); }, Math.min(ms + 1000, 2147483647));');
+    expect(appSource).toContain('const t = setTimeout(() => { refreshEntitlements(); setAiResetChecks((n) => n + 1); }, aiResetWaitMs(aiResetsAt, Date.now()));');
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// 5c. The box a relaunch finds closed, and the timer that cleared itself.
+// The entitlements snapshot carried no reset time, so a relaunch with the day
+// spent closed the box with no timer to open it. And the timer set the reset
+// time to null before it re-read, so a read that still said zero (a phone
+// clock ahead of the server's, or a failed read) left it shut with no timer.
+// ───────────────────────────────────────────────────────────────────────────
+describe('the unlock timer survives a relaunch and a read that still says zero', () => {
+  const lift = () => evaluate(
+    ['AI_RESET_RECHECK_MS', 'aiResetWaitMs'].map((n) => extractDeclaration(appSource, n)),
+    ['AI_RESET_RECHECK_MS', 'aiResetWaitMs'],
+  );
+  const RESET = '2026-10-07T00:00:00.000Z';
+  const at = Date.parse(RESET);
+
+  test('before the reset it wakes just past it', () => {
+    const { aiResetWaitMs } = lift();
+    expect(aiResetWaitMs(RESET, at - 60000)).toBe(61000);
+    expect(aiResetWaitMs(RESET, at - 1)).toBe(1001);
+    // setTimeout's own ceiling, so a far reset is not a timer that fires now.
+    expect(aiResetWaitMs('2099-01-01T00:00:00.000Z', at)).toBe(2147483647);
+  });
+
+  test('once the reset has passed it reads again in half a minute, never at once', () => {
+    const { aiResetWaitMs, AI_RESET_RECHECK_MS } = lift();
+    expect(AI_RESET_RECHECK_MS).toBe(30000);
+    for (const now of [at, at + 1, at + 5 * 60000, at + 86400000]) {
+      expect(aiResetWaitMs(RESET, now)).toBe(AI_RESET_RECHECK_MS);
+    }
+    // A time that does not parse is a slow re-check, not a tight loop.
+    expect(aiResetWaitMs('not a time', at)).toBe(AI_RESET_RECHECK_MS);
+  });
+
+  test('every wake reads the meter and arms the next one, and only a read clears the time', () => {
+    const start = appSource.indexOf('const [aiResetChecks, setAiResetChecks] = useState(0);');
+    expect(start).toBeGreaterThan(-1);
+    const effect = appSource.slice(start, appSource.indexOf('}, [aiResetsAt, aiResetChecks, refreshEntitlements]);', start));
+    expect(effect).toContain('if (!aiResetsAt) return undefined;');
+    expect(effect).toContain('refreshEntitlements(); setAiResetChecks((n) => n + 1);');
+    expect(effect).toContain('return () => clearTimeout(t);');
+    expect(effect).not.toContain('setAiResetsAt(');
+  });
+
+  test('the snapshot seeds the reset time, clears it with chirps left, and keeps a known one at zero', () => {
+    const start = appSource.indexOf('const applyEntitlements = useCallback((seq, data) => {');
+    const apply = appSource.slice(start, appSource.indexOf('const refreshEntitlements = useCallback', start));
+    expect(apply).toContain("if (typeof data?.birdie?.remaining === 'number') {");
+    expect(apply).toContain('setAiRemaining(data.birdie.remaining);');
+    expect(apply).toMatch(/if \(data\.birdie\.remaining > 0\) setAiResetsAt\(null\);\s*else \{\s*const at = aiResetsAtFromReply\(data\.birdie\);\s*if \(at\) setAiResetsAt\(at\);\s*\}/);
+    // The reading is the reply's own helper, run here on a snapshot's block.
+    const aiResetsAtFromReply = evaluate([extractDeclaration(appSource, 'aiResetsAtFromReply')], ['aiResetsAtFromReply']).aiResetsAtFromReply;
+    expect(aiResetsAtFromReply({ limit: 10, used: 10, remaining: 0, resetsAt: RESET })).toBe(RESET);
+    expect(aiResetsAtFromReply({ limit: 10, used: 10, remaining: 0 })).toBeNull();
+    expect(aiResetsAtFromReply({ limit: 10, used: 3, remaining: 7, resetsAt: null })).toBeNull();
   });
 });
 

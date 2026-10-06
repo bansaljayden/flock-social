@@ -13,8 +13,11 @@ const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8').repla
 test('the Birdie box unlocks at the reset time it prints', () => {
   const app = read('App.js');
   expect(app).toContain("&& (!aiResetsAt || Date.now() < Date.parse(aiResetsAt));");
-  expect(app).toContain("const t = setTimeout(() => { setAiResetsAt(null); refreshEntitlements(); }, Math.min(ms + 1000, 2147483647));");
-  expect(app).toContain("}, [aiResetsAt, refreshEntitlements]);");
+  // The timer reads the meter and arms its next wake; it never clears the
+  // reset time itself (birdieWindowAndDemoLock.test.js runs aiResetWaitMs).
+  expect(app).toContain('const t = setTimeout(() => { refreshEntitlements(); setAiResetChecks((n) => n + 1); }, aiResetWaitMs(aiResetsAt, Date.now()));');
+  expect(app).toContain('}, [aiResetsAt, aiResetChecks, refreshEntitlements]);');
+  expect(app).not.toContain('setTimeout(() => { setAiResetsAt(null);');
 });
 
 test('a dropped reply reads in Birdie voice, not as a form submission', () => {
