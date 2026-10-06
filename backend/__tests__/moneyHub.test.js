@@ -3582,7 +3582,8 @@ test('a bill charged on or after its end date renewed after all: it runs, and is
   assert.strictEqual(pic.totals.perMonthCents - base.totals.perMonthCents, 3180, 'a bill still being paid left the burn');
   assert.deepStrictEqual(pic.upcoming.map((u) => u.on), ['2026-11-20']);
   assert.deepStrictEqual(pic.ending, []);
-  assert.deepStrictEqual(pic.chargedPastEnd, [{ expenseId: 1, label: 'Store tool, Plus', endsOn: '2026-10-20', lastChargedOn: '2026-10-20' }]);
+  // A bill paid ahead has no last bill after its end date to wait for.
+  assert.deepStrictEqual(pic.chargedPastEnd, [{ expenseId: 1, label: 'Store tool, Plus', endsOn: '2026-10-20', lastChargedOn: '2026-10-20', cadence: 'monthly', lastBillBy: null }]);
   // A stopped row is out either way, so there is nothing to clear.
   assert.deepStrictEqual(pictureOn('2026-10-25', [expense({ ...ENDING, lastChargedOn: '2026-10-20', active: false })]).chargedPastEnd, []);
 });
@@ -3609,7 +3610,10 @@ test('a usage bill still charged long after its end date outran it: it runs, and
   const base = pictureOn('2026-12-10', []);
   const pic = pictureOn('2026-12-10', [flex]);
   assert.strictEqual(pic.totals.perMonthCents - base.totals.perMonthCents, 3000, 'a bill still being paid left the burn');
-  assert.deepStrictEqual(pic.chargedPastEnd, [{ expenseId: 4, label: 'MapTiler, Flex', endsOn: '2026-09-30', lastChargedOn: '2026-12-02' }]);
+  // Named as a usage bill, with the day its last bill was expected by, so
+  // the screen does not say any charge after the end date is a renewal
+  // (second review 2026-10-06).
+  assert.deepStrictEqual(pic.chargedPastEnd, [{ expenseId: 4, label: 'MapTiler, Flex', endsOn: '2026-09-30', lastChargedOn: '2026-12-02', cadence: 'usage', lastBillBy: '2026-10-29' }]);
   assert.ok(!pic.licence.items.some((i) => i.id === 'maptiler'), 'a plan being paid for read as unlicensed');
   assert.ok(moneyHub.buildPriceSheet({ expenses: [flex], todayYmd: '2026-12-10' }).rows.some((r) => r.id === 'expense-4'));
   assert.match(moneyHub.expensesCsv([flex], '2026-12-10').split('\r\n')[1], /"2026-09-30","yes"/);
@@ -3817,16 +3821,24 @@ test('the hub says where each row stands against its end date, and carries the b
     { id: 2, vendor: 'Ended', kind: 'tooling', amount_cents: 2000, cadence: 'monthly', ends_on: earlier },
     { id: 3, vendor: 'Renewed', kind: 'tooling', amount_cents: 1000, cadence: 'monthly', last_charged_on: today, ends_on: earlier },
     { id: 4, vendor: 'Renews', kind: 'tooling', amount_cents: 500, cadence: 'monthly' },
+    // Charged today, two months past its end date: later than its last bill.
+    { id: 5, vendor: 'Metered', kind: 'tooling', amount_cents: 700, cadence: 'usage', last_charged_on: today, ends_on: moneyHub.__test.addMonthsYmd(today, -2) },
   ];
   handlers = hubHandlers();
   const r = await req('GET', '/api/admin/money');
   assert.strictEqual(r.status, 200, r.text);
   const state = Object.fromEntries(r.body.expenses.rows.map((x) => [x.vendor, x.endState]));
-  assert.deepStrictEqual(state, { Ending: 'ending', Ended: 'ended', Renewed: 'renewed', Renews: null });
+  assert.deepStrictEqual(state, { Ending: 'ending', Ended: 'ended', Renewed: 'renewed', Renews: null, Metered: 'renewed' });
   assert.deepStrictEqual(r.body.costs.ending.map((e) => e.label), ['Ending']);
   assert.strictEqual(r.body.costs.afterEnding.changeCents, -3000);
   assert.strictEqual(r.body.costs.afterEnding.burnCents, r.body.net.burnCents - 3000);
-  assert.deepStrictEqual(r.body.costs.chargedPastEnd.map((x) => x.label), ['Renewed']);
+  assert.deepStrictEqual(r.body.costs.chargedPastEnd.map((x) => x.label), ['Renewed', 'Metered']);
+  // A usage row with an end date carries the day its last bill was expected
+  // by, the one the screen quotes; a bill paid ahead carries none.
+  const lastBillBy = moneyHub.__test.usageLastBillBy(moneyHub.__test.addMonthsYmd(today, -2));
+  assert.deepStrictEqual(Object.fromEntries(r.body.expenses.rows.map((x) => [x.vendor, x.lastBillBy])),
+    { Ending: null, Ended: null, Renewed: null, Renews: null, Metered: lastBillBy });
+  assert.deepStrictEqual(r.body.costs.chargedPastEnd.map((x) => [x.cadence, x.lastBillBy]), [['monthly', null], ['usage', lastBillBy]]);
 });
 
 // The renewal totals count only the bills the hub can date (2026-10-06).

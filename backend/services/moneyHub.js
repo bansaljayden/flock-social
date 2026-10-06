@@ -827,6 +827,13 @@ function endOf(x, todayYmd) {
   return x.endsOn <= todayYmd ? 'ended' : 'ending';
 }
 
+// The day a usage bill's last bill was expected by, for the screen to quote
+// beside a later charge; null for any other bill, which is paid ahead and
+// has no bill after its end date to wait for.
+function lastBillByOf(x) {
+  return x && x.cadence === 'usage' && isYmd(x.endsOn) ? usageLastBillBy(x.endsOn) : null;
+}
+
 // The day nothing more is charged, or null for a bill that renews.
 function stopsOn(x, todayYmd) {
   const end = endOf(x, todayYmd);
@@ -1567,7 +1574,11 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
   // A bill still marked as charged whose last charge outran its end date
   // renewed after all (THE END OF A BILL): a subscription charged on or after
   // it, or a usage bill charged after the last bill it leaves room for. It is
-  // counted as running, and named so the stale date is cleared or moved.
+  // counted as running, and named so the stale date is cleared or moved. The
+  // cadence and the day a usage bill's last bill was expected by go with it,
+  // so the screen words each case on its own: a usage charge after the end
+  // date is a renewal only once it is later than that day (second review
+  // 2026-10-06).
   const chargedPastEnd = expenses
     .filter((x) => x.active && endOf(x, today) === 'renewed')
     .map((x) => ({
@@ -1575,6 +1586,8 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
       label: x.product ? `${x.vendor}, ${x.product}` : x.vendor,
       endsOn: x.endsOn,
       lastChargedOn: x.lastChargedOn,
+      cadence: x.cadence,
+      lastBillBy: lastBillByOf(x),
     }));
 
   return {
@@ -3988,10 +4001,11 @@ async function buildMoneyHub({
       status: expensesR.ok ? 'ok' : 'error',
       // Each row says where it stands against its end date today (THE END OF
       // A BILL): 'ending', 'ended', 'renewed' when a later charge outran the
-      // date, or null for a bill that renews.
+      // date, or null for a bill that renews. A usage row with an end date
+      // also says the day its last bill was expected by.
       rows: expenses.map((x) => {
         const end = endOf(x, month.todayYmd);
-        return { ...x, endState: end === 'none' ? null : end };
+        return { ...x, endState: end === 'none' ? null : end, lastBillBy: lastBillByOf(x) };
       }),
       truncated: !!(expensesR.ok && expensesR.value.truncated),
       limit: EXPENSE_LIST_LIMIT,
@@ -4071,6 +4085,7 @@ module.exports = {
     tallySubscribers,
     nextChargeOn,
     endOf,
+    usageLastBillBy,
     isRunning,
     readServing,
     addMonthsYmd,
