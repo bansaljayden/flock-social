@@ -298,11 +298,16 @@ test('the Monday digest keeps going to a venue inside its window', async () => {
     const inside = await venueDigest.runVenueDigestSweep(monday);
     assert.strictEqual(inside.sent, 1, 'the digest is something the venue has today, so it keeps it');
     await testPool.query('DELETE FROM venue_digest_sends WHERE venue_profile_id > 0');
+    // The window is closed against the Monday the sweep is run for, not
+    // against the wall clock. It used to end a day before NOW(), which put
+    // the end AFTER this fixed Monday once the calendar passed noon on the
+    // day after it (2026-10-05), and the test failed every run from then on.
+    const nextMonday = new Date('2026-10-05T12:00:00Z');
     await testPool.query(
-      "UPDATE venue_roost_notices SET emailed_at = NOW() - INTERVAL '31 days', charge_not_before = NOW() - INTERVAL '1 day' WHERE user_id = $1",
-      [v.id]
+      "UPDATE venue_roost_notices SET emailed_at = $2::timestamptz - INTERVAL '31 days', charge_not_before = $2::timestamptz - INTERVAL '1 day' WHERE user_id = $1",
+      [v.id, nextMonday]
     );
-    const after = await venueDigest.runVenueDigestSweep(new Date('2026-10-05T12:00:00Z'));
+    const after = await venueDigest.runVenueDigestSweep(nextMonday);
     assert.strictEqual(after.sent, 0, 'after the window a free venue gets no digest');
   } finally {
     venueDigest._setCardLoaderForTests(null);
