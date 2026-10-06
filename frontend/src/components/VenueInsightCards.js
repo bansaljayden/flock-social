@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BirdNote, WARM_BIRD } from './ui/BirdieBird';
 import { hourlySourcePhrase } from '../lib/crowd';
 import { signInKey } from '../lib/sessionIdentity';
+import { isNativeShell } from '../lib/nativeShell';
 
 // Roost, the advisor's T0 surface (ADVISOR-PRODUCT-SHAPE.md sec 5), grown into
 // a screen a venue owner can poke at: a daypart-aware lead card, a tappable
@@ -464,8 +465,10 @@ const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHo
         // The server said which plan serves these; repeat it rather than
         // guessing. Dormant while VENUE_BILLING_ENABLED is unset.
         // The App Store build names no plan (lib/purchasesBuild.js),
-        // including the server's own wording.
-        setLockedReason(process.env.REACT_APP_PURCHASES !== 'off'
+        // including the server's own wording. Nor does the app with
+        // purchases on: that wording asks for a venue plan upgrade, and Roost
+        // is sold on the website only (lib/nativeShell.js).
+        setLockedReason(process.env.REACT_APP_PURCHASES !== 'off' && !isNativeShell()
           ? (err?.data?.error || `${FEATURE_NAME} is the paid venue plan.`)
           : 'Not turned on for your venue.');
         setState('locked');

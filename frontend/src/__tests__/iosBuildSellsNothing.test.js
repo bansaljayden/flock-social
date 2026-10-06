@@ -339,10 +339,12 @@ describe('the venue dashboard', () => {
   });
 
   test('a plan refusal on the cards or a typed question names no plan when off', () => {
+    // The app with purchases on says the same (roostNotSoldInApp.test.js).
     const cards = read('components', 'VenueInsightCards.js');
-    expect(cards).toContain("setLockedReason(process.env.REACT_APP_PURCHASES !== 'off'\n          ? (err?.data?.error || `${FEATURE_NAME} is the paid venue plan.`)\n          : 'Not turned on for your venue.');");
+    expect(cards).toContain("setLockedReason(process.env.REACT_APP_PURCHASES !== 'off' && !isNativeShell()\n          ? (err?.data?.error || `${FEATURE_NAME} is the paid venue plan.`)\n          : 'Not turned on for your venue.');");
     const chat = read('components', 'VenueAdvisorChat.js');
-    expect(chat).toContain("const said = planRefusal && process.env.REACT_APP_PURCHASES === 'off'\n        ? 'This is not turned on for your venue.'");
+    expect(chat).toContain("setLockedReason(process.env.REACT_APP_PURCHASES !== 'off' && !isNativeShell()\n          ? (err?.data?.error || 'This is part of Roost.')\n          : 'This is not turned on for your venue.');");
+    expect(chat).toContain("const said = planRefusal && (process.env.REACT_APP_PURCHASES === 'off' || isNativeShell())\n        ? 'This is not turned on for your venue.'");
     expect(chat).toContain("err?.data?.code === 'UPGRADE_REQUIRED'");
     expect(readRepo('backend', 'services', 'venueEntitlements.js')).toContain("code: 'UPGRADE_REQUIRED',");
   });
