@@ -203,7 +203,7 @@ pool.query = async (text, params = []) => {
     return ok({ rows: [row], rowCount: 1 });
   }
   if (sql.startsWith("UPDATE users SET oauth_provider = 'google'")) {
-    const row = users.find((u) => u.id === params[2]);
+    const row = users.find((u) => u.id === params[1]);
     if (!row) return ok({ rows: [], rowCount: 0 });
     row.oauth_provider = 'google';
     row.oauth_id = params[0];

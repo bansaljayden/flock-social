@@ -3232,7 +3232,23 @@ router.post('/google', [
     let credentialExp = null;
     let credentialIdentity = null;
 
-    let googleId, email, name, picture, emailVerified;
+    // NOT THE PICTURE (2026-10-06). Both branches below used to read Google's
+    // `picture` claim and store it as the avatar: a link to Google's image host
+    // for a new account, and the same link COALESCEd onto a claimed one. That
+    // was the only avatar in the app that skipped the upload route
+    // (routes/users.js): no moderateImage screen, no metadata strip, and not a
+    // data URL, so what it showed was whatever Google served at that moment,
+    // after any check. A picture the upload screen refuses could be set as the
+    // Google photo and carried onto every roster, chat row and friends list by
+    // signing in. The claim is no longer read. A Google account starts with the
+    // initial, as an email signup does, and a photo goes through the upload
+    // like any other. Migration 120 cleared the links already stored.
+    //
+    // Fetching the photo here and screening it was the other way, and it is
+    // not taken: it would put an outbound fetch of a link out of the token and
+    // a billed Vision call on every Google sign-up, and one more upstream wait
+    // on the sign-in, for a default the person never picked.
+    let googleId, email, name, emailVerified;
     if (req.body.credential) {
       // FAIL CLOSED (round 4): an undefined audience makes verifyIdToken skip
       // the check, so an ID token minted for any Google app would pass. The
@@ -3265,7 +3281,7 @@ router.post('/google', [
       // verified — the whole account-claim below hangs on this flag meaning
       // "Google vouches for this address". Mirrors the Apple branch.
       const gp = ticket.getPayload();
-      ({ sub: googleId, email, name, picture } = gp);
+      ({ sub: googleId, email, name } = gp);
       emailVerified = gp.email_verified === true || gp.email_verified === 'true';
       credentialExp = gp.exp;
 
@@ -3415,7 +3431,7 @@ router.post('/google', [
       if (profile.email_verified === false) {
         return res.status(401).json({ error: 'Google account email is not verified' });
       }
-      ({ sub: googleId, email, name, picture } = profile);
+      ({ sub: googleId, email, name } = profile);
       // FAIL CLOSED (round 13): `!== false` treated an absent field as verified.
       emailVerified = profile.email_verified === true || profile.email_verified === 'true';
     }
@@ -3524,14 +3540,17 @@ router.post('/google', [
         // ACCEPTED COST: a genuine password-to-Google upgrader re-enters their
         // payment handles once. That is a settings screen; the alternative is a
         // silent payment redirect that neither party can see.
+        //
+        // The avatar is not touched. It used to take Google's photo when the row
+        // had none (see NOT THE PICTURE where the token is read); whatever the
+        // row holds came in through the upload screen or the drawn-avatar save.
         const claimed = await pool.query(
           `UPDATE users SET oauth_provider = 'google', oauth_id = $1, password = NULL,
-             profile_image_url = COALESCE(profile_image_url, $2),
              email_verified = TRUE, verified_email = email,
              venmo_username = NULL, cashapp_cashtag = NULL, zelle_identifier = NULL,
              token_version = token_version + 1, updated_at = NOW()
-           WHERE id = $3 RETURNING *`,
-          [googleId, picture || null, claimTarget.id]
+           WHERE id = $2 RETURNING *`,
+          [googleId, claimTarget.id]
         );
         user = claimed.rows[0];
         // Round 15: the bump kills REST sessions on the next request, but a
@@ -3626,11 +3645,13 @@ router.post('/google', [
         const googleName = safeOAuthDisplayName(name, email, 'Google');
         // email_verified TRUE: Google already proved this address and must not
         // be asked again. verified_email records WHICH address was proved.
+        // No profile_image_url: the account starts with the initial (see NOT
+        // THE PICTURE where the token is read).
         result = await pool.query(
-          `INSERT INTO users (email, name, oauth_provider, oauth_id, profile_image_url, terms_accepted_at, date_of_birth, email_verified, verified_email)
-           VALUES ($1, $2, 'google', $3, $4, NOW(), $5, TRUE, $6)
+          `INSERT INTO users (email, name, oauth_provider, oauth_id, terms_accepted_at, date_of_birth, email_verified, verified_email)
+           VALUES ($1, $2, 'google', $3, NOW(), $4, TRUE, $5)
            RETURNING *`,
-          [email, googleName, googleId, picture, googleDob, email]
+          [email, googleName, googleId, googleDob, email]
         );
         user = result.rows[0];
         linkWaitlistConversion(user.email, user.id);

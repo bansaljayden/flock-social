@@ -148,8 +148,8 @@ pool.query = async (text, params = []) => {
     const row = {
       id: nextUserId++, token_version: 0, is_banned: false, password: null,
       email: params[0], name: params[1], oauth_provider: 'google', oauth_id: params[2],
-      profile_image_url: params[3], date_of_birth: params[4],
-      email_verified: clause(sql, /email_verified/), verified_email: params[5],
+      profile_image_url: null, date_of_birth: params[3],
+      email_verified: clause(sql, /email_verified/), verified_email: params[4],
     };
     users.push(row);
     return { rows: [row], rowCount: 1 };
