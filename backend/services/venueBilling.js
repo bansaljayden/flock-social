@@ -244,6 +244,39 @@ async function venueCustomerIdsFor(userId) {
   return ids;
 }
 
+// A CUSTOMER SHARED WITH ANOTHER ACCOUNT. An operator may put two venues' plans
+// on one Stripe customer (FILL_CUSTOMER_SQL below leaves it where it is), and
+// every customer on record used to be treated as this account's alone: the
+// account's deletion deleted it, which cancels every subscription on it, the
+// other venue's included; Manage billing opened the portal on it, where the
+// owner sees and can cancel the other venue's plan and card; a revocation
+// expired the other venue's open checkout. A customer is shared when another
+// account has it on record (a venue profile, a grant, a subscription record,
+// or a Flock Pro customer), or when Stripe holds a subscription on it that
+// names another account (namesAnotherAccount). A shared customer is never
+// deleted or opened in the portal for one of them, and only this account's
+// own subscriptions on it are touched.
+const SHARED_CUSTOMERS_SQL = `SELECT c.id FROM unnest($2::text[]) AS c(id)
+  WHERE EXISTS (SELECT 1 FROM venue_profiles WHERE stripe_customer_id = c.id AND user_id IS DISTINCT FROM $1::int)
+     OR EXISTS (SELECT 1 FROM venue_subscriptions WHERE stripe_customer_id = c.id AND user_id <> $1::int)
+     OR EXISTS (SELECT 1 FROM venue_stripe_subscriptions WHERE stripe_customer_id = c.id AND user_id <> $1::int)
+     OR EXISTS (SELECT 1 FROM users WHERE stripe_customer_id = c.id AND id <> $1::int)`;
+
+async function customersOnRecordElsewhere(userId, customerIds) {
+  if (!customerIds.length) return new Set();
+  const r = await pool.query(SHARED_CUSTOMERS_SQL, [userId, customerIds]);
+  return new Set((r && Array.isArray(r.rows) ? r.rows : []).map((row) => row.id));
+}
+
+// A subscription that is another account's: a Roost plan naming another venue
+// account, or a Flock Pro plan naming another person.
+function namesAnotherAccount(s, userId) {
+  const meta = (s && s.metadata) || {};
+  if (meta.app_user_id && String(meta.app_user_id) !== String(userId)) return true;
+  const owner = venueUserIdFrom(meta);
+  return owner !== null && owner !== userId;
+}
+
 // Whether Stripe may still bill this subscription: the statuses that block a
 // second checkout (LIVE_STATUSES), and the ones a venue manages in the portal.
 const stillBilling = (sub) => !!(sub && LIVE_STATUSES.has(sub.status));
@@ -353,10 +386,34 @@ async function latestVenueSubscription(userId, customerIds, requestOptions) {
 // on file that Stripe has deleted is replaced at the next checkout
 // (ensureVenueCustomer), and the trial is read from the venue's record of
 // subscriptions (venueTrialUsed), not from whichever customer is current.
+//
+// A SHARED CUSTOMER IS NOT DELETED (customersOnRecordElsewhere). Deleting it
+// cancelled the other venue's plan at once, with no refund, and left that
+// venue's profile pointing at a customer that was gone. Only this account's
+// own subscriptions on it are cancelled, at once, and the customer stays.
 async function closeVenueCustomer(userId) {
   const customerIds = await venueCustomerIdsFor(userId);
   if (customerIds.length === 0) return false;
+  if (!billing.stripeConfigured()) {
+    throw refusal(503, `Roost Stripe customers ${customerIds.join(', ')} were not cancelled; Stripe is not configured`, 'STRIPE_NOT_CONFIGURED');
+  }
+  const elsewhere = await customersOnRecordElsewhere(userId, customerIds);
   for (const customerId of customerIds) {
+    let held;
+    try {
+      held = await subscriptionsOn(customerId);
+    } catch (err) {
+      if (!missingAtStripe(err)) throw err;
+      held = [];
+    }
+    if (elsewhere.has(customerId) || held.some((s) => namesAnotherAccount(s, userId))) {
+      for (const s of held) {
+        if (!isVenueObject(s) || venueUserIdFrom(s.metadata) !== userId) continue;
+        await cancelNow(s, `flock-account-deleted-cancel-${s.id}`);
+      }
+      console.error(`[venue-billing] venue user ${userId}'s Roost customer ${customerId} is shared with another account, so it was kept and only this account's subscriptions on it were cancelled.`);
+      continue;
+    }
     const closed = await billing.closeCustomer(customerId);
     if (!closed) {
       throw refusal(503, `Roost Stripe customer ${customerId} was not cancelled; Stripe is not configured`, 'STRIPE_NOT_CONFIGURED');
@@ -457,9 +514,12 @@ async function hasEverSubscribed(customerId) {
 }
 
 // Only the newest checkout can ever be paid; see proBilling.expireOpenSessions
-// for why a session that will not expire blocks a second one.
-async function expireOpenSessions(customerId) {
+// for why a session that will not expire blocks a second one. A session that
+// names another venue account (a customer an operator shared between two
+// venues) is that venue's checkout, not this one's to expire.
+async function expireOpenSessions(customerId, userId) {
   for (const s of await openSessionsOn(customerId)) {
+    if (namesAnotherAccount(s, userId)) continue;
     try {
       await stripe().checkout.sessions.expire(s.id);
     } catch (err) {
@@ -552,7 +612,7 @@ async function buildVenueCheckout(user, plan) {
     }
   }
   const customerId = await ensureVenueCustomer(user, profile);
-  await expireOpenSessions(customerId);
+  await expireOpenSessions(customerId, user.id);
   if (await blockingSubscription(user.id, customerId)) {
     throw refusal(409, 'You already have Roost. Manage it from billing.', 'ALREADY_SUBSCRIBED');
   }
@@ -615,11 +675,32 @@ async function buildVenueCheckout(user, plan) {
 // The portal opens on the customer that holds the account's newest Roost
 // subscription, on any customer on record (venueCustomerIdsFor), and on the
 // profile's own customer when none of them holds one.
+//
+// NEVER ON A SHARED CUSTOMER. Stripe's portal is customer-wide: it lists every
+// subscription, invoice and card on the customer, and lets whoever opens it
+// cancel any of them. On a customer another account shares
+// (customersOnRecordElsewhere) that is the other venue's plan, so the owner is
+// sent to email instead.
+async function customerShared(userId, customerId) {
+  if ((await customersOnRecordElsewhere(userId, [customerId])).has(customerId)) return true;
+  let held;
+  try {
+    held = await subscriptionsOn(customerId);
+  } catch (err) {
+    if (missingAtStripe(err)) return false;
+    throw err;
+  }
+  return held.some((s) => namesAnotherAccount(s, userId));
+}
+
 async function createVenuePortal(userId) {
   const customerIds = await venueCustomerIdsFor(userId);
   if (customerIds.length === 0) throw refusal(404, 'There is no Roost subscription on this account.', 'NO_WEB_SUBSCRIPTION');
   const latest = customerIds.length > 1 ? await latestVenueSubscription(userId, customerIds) : null;
   const customerId = latest ? latest.customerId : customerIds[0];
+  if (await customerShared(userId, customerId)) {
+    throw refusal(409, 'Billing for your Roost plan is shared with another venue, so we handle it by email. Write to social@flockcorp.com.', 'SHARED_BILLING');
+  }
   const session = await stripe().billingPortal.sessions.create({
     customer: customerId,
     return_url: `${billing.webBase()}/app?venue_billing=manage`,
@@ -1126,8 +1207,8 @@ const idOf = (ref) => (typeof ref === 'string' && ref ? ref : ref && typeof ref.
 // on the dashboard from that moment, and nothing told Stripe: an open checkout
 // stayed payable, the subscription renewed, and the writer only logged the
 // unverified profile on each event while the card was charged. This expires
-// every open Roost checkout on every customer the account has on record and
-// cancels every Roost subscription of the account's.
+// every open Roost checkout of the account's, on every customer it has on
+// record, and cancels every Roost subscription of the account's.
 //
 // IMMEDIATELY, NOT AT THE PERIOD END. That is the fairer of the two for a
 // revoked claim: the venue is served nothing from the moment of revocation,
@@ -1153,9 +1234,18 @@ async function stopRoostForRevokedClaim(userId, { customerIds = null } = {}) {
     if (!billing.stripeConfigured()) {
       throw refusal(503, `venue user ${userId} has Roost customers on record (${customers.join(', ')}) and Stripe is not configured, so nothing was cancelled`, 'STRIPE_NOT_CONFIGURED');
     }
+    // A customer Stripe has deleted (a failed account deletion keeps its id on
+    // file) holds nothing to stop.
+    const orNothing = (err) => {
+      if (missingAtStripe(err)) return [];
+      throw err;
+    };
     for (const customerId of customers) {
-      for (const s of await openSessionsOn(customerId)) {
-        if (!isVenueObject(s)) continue;
+      for (const s of await openSessionsOn(customerId).catch(orNothing)) {
+        // Only this account's: on a customer another venue shares
+        // (customersOnRecordElsewhere), an open checkout naming that venue is
+        // its own business.
+        if (!isVenueObject(s) || venueUserIdFrom(s.metadata) !== userId) continue;
         try {
           await stripe().checkout.sessions.expire(s.id);
           outcome.checkoutsExpired += 1;
@@ -1164,7 +1254,7 @@ async function stopRoostForRevokedClaim(userId, { customerIds = null } = {}) {
           if (!again || again.status === 'open') throw err;
         }
       }
-      for (const s of await subscriptionsOn(customerId)) {
+      for (const s of await subscriptionsOn(customerId).catch(orNothing)) {
         if (!isVenueObject(s) || venueUserIdFrom(s.metadata) !== userId) continue;
         if (await cancelNow(s, `flock-claim-revoked-cancel-${s.id}`)) outcome.subscriptionsCancelled.push(s.id);
       }
