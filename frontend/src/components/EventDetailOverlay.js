@@ -56,7 +56,9 @@
  * here, from `userLocation` (a fifteenth prop) to the venue, by the same
  * function the card uses, and the server sends no distance at all. The time
  * also says the venue's zone when the venue's clock is not the viewer's. Both
- * come from lib/eventWhereWhen.js, which says why.
+ * come from lib/eventWhereWhen.js, which says why. And a seat map that does
+ * not load takes its heading with it, rather than leaving "Seat Map" over an
+ * empty space.
  */
 import React from 'react';
 import Icons from './ui/Icons';
@@ -167,11 +169,15 @@ export default function EventDetailOverlay({
               </div>
             )}
 
-            {/* Seatmap */}
+            {/* Seatmap. Ticketmaster's link goes straight into the img, so a
+                host the content policy refuses, or a dead link, is an image
+                that never loads. The whole section goes with it: hiding only
+                the img left a "Seat Map" heading over nothing. Keyed on the
+                link, so another seat map starts out shown. */}
             {eventDetail.seatmap_url && (
-              <div style={{ marginBottom: '16px' }}>
+              <div key={eventDetail.seatmap_url} style={{ marginBottom: '16px' }}>
                 <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: '0 0 8px' }}>Seat Map</p>
-                <img src={eventDetail.seatmap_url} alt="Seat map" style={{ width: '100%', borderRadius: '12px', border: '1px solid var(--border-default)' }} onError={(e) => { e.target.style.display = 'none'; }} />
+                <img src={eventDetail.seatmap_url} alt="Seat map" style={{ width: '100%', borderRadius: '12px', border: '1px solid var(--border-default)' }} onError={(e) => { e.currentTarget.parentElement.style.display = 'none'; }} />
               </div>
             )}
 
