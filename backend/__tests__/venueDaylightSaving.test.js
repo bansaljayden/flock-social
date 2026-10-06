@@ -178,6 +178,14 @@ test('the hour the clock shows twice means the showing that has not finished yet
   assert.equal(at('2026-11-01T05:30:00Z'), '2026-11-01T05:00:00Z', 'asked during the first 1 AM: that one');
   assert.equal(at('2026-11-01T06:30:00Z'), '2026-11-01T06:00:00Z', 'asked during the second 1 AM: that one');
   assert.equal(at('2026-11-01T09:00:00Z'), '2026-11-01T05:00:00Z', 'asked afterwards: the first again');
+  // A minute inside the hour shown twice belongs to its showing's hour, which
+  // starts at the top of that hour: at 1:20 the second time, 1:30 is the second
+  // 1:30, ten minutes ahead, not the first one fifty minutes back.
+  const oneThirty = { year: 2026, month: 11, day: 1, hour: 1, minute: 30 };
+  const at130 = (nowIso) => iso(zone.instantForWallClock(oneThirty, NY, Date.parse(nowIso)));
+  assert.equal(at130('2026-11-01T06:20:00Z'), '2026-11-01T06:30:00Z', '1:20 during the second 1 AM');
+  assert.equal(at130('2026-11-01T05:20:00Z'), '2026-11-01T05:30:00Z', '1:20 during the first 1 AM');
+  assert.equal(at130('2026-11-01T05:50:00Z'), '2026-11-01T05:30:00Z', 'still the first hour: the first 1:30, now past');
   // A time the clock skips is read with the offset from before the change,
   // which lands on the instant the clock jumps to.
   assert.equal(iso(zone.instantForWallClock({ year: 2027, month: 3, day: 14, hour: 2 }, NY)),
