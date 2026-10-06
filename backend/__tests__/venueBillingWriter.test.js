@@ -1021,6 +1021,34 @@ test('a claim paying for Roost cannot be re-pointed at another listing until the
   assert.strictEqual((await state(id)).served, 'free');
 });
 
+test('with venue billing switched off the listing guard is off too, on both write paths', async () => {
+  // Nothing is enforced while VENUE_BILLING_ENABLED is off, and a profile
+  // save that answered ROOST_ON_LISTING then changed a route's behaviour for
+  // a feature that is not on.
+  const [PLACE_A, PLACE_B] = placePair();
+  const [PLACE_C] = placePair();
+  const id = await venue({ verified: true, placeId: PLACE_A });
+  await venueBilling.syncVenueSubscription(sub('sub_listing_off', id, 'active', { metadata: boundTo(PLACE_A)(id) }));
+  const saved = process.env.VENUE_BILLING_ENABLED;
+  delete process.env.VENUE_BILLING_ENABLED;
+  try {
+    const moved = await profileCall('PUT', '/api/venue-profile', { as: id, body: { googlePlaceId: PLACE_B } });
+    assert.strictEqual(moved.status, 200, `a save was refused over a plan while billing is off: ${moved.text}`);
+    const reclaimed = await profileCall('POST', '/api/venue-profile', { as: id, body: { businessName: 'The Owl', googlePlaceId: PLACE_C } });
+    assert.strictEqual(reclaimed.status, 201, reclaimed.text);
+  } finally {
+    process.env.VENUE_BILLING_ENABLED = saved;
+  }
+  const p = await testPool.query('SELECT google_place_id FROM venue_profiles WHERE user_id = $1', [id]);
+  assert.strictEqual(p.rows[0].google_place_id, PLACE_C);
+  // Switched on, the same plan holds the claim where it is now.
+  const held = await profileCall('PUT', '/api/venue-profile', { as: id, body: { googlePlaceId: PLACE_A } });
+  assert.strictEqual(held.status, 200, 'a move back to the listing the plan is for is never refused');
+  const refused = await profileCall('PUT', '/api/venue-profile', { as: id, body: { googlePlaceId: PLACE_B } });
+  assert.strictEqual(refused.status, 409, refused.text);
+  assert.strictEqual(refused.body.code, 'ROOST_ON_LISTING');
+});
+
 // ---------------------------------------------------------------------------
 // A PLAN SOLD BY HAND IS ON RECORD WHERE THE PORTAL AND DELETION LOOK.
 //
