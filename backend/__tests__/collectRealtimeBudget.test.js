@@ -8,6 +8,21 @@ const path = require('path');
 const collect = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ml', 'collectRealtime.js'), 'utf8');
 const svc = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ml', 'bestTimeService.js'), 'utf8');
 
+// THE README SAYS WHICH VENUES THE COLLECTOR READS. It said the collector
+// writes "exactly that reading every hour for the venues the app serves". A
+// run asks only about active venues with a vendor id in its default scope,
+// Philadelphia and the Lehigh Valley, served venues first within this budget,
+// and stores a forecast row when the vendor has no live value; the app serves
+// a card for any place id, so most served venues are never polled.
+test('the README describes the venues the collector actually polls', () => {
+  const readme = fs.readFileSync(path.join(__dirname, '..', '..', 'README.md'), 'utf8').replace(/\s+/g, ' ');
+  assert.match(collect, /: \['philly', 'lehigh'\]\);/);
+  assert.match(collect, /WHERE v\.is_active = true AND v\.besttime_venue_id IS NOT NULL/);
+  assert.ok(!/every hour for the venues the app serves/.test(readme), 'the README says the collector reads every venue the app serves');
+  assert.ok(readme.includes('The hourly collector now asks for that reading for the venues it can poll in Philadelphia and the Lehigh Valley, served venues first, and stores it when the vendor has one'),
+    'the README no longer says which venues the collector polls');
+});
+
 test('a sweep stops calling after fifty minutes and says what it left', () => {
   assert.match(collect, /const RUN_TIME_BUDGET_MS = 50 \* 60 \* 1000;/);
   // `now` is Date.now in production and a simulated clock in
