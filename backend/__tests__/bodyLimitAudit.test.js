@@ -149,6 +149,8 @@ const ROUTE_BOUNDS = {
     /body\('messages'\)\.isArray\(\{\s*min:\s*\d+,\s*max:\s*(\d+)\s*\}\)/, "the messages array cap"),
   aiMaxMessageChars: num('routes/ai.js',
     /body\('messages\.\*\.text'\)[\s\S]{0,120}?isLength\(\{\s*max:\s*(\d+)\s*\}\)/, "the per-message text cap"),
+  aiContextNameChars: num('routes/ai.js',
+    /const MAX_CONTEXT_NAME_WIRE_CHARS = (\d+);/, 'the context name cap'),
 
   // POST /api/crowd/batch — the named suspect.
   crowdMaxVenues: num('routes/crowd.js',
@@ -301,8 +303,10 @@ test('the largest honest /api/ai/chat body fits the Birdie parser', () => {
   const b = ROUTE_BOUNDS;
   // 24 turns, every one of them 4000 code points of the widest characters that
   // exist, plus the currentContext fields routes/ai.js interpolates into the
-  // system prompt, plus keys.
-  const worst = b.aiMaxMessages * (b.aiMaxMessageChars * PER_CHAR + 40) + 4096;
+  // system prompt, each as wide as the route lets it arrive (three names,
+  // screen, tab and status at 40, a place id at 200, the zone at 64), plus keys.
+  const context = (3 * b.aiContextNameChars + 3 * 40 + 200 + 64) * PER_CHAR;
+  const worst = b.aiMaxMessages * (b.aiMaxMessageChars * PER_CHAR + 40) + context + 4096;
   assert.ok(S.AI_CHAT_JSON_BODY_BYTES >= worst,
     `Birdie's parser (${S.AI_CHAT_JSON_BODY_BYTES}) must carry the largest body its validators accept (${worst})`);
 });
@@ -777,8 +781,8 @@ test('the largest conversation routes/ai.js accepts is not refused by the parser
     localDay: 5,
     currentContext: {
       screen: 'x'.repeat(40), tab: 'x'.repeat(40),
-      flock: { name: 'x'.repeat(120), venue: 'x'.repeat(120), status: 'x'.repeat(40) },
-      venue: { name: 'x'.repeat(120), place_id: 'x'.repeat(200) },
+      flock: { name: 'x'.repeat(b.aiContextNameChars), venue: 'x'.repeat(b.aiContextNameChars), status: 'x'.repeat(40) },
+      venue: { name: 'x'.repeat(b.aiContextNameChars), place_id: 'x'.repeat(200) },
     },
   };
   const res = await send('/api/ai/chat', payload);

@@ -524,6 +524,13 @@ const PROMPT_INVISIBLE_CHARS =
 // at all. A Google display name runs well under 60 characters; the address
 // bound is the generous one because a formatted address carries a country.
 const MAX_CONTEXT_CHARS = 120;
+// The widest a name in the request's context may ARRIVE, which is not how much
+// of it reaches the prompt. A flock's name and venue are as wide as their
+// columns (routes/flocks.js NAME_MAX and VENUE_NAME_MAX, 255), the app sends
+// the open plan's as they are, and the map's venue can be a flock's venue.
+// Refusing past 120 cost every turn on a long-named flock an "Invalid value";
+// buildContextDataLine still keeps MAX_CONTEXT_CHARS of each.
+const MAX_CONTEXT_NAME_WIRE_CHARS = 255;
 const MAX_CONTEXT_PLACE_ID_CHARS = 200;
 const MAX_VENUE_NAME_CHARS = 120;
 const MAX_VENUE_ADDRESS_CHARS = 200;
@@ -2015,10 +2022,10 @@ router.post('/chat',
     body('currentContext').optional({ values: 'null' }).isObject(),
     scalarOnly(body('currentContext.screen').optional({ values: 'null' }), 'screen').isString().isLength({ max: 40 }),
     scalarOnly(body('currentContext.tab').optional({ values: 'null' }), 'tab').isString().isLength({ max: 40 }),
-    scalarOnly(body('currentContext.flock.name').optional({ values: 'null' }), 'flock name').isString().isLength({ max: 120 }),
-    scalarOnly(body('currentContext.flock.venue').optional({ values: 'null' }), 'flock venue').isString().isLength({ max: 120 }),
+    scalarOnly(body('currentContext.flock.name').optional({ values: 'null' }), 'flock name').isString().isLength({ max: MAX_CONTEXT_NAME_WIRE_CHARS }),
+    scalarOnly(body('currentContext.flock.venue').optional({ values: 'null' }), 'flock venue').isString().isLength({ max: MAX_CONTEXT_NAME_WIRE_CHARS }),
     scalarOnly(body('currentContext.flock.status').optional({ values: 'null' }), 'flock status').isString().isLength({ max: 40 }),
-    scalarOnly(body('currentContext.venue.name').optional({ values: 'null' }), 'venue name').isString().isLength({ max: 120 }),
+    scalarOnly(body('currentContext.venue.name').optional({ values: 'null' }), 'venue name').isString().isLength({ max: MAX_CONTEXT_NAME_WIRE_CHARS }),
     scalarOnly(body('currentContext.venue.place_id').optional({ values: 'null' }), 'venue place id').isString().isLength({ max: 200 }),
     body('localHour').optional().isInt({ min: 0, max: 23 }),
     body('localDay').optional().isInt({ min: 0, max: 6 }),
