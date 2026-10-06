@@ -43,9 +43,12 @@ const invoices = {};
 const cancels = [];
 // Every customer deleted, in order (account deletion closes them).
 const deletedCustomers = [];
-// Checkout, for the tests that buy: customers made, sessions made.
+// Checkout, for the tests that buy: customers made, sessions made, sessions
+// still open (payable) and the ones expired.
 let customersMade = 0;
 const sessionsMade = [];
+const openSessions = [];
+const expiredSessions = [];
 function FakeStripe() {
   return {
     customers: {
@@ -59,7 +62,15 @@ function FakeStripe() {
     },
     checkout: {
       sessions: {
-        list: async () => ({ data: [] }),
+        // openSessions: sessions still payable, by customer.
+        list: async ({ customer, status }) => ({ data: status === 'open' ? openSessions.filter((s) => s.customer === customer).map((s) => ({ ...s })) : [] }),
+        expire: async (id) => {
+          expiredSessions.push(id);
+          const i = openSessions.findIndex((s) => s.id === id);
+          if (i >= 0) openSessions.splice(i, 1);
+          return { id, status: 'expired' };
+        },
+        retrieve: async (id) => openSessions.find((s) => s.id === id) || { id, status: 'expired' },
         create: async (args) => { sessionsMade.push(args); return { id: `cs_made_${sessionsMade.length}`, url: 'https://checkout.stripe.com/c/pay/made' }; },
       },
     },
@@ -1098,4 +1109,83 @@ test('a failed account deletion keeps the customer on file, and the next checkou
   assert.notStrictEqual(session.customer, 'cus_TRIAL_USED');
   const now = await testPool.query('SELECT stripe_customer_id FROM venue_profiles WHERE user_id = $1', [id]);
   assert.strictEqual(now.rows[0].stripe_customer_id, session.customer);
+});
+
+// ---------------------------------------------------------------------------
+// A REVOKED CLAIM STOPS BEING CHARGED.
+//
+// Un-verifying a claim (PUT /api/admin/venues/:profileId/verify with
+// verified: false) neither expired an open Roost checkout nor cancelled the
+// venue's subscription. The dashboard refused Roost from that moment, the
+// sync only logged the unverified profile, and Stripe went on charging. Now
+// the revocation expires every open checkout and cancels the plan at once.
+// ---------------------------------------------------------------------------
+
+async function profileIdOf(userId) {
+  return (await testPool.query('SELECT id FROM venue_profiles WHERE user_id = $1', [userId])).rows[0].id;
+}
+
+test('revoking a claim cancels its Roost plan now and expires any checkout still open', async () => {
+  const [PLACE] = placePair();
+  const id = await venue({ verified: true, placeId: PLACE });
+  const adminId = await admin();
+  await testPool.query("UPDATE venue_profiles SET stripe_customer_id = 'cus_REVOKED' WHERE user_id = $1", [id]);
+  await venueBilling.syncVenueSubscription(sub('sub_revoked', id, 'active', { customer: 'cus_REVOKED', metadata: boundTo(PLACE)(id) }));
+  assert.strictEqual((await state(id)).served, 'pro');
+  openSessions.push({ id: 'cs_open_revoked', customer: 'cus_REVOKED', status: 'open', metadata: { kind: 'venue', flock_venue_user_id: String(id) } });
+
+  const res = await adminCall('PUT', `/api/admin/venues/${await profileIdOf(id)}/verify`, {
+    as: adminId, body: { verified: false, reason: 'not the owner after all' },
+  });
+  assert.strictEqual(res.status, 200, res.text);
+  assert.strictEqual(res.body.verified, false);
+  assert.deepStrictEqual(cancels.filter((c) => c.id === 'sub_revoked').map((c) => c.options),
+    [{ idempotencyKey: 'flock-claim-revoked-cancel-sub_revoked' }], 'a revoked claim went on being billed');
+  assert.ok(expiredSessions.includes('cs_open_revoked'), 'a checkout left open could still be paid after the claim was revoked');
+  assert.ok(!openSessions.some((s) => s.id === 'cs_open_revoked'));
+  const s = await state(id);
+  assert.strictEqual(s.grant.status, 'canceled', 'the grant was not written from the cancelled subscription');
+  assert.strictEqual(s.served, 'free');
+  assert.deepStrictEqual(res.body.roost, { checkoutsExpired: 1, subscriptionsCancelled: ['sub_revoked'] });
+});
+
+test('a revocation whose billing Stripe will not stop says so, and sending it again finishes the job', async () => {
+  const [PLACE] = placePair();
+  const id = await venue({ verified: true, placeId: PLACE });
+  const adminId = await admin();
+  await testPool.query("UPDATE venue_profiles SET stripe_customer_id = 'cus_REVOKE_FAILS' WHERE user_id = $1", [id]);
+  await venueBilling.syncVenueSubscription(sub('sub_revoke_fails', id, 'active', { customer: 'cus_REVOKE_FAILS', metadata: boundTo(PLACE)(id) }));
+  const profileId = await profileIdOf(id);
+
+  const realKey = process.env.STRIPE_SECRET_KEY;
+  delete process.env.STRIPE_SECRET_KEY;
+  let first;
+  try {
+    first = await adminCall('PUT', `/api/admin/venues/${profileId}/verify`, { as: adminId, body: { verified: false } });
+  } finally {
+    process.env.STRIPE_SECRET_KEY = realKey;
+  }
+  assert.strictEqual(first.status, 502, first.text);
+  assert.strictEqual(first.body.code, 'ROOST_NOT_STOPPED');
+  assert.ok(!/—/.test(first.body.error));
+  const p = await testPool.query('SELECT verified FROM venue_profiles WHERE user_id = $1', [id]);
+  assert.strictEqual(p.rows[0].verified, false, 'the badge stays down: a billing failure must not keep it up');
+  assert.ok(!cancels.some((c) => c.id === 'sub_revoke_fails'));
+
+  const again = await adminCall('PUT', `/api/admin/venues/${profileId}/verify`, { as: adminId, body: { verified: false } });
+  assert.strictEqual(again.status, 200, again.text);
+  assert.ok(cancels.some((c) => c.id === 'sub_revoke_fails'));
+});
+
+test('verifying a claim, or declining one that never paid, touches no billing', async () => {
+  const [PLACE] = placePair();
+  const id = await venue({ verified: false, placeId: PLACE });
+  const adminId = await admin();
+  const before = cancels.length;
+  const declined = await adminCall('PUT', `/api/admin/venues/${await profileIdOf(id)}/verify`, { as: adminId, body: { verified: false } });
+  assert.strictEqual(declined.status, 200, declined.text);
+  assert.ok(!('roost' in declined.body));
+  const granted = await adminCall('PUT', `/api/admin/venues/${await profileIdOf(id)}/verify`, { as: adminId, body: { verified: true, googlePlaceId: PLACE } });
+  assert.strictEqual(granted.status, 200, granted.text);
+  assert.strictEqual(cancels.length, before);
 });

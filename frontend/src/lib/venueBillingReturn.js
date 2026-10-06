@@ -36,15 +36,19 @@ export function readVenueBillingReturn(win = typeof window === 'undefined' ? und
 // so one call is normally enough. The webhook covers the rest: if the confirm
 // fails, the dashboard still reloads its plan, and the tier arrives when
 // Stripe's event does.
-// Resolves to 'roost' | 'pending' | 'incomplete' | 'unknown'. Only 'pending'
-// and 'roost' mean Stripe called the checkout complete. 'unknown' is anything
-// this call could not confirm, a confirm that threw included (a session that
-// belongs to another account answers 404), so a caller must not say on it that
-// a payment went through.
+// Resolves to 'roost' | 'pending' | 'incomplete' | 'refused' | 'unknown'. Only
+// 'pending' and 'roost' mean Stripe called the checkout complete and the plan
+// is ours to deliver. 'refused' is a checkout that completed against a claim
+// no longer verified for its listing: the server cancelled it and refunded
+// what it took (backend/services/venueBilling.js fulfillVenueCheckout), so
+// nothing is coming. 'unknown' is anything this call could not confirm, a
+// confirm that threw included (a session that belongs to another account
+// answers 404), so a caller must not say on it that a payment went through.
 export async function settleVenueCheckout({ sessionId, confirm }) {
   try {
     const r = await confirm(sessionId);
     if (r && r.complete === false) return 'incomplete';
+    if (r && r.refused) return 'refused';
     if (r && r.tier && r.tier !== 'free') return 'roost';
     if (r && r.complete) return 'pending';
     return 'unknown';
