@@ -113,7 +113,10 @@ describe('the panel before the account has said yes', () => {
     expect(screen.getByRole('group', { name: 'Before Birdie answers' })).toBeInTheDocument();
     const text = screen.getByRole('group').textContent;
     expect(text).toMatch(/Google's Gemini/);
-    for (const kind of ['your messages to Birdie', 'your first name', 'your age range', 'what you have open in Flock', 'rounded to about a kilometer', "your friends' names"]) {
+    // 'your time zone' since every turn carries it, so Birdie knows the date
+    // and reads "Friday at 8" on this person's clock (backend routes/ai.js,
+    // WHOSE CLOCK BIRDIE PLANS ON).
+    for (const kind of ['your messages to Birdie', 'your first name', 'your age range', 'your time zone', 'what you have open in Flock', 'rounded to about a kilometer', "your friends' names"]) {
       expect(text).toContain(kind);
     }
     expect(text).toMatch(/Your email, your exact location and your chats with friends are not sent/);
@@ -297,6 +300,39 @@ describe('the client calls', () => {
       else process.env.REACT_APP_PURCHASES = before;
     }
   });
+
+  // Birdie was never told the date or the zone, so "Friday at 8" became 4 PM
+  // Eastern on the card (backend routes/ai.js, WHOSE CLOCK BIRDIE PLANS ON).
+  // Every turn now carries the device's own zone, and a runtime that cannot
+  // answer sends none rather than a guess; the server falls back on its own.
+  const chatBody = () => {
+    const call = global.fetch.mock.calls.find(([url]) => String(url).includes('/api/ai/chat'));
+    return JSON.parse(call[1].body);
+  };
+
+  test("every Birdie turn carries the device's time zone", async () => {
+    global.fetch = answer({ text: 'go at 9', venues: [] });
+    await api.sendAiChat([{ role: 'user', text: 'friday at 8?' }], null, null);
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    expect(typeof zone).toBe('string');
+    expect(chatBody().timeZone).toBe(zone);
+  });
+
+  test.each([
+    ['answers with no zone', () => ({ resolvedOptions: () => ({}) })],
+    ['answers with something too long to be one', () => ({ resolvedOptions: () => ({ timeZone: 'x'.repeat(65) }) })],
+    ['throws', () => { throw new RangeError('no zone'); }],
+  ])('a runtime that %s sends no zone, and the turn still goes', async (_name, impl) => {
+    global.fetch = answer({ text: 'go at 9', venues: [] });
+    const spy = jest.spyOn(Intl, 'DateTimeFormat').mockImplementation(impl);
+    try {
+      await api.sendAiChat([{ role: 'user', text: 'friday at 8?' }], null, null);
+    } finally {
+      spy.mockRestore();
+    }
+    expect('timeZone' in chatBody()).toBe(false);
+    expect(chatBody().consentFlow).toBe('ask');
+  });
 });
 
 describe('Settings: the answer can be taken back', () => {
@@ -310,5 +346,9 @@ describe('Settings: the answer can be taken back', () => {
 
   test('the switch flips through the function the panel uses', () => {
     expect(settings).toContain('<Toggle label="Let Birdie use Google\'s Gemini" on={birdieConsented} onChange={() => { if (!birdieConsentBusy) answerBirdieConsent(!birdieConsented); }} />');
+  });
+
+  test('the screen behind it lists what is sent the way the panel does, time zone included', () => {
+    expect(settings).toContain('it sends Google your messages to Birdie, your first name, your age range, your time zone and what you have open in Flock.');
   });
 });
