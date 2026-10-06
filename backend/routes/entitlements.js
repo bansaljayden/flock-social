@@ -7,9 +7,10 @@ const router = express.Router();
 router.use(authenticate);
 
 // GET /api/entitlements — current user's premium status + Birdie quota.
-// Response shape (frontend contract):
-// { isPremium, paywallEnabled,
-//   birdie:   { limit, used, remaining },
+// Response shape (frontend contract; services/entitlements.js says what each
+// field means):
+// { isPremium, paywallEnabled, graceEndsAt,
+//   birdie:   { limit, used, remaining, resetsAt },
 //   forecast: { limit, used, remaining } }
 router.get('/', async (req, res) => {
   try {

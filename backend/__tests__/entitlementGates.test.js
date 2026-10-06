@@ -335,8 +335,37 @@ test('the snapshot keeps exactly the keys the client contract names', async () =
   // graceEndsAt joined the contract with the unmetered first week: the client
   // must be able to tell a limit that is not enforced yet from one that is.
   assert.deepStrictEqual(Object.keys(e).sort(), ['birdie', 'forecast', 'graceEndsAt', 'isPremium', 'paywallEnabled']);
-  assert.deepStrictEqual(Object.keys(e.birdie).sort(), ['limit', 'remaining', 'used']);
+  // resetsAt joined it so a relaunch with the day spent knows when the box
+  // opens again; it is null whenever there are chirps left.
+  assert.deepStrictEqual(Object.keys(e.birdie).sort(), ['limit', 'remaining', 'resetsAt', 'used']);
   assert.deepStrictEqual(Object.keys(e.forecast).sort(), ['limit', 'remaining', 'used']);
+});
+
+// THE SNAPSHOT SAYS WHEN A SPENT DAY COMES BACK. The client opens Birdie's box
+// on a timer armed from a reset time, and only the reply that spent the last
+// chirp and the 429 after it carried one. A relaunch with the day spent read
+// remaining 0 and no time from this snapshot, so the box stayed shut past the
+// reset with nothing set to open it.
+test('a spent day carries the next UTC midnight as its reset, and a day with chirps left carries none', async () => {
+  const spent = freshId();
+  for (let i = 0; i < FREE_DAILY_LIMIT; i++) checkUserRateLimit(spent);
+  process.env.PAYWALL_ENABLED = 'true';
+  premiumIs(false);
+  const before = Date.now();
+  const e = await getEntitlements(spent);
+  assert.strictEqual(e.birdie.limit, FREE_DAILY_LIMIT);
+  assert.strictEqual(e.birdie.remaining, 0);
+  const at = Date.parse(e.birdie.resetsAt);
+  assert.ok(Number.isFinite(at), `resetsAt is not a time: ${e.birdie.resetsAt}`);
+  const d = new Date(at);
+  assert.deepStrictEqual([d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds(), d.getUTCMilliseconds()], [0, 0, 0, 0],
+    'the meter resets at UTC midnight, and resetsAt is some other moment');
+  assert.ok(at > before && at <= before + 24 * 3600 * 1000, 'resetsAt is not the next UTC midnight');
+
+  premiumIs(false);
+  const left = await getEntitlements(freshId());
+  assert.strictEqual(left.birdie.remaining, FREE_DAILY_LIMIT);
+  assert.strictEqual(left.birdie.resetsAt, null);
 });
 
 // ===========================================================================
