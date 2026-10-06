@@ -973,8 +973,10 @@ test('with push unconfigured the deletion still completes and still emits', asyn
 // ---------------------------------------------------------------------------
 const billing = require('../services/proBilling');
 
-// `refuse` makes Stripe answer every customer delete with an error.
-function withStripe(fn, { refuse = false } = {}) {
+// `refuse` makes Stripe answer every customer delete with an error, and
+// `refuseIds` only the deletes of those customers. `subsByCustomer` is what
+// each customer holds when its subscriptions are listed.
+function withStripe(fn, { refuse = false, refuseIds = [], subsByCustomer = {} } = {}) {
   const stripePath = require.resolve('stripe');
   const savedEntry = require.cache[stripePath];
   const savedKey = process.env.STRIPE_SECRET_KEY;
@@ -984,14 +986,15 @@ function withStripe(fn, { refuse = false } = {}) {
     exports: function FakeStripe() {
       return {
         customers: { del: async (id) => {
-          if (refuse) throw Object.assign(new Error('simulated Stripe outage'), { statusCode: 500 });
+          if (refuse || refuseIds.includes(id)) throw Object.assign(new Error('simulated Stripe outage'), { statusCode: 500 });
           deleted.push(id);
           return { id, deleted: true };
         } },
         // A Roost customer's subscriptions are read before it is closed, to
         // tell one this account alone holds from one shared with another
-        // venue (services/venueBilling.js closeVenueCustomer). None here.
-        subscriptions: { list: async () => ({ data: [], has_more: false }) },
+        // venue (services/venueBilling.js closeVenueCustomer), and to say
+        // what closing it cancelled.
+        subscriptions: { list: async ({ customer }) => ({ data: subsByCustomer[customer] || [], has_more: false }) },
       };
     },
   };
@@ -1206,6 +1209,42 @@ test('Pro cancelled but the deletion rolled back: account kept, with the cancell
     assert.equal(res.body.code, 'SUBSCRIPTION_CANCELLED_ACCOUNT_KEPT');
     assert.deepEqual(deletedAtStripe, ['cus_PRO_ON_FILE']);
   });
+});
+
+// WHAT WAS ALREADY CANCELLED IS SAID. The Pro customer is closed and forgotten
+// before the Roost step, so a Roost failure after it kept the account with
+// Pro gone, and the refusal named only Roost. A Roost plan cancelled before
+// the transaction rolled back was answered "Nothing was changed".
+const liveRoostPlan = (id) => [{ id, status: 'active', metadata: { kind: 'venue', flock_venue_user_id: String(DELETER) } }];
+
+test('Pro cancelled and Roost refused: the account is kept, and the refusal says both', async () => {
+  await withStripe(async (deletedAtStripe) => {
+    const res = await deleteAccountAs({ proCustomer: 'cus_PRO_ON_FILE', roostCustomer: 'cus_ROOST_ON_FILE' });
+    assert.equal(res.status, 503, JSON.stringify(res.body));
+    assert.equal(res.body.error, 'Your Flock Pro web subscription was cancelled, but your Roost subscription could not be cancelled just now, so your account was not deleted. Try again in a minute.');
+    assert.equal(res.body.code, 'SUBSCRIPTION_PARTLY_CANCELLED', 'the App Store build said only that a subscription is still active');
+    assert.deepEqual(deletedAtStripe, ['cus_PRO_ON_FILE']);
+    assert.equal(rowDeleted, false);
+  }, { refuseIds: ['cus_ROOST_ON_FILE'] });
+});
+
+test('a Roost plan cancelled before the deletion rolled back is said, not "Nothing was changed"', async () => {
+  await withStripe(async (deletedAtStripe) => {
+    const res = await deleteAccountAs({ roostCustomer: 'cus_ROOST_ON_FILE', failTransaction: true });
+    assert.equal(res.status, 503, JSON.stringify(res.body));
+    assert.equal(res.body.error, 'Your Roost subscription was cancelled, but the account could not be deleted just now. Please try again in a minute.');
+    assert.equal(res.body.code, 'SUBSCRIPTION_CANCELLED_ACCOUNT_KEPT');
+    assert.deepEqual(deletedAtStripe, ['cus_ROOST_ON_FILE']);
+  }, { subsByCustomer: { cus_ROOST_ON_FILE: liveRoostPlan('sub_roost_live') } });
+});
+
+test('Pro and a Roost plan both cancelled before a rollback are both said', async () => {
+  await withStripe(async () => {
+    const res = await deleteAccountAs({ proCustomer: 'cus_PRO_ON_FILE', roostCustomer: 'cus_ROOST_ON_FILE', failTransaction: true });
+    assert.equal(res.status, 503, JSON.stringify(res.body));
+    assert.equal(res.body.error, 'Your Flock Pro web and Roost subscriptions were cancelled, but the account could not be deleted just now. Please try again in a minute.');
+    assert.equal(res.body.code, 'SUBSCRIPTION_CANCELLED_ACCOUNT_KEPT');
+  }, { subsByCustomer: { cus_ROOST_ON_FILE: liveRoostPlan('sub_roost_live') } });
 });
 
 test('a rollback with nothing billed carries no billing code', async () => {

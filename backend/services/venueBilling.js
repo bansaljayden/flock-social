@@ -391,35 +391,49 @@ async function latestVenueSubscription(userId, customerIds, requestOptions) {
 // cancelled the other venue's plan at once, with no refund, and left that
 // venue's profile pointing at a customer that was gone. Only this account's
 // own subscriptions on it are cancelled, at once, and the customer stays.
+//
+// WHAT WAS CANCELLED IS SAID, on the way out either way: { cancelled } lists
+// the plans still billing that this call ended, and a throw carries the ones
+// it ended before it failed as err.cancelledBefore. The customers are closed
+// one by one, so a failure on the second could follow the first plan's end,
+// and the deletion route told the owner only that Roost could not be
+// cancelled while the plan they were paying for already had been.
 async function closeVenueCustomer(userId) {
   const customerIds = await venueCustomerIdsFor(userId);
   if (customerIds.length === 0) return false;
   if (!billing.stripeConfigured()) {
     throw refusal(503, `Roost Stripe customers ${customerIds.join(', ')} were not cancelled; Stripe is not configured`, 'STRIPE_NOT_CONFIGURED');
   }
-  const elsewhere = await customersOnRecordElsewhere(userId, customerIds);
-  for (const customerId of customerIds) {
-    let held;
-    try {
-      held = await subscriptionsOn(customerId);
-    } catch (err) {
-      if (!missingAtStripe(err)) throw err;
-      held = [];
-    }
-    if (elsewhere.has(customerId) || held.some((s) => namesAnotherAccount(s, userId))) {
-      for (const s of held) {
-        if (!isVenueObject(s) || venueUserIdFrom(s.metadata) !== userId) continue;
-        await cancelNow(s, `flock-account-deleted-cancel-${s.id}`);
+  const cancelled = [];
+  try {
+    const elsewhere = await customersOnRecordElsewhere(userId, customerIds);
+    for (const customerId of customerIds) {
+      let held;
+      try {
+        held = await subscriptionsOn(customerId);
+      } catch (err) {
+        if (!missingAtStripe(err)) throw err;
+        held = [];
       }
-      console.error(`[venue-billing] venue user ${userId}'s Roost customer ${customerId} is shared with another account, so it was kept and only this account's subscriptions on it were cancelled.`);
-      continue;
+      if (elsewhere.has(customerId) || held.some((s) => namesAnotherAccount(s, userId))) {
+        for (const s of held) {
+          if (!isVenueObject(s) || venueUserIdFrom(s.metadata) !== userId) continue;
+          if (await cancelNow(s, `flock-account-deleted-cancel-${s.id}`)) cancelled.push(s.id);
+        }
+        console.error(`[venue-billing] venue user ${userId}'s Roost customer ${customerId} is shared with another account, so it was kept and only this account's subscriptions on it were cancelled.`);
+        continue;
+      }
+      const closed = await billing.closeCustomer(customerId);
+      if (!closed) {
+        throw refusal(503, `Roost Stripe customer ${customerId} was not cancelled; Stripe is not configured`, 'STRIPE_NOT_CONFIGURED');
+      }
+      for (const s of held) if (stillBilling(s)) cancelled.push(s.id);
     }
-    const closed = await billing.closeCustomer(customerId);
-    if (!closed) {
-      throw refusal(503, `Roost Stripe customer ${customerId} was not cancelled; Stripe is not configured`, 'STRIPE_NOT_CONFIGURED');
-    }
+  } catch (err) {
+    if (err && typeof err === 'object') err.cancelledBefore = cancelled;
+    throw err;
   }
-  return true;
+  return { cancelled };
 }
 
 const missingAtStripe = (err) => !!err && (err.code === 'resource_missing' || err.statusCode === 404);

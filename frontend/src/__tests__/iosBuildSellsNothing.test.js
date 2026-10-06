@@ -282,7 +282,7 @@ describe('the You tab', () => {
     const settings = read('screens', 'ProfileSettings.js');
     expect(settings).toContain("} else if (process.env.REACT_APP_PURCHASES === 'off' && DELETE_BILLING_NEUTRAL[err?.code]) {\n                          setDeleteError(DELETE_BILLING_NEUTRAL[err.code]);\n                        } else {\n                          setDeleteError(err.message || 'Could not delete account. Try again.');");
     const { DELETE_BILLING_NEUTRAL } = require('../screens/ProfileSettings');
-    expect(Object.keys(DELETE_BILLING_NEUTRAL).sort()).toEqual(['SUBSCRIPTION_CANCELLED_ACCOUNT_KEPT', 'SUBSCRIPTION_NOT_CANCELLED']);
+    expect(Object.keys(DELETE_BILLING_NEUTRAL).sort()).toEqual(['SUBSCRIPTION_CANCELLED_ACCOUNT_KEPT', 'SUBSCRIPTION_NOT_CANCELLED', 'SUBSCRIPTION_PARTLY_CANCELLED']);
     for (const text of Object.values(DELETE_BILLING_NEUTRAL)) {
       expect(text).not.toMatch(/Pro\b|Roost|flockcorp|\$\d|price|buy|http|—/i);
     }
@@ -292,6 +292,10 @@ describe('the You tab', () => {
     expect(DELETE_BILLING_NEUTRAL.SUBSCRIPTION_NOT_CANCELLED).toMatch(/could not be cancelled just now and is still active/);
     expect(DELETE_BILLING_NEUTRAL.SUBSCRIPTION_CANCELLED_ACCOUNT_KEPT).toMatch(/subscription was cancelled/);
     expect(DELETE_BILLING_NEUTRAL.SUBSCRIPTION_CANCELLED_ACCOUNT_KEPT).toMatch(/account could not be deleted/);
+    // Something was cancelled and something is still on: both are said.
+    expect(DELETE_BILLING_NEUTRAL.SUBSCRIPTION_PARTLY_CANCELLED).toMatch(/account was not deleted/);
+    expect(DELETE_BILLING_NEUTRAL.SUBSCRIPTION_PARTLY_CANCELLED).toMatch(/billing was cancelled/);
+    expect(DELETE_BILLING_NEUTRAL.SUBSCRIPTION_PARTLY_CANCELLED).toMatch(/is still active/);
     // Every code the server sends has wording here, and every sentence on the
     // deletion route that names a plan carries a code.
     const users = readRepo('backend', 'routes', 'users.js');
@@ -300,10 +304,11 @@ describe('the You tab', () => {
     const start = users.indexOf('const stripeCustomer = await stripeCustomerIdFor(req.user.id);');
     const route = users.slice(start, users.indexOf('client.release();', start));
     const refusals = route.split('\n').filter((l) => /\.json\(\{ error: .*(Flock Pro|Roost)/.test(l));
-    expect(refusals).toHaveLength(4);
+    expect(refusals).toHaveLength(6);
     for (const line of refusals) expect(line).toMatch(/, code: 'SUBSCRIPTION_[A-Z_]+' \}\);$/);
     expect(route).toContain("? 'Your Flock Pro web subscription was cancelled, but the account could not be deleted just now. Please try again in a minute.'");
-    expect(route).toContain("...(!appleRevoked && stripeClosed ? { code: 'SUBSCRIPTION_CANCELLED_ACCOUNT_KEPT' } : {}),");
+    expect(route).toContain("? 'Your Roost subscription was cancelled, but the account could not be deleted just now. Please try again in a minute.'");
+    expect(route).toContain("...(!appleRevoked && (stripeClosed || roostCancelled) ? { code: 'SUBSCRIPTION_CANCELLED_ACCOUNT_KEPT' } : {}),");
   });
 });
 
