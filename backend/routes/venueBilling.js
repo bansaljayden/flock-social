@@ -65,9 +65,29 @@ router.get('/status', async (req, res) => {
     if (!profile) return res.status(404).json({ error: 'There is no venue on this account.', code: 'NO_VENUE' });
     const ent = await getVenueEntitlement(req.user.id);
     const state = venueBilling.checkoutState();
+    // MANAGE BILLING IS FOR A PLAN STILL RUNNING. This was true for any
+    // customer that had EVER held a subscription, and the plans control then
+    // showed Manage billing alone. Stripe's portal cannot start a new
+    // subscription, so a venue that cancelled and came back had no way to buy
+    // Roost again. Now it is true while the account's newest Roost
+    // subscription, on any customer on record, is one Stripe may still bill
+    // (active, trialing, past_due, unpaid: the same set that blocks a second
+    // checkout); once it has ended, the plans are offered again, with no
+    // second trial. A short timeout and no retries, because the checkout
+    // return polls this route; a lookup that fails offers Manage billing to
+    // nobody and the plans to nobody who has one, which checkout re-checks.
     let canManage = false;
-    if (profile.stripe_customer_id && billing.stripeConfigured()) {
-      canManage = await billing.hasEverSubscribed(profile.stripe_customer_id).catch(() => false);
+    let latest = null;
+    if (billing.stripeConfigured()) {
+      const customers = await venueBilling.venueCustomerIdsFor(req.user.id);
+      if (customers.length) {
+        latest = await venueBilling.latestVenueSubscription(req.user.id, customers, { timeout: 5000, maxNetworkRetries: 0 })
+          .catch((err) => {
+            console.warn('[venue-billing] status could not read the Roost subscriptions:', err?.message || err);
+            return null;
+          });
+        canManage = !!(latest && venueBilling.stillBilling(latest.subscription));
+      }
     }
     // A price lookup that fails hides the offer, not the page, so a
     // subscriber can still reach Manage while Stripe is slow.
@@ -84,7 +104,7 @@ router.get('/status', async (req, res) => {
     // One trial per venue and per account, the same answer checkout acts on
     // (venueBilling.venueTrialUsed). A lookup that fails offers none: the
     // page must not promise 14 days checkout may not give.
-    const trialAvailable = sellable && !canManage
+    const trialAvailable = sellable && !canManage && !latest
       && !(await venueBilling.venueTrialUsed(req.user.id, profile.google_place_id).catch(() => true));
     // A venue account from before Roost had a price keeps everything, and
     // cannot be charged, until the date its notice named (Terms 9.6). freeUntil
