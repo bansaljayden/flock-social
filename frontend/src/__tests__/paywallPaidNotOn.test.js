@@ -51,6 +51,8 @@ const mockRc = {
     this.grantsPro = true;
     this.cancels = false;
     this.charged = [];
+    this.restoreGrantsPro = false;
+    this.restoreFails = false;
   },
 };
 mockRc.reset();
@@ -74,7 +76,11 @@ jest.mock('@revenuecat/purchases-capacitor', () => ({
       const active = mockRc.grantsPro ? { pro: {} } : {};
       return Promise.resolve({ customerInfo: { entitlements: { active } } });
     },
-    restorePurchases: () => Promise.resolve({ customerInfo: { entitlements: { active: {} } } }),
+    restorePurchases: () => {
+      if (mockRc.restoreFails) return Promise.reject(new Error('The Internet connection appears to be offline.'));
+      const active = mockRc.restoreGrantsPro ? { pro: {} } : {};
+      return Promise.resolve({ customerInfo: { entitlements: { active } } });
+    },
   },
 }));
 
@@ -122,10 +128,83 @@ describe('the store charged and RevenueCat did not grant Pro', () => {
     // Not a success: no welcome, no purchase event, the sheet is still up.
     expect(showToast).not.toHaveBeenCalled();
     expect(trackPurchaseCompleted).not.toHaveBeenCalled();
-    expect(onUpgraded).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
+    // But App.js starts the sync a purchase gets, as a purchase, so Pro can
+    // still arrive without Restore and the poll may say so if it never does.
+    expect(onUpgraded).toHaveBeenCalledTimes(1);
+    expect(onUpgraded).toHaveBeenCalledWith('purchase');
     // The sentence follows the copy rules and points at no store but this one.
     expect(PAID_NOT_ON_YET).not.toMatch(/—|https?:|\/pro\b|website/);
+  });
+
+  // After that payment, Restore is the button the sentence points at, so what
+  // a restore says next has to agree with the payment.
+  describe('a restore after a payment that did not switch Pro on', () => {
+    const paidNotOn = async (props = {}) => {
+      mockRc.grantsPro = false;
+      const handlers = { onUpgraded: jest.fn(), onClose: jest.fn(), showToast: jest.fn() };
+      const view = render(<PaywallSheet open trigger="birdie" {...handlers} {...props} />);
+      const cta = await screen.findByRole('button', { name: MONTHLY_CTA });
+      await act(async () => { cta.click(); });
+      expect(await screen.findByRole('alert')).toHaveTextContent(PAID_NOT_ON_YET);
+      return { ...handlers, ...view };
+    };
+    const tapRestore = async () => {
+      await act(async () => { screen.getByRole('button', { name: 'Restore purchases' }).click(); });
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Restore purchases' })).toBeTruthy());
+    };
+
+    test('one that finds nothing keeps the paid sentence, never "No previous purchases found"', async () => {
+      const { showToast, onClose } = await paidNotOn();
+      await tapRestore();
+      expect(screen.getByRole('alert')).toHaveTextContent(PAID_NOT_ON_YET);
+      expect(showToast).not.toHaveBeenCalledWith('No previous purchases found', 'error');
+      expect(onClose).not.toHaveBeenCalled();
+    });
+
+    test('one that fails keeps the paid sentence under its own failure', async () => {
+      const { showToast } = await paidNotOn();
+      mockRc.restoreFails = true;
+      await tapRestore();
+      expect(showToast).toHaveBeenCalledWith('Could not restore purchases', 'error');
+      expect(screen.getByRole('alert')).toHaveTextContent(PAID_NOT_ON_YET);
+    });
+
+    test('one that finds Pro welcomes them, and App.js still treats it as the purchase it was', async () => {
+      const { showToast, onClose, onUpgraded } = await paidNotOn();
+      mockRc.restoreGrantsPro = true;
+      await tapRestore();
+      await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
+      expect(showToast).toHaveBeenCalledWith('Welcome to Flock Pro', 'success');
+      expect(onUpgraded.mock.calls).toEqual([['purchase'], ['purchase']]);
+    });
+
+    test('when the sync finds Pro on its own, the sheet says so and closes', async () => {
+      const { showToast, onClose, rerender, onUpgraded } = await paidNotOn({ accountIsPro: false });
+      rerender(<PaywallSheet open trigger="birdie" onUpgraded={onUpgraded} onClose={onClose} showToast={showToast} accountIsPro />);
+      expect(showToast).toHaveBeenCalledWith('Welcome to Flock Pro', 'success');
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(screen.queryByRole('alert')).toBeNull();
+    });
+  });
+
+  test('without such a payment, a restore that finds nothing says so as before', async () => {
+    const showToast = jest.fn();
+    render(<PaywallSheet open trigger="settings" onClose={() => {}} showToast={showToast} />);
+    await screen.findByRole('button', { name: MONTHLY_CTA });
+    await act(async () => { screen.getByRole('button', { name: 'Restore purchases' }).click(); });
+    await waitFor(() => expect(showToast).toHaveBeenCalledWith('No previous purchases found', 'error'));
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
+  test('a change of Pro with no such payment closes nothing', async () => {
+    const onClose = jest.fn();
+    const showToast = jest.fn();
+    const { rerender } = render(<PaywallSheet open trigger="settings" onClose={onClose} showToast={showToast} accountIsPro={false} />);
+    await screen.findByRole('button', { name: MONTHLY_CTA });
+    rerender(<PaywallSheet open trigger="settings" onClose={onClose} showToast={showToast} accountIsPro />);
+    expect(onClose).not.toHaveBeenCalled();
+    expect(showToast).not.toHaveBeenCalled();
   });
 
   test('a cancel still leaves the sheet quiet', async () => {
@@ -286,5 +365,7 @@ describe('the poll after an App Store purchase', () => {
     const mount = appSource.slice(appSource.indexOf('<PaywallSheet'), appSource.indexOf('/>', appSource.indexOf('<PaywallSheet')));
     expect(mount).toContain('onUpgraded={confirmUpgrade}');
     expect(mount).toContain('onAlreadyPro={refreshEntitlements}');
+    // And the sheet hears when the sync for a payment brings Pro.
+    expect(mount).toContain('accountIsPro={isPro}');
   });
 });

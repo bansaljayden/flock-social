@@ -11,13 +11,16 @@ import useSheetDrag from '../hooks/useSheetDrag';
 // (overlay, 440px max, 20px top radius, a grabber that pulls it closed,
 // sheetRise).
 //
-// Props: { open, onClose, showToast, onUpgraded, onAlreadyPro, trigger, birdieResetsAt, place }
-//   onUpgraded(kind): the App Store has just given Pro by a 'purchase' or a
-//          'restore'. App.js polls until the server agrees (confirmUpgrade),
-//          and only after a purchase does it say so when the server never does.
+// Props: { open, onClose, showToast, onUpgraded, onAlreadyPro, accountIsPro, trigger, birdieResetsAt, place }
+//   onUpgraded(kind): a 'purchase' went through (Pro came back with it or
+//          not), or a 'restore' found Pro. App.js polls until the server
+//          agrees (confirmUpgrade), and only after a purchase does it say so
+//          when the server never does.
 //   onAlreadyPro: the server already counts this account as Pro. App.js
 //          re-reads its own copy (refreshEntitlements), with no poll and no
 //          message, because nothing was bought here.
+//   accountIsPro: App.js's copy of whether this account has Pro, so a
+//          purchase that went through without Pro can be told when it lands.
 //   trigger ∈ 'birdie' | 'forecast' | 'settings' | null: which limit opened it.
 //   birdieResetsAt: the reset time the server sent with Birdie's refusal.
 //   place: the venue a forecast was locked on, so the trip back from Stripe
@@ -158,7 +161,7 @@ function freeTrialLabel(pkg, eligible) {
   return `${n}-${unit} free trial`;
 }
 
-const PaywallSheet = ({ open, onClose, showToast, onUpgraded, onAlreadyPro, trigger, birdieResetsAt, place }) => {
+const PaywallSheet = ({ open, onClose, showToast, onUpgraded, onAlreadyPro, accountIsPro, trigger, birdieResetsAt, place }) => {
   const { isDark } = useTheme();
   const accent = isDark ? '#6d9ac3' : '#2d5a87';
   // lib/nativeShell.js's answer, the one index.js boots on, so a shell booted
@@ -179,6 +182,11 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, onAlreadyPro, trig
   const [trialEligible, setTrialEligible] = useState(() => new Set());
   const [webStatus, setWebStatus] = useState(null);
   const [actionError, setActionError] = useState('');
+  // True from a purchase that went through without Pro (reason 'not_granted')
+  // until Pro lands, for this opening of the sheet. While it is, a restore
+  // that finds nothing keeps PAID_NOT_ON_YET on screen instead of saying "No
+  // previous purchases found" about an Apple ID that was charged a moment ago.
+  const paidNotOnRef = useRef(false);
 
   // One paywall_shown per opening, and what opened it (services/api.js, THE
   // PAYWALL FUNNEL). Its own effect so a change of trigger while open counts
@@ -215,6 +223,7 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, onAlreadyPro, trig
     setBusy(false);
     setRestoring(false);
     setActionError('');
+    paidNotOnRef.current = false;
     if (!native) return loadWeb();
     if (!isPurchasesAvailable()) {
       setLoadState('unavailable');
@@ -272,6 +281,18 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, onAlreadyPro, trig
     // onAlreadyPro (App.js's refreshEntitlements).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  // PRO LANDED AFTER A PURCHASE THAT WENT THROUGH WITHOUT IT. The poll App.js
+  // started for that purchase (onUpgraded('purchase')) found it, so the sheet
+  // says so and closes, rather than leave "isn't on yet" over an account that
+  // has Pro now. Nothing happens on any other change of accountIsPro.
+  useEffect(() => {
+    if (!open || !accountIsPro || !paidNotOnRef.current) return;
+    paidNotOnRef.current = false;
+    setActionError('');
+    showToast?.('Welcome to Flock Pro', 'success');
+    onClose?.();
+  }, [open, accountIsPro, showToast, onClose]);
 
   // Dialog behavior. This sheet had none of it: no role, no label, no focus
   // move, no Escape, and no close control of any kind. The only way out was a
@@ -388,8 +409,13 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, onAlreadyPro, trig
         setActionError(ACCOUNT_UNCONFIRMED_BUY);
       } else if (reason === 'not_granted') {
         // Charged, and Pro did not come back with the receipt. The sheet
-        // stays open so Restore is right there.
+        // stays open so Restore is right there, and App.js starts the same
+        // sync a purchase gets (the server asks RevenueCat, then the
+        // entitlements are read again), so Pro can still arrive without the
+        // person doing anything. The effect above says so if it does.
+        paidNotOnRef.current = true;
         setActionError(PAID_NOT_ON_YET);
+        onUpgraded?.('purchase');
       }
       // Cancelled / failed purchases stay quiet: the sheet remains usable.
     } finally {
@@ -400,13 +426,26 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, onAlreadyPro, trig
   const handleRestore = async () => {
     if (busy || restoring) return;
     setRestoring(true);
-    setActionError('');
+    // A payment that has not switched Pro on keeps its sentence through a
+    // restore that does not fix it (paidNotOnRef).
+    if (!paidNotOnRef.current) setActionError('');
     try {
       const { success, isPro, reason } = await restore();
       if (success && isPro) {
+        // Still a purchase for App.js when this sheet took the payment that
+        // the restore has now matched to Pro: if the server never agrees,
+        // that person has paid and is owed the sentence that says so.
+        const paid = paidNotOnRef.current;
+        paidNotOnRef.current = false;
+        setActionError('');
         showToast?.('Welcome to Flock Pro', 'success');
-        onUpgraded?.('restore');
+        onUpgraded?.(paid ? 'purchase' : 'restore');
         onClose?.();
+      } else if (success && paidNotOnRef.current) {
+        // The store answered with nothing for the Apple ID it charged a moment
+        // ago. "No previous purchases found" would contradict that payment, so
+        // the paid-but-not-on sentence, with the address to write to, stays.
+        setActionError(PAID_NOT_ON_YET);
       } else if (success) {
         showToast?.('No previous purchases found', 'error');
       } else if (reason === 'account') {
