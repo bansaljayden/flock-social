@@ -46,10 +46,11 @@ function FakeStripe() {
     },
     subscriptions: {
       // One page at a time, the way Stripe answers: `limit` (ten when none is
-      // asked for) after `starting_after`, with has_more.
+      // asked for) after `starting_after`, with has_more. A subscription that
+      // names a customer is listed for that customer only.
       list: async (args) => {
         stripeCalls.push(['subscriptions.list', args]);
-        const all = stripeState.subscriptions;
+        const all = stripeState.subscriptions.filter((s) => !s.customer || s.customer === args.customer);
         const limit = args.limit || 10;
         const start = args.starting_after ? all.findIndex((s) => s.id === args.starting_after) + 1 : 0;
         return { data: all.slice(start, start + limit), has_more: start + limit < all.length };
@@ -497,6 +498,39 @@ test('checkout sees a live plan past the first page and does not sell a second o
     assert.strictEqual(res.status, 409, `a second plan was sold over one still billing: ${JSON.stringify(res.body)}`);
     assert.strictEqual(res.body.code, 'ALREADY_SUBSCRIBED');
     assert.ok(!stripeCalls.some(([n]) => n === 'checkout.create'));
+  } finally { restore(); }
+});
+
+// ---- checkout asks every customer a plan of the account is on record with ---
+
+test('a hand-sold plan still billing on a customer of its own blocks a second checkout, whatever the grant says', async () => {
+  // Past due beyond the grant's grace, so the grant reads free. Checkout asked
+  // only the customer it makes sessions on, sold a second plan, and Stripe went
+  // on retrying the first: one venue billed twice.
+  setEnv(ON);
+  stripeState.subscriptions = [{ ...roostSub('sub_hand_sold', 'past_due', 1700000000), customer: 'cus_HAND_SOLD' }];
+  const { restore } = stubPool(venueDb({ customer: 'cus_VENUE1', recorded: ['cus_HAND_SOLD'], trialUsed: true }));
+  try {
+    const res = await call(venueBillingRoutes, 'POST', '/api/venue-billing/checkout', { plan: 'monthly' });
+    assert.strictEqual(res.status, 409, `a second plan was sold over a hand-sold one still billing: ${JSON.stringify(res.body)}`);
+    assert.strictEqual(res.body.code, 'ALREADY_SUBSCRIBED');
+    assert.ok(!stripeCalls.some(([n]) => n === 'checkout.create'));
+    // And the plans card offers the way to it.
+    const status = await call(venueBillingRoutes, 'GET', '/api/venue-billing/status');
+    assert.strictEqual(status.body.canManage, true);
+  } finally { restore(); }
+});
+
+test('another venue\'s plan, or a Flock Pro plan, on the same customer does not block a Roost checkout', async () => {
+  setEnv(ON);
+  stripeState.subscriptions = [
+    { id: 'sub_other_venue', status: 'active', created: 1700000000, customer: 'cus_VENUE1', metadata: { kind: 'venue', flock_venue_user_id: '777' } },
+    { id: 'sub_pro', status: 'active', created: 1700000001, customer: 'cus_VENUE1', metadata: { app_user_id: String(ME.id) } },
+  ];
+  const { restore } = stubPool(venueDb({ customer: 'cus_VENUE1', trialUsed: true }));
+  try {
+    const res = await call(venueBillingRoutes, 'POST', '/api/venue-billing/checkout', { plan: 'monthly' });
+    assert.strictEqual(res.status, 200, `a plan that is not this venue's Roost blocked its checkout: ${JSON.stringify(res.body)}`);
   } finally { restore(); }
 });
 

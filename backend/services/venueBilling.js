@@ -416,8 +416,37 @@ async function ensureVenueCustomer(user, profile) {
   return venueCustomerIdFor(user.id);
 }
 
-async function hasLiveSubscription(customerId) {
-  return (await subscriptionsOn(customerId)).some((s) => LIVE_STATUSES.has(s.status));
+// A SUBSCRIPTION THAT MAKES A SECOND CHECKOUT A SECOND BILL, on ANY customer a
+// Roost plan of this account is on record with. Only the customer checkout
+// uses was asked, so a hand-sold plan on a customer of its own that had gone
+// past due beyond the grant's grace (the grant then reads free) let checkout
+// sell a new plan while Stripe went on retrying the old one: billed twice. A
+// live subscription blocks when it names this account. One naming nobody
+// blocks on the customer checkout made for this account (a plan made there by
+// hand without its metadata is still this venue's), and nowhere else. One
+// naming another account (an operator who put two venues' plans on one
+// customer) or a Flock Pro subscription never blocks Roost.
+function blocksCheckout(s, userId, checkoutCustomer) {
+  if (!s || !LIVE_STATUSES.has(s.status)) return false;
+  if (s.metadata && s.metadata.app_user_id) return false;
+  const owner = venueUserIdFrom(s.metadata);
+  return owner === userId || (owner === null && checkoutCustomer);
+}
+
+async function blockingSubscription(userId, checkoutCustomerId) {
+  const customers = [...new Set([checkoutCustomerId, ...(await venueCustomerIdsFor(userId))].filter(Boolean))];
+  for (const customerId of customers) {
+    let data;
+    try {
+      data = await subscriptionsOn(customerId);
+    } catch (err) {
+      if (missingAtStripe(err)) continue;
+      throw err;
+    }
+    const found = data.find((s) => blocksCheckout(s, userId, customerId === checkoutCustomerId));
+    if (found) return found;
+  }
+  return null;
 }
 
 // One trial per venue. A customer who has ever held a Roost subscription, in
@@ -524,7 +553,7 @@ async function buildVenueCheckout(user, plan) {
   }
   const customerId = await ensureVenueCustomer(user, profile);
   await expireOpenSessions(customerId);
-  if (await hasLiveSubscription(customerId)) {
+  if (await blockingSubscription(user.id, customerId)) {
     throw refusal(409, 'You already have Roost. Manage it from billing.', 'ALREADY_SUBSCRIBED');
   }
   const trial = !(await venueTrialUsed(user.id, profile.google_place_id)) && !(await hasEverSubscribed(customerId));
