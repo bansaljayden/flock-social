@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { BirdieStill, BirdNote } from './ui/BirdieBird';
 import { signInKey } from '../lib/sessionIdentity';
+import { isNativeShell } from '../lib/nativeShell';
 
 // Roost, the chat half of the venue advisor: a Q&A thread on the venue
 // dashboard, below the insight cards.
@@ -683,8 +684,10 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
       // not a lock; the locked state has no retry.
       if (err?.status === 403 && err?.data?.reason !== 'ENTITLEMENT_UNAVAILABLE') {
         // The App Store build names no plan (see lib/purchasesBuild.js),
-        // including the server's own wording.
-        setLockedReason(process.env.REACT_APP_PURCHASES !== 'off'
+        // including the server's own wording. Nor does the app with purchases
+        // on: that wording asks for a venue plan upgrade, and Roost is sold on
+        // the website only (lib/nativeShell.js).
+        setLockedReason(process.env.REACT_APP_PURCHASES !== 'off' && !isNativeShell()
           ? (err?.data?.error || 'This is part of Roost.')
           : 'This is not turned on for your venue.');
         setState('locked');
@@ -797,9 +800,10 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
       // (chat audit, 2026-09-05). A 4xx with a real sentence renders as a
       // quiet answer; the error row stays for 5xx and the network.
       // The App Store build names no plan, so a plan refusal (the server's
-      // "needs a venue plan upgrade") is reworded there like the locked state.
+      // "needs a venue plan upgrade") is reworded there like the locked state,
+      // and so it is inside the app with purchases on, where Roost is not sold.
       const planRefusal = Number(err?.status) === 403 && err?.data?.code === 'UPGRADE_REQUIRED';
-      const said = planRefusal && process.env.REACT_APP_PURCHASES === 'off'
+      const said = planRefusal && (process.env.REACT_APP_PURCHASES === 'off' || isNativeShell())
         ? 'This is not turned on for your venue.'
         : [400, 403, 429].includes(Number(err?.status)) && typeof err?.message === 'string' && err.message.trim().length > 12
           ? err.message.trim()

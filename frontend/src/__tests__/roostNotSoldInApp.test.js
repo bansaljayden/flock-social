@@ -32,12 +32,19 @@ jest.mock('../services/api', () => ({
   openVenuePortal: jest.fn(),
 }));
 jest.mock('../components/ui/BirdieBird', () => {
+  const R = require('react');
   const Stub = () => null;
-  return { __esModule: true, default: Stub, BirdieStill: Stub, BirdNote: Stub, WARM_BIRD: {}, BIRDIE: {} };
+  // The note's words are what these tests read; the bird is not.
+  const BirdNote = ({ body, action }) => R.createElement('div', null, body, action || null);
+  return { __esModule: true, default: Stub, BirdieStill: Stub, BirdNote, WARM_BIRD: {}, BIRDIE: {} };
 });
 
 // eslint-disable-next-line import/first
 import VenueDashboard from '../screens/VenueDashboard';
+// eslint-disable-next-line import/first
+import VenueInsightCards from '../components/VenueInsightCards';
+// eslint-disable-next-line import/first
+import VenueAdvisorChat, { clearAdvisorThread } from '../components/VenueAdvisorChat';
 // eslint-disable-next-line import/first
 import { getVenueBillingStatus } from '../services/api';
 
@@ -229,6 +236,65 @@ describe('what the app keeps saying about Roost', () => {
       expect(container.textContent).not.toMatch(/\$\s?\d|Requires Roost|Upgrade/);
       unmount();
     }
+  });
+});
+
+// Roost's cards and its questions sit inside the Analytics body, which only a
+// Roost venue opens, so a refusal there is the server disagreeing with the
+// dashboard: a plan that changed mid-session, say. The server's sentence for it
+// is "This feature needs a venue plan upgrade.", an upgrade prompt, and the
+// web shows it as before. Inside the app it reads the way the build that sells
+// nothing reads.
+describe("Roost's cards and questions, when the server refuses the plan", () => {
+  const UPGRADE = 'This feature needs a venue plan upgrade.';
+  const refusal = () => Object.assign(new Error(UPGRADE), {
+    status: 403,
+    data: { error: UPGRADE, code: 'UPGRADE_REQUIRED', requiredTier: 'pro' },
+  });
+  const cards = () => render(<VenueInsightCards fetchCards={() => Promise.reject(refusal())} colors={{ navy: '#0d2847' }} />);
+  const chat = (props) => render(
+    <VenueAdvisorChat
+      fetchQuestions={async () => ({ name: 'Roost', freeText: true, lead: [{ id: 'peak_hours', label: 'When do we peak this week?' }], groups: [] })}
+      ask={async () => { throw refusal(); }}
+      askQuestion={async () => { throw refusal(); }}
+      colors={{ navy: '#0d2847' }}
+      {...props}
+    />
+  );
+  beforeEach(() => { clearAdvisorThread(); });
+
+  test('on the web the cards repeat the server, as before', async () => {
+    cards();
+    expect(await screen.findByText(UPGRADE)).toBeTruthy();
+  });
+
+  test('inside the app the cards say the feature is not on, with no upgrade', async () => {
+    inTheApp();
+    const { container } = cards();
+    expect(await screen.findByText('Not turned on for your venue.')).toBeTruthy();
+    expect(container.textContent).not.toMatch(/upgrade|paid/i);
+    // The card is still called what it is.
+    expect(container.textContent).toContain('Roost');
+  });
+
+  test('a locked chat says the same in the app, and the server\'s words on the web', async () => {
+    const locked = { fetchQuestions: async () => { throw refusal(); } };
+    const web = chat(locked);
+    expect(await screen.findByText(UPGRADE)).toBeTruthy();
+    web.unmount();
+    inTheApp();
+    const { container } = chat(locked);
+    expect(await screen.findByText('This is not turned on for your venue.')).toBeTruthy();
+    expect(container.textContent).not.toMatch(/upgrade/i);
+  });
+
+  test('a question the plan refuses is answered without an upgrade line inside the app', async () => {
+    inTheApp();
+    const { container } = chat();
+    const chip = await screen.findByRole('button', { name: 'When do we peak this week?' });
+    await act(async () => { chip.click(); });
+    expect(await screen.findByText('This is not turned on for your venue.')).toBeTruthy();
+    expect(container.textContent).not.toMatch(/upgrade/i);
   });
 });
 
