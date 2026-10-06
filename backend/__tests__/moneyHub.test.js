@@ -3513,6 +3513,19 @@ test('a bill charged on or after its end date renewed after all: it runs, and is
   assert.deepStrictEqual(pictureOn('2026-10-25', [expense({ ...ENDING, lastChargedOn: '2026-10-20', active: false })]).chargedPastEnd, []);
 });
 
+test('a usage bill is billed after the use, so its last bill after the end date is not a renewal', () => {
+  // Build minutes stopped on Oct 1 and their invoice was paid on Oct 2.
+  const metered = expense({ id: 7, vendor: 'Build service', kind: 'tooling', cadence: 'usage', amountCents: 13015, lastChargedOn: '2026-10-02', endsOn: '2026-10-01' });
+  assert.strictEqual(moneyHub.__test.endOf(metered, '2026-10-06'), 'ended');
+  const base = pictureOn('2026-10-06', []);
+  const pic = pictureOn('2026-10-06', [metered]);
+  assert.deepStrictEqual(pic.chargedPastEnd, []);
+  assert.strictEqual(pic.totals.perMonthCents, base.totals.perMonthCents, 'out of the burn from the day it ended');
+  assert.strictEqual(pic.totals.thisMonthCents - base.totals.thisMonthCents, 13015, 'its last bill was paid this month');
+  // A subscription paid ahead with the same dates did renew.
+  assert.strictEqual(moneyHub.__test.endOf({ ...metered, cadence: 'monthly' }, '2026-10-06'), 'renewed');
+});
+
 test('the renewal totals count a bill set to end up to the day before it, and a credit set to end raises the burn', () => {
   const totals = (x) => Object.fromEntries(pictureOn('2026-10-06', [x]).upcomingTotals.map((t) => [t.days, t]));
   const monthly = { id: 2, vendor: 'Host', kind: 'infrastructure', cadence: 'monthly', amountCents: 10000, renewsOn: '2026-10-15' };
