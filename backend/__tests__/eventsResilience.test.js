@@ -373,12 +373,17 @@ test('honesty: dates are the venue\'s wall clock, not re-derived from server UTC
   assert.strictEqual(ev.date, '2026-08-20');
   assert.strictEqual(ev.time, '19:00:00');
   assert.strictEqual(ev.datetime_utc, '2026-08-21T01:00:00Z');
-  // The fields the client renders (App.js events list + detail sheet) exist
-  // and are not invented.
+  // The fields the client renders (the Discover events list + detail sheet)
+  // exist and are not invented. `location` is what the app measures the
+  // distance to, from where the viewer is; `timezone` is how it says whose
+  // clock the time is on. distance_miles left the list on 2026-10-06 (see
+  // "cell:" below).
   for (const k of ['id', 'name', 'category', 'venue_name', 'venue_address', 'location',
-    'image_url', 'price_range', 'genre', 'url', 'distance_miles']) {
+    'image_url', 'price_range', 'genre', 'url', 'timezone']) {
     assert.ok(k in ev, `client-rendered field missing from the response: ${k}`);
   }
+  assert.strictEqual(ev.timezone, 'America/Denver',
+    'a listed event has to say which zone its wall clock is on');
   assert.strictEqual(ev.venue_name, 'Red Rocks');
   assert.strictEqual(ev.category, 'concert');
   assert.deepStrictEqual(ev.location, { latitude: 39.6654, longitude: -105.2057 });
@@ -405,6 +410,44 @@ test('honesty: /details statuses tell the truth — 404 missing, 502 broken upst
   tmImpl = () => { throw new TypeError('fetch failed'); };
   res = await get('/api/events/details?id=NoSuchEvent4');
   assert.strictEqual(res.status, 503, res.text);
+});
+
+// ── The cell, not the caller ────────────────────────────────────────────────
+// An answer is cached for everyone whose position rounds to one 0.1-degree
+// cell, so it has to be asked about the cell. It was asked at the exact point
+// of whoever missed the cache first: everyone else in the cell got a list
+// centred on that person for an hour, and every distance in it was measured
+// from where that person stood.
+
+test('cell: two callers in one cell are asked about at its centre, once', async () => {
+  for (const p of ['/api/events/search', '/api/events/featured']) {
+    eventsRouter.__test.reset();
+    tmCalls = [];
+    tmImpl = () => TM_ONE;
+    // Both round to 39.7,-105.0, about 10 km apart.
+    const first = await get(`${p}?location=39.7412,-104.9801`);
+    const second = await get(`${p}?location=39.6631,-105.0379`);
+    assert.strictEqual(first.status, 200, first.text);
+    assert.strictEqual(second.status, 200, second.text);
+    assert.strictEqual(tmCalls.length, 1, `${p}: one cell cost ${tmCalls.length} paid calls`);
+    assert.strictEqual(new URL(tmCalls[0].url).searchParams.get('latlong'), '39.7,-105.0',
+      `${p} asked Ticketmaster about the first caller's own point, not the cell the answer is cached for`);
+    assert.deepStrictEqual(second.body, first.body);
+  }
+});
+
+test('cell: no distance comes back, because any distance would be one caller\'s', async () => {
+  // Ticketmaster puts `distance` on every event when it is asked at a point.
+  const measured = { ...RAW_EVENT, distance: 3.17, units: 'MILES' };
+  tmImpl = () => ({ ok: true, status: 200, json: async () => ({ _embedded: { events: [measured] } }) });
+  for (const p of ['/api/events/search?location=39.74,-104.98', '/api/events/featured?location=39.74,-104.98']) {
+    eventsRouter.__test.reset();
+    const res = await get(p);
+    assert.strictEqual(res.status, 200, res.text);
+    const ev = res.body.events[0];
+    assert.ok(!('distance_miles' in ev),
+      `${p} handed every caller in the cell a distance measured from one of them: ${ev.distance_miles}`);
+  }
 });
 
 test('honesty: a cached /details answer is the same answer, without a second invoice', async () => {
