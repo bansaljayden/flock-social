@@ -411,9 +411,23 @@ test('with curve_offset and the nowcast on, Birdie can quote the measured accura
   const served = require('../services/servedAccuracy.json');
   const prompt = withServeEnv('curve_offset', 'true', adult);
   assert.match(prompt, /If someone asks how accurate Flock's crowd levels are, answer from these measured figures and nothing else\./);
-  assert.ok(prompt.includes(`Tested against ${served.rows.toLocaleString('en-US')} real live readings it had not seen (September 6 to 8, 2026), ${Math.round(served.within_one_band)}% of Flock's crowd numbers landed within one crowd level`),
-    'the within-one-level figure is not the one servedAccuracy.json records');
-  assert.ok(prompt.includes(`the average miss was ${Math.round(served.mae)} points`));
+  // WHAT IT WAS MEASURED ON is part of the figure. The readings are held-out
+  // live readings from venues in the Lehigh Valley and Miami that have live
+  // readings, and the line used to tell Birdie to call the result "Flock's
+  // numbers overall". The file is what names the population, so the words are
+  // checked against it.
+  assert.match(served.population, /Lehigh/);
+  assert.match(served.population, /Miami/);
+  assert.ok(prompt.includes(`Tested against ${served.rows.toLocaleString('en-US')} real live readings it had not seen (September 6 to 8, 2026), all from venues in the Lehigh Valley and Miami that have live readings`),
+    'the line no longer says which readings the figures were measured on');
+  assert.ok(!/numbers overall/.test(prompt), 'Birdie is still told the figure describes every number Flock makes');
+  assert.match(prompt, /not every venue or city Flock covers/);
+  // WITHIN ONE LEVEL NEVER TRAVELS ALONE (scripts/ml/MODEL-METRICS.md: a
+  // constant "Not Busy" beats every served configuration on it). The
+  // exact-level rate and the average miss sit beside it, from the same file.
+  assert.ok(prompt.includes(`${Math.round(served.band_exact)}% of Flock's crowd numbers matched the reading's crowd level exactly, ${Math.round(served.within_one_band)}% landed within one crowd level of the reading, and the average miss was ${Math.round(served.mae)} points`),
+    'the within-one-level figure is quoted without the exact-level rate and the average miss beside it, or not as servedAccuracy.json records them');
+  assert.match(prompt, /Never give the within-one-level figure without the exact match and the average miss beside it\./);
   assert.ok(prompt.includes(`${Math.round(served.reading_one_hour_earlier.within_one_band)}% landed within one level`));
   assert.match(prompt, /never how sure one number is\./);
   // Inside the hard rules, beside the confidence rule it qualifies.
