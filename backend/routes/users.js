@@ -1,4 +1,6 @@
 const express = require('express');
+const { canonicalAvatarUrl } = require('../services/avatarArt');
+const { baseApiUrl } = require('../services/emailService');
 // SECURITY-AUDIT-auth.md A5-1 (MEDIUM). This file was the half of the bcrypt
 // swap that f9699d1 missed. routes/auth.js moved its login compare to the
 // native library so the pure-JS key schedule stops running on the only thread;
@@ -1059,15 +1061,14 @@ function maybePurgeExpiredGrace(now = Date.now()) {
 //
 // The rest have no column width to borrow, so they come from the product:
 //
-//   MAX_AVATAR_URL    the only URL this route accepts is a DiceBear one (the
-//                     host allowlist below is a single entry), and the URL the
-//                     client builds is about 55 characters:
-//                     https://api.dicebear.com/7.x/<style>/svg?seed=<seed>.
-//                     255 is over four times that, leaves room for DiceBear's
-//                     option parameters, and matches the width of every other
-//                     identifier column this file writes. It matters because
-//                     profile_image_url is repeated on every message row,
-//                     roster entry and push payload the user appears in.
+//   MAX_AVATAR_URL    the only URL this route accepts is a drawn avatar's
+//                     (services/avatarArt.js canonicalAvatarUrl), about 65
+//                     characters:
+//                     https://api.flockcorp.com/api/avatars/<style>/svg?seed=<seed>.
+//                     255 is several times that and matches the width of every
+//                     other identifier column this file writes. It matters
+//                     because profile_image_url is repeated on every message
+//                     row, roster entry and push payload the user appears in.
 //   MAX_PASSWORD      bcrypt ignores everything past 72 bytes, so no character
 //                     beyond that can change the outcome of a compare or a hash.
 //                     1024 is fourteen times the part that can matter and far
@@ -2379,7 +2380,7 @@ router.post('/upload-image', (req, res) => {
   });
 });
 
-// PUT /api/users/profile-image - Save an external avatar URL (e.g. DiceBear)
+// PUT /api/users/profile-image - Save a drawn avatar's URL (services/avatarArt.js)
 // TAKING A PHOTO DOWN (settings audit, 2026-09-05). The upload above and the
 // avatar save below were the only writers of profile_image_url, and both set
 // a value, so a person who had uploaded their face could not remove it
@@ -2415,7 +2416,10 @@ router.put('/profile-image',
     // regex work.
     scalarOnly(body('url'), 'URL').trim()
       .isLength({ max: MAX_AVATAR_URL }).withMessage('Avatar URL is too long')
-      .isURL({ protocols: ['https'], require_protocol: true }).withMessage('Valid HTTPS URL required'),
+      // http as well as https: a local build names its API over plain http.
+      // Nothing the client sends is stored but the style and the seed
+      // (canonicalAvatarUrl below rebuilds the link on our own origin).
+      .isURL({ protocols: ['https', 'http'], require_protocol: true }).withMessage('Valid URL required'),
   ],
   async (req, res) => {
     try {
@@ -2424,13 +2428,12 @@ router.put('/profile-image',
         return res.status(400).json({ error: errors.array()[0].msg });
       }
 
-      const { url } = req.body;
-
-      // Only allow URLs from trusted avatar services
-      const allowedHosts = ['api.dicebear.com'];
-      let hostname;
-      try { hostname = new URL(url).hostname; } catch { return res.status(400).json({ error: 'Invalid URL' }); }
-      if (!allowedHosts.includes(hostname)) {
+      // Only a drawn avatar, stored in its one form: our own link. The hosted
+      // DiceBear link an older build of the app still sends is accepted and
+      // stored as ours (the same picture; migration 116 did the same to every
+      // link already saved). Anything else is refused.
+      const url = canonicalAvatarUrl(req.body.url, baseApiUrl());
+      if (!url) {
         return res.status(400).json({ error: 'Avatar URL must be from a trusted provider' });
       }
 

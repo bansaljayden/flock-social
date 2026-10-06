@@ -221,9 +221,12 @@ describe('CSP covers the hosts the code actually talks to', () => {
   });
 
   it('covers the avatar host App.js builds URLs against', () => {
-    const dicebear = firstUrl(APP, /https:\/\/api\.dicebear\.com/);
-    expect(dicebear).toBeTruthy();
-    expect(allows(directive('img-src'), dicebear)).toBe(true);
+    // Drawn avatars come from our own API (backend/services/avatarArt.js),
+    // built against BASE_URL, whose production default is this origin.
+    expect(APP).toMatch(/\$\{BASE_URL\}\/api\/avatars\//);
+    expect(allows(directive('img-src'), 'https://api.flockcorp.com')).toBe(true);
+    // A link saved before migration 116 that it did not rewrite still loads.
+    expect(allows(directive('img-src'), 'https://api.dicebear.com')).toBe(true);
   });
 
   it('covers Google sign-in and the gstatic bundles the push worker imports', () => {

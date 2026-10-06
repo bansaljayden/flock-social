@@ -13907,17 +13907,27 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // having said a word, which reads as the app losing the avatar. Two buttons
   // in one sheet cannot answer differently, so the picture on screen goes back
   // to the one the server actually has.
+  // The picture is drawn by our own API (backend/services/avatarArt.js), not
+  // by DiceBear's hosted service, whose free use is non-commercial only. The
+  // seed is six letters and digits from the platform's random source: the old
+  // Math.random() slice could come out empty, which the server refuses.
   const generateAIAvatar = useCallback(async () => {
     const avatarStyles = ['adventurer', 'avataaars', 'bottts', 'personas', 'pixel-art'];
-    const style = avatarStyles[Math.floor(Math.random() * avatarStyles.length)];
-    const seed = Math.random().toString(36).substring(7);
-    const url = `https://api.dicebear.com/7.x/${style}/svg?seed=${seed}`;
+    const bytes = new Uint8Array(7);
+    window.crypto.getRandomValues(bytes);
+    const style = avatarStyles[bytes[6] % avatarStyles.length];
+    const seed = Array.from(bytes.slice(0, 6), (b) => (b % 36).toString(36)).join('');
+    const url = `${BASE_URL}/api/avatars/${style}/svg?seed=${seed}`;
     const previousPic = profilePic;
     setProfilePic(url);
     setShowPicModal(false);
 
     try {
-      await saveProfileImageUrl(url);
+      const saved = await saveProfileImageUrl(url);
+      // The server stores one canonical form; show the one it kept.
+      if (typeof saved?.profile_image_url === 'string') {
+        setProfilePic((cur) => (cur === url ? saved.profile_image_url : cur));
+      }
       showToast('Profile picture updated.', 'success');
     } catch (err) {
       console.error('Avatar save failed:', err);
