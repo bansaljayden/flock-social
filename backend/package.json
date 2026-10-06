@@ -14,6 +14,12 @@
     "seed:review": "node scripts/seed-review-account.js"
   },
   "dependencies": {
+    "@dicebear/adventurer": "9.4.2",
+    "@dicebear/avataaars": "9.4.2",
+    "@dicebear/bottts": "9.4.2",
+    "@dicebear/core": "9.4.3",
+    "@dicebear/personas": "9.4.2",
+    "@dicebear/pixel-art": "9.4.2",
     "@google/genai": "^2.17.0",
     "@sentry/node": "^10.58.0",
     "bcrypt": "^6.0.0",

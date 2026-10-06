@@ -36,9 +36,10 @@ test('free tiers that exclude commercial use say so', () => {
   // MapTiler Free is non-commercial and pauses; Flex is the commercial plan.
   assert.match(watch('maptiler-satellite').note, /non-commercial use only/);
   assert.match(dep('maptiler').unknownAction, /Flex at \$30 a month/);
-  // DiceBear's hosted API is non-commercial.
-  assert.match(watch('dicebear').note, /NON-COMMERCIAL use only/);
-  assert.doesNotMatch(dep('dicebear').costsNothingBecause, /^Free hosted tier/);
+  // DiceBear's hosted API is non-commercial, so the avatars are drawn on our
+  // own server (2026-10-05) and the line says so.
+  assert.match(watch('dicebear').note, /Drawn by our own server/);
+  assert.match(dep('dicebear').costsNothingBecause, /on our own server/);
   // CARTO requires a key since its 2026-09-29 terms.
   assert.match(watch('carto-basemaps').note, /CARTO-issued key/);
   assert.match(dep('carto').unknownAction, /CARTO-issued key/);

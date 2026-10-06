@@ -3080,7 +3080,9 @@ test('the App Store break-even uses the App Store price, with the 15% case besid
 test('plans outside their terms are listed with what licensing them adds, and a recorded fix clears them', () => {
   const pic = moneyHub.buildCostPicture({ expenses: [], month: MONTH });
   const ids = pic.licence.items.map((i) => i.id);
-  for (const id of ['vercel', 'maptiler', 'dicebear', 'carto']) assert.ok(ids.includes(id), `${id} is missing`);
+  for (const id of ['vercel', 'maptiler', 'carto']) assert.ok(ids.includes(id), `${id} is missing`);
+  // Fixed in code (avatars drawn on our own server), so it left the list.
+  assert.ok(!ids.includes('dicebear'));
   assert.strictEqual(pic.licence.toComplyPerMonthCents, 5000, 'Vercel Pro $20 and MapTiler Flex $30');
   assert.strictEqual(pic.licence.licensedPerMonthCents, pic.totals.perMonthCents + 5000);
   for (const i of pic.licence.items) assert.match(i.checked, /^\d{4}-\d{2}-\d{2}$/);
@@ -3091,7 +3093,7 @@ test('plans outside their terms are listed with what licensing them adds, and a 
     ],
     month: MONTH,
   });
-  assert.deepStrictEqual(fixed.licence.items.map((i) => i.id).sort(), ['carto', 'dicebear']);
+  assert.deepStrictEqual(fixed.licence.items.map((i) => i.id).sort(), ['carto']);
   assert.strictEqual(fixed.licence.toComplyPerMonthCents, 0);
   // A stopped or free row fixes nothing.
   const stopped = moneyHub.buildCostPicture({

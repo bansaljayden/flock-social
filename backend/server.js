@@ -1641,6 +1641,7 @@ app.use('/api/revenuecat', revenuecatRoutes);                  // RevenueCat web
 app.use('/api/stripe-webhook', require('./routes/stripeWebhook')); // Stripe webhook (signed, no JWT, no limiter) — before messages catch-all
 app.use('/api/guest', apiLimiter, require('./routes/guest').router); // Guest link RSVP/vote (token-authed, no JWT) — before messages catch-all
 app.use('/api/badge', apiLimiter, require('./routes/badge'));        // Embeddable live-busyness SVG (public, claimed venues only)
+app.use('/api/avatars', apiLimiter, require('./routes/avatars'));    // PUBLIC: the cartoon avatars, drawn here (services/avatarArt.js)
 app.use('/api/sensors', apiLimiter, sensorRoutes);              // Pi sensor ingest (x-api-key) + read APIs (JWT)
 app.use('/api/checkin', apiLimiter, checkinRoutes);             // NFC tap + manual venue check-in (anon-friendly GET)
 app.use('/api/waitlist', apiLimiter, waitlistRoutes);           // PUBLIC, no auth — MUST stay before the /api catch-alls

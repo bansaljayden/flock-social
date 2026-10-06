@@ -653,16 +653,24 @@ test('the search term is capped at the width of the column it is matched against
   assert.deepEqual(log.map((q) => q.sql), [], 'the over-long term reached the database');
 });
 
-test('an avatar URL at MAX_AVATAR_URL is saved and one character more is refused', async () => {
+test('an avatar URL past MAX_AVATAR_URL is refused for length, and a long seed under it for shape', async () => {
+  // A drawn avatar's link is about 65 characters (services/avatarArt.js), so
+  // no valid one comes near the ceiling; the ceiling still answers first.
   const prefix = 'https://api.dicebear.com/7.x/bottts/svg?seed=';
   clearLimiters();
-  const at = await call('PUT', '/api/users/profile-image', { url: prefix + pad(U.AVATAR_URL - prefix.length) });
-  assert.equal(at.status, 200, at.text);
+  const ok = await call('PUT', '/api/users/profile-image', { url: prefix + 'abc123' });
+  assert.equal(ok.status, 200, ok.text);
   assert.equal(wrote(/UPDATE users SET profile_image_url/i).length, 1);
+
+  clearLimiters();
+  const at = await call('PUT', '/api/users/profile-image', { url: prefix + pad(U.AVATAR_URL - prefix.length) });
+  assert.equal(at.status, 400, 'a seed past 64 characters is not one the button draws');
+  assert.match(at.text, /trusted provider/);
 
   clearLimiters();
   const over = await call('PUT', '/api/users/profile-image', { url: prefix + pad(U.AVATAR_URL + 1 - prefix.length) });
   assert.equal(over.status, 400, 'profile_image_url is repeated on every roster and push; it needs a ceiling');
+  assert.match(over.text, /too long/i);
   assert.deepEqual(noWrites(), []);
 });
 

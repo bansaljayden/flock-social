@@ -198,6 +198,17 @@ export default function AboutPage() {
         </p>
       </section>
 
+      <section>
+        <h2>Credits</h2>
+        <p>
+          The cartoon avatars Flock can make for you are drawn with the open-source{' '}
+          <a href="https://www.dicebear.com" style={READABLE}>DiceBear</a> library, from
+          artwork by Lisa Wischofsky (Adventurer) and Draftbit (Personas), both under{' '}
+          <a href="https://creativecommons.org/licenses/by/4.0/" style={READABLE}>CC BY 4.0</a>,
+          Pablo Stanley (Avataaars and Bottts), and DiceBear (Pixel Art, CC0).
+        </p>
+      </section>
+
       {/* The shared SiteFooter carries the legal links, the mailbox and the
           copyright; the lead line below keeps this page's brand row. The
           anchor is written out here, not defaulted inside SiteFooter, because
