@@ -39,6 +39,12 @@ const charges = {};
 const refunds = {};
 const invoicePayments = {};
 const invoices = {};
+// How an invoice was paid (invoice id to PaymentIntent), for a refund made by
+// invoice, and every refund Stripe was asked to make, in order.
+const paidWith = {};
+const refundsMade = [];
+// Checkout sessions that completed, by id, for a confirm.
+const completedSessions = {};
 // Every cancel Stripe was asked for, in order, with its request options.
 const cancels = [];
 // Every customer deleted, in order (account deletion closes them).
@@ -70,7 +76,7 @@ function FakeStripe() {
           if (i >= 0) openSessions.splice(i, 1);
           return { id, status: 'expired' };
         },
-        retrieve: async (id) => openSessions.find((s) => s.id === id) || { id, status: 'expired' },
+        retrieve: async (id) => completedSessions[id] || openSessions.find((s) => s.id === id) || { id, status: 'expired' },
         create: async (args) => { sessionsMade.push(args); return { id: `cs_made_${sessionsMade.length}`, url: 'https://checkout.stripe.com/c/pay/made' }; },
       },
     },
@@ -96,12 +102,21 @@ function FakeStripe() {
     },
     refunds: {
       list: async ({ charge }) => ({ data: (refunds[charge] || []).map((r) => ({ ...r })), has_more: false }),
+      create: async (args, opts) => { refundsMade.push({ args, options: opts || null }); return { id: `re_made_${refundsMade.length}`, status: 'succeeded' }; },
     },
     invoicePayments: {
-      list: async ({ payment }) => ({
-        data: (invoicePayments[payment.payment_intent] || []).map((invoice, i) => ({ id: `inpay_${i}_${invoice}`, invoice, status: 'paid' })),
-        has_more: false,
-      }),
+      // By PaymentIntent (which invoices a charge paid), or by invoice (how an
+      // invoice was paid).
+      list: async ({ payment, invoice }) => {
+        if (invoice) {
+          const pi = paidWith[invoice];
+          return { data: pi ? [{ id: `inpay_${invoice}`, invoice, status: 'paid', payment: { type: 'payment_intent', payment_intent: pi } }] : [], has_more: false };
+        }
+        return {
+          data: (invoicePayments[payment.payment_intent] || []).map((inv, i) => ({ id: `inpay_${i}_${inv}`, invoice: inv, status: 'paid' })),
+          has_more: false,
+        };
+      },
     },
     invoices: {
       retrieve: async (id) => invoices[id] || null,
@@ -1290,6 +1305,90 @@ test('a revocation whose billing Stripe will not stop says so, and sending it ag
   const again = await adminCall('PUT', `/api/admin/venues/${profileId}/verify`, { as: adminId, body: { verified: false } });
   assert.strictEqual(again.status, 200, again.text);
   assert.ok(cancels.some((c) => c.id === 'sub_revoke_fails'));
+});
+
+// ---------------------------------------------------------------------------
+// A PURCHASE ALREADY DELIVERED IS NEVER REFUSED AT FULFILLMENT.
+//
+// Fulfillment checks the claim again and refunds a purchase made against a
+// claim that is no longer good. It ran again for any completed session handed
+// back (the old success link, a confirm sent by hand, Stripe resending the
+// event) and judged the claim as it was then, so a yearly plan used for
+// months, set to end and its claim moved on, had its $990 refunded.
+// ---------------------------------------------------------------------------
+
+function completedCheckout(id, subId, userId, placeId, invoiceId) {
+  completedSessions[id] = {
+    id, object: 'checkout.session', mode: 'subscription', status: 'complete',
+    subscription: subId, invoice: invoiceId, payment_status: 'paid', metadata: boundTo(placeId)(userId),
+  };
+  paidWith[invoiceId] = `pi_${invoiceId}`;
+  return completedSessions[id];
+}
+const completedEvent = (session) => ({ type: 'checkout.session.completed', data: { object: session } });
+
+test('a checkout handed back after the plan was used and its claim moved on is not cancelled or refunded', async () => {
+  const [PLACE_A, PLACE_B] = placePair();
+  const id = await venue({ verified: true, placeId: PLACE_A });
+  const yearEnds = Math.floor(Date.now() / 1000) + 300 * DAY_S;
+  sub('sub_delivered', id, 'active', { metadata: boundTo(PLACE_A)(id), ...period('price_roost_year', yearEnds) });
+  const session = completedCheckout('cs_delivered', 'sub_delivered', id, PLACE_A, 'in_delivered');
+  const first = await venueBilling.handleVenueEvent(completedEvent(session));
+  assert.strictEqual(first.tier, 'pro');
+  const served = await testPool.query('SELECT served_at FROM venue_stripe_subscriptions WHERE stripe_subscription_id = $1', ['sub_delivered']);
+  assert.ok(served.rows[0].served_at, 'serving the plan was not recorded');
+
+  // Months on, the owner sets the plan to end and moves the claim, as
+  // ROOST_LISTING_MSG tells them to.
+  sub('sub_delivered', id, 'active', { metadata: boundTo(PLACE_A)(id), ...period('price_roost_year', yearEnds), cancel_at: yearEnds, cancel_at_period_end: true });
+  await venueBilling.syncVenueSubscription('sub_delivered');
+  const moved = await profileCall('PUT', '/api/venue-profile', { as: id, body: { googlePlaceId: PLACE_B } });
+  assert.strictEqual(moved.status, 200, moved.text);
+
+  const cancelsBefore = cancels.length;
+  const refundsBefore = refundsMade.length;
+  // Stripe resends the event, and the owner reopens the old success link.
+  const replay = await venueBilling.handleVenueEvent(completedEvent(session));
+  assert.ok(!replay.refused, 'a delivered purchase was refused');
+  const confirmed = await venueBilling.confirmVenueCheckout(id, 'cs_delivered');
+  assert.deepStrictEqual(confirmed, { complete: true, tier: 'free' });
+  assert.strictEqual(cancels.length, cancelsBefore, 'the rest of a plan set to end was cancelled');
+  assert.deepStrictEqual(refundsMade.slice(refundsBefore), [], 'the first payment of a plan used for months was refunded');
+
+  // Once it has ended, the same.
+  sub('sub_delivered', id, 'canceled', { metadata: boundTo(PLACE_A)(id), ...period('price_roost_year', yearEnds), ended_at: Math.floor(Date.now() / 1000) });
+  await venueBilling.handleVenueEvent(completedEvent(session));
+  assert.deepStrictEqual(refundsMade.slice(refundsBefore), [], 'an ended plan was refunded on a replay');
+});
+
+test('a checkout handed back after an admin revoked the claim refunds nothing: that refund is a person\'s call', async () => {
+  const [PLACE] = placePair();
+  const id = await venue({ verified: true, placeId: PLACE });
+  const adminId = await admin();
+  await testPool.query("UPDATE venue_profiles SET stripe_customer_id = 'cus_DELIVERED_REVOKED' WHERE user_id = $1", [id]);
+  sub('sub_delivered_revoked', id, 'active', { customer: 'cus_DELIVERED_REVOKED', metadata: boundTo(PLACE)(id) });
+  const session = completedCheckout('cs_delivered_revoked', 'sub_delivered_revoked', id, PLACE, 'in_delivered_revoked');
+  await venueBilling.handleVenueEvent(completedEvent(session));
+  const revoked = await adminCall('PUT', `/api/admin/venues/${await profileIdOf(id)}/verify`, { as: adminId, body: { verified: false } });
+  assert.strictEqual(revoked.status, 200, revoked.text);
+  const refundsBefore = refundsMade.length;
+  const again = await venueBilling.confirmVenueCheckout(id, 'cs_delivered_revoked');
+  assert.ok(!again.refused);
+  assert.deepStrictEqual(refundsMade.slice(refundsBefore), [], 'a confirm after a revocation refunded what the admin left for a person to decide');
+});
+
+test('a purchase completed against a claim revoked before it was ever served is still cancelled and refunded, once', async () => {
+  const [PLACE] = placePair();
+  const id = await venue({ verified: false, placeId: PLACE });
+  sub('sub_never_served', id, 'active', { metadata: boundTo(PLACE)(id) });
+  const session = completedCheckout('cs_never_served', 'sub_never_served', id, PLACE, 'in_never_served');
+  // Stripe's created event arrives first and records it, unserved.
+  await venueBilling.syncVenueSubscription('sub_never_served');
+  const result = await venueBilling.handleVenueEvent(completedEvent(session));
+  assert.strictEqual(result.refused, 'CLAIM_NOT_VERIFIED');
+  assert.ok(cancels.some((c) => c.id === 'sub_never_served'), 'a purchase never delivered was left billing');
+  assert.deepStrictEqual(refundsMade.filter((r) => r.args.payment_intent === 'pi_in_never_served').map((r) => r.options),
+    [{ idempotencyKey: 'flock-claim-revoked-refund-in_never_served' }]);
 });
 
 // ---------------------------------------------------------------------------

@@ -733,6 +733,43 @@ test('the return from Stripe checks the claim too: a confirm against a revoked c
   } finally { restore(); }
 });
 
+// A completed session can be handed back at any time: the old success link,
+// a confirm sent by hand, Stripe resending the event. A purchase that was
+// already delivered, or whose account is gone, is written from Stripe and
+// never refused or refunded over the claim as it is now.
+test('the return for a purchase already delivered refunds nothing, whatever the claim says now', async () => {
+  setEnv(ON);
+  stripeState.sessions.cs_done_1 = completedSession();
+  stripeState.subById.sub_V1 = sub({ status: 'active', metadata: { kind: 'venue', flock_venue_user_id: String(ME.id), flock_venue_place_id: PLACE } });
+  stripeState.paidWith.in_first = 'pi_first';
+  const moved = claimNow({ verified: true, place: 'ChIJsomewhereElse00001' });
+  const { restore } = stubPool(async (sql, params) => {
+    if (sql.includes('SELECT served_at FROM venue_stripe_subscriptions')) return { rows: [{ served_at: new Date('2026-06-01T00:00:00Z') }] };
+    return moved(sql, params);
+  });
+  try {
+    const res = await call(venueBillingRoutes, 'POST', '/api/venue-billing/confirm', { sessionId: 'cs_done_1' });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    assert.ok(!res.body.refused, 'a delivered purchase was refused on its return');
+    assert.ok(!stripeCalls.some(([n]) => n === 'subscriptions.cancel'), 'a delivered plan was cancelled');
+    assert.ok(!stripeCalls.some(([n]) => n === 'refunds.create'), 'a delivered plan was refunded');
+  } finally { restore(); }
+});
+
+test('a checkout handed back after its account was deleted is neither cancelled nor refunded', async () => {
+  setEnv(ON);
+  stripeState.subById.sub_V1 = sub({ status: 'canceled', metadata: { kind: 'venue', flock_venue_user_id: String(ME.id), flock_venue_place_id: PLACE } });
+  stripeState.paidWith.in_first = 'pi_first';
+  // No venue profile: the deletion took it.
+  const { restore } = stubPool(async (sql) => (sql.startsWith('WITH old AS') ? { rows: [{ profiles: 0, written: 0 }] } : null));
+  try {
+    const res = await stripeWebhook({ id: 'evt_gone', type: 'checkout.session.completed', data: { object: completedSession() } });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    assert.ok(!stripeCalls.some(([n]) => n === 'refunds.create'), 'a deleted account\'s first payment was refunded on a replay');
+    assert.ok(!stripeCalls.some(([n]) => n === 'subscriptions.cancel'));
+  } finally { restore(); }
+});
+
 test('a checkout completed on a claim still verified for its listing is fulfilled as before', async () => {
   setEnv(ON);
   stripeState.subById.sub_V1 = sub({ status: 'trialing', metadata: { kind: 'venue', flock_venue_user_id: String(ME.id), flock_venue_place_id: PLACE } });

@@ -779,6 +779,12 @@ const RECORD_SUBSCRIPTION_SQL = `INSERT INTO venue_stripe_subscriptions (stripe_
     google_place_id = COALESCE($4::varchar, venue_stripe_subscriptions.google_place_id, EXCLUDED.google_place_id)
   RETURNING google_place_id`;
 
+// THE FIRST TIME A SUBSCRIPTION IS SERVED (migration 121). Fulfillment never
+// refuses or refunds a subscription that has been (fulfillVenueCheckout), so
+// it is written on the sync's own transaction, by the read that served it.
+const MARK_SERVED_SQL = 'UPDATE venue_stripe_subscriptions SET served_at = NOW() WHERE stripe_subscription_id = $1::text AND served_at IS NULL';
+const SERVED_SQL = 'SELECT served_at FROM venue_stripe_subscriptions WHERE stripe_subscription_id = $1::text';
+
 // The listing's trial is used, whoever's account bought the plan (migration
 // 121, TRIAL_USED_SQL). Written for an account that no longer exists too, from
 // the listing in the metadata: a deletion's own cancel event can be the first
@@ -919,11 +925,13 @@ async function syncVenueSubscription(subscriptionId) {
       userId, g.grantTier, g.status, g.expiresAt, customerId || null, sub.id, g.priceId,
       g.periodEnd, g.cancelAt, g.trialEnd, g.live, g.cachedTier, boundPlace || null,
     ]);
-    await client.query('COMMIT');
     const row = r.rows[0] || {};
-    if (!row.profiles) return { ignored: 'no_venue_profile' };
     // Bound to no listing binds nothing (the resolver's rule too).
     const otherListing = !!boundPlace && boundPlace !== (row.place_id || null);
+    const served = !!row.profiles && g.live && row.verified === true && !otherListing;
+    if (served) await client.query(MARK_SERVED_SQL, [sub.id]);
+    await client.query('COMMIT');
+    if (!row.profiles) return { ignored: 'no_venue_profile' };
     if (g.live && otherListing) {
       console.error(`[venue-billing] venue user ${userId} holds a live Roost subscription (${sub.id}) bought for listing ${boundPlace || 'none'}, but the claim names ${row.place_id || 'no listing'}, so it is not served there. To move the plan, set flock_venue_place_id on the subscription in Stripe to the listing the claim names; otherwise cancel it.`);
     }
@@ -937,7 +945,6 @@ async function syncVenueSubscription(subscriptionId) {
     if (g.live && row.verified !== true) {
       console.error(`[venue-billing] venue user ${userId} holds a live Roost subscription (${sub.id}) but the profile is not verified, so no tier is served. Verify the claim or refund it.`);
     }
-    const served = g.live && row.verified === true && !otherListing;
     return { userId, tier: served ? g.cachedTier : 'free', status: g.status, written: row.written > 0 };
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
@@ -1118,12 +1125,21 @@ async function stopRoostForRevokedClaim(userId, { customerIds = null } = {}) {
   });
 }
 
-// Whether a claim is still good for a plan bought for `placeId`: the account's
-// venue is verified and still names that listing. A session from before
-// flock_venue_place_id existed names none, and then verified alone decides.
-async function claimStillGood(userId, placeId) {
+// Whether a claim is still good for a plan bought for `placeId`: 'good' when
+// the account's venue is verified and still names that listing, 'bad' when it
+// is not, and 'gone' when the account has no venue any more (its deletion
+// took the profile with it). A session from before flock_venue_place_id
+// existed names no listing, and then verified alone decides.
+async function claimFor(userId, placeId) {
   const profile = await venueProfileFor(userId);
-  return !!(profile && profile.verified === true && (!placeId || profile.google_place_id === placeId));
+  if (!profile) return 'gone';
+  return profile.verified === true && (!placeId || profile.google_place_id === placeId) ? 'good' : 'bad';
+}
+
+async function wasServed(subscriptionId) {
+  const r = await pool.query(SERVED_SQL, [subscriptionId]);
+  const row = r && Array.isArray(r.rows) ? r.rows[0] : null;
+  return !!(row && row.served_at);
 }
 
 // The money a refused purchase took, given back. A trial took none. The first
@@ -1160,12 +1176,31 @@ async function refundRefusedPurchase(session) {
 // once and its payment refunded: a purchase we will not deliver is not one we
 // keep the money for. Then the grant is written from Stripe as for any event,
 // which records the cancellation.
+//
+// ONLY A PURCHASE THAT WAS NEVER DELIVERED. Fulfillment runs again whenever a
+// completed session is handed back: the owner reopens the old success link or
+// sends a confirm by hand with any session the account owns, or Stripe resends
+// checkout.session.completed. It judged the claim as it was at that moment, so
+// a plan used for months, then set to end and its claim moved on (the steps
+// ROOST_LISTING_MSG gives), had its first payment refunded on any replay, and
+// so did a plan that had already ended, or one whose claim an admin revoked,
+// where whether to refund is a person's call (stopRoostForRevokedClaim). So a
+// subscription the writer has ever served (served_at, migration 121) is never
+// refused or refunded here, and nor is a purchase whose account is gone: its
+// deletion closed the customer. Both are only written from Stripe as usual,
+// and the writer serves nothing to a claim that is not good.
 async function fulfillVenueCheckout(session) {
   const subscriptionId = idOf(session && session.subscription);
   if (!subscriptionId) return { ignored: 'no_subscription' };
   const userId = venueUserIdFrom(session.metadata);
   const placeId = venuePlaceIdFrom(session.metadata);
-  if (!userId || await claimStillGood(userId, placeId)) return syncVenueSubscription(subscriptionId);
+  if (!userId) return syncVenueSubscription(subscriptionId);
+  const claim = await claimFor(userId, placeId);
+  if (claim === 'good') return syncVenueSubscription(subscriptionId);
+  if (claim === 'gone' || await wasServed(subscriptionId)) {
+    console.log(`[venue-billing] checkout ${session.id} was handed back for venue user ${userId}, whose claim is not verified for listing ${placeId || 'none'} now, but ${claim === 'gone' ? 'the account is gone' : `subscription ${subscriptionId} was already delivered`}, so nothing was cancelled or refunded.`);
+    return syncVenueSubscription(subscriptionId);
+  }
   const sub = await stripe().subscriptions.retrieve(subscriptionId);
   if (isVenueObject(sub)) {
     await cancelNow(sub, `flock-claim-revoked-cancel-${sub.id}`);
