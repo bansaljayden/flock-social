@@ -168,8 +168,9 @@ const CROWD_DATA = {
   },
 };
 
-// 261 of 412 venue-hours within one band, over 26 days, out of 1,280 serves,
-// every one of them made by the venue's own curve, as production serves.
+// 261 of 412 venue-hours within one band and 169 at the exact band, over 26
+// days, out of 1,280 serves, every one of them made by the venue's own curve,
+// as production serves.
 const MODEL = {
   version: { status: 'ok', value: '2.6.0-starling', source: 'loaded', loaded: true },
   serving: { mode: 'curve_offset', nowcast: true },
@@ -187,6 +188,8 @@ const MODEL = {
     minDays: 5,
     withinOneBand: 261,
     percent: 63.3,
+    exactBand: 169,
+    exactPercent: 41,
     fromCurve: 412,
     versions: ['2.6.0-starling+curve_offset+nowcast'],
   },
@@ -823,7 +826,7 @@ describe('the model: what makes the numbers, and the served ones against the goa
   // Any wording that hands the curve's numbers to the model.
   const MODEL_CLAIM = /model forecasts|from the model|crowd model|the model answers|Live model/i;
 
-  test('what makes the numbers, the loaded version, the share within one band with its window and n, the goal and the gap', async () => {
+  test('what makes the numbers, the loaded version, the exact level beside within one with the window and n, the goal and the gap', async () => {
     await renderHub(CONNECTED);
     const card = modelCard();
     expect(card.textContent).toMatch(/What makes Flock's crowd numbers now, and how the served ones held up against what the collector measured in the same hour\./);
@@ -833,21 +836,24 @@ describe('the model: what makes the numbers, and the served ones against the goa
     expect(within(hubRow('Model version')).getByText('2.6.0-starling')).toBeInTheDocument();
     expect(hubRow('Model version').textContent).toMatch(/The version this server loaded, from its model_metadata\.json\. Serve mode curve_offset does not run it\. A venue's own data answers only while it is loaded\./);
     expect(within(hubRow('Model version')).queryByText('Not loaded')).toBeNull();
-    expect(within(card).getByText('Within one crowd band, last 30 days')).toBeInTheDocument();
-    expect(within(card).getByText('63.3%')).toBeInTheDocument();
+    expect(within(card).getByText('Against the live reading, last 30 days')).toBeInTheDocument();
+    // The exact level and within one, side by side, in the site's words.
+    // Within one alone flatters a forecast that always names the same level.
+    expect(within(card).getByText('41.0%').nextSibling).toHaveTextContent('named the exact crowd level of the reading');
+    expect(within(card).getByText('63.3%').nextSibling).toHaveTextContent("landed within one level, the reading's or the one next to it");
     // n and its count are held together by non-breaking spaces, so a narrow
     // screen never strands "n" at the end of a line.
-    expect(card.textContent).toMatch(/of forecasts made from a venue's own data landed in the live reading's crowd band or the one next to it\. n = 412 venue-hours over 26 days, 261 of them within one band, from 1,280 forecasts served in the window\./);
+    expect(card.textContent).toMatch(/Of forecasts made from a venue's own data\. n = 412 venue-hours over 26 days, 169 at the exact level and 261 within one, from 1,280 forecasts served in the window\. Within one alone would flatter a forecast that always named the same level, so the exact share sits beside it\./);
     expect(card.textContent).toMatch(/Counts forecasts made from a venue's own data \(served_predictions, prediction_method ml\) on the venue card and the vote list\. Of the 412 venue-hours scored, all came from the venue's own curve and live readings\. Each is paired/);
     expect(card.textContent).not.toMatch(MODEL_CLAIM);
     expect(within(hubRow('Goal')).getByText('85%')).toBeInTheDocument();
-    expect(hubRow('Goal').textContent).toMatch(/Of served forecasts within one crowd band\. Not the blended training figure/);
+    expect(hubRow('Goal').textContent).toMatch(/Of served forecasts within one crowd level\. Not the blended training figure/);
     const gap = hubRow('Gap to goal');
     expect(within(gap).getByText('21.7 points')).toBeInTheDocument();
-    expect(gap.textContent).toMatch(/The goal less the measured share, in percentage points\./);
-    expect(card.textContent).toMatch(/scored on the bands the app prints: Quiet up to 20, Not Busy up to 39, Steady up to 69, Busy up to 84, Packed above\./);
+    expect(gap.textContent).toMatch(/The goal less the within-one share, in percentage points\./);
+    expect(card.textContent).toMatch(/scored on the crowd levels the app prints: Quiet up to 20, Not Busy up to 39, Steady up to 69, Busy up to 84, Packed above\./);
     expect(card.textContent).toMatch(/held for an hour; this answer is 17 minutes old\./);
-    expect(percentsIn(card)).toEqual(['63.3%', '85%']);
+    expect(percentsIn(card)).toEqual(['41.0%', '63.3%', '85%']);
     expect(card.textContent).not.toMatch(/85\.1|87\.3/);
     expect(card.textContent).not.toMatch(/window mixes/);
   });
@@ -898,15 +904,15 @@ describe('the model: what makes the numbers, and the served ones against the goa
   test('under the minimum it says not enough observations yet, and prints no share and no gap', async () => {
     await renderHub(withModel({
       gapPoints: null,
-      accuracy: { ...MODEL.accuracy, served: 310, matched: 37, days: 3, enough: false, withinOneBand: null, percent: null },
+      accuracy: { ...MODEL.accuracy, served: 310, matched: 37, days: 3, enough: false, withinOneBand: null, percent: null, exactBand: null, exactPercent: null },
     }));
     // The screen paints the last load first, so wait for this one.
     await within(modelCard()).findByText(/^37 venue-hours over 3 days so far/);
     const card = modelCard();
     expect(within(card).getByText('Not enough observations yet')).toBeInTheDocument();
-    expect(card.textContent).toMatch(/37 venue-hours over 3 days so far, from 310 forecasts served\. The share shows from 100 venue-hours across at least 5 days; below that it mostly measures chance\./);
+    expect(card.textContent).toMatch(/37 venue-hours over 3 days so far, from 310 forecasts served\. The shares show from 100 venue-hours across at least 5 days; below that they mostly measure chance\./);
     expect(within(hubRow('Gap to goal')).getByText('Not measured yet')).toBeInTheDocument();
-    expect(hubRow('Gap to goal').textContent).toMatch(/Waits for enough observations to measure the share\./);
+    expect(hubRow('Gap to goal').textContent).toMatch(/Waits for enough observations to measure the shares\./);
     // The only percentage in the card is the goal.
     expect(percentsIn(card)).toEqual(['85%']);
   });
@@ -916,17 +922,38 @@ describe('the model: what makes the numbers, and the served ones against the goa
     // an older or broken server still cannot put a noisy figure on it.
     await renderHub(withModel({
       gapPoints: 72.5,
-      accuracy: { ...MODEL.accuracy, served: 40, matched: 8, days: 1, enough: false, withinOneBand: 1, percent: 12.5 },
+      accuracy: { ...MODEL.accuracy, served: 40, matched: 8, days: 1, enough: false, withinOneBand: 1, percent: 12.5, exactBand: 0, exactPercent: 0 },
     }));
     // The screen paints the last load first, so wait for this one.
     await within(modelCard()).findByText(/^8 venue-hours over 1 day so far/);
     const card = modelCard();
     expect(within(card).getByText('Not enough observations yet')).toBeInTheDocument();
     expect(within(card).queryByText('12.5%')).toBeNull();
+    expect(within(card).queryByText('0.0%')).toBeNull();
     expect(percentsIn(card)).toEqual(['85%']);
     // Nor the gap worked from it.
     expect(within(hubRow('Gap to goal')).getByText('Not measured yet')).toBeInTheDocument();
     expect(card.textContent).not.toMatch(/72\.5/);
+  });
+
+  test('a within-one share that arrives without the exact level is not shown alone, and neither is its gap', async () => {
+    // Review of the public copy (2026-10-06): within one alone flatters a
+    // forecast that always names the same level, so an older server that
+    // sends no exact share gets no share drawn at all.
+    const accuracy = { ...MODEL.accuracy };
+    delete accuracy.exactBand;
+    delete accuracy.exactPercent;
+    await renderHub(withModel({ accuracy }));
+    // The screen paints the last load first, so wait for this one.
+    await within(modelCard()).findByText('Not shown alone');
+    const card = modelCard();
+    expect(card.textContent).toMatch(/This server sent the within-one share without the exact level beside it\. Within one alone would flatter a forecast that always named the same level, so neither is shown until both arrive\./);
+    expect(within(card).queryByText('63.3%')).toBeNull();
+    expect(percentsIn(card)).toEqual(['85%']);
+    expect(within(hubRow('Gap to goal')).getByText('Not measured yet')).toBeInTheDocument();
+    expect(hubRow('Gap to goal').textContent).toMatch(/Waits for both shares above\./);
+    expect(card.textContent).not.toMatch(/21\.7/);
+    expect(within(card).queryByText('Not enough observations yet')).toBeNull();
   });
 
   test('a check that failed says could not load with the reason, and prints no share and no gap', async () => {
@@ -997,8 +1024,8 @@ describe('the model: what makes the numbers, and the served ones against the goa
     expect(within(fallback).getByText('1,204')).toBeInTheDocument();
     expect(fallback.textContent).toMatch(/The venue has no baseline yet, across 212 venues\. A venue gets numbers from its own data once the collector has read it\./);
     expect(within(card).getByText("By what answered: the venue's own curve and live readings 1,290; the trained model 20; the venue has no baseline yet 1,204; the venue owner's live report 40; an error on the request 12; not recorded 3. Held for an hour with the check above.")).toBeInTheDocument();
-    // The accuracy share and the goal are untouched; the split adds one.
-    expect(percentsIn(card)).toEqual(['63.3%', '85%', '51%']);
+    // The two accuracy shares and the goal are untouched; the split adds one.
+    expect(percentsIn(card)).toEqual(['41.0%', '63.3%', '85%', '51%']);
     expect(card.textContent).not.toMatch(/rule_engine/);
     expect(card.textContent).not.toMatch(MODEL_CLAIM);
   });
@@ -1034,7 +1061,7 @@ describe('the model: what makes the numbers, and the served ones against the goa
     // The screen paints the last load first, so wait for this one.
     await within(modelCard()).findByText('None served');
     const card = modelCard();
-    expect(percentsIn(card)).toEqual(['63.3%', '85%']);
+    expect(percentsIn(card)).toEqual(['41.0%', '63.3%', '85%']);
     expect(within(hubRow("Forecasts from a venue's own data")).getByText('None served')).toBeInTheDocument();
     expect(within(card).queryByText('Most common fallback')).toBeNull();
     expect(within(card).queryByText(/^By what answered/)).toBeNull();
@@ -1048,6 +1075,7 @@ describe('the model: what makes the numbers, and the served ones against the goa
     expect(within(card).getByText('Could not load')).toBeInTheDocument();
     expect(within(card).getByText(/did not finish counting what answered each forecast served/)).toBeInTheDocument();
     expect(within(card).queryByText("Forecasts from a venue's own data")).toBeNull();
+    expect(within(card).getByText('41.0%')).toBeInTheDocument();
     expect(within(card).getByText('63.3%')).toBeInTheDocument();
   });
 

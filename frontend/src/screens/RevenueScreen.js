@@ -1654,9 +1654,10 @@ function HubCrowdData({ h, colors }) {
 // THE MODEL): forecasts made from a venue's own data (prediction_method ml)
 // served in the window, each paired with the collector's live reading of the
 // same venue in the same hour of the same day, one pair per venue and hour,
-// counted when its crowd band is the reading's or the next one over. Under the
-// minimum the server sends no share at all, and this card says there are not
-// enough observations yet rather than printing a noisy one.
+// counted when its crowd band is the reading's or the next one over, and
+// beside that when it is the reading's own. Under the minimum the server
+// sends no share at all, and this card says there are not enough
+// observations yet rather than printing a noisy one.
 //
 // prediction_method ml is the venue's own curve and live readings in
 // curve_offset mode, where no model runs, and the trained model's number in
@@ -1720,7 +1721,12 @@ function HubModel({ h, colors }) {
   const goal = m.goal || {};
   const navy = colors.navy;
   const ready = a.status === 'ok';
-  const measured = ready && a.enough === true && Number.isFinite(a.percent);
+  // Within one band alone flatters a forecast that always names the same
+  // level (scripts/ml/MODEL-METRICS.md, "Within one band on live readings"),
+  // so the share is drawn only with the exact-level share beside it. A server
+  // that sends the first without the second gets neither, and no gap.
+  const shareArrived = ready && a.enough === true && Number.isFinite(a.percent);
+  const measured = shareArrived && Number.isFinite(a.exactPercent);
   const gap = m.gapPoints;
   const bands = Array.isArray(m.bands) ? m.bands : [];
   const ladder = bands.map((b) => (Number.isFinite(b.upTo) ? `${b.label} up to ${b.upTo}` : `${b.label} above`)).join(', ');
@@ -1740,13 +1746,15 @@ function HubModel({ h, colors }) {
   const scoredMadeBy = ready && Number.isFinite(a.matched) ? hubMadeBy(a.fromCurve, a.matched) : null;
   let gapValue = 'Not measured yet';
   let gapTone = 'muted';
-  let gapNote = ready ? 'Waits for enough observations to measure the share.' : 'Waits for the check above to answer.';
+  let gapNote = 'Waits for the check above to answer.';
+  if (shareArrived) gapNote = 'Waits for both shares above.';
+  else if (ready) gapNote = 'Waits for enough observations to measure the shares.';
   // Only beside a share this card draws: a gap from a sample under the
   // minimum would be the noisy percentage by another name.
   if (measured && Number.isFinite(gap)) {
     gapValue = gap > 0 ? `${gap.toFixed(1)} points` : 'Met';
     gapTone = gap > 0 ? 'warn' : 'good';
-    gapNote = gap > 0 ? 'The goal less the measured share, in percentage points.' : 'The measured share is at or above the goal.';
+    gapNote = gap > 0 ? 'The goal less the within-one share, in percentage points.' : 'The within-one share is at or above the goal.';
   }
   return (
     <div id={HUB_CARD.model.id} style={hubStyle.card}>
@@ -1769,21 +1777,38 @@ function HubModel({ h, colors }) {
         tone={v.status === 'ok' ? undefined : 'muted'}
         note={versionNote}
       />
-      <p style={hubStyle.kicker}>Within one crowd band, last {Number.isFinite(a.windowDays) ? a.windowDays : 30} days</p>
+      <p style={hubStyle.kicker}>Against the live reading, last {Number.isFinite(a.windowDays) ? a.windowDays : 30} days</p>
       {!ready && <HubNotice status={a.status} reason={a.reason} />}
       {measured && (
         <>
-          <p style={{ ...hubStyle.big, color: navy }}>{hubPct(a.percent)}</p>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: '10px' }}>
+            <div style={{ minWidth: 0 }}>
+              <p style={{ ...hubStyle.big, color: navy }}>{hubPct(a.exactPercent)}</p>
+              <p style={hubStyle.note}>named the exact crowd level of the reading</p>
+            </div>
+            <div style={{ minWidth: 0 }}>
+              <p style={{ ...hubStyle.big, color: navy }}>{hubPct(a.percent)}</p>
+              <p style={hubStyle.note}>landed within one level, the reading&apos;s or the one next to it</p>
+            </div>
+          </div>
           <p style={hubStyle.note}>
-            of forecasts made from a venue&apos;s own data landed in the live reading&apos;s crowd band or the one next to it. n&nbsp;=&nbsp;{hubCount(a.matched)} venue-hours over {hubPlural(a.days, 'day', 'days')}{Number.isFinite(a.withinOneBand) ? `, ${hubCount(a.withinOneBand)} of them within one band` : ''}, from {hubPlural(a.served, 'forecast', 'forecasts')} served in the window.
+            Of forecasts made from a venue&apos;s own data. n&nbsp;=&nbsp;{hubCount(a.matched)} venue-hours over {hubPlural(a.days, 'day', 'days')}{Number.isFinite(a.exactBand) && Number.isFinite(a.withinOneBand) ? `, ${hubCount(a.exactBand)} at the exact level and ${hubCount(a.withinOneBand)} within one` : ''}, from {hubPlural(a.served, 'forecast', 'forecasts')} served in the window. Within one alone would flatter a forecast that always named the same level, so the exact share sits beside it.
           </p>
         </>
       )}
-      {ready && !measured && (
+      {shareArrived && !measured && (
+        <>
+          <p style={{ fontSize: 'var(--t-title)', fontWeight: '600', color: navy, margin: '2px 0 0', lineHeight: 1.25 }}>Not shown alone</p>
+          <p style={hubStyle.note}>
+            This server sent the within-one share without the exact level beside it. Within one alone would flatter a forecast that always named the same level, so neither is shown until both arrive.
+          </p>
+        </>
+      )}
+      {ready && !shareArrived && (
         <>
           <p style={{ fontSize: 'var(--t-title)', fontWeight: '600', color: navy, margin: '2px 0 0', lineHeight: 1.25 }}>Not enough observations yet</p>
           <p style={hubStyle.note}>
-            {hubCount(a.matched)} venue-hours over {hubPlural(a.days, 'day', 'days')} so far, from {hubPlural(a.served, 'forecast', 'forecasts')} served. The share shows from {hubCount(a.minSample)} venue-hours across at least {hubPlural(a.minDays, 'day', 'days')}; below that it mostly measures chance.
+            {hubCount(a.matched)} venue-hours over {hubPlural(a.days, 'day', 'days')} so far, from {hubPlural(a.served, 'forecast', 'forecasts')} served. The shares show from {hubCount(a.minSample)} venue-hours across at least {hubPlural(a.minDays, 'day', 'days')}; below that they mostly measure chance.
           </p>
         </>
       )}
@@ -1792,7 +1817,7 @@ function HubModel({ h, colors }) {
           navy={navy}
           label="Goal"
           value={Number.isFinite(goal.percent) ? `${goal.percent}%` : 'Not set'}
-          note="Of served forecasts within one crowd band. Not the blended training figure, which mostly scores rows whose answer was known in advance."
+          note="Of served forecasts within one crowd level. Not the blended training figure, which mostly scores rows whose answer was known in advance."
         />
         <HubRow navy={navy} label="Gap to goal" value={gapValue} tone={gapTone} note={gapNote} />
       </div>
@@ -1800,10 +1825,10 @@ function HubModel({ h, colors }) {
         <p style={hubStyle.foot}>This window mixes {versions.length} served versions: {versions.join(', ')}. A +curve_offset or +nowcast ending names a switch that changed the number.</p>
       )}
       <p style={hubStyle.foot}>
-        Counts forecasts made from a venue&apos;s own data (served_predictions, prediction_method ml) on the venue card and the vote list.{scoredMadeBy ? ` Of the ${hubPlural(a.matched, 'venue-hour', 'venue-hours')} scored, ${scoredMadeBy}.` : ''} Each is paired with the collector&apos;s live reading of the same venue in the same hour of the same day (ml_training_data), one pair per venue and hour, and scored on the bands the app prints{ladder ? `: ${ladder}` : ''}. Checked on the server and held for {holdMinutes === 60 ? 'an hour' : `${holdMinutes} minutes`}{age}.
+        Counts forecasts made from a venue&apos;s own data (served_predictions, prediction_method ml) on the venue card and the vote list.{scoredMadeBy ? ` Of the ${hubPlural(a.matched, 'venue-hour', 'venue-hours')} scored, ${scoredMadeBy}.` : ''} Each is paired with the collector&apos;s live reading of the same venue in the same hour of the same day (ml_training_data), one pair per venue and hour, and scored on the crowd levels the app prints{ladder ? `: ${ladder}` : ''}. Checked on the server and held for {holdMinutes === 60 ? 'an hour' : `${holdMinutes} minutes`}{age}.
       </p>
-      {/* WHAT ANSWERED. The share above scores forecasts made from a venue's
-          own data only, so on its own it cannot say whether those were most
+      {/* WHAT ANSWERED. The shares above score forecasts made from a venue's
+          own data only, so on their own they cannot say whether those were most
           of what people saw or almost none of it, the rest coming from the
           rule engine. This is that split, from the same table, beside it. */}
       {cov && (
