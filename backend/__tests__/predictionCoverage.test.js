@@ -24,6 +24,10 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
+// The no-curve fallback stays off here: this suite pins the counter with the
+// exits as they ship. __tests__/noCurveFallback.test.js counts it switched on.
+delete process.env.CROWD_NO_CURVE_FALLBACK;
+
 const mlPredictor = require('../services/mlPredictor');
 
 const WEATHER = { temp: 74, humidity: 50, windSpeed: 5, isRaining: false, conditionId: 800 };
@@ -40,7 +44,7 @@ function venueAt(placeId) {
 
 test('predictionCoverage is a non-consuming read with a stable shape', () => {
   const a = mlPredictor.predictionCoverage();
-  for (const key of ['since', 'total', 'ml', 'ruleEngine', 'modelShare', 'byMethod', 'modelVersion', 'modelLoaded', 'inMemory']) {
+  for (const key of ['since', 'total', 'ml', 'categoryCurve', 'ruleEngine', 'modelShare', 'byMethod', 'modelVersion', 'modelLoaded', 'noCurveFallback', 'inMemory']) {
     assert.ok(key in a, `predictionCoverage must always carry ${key}`);
   }
   assert.equal(a.inMemory, true);
@@ -85,7 +89,12 @@ test('every prediction is counted exactly once, under the exit it actually took'
 
   const after = mlPredictor.predictionCoverage();
   assert.equal(after.total - before.total, N, 'one prediction, one tally, no double counting');
-  assert.equal(after.ml + after.ruleEngine, after.total, 'the ml and rule legs must partition the total');
+  // Three legs since the no-curve fallback (CROWD_NO_CURVE_FALLBACK): the
+  // category table's answers are neither a venue's own data nor the rule
+  // engine's. With that switch off, as here, its leg is zero.
+  assert.equal(after.ml + after.categoryCurve + after.ruleEngine, after.total,
+    'the ml, category-table and rule legs must partition the total');
+  assert.equal(after.categoryCurve, 0, 'the switch is off in this suite');
 
   for (const r of results) {
     assert.ok(typeof r.predictionMethod === 'string' && r.predictionMethod,
@@ -98,7 +107,8 @@ test('every prediction is counted exactly once, under the exit it actually took'
   // of the admin panel and a reader of a response are looking at one vocabulary.
   const counted = Object.keys(after.byMethod);
   for (const method of counted) {
-    assert.ok(method === 'ml' || method.startsWith('rule_engine') || method === 'unknown',
+    assert.ok(method === 'ml' || method.startsWith('rule_engine') || method === 'unknown'
+      || method === 'category_curve_no_baseline',
       `unexpected predictionMethod in the ledger: ${method}`);
   }
 
