@@ -8679,10 +8679,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // one older than the last applied is dropped.
   const entitlementsSentRef = useRef(0);
   const entitlementsAppliedRef = useRef(0);
+  // Whether the answer applied last says Pro, for the upgrade poll below to
+  // ask before it says Pro has not switched on.
+  const proAppliedRef = useRef(false);
   const applyEntitlements = useCallback((seq, data) => {
     if (seq < entitlementsAppliedRef.current) return;
     entitlementsAppliedRef.current = seq;
     setEntitlements(data);
+    proAppliedRef.current = data?.isPremium === true;
     // The boot fetch never seeded the meter, so the "chirps left" line was
     // hidden until the first reply of every session.
     if (typeof data?.birdie?.remaining === 'number') setAiRemaining(data.birdie.remaining);
@@ -8701,13 +8705,27 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // the first, so one sync that fails on a RevenueCat hiccup is tried again
   // instead of leaving the rest of the poll reading an account nothing will
   // update.
+  //
+  // AND IT SAYS SO WHEN IT GIVES UP. The sheet has already said "Welcome to
+  // Flock Pro" by the time this runs, so a poll that ended quietly left a
+  // person who had just paid still metered, with nothing on screen to say why
+  // or what to do. An error toast stays until it is closed, and Restore
+  // purchases, in the sheet the You tab's Flock Pro row opens, is the fix to
+  // try first.
   const upgradePollRef = useRef(null);
   const confirmUpgrade = useCallback(() => {
     const delays = [0, 1500, 3000, 5000, 8000]; // 5 tries over ~17s, then stop
     let attempt = 0;
     const again = () => {
       attempt += 1;
-      if (attempt >= delays.length) return;
+      if (attempt >= delays.length) {
+        // The flag spelled out, so a build that sells nothing carries none of
+        // this sentence (lib/purchasesBuild.js); nothing there runs the poll.
+        if ((process.env.REACT_APP_PURCHASES !== 'off') && !proAppliedRef.current) {
+          showToast("Your Flock Pro is paid for, but it isn't on for this account yet. In a minute, open Flock Pro in You and tap Restore purchases. If it still isn't on, write to social@flockcorp.com.", 'error');
+        }
+        return;
+      }
       upgradePollRef.current = setTimeout(check, delays[attempt]);
     };
     const check = () => {
@@ -8728,7 +8746,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     };
     clearTimeout(upgradePollRef.current);
     check();
-  }, [applyEntitlements]);
+  }, [applyEntitlements, showToast]);
   useEffect(() => () => clearTimeout(upgradePollRef.current), []);
   // Back from a web checkout or the billing portal (PRO_RETURN, read at the
   // bottom of this file). A purchase confirms, then waits up to ~30s for Pro
