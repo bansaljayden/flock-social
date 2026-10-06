@@ -436,13 +436,24 @@ test('Manage billing is for a plan still running: active, trialing, past due or 
       assert.strictEqual(status.body.trialDays, 0);
     } finally { restore(); }
   }
-  // A plan that has ended after a newer one was bought and ended too.
+  // A plan still billing keeps Manage billing even when a newer checkout was
+  // started and abandoned after it: checkout would refuse that venue as
+  // already subscribed, so the plans alone would be a dead end.
   stripeState.subscriptions = [roostSub('sub_first', 'active', 1600000000), roostSub('sub_latest', 'incomplete_expired', 1700000000)];
-  const { restore } = stubPool(venueDb({ customer: 'cus_VENUE1', trialUsed: true }));
+  let db = stubPool(venueDb({ customer: 'cus_VENUE1', trialUsed: true }));
+  try {
+    const status = await call(venueBillingRoutes, 'GET', '/api/venue-billing/status');
+    assert.strictEqual(status.body.canManage, true, 'a plan Stripe is still billing was hidden behind an abandoned newer checkout');
+    assert.strictEqual(status.body.subscriptionStatus, 'active');
+  } finally { db.restore(); }
+  // Nothing billing at all: the plans.
+  stripeState.subscriptions = [roostSub('sub_first', 'canceled', 1600000000), roostSub('sub_latest', 'incomplete_expired', 1700000000)];
+  db = stubPool(venueDb({ customer: 'cus_VENUE1', trialUsed: true }));
   try {
     const status = await call(venueBillingRoutes, 'GET', '/api/venue-billing/status');
     assert.strictEqual(status.body.canManage, false);
-  } finally { restore(); }
+    assert.strictEqual(status.body.subscriptionStatus, null);
+  } finally { db.restore(); }
 });
 
 // ---- the dates the plans card names come from Stripe -----------------------

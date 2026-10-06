@@ -258,21 +258,36 @@ function subscriptionDates(sub) {
   };
 }
 
-// The newest Roost subscription this account holds, on any of its customers,
-// with the customer it is on, or null. Only subscriptions naming this account.
+// The Roost subscription that matters now, on any of the account's customers,
+// with the customer it is on, or null: the newest one Stripe may still bill,
+// else the newest of all. Only subscriptions naming this account. A plan that
+// is still billing is the one its owner has to be able to manage, even when a
+// newer checkout was started and abandoned after it (that one ends
+// incomplete_expired); taking the newest alone would have hidden Manage
+// billing from a venue Stripe was still charging, while checkout refused it
+// as already subscribed. A customer Stripe has deleted (a failed account
+// deletion keeps its id on file) holds nothing and is passed over.
+const createdAt = (s) => Number(s && s.created) || 0;
 async function latestVenueSubscription(userId, customerIds, requestOptions) {
-  let latest = null;
+  let newest = null;
+  let newestBilling = null;
   for (const customerId of customerIds) {
-    const list = await stripe().subscriptions.list({ customer: customerId, status: 'all', limit: 10 }, requestOptions);
+    let list;
+    try {
+      list = await stripe().subscriptions.list({ customer: customerId, status: 'all', limit: 10 }, requestOptions);
+    } catch (err) {
+      if (missingAtStripe(err)) continue;
+      throw err;
+    }
     const data = list && Array.isArray(list.data) ? list.data : [];
     for (const s of data) {
       if (!isVenueObject(s) || venueUserIdFrom(s.metadata) !== userId) continue;
-      if (!latest || (Number(s.created) || 0) > (Number(latest.subscription.created) || 0)) {
-        latest = { subscription: s, customerId };
-      }
+      const entry = { subscription: s, customerId };
+      if (!newest || createdAt(s) > createdAt(newest.subscription)) newest = entry;
+      if (stillBilling(s) && (!newestBilling || createdAt(s) > createdAt(newestBilling.subscription))) newestBilling = entry;
     }
   }
-  return latest;
+  return newestBilling || newest;
 }
 
 // Account deletion. Deleting the customer cancels its Roost subscription at
