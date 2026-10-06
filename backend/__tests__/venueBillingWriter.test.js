@@ -1319,6 +1319,57 @@ test('a comp keeps its own end date on the card', async () => {
   assert.strictEqual(res.body.tier_current_period_end, null);
 });
 
+// ---------------------------------------------------------------------------
+// A STRIPE GRANT IS JUDGED ON THE CLAIM AS IT IS NOW.
+//
+// The writer keeps the tier cache at free for a claim that is not verified
+// when a subscription's event arrives, and the resolver served the lower of
+// the cache and the grant. Nothing raised the cache when the claim was then
+// verified, so a plan made by hand for a claim still waiting on verification
+// was billed and served nothing until the subscription's next event, a year
+// away on the yearly plan.
+// ---------------------------------------------------------------------------
+
+test('a Stripe plan synced while its claim waited on verification is served once the claim is verified', async () => {
+  const [PLACE] = placePair();
+  const id = await venue({ verified: false, placeId: PLACE });
+  const adminId = await admin();
+  await venueBilling.syncVenueSubscription(sub('sub_verified_later', id, 'active', { metadata: boundTo(PLACE)(id) }));
+  assert.strictEqual((await state(id)).served, 'free', 'an unverified claim was served');
+  const before = reads.length;
+  const res = await adminCall('PUT', `/api/admin/venues/${await profileIdOf(id)}/verify`, { as: adminId, body: { verified: true, googlePlaceId: PLACE } });
+  assert.strictEqual(res.status, 200, res.text);
+  assert.strictEqual(reads.length, before, 'serving the plan needed no Stripe call');
+  assert.strictEqual((await state(id)).served, 'pro', 'a verified venue Stripe is billing was served nothing until its next event');
+});
+
+test('a hand-made plan naming a listing the claim had not linked yet is served once the claim links it and is verified', async () => {
+  const [PLACE] = placePair();
+  const id = await venue({ verified: true });
+  const adminId = await admin();
+  await venueBilling.syncVenueSubscription(sub('sub_listing_later', id, 'active', { metadata: boundTo(PLACE)(id) }));
+  assert.strictEqual((await state(id)).served, 'free', 'a plan for a listing the claim does not name was served');
+  const linked = await profileCall('PUT', '/api/venue-profile', { as: id, body: { googlePlaceId: PLACE } });
+  assert.strictEqual(linked.status, 200, linked.text);
+  assert.strictEqual((await state(id)).served, 'free', 'linking a listing resets verification, and an unverified claim is served nothing');
+  const res = await adminCall('PUT', `/api/admin/venues/${await profileIdOf(id)}/verify`, { as: adminId, body: { verified: true, googlePlaceId: PLACE } });
+  assert.strictEqual(res.status, 200, res.text);
+  assert.strictEqual((await state(id)).served, 'pro');
+});
+
+test('a claim that stops being verified is served nothing from a live Stripe grant, whatever the cache still says', async () => {
+  // Un-verifying cancels the plan at Stripe (stopRoostForRevokedClaim), and
+  // when Stripe cannot be reached the grant stays live with a cache of pro.
+  const [PLACE] = placePair();
+  const id = await venue({ verified: true, placeId: PLACE });
+  await venueBilling.syncVenueSubscription(sub('sub_unverified_later', id, 'active', { metadata: boundTo(PLACE)(id) }));
+  assert.strictEqual((await state(id)).cached, 'pro');
+  await testPool.query('UPDATE venue_profiles SET verified = false WHERE user_id = $1', [id]);
+  const s = await state(id);
+  assert.strictEqual(s.cached, 'pro', 'the case under test is a cache that still says pro');
+  assert.strictEqual(s.served, 'free', 'an unverified claim was served Roost from the cache');
+});
+
 test('verifying a claim, or declining one that never paid, touches no billing', async () => {
   const [PLACE] = placePair();
   const id = await venue({ verified: false, placeId: PLACE });
