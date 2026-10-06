@@ -861,17 +861,20 @@ test('a later event that still reads the refunded subscription as active cannot 
   assert.strictEqual(rows.rows.length, 1);
 });
 
-test('a refund whose cancel failed is finished on the retry, even after the subscription made another invoice', async () => {
+test('a refund whose cancel failed is finished on the retry, even after the subscription renewed', async () => {
   // The ending was recorded, the cancel failed, the webhook answered 500, and
-  // before Stripe sent the event again the subscription had a newer invoice.
-  // The retry no longer matched the current period and gave up, and Stripe
-  // went on billing a subscription the writer refuses to grant for good.
+  // before Stripe sent the event again the subscription had renewed. The
+  // refunded invoice no longer paid for the current period, so the retry gave
+  // up, and Stripe went on billing a subscription the writer refuses to grant
+  // for good. Only the recorded ending can finish it now.
   const id = await yearlySubscriber('sub_refund_retry', 'in_refund_retry');
   paidBy('ch_refund_retry', 'in_refund_retry', 'sub_refund_retry', 99000);
   refunds.ch_refund_retry = [{ id: 're_retry', status: 'succeeded', amount: 99000 }];
   failNextCancel.add('sub_refund_retry');
   await assert.rejects(venueBilling.revokeRefundedSubscription({ object: 'charge', id: 'ch_refund_retry' }));
   assert.ok(!cancels.some((c) => c.id === 'sub_refund_retry'));
+  // The renewal: the period moves a year on, with an invoice of its own.
+  subs.sub_refund_retry.items.data[0].current_period_end += YEAR_S;
   subs.sub_refund_retry.latest_invoice = 'in_after_refund';
   const retry = await venueBilling.revokeRefundedSubscription({ object: 'charge', id: 'ch_refund_retry' });
   assert.deepStrictEqual(retry.revoked, ['sub_refund_retry'], `the retry gave up: ${JSON.stringify(retry)}`);
