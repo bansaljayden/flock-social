@@ -1184,6 +1184,9 @@ function renewalTotals(expenses, todayYmd) {
   });
 }
 
+// How many bills the Costs card ranks by size before it sums the rest.
+const BIGGEST_BILLS_SHOWN = 5;
+
 function buildCostPicture({ expenses = [], reconciled = null, month }) {
   // Still being charged today: active, and not past an end date (THE END OF A
   // BILL). Everywhere below that asked whether a row was active asks this.
@@ -1386,6 +1389,31 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
     lines: undatedLines.map((l) => ({ id: l.id, label: l.label, cadence: l.cadence, perMonthCents: l.perMonthCents })),
   };
 
+  // THE BIGGEST BILLS (2026-10-06): every dollar charge in the burn, largest
+  // first, with its share, so where the money goes is one list instead of two
+  // tables and a scan of the expense list. The share is of the charges before
+  // any credit, which is the burn itself when there is no credit, so the
+  // shares of a full list add up to a hundred either way. Read from the same
+  // lines as the totals, so it cannot disagree with them.
+  const charges = lines.filter((l) => l.perMonthExact > 0 && !l.isCredit)
+    .sort((a, b) => b.perMonthExact - a.perMonthExact || a.label.localeCompare(b.label));
+  const chargesExact = charges.reduce((s, l) => s + l.perMonthExact, 0);
+  const rest = charges.slice(BIGGEST_BILLS_SHOWN);
+  const biggest = {
+    lines: charges.slice(0, BIGGEST_BILLS_SHOWN).map((l) => ({
+      id: l.id,
+      label: l.label,
+      kind: l.kind,
+      cadence: l.cadence,
+      perMonthCents: l.perMonthCents,
+      pct: chargesExact > 0 ? Math.round((l.perMonthExact / chargesExact) * 100) : null,
+    })),
+    restBills: rest.length,
+    restPerMonthCents: r0(rest.reduce((s, l) => s + l.perMonthExact, 0)),
+    chargesPerMonthCents: r0(chargesExact),
+    beforeCredits: lines.some((l) => l.perMonthExact < 0),
+  };
+
   for (const l of lines) { delete l.perMonthExact; delete l.thisMonthExact; }
 
   // Renewals in the window, from the expense list. Code lines carry no charge
@@ -1455,6 +1483,7 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
     byKind: EXPENSE_KINDS.map((k) => byKind[k]),
     byCategory: [...byCategory.values()].sort((a, b) => b.perMonthCents - a.perMonthCents || a.category.localeCompare(b.category)),
     totals: { thisMonthCents, perMonthCents: perMonthTotal },
+    biggest,
     upcoming,
     upcomingWindowDays: RENEWAL_WINDOW_DAYS,
     upcomingTotals: renewalTotals(expenses, month.todayYmd),
@@ -3911,5 +3940,6 @@ module.exports = {
     MODEL_GOAL_PCT,
     MODEL_META_PATH,
     MODEL_COVERAGE_DAYS,
+    BIGGEST_BILLS_SHOWN,
   },
 };
