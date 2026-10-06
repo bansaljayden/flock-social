@@ -117,6 +117,21 @@ describe('what counts as a Google photo link', () => {
     });
   });
 
+  it('touches only avatar fields: text that starts with such a link arrives as written', () => {
+    const shared = `${GOOGLE_PHOTO} look at this`;
+    const body = JSON.stringify({
+      message: { id: 9, text: GOOGLE_PHOTO, sender_image: GOOGLE_PHOTO },
+      flock: { name: shared, bio: GOOGLE_PHOTO },
+    });
+    expect(JSON.parse(body, withoutGooglePhotoLinks)).toEqual({
+      message: { id: 9, text: GOOGLE_PHOTO, sender_image: null },
+      flock: { name: shared, bio: GOOGLE_PHOTO },
+    });
+    const event = { text: GOOGLE_PHOTO, content: shared, sender_image: GOOGLE_PHOTO, avatarUrl: GOOGLE_PHOTO };
+    dropGooglePhotoLinks(event);
+    expect(event).toEqual({ text: GOOGLE_PHOTO, content: shared, sender_image: null, avatarUrl: null });
+  });
+
   it('is taken out of a parsed event in place, and a frozen one is left alone without a throw', () => {
     const event = { sender_image: GOOGLE_PHOTO, members: [{ image: GOOGLE_PHOTO }, { image: OWN_PHOTO }] };
     dropGooglePhotoLinks(event);
