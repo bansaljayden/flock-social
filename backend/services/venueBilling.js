@@ -338,8 +338,10 @@ const openSessionsOn = (customerId) =>
 // billing from a venue Stripe was still charging, while checkout refused it
 // as already subscribed. A customer Stripe has deleted (a failed account
 // deletion keeps its id on file) holds nothing and is passed over.
+// `skip` passes over the subscriptions it answers true for (the status route
+// hands in plansLeftBehind).
 const createdAt = (s) => Number(s && s.created) || 0;
-async function latestVenueSubscription(userId, customerIds, requestOptions) {
+async function latestVenueSubscription(userId, customerIds, requestOptions, { skip = null } = {}) {
   let newest = null;
   let newestBilling = null;
   for (const customerId of customerIds) {
@@ -352,6 +354,7 @@ async function latestVenueSubscription(userId, customerIds, requestOptions) {
     }
     for (const s of data) {
       if (!isVenueObject(s) || venueUserIdFrom(s.metadata) !== userId) continue;
+      if (skip && skip(s)) continue;
       const entry = { subscription: s, customerId };
       if (!newest || createdAt(s) > createdAt(newest.subscription)) newest = entry;
       if (stillBilling(s) && (!newestBilling || createdAt(s) > createdAt(newestBilling.subscription))) newestBilling = entry;
@@ -504,8 +507,44 @@ function blocksCheckout(s, userId, checkoutCustomer) {
   return owner === userId || (owner === null && checkoutCustomer);
 }
 
-async function blockingSubscription(userId, checkoutCustomerId) {
+// A PLAN LEFT WITH THE LISTING ITS CLAIM MOVED AWAY FROM. ROOST_LISTING_MSG
+// (routes/venueProfile.js) tells an owner to end the plan before moving the
+// claim; once it is set to end the claim can move, and the rest of its period
+// stays with the old listing. Stripe still calls that plan active until its
+// period ends, and it blocked checkout (ALREADY_SUBSCRIBED) and was the plan
+// the status route offered to manage, so the new listing could not buy Roost
+// until the old plan ran out, up to a year on the yearly plan, and the one
+// button on the card led to Stripe's Renew, which bills for a listing the
+// claim has left. A plan bound to another listing than the one the claim
+// names now, and set to end or past collecting (unpaid), bills nothing more
+// for this claim, so neither checkout nor the status route counts it. The
+// binding is the listing in its metadata, else the one on record
+// (venue_stripe_subscriptions); a plan bound to nothing binds to whatever
+// the claim names, as in the resolver, and always counts.
+const BINDINGS_SQL = 'SELECT stripe_subscription_id, google_place_id FROM venue_stripe_subscriptions WHERE user_id = $1::int';
+
+async function planBindings(userId) {
+  const r = await pool.query(BINDINGS_SQL, [userId]);
+  const rows = r && Array.isArray(r.rows) ? r.rows : [];
+  return new Map(rows.filter((row) => row.google_place_id).map((row) => [row.stripe_subscription_id, row.google_place_id]));
+}
+
+function leftBehind(s, placeId, bindings) {
+  if (!s || !(s.cancel_at || s.cancel_at_period_end || s.status === 'unpaid')) return false;
+  const bound = venuePlaceIdFrom(s.metadata) || (bindings && bindings.get(s.id)) || null;
+  return !!bound && bound !== (placeId || null);
+}
+
+// For the status route: which of the account's plans were left with a listing
+// its claim no longer names.
+async function plansLeftBehind(userId, placeId) {
+  const bindings = await planBindings(userId);
+  return (s) => leftBehind(s, placeId, bindings);
+}
+
+async function blockingSubscription(userId, checkoutCustomerId, placeId) {
   const customers = [...new Set([checkoutCustomerId, ...(await venueCustomerIdsFor(userId))].filter(Boolean))];
+  const bindings = await planBindings(userId);
   for (const customerId of customers) {
     let data;
     try {
@@ -514,7 +553,7 @@ async function blockingSubscription(userId, checkoutCustomerId) {
       if (missingAtStripe(err)) continue;
       throw err;
     }
-    const found = data.find((s) => blocksCheckout(s, userId, customerId === checkoutCustomerId));
+    const found = data.find((s) => blocksCheckout(s, userId, customerId === checkoutCustomerId) && !leftBehind(s, placeId, bindings));
     if (found) return found;
   }
   return null;
@@ -627,7 +666,7 @@ async function buildVenueCheckout(user, plan) {
   }
   const customerId = await ensureVenueCustomer(user, profile);
   await expireOpenSessions(customerId, user.id);
-  if (await blockingSubscription(user.id, customerId)) {
+  if (await blockingSubscription(user.id, customerId, profile.google_place_id)) {
     throw refusal(409, 'You already have Roost. Manage it from billing.', 'ALREADY_SUBSCRIBED');
   }
   const trial = !(await venueTrialUsed(user.id, profile.google_place_id)) && !(await hasEverSubscribed(customerId));
@@ -1462,6 +1501,7 @@ module.exports = {
   venueCustomerIdFor,
   venueCustomerIdsFor,
   latestVenueSubscription,
+  plansLeftBehind,
   stillBilling,
   subscriptionDates,
   venueTrialUsed,

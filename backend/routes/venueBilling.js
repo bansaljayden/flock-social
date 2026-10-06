@@ -76,12 +76,16 @@ router.get('/status', async (req, res) => {
     // second trial. A short timeout and no retries, because the checkout
     // return polls this route; a lookup that fails offers Manage billing to
     // nobody and the plans to nobody who has one, which checkout re-checks.
+    // A plan set to end and left with a listing the claim has moved away from
+    // is not this claim's plan any more (venueBilling plansLeftBehind), so it
+    // neither hides the plans nor is offered to manage.
     let canManage = false;
     let latest = null;
     if (billing.stripeConfigured()) {
       const customers = await venueBilling.venueCustomerIdsFor(req.user.id);
       if (customers.length) {
-        latest = await venueBilling.latestVenueSubscription(req.user.id, customers, { timeout: 5000, maxNetworkRetries: 0 })
+        const skip = await venueBilling.plansLeftBehind(req.user.id, profile.google_place_id);
+        latest = await venueBilling.latestVenueSubscription(req.user.id, customers, { timeout: 5000, maxNetworkRetries: 0 }, { skip })
           .catch((err) => {
             console.warn('[venue-billing] status could not read the Roost subscriptions:', err?.message || err);
             return null;
