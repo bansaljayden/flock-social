@@ -133,8 +133,16 @@ const GOOGLE_PHOTO_LINK = /^https?:\/\/([a-z0-9-]+\.)*googleusercontent\.com([/:
 
 export const isGooglePhotoLink = (value) => typeof value === 'string' && GOOGLE_PHOTO_LINK.test(value);
 
-// For JSON.parse: a Google photo link becomes null wherever it sits.
-export const withoutGooglePhotoLinks = (_key, value) => (isGooglePhotoLink(value) ? null : value);
+// ONLY WHERE AN AVATAR SITS. Read by value alone, the scrub blanked any text
+// that began with such a link: a chat message opening with a shared Google
+// Photos link, a bio, a flock name arrived as null, and a screen that read the
+// text's length threw. Avatars travel as profile_image_url, image_url,
+// avatarUrl, and in live events sender_image and image; the key decides.
+const AVATAR_KEY = /(image|avatar|photo)(_?url)?$/i;
+const isAvatarKey = (key) => typeof key === 'string' && AVATAR_KEY.test(key);
+
+// For JSON.parse: a Google photo link in an avatar field becomes null.
+export const withoutGooglePhotoLinks = (key, value) => (isAvatarKey(key) && isGooglePhotoLink(value) ? null : value);
 
 // The same for something already parsed (a socket event), in place. A live
 // event is a few levels deep, so the walk stops at six. It must not throw: it
@@ -144,7 +152,7 @@ export function dropGooglePhotoLinks(value, depth = 0) {
   try {
     for (const key of Object.keys(value)) {
       const v = value[key];
-      if (isGooglePhotoLink(v)) value[key] = null;
+      if (isAvatarKey(key) && isGooglePhotoLink(v)) value[key] = null;
       else if (v && typeof v === 'object') dropGooglePhotoLinks(v, depth + 1);
     }
   } catch {
