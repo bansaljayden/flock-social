@@ -19,6 +19,8 @@
 //   * the answer: the table's value rounded and clamped, its tag, a null model
 //     version, its sources, baselineScore, and the figure it publishes
 //     (within-15 41.3 on 4,248 rows) with its population;
+//   * the row: guessCategory over the first three Google types, the ones the
+//     table was measured on, never the whole list;
 //   * the presence probe: cached (a no for an hour, a yes for a day), charged
 //     to the venue-lookup budget, and silent on a refusal or a failure;
 //   * the strip, the coverage counter, and the words crowdEngine gives it.
@@ -324,6 +326,26 @@ test('the category is guessCategory(types), the hour and weekday are the scored 
       assert.equal(r.baselineScore, served > 0 ? served : null);
     });
   }
+});
+
+test('the category is read off the first three Google types, the ones the table was measured on', async () => {
+  // The study read google_type_1..3 (types[0..2] of the same Places array the
+  // card passes whole). A bar fourth in the list was never part of what it
+  // scored: this place was measured with the restaurant row.
+  const types = ['american_restaurant', 'restaurant', 'food', 'bar', 'point_of_interest', 'establishment'];
+  const restaurant = Math.round(tableValue('restaurant'));
+  assert.notEqual(restaurant, Math.round(tableValue('bar')), 'the two rows differ at this hour');
+  await withPredictor({ env: { [SWITCH]: ON } }, async (p) => {
+    assert.equal(p._internals.NO_CURVE_FALLBACK_TYPES_READ, 3);
+    const r = await p.predictBusyness(venue({ types }), WX, TS);
+    assert.equal(r.predictionMethod, METHOD);
+    assert.equal(r.score, restaurant, 'the row of the three types it was measured on, not the bar fourth');
+    // Third is inside them, and a club fourth is still not read.
+    const clubFourth = ['restaurant', 'food', 'bar', 'night_club'];
+    assert.notEqual(Math.round(tableValue('bar')), Math.round(tableValue('nightclub')));
+    const r2 = await p.predictBusyness(venue({ types: clubFourth }), WX, TS);
+    assert.equal(r2.score, Math.round(tableValue('bar')));
+  });
 });
 
 test('the gate is 200 reviews, read off user_ratings_total or review_count, and a count nobody gave is not 200', async () => {
