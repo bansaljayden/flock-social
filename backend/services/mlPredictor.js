@@ -346,11 +346,17 @@ function predictionCoverage() {
   const byMethod = { ...predictionMethodCounts };
   const total = Object.values(byMethod).reduce((a, b) => a + b, 0);
   const ml = byMethod.ml || 0;
+  // The no-curve fallback's answers (CROWD_NO_CURVE_FALLBACK): the category
+  // table's typical level, which is neither a venue's own data nor the rule
+  // engine, so it is a leg of its own and the three legs still add up to the
+  // total. Zero whenever that switch is off.
+  const categoryCurve = byMethod[NO_CURVE_FALLBACK_METHOD] || 0;
   return {
     since: predictionCountsSince,
     total,
     ml,
-    ruleEngine: total - ml,
+    categoryCurve,
+    ruleEngine: total - ml - categoryCurve,
     modelShare: total > 0 ? ml / total : null,
     byMethod,
     modelVersion: (metadata && metadata.model_version) || null,
@@ -359,6 +365,7 @@ function predictionCoverage() {
     // answers above each one produced since the counters started.
     serveMode: serveMode(),
     nowcastEnabled: nowcastEnabled(),
+    noCurveFallback: noCurveFallbackEnabled(),
     curveOffsetAnswers: switchedCounts.curveOffset,
     nowcastAnswersByLag: { ...switchedCounts.nowcastByLag },
     inMemory: true,
@@ -4094,6 +4101,214 @@ function servedConfidence({ accuracy, qmapApplied, hasWeather, curveOffset, nowc
   return { confidence, confidenceMeasurement };
 }
 
+// ---------------------------------------------------------------------------
+// A VENUE WITH NO CURVE OF ITS OWN: CROWD_NO_CURVE_FALLBACK, OFF UNLESS SET.
+//
+// The no-baseline exit in predictBusyness hands a venue with no row in
+// ml_venue_baselines to the rule engine (crowdEngine.calculateCrowdScore), a
+// hand-written curve per category scaled by review count. The shipped artifact
+// carries a better answer to the same question: metadata.category_baselines,
+// the mean label per category, weekday and hour over its training frame, keyed
+// "<category>_<dow>_<hour>". buildFeatureMap already reads it for the
+// category_baseline feature, so it is in memory at the exit and costs nothing.
+//
+// MEASURED offline on held-out live readings, each venue scored with its own
+// curve withheld, for venues with 200 or more Google reviews:
+//
+//                          rule engine   category table
+//   Lehigh (7,276 rows)
+//     MAE                      28.88        25.17   the difference's two-way
+//                                                   CI95 is [-4.95, -2.82]
+//     within 10                20.7%        29.5%
+//     exact band               22.4%        33.5%
+//     within one band          61.7%        65.3%
+//   Miami
+//     MAE                      35.37        26.96
+//
+// Under 200 reviews the table loses within one band to the rule engine by 6.1
+// points, so 200 reviews is the gate and the rule engine still answers below
+// it. Philadelphia has not been checked, which is why this ships off.
+//
+// WHAT IT TAKES, every one of these, or the rule engine answers exactly as it
+// always has:
+//   * the switch: "category_curve", exactly. Anything else that is set is
+//     logged once and left off, the way serveMode treats CROWD_SERVE_MODE;
+//   * the artifact the table was measured on (NO_CURVE_FALLBACK_FITTED_ON). A
+//     retrain's table is a different table, and nobody has measured it;
+//   * 200 or more Google reviews, read off the two fields buildFeatureMap reads
+//     but without its median fill: a count nobody gave us is not 200;
+//   * the corpus gap. A refused or failed baseline lookup never found out
+//     whether the venue has a curve, and a popular_times payload that answered
+//     zero is the venue's own pattern saying zero;
+//   * no ml_venue_baselines row for the venue at all (venueHasCurve). A venue
+//     whose own curve is zero at this hour is closed or empty by its own
+//     pattern, and its category's typical level must not be put over that;
+//   * a finite value in the table for guessCategory(venue.types) at the
+//     weekday and hour buildFeatureMap reads off the same timestamp.
+//
+// WHAT IT IS CALLED, everywhere. predictionMethod NO_CURVE_FALLBACK_METHOD:
+// never 'ml', which services/moneyHub.js and the coverage counter read as the
+// venue's own data, and never a rule_engine name, because the rule engine did
+// not make it. modelVersion is null because no model ran.
+// crowdEngine.describePredictionSupport hedges it like any category prior
+// ("Usually busy") and crowdEngine.describeServedArithmetic names it
+// 'category_typical', so every surface words it as what is typical for that
+// kind of place at that hour: not this venue's pattern, not the model, not a
+// live reading.
+//
+// BEFORE IT IS TURNED ON, the app build people run has to carry the venue
+// card's rule that only an 'ml' number shows LIVE
+// (components/venue/ConsumerVenueCard.js isLiveNow). A build from before that
+// rule shows LIVE over any method that does not start with rule_engine, and
+// this one does not.
+// ---------------------------------------------------------------------------
+const NO_CURVE_FALLBACK_SWITCH = 'category_curve';
+const NO_CURVE_FALLBACK_METHOD = crowdEngine.NO_CURVE_FALLBACK_METHOD;
+const NO_CURVE_FALLBACK_MIN_REVIEWS = 200;
+const NO_CURVE_FALLBACK_FITTED_ON = '2.6.0-starling';
+
+// WHAT THE CONFIDENCE FIGURE IS for a number the table made: within-15 of the
+// gated policy (this table at 200 or more reviews, the rule engine below) on
+// the scored window the switches above were measured on, each venue scored with
+// its own curve withheld. Published with its own population string, the way
+// SERVE_MEASURED is, so it can never be read as the model's figure or the
+// switches'.
+const NO_CURVE_FALLBACK_POPULATION = 'live readings 2026-09-06..08 (Lehigh and Miami, local 2026-09-08 export), each venue scored with its own curve withheld; this table for venues with 200+ Google reviews, the rule engine below';
+const NO_CURVE_FALLBACK_MEASURED = Object.freeze({ within15: 41.3, rows: 4248 });
+
+let unknownNoCurveFallbackLogged = false;
+
+// "category_curve" and nothing else. A switch that is off by default must not
+// be turned on by a near miss, so case and spacing count: ' category_curve'
+// and 'CATEGORY_CURVE' are off, and say so once.
+function noCurveFallbackEnabled() {
+  const raw = process.env.CROWD_NO_CURVE_FALLBACK;
+  if (raw === NO_CURVE_FALLBACK_SWITCH) return true;
+  if (raw !== undefined && raw !== '' && !unknownNoCurveFallbackLogged) {
+    unknownNoCurveFallbackLogged = true;
+    console.warn(`[MLPredictor] CROWD_NO_CURVE_FALLBACK=${JSON.stringify(raw)} is not "${NO_CURVE_FALLBACK_SWITCH}"; a venue with no curve gets the rule engine.`);
+  }
+  return false;
+}
+
+// The table's value for this venue at this hour, rounded and clamped to 0-100,
+// or null when a gate that needs no query says no. Pure. `ts` is the venue wall
+// clock predictBusyness scores on, read with the getters buildFeatureMap uses.
+function noCurveFallbackValue(venue, ts) {
+  if (!metadata || metadata.model_version !== NO_CURVE_FALLBACK_FITTED_ON) return null;
+  const reviews = storedNumber(venue.user_ratings_total ?? venue.review_count);
+  if (reviews === null || reviews < NO_CURVE_FALLBACK_MIN_REVIEWS) return null;
+  const category = guessCategory(Array.isArray(venue.types) ? venue.types : []);
+  const raw = storedNumber((metadata.category_baselines || {})[`${category}_${ts.getDay()}_${ts.getHours()}`]);
+  if (raw === null) return null;
+  return Math.max(0, Math.min(100, Math.round(raw)));
+}
+
+// ---------------------------------------------------------------------------
+// DOES THE VENUE HAVE A CURVE AT ALL: one ml_venue_baselines row, or none.
+//
+// The question the fallback turns on, and a different one from the slot lookup
+// in front of it. getBaseline reads three rows around one hour, so its zero is
+// either a venue with no curve or a venue whose curve is zero at this hour, and
+// only the first may be given its category's typical level. One indexed probe
+// answers it, asked only after every other gate has said yes, so with the
+// switch off it never runs.
+//
+// Cached and charged like the place-keyed lookups at the top of this file:
+// keyed on the place id, bounded at PREDICTOR_CACHE_MAX, and gated by
+// allowVenueLookup in front of the query, so an unshaped id is refused for
+// free, a refusal neither queries nor writes, and a failed query writes
+// nothing. Both answer null, and the fallback needs a no: unknown is not one.
+//
+// A YES IS HELD A DAY, like the slot answers it is read beside
+// (BASELINE_CACHE_TTL). A NO IS HELD AN HOUR. A stale no is the one answer
+// that could put a category value over a venue's own curve, and a venue gets
+// its first rows within the hour of being collected. A stale yes only keeps
+// the rule engine, which is the answer every venue had before this existed.
+// ---------------------------------------------------------------------------
+const curvePresenceCache = new Map(); // placeId -> { ts, data: boolean }
+const CURVE_ABSENT_CACHE_TTL = 60 * 60 * 1000;
+const CURVE_PRESENCE_SQL = `SELECT 1 FROM ml_venue_baselines
+        WHERE google_place_id = $1
+        LIMIT 1`;
+
+// `userId` (optional) is the account a cache MISS is charged to, exactly as
+// getBaseline charges it.
+async function venueHasCurve(placeId, userId) {
+  if (!pool || !placeId) return null;
+  const cached = curvePresenceCache.get(placeId);
+  if (cached && Date.now() - cached.ts < (cached.data ? BASELINE_CACHE_TTL : CURVE_ABSENT_CACHE_TTL)) {
+    return cached.data;
+  }
+  if (!allowVenueLookup(placeId, userId)) return null;
+  try {
+    const { rows } = await pool.query(CURVE_PRESENCE_SQL, [placeId]);
+    const data = Array.isArray(rows) && rows.length > 0;
+    boundedSet(curvePresenceCache, placeId, { ts: Date.now(), data });
+    return data;
+  } catch (err) {
+    console.error('[MLPredictor] Curve presence lookup failed:', err.message);
+    return null;
+  }
+}
+
+// The table's value when every gate holds, or null for the rule engine. The
+// switch is read first, so with it off this returns before anything else
+// runs. Never throws: whatever goes wrong in here, the venue keeps the answer
+// it had before this existed.
+async function noCurveFallback(venue, ts, placeId, userId) {
+  try {
+    if (!noCurveFallbackEnabled()) return null;
+    if (venue.popular_times) return null;
+    const value = noCurveFallbackValue(venue, ts);
+    if (value === null) return null;
+    // Last, because it is the only gate that can cost a query.
+    if (await venueHasCurve(placeId, userId) !== false) return null;
+    return value;
+  } catch {
+    return null;
+  }
+}
+
+// The answer, in the rule-engine exits' shape plus two fields a model answer
+// carries, for the reasons the notes in predictBusyness give:
+// confidenceMeasurement, because the confidence integer never travels without
+// what it is, and baselineScore, the ordering axis, because this table is what
+// ranks this venue's hours for the best-time and peak lines. No factors: none
+// of the rule engine's went in.
+function noCurveFallbackResponse(value, eventsSeen, eventsReason) {
+  const percent = NO_CURVE_FALLBACK_MEASURED.within15;
+  return {
+    score: value,
+    label: getLabel(value),
+    confidence: Math.max(0, Math.min(100, Math.round(percent))),
+    factors: {},
+    // What the number read: Google's types and review count (the category and
+    // the gate) and the artifact's category table. Not the model, the weather,
+    // the event listing or any live reading.
+    dataSourcesUsed: ['google_places', 'category_curve'],
+    predictionMethod: NO_CURVE_FALLBACK_METHOD,
+    modelVersion: null,
+    confidenceMeasurement: {
+      status: 'measured',
+      means: 'measured_accuracy',
+      metric: `within_15_${NO_CURVE_FALLBACK_METHOD}`,
+      population: NO_CURVE_FALLBACK_POPULATION,
+      populationRows: NO_CURVE_FALLBACK_MEASURED.rows,
+      measuredPercent: percent,
+      // The table reads no weather, so a missing reading costs it nothing.
+      weatherPenalty: 0,
+    },
+    // The lookup ran before this exit was known, so what it said is stated
+    // exactly as the rule-engine exits state it.
+    eventsObserved: eventsSeen,
+    eventsUnavailableReason: eventsReason,
+    // No stored baseline is under this number.
+    baselineData: null,
+    baselineScore: value > 0 ? value : null,
+  };
+}
+
 // WHY AN UNCHECKED STREET DOES NOT MOVE THE CONFIDENCE FIGURE.
 //
 // The obvious symmetry with weatherPenalty is wrong, and the reason is worth
@@ -4248,6 +4463,20 @@ async function predictBusyness(venue, weather, timestamp, options = {}, slotInst
       result.modelVersion = null;
       result.eventsObserved = eventsSeen;
       result.eventsUnavailableReason = eventsReason;
+      // THE CORPUS GAP, ANSWERED FROM THE CATEGORY TABLE when
+      // CROWD_NO_CURVE_FALLBACK holds for this venue (the block above
+      // noCurveFallbackEnabled). Only the corpus gap: a refused or failed
+      // lookup never found out whether the venue has a curve. With the
+      // switch off this returns before it reads anything, and the rule
+      // engine's answer above is served exactly as it was.
+      if (result.predictionMethod === 'rule_engine_no_baseline') {
+        const typical = await noCurveFallback(venue, ts, placeId, userId);
+        if (typical !== null) {
+          const fallback = noCurveFallbackResponse(typical, eventsSeen, eventsReason);
+          countPrediction(fallback.predictionMethod);
+          return fallback;
+        }
+      }
       countPrediction(result.predictionMethod);
       return result;
     }
@@ -4908,6 +5137,10 @@ module.exports = {
   // Birdie can answer "how accurate is it" with a figure that describes the
   // numbers it is actually handing out.
   servedAccuracyHeadline,
+  // Whether CROWD_NO_CURVE_FALLBACK can serve the category table's typical
+  // level, read by routes/ai.js so Birdie is told what that number is only
+  // while one can reach it.
+  noCurveFallbackEnabled,
   estimateCapacity,
   estimateWait,
   findBestTime,
@@ -5035,6 +5268,7 @@ module.exports = {
     curveCacheSize: () => curveCache.size,
     curveInflightSize: () => curveInflight.size,
     feedbackCacheSize: () => feedbackCache.size,
+    curvePresenceCacheSize: () => curvePresenceCache.size,
     // Tests only. Production code must never reset a spending counter.
     __resetVenueLookupCaches: () => {
       baselineCache.clear();
@@ -5046,8 +5280,25 @@ module.exports = {
       // see the previous case's remembered rows and count one too few.
       curveCache.clear();
       curveInflight.clear();
+      // And the no-curve fallback's presence answers, charged to the same
+      // budget, for the same reason.
+      curvePresenceCache.clear();
       venueLookupBudget.reset();
     },
+    // The no-curve fallback (CROWD_NO_CURVE_FALLBACK): how the switch is read,
+    // its gates and the figure it publishes, for
+    // __tests__/noCurveFallback.test.js.
+    noCurveFallbackEnabled,
+    noCurveFallbackValue,
+    venueHasCurve,
+    NO_CURVE_FALLBACK_SWITCH,
+    NO_CURVE_FALLBACK_METHOD,
+    NO_CURVE_FALLBACK_MIN_REVIEWS,
+    NO_CURVE_FALLBACK_FITTED_ON,
+    NO_CURVE_FALLBACK_MEASURED,
+    NO_CURVE_FALLBACK_POPULATION,
+    CURVE_ABSENT_CACHE_TTL,
+    BASELINE_CACHE_TTL,
     neighborCacheSize: () => neighborCache.size,
     selfBaselineCacheSize: () => selfBaselineCache.size,
     // The R4-I2 budget on neighbour range scans, for
