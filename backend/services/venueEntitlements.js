@@ -141,6 +141,12 @@ function noticeWindowOpen(row, now) {
 //   3. A GRANT ROW THAT IS LIVE gives the LOWER of the two tiers. One statement
 //      writes both, so they agree; if they ever disagree, the disagreement is a
 //      bug and the fail-closed reading of a bug is the smaller entitlement.
+//      A STRIPE GRANT is the one exception (stripeGrantJudgedNow below): the
+//      Stripe writer leaves the cache at free for a claim that was not
+//      verified when the subscription's last event arrived, so the cache only
+//      says what the claim was then. Such a grant is judged on the claim as it
+//      is now instead: served while the claim is verified, whatever the cache
+//      says, and never while it is not.
 //
 // The answer is always a plan, 'free' or ROOST_TIER (planOf above), so a
 // stored 'premium' comes out as Roost whichever column holds it.
@@ -166,6 +172,24 @@ function grantForAnotherListing(row) {
   return bound !== (row.place_id ?? null);
 }
 
+// A STRIPE GRANT IS JUDGED ON THE CLAIM AS IT IS NOW. The writer keeps the
+// cache at free while the claim is unverified (services/venueBilling.js
+// SYNC_SQL), and nothing raised it when the claim was verified afterwards: a
+// plan made by hand for a claim still waiting on verification, or for a claim
+// that had not linked its listing yet, was billed and served nothing until the
+// subscription's next event, which on the yearly plan is a year away. The
+// other way round, a claim un-verified while its cancellation could not reach
+// Stripe kept a cache of pro. So a Stripe grant is served exactly while the
+// claim is verified, read with the grant. Only a row from a query that selects
+// the claim's verified flag and both listings is judged this way (TIER_SQL,
+// the Monday digest); any other read keeps the cache rule, never a wider one.
+// Comps and admin grants keep the cache rule as they always have.
+const hasOwn = (row, key) => Object.prototype.hasOwnProperty.call(row, key);
+function stripeGrantJudgedNow(row) {
+  return row.grant_source === 'stripe' && hasOwn(row, 'verified')
+    && hasOwn(row, 'grant_place_id') && hasOwn(row, 'place_id');
+}
+
 function resolveGrantedTier(row, now) {
   // Unknown / null / garbage tier is free, never a bypass.
   const cached = rankOf(row?.tier) === null ? 'free' : row.tier;
@@ -179,13 +203,14 @@ function resolveGrantedTier(row, now) {
     if (!(endsAt > (typeof now === 'number' ? now : Date.now()))) return 'free';
   }
   const granted = rankOf(row.grant_tier) === null ? 'free' : row.grant_tier;
+  if (stripeGrantJudgedNow(row)) return row.verified === true ? planOf(granted) : 'free';
   return planOf(rankOf(granted) <= rankOf(cached) ? granted : cached);
 }
 
 // ONE LINE, ON PURPOSE. Several suites drive this module against a scripted pg
 // fake that matches on the raw SQL text, and a multi-line template literal
 // arrives at those matchers with newlines in it.
-const TIER_SQL = 'SELECT vp.tier, vs.tier AS grant_tier, vs.status AS grant_status, vs.source AS grant_source, vs.granted_reason, vs.granted_at, vs.expires_at, (vp.created_at IS NULL OR vp.created_at < $2::timestamptz) AS roost_legacy, vn.charge_not_before AS roost_notice_until, vs.google_place_id AS grant_place_id, vp.google_place_id AS place_id, vs.current_period_end, vs.cancel_at, vs.trial_end FROM venue_profiles vp LEFT JOIN venue_subscriptions vs ON vs.user_id = vp.user_id LEFT JOIN venue_roost_notices vn ON vn.user_id = vp.user_id WHERE vp.user_id = $1';
+const TIER_SQL = 'SELECT vp.tier, vs.tier AS grant_tier, vs.status AS grant_status, vs.source AS grant_source, vs.granted_reason, vs.granted_at, vs.expires_at, (vp.created_at IS NULL OR vp.created_at < $2::timestamptz) AS roost_legacy, vn.charge_not_before AS roost_notice_until, vs.google_place_id AS grant_place_id, vp.google_place_id AS place_id, vs.current_period_end, vs.cancel_at, vs.trial_end, vp.verified FROM venue_profiles vp LEFT JOIN venue_subscriptions vs ON vs.user_id = vp.user_id LEFT JOIN venue_roost_notices vn ON vn.user_id = vp.user_id WHERE vp.user_id = $1';
 
 // A date column as ISO, or null.
 function isoOrNull(v) {
