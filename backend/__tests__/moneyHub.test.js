@@ -3639,3 +3639,37 @@ test('the hub says where each row stands against its end date, and carries the b
   assert.strictEqual(r.body.costs.afterEnding.burnCents, r.body.net.burnCents - 3000);
   assert.deepStrictEqual(r.body.costs.chargedPastEnd.map((x) => x.label), ['Renewed']);
 });
+
+// The renewal totals count only the bills the hub can date (2026-10-06).
+test('the renewal totals name the monthly bills they cannot date, with what they come to', () => {
+  const cm = require('../services/costModel');
+  const base = moneyHub.buildCostPicture({ expenses: [], month: MONTH });
+  const ids = base.undatedMonthly.lines.map((l) => l.id);
+  for (const e of cm.FIXED_MONTHLY) assert.strictEqual(ids.includes(e.id), e.usd > 0, `${e.id}: a monthly line is named when it is a charge, and a $0 line is not`);
+  for (const l of cm.RECONCILED.lines) assert.ok(ids.includes(l.id), `${l.id} is billed monthly on a day nothing records`);
+  for (const e of [...cm.FIXED_ANNUAL, ...cm.ONE_TIME]) assert.ok(!ids.includes(e.id), `${e.id} is not a monthly bill`);
+  const codeMonthly = cm.FIXED_MONTHLY.reduce((s, e) => s + Math.round(e.usd * 100), 0)
+    + cm.RECONCILED.lines.reduce((s, l) => s + Math.round(l.usdPerMonth * 100), 0);
+  assert.strictEqual(base.undatedMonthly.perMonthCents, codeMonthly);
+  const amounts = base.undatedMonthly.lines.map((l) => l.perMonthCents);
+  assert.deepStrictEqual(amounts, [...amounts].sort((a, b) => b - a), 'largest first');
+
+  const pic = moneyHub.buildCostPicture({
+    expenses: [
+      expense({ id: 1, vendor: 'Dated', kind: 'tooling', amountCents: 2000, renewsOn: '2026-10-13' }),
+      expense({ id: 2, vendor: 'Undated', kind: 'tooling', amountCents: 1500 }),
+      expense({ id: 3, vendor: 'Metered', kind: 'tooling', cadence: 'usage', amountCents: 700, lastChargedOn: '2026-10-01' }),
+      expense({ id: 4, vendor: 'Credit', kind: 'tooling', amountCents: 500, isCredit: true }),
+      expense({ id: 5, vendor: 'Abroad', kind: 'tooling', amountCents: 900, currency: 'EUR' }),
+      // A dated bill standing in for the reconciled Railway line takes it off
+      // the undated list along with its figure.
+      expense({ id: 6, vendor: 'Railway', product: 'Pro', kind: 'infrastructure', amountCents: 4500, lastChargedOn: '2026-09-15', replacesLine: 'railway' }),
+    ],
+    month: MONTH,
+  });
+  const named = pic.undatedMonthly.lines.map((l) => l.id);
+  assert.ok(named.includes('expense-2') && named.includes('expense-3'), JSON.stringify(named));
+  for (const id of ['expense-1', 'expense-4', 'expense-5', 'expense-6', 'railway']) assert.ok(!named.includes(id), id);
+  const railwayCents = Math.round(cm.RECONCILED.lines.find((l) => l.id === 'railway').usdPerMonth * 100);
+  assert.strictEqual(pic.undatedMonthly.perMonthCents, codeMonthly - railwayCents + 1500 + 700);
+});

@@ -840,6 +840,7 @@ function HubCosts({ h, colors }) {
   );
   const upcoming = c.upcoming || [];
   const truncated = !!(h.expenses && h.expenses.truncated);
+  const undated = c.undatedMonthly && Array.isArray(c.undatedMonthly.lines) ? c.undatedMonthly : null;
   const ending = Array.isArray(c.ending) ? c.ending : [];
   return (
     <div id={HUB_CARD.costs.id} style={hubStyle.card}>
@@ -878,6 +879,27 @@ function HubCosts({ h, colors }) {
           note={u.estimated ? 'Worked out from the last charge date.' : null}
         />
       ))}
+
+      {/* The monthly bills the renewals cannot date (moneyHub.js, MONTHLY
+          BILLS THE RENEWAL TOTALS CANNOT DATE). The totals above count dated
+          bills only, and read as everything going out while the code's own
+          monthly bills were in none of them. Withheld with the totals when
+          the list is cut short. */}
+      {undated && undated.lines.length > 0 && !truncated && (
+        <>
+          <p style={hubStyle.kicker}>Monthly bills with no date</p>
+          <p style={hubStyle.note}>Charged every month on a day nothing here records, so they are in none of the renewals above: {hubMoney(undated.perMonthCents)} a month in all.</p>
+          {undated.lines.map((l) => (
+            <HubRow
+              key={`undated-${l.id}`}
+              navy={navy}
+              label={l.label}
+              value={`${hubMoney(l.perMonthCents)} a month`}
+              note={l.cadence === 'usage' ? 'Billed by use, at its latest figure.' : null}
+            />
+          ))}
+        </>
+      )}
 
       {/* Bills whose renewal is turned off (moneyHub.js, THE END OF A BILL):
           the day each stops, and what the burn does then. */}

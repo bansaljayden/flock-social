@@ -1804,3 +1804,39 @@ describe('a bill that ends rather than renews', () => {
     expect(within(document.getElementById('hub-expenses')).queryByText('Ending')).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// WHAT THE RENEWALS LEAVE OUT (2026-10-06). The renewal totals count the bills
+// the hub can date, and the monthly bills it cannot are named beside them, so
+// "next 30 days" is not read as everything going out.
+// ---------------------------------------------------------------------------
+describe('the monthly bills the renewals cannot date', () => {
+  const UNDATED = {
+    perMonthCents: 14347,
+    lines: [
+      { id: 'besttime-subscription', label: 'BestTime.app Pro, Package 100', cadence: 'monthly', perMonthCents: 11900 },
+      { id: 'railway', label: 'Railway (backend and Postgres)', cadence: 'usage', perMonthCents: 2447 },
+    ],
+  };
+
+  test('they are named beside the renewals, with what they come to', async () => {
+    await renderHub({ ...CONNECTED, costs: { ...COSTS, undatedMonthly: UNDATED } });
+    const costs = document.getElementById('hub-costs');
+    expect(await within(costs).findByText('Monthly bills with no date')).toBeInTheDocument();
+    expect(within(costs).getByText('Charged every month on a day nothing here records, so they are in none of the renewals above: $143.47 a month in all.')).toBeInTheDocument();
+    const railway = hubRow('Railway (backend and Postgres)');
+    expect(within(railway).getByText('$24.47 a month')).toBeInTheDocument();
+    expect(railway.textContent).toMatch(/Billed by use, at its latest figure\./);
+    expect(hubRow('BestTime.app Pro, Package 100').textContent).not.toMatch(/Billed by use/);
+  });
+
+  test('a list cut short withholds them with the totals', async () => {
+    await renderHub({
+      ...CONNECTED,
+      costs: { ...COSTS, status: 'error', reason: 'The expense list has more than 500 rows.', undatedMonthly: UNDATED },
+      expenses: { ...EXPENSES, truncated: true, limit: 500 },
+    });
+    await screen.findByText(/Totals withheld until the expense list fits/);
+    expect(screen.queryByText('Monthly bills with no date')).toBeNull();
+  });
+});
