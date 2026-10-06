@@ -1118,13 +1118,17 @@ export default function ProfileSettings({
                     INSIDE THE APP WITH PURCHASES ON, the web's sentence named
                     flockcorp.com as a place Pro is bought, which App Review
                     reads as steering (3.1.1), and it went quiet for an account
-                    whose Pro could not be read. So the app says only the App
-                    Store half, and an unknown answer gets it too. A web
-                    subscription is still cancelled with the account
-                    (backend/routes/users.js), so leaving that half out tells
-                    nobody anything untrue. */}
-                {(process.env.REACT_APP_PURCHASES !== 'off') ? (isNativeShell() ? ((entitlements?.paywallEnabled || isPro || entitlementsUnknown) && (
-                  <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>Deleting your account does not cancel Flock Pro bought in the App Store. It keeps renewing until you cancel it in your Apple ID settings, under Subscriptions.</p>
+                    whose Pro could not be read. So the app says both halves
+                    without naming where the second is bought: Pro from the App
+                    Store keeps renewing until it is cancelled in Apple ID
+                    settings, and a subscription Flock bills directly ends with
+                    the account (backend/routes/users.js cancels it). Each is
+                    true of whoever reads it. And it goes to an account that is
+                    Pro or whose Pro is unknown, never just because Pro is on
+                    sale (paywallEnabled is the global switch, and says nothing
+                    about this account). */}
+                {(process.env.REACT_APP_PURCHASES !== 'off') ? (isNativeShell() ? ((isPro || entitlementsUnknown) && (
+                  <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>Deleting your account does not cancel Flock Pro bought in the App Store. It keeps renewing until you cancel it in your Apple ID settings, under Subscriptions. If Flock bills you directly, your subscription is cancelled with the account.</p>
                 )) : ((entitlements?.paywallEnabled || isPro) && (
                   <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>Flock Pro bought on flockcorp.com is cancelled when you delete your account. Flock Pro bought in the App Store is not: cancel it first in your Apple ID settings, under Subscriptions.</p>
                 ))) : ((isPro || entitlementsUnknown) && (

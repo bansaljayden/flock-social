@@ -12,10 +12,14 @@
  * account whose Pro status could not be read lost the warning, while the build
  * that sells nothing already warned that account.
  *
- * Now, inside the app with purchases on, the sheet gives the App Store half
- * alone, to a subscriber, to anyone while Pro is on sale, and to an account
- * whose status is unknown. The website keeps its sentence and its rule, and the
- * build that sells nothing keeps its neutral one.
+ * Now, inside the app with purchases on, the sheet says both halves without
+ * naming where the second is bought: Pro from the App Store keeps renewing
+ * until it is cancelled in Apple ID settings, and a subscription Flock bills
+ * directly is cancelled with the account. Both are true of whoever reads them.
+ * It goes to a subscriber and to an account whose status is unknown, and not
+ * to everyone merely because Pro is on sale (paywallEnabled is a global
+ * switch, not a fact about this account). The website keeps its sentence and
+ * its rule, and the build that sells nothing keeps its neutral one.
  *
  * The real ProfileSettings is rendered with the sheet open, every prop given a
  * neutral value read off the screen's own signature (accountReconfirmInPlace
@@ -109,7 +113,7 @@ function sheet({ entitlements, isPro, entitlementsUnknown }) {
 // The sheet's own words, so nothing else on the You tab can answer for it.
 const sheetText = () => screen.getByText('Delete your account?').parentElement.textContent;
 
-const APP_STORE_NOTE = 'Deleting your account does not cancel Flock Pro bought in the App Store. It keeps renewing until you cancel it in your Apple ID settings, under Subscriptions.';
+const APP_STORE_NOTE = 'Deleting your account does not cancel Flock Pro bought in the App Store. It keeps renewing until you cancel it in your Apple ID settings, under Subscriptions. If Flock bills you directly, your subscription is cancelled with the account.';
 const WEB_NOTE = 'Flock Pro bought on flockcorp.com is cancelled when you delete your account. Flock Pro bought in the App Store is not: cancel it first in your Apple ID settings, under Subscriptions.';
 const NEUTRAL_NOTE = 'Deleting your account does not cancel a subscription paid through the App Store. Cancel it first in the Settings app: tap your name, then Subscriptions.';
 
@@ -146,7 +150,7 @@ afterEach(() => {
 describe('inside the app, with purchases on', () => {
   beforeEach(() => { inTheApp(); });
 
-  test.each(['unknown', 'failedRead', 'subscriber', 'onSale'])('%s: the App Store warning, and nothing about the website', async (state) => {
+  test.each(['unknown', 'failedRead', 'subscriber'])('%s: the warning, and nothing about the website', async (state) => {
     const { unmount } = await opened(state);
     const text = sheetText();
     expect(text).toContain(APP_STORE_NOTE);
@@ -155,14 +159,21 @@ describe('inside the app, with purchases on', () => {
     unmount();
   });
 
-  test('an account that is known not to have Pro, with nothing on sale, is not told about a subscription', async () => {
-    await opened('nothingSold');
-    expect(sheetText()).not.toMatch(/App Store|Subscriptions/);
+  // Pro on sale is a switch for everybody, not a fact about this account: an
+  // account the server says has no Pro is not told about a subscription.
+  test.each(['onSale', 'nothingSold'])('%s, and known not to have Pro: no warning about a subscription', async (state) => {
+    const { unmount } = await opened(state);
+    expect(sheetText()).not.toMatch(/App Store|Subscriptions|bills you/);
+    unmount();
   });
 
-  test('the warning says the subscription keeps renewing and where to stop it', () => {
-    expect(APP_STORE_NOTE).toMatch(/keeps renewing until you cancel it in your Apple ID settings, under Subscriptions/);
-    expect(APP_STORE_NOTE).not.toMatch(/—|\$\d|http/);
+  test('the warning is true of whoever reads it, and names no place to buy', () => {
+    // An App Store subscriber: it keeps renewing, and where to stop it.
+    expect(APP_STORE_NOTE).toMatch(/does not cancel Flock Pro bought in the App Store\. It keeps renewing until you cancel it in your Apple ID settings, under Subscriptions\./);
+    // A subscriber Flock bills itself: that one ends with the account
+    // (backend/routes/users.js closes the Stripe customer on deletion).
+    expect(APP_STORE_NOTE).toMatch(/If Flock bills you directly, your subscription is cancelled with the account\./);
+    expect(APP_STORE_NOTE).not.toMatch(/—|\$\d|http|flockcorp|website|on the web/i);
   });
 });
 

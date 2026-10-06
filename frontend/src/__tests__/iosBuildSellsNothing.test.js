@@ -244,10 +244,10 @@ describe('the You tab', () => {
     expect(note).toContain(`)) : ((entitlements?.paywallEnabled || isPro) && (\n                  <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>Flock Pro bought on flockcorp.com is cancelled when you delete your account. Flock Pro bought in the App Store is not: cancel it first in your Apple ID settings, under Subscriptions.</p>`);
   });
 
-  test('deletion, unset, in the app: the App Store warning alone, to the same accounts the off build warns and more', () => {
+  test('deletion, unset, in the app: a warning true of both stores, to the same accounts the off build warns', () => {
     // deletionNoteInApp.test.js renders every state; this pins the shape.
     const note = deletionNote();
-    expect(note).toContain(`{${ON} ? (isNativeShell() ? ((entitlements?.paywallEnabled || isPro || entitlementsUnknown) && (\n                  <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>Deleting your account does not cancel Flock Pro bought in the App Store. It keeps renewing until you cancel it in your Apple ID settings, under Subscriptions.</p>`);
+    expect(note).toContain(`{${ON} ? (isNativeShell() ? ((isPro || entitlementsUnknown) && (\n                  <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>Deleting your account does not cancel Flock Pro bought in the App Store. It keeps renewing until you cancel it in your Apple ID settings, under Subscriptions. If Flock bills you directly, your subscription is cancelled with the account.</p>`);
   });
 
   test('deletion, off: a subscriber still gets the App Store warning and how to cancel, with nothing sold', () => {
