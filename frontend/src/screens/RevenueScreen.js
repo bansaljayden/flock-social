@@ -1010,16 +1010,24 @@ function hubExpenseAmount(x) {
 }
 
 // What the burn does on the day a bill set to end stops (moneyHub.js, THE END
-// OF A BILL): down by its share a month for a charge, up for a credit. null
-// for a bill in another currency, which was never in the dollar burn.
+// OF A BILL), as the server works it out: a bill that stood in for a code line
+// gives that line back, so a $149 bill in place of a $119 line takes $30 off,
+// not $149 (review 2026-10-06). A payload from before burnChangeCents has only
+// the bill's own share. null for a bill in another currency, which was never
+// in the dollar burn.
 function hubBurnMove(e) {
-  if (!Number.isFinite(e.perMonthCents) || e.perMonthCents === 0) return null;
-  return `the burn ${e.perMonthCents > 0 ? 'falls' : 'rises'} by ${hubMoney(Math.abs(e.perMonthCents))} a month`;
+  const change = Number.isFinite(e.burnChangeCents) ? e.burnChangeCents
+    : (Number.isFinite(e.perMonthCents) ? -e.perMonthCents : null);
+  if (!Number.isFinite(change) || change === 0) return null;
+  return `the burn ${change < 0 ? 'falls' : 'rises'} by ${hubMoney(Math.abs(change))} a month`;
 }
 
 function hubEndingWords(e) {
   const move = hubBurnMove(e);
-  return `No ${e.isCredit ? 'credit' : 'charge'} on or after this day.${move ? ` Then ${move}.` : ''}`;
+  const back = Array.isArray(e.restores) && e.restores.length > 0
+    ? `, as the code's ${hubAnd(e.restores)} ${e.restores.length === 1 ? 'counts' : 'count'} again`
+    : '';
+  return `No ${e.isCredit ? 'credit' : 'charge'} on or after this day.${move ? ` Then ${move}${back}.` : ''}`;
 }
 
 const HUB_EMPTY_EXPENSE = {
