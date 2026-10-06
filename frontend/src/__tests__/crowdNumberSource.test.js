@@ -316,7 +316,7 @@ describe('the strip of nearby peaks is captioned from the rows drawn, one per ve
 // THE NO-CURVE FALLBACK. With CROWD_NO_CURVE_FALLBACK on, the server gives a
 // venue with no curve of its own the artifact's typical level for its
 // category at that weekday and hour: predictionMethod
-// 'category_curve_no_baseline', numberSource 'category_typical'. Every
+// 'rule_engine_category_table', numberSource 'category_typical'. Every
 // surface says what that is, typical for this kind of place at that hour, and
 // never this venue's pattern, the model or a live reading.
 // ---------------------------------------------------------------------------
@@ -325,7 +325,10 @@ describe('the category table\'s number is typical for this kind of place, never 
   const NOT_THIS_VENUE = /this venue|crowd model|\blive\b|usual pattern/;
 
   test('its method is the server\'s, and its source has its own words, adjusted or not', () => {
-    expect(NO_CURVE_FALLBACK_METHOD).toBe('category_curve_no_baseline');
+    expect(NO_CURVE_FALLBACK_METHOD).toBe('rule_engine_category_table');
+    // A rule_engine name, so builds that show LIVE over any other method
+    // never show it over this one.
+    expect(NO_CURVE_FALLBACK_METHOD.startsWith('rule_engine_')).toBe(true);
     expect(numberSourcePhrase('category_typical')).toBe('what is typical for this kind of place at this hour of the week');
     expect(numberSourcePhrase('category_typical_adjusted'))
       .toBe(`what is typical for this kind of place at this hour of the week, ${R}`);

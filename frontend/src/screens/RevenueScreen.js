@@ -1679,15 +1679,17 @@ const HUB_METHOD_WORDS = {
   rule_engine_fallback: 'an error on the request',
   // The server's no-curve fallback (CROWD_NO_CURVE_FALLBACK): a venue with no
   // baseline and 200+ reviews, given its category's typical level instead of
-  // the rule engine. Named by what it is, never as the venue's own data.
-  category_curve_no_baseline: "the venue has no baseline yet, so its category's typical level for the hour",
+  // the rule engine. Named by what it is, never as the venue's own data. Its
+  // method starts with rule_engine for older app builds' sake, so it has words
+  // of its own here, keyed on the exact name.
+  rule_engine_category_table: "the venue has no baseline yet, so its category's typical level for the hour",
   owner_report: "the venue owner's live report",
   unknown: 'not recorded',
 };
 const hubMethodWords = (m) => HUB_METHOD_WORDS[m] || m;
 // The two fallbacks for a venue with no baseline, both of which end once the
 // collector has read the venue.
-const HUB_NO_BASELINE_METHODS = ['rule_engine_no_baseline', 'category_curve_no_baseline'];
+const HUB_NO_BASELINE_METHODS = ['rule_engine_no_baseline', 'rule_engine_category_table'];
 
 // The two things that make a forecast from a venue's own data.
 const HUB_FROM_CURVE = "the venue's own curve and live readings";
