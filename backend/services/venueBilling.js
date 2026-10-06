@@ -210,6 +210,49 @@ async function venueCustomerIdFor(userId) {
   return rows[0] ? rows[0].stripe_customer_id || null : null;
 }
 
+// EVERY STRIPE CUSTOMER A ROOST PLAN OF THIS ACCOUNT IS ON RECORD WITH. The
+// one on the venue profile is the customer checkout made. A plan sold by hand
+// (the founding rate) is made in the Stripe dashboard on a customer of the
+// operator's making, and was recorded only in venue_subscriptions, so the
+// portal told that owner there was nothing to manage and account deletion
+// left its card billed. The writer now records every subscription's customer
+// (venue_stripe_subscriptions) and puts it on the profile when the profile
+// has none, and the portal and deletion read all of them. The profile's own
+// customer first.
+const CUSTOMERS_SQL = `SELECT stripe_customer_id FROM venue_profiles WHERE user_id = $1 AND stripe_customer_id IS NOT NULL
+  UNION ALL
+  SELECT stripe_customer_id FROM venue_subscriptions WHERE user_id = $1 AND stripe_customer_id IS NOT NULL
+  UNION ALL
+  SELECT stripe_customer_id FROM venue_stripe_subscriptions WHERE user_id = $1 AND stripe_customer_id IS NOT NULL`;
+
+async function venueCustomerIdsFor(userId) {
+  const r = await pool.query(CUSTOMERS_SQL, [userId]);
+  const rows = r && Array.isArray(r.rows) ? r.rows : [];
+  const ids = [];
+  for (const row of rows) {
+    const id = row && typeof row.stripe_customer_id === 'string' ? row.stripe_customer_id : null;
+    if (id && !ids.includes(id)) ids.push(id);
+  }
+  return ids;
+}
+
+// The newest Roost subscription this account holds, on any of its customers,
+// with the customer it is on, or null. Only subscriptions naming this account.
+async function latestVenueSubscription(userId, customerIds, requestOptions) {
+  let latest = null;
+  for (const customerId of customerIds) {
+    const list = await stripe().subscriptions.list({ customer: customerId, status: 'all', limit: 10 }, requestOptions);
+    const data = list && Array.isArray(list.data) ? list.data : [];
+    for (const s of data) {
+      if (!isVenueObject(s) || venueUserIdFrom(s.metadata) !== userId) continue;
+      if (!latest || (Number(s.created) || 0) > (Number(latest.subscription.created) || 0)) {
+        latest = { subscription: s, customerId };
+      }
+    }
+  }
+  return latest;
+}
+
 // Account deletion. Deleting the customer cancels its Roost subscription at
 // once. THROWS if Stripe would not do it, so routes/users.js can refuse the
 // deletion instead of leaving a card being billed for a venue that is gone.
@@ -221,17 +264,23 @@ async function venueCustomerIdFor(userId) {
 // went on billing a venue nobody could cancel from inside Flock. A customer on
 // file that was not closed is a refusal now. No customer on file is still an
 // ordinary false: there is nothing to cancel.
+//
+// EVERY CUSTOMER ON RECORD, not only the profile's (venueCustomerIdsFor): a
+// plan sold by hand lives on a customer checkout never made, and the deletion
+// used to skip it and leave its card billed for an account that was gone.
 async function closeVenueCustomer(userId) {
-  const customerId = await venueCustomerIdFor(userId);
-  if (!customerId) return false;
-  const closed = await billing.closeCustomer(customerId);
-  if (!closed) {
-    throw refusal(503, `Roost Stripe customer ${customerId} was not cancelled; Stripe is not configured`, 'STRIPE_NOT_CONFIGURED');
+  const customerIds = await venueCustomerIdsFor(userId);
+  if (customerIds.length === 0) return false;
+  for (const customerId of customerIds) {
+    const closed = await billing.closeCustomer(customerId);
+    if (!closed) {
+      throw refusal(503, `Roost Stripe customer ${customerId} was not cancelled; Stripe is not configured`, 'STRIPE_NOT_CONFIGURED');
+    }
+    await pool.query(
+      'UPDATE venue_profiles SET stripe_customer_id = NULL WHERE user_id = $1 AND stripe_customer_id = $2::text',
+      [userId, customerId]
+    );
   }
-  await pool.query(
-    'UPDATE venue_profiles SET stripe_customer_id = NULL WHERE user_id = $1 AND stripe_customer_id = $2::text',
-    [userId, customerId]
-  );
   return true;
 }
 
@@ -408,9 +457,14 @@ async function buildVenueCheckout(user, plan) {
   return session.url;
 }
 
+// The portal opens on the customer that holds the account's newest Roost
+// subscription, on any customer on record (venueCustomerIdsFor), and on the
+// profile's own customer when none of them holds one.
 async function createVenuePortal(userId) {
-  const customerId = await venueCustomerIdFor(userId);
-  if (!customerId) throw refusal(404, 'There is no Roost subscription on this account.', 'NO_WEB_SUBSCRIPTION');
+  const customerIds = await venueCustomerIdsFor(userId);
+  if (customerIds.length === 0) throw refusal(404, 'There is no Roost subscription on this account.', 'NO_WEB_SUBSCRIPTION');
+  const latest = customerIds.length > 1 ? await latestVenueSubscription(userId, customerIds) : null;
+  const customerId = latest ? latest.customerId : customerIds[0];
   const session = await stripe().billingPortal.sessions.create({
     customer: customerId,
     return_url: `${billing.webBase()}/app?venue_billing=manage`,
@@ -596,6 +650,18 @@ const RECORD_SUBSCRIPTION_SQL = `INSERT INTO venue_stripe_subscriptions (stripe_
     google_place_id = CASE WHEN $4::varchar IS NOT NULL THEN $4::varchar ELSE venue_stripe_subscriptions.google_place_id END
   RETURNING google_place_id`;
 
+// THE CUSTOMER GOES WHERE THE PORTAL LOOKS FIRST. Checkout was the only
+// writer of venue_profiles.stripe_customer_id, so a plan sold by hand left it
+// empty. The writer fills it from the subscription's customer when the
+// profile has none, and never takes one another venue already holds (the
+// column is unique; an operator who made two venues' plans on one customer
+// gets the grant written and that customer left where it is).
+const FILL_CUSTOMER_SQL = `UPDATE venue_profiles SET stripe_customer_id = $2::text
+   WHERE user_id = $1::int
+     AND stripe_customer_id IS NULL
+     AND NOT EXISTS (SELECT 1 FROM venue_profiles other
+                      WHERE other.stripe_customer_id = $2::text AND other.user_id <> $1::int)`;
+
 // ONE SYNC PER VENUE AT A TIME, AND THE LAST ONE READS LAST. Every caller (the
 // webhook, once per subscription event, and the confirm route after the
 // redirect back) re-reads the subscription and writes what it says, and at the
@@ -711,6 +777,7 @@ async function syncVenueSubscription(subscriptionId) {
     const boundPlace = recorded && Array.isArray(recorded.rows) && recorded.rows[0]
       ? recorded.rows[0].google_place_id
       : metaPlace;
+    if (customerId) await client.query(FILL_CUSTOMER_SQL, [userId, customerId]);
     const r = await client.query(SYNC_SQL, [
       userId, g.grantTier, g.status, g.expiresAt, customerId || null, sub.id, g.priceId,
       g.periodEnd, g.cancelAt, g.trialEnd, g.live, g.cachedTier, boundPlace || null,
@@ -889,6 +956,8 @@ module.exports = {
   handleVenueEvent,
   revokeRefundedSubscription,
   venueCustomerIdFor,
+  venueCustomerIdsFor,
+  latestVenueSubscription,
   venueTrialUsed,
   closeVenueCustomer,
   venueCheckoutKey,

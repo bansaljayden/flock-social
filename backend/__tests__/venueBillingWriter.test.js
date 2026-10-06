@@ -41,8 +41,13 @@ const invoicePayments = {};
 const invoices = {};
 // Every cancel Stripe was asked for, in order, with its request options.
 const cancels = [];
+// Every customer deleted, in order (account deletion closes them).
+const deletedCustomers = [];
 function FakeStripe() {
   return {
+    customers: {
+      del: async (id) => { deletedCustomers.push(id); return { id, deleted: true }; },
+    },
     subscriptions: {
       retrieve: async (id, params, options) => {
         const answer = subs[id] ? JSON.parse(JSON.stringify(subs[id])) : subs[id];
@@ -968,4 +973,70 @@ test('a claim paying for Roost cannot be re-pointed at another listing until the
   assert.strictEqual(after.status, 200, after.text);
   await testPool.query('UPDATE venue_profiles SET verified = true WHERE user_id = $1', [id]);
   assert.strictEqual((await state(id)).served, 'free');
+});
+
+// ---------------------------------------------------------------------------
+// A PLAN SOLD BY HAND IS ON RECORD WHERE THE PORTAL AND DELETION LOOK.
+//
+// The founding rate is sold by hand: an operator makes the subscription in the
+// Stripe dashboard, with venue metadata, on a customer of their own making.
+// The writer recorded it in venue_subscriptions, but venue_profiles'
+// stripe_customer_id was only ever written by checkout, and the portal and
+// account deletion read nothing else. The owner could not reach billing, and
+// deleting the account skipped the cancellation and left the card billed.
+// ---------------------------------------------------------------------------
+
+function foundingSub(id, userId, customer) {
+  return sub(id, userId, 'active', { customer, ...period('price_roost_founding', Math.floor(Date.now() / 1000) + 30 * DAY_S) });
+}
+
+test('a hand-sold subscription records its customer on the venue, so the owner can reach billing', async () => {
+  process.env.STRIPE_PRICE_ROOST_FOUNDING = 'price_roost_founding';
+  try {
+    const id = await venue({ verified: true });
+    await venueBilling.syncVenueSubscription(foundingSub('sub_founding_1', id, 'cus_FOUNDING_1'));
+    assert.strictEqual((await state(id)).served, 'pro');
+    const p = await testPool.query('SELECT stripe_customer_id FROM venue_profiles WHERE user_id = $1', [id]);
+    assert.strictEqual(p.rows[0].stripe_customer_id, 'cus_FOUNDING_1', 'the customer behind the plan was never put where the portal looks');
+  } finally {
+    delete process.env.STRIPE_PRICE_ROOST_FOUNDING;
+  }
+});
+
+test('a customer already on the venue is kept, and one held by another venue is never copied over', async () => {
+  process.env.STRIPE_PRICE_ROOST_FOUNDING = 'price_roost_founding';
+  try {
+    const mine = await venue({ verified: true });
+    const other = await venue({ verified: true });
+    await testPool.query("UPDATE venue_profiles SET stripe_customer_id = 'cus_FROM_CHECKOUT' WHERE user_id = $1", [mine]);
+    await testPool.query("UPDATE venue_profiles SET stripe_customer_id = 'cus_SHARED_BY_MISTAKE' WHERE user_id = $1", [other]);
+    await venueBilling.syncVenueSubscription(foundingSub('sub_founding_2', mine, 'cus_FOUNDING_2'));
+    const kept = await testPool.query('SELECT stripe_customer_id FROM venue_profiles WHERE user_id = $1', [mine]);
+    assert.strictEqual(kept.rows[0].stripe_customer_id, 'cus_FROM_CHECKOUT');
+
+    // An operator who made the plan on another venue's customer: the sync
+    // must still write the grant, not fail on the customer's unique index.
+    const third = await venue({ verified: true });
+    await venueBilling.syncVenueSubscription(foundingSub('sub_founding_3', third, 'cus_SHARED_BY_MISTAKE'));
+    assert.strictEqual((await state(third)).served, 'pro');
+    const none = await testPool.query('SELECT stripe_customer_id FROM venue_profiles WHERE user_id = $1', [third]);
+    assert.strictEqual(none.rows[0].stripe_customer_id, null);
+  } finally {
+    delete process.env.STRIPE_PRICE_ROOST_FOUNDING;
+  }
+});
+
+test('deleting the account closes every customer a Roost plan was recorded on, not only the one checkout made', async () => {
+  process.env.STRIPE_PRICE_ROOST_FOUNDING = 'price_roost_founding';
+  try {
+    const id = await venue({ verified: true });
+    await testPool.query("UPDATE venue_profiles SET stripe_customer_id = 'cus_CHECKOUT_4' WHERE user_id = $1", [id]);
+    await venueBilling.syncVenueSubscription(foundingSub('sub_founding_4', id, 'cus_FOUNDING_4'));
+    deletedCustomers.length = 0;
+    await venueBilling.closeVenueCustomer(id);
+    assert.deepStrictEqual([...deletedCustomers].sort(), ['cus_CHECKOUT_4', 'cus_FOUNDING_4'],
+      'the hand-sold plan\'s customer was left billing after the account went');
+  } finally {
+    delete process.env.STRIPE_PRICE_ROOST_FOUNDING;
+  }
 });
