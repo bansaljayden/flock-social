@@ -50,7 +50,8 @@ test('the review gate is said before the form, not after it', () => {
 });
 
 test("Birdie's meter is seeded from entitlements, not from the first reply", () => {
-  expect(app).toMatch(/if \(typeof data\?\.birdie\?\.remaining === 'number'\) setAiRemaining\(data\.birdie\.remaining\);/);
+  // The reset time is seeded beside it (birdieWindowAndDemoLock.test.js).
+  expect(app).toMatch(/if \(typeof data\?\.birdie\?\.remaining === 'number'\) \{\s*setAiRemaining\(data\.birdie\.remaining\);/);
 });
 
 // ---------------------------------------------------------------------------
