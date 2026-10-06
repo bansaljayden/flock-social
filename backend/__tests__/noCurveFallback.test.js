@@ -20,7 +20,9 @@
 //     version, its sources, baselineScore, and the figure it publishes
 //     (within-15 41.3 on 4,248 rows) with its population;
 //   * the row: guessCategory over the first three Google types, the ones the
-//     table was measured on, never the whole list;
+//     table was measured on, never the whole list, and only when those types
+//     name one of its categories (an airport, a hotel or no types at all is
+//     not given the catch-all restaurant row);
 //   * the presence probe: cached (a no for an hour, a yes for a day), charged
 //     to the venue-lookup budget, and silent on a refusal or a failure;
 //   * the strip, the coverage counter, and the words crowdEngine gives it.
@@ -307,11 +309,11 @@ test('the category is guessCategory(types), the hour and weekday are the scored 
     const late = new Date(Date.UTC(2026, 8, 7, 4, 0, 0)); // Monday 4 AM
     const r2 = await p.predictBusyness(venue(), WX, late);
     assert.equal(r2.score, Math.round(tableValue('bar', 1, 4)));
-    // No types at all is the model path's default category too.
-    const r3 = await p.predictBusyness(venue({ types: [] }), WX, TS);
+    // A restaurant is named by its own types (guessCategory has no test for
+    // one: it is what is left over), and then it gets the restaurant row.
+    const r3 = await p.predictBusyness(venue({ types: ['italian_restaurant', 'food', 'point_of_interest'] }), WX, TS);
+    assert.equal(r3.predictionMethod, METHOD);
     assert.equal(r3.score, Math.round(tableValue('restaurant')));
-    const r4 = await p.predictBusyness(venue({ types: 'bar' }), WX, TS);
-    assert.equal(r4.score, Math.round(tableValue('restaurant')), 'types that are not a list are no types');
   });
   for (const [stored, served] of [[150, 100], [-5, 0], [0.4, 0], [99.5, 100]]) {
     await withPredictor({
@@ -345,6 +347,50 @@ test('the category is read off the first three Google types, the ones the table 
     assert.notEqual(Math.round(tableValue('bar')), Math.round(tableValue('nightclub')));
     const r2 = await p.predictBusyness(venue({ types: clubFourth }), WX, TS);
     assert.equal(r2.score, Math.round(tableValue('bar')));
+  });
+});
+
+test('a place the table has no row for keeps today\'s answer: guessCategory\'s catch-all restaurant is not a category', async () => {
+  // guessCategory answers 'restaurant' for any list it does not recognise and
+  // for none. Served, every one of these would get the restaurant row as what
+  // is typical for its kind of place, with a figure measured on none of them.
+  const unnamed = [
+    ['airport', 'point_of_interest', 'establishment'],
+    ['lodging', 'point_of_interest', 'establishment'],
+    ['car_repair', 'point_of_interest', 'establishment'],
+    ['hospital', 'health', 'point_of_interest'],
+    ['stadium', 'sports_complex', 'arena'],
+    // 'food' is on supermarkets; it names no restaurant.
+    ['supermarket', 'grocery_store', 'food'],
+    // A restaurant fourth is past the three types the table was measured on.
+    ['hotel', 'lodging', 'point_of_interest', 'restaurant'],
+    // guessCategory names none of these either, so the study scored this bar
+    // on the restaurant row; it keeps the rule engine now.
+    ['bar_and_grill', 'gastropub', 'sports_bar'],
+    // No types, or types that are not a list, name nothing.
+    [], 'bar', null, undefined,
+  ];
+  await withPredictor({ env: { [SWITCH]: ON } }, async (p, db) => {
+    for (const types of unnamed) {
+      const v = venue({ types });
+      assert.deepStrictEqual(await p.predictBusyness(v, WX, TS), todaysAnswer(v, WX, TS), JSON.stringify(types));
+    }
+    assert.equal(db.presence().length, 0, 'every one refused before the probe');
+    // A restaurant its types name keeps the row, with or without the plain type.
+    for (const types of [['restaurant', 'food', 'point_of_interest'], ['sushi_restaurant', 'point_of_interest', 'establishment']]) {
+      const r = await p.predictBusyness(venue({ types }), WX, TS);
+      assert.equal(r.predictionMethod, METHOD, JSON.stringify(types));
+      assert.equal(r.score, Math.round(tableValue('restaurant')), JSON.stringify(types));
+    }
+    // The rule on its own: a named category, or null.
+    const { noCurveFallbackCategory } = p._internals;
+    assert.equal(noCurveFallbackCategory(['night_club', 'bar']), 'nightclub');
+    assert.equal(noCurveFallbackCategory(['amusement_park', 'park']), 'entertainment');
+    assert.equal(noCurveFallbackCategory(['fast_food_restaurant']), 'fast_food');
+    assert.equal(noCurveFallbackCategory(['steak_house', 'american_restaurant']), 'restaurant');
+    assert.equal(noCurveFallbackCategory(['airport']), null);
+    assert.equal(noCurveFallbackCategory(['food', 'point_of_interest']), null);
+    assert.equal(noCurveFallbackCategory([]), null);
   });
 });
 
@@ -613,6 +659,9 @@ test('the published figure is pinned: within-15 41.3 on 4,248 rows, with what it
     assert.match(I.NO_CURVE_FALLBACK_POPULATION, /Lehigh and Miami/);
     assert.match(I.NO_CURVE_FALLBACK_POPULATION, /own curve withheld/);
     assert.match(I.NO_CURVE_FALLBACK_POPULATION, /200\+ Google reviews/);
+    // The category gate is part of the policy the figure describes (re-read
+    // with it on the same rows: 41.29, published as 41.3).
+    assert.match(I.NO_CURVE_FALLBACK_POPULATION, /first three Google types name one of its categories/);
     assert.notEqual(I.NO_CURVE_FALLBACK_POPULATION, I.SERVE_MEASURED_POPULATION);
     assert.equal(I.NO_CURVE_FALLBACK_MIN_REVIEWS, 200);
     assert.equal(I.NO_CURVE_FALLBACK_FITTED_ON, '2.6.0-starling');

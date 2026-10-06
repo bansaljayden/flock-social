@@ -4146,9 +4146,11 @@ function servedConfidence({ accuracy, qmapApplied, hasWeather, curveOffset, nowc
 //   * no ml_venue_baselines row for the venue at all (venueHasCurve). A venue
 //     whose own curve is zero at this hour is closed or empty by its own
 //     pattern, and its category's typical level must not be put over that;
-//   * a finite value in the table for guessCategory over the venue's first
-//     three Google types (NO_CURVE_FALLBACK_TYPES_READ) at the weekday and
-//     hour buildFeatureMap reads off the same timestamp.
+//   * a category named by the venue's own first three Google types
+//     (NO_CURVE_FALLBACK_TYPES_READ, noCurveFallbackCategory), never
+//     guessCategory's catch-all 'restaurant' for a list it did not recognise;
+//   * a finite value in the table for that category at the weekday and hour
+//     buildFeatureMap reads off the same timestamp.
 //
 // WHAT IT IS CALLED, everywhere. predictionMethod NO_CURVE_FALLBACK_METHOD:
 // never 'ml', which services/moneyHub.js and the coverage counter read as the
@@ -4172,12 +4174,12 @@ const NO_CURVE_FALLBACK_MIN_REVIEWS = 200;
 const NO_CURVE_FALLBACK_FITTED_ON = '2.6.0-starling';
 
 // WHAT THE CONFIDENCE FIGURE IS for a number the table made: within-15 of the
-// gated policy (this table at 200 or more reviews, the rule engine below) on
-// the scored window the switches above were measured on, each venue scored with
-// its own curve withheld. Published with its own population string, the way
-// SERVE_MEASURED is, so it can never be read as the model's figure or the
-// switches'.
-const NO_CURVE_FALLBACK_POPULATION = 'live readings 2026-09-06..08 (Lehigh and Miami, local 2026-09-08 export), each venue scored with its own curve withheld; this table for venues with 200+ Google reviews, the rule engine below';
+// gated policy (this table at 200 or more reviews for a place whose types name
+// one of its categories, the rule engine for the rest) on the scored window the
+// switches above were measured on, each venue scored with its own curve
+// withheld. Published with its own population string, the way SERVE_MEASURED
+// is, so it can never be read as the model's figure or the switches'.
+const NO_CURVE_FALLBACK_POPULATION = 'live readings 2026-09-06..08 (Lehigh and Miami, local 2026-09-08 export), each venue scored with its own curve withheld; this table for venues with 200+ Google reviews whose first three Google types name one of its categories, the rule engine for the rest';
 const NO_CURVE_FALLBACK_MEASURED = Object.freeze({ within15: 41.3, rows: 4248 });
 
 // THE FIRST THREE GOOGLE TYPES, because those are the types the table was
@@ -4189,6 +4191,34 @@ const NO_CURVE_FALLBACK_MEASURED = Object.freeze({ within15: 41.3, rows: 4248 })
 // 'food', 'bar'] was measured as a restaurant, 39 ("Not Busy") on a Friday at
 // 10 PM, and read whole it is a bar, 66. So the row is read off the same three.
 const NO_CURVE_FALLBACK_TYPES_READ = 3;
+
+// ONLY A KIND OF PLACE THE TABLE HAS A ROW FOR, named by the venue's own types.
+// guessCategory answers 'restaurant' for every type list it does not recognise
+// and for an empty one. That is right for the model's category feature, which
+// needs some category, and wrong here: an airport, a hotel, a hospital or a car
+// repair shop would be served the restaurant row as what is typical for that
+// kind of place, with a figure measured on places none of which was one. Every
+// row the study scored was a corpus venue in one of the table's thirteen
+// categories. So the category has to come from a type that names it. Nothing in
+// guessCategory tests for a restaurant (a restaurant is what is left over), so
+// 'restaurant' is kept only when the types say restaurant: 'restaurant' itself
+// or any '*_restaurant'. 'food' does not count; Google puts it on supermarkets.
+// Null sends the venue to the rule engine, which has its own curves for the
+// kinds of place the table has none for.
+//
+// Re-read on the study's own rows with this gate: the published policy's
+// within-15 on the 4,248 score-window rows is 41.29 against 41.34 without it,
+// so the published 41.3 stands. The gate sends about 2 in 100 of the 200+
+// review rows back to the rule engine: bars typed only bar_and_grill,
+// gastropub and sports_bar, wineries, tea houses, a sporting goods store.
+function noCurveFallbackCategory(types) {
+  if (!types.length) return null;
+  const category = guessCategory(types);
+  if (category !== 'restaurant') return category;
+  const saysRestaurant = types.some((t) => typeof t === 'string'
+    && (t === 'restaurant' || t.endsWith('_restaurant')));
+  return saysRestaurant ? category : null;
+}
 
 let unknownNoCurveFallbackLogged = false;
 
@@ -4213,7 +4243,8 @@ function noCurveFallbackValue(venue, ts) {
   const reviews = storedNumber(venue.user_ratings_total ?? venue.review_count);
   if (reviews === null || reviews < NO_CURVE_FALLBACK_MIN_REVIEWS) return null;
   const types = Array.isArray(venue.types) ? venue.types.slice(0, NO_CURVE_FALLBACK_TYPES_READ) : [];
-  const category = guessCategory(types);
+  const category = noCurveFallbackCategory(types);
+  if (category === null) return null;
   const raw = storedNumber((metadata.category_baselines || {})[`${category}_${ts.getDay()}_${ts.getHours()}`]);
   if (raw === null) return null;
   return Math.max(0, Math.min(100, Math.round(raw)));
@@ -5307,6 +5338,7 @@ module.exports = {
     // __tests__/noCurveFallback.test.js.
     noCurveFallbackEnabled,
     noCurveFallbackValue,
+    noCurveFallbackCategory,
     venueHasCurve,
     NO_CURVE_FALLBACK_SWITCH,
     NO_CURVE_FALLBACK_METHOD,
