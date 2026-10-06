@@ -1419,7 +1419,7 @@ export default function VenueDashboard({
           {intelReady && venueProfile?.google_place_id && (
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
               <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 6px' }}>Live Badge for Your Website</h3>
-              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 10px', lineHeight: 1.5 }}>A live "how busy is it" badge, updated every 15 minutes by Flock's crowd model. Paste this where your site's HTML goes:</p>
+              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 10px', lineHeight: 1.5 }}>A live "how busy is it" badge, updated every 15 minutes from Flock's crowd numbers. Paste this where your site's HTML goes:</p>
               <button className="hit44"
                 onClick={async () => {
                   const snippet = `<img src="${BASE_URL}/api/badge/${venueProfile.google_place_id}.svg" alt="How busy is ${venueData.name}? Live from Flock" height="36">`;
