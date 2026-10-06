@@ -41,6 +41,8 @@ test('a deletion refused over billing keeps its sentence on the web and carries 
   expect(users).toMatch(/error: "We couldn't cancel your Flock Pro web subscription just now\. Try again in a minute\.", code: 'SUBSCRIPTION_NOT_CANCELLED' \}/);
   expect(users).toMatch(/error: "We couldn't cancel your Roost subscription just now\. Try again in a minute\.", code: 'SUBSCRIPTION_NOT_CANCELLED' \}/);
   expect(users).toMatch(/error: 'Your Flock Pro web subscription was cancelled, but the account could not be deleted just now\. Please try again in a minute\.', code: 'SUBSCRIPTION_CANCELLED_ACCOUNT_KEPT' \}/);
+  // Pro cancelled and Roost not: the account is kept, and both are said.
+  expect(users).toMatch(/error: 'Your Flock Pro web subscription was cancelled, but your Roost subscription could not be cancelled just now, so your account was not deleted\. Try again in a minute\.', code: 'SUBSCRIPTION_PARTLY_CANCELLED' \}/);
   expect(profile).toMatch(/\} else \{\s*setDeleteError\(err\.message \|\| 'Could not delete account\. Try again\.'\);/);
   // Only a build that sells nothing swaps the wording, and only for a code it knows.
   expect(profile).toMatch(/else if \(process\.env\.REACT_APP_PURCHASES === 'off' && DELETE_BILLING_NEUTRAL\[err\?\.code\]\)/);

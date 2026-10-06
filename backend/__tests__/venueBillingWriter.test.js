@@ -47,8 +47,10 @@ const refundsMade = [];
 const completedSessions = {};
 // Every cancel Stripe was asked for, in order, with its request options.
 const cancels = [];
-// Every customer deleted, in order (account deletion closes them).
+// Every customer deleted, in order (account deletion closes them), and the
+// ones Stripe refuses to delete.
 const deletedCustomers = [];
+const refuseDeletes = new Set();
 // Checkout, for the tests that buy: customers made, sessions made, sessions
 // still open (payable) and the ones expired.
 let customersMade = 0;
@@ -65,7 +67,12 @@ function page(all, limit = 10, after = null) {
 function FakeStripe() {
   return {
     customers: {
-      del: async (id) => { deletedCustomers.push(id); return { id, deleted: true }; },
+      del: async (id) => {
+        if (refuseDeletes.has(id)) throw Object.assign(new Error('simulated Stripe outage'), { statusCode: 500 });
+        deletedCustomers.push(id);
+        for (const s of Object.values(subs)) if (s && s.customer === id) s.status = 'canceled';
+        return { id, deleted: true };
+      },
       create: async (args, opts) => { customersMade += 1; return { id: `cus_MADE_${customersMade}`, metadata: args.metadata, idempotencyKey: opts && opts.idempotencyKey }; },
       // A deleted customer still answers, the way Stripe's does: deleted: true.
       retrieve: async (id) => (deletedCustomers.includes(id) ? { id, deleted: true } : { id }),
@@ -1164,6 +1171,32 @@ test('deleting the account closes every customer a Roost plan was recorded on, n
     await venueBilling.closeVenueCustomer(id);
     assert.deepStrictEqual(deletedCustomers.slice(before).sort(), ['cus_CHECKOUT_4', 'cus_FOUNDING_4'],
       'the hand-sold plan\'s customer was left billing after the account went');
+  } finally {
+    delete process.env.STRIPE_PRICE_ROOST_FOUNDING;
+  }
+});
+
+test('a deletion that fails on a second customer says which plans it had already cancelled', async () => {
+  process.env.STRIPE_PRICE_ROOST_FOUNDING = 'price_roost_founding';
+  try {
+    const id = await venue({ verified: true });
+    await testPool.query("UPDATE venue_profiles SET stripe_customer_id = 'cus_CHECKOUT_PART' WHERE user_id = $1", [id]);
+    await venueBilling.syncVenueSubscription(sub('sub_part_checkout', id, 'active', { customer: 'cus_CHECKOUT_PART' }));
+    await venueBilling.syncVenueSubscription(foundingSub('sub_part_founding', id, 'cus_FOUNDING_PART'));
+    refuseDeletes.add('cus_FOUNDING_PART');
+    let thrown = null;
+    try {
+      await venueBilling.closeVenueCustomer(id);
+    } catch (err) {
+      thrown = err;
+    } finally {
+      refuseDeletes.delete('cus_FOUNDING_PART');
+    }
+    assert.ok(thrown, 'a customer Stripe would not close was passed over');
+    assert.deepStrictEqual(thrown.cancelledBefore, ['sub_part_checkout'], 'the plan already cancelled before the failure was not reported');
+    // A retry finishes it, and reports what it ended.
+    const done = await venueBilling.closeVenueCustomer(id);
+    assert.deepStrictEqual(done.cancelled, ['sub_part_founding']);
   } finally {
     delete process.env.STRIPE_PRICE_ROOST_FOUNDING;
   }

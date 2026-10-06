@@ -3511,6 +3511,8 @@ async function deleteAccount(req, res) {
     // the code (frontend/src/screens/ProfileSettings.js DELETE_BILLING_NEUTRAL):
     //   SUBSCRIPTION_NOT_CANCELLED           account kept, subscription still on
     //   SUBSCRIPTION_CANCELLED_ACCOUNT_KEPT  subscription cancelled, account kept
+    //   SUBSCRIPTION_PARTLY_CANCELLED        account kept, some billing cancelled
+    //                                        and a subscription still on
     //
     // Read inside the checkout queues and not before them, so a customer a
     // checkout saved a moment ago is the one read here (holdAccountCheckouts).
@@ -3559,10 +3561,27 @@ async function deleteAccount(req, res) {
     // with the account's rows in the transaction below, and stay on file if
     // that transaction rolls back, so the venue's record of its trial does
     // too (services/venueBilling.js closeVenueCustomer).
+    //
+    // A REFUSAL HERE SAYS WHAT WAS ALREADY CANCELLED. By now the Pro
+    // subscription above may be gone, and closeVenueCustomer may have ended
+    // one Roost plan before failing on the next customer. Answering only "we
+    // couldn't cancel your Roost subscription" kept the account, cancelled a
+    // paid plan and never said so, and anyone who did not try again had lost
+    // it. SUBSCRIPTION_PARTLY_CANCELLED names both halves: something was
+    // cancelled, and a subscription is still on.
+    let roostCancelled = false;
     try {
-      await closeVenueCustomer(req.user.id);
+      const roost = await closeVenueCustomer(req.user.id);
+      roostCancelled = !!(roost && Array.isArray(roost.cancelled) && roost.cancelled.length > 0);
     } catch (err) {
       console.error('[users] Roost Stripe customer close failed during deletion:', err?.message || err);
+      const someRoostCancelled = Array.isArray(err && err.cancelledBefore) && err.cancelledBefore.length > 0;
+      if (stripeClosed) {
+        return res.status(503).json({ error: 'Your Flock Pro web subscription was cancelled, but your Roost subscription could not be cancelled just now, so your account was not deleted. Try again in a minute.', code: 'SUBSCRIPTION_PARTLY_CANCELLED' });
+      }
+      if (someRoostCancelled) {
+        return res.status(503).json({ error: 'Some of your Roost billing was cancelled, but the rest could not be cancelled just now, so your account was not deleted. Try again in a minute.', code: 'SUBSCRIPTION_PARTLY_CANCELLED' });
+      }
       return res.status(503).json({ error: "We couldn't cancel your Roost subscription just now. Try again in a minute.", code: 'SUBSCRIPTION_NOT_CANCELLED' });
     }
 
@@ -3813,11 +3832,17 @@ async function deleteAccount(req, res) {
       return res.status(503).json({
         error: appleRevoked
           ? 'Your Apple sign-in was disconnected, but the account could not be deleted just now. Sign in with Apple again, then try once more.'
-          : stripeClosed
-            ? 'Your Flock Pro web subscription was cancelled, but the account could not be deleted just now. Please try again in a minute.'
-            : "We couldn't finish deleting your account just now. Nothing was changed. Please try again in a minute.",
+          : stripeClosed && roostCancelled
+            ? 'Your Flock Pro web and Roost subscriptions were cancelled, but the account could not be deleted just now. Please try again in a minute.'
+            : stripeClosed
+              ? 'Your Flock Pro web subscription was cancelled, but the account could not be deleted just now. Please try again in a minute.'
+              // "Nothing was changed" was said here after a Roost plan had
+              // been cancelled above.
+              : roostCancelled
+                ? 'Your Roost subscription was cancelled, but the account could not be deleted just now. Please try again in a minute.'
+                : "We couldn't finish deleting your account just now. Nothing was changed. Please try again in a minute.",
         // The Apple sentence names no plan and is the one shown when both ran.
-        ...(!appleRevoked && stripeClosed ? { code: 'SUBSCRIPTION_CANCELLED_ACCOUNT_KEPT' } : {}),
+        ...(!appleRevoked && (stripeClosed || roostCancelled) ? { code: 'SUBSCRIPTION_CANCELLED_ACCOUNT_KEPT' } : {}),
       });
     } finally {
       client.release();

@@ -80,6 +80,7 @@ import useEdgeSwipeBack from '../hooks/useEdgeSwipeBack';
 export const DELETE_BILLING_NEUTRAL = {
   SUBSCRIPTION_NOT_CANCELLED: 'Your account was not deleted. A subscription on it could not be cancelled just now and is still active. Try again in a minute.',
   SUBSCRIPTION_CANCELLED_ACCOUNT_KEPT: 'Your subscription was cancelled, but your account could not be deleted just now. Try again in a minute.',
+  SUBSCRIPTION_PARTLY_CANCELLED: 'Your account was not deleted. Some of its billing was cancelled, and a subscription that could not be cancelled just now is still active. Try again in a minute.',
 };
 
 // The one line under the switch. The privacy policy describes the same
