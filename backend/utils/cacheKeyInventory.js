@@ -959,7 +959,9 @@ const INVENTORY = [
       + 'nothing reads no row',
     protects: 'one indexed SELECT 1 ... LIMIT 1 on ml_venue_baselines on the 20-connection '
       + 'primary pool, asked at the no-baseline exit and only while CROWD_NO_CURVE_FALLBACK '
-      + 'is on, after every gate that needs no query has passed',
+      + 'is on, after every gate that needs no query has passed. primeVenueCurve also writes '
+      + 'it (noteCurvePresence) when a whole-curve read finishes, from rows that read already '
+      + 'paid for, so a strip never answers from an older no than the rows it just read',
     denominator: 'uncached presence probes, charged to the same crowd-venue-lookup budget '
       + 'as the slot lookup in front of it (1500/hr, 5000/day per account). A hit is '
       + 'answered above the gate and costs nothing',

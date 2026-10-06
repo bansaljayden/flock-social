@@ -1673,6 +1673,10 @@ async function primeVenueCurve(placeId, userId) {
     [placeId]
   ).then(({ rows }) => {
     boundedSet(curveCache, placeId, { ts: Date.now(), rows }, CURVE_CACHE_MAX);
+    // The same read says whether the venue has a curve at all, which is the
+    // no-curve fallback's question, and says it newer than any answer that
+    // fallback is holding (noteCurvePresence).
+    noteCurvePresence(placeId, rows);
     return rows;
   });
   curveInflight.set(placeId, pending);
@@ -4271,6 +4275,8 @@ function noCurveFallbackValue(venue, ts) {
 // that could put a category value over a venue's own curve, and a venue gets
 // its first rows within the hour of being collected. A stale yes only keeps
 // the rule engine, which is the answer every venue had before this existed.
+// Either is replaced as soon as a strip reads the venue's whole curve
+// (noteCurvePresence), because that read is the newer answer.
 // ---------------------------------------------------------------------------
 const curvePresenceCache = new Map(); // placeId -> { ts, data: boolean }
 const CURVE_ABSENT_CACHE_TTL = 60 * 60 * 1000;
@@ -4296,6 +4302,21 @@ async function venueHasCurve(placeId, userId) {
     console.error('[MLPredictor] Curve presence lookup failed:', err.message);
     return null;
   }
+}
+
+// A WHOLE-CURVE READ ANSWERS THE SAME QUESTION, AND IT IS NEWER. Before a strip
+// scores a venue's hours, primeVenueCurve reads every row the venue has. A
+// venue that gained its first rows inside the hour a cached no is held would
+// otherwise be scored by that strip from its own rows in its open hours and
+// given its category's typical level in the hours its own curve says zero, by
+// the very request that had just read those rows. So a finished read writes
+// its answer here: a yes for any row, a no for none, exactly what the probe
+// would say. It costs nothing, because the read was already made and charged,
+// and a refused or failed read never reaches this. Only while the switch is
+// on, the only time anything reads this map.
+function noteCurvePresence(placeId, rows) {
+  if (!placeId || !Array.isArray(rows) || !noCurveFallbackEnabled()) return;
+  boundedSet(curvePresenceCache, placeId, { ts: Date.now(), data: rows.length > 0 });
 }
 
 // The table's value when every gate holds, or null for the rule engine. The
