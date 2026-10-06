@@ -12,7 +12,9 @@ const api = fs.readFileSync(path.join(__dirname, '..', 'services', 'api.js'), 'u
 
 test('"this flock" is a flock the person is looking at', () => {
   expect(app).toMatch(/const onFlock = currentScreen === 'chatDetail' \|\| currentScreen === 'detail';\s*const flock = onFlock \? \(flocks\.find\(f => f\.id === selectedFlockId\) \|\| null\) : null;/);
-  expect(app).toMatch(/venue: ctx\.flock\.venue && ctx\.flock\.venue !== 'TBD' \? ctx\.flock\.venue : null,/);
+  // Built by toAiWireContext since the names were cut to the prompt's width
+  // (birdieWindowAndDemoLock.test.js runs it).
+  expect(app).toMatch(/venue: c\.flock\.venue && c\.flock\.venue !== 'TBD' \? aiContextName\(c\.flock\.venue\) : null,/);
 });
 
 test('error bubbles never go back to the model as its own words', () => {
