@@ -779,23 +779,41 @@ function perMonthCents(cadence, amountCents) {
 // (chargedPastEnd) so the date gets cleared.
 //
 // A usage bill is paid after the use, so its last bill lands after the day it
-// ends: when the billing cycle holding that day closes, up to a month later,
-// and a vendor that bills by the calendar month can take the first days of
-// the next month to send it. A usage charge within a month and a week of the
-// end date is that last bill, not a renewal. A later one pays for use after
-// the end date, so the date is out of date the same way (review 2026-10-06:
-// a $30 usage plan set to end Sep 30 and still paid on Dec 2 had left the
-// burn, with nothing naming the date).
+// ends, for use up to the day before. A vendor that bills each cycle on its
+// own billing day sends it when the cycle holding that last day closes, by
+// the day before a month after the end date. A vendor that bills by the
+// calendar month sends it in the first days of the month after the one that
+// last day is in. A usage charge later than both pays for use from the end
+// date on, so the date is out of date the same way (review 2026-10-06: a $30
+// usage plan set to end Sep 30 and still paid on Dec 2 had left the burn,
+// with nothing naming the date).
+//
+// A month and a week after the end date, the room this gave at first, read
+// the first charge for use after the date as the last bill whenever the date
+// was the 1st or in a month's last week: Nov 2, for October, on a bill set to
+// end Sep 30 (second review 2026-10-06). No rule on dates alone is exact for
+// every vendor. Set to end in a month's first days, a cycle billed on its own
+// day in that same week reads as ended a month too long, since a calendar
+// month billed on that day would be its last bill.
 //
 // A one-time charge has nothing to end, and the table refuses the pair.
 
-// The days a vendor may take to bill a usage cycle once it closes.
+// The days into the next month a vendor that bills by the calendar month may
+// take to bill the last one.
 const USAGE_BILLING_LAG_DAYS = 7;
 
-// The last day a usage bill's final invoice can land: a cycle after its end
-// date, and the vendor's lag after that.
+function lastDayOfMonthYmd(ymd) {
+  const [y, m] = ymd.split('-').map(Number);
+  return `${y}-${pad2(m)}-${pad2(new Date(Date.UTC(y, m, 0)).getUTCDate())}`;
+}
+
+// The last day a usage bill's final invoice can land: the later of the day
+// before a month after its end date, and the lag into the month after its
+// last day of use.
 function usageLastBillBy(endsOn) {
-  return addDaysYmd(addMonthsYmd(endsOn, 1), USAGE_BILLING_LAG_DAYS);
+  const cycle = addDaysYmd(addMonthsYmd(endsOn, 1), -1);
+  const calendarMonth = addDaysYmd(lastDayOfMonthYmd(addDaysYmd(endsOn, -1)), USAGE_BILLING_LAG_DAYS);
+  return cycle > calendarMonth ? cycle : calendarMonth;
 }
 
 function endOf(x, todayYmd) {

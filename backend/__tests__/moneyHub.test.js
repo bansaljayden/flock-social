@@ -3616,13 +3616,45 @@ test('a usage bill still charged long after its end date outran it: it runs, and
   assert.strictEqual(moneyHub.costsLedger({ expenses: [flex], month: moneyHub.monthOf('2026-12-10') }).activeRows, 1);
   // Two months on, from the first of the month.
   assert.strictEqual(moneyHub.__test.endOf({ ...flex, endsOn: '2026-10-01', lastChargedOn: '2026-12-01' }, '2026-12-10'), 'renewed');
-
-  // Its last bill has a month and a week: the cycle that holds Sep 30 closes
-  // by Oct 30, and the vendor may take a few days to bill it.
-  assert.strictEqual(moneyHub.__test.endOf({ ...flex, lastChargedOn: '2026-11-06' }, '2026-12-10'), 'ended');
-  assert.strictEqual(moneyHub.__test.endOf({ ...flex, lastChargedOn: '2026-11-07' }, '2026-12-10'), 'renewed');
   // A stopped row is out either way, so there is nothing to clear.
   assert.deepStrictEqual(pictureOn('2026-12-10', [{ ...flex, active: false }]).chargedPastEnd, []);
+});
+
+test('a usage bill\'s last bill has only until its vendor could send it, so the first charge for use after the end date outruns it', () => {
+  // Second review 2026-10-06: the last bill had a month and a week, which
+  // read the first charge for use after the end date as the last bill
+  // whenever the date fell on the 1st or in a month's last week. Set to end
+  // Sep 30 by a vendor that bills the calendar month on the 2nd, the Nov 2
+  // charge for October left the burn for all of November.
+  const flex = expense({ id: 4, vendor: 'MapTiler', product: 'Flex', kind: 'infrastructure', cadence: 'usage', amountCents: 3000, lastChargedOn: '2026-11-02', endsOn: '2026-09-30' });
+  assert.strictEqual(moneyHub.__test.endOf(flex, '2026-11-10'), 'renewed');
+  const pic = pictureOn('2026-11-10', [flex]);
+  assert.strictEqual(pic.totals.perMonthCents - pictureOn('2026-11-10', []).totals.perMonthCents, 3000, 'a bill still being paid left the burn');
+  assert.deepStrictEqual(pic.chargedPastEnd.map((x) => x.expenseId), [4]);
+  assert.ok(!pic.licence.items.some((i) => i.id === 'maptiler'), 'a plan being paid for read as unlicensed');
+
+  const endOn = (endsOn, lastChargedOn) => moneyHub.__test.endOf({ ...flex, endsOn, lastChargedOn }, '2026-12-10');
+  // The calendar month billed on the 2nd: Oct 2 is September's last bill.
+  assert.strictEqual(endOn('2026-09-30', '2026-10-02'), 'ended');
+  // The calendar month billed on the 1st: set to end Oct 1, Oct 1 is
+  // September's bill and Nov 1 is October's.
+  assert.strictEqual(endOn('2026-10-01', '2026-10-01'), 'ended');
+  assert.strictEqual(endOn('2026-10-01', '2026-11-01'), 'renewed');
+  // The build service bills its cycle on the 2nd: set to end Oct 1, its last
+  // bill came Oct 2 (the test above), and kept on, the next comes Nov 2.
+  assert.strictEqual(endOn('2026-10-01', '2026-11-02'), 'renewed');
+  // A plan set to end on its own billing day: that day bills its last cycle,
+  // and a month on bills a cycle that began on the end date.
+  assert.strictEqual(endOn('2026-10-15', '2026-11-14'), 'ended');
+  assert.strictEqual(endOn('2026-10-15', '2026-11-15'), 'renewed');
+  // A cycle billed on the 29th that holds Sep 29 is billed Oct 29.
+  assert.strictEqual(endOn('2026-09-30', '2026-10-29'), 'ended');
+  assert.strictEqual(endOn('2026-09-30', '2026-10-30'), 'renewed');
+  // Set to end early in a month, the calendar month holding its last days is
+  // billed in the first week of the next one.
+  assert.strictEqual(endOn('2026-10-03', '2026-11-05'), 'ended');
+  assert.strictEqual(endOn('2026-10-03', '2026-11-07'), 'ended');
+  assert.strictEqual(endOn('2026-10-03', '2026-11-08'), 'renewed');
 });
 
 // Review of the forecast (2026-10-06): the burn after a bill ends is worked
