@@ -3763,7 +3763,7 @@ test('the biggest bills are every dollar charge in the burn, largest first, with
   assert.strictEqual(b.chargesPerMonthCents, pic.totals.perMonthCents);
   assert.strictEqual(b.lines[0].pct, Math.round((30000 / pic.totals.perMonthCents) * 100));
   const listed = b.lines.reduce((s, l) => s + l.perMonthCents, 0) + b.restPerMonthCents;
-  assert.ok(Math.abs(listed - b.chargesPerMonthCents) <= n, 'the shown bills and the rest add up to the charges');
+  assert.strictEqual(listed, b.chargesPerMonthCents, 'the shown bills and the rest add up to the charges to the cent');
   // A credit is never ranked, and the shares are then of the charges before it.
   const withCredit = moneyHub.buildCostPicture({
     expenses: [expense({ id: 1, vendor: 'Big tool', kind: 'tooling', amountCents: 20000 }), expense({ id: 6, vendor: 'Big tool', product: 'Credit', kind: 'tooling', amountCents: 5000, isCredit: true })],
@@ -3772,4 +3772,21 @@ test('the biggest bills are every dollar charge in the burn, largest first, with
   assert.strictEqual(withCredit.beforeCredits, true);
   assert.ok(!withCredit.lines.some((l) => l.label === 'Big tool, Credit'));
   assert.strictEqual(withCredit.chargesPerMonthCents, moneyHub.buildCostPicture({ expenses: [expense({ id: 1, vendor: 'Big tool', kind: 'tooling', amountCents: 20000 })], month: MONTH }).totals.perMonthCents);
+});
+
+// Review of the ranking (2026-10-06): each figure rounded on its own drifted
+// from the burn the summary shows.
+test('the biggest bills and the rest add up to the burn to the cent', () => {
+  // Five yearly bills of $2,400.04 are $200.0033 a month each: rounded one by
+  // one they and the rest read $1,201.28 under a $1,201.30 burn.
+  const pic = moneyHub.buildCostPicture({
+    expenses: Array.from({ length: 5 }, (_, i) => expense({ id: 300 + i, vendor: `Yearly ${i}`, kind: 'tooling', cadence: 'yearly', amountCents: 240004 })),
+    month: MONTH,
+  });
+  const b = pic.biggest;
+  assert.strictEqual(b.chargesPerMonthCents, pic.totals.perMonthCents);
+  assert.strictEqual(b.lines.reduce((s, l) => s + l.perMonthCents, 0) + b.restPerMonthCents, pic.totals.perMonthCents);
+  // Each shown figure is its own share rounded one way or the other.
+  for (const l of b.lines) assert.ok(l.perMonthCents === 20000 || l.perMonthCents === 20001, `${l.label} reads ${l.perMonthCents}`);
+  for (let i = 1; i < b.lines.length; i += 1) assert.ok(b.lines[i - 1].perMonthCents >= b.lines[i].perMonthCents, 'still largest first');
 });

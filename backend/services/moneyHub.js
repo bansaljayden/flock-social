@@ -1446,20 +1446,30 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
   const charges = lines.filter((l) => l.perMonthExact > 0 && !l.isCredit)
     .sort((a, b) => b.perMonthExact - a.perMonthExact || a.label.localeCompare(b.label));
   const chargesExact = charges.reduce((s, l) => s + l.perMonthExact, 0);
+  const beforeCredits = lines.some((l) => l.perMonthExact < 0);
+  // With no credit the charges are the burn, so their total is the burn's own
+  // rounded figure and the list adds up to the burn the summary shows.
+  const chargesCents = beforeCredits ? r0(chargesExact) : perMonthTotal;
+  const shown = charges.slice(0, BIGGEST_BILLS_SHOWN);
   const rest = charges.slice(BIGGEST_BILLS_SHOWN);
+  // The shown bills and the rest are rounded together, largest remainder, so
+  // they add up to the charges to the cent (review 2026-10-06: five $200.0033
+  // bills and a $201.2808 rest read $1,201.28 under a $1,201.30 burn).
+  const figures = [...shown.map((l) => ({ cents: l.perMonthExact })), { cents: rest.reduce((s, l) => s + l.perMonthExact, 0) }];
+  roundRowsToTotal(figures, 'cents', chargesCents);
   const biggest = {
-    lines: charges.slice(0, BIGGEST_BILLS_SHOWN).map((l) => ({
+    lines: shown.map((l, i) => ({
       id: l.id,
       label: l.label,
       kind: l.kind,
       cadence: l.cadence,
-      perMonthCents: l.perMonthCents,
+      perMonthCents: figures[i].cents,
       pct: chargesExact > 0 ? Math.round((l.perMonthExact / chargesExact) * 100) : null,
     })),
     restBills: rest.length,
-    restPerMonthCents: r0(rest.reduce((s, l) => s + l.perMonthExact, 0)),
-    chargesPerMonthCents: r0(chargesExact),
-    beforeCredits: lines.some((l) => l.perMonthExact < 0),
+    restPerMonthCents: figures[figures.length - 1].cents,
+    chargesPerMonthCents: chargesCents,
+    beforeCredits,
   };
 
   for (const l of lines) { delete l.perMonthExact; delete l.thisMonthExact; }
