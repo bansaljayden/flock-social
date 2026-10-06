@@ -1,3 +1,4 @@
+const { createSecretKey } = require('crypto');
 const jwt = require('jsonwebtoken');
 const pool = require('../config/database');
 const { prepared } = require('../db/prepared');
@@ -16,6 +17,37 @@ const TOKEN_EXPIRY = '24h';
 // means a future change to how JWT_SECRET is loaded (a PEM, a KeyObject) can
 // never silently widen the accepted algorithm set to the asymmetric family.
 const TOKEN_ALGORITHMS = ['HS256'];
+
+// THE SECRET GOES TO jsonwebtoken AS A KEY, NOT AS A STRING. jsonwebtoken 9
+// tries every string secret as a PEM public key first (crypto.createPublicKey),
+// catches the parse failure, and only then builds the secret key it verifies
+// with. On the local stack that failed parse and its throw were 13% of the
+// API's CPU under the chat history read. This is the same key it falls back to
+// (createSecretKey over the UTF-8 bytes of the same string), rebuilt whenever
+// JWT_SECRET changes; an unset secret passes through so it is refused as before.
+let jwtKeySource;
+let jwtKeyObject;
+function jwtVerifyKey() {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) return secret;
+  if (secret !== jwtKeySource) {
+    jwtKeyObject = createSecretKey(Buffer.from(secret));
+    jwtKeySource = secret;
+  }
+  return jwtKeyObject;
+}
+
+// ONE LOOKUP PER REQUEST, HOWEVER MANY ROUTERS IT CROSSES. server.js mounts
+// /api/flocks twice and two bare /api catch-alls, each router running
+// router.use(authenticate), so a request pays for every router it passes on
+// the way to the one that serves it: GET /api/flocks/:id/messages verified its
+// token and read its user row three times, GET /api/dm twice. A later pass
+// reuses the first pass's token and row when the header is the same, but only
+// from a pass that checked the token's clock, and every pass still applies its
+// own token-version, ban and unverified-account checks to that row, so an
+// allowBanned or allowExpired mount answers as it did and a stricter one after
+// it still refuses.
+const VERIFIED_BEARER = Symbol('verifiedBearer');
 
 // Every Flock JWT carries the issuing user's token_version as `tv` (migration
 // 009). Bumping users.token_version invalidates every token outstanding for
@@ -360,22 +392,30 @@ function makeAuthenticate({ allowBanned = false, allowExpired = false } = {}) {
       }
 
       const token = header.split(' ')[1];
-      const decoded = jwt.verify(token, process.env.JWT_SECRET, {
-        algorithms: TOKEN_ALGORITHMS,
-        ignoreExpiration: allowExpired,
-      });
+      const seen = req[VERIFIED_BEARER];
+      let decoded;
+      let result;
+      if (seen && seen.header === header) {
+        ({ decoded, result } = seen);
+      } else {
+        decoded = jwt.verify(token, jwtVerifyKey(), {
+          algorithms: TOKEN_ALGORITHMS,
+          ignoreExpiration: allowExpired,
+        });
 
-      // Confirm user still exists in DB.
-      // `email_verified` is selected BEFORE is_banned deliberately: it keeps
-      // the `is_banned, token_version FROM users WHERE id = $1` substring that
-      // the existing test harnesses dispatch on intact.
-      const result = await pool.query(
-        prepared('auth-user', 'SELECT id, email, name, role, email_verified, is_banned, token_version FROM users WHERE id = $1'),
-        [decoded.userId]
-      );
+        // Confirm user still exists in DB.
+        // `email_verified` is selected BEFORE is_banned deliberately: it keeps
+        // the `is_banned, token_version FROM users WHERE id = $1` substring that
+        // the existing test harnesses dispatch on intact.
+        result = await pool.query(
+          prepared('auth-user', 'SELECT id, email, name, role, email_verified, is_banned, token_version FROM users WHERE id = $1'),
+          [decoded.userId]
+        );
 
-      if (result.rows.length === 0) {
-        return res.status(401).json({ error: 'User no longer exists' });
+        if (result.rows.length === 0) {
+          return res.status(401).json({ error: 'User no longer exists' });
+        }
+        if (!allowExpired) req[VERIFIED_BEARER] = { header, decoded, result };
       }
 
       // Server-side revocation (round 13). A stale version means the account
