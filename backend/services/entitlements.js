@@ -33,7 +33,7 @@
 // answer 503 instead of a confident "you have not paid".
 // ---------------------------------------------------------------------------
 const pool = require('../config/database');
-const { getUsedToday, PREMIUM_DAILY_LIMIT, FREE_DAILY_LIMIT } = require('./birdieUsage');
+const { getUsedToday, nextUtcMidnightISO, PREMIUM_DAILY_LIMIT, FREE_DAILY_LIMIT } = require('./birdieUsage');
 const { FREE_MONTHLY_FORECASTS, getUsedThisMonth } = require('./forecastUsage');
 
 // THE FIRST WEEK IS NOT METERED. An account younger than this many days gets
@@ -279,8 +279,15 @@ function paywallEnabled(userId) {
 // Shape is a frontend contract:
 // { isPremium, paywallEnabled,
 //   graceEndsAt,                              // ISO, or null when not in the free week
-//   birdie:   { limit, used, remaining },     // per day
+//   birdie:   { limit, used, remaining,       // per day
+//               resetsAt },                   // ISO, or null while chirps are left
 //   forecast: { limit, used, remaining } }    // per calendar month
+//
+// birdie.resetsAt is the next UTC midnight, when the day's count resets, and
+// it is sent only once the day is spent: the same time the 429 and the reply
+// that spends the last chirp carry (routes/ai.js). The app arms the timer
+// that opens Birdie's box from it, and a relaunch with the day spent reads
+// only this snapshot, so without it the box stayed shut past the reset.
 //
 // IN THE FIRST WEEK the limits are reported exactly as they are enforced,
 // which is the way they are for Pro: Birdie at PREMIUM_DAILY_LIMIT and the
@@ -310,6 +317,10 @@ async function getEntitlements(userId) {
   const metered = enabled && !premium && grace === null;
   const birdieLimit = metered ? FREE_DAILY_LIMIT : PREMIUM_DAILY_LIMIT;
   const birdieUsed = getUsedToday(userId);
+  // Clamped: switching the paywall on mid-day drops the limit from 150 to 10
+  // under accounts that have already spent more than 10, and a negative
+  // "remaining" would render as a negative number on a screen.
+  const birdieRemaining = Math.max(0, birdieLimit - birdieUsed);
   const forecastUsed = getUsedThisMonth(userId);
   return {
     isPremium: premium,
@@ -318,10 +329,8 @@ async function getEntitlements(userId) {
     birdie: {
       limit: birdieLimit,
       used: birdieUsed,
-      // Clamped: switching the paywall on mid-day drops the limit from 150 to
-      // 10 under accounts that have already spent more than 10, and a negative
-      // "remaining" would render as a negative number on a screen.
-      remaining: Math.max(0, birdieLimit - birdieUsed),
+      remaining: birdieRemaining,
+      resetsAt: birdieRemaining === 0 ? nextUtcMidnightISO() : null,
     },
     forecast: {
       limit: metered ? FREE_MONTHLY_FORECASTS : null,
