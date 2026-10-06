@@ -312,6 +312,9 @@ const CLAIMED_MSG = 'That business is already claimed by a verified owner. If it
 // the rest of its period stays with the old listing) or ours: we re-bind the
 // plan in Stripe, after which moving the claim to its new listing is allowed.
 // Comps never block a move; they stay with the listing they were given for.
+// Only while venue billing is on (VENUE_BILLING_ENABLED, bound into both
+// statements): with it off no plan is enforced anywhere, so a profile save
+// behaves exactly as it did before Roost had a price.
 const ROOST_LISTING_MSG = 'Your Roost plan is for the Google listing your venue has now. Cancel it from Manage billing first, or write to social@flockcorp.com and we will move it to the new listing.';
 
 async function claimedByAnother(placeId, userId) {
@@ -565,8 +568,10 @@ router.post('/', requireVerified, [
                          THEN NULL ELSE venue_profiles.verification_requested_at END,
          updated_at = NOW()
        -- A claim paying for Roost keeps its listing (ROOST_LISTING_MSG above):
-       -- a refused re-claim updates nothing and returns no row.
-       WHERE NOT (EXCLUDED.google_place_id IS NOT NULL
+       -- a refused re-claim updates nothing and returns no row. $8 is
+       -- whether venue billing is on.
+       WHERE NOT ($8::boolean
+                  AND EXCLUDED.google_place_id IS NOT NULL
                   AND EXCLUDED.google_place_id IS DISTINCT FROM venue_profiles.google_place_id
                   AND EXISTS (SELECT 1 FROM venue_subscriptions vs
                                WHERE vs.user_id = venue_profiles.user_id
@@ -576,7 +581,8 @@ router.post('/', requireVerified, [
                                  AND vs.cancel_at IS NULL
                                  AND vs.google_place_id IS DISTINCT FROM EXCLUDED.google_place_id))
        RETURNING *`,
-      [req.user.id, businessName, category || null, location || null, description || null, goals || [], googlePlaceId || null]
+      [req.user.id, businessName, category || null, location || null, description || null, goals || [], googlePlaceId || null,
+       venueBillingEnabled()]
     );
     // Only the refusal above returns no row: the INSERT path always writes one.
     if (result.rows.length === 0) {
@@ -992,8 +998,9 @@ router.put('/', [
         -- above). Decided here, against the row being written, so a plan
         -- that starts while this waits is still seen. Cast here because
         -- Postgres reads the WHERE before the SET, and a bare IS NOT NULL
-        -- gives a parameter no type.
-        AND NOT ($9::varchar IS NOT NULL AND $9::varchar IS DISTINCT FROM google_place_id
+        -- gives a parameter no type. $13 is whether venue billing is on.
+        AND NOT ($13::boolean
+                 AND $9::varchar IS NOT NULL AND $9::varchar IS DISTINCT FROM google_place_id
                  AND EXISTS (SELECT 1 FROM venue_subscriptions vs
                               WHERE vs.user_id = venue_profiles.user_id
                                 AND vs.source = 'stripe'
@@ -1011,7 +1018,8 @@ router.put('/', [
        // for any non-empty photoUrl that got this far.
        photoUrl ? safeVenuePhotoUrl(photoUrl) : null,
        req.user.id,
-       phone === '']
+       phone === '',
+       venueBillingEnabled()]
     );
 
     if (result.rows.length === 0) {
