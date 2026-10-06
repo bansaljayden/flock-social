@@ -352,7 +352,10 @@ function predictionCoverage() {
   // The no-curve fallback's answers (CROWD_NO_CURVE_FALLBACK): the category
   // table's typical level, which is neither a venue's own data nor the rule
   // engine, so it is a leg of its own and the three legs still add up to the
-  // total. Zero whenever that switch is off.
+  // total. Read by its exact name: it starts with rule_engine for the shipped
+  // app builds' sake (crowdEngine NO_CURVE_FALLBACK_METHOD), and a prefix
+  // count would put it in the rule engine's leg. Zero whenever that switch is
+  // off.
   const categoryCurve = byMethod[NO_CURVE_FALLBACK_METHOD] || 0;
   return {
     since: predictionCountsSince,
@@ -4156,21 +4159,19 @@ function servedConfidence({ accuracy, qmapApplied, hasWeather, curveOffset, nowc
 //   * a finite value in the table for that category at the weekday and hour
 //     buildFeatureMap reads off the same timestamp.
 //
-// WHAT IT IS CALLED, everywhere. predictionMethod NO_CURVE_FALLBACK_METHOD:
-// never 'ml', which services/moneyHub.js and the coverage counter read as the
-// venue's own data, and never a rule_engine name, because the rule engine did
-// not make it. modelVersion is null because no model ran.
-// crowdEngine.describePredictionSupport hedges it like any category prior
-// ("Usually busy") and crowdEngine.describeServedArithmetic names it
+// WHAT IT IS CALLED, everywhere. predictionMethod NO_CURVE_FALLBACK_METHOD,
+// 'rule_engine_category_table': never 'ml', which services/moneyHub.js and the
+// coverage counter read as the venue's own data. It starts with rule_engine
+// because that prefix is what the iOS builds already shipped read as "a
+// category prior, not LIVE" (ConsumerVenueCard isLiveNow before only 'ml' could
+// be LIVE), and they cannot be updated; the note at the constant in
+// crowdEngine says why that is true of this number. The coverage counter still
+// gives it a leg of its own, by the exact name. modelVersion is null because no
+// model ran. crowdEngine.describePredictionSupport hedges it like any category
+// prior ("Usually busy") and crowdEngine.describeServedArithmetic names it
 // 'category_typical', so every surface words it as what is typical for that
 // kind of place at that hour: not this venue's pattern, not the model, not a
 // live reading.
-//
-// BEFORE IT IS TURNED ON, the app build people run has to carry the venue
-// card's rule that only an 'ml' number shows LIVE
-// (components/venue/ConsumerVenueCard.js isLiveNow). A build from before that
-// rule shows LIVE over any method that does not start with rule_engine, and
-// this one does not.
 // ---------------------------------------------------------------------------
 const NO_CURVE_FALLBACK_SWITCH = 'category_curve';
 const NO_CURVE_FALLBACK_METHOD = crowdEngine.NO_CURVE_FALLBACK_METHOD;

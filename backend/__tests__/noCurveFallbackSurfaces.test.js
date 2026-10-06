@@ -6,7 +6,7 @@
 // With CROWD_NO_CURVE_FALLBACK=category_curve, services/mlPredictor.js answers
 // a venue with no curve of its own (200+ Google reviews, no ml_venue_baselines
 // row at all) with the shipped artifact's typical level for its category at
-// that weekday and hour, tagged category_curve_no_baseline. Every surface has
+// that weekday and hour, tagged rule_engine_category_table. Every surface has
 // to say what that is: what is typical for that kind of place at that hour,
 // never the venue's own pattern, never the trained model, never live.
 //
@@ -50,7 +50,7 @@ delete process.env.ML_SHIP_GATE_OVERRIDE;
 for (const k of ['CROWD_NO_CURVE_FALLBACK', 'CROWD_SERVE_MODE', 'CROWD_NOWCAST_ENABLED']) delete process.env[k];
 
 const SWITCH = 'CROWD_NO_CURVE_FALLBACK';
-const METHOD = 'category_curve_no_baseline';
+const METHOD = 'rule_engine_category_table';
 const META = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ml', 'models', 'model_metadata.json'), 'utf8'));
 
 // --- the ONNX session: the real artifact's shape, and a run() that throws, so
@@ -242,7 +242,7 @@ test('the card says the number is typical for this kind of place, measured as su
   assert.deepStrictEqual(c.confidenceMeasurement, {
     status: 'measured',
     means: 'measured_accuracy',
-    metric: 'within_15_category_curve_no_baseline',
+    metric: 'within_15_rule_engine_category_table',
     population: mlPredictor._internals.NO_CURVE_FALLBACK_POPULATION,
     populationRows: 4248,
     measuredPercent: 41.3,
@@ -319,7 +319,7 @@ test('the vote list gives each row the same evidence the card gives it', async (
   assert.strictEqual(a.confidenceBasis, 'category_pattern');
   assert.strictEqual(a.confidenceMeans, 'measured_accuracy');
   assert.strictEqual(a.modelVersion, null);
-  assert.strictEqual(a.confidenceMeasurement.metric, 'within_15_category_curve_no_baseline');
+  assert.strictEqual(a.confidenceMeasurement.metric, 'within_15_rule_engine_category_table');
   assert.strictEqual(a.confidenceMeasurement.publishedPercent, a.confidence);
   assert.strictEqual(b.predictionMethod, 'rule_engine_no_baseline');
   assert.strictEqual(b.confidenceMeasurement.status, 'unmeasured');
@@ -339,7 +339,7 @@ test('the public demo names it typical for its category, hedges it, and names ev
   assert.match(d.label, HEDGED);
   assert.strictEqual(d.confidence, 41);
   assert.strictEqual(d.confidence_measurement.status, 'measured');
-  assert.strictEqual(d.confidence_measurement.metric, 'within_15_category_curve_no_baseline');
+  assert.strictEqual(d.confidence_measurement.metric, 'within_15_rule_engine_category_table');
   for (const h of d.hourly) {
     assert.strictEqual(h.predictionMethod, METHOD, h.hour);
     assert.strictEqual(h.numberSource, 'category_typical', h.hour);
@@ -364,7 +364,7 @@ test('Birdie is handed the number as typical for this kind of place, hour by hou
   assert.strictEqual(out.crowd_method, 'category_typical');
   assert.match(out.crowd_label, HEDGED);
   assert.strictEqual(out.confidence_measurement.status, 'measured');
-  assert.strictEqual(out.confidence_measurement.metric, 'within_15_category_curve_no_baseline');
+  assert.strictEqual(out.confidence_measurement.metric, 'within_15_rule_engine_category_table');
   assert.strictEqual(out.hourly_forecast.length, 12);
   for (const h of out.hourly_forecast) {
     assert.strictEqual(h.predictionMethod, METHOD, h.hour);
@@ -380,12 +380,12 @@ test('Birdie is handed the number as typical for this kind of place, hour by hou
 test('Birdie\'s rules name the method and its source only while the switch can serve them', () => {
   const rule = /- When get_crowd_prediction returns `crowd_method` = "category_typical"[^\n]*/;
   const off = buildSystemPrompt('Ava', {}, { ageBracket: 'adult' });
-  assert.doesNotMatch(off, /category_typical|category_curve_no_baseline/, 'off, the prompt is what it was');
+  assert.doesNotMatch(off, /category_typical|rule_engine_category_table/, 'off, the prompt is what it was');
   on();
   const prompt = buildSystemPrompt('Ava', {}, { ageBracket: 'adult' });
   const line = rule.exec(prompt);
   assert.ok(line, 'the rule is in the prompt');
-  assert.match(line[0], /or an hour in `hourly_forecast` has `predictionMethod` = "category_curve_no_baseline"/);
+  assert.match(line[0], /or an hour in `hourly_forecast` has `predictionMethod` = "rule_engine_category_table"/);
   assert.match(line[0], /the number is what is typical for this kind of place at that hour of the week/);
   assert.match(line[0], /It is not a reading of this venue, not this venue's own usual pattern, not the crowd model's number and not live/);
   assert.match(line[0], /"category_typical_adjusted" is that typical level, adjusted by verified visitor reports/);

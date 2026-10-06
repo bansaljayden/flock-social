@@ -51,7 +51,7 @@ const META = JSON.parse(fs.readFileSync(META_FILE, 'utf8'));
 
 const SWITCH = 'CROWD_NO_CURVE_FALLBACK';
 const ON = 'category_curve';
-const METHOD = 'category_curve_no_baseline';
+const METHOD = 'rule_engine_category_table';
 const SWITCH_ENV = [SWITCH, 'CROWD_SERVE_MODE', 'CROWD_NOWCAST_ENABLED'];
 
 // Friday 2026-09-04, 9 PM on the venue's wall clock (this process runs UTC).
@@ -275,7 +275,7 @@ test('switched on, a venue with 200+ reviews and no row at all gets the table\'s
       confidenceMeasurement: {
         status: 'measured',
         means: 'measured_accuracy',
-        metric: 'within_15_category_curve_no_baseline',
+        metric: 'within_15_rule_engine_category_table',
         population: p._internals.NO_CURVE_FALLBACK_POPULATION,
         populationRows: 4248,
         measuredPercent: 41.3,
@@ -734,6 +734,27 @@ test('the published figure is pinned: within-15 41.3 on 4,248 rows, with what it
 // ---------------------------------------------------------------------------
 // 5. The words.
 // ---------------------------------------------------------------------------
+
+test('its name starts with rule_engine, so app builds already shipped never show it as LIVE', () => {
+  // The venue card in the iOS builds people already have shows LIVE over any
+  // method that does not start with rule_engine, and a fresh lastUpdated. That
+  // rule, as it reads in those builds (ConsumerVenueCard isLiveNow before
+  // "only 'ml' is LIVE"):
+  const shippedIsLive = (cd) => {
+    if (!cd?.lastUpdated) return false;
+    const method = String(cd.predictionMethod || '');
+    if (!method || method.startsWith('rule_engine')) return false;
+    if (cd.numberSource === 'venue_pattern') return false;
+    return Date.now() - Date.parse(cd.lastUpdated) < 30 * 60 * 1000;
+  };
+  const card = { predictionMethod: crowdEngine.NO_CURVE_FALLBACK_METHOD, numberSource: 'category_typical', lastUpdated: new Date().toISOString() };
+  assert.equal(shippedIsLive(card), false, 'a category prior is never LIVE, on any build');
+  assert.ok(crowdEngine.NO_CURVE_FALLBACK_METHOD.startsWith('rule_engine_'));
+  // And it is still its own name: nothing that has to tell it from the rule
+  // engine reads a prefix (the words below, the coverage counter's own leg).
+  assert.ok(!['rule_engine', 'rule_engine_no_baseline', 'rule_engine_baseline_refused', 'rule_engine_baseline_error',
+    'rule_engine_no_weather_norm', 'rule_engine_fallback'].includes(crowdEngine.NO_CURVE_FALLBACK_METHOD));
+});
 
 test('crowdEngine hedges it as a category prior, says its confidence is measured, and names it category_typical', () => {
   assert.equal(crowdEngine.NO_CURVE_FALLBACK_METHOD, METHOD);

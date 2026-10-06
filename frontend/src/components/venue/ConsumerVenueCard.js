@@ -811,11 +811,11 @@ export default function ConsumerVenueCard({
                   if (!cd?.lastUpdated || ownerNumber) return false;
                   const method = String(cd.predictionMethod || '');
                   // Only the model path's own number, 'ml', may be LIVE. This
-                  // was "anything but rule_engine", which let through the
-                  // server's no-curve fallback ('category_curve_no_baseline'):
-                  // what is typical for this kind of place at this hour, a
-                  // category prior exactly like the rule engine's, and no
-                  // more live than one.
+                  // was "anything but rule_engine", so any new method the
+                  // server added passed it unless its name happened to start
+                  // with rule_engine. The no-curve fallback's does
+                  // ('rule_engine_category_table'), for the builds that still
+                  // read the old rule; this one does not depend on a name.
                   if (method !== 'ml') return false;
                   // With CROWD_SERVE_MODE=curve_offset the method stays 'ml'
                   // for a number that is the venue's weekly pattern alone: no

@@ -73,10 +73,11 @@ test('LIVE means the model produced the number, not that the reply is new', () =
   // then drew a pulsing LIVE eight rows above "An estimate from typical
   // patterns for this kind of place".
   expect(card).toMatch(/const method = String\(cd\.predictionMethod \|\| ''\);/);
-  // Only 'ml' may be LIVE. The test was "anything but rule_engine", and the
-  // server's no-curve fallback ('category_curve_no_baseline', what is typical
-  // for this kind of place at this hour) passed it, which put LIVE over a
-  // category prior again.
+  // Only 'ml' may be LIVE. The test was "anything but rule_engine", which any
+  // new server method passed unless its name started with rule_engine, and a
+  // category prior under any other name would have worn LIVE again. (The
+  // no-curve fallback's method is 'rule_engine_category_table' for the builds
+  // that still carry the old test.)
   expect(card).toMatch(/if \(method !== 'ml'\) return false;/);
   expect(card).not.toMatch(/if \(!method \|\| method\.startsWith\('rule_engine'\)\) return false;/);
 });

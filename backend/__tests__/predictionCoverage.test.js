@@ -105,10 +105,12 @@ test('every prediction is counted exactly once, under the exit it actually took'
 
   // The tally is keyed by the same strings the payload publishes, so a reader
   // of the admin panel and a reader of a response are looking at one vocabulary.
+  // The no-curve fallback's method (crowdEngine NO_CURVE_FALLBACK_METHOD) is
+  // in this vocabulary too: it starts with rule_engine on purpose, and the
+  // counter gives it its own leg by its exact name.
   const counted = Object.keys(after.byMethod);
   for (const method of counted) {
-    assert.ok(method === 'ml' || method.startsWith('rule_engine') || method === 'unknown'
-      || method === 'category_curve_no_baseline',
+    assert.ok(method === 'ml' || method.startsWith('rule_engine') || method === 'unknown',
       `unexpected predictionMethod in the ledger: ${method}`);
   }
 

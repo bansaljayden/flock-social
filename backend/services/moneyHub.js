@@ -2979,7 +2979,7 @@ function statedBestTimePlan(now = new Date()) {
 // ('2.6.0-starling+curve_offset', servedModelVersion), so the check counts how
 // many of its pairs the curve made (from_curve) and the card names what made
 // them rather than calling every 'ml' row the model's. A row tagged
-// category_curve_no_baseline is not counted: that is the category table's
+// rule_engine_category_table is not counted: that is the category table's
 // typical level for a venue with no curve of its own (mlPredictor
 // CROWD_NO_CURVE_FALLBACK), neither the venue's data nor the model. From the
 // venue card or the vote list, paired with the collector's
@@ -3210,7 +3210,7 @@ async function readModelCoverage(db = pool, { windowDays = MODEL_COVERAGE_DAYS }
   const mlRow = rows.find((row) => String(row.method || 'unknown').slice(0, 60) === 'ml');
   // A fallback is anything standing in for the venue's own data: the rule
   // engine, or, with CROWD_NO_CURVE_FALLBACK on, the category table's typical
-  // level at a venue with no curve (category_curve_no_baseline). The owner's
+  // level at a venue with no curve (rule_engine_category_table). The owner's
   // own live report is not one (it outranks the venue's data on purpose), and
   // neither is a serve whose method was not recorded.
   const fallbacks = byMethod.filter((m) => !['ml', 'owner_report', 'unknown'].includes(m.method));

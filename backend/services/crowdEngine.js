@@ -90,8 +90,9 @@ function hedgeLabel(label) {
 //   predictionMethod — as set by services/mlPredictor.js: 'ml' when the trained
 //     model produced the number, 'rule_engine*' for any of the honest refusals
 //     (no model on disk, ship gate failed, no baseline, no climatology,
-//     inference threw), and NO_CURVE_FALLBACK_METHOD for the category table's
-//     typical level at a venue with no curve of its own (CROWD_NO_CURVE_FALLBACK).
+//     inference threw), and NO_CURVE_FALLBACK_METHOD, itself a 'rule_engine_'
+//     name (see its note), for the category table's typical level at a venue
+//     with no curve of its own (CROWD_NO_CURVE_FALLBACK).
 //   verifiedReports — how many distinct verified reporters
 //     buildCalibrationAdjustment actually blended in. Below
 //     MIN_CALIBRATION_REPORTERS it is 0 influence and therefore 0 evidence.
@@ -166,7 +167,19 @@ const ML_BASELINE_AXIS_VERIFIED = true;
 // artifact's category_baselines value for the venue's category, weekday and
 // hour. One name for it, defined here beside the rule that decides what it may
 // claim, and read by the predictor that produces it.
-const NO_CURVE_FALLBACK_METHOD = 'category_curve_no_baseline';
+//
+// IT STARTS WITH rule_engine ON PURPOSE, though crowdEngine's rule engine does
+// not make it. The prefix is how every client already in people's hands tells
+// a category prior from a reading: the venue card in the shipped iOS builds
+// shows LIVE over any method that does not start with rule_engine
+// (ConsumerVenueCard isLiveNow before "only 'ml' is LIVE"), and those builds
+// cannot be changed. Under any other name the switch would put a pulsing LIVE
+// over this number for everyone on such a build. It is a category prior like
+// the rule engine's, which is exactly what the prefix says to every reader that
+// keys on it, Birdie's hour rule included ("what is typical for a venue like
+// this one"). Everything that has to tell the two apart (the words here, the
+// coverage counter, the money hub) reads this exact name.
+const NO_CURVE_FALLBACK_METHOD = 'rule_engine_category_table';
 
 function describePredictionSupport(predictionMethod, verifiedReports) {
   const reports = Number.isFinite(verifiedReports) ? verifiedReports : 0;

@@ -1050,7 +1050,7 @@ describe('the model: what makes the numbers, and the served ones against the goa
     // CROWD_NO_CURVE_FALLBACK on: a venue with no baseline and 200+ reviews
     // gets its category's typical level for the hour instead of the rule
     // engine. It is not the venue's own data, so it is a fallback.
-    const typical = { method: 'category_curve_no_baseline', served: 900, venues: 150 };
+    const typical = { method: 'rule_engine_category_table', served: 900, venues: 150 };
     await renderHub(withModel({ coverage: { ...COVERAGE, byMethod: [COVERAGE.byMethod[0], typical, ...COVERAGE.byMethod.slice(1)], topFallback: typical, total: COVERAGE.total + 900 } }));
     expect(await screen.findByText(/^By what answered: the venue's own curve and live readings 1,290; the trained model 20; the venue has no baseline yet, so its category's typical level for the hour 900; the venue has no baseline yet 1,204;/)).toBeInTheDocument();
     const fallback = hubRow('Most common fallback');
@@ -1165,7 +1165,7 @@ describe('the Costs tab: what answered the forecasts', () => {
       ...COUNTER,
       categoryCurve: 300,
       ruleEngine: 959,
-      byMethod: { ml: 1310, category_curve_no_baseline: 300, rule_engine_no_baseline: 959 },
+      byMethod: { ml: 1310, rule_engine_category_table: 300, rule_engine_no_baseline: 959 },
       noCurveFallback: true,
     });
     const card = panel();

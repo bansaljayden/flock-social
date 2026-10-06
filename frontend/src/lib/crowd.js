@@ -66,7 +66,7 @@ export const crowdArcFor = (score) => {
  * then never worded as the number itself.
  *
  * One source is not the venue's at all. 'category_typical' is the server's
- * no-curve fallback (predictionMethod 'category_curve_no_baseline', behind
+ * no-curve fallback (predictionMethod 'rule_engine_category_table', behind
  * the switch CROWD_NO_CURVE_FALLBACK): for a venue with no crowd curve of its
  * own, what is typical for its kind of place at that hour of the week. Its
  * words say exactly that, and never this venue's pattern, the model or live.
@@ -79,8 +79,11 @@ const NUMBER_SOURCE_PHRASES = {
   category_typical: 'what is typical for this kind of place at this hour of the week',
 };
 // The predictionMethod that number carries, the server's
-// crowdEngine.NO_CURVE_FALLBACK_METHOD.
-export const NO_CURVE_FALLBACK_METHOD = 'category_curve_no_baseline';
+// crowdEngine.NO_CURVE_FALLBACK_METHOD. It starts with rule_engine so that
+// app builds already shipped, which show LIVE over any other method, treat
+// it as the category prior it is; read it by this exact name wherever it has
+// to be told from the rule engine's.
+export const NO_CURVE_FALLBACK_METHOD = 'rule_engine_category_table';
 // The same sources once visitor reports adjusted the number. "Alone" goes:
 // the model's number is not alone any more.
 const ADJUSTED_BASE_PHRASES = {
