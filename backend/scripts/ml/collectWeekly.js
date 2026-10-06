@@ -206,15 +206,28 @@ const ORDER_BY_SERVED = `(SELECT COUNT(*) FROM served_predictions sp
                              AND sp.served_at > NOW() - INTERVAL '60 days') DESC,
                          review_count DESC NULLS LAST, id`;
 
-// --order=stalest is for a by-id refresh (--only-found): the venues whose
-// newest weekly curve is oldest come first, and a venue with no curve before
-// all of them. A refresh writes in place and moves collected_at forward, so a
-// refresh run in pieces between the hourly live runs (which BestTime throttles
-// when both call at once; seen 2026-10-06) picks up where the last piece
-// stopped. The third fixed string; nothing from argv reaches the SQL.
-const ORDER_BY_STALEST = `(SELECT MAX(t.collected_at) FROM ml_training_data t
-                            WHERE t.venue_id = ml_venues.id AND t.collection_mode = 'weekly') ASC NULLS FIRST,
-                          id`;
+// --order=stalest is for a by-id refresh (--only-found). A venue's place in
+// line is the later of two stamps on its own row, oldest first:
+// last_collected_at, which this collector and the harvest set when weekly rows
+// land, and besttime_attempted_at, which this collector sets on every ask,
+// misses included. GREATEST skips a NULL and is NULL only when both are, so a
+// venue with neither comes before all of them: one never asked and with no
+// curve, or one whose curve only discoverBestTime.js wrote (it stamps
+// neither; the first refresh does).
+//
+// The order used to read the newest weekly row alone. A miss writes no rows,
+// so the venues BestTime has no forecast for kept their place at the head of
+// the line and every piece asked them again (2026-10-06: the third lehigh
+// window opened with the 40 venues the first had already asked). The attempt
+// alone would not do either, because the harvest refreshes curves without
+// stamping one. With both, a refresh run in pieces between the hourly live
+// runs (which BestTime throttles when both call at once; seen 2026-10-06)
+// picks up where the last piece stopped. Reading the venue row also drops the
+// per-venue MAX(collected_at) subquery, which the planner answered, on a
+// synthetic table shaped like the corpus, by walking idx_ml_training_collected
+// backward past every newer row, once per venue. The third fixed string;
+// nothing from argv reaches the SQL.
+const ORDER_BY_STALEST = 'GREATEST(last_collected_at, besttime_attempted_at) ASC NULLS FIRST, id';
 
 function selectionOptions(argv) {
   const orderArg = argv.find((a) => a.startsWith('--order='));

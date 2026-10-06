@@ -154,6 +154,11 @@ const SUITE_SLOTS = {
   reviewSeedBudgetRealDb: 68,    // new in 2026-10-03; the App Review seed
                                  // run for real, then the budget route shows
                                  // the reviewer a ceiling.
+  collectWeeklyStalest: 81,      // new in 2026-10-06; the weekly refresh run
+                                 // piece after piece with --order=stalest.
+                                 // Far from 69-72, which suites written the
+                                 // same day in other branches are likeliest
+                                 // to take.
 };
 
 // Two suites sharing a slot would silently reintroduce exactly the collision the
