@@ -42,7 +42,9 @@ const FX = require('./helpers/bandEvalFixture');
 const ML_DIR = path.join(__dirname, '..', 'scripts', 'ml');
 const MODELS_DIR = path.join(ML_DIR, 'models');
 const PREDICTOR = require.resolve('../services/mlPredictor');
-const SWITCH_ENV = ['CROWD_SERVE_MODE', 'CROWD_NOWCAST_ENABLED', 'CROWD_QMAP_ENABLED'];
+// CROWD_NO_CURVE_FALLBACK too: it is a switch the strip's attribution reads
+// (mlPredictor hourlyAttributionOn), so every case here starts with it off.
+const SWITCH_ENV = ['CROWD_SERVE_MODE', 'CROWD_NOWCAST_ENABLED', 'CROWD_QMAP_ENABLED', 'CROWD_NO_CURVE_FALLBACK'];
 
 function withEnv(env, fn) {
   const saved = Object.fromEntries(SWITCH_ENV.map((k) => [k, process.env[k]]));
@@ -635,6 +637,37 @@ test('each forecast hour says yes or no to live readings, including an hour no s
   for (const h of off) assert.ok(!('liveReadings' in h) && !('numberSource' in h), h.hour);
   assert.deepEqual(off.map((h) => h.score), on.slice(0, 2).map((h) => h.score).concat(off[2].score),
     'where no source is named the number is the switched-off number');
+});
+
+test('with only the no-curve fallback on, each forecast hour says yes or no to live readings, and the stored offset is a yes', async () => {
+  // CROWD_NO_CURVE_FALLBACK is a switch too: while it is on, the strip's
+  // hours say what made them, so the venue dashboard can name a peak the
+  // category table made. With both serving switches off the model's number
+  // still carries the stored offset, a median of the venue's live readings,
+  // and the hour has to say yes to that, never a no it would be wrong about.
+  const same = [['2026-09-05', 10, 0], ['2026-09-05', 11, 0], ['2026-09-06', 19, 0]];
+  const off = await serveFlatCurveCase({}, { live: same, hourly: [18, 3] });
+  const fallbackOnly = await serveFlatCurveCase({ CROWD_NO_CURVE_FALLBACK: 'category_curve' }, { live: same, hourly: [18, 3] });
+  assert.deepEqual(fallbackOnly.map((h) => h.score), off.map((h) => h.score), 'the same numbers as switched off');
+  for (const h of fallbackOnly) {
+    assert.equal(h.predictionMethod, 'ml', h.hour);
+    assert.ok(!('numberSource' in h), `${h.hour}: no serving switch named an arithmetic`);
+  }
+  assert.deepEqual(fallbackOnly.map((h) => h.liveReadings), [true, true, true], 'the stored offset is in every hour');
+  // One number, read the same way: the switched-off response does not say it
+  // used live readings, and its offset does.
+  const one = await serveFlatCurveCase({}, { live: same });
+  assert.ok(one.recentDeviation, 'the stored offset was applied');
+  assert.ok(!('usedLiveReadings' in one));
+  const { liveReadingsReached } = freshPredictor();
+  assert.equal(liveReadingsReached(one), true);
+  assert.equal(liveReadingsReached({ ...one, recentDeviation: null }), false);
+  // A switched number's own answer wins, either way.
+  assert.equal(liveReadingsReached({ ...one, usedLiveReadings: false }), false);
+  assert.equal(liveReadingsReached({ predictionMethod: 'ml', usedLiveReadings: true }), true);
+  // The rule engine and the category table read no live reading.
+  assert.equal(liveReadingsReached({ predictionMethod: 'rule_engine_no_baseline' }), false);
+  assert.equal(liveReadingsReached(null), false);
 });
 
 test('each forecast hour carries its own source, and a switched-off hour carries none', async () => {

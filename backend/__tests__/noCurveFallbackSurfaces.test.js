@@ -24,6 +24,9 @@
 //   * Birdie's crowd tool and its rules, which name the method only while the
 //     switch can serve it;
 //   * the venue's embeddable badge, which hedges it and does not call it live;
+//   * the venue dashboard's strip, whose row names a peak the table made even
+//     with both serving switches off (the fallback is a switch, so the hours
+//     say what made them, every one a plain no to live readings);
 //   * with the switch off, every one of those reads exactly as it did.
 //
 // __tests__/noCurveFallback.test.js pins the predictor's gates and figure.
@@ -79,9 +82,14 @@ const crowdEngine = require('../services/crowdEngine');
 const pool = require('../config/database');
 let feedbackRows = [];
 let served = [];
+// The signed-in owner's venue, for the venue dashboard's strip.
+let venueCtx = null;
 pool.query = (sql, params) => {
   const flat = String(sql).replace(/\s+/g, ' ').trim();
   if (/FROM venue_feedback/.test(flat)) return Promise.resolve({ rows: feedbackRows });
+  if (/SELECT id, google_place_id, verified, category, verification_requested_at FROM venue_profiles WHERE user_id = \$1/.test(flat)) {
+    return Promise.resolve({ rows: venueCtx ? [venueCtx] : [] });
+  }
   if (/^INSERT INTO served_predictions/.test(flat)) {
     served.push(params);
     return Promise.resolve({ rows: [], rowCount: 0 });
@@ -142,6 +150,7 @@ const mlPredictor = require('../services/mlPredictor');
 const crowdRouter = require('../routes/crowd');
 const publicCrowdRouter = require('../routes/publicCrowd');
 const badgeRouter = require('../routes/badge');
+const venueDashboardRouter = require('../routes/venueDashboard');
 const aiRouter = require('../routes/ai');
 const { executeTool, buildSystemPrompt } = aiRouter.__testables;
 const { confidenceMeasurementFor } = crowdRouter;
@@ -153,6 +162,7 @@ app.use(express.json());
 app.use('/api/crowd', crowdRouter);
 app.use('/api/public', publicCrowdRouter);
 app.use('/api/badge', badgeRouter);
+app.use('/api/venue-dashboard', venueDashboardRouter);
 
 let base;
 const server = http.createServer(app);
@@ -169,6 +179,7 @@ let nextUser = 5400;
 test.beforeEach(() => {
   feedbackRows = [];
   served = [];
+  venueCtx = null;
   delete process.env[SWITCH];
   CURRENT_USER = { id: ++nextUser, name: 'Cat', role: 'user' };
   if (typeof __resetPlacesBudget === 'function') __resetPlacesBudget();
@@ -240,12 +251,14 @@ test('the card says the number is typical for this kind of place, measured as su
     publishedPercent: 41,
   });
   assert.deepStrictEqual(c.dataSourcesUsed, ['google_places', 'category_curve']);
-  // Every bar is the table's, named as such, and none claims a live reading.
+  // Every bar is the table's, named as such, and says no live reading reached
+  // it: the fallback is a switch, so the bars say what made them.
   assert.strictEqual(c.hourly.length, 12);
   for (const h of c.hourly) {
     assert.strictEqual(h.predictionMethod, METHOD, h.hour);
     assert.strictEqual(h.numberSource, 'category_typical', h.hour);
-    assert.ok(!('liveReadings' in h) && !('baselineScore' in h), h.hour);
+    assert.strictEqual(h.liveReadings, false, h.hour);
+    assert.ok(!('baselineScore' in h), h.hour);
   }
   assert.strictEqual(c.hourly[0].score, c.score, 'the Now bar and the dial are one number');
   // The serve is on record as what it was, never as the venue's own data.
@@ -330,6 +343,7 @@ test('the public demo names it typical for its category, hedges it, and names ev
   for (const h of d.hourly) {
     assert.strictEqual(h.predictionMethod, METHOD, h.hour);
     assert.strictEqual(h.numberSource, 'category_typical', h.hour);
+    assert.strictEqual(h.liveReadings, false, h.hour);
   }
   // Off, the same card carries no source at all.
   delete process.env[SWITCH];
@@ -355,13 +369,12 @@ test('Birdie is handed the number as typical for this kind of place, hour by hou
   for (const h of out.hourly_forecast) {
     assert.strictEqual(h.predictionMethod, METHOD, h.hour);
     assert.match(h.label, HEDGED, h.hour);
-    assert.ok(!('live_readings' in h), h.hour);
+    assert.strictEqual(h.live_readings, false, h.hour);
   }
-  // Every hour after the first names its source. The first is the headline's
-  // number and, with no serving switch on, carries no crowd_method: its
-  // predictionMethod is what Birdie's rule names.
-  for (const h of out.hourly_forecast.slice(1)) assert.strictEqual(h.crowd_method, 'category_typical', h.hour);
-  assert.ok(!('crowd_method' in out.hourly_forecast[0]));
+  // Every hour names its source, the first included: it is the headline's
+  // number, and it takes the headline's crowd_method while any switch is on,
+  // which with no serving switch on this fallback is.
+  for (const h of out.hourly_forecast) assert.strictEqual(h.crowd_method, 'category_typical', h.hour);
 });
 
 test('Birdie\'s rules name the method and its source only while the switch can serve them', () => {
@@ -401,6 +414,38 @@ test('the venue\'s badge hedges the table\'s number and does not call it live', 
   const off = await (await realFetch(`${base}/api/badge/${freshId('BADGEOFF')}.svg`)).text();
   assert.match(off, /live from Flock/);
   assert.doesNotMatch(off, /at this hour/);
+});
+
+// ===========================================================================
+// The venue dashboard's strip.
+// ===========================================================================
+
+test('the venue dashboard\'s strip names a peak the table made, with the serving switches off too', async () => {
+  // No serving switch is on in this file. The strip forwards a row's peak
+  // attribution only when the peak hour says yes or no to live readings,
+  // and the hours say that while any switch is on, this fallback included:
+  // without it the owner's own category peak was captioned as the crowd
+  // model's (frontend lib/crowd peersSourcePhrase reads these fields).
+  on();
+  CURRENT_USER = { id: ++nextUser, name: 'Owner', role: 'venue_owner' };
+  venueCtx = { id: 71, google_place_id: freshId('STRIP'), verified: true };
+  const res = await call('GET', '/api/venue-dashboard/strip');
+  assert.strictEqual(res.status, 200, res.text);
+  assert.strictEqual(res.body.available, true, res.text);
+  const you = res.body.you;
+  assert.strictEqual(you.method, METHOD);
+  assert.strictEqual(you.peakMethod, METHOD);
+  assert.strictEqual(you.peakNumberSource, 'category_typical');
+  assert.strictEqual(you.peakLiveReadings, false);
+  // Off, the same row keeps exactly the keys it had, and the rule engine's tag.
+  delete process.env[SWITCH];
+  CURRENT_USER = { id: ++nextUser, name: 'Owner', role: 'venue_owner' };
+  venueCtx = { id: 72, google_place_id: freshId('STRIPOFF'), verified: true };
+  const off = await call('GET', '/api/venue-dashboard/strip');
+  assert.strictEqual(off.status, 200, off.text);
+  assert.strictEqual(off.body.available, true, off.text);
+  assert.deepStrictEqual(Object.keys(off.body.you).sort(), ['label', 'method', 'name', 'peakHour', 'peakScore', 'score']);
+  assert.strictEqual(off.body.you.method, 'rule_engine_no_baseline');
 });
 
 // ===========================================================================

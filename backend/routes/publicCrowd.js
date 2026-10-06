@@ -496,8 +496,9 @@ async function buildCard(v, weather, clock, preScored, place) {
         // is on, a bar can be the venue's pattern, a carried live reading or
         // the model, hour by hour, and the chart's caption is read off the
         // bars drawn (lib/crowd hourlySourcePhrase), not off the headline.
-        // predictHourlyForecast sends neither key with both switches off, so
-        // a switched-off bar keeps exactly the keys it had.
+        // predictHourlyForecast sends neither key with every switch off
+        // (CROWD_NO_CURVE_FALLBACK is one), so a switched-off bar keeps
+        // exactly the keys it had.
         ...(h.numberSource ? { numberSource: h.numberSource } : {}),
         ...(typeof h.liveReadings === 'boolean' ? { liveReadings: h.liveReadings } : {}),
         // Google's openNow wins for the "Now" bar. Published hours and reality

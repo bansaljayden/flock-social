@@ -219,6 +219,7 @@ test('switched off, a venue with no curve gets exactly today\'s answer, and no p
       assert.equal(p.predictionCoverage().noCurveFallback, false);
       assert.equal(p.predictionCoverage().categoryCurve, 0);
       // The strip, too: every hour today's tag, and no source named.
+      assert.equal(p._internals.hourlyAttributionOn(), false);
       const strip = await p.predictHourlyForecast(v, WX, 19, 4, TS);
       for (const h of strip) {
         assert.equal(h.predictionMethod, 'rule_engine_no_baseline', h.hour);
@@ -661,6 +662,7 @@ test('a probe is charged to the account like the slot lookup it follows', async 
 test('the strip carries the table\'s number hour by hour, names it, and ranks the hours on it', async () => {
   for (const env of [{ [SWITCH]: ON }, { [SWITCH]: ON, CROWD_SERVE_MODE: 'curve_offset', CROWD_NOWCAST_ENABLED: 'true' }]) {
     await withPredictor({ env }, async (p) => {
+      assert.equal(p._internals.hourlyAttributionOn(), true);
       const v = venue();
       const strip = await p.predictHourlyForecast(v, WX, 18, 6, TS);
       assert.equal(strip.length, 6);
@@ -670,8 +672,11 @@ test('the strip carries the table\'s number hour by hour, names it, and ranks th
         assert.equal(h.score, value, h.hour);
         assert.equal(h.baselineScore, value, h.hour);
         assert.equal(h.numberSource, 'category_typical', h.hour);
-        if (env.CROWD_NOWCAST_ENABLED) assert.equal(h.liveReadings, false, `${h.hour}: no live reading reached it`);
-        else assert.ok(!('liveReadings' in h));
+        // A plain no on every hour, with the serving switches off too: the
+        // fallback is a switch, and while it is on each hour says what made
+        // it, which is what lets the venue dashboard's strip name a peak the
+        // table made instead of captioning it as the crowd model's.
+        assert.equal(h.liveReadings, false, `${h.hour}: no live reading reached it`);
       });
       // Every hour has the table's value as its ordering axis, so best time
       // and peak rank on it rather than falling back to model scores.

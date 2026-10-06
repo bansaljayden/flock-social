@@ -4943,6 +4943,32 @@ function weatherForSlot(hourlyWx, slotInstantMs, currentWeather, nowMs) {
   return best;
 }
 
+// WHETHER A STRIP'S HOURS SAY WHAT MADE THEM: while any switch that changes
+// what an hour can be made of is on. That is the two serving switches, and
+// CROWD_NO_CURVE_FALLBACK, which puts the category table's number on hours the
+// rule engine answered before. The venue dashboard's strip forwards a row's
+// peak attribution only when its peak hour carries the yes or no below, so
+// gated on the serving switches alone, a strip of category peaks went out
+// with no attribution and was captioned as the crowd model's. With all three
+// off, every hour keeps exactly the keys it had.
+function hourlyAttributionOn() {
+  return switchedArithmeticOn() || noCurveFallbackEnabled();
+}
+
+// WHETHER ANY LIVE READING REACHED THIS NUMBER, answered the same way whatever
+// is switched on. A switched number says so itself (usedLiveReadings). With
+// both serving switches off the model's number still carries the stored
+// offset, a median of the venue's live readings, and says nothing about it, so
+// the offset it recorded (recentDeviation, set whenever one was applied)
+// answers instead. A rule-engine or category-table number read no live
+// reading. A switched-off hour that only said "no" would be telling Birdie
+// never to mention live readings that are in the number.
+function liveReadingsReached(result) {
+  if (!result) return false;
+  if (typeof result.usedLiveReadings === 'boolean') return result.usedLiveReadings;
+  return Boolean(result.recentDeviation);
+}
+
 // `options.userId` is forwarded to every hour's predictBusyness. This path is
 // the largest single-request event fan-out in the app — 24 hours, each its own
 // UTC hour slot in the event cache key, so a cold venue can be 24 upstream calls
@@ -5101,6 +5127,9 @@ async function predictHourlyForecast(venue, weather, startHour, count, baseTimes
     await primeVenueCurve(basePlaceId, options && options.userId);
   } catch { /* prime nothing; the loop queries per hour, as before */ }
 
+  // Read once, so every hour of one strip carries the same keys.
+  const attributed = hourlyAttributionOn();
+
   for (const slot of slots) {
     // One timestamp for the label and the score, one instant for the weather
     // and the event window, both from forecastSlots.
@@ -5108,11 +5137,11 @@ async function predictHourlyForecast(venue, weather, startHour, count, baseTimes
     const slotWeather = weatherForSlot(hourlyWx, slot.instantMs, weather, nowMs);
     try {
       const result = await predictBusyness(venue, slotWeather, ts, options, slot.instantMs);
-      // Which arithmetic made THIS hour's number when a serving switch changed
-      // it, per entry for the reason predictionMethod is: a strip can mix
-      // hours the nowcast moved with hours it had no reading for, and a chart
+      // Which arithmetic made THIS hour's number when a switch changed it,
+      // per entry for the reason predictionMethod is: a strip can mix hours
+      // the nowcast moved with hours it had no reading for, and a chart
       // captioned off the current hour alone would credit live readings to
-      // bars that never used one. Absent with both switches off, so a
+      // bars that never used one. Absent with every switch off, so a
       // switched-off entry keeps exactly its keys.
       const numberSource = crowdEngine.describeServedArithmetic(result);
       // predictionMethod per entry (skew fix c): without it a strip silently
@@ -5125,12 +5154,13 @@ async function predictHourlyForecast(venue, weather, startHour, count, baseTimes
         predictionMethod: result.predictionMethod || null,
         ...(numberSource ? { numberSource } : {}),
         // Whether a live reading reached THIS hour's number, as an explicit
-        // yes or no on every hour while a switch is on (a rule-engine hour
-        // is a no). numberSource cannot answer it by being absent: it is
-        // absent both for an hour no reading touched and for one whose
-        // live offset happened to land on the stored offset's score.
-        // Absent with both switches off, like numberSource.
-        ...(switchedArithmeticOn() ? { liveReadings: result.usedLiveReadings === true } : {}),
+        // yes or no on every hour while a switch is on (hourlyAttributionOn;
+        // a rule-engine or category-table hour is a no). numberSource cannot
+        // answer it by being absent: it is absent both for an hour no reading
+        // touched and for one whose live offset happened to land on the
+        // stored offset's score. Absent with every switch off, like
+        // numberSource.
+        ...(attributed ? { liveReadings: liveReadingsReached(result) } : {}),
         // The ordering axis for this hour, carried per entry because
         // crowdEngine picks it for the whole candidate set at once and has to
         // be able to see that EVERY hour it is about to compare has one. Null
@@ -5178,7 +5208,7 @@ async function predictHourlyForecast(venue, weather, startHour, count, baseTimes
         eventsObserved: false,
         eventsUnavailableReason: 'not_attempted',
         // No live reading reached a rule-engine number.
-        ...(switchedArithmeticOn() ? { liveReadings: false } : {}),
+        ...(attributed ? { liveReadings: false } : {}),
       });
     }
   }
@@ -5210,6 +5240,10 @@ module.exports = {
   // level, read by routes/ai.js so Birdie is told what that number is only
   // while one can reach it.
   noCurveFallbackEnabled,
+  // Whether a live reading reached a served number, whatever is switched on:
+  // routes/ai.js gives Birdie's first hour the headline's answer with it, the
+  // same answer predictHourlyForecast gives every other hour.
+  liveReadingsReached,
   estimateCapacity,
   estimateWait,
   findBestTime,
@@ -5361,6 +5395,7 @@ module.exports = {
     noCurveFallbackValue,
     noCurveFallbackCategory,
     venueHasCurve,
+    hourlyAttributionOn,
     NO_CURVE_FALLBACK_SWITCH,
     NO_CURVE_FALLBACK_METHOD,
     NO_CURVE_FALLBACK_MIN_REVIEWS,
