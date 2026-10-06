@@ -191,15 +191,31 @@ function createdAfterFrom(argv) {
 // week that is already in the corpus. --order=reviews spends the admissions on
 // the most reviewed places first, which are the ones BestTime is likeliest to
 // find (a 404 still spends the lookup) and the ones people are likeliest to open.
+//
+// --order=served goes one better when people have already opened some of them:
+// the venues real users were served a crowd score for in the last 60 days come
+// first, most served first, then the rest by reviews. Every one of those
+// serves went out on the rule engine because the venue has no curve, and an
+// admission is what moves it onto the model (measured 2026-09-08: 1.82 points
+// of MAE and 11.4 of within-10 between the two). On 2026-10-06 the served
+// venues among the retry-eligible misses sat at ranks 3 to 217 by reviews, so a
+// month spent by reviews alone reached few of them. The ORDER BY is one of two
+// fixed strings; nothing from argv is spliced into the SQL.
+const ORDER_BY_SERVED = `(SELECT COUNT(*) FROM served_predictions sp
+                           WHERE sp.venue_place_id = ml_venues.google_place_id
+                             AND sp.served_at > NOW() - INTERVAL '60 days') DESC,
+                         review_count DESC NULLS LAST, id`;
 function selectionOptions(argv) {
   const orderArg = argv.find((a) => a.startsWith('--order='));
   const order = orderArg ? orderArg.slice('--order='.length) : null;
-  if (order !== null && order !== 'reviews') {
-    return { error: `--order must be "reviews", got "${order}".` };
+  if (order !== null && order !== 'reviews' && order !== 'served') {
+    return { error: `--order must be "reviews" or "served", got "${order}".` };
   }
   return {
     withoutWeekly: argv.includes('--without-weekly'),
-    orderBy: order === 'reviews' ? 'review_count DESC NULLS LAST, id' : 'city, id',
+    orderBy: order === 'reviews' ? 'review_count DESC NULLS LAST, id'
+      : order === 'served' ? ORDER_BY_SERVED
+        : 'city, id',
   };
 }
 

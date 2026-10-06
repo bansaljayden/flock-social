@@ -136,6 +136,21 @@ test('--order=reviews and --without-weekly aim the rest of a month at uncovered,
   }
 });
 
+test('--order=served puts the venues people were served first, then the rest by reviews', async () => {
+  const { orderBy } = selectionOptions(['--order=served']);
+  assert.match(orderBy, /FROM served_predictions sp/);
+  assert.match(orderBy, /sp\.venue_place_id = ml_venues\.google_place_id/);
+  assert.match(orderBy, /INTERVAL '60 days'\) DESC,\s+review_count DESC NULLS LAST, id$/);
+  const { exitCode, selects } = await selectsFor([
+    '--city=lehigh', '--skip-collected', '--retry-404', '--without-weekly', '--order=served', '--limit=40', '--max-new=40',
+  ]);
+  assert.notStrictEqual(exitCode, 1);
+  assert.strictEqual(selects.length, 1);
+  assert.match(selects[0].sql, / ORDER BY \(SELECT COUNT\(\*\) FROM served_predictions sp /);
+  assert.match(selects[0].sql, / LIMIT \$3$/);
+  assert.deepStrictEqual(selects[0].params, ['lehigh', 30, 40]);
+});
+
 test('the collector refuses a bad --order before it selects a single venue', async () => {
   const { exitCode, selects } = await selectsFor(['--city=philly', '--order=rating', '--max-new=5']);
   assert.strictEqual(exitCode, 1);
