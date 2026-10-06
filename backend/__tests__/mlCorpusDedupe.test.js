@@ -83,6 +83,10 @@ const CONN = `postgresql://postgres:postgres@127.0.0.1:${PG_PORT}/flock_dedupe_t
 // this embedded instance. PGSSLMODE matters even with a connection string.
 process.env.DATABASE_URL = CONN;
 process.env.PGSSLMODE = 'disable';
+// collectWeekly refuses to start without a BestTime key. The service is
+// stubbed below, so this one is never sent, and pinning it keeps the real one
+// out of the suite.
+process.env.BESTTIME_API_KEY = 'not-a-real-key';
 
 // ---------------------------------------------------------------------------
 // Stubs. ZERO paid API calls: BestTime and OpenWeatherMap are both replaced in

@@ -12,6 +12,10 @@
 // selection tests below run the real collector and read the statements it
 // issued, and nothing here can reach a database or BestTime.
 process.env.DATABASE_URL = 'postgresql://nobody@127.0.0.1:1/never';
+// The collector refuses to start without a key. BestTime is stubbed, so this
+// one is never sent, and setting it first keeps dotenv from loading the real
+// one out of backend/.env.
+process.env.BESTTIME_API_KEY = 'not-a-real-key';
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -216,6 +220,31 @@ test('a malformed --max-credits exits non-zero before the venue list is read', a
   }
   assert.deepStrictEqual(maxCreditsFrom([]), { value: 2500 });
   assert.deepStrictEqual(maxCreditsFrom(['--max-credits=40']), { value: 40 });
+});
+
+test('a run without a BestTime key exits non-zero before the venue list is read', async () => {
+  // fetchWeeklyForecast answers null without a key, and the collector files a
+  // null as "no forecast": it stamps the venue as asked and marks it 404 if it
+  // had no status. A run whose key went missing would do that to every venue
+  // it selected without one call, and --order=stalest would then put them all
+  // behind every other venue.
+  const saved = process.env.BESTTIME_API_KEY;
+  try {
+    for (const blank of ['', '   ']) {
+      process.env.BESTTIME_API_KEY = blank;
+      const r = await selectsFor(['--city=lehigh', '--only-found', '--order=stalest', '--limit=300'], byId(3));
+      assert.strictEqual(r.exitCode, 1, JSON.stringify(blank));
+      assert.strictEqual(r.selects.length, 0, `a run with key ${JSON.stringify(blank)} read the venue list`);
+      assert.strictEqual(r.bestTimeCalls, 0);
+      assert.deepStrictEqual(issued.filter((q) => q.sql.startsWith('UPDATE')), []);
+    }
+  } finally {
+    process.env.BESTTIME_API_KEY = saved;
+  }
+  // With the key back, the same run starts.
+  const keyed = await selectsFor(['--city=lehigh', '--only-found', '--order=stalest', '--limit=300'], byId(3));
+  assert.notStrictEqual(keyed.exitCode, 1);
+  assert.strictEqual(keyed.bestTimeCalls, 1);
 });
 
 test('the month-end command selects uncovered, never-tried venues, most reviewed first', async () => {
