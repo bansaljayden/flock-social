@@ -33,6 +33,14 @@ const reads = [];
 // Runs after each read has taken its answer, so a test can change the
 // subscription between two reads of it.
 let afterRead = null;
+// The money side, for the refund tests: charges by id, the refunds on each
+// charge, which invoices each PaymentIntent paid, and each invoice's parent.
+const charges = {};
+const refunds = {};
+const invoicePayments = {};
+const invoices = {};
+// Every cancel Stripe was asked for, in order, with its request options.
+const cancels = [];
 function FakeStripe() {
   return {
     subscriptions: {
@@ -42,6 +50,26 @@ function FakeStripe() {
         if (afterRead) afterRead(id);
         return answer;
       },
+      cancel: async (id, params, options) => {
+        cancels.push({ id, options: options || null });
+        if (subs[id]) subs[id].status = 'canceled';
+        return { id, status: 'canceled' };
+      },
+    },
+    charges: {
+      retrieve: async (id) => (charges[id] ? JSON.parse(JSON.stringify(charges[id])) : null),
+    },
+    refunds: {
+      list: async ({ charge }) => ({ data: (refunds[charge] || []).map((r) => ({ ...r })), has_more: false }),
+    },
+    invoicePayments: {
+      list: async ({ payment }) => ({
+        data: (invoicePayments[payment.payment_intent] || []).map((invoice, i) => ({ id: `inpay_${i}_${invoice}`, invoice, status: 'paid' })),
+        has_more: false,
+      }),
+    },
+    invoices: {
+      retrieve: async (id) => invoices[id] || null,
     },
   };
 }
@@ -678,4 +706,114 @@ test('an event from the same paid period hands a grant lifted to that period bac
   s = await state(id);
   assert.strictEqual(s.grant.status, 'canceled');
   assert.strictEqual(s.served, 'free');
+});
+
+// ---------------------------------------------------------------------------
+// A FULL REFUND ENDS WHAT IT PAID FOR, AND IT STAYS ENDED.
+//
+// The webhook used to acknowledge every refund event as ignored, and the
+// subscription stayed the authority, so a venue whose $990 for the year was
+// refunded in full kept the year of Roost: Stripe still called the
+// subscription active, and every later event re-read it and wrote it again.
+// A full refund of the payment for the current period now revokes the grant,
+// records why (migration 118) and cancels the subscription, and a later event
+// that still reads the subscription as active cannot put Roost back. A partial
+// refund is a credit, not an ending, and changes nothing.
+// ---------------------------------------------------------------------------
+
+// The charge for `invoiceId`, paid through a PaymentIntent the way a
+// subscription invoice is paid (Stripe API 2025-03-31 basil and later).
+function paidBy(chargeId, invoiceId, subscriptionId, amount) {
+  const pi = `pi_${chargeId}`;
+  charges[chargeId] = { id: chargeId, object: 'charge', amount, customer: 'cus_W', payment_intent: pi };
+  invoicePayments[pi] = [invoiceId];
+  invoices[invoiceId] = { id: invoiceId, parent: { type: 'subscription_details', subscription_details: { subscription: subscriptionId } } };
+}
+
+async function yearlySubscriber(subId, invoiceId) {
+  const id = await venue({ verified: true });
+  const yearEnds = Math.floor(Date.now() / 1000) + 335 * DAY_S;
+  await venueBilling.syncVenueSubscription(sub(subId, id, 'active', { ...period('price_roost_year', yearEnds), latest_invoice: invoiceId }));
+  assert.strictEqual((await state(id)).served, 'pro');
+  return id;
+}
+
+test('a full refund of the payment for the current period revokes Roost, records why, and cancels the subscription', async () => {
+  const id = await yearlySubscriber('sub_refund_full', 'in_refund_full');
+  paidBy('ch_refund_full', 'in_refund_full', 'sub_refund_full', 99000);
+  refunds.ch_refund_full = [{ id: 're_full', status: 'succeeded', amount: 99000 }];
+
+  const result = await venueBilling.revokeRefundedSubscription({ object: 'charge', id: 'ch_refund_full' });
+  assert.deepStrictEqual(result.revoked, ['sub_refund_full']);
+  const s = await state(id);
+  assert.strictEqual(s.served, 'free', 'a venue whose year was refunded in full kept the year of Roost');
+  assert.strictEqual(s.cached, 'free');
+  assert.strictEqual(s.grant.status, 'refunded', 'the grant says why it ended');
+  assert.ok(new Date(s.grant.expires_at).getTime() <= Date.now() + 1000, 'the grant ended now, not at the end of the refunded year');
+  assert.deepStrictEqual(cancels.filter((c) => c.id === 'sub_refund_full').map((c) => c.options),
+    [{ idempotencyKey: 'flock-refund-cancel-sub_refund_full' }], 'the refunded subscription was left to bill again next year');
+  const ending = await testPool.query("SELECT cause, source_id, stripe_invoice_id FROM stripe_subscription_endings WHERE stripe_subscription_id = 'sub_refund_full'");
+  assert.deepStrictEqual(ending.rows, [{ cause: 'refund', source_id: 'ch_refund_full', stripe_invoice_id: 'in_refund_full' }]);
+  assert.ok(s.audit.some((r) => /^tier pro -> free: Stripe subscription sub_refund_full refunded/.test(r.reason)), 'the audit log says the refund ended it');
+});
+
+test('a later event that still reads the refunded subscription as active cannot put Roost back', async () => {
+  const id = await yearlySubscriber('sub_refund_durable', 'in_refund_durable');
+  paidBy('ch_refund_durable', 'in_refund_durable', 'sub_refund_durable', 99000);
+  refunds.ch_refund_durable = [{ id: 're_durable', status: 'succeeded', amount: 99000 }];
+  await venueBilling.revokeRefundedSubscription({ object: 'refund', id: 're_durable', charge: 'ch_refund_durable' });
+  assert.strictEqual((await state(id)).served, 'free');
+
+  // The cancel had not landed (or was undone by hand), and an update event
+  // arrives with Stripe still calling the subscription active and paid
+  // through the year.
+  subs.sub_refund_durable.status = 'active';
+  await venueBilling.syncVenueSubscription('sub_refund_durable');
+  const s = await state(id);
+  assert.strictEqual(s.served, 'free', 'a subscription update after a full refund restored Roost');
+  assert.strictEqual(s.grant.status, 'refunded');
+  // And a replay of the refund event records nothing twice.
+  await venueBilling.revokeRefundedSubscription({ object: 'charge', id: 'ch_refund_durable' });
+  const rows = await testPool.query("SELECT 1 FROM stripe_subscription_endings WHERE stripe_subscription_id = 'sub_refund_durable'");
+  assert.strictEqual(rows.rows.length, 1);
+});
+
+test('a partial refund is a credit, not an ending: Roost stays and nothing is cancelled', async () => {
+  const id = await yearlySubscriber('sub_refund_part', 'in_refund_part');
+  paidBy('ch_refund_part', 'in_refund_part', 'sub_refund_part', 99000);
+  refunds.ch_refund_part = [{ id: 're_part', status: 'succeeded', amount: 20000 }];
+  const result = await venueBilling.revokeRefundedSubscription({ object: 'charge', id: 'ch_refund_part' });
+  assert.strictEqual(result.ignored, 'partial_refund');
+  const s = await state(id);
+  assert.strictEqual(s.served, 'pro', 'a partial refund took Roost away');
+  assert.strictEqual(s.grant.status, 'active');
+  assert.ok(!cancels.some((c) => c.id === 'sub_refund_part'), 'a partial refund cancelled the subscription');
+  assert.strictEqual((await testPool.query("SELECT 1 FROM stripe_subscription_endings WHERE stripe_subscription_id = 'sub_refund_part'")).rows.length, 0);
+});
+
+test('only refunds that succeeded count: a full refund still pending changes nothing until it lands', async () => {
+  const id = await yearlySubscriber('sub_refund_pending', 'in_refund_pending');
+  paidBy('ch_refund_pending', 'in_refund_pending', 'sub_refund_pending', 99000);
+  refunds.ch_refund_pending = [{ id: 're_pending', status: 'pending', amount: 99000 }];
+  assert.strictEqual((await venueBilling.revokeRefundedSubscription({ object: 'charge', id: 'ch_refund_pending' })).ignored, 'partial_refund');
+  assert.strictEqual((await state(id)).served, 'pro');
+  // Two partial refunds that add up to the whole payment are a full refund.
+  refunds.ch_refund_pending = [
+    { id: 're_pending', status: 'succeeded', amount: 49500 },
+    { id: 're_rest', status: 'succeeded', amount: 49500 },
+  ];
+  await venueBilling.revokeRefundedSubscription({ object: 'refund', id: 're_rest', charge: 'ch_refund_pending' });
+  assert.strictEqual((await state(id)).served, 'free');
+});
+
+test('a full refund of an earlier period leaves the period being paid for now', async () => {
+  // A goodwill refund of last month, after this month was paid: the money
+  // that paid for today was not returned.
+  const id = await yearlySubscriber('sub_refund_old', 'in_refund_now');
+  paidBy('ch_refund_old', 'in_refund_last', 'sub_refund_old', 9900);
+  refunds.ch_refund_old = [{ id: 're_old', status: 'succeeded', amount: 9900 }];
+  const result = await venueBilling.revokeRefundedSubscription({ object: 'charge', id: 'ch_refund_old' });
+  assert.ok(result.ignored, JSON.stringify(result));
+  assert.strictEqual((await state(id)).served, 'pro');
+  assert.ok(!cancels.some((c) => c.id === 'sub_refund_old'));
 });

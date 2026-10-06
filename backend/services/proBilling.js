@@ -693,9 +693,11 @@ async function closeCustomer(customerId) {
 // A charge that does carry `invoice` (an object rendered at an older version)
 // is read directly, and so is an invoice's old top-level `subscription`.
 //
-// Answers { charge, customerId, funded: [{ invoiceId, subscriptionId }] }.
-// `funded` is empty for a charge that paid no subscription invoice, and holds
-// more than one entry only when one PaymentIntent paid several invoices.
+// Takes a charge id, or a charge this server has just read from Stripe (never
+// one out of an event body). Answers { charge, customerId, funded:
+// [{ invoiceId, subscriptionId }] }. `funded` is empty for a charge that paid
+// no subscription invoice, and holds more than one entry only when one
+// PaymentIntent paid several invoices.
 const idOf = (ref) => (typeof ref === 'string' && ref ? ref : ref && typeof ref.id === 'string' ? ref.id : null);
 
 // Pages of InvoicePayments read for one PaymentIntent, at most. A subscription
@@ -728,8 +730,8 @@ async function invoicesPaidBy(charge) {
   return ids;
 }
 
-async function subscriptionsFundedBy(chargeId) {
-  const charge = await stripe().charges.retrieve(chargeId);
+async function subscriptionsFundedBy(chargeOrId) {
+  const charge = chargeOrId && typeof chargeOrId === 'object' ? chargeOrId : await stripe().charges.retrieve(chargeOrId);
   const customerId = idOf(charge && charge.customer);
   const funded = [];
   for (const invoiceId of await invoicesPaidBy(charge)) {
@@ -779,8 +781,9 @@ const isOurSubscription = (s) => !!(s && s.metadata && (s.metadata.app_user_id |
 // on the recorded subscription and never resolves again. A dispute over a
 // charge that paid no subscription invoice ends nothing.
 //
-// A refund is not handled here: Stripe's refund dialog offers to cancel in the
-// same step, and a partial refund is often a goodwill credit, not an ending.
+// A refund is not handled here. A full refund of a Roost period ends that
+// subscription in services/venueBilling.js (revokeRefundedSubscription), and a
+// Pro refund is RevenueCat's, which reads Stripe's refunds itself.
 async function cancelDisputedSubscriptions(dispute) {
   const disputeId = dispute && typeof dispute.id === 'string' && dispute.id ? dispute.id : null;
   const chargeId = idOf(dispute && dispute.charge);

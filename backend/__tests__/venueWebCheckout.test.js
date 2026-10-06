@@ -31,7 +31,11 @@ process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret-for-unit-tests';
 
 // ---- the fake Stripe ------------------------------------------------------
 const stripeCalls = [];
-const stripeState = { subscriptions: [], sessions: {}, openSessions: [], subById: {}, keepCreatedOpen: false };
+// charges / refunds / invoicePayments / invoices: the money side, for the
+// refund tests. A charge is paid through a PaymentIntent, which names the
+// invoice it paid, which names its subscription (Stripe API 2025-03-31 basil
+// and later).
+const stripeState = { subscriptions: [], sessions: {}, openSessions: [], subById: {}, keepCreatedOpen: false, charges: {}, refunds: {}, invoicePayments: {}, invoices: {} };
 let createdSessions = 0;
 function FakeStripe() {
   return {
@@ -42,6 +46,26 @@ function FakeStripe() {
     subscriptions: {
       list: async (args) => { stripeCalls.push(['subscriptions.list', args]); return { data: stripeState.subscriptions }; },
       retrieve: async (id) => { stripeCalls.push(['subscriptions.retrieve', id]); return stripeState.subById[id]; },
+      cancel: async (id, params, opts) => {
+        stripeCalls.push(['subscriptions.cancel', id, opts]);
+        if (stripeState.subById[id]) stripeState.subById[id] = { ...stripeState.subById[id], status: 'canceled' };
+        return { id, status: 'canceled' };
+      },
+    },
+    charges: {
+      retrieve: async (id) => { stripeCalls.push(['charges.retrieve', id]); return stripeState.charges[id] || null; },
+    },
+    refunds: {
+      list: async (args) => { stripeCalls.push(['refunds.list', args]); return { data: stripeState.refunds[args.charge] || [], has_more: false }; },
+    },
+    invoicePayments: {
+      list: async (args) => ({
+        data: (stripeState.invoicePayments[args.payment.payment_intent] || []).map((invoice, i) => ({ id: `inpay_${i}`, invoice, status: 'paid' })),
+        has_more: false,
+      }),
+    },
+    invoices: {
+      retrieve: async (id) => stripeState.invoices[id] || null,
     },
     prices: {
       retrieve: async (id) => ({ id, unit_amount: id === 'price_roost_year' ? 99000 : 9900, currency: 'usd', recurring: { interval: id === 'price_roost_year' ? 'year' : 'month' } }),
@@ -182,6 +206,10 @@ test.beforeEach(() => {
   stripeState.openSessions = [];
   stripeState.subById = {};
   stripeState.keepCreatedOpen = false;
+  stripeState.charges = {};
+  stripeState.refunds = {};
+  stripeState.invoicePayments = {};
+  stripeState.invoices = {};
   createdSessions = 0;
   billing.__test.resetStripe();
 });
@@ -537,6 +565,56 @@ test('a subscription that has ended on an unrecognised price still revokes', asy
     assert.strictEqual(write.params[2], 'canceled');
     assert.strictEqual(write.params[10], false);
     assert.strictEqual(write.params[11], 'free');
+  } finally { restore(); }
+});
+
+// A refund event names a charge, not a subscription, and carries no venue
+// metadata, so it never reached the venue branch: the webhook answered
+// "ignored" and the refunded subscription kept its year of Roost.
+function refundedInFull(subId, { amount = 99000, refunded = amount } = {}) {
+  stripeState.subById[subId] = sub({ id: subId, status: 'active', latest_invoice: `in_${subId}` });
+  stripeState.charges[`ch_${subId}`] = { id: `ch_${subId}`, object: 'charge', amount, customer: 'cus_VENUE1', payment_intent: `pi_${subId}` };
+  stripeState.invoicePayments[`pi_${subId}`] = [`in_${subId}`];
+  stripeState.invoices[`in_${subId}`] = { id: `in_${subId}`, parent: { type: 'subscription_details', subscription_details: { subscription: subId } } };
+  stripeState.refunds[`ch_${subId}`] = [{ id: `re_${subId}`, status: 'succeeded', amount: refunded }];
+}
+
+for (const type of ['charge.refunded', 'refund.updated']) {
+  test(`a full refund (${type}) reaches the Roost writer: the subscription is cancelled and the grant revoked`, async () => {
+    setEnv(ON);
+    refundedInFull('sub_R1');
+    const { calls, restore } = stubPool(async (sql) => {
+      if (sql.startsWith('WITH old AS')) return { rows: [{ profiles: 1, written: 1, verified: true }] };
+      return null;
+    });
+    try {
+      const object = type === 'charge.refunded'
+        ? stripeState.charges.ch_sub_R1
+        : { id: 're_sub_R1', object: 'refund', charge: 'ch_sub_R1', status: 'succeeded', amount: 99000 };
+      const res = await stripeWebhook({ id: 'evt_r1', type, data: { object } });
+      assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+      assert.ok(!res.body.ignored, `the refund was acknowledged as ignored: ${JSON.stringify(res.body)}`);
+      assert.deepStrictEqual(stripeCalls.filter(([n]) => n === 'subscriptions.cancel').map(([, id]) => id), ['sub_R1']);
+      assert.ok(calls.some((c) => c.text.includes('INSERT INTO stripe_subscription_endings')), 'the refund was not recorded against the subscription');
+      const write = calls.find((c) => c.text.startsWith('WITH old AS'));
+      assert.ok(write, 'the grant was not written');
+      assert.strictEqual(write.params[10], false, 'a refunded subscription was written live');
+      assert.strictEqual(write.params[11], 'free');
+      assert.strictEqual(rcCalls.length, 0);
+    } finally { restore(); }
+  });
+}
+
+test('a partial refund event is acknowledged and changes nothing', async () => {
+  setEnv(ON);
+  refundedInFull('sub_R2', { refunded: 1000 });
+  const { calls, restore } = stubPool(async () => null);
+  try {
+    const res = await stripeWebhook({ id: 'evt_r2', type: 'charge.refunded', data: { object: stripeState.charges.ch_sub_R2 } });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    assert.strictEqual(res.body.ignored, 'partial_refund');
+    assert.ok(!stripeCalls.some(([n]) => n === 'subscriptions.cancel'));
+    assert.ok(!calls.some((c) => c.text.startsWith('WITH old AS')));
   } finally { restore(); }
 });
 
