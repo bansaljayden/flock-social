@@ -1994,7 +1994,7 @@ const VERIFY_DECIDED_SUBJECT = (verified, name) => (verified
 // billing is off), false means it is not, and null means the plan could not be
 // read, in which case the email says nothing about Roost either way.
 const { venueBillingEnabled, getVenueTier } = require('../services/venueEntitlements');
-// Held as a module object, so a test can see the call the verify route makes.
+// The verify route stops a revoked claim's Roost billing through it.
 const venueBilling = require('../services/venueBilling');
 async function roostIsOnFor(ownerUserId) {
   if (!venueBillingEnabled()) return true;
