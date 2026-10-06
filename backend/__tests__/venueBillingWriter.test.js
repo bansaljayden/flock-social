@@ -55,6 +55,13 @@ let customersMade = 0;
 const sessionsMade = [];
 const openSessions = [];
 const expiredSessions = [];
+// One page of a Stripe list, the way Stripe answers one: `limit` items (ten
+// when none is asked for) after `starting_after`, and has_more when there are
+// more, newest first as given.
+function page(all, limit = 10, after = null) {
+  const start = after ? all.findIndex((x) => x.id === after) + 1 : 0;
+  return { data: all.slice(start, start + limit), has_more: start + limit < all.length };
+}
 function FakeStripe() {
   return {
     customers: {
@@ -69,7 +76,8 @@ function FakeStripe() {
     checkout: {
       sessions: {
         // openSessions: sessions still payable, by customer.
-        list: async ({ customer, status }) => ({ data: status === 'open' ? openSessions.filter((s) => s.customer === customer).map((s) => ({ ...s })) : [] }),
+        list: async ({ customer, status, limit, starting_after: after }) => page(
+          status === 'open' ? openSessions.filter((s) => s.customer === customer).map((s) => ({ ...s })) : [], limit, after),
         expire: async (id) => {
           expiredSessions.push(id);
           const i = openSessions.findIndex((s) => s.id === id);
@@ -82,9 +90,8 @@ function FakeStripe() {
     },
     subscriptions: {
       // A deleted customer's subscriptions went with it.
-      list: async ({ customer }) => ({
-        data: deletedCustomers.includes(customer) ? [] : Object.values(subs).filter((s) => s && s.customer === customer).map((s) => ({ ...s })),
-      }),
+      list: async ({ customer, limit, starting_after: after }) => page(
+        deletedCustomers.includes(customer) ? [] : Object.values(subs).filter((s) => s && s.customer === customer).map((s) => ({ ...s })), limit, after),
       retrieve: async (id, params, options) => {
         const answer = subs[id] ? JSON.parse(JSON.stringify(subs[id])) : subs[id];
         reads.push({ id, status: answer ? answer.status : null, options: options || null });
@@ -1305,6 +1312,27 @@ test('a revocation whose billing Stripe will not stop says so, and sending it ag
   const again = await adminCall('PUT', `/api/admin/venues/${profileId}/verify`, { as: adminId, body: { verified: false } });
   assert.strictEqual(again.status, 200, again.text);
   assert.ok(cancels.some((c) => c.id === 'sub_revoke_fails'));
+});
+
+test('a revocation reads every page: a running plan behind a hundred that ended is still cancelled', async () => {
+  // It read one page of twenty subscriptions and twenty open checkouts, so a
+  // plan older than twenty failed checkouts was never seen, and the
+  // revocation answered success while Stripe went on billing it.
+  const [PLACE] = placePair();
+  const id = await venue({ verified: true, placeId: PLACE });
+  const adminId = await admin();
+  await testPool.query("UPDATE venue_profiles SET stripe_customer_id = 'cus_MANY_ENDED' WHERE user_id = $1", [id]);
+  // Newest first, as Stripe lists them: the failed checkouts, then the plan.
+  for (let i = 0; i < 119; i += 1) sub(`sub_many_ended_${i}`, id, 'incomplete_expired', { customer: 'cus_MANY_ENDED', metadata: boundTo(PLACE)(id) });
+  sub('sub_many_live', id, 'active', { customer: 'cus_MANY_ENDED', metadata: boundTo(PLACE)(id) });
+  for (let i = 0; i < 25; i += 1) {
+    openSessions.push({ id: `cs_many_${i}`, customer: 'cus_MANY_ENDED', status: 'open', metadata: { kind: 'venue', flock_venue_user_id: String(id) } });
+  }
+  const res = await adminCall('PUT', `/api/admin/venues/${await profileIdOf(id)}/verify`, { as: adminId, body: { verified: false } });
+  assert.strictEqual(res.status, 200, res.text);
+  assert.ok(cancels.some((c) => c.id === 'sub_many_live'), 'the revocation left the running plan billing');
+  assert.deepStrictEqual(res.body.roost.subscriptionsCancelled, ['sub_many_live']);
+  assert.deepStrictEqual(openSessions.filter((s) => s.customer === 'cus_MANY_ENDED'), [], 'a checkout past the first page stayed payable');
 });
 
 // ---------------------------------------------------------------------------

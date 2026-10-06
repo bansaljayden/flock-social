@@ -45,7 +45,15 @@ function FakeStripe() {
       retrieve: async (id) => { stripeCalls.push(['customers.retrieve', id]); return { id }; },
     },
     subscriptions: {
-      list: async (args) => { stripeCalls.push(['subscriptions.list', args]); return { data: stripeState.subscriptions }; },
+      // One page at a time, the way Stripe answers: `limit` (ten when none is
+      // asked for) after `starting_after`, with has_more.
+      list: async (args) => {
+        stripeCalls.push(['subscriptions.list', args]);
+        const all = stripeState.subscriptions;
+        const limit = args.limit || 10;
+        const start = args.starting_after ? all.findIndex((s) => s.id === args.starting_after) + 1 : 0;
+        return { data: all.slice(start, start + limit), has_more: start + limit < all.length };
+      },
       retrieve: async (id) => { stripeCalls.push(['subscriptions.retrieve', id]); return stripeState.subById[id]; },
       cancel: async (id, params, opts) => {
         stripeCalls.push(['subscriptions.cancel', id, opts]);
@@ -454,6 +462,42 @@ test('Manage billing is for a plan still running: active, trialing, past due or 
     assert.strictEqual(status.body.canManage, false);
     assert.strictEqual(status.body.subscriptionStatus, null);
   } finally { db.restore(); }
+});
+
+// ---- every page of the customer's subscriptions is read ---------------------
+//
+// The status route and checkout read one page of ten subscriptions, so a plan
+// still billing behind ten newer ones that ended (a failed payment leaves one
+// each) was invisible: Manage billing was hidden, and checkout sold a second
+// plan on top of the first.
+
+function behindManyEnded(live) {
+  const ended = Array.from({ length: 119 }, (_, i) => roostSub(`sub_ended_${i}`, 'incomplete_expired', 1700000000 - i));
+  return [...ended, roostSub('sub_running', live, 1600000000)];
+}
+
+test('a plan still billing behind a hundred that ended keeps Manage billing', async () => {
+  setEnv(ON);
+  stripeState.subscriptions = behindManyEnded('active');
+  const { restore } = stubPool(venueDb({ customer: 'cus_VENUE1', trialUsed: true }));
+  try {
+    const status = await call(venueBillingRoutes, 'GET', '/api/venue-billing/status');
+    assert.strictEqual(status.status, 200, JSON.stringify(status.body));
+    assert.strictEqual(status.body.canManage, true, 'a plan Stripe is billing was hidden past the first page');
+    assert.strictEqual(status.body.subscriptionStatus, 'active');
+  } finally { restore(); }
+});
+
+test('checkout sees a live plan past the first page and does not sell a second one', async () => {
+  setEnv(ON);
+  stripeState.subscriptions = behindManyEnded('past_due');
+  const { restore } = stubPool(venueDb({ customer: 'cus_VENUE1', trialUsed: true }));
+  try {
+    const res = await call(venueBillingRoutes, 'POST', '/api/venue-billing/checkout', { plan: 'monthly' });
+    assert.strictEqual(res.status, 409, `a second plan was sold over one still billing: ${JSON.stringify(res.body)}`);
+    assert.strictEqual(res.body.code, 'ALREADY_SUBSCRIBED');
+    assert.ok(!stripeCalls.some(([n]) => n === 'checkout.create'));
+  } finally { restore(); }
 });
 
 // ---- the dates the plans card names come from Stripe -----------------------
