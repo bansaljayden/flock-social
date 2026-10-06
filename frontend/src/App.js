@@ -3267,6 +3267,35 @@ const toAiWireMessages = (messages) => (Array.isArray(messages) ? messages : [])
   };
 });
 
+// Where the user is in the app, as Birdie's context goes on the wire. The
+// names in it are cut to the 120 characters the prompt keeps of each
+// (backend routes/ai.js buildContextDataLine). A flock's name and venue run
+// to 255, and the map's venue can be a flock's venue; the route refused
+// anything past 120 with "Invalid value", which Birdie's bubble printed on
+// every turn while that flock was open. It takes the full width now, and this
+// sends only what reaches the model. Cut by code point, so an emoji at the
+// edge is kept whole or dropped, never split.
+const AI_CONTEXT_NAME_CHARS = 120;
+const aiContextName = (value) => (typeof value === 'string' ? Array.from(value).slice(0, AI_CONTEXT_NAME_CHARS).join('') : value);
+const toAiWireContext = (ctx) => {
+  const c = ctx || {};
+  const out = { screen: c.currentScreen, tab: c.currentTab };
+  if (c.flock) {
+    out.flock = {
+      name: aiContextName(c.flock.name || c.flock.title),
+      venue: c.flock.venue && c.flock.venue !== 'TBD' ? aiContextName(c.flock.venue) : null,
+      status: c.flock.status || null,
+    };
+  }
+  if (c.activeVenue) {
+    out.venue = {
+      name: aiContextName(c.activeVenue.name),
+      place_id: c.activeVenue.place_id || null,
+    };
+  }
+  return out;
+};
+
 // ---------------------------------------------------------------------------
 // Paying somebody back, when the wallet app may not be installed
 //
@@ -10262,23 +10291,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
       // Snapshot of where the user is in the app right now — lets Birdie answer
       // questions like "is this place busy?" or "who's in this flock?"
-      const currentContext = {
-        screen: ctx.currentScreen,
-        tab: ctx.currentTab,
-      };
-      if (ctx.flock) {
-        currentContext.flock = {
-          name: ctx.flock.name || ctx.flock.title,
-          venue: ctx.flock.venue && ctx.flock.venue !== 'TBD' ? ctx.flock.venue : null,
-          status: ctx.flock.status || null,
-        };
-      }
-      if (ctx.activeVenue) {
-        currentContext.venue = {
-          name: ctx.activeVenue.name,
-          place_id: ctx.activeVenue.place_id || null,
-        };
-      }
+      const currentContext = toAiWireContext(ctx);
 
       // Send the last AI_CHAT_MAX_MESSAGES turns, which is everything the
       // server will take. It used to be the whole conversation, so the 25th

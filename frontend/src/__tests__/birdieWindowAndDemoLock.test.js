@@ -411,6 +411,64 @@ describe('toAiWireMessages', () => {
 });
 
 // ───────────────────────────────────────────────────────────────────────────
+// 3b. toAiWireContext — the names go no wider than the prompt keeps them.
+// A flock's name and venue run to 255 characters, and the route refused any
+// context name past 120 with "Invalid value", which Birdie's bubble printed on
+// every turn while that flock was open.
+// ───────────────────────────────────────────────────────────────────────────
+describe('toAiWireContext', () => {
+  const lift = () => evaluate(
+    ['AI_CONTEXT_NAME_CHARS', 'aiContextName', 'toAiWireContext'].map((n) => extractDeclaration(appSource, n)),
+    ['AI_CONTEXT_NAME_CHARS', 'toAiWireContext'],
+  );
+
+  test('the cut is the 120 the server keeps of each name in the prompt', () => {
+    expect(lift().AI_CONTEXT_NAME_CHARS).toBe(readNumber(aiRouteSource, 'MAX_CONTEXT_CHARS'));
+  });
+
+  test('a flock named and placed as wide as its columns goes out at 120 characters a name', () => {
+    const { toAiWireContext } = lift();
+    const name = `Friday ${'n'.repeat(248)}`;
+    const venue = `Oakwood ${'v'.repeat(247)}`;
+    const out = toAiWireContext({
+      currentScreen: 'chatDetail', currentTab: 'home',
+      flock: { name, venue, status: 'planning' },
+      activeVenue: { name: venue, place_id: 'PLACE_A' },
+    });
+    expect(out).toEqual({
+      screen: 'chatDetail', tab: 'home',
+      flock: { name: name.slice(0, 120), venue: venue.slice(0, 120), status: 'planning' },
+      venue: { name: venue.slice(0, 120), place_id: 'PLACE_A' },
+    });
+  });
+
+  test('an emoji at the edge is kept whole or left off, never split', () => {
+    const { toAiWireContext } = lift();
+    const out = toAiWireContext({ flock: { name: `${'x'.repeat(119)}\u{1F389}\u{1F389}` } });
+    expect(out.flock.name).toBe(`${'x'.repeat(119)}\u{1F389}`);
+    expect(Array.from(out.flock.name)).toHaveLength(120);
+  });
+
+  test('a short context is sent as it was built before', () => {
+    const { toAiWireContext } = lift();
+    expect(toAiWireContext({ currentScreen: 'main', currentTab: 'home' })).toEqual({ screen: 'main', tab: 'home' });
+    expect(toAiWireContext({ flock: { title: 'Tacos', venue: 'TBD' }, activeVenue: { name: 'Oakwood' } })).toEqual({
+      screen: undefined, tab: undefined,
+      flock: { name: 'Tacos', venue: null, status: null },
+      venue: { name: 'Oakwood', place_id: null },
+    });
+    expect(toAiWireContext(null)).toEqual({ screen: undefined, tab: undefined });
+  });
+
+  test('sendAiMessage builds its context through it', () => {
+    const start = appSource.indexOf('const sendAiMessage = useCallback');
+    const send = appSource.slice(start, appSource.indexOf('const fillAiInput = useCallback', start));
+    expect(send).toContain('const currentContext = toAiWireContext(ctx);');
+    expect(send).not.toMatch(/name: ctx\.flock\.name/);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
 // 4. Client and server agree about the cap
 // ───────────────────────────────────────────────────────────────────────────
 describe('the message cap is the same number in all three files', () => {
