@@ -1,5 +1,10 @@
 // ---------------------------------------------------------------------------
-// THE TWO SHELL STEPS IN codemagic.yaml, EXECUTED.
+// THE SHELL STEPS IN codemagic.yaml, EXECUTED.
+//
+// Three now: the push plist check, the provisioning profile check, and the
+// RevenueCat key check (section 3 at the bottom), which stops a build that
+// sells Flock Pro without the Apple key and does nothing to one that sells
+// nothing. The history below is about the first two.
 //
 // WHY THIS FILE EXISTS. Both guards in that file were written after a build
 // shipped something broken while printing green, and both were then tested by
@@ -85,6 +90,7 @@ function stepScript(titleRe) {
 
 const PLIST_STEP = stepScript(/GoogleService-Info\.plist/);
 const PROFILE_STEP = stepScript(/App\.entitlements/);
+const REVENUECAT_STEP = stepScript(/RevenueCat key/);
 
 // --- can this machine run a POSIX shell at all? ----------------------------
 // The same rule the generated-config checks in iosShellConfigMatchesCode.js
@@ -127,7 +133,7 @@ const s = (name) => (RUNNABLE ? name : `${name} [${NEEDS_SHELL}]`);
 if (!RUNNABLE) {
   // eslint-disable-next-line no-console
   console.warn(
-    `[codemagicShellSteps] ${NEEDS_SHELL}. NOTHING in codemagic.yaml's two shell`
+    `[codemagicShellSteps] ${NEEDS_SHELL}. NOTHING in codemagic.yaml's three shell`
     + ' steps was executed on this run.'
   );
 }
@@ -169,7 +175,7 @@ function sandbox() {
 }
 
 /**
- * Runs one of the two step bodies against a freshly built sandbox.
+ * Runs one of the step bodies against a freshly built sandbox.
  *
  * The environment is BUILT, not inherited: every REACT_APP_* and
  * GOOGLE_SERVICE_INFO_PLIST that happens to be set on the machine running the
@@ -191,6 +197,15 @@ function run(step, opts = {}) {
   // one directory and prove the step looks there.
   for (const [name, contents] of Object.entries(opts.profilesNew || {})) {
     fs.writeFileSync(path.join(box.profilesNew, name), contents, 'utf8');
+  }
+  // What `npm run build` leaves in build/static/js, for the RevenueCat key
+  // step. No option, no directory: a build that wrote nothing.
+  if (opts.build) {
+    const js = path.join(box.cwd, 'build', 'static', 'js');
+    fs.mkdirSync(js, { recursive: true });
+    for (const [name, contents] of Object.entries(opts.build)) {
+      fs.writeFileSync(path.join(js, name), contents, 'utf8');
+    }
   }
 
   const env = {
@@ -220,13 +235,25 @@ function run(step, opts = {}) {
 // guards in them. Cheap, and it is the one thing that cannot be caught by the
 // cases below going green.
 describe('the step bodies come out of codemagic.yaml intact', () => {
-  test('both steps parse as runnable shell, not as an empty string', () => {
+  test('all three steps parse as runnable shell, not as an empty string', () => {
     expect(PLIST_STEP.body).toMatch(/^set -eu$/m);
     expect(PLIST_STEP.body).toMatch(/PUSH CHECK FAILED/);
     expect(PLIST_STEP.body.split('\n').length).toBeGreaterThan(40);
     expect(PROFILE_STEP.body).toMatch(/^set -eu$/m);
     expect(PROFILE_STEP.body).toMatch(/SIGNING CHECK FAILED/);
     expect(PROFILE_STEP.body.split('\n').length).toBeGreaterThan(40);
+    expect(REVENUECAT_STEP.body).toMatch(/^set -eu$/m);
+    expect(REVENUECAT_STEP.body).toMatch(/PURCHASE CHECK FAILED/);
+    expect(REVENUECAT_STEP.body.split('\n').length).toBeGreaterThan(40);
+  });
+
+  test('the Python inside the RevenueCat step survived the dedent', () => {
+    // Python reads its own indentation, so a dedent that is off by one turns
+    // the loop body into a syntax error, the step fails closed, and every
+    // build stops on a message about source maps that is not true.
+    expect(REVENUECAT_STEP.body).toMatch(/^for path in maps:$/m);
+    expect(REVENUECAT_STEP.body).toMatch(/^ {4}with open\(path, encoding="utf-8"\) as f:$/m);
+    expect(REVENUECAT_STEP.body).toMatch(/^print\(len\(maps\), sdk\)$/m);
   });
 
   test('the heredoc that writes the placeholder plist survived the dedent', () => {
@@ -551,5 +578,105 @@ describe(s('the provisioning profile step, run'), () => {
       expect({ buddyErr, code: r.code }).toEqual({ buddyErr, code: 1 });
       expect(r.out).toContain(`  STALE, missing: ${DOMAINS}`);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 3. The RevenueCat key step.
+//
+// A build that sells Flock Pro with no RevenueCat Apple key installs, runs
+// and uploads, and its Pro sheet says Pro can't be bought in the app: the
+// same green failure as the other two. The step reads the source maps the
+// build just wrote to see whether the RevenueCat SDK is in the bundle, which
+// is true exactly when purchases are on, and only then asks for the key. The
+// build made with REACT_APP_PURCHASES=off, which is every build until that
+// line changes, carries no SDK and passes whatever the key.
+// ---------------------------------------------------------------------------
+describe(s('the RevenueCat key step, run'), () => {
+  jest.setTimeout(30000);
+
+  // Source maps as far as this step reads them. Paths are what CRA writes:
+  // relative to src, node_modules one level up.
+  const map = (sources, sourcesContent = sources.map(() => '')) => JSON.stringify({
+    version: 3, file: 'x.js', sources, sourcesContent, mappings: '',
+  });
+  const OFF_BUILD = {
+    'main.0123abcd.js.map': map(['index.js', 'App.js', '../node_modules/react-dom/index.js']),
+    '1234.89abcdef.chunk.js.map': map(['screens/VenueDashboard.js', 'components/venue/VenueBillingControl.js']),
+  };
+  const ON_BUILD = {
+    ...OFF_BUILD,
+    '5678.fedcba98.chunk.js.map': map(['services/purchases.js', '../node_modules/@revenuecat/purchases-capacitor/dist/esm/index.js']),
+  };
+  const build = (files, key) => run(REVENUECAT_STEP, {
+    build: files,
+    env: key === undefined ? {} : { REACT_APP_REVENUECAT_IOS_KEY: key },
+  });
+  const SELLS_NOTHING = 'This build sells nothing: the RevenueCat SDK is not in it';
+
+  shellTest('a build made with purchases off passes with no key, and says why', () => {
+    const r = build(OFF_BUILD);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain(SELLS_NOTHING);
+    expect(r.out).not.toMatch(/PURCHASE CHECK FAILED/);
+  });
+
+  shellTest('a build made with purchases off ignores the key entirely, a wrong one included', () => {
+    for (const key of ['', 'goog_abc123', 'appl_abc123']) {
+      const r = build(OFF_BUILD, key);
+      expect({ key, code: r.code }).toEqual({ key, code: 0 });
+      expect(r.out).toContain(SELLS_NOTHING);
+    }
+  });
+
+  shellTest('a build that sells Pro with no key stops and names the variable', () => {
+    for (const key of [undefined, '']) {
+      const r = build(ON_BUILD, key);
+      expect({ key, code: r.code }).toEqual({ key, code: 1 });
+      expect(r.out).toContain('PURCHASE CHECK FAILED: this build sells Flock Pro, and REACT_APP_REVENUECAT_IOS_KEY is not set.');
+      expect(r.out).toContain('FIX: set REACT_APP_REVENUECAT_IOS_KEY in the flock_web group');
+    }
+  });
+
+  shellTest('a key that is not the Apple one stops it too', () => {
+    // RevenueCat's Google key, a secret key, a bare prefix, and two values a
+    // paste into the variable group can leave behind.
+    for (const key of ['goog_abc123', 'sk_abc123', 'appl_', 'appl_abc123\n', ' appl_abc123', 'APPL_abc123']) {
+      const r = build(ON_BUILD, key);
+      expect({ key, code: r.code }).toEqual({ key, code: 1 });
+      expect(r.out).toContain("REACT_APP_REVENUECAT_IOS_KEY is not\nRevenueCat's Apple key. It has to start with appl_");
+    }
+  });
+
+  shellTest('the Apple key passes, and the log does not print it', () => {
+    const r = build(ON_BUILD, 'appl_AbCdEf123456');
+    expect(r.code).toBe(0);
+    expect(r.out.trim()).toBe("This build sells Flock Pro, and REACT_APP_REVENUECAT_IOS_KEY is RevenueCat's Apple key (17 characters).");
+    expect(r.out).not.toContain('AbCdEf123456');
+  });
+
+  shellTest('the SDK named only in a file\'s text is not the SDK in the bundle', () => {
+    // A map carries every source file's text too. A comment that mentions the
+    // package must not turn a build that sells nothing into one that does.
+    const files = {
+      'main.0123abcd.js.map': map(['lib/purchasesBuild.js'], ["// RevenueCat (@revenuecat/purchases-capacitor/dist) is not in this build"]),
+    };
+    const r = build(files);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain(SELLS_NOTHING);
+  });
+
+  shellTest('no source maps at all stops the build rather than guessing', () => {
+    for (const files of [undefined, {}, { 'main.0123abcd.js': 'console.log(1)' }]) {
+      const r = build(files);
+      expect(r.code).toBe(1);
+      expect(r.out).toContain('PURCHASE CHECK FAILED: build/static/js has no source maps');
+    }
+  });
+
+  shellTest('a map that cannot be read stops it too', () => {
+    const r = build({ ...ON_BUILD, 'broken.chunk.js.map': '{ not json' }, 'appl_AbCdEf123456');
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('PURCHASE CHECK FAILED: the source maps under build/static/js could not be read,');
   });
 });

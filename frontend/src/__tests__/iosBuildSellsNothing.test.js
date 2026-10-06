@@ -500,6 +500,21 @@ describe('where the flag is set', () => {
     expect(buildLine(workflow('ios-capacitor'))).toBe('REACT_APP_PURCHASES=off npm run build');
   });
 
+  test('right after that build, a step stops a build that sells Pro without the Apple key', () => {
+    // codemagicShellSteps.test.js runs the step itself, with both builds.
+    const block = workflow('ios-capacitor');
+    const names = [...block.matchAll(/^ {6}- name: (.*)$/gm)].map((m) => m[1]);
+    const at = names.indexOf('Check the RevenueCat key if this build sells Flock Pro');
+    expect(at).toBeGreaterThan(-1);
+    expect(names[at - 1]).toBe('Build web app (root asset paths)');
+    expect(names[at + 1]).toBe('Capacitor sync iOS');
+    // It decides from the bundle, by the SDK services/purchases.js imports
+    // behind the flag, so the same step needs no edit when the line flips.
+    expect(block).toContain('if any("@revenuecat/purchases-capacitor/" in s for s in sources):');
+    expect(read('services', 'purchases.js')).toContain("await import('@revenuecat/purchases-capacitor');");
+    expect(block).toContain('appl_?*) KEY_OK=1 ;;');
+  });
+
   test('the review recording builds the same app the reviewer gets', () => {
     expect(buildLine(workflow('ios-review-recording'))).toMatch(/(^| )REACT_APP_PURCHASES=off .*npm run build$/);
   });

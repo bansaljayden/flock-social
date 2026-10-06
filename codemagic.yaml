@@ -37,7 +37,10 @@
 #                                      web half and the native half cannot end up
 #                                      naming two different Firebase projects.
 #      REACT_APP_REVENUECAT_IOS_KEY    the paywall can never show, even with
-#                                      PAYWALL_ENABLED set on the backend
+#                                      PAYWALL_ENABLED set on the backend. The
+#                                      one exception to failing green: once the
+#                                      build sells Pro, the RevenueCat key step
+#                                      below stops it instead
 #      REACT_APP_SENTRY_DSN            crashes inside the shell go unreported
 #      REACT_APP_POSTHOG_KEY           posthog-js is never imported, no analytics
 #      REACT_APP_API_URL               optional. Defaults to https://api.flockcorp.com
@@ -108,6 +111,79 @@ workflows:
         # (frontend/src/lib/purchasesBuild.js). Set on the iOS build lines
         # only, never on Vercel, so the web keeps everything.
         script: REACT_APP_PURCHASES=off npm run build
+      - name: Check the RevenueCat key if this build sells Flock Pro
+        script: |
+          # A BUILD THAT SELLS PRO WITHOUT ITS STORE KEY SHIPS GREEN. With
+          # REACT_APP_REVENUECAT_IOS_KEY unset, or set to anything but
+          # RevenueCat's public key for the Apple app (appl_...),
+          # services/purchases.js finds no store on any device: the Pro sheet
+          # says Pro can't be bought in the app, and the archive, the upload
+          # and TestFlight all pass. So the key is checked here, against the
+          # web build that just inlined it.
+          #
+          # ONLY WHEN THE BUILD SELLS. While the build line above runs with
+          # REACT_APP_PURCHASES=off the bundle has no purchase code and needs
+          # no key, so this step says so and exits 0. It reads that from what
+          # the build produced, not from the build line: the RevenueCat SDK is
+          # bundled exactly when purchases are on (services/purchases.js
+          # imports it behind that flag), and the source maps list every
+          # module in the bundle. Grepping this file for the flag would also
+          # find the review recording's build line, which says off too.
+          set -eu
+          KEY="${REACT_APP_REVENUECAT_IOS_KEY:-}"
+          # The "sources" list of each map, and nothing else: a map also holds
+          # every file's text, and a comment that names the SDK is not the SDK.
+          VERDICT=$(python3 -c '
+          import glob, json
+          maps = glob.glob("build/static/js/*.map")
+          sdk = 0
+          for path in maps:
+              with open(path, encoding="utf-8") as f:
+                  sources = json.load(f).get("sources") or []
+              if any("@revenuecat/purchases-capacitor/" in s for s in sources):
+                  sdk = 1
+          print(len(maps), sdk)
+          ') || VERDICT=""
+          set -- $VERDICT
+          if [ "$#" -ne 2 ]; then
+            echo "PURCHASE CHECK FAILED: the source maps under build/static/js could not be read,"
+            echo "so nothing here can tell whether this build sells Flock Pro."
+            exit 1
+          fi
+          if [ "$1" -eq 0 ]; then
+            echo "PURCHASE CHECK FAILED: build/static/js has no source maps, so nothing here can tell"
+            echo "whether this build sells Flock Pro. This step reads them to see whether the"
+            echo "RevenueCat SDK was bundled."
+            echo "FIX: leave GENERATE_SOURCEMAP unset for this build, or change this step first."
+            exit 1
+          fi
+          if [ "$2" -eq 0 ]; then
+            echo "This build sells nothing: the RevenueCat SDK is not in it (the web build ran with"
+            echo "REACT_APP_PURCHASES=off), so it needs no RevenueCat key."
+            exit 0
+          fi
+          case "$KEY" in
+            appl_?*) KEY_OK=1 ;;
+            *) KEY_OK=0 ;;
+          esac
+          # A pasted value that carries a line break or a space is not the key.
+          case "$KEY" in
+            *[[:space:]]*) KEY_OK=0 ;;
+          esac
+          if [ "$KEY_OK" -ne 1 ]; then
+            if [ -z "$KEY" ]; then
+              echo "PURCHASE CHECK FAILED: this build sells Flock Pro, and REACT_APP_REVENUECAT_IOS_KEY is not set."
+            else
+              echo "PURCHASE CHECK FAILED: this build sells Flock Pro, and REACT_APP_REVENUECAT_IOS_KEY is not"
+              echo "RevenueCat's Apple key. It has to start with appl_ and hold no spaces or line breaks."
+            fi
+            echo "Every device would get a Pro sheet saying Pro can't be bought in the app, and the"
+            echo "archive, the upload and TestFlight would all have passed."
+            echo "FIX: set REACT_APP_REVENUECAT_IOS_KEY in the flock_web group to the public SDK key of"
+            echo "     the Apple app in RevenueCat (Project settings, API keys), then re-run this build."
+            exit 1
+          fi
+          echo "This build sells Flock Pro, and REACT_APP_REVENUECAT_IOS_KEY is RevenueCat's Apple key (${#KEY} characters)."
       - name: Capacitor sync iOS
         script: npx cap sync ios
       - name: Write and verify GoogleService-Info.plist (push notifications)
