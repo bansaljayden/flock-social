@@ -92,9 +92,10 @@ the weather and nearby events alone. The closest published system, a 2023 ACM
 SIGSPATIAL graph model ([BysGNN](https://arxiv.org/abs/2306.15927)), starts from
 a baseline it describes as "similar to Google Maps' popular times graph" and
 halves its error by feeding each venue's own recent visit history back in.
-Flock's gain is measured with no such input in the feature set. The collector
-now writes exactly that reading every hour for the venues the app serves, which
-makes it the next input the model gets.
+Flock's gain is measured with no such input in the feature set. The hourly
+collector now asks for that reading for the venues it can poll in Philadelphia
+and the Lehigh Valley, served venues first, and stores it when the vendor has
+one, which makes it the next input the model gets.
 
 **It is above zero at the granularity where the field is below it.** R², the
 coefficient of determination, is positive when a model's predictions carry more
