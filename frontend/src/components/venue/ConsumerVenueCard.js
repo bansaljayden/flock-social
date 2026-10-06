@@ -810,7 +810,13 @@ export default function ConsumerVenueCard({
                 const isLiveNow = (() => {
                   if (!cd?.lastUpdated || ownerNumber) return false;
                   const method = String(cd.predictionMethod || '');
-                  if (!method || method.startsWith('rule_engine')) return false;
+                  // Only the model path's own number, 'ml', may be LIVE. This
+                  // was "anything but rule_engine", which let through the
+                  // server's no-curve fallback ('category_curve_no_baseline'):
+                  // what is typical for this kind of place at this hour, a
+                  // category prior exactly like the rule engine's, and no
+                  // more live than one.
+                  if (method !== 'ml') return false;
                   // With CROWD_SERVE_MODE=curve_offset the method stays 'ml'
                   // for a number that is the venue's weekly pattern alone: no
                   // model ran and no live reading reached it. The source says
