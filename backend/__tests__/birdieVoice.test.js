@@ -429,7 +429,7 @@ test('with curve_offset and the nowcast on, Birdie can quote the measured accura
   assert.ok(prompt.includes(`${Math.round(served.band_exact)}% of Flock's crowd numbers named the exact crowd level of the reading and ${Math.round(served.within_one_band)}% landed within one level, and the average miss was ${Math.round(served.mae)} points.`),
     'the within-one-level figure is quoted without the exact-level rate and the average miss beside it, or not as servedAccuracy.json records them');
   assert.match(prompt, /Never give the within-one-level figure without the exact-level figure and the average miss beside it\./);
-  assert.ok(prompt.includes(`${Math.round(served.reading_one_hour_earlier.within_one_band)}% landed within one level`));
+  assert.ok(prompt.includes(`${Math.round(served.reading_one_hour_earlier.band_exact)}% named the exact level and ${Math.round(served.reading_one_hour_earlier.within_one_band)}% landed within one`));
   assert.match(prompt, /never how sure one number is\./);
   // Inside the hard rules, beside the confidence rule it qualifies.
   const at = prompt.indexOf('how accurate Flock');
@@ -441,6 +441,6 @@ test('with either switch off, the prompt states no accuracy figure', () => {
   for (const [mode, nowcast] of [[undefined, undefined], ['curve_offset', undefined], [undefined, 'true'], ['model', 'true']]) {
     const prompt = withServeEnv(mode, nowcast, adult);
     assert.ok(!prompt.includes('how accurate Flock'), `accuracy line present with CROWD_SERVE_MODE=${mode} CROWD_NOWCAST_ENABLED=${nowcast}`);
-    assert.ok(!/78\.8|79%|56%/.test(prompt));
+    assert.ok(!/78\.8|79%|56%|86%|92%/.test(prompt));
   }
 });
