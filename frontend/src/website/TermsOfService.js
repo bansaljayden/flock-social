@@ -5,7 +5,7 @@ import SiteFooter from './SiteFooter';
 // Moved to September 27 when 9.6 renamed "the Monday digest" to "the Monday
 // email", the name the venue dashboard's switch uses. The words moved, so the
 // date does (DESIGN-STANDARD §Q4).
-const EFFECTIVE_DATE = 'September 27, 2026';
+const EFFECTIVE_DATE = 'October 6, 2026';
 const SUPPORT_EMAIL = 'social@flockcorp.com';
 
 // THE COUNTERPARTY IS FLOCK SOCIAL LLC, a Pennsylvania limited liability
@@ -378,7 +378,7 @@ export default function TermsOfService() {
           <li>It expires by itself 90 minutes after you set it. After that, users see our estimate again. You do not have to turn it off, and you can retract it early.</li>
           <li>Flock users can report busyness too. When enough of them do, currently three or more, their reports take precedence over yours. That precedence is not something you can buy.</li>
           <li>Reports are attributable. We keep a record of who set what and when, and we keep it after a report expires or is retracted.</li>
-          <li>You allow us to use your reports to correct predictions at your venue, to train the crowd model that serves every venue, and to contribute to aggregate comparisons across venues in your city and category. Those aggregates are built so that no single venue's number can be read back out of them, and they are not published at all until at least five owners other than you have reported into the same comparison and at least three of their readings land on the figure itself.</li>
+          <li>You allow us to use your reports to correct predictions at your venue, to train the crowd model, which learns from every venue, and to contribute to aggregate comparisons across venues in your city and category. Those aggregates are built so that no single venue's number can be read back out of them, and they are not published at all until at least five owners other than you have reported into the same comparison and at least three of their readings land on the figure itself.</li>
         </ul>
         <p>
           Misreporting is the one venue behaviour that can cost you the feature, or the

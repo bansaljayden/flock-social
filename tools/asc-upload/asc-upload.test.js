@@ -43,6 +43,8 @@ const DOC_PATH = join(REPO_ROOT, 'APP-STORE-SUBMISSION.md');
 const DOC = existsSync(DOC_PATH) ? readFileSync(DOC_PATH, 'utf8') : null;
 const NO_DOC = DOC === null && 'APP-STORE-SUBMISSION.md is private and not in this checkout';
 const docTest = (name, fn) => test(name, { skip: NO_DOC }, fn);
+// The dry run also counts the private screenshots in store-assets/.
+const NO_SHOTS = !existsSync(join(REPO_ROOT, 'store-assets')) && 'store-assets/ (private screenshots) is not in this checkout';
 
 function makeP256Pem() {
   const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
@@ -531,7 +533,7 @@ test('CLI: --check-review-login without an API key exits 1 naming the missing op
 // CLI smoke test: full offline dry run against the real repo
 // ---------------------------------------------------------------------------
 
-docTest('CLI dry run exits 0, prints the plan, missing screenshots, and the never-touches checklist', () => {
+test('CLI dry run exits 0, prints the plan, missing screenshots, and the never-touches checklist', { skip: NO_DOC || NO_SHOTS }, () => {
   const result = spawnSync(process.execPath, [join(HERE, 'upload.mjs'), '--dry-run'], { encoding: 'utf8' });
   assert.equal(result.status, 0, `stderr: ${result.stderr}`);
   assert.match(result.stdout, /DRY RUN, no network writes/);

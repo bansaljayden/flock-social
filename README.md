@@ -117,17 +117,19 @@ above the previous shipped model's, measured on the same rows in the same run
 30.77). Candidate and incumbent are scored on identical rows with identical
 features, so the floor rises whenever the incumbent improves.
 
-**How it works.** `backend/services/mlPredictor.js` serves an XGBoost model
-(800 gradient-boosted trees at depth 8, exported to ONNX and run in-process by
-`onnxruntime-node`, **v2.6.0 "Starling"**). The corpus is Flock's own:
+**How it works.** In model mode (`CROWD_SERVE_MODE=model`),
+`backend/services/mlPredictor.js` serves an XGBoost model (800 gradient-boosted
+trees at depth 8, exported to ONNX and run in-process by `onnxruntime-node`,
+**v2.6.0 "Starling"**). Production runs `curve_offset` today and keeps this model
+as the one a retrain has to beat. The corpus is Flock's own:
 **3.9 million rows across 34 cities**, collected by Flock's pipeline. After
 holding out three whole cities and keeping the rows with a usable baseline, that
 is **1.93 million training rows across 30 cities**. The model reads **106
 features**: time patterns, weather, nearby events, holiday calendars, venue
 category and popularity, and the typical level for that kind of venue and for
 its neighbors at that hour. It predicts a *delta*, how far
-a venue will sit from its own typical value for that hour, and the served score
-is the baseline plus that delta, clamped and clipped to 0 to 100. Training runs
+a venue will sit from its own typical value for that hour, and in model mode the
+served score is the baseline plus that delta, clamped and clipped to 0 to 100. Training runs
 on CPU with pinned threads and is **bit-reproducible**: given the same data and
 seed, two runs produce identical predictions, so the artifact can be regenerated
 by anyone holding the corpus.
