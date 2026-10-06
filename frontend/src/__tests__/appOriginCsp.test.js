@@ -229,6 +229,18 @@ describe('CSP covers the hosts the code actually talks to', () => {
     expect(allows(directive('img-src'), 'https://api.dicebear.com')).toBe(true);
   });
 
+  it('does not let a Google profile photo draw as an avatar', () => {
+    // Google sign-in stored the token's picture link as the avatar, unscreened,
+    // until 2026-10-06; backend migration 120 cleared the links it had stored.
+    // Nothing else in the app loads an image from Google's user-content host
+    // (venue photos come through the API's own photo proxy), so the host is
+    // out of img-src in both copies of the policy, and a link that turned up
+    // anyway would not draw.
+    const googlePhoto = 'https://lh3.googleusercontent.com/a/ACg8ocExample=s96-c';
+    expect(allows(directive('img-src'), googlePhoto)).toBe(false);
+    expect(allows(metaDirective('img-src'), googlePhoto)).toBe(false);
+  });
+
   it('covers Google sign-in and the gstatic bundles the push worker imports', () => {
     // @react-oauth/google injects https://accounts.google.com/gsi/client.
     expect(read('package.json')).toContain('@react-oauth/google');
