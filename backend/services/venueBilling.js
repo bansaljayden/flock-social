@@ -69,6 +69,20 @@ const KEEP_STATUSES = new Set(['active', 'trialing', 'past_due']);
 // A subscription already running, so a second checkout would bill twice. NOT
 // 'incomplete', for the reason proBilling.js gives.
 const LIVE_STATUSES = new Set(['active', 'trialing', 'past_due', 'unpaid']);
+// Statuses after which Stripe will never bill the subscription again, so
+// there is nothing left to cancel.
+const ENDED_STATUSES = new Set(['canceled', 'incomplete_expired']);
+
+// What a subscription WE ended early is written as in venue_subscriptions.status
+// (stripe_subscription_endings.cause, migration 118). Not Stripe's word on
+// purpose: Stripe can still call such a subscription active, and the row says
+// why the grant ended. Any status outside GRANT_LIVE_STATUSES revokes in the
+// resolver, so these two need nothing there.
+function endingStatus(cause) {
+  if (cause === 'refund') return 'refunded';
+  if (cause === 'dispute') return 'disputed';
+  return 'ended';
+}
 
 function plain(raw) {
   return typeof raw === 'string' && raw.trim() ? raw.trim() : null;
@@ -362,15 +376,18 @@ function toDate(unixSeconds) {
 // What one Stripe subscription means for the grant. Pure, so a test can walk
 // every status through it. unknownPriceIsRoost is for a subscription Stripe is
 // still billing on a price missing from the configuration (see
-// syncVenueSubscription): it counts that price as Roost.
-function grantFromSubscription(sub, now = Date.now(), { unknownPriceIsRoost = false } = {}) {
+// syncVenueSubscription): it counts that price as Roost. endedBy is the cause
+// recorded for a subscription we ended early (a full refund, a dispute): it
+// is never live, whatever Stripe's status says, and its status is written as
+// that cause (endingStatus above).
+function grantFromSubscription(sub, now = Date.now(), { unknownPriceIsRoost = false, endedBy = null } = {}) {
   const item = sub && sub.items && Array.isArray(sub.items.data) ? sub.items.data[0] : null;
   const priceId = item && item.price ? item.price.id : null;
   const priceOk = !!priceId && (unknownPriceIsRoost || recognisedPrices().has(priceId));
   // current_period_end moved onto the item in recent API versions; the
   // subscription-level field is the older home.
   const periodEnd = toDate(item && item.current_period_end) || toDate(sub.current_period_end);
-  const live = KEEP_STATUSES.has(sub.status) && priceOk;
+  const live = KEEP_STATUSES.has(sub.status) && priceOk && !endedBy;
   let expiresAt;
   if (live) {
     // Never NULL for a Stripe grant: NULL means "no end date" to the
@@ -383,7 +400,7 @@ function grantFromSubscription(sub, now = Date.now(), { unknownPriceIsRoost = fa
     live,
     priceOk,
     priceId,
-    status: typeof sub.status === 'string' ? sub.status.slice(0, 32) : 'unknown',
+    status: endedBy ? endingStatus(endedBy) : typeof sub.status === 'string' ? sub.status.slice(0, 32) : 'unknown',
     grantTier: priceOk ? ROOST_TIER : 'free',
     cachedTier: live ? ROOST_TIER : 'free',
     expiresAt,
@@ -539,6 +556,15 @@ const SYNC_SQL = `WITH old AS (
 const SYNC_LOCK_NAMESPACE = 81437;
 const LOCKED_READ = { timeout: 5000, maxNetworkRetries: 0 };
 
+// ENDED BY US STAYS ENDED. A subscription whose current period's payment was
+// refunded in full, or which a dispute ended, has a row in
+// stripe_subscription_endings (migration 118). Stripe can still call it
+// active (the cancel has not landed, or somebody undid it in the dashboard),
+// and every event re-reads Stripe, so without this read a later
+// customer.subscription.updated wrote the year of Roost straight back. Read on
+// the locked transaction, with the subscription it is about.
+const ENDED_SQL = 'SELECT cause FROM stripe_subscription_endings WHERE stripe_subscription_id = $1::text ORDER BY id LIMIT 1';
+
 // Re-reads the subscription from Stripe and writes what it says. Events arrive
 // out of order and can be replayed, so the event body is never the source:
 // whatever Stripe says under the venue's lock is written, and writing it twice
@@ -580,10 +606,15 @@ async function syncVenueSubscription(subscriptionId) {
     if (owner !== userId) {
       throw new Error(`Roost subscription ${subscriptionId} named venue user ${userId} and then ${owner ? `venue user ${owner}` : 'no venue account'} on the read under the lock. Nothing was written; Stripe's retry reads it again.`);
     }
-    let g = grantFromSubscription(sub);
-    if (!g.priceOk && KEEP_STATUSES.has(sub.status)) {
+    const ended = await client.query(ENDED_SQL, [sub.id]);
+    const endedBy = ended && Array.isArray(ended.rows) && ended.rows[0] ? ended.rows[0].cause : null;
+    let g = grantFromSubscription(sub, Date.now(), { endedBy });
+    if (!g.priceOk && KEEP_STATUSES.has(sub.status) && !endedBy) {
       console.error(`[venue-billing] subscription ${sub.id} is ${g.status} on price ${g.priceId}, which is not a configured Roost price. Stripe is billing it, so Roost is kept through the period being billed. If the price is real, set it in STRIPE_PRICE_ROOST_* (a price no longer sold goes in STRIPE_PRICE_ROOST_LEGACY).`);
       g = grantFromSubscription(sub, Date.now(), { unknownPriceIsRoost: true });
+    }
+    if (endedBy && KEEP_STATUSES.has(sub.status)) {
+      console.error(`[venue-billing] subscription ${sub.id} is ${sub.status} at Stripe, but we ended it (${endedBy}), so the grant stays revoked. Cancel it in Stripe if it is still billing.`);
     }
     if (!g.priceOk) {
       console.error(`[venue-billing] subscription ${sub.id} is ${g.status} on price ${g.priceId}, which is not a configured Roost price. It is not live, so the grant is revoked as for any ended subscription.`);
@@ -613,6 +644,111 @@ async function syncVenueSubscription(subscriptionId) {
   } finally {
     client.release();
   }
+}
+
+// ---------------------------------------------------------------------------
+// Refunds
+// ---------------------------------------------------------------------------
+
+// Cancels a subscription now, unless Stripe has already ended it. A cancel
+// that fails because the subscription ended in between (the venue cancelled,
+// a deleted event raced us) is the outcome wanted, so it is checked for
+// before the failure is passed on.
+async function cancelNow(sub, idempotencyKey) {
+  if (!sub || ENDED_STATUSES.has(sub.status)) return false;
+  try {
+    await stripe().subscriptions.cancel(sub.id, {}, { idempotencyKey });
+    return true;
+  } catch (err) {
+    const again = await stripe().subscriptions.retrieve(sub.id).catch(() => null);
+    if (again && ENDED_STATUSES.has(again.status)) return false;
+    throw err;
+  }
+}
+
+// Pages of a charge's refunds read, at most. A charge carries a handful.
+const MAX_REFUND_PAGES = 5;
+
+// What has really come back to the venue: refunds Stripe says succeeded. A
+// refund can be pending for days on some payment methods and can still fail,
+// and a failed or cancelled refund returned nothing.
+async function succeededRefundTotal(chargeId) {
+  let total = 0;
+  let after = null;
+  for (let page = 0; page < MAX_REFUND_PAGES; page += 1) {
+    const list = await stripe().refunds.list({ charge: chargeId, limit: 100, ...(after ? { starting_after: after } : {}) });
+    const data = list && Array.isArray(list.data) ? list.data : [];
+    for (const r of data) {
+      if (r && r.status === 'succeeded' && Number.isFinite(r.amount)) total += r.amount;
+    }
+    if (!list || !list.has_more || data.length === 0) break;
+    after = data[data.length - 1].id;
+  }
+  return total;
+}
+
+// A FULL REFUND ENDS WHAT IT PAID FOR. The webhook used to acknowledge every
+// refund event as ignored, and the subscription stayed the one authority for
+// the grant, so a venue whose $990 for the year was refunded in full kept the
+// year of Roost: Stripe still called the subscription active, and every later
+// event re-read it and wrote it again. Stripe's refund dialog offers to cancel
+// in the same step, but nothing made anyone tick it.
+//
+// Called for charge.refunded and the refund events (routes/stripeWebhook.js),
+// with the event's object, which is only used for the charge id: everything
+// decided here is read back from Stripe, like every other venue event.
+//
+//   FULL means the refunds Stripe says SUCCEEDED add up to the whole charge.
+//   A partial refund is a credit (a goodwill amount, a price correction), not
+//   an ending, and changes nothing. A pending one changes nothing until it
+//   lands, and the refund.updated that says it landed brings it back here.
+//
+//   ITS SUBSCRIPTION is found through the charge's invoice
+//   (proBilling.subscriptionsFundedBy), never through the customer: a customer
+//   outlives a subscription.
+//
+//   ONLY THE CURRENT PERIOD. The refunded invoice has to be the subscription's
+//   latest, the one paying for today. A full refund of last month, after this
+//   month was paid, returned nothing that pays for today, so today's grant
+//   stands.
+//
+//   DURABLY. The decision is recorded (stripe_subscription_endings, migration
+//   118) before anything else, and the writer reads that on every sync, so a
+//   later event that still reads the subscription as active cannot restore
+//   it. Then the subscription is cancelled now, without proration: the money
+//   for the period is back with the venue, so there is nothing paid to run
+//   out, and a subscription left open would bill again at its next renewal.
+//   Last, the grant is written from Stripe as usual, which revokes it now.
+//
+// A Pro subscription is left alone: RevenueCat reads Stripe's refunds itself
+// and revokes on its own path (routes/revenuecat.js).
+async function revokeRefundedSubscription(obj) {
+  const chargeId = obj && obj.object === 'charge'
+    ? (typeof obj.id === 'string' ? obj.id : null)
+    : (typeof (obj && obj.charge) === 'string' ? obj.charge : obj && obj.charge && obj.charge.id) || null;
+  if (!chargeId) return { ignored: 'no_charge' };
+  const charge = await stripe().charges.retrieve(chargeId);
+  const amount = charge && Number.isFinite(charge.amount) ? charge.amount : 0;
+  if (!(amount > 0)) return { ignored: 'no_payment' };
+  if ((await succeededRefundTotal(chargeId)) < amount) return { ignored: 'partial_refund' };
+  const { funded } = await billing.subscriptionsFundedBy(charge);
+  if (funded.length === 0) return { ignored: 'no_subscription' };
+  const revoked = [];
+  for (const f of funded) {
+    const sub = await stripe().subscriptions.retrieve(f.subscriptionId);
+    if (!isVenueObject(sub)) continue;
+    const latest = typeof sub.latest_invoice === 'string' ? sub.latest_invoice : sub.latest_invoice && sub.latest_invoice.id;
+    if (latest !== f.invoiceId) {
+      console.log(`[venue-billing] charge ${chargeId} was refunded in full, but it paid invoice ${f.invoiceId}, not the one paying for subscription ${sub.id}'s current period (${latest || 'none'}), so Roost stands.`);
+      continue;
+    }
+    await billing.recordEnding({ cause: 'refund', sourceId: chargeId, subscriptionId: sub.id, invoiceId: f.invoiceId, chargeId });
+    await cancelNow(sub, `flock-refund-cancel-${sub.id}`);
+    await syncVenueSubscription(sub.id);
+    revoked.push(sub.id);
+  }
+  if (revoked.length === 0) return { ignored: 'not_current_roost_period' };
+  return { revoked };
 }
 
 // The Stripe webhook's venue branch. Only called for objects that carry
@@ -655,6 +791,7 @@ module.exports = {
   confirmVenueCheckout,
   syncVenueSubscription,
   handleVenueEvent,
+  revokeRefundedSubscription,
   venueCustomerIdFor,
   closeVenueCustomer,
   venueCheckoutKey,

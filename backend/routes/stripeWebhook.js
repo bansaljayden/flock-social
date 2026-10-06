@@ -46,6 +46,17 @@ const HANDLED = new Set([
   'customer.subscription.deleted',
 ]);
 
+// The refund events: charge.refunded carries the Charge, the other three a
+// Refund (refund.updated is the one that says a pending refund landed, and
+// charge.refund.updated is its older name). The endpoint has to be
+// subscribed to them in the Stripe dashboard (VENUE-BILLING.md).
+const REFUND_EVENTS = new Set([
+  'charge.refunded',
+  'charge.refund.updated',
+  'refund.created',
+  'refund.updated',
+]);
+
 // Roost also needs `created`: a subscription can exist (a trial that starts
 // with no charge) before anything else about it changes.
 const VENUE_HANDLED = new Set([
@@ -86,6 +97,23 @@ router.post('/', async (req, res) => {
       return res.json({ received: true, ...(result && result.ignored ? { ignored: result.ignored } : {}) });
     } catch (err) {
       console.error('[stripe-webhook] charge.dispute.created failed:', err?.message || err);
+      return res.status(500).json({ error: 'Webhook failed' });
+    }
+  }
+
+  // A REFUND names a charge too, and carries no venue metadata, so it never
+  // reached the venue branch below and was acknowledged as ignored: a Roost
+  // subscription refunded in full kept its year. services/venueBilling.js
+  // revokeRefundedSubscription decides from Stripe's own record whether the
+  // refund was full, which subscription it paid for and whether that is the
+  // period being paid for now. A Pro refund comes back ignored from there,
+  // because RevenueCat reads Stripe's refunds itself.
+  if (REFUND_EVENTS.has(event.type)) {
+    try {
+      const result = await venueBilling.revokeRefundedSubscription(eventObject);
+      return res.json({ received: true, ...(result && result.ignored ? { ignored: result.ignored } : {}) });
+    } catch (err) {
+      console.error(`[stripe-webhook] ${event.type} failed:`, err?.message || err);
       return res.status(500).json({ error: 'Webhook failed' });
     }
   }
