@@ -37,7 +37,15 @@
 const fs = require('fs');
 const path = require('path');
 const React = require('react');
-const { render, screen, fireEvent, waitFor, within } = require('@testing-library/react');
+const { render, screen, fireEvent, waitFor, within, configure } = require('@testing-library/react');
+
+// The hub is the heaviest screen in the app, and every test here starts by
+// waiting for its first render (renderHub below). Testing Library gives that
+// one second, which a full pre-push run on a busy machine overshoots: three
+// different tests here failed that way (2026-09-30, 10-05 twice) and each
+// passed alone. Five seconds is the same check with room for load; a hub
+// that never renders still fails.
+configure({ asyncUtilTimeout: 5000 });
 
 jest.mock('../services/api', () => ({
   __esModule: true,
