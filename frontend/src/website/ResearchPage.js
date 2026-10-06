@@ -98,10 +98,19 @@ export default function ResearchPage() {
         <section className="lp-sec-navy lp-on-navy rs-hero">
           <div className="lp-wrap">
             <h1>Why we study crowds, and what we found.</h1>
+            {/* The first study is the forecast the chart below scores: a
+                venue's weekly pattern moved by its live readings, which only
+                a venue with a pattern gets. A venue with none is scored by
+                the rule engine (crowdEngine.js), which the chart does not
+                measure as Flock's number, so the lead does not put the
+                forecast behind every card. */}
             <p className="lp-lead rs-hero-lead">
-              The forecast behind the number on every venue card says how busy
-              a place will be. The second study, a sensor that counts the people
-              actually there, has so far been tested on research footage.
+              The first study is the forecast of how busy a place will be,
+              behind the number on a venue card wherever Flock knows that
+              venue's weekly pattern. A venue without one gets an estimate from
+              what is typical for its kind. The second study, a sensor that
+              counts the people actually there, has so far been tested on
+              research footage.
             </p>
 
             <div className="rs-paper">
@@ -158,7 +167,7 @@ export default function ResearchPage() {
               usLabel="Flock"
               themLabel="Chart"
               rows={FORECAST}
-              note="Share of the same 4,183 held-out live readings. Higher is better."
+              note="Share of the same 4,183 held-out live readings, at venues in the Lehigh Valley and Miami. Higher is better."
             />
             <Chart
               title="Owl against the heat rule it replaced"
