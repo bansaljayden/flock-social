@@ -266,6 +266,36 @@ function subscriptionDates(sub) {
   };
 }
 
+// EVERY PAGE OF A STRIPE LIST. A list answers one page, ten items unless asked
+// for more, and says has_more when there is another. Every reader here took
+// the first page as the whole answer (ten subscriptions for the status route
+// and checkout, twenty for a revocation), so a live plan older than ten or
+// twenty newer ones that ended (failed payments leave one each) was invisible:
+// the status hid Manage billing, checkout sold a second plan, and a revocation
+// reported success without cancelling it. Read to the end, a hundred at a
+// time. Past MAX_LIST_PAGES the read throws rather than answer from part of
+// the list: a refusal can be retried, a wrong answer cannot.
+const MAX_LIST_PAGES = 10;
+async function listAll(list, params, requestOptions) {
+  const out = [];
+  let after = null;
+  for (let page = 0; page < MAX_LIST_PAGES; page += 1) {
+    const res = await list({ ...params, limit: 100, ...(after ? { starting_after: after } : {}) }, requestOptions);
+    const data = res && Array.isArray(res.data) ? res.data : [];
+    out.push(...data);
+    if (!res || !res.has_more || data.length === 0) return out;
+    after = data[data.length - 1].id;
+  }
+  throw new Error(`a Stripe list for ${params.customer || 'a customer'} ran past ${MAX_LIST_PAGES} pages`);
+}
+
+// Every subscription on a customer, in any status, and every checkout of one
+// still open.
+const subscriptionsOn = (customerId, requestOptions) =>
+  listAll((p, o) => stripe().subscriptions.list(p, o), { customer: customerId, status: 'all' }, requestOptions);
+const openSessionsOn = (customerId) =>
+  listAll((p, o) => stripe().checkout.sessions.list(p, o), { customer: customerId, status: 'open' });
+
 // The Roost subscription that matters now, on any of the account's customers,
 // with the customer it is on, or null: the newest one Stripe may still bill,
 // else the newest of all. Only subscriptions naming this account. A plan that
@@ -280,14 +310,13 @@ async function latestVenueSubscription(userId, customerIds, requestOptions) {
   let newest = null;
   let newestBilling = null;
   for (const customerId of customerIds) {
-    let list;
+    let data;
     try {
-      list = await stripe().subscriptions.list({ customer: customerId, status: 'all', limit: 10 }, requestOptions);
+      data = await subscriptionsOn(customerId, requestOptions);
     } catch (err) {
       if (missingAtStripe(err)) continue;
       throw err;
     }
-    const data = list && Array.isArray(list.data) ? list.data : [];
     for (const s of data) {
       if (!isVenueObject(s) || venueUserIdFrom(s.metadata) !== userId) continue;
       const entry = { subscription: s, customerId };
@@ -388,8 +417,7 @@ async function ensureVenueCustomer(user, profile) {
 }
 
 async function hasLiveSubscription(customerId) {
-  const list = await stripe().subscriptions.list({ customer: customerId, status: 'all', limit: 10 });
-  return list.data.some((s) => LIVE_STATUSES.has(s.status));
+  return (await subscriptionsOn(customerId)).some((s) => LIVE_STATUSES.has(s.status));
 }
 
 // One trial per venue. A customer who has ever held a Roost subscription, in
@@ -402,8 +430,7 @@ async function hasEverSubscribed(customerId) {
 // Only the newest checkout can ever be paid; see proBilling.expireOpenSessions
 // for why a session that will not expire blocks a second one.
 async function expireOpenSessions(customerId) {
-  const open = await stripe().checkout.sessions.list({ customer: customerId, status: 'open', limit: 20 });
-  for (const s of open.data) {
+  for (const s of await openSessionsOn(customerId)) {
     try {
       await stripe().checkout.sessions.expire(s.id);
     } catch (err) {
@@ -1098,8 +1125,7 @@ async function stopRoostForRevokedClaim(userId, { customerIds = null } = {}) {
       throw refusal(503, `venue user ${userId} has Roost customers on record (${customers.join(', ')}) and Stripe is not configured, so nothing was cancelled`, 'STRIPE_NOT_CONFIGURED');
     }
     for (const customerId of customers) {
-      const open = await stripe().checkout.sessions.list({ customer: customerId, status: 'open', limit: 20 });
-      for (const s of (open && Array.isArray(open.data) ? open.data : [])) {
+      for (const s of await openSessionsOn(customerId)) {
         if (!isVenueObject(s)) continue;
         try {
           await stripe().checkout.sessions.expire(s.id);
@@ -1109,8 +1135,7 @@ async function stopRoostForRevokedClaim(userId, { customerIds = null } = {}) {
           if (!again || again.status === 'open') throw err;
         }
       }
-      const list = await stripe().subscriptions.list({ customer: customerId, status: 'all', limit: 20 });
-      for (const s of (list && Array.isArray(list.data) ? list.data : [])) {
+      for (const s of await subscriptionsOn(customerId)) {
         if (!isVenueObject(s) || venueUserIdFrom(s.metadata) !== userId) continue;
         if (await cancelNow(s, `flock-claim-revoked-cancel-${s.id}`)) outcome.subscriptionsCancelled.push(s.id);
       }
