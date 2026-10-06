@@ -64,13 +64,23 @@ export const crowdArcFor = (score) => {
  * A source ending in '_adjusted' is that arithmetic with verified visitor
  * reports blended in afterwards. Its words say so, and a carried reading is
  * then never worded as the number itself.
+ *
+ * One source is not the venue's at all. 'category_typical' is the server's
+ * no-curve fallback (predictionMethod 'category_curve_no_baseline', behind
+ * the switch CROWD_NO_CURVE_FALLBACK): for a venue with no crowd curve of its
+ * own, what is typical for its kind of place at that hour of the week. Its
+ * words say exactly that, and never this venue's pattern, the model or live.
  */
 const NUMBER_SOURCE_PHRASES = {
   venue_pattern_live: "this venue's usual pattern and its recent live readings",
   venue_pattern: "this venue's usual pattern",
   model_live: "the Flock crowd model and this venue's recent live readings",
   model_alone: 'the Flock crowd model alone',
+  category_typical: 'what is typical for this kind of place at this hour of the week',
 };
+// The predictionMethod that number carries, the server's
+// crowdEngine.NO_CURVE_FALLBACK_METHOD.
+export const NO_CURVE_FALLBACK_METHOD = 'category_curve_no_baseline';
 // The same sources once visitor reports adjusted the number. "Alone" goes:
 // the model's number is not alone any more.
 const ADJUSTED_BASE_PHRASES = {
@@ -126,6 +136,14 @@ export const isAdjustedSource = (source) => {
   return Boolean(parsed && parsed.adjusted);
 };
 
+// True when the number is the typical level for this kind of place (the
+// no-curve fallback), adjusted or not: not a reading of this venue, so not
+// live by any reading of the word.
+export const isCategoryTypicalSource = (source) => {
+  const parsed = parseSource(source);
+  return Boolean(parsed && parsed.base === 'category_typical');
+};
+
 /**
  * The venue card's line under the dial: where the number came from.
  *
@@ -139,7 +157,9 @@ export const isAdjustedSource = (source) => {
  * like this one. Only 'ml' is the model; a missing method is not assumed to
  * be. A named source is only ever sent while a serving switch is on, and it
  * already carries the reports words when reports adjusted it, so they are
- * not said twice.
+ * not said twice. The one named source that is not the model path's,
+ * 'category_typical', names itself the same way: what is typical for this
+ * kind of place at this hour of the week.
  */
 export const RULE_ENGINE_WORDS = 'what is typical for a venue like this';
 export const cardSourceLine = (cd) => {
@@ -152,6 +172,7 @@ export const cardSourceLine = (cd) => {
     if (madeFrom) return `From ${madeFrom}, ${REPORTS_ADJUSTED_WORDS}.`;
     return model ? `From the crowd model, ${REPORTS_ADJUSTED_WORDS}.` : `From ${RULE_ENGINE_WORDS}, ${REPORTS_ADJUSTED_WORDS}.`;
   }
+  if (isCategoryTypicalSource(cd.numberSource)) return `From ${madeFrom}.`;
   if (model) return madeFrom ? `From ${madeFrom}.` : 'From the Flock crowd model.';
   return 'An estimate from typical patterns for this kind of place.';
 };
@@ -171,7 +192,12 @@ const SOURCE_PARTS = {
   venue_pattern: { base: 'pattern', live: false },
   model_live: { base: 'model', live: true },
   model_alone: { base: 'model', live: false },
+  // Not measured at this venue at all, like a rule-engine bar.
+  category_typical: { base: 'category', live: false },
 };
+// The chart's words when every bar drawn is typical for this kind of place and
+// at least one is the category table's: true of every bar, whatever the reader.
+const CATEGORY_HOURS_WORDS = 'what is typical for this kind of place at each hour of the week';
 const BASE_PHRASES = {
   pattern: "this venue's usual pattern",
   model: 'the Flock crowd model',
@@ -202,6 +228,9 @@ const RULE_HOURS_WORDS_VISITOR = 'and in hours not measured there yet, what is t
  * already had. A model bar without a source counts as the model's number; a
  * rule-engine bar beside named ones is said to be typical for a venue like
  * this one. `reader: 'visitor'` words that for someone who is not the venue.
+ * A bar the category table made ('category_typical') is not measured here
+ * either: beside measured bars it joins the rule-engine words, and when no
+ * bar is measured the chart says every bar is typical for this kind of place.
  */
 export const hourlySourcePhrase = (bars, { reader = 'owner' } = {}) => {
   const ruleWords = reader === 'visitor' ? RULE_HOURS_WORDS_VISITOR : RULE_HOURS_WORDS;
@@ -220,7 +249,8 @@ export const hourlySourcePhrase = (bars, { reader = 'owner' } = {}) => {
     if (b.predictionMethod === 'ml') return { source: null, base: 'model', live: flag === true };
     return { source: null, base: 'rule', live: false };
   });
-  const measured = parts.filter((p) => p.base !== 'rule');
+  const measured = parts.filter((p) => p.base !== 'rule' && p.base !== 'category');
+  if (measured.length === 0) return CATEGORY_HOURS_WORDS;
   const ruleHours = measured.length < parts.length;
   const withRule = (phrase) => (ruleHours ? `${phrase}, ${ruleWords}` : phrase);
 
@@ -235,6 +265,11 @@ export const hourlySourcePhrase = (bars, { reader = 'owner' } = {}) => {
   if (live > 0) return withRule(`${base}, with this venue's recent live readings in some hours`);
   return withRule(base);
 };
+
+// True when hourlySourcePhrase says every bar drawn is typical for this kind
+// of place: no bar is this venue's own data or a live reading, so a caption
+// over those bars must not call them live.
+export const hourlyTypicalOnly = (bars) => hourlySourcePhrase(bars) === CATEGORY_HOURS_WORDS;
 
 /**
  * The words for a row of OTHER venues' numbers, one bar per venue (the venue

@@ -14,6 +14,7 @@ const path = require('path');
 const {
   numberSourcePhrase, hourlySourcePhrase, isAdjustedSource, isPatternOnlySource, peersSourcePhrase, REPORTS_ADJUSTED_WORDS,
   cardSourceLine, stripRowMethod, stripPeakBars,
+  isCategoryTypicalSource, hourlyTypicalOnly, NO_CURVE_FALLBACK_METHOD,
 } = require('../lib/crowd');
 
 const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8').replace(/\r\n/g, '\n');
@@ -156,7 +157,12 @@ test('every surface that credits the crowd model reads the number source first',
   // headline's source only when no chart is drawn.
   expect(demo).toMatch(/const crowdBars = hourly\.filter\(\(h\) => h && h\.open !== false\);/);
   expect(demo).toMatch(/const madeFrom = crowdBars\.length\s*\? hourlySourcePhrase\(crowdBars, \{ reader: 'visitor' \}\)\s*: numberSourcePhrase\(selected\?\.number_source\);/);
-  expect(demo).toMatch(/\{madeFrom\s*\? `Live from \$\{madeFrom\}`\s*: 'Live from the model inside Flock'\}/);
+  // A chart (or, with none drawn, a headline) that is only what is typical for
+  // this kind of place is said to be from that, never "Live", and draws no
+  // live dot.
+  expect(demo).toMatch(/const typicalOnly = crowdBars\.length\s*\? hourlyTypicalOnly\(crowdBars\)\s*: isCategoryTypicalSource\(selected\?\.number_source\);/);
+  expect(demo).toMatch(/\{madeFrom\s*\? \(typicalOnly \? `From \$\{madeFrom\}` : `Live from \$\{madeFrom\}`\)\s*: 'Live from the model inside Flock'\}/);
+  expect(demo).toMatch(/\{!typicalOnly && \(\s*<span\s*key=\{`\$\{venueName\(selected\)\}\|\$\{selected\.fetched_at \|\| ''\}`\}\s*className="lpd-live-dot"/);
   expect(demo).not.toMatch(/`Live from \$\{numberSourcePhrase\(selected\.number_source\)\}`/);
 
   // The strip's caption reads each row's peak, not the model by default.
@@ -303,5 +309,93 @@ describe('the strip of nearby peaks is captioned from the rows drawn, one per ve
       expect(peersSourcePhrase(s)).not.toMatch(/this venue/);
       expect(peersSourcePhrase(s)).not.toMatch(EM_DASH);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// THE NO-CURVE FALLBACK. With CROWD_NO_CURVE_FALLBACK on, the server gives a
+// venue with no curve of its own the artifact's typical level for its
+// category at that weekday and hour: predictionMethod
+// 'category_curve_no_baseline', numberSource 'category_typical'. Every
+// surface says what that is, typical for this kind of place at that hour, and
+// never this venue's pattern, the model or a live reading.
+// ---------------------------------------------------------------------------
+describe('the category table\'s number is typical for this kind of place, never this venue, the model or live', () => {
+  const R = REPORTS_ADJUSTED_WORDS;
+  const NOT_THIS_VENUE = /this venue|crowd model|\blive\b|usual pattern/;
+
+  test('its method is the server\'s, and its source has its own words, adjusted or not', () => {
+    expect(NO_CURVE_FALLBACK_METHOD).toBe('category_curve_no_baseline');
+    expect(numberSourcePhrase('category_typical')).toBe('what is typical for this kind of place at this hour of the week');
+    expect(numberSourcePhrase('category_typical_adjusted'))
+      .toBe(`what is typical for this kind of place at this hour of the week, ${R}`);
+    for (const v of ['category_typical', 'category_typical_adjusted']) {
+      expect(numberSourcePhrase(v)).not.toMatch(NOT_THIS_VENUE);
+      expect(numberSourcePhrase(v)).not.toMatch(EM_DASH);
+      expect(isCategoryTypicalSource(v)).toBe(true);
+      expect(isPatternOnlySource(v)).toBe(false);
+    }
+    expect(isAdjustedSource('category_typical_adjusted')).toBe(true);
+    for (const v of ['venue_pattern', 'model_alone', 'live_reading_1h', 'category', 'category_pattern', undefined, null, '']) {
+      expect(isCategoryTypicalSource(v)).toBe(false);
+    }
+  });
+
+  test('the card\'s line says what is typical for this kind of place, with visitor reports or without', () => {
+    const card = { predictionMethod: NO_CURVE_FALLBACK_METHOD, confidenceBasis: 'category_pattern', numberSource: 'category_typical' };
+    expect(cardSourceLine(card)).toBe('From what is typical for this kind of place at this hour of the week.');
+    const blended = { predictionMethod: NO_CURVE_FALLBACK_METHOD, confidenceBasis: 'user_reports', numberSource: 'category_typical_adjusted' };
+    expect(cardSourceLine(blended)).toBe(`From what is typical for this kind of place at this hour of the week, ${R}.`);
+    // A payload that carries the method and no source (a surface that does
+    // not forward numberSource) is still not the model's, and keeps the
+    // category words it always had.
+    expect(cardSourceLine({ predictionMethod: NO_CURVE_FALLBACK_METHOD, confidenceBasis: 'category_pattern' }))
+      .toBe('An estimate from typical patterns for this kind of place.');
+    expect(cardSourceLine({ predictionMethod: NO_CURVE_FALLBACK_METHOD, confidenceBasis: 'user_reports' }))
+      .toBe(`From what is typical for a venue like this, ${R}.`);
+    for (const p of [card, blended]) {
+      expect(cardSourceLine(p)).not.toMatch(NOT_THIS_VENUE);
+      expect(cardSourceLine(p)).not.toMatch(EM_DASH);
+    }
+  });
+
+  test('a chart of its hours says every bar is typical for this kind of place, for an owner or a visitor', () => {
+    const typical = { predictionMethod: NO_CURVE_FALLBACK_METHOD, numberSource: 'category_typical', liveReadings: false };
+    const rule = { predictionMethod: 'rule_engine_no_baseline', liveReadings: false };
+    const words = 'what is typical for this kind of place at each hour of the week';
+    expect(hourlySourcePhrase([typical, typical, typical])).toBe(words);
+    expect(hourlySourcePhrase([typical, typical], { reader: 'visitor' })).toBe(words);
+    // An hour the rule engine made beside them is typical for a venue like
+    // this too, so the same words are true of every bar.
+    expect(hourlySourcePhrase([rule, typical, typical])).toBe(words);
+    expect(hourlyTypicalOnly([typical, typical])).toBe(true);
+    expect(hourlyTypicalOnly([rule, typical])).toBe(true);
+    expect(hourlySourcePhrase([typical])).not.toMatch(NOT_THIS_VENUE);
+    // With no category bar and no other source, the chart keeps its old caption.
+    expect(hourlySourcePhrase([rule, rule])).toBeNull();
+    expect(hourlyTypicalOnly([rule, rule])).toBe(false);
+  });
+
+  test('beside bars measured at this venue its hours take the not-measured-here words, and the chart is not typical-only', () => {
+    const typical = { predictionMethod: NO_CURVE_FALLBACK_METHOD, numberSource: 'category_typical', liveReadings: false };
+    const pattern = { predictionMethod: 'ml', numberSource: 'venue_pattern', liveReadings: false };
+    expect(hourlySourcePhrase([pattern, typical]))
+      .toBe("this venue's usual pattern, and in hours not measured here yet, what is typical for a venue like yours");
+    expect(hourlySourcePhrase([pattern, typical], { reader: 'visitor' }))
+      .toBe("this venue's usual pattern, and in hours not measured there yet, what is typical for a venue like this one");
+    expect(hourlyTypicalOnly([pattern, typical])).toBe(false);
+    expect(hourlyTypicalOnly([pattern])).toBe(false);
+    expect(hourlyTypicalOnly(null)).toBe(false);
+  });
+
+  test('on the strip of nearby peaks its rows are typical for the category, and never credited to the model', () => {
+    const row = (predictionMethod, numberSource) => ({ predictionMethod, ...(numberSource ? { numberSource } : {}), liveReadings: false });
+    expect(peersSourcePhrase([row(NO_CURVE_FALLBACK_METHOD, 'category_typical'), row(NO_CURVE_FALLBACK_METHOD, 'category_typical')]))
+      .toBe("what is typical for each venue's category");
+    expect(peersSourcePhrase([row('ml', 'venue_pattern'), row(NO_CURVE_FALLBACK_METHOD, 'category_typical')]))
+      .toBe("each venue's usual pattern, or what is typical for the category where a row says so");
+    const strip = { name: 'Next Door', method: NO_CURVE_FALLBACK_METHOD, peakMethod: NO_CURVE_FALLBACK_METHOD, peakNumberSource: 'category_typical', peakLiveReadings: false };
+    expect(stripRowMethod(strip)).toBe(NO_CURVE_FALLBACK_METHOD);
+    expect(stripRowMethod({ name: 'Next Door', method: NO_CURVE_FALLBACK_METHOD })).not.toBe('ml');
   });
 });
