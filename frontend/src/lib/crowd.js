@@ -275,6 +275,48 @@ export const hourlySourcePhrase = (bars, { reader = 'owner' } = {}) => {
 export const hourlyTypicalOnly = (bars) => hourlySourcePhrase(bars) === CATEGORY_HOURS_WORDS;
 
 /**
+ * The note under the public demo's chart, without its "updated" tail, and
+ * whether it may call itself live (the demo draws its green dot only then).
+ *
+ * It describes the bars drawn as a crowd (closed hours left out by the
+ * caller), or the headline when no chart is drawn. A named source says what
+ * made them. With none named, the demo used to say "Live from the model inside
+ * Flock" whatever answered, and a venue with no weekly pattern, which is any
+ * place outside the corpus and the demo takes coordinates from anywhere, is
+ * answered by the rule engine alone: a category estimate no model and no live
+ * reading touched. That case now says so, in the in-app card's words for the
+ * same number. Live follows the card's LIVE chip: only a model-path number,
+ * and never one that is the venue's weekly pattern alone.
+ */
+export const DEMO_RULE_ENGINE_NOTE = 'An estimate from typical patterns for this kind of place';
+const MODEL_BASES = ['model_holdout', 'model_unverified_axis'];
+export const demoNoteLead = (crowdBars, card) => {
+  const bars = Array.isArray(crowdBars) ? crowdBars.filter(Boolean) : [];
+  const madeFrom = bars.length
+    ? hourlySourcePhrase(bars, { reader: 'visitor' })
+    : numberSourcePhrase(card?.number_source);
+  // What made each number the note describes: the bars, else the headline,
+  // whose provenance the demo sends as confidence_basis. A missing method or
+  // basis is not taken to be the model's.
+  const parts = bars.length
+    ? bars.map((b) => ({ model: b.predictionMethod === 'ml', source: b.numberSource }))
+    : [{
+      // A number that is what is typical for this kind of place (the no-curve
+      // fallback) carries a source too, and it is no model's and no reading's.
+      model: Boolean(card) && !isCategoryTypicalSource(card.number_source)
+        && (parseSource(card.number_source) !== null || MODEL_BASES.includes(card.confidence_basis)),
+      source: card?.number_source,
+    }];
+  const live = parts.some((p) => p.model && !isPatternOnlySource(p.source));
+  if (madeFrom) return { text: `${live ? 'Live from' : 'From'} ${madeFrom}`, live };
+  if (parts.every((p) => !p.model)) return { text: DEMO_RULE_ENGINE_NOTE, live: false };
+  // Both switches off: the model's own hours, with the rule engine's named
+  // beside them the way the captions above name them.
+  const ruleHours = parts.some((p) => !p.model);
+  return { text: ruleHours ? `Live from the model inside Flock, ${RULE_HOURS_WORDS_VISITOR}` : 'Live from the model inside Flock', live: true };
+};
+
+/**
  * The words for a row of OTHER venues' numbers, one bar per venue (the venue
  * dashboard's strip of evening peaks nearby).
  *
