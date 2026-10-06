@@ -776,14 +776,36 @@ function perMonthCents(cadence, amountCents) {
 // means it renewed after all (one App Store "expiring" notice was followed by
 // a renewal), and the date is out of date. Rather than drop a bill that is
 // still being paid, the hub counts it as running and names it
-// (chargedPastEnd) so the date gets cleared. A usage bill is paid after the
-// use, so its last bill can land on or after the day it ends, and that is not
-// a renewal.
+// (chargedPastEnd) so the date gets cleared.
+//
+// A usage bill is paid after the use, so its last bill lands after the day it
+// ends: when the billing cycle holding that day closes, up to a month later,
+// and a vendor that bills by the calendar month can take the first days of
+// the next month to send it. A usage charge within a month and a week of the
+// end date is that last bill, not a renewal. A later one pays for use after
+// the end date, so the date is out of date the same way (review 2026-10-06:
+// a $30 usage plan set to end Sep 30 and still paid on Dec 2 had left the
+// burn, with nothing naming the date).
 //
 // A one-time charge has nothing to end, and the table refuses the pair.
+
+// The days a vendor may take to bill a usage cycle once it closes.
+const USAGE_BILLING_LAG_DAYS = 7;
+
+// The last day a usage bill's final invoice can land: a cycle after its end
+// date, and the vendor's lag after that.
+function usageLastBillBy(endsOn) {
+  return addDaysYmd(addMonthsYmd(endsOn, 1), USAGE_BILLING_LAG_DAYS);
+}
+
 function endOf(x, todayYmd) {
   if (!x || !isYmd(x.endsOn) || x.cadence === 'one_time') return 'none';
-  if (x.cadence !== 'usage' && isYmd(x.lastChargedOn) && x.lastChargedOn >= x.endsOn) return 'renewed';
+  if (isYmd(x.lastChargedOn)) {
+    const outran = x.cadence === 'usage'
+      ? x.lastChargedOn > usageLastBillBy(x.endsOn)
+      : x.lastChargedOn >= x.endsOn;
+    if (outran) return 'renewed';
+  }
   return x.endsOn <= todayYmd ? 'ended' : 'ending';
 }
 
@@ -1524,9 +1546,10 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
     .filter((l) => l.origin !== 'expense' && !l.counted)
     .map((l) => ({ id: l.id, label: l.label, byExpenseIds: l.replacedBy || [] }));
 
-  // A bill still marked as charged whose last charge is on or after its end
-  // date renewed after all (THE END OF A BILL). It is counted as running,
-  // and named so the stale date is cleared or moved.
+  // A bill still marked as charged whose last charge outran its end date
+  // renewed after all (THE END OF A BILL): a subscription charged on or after
+  // it, or a usage bill charged after the last bill it leaves room for. It is
+  // counted as running, and named so the stale date is cleared or moved.
   const chargedPastEnd = expenses
     .filter((x) => x.active && endOf(x, today) === 'renewed')
     .map((x) => ({
