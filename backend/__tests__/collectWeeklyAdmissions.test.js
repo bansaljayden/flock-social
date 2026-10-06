@@ -151,6 +151,18 @@ test('--order=served puts the venues people were served first, then the rest by 
   assert.deepStrictEqual(selects[0].params, ['lehigh', 30, 40]);
 });
 
+test('--order=stalest refreshes the oldest curves first, a venue with none before them', async () => {
+  const { orderBy } = selectionOptions(['--order=stalest']);
+  assert.match(orderBy, /SELECT MAX\(t\.collected_at\) FROM ml_training_data t/);
+  assert.match(orderBy, /t\.venue_id = ml_venues\.id AND t\.collection_mode = 'weekly'\) ASC NULLS FIRST,\s+id$/);
+  const { exitCode, selects } = await selectsFor(['--city=philly', '--only-found', '--order=stalest', '--limit=300']);
+  assert.notStrictEqual(exitCode, 1);
+  assert.strictEqual(selects.length, 1);
+  assert.match(selects[0].sql, / AND besttime_venue_id IS NOT NULL /);
+  assert.match(selects[0].sql, / ORDER BY \(SELECT MAX\(t\.collected_at\) FROM ml_training_data t/);
+  assert.deepStrictEqual(selects[0].params, ['philly', 300]);
+});
+
 test('the collector refuses a bad --order before it selects a single venue', async () => {
   const { exitCode, selects } = await selectsFor(['--city=philly', '--order=rating', '--max-new=5']);
   assert.strictEqual(exitCode, 1);
