@@ -372,8 +372,8 @@ test('Birdie is handed the number as typical for this kind of place, hour by hou
     assert.strictEqual(h.live_readings, false, h.hour);
   }
   // Every hour names its source, the first included: it is the headline's
-  // number, and it takes the headline's crowd_method while any switch is on,
-  // which with no serving switch on this fallback is.
+  // number, and it takes the headline's crowd_method while any switch is on.
+  // Here the only switch on is this fallback.
   for (const h of out.hourly_forecast) assert.strictEqual(h.crowd_method, 'category_typical', h.hour);
 });
 
