@@ -320,6 +320,13 @@ const CLAIMED_MSG = 'That business is already claimed by a verified owner. If it
 // Only while venue billing is on (VENUE_BILLING_ENABLED, bound into both
 // statements): with it off no plan is enforced anywhere, so a profile save
 // behaves exactly as it did before Roost had a price.
+// SET TO RENEW means Stripe will invoice the plan again: it has no cancel
+// date, or its cancel date is past its current period end. Stripe invoices
+// every period until a cancel date, so a "cancel on a date" months out still
+// renews, and any cancel date used to let the claim move while the plan went
+// on charging. A plan with no period end on record is taken as renewing.
+// Checkout passes over a plan left behind by the same rule
+// (services/venueBilling.js endsThisPeriod).
 const ROOST_LISTING_MSG = 'Your Roost plan is for the Google listing your venue has now. Cancel it from Manage billing first, or write to social@flockcorp.com and we will move it to the new listing.';
 
 async function claimedByAnother(placeId, userId) {
@@ -583,7 +590,7 @@ router.post('/', requireVerified, [
                                  AND vs.source = 'stripe'
                                  AND vs.status IN ('active', 'trialing', 'past_due')
                                  AND vs.expires_at > NOW()
-                                 AND vs.cancel_at IS NULL
+                                 AND (vs.cancel_at IS NULL OR vs.current_period_end IS NULL OR vs.cancel_at > vs.current_period_end)
                                  AND COALESCE(vs.google_place_id, venue_profiles.google_place_id) IS NOT NULL
                                  AND COALESCE(vs.google_place_id, venue_profiles.google_place_id) IS DISTINCT FROM EXCLUDED.google_place_id))
        RETURNING *`,
@@ -1012,7 +1019,7 @@ router.put('/', [
                                 AND vs.source = 'stripe'
                                 AND vs.status IN ('active', 'trialing', 'past_due')
                                 AND vs.expires_at > NOW()
-                                AND vs.cancel_at IS NULL
+                                AND (vs.cancel_at IS NULL OR vs.current_period_end IS NULL OR vs.cancel_at > vs.current_period_end)
                                 AND COALESCE(vs.google_place_id, venue_profiles.google_place_id) IS NOT NULL
                                 AND COALESCE(vs.google_place_id, venue_profiles.google_place_id) IS DISTINCT FROM $9::varchar))
       RETURNING *`,

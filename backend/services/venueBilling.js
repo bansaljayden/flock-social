@@ -516,11 +516,12 @@ function blocksCheckout(s, userId, checkoutCustomer) {
 // until the old plan ran out, up to a year on the yearly plan, and the one
 // button on the card led to Stripe's Renew, which bills for a listing the
 // claim has left. A plan bound to another listing than the one the claim
-// names now, and set to end or past collecting (unpaid), bills nothing more
-// for this claim, so neither checkout nor the status route counts it. The
-// binding is the listing in its metadata, else the one on record
-// (venue_stripe_subscriptions); a plan bound to nothing binds to whatever
-// the claim names, as in the resolver, and always counts.
+// names now, and ending inside its current period or past collecting
+// (endsThisPeriod), bills nothing more for this claim, so neither checkout
+// nor the status route counts it. The binding is the listing in its
+// metadata, else the one on record (venue_stripe_subscriptions); a plan bound
+// to nothing binds to whatever the claim names, as in the resolver, and
+// always counts.
 const BINDINGS_SQL = 'SELECT stripe_subscription_id, google_place_id FROM venue_stripe_subscriptions WHERE user_id = $1::int';
 
 async function planBindings(userId) {
@@ -529,8 +530,26 @@ async function planBindings(userId) {
   return new Map(rows.filter((row) => row.google_place_id).map((row) => [row.stripe_subscription_id, row.google_place_id]));
 }
 
+// SET TO END MEANS NOTHING MORE IS INVOICED. Any cancel date used to count,
+// but Stripe invoices a plan every period until its cancel date, so one with
+// a cancel date past the period it is in (a dashboard "cancel on a date", a
+// fixed-term founding plan) still renews: skipped as left behind, it let
+// checkout sell a second plan while it went on charging, and the card hid it.
+// A plan ends this period when it is set to end at its period end, or its
+// cancel date is no later than that end, or it is past collecting (unpaid,
+// which Stripe no longer tries to charge). A plan with no period end to
+// compare is taken as renewing. routes/venueProfile.js applies the same rule
+// to the listing guard.
+function endsThisPeriod(s) {
+  if (!s) return false;
+  if (s.status === 'unpaid' || s.cancel_at_period_end) return true;
+  const item = s.items && Array.isArray(s.items.data) ? s.items.data[0] : null;
+  const periodEnd = (item && item.current_period_end) || s.current_period_end || null;
+  return Number.isFinite(s.cancel_at) && s.cancel_at > 0 && Number.isFinite(periodEnd) && s.cancel_at <= periodEnd;
+}
+
 function leftBehind(s, placeId, bindings) {
-  if (!s || !(s.cancel_at || s.cancel_at_period_end || s.status === 'unpaid')) return false;
+  if (!endsThisPeriod(s)) return false;
   const bound = venuePlaceIdFrom(s.metadata) || (bindings && bindings.get(s.id)) || null;
   return !!bound && bound !== (placeId || null);
 }
