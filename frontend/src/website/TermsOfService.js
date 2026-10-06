@@ -249,10 +249,12 @@ export default function TermsOfService() {
         <h2>7. Predictions, Birdie and Roost are estimates</h2>
         <p>
           <strong>Every number Flock shows you about how busy a place is, or will be, is an
-          estimate.</strong> It is worked out from the venue's usual pattern and its recent
-          live busyness readings, and for some venues from the weather, listed events nearby,
-          reports from people who were there, or the venue's own reading or a sensor at its
-          door. It is not a measurement of
+          estimate.</strong> It is worked out from the venue's usual pattern at that hour,
+          blended with or replaced by a recent live busyness reading when there is one. A
+          venue with no pattern yet gets an estimate from what is typical for its kind of
+          place at that time, which can include the weather. For some venues, recent reports
+          from people who were there, or the venue's own reading, adjust it. It is not a
+          measurement of
           the room you are about to walk into, and it is not a promise. A venue can be empty
           when Flock says it is busy, and packed when Flock says it is quiet. Opening hours,
           prices, addresses and event listings come from third parties and from venues
