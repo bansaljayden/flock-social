@@ -1571,9 +1571,16 @@ describe('needs attention: every live problem at the top, each linking to its ca
     ['a plan used outside its terms', { ...QUIET, costs: { ...COSTS, licence: { items: [{ id: 'vercel', vendor: 'Vercel', plan: 'Hobby (free)', why: 'Hobby is for non-commercial use.', fix: 'Vercel Pro', fixCentsPerMonth: 2000, source: 'https://vercel.com', checked: '2026-09-29' }], toComplyPerMonthCents: 2000, licensedPerMonthCents: 22078 } } },
       'Plans outside their terms', '1', /Vercel Hobby \(free\)\. Licensed for commercial use, the burn is \$220\.78 a month \(\$20\.00 more\)\./, 'hub-costs'],
     // A bill charged on or after the day it was set to end renewed after all
-    // (migration 117): the date on the row is what is wrong.
+    // (migration 117): the date on the row is what is wrong. The rule is said
+    // of a bill paid ahead, which a usage bill is not (second review
+    // 2026-10-06). A payload from before the cadence was sent lists only
+    // bills paid ahead.
     ['a bill charged after the day it was set to end', { ...QUIET, costs: { ...COSTS, chargedPastEnd: [{ expenseId: 7, label: 'Store tool, Plus', endsOn: '2026-09-20', lastChargedOn: '2026-09-20' }] } },
-      'Charged after the end date', '1', /Store tool, Plus, set to end Sep 20(, 2026)? and charged Sep 20(, 2026)?\. A charge on or after the end date means it renewed, so it counts as running\. Clear the end date, or set the new one\./, 'hub-expenses'],
+      'Charged after the end date', '1', /Store tool, Plus, set to end Sep 20(, 2026)? and charged Sep 20(, 2026)?\. For a bill paid ahead, a charge on or after the end date means it renewed, so it counts as running\. Clear the end date, or set the new one\. Go to the expense list$/, 'hub-expenses'],
+    // A usage bill is billed after the use, so the server lists one only once
+    // a charge is later than the day its last bill was expected by.
+    ['a usage bill charged after its last bill was expected', { ...QUIET, costs: { ...COSTS, chargedPastEnd: [{ expenseId: 8, label: 'MapTiler, Flex', endsOn: '2026-07-31', lastChargedOn: '2026-09-02', cadence: 'usage', lastBillBy: '2026-08-30' }] } },
+      'Charged after the end date', '1', /MapTiler, Flex, set to end Jul 31(, 2026)?, its last bill expected by Aug 30(, 2026)?, and charged Sep 2(, 2026)?\. For a usage bill, a charge after its last bill was expected pays for use past the end date, so it counts as running\. Clear the end date, or set the new one\. If a usage charge was the last bill, mark its row stopped\. Go to the expense list$/, 'hub-expenses'],
   ];
 
   test.each(TRIGGERS)('%s is a row that says so', async (_why, payload, label, value, note, target) => {
@@ -2055,6 +2062,46 @@ describe('a bill that ends rather than renews', () => {
     expect(within(stopped).getByText('Stopped')).toBeInTheDocument();
     expect(stopped.textContent).toMatch(/last charged Sep 20(, 2026)?, charged on or after its end date of Sep 20(, 2026)?\./);
     expect(stopped.textContent).not.toMatch(/counts as running/);
+  });
+
+  test('a usage bill charged after its last bill was expected is worded on its own, on its row and in the attention list', async () => {
+    // Second review 2026-10-06: a usage row reaches 'renewed' only once a
+    // charge is later than the day its last bill was expected by. Said as "on
+    // or after its end date", the words for a bill paid ahead, the last bill
+    // of an ended usage row on the same screen read as a renewal, and clearing
+    // its date put a finished bill back in the burn.
+    const built = { ...ENDING_ROW, id: 15, vendor: 'Build service', product: null, cadence: 'usage', amountCents: 13015, lastChargedOn: '2026-09-02', renewsOn: null, endsOn: '2026-08-31', endState: 'ended', lastBillBy: '2026-09-30' };
+    const flex = { ...ENDING_ROW, id: 16, vendor: 'MapTiler', product: 'Flex', kind: 'infrastructure', cadence: 'usage', amountCents: 3000, lastChargedOn: '2026-09-02', renewsOn: null, endsOn: '2026-07-31', endState: 'renewed', lastBillBy: '2026-08-30' };
+    const oldKey = { ...flex, id: 17, product: 'Old key', active: false };
+    const renewed = { ...ENDING_ROW, id: 13, product: 'Renewed', lastChargedOn: '2026-09-20', renewsOn: null, endsOn: '2026-09-20', endState: 'renewed', lastBillBy: null };
+    await renderHub({
+      ...CONNECTED,
+      costs: {
+        ...COSTS,
+        chargedPastEnd: [
+          { expenseId: 13, label: 'Store tool, Renewed', endsOn: '2026-09-20', lastChargedOn: '2026-09-20', cadence: 'monthly', lastBillBy: null },
+          { expenseId: 16, label: 'MapTiler, Flex', endsOn: '2026-07-31', lastChargedOn: '2026-09-02', cadence: 'usage', lastBillBy: '2026-08-30' },
+        ],
+      },
+      expenses: { ...EXPENSES, rows: [...EXPENSES.rows, built, flex, oldKey, renewed] },
+    });
+    const flexRow = await expenseRow('MapTiler, Flex');
+    expect(flexRow.textContent).toMatch(/last charged Sep 2(, 2026)?, after the last bill expected by Aug 30(, 2026)? for its end date of Jul 31(, 2026)?, so it counts as running until the date is cleared\./);
+    expect(flexRow.textContent).not.toMatch(/on or after/);
+    const stopped = await expenseRow('MapTiler, Old key');
+    expect(stopped.textContent).toMatch(/last charged Sep 2(, 2026)?, after the last bill expected by Aug 30(, 2026)? for its end date of Jul 31(, 2026)?\./);
+    expect(stopped.textContent).not.toMatch(/counts as running/);
+    // The last bill of the ended usage row, after its end date, is an end.
+    expect((await expenseRow('Build service')).textContent).toMatch(/last charged Sep 2(, 2026)?, ended Aug 31(, 2026)?\./);
+    // A bill paid ahead keeps its words.
+    expect((await expenseRow('Store tool, Renewed')).textContent).toMatch(/charged on or after its end date of Sep 20(, 2026)?, so it counts as running until the date is cleared\./);
+
+    // Each kind is worded on its own, and no rule is stated that the ended
+    // usage row breaks.
+    const attention = screen.getByText('Charged after the end date').parentElement.parentElement;
+    expect(within(attention).getByText('2')).toBeInTheDocument();
+    expect(attention.textContent).toMatch(/Store tool, Renewed, set to end Sep 20(, 2026)? and charged Sep 20(, 2026)?\. For a bill paid ahead, a charge on or after the end date means it renewed, so it counts as running\. MapTiler, Flex, set to end Jul 31(, 2026)?, its last bill expected by Aug 30(, 2026)?, and charged Sep 2(, 2026)?\. For a usage bill, a charge after its last bill was expected pays for use past the end date, so it counts as running\. Clear the end date, or set the new one\. If a usage charge was the last bill, mark its row stopped\./);
+    expect(attention.textContent).not.toMatch(/A charge on or after/);
   });
 
   test('with the list cut short the end dates are listed, and no burn change worked from the partial list is quoted', async () => {
