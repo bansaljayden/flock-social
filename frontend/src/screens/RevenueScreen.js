@@ -1203,7 +1203,9 @@ function HubExpenseRow({ x, codeLines, colors, onEdit, onChanged }) {
   const amount = hubExpenseAmount(x);
   // Where the row stands against its end date, as the server read it today
   // (moneyHub.js, THE END OF A BILL). A renewal on or after the end date
-  // never comes, so the end is said in its place.
+  // never comes, so the end is said in its place. A charge that outran the
+  // date keeps a row running only while it is marked as charged: a stopped
+  // row is out of the burn either way (review 2026-10-06).
   const end = x.endState || null;
   const stops = (end === 'ending' || end === 'ended') && x.endsOn;
   const running = x.active && end !== 'ended';
@@ -1214,7 +1216,7 @@ function HubExpenseRow({ x, codeLines, colors, onEdit, onChanged }) {
     x.lastChargedOn ? `last charged ${hubDay(x.lastChargedOn)}` : null,
     end === 'ending' ? `ends ${hubDay(x.endsOn)}` : null,
     end === 'ended' ? `ended ${hubDay(x.endsOn)}` : null,
-    end === 'renewed' ? `charged on or after its end date of ${hubDay(x.endsOn)}, so it counts as running until the date is cleared` : null,
+    end === 'renewed' ? `charged on or after its end date of ${hubDay(x.endsOn)}${x.active ? ', so it counts as running until the date is cleared' : ''}` : null,
     line ? `counts instead of ${line} in the code` : null,
   ].filter(Boolean).join(', ');
   return (
