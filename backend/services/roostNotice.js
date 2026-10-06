@@ -14,8 +14,9 @@
 //     arrives the venue keeps everything it has today, which is every feature,
 //     as while enforcement is off (getVenueEntitlement reads the window);
 //   * a venue that subscribes inside the window is never charged before that
-//     date (services/venueBilling.js sets the Stripe trial_end from it, and
-//     sends this notice first if it has not gone out yet).
+//     date (services/venueBilling.js sets the Stripe trial_end from it, sends
+//     this notice first if it has not gone out yet, and makes no checkout
+//     while no notice is on record).
 //
 // A venue account created on or after ROOST_PRICED_FROM signed up under the
 // priced Terms: no notice, the ordinary 14-day trial, ordinary enforcement.
@@ -160,8 +161,10 @@ async function runRoostNoticeSweep(now = new Date()) {
 
 // A pre-existing venue starting checkout before the sweep has reached it: send
 // its notice now, so its window has an end and its first charge a floor.
-// Answers the date the notice named, or null when no notice could be sent
-// (the caller then floors the charge at 30 days from now instead).
+// Answers the date the notice named, or null when no notice could be sent, and
+// the caller then makes no checkout. It used to floor the charge at 30 days
+// from now and go ahead, and the notice the sweep sent later named a date
+// after that floor, so Stripe charged before the date the venue was told.
 async function sendNoticeForCheckout(userId, now = Date.now()) {
   if (!venueBillingEnabled()) return null;
   const r = await pool.query(ONE_SQL, [ROOST_PRICED_FROM, userId]);

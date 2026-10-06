@@ -415,18 +415,25 @@ async function buildVenueCheckout(user, plan) {
     if (ent.source === 'stripe') throw refusal(409, 'You already have Roost. Manage it from billing.', 'ALREADY_SUBSCRIBED');
     throw refusal(409, 'Your plan is already covered. Write to us if you want to switch to paying for it.', 'PLAN_ALREADY_GRANTED');
   }
-  const customerId = await ensureVenueCustomer(user, profile);
-  await expireOpenSessions(customerId);
-  if (await hasLiveSubscription(customerId)) {
-    throw refusal(409, 'You already have Roost. Manage it from billing.', 'ALREADY_SUBSCRIBED');
-  }
-  const trial = !(await venueTrialUsed(user.id, profile.google_place_id)) && !(await hasEverSubscribed(customerId));
   // THE NOTICE FLOOR. A venue account from before Roost had a price is not
   // charged before the date its notice email named (Terms 9.6,
   // services/roostNotice.js). If the notice has not gone out yet it is sent
-  // now, so the window has an end; if it cannot be sent, the floor is 30 days
-  // from now, which is never earlier than a notice sent now would have named.
-  // Inside the window this applies even to a venue that has had its trial.
+  // now, so the window has an end, and the first charge is never before that
+  // date. Inside the window this applies even to a venue that has had its
+  // trial.
+  //
+  // NO NOTICE ON RECORD, NO CHARGEABLE CHECKOUT. When the notice could not be
+  // sent here, this used to floor the first charge at 30 days from now and go
+  // ahead. The daily sweep then sent the notice on some later day, and that
+  // email promised no charge until 30 days after IT, while the Stripe
+  // trial_end still said 30 days after the checkout: the venue was charged
+  // before the date it had been told, by however many days the sweep came
+  // later. The date a venue is promised is the one its recorded notice names,
+  // so a checkout is only made once one is recorded, and the owner is asked to
+  // try again. Refused before Stripe is touched, so a refusal leaves no
+  // customer or session behind. A 409 rather than a 5xx, because the route
+  // hides a 5xx's words and the owner can act on these (a bounced address is
+  // the usual reason).
   let noticeFloor = 0;
   if (ent.inNoticeWindow) {
     const named = ent.noticeUntil ? Date.parse(ent.noticeUntil) : NaN;
@@ -437,9 +444,18 @@ async function buildVenueCheckout(user, plan) {
         console.error(`[venue-billing] notice for venue user ${user.id} could not be sent at checkout:`, err && err.message);
         return null;
       });
-      noticeFloor = sent ? sent.getTime() : Date.now() + roostNotice.NOTICE_MS;
+      if (!sent) {
+        throw refusal(409, 'Before Roost can be bought, we email you a notice that names the date of your first charge, and that email could not be sent just now. Check the email address on your account, then try again.', 'NOTICE_NOT_SENT');
+      }
+      noticeFloor = sent.getTime();
     }
   }
+  const customerId = await ensureVenueCustomer(user, profile);
+  await expireOpenSessions(customerId);
+  if (await hasLiveSubscription(customerId)) {
+    throw refusal(409, 'You already have Roost. Manage it from billing.', 'ALREADY_SUBSCRIBED');
+  }
+  const trial = !(await venueTrialUsed(user.id, profile.google_place_id)) && !(await hasEverSubscribed(customerId));
   const trialEndMs = noticeFloor
     ? Math.max(noticeFloor, trial ? Date.now() + TRIAL_DAYS * DAY_MS : 0, Date.now() + STRIPE_MIN_TRIAL_MS)
     : 0;

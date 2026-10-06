@@ -957,16 +957,35 @@ test('inside the window with no notice yet: checkout sends it first and charges 
   } finally { restore(); roostNotice.sendNoticeForCheckout = real; }
 });
 
-test('inside the window when the notice cannot be sent: the first charge is at least 30 days from now', async () => {
+test('inside the window when the notice cannot be sent: no chargeable checkout is made at all', async () => {
+  // THE BUG THIS PINS. The checkout floored the first charge at 30 days from
+  // now and went ahead. The sweep then sent the notice on a later day, and
+  // that email promised no charge until 30 days after IT, while Stripe's
+  // trial_end still said 30 days after the checkout: the venue was charged
+  // before the date it had been told. No notice recorded, no checkout.
   setEnv(ON);
   const real = roostNotice.sendNoticeForCheckout;
   roostNotice.sendNoticeForCheckout = async () => null;
   const { restore } = stubPool(venueDb({ legacy: true, noticeUntil: null }));
   try {
-    const before = Date.now();
     const res = await call(venueBillingRoutes, 'POST', '/api/venue-billing/checkout', { plan: 'monthly' });
-    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
-    assert.ok(sessionArgs().subscription_data.trial_end * 1000 >= before + 30 * DAY - 1000);
+    assert.strictEqual(res.status, 409, `a checkout was made with no notice on record: ${JSON.stringify(res.body)}`);
+    assert.strictEqual(res.body.code, 'NOTICE_NOT_SENT');
+    assert.ok(!/—/.test(res.body.error));
+    assert.strictEqual(sessionArgs(), null, 'Stripe was handed a session whose trial end no notice had named');
+  } finally { restore(); roostNotice.sendNoticeForCheckout = real; }
+});
+
+test('inside the window, a notice send that throws is the same refusal, not a 30-day guess', async () => {
+  setEnv(ON);
+  const real = roostNotice.sendNoticeForCheckout;
+  roostNotice.sendNoticeForCheckout = async () => { throw new Error('db down after the send'); };
+  const { restore } = stubPool(venueDb({ legacy: true, noticeUntil: null }));
+  try {
+    const res = await call(venueBillingRoutes, 'POST', '/api/venue-billing/checkout', { plan: 'monthly' });
+    assert.strictEqual(res.status, 409, JSON.stringify(res.body));
+    assert.strictEqual(res.body.code, 'NOTICE_NOT_SENT');
+    assert.strictEqual(sessionArgs(), null);
   } finally { restore(); roostNotice.sendNoticeForCheckout = real; }
 });
 
