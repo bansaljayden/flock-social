@@ -167,6 +167,35 @@ describe('the Subscription card on the Settings tab', () => {
     expect(screen.getByRole('button', { name: 'See plans and pricing' })).toBeTruthy();
   });
 
+  // A plan bought through Stripe is cancelled from Manage billing, which sits
+  // in the plans sheet, so on the web the line under the buttons sends the
+  // owner there. Neither the sheet nor See plans and pricing is in the app, so
+  // there the line is the email route and names neither.
+  describe('the line under the buttons for a plan billed through Stripe', () => {
+    const STRIPE_PLAN = { venueTab: 'settings', venueTier: 'pro', venueTierReason: 'paid', venueTierSource: 'stripe' };
+    const MANAGEABLE = {
+      billingEnabled: true, checkoutAvailable: true, verified: true, canManage: true, status: 'active',
+      plans: [{ id: 'monthly', interval: 'month', label: '$99.00' }], trialDays: 0, taxAdded: false,
+    };
+
+    test('on the web it points at Manage billing, as before', async () => {
+      getVenueBillingStatus.mockResolvedValue(MANAGEABLE);
+      dashboard(STRIPE_PLAN);
+      await settle();
+      expect(screen.getByText(/Cancel it from See plans and pricing, then Manage billing\./)).toBeTruthy();
+    });
+
+    test('inside the app it is the email route, and names nothing the app does not have', async () => {
+      inTheApp();
+      getVenueBillingStatus.mockResolvedValue(MANAGEABLE);
+      const { container } = dashboard(STRIPE_PLAN);
+      await settle();
+      expect(screen.getByText(/Write to social@flockcorp\.com and we will change or stop the plan and email you back to confirm\./)).toBeTruthy();
+      expect(container.textContent).not.toMatch(/See plans|Manage billing/);
+      expect(screen.getByRole('button', { name: 'Change or cancel this plan' })).toBeTruthy();
+    });
+  });
+
   test('inside the app a Roost venue keeps the way to change or cancel and loses the plans', async () => {
     inTheApp();
     const { container } = dashboard({ venueTab: 'settings', venueTier: 'pro', venueTierReason: 'paid', venueTierSource: 'admin' });
@@ -311,6 +340,8 @@ describe('the gates are in the source, where the build can see them', () => {
     expect(DASH).toContain('{!native && (\n                      <button className="hit44" onClick={() => setShowUpgradeModal(true)}');
     // Four buttons open the sheet, each pinned above. A fifth is a new one to gate.
     expect(DASH.split('setShowUpgradeModal(true)').length - 1).toBe(4);
+    // And the line that names the sheet's Manage billing is the web's alone.
+    expect(DASH).toContain("{!native && venueTierSource === 'stripe' && status?.canManage\n                            ? <>Cancel it from See plans and pricing, then Manage billing.");
   });
 
   test("App.js's fallback price is never made inside the app", () => {
