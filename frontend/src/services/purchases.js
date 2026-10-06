@@ -254,6 +254,8 @@ export const introEligibleProducts = async (productIds) => {
  * be confirmed as the signed-in account the store is never asked, nothing is
  * charged, and the answer carries reason: 'account' so the sheet can say so.
  * The same answer when the session that asked has ended before its turn came.
+ * A purchase the store finished whose answer does not carry Pro carries
+ * reason: 'not_granted', because that one has been paid for.
  */
 export const purchase = async (pkg) => {
   // Who asked, read before anything here waits (askedBy).
@@ -265,7 +267,12 @@ export const purchase = async (pkg) => {
     try {
       const { customerInfo } = await Purchases.purchasePackage({ aPackage: pkg });
       const isPro = proFromCustomerInfo(customerInfo);
-      return { success: isPro, isPro };
+      // purchasePackage resolving means the App Store finished the purchase.
+      // Without Pro in RevenueCat's answer this used to come back looking
+      // exactly like a cancel, and the sheet stays quiet on a cancel, so
+      // somebody could be charged with nothing on screen to say so.
+      if (!isPro) return { success: false, isPro: false, reason: 'not_granted' };
+      return { success: true, isPro };
     } catch (err) {
       if (!err?.userCancelled) {
         console.warn('purchase failed:', err?.message || err);

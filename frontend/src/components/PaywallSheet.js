@@ -84,6 +84,13 @@ const TERMS_URL = 'https://www.flockcorp.com/terms';
 const PRIVACY_URL = 'https://www.flockcorp.com/privacy';
 const CONTACT_EMAIL = 'social@flockcorp.com';
 
+// The App Store finished the purchase and RevenueCat's answer did not carry Pro
+// (reason: 'not_granted' from services/purchases.js). That person has paid, so
+// the sheet says so and names the two things that can fix it: Restore, which
+// sits under this line, and us. The support address is for help with this
+// purchase and names no other place to buy.
+const PAID_NOT_ON_YET = `Your payment went through, but Flock Pro isn't on yet. Tap Restore purchases or try again in a minute. If it still isn't on, write to ${CONTACT_EMAIL}.`;
+
 const FONT = "'Hanken Grotesk', -apple-system, BlinkMacSystemFont, sans-serif";
 
 // Minimal 18px stroke icons (in-app SVG language, no emoji as UI icons).
@@ -344,6 +351,10 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, trigger, birdieRes
         // so the purchase could not land on anybody else's. The tap would
         // otherwise look dead.
         setActionError(ACCOUNT_UNCONFIRMED_BUY);
+      } else if (reason === 'not_granted') {
+        // Charged, and Pro did not come back with the receipt. The sheet
+        // stays open so Restore is right there.
+        setActionError(PAID_NOT_ON_YET);
       }
       // Cancelled / failed purchases stay quiet: the sheet remains usable.
     } finally {
