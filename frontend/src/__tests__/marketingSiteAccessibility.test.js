@@ -1047,7 +1047,7 @@ describe('copy rules (DESIGN-STANDARD)', () => {
     expect(copy).toContain(`${served.band_exact.toFixed(1)}% of Flock's crowd numbers named the exact crowd level of the reading, ${served.within_one_band}% landed within one level, and ${served.within_10}% within 10 points`);
     expect(copy).toContain(`The average miss was ${Math.round(served.mae)} points, with no lean high or low`);
     expect(Math.abs(served.bias)).toBeLessThan(2);
-    expect(copy).toContain(`${Math.round(served.reading_one_hour_earlier.within_one_band)}% landed within one level`);
-    expect(copy).toContain(`scored ${served.before.within_one_band}% within one level before the September upgrade`);
+    expect(copy).toContain(`${served.reading_one_hour_earlier.band_exact.toFixed(1)}% named the exact level and ${served.reading_one_hour_earlier.within_one_band}% landed within one`);
+    expect(copy).toContain(`scored ${served.before.band_exact.toFixed(1)}% on the exact level and ${served.before.within_one_band}% within one`);
   });
 });

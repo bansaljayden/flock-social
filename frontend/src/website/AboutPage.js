@@ -121,9 +121,10 @@ export default function AboutPage() {
           from September 6 to 8, 2026, 56.0% of Flock's crowd numbers named the
           exact crowd level of the reading, 78.8% landed within one level, and
           53.8% within 10 points. The average miss was 17 points, with no lean
-          high or low. When a venue had a live reading from the hour before, 92%
-          landed within one level. The same readings scored 58.5% within one level
-          before the September upgrade.
+          high or low. When a venue had a live reading from the hour before, 86.1%
+          named the exact level and 91.7% landed within one. Before the September
+          upgrade the same readings scored 32.2% on the exact level and 58.5%
+          within one.
         </p>
         <p>
           Flock also trains its own machine-learning crowd model. The current

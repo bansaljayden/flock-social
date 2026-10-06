@@ -143,8 +143,9 @@ above.
 
 **The corpus grows every hour.** A collector runs on an hourly cron across the
 served geography, Philadelphia and the Lehigh Valley, served venues first, and
-adds a few thousand provenance-verified live readings a day: each run stores
-one for every venue the vendor has a live reading for at that hour. Every row it writes
+adds a few thousand provenance-verified live readings a day: each hourly run asks
+the vendor about the active venues open at that hour, served venues first within a
+fifty-minute budget, and stores the live readings it gets back. Every row it writes
 records whether its label is a live reading or the vendor's forecast, with the
 vendor's forecast for the same moment kept beside it, and each run reads back
 what it wrote and refuses to exit clean if any row it committed is unlabelled.
@@ -154,8 +155,9 @@ A venue the model has no baseline for is answered by the rule engine in
 names the engine behind it and no rule-engine answer is ever presented as a
 model output.
 
-**Where the next gain comes from.** Every model figure above is scored on three
-cities held out of training entirely, rather than on the cities the product
+**Where the next gain comes from.** The model's test figures above are scored on
+three cities held out of training entirely (the 0.653 is cross-validation across
+the training cities), rather than on the cities the product
 serves, which is the harder of the two readings and the one worth publishing.
 The binding input today is evidence density: about 26 live readings per venue
 across 168 weekly slots, so the model reads a kind of venue on a Tuesday at 9pm

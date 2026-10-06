@@ -10,7 +10,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, verify as cryptoVerify } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -37,7 +37,12 @@ import {
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(HERE, '..', '..');
 const DOC_PATH = join(REPO_ROOT, 'APP-STORE-SUBMISSION.md');
-const DOC = readFileSync(DOC_PATH, 'utf8');
+// The submission doc is private (gitignored), so a fresh clone does not have
+// it. Tests that read it skip there instead of failing to load; the JWT,
+// planning and review-login tests below run everywhere.
+const DOC = existsSync(DOC_PATH) ? readFileSync(DOC_PATH, 'utf8') : null;
+const NO_DOC = DOC === null && 'APP-STORE-SUBMISSION.md is private and not in this checkout';
+const docTest = (name, fn) => test(name, { skip: NO_DOC }, fn);
 
 function makeP256Pem() {
   const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
@@ -104,7 +109,7 @@ test('JWT minting rejects a lifetime over the 20-minute cap', () => {
 // Doc parsing against the real APP-STORE-SUBMISSION.md
 // ---------------------------------------------------------------------------
 
-test('real doc: every computed count matches the doc-declared count, zero validation errors', () => {
+docTest('real doc: every computed count matches the doc-declared count, zero validation errors', () => {
   const listing = parseSubmissionDoc(DOC);
   const errors = validateListing(listing);
   assert.deepEqual(errors, [], `validation must pass on the real doc, got: ${JSON.stringify(errors)}`);
@@ -120,7 +125,7 @@ test('real doc: every computed count matches the doc-declared count, zero valida
   assert.equal(listing.copyright, '2026 Flock Social LLC');
 });
 
-test('real doc: fields are within Apple limits with the researched values', () => {
+docTest('real doc: fields are within Apple limits with the researched values', () => {
   const listing = parseSubmissionDoc(DOC);
   assert.ok(listing.name.length <= APPLE_LIMITS.name.chars);
   assert.ok(listing.subtitle.length <= APPLE_LIMITS.subtitle.chars);
@@ -130,14 +135,14 @@ test('real doc: fields are within Apple limits with the researched values', () =
   assert.ok(listing.whatsNew.length <= APPLE_LIMITS.whatsNew.chars);
 });
 
-test('real doc: URLs are the canonical https://www forms', () => {
+docTest('real doc: URLs are the canonical https://www forms', () => {
   const listing = parseSubmissionDoc(DOC);
   assert.equal(listing.supportUrl, 'https://www.flockcorp.com/support');
   assert.equal(listing.marketingUrl, 'https://www.flockcorp.com');
   assert.equal(listing.privacyPolicyUrl, 'https://www.flockcorp.com/privacy');
 });
 
-test('real doc: screenshot plan has 6 slots, 12 files, naming convention holds', () => {
+docTest('real doc: screenshot plan has 6 slots, 12 files, naming convention holds', () => {
   const listing = parseSubmissionDoc(DOC);
   assert.equal(listing.screenshotPlan.length, 6);
   const manifest = buildScreenshotManifest(listing.screenshotPlan, new Map());
@@ -151,12 +156,12 @@ test('real doc: screenshot plan has 6 slots, 12 files, naming convention holds',
 // Mutations: each must fail with a message naming the fix
 // ---------------------------------------------------------------------------
 
-test('mutation: broken paste-block delimiter fails naming section 6.4', () => {
+docTest('mutation: broken paste-block delimiter fails naming section 6.4', () => {
   const mutated = DOC.replace('---PASTE START---', '---PASTE-START---'); // first occurrence = 6.4
   assert.throws(() => parseSubmissionDoc(mutated), /6\.4 paste block delimiters.*FIX/s);
 });
 
-test('mutation: oversized description fails naming the 4000 limit', () => {
+docTest('mutation: oversized description fails naming the 4000 limit', () => {
   const mutated = DOC.replace(
     'Get the flock out the door.',
     `Get the flock out the door.${'x'.repeat(2000)}`
@@ -166,7 +171,7 @@ test('mutation: oversized description fails naming the 4000 limit', () => {
   assert.ok(limitError, `expected a description over-limit error, got: ${JSON.stringify(errors)}`);
 });
 
-test('mutation: over-100-byte keyword field fails naming the byte limit', () => {
+docTest('mutation: over-100-byte keyword field fails naming the byte limit', () => {
   const mutated = DOC.replace(
     'weekend,meet up,budget,invite',
     'weekend,meet up,budget,invite,anextremelylongkeywordthatpushesitover'
@@ -176,7 +181,7 @@ test('mutation: over-100-byte keyword field fails naming the byte limit', () => 
   assert.ok(limitError, `expected a keywords byte-limit error, got: ${JSON.stringify(errors)}`);
 });
 
-test('mutation: over-30-character app name fails naming the limit', () => {
+docTest('mutation: over-30-character app name fails naming the limit', () => {
   // ^...$ with /m tolerates CRLF line endings in the doc.
   const mutated = DOC.replace(/^> Flock: Plan Nights Out\r?$/m, '> Flock The Coordination App For Nights Out Tonight');
   const errors = validateListing(parseSubmissionDoc(mutated));
@@ -184,21 +189,21 @@ test('mutation: over-30-character app name fails naming the limit', () => {
   assert.ok(limitError, `expected a name over-limit error, got: ${JSON.stringify(errors)}`);
 });
 
-test('mutation: an em dash in listing copy fails, naming the copy standard', () => {
+docTest('mutation: an em dash in listing copy fails, naming the copy standard', () => {
   const mutated = DOC.replace('and split the bill after. Free to use.', 'and split the bill after — free to use.');
   const errors = validateListing(parseSubmissionDoc(mutated));
   const emDashError = errors.find((e) => e.field === 'promotionalText' && /em dash.*FIX/s.test(e.message));
   assert.ok(emDashError, `expected an em-dash error, got: ${JSON.stringify(errors)}`);
 });
 
-test('mutation: copy changed without its recorded count fails as doc drift', () => {
+docTest('mutation: copy changed without its recorded count fails as doc drift', () => {
   const mutated = DOC.replace('Get the flock out the door.', 'Get the flock out the door'); // one char shorter
   const errors = validateListing(parseSubmissionDoc(mutated));
   const drift = errors.find((e) => e.field === 'description' && /Doc drift.*declares.*2599.*2598.*FIX/s.test(e.message));
   assert.ok(drift, `expected a doc-drift error, got: ${JSON.stringify(errors)}`);
 });
 
-test('mutation: a removed section heading fails naming the section', () => {
+docTest('mutation: a removed section heading fails naming the section', () => {
   const mutated = DOC.replace('### 6.3 Keyword field', '### Keyword field');
   assert.throws(() => parseSubmissionDoc(mutated), /6\.3.*FIX/s);
 });
@@ -233,7 +238,7 @@ test('mutation: an unsupported pixel size fails listing the allowed sizes', () =
   assert.throws(() => displayTypeForDimensions(1170, 2532), /matches no supported.*FIX.*1290x2796/s);
 });
 
-test('missing files are listed and never fatal (metadata-only continue)', () => {
+docTest('missing files are listed and never fatal (metadata-only continue)', () => {
   const listing = parseSubmissionDoc(DOC);
   const files = new Map([['01-nest-light.png', { size: 100, width: 1290, height: 2796 }]]);
   const manifest = buildScreenshotManifest(listing.screenshotPlan, files);
@@ -243,7 +248,7 @@ test('missing files are listed and never fatal (metadata-only continue)', () => 
   assert.ok(manifest.missing.includes('01-nest-dark.png'));
 });
 
-test('mutation: a planned file breaking the naming convention fails naming the convention', () => {
+docTest('mutation: a planned file breaking the naming convention fails naming the convention', () => {
   const listing = parseSubmissionDoc(DOC);
   const plan = structuredClone(listing.screenshotPlan);
   plan[0].light = '1-plan-light.png'; // one digit, not two
@@ -254,14 +259,14 @@ test('mutation: a planned file breaking the naming convention fails naming the c
   );
 });
 
-test('a stray misnamed file on disk fails naming the convention', () => {
+docTest('a stray misnamed file on disk fails naming the convention', () => {
   const listing = parseSubmissionDoc(DOC);
   const files = new Map([['Screenshot 2026-08-14 at 9.12.01 PM.png', { size: 5, width: 1290, height: 2796 }]]);
   const manifest = buildScreenshotManifest(listing.screenshotPlan, files);
   assert.ok(manifest.errors.some((e) => /naming convention/.test(e) && /FIX/.test(e)));
 });
 
-test('per-set cap: 12 same-size files plan 10 uploads, all lights first, 2 skipped', () => {
+docTest('per-set cap: 12 same-size files plan 10 uploads, all lights first, 2 skipped', () => {
   const listing = parseSubmissionDoc(DOC);
   const files = new Map();
   for (const slot of listing.screenshotPlan) {
@@ -292,7 +297,7 @@ function uploadsFor(listing, count = 2) {
 
 const OPTIONS = { bundleId: 'com.flockcorp.flock', versionString: '1.0', locale: 'en-US' };
 
-test('first run (empty remote): plan creates version, localization, set; no deletes', () => {
+docTest('first run (empty remote): plan creates version, localization, set; no deletes', () => {
   const listing = parseSubmissionDoc(DOC);
   const remote = { appId: 'app1', versionId: null, versionLocalizationId: null, appInfoId: 'info1', appInfoLocalizationId: null, screenshotSets: {} };
   const steps = buildPlan({ listing, uploads: uploadsFor(listing), remote, options: OPTIONS });
@@ -308,7 +313,7 @@ test('first run (empty remote): plan creates version, localization, set; no dele
   assert.equal(createLoc.body.attributes.supportUrl, 'https://www.flockcorp.com/support');
 });
 
-test('second run (populated remote): plan replaces, never duplicates', () => {
+docTest('second run (populated remote): plan replaces, never duplicates', () => {
   const listing = parseSubmissionDoc(DOC);
   const remote = {
     appId: 'app1', versionId: 'ver1', versionLocalizationId: 'loc1',
@@ -337,7 +342,7 @@ test('second run (populated remote): plan replaces, never duplicates', () => {
   assert.ok(steps.find((s) => s.kind === 'update-appinfo-localization').path.endsWith('/infoloc1'));
 });
 
-test('mutation: an invalid display type in the upload plan fails naming valid identifiers', () => {
+docTest('mutation: an invalid display type in the upload plan fails naming valid identifiers', () => {
   const listing = parseSubmissionDoc(DOC);
   const uploads = { APP_IPHONE_69: { upload: [], skipped: [] } };
   assert.throws(
@@ -346,7 +351,7 @@ test('mutation: an invalid display type in the upload plan fails naming valid id
   );
 });
 
-test('plan payloads carry no key material or auth headers', () => {
+docTest('plan payloads carry no key material or auth headers', () => {
   const listing = parseSubmissionDoc(DOC);
   const steps = buildPlan({ listing, uploads: uploadsFor(listing), remote: null, options: OPTIONS });
   const s = JSON.stringify(steps);
@@ -355,7 +360,7 @@ test('plan payloads carry no key material or auth headers', () => {
   assert.ok(!s.includes('Bearer '));
 });
 
-test('offline plan (no credentials) marks create-vs-update steps as resolved live', () => {
+docTest('offline plan (no credentials) marks create-vs-update steps as resolved live', () => {
   const listing = parseSubmissionDoc(DOC);
   const steps = buildPlan({ listing, uploads: uploadsFor(listing), remote: null, options: OPTIONS });
   const loc = steps.find((s) => s.kind === 'create-version-localization');
@@ -526,7 +531,7 @@ test('CLI: --check-review-login without an API key exits 1 naming the missing op
 // CLI smoke test: full offline dry run against the real repo
 // ---------------------------------------------------------------------------
 
-test('CLI dry run exits 0, prints the plan, missing screenshots, and the never-touches checklist', () => {
+docTest('CLI dry run exits 0, prints the plan, missing screenshots, and the never-touches checklist', () => {
   const result = spawnSync(process.execPath, [join(HERE, 'upload.mjs'), '--dry-run'], { encoding: 'utf8' });
   assert.equal(result.status, 0, `stderr: ${result.stderr}`);
   assert.match(result.stdout, /DRY RUN, no network writes/);
