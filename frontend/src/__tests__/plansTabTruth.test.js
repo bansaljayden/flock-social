@@ -64,9 +64,15 @@ test('the detail sheet says when the rest did not load, and keeps the distance',
   // The card's own fetch went to the Discover screen with the events drawer;
   // the overlay's Try again is still the overlay's. Both are still pinned,
   // each against the file that now performs the merge.
-  expect(exploreScreen).toMatch(/distance_miles: data\?\.event\?\.distance_miles \?\? prev\?\.distance_miles \?\? null/);
-  expect(eventDetailOverlay).toMatch(/distance_miles: data\?\.event\?\.distance_miles \?\? prev\?\.distance_miles \?\? null/);
-  expect(eventDetailOverlay).toMatch(/km away/);
+  // Since 2026-10-06 the distance is measured on the device, from the viewer
+  // to the venue (lib/eventWhereWhen.js), so what each merge has to keep is
+  // the venue's position, not the server's distance_miles, which was measured
+  // from somebody else and is no longer sent.
+  expect(exploreScreen).toMatch(/location: data\?\.event\?\.location \?\? prev\?\.location \?\? null/);
+  expect(eventDetailOverlay).toMatch(/location: data\?\.event\?\.location \?\? prev\?\.location \?\? null/);
+  expect(eventDetailOverlay).toMatch(/const distanceKm = eventDistanceKm\(eventDetail, userLocation\);/);
+  expect(eventDetailOverlay).toMatch(/\{formatEventDistance\(distanceKm\)\} away/);
+  expect(eventDetailOverlay).not.toMatch(/eventDetail\.distance_miles/);
   expect(eventDetailOverlay).not.toMatch(/miles away/);
   expect(app).not.toMatch(/miles away/);
   expect(exploreScreen).not.toMatch(/miles away/);

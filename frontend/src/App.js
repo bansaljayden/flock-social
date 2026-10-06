@@ -19966,7 +19966,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     showToast,
   };
 
-  // THE EVENT DETAIL OVERLAY'S FOURTEEN. Built here rather than in renderScreen
+  // THE EVENT DETAIL OVERLAY'S FIFTEEN. Built here rather than in renderScreen
   // for the same reason verifyEmailSheetProps and newDmModalProps are: it is an
   // overlay, mounted from the root tree at the bottom of this component, not a
   // screen mounted from renderScreen. Object shorthand throughout and no
@@ -19977,6 +19977,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // eventDetailLoading and eventDetailError have no other reader left in
   // App.js, so this object is also what keeps their useState lines from being
   // unused variables, which under react-scripts is a build error.
+  //
+  // userLocation is the fifteenth (2026-10-06): the overlay measures its
+  // distance line from the viewer, as the event card does, instead of showing
+  // a distance the server measured from somebody else.
   const eventDetailOverlayProps = {
     DialogBehavior,
     colors,
@@ -19992,6 +19996,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setEventDetailLoading,
     setSelectedVenueForCreate,
     setShowEventsView,
+    userLocation,
   };
 
   // THE RESULTS LIST'S TWENTY-THREE. Built here rather than in renderScreen for
