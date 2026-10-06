@@ -420,6 +420,7 @@ const ROUTES_DIR = path.join(BACKEND, 'routes');
 const AUTH_EXEMPT = new Map([
   ['auth.js', 'public by definition — signup/login/verify/reset; the four routes that need a session mount authenticate inline'],
   ['badge.js', 'GET /api/badge/:placeId.svg is a public embeddable image with its own cache and rate caps'],
+  ['avatars.js', 'GET /api/avatars/:style/svg is a public image: an <img> sends no token, the picture is the same for everybody, and apiLimiter caps it'],
   ['checkin.js', 'anonymous NFC tap GET; writes are gated on an HMAC signature (NFC_TAG_SECRET)'],
   ['guest.js', 'guest RSVP/vote, authorised by an unguessable per-invite token rather than a JWT'],
   ['publicCrowd.js', 'public website crowd demo; per-IP and per-day caps inside the router'],

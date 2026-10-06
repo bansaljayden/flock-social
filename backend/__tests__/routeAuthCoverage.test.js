@@ -47,6 +47,7 @@ const EXPECTED_PUBLIC = {
   waitlist: 'landing page signup form, public by design',
   publicCrowd: 'website live crowd demo; own per-IP and daily caps inside',
   badge: 'embeddable live-busyness SVG for claimed venues',
+  avatars: 'the drawn avatars: an <img> sends no token, and a style and seed draw the same picture for everybody, no account data',
   guest: 'share-link RSVP and vote, authenticated by the link token itself',
   checkin: 'an NFC tap opens a URL on a phone with no session',
   unsubscribe: 'one-click unsubscribe from an email, signed token',
