@@ -545,6 +545,15 @@ function promptSafe(value, maxChars) {
     .slice(0, maxChars);
 }
 
+// A name the model reads inside a line or a sentence that quotes it: the data
+// line (buildContextDataLine) and add_venue_to_vote's refusal. promptSafe's
+// flattening and bound, then the brackets and quotes that could end the line
+// or the quoted name swapped for characters that cannot.
+function dataName(value) {
+  return String(promptSafe(value, MAX_CONTEXT_CHARS) || '')
+    .replace(/\[/g, '(').replace(/\]/g, ')').replace(/"/g, "'");
+}
+
 // ---------------------------------------------------------------------------
 // Tool definitions for Gemini
 // ---------------------------------------------------------------------------
@@ -1574,13 +1583,19 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
         [flockId, userId]
       );
       if (membership.rows.length === 0) return { error: 'That plan is not one of yours.' };
+      // The plan's name is its creator's text, and the caller need not be the
+      // creator, so it goes to the model the way get_user_flocks sends the
+      // same string (the rule above promptSafe). The vote card shows this
+      // copy too, where a bidi control would reorder its sentence. Quoted in
+      // the refusal, with any quote inside it swapped so it cannot end there.
+      const flockName = promptSafe(membership.rows[0].name, MAX_CONTEXT_CHARS);
       if (membership.rows[0].status === 'completed' || membership.rows[0].status === 'cancelled') {
-        return { error: `${membership.rows[0].name} already finished.` };
+        return { error: `The plan "${dataName(flockName)}" already finished.` };
       }
       return {
         staged: true,
         flock_id: flockId,
-        flock_name: membership.rows[0].name,
+        flock_name: flockName,
         venue: {
           place_id: picked.row.place_id,
           name: picked.row.name,
@@ -1699,8 +1714,7 @@ function buildClockLine(clock) {
 // the one every LLM product carries, and it is bounded by the tool clamps.
 function buildContextDataLine(ctx) {
   if (!ctx || typeof ctx !== 'object') return '';
-  const clean = (v) => String(promptSafe(v, MAX_CONTEXT_CHARS) || '')
-    .replace(/\[/g, '(').replace(/\]/g, ')').replace(/"/g, "'");
+  const clean = dataName;
   const parts = [];
   const flockName = clean(ctx.flock?.name);
   if (flockName) {
