@@ -370,6 +370,15 @@ function birdieRefusal(res, leg) {
     `lot of chatter right now, and we've hit the day's limit. i'm back ${waitPhrase(ms)}`));
 }
 
+// When the day a turn was charged to ends, which is when its last chirp comes
+// back. Read off the charge day (services/birdieUsage.js chargeDay) rather than
+// the clock at reply time, because a turn that straddles UTC midnight spent the
+// day before's chirp and today's are already back.
+function chargeDayEndsAt(chargeDay) {
+  const start = typeof chargeDay === 'string' ? Date.parse(`${chargeDay}T00:00:00.000Z`) : NaN;
+  return Number.isFinite(start) ? new Date(start + 24 * HOUR_MS).toISOString() : nextUtcMidnightISO();
+}
+
 // WHETHER GEMINI WITHHELD THE REPLY, read off why the turn ended. Only SAFETY
 // used to count, so a reply stopped as PROHIBITED_CONTENT, BLOCKLIST or SPII
 // fell through to "say that one more time?" and asked for the repeat that is
@@ -2371,6 +2380,11 @@ router.post('/chat',
       }
 
       const result = { text: responseText, venues: venueCards, remaining };
+      // THE LAST CHIRP SAYS WHEN THE NEXT ONE COMES. The app closes Birdie's
+      // box on remaining: 0, and it only learned when to open it again from a
+      // 429's resetsAt, so the box this reply closed stayed shut past the
+      // reset. Same field, same instant as that refusal names.
+      if (remaining === 0) result.resetsAt = chargeDayEndsAt(rateCheck.chargeDay);
       if (navigationAction) result.navigate = navigationAction;
       if (flockDraftAction) result.flock_draft = flockDraftAction;
       if (venueVoteAction) result.vote_stage = venueVoteAction;
