@@ -222,8 +222,14 @@ const PLACE = 'ChIJvenueWebCheckout001';
 // The venue profile and grant rows, answered the way the real queries shape them.
 // trialUsed: the account, or the venue under any account, already has a Roost
 // subscription on record (venue_stripe_subscriptions, migration 119).
-function venueDb({ verified = true, customer = null, grant = null, cachedTier = 'free', legacy = undefined, noticeUntil = null, placeId = PLACE, trialUsed = false } = {}) {
+// recorded: other Stripe customers a Roost subscription of this account was
+// recorded on (venue_subscriptions, venue_stripe_subscriptions), as a plan sold
+// by hand on a customer of its own is.
+function venueDb({ verified = true, customer = null, grant = null, cachedTier = 'free', legacy = undefined, noticeUntil = null, placeId = PLACE, trialUsed = false, recorded = [] } = {}) {
   return async (sql) => {
+    if (sql.includes('SELECT stripe_customer_id FROM venue_profiles WHERE user_id = $1') && sql.includes('UNION ALL')) {
+      return { rows: [customer, ...recorded].filter(Boolean).map((c) => ({ stripe_customer_id: c })) };
+    }
     if (sql.includes('SELECT id, verified, business_name, stripe_customer_id') && sql.includes('FROM venue_profiles')) {
       return { rows: [{ id: 9, verified, business_name: 'The Owl', stripe_customer_id: customer, google_place_id: placeId }] };
     }
@@ -736,6 +742,21 @@ test('the portal returns to the venue dashboard, and a venue with no customer ge
     const res = await call(venueBillingRoutes, 'POST', '/api/venue-billing/portal');
     assert.strictEqual(res.status, 404);
     assert.strictEqual(res.body.code, 'NO_WEB_SUBSCRIPTION');
+  } finally { db.restore(); }
+});
+
+test('a plan sold by hand on a customer of its own still opens the portal, on that customer', async () => {
+  // The portal read venue_profiles.stripe_customer_id and nothing else, and
+  // only checkout ever wrote it, so a founding venue whose plan was made by
+  // hand in the dashboard was told it had no subscription to manage.
+  setEnv(ON);
+  stripeState.subscriptions = [{ id: 'sub_founding', status: 'active', created: 1700000000, customer: 'cus_FOUNDING', metadata: { kind: 'venue', flock_venue_user_id: String(ME.id) } }];
+  const db = stubPool(venueDb({ customer: null, recorded: ['cus_FOUNDING'] }));
+  try {
+    const res = await call(venueBillingRoutes, 'POST', '/api/venue-billing/portal');
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    const [, args] = stripeCalls.find(([n]) => n === 'portal.create');
+    assert.strictEqual(args.customer, 'cus_FOUNDING');
   } finally { db.restore(); }
 });
 
