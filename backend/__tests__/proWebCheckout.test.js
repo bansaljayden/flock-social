@@ -29,7 +29,10 @@ process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret-for-unit-tests';
 
 // ---- the fake Stripe ------------------------------------------------------
 const stripeCalls = [];
-const stripeState = { subscriptions: [], sessions: {}, openSessions: [], charges: {}, promoCodes: [], promoLookupFails: false, refuseDiscounts: false };
+// invoicePayments: PaymentIntent id -> the invoice ids it paid, the lookup
+// Stripe documents for finding a charge's subscription since 2025-03-31.basil.
+// invoices: invoice id -> the invoice, whose parent names its subscription.
+const stripeState = { subscriptions: [], sessions: {}, openSessions: [], charges: {}, invoicePayments: {}, invoices: {}, promoCodes: [], promoLookupFails: false, refuseDiscounts: false };
 function FakeStripe() {
   return {
     customers: {
@@ -38,7 +41,18 @@ function FakeStripe() {
     },
     subscriptions: {
       list: async (args) => { stripeCalls.push(['subscriptions.list', args]); return { data: stripeState.subscriptions }; },
-      cancel: async (id, params, opts) => { stripeCalls.push(['subscriptions.cancel', id, opts]); return { id, status: 'canceled' }; },
+      retrieve: async (id) => {
+        stripeCalls.push(['subscriptions.retrieve', id]);
+        const s = stripeState.subscriptions.find((x) => x.id === id);
+        return s ? { ...s } : null;
+      },
+      // A cancel sticks, the way it does at Stripe, so a replay sees it.
+      cancel: async (id, params, opts) => {
+        stripeCalls.push(['subscriptions.cancel', id, opts]);
+        const s = stripeState.subscriptions.find((x) => x.id === id);
+        if (s) s.status = 'canceled';
+        return { id, status: 'canceled' };
+      },
       update: async (id, params) => {
         stripeCalls.push(['subscriptions.update', id, params]);
         const s = stripeState.subscriptions.find((x) => x.id === id) || { id };
@@ -54,6 +68,17 @@ function FakeStripe() {
     },
     charges: {
       retrieve: async (id) => { stripeCalls.push(['charges.retrieve', id]); return stripeState.charges[id] || { id, customer: null }; },
+    },
+    invoicePayments: {
+      list: async (args) => {
+        stripeCalls.push(['invoicePayments.list', args]);
+        const pi = args && args.payment ? args.payment.payment_intent : null;
+        const invoices = (pi && stripeState.invoicePayments[pi]) || [];
+        return { data: invoices.map((invoice, i) => ({ id: `inpay_${pi}_${i}`, invoice, status: 'paid' })), has_more: false };
+      },
+    },
+    invoices: {
+      retrieve: async (id) => { stripeCalls.push(['invoices.retrieve', id]); return stripeState.invoices[id] || null; },
     },
     prices: {
       retrieve: async (id) => ({ id, unit_amount: 399, currency: 'usd', recurring: { interval: 'month' } }),
@@ -198,6 +223,8 @@ test.beforeEach(() => {
   rcSubscriptions = null;
   stripeState.subscriptions = [];
   stripeState.charges = {};
+  stripeState.invoicePayments = {};
+  stripeState.invoices = {};
   stripeState.promoCodes = [];
   stripeState.promoLookupFails = false;
   stripeState.refuseDiscounts = false;
@@ -889,24 +916,117 @@ test('/status still answers, without an offer, when Stripe cannot describe a pri
 
 // ---- the 2026-09-24 attack pass: what it found, pinned shut ----
 
-test('a chargeback cancels the live subscriptions we made for that customer, and nothing else', async () => {
+// A dispute names a charge, and the charge's invoice names the one
+// subscription that money paid for. The ending is recorded once per dispute
+// (migration 118), so this fake keeps the table in memory.
+function endingsDb(endings) {
+  return async (sql, params) => {
+    if (sql.includes('INSERT INTO stripe_subscription_endings')) {
+      const [cause, sourceId, subscriptionId, invoiceId, chargeId] = params;
+      if (endings.some((e) => e.cause === cause && e.source_id === sourceId && e.stripe_subscription_id === subscriptionId)) {
+        return { rows: [], rowCount: 0 };
+      }
+      endings.push({ cause, source_id: sourceId, stripe_subscription_id: subscriptionId, stripe_invoice_id: invoiceId, stripe_charge_id: chargeId });
+      return { rows: [{ stripe_subscription_id: subscriptionId }], rowCount: 1 };
+    }
+    if (sql.includes('FROM stripe_subscription_endings')) {
+      return { rows: endings.filter((e) => e.cause === params[0] && e.source_id === params[1]) };
+    }
+    return null;
+  };
+}
+
+// Charge -> PaymentIntent -> the invoice it paid -> that invoice's subscription.
+function chargeFunds(chargeId, subscriptionId, { customer = 'cus_TEST123', legacyInvoiceField = false } = {}) {
+  const pi = `pi_${chargeId}`;
+  const invoice = `in_${chargeId}`;
+  stripeState.charges[chargeId] = legacyInvoiceField
+    ? { id: chargeId, customer, payment_intent: pi, invoice }
+    : { id: chargeId, customer, payment_intent: pi };
+  stripeState.invoicePayments[pi] = [invoice];
+  stripeState.invoices[invoice] = { id: invoice, parent: { type: 'subscription_details', subscription_details: { subscription: subscriptionId } } };
+}
+
+const dispute = (id, charge) => ({ id: `evt_${id}`, type: 'charge.dispute.created', data: { object: { id, object: 'dispute', charge } } });
+
+test('a chargeback cancels the subscription its charge paid for, and nothing else the customer holds', async () => {
   setEnv(ON);
-  stripeState.charges.ch_1 = { id: 'ch_1', customer: 'cus_TEST123' };
+  chargeFunds('ch_1', 'sub_live');
   stripeState.subscriptions = [
     { id: 'sub_live', status: 'active', metadata: { app_user_id: '7' } },
     { id: 'sub_roost', status: 'trialing', metadata: { kind: 'venue', flock_venue_user_id: '7' } },
     { id: 'sub_old', status: 'canceled', metadata: { app_user_id: '7' } },
     { id: 'sub_by_hand', status: 'active', metadata: {} },
   ];
-  const { restore } = stubPool(async () => null);
+  const endings = [];
+  const { restore } = stubPool(endingsDb(endings));
   try {
-    const res = await postWebhook({ type: 'charge.dispute.created', data: { object: { id: 'dp_1', charge: 'ch_1' } } }, 't=1,v1=good');
+    const res = await postWebhook(dispute('dp_1', 'ch_1'), 't=1,v1=good');
     assert.strictEqual(res.status, 200, JSON.stringify(res.body));
-    const cancelled = stripeCalls.filter((c) => c[0] === 'subscriptions.cancel').map((c) => c[1]).sort();
-    assert.deepStrictEqual(cancelled, ['sub_live', 'sub_roost']);
-    for (const [, id, opts] of stripeCalls.filter((c) => c[0] === 'subscriptions.cancel')) {
-      assert.deepStrictEqual(opts, { idempotencyKey: `flock-dispute-cancel-${id}` }, 'a retried dispute event cancels once');
-    }
+    const cancelled = stripeCalls.filter((c) => c[0] === 'subscriptions.cancel');
+    assert.deepStrictEqual(cancelled.map((c) => c[1]), ['sub_live'],
+      'a dispute over one charge ended subscriptions that charge never paid for');
+    assert.deepStrictEqual(cancelled[0][2], { idempotencyKey: 'flock-dispute-cancel-sub_live' }, 'a retried dispute event cancels once');
+    assert.deepStrictEqual(endings.map((e) => [e.cause, e.source_id, e.stripe_subscription_id, e.stripe_invoice_id, e.stripe_charge_id]),
+      [['dispute', 'dp_1', 'sub_live', 'in_ch_1', 'ch_1']], 'the dispute is recorded against the subscription it ended');
+  } finally { restore(); }
+});
+
+test('a replayed dispute ends nothing the customer bought after it', async () => {
+  // THE CASE THE REVIEW FOUND. A dispute cancels subscription A. The owner
+  // buys B on the same Stripe customer. The old dispute event arrives again
+  // (Stripe resends it, or somebody resends it from the dashboard), and the
+  // handler used to list the customer's CURRENT subscriptions and cancel B
+  // for a charge B never made.
+  setEnv(ON);
+  chargeFunds('ch_A', 'sub_A');
+  stripeState.subscriptions = [{ id: 'sub_A', status: 'active', metadata: { kind: 'venue', flock_venue_user_id: '7' } }];
+  const endings = [];
+  const { restore } = stubPool(endingsDb(endings));
+  try {
+    const first = await postWebhook(dispute('dp_A', 'ch_A'), 't=1,v1=good');
+    assert.strictEqual(first.status, 200, JSON.stringify(first.body));
+    assert.deepStrictEqual(stripeCalls.filter((c) => c[0] === 'subscriptions.cancel').map((c) => c[1]), ['sub_A']);
+
+    // The venue comes back and buys again on the same customer.
+    stripeState.subscriptions.push({ id: 'sub_B', status: 'active', metadata: { kind: 'venue', flock_venue_user_id: '7' } });
+    stripeCalls.length = 0;
+    const replay = await postWebhook(dispute('dp_A', 'ch_A'), 't=1,v1=good');
+    assert.strictEqual(replay.status, 200, JSON.stringify(replay.body));
+    assert.deepStrictEqual(stripeCalls.filter((c) => c[0] === 'subscriptions.cancel').map((c) => c[1]), [],
+      'the replay of an old dispute cancelled a subscription bought after it');
+    assert.strictEqual(stripeState.subscriptions.find((s) => s.id === 'sub_B').status, 'active');
+    assert.strictEqual(endings.length, 1, 'one record per dispute, however often it arrives');
+  } finally { restore(); }
+});
+
+test('a dispute over a charge that paid no subscription invoice cancels nothing', async () => {
+  setEnv(ON);
+  stripeState.charges.ch_one_off = { id: 'ch_one_off', customer: 'cus_TEST123', payment_intent: 'pi_one_off' };
+  stripeState.subscriptions = [{ id: 'sub_live', status: 'active', metadata: { app_user_id: '7' } }];
+  const endings = [];
+  const { restore } = stubPool(endingsDb(endings));
+  try {
+    const res = await postWebhook(dispute('dp_3', 'ch_one_off'), 't=1,v1=good');
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    assert.strictEqual(res.body.ignored, 'no_subscription');
+    assert.ok(!stripeCalls.some((c) => c[0] === 'subscriptions.cancel'), 'a charge that paid for no subscription ended one anyway');
+    assert.deepStrictEqual(endings, []);
+  } finally { restore(); }
+});
+
+test('a charge rendered with its invoice field (an older API version) resolves the same way', async () => {
+  setEnv(ON);
+  chargeFunds('ch_old', 'sub_live', { legacyInvoiceField: true });
+  stripeState.subscriptions = [
+    { id: 'sub_live', status: 'active', metadata: { app_user_id: '7' } },
+    { id: 'sub_other', status: 'active', metadata: { app_user_id: '7' } },
+  ];
+  const { restore } = stubPool(endingsDb([]));
+  try {
+    const res = await postWebhook(dispute('dp_4', 'ch_old'), 't=1,v1=good');
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    assert.deepStrictEqual(stripeCalls.filter((c) => c[0] === 'subscriptions.cancel').map((c) => c[1]), ['sub_live']);
   } finally { restore(); }
 });
 
