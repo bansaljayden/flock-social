@@ -68,7 +68,8 @@ import { isNativeShell } from '../lib/nativeShell';
 import useEdgeSwipeBack from '../hooks/useEdgeSwipeBack';
 // REACT_APP_PURCHASES=off (the App Store build): no Pro row, no Pro badge, and
 // the subscription note on deletion is a plain App Store warning for an account
-// that has Pro. lib/purchasesBuild.js has the rules.
+// that has Pro. lib/purchasesBuild.js has the rules. With purchases on, the
+// note inside the app is the App Store half alone, never the website's.
 
 // A deletion refused over billing, said without naming a plan. The sentence
 // from the server names Flock Pro or Roost (backend/routes/users.js, DELETE
@@ -1112,10 +1113,21 @@ export default function ProfileSettings({
                     the entitlement read never landed (entitlementsUnknown in
                     App.js), isPro is only a default, so the warning shows
                     then too: a paying account must not lose it to a failed
-                    request. */}
-                {(process.env.REACT_APP_PURCHASES !== 'off') ? ((entitlements?.paywallEnabled || isPro) && (
+                    request.
+
+                    INSIDE THE APP WITH PURCHASES ON, the web's sentence named
+                    flockcorp.com as a place Pro is bought, which App Review
+                    reads as steering (3.1.1), and it went quiet for an account
+                    whose Pro could not be read. So the app says only the App
+                    Store half, and an unknown answer gets it too. A web
+                    subscription is still cancelled with the account
+                    (backend/routes/users.js), so leaving that half out tells
+                    nobody anything untrue. */}
+                {(process.env.REACT_APP_PURCHASES !== 'off') ? (isNativeShell() ? ((entitlements?.paywallEnabled || isPro || entitlementsUnknown) && (
+                  <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>Deleting your account does not cancel Flock Pro bought in the App Store. It keeps renewing until you cancel it in your Apple ID settings, under Subscriptions.</p>
+                )) : ((entitlements?.paywallEnabled || isPro) && (
                   <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>Flock Pro bought on flockcorp.com is cancelled when you delete your account. Flock Pro bought in the App Store is not: cancel it first in your Apple ID settings, under Subscriptions.</p>
-                )) : ((isPro || entitlementsUnknown) && (
+                ))) : ((isPro || entitlementsUnknown) && (
                   <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 16px', lineHeight: 1.5 }}>Deleting your account does not cancel a subscription paid through the App Store. Cancel it first in the Settings app: tap your name, then Subscriptions.</p>
                 ))}
                 {/* Both inputs below close the keyboard on Return
