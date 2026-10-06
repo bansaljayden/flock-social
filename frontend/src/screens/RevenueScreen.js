@@ -1168,7 +1168,15 @@ function HubExpenseForm({ expense, kinds, cadences, codeLines, colors, onDone, o
         </label>
       </div>
       {form.isCredit && <p style={hubStyle.note}>Type the amount as a plain number. It is taken off the totals instead of added.</p>}
-      {form.endsOn && form.cadence !== 'one_time' && <p style={hubStyle.note}>For a bill whose renewal is turned off. Nothing is charged on or after that day and the hub stops counting it then, so leave Still being charged ticked.</p>}
+      {/* A usage bill is billed after the use, so its last bill comes after
+          the day it ends (moneyHub.js, THE END OF A BILL). */}
+      {form.endsOn && form.cadence !== 'one_time' && (
+        <p style={hubStyle.note}>
+          {form.cadence === 'usage'
+            ? 'For a usage bill that stops on that day. Its last bill comes after, for the use up to then, and the hub stops counting it on that day, so leave Still being charged ticked.'
+            : 'For a bill whose renewal is turned off. Nothing is charged on or after that day and the hub stops counting it then, so leave Still being charged ticked.'}
+        </p>
+      )}
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '12px', marginTop: '10px' }}>
         <button className="hit44" type="button" disabled={busy || !form.vendor.trim() || String(form.amount).trim() === ''} onClick={save}
           style={{ padding: '8px 14px', borderRadius: '8px', border: 'none', background: colors.navyBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: busy ? 'default' : 'pointer' }}>
