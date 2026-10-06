@@ -1522,14 +1522,20 @@ export default function VenueDashboard({
             </div>
           )}
 
-          {/* Embeddable live badge — free marketing for them, distribution for us */}
+          {/* Embeddable crowd badge: free marketing for them, distribution for us.
+              Nothing here calls it live: the pill can read "Usually busy at
+              this hour" (a venue with no crowd curve of its own, served what
+              is typical for its kind of place), and the snippet's alt is what
+              a screen reader announces in place of the pill, written once and
+              pasted onto the venue's site, so it names no state at all. The
+              pill's own text says which it is. */}
           {intelReady && venueProfile?.google_place_id && (
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-              <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 6px' }}>Live Badge for Your Website</h3>
-              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 10px', lineHeight: 1.5 }}>A live "how busy is it" badge, updated every 15 minutes from Flock's crowd numbers. Paste this where your site's HTML goes:</p>
+              <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 6px' }}>Crowd Badge for Your Website</h3>
+              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 10px', lineHeight: 1.5 }}>A "how busy is it" badge, updated every 15 minutes from Flock's crowd numbers. Paste this where your site's HTML goes:</p>
               <button className="hit44"
                 onClick={async () => {
-                  const snippet = `<img src="${BASE_URL}/api/badge/${venueProfile.google_place_id}.svg" alt="How busy is ${venueData.name}? Live from Flock" height="36">`;
+                  const snippet = `<img src="${BASE_URL}/api/badge/${venueProfile.google_place_id}.svg" alt="How busy is ${venueData.name}? From Flock" height="36">`;
                   try { await navigator.clipboard.writeText(snippet); showToast('Embed code copied'); } catch { showToast('Could not copy', 'error'); }
                 }}
                 style={{ width: '100%', padding: '10px', borderRadius: '10px', border: `1.5px dashed ${colors.steel}`, backgroundColor: 'transparent', color: colors.steel, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}
