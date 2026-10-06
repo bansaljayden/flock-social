@@ -1049,3 +1049,41 @@ describe('the budget settles the way the pages say it does', () => {
     expect(home).not.toMatch(/No number until everyone has answered/);
   });
 });
+
+// WHAT A VENUE'S OWN READING DOES TO THE NUMBER, AND WHAT THE DASHBOARD IS
+// BUILT FROM. Terms 7 said the venue's own reading "adjust[s]" the estimate.
+// services/ownerReports.js applyOwnerReport does neither of the things that
+// word means: with fewer than MIN_CALIBRATION_REPORTERS verified reporters the
+// live reading REPLACES the published number, labelled as the venue's (9.4
+// says it is never shown as Flock's estimate), and with that many the users'
+// number stands with the venue's beside it. 9.5 said the dashboard's busyness
+// curves are built "from our model"; production serves each venue's curve and
+// its live readings (curve_offset with the nowcast), with no model run.
+describe("Terms 7 and 9.5 say what a venue's reading and the dashboard's curves are made of", () => {
+  const owner = read('backend', 'services', 'ownerReports.js');
+  const engine = read('backend', 'services', 'crowdEngine.js');
+  const mirror = read('frontend', 'api', 'marketing-page.js');
+  const termsMirror = mirror.slice(mirror.indexOf('  terms: ['));
+  const copies = [['TermsOfService.js', terms.replace(/\s+/g, ' ')], ['marketing-page.js', termsMirror]];
+
+  test("a venue's live reading replaces the estimate until enough users outrank it, and both copies say so", () => {
+    expect(owner).toMatch(/score: live\.percent,/);
+    expect(owner).toMatch(/predictionMethod: OWNER_BASIS,/);
+    expect(owner).toMatch(/if \(reporters >= crowdEngine\.MIN_CALIBRATION_REPORTERS\) \{\s*return \{\s*\.\.\.result,\s*ownerReport: \{ \.\.\.live, applied: false/);
+    expect(Number(engine.match(/const MIN_CALIBRATION_REPORTERS = (\d+);/)[1])).toBe(3);
+    for (const [, text] of copies) {
+      expect(text).toContain("For some venues, recent reports from people who were there adjust it. While a venue's own live reading stands, it is shown in place of our estimate and labelled as the venue's, unless enough users have reported to take precedence (see 9.4).");
+      expect(text).not.toMatch(/the venue's own reading, adjust it/);
+      // 9.4, the section it points at, still says the same thing.
+      expect(text).toContain("Your report is shown to users as coming from your venue, and never as Flock's own estimate.");
+      expect(text).toContain('When enough of them do, currently three or more, their reports take precedence over yours.');
+    }
+  });
+
+  test('9.5 builds the dashboard from Flock activity and its crowd numbers, not a model', () => {
+    for (const [, text] of copies) {
+      expect(text).toContain("The dashboard shows analytics built from Flock activity and from Flock's crowd numbers: consideration counts, check-in counts, busyness curves, and the Roost cards and answers.");
+      expect(text).not.toMatch(/built from Flock activity and from our model/);
+    }
+  });
+});
