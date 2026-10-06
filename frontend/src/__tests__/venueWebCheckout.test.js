@@ -176,6 +176,14 @@ describe('the return from Stripe', () => {
     expect(await settleVenueCheckout({ sessionId: 'cs_1', confirm: async () => { throw new Error('x'); } })).toBe('unknown');
   });
 
+  test('settle: a purchase refused because the claim is no longer verified is never "your payment went through"', async () => {
+    // The server cancels and refunds a checkout completed against a claim
+    // that was revoked or moved to another listing, and says so.
+    expect(await settleVenueCheckout({ sessionId: 'cs_1', confirm: async () => ({ complete: true, tier: null, refused: 'CLAIM_NOT_VERIFIED' }) })).toBe('refused');
+    const app = read('App.js');
+    expect(app).toMatch(/outcome === 'refused'\) showToast\('Your venue is not verified for that listing, so we cancelled this purchase and refunded anything it charged\.'/);
+  });
+
   test('App.js reads the return once at module scope and reloads the venue plan', () => {
     const app = read('App.js');
     expect(app).toContain("let VENUE_BILLING_RETURN = (process.env.REACT_APP_PURCHASES !== 'off') ? readVenueBillingReturn() : null;");

@@ -1994,6 +1994,8 @@ const VERIFY_DECIDED_SUBJECT = (verified, name) => (verified
 // billing is off), false means it is not, and null means the plan could not be
 // read, in which case the email says nothing about Roost either way.
 const { venueBillingEnabled, getVenueTier } = require('../services/venueEntitlements');
+// Held as a module object, so a test can see the call the verify route makes.
+const venueBilling = require('../services/venueBilling');
 async function roostIsOnFor(ownerUserId) {
   if (!venueBillingEnabled()) return true;
   if (ownerUserId == null) return null;
@@ -2210,7 +2212,18 @@ router.put('/venues/:profileId/verify', async (req, res) => {
               -- delete that committed while this waited), which is a changed
               -- claim too.
               ($1::boolean AND t.google_place_id IS DISTINCT FROM $5::varchar) AS place_changed,
-              EXISTS (SELECT 1 FROM blocked) AS place_taken
+              EXISTS (SELECT 1 FROM blocked) AS place_taken,
+              -- Every Stripe customer a Roost plan of the owner is on record
+              -- with, read in this same statement, so a decision that takes
+              -- the claim away can stop its billing without a second query
+              -- (services/venueBilling.js stopRoostForRevokedClaim).
+              ARRAY(SELECT c.customer_id FROM (
+                      SELECT vp2.stripe_customer_id AS customer_id FROM venue_profiles vp2 WHERE vp2.id = t.id
+                      UNION ALL
+                      SELECT vs.stripe_customer_id FROM venue_subscriptions vs WHERE vs.user_id = t.user_id
+                      UNION ALL
+                      SELECT vss.stripe_customer_id FROM venue_stripe_subscriptions vss WHERE vss.user_id = t.user_id
+                    ) c WHERE c.customer_id IS NOT NULL) AS roost_customers
        FROM target t
        LEFT JOIN upd u ON true
        LEFT JOIN users ou ON ou.id = t.user_id`,
@@ -2245,7 +2258,38 @@ router.put('/venues/:profileId/verify', async (req, res) => {
         googlePlaceId: row.google_place_id,
       });
     }
-    res.json({ id: row.id, business_name: row.business_name, verified: row.verified });
+
+    // A CLAIM TAKEN AWAY STOPS BEING BILLED. The dashboard refuses Roost to an
+    // unverified claim from this moment, and nothing used to tell Stripe: an
+    // open checkout stayed payable and the subscription went on renewing.
+    // Expired and cancelled now, immediately rather than at the period end
+    // (services/venueBilling.js stopRoostForRevokedClaim says why that is the
+    // fairer of the two). The decision above is already committed and is not
+    // undone if Stripe fails here: taking a badge away is the safe direction.
+    // The admin is told instead, and sending the same decision again finishes
+    // the job, because it reruns this on the customers still on record.
+    let roost = null;
+    if (!verified && row.owner_user_id != null) {
+      try {
+        roost = await venueBilling.stopRoostForRevokedClaim(row.owner_user_id, {
+          customerIds: Array.isArray(row.roost_customers) ? row.roost_customers : [],
+        });
+      } catch (err) {
+        console.error(`[venue-verification] profile #${row.id}: the claim was revoked but its Roost billing was not stopped (${err.message}). Send the same decision again.`);
+        res.status(502).json({
+          error: 'The claim is no longer verified, but its Roost plan could not be stopped at Stripe just now. Send the same decision again to finish it.',
+          code: 'ROOST_NOT_STOPPED',
+          id: row.id,
+          verified: row.verified,
+        });
+        notifyVerificationDecided(row).catch((notifyErr) => console.error(
+          `[venue-verification] profile #${row.id}: telling the owner failed (${notifyErr.message}).`
+        ));
+        return;
+      }
+    }
+    const stopped = roost && (roost.checkoutsExpired > 0 || roost.subscriptionsCancelled.length > 0);
+    res.json({ id: row.id, business_name: row.business_name, verified: row.verified, ...(stopped ? { roost } : {}) });
 
     // Tell the owner, AFTER the response, on both outcomes.
     //

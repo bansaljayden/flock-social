@@ -35,7 +35,7 @@ const stripeCalls = [];
 // refund tests. A charge is paid through a PaymentIntent, which names the
 // invoice it paid, which names its subscription (Stripe API 2025-03-31 basil
 // and later).
-const stripeState = { subscriptions: [], sessions: {}, openSessions: [], subById: {}, keepCreatedOpen: false, charges: {}, refunds: {}, invoicePayments: {}, invoices: {} };
+const stripeState = { subscriptions: [], sessions: {}, openSessions: [], subById: {}, keepCreatedOpen: false, charges: {}, refunds: {}, invoicePayments: {}, invoices: {}, paidWith: {} };
 let createdSessions = 0;
 function FakeStripe() {
   return {
@@ -58,12 +58,22 @@ function FakeStripe() {
     },
     refunds: {
       list: async (args) => { stripeCalls.push(['refunds.list', args]); return { data: stripeState.refunds[args.charge] || [], has_more: false }; },
+      create: async (args, opts) => { stripeCalls.push(['refunds.create', args, opts]); return { id: 're_made', status: 'succeeded' }; },
     },
     invoicePayments: {
-      list: async (args) => ({
-        data: (stripeState.invoicePayments[args.payment.payment_intent] || []).map((invoice, i) => ({ id: `inpay_${i}`, invoice, status: 'paid' })),
-        has_more: false,
-      }),
+      // By PaymentIntent (which invoices a charge paid), or by invoice (how an
+      // invoice was paid: stripeState.paidWith maps an invoice to the
+      // PaymentIntent that paid it).
+      list: async (args) => {
+        if (args.invoice) {
+          const pi = stripeState.paidWith[args.invoice];
+          return { data: pi ? [{ id: `inpay_${args.invoice}`, invoice: args.invoice, status: 'paid', payment: { type: 'payment_intent', payment_intent: pi } }] : [], has_more: false };
+        }
+        return {
+          data: (stripeState.invoicePayments[args.payment.payment_intent] || []).map((invoice, i) => ({ id: `inpay_${i}`, invoice, status: 'paid' })),
+          has_more: false,
+        };
+      },
     },
     invoices: {
       retrieve: async (id) => stripeState.invoices[id] || null,
@@ -211,6 +221,7 @@ test.beforeEach(() => {
   stripeState.refunds = {};
   stripeState.invoicePayments = {};
   stripeState.invoices = {};
+  stripeState.paidWith = {};
   createdSessions = 0;
   billing.__test.resetStripe();
 });
@@ -492,12 +503,17 @@ const stripeWebhook = async (event, sig = 't=1,v1=good') => {
   }
 };
 
+// The claim a completed checkout is checked against before it is fulfilled.
+const verifiedClaim = (sql) => (sql.includes('SELECT id, verified, business_name, stripe_customer_id') && sql.includes('FROM venue_profiles')
+  ? { rows: [{ id: 9, verified: true, business_name: 'The Owl', stripe_customer_id: 'cus_VENUE1', google_place_id: PLACE }] }
+  : null);
+
 test('a venue webhook event re-reads Stripe, writes the grant, and never reaches RevenueCat', async () => {
   setEnv(ON);
   stripeState.subById.sub_V1 = sub({ status: 'trialing', trial_end: Math.floor(Date.now() / 1000) + 14 * 86400 });
   const { calls, restore } = stubPool(async (sql) => {
     if (sql.startsWith('WITH old AS')) return { rows: [{ profiles: 1, written: 1, verified: true }] };
-    return null;
+    return verifiedClaim(sql);
   });
   try {
     const res = await stripeWebhook({
@@ -523,6 +539,105 @@ test('a venue webhook event re-reads Stripe, writes the grant, and never reaches
     assert.deepStrictEqual(txn[1].params, [venueBilling.__test.SYNC_LOCK_NAMESPACE, ME.id]);
     assert.strictEqual(stripeCalls.filter(([n, id]) => n === 'subscriptions.retrieve' && id === 'sub_V1').length, 2,
       'one read to find the venue, one under its lock');
+  } finally { restore(); }
+});
+
+// ---- a purchase completed against a claim that is no longer good ----------
+//
+// The claim was checked when the session was made and never again, so a
+// checkout paid after the claim was revoked (or re-pointed at another listing)
+// started a plan the dashboard would refuse to serve, and Stripe billed it.
+// Fulfillment now checks the claim again, and a purchase against a claim that
+// is not verified for the listing it was bought for is cancelled and its
+// payment refunded.
+
+function completedSession({ id = 'cs_done_1', paid = true, place = PLACE } = {}) {
+  return {
+    id, object: 'checkout.session', mode: 'subscription', status: 'complete',
+    subscription: 'sub_V1', invoice: 'in_first', payment_status: paid ? 'paid' : 'no_payment_required',
+    metadata: { kind: 'venue', flock_venue_user_id: String(ME.id), flock_venue_place_id: place },
+  };
+}
+
+function claimNow({ verified, place = PLACE }) {
+  return async (sql) => {
+    if (sql.startsWith('WITH old AS')) return { rows: [{ profiles: 1, written: 1, verified, place_id: place }] };
+    if (sql.includes('SELECT id, verified, business_name, stripe_customer_id') && sql.includes('FROM venue_profiles')) {
+      return { rows: [{ id: 9, verified, business_name: 'The Owl', stripe_customer_id: 'cus_VENUE1', google_place_id: place }] };
+    }
+    return null;
+  };
+}
+
+test('a checkout paid after the claim was revoked is cancelled and refunded, not fulfilled', async () => {
+  setEnv(ON);
+  stripeState.subById.sub_V1 = sub({ status: 'active', metadata: { kind: 'venue', flock_venue_user_id: String(ME.id), flock_venue_place_id: PLACE } });
+  stripeState.paidWith.in_first = 'pi_first';
+  const { calls, restore } = stubPool(claimNow({ verified: false }));
+  try {
+    const res = await stripeWebhook({ id: 'evt_rev', type: 'checkout.session.completed', data: { object: completedSession() } });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    const cancelled = stripeCalls.filter(([n]) => n === 'subscriptions.cancel');
+    assert.deepStrictEqual(cancelled.map(([, id, opts]) => [id, opts]), [['sub_V1', { idempotencyKey: 'flock-claim-revoked-cancel-sub_V1' }]],
+      'a purchase against a revoked claim was fulfilled and left billing');
+    const refunded = stripeCalls.filter(([n]) => n === 'refunds.create');
+    assert.strictEqual(refunded.length, 1, 'the payment taken for a purchase we refused was kept');
+    assert.strictEqual(refunded[0][1].payment_intent, 'pi_first');
+    assert.deepStrictEqual(refunded[0][2], { idempotencyKey: 'flock-claim-revoked-refund-in_first' });
+    const write = calls.find((c) => c.text.startsWith('WITH old AS'));
+    assert.ok(write, 'the cancelled subscription was not written');
+    assert.strictEqual(write.params[10], false, 'the refused purchase was written live');
+  } finally { restore(); }
+});
+
+test('a checkout paid after the claim moved to another listing is refused the same way', async () => {
+  setEnv(ON);
+  stripeState.subById.sub_V1 = sub({ status: 'active', metadata: { kind: 'venue', flock_venue_user_id: String(ME.id), flock_venue_place_id: PLACE } });
+  stripeState.paidWith.in_first = 'pi_first';
+  const { restore } = stubPool(claimNow({ verified: true, place: 'ChIJsomewhereElse00001' }));
+  try {
+    const res = await stripeWebhook({ id: 'evt_moved', type: 'checkout.session.completed', data: { object: completedSession() } });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    assert.deepStrictEqual(stripeCalls.filter(([n]) => n === 'subscriptions.cancel').map(([, id]) => id), ['sub_V1']);
+  } finally { restore(); }
+});
+
+test('a trial bought against a revoked claim is cancelled with nothing to refund', async () => {
+  setEnv(ON);
+  stripeState.subById.sub_V1 = sub({ status: 'trialing', metadata: { kind: 'venue', flock_venue_user_id: String(ME.id), flock_venue_place_id: PLACE } });
+  const { restore } = stubPool(claimNow({ verified: false }));
+  try {
+    const res = await stripeWebhook({ id: 'evt_rev_trial', type: 'checkout.session.completed', data: { object: completedSession({ paid: false }) } });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    assert.deepStrictEqual(stripeCalls.filter(([n]) => n === 'subscriptions.cancel').map(([, id]) => id), ['sub_V1']);
+    assert.ok(!stripeCalls.some(([n]) => n === 'refunds.create'), 'a trial took no money, so there is none to give back');
+  } finally { restore(); }
+});
+
+test('the return from Stripe checks the claim too: a confirm against a revoked claim cancels, and says Roost is not on', async () => {
+  setEnv(ON);
+  stripeState.sessions.cs_done_1 = completedSession();
+  stripeState.subById.sub_V1 = sub({ status: 'trialing', metadata: { kind: 'venue', flock_venue_user_id: String(ME.id), flock_venue_place_id: PLACE } });
+  const { restore } = stubPool(claimNow({ verified: false }));
+  try {
+    const res = await call(venueBillingRoutes, 'POST', '/api/venue-billing/confirm', { sessionId: 'cs_done_1' });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    assert.strictEqual(res.body.tier, null, 'the owner was told Roost is on for a purchase that was refused');
+    assert.strictEqual(res.body.refused, 'CLAIM_NOT_VERIFIED', 'the return cannot say why nothing was bought');
+    assert.deepStrictEqual(stripeCalls.filter(([n]) => n === 'subscriptions.cancel').map(([, id]) => id), ['sub_V1']);
+  } finally { restore(); }
+});
+
+test('a checkout completed on a claim still verified for its listing is fulfilled as before', async () => {
+  setEnv(ON);
+  stripeState.subById.sub_V1 = sub({ status: 'trialing', metadata: { kind: 'venue', flock_venue_user_id: String(ME.id), flock_venue_place_id: PLACE } });
+  const { calls, restore } = stubPool(claimNow({ verified: true }));
+  try {
+    const res = await stripeWebhook({ id: 'evt_ok', type: 'checkout.session.completed', data: { object: completedSession({ paid: false }) } });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    assert.ok(!stripeCalls.some(([n]) => n === 'subscriptions.cancel' || n === 'refunds.create'));
+    const write = calls.find((c) => c.text.startsWith('WITH old AS'));
+    assert.strictEqual(write.params[10], true);
   } finally { restore(); }
 });
 

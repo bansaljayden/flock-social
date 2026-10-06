@@ -18069,6 +18069,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       setVenueDashProfileLoaded(false);
       setVenueProfileAsk((n) => n + 1);
       if (outcome === 'roost') showToast('Roost is on.');
+      else if (outcome === 'refused') showToast('Your venue is not verified for that listing, so we cancelled this purchase and refunded anything it charged.', 'info');
       else if (outcome === 'pending') showToast('Your payment went through. Roost can take a minute to switch on.', 'info');
       else if (outcome === 'incomplete') showToast('That checkout has not finished. If you paid, Roost will switch on shortly.', 'info');
       else showToast('We could not confirm your purchase yet. If you paid, Roost will switch on shortly.', 'info');

@@ -952,15 +952,137 @@ async function revokeRefundedSubscription(obj) {
   return { revoked };
 }
 
+// ---------------------------------------------------------------------------
+// A claim that is no longer good
+// ---------------------------------------------------------------------------
+
+const idOf = (ref) => (typeof ref === 'string' && ref ? ref : ref && typeof ref.id === 'string' ? ref.id : null);
+
+// WHEN A CLAIM IS REVOKED, ITS BILLING STOPS. Un-verifying a claim (routes/admin.js,
+// PUT /api/admin/venues/:profileId/verify with verified: false) refuses Roost
+// on the dashboard from that moment, and nothing told Stripe: an open checkout
+// stayed payable, the subscription renewed, and the writer only logged the
+// unverified profile on each event while the card was charged. This expires
+// every open Roost checkout on every customer the account has on record and
+// cancels every Roost subscription of the account's.
+//
+// IMMEDIATELY, NOT AT THE PERIOD END. That is the fairer of the two for a
+// revoked claim: the venue is served nothing from the moment of revocation,
+// and a subscription left to its period end is still a standing authority to
+// charge it, by a renewal, by a trial converting, or by Stripe retrying a
+// failed invoice, which cancel_at_period_end does not stop and a cancellation
+// does (Stripe turns off collection on a cancelled subscription's open
+// invoices). No proration credit is made: a credit on a customer who can no
+// longer buy anything is not money back. What the venue already paid for the
+// current period is a refund for a person to decide, because a claim is
+// revoked when we could not confirm the account runs the venue, which can be
+// fraud, so the log names the subscription.
+//
+// Runs in the venue's checkout queue, so a checkout being built for the claim
+// finishes first and its session is expired here, and one asked for after
+// this finds the claim unverified and is refused. customerIds may be handed in
+// by a caller that has just read them in its own statement.
+async function stopRoostForRevokedClaim(userId, { customerIds = null } = {}) {
+  return billing.withCheckoutLock(venueCheckoutKey(userId), async () => {
+    const customers = Array.isArray(customerIds) ? [...new Set(customerIds.filter(Boolean))] : await venueCustomerIdsFor(userId);
+    const outcome = { checkoutsExpired: 0, subscriptionsCancelled: [] };
+    if (customers.length === 0) return outcome;
+    if (!billing.stripeConfigured()) {
+      throw refusal(503, `venue user ${userId} has Roost customers on record (${customers.join(', ')}) and Stripe is not configured, so nothing was cancelled`, 'STRIPE_NOT_CONFIGURED');
+    }
+    for (const customerId of customers) {
+      const open = await stripe().checkout.sessions.list({ customer: customerId, status: 'open', limit: 20 });
+      for (const s of (open && Array.isArray(open.data) ? open.data : [])) {
+        if (!isVenueObject(s)) continue;
+        try {
+          await stripe().checkout.sessions.expire(s.id);
+          outcome.checkoutsExpired += 1;
+        } catch (err) {
+          const again = await stripe().checkout.sessions.retrieve(s.id).catch(() => null);
+          if (!again || again.status === 'open') throw err;
+        }
+      }
+      const list = await stripe().subscriptions.list({ customer: customerId, status: 'all', limit: 20 });
+      for (const s of (list && Array.isArray(list.data) ? list.data : [])) {
+        if (!isVenueObject(s) || venueUserIdFrom(s.metadata) !== userId) continue;
+        if (await cancelNow(s, `flock-claim-revoked-cancel-${s.id}`)) outcome.subscriptionsCancelled.push(s.id);
+      }
+    }
+    // The grant is written from Stripe now, rather than when the deleted
+    // events arrive.
+    for (const subscriptionId of outcome.subscriptionsCancelled) await syncVenueSubscription(subscriptionId);
+    if (outcome.subscriptionsCancelled.length) {
+      console.error(`[venue-billing] venue user ${userId}'s claim was revoked, so Roost subscription(s) ${outcome.subscriptionsCancelled.join(', ')} were cancelled now. Whether to refund what was paid for the current period is a person's decision.`);
+    }
+    return outcome;
+  });
+}
+
+// Whether a claim is still good for a plan bought for `placeId`: the account's
+// venue is verified and still names that listing. A session from before
+// flock_venue_place_id existed names none, and then verified alone decides.
+async function claimStillGood(userId, placeId) {
+  const profile = await venueProfileFor(userId);
+  return !!(profile && profile.verified === true && (!placeId || profile.google_place_id === placeId));
+}
+
+// The money a refused purchase took, given back. A trial took none. The first
+// invoice of the session is paid by one PaymentIntent (InvoicePayments, the
+// same lookup proBilling.subscriptionsFundedBy documents), and the refund is
+// keyed on the invoice, so a retried event refunds once. A payment already
+// refunded is the outcome wanted.
+async function refundRefusedPurchase(session) {
+  if (!session || session.payment_status === 'no_payment_required') return null;
+  const invoiceId = idOf(session.invoice);
+  if (!invoiceId) return null;
+  const list = await stripe().invoicePayments.list({ invoice: invoiceId, status: 'paid', limit: 10 });
+  const paid = (list && Array.isArray(list.data) ? list.data : [])
+    .find((p) => p && p.status === 'paid' && p.payment && idOf(p.payment.payment_intent));
+  if (!paid) return null;
+  try {
+    return await stripe().refunds.create(
+      { payment_intent: idOf(paid.payment.payment_intent), metadata: { flock_reason: 'claim_not_verified' } },
+      { idempotencyKey: `flock-claim-revoked-refund-${invoiceId}` }
+    );
+  } catch (err) {
+    if (err && err.code === 'charge_already_refunded') return null;
+    throw err;
+  }
+}
+
+// FULFILLMENT CHECKS THE CLAIM AGAIN. Checkout refuses an unverified claim
+// when the session is made, and that was the last time the claim was asked
+// about: a session paid after the claim was revoked (or re-pointed at another
+// listing) became a plan the dashboard refused to serve, billed every period.
+// When a checkout completes (the webhook, or the owner's return from Stripe,
+// whichever is first) the claim is read again, and a purchase against a claim
+// that is no longer verified for the listing it was bought for is cancelled at
+// once and its payment refunded: a purchase we will not deliver is not one we
+// keep the money for. Then the grant is written from Stripe as for any event,
+// which records the cancellation.
+async function fulfillVenueCheckout(session) {
+  const subscriptionId = idOf(session && session.subscription);
+  if (!subscriptionId) return { ignored: 'no_subscription' };
+  const userId = venueUserIdFrom(session.metadata);
+  const placeId = venuePlaceIdFrom(session.metadata);
+  if (!userId || await claimStillGood(userId, placeId)) return syncVenueSubscription(subscriptionId);
+  const sub = await stripe().subscriptions.retrieve(subscriptionId);
+  if (isVenueObject(sub)) {
+    await cancelNow(sub, `flock-claim-revoked-cancel-${sub.id}`);
+    await refundRefusedPurchase(session);
+  }
+  console.error(`[venue-billing] checkout ${session.id} completed for venue user ${userId}, whose claim is not verified for listing ${placeId || 'none'} any more, so subscription ${subscriptionId} was cancelled and its payment refunded.`);
+  const result = await syncVenueSubscription(subscriptionId);
+  return { ...result, tier: 'free', refused: 'CLAIM_NOT_VERIFIED' };
+}
+
 // The Stripe webhook's venue branch. Only called for objects that carry
 // kind='venue', so nothing here can touch a Pro event.
 async function handleVenueEvent(event) {
   const obj = event.data && event.data.object ? event.data.object : {};
   if (event.type === 'checkout.session.completed') {
     if (obj.mode !== 'subscription') return { ignored: 'not_subscription' };
-    const subscriptionId = typeof obj.subscription === 'string' ? obj.subscription : obj.subscription && obj.subscription.id;
-    if (!subscriptionId) return { ignored: 'no_subscription' };
-    return syncVenueSubscription(subscriptionId);
+    return fulfillVenueCheckout(obj);
   }
   if (event.type.startsWith('customer.subscription.')) return syncVenueSubscription(obj.id);
   return { ignored: event.type };
@@ -968,18 +1090,17 @@ async function handleVenueEvent(event) {
 
 // After the redirect back: prove the session is this account's, then write
 // the subscription now rather than waiting for the webhook, so the owner lands
-// on a dashboard that already shows Roost.
+// on a dashboard that already shows Roost. A purchase refused at fulfillment
+// says so, so the return does not tell the owner it went through.
 async function confirmVenueCheckout(userId, sessionId) {
   const session = await stripe().checkout.sessions.retrieve(sessionId);
   if (!session || !isVenueObject(session) || venueUserIdFrom(session.metadata) !== userId) {
     throw refusal(404, 'That checkout does not belong to this account.');
   }
   if (session.status !== 'complete') return { complete: false, tier: null };
-  const subscriptionId = typeof session.subscription === 'string'
-    ? session.subscription
-    : session.subscription && session.subscription.id;
-  if (!subscriptionId) return { complete: true, tier: null };
-  const result = await syncVenueSubscription(subscriptionId);
+  if (!idOf(session.subscription)) return { complete: true, tier: null };
+  const result = await fulfillVenueCheckout(session);
+  if (result.refused) return { complete: true, tier: null, refused: result.refused };
   return { complete: true, tier: result.tier || null };
 }
 
@@ -993,6 +1114,7 @@ module.exports = {
   syncVenueSubscription,
   handleVenueEvent,
   revokeRefundedSubscription,
+  stopRoostForRevokedClaim,
   venueCustomerIdFor,
   venueCustomerIdsFor,
   latestVenueSubscription,
