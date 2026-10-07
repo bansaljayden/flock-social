@@ -78,7 +78,14 @@ function webhookSecret() {
   // a paste is the usual one.
   const compact = typeof raw === 'string' ? raw.replace(/\s+/g, '') : '';
   if (!compact) return { key: null, problem: SECRET_NOT_SET };
-  const value = compact.startsWith('whsec_') ? compact.slice('whsec_'.length) : compact;
+  // Quotes around the value and a full stop after it, the two marks a value
+  // pasted out of a message or a .env file most often carries. Neither is ever
+  // key material, the old reader decoded both to the right key (Node's decoder
+  // skips them), and production may hold either, so they are taken off rather
+  // than refused. The URL-safe alphabet is not: converting it would also turn
+  // a doubled or upper-case prefix into a wrong key that decodes.
+  const unwrapped = compact.replace(/^(['"])(.+)\1$/, '$2').replace(/\.+$/, '');
+  const value = unwrapped.startsWith('whsec_') ? unwrapped.slice('whsec_'.length) : unwrapped;
   // Padding only ever completes a group of four characters, and one character
   // left over after the last full group encodes nothing, so a value showing
   // either has been damaged on its way here.
@@ -86,8 +93,8 @@ function webhookSecret() {
   if (!STANDARD_BASE64.test(value) || !fitsGroups) {
     return {
       key: null,
-      problem: 'is set but is not whsec_ followed by standard base64 (quotes around it, an upper-case or '
-        + 'doubled prefix, or a pasted NAME=value line all look like this)',
+      problem: 'is set but is not whsec_ followed by standard base64 (an upper-case or doubled prefix, the '
+        + 'URL-safe alphabet, or a pasted NAME=value line all look like this)',
     };
   }
   const key = Buffer.from(value, 'base64');

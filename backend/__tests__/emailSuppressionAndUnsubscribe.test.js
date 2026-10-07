@@ -879,8 +879,6 @@ const W = 'whsec_';
 const URL_SAFE_KEY = Buffer.concat([Buffer.from([0xfb, 0xff, 0xbf]), crypto.randomBytes(21)]);
 const NOT_BASE64 = /is not whsec_ followed by standard base64/;
 const unusableSecrets = () => [
-  ['wrapped in double quotes', `"${W}${WEBHOOK_SECRET_RAW}"`, NOT_BASE64],
-  ['wrapped in single quotes', `'${W}${WEBHOOK_SECRET_RAW}'`, NOT_BASE64],
   ['an upper-case prefix', `WHSEC_${WEBHOOK_SECRET_RAW}`, NOT_BASE64],
   ['the prefix twice', `${W}${W}${WEBHOOK_SECRET_RAW}`, NOT_BASE64],
   ['a pasted NAME=value line', `RESEND_WEBHOOK_SECRET=${W}${WEBHOOK_SECRET_RAW}`, NOT_BASE64],
@@ -927,7 +925,7 @@ test('a secret that is set but malformed is refused with 503 and named as malfor
       cases.length, 'every refused event logs its own line');
     const named = text.match(/EMAIL: RESEND_WEBHOOK_SECRET is set but [^\n]*Copy the value out of the Resend dashboard/g) || [];
     assert.strictEqual(named.length, 1, 'what is wrong with the value is said once per process, not on every event');
-    assert.match(named[0], /quotes around it/, 'and it describes the first value it read');
+    assert.match(named[0], /an upper-case or doubled prefix/, 'and it describes the first value it read');
   } finally { cap.restore(); }
 });
 
@@ -939,6 +937,10 @@ test('the real secret still verifies with whitespace around or inside it, with n
     ['no whsec_ prefix', WEBHOOK_SECRET_RAW, WEBHOOK_SECRET_RAW],
     ['a 25-byte key, padded', `${W}${padded25}`, padded25],
     ['a 25-byte key, unpadded', `${W}${padded25.replace(/=+$/, '')}`, padded25],
+    // The two paste marks the old reader decoded to the right key.
+    ['wrapped in double quotes', `"${W}${WEBHOOK_SECRET_RAW}"`, WEBHOOK_SECRET_RAW],
+    ['wrapped in single quotes', `'${W}${WEBHOOK_SECRET_RAW}'`, WEBHOOK_SECRET_RAW],
+    ['a full stop after it', `${W}${WEBHOOK_SECRET_RAW}.`, WEBHOOK_SECRET_RAW],
   ];
   const cap = silence();
   try {
@@ -969,7 +971,7 @@ test('at boot in production a missing secret and a malformed one are each named 
   assert.match(missing, /RESEND_WEBHOOK_SECRET is not set, so POST \/api\/email-events refuses every delivery event/);
   assert.match(missing, /Create the webhook in the Resend dashboard/);
 
-  const quoted = `"${W}${WEBHOOK_SECRET_RAW}"`;
+  const quoted = `WHSEC_${WEBHOOK_SECRET_RAW}`;
   const malformed = bootLog({ RESEND_WEBHOOK_SECRET: quoted });
   assert.ok(!/is not set/.test(malformed.text), 'a value that is set must not be reported as missing');
   assert.match(malformed.text, /RESEND_WEBHOOK_SECRET is set but is not whsec_ followed by standard base64/);
