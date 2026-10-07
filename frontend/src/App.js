@@ -9252,6 +9252,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       }
       if (fresh('pinnedFlockIds') && Array.isArray(s.pinnedFlockIds)) setPinnedFlockIds(s.pinnedFlockIds);
       if (fresh('flockOrder') && Array.isArray(s.flockOrder)) setFlockOrder(s.flockOrder);
+      // The Birdie and SOS buttons' places. The pull writes them to storage and
+      // the screen read them only at mount, so after signing out and back in
+      // they sat at their defaults until the app restarted. Same rules as the
+      // mount read: SOS docks bottom-left or bottom-right only.
+      if (fresh('birdieCorner') && /^(top|bottom)-(left|right)$/.test(String(s.birdieCorner))) setBirdieCorner(String(s.birdieCorner));
+      if (fresh('sosCorner')) setSosCorner(String(s.sosCorner).includes('left') ? 'bottom-left' : 'bottom-right');
     };
     window.addEventListener('flock-settings-loaded', onSettings);
     // The pull goes out as the session starts, before this screen mounts, so

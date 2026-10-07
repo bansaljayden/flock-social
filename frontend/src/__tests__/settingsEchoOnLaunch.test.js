@@ -574,3 +574,8 @@ test('the profile photo upload keeps to its account across a renewal and on the 
   expect(fn).toContain('if (madeFor && accountOf(next || getToken()) !== madeFor) throw sessionEndedError();');
   expect(fn.indexOf('let { res, data } = await send(token);')).toBeLessThan(fn.indexOf('if (madeFor && accountOf(getToken()) !== madeFor) throw sessionEndedError();'));
 });
+
+test("the listener puts the Birdie and SOS buttons where the account has them", () => {
+  expect(app).toContain("if (fresh('birdieCorner') && /^(top|bottom)-(left|right)$/.test(String(s.birdieCorner))) setBirdieCorner(String(s.birdieCorner));");
+  expect(app).toContain("if (fresh('sosCorner')) setSosCorner(String(s.sosCorner).includes('left') ? 'bottom-left' : 'bottom-right');");
+});
