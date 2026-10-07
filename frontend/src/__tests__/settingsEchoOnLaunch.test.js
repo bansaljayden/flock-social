@@ -458,7 +458,9 @@ describe('what is still owed survives a reload', () => {
 
 test('a request made for an account that signed out while it waited is not sent on the next one', () => {
   const apiSource = fs.readFileSync(path.join(__dirname, '..', 'services', 'api.js'), 'utf8');
-  expect(apiSource).toContain('const madeFor = signingIn ? null : accountOf(getToken());');
+  // An account the caller captured before a wait of its own (currentAccount)
+  // stands in for the token's; otherwise it is the token's at the start.
+  expect(apiSource).toContain('const madeFor = signingIn ? null : (account !== undefined ? String(account) : accountOf(getToken()));');
   expect(apiSource).toContain('if (madeFor && accountOf(token) !== madeFor) throw sessionEndedError();');
   expect(apiSource).toContain('if (madeFor && accountOf(next || getToken()) !== madeFor) throw sessionEndedError();');
   // Checked after the renewal, before the token is used.

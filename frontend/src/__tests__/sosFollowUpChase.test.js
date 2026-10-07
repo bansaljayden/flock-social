@@ -253,7 +253,9 @@ describe('a deliberate press is marked fresh, and the chase never is', () => {
     const start = APP.indexOf('const handleEmergencyAlert = useCallback(');
     expect(start).toBeGreaterThan(-1);
     const press = APP.slice(start, APP.indexOf('const handleStandDown = useCallback(', start));
-    expect(press).toMatch(/await sendEmergencyAlert\(\{[^}]*includeLocation: !!loc,\s*fresh: true,\s*\}\)/);
+    // fresh, and the account taken before the wait for a fix (a sign-out and
+    // another sign-in in those seconds must not send it from the next account).
+    expect(press).toMatch(/await sendEmergencyAlert\(\{[^}]*includeLocation: !!loc,\s*fresh: true,\s*account,\s*\}\)/);
   });
 
   it('the request carries fresh: true only when the caller said exactly true', async () => {
