@@ -10,6 +10,7 @@ const settings = fs.readFileSync(path.join(__dirname, '..', 'screens', 'ProfileS
 const app = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8');
 const signup = fs.readFileSync(path.join(__dirname, '..', 'components', 'auth', 'SignupScreen.js'), 'utf8');
 const birdie = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'backend', 'routes', 'ai.js'), 'utf8');
+const usersRoute = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'backend', 'routes', 'users.js'), 'utf8');
 
 test('the handles row, its title and its heading say pay-back, not payment methods', () => {
   expect(settings).toContain("{ l: 'Pay-back handles', s: 'payment', icon: Icons.dollar,");
@@ -29,4 +30,9 @@ test('the words around it say the same thing: the save toast, the verify hint, s
   expect(birdie).toContain('"payment" (pay-back handles: Venmo, Cash App, Zelle)');
   expect(birdie).toContain('- **You** (tab: profile): profile, settings, pay-back handles (Venmo, Cash App, Zelle), appearance');
   expect(birdie).not.toMatch(/payment methods/i);
+  // The save route's errors reach the screen word for word (ProfileSettings
+  // toasts err.message).
+  expect(usersRoute).toContain("{ error: 'No pay-back handles provided' }");
+  expect(usersRoute).toContain("{ error: 'Failed to save pay-back handles' }");
+  expect(usersRoute).not.toMatch(/error: '[^']*payment methods/i);
 });
