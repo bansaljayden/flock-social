@@ -33,8 +33,9 @@
 //   6. the flag takes one value, and the frontend sends that value
 //
 // Allow also says which question it answered (migration 122), and /chat reads
-// the zone a turn carries only on a yes to one that names it. That is run on a
-// real database in birdieConsentCopyRealDb.test.js.
+// the zone a turn carries only on a yes to one that names it. The app's half
+// is pinned at the bottom; the route's, on a real database, is
+// birdieConsentCopyRealDb.test.js.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -327,4 +328,24 @@ test('the frontend sends exactly the flag this route holds to the answer', () =>
   assert.match(sendAiChat, /\n {2}body\.consentFlow = 'ask';/, 'sendAiChat must set the flag on every turn, unconditionally');
   const route = fs.readFileSync(path.join(__dirname, '..', 'routes', 'ai.js'), 'utf8');
   assert.match(route, /const BIRDIE_CONSENT_FLOW = 'ask';/);
+});
+
+test("the app's Allow names the question this route reads the zone on, and that question names the zone", () => {
+  // Migration 122. The number the app sends with Allow is what lets /chat
+  // read the zone the app sends on every turn, so it has to be the route's,
+  // and it has to be sent from a build whose question says the zone goes.
+  const frontend = path.join(__dirname, '..', '..', 'frontend', 'src');
+  const api = fs.readFileSync(path.join(frontend, 'services', 'api.js'), 'utf8');
+  const sent = api.match(/export const BIRDIE_CONSENT_COPY = (\d+);/);
+  assert.ok(sent, 'services/api.js no longer names the question its Allow answered');
+  const route = fs.readFileSync(path.join(__dirname, '..', 'routes', 'ai.js'), 'utf8');
+  const read = route.match(/const BIRDIE_CONSENT_COPY_ZONE = (\d+);/);
+  assert.ok(read, 'routes/ai.js no longer names the question that names the zone');
+  assert.strictEqual(sent[1], read[1]);
+  const grant = api.slice(api.indexOf('export async function grantBirdieConsent('));
+  assert.match(grant.slice(0, grant.indexOf('\n}')), /body: JSON\.stringify\(\{ copy: BIRDIE_CONSENT_COPY \}\)/);
+  for (const screen of [['components', 'birdie', 'BirdiePanel.js'], ['screens', 'ProfileSettings.js']]) {
+    const text = fs.readFileSync(path.join(frontend, ...screen), 'utf8');
+    assert.ok(text.includes('your time zone with the date and time it is there'), `${screen.join('/')} no longer names the zone`);
+  }
 });

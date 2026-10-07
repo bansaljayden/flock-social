@@ -3625,8 +3625,9 @@ export async function sendAiChat(messages, location, currentContext) {
   // WHOSE CLOCK BIRDIE PLANS ON). Left off when the runtime cannot answer, or
   // answers with something no zone name is; the server then tells Birdie the
   // zone is unknown. It never reads another zone in its place, so the zone
-  // goes only from a client whose consent copy names it. 64 is the server's
-  // bound, as for push.
+  // goes only from a client whose consent copy names it, and the server
+  // reads it only on a yes given to that copy (BIRDIE_CONSENT_COPY below).
+  // 64 is the server's bound, as for push.
   try {
     const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     if (typeof zone === 'string' && zone.length > 0 && zone.length <= 64) body.timeZone = zone;
@@ -3653,8 +3654,16 @@ export async function sendAiChat(messages, location, currentContext) {
 // routes/ai.js, migration 100). Both answer { consented, consentedAt }, and
 // /chat refuses this client (it sends consentFlow, see sendAiChat) with
 // BIRDIE_CONSENT_REQUIRED until the grant has landed.
+//
+// The grant says which question this build showed: the panel's and the
+// Settings screen's, which name the time zone with the date and time there.
+// The server records it (migration 122) and reads the zone sendAiChat sends
+// only on a yes to a question that names it, so an account that said yes to
+// the earlier question, which this build never asks again, is not read in its
+// zone. 2 is the first question that names the zone.
+export const BIRDIE_CONSENT_COPY = 2;
 export async function grantBirdieConsent() {
-  return request('/api/ai/consent', { method: 'POST' });
+  return request('/api/ai/consent', { method: 'POST', body: JSON.stringify({ copy: BIRDIE_CONSENT_COPY }) });
 }
 
 export async function withdrawBirdieConsent() {
