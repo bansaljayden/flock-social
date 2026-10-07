@@ -19,8 +19,9 @@
  *      which is what makes the server hold it to the recorded answer.
  *   4. Settings: the switch that takes the answer back exists, under Safety
  *      and privacy, and flips through the same function the panel uses. Its
- *      paragraph says a yes to the question before the time zone was named
- *      leaves the zone out until the switch goes off and on again.
+ *      paragraph says a yes to an earlier version of the question, which did
+ *      not name the time zone, leaves the zone out until the switch goes off
+ *      and on again.
  *
  * The server half (the route refuses a client that asks and has no yes on
  * record, and serves a build installed before the question exactly as
@@ -366,7 +367,7 @@ describe('Settings: the answer can be taken back', () => {
     // Every account with a yes reads this, a yes given to the question before
     // it named the time zone included, and the server leaves the zone out for
     // that one (backend routes/ai.js, WHICH QUESTION A YES ANSWERED).
-    expect(settings).toContain("it sends Google your messages to Birdie, your first name, your age range, and what you have open in Flock. It also sends your time zone with the date and time it is there, unless you said yes before Birdie's question named them. That earlier yes keeps them out until you turn this off and on again.");
+    expect(settings).toContain("it sends Google your messages to Birdie, your first name, your age range, and what you have open in Flock. It also sends your time zone with the date and time it is there, unless you said yes to an earlier version of Birdie's question, which did not name them. That earlier yes keeps them out until you turn this off and on again.");
   });
 
   test('off and on again is a yes to the question that names the zone', () => {
