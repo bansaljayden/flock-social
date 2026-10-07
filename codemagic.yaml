@@ -103,7 +103,11 @@ workflows:
         PUBLIC_URL: "/"
         CI: "false"        # don't treat CRA build warnings as errors
       node: 22             # Capacitor 8.4 CLI requires Node >= 22
-      xcode: latest
+      # 26.6, not latest (which this was until 2026-10-07). The shell has not
+      # adopted the UIScene lifecycle, and an app built with Xcode 27 does not
+      # launch on iOS 27 without it. Move up after that migration (Capacitor
+      # 8.5's npx cap migrate adds the scene delegate).
+      xcode: 26.6
     scripts:
       - name: Install web dependencies
         script: npm install --no-audit --no-fund
@@ -640,7 +644,7 @@ workflows:
         # not "Sam Review". C's is whatever the throwaway signs up as.
         REVIEW_NAME_C: "Casey Review"
       node: 22
-      xcode: latest
+      xcode: 26.6   # pinned, not latest: the reason is on ios-capacitor above
     scripts:
       - name: Check the review account variables
         script: |
