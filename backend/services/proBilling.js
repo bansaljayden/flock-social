@@ -366,6 +366,21 @@ function constructWebhookEvent(rawBody, signature) {
   return stripe().webhooks.constructEvent(rawBody, signature, secret);
 }
 
+// What is wrong with the shape of STRIPE_WEBHOOK_SECRET, in words, or null. An
+// endpoint's signing secret starts with whsec_ and has no space in it. A value
+// of another shape is still tried, because "configured" stays the one length
+// rule every readiness check shares; this only lets the webhook's log say why
+// every delivery fails. Never returns any part of the value.
+function stripeWebhookSecretProblem() {
+  const secret = stripeWebhookSecret();
+  if (!secret) return null;
+  if (!secret.startsWith('whsec_')) {
+    return 'does not start with whsec_, so it is not an endpoint signing secret (quotes around the value, or an API key pasted into the wrong variable, look like this)';
+  }
+  if (/\s/.test(secret)) return 'has a space or a line break inside it, which no signing secret has';
+  return null;
+}
+
 // ONE CHECKOUT BEING BUILT PER ACCOUNT AT A TIME. Expiring the open sessions,
 // checking for a live subscription and creating the new session are three
 // Stripe calls, and two requests that interleave them (a double click, two
@@ -840,6 +855,7 @@ module.exports = {
   sandboxAllowed,
   constructWebhookEvent,
   stripeWebhookConfigured: () => !!stripeWebhookSecret(),
+  stripeWebhookSecretProblem,
   stripeConfigured,
   // The one Stripe client, shared with services/venueBilling.js (Roost), so
   // both products use the same key and the same retry and timeout settings.
