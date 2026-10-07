@@ -69,6 +69,23 @@ describe('localIsNewer', () => {
     await new Promise((r) => setTimeout(r, 700));
   });
 
+  test('the pull does not write its older value over one this device changed while it was on the wire', async () => {
+    localStorage.setItem('flock_order', JSON.stringify([5]));
+    let answer;
+    api.getUserSettings.mockImplementation(() => new Promise((resolve) => { answer = resolve; }));
+    const pulling = pullSettings();
+    localStorage.setItem('flock_interests', JSON.stringify(['Food']));
+    queueSync({ userInterests: ['Food'] });
+    answer({ settings: { userInterests: [], flockOrder: [9] } });
+    await pulling;
+    expect(localStorage.getItem('flock_interests')).toBe(JSON.stringify(['Food']));
+    // A key this device did not touch still takes the account's value.
+    expect(localStorage.getItem('flock_order')).toBe(JSON.stringify([9]));
+    await new Promise((r) => setTimeout(r, 700));
+    localStorage.removeItem('flock_interests');
+    localStorage.removeItem('flock_order');
+  });
+
   // A brand-new account: the pull finds nothing and pushes this device's
   // values itself. When that push fails, the values must stay owed.
   test('a failed initial push leaves the values queued, so they are retried and not taken as held', async () => {
