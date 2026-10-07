@@ -1203,10 +1203,22 @@ async function syncVenueSubscription(subscriptionId, { refuse = null } = {}) {
     if (owner !== userId) {
       throw new Error(`Roost subscription ${subscriptionId} named venue user ${userId} and then ${owner ? `venue user ${owner}` : 'no venue account'} on the read under the lock. Nothing was written; Stripe's retry reads it again.`);
     }
+    // THE CLAIM'S ROW FIRST. The other writers of an account's Roost rows (a
+    // profile save, the admin's verify, a comp) each start by writing the
+    // claim's row, and this sync reached that row last, after the
+    // subscription's record, when an event changed the tier cache: a save
+    // giving the claim its first listing, or a verify, could hold the claim's
+    // row while waiting on the record the sync held, with the sync waiting on
+    // the claim's row, and Postgres failed one of them. The row is taken here,
+    // before anything is written, so they queue on it instead. It is also the
+    // claim a refusal is decided on (decideRefusal). None for an account that
+    // is gone.
+    const claimed = await client.query(PROFILE_FOR_UPDATE_SQL, [userId]);
+    const profile = claimed && Array.isArray(claimed.rows) ? claimed.rows[0] || null : null;
     const customerId = typeof sub.customer === 'string' ? sub.customer : sub.customer && sub.customer.id;
     // The listing this subscription pays for (ONE VENUE PER PLAN).
     const metaPlace = venuePlaceIdFrom(sub.metadata);
-    const decided = refuse ? await decideRefusal(client, refuse, sub, userId, customerId, metaPlace) : null;
+    const decided = refuse ? await decideRefusal(client, refuse, sub, userId, customerId, metaPlace, profile) : null;
     const ended = await client.query(ENDED_SQL, [sub.id]);
     const endingRow = ended && Array.isArray(ended.rows) && ended.rows[0] ? ended.rows[0] : null;
     const recorded = await client.query(RECORD_SUBSCRIPTION_SQL, [sub.id, userId, customerId || null, metaPlace]);
@@ -1271,17 +1283,16 @@ async function syncVenueSubscription(subscriptionId, { refuse = null } = {}) {
 // own, and cancel and refund on what it read: a verification that landed in
 // between made the plan served (the resolver serves a Stripe grant the moment
 // its claim is verified) while fulfillment went on to refund it. Here, inside
-// the sync's transaction and under the venue's lock, the claim is read with its
-// row locked and the refusal is marked on the subscription's record only while
-// it has never been served (REFUSE_SQL), and the grant written in this same
-// transaction is ended by it. Answers 'good' (the claim is good now; nothing
-// is refused), 'gone' (the account's venue is gone), 'moved' (an operator has
-// since moved the plan to another account, whose it is), 'delivered' (it was
-// served, so it is never refused), or 'refused', with what the refusal owes.
-async function decideRefusal(client, { session, userId: buyer, placeId, why }, sub, userId, customerId, metaPlace) {
+// the sync's transaction and under the venue's lock, the claim is the one the
+// sync read with its row locked (`profile`), the refusal is marked on the
+// subscription's record only while it has never been served (REFUSE_SQL), and
+// the grant written in this same transaction is ended by it. Answers 'good'
+// (the claim is good now; nothing is refused), 'gone' (the account's venue is
+// gone), 'moved' (an operator has since moved the plan to another account,
+// whose it is), 'delivered' (it was served, so it is never refused), or
+// 'refused', with what the refusal owes.
+async function decideRefusal(client, { session, userId: buyer, placeId, why }, sub, userId, customerId, metaPlace, profile) {
   if (buyer !== userId) return { decision: 'moved' };
-  const claim = await client.query(PROFILE_FOR_UPDATE_SQL, [userId]);
-  const profile = claim && Array.isArray(claim.rows) ? claim.rows[0] : null;
   if (!profile) return { decision: 'gone' };
   if (claimIsGood(profile, placeId)) return { decision: 'good' };
   const marked = await client.query(REFUSE_SQL, [sub.id, userId, customerId || null, metaPlace]);

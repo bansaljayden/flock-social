@@ -1286,6 +1286,44 @@ test('a comp given to a claim with no listing is left as it was by the claim\'s 
   assert.strictEqual((await state(id)).served, 'pro');
 });
 
+// ONE ORDER FOR THE ACCOUNT'S ROOST ROWS. The profile save and the admin's
+// verify write the claim's row first and then the plan's rows; the sync wrote
+// the subscription's record first and came back to the claim's row last, when
+// an event changed the tier cache. A cancellation synced while the owner saved
+// the claim's first listing: the save held the claim's row and waited on the
+// record the sync held, the sync waited on the claim's row, and Postgres broke
+// that by failing one of them. The sync takes the claim's row before it
+// writes anything, so the save waits for it instead.
+test('a first-listing save that lands mid-sync waits for the sync instead of deadlocking with it', async () => {
+  const [PLACE_A] = placePair();
+  const id = await venue({ verified: true });
+  // A plan bound to no listing, recorded and served by an earlier event.
+  await venueBilling.syncVenueSubscription(sub('sub_lock_order', id, 'active'));
+  assert.strictEqual((await state(id)).cached, 'pro');
+  // It is cancelled, and that event's sync reaches its grant write and is
+  // held there, holding the subscription's record.
+  subs.sub_lock_order.status = 'canceled';
+  const hold = armWriteHold();
+  const syncing = venueBilling.syncVenueSubscription('sub_lock_order');
+  await hold.writeReached;
+  // The owner saves the claim's first listing in that moment.
+  let saveAnswered = false;
+  const saving = profileCall('PUT', '/api/venue-profile', { as: id, body: { googlePlaceId: PLACE_A } })
+    .then((r) => { saveAnswered = true; return r; });
+  await sleep(300);
+  assert.strictEqual(saveAnswered, false, 'the save did not wait for the sync');
+  hold.release();
+  const [synced, saved] = await Promise.all([syncing, saving]);
+  assert.strictEqual(saved.status, 200, saved.text);
+  assert.strictEqual(synced.status, 'canceled');
+  const s = await state(id);
+  assert.strictEqual(s.cached, 'free');
+  assert.strictEqual(s.served, 'free');
+  // The save still bound the plan to the listing it named.
+  const rec = await testPool.query('SELECT google_place_id FROM venue_stripe_subscriptions WHERE stripe_subscription_id = $1', ['sub_lock_order']);
+  assert.strictEqual(rec.rows[0].google_place_id, PLACE_A);
+});
+
 test('after the documented move, the listing the claim names now can buy its own plan', async () => {
   // End the plan, move the claim, get the new listing verified: the steps
   // ROOST_LISTING_MSG gives. The old plan is active at Stripe until its year
