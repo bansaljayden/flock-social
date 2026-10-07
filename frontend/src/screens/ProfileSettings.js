@@ -1312,10 +1312,14 @@ export default function ProfileSettings({
             </button>
           )}
 
-          {/* Legal Links */}
+          {/* Legal Links. The four buttons wrap: in one centered row they are
+              wider than a 375 px screen (the iPhone-compatibility size an iPad
+              gives the app), and a centered row's left overflow cannot be
+              scrolled to, so Terms of Service and Community Guidelines were
+              cut off at both edges. */}
           <div style={{ marginTop: '24px', paddingTop: '16px', borderTop: `1px solid ${colors.creamDark}` }}>
             <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', marginBottom: '12px', textAlign: 'center', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Legal</p>
-            <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', justifyContent: 'center' }}>
               <button
                 className="hit44 glass-btn glass-secondary" onClick={() => openExternal('https://www.flockcorp.com/terms')}
                 style={{
