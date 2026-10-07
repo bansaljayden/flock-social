@@ -56,6 +56,20 @@ const path = require('node:path');
 const express = require('express');
 
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'money-hub-test-secret';
+
+// The clock is pinned (helpers/pinnedClock.js) to noon UTC on 2026-10-07, a
+// day the dated bills below were written around, before anything below loads.
+// Two things read it. utils/placesBudget.js keys its count on the UTC date and
+// GET /costs prices the day from it, so from the real clock a test that
+// charged before 00:00 UTC and priced after it read the new day's zero. And
+// MONTH is today in the hub's zone: the upcoming-bill tests count a monthly
+// bill's charges inside 90 days, which is three from October but four when
+// the window holds a short February, so from the real clock they failed every
+// day from November 30 to February 28.
+const { pinClock } = require('./helpers/pinnedClock');
+const pinnedClock = pinClock(Date.UTC(2026, 9, 7, 12, 0, 0));
+test.after(() => pinnedClock.restore());
+
 // Fake, and assembled at runtime so nothing here looks like a real key.
 const STRIPE_KEY = ['sk', 'test', `moneyhub${'0'.repeat(20)}`].join('_');
 const RC_KEY = 'rc_secret_moneyhub_fake_key_000';
