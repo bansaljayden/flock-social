@@ -196,6 +196,11 @@ export default function DeleteAccount() {
             listing does not get a second free trial.
           </li>
           <li>
+            If we turned down a Roost purchase for your venue, Stripe's identifiers for it,
+            the reason and the dates. It has no link to your account, and it is kept so its
+            refund is finished, and finished only once.
+          </li>
+          <li>
             <strong>Your email address, if it is on our do-not-mail list.</strong> An address
             goes on that list when mail to it hard-bounces, when someone reports us as spam,
             or when someone uses an unsubscribe link. The list is keyed on the address itself
