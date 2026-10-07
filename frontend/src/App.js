@@ -4901,7 +4901,7 @@ const PROFILE_SUBSCREEN_TITLES = {
   interests: 'Interests',
   safety: 'Safety',
   blocked: 'Blocked accounts',
-  payment: 'Payment',
+  payment: 'Pay-back handles',
   // Short, because this is a header row beside a back button. The pane's own
   // heading carries the privacy policy's exact wording; see the pane.
   phonediscovery: 'Find me by phone',

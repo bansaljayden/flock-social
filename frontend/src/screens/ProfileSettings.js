@@ -316,7 +316,7 @@ export default function ProfileSettings({
         <div key={`profile-${profileScreen}-container`} ref={edgeBack} className="screen-enter" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
           <div style={{ padding: '12px', display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid var(--divider)', backgroundColor: 'var(--bg-card-solid)', flexShrink: 0 }}>
             <button aria-label="Back" className="hit44" onClick={backToYou} style={{ background: 'none', border: 'none', color: colors.navy, fontSize: 'var(--t-title)', cursor: 'pointer' }}>←</button>
-            <h1 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0 }}>{PROFILE_SUBSCREEN_TITLES[profileScreen] || 'Payment'}</h1>
+            <h1 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0 }}>{PROFILE_SUBSCREEN_TITLES[profileScreen] || ''}</h1>
           </div>
           <div style={{ flex: 1, padding: '16px', overflowY: 'auto' }}>
             {profileScreen === 'edit' && (() => {
@@ -720,7 +720,7 @@ export default function ProfileSettings({
             {profileScreen === 'payment' && (
               <div>
                 <div style={styles.card}>
-                  <h2 style={{ fontWeight: '700', fontSize: 'var(--t-title)', color: colors.navy, margin: '0 0 4px' }}>Payment methods</h2>
+                  <h2 style={{ fontWeight: '700', fontSize: 'var(--t-title)', color: colors.navy, margin: '0 0 4px' }}>How friends pay you back</h2>
                   <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 16px' }}>Add your handles so friends can pay you after a night out</p>
 
                   {/* Venmo */}
@@ -847,7 +847,7 @@ export default function ProfileSettings({
                 // And the admin console, for the one account that has it.
                 ...(authUser?.role === 'admin' ? [{ l: 'Admin dashboard', s: 'admin', icon: Icons.barChart }] : []),
                 { l: 'Interests', s: 'interests', icon: Icons.target, v: userInterests.length > 0 ? `${userInterests.length} interests` : 'None yet' },
-                { l: 'Payment', s: 'payment', icon: Icons.creditCard, v: [authUser?.venmo_username && 'Venmo', authUser?.cashapp_cashtag && 'Cash App', authUser?.zelle_identifier && 'Zelle'].filter(Boolean).join(', ') || 'Not set' },
+                { l: 'Pay-back handles', s: 'payment', icon: Icons.dollar, v: [authUser?.venmo_username && 'Venmo', authUser?.cashapp_cashtag && 'Cash App', authUser?.zelle_identifier && 'Zelle'].filter(Boolean).join(', ') || 'Not set' },
               ],
             },
             {
