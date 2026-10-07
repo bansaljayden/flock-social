@@ -338,7 +338,7 @@ router.get('/venues/tag-url', async (req, res) => {
     if (!validPlaceId(placeId)) return res.status(400).json({ error: 'Invalid venue id' });
     if (!(await isKnownVenue(placeId))) return res.status(404).json({ error: 'Unknown venue' });
     const sig = nfcTagSig(placeId);
-    if (!sig) return res.status(503).json({ error: 'NFC_TAG_SECRET is not set on this server, so no tag can be minted.' });
+    if (!sig) return res.status(503).json({ error: 'NFC_TAG_SECRET is not set on this server, or is shorter than 32 characters, so no tag can be minted.' });
     const base = process.env.PUBLIC_WEB_URL || 'https://www.flockcorp.com';
     res.json({ url: `${base.replace(/\/$/, '')}/checkin/${encodeURIComponent(placeId)}?sig=${sig}` });
   } catch (err) {
