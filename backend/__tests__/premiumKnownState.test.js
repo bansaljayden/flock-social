@@ -88,6 +88,7 @@ placesBudget.allowGlobalPlacesCall = () => true;
 // spends none of either.
 const { FREE_MONTHLY_FORECASTS, getUsedThisMonth, recordView } = require('../services/forecastUsage');
 const { FREE_DAILY_LIMIT, PREMIUM_DAILY_LIMIT, checkUserRateLimit, getUsedToday } = require('../services/birdieUsage');
+const { withSteppingClock } = require('./helpers/steppingClock');
 
 // --- Gemini, faked ----------------------------------------------------------
 const genaiMod = require('@google/genai');
@@ -345,6 +346,61 @@ test('the reply that spends the free day\'s last chirp says when they come back'
   const refused = await call('POST', '/api/ai/chat', chatBody);
   assert.strictEqual(refused.status, 429, refused.text);
   assert.strictEqual(last.body.resetsAt, refused.body.resetsAt);
+});
+
+// THE REFUSAL NAMES THE END OF THE DAY IT FOUND SPENT. The 429 checked the
+// meter and then read the clock again for resetsAt, so a refusal that
+// straddled UTC midnight found the day that had just ended spent and named the
+// midnight after the day that had just begun, and the app keeps the box shut
+// until the time it is given. The clock moves a millisecond on every read and
+// is set two milliseconds before midnight as the tier read answers, the last
+// wait before the meter is checked, so the check falls on October 6 and any
+// read after it on October 7.
+test('a refusal read across UTC midnight names the end of the day it found spent', async () => {
+  process.env.PAYWALL_ENABLED = 'true';
+  const uid = CURRENT_USER.id;
+  const OCT_7 = Date.UTC(2026, 9, 7);
+  await withSteppingClock(OCT_7 - 60000, async (clock) => {
+    for (let i = 0; i < FREE_DAILY_LIMIT; i++) {
+      assert.strictEqual(checkUserRateLimit(uid, FREE_DAILY_LIMIT).allowed, true);
+    }
+    handlers.push([/SELECT is_premium\b[\s\S]*?\bFROM users\b/, () => {
+      clock.set(OCT_7 - 2);
+      return { rows: [{ is_premium: false }] };
+    }]);
+    const refused = await call('POST', '/api/ai/chat', chatBody);
+    assert.strictEqual(refused.status, 429, refused.text);
+    assert.strictEqual(refused.body.code, 'UPGRADE_REQUIRED');
+    assert.strictEqual(refused.body.resetsAt, new Date(OCT_7).toISOString(),
+      'the refusal named a reset after a day other than the one it found spent');
+  });
+});
+
+// The same for the daily cap everyone has, the 150 that holds with the
+// paywall off. Its refusal says when Birdie is back in words and in
+// Retry-After, and across midnight it said a day. With the paywall off the
+// last wait before the meter is the consent read, so the clock is set there.
+test('the everyday cap refused across UTC midnight says it is back in moments, not a day', async () => {
+  const uid = CURRENT_USER.id;
+  const OCT_7 = Date.UTC(2026, 9, 7);
+  await withSteppingClock(OCT_7 - 11 * 60000, async (clock) => {
+    // Fifteen a minute is its own limit, so the day is spent a minute at a time.
+    for (let i = 0; i < PREMIUM_DAILY_LIMIT; i++) {
+      if (i % 15 === 0) clock.set(OCT_7 - 11 * 60000 + (i / 15) * 61000);
+      assert.strictEqual(checkUserRateLimit(uid).allowed, true, `turn ${i + 1} of the day was refused`);
+    }
+    handlers.push([/^SELECT birdie_ai_consent_at, birdie_ai_consent_copy FROM users WHERE id = \$1$/, () => {
+      clock.set(OCT_7 - 2);
+      return { rows: [{ birdie_ai_consent_at: new Date('2026-10-01T00:00:00Z'), birdie_ai_consent_copy: 2 }] };
+    }]);
+    const refused = await call('POST', '/api/ai/chat', { ...chatBody, consentFlow: 'ask' });
+    assert.strictEqual(refused.status, 429, refused.text);
+    assert.strictEqual(refused.body.code, undefined, 'the everyday cap is not the free tier and pitches nothing');
+    assert.doesNotMatch(refused.body.error, /hours|a day/, `the refusal sends them away for a day: ${refused.body.error}`);
+    assert.ok(Date.parse(refused.body.resetsAt) <= OCT_7 + 1000,
+      `the refusal names ${refused.body.resetsAt}, after the end of the day it found spent`);
+    assert.ok(refused.body.retryAfterSeconds <= 1);
+  });
 });
 
 test('a reply with chirps left names no reset', async () => {
