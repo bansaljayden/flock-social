@@ -1487,12 +1487,12 @@ async function refundRefusedPurchase(session, why = CLAIM_NOT_VERIFIED_REFUND) {
 }
 
 // A PURCHASE FOR AN ACCOUNT THAT IS GONE. The deletion ended every Roost plan
-// of the account's that Stripe held, or was refused (closeVenueCustomer), so
-// a plan of its still billing now was not there when the deletion looked: a
-// checkout paid in the moment after, on a customer the deletion kept because
-// another venue shares it. Fulfillment used to write it from Stripe and stop,
-// which records nothing for an account that does not exist, so it renewed
-// every period with nothing in Flock pointing at it. An account that is gone
+// of the account's that Stripe listed, or was refused (closeVenueCustomer), so
+// a plan of its still billing now is one the deletion never saw: a checkout
+// that slipped past it on a customer it kept because another venue shares
+// it. Fulfillment used to write it from Stripe and stop, which records
+// nothing for an account that does not exist, so it renewed every period
+// with nothing in Flock pointing at it. An account that is gone
 // can never be served, so that plan is cancelled now and what it took is
 // refunded. A plan the deletion already ended is left as it is: whether it
 // was ever served went with the account's records, and a replay must not
