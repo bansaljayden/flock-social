@@ -502,8 +502,13 @@ const VenueDetailSheet = ({
               {footerHasDirections ? (
                 <button type="button" onClick={() => {
                   // Place Details sends location {latitude, longitude}; an
-                  // older payload carried geometry.location, and a map pin's
-                  // seed object carries lat and lng.
+                  // older payload carried geometry.location. Until the details
+                  // answer, or when they fail, the card holds the seed its
+                  // caller passed, and only some seeds carry lat and lng: a
+                  // plan's Details, the two MapLibreMapView builds, and a
+                  // quieter place nearby that has a pin on the map. Without
+                  // them Apple Maps searches for the name at its address
+                  // (lib/mapsLinks.js).
                   const at = venueDetailModal.location || (venueDetailModal.geometry && venueDetailModal.geometry.location) || {};
                   openMapsChooser({
                     place: {

@@ -18,7 +18,7 @@ const {
 const MapsChooserModule = require('../components/ui/MapsChooser');
 
 const MapsChooserHost = MapsChooserModule.default;
-const { openMapsChooser } = MapsChooserModule;
+const { openMapsChooser, closeMapsChooser } = MapsChooserModule;
 
 const SRC = path.resolve(__dirname, '..');
 const readSrc = (...p) => fs.readFileSync(path.join(SRC, ...p), 'utf8');
@@ -36,9 +36,20 @@ describe('the Apple Maps link', () => {
     expect(appleMapsUrl(VENUE)).toBe("https://maps.apple.com/?ll=40.6112,-75.3746&q=Lucky's%20Last%20Chance");
   });
 
-  test('with no coordinates the address locates it and the name labels it', () => {
+  test("with no coordinates the name is searched for at its address, which lands on the place's own card", () => {
+    // `address` with `q` showed the bare address card, titled with the street
+    // address and not the name.
     expect(appleMapsUrl({ name: 'Lucky', address: '125 E 3rd St, Bethlehem' }))
-      .toBe('https://maps.apple.com/?address=125%20E%203rd%20St%2C%20Bethlehem&q=Lucky');
+      .toBe('https://maps.apple.com/?q=Lucky%2C%20125%20E%203rd%20St%2C%20Bethlehem');
+  });
+
+  test('an address alone is shown without a search', () => {
+    expect(appleMapsUrl({ address: '125 E 3rd St, Bethlehem' }))
+      .toBe('https://maps.apple.com/?address=125%20E%203rd%20St%2C%20Bethlehem');
+  });
+
+  test('a pin with no name is labelled with a plain word, never left to search', () => {
+    expect(appleMapsUrl({ lat: 40.6112, lng: -75.3746 })).toBe('https://maps.apple.com/?ll=40.6112,-75.3746&q=Location');
   });
 
   test('a name alone is a search, and nothing at all is no link', () => {
@@ -61,10 +72,36 @@ describe('the Apple Maps link', () => {
     const url = appleMapsUrl({ name: 'A&B=1#x', lat: 1, lng: 2 });
     expect(url).toBe('https://maps.apple.com/?ll=1,2&q=A%26B%3D1%23x');
   });
+
+  test('a name cut through an emoji still makes a link', () => {
+    // 119 letters, then an emoji: the cut at 120 fell inside the emoji, and
+    // encodeURIComponent throws on the half it left. The cut is by code
+    // point now, so the emoji stays whole.
+    const long = `${'A'.repeat(119)}\u{1F37A} Bar`;
+    expect(appleMapsUrl({ name: long, lat: 40.1, lng: -75.2 }))
+      .toBe(`https://maps.apple.com/?ll=40.1,-75.2&q=${'A'.repeat(119)}%F0%9F%8D%BA`);
+    // A name that arrives already cut by UTF-16 unit, as the server and
+    // App.js cut a name at 80, ends in half an emoji. The half is dropped.
+    const halfEmoji = `${'A'.repeat(79)}\u{1F98B}xyz`.slice(0, 80);
+    expect(halfEmoji.charCodeAt(79)).toBe(0xd83e);
+    expect(() => encodeURIComponent(halfEmoji)).toThrow(URIError);
+    expect(appleMapsUrl({ name: halfEmoji, lat: 40.1, lng: -75.2 })).toBe(`https://maps.apple.com/?ll=40.1,-75.2&q=${'A'.repeat(79)}`);
+    // So is a stray low half; whole emoji and curly quotes stay.
+    expect(appleMapsUrl({ name: 'Joe’s \u{1F37A} Bar\uDC00' })).toBe('https://maps.apple.com/?q=Joe%E2%80%99s%20%F0%9F%8D%BA%20Bar');
+    // An address is cut the same way, at 240.
+    const longAddress = `${'B'.repeat(239)}\u{1F37A} St`;
+    expect(appleMapsUrl({ address: longAddress })).toBe(`https://maps.apple.com/?address=${'B'.repeat(239)}%F0%9F%8D%BA`);
+  });
+
+  test('the link code parses on iOS 15: no regex lookbehind, no toWellFormed', () => {
+    const code = readSrc('lib', 'mapsLinks.js');
+    expect(code).not.toMatch(/\(\?<[=!]/);
+    expect(code).not.toMatch(/\.(toWellFormed|isWellFormed)\(/);
+  });
 });
 
 describe('which apps are offered, and in what order', () => {
-  test('an iPhone, an iPad (which reports a Mac) and the iOS app list Apple Maps first', () => {
+  test('an iPhone, Safari on an iPad (which reports a Mac) and the iOS app list Apple Maps first', () => {
     expect(onAppleDevice(IPHONE, 'https:')).toBe(true);
     expect(onAppleDevice(IPAD_AS_MAC, 'https:')).toBe(true);
     expect(onAppleDevice('', 'capacitor:')).toBe(true);
@@ -85,9 +122,19 @@ describe('which apps are offered, and in what order', () => {
     expect(choices.map((c) => c.label)).toEqual(['Google Maps']);
   });
 
-  test('a Google link that is not https is left out', () => {
+  test('a Google link that is not a web link is left out', () => {
     const choices = mapsChoices({ place: VENUE, googleUrl: 'javascript:alert(1)' }, { apple: true, android: false });
     expect(choices.map((c) => c.label)).toEqual(['Apple Maps']);
+  });
+
+  test('an http Google link is upgraded to https, not dropped', () => {
+    // The venue card shows Get Directions for an http google_maps_url, so
+    // dropping it would leave the Google choice off a button still on screen.
+    const choices = mapsChoices({ place: VENUE, googleUrl: ' http://maps.google.com/?cid=4242 ' }, { apple: true, android: false });
+    expect(choices.map((c) => c.label)).toEqual(['Apple Maps', 'Google Maps']);
+    expect(choices[1].url).toBe('https://maps.google.com/?cid=4242');
+    expect(mapsChoices({ googleUrl: 'HTTP://maps.google.com/?cid=1' }, { apple: false, android: true })[0].url)
+      .toBe('https://maps.google.com/?cid=1');
   });
 });
 
@@ -130,6 +177,62 @@ describe('the Open in sheet', () => {
     expect(opened.length).toBe(1);
     expect(openMapsChooser({ place: {}, googleUrl: null })).toBe(false);
   });
+
+  test('one app to offer opens straight away, with no sheet to choose from', () => {
+    render(React.createElement(MapsChooserHost, {}));
+    // A place with no Google link: Apple Maps is the only choice.
+    let result;
+    act(() => { result = openMapsChooser({ place: VENUE, googleUrl: null }); });
+    expect(result).toBe(true);
+    expect(screen.queryByText('Open in')).toBeNull();
+    expect(opened).toEqual([["https://maps.apple.com/?ll=40.6112,-75.3746&q=Lucky's%20Last%20Chance", '_blank', 'noopener,noreferrer']]);
+  });
+
+  test('an Android phone goes straight to Google Maps', () => {
+    const ua = jest.spyOn(window.navigator, 'userAgent', 'get').mockReturnValue(ANDROID);
+    try {
+      render(React.createElement(MapsChooserHost, {}));
+      act(() => { openMapsChooser({ place: VENUE, googleUrl: GOOGLE }); });
+      expect(screen.queryByText('Open in')).toBeNull();
+      expect(opened).toEqual([[GOOGLE, '_blank', 'noopener,noreferrer']]);
+    } finally {
+      ua.mockRestore();
+    }
+  });
+
+  test('if the Apple link cannot be built, the tap still opens Google Maps', () => {
+    // What a label cut through an emoji did before: encodeURIComponent threw
+    // inside the tap, and nothing opened at all.
+    render(React.createElement(MapsChooserHost, {}));
+    const encode = jest.spyOn(global, 'encodeURIComponent').mockImplementation(() => { throw new URIError('URI malformed'); });
+    try {
+      let result;
+      act(() => { result = openMapsChooser({ place: VENUE, googleUrl: GOOGLE }); });
+      expect(result).toBe(true);
+      expect(opened).toEqual([[GOOGLE, '_blank', 'noopener,noreferrer']]);
+    } finally {
+      encode.mockRestore();
+    }
+  });
+
+  test('an arriving SOS alarm takes the sheet down', () => {
+    render(React.createElement(MapsChooserHost, {}));
+    act(() => { openMapsChooser({ place: VENUE, googleUrl: GOOGLE }); });
+    expect(screen.getByText('Open in')).toBeTruthy();
+    act(() => { closeMapsChooser(); });
+    expect(screen.queryByText('Open in')).toBeNull();
+    expect(opened).toEqual([]);
+    // With nothing open it does nothing.
+    expect(() => act(() => { closeMapsChooser(); })).not.toThrow();
+  });
+
+  test("the sheet's bottom padding uses the app's safe-area token", () => {
+    // index.css, SAFE-AREA CONTRACT rule 1. The token reads the inset
+    // Capacitor injects first, where the web view's own env() is unreliable.
+    const sheet = readSrc('components', 'ui', 'MapsChooser.js');
+    expect(sheet).toContain("padding: '16px 16px calc(16px + var(--safe-bottom))'");
+    expect(sheet).not.toContain('env(safe-area-inset-bottom)');
+  });
 });
 
 describe('every way to a map goes through the sheet', () => {
@@ -138,16 +241,42 @@ describe('every way to a map goes through the sheet', () => {
   const flockDetail = readSrc('screens', 'FlockDetail.js');
 
   test('the app mounts the one sheet with the shared dialog behaviour', () => {
-    expect(app).toContain("import MapsChooserHost, { openMapsChooser } from './components/ui/MapsChooser';");
+    expect(app).toContain("import MapsChooserHost, { openMapsChooser, closeMapsChooser } from './components/ui/MapsChooser';");
     expect(app).toContain('<MapsChooserHost DialogBehavior={DialogBehavior} />');
   });
 
-  test('no map link in these three files opens Google Maps directly any more', () => {
-    for (const [name, text] of [['App.js', app], ['VenueDetailSheet.js', venueSheet], ['FlockDetail.js', flockDetail]]) {
-      const direct = text.split('\n').filter((line) => /href=\{`https:\/\/(maps\.google\.com|www\.google\.com\/maps)/.test(line)
-        || /openExternal\([^)]*google\.com\/maps/.test(line));
-      expect([name, direct]).toEqual([name, []]);
-    }
+  // Whole files, not line by line: the plan's old Directions call spread its
+  // Google link over three lines, and a per-line check read none of them.
+  // Every app source file is read; a Google Maps link may appear only as the
+  // googleUrl handed to the sheet. The staff moderation console is not the
+  // app, and the two files that build the sheet are its own.
+  test('no map link anywhere in the app opens Google Maps directly', () => {
+    const skip = new Set([
+      path.join('website', 'ModerationDashboard.js'),
+      path.join('lib', 'mapsLinks.js'),
+      path.join('components', 'ui', 'MapsChooser.js'),
+    ]);
+    const files = [];
+    const walk = (dir) => {
+      for (const entry of fs.readdirSync(path.join(SRC, dir), { withFileTypes: true })) {
+        const rel = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          if (entry.name !== '__tests__') walk(rel);
+        } else if (/\.(jsx?|tsx?)$/.test(entry.name) && !/\.test\./.test(entry.name) && !skip.has(rel)) {
+          files.push(rel);
+        }
+      }
+    };
+    walk('');
+    expect(files).toContain('App.js');
+    expect(files).toContain(path.join('screens', 'FlockDetail.js'));
+    const googleMaps = /google\.[a-z.]+\/maps|maps\.google\.|goo\.gl\/maps|maps\.app\.goo\.gl/i;
+    const direct = files.filter((rel) => {
+      // A googleUrl value runs to the comma that ends its line.
+      const text = readSrc(rel).replace(/googleUrl:[\s\S]*?,\r?\n/g, '');
+      return googleMaps.test(text);
+    });
+    expect(direct).toEqual([]);
   });
 
   test('the venue sheet, a plan and an SOS alarm each open the sheet', () => {
@@ -155,11 +284,35 @@ describe('every way to a map goes through the sheet', () => {
     expect(venueSheet).toMatch(/openMapsChooser\(\{\s*place: \{\s*name: venueDetailModal\.name,/);
     expect(flockDetail).toContain("import { openMapsChooser } from '../components/ui/MapsChooser';");
     expect(flockDetail).toMatch(/openMapsChooser\(\{\s*place: \{ name: flock\.venue, address: flock\.venueAddress, lat: flock\.venueLat, lng: flock\.venueLng \}/);
-    expect(app).toMatch(/openMapsChooser\(\{\s*place: \{ name: safetyAlert\.name, lat: safetyAlert\.lat, lng: safetyAlert\.lng \}/);
+    expect(app).toMatch(/openMapsChooser\(\{\s*place: \{ lat: safetyAlert\.lat, lng: safetyAlert\.lng \}/);
+  });
+
+  test("an SOS alarm's map pin carries no name: the sender's name and their emergency position do not go to Apple together", () => {
+    const sos = app.slice(app.indexOf('{safetyAlert.lat !== null && ('), app.indexOf('{SOSModal()}'));
+    expect(sos).toContain('openMapsChooser({');
+    expect(sos).not.toMatch(/name: safetyAlert\.name/);
+    expect(sos).toContain('googleUrl: `https://maps.google.com/?q=${safetyAlert.lat},${safetyAlert.lng}`');
+  });
+
+  test('every arriving SOS alarm takes the maps sheet down before it is drawn', () => {
+    // The sheet sits at zIndex 10050 and the alarm at 220: an alarm arriving
+    // under an open sheet was covered, and Escape dismissed it unseen.
+    const arrivals = (app.match(/setSafetyAlert\(\{/g) || []).length;
+    expect(arrivals).toBeGreaterThanOrEqual(2);
+    expect((app.match(/closeMapsChooser\(\);\s*setSafetyAlert\(\{/g) || []).length).toBe(arrivals);
   });
 
   test("a plan's Details hands the venue card the plan's coordinates, so Apple Maps has the pin before the details load", () => {
     expect(flockDetail).toContain('photo_url: flock.venuePhoto, lat: flock.venueLat, lng: flock.venueLng })}');
     expect(venueSheet).toMatch(/lat: at\.latitude \?\? at\.lat \?\? venueDetailModal\.lat,/);
+  });
+
+  test("the map's venue seeds and a quieter place nearby carry their coordinates too", () => {
+    const map = readSrc('components', 'map', 'MapLibreMapView.js');
+    expect(map).toContain('photo_url: v.photo_url, lat: v.location?.latitude, lng: v.location?.longitude });');
+    expect(map).toContain('photo_url: venuePhoto, lat: fLat, lng: fLng });');
+    const card = readSrc('components', 'venue', 'ConsumerVenueCard.js');
+    expect(card).toContain('const pin = v.location || allVenues.find(x => x.place_id === pid)?.location;');
+    expect(card).toContain('openVenueDetail(pid, { name: v.name, place_id: pid, lat: pin?.latitude, lng: pin?.longitude }, { panMap: true });');
   });
 });

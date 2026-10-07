@@ -24,16 +24,33 @@ function openInNewWindow(url) {
 
 // Offers the maps apps for one place. `place` is { name, address, lat, lng };
 // `googleUrl` is the caller's Google Maps link. Returns false when there is
-// nothing to open. With no host mounted (a screen rendered on its own), the
-// first choice opens directly, so the button never does nothing.
+// nothing to open. A single choice (Android, which has no Apple Maps, or a
+// place with one usable link) opens directly, since a sheet with one app on it
+// is a tap that chooses nothing. So does the first choice when no host is
+// mounted (a screen rendered on its own), so the button never does nothing.
 export function openMapsChooser({ place, googleUrl } = {}) {
-  const choices = mapsChoices({ place, googleUrl });
+  let choices;
+  try {
+    choices = mapsChoices({ place, googleUrl });
+  } catch {
+    // The Apple link could not be built (encodeURIComponent throws on text it
+    // cannot encode). That loses Apple Maps only: Google's link needs nothing
+    // from the place, so it is still offered and the tap still opens a map.
+    choices = mapsChoices({ googleUrl });
+  }
   if (choices.length === 0) return false;
-  if (present) {
+  if (present && choices.length > 1) {
     present(choices);
     return true;
   }
   return openInNewWindow(choices[0].url);
+}
+
+// Takes the sheet down. App.js calls it when an SOS alarm arrives: the sheet
+// sits above every overlay, so the alarm would be drawn under it, and Escape
+// would go to the alarm, the newest dialog, and dismiss it unseen.
+export function closeMapsChooser() {
+  if (present) present(null);
 }
 
 export default function MapsChooserHost({ DialogBehavior }) {
@@ -52,7 +69,7 @@ export default function MapsChooserHost({ DialogBehavior }) {
       style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 10050, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
     >
       {DialogBehavior ? <DialogBehavior onClose={close} label="Open in a maps app" /> : null}
-      <div style={{ width: '100%', maxWidth: '420px', boxSizing: 'border-box', backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '16px 16px calc(16px + env(safe-area-inset-bottom))', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+      <div style={{ width: '100%', maxWidth: '420px', boxSizing: 'border-box', backgroundColor: 'var(--bg-card-solid)', borderRadius: '20px 20px 0 0', padding: '16px 16px calc(16px + var(--safe-bottom))', display: 'flex', flexDirection: 'column', gap: '8px' }}>
         <p style={{ margin: '0 0 4px', textAlign: 'center', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '600' }}>Open in</p>
         {choices.map((c) => (
           <button

@@ -123,7 +123,7 @@ import { BirdieStill, BirdNote, WARM_BIRD } from './components/ui/BirdieBird';
 // chunk would fail for exactly the person it is meant for.
 import FloppyBird from './components/ui/FloppyBird';
 import Icons from './components/ui/Icons';
-import MapsChooserHost, { openMapsChooser } from './components/ui/MapsChooser';
+import MapsChooserHost, { openMapsChooser, closeMapsChooser } from './components/ui/MapsChooser';
 // Add Friends left App.js in the same sweep as the venue dashboard below and
 // for the same review reason, but it is imported normally rather than lazily.
 // It is a consumer screen the empty home state points a brand new account
@@ -8405,6 +8405,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // the socket fired is exactly who taps it, and a socket emit is never
       // replayed to a socket that was not there. Same shape onSafetyAlert
       // builds from the live event, so the modal reads a tap identically.
+      // The maps sheet comes down first: it sits above every overlay, so an
+      // alarm drawn while it is open would be under it.
+      closeMapsChooser();
       setSafetyAlert({
         userId: intent.userId != null ? String(intent.userId) : null,
         name: String(intent.name || 'Someone on your plan').slice(0, 80),
@@ -12739,6 +12742,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   useEffect(() => {
     const unsub = onSafetyAlert((data) => {
       if (!data || !data.fromUserId) return;
+      // As for a tapped alarm: the maps sheet, above every overlay, would
+      // cover this one, so it comes down first.
+      closeMapsChooser();
       setSafetyAlert({
         userId: String(data.fromUserId),
         name: String(data.fromUserName || 'Someone on your plan').slice(0, 80),
@@ -20961,10 +20967,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                 {Icons.phone('currentColor', 18)} Call 911
               </a>
               {/* Apple Maps or Google Maps (components/ui/MapsChooser.js),
-                  pinned at the alarm's position and labelled with the name. */}
+                  pinned at the alarm's position. The pin carries no name: the
+                  Google link never did, and the sender's name next to where
+                  they are in an emergency is not Apple's to receive either. */}
               {safetyAlert.lat !== null && (
                 <button type="button" className="hit44" onClick={() => openMapsChooser({
-                  place: { name: safetyAlert.name, lat: safetyAlert.lat, lng: safetyAlert.lng },
+                  place: { lat: safetyAlert.lat, lng: safetyAlert.lng },
                   googleUrl: `https://maps.google.com/?q=${safetyAlert.lat},${safetyAlert.lng}`,
                 })} style={{ minHeight: '44px', borderRadius: '10px', border: '1px solid var(--border-mid)', background: 'none', color: 'var(--text-primary)', fontSize: 'inherit', fontWeight: '600', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', cursor: 'pointer' }}>
                   {Icons.mapPin('currentColor', 16)} {safetyAlert.accuracy > SOS_COARSE_FIX_METRES || safetyAlert.approximate === true ? 'See the area they are in' : 'See where they are'}

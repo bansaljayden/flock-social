@@ -1248,7 +1248,13 @@ export default function ConsumerVenueCard({
                         const pid = v.placeId || v.place_id;
                         if (pid) {
                           setVenueDetailHistory(prev => [...prev, { activeVenue, crowdData: cd, crowdAlternatives }]);
-                          openVenueDetail(pid, { name: v.name, place_id: pid }, { panMap: true });
+                          // The place's pin coordinates when the map has it (a
+                          // row from the server carries none), so Get Directions
+                          // can pin it in Apple Maps before Place Details
+                          // answers instead of searching for the name, which can
+                          // land on another branch of a chain.
+                          const pin = v.location || allVenues.find(x => x.place_id === pid)?.location;
+                          openVenueDetail(pid, { name: v.name, place_id: pid, lat: pin?.latitude, lng: pin?.longitude }, { panMap: true });
                         } else {
                           setActiveVenue(v);
                         }

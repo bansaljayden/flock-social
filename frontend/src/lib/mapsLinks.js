@@ -9,20 +9,41 @@
 // Google keeps the link each caller already had: Google's own url for the
 // place, or a search by its Google place id, both of which land on the right
 // place page. Apple Maps cannot read a Google place id, so its link is built
-// from what the app knows about the place: the coordinates when there are
-// any, then the address, then the name.
+// from what the app knows about the place: a pin at its coordinates, carrying
+// its name, when there are any; otherwise a search for the name at its
+// address, which lands on the place's own card; then the address alone, then
+// the name alone.
 //
-// Apple's map link parameters (developer.apple.com, "Map Links"): `ll` puts
-// the pin at a latitude and longitude, `address` shows an address without
-// searching for it, and `q` labels the pin when the place is given by `ll` or
-// `address`. `q` on its own is a search.
+// Apple documents its map links at
+// https://developer.apple.com/documentation/mapkit/unified-map-urls (the
+// older "Map Links" page redirects there). Those unified links (/place,
+// /search, /directions) need iOS 18.4 or later and the app supports iOS 15,
+// so these keep the earlier parameters, which maps.apple.com still maps onto
+// the unified ones: `ll` with `q` is a pin named `q` at a latitude and
+// longitude (/place?coordinate=..&name=..), `address` shows an address
+// without searching for it (/place?address=..), and `q` on its own is a
+// search (/search?query=..).
 
 const MAX_LABEL = 120;
 const MAX_ADDRESS = 240;
 
+// One half of a UTF-16 surrogate pair, without the other half.
+function loneSurrogate(c) {
+  const unit = c.charCodeAt(0);
+  return c.length === 1 && unit >= 0xd800 && unit <= 0xdfff;
+}
+
+// Cut by code point, not by UTF-16 unit. A cut through an emoji used to leave
+// half of it behind, encodeURIComponent throws on half an emoji, and the tap
+// opened nothing. Text that arrives already cut that way (names are cut by
+// UTF-16 unit elsewhere in the app and on the server) loses the stray half
+// for the same reason. Array.from walks the text by code point: a regex
+// lookbehind or String.prototype.toWellFormed would be shorter, and the iOS 15
+// web view has neither.
 function clean(text, max) {
   if (typeof text !== 'string') return '';
-  return text.replace(/\s+/g, ' ').trim().slice(0, max);
+  const whole = Array.from(text).filter((c) => !loneSurrogate(c)).join('');
+  return Array.from(whole.replace(/\s+/g, ' ').trim()).slice(0, max).join('');
 }
 
 // A usable latitude and longitude, or null. 0,0 is a point in the Gulf of
@@ -47,11 +68,13 @@ export function appleMapsUrl({ name, address, lat, lng } = {}) {
   if (at) {
     params.push(`ll=${at.lat},${at.lng}`);
     params.push(`q=${encodeURIComponent(label || where || 'Location')}`);
+  } else if (label) {
+    // Not `address` with `q`: Apple Maps shows that as the bare address card
+    // and titles it with the street address, not the name. A search for the
+    // name at its address lands on the place's own card.
+    params.push(`q=${encodeURIComponent(where ? `${label}, ${where}` : label)}`);
   } else if (where) {
     params.push(`address=${encodeURIComponent(where)}`);
-    if (label) params.push(`q=${encodeURIComponent(label)}`);
-  } else if (label) {
-    params.push(`q=${encodeURIComponent(label)}`);
   } else {
     return null;
   }
@@ -62,9 +85,10 @@ function userAgent() {
   return typeof navigator !== 'undefined' && navigator ? String(navigator.userAgent || '') : '';
 }
 
-// iPhone, iPad and Mac, which all have Apple Maps. iPadOS reports itself as a
-// Mac in Safari and in the app's web view, which is the right answer here too.
-// The iOS app is served from capacitor://localhost.
+// iPhone, iPad and Mac, which all have Apple Maps. Safari on an iPad reports a
+// Mac, which is the right answer here too. The iOS app is an iPhone app, so on
+// an iPad its web view reports an iPhone; it is known by its capacitor:
+// protocol anyway, since it is served from capacitor://localhost.
 export function onAppleDevice(ua = userAgent(), protocol = typeof window !== 'undefined' && window.location ? window.location.protocol : '') {
   return protocol === 'capacitor:' || /iPhone|iPad|iPod|Macintosh/i.test(ua);
 }
@@ -75,12 +99,24 @@ export function onAndroid(ua = userAgent()) {
   return /Android/i.test(ua);
 }
 
+// The caller's Google link as https, or null. An http one is upgraded rather
+// than left out: Google serves its maps links over https too, and the venue
+// card's Get Directions shows for an http google_maps_url, so dropping it
+// would take the Google choice away from a button still on screen.
+function httpsLink(url) {
+  if (typeof url !== 'string') return null;
+  const link = url.trim();
+  if (/^https:\/\//i.test(link)) return link;
+  if (/^http:\/\//i.test(link)) return `https://${link.slice('http://'.length)}`;
+  return null;
+}
+
 // The maps apps to offer for one place, in order. `googleUrl` is the caller's
 // Google Maps link. Each choice carries an https link or is left out.
 export function mapsChoices({ place, googleUrl } = {}, { apple = onAppleDevice(), android = onAndroid() } = {}) {
   const choices = [];
   const appleUrl = android ? null : appleMapsUrl(place || {});
-  const google = typeof googleUrl === 'string' && /^https:\/\//i.test(googleUrl.trim()) ? googleUrl.trim() : null;
+  const google = httpsLink(googleUrl);
   if (appleUrl) choices.push({ app: 'apple', label: 'Apple Maps', url: appleUrl });
   if (google) choices.push({ app: 'google', label: 'Google Maps', url: google });
   if (!apple) choices.reverse();
