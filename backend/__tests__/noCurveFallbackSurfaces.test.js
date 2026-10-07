@@ -44,6 +44,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const express = require('express');
+const { withSteppingClock } = require('./helpers/steppingClock');
 
 process.env.TZ = 'UTC';
 process.env.JWT_SECRET = 'no-curve-fallback-surfaces-secret';
@@ -819,7 +820,38 @@ function tally(list) {
   return kinds;
 }
 
+// THE CLOCK THIS RUNS UNDER IS PINNED, to 03:20 UTC on 2026-10-07.
+//
+// Every count below depends on the hour the routes read off the clock, which
+// for these UTC listings is the venue's own hour, and they were measured
+// before 6 AM UTC. From 06:00 the dashboard dial's hour is one of the day's
+// bars (6 AM to 11 PM), and from 17:00 it is one of a bar's evening hours on
+// the strip row, so the strip finds that slot in the cache the dial has just
+// filled and reads one slot fewer: 'intelligence cold' came out 60 from 06:00
+// and 'strip cold' 7 from 17:00. The counts held only from 00:00 to 05:59
+// UTC, and the pre-push hook, which runs this suite, refused every backend
+// push for the other eighteen hours. So the test runs under
+// helpers/steppingClock.js: Date.now() and a no-argument new Date() answer
+// from a clock that starts at that instant, a day these counts were measured
+// on, moves one millisecond per read, and is put back when the test ends. The
+// surfaces, the counts and the card again six minutes on are as they were, so
+// the test still proves that the switch-off path sends exactly the statements
+// it sent before.
+//
+// Checked by running this file directly with the whole process's clock moved
+// to 03:20, 06:20, 12:20 and 23:20 UTC, to every other hour of the day at :20,
+// and to 03:20, 12:20, 23:20 and 23:55 on each day of the week: a --require
+// preload replaced global.Date with a subclass whose Date.now() and
+// no-argument constructor started at that time and ran forward from it, so
+// every other test in the file read the moved clock. Every test passed every
+// time; before the pin, this one failed from 06:20 on.
+const STATEMENTS_MEASURED_AT = Date.UTC(2026, 9, 7, 3, 20, 0);
+
 test('switched off, in the production configuration, every surface sends exactly the statements it sent before, and never a presence probe', async () => {
+  await withSteppingClock(STATEMENTS_MEASURED_AT, sendsTheStatementsItSentBefore);
+});
+
+async function sendsTheStatementsItSentBefore() {
   // CROWD_SERVE_MODE=curve_offset and CROWD_NOWCAST_ENABLED=true are set in
   // production and CROWD_NO_CURVE_FALLBACK is not, so this is what a deploy
   // of the presence and agreement changes runs. The counts below were taken
@@ -907,4 +939,4 @@ test('switched off, in the production configuration, every surface sends exactly
     'card cold again': same(0, 23, 1, 27),
     'card curved again': same(0, 0, 0, 4),
   });
-});
+}

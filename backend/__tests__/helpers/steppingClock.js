@@ -14,7 +14,8 @@
 // helpers/virtualClock.js is the other kind: it drives code that takes `now`
 // and `pause` as arguments, and leaves the global clock alone.
 //
-// Used by entitlementGates.test.js and premiumKnownState.test.js.
+// Used by entitlementGates.test.js and premiumKnownState.test.js, and by
+// noCurveFallbackSurfaces.test.js to pin the hour its statement counts hold at.
 // ---------------------------------------------------------------------------
 
 async function withSteppingClock(startMs, fn) {
