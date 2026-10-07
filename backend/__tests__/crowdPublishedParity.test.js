@@ -35,6 +35,14 @@ process.env.GOOGLE_PLACES_API_KEY = 'test-places-key';
 delete process.env.PAYWALL_ENABLED;
 delete process.env.TICKETMASTER_API_KEY;
 
+// The clock is pinned to the top of an hour in the middle of a UTC day
+// (helpers/pinnedClock.js) before the routes load. Tests here ask for a card
+// more than once and compare its hours, so from the real clock a test running
+// across the top of an hour compared two different hours.
+const { pinClock } = require('./helpers/pinnedClock');
+const pinnedClock = pinClock(Date.UTC(2026, 6, 15, 12, 0, 0));
+test.after(() => pinnedClock.restore());
+
 const crowdEngine = require('../services/crowdEngine');
 
 // --- scripted pg ------------------------------------------------------------
