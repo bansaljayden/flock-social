@@ -1622,8 +1622,11 @@ async function request(endpoint, options = {}) {
       && data && data !== PARSE_FAILED && data.error === 'Token expired') {
       renewedAfterExpiry = true;
       const next = await renewAfterExpiry(token);
+      // Whether or not it renewed: the renewal answers null once the session
+      // has changed, and this 401 would then be handled below as this tab's
+      // expiry, signing out whoever signed in meanwhile.
+      if (madeFor && accountOf(next || getToken()) !== madeFor) throw sessionEndedError();
       if (next) {
-        if (madeFor && accountOf(next) !== madeFor) throw sessionEndedError();
         token = next;
         headers['Authorization'] = `Bearer ${token}`;
         continue;
