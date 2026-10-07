@@ -366,8 +366,11 @@ describe('Settings: the answer can be taken back', () => {
   test('the screen behind it lists what is sent the way the panel does, and says when the time zone goes', () => {
     // Every account with a yes reads this, a yes given to the question before
     // it named the time zone included, and the server leaves the zone out for
-    // that one (backend routes/ai.js, WHICH QUESTION A YES ANSWERED).
-    expect(settings).toContain("it sends Google your messages to Birdie, your first name, your age range, and what you have open in Flock. It also sends your time zone with the date and time it is there, unless you said yes to an earlier version of Birdie's question, which did not name them. That earlier yes keeps them out until you turn this off and on again.");
+    // that one (backend routes/ai.js, WHICH QUESTION A YES ANSWERED). It also
+    // leaves it out when the device reports no zone, whatever the yes: the
+    // zone it reads is only ever the one the turn sent (userZone), which is
+    // the condition the privacy policy states too.
+    expect(settings).toContain("it sends Google your messages to Birdie, your first name, your age range, and what you have open in Flock. It also sends your time zone with the date and time it is there, but only when your device reports its time zone. A yes to an earlier version of Birdie's question, which did not name them, keeps them out until you turn this off and on again.");
   });
 
   test('off and on again is a yes to the question that names the zone', () => {
