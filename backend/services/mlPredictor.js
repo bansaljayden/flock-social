@@ -327,8 +327,9 @@ function countPrediction(method) {
 }
 
 // Takes one count back, for an answer that was replaced before anybody was
-// served it (agreeWithStrip), so one venue-hour is still counted once. A key
-// that falls to zero goes, so byMethod reads as if it had never been counted.
+// served it (agreeWithStrip, through uncountAnswer below), so one venue-hour
+// is still counted once. A key that falls to zero goes, so byMethod reads as
+// if it had never been counted.
 function uncountPrediction(method) {
   const key = typeof method === 'string' && method ? method : 'unknown';
   if (!(predictionMethodCounts[key] > 0)) return;
@@ -349,6 +350,34 @@ function countSwitchedArithmetic(curveOffset, nowcast) {
   if (nowcast && switchedCounts.nowcastByLag[nowcast.bucket] !== undefined) {
     switchedCounts.nowcastByLag[nowcast.bucket] += 1;
   }
+}
+
+// WHAT ONE ANSWER ADDED TO THE COUNTERS ABOVE, read off the answer itself:
+// its method (countPrediction) and, for a number a switch made, the arithmetic
+// countSwitchedArithmetic recorded. A model answer carries that as serveMode
+// and nowcast whenever either switch is on; with both off it added no
+// switched count and carries neither field, so the two cannot disagree. Read
+// off the answer rather than off the switches as they stand now, which may
+// not be what they were when it was counted.
+function countsAddedBy(answer) {
+  return {
+    method: answer ? answer.predictionMethod : undefined,
+    curveOffset: Boolean(answer && answer.serveMode === 'curve_offset'),
+    nowcast: (answer && answer.nowcast) || null,
+  };
+}
+
+// Takes back everything countsAddedBy says an answer added, for an answer
+// replaced before anybody was served it (agreeWithStrip): the method count,
+// its curve_offset answer and its nowcast lag bucket. Taking back the method
+// alone left a replaced curve_offset answer counted twice in
+// curveOffsetAnswers and in nowcastAnswersByLag, while total and ml counted
+// the venue-hour once. Nothing goes below zero.
+function uncountAnswer(added) {
+  uncountPrediction(added.method);
+  if (added.curveOffset && switchedCounts.curveOffset > 0) switchedCounts.curveOffset -= 1;
+  const bucket = added.nowcast ? added.nowcast.bucket : null;
+  if (switchedCounts.nowcastByLag[bucket] > 0) switchedCounts.nowcastByLag[bucket] -= 1;
 }
 
 // Non-consuming read, for routes/admin.js. `modelShare` is the fraction of
@@ -5178,11 +5207,13 @@ function stripHourEntry(result, hour, attributed) {
 // WHAT EACH HOUR OF A STRIP WAS SCORED WITH, kept beside the array
 // predictHourlyForecast returned: the venue and options it was handed, whether
 // its hours carry attribution, and per hour, in the array's order, the
-// timestamp, the slot's real instant and the weather that hour was given. An
-// hour carries only its label, and agreeWithStrip needs the rest to score an
-// hour again exactly as the strip scored it. A WeakMap, so nothing is added to
-// the array or its entries (nothing reaches a response), and an entry goes
-// when its array does.
+// timestamp, the slot's real instant and the weather that hour was given, and
+// what its answer added to the coverage counters (countsAddedBy; null for an
+// hour predictBusyness threw on, which added nothing). An hour carries only
+// its label, and agreeWithStrip needs the rest to score an hour again exactly
+// as the strip scored it and to take back what the replaced answer counted. A
+// WeakMap, so nothing is added to the array or its entries (nothing reaches a
+// response), and an entry goes when its array does.
 const stripScoring = new WeakMap();
 
 // `options.userId` is forwarded to every hour's predictBusyness. This path is
@@ -5354,9 +5385,11 @@ async function predictHourlyForecast(venue, weather, startHour, count, baseTimes
     // and the event window, both from forecastSlots.
     const ts = slot.ts;
     const slotWeather = weatherForSlot(hourlyWx, slot.instantMs, weather, nowMs);
-    scoredWith.push({ ts, instantMs: slot.instantMs, weather: slotWeather });
+    const scored = { ts, instantMs: slot.instantMs, weather: slotWeather, counted: null };
+    scoredWith.push(scored);
     try {
       const result = await predictBusyness(venue, slotWeather, ts, options, slot.instantMs);
+      scored.counted = countsAddedBy(result);
       forecast.push(stripHourEntry(result, labelFor(ts), attributed));
     } catch (err) {
       // Fallback for this hour
@@ -5424,8 +5457,10 @@ async function predictHourlyForecast(venue, weather, startHour, count, baseTimes
 // the strip shows. Each hour scored again costs the one slot read its dropped
 // miss stood in for, charged like any slot lookup; the headline reads only
 // what the hours and the two calls in front of it just read. Every replaced
-// answer is taken back out of the coverage count, so each venue-hour is still
-// counted once.
+// answer takes back everything it added to the coverage counters
+// (uncountAnswer: its method, its curve_offset answer and its nowcast lag
+// bucket, read off the answer itself), so each venue-hour is still counted
+// once on every counter predictionCoverage reports.
 //
 // A headline and a strip with nothing on the table come back as they went in,
 // with nothing read, and that is every response while CROWD_NO_CURVE_FALLBACK
@@ -5454,7 +5489,9 @@ async function agreeWithStrip(headline, strip, venue, weather, timestamp, option
     const ownSlot = `${(venue && (venue.place_id || venue.google_place_id)) || null}_${at.getDay()}_${at.getHours()}`;
     if (!onTable(headline) && !hoursScoredAgain.has(ownSlot)) return headline;
     const rescored = await predictBusyness(venue, weather, timestamp, options);
-    uncountPrediction(headline.predictionMethod);
+    // Whatever the headline was, a model answer made under curve_offset or
+    // with a nowcast included, every count it added goes with it.
+    uncountAnswer(countsAddedBy(headline));
     return rescored;
   } catch {
     return headline;
@@ -5484,7 +5521,10 @@ async function rescoreTableHours(strip) {
     try {
       const result = await predictBusyness(venue, slot.weather, slot.ts, options, slot.instantMs);
       strip[i] = stripHourEntry(result, hour.hour, attributed);
-      uncountPrediction(NO_CURVE_FALLBACK_METHOD);
+      // What the replaced hour added, as recorded when the strip scored it,
+      // goes; the record then describes the answer now in the array.
+      uncountAnswer(slot.counted || countsAddedBy(hour));
+      slot.counted = countsAddedBy(result);
       done.add(`${placeId}_${day}_${hourOfDay}`);
     } catch { /* the hour keeps the answer it had */ }
   }
