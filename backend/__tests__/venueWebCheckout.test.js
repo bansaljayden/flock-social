@@ -822,8 +822,41 @@ function completedSession({ id = 'cs_done_1', paid = true, place = PLACE } = {})
   };
 }
 
-function claimNow({ verified, place = PLACE }) {
-  return async (sql) => {
+// A refusal is decided under the venue's lock and recorded before anything is
+// cancelled (migration 123): the subscription's record is marked refused only
+// while it was never served, and what the refusal owes is kept until it is
+// finished. `served` is a subscription already delivered, whose mark finds
+// served_at set and comes back empty.
+function refusalTables({ served = false } = {}) {
+  const owed = {};
+  return (sql, params) => {
+    if (sql.includes('INSERT INTO venue_stripe_subscriptions') && sql.includes('WHERE venue_stripe_subscriptions.served_at IS NULL')) {
+      return served ? { rows: [], rowCount: 0 } : { rows: [{ refused_at: new Date() }], rowCount: 1 };
+    }
+    if (sql.includes('INSERT INTO roost_refused_purchases')) {
+      const [subscriptionId, sessionId, invoiceId, reason] = params;
+      if (!owed[subscriptionId]) {
+        owed[subscriptionId] = {
+          stripe_subscription_id: subscriptionId, stripe_checkout_session_id: sessionId, stripe_invoice_id: invoiceId,
+          reason, created_at: new Date(), finished_at: null,
+        };
+      }
+      return { rows: [], rowCount: 1 };
+    }
+    if (sql.includes('UPDATE roost_refused_purchases SET finished_at')) {
+      if (owed[params[0]]) owed[params[0]].finished_at = new Date();
+      return { rows: [], rowCount: 1 };
+    }
+    if (sql.includes('FROM roost_refused_purchases')) return { rows: owed[params[0]] ? [{ ...owed[params[0]] }] : [] };
+    return null;
+  };
+}
+
+function claimNow({ verified, place = PLACE, served = false }) {
+  const refusals = refusalTables({ served });
+  return async (sql, params) => {
+    const refusal = refusals(sql, params);
+    if (refusal) return refusal;
     if (sql.startsWith('WITH old AS')) return { rows: [{ profiles: 1, written: 1, verified, place_id: place }] };
     if (sql.includes('SELECT id, verified, business_name, stripe_customer_id') && sql.includes('FROM venue_profiles')) {
       return { rows: [{ id: 9, verified, business_name: 'The Owl', stripe_customer_id: 'cus_VENUE1', google_place_id: place }] };
@@ -901,11 +934,8 @@ test('the return for a purchase already delivered refunds nothing, whatever the 
   stripeState.sessions.cs_done_1 = completedSession();
   stripeState.subById.sub_V1 = sub({ status: 'active', metadata: { kind: 'venue', flock_venue_user_id: String(ME.id), flock_venue_place_id: PLACE } });
   stripeState.paidWith.in_first = 'pi_first';
-  const moved = claimNow({ verified: true, place: 'ChIJsomewhereElse00001' });
-  const { restore } = stubPool(async (sql, params) => {
-    if (sql.includes('SELECT served_at FROM venue_stripe_subscriptions')) return { rows: [{ served_at: new Date('2026-06-01T00:00:00Z') }] };
-    return moved(sql, params);
-  });
+  // Served before: the refusal's mark finds served_at set and takes nothing.
+  const { restore } = stubPool(claimNow({ verified: true, place: 'ChIJsomewhereElse00001', served: true }));
   try {
     const res = await call(venueBillingRoutes, 'POST', '/api/venue-billing/confirm', { sessionId: 'cs_done_1' });
     assert.strictEqual(res.status, 200, JSON.stringify(res.body));
