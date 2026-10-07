@@ -304,6 +304,16 @@ describe('deletion copy matches the deletion path', () => {
     expect(baseline).toMatch(/research_analytics[\s\S]{0,120}flock_id INTEGER REFERENCES flocks\(id\) ON DELETE SET NULL/);
     expect(deletePage).toMatch(/one row per finished plan/i);
     expect(privacy).toMatch(/Plan statistics/);
+
+    // The listings a Roost plan was ever bought for (migration 121): a table
+    // with no account in it, which the Stripe writer adds to, kept after the
+    // venue account is deleted so a listing's one free trial outlives it.
+    const roostTrials = read('backend', 'migrations', '121_roost_trials_and_delivery.sql');
+    expect(roostTrials).toMatch(/CREATE TABLE IF NOT EXISTS roost_trial_listings \(\s*google_place_id VARCHAR\(255\) PRIMARY KEY,\s*first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW\(\)\s*\);/);
+    expect(read('backend', 'services', 'venueBilling.js')).toMatch(/INSERT INTO roost_trial_listings/);
+    expect(privacy).toMatch(/<strong>The Google listing a Roost plan was ever bought for,<\/strong>/);
+    expect(privacy).toMatch(/<strong>Roost trial record:<\/strong>[^<]*no expiry/);
+    expect(deletePage).toMatch(/the Google listing it was bought for/);
   });
 
   test('created flocks cascade, so both pages warn that the whole plan goes', () => {
