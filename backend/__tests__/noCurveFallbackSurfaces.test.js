@@ -27,7 +27,13 @@
 //   * the venue dashboard's strip, whose row names a peak the table made even
 //     with both serving switches off (the fallback is a switch, so the hours
 //     say what made them, every one a plain no to live readings);
-//   * with the switch off, every one of those reads exactly as it did.
+//   * one response, one answer: the card, the demo card and its pin, the
+//     dashboard's dial and its strip row, and Birdie each score the headline
+//     again when their strip read the venue's first rows after the headline
+//     decided on an older no;
+//   * with the switch off, every one of those reads exactly as it did, and in
+//     the production configuration each sends the statements it sent before
+//     the presence and agreement changes, counted, with no presence probe.
 //
 // __tests__/noCurveFallback.test.js pins the predictor's gates and figure.
 // ===========================================================================
@@ -78,14 +84,42 @@ require.cache[ORT] = {
 
 const crowdEngine = require('../services/crowdEngine');
 
-// --- scripted pg: no curve for anybody --------------------------------------
+// --- scripted pg: no curve for anybody, unless a test writes one ------------
 const pool = require('../config/database');
 let feedbackRows = [];
 let served = [];
 // The signed-in owner's venue, for the venue dashboard's strip.
 let venueCtx = null;
+// ml_venue_baselines, as { placeId: { 'day_hour': baseline } }: the collector's
+// rows for the venues a test gives a curve. Everyone else has none.
+let curves = {};
+// Every statement sent, whitespace folded, so a test can count them.
+let statements = [];
+// How long a whole-curve read takes to come back, so a test can make a strip
+// read the curve after the headline beside it has decided.
+let curveDelayMs = 0;
+const CURVE_READ = /^SELECT day_of_week, hour, baseline, source, updated_at FROM ml_venue_baselines WHERE google_place_id = \$1$/;
+const curveRows = (placeId) => Object.entries(curves[placeId] || {}).map(([k, v]) => {
+  const [d, h] = k.split('_').map(Number);
+  return { day_of_week: d, hour: h, baseline: String(v), source: 'collected', updated_at: new Date() };
+});
 pool.query = (sql, params) => {
   const flat = String(sql).replace(/\s+/g, ' ').trim();
+  statements.push(flat);
+  // Each read answers with what the table held when it was sent.
+  if (/^SELECT 1 FROM ml_venue_baselines WHERE google_place_id = \$1 LIMIT 1$/.test(flat)) {
+    return Promise.resolve({ rows: curveRows(params[0]).length ? [{ '?column?': 1 }] : [] });
+  }
+  if (/FROM ml_venue_baselines WHERE google_place_id = \$1 AND \(/.test(flat)) {
+    const slots = [[params[1], params[2]], [params[3], params[4]], [params[5], params[6]]];
+    return Promise.resolve({ rows: curveRows(params[0]).filter((r) => slots.some(([d, h]) => r.day_of_week === d && r.hour === h)) });
+  }
+  if (CURVE_READ.test(flat)) {
+    const rows = curveRows(params[0]);
+    return curveDelayMs > 0
+      ? new Promise((resolve) => setTimeout(() => resolve({ rows }), curveDelayMs))
+      : Promise.resolve({ rows });
+  }
   if (/FROM venue_feedback/.test(flat)) return Promise.resolve({ rows: feedbackRows });
   if (/SELECT id, google_place_id, verified, category, verification_requested_at FROM venue_profiles WHERE user_id = \$1/.test(flat)) {
     return Promise.resolve({ rows: venueCtx ? [venueCtx] : [] });
@@ -119,6 +153,8 @@ placesBudget.allowGlobalPlacesCall = () => true;
 
 // --- Google, faked: a bar with 300 reviews on UTC, open around the clock -----
 const realFetch = global.fetch;
+// What the demo's area search finds. Empty unless a test names places.
+let areaPlaces = [];
 function place(id) {
   return {
     id,
@@ -135,6 +171,9 @@ function place(id) {
 }
 global.fetch = (url, opts) => {
   const u = String(url);
+  if (u.startsWith('https://places.googleapis.com/v1/places:searchText')) {
+    return Promise.resolve({ ok: true, status: 200, json: async () => ({ places: areaPlaces.map(place) }) });
+  }
   if (u.startsWith('https://places.googleapis.com/v1/places/')) {
     const id = decodeURIComponent(u.slice('https://places.googleapis.com/v1/places/'.length).split('?')[0]);
     return Promise.resolve({ ok: true, status: 200, json: async () => place(id) });
@@ -180,7 +219,13 @@ test.beforeEach(() => {
   feedbackRows = [];
   served = [];
   venueCtx = null;
+  curves = {};
+  statements = [];
+  curveDelayMs = 0;
+  areaPlaces = [];
   delete process.env[SWITCH];
+  delete process.env.CROWD_SERVE_MODE;
+  delete process.env.CROWD_NOWCAST_ENABLED;
   CURRENT_USER = { id: ++nextUser, name: 'Cat', role: 'user' };
   if (typeof __resetPlacesBudget === 'function') __resetPlacesBudget();
   placeDetailsCache.__test.reset();
@@ -468,4 +513,262 @@ test('the measurement block forwards the figure as measured, and the label never
   const support = crowdEngine.describePredictionSupport(r.predictionMethod, 0);
   assert.doesNotMatch(crowdEngine.publishedLabel(r.score, support), NOT_THIS);
   assert.match(crowdEngine.publishedLabel(r.score, support), HEDGED);
+});
+
+// ===========================================================================
+// One response, one answer.
+//
+// The card, the public demo, the venue dashboard and Birdie each put a
+// headline beside a strip of hours for the same venue. The headline can
+// decide on a no held from before the collector reached the venue, and the
+// strip then read the venue's first rows. Each surface scores the headline
+// again when that happens, so one response never has the category's typical
+// level on the dial and the venue's own curve on the bars, and the demo never
+// draws its "Live from the model" note and green dot beside a category dial.
+// CROWD_SERVE_MODE=curve_offset here, as in production, so a curve's hours
+// are made without running the stubbed model.
+// ===========================================================================
+
+const ALL_SLOTS = (() => {
+  const c = {};
+  for (let d = 0; d < 7; d++) for (let h = 0; h < 24; h++) c[`${d}_${h}`] = 50;
+  return c;
+})();
+
+const curveOn = () => {
+  on();
+  process.env.CROWD_SERVE_MODE = 'curve_offset';
+};
+
+// Keeps a test out of the last seconds of an hour: the setup below and the
+// request after it must score the same hour, or the request reads a slot the
+// setup never touched.
+async function awayFromHourEdge() {
+  const intoHour = Date.now() % 3600000;
+  if (intoHour > 3600000 - 10000) await new Promise((resolve) => setTimeout(resolve, 3600000 - intoHour + 50));
+}
+
+// An earlier request for the venue, before the collector reached it. Scored at
+// this hour on the venue's clock (UTC, offset 0, as the faked listing says), it
+// leaves the probe's no held and this hour's slot a cached zero: the state
+// every surface below starts from. Then the collector writes the venue's rows.
+async function scoredBeforeTheCollector(id) {
+  const at = new Date();
+  at.setUTCMinutes(0, 0, 0);
+  const r = await mlPredictor.predictBusyness({
+    place_id: id, types: ['bar'], user_ratings_total: 300, rating: 4.4, price_level: 2,
+    location: { latitude: 39.95, longitude: -75.16 }, utcOffsetMinutes: 0,
+  }, null, at);
+  assert.strictEqual(r.predictionMethod, METHOD, 'setup: no rows yet, so the table');
+  curves[id] = { ...ALL_SLOTS };
+}
+
+test('the public demo: a dial scored before its strip read the venue\'s first rows is scored again, never left beside the curve\'s bars', async () => {
+  curveOn();
+  publicCrowdRouter.__testables.resetDemoLimitsForTest();
+  await awayFromHourEdge();
+  const id = freshId('DEMOAGREE');
+  await scoredBeforeTheCollector(id);
+  const res = await call('GET', `/api/public/demo/venue/${id}`);
+  assert.strictEqual(res.status, 200, res.text);
+  const d = res.body;
+  assert.ok(d.hourly.length > 0);
+  for (const h of d.hourly) assert.notStrictEqual(h.predictionMethod, METHOD, h.hour);
+  assert.strictEqual(d.hourly[0].predictionMethod, 'ml', 'the strip read the venue\'s own curve');
+  assert.notStrictEqual(d.number_source, 'category_typical', 'the dial is not the category\'s level');
+  assert.strictEqual(d.number_source, d.hourly[0].numberSource, 'the dial and the Now bar name one source');
+  assert.strictEqual(d.score, d.hourly[0].score, 'and show one number');
+  assert.notStrictEqual(d.confidence_measurement.metric, 'within_15_rule_engine_category_table');
+});
+
+test('the public demo\'s area answer: the featured card is scored again, and its pin stays the same prediction', async () => {
+  curveOn();
+  publicCrowdRouter.__testables.resetDemoLimitsForTest();
+  await awayFromHourEdge();
+  const id = freshId('AREAAGREE');
+  await scoredBeforeTheCollector(id);
+  areaPlaces = [id];
+  const res = await call('GET', '/api/public/demo/venues?lat=39.95&lng=-75.16&q=agreeing%20card');
+  assert.strictEqual(res.status, 200, res.text);
+  const card = res.body.card;
+  assert.ok(card, res.text);
+  assert.strictEqual(card.place_id, id);
+  for (const h of card.hourly) assert.notStrictEqual(h.predictionMethod, METHOD, h.hour);
+  assert.notStrictEqual(card.number_source, 'category_typical');
+  assert.strictEqual(card.score, card.hourly[0].score);
+  const pin = res.body.venues.find((v) => v.place_id === id);
+  assert.deepStrictEqual(
+    { score: pin.score, label: pin.label, confidence_basis: pin.confidence_basis },
+    { score: card.score, label: card.label, confidence_basis: card.confidence_basis },
+    'the pin and the dial are one prediction',
+  );
+});
+
+test('the card: a headline that decided before its strip read the venue\'s first rows is scored again, and served as what it shows', async () => {
+  curveOn();
+  await awayFromHourEdge();
+  const id = freshId('CARDAGREE');
+  await scoredBeforeTheCollector(id);
+  // The strip reads the curve after the headline beside it has decided.
+  curveDelayMs = 30;
+  const res = await call('GET', `/api/crowd/${id}`);
+  assert.strictEqual(res.status, 200, res.text);
+  const c = res.body;
+  for (const h of c.hourly) assert.notStrictEqual(h.predictionMethod, METHOD, h.hour);
+  assert.strictEqual(c.hourly[0].predictionMethod, 'ml');
+  assert.strictEqual(c.predictionMethod, 'ml', 'the headline agrees with its strip');
+  assert.notStrictEqual(c.numberSource, 'category_typical');
+  assert.strictEqual(c.numberSource, c.hourly[0].numberSource);
+  assert.strictEqual(c.score, c.hourly[0].score);
+  assert.strictEqual(served.length, 1);
+  assert.deepStrictEqual(served[0][3], ['ml'], 'the serve is recorded as the number shown');
+});
+
+test('the venue dashboard: the owner\'s dial is scored again when its strip read the venue\'s first rows', async () => {
+  curveOn();
+  await awayFromHourEdge();
+  CURRENT_USER = { id: ++nextUser, name: 'Owner', role: 'venue_owner' };
+  const id = freshId('INTELAGREE');
+  venueCtx = { id: 81, google_place_id: id, verified: true };
+  await scoredBeforeTheCollector(id);
+  curveDelayMs = 30;
+  const res = await call('GET', '/api/venue-dashboard/intelligence');
+  assert.strictEqual(res.status, 200, res.text);
+  assert.strictEqual(res.body.available, true, res.text);
+  for (const h of res.body.todayHourly) assert.notStrictEqual(h.predictionMethod, METHOD, h.hour);
+  assert.strictEqual(res.body.now.method, 'ml', 'the dial agrees with the bars beside it');
+  assert.notStrictEqual(res.body.numberSource, 'category_typical');
+});
+
+test('the venue dashboard\'s strip: the owner\'s own row is scored again the same way', async () => {
+  curveOn();
+  await awayFromHourEdge();
+  CURRENT_USER = { id: ++nextUser, name: 'Owner', role: 'venue_owner' };
+  const id = freshId('STRIPAGREE');
+  venueCtx = { id: 82, google_place_id: id, verified: true };
+  await scoredBeforeTheCollector(id);
+  curveDelayMs = 30;
+  const res = await call('GET', '/api/venue-dashboard/strip');
+  assert.strictEqual(res.status, 200, res.text);
+  assert.strictEqual(res.body.available, true, res.text);
+  assert.strictEqual(res.body.you.method, 'ml');
+  assert.notStrictEqual(res.body.you.peakMethod, METHOD);
+});
+
+test('Birdie: a headline scored before the strip read the venue\'s first rows is scored again, so the first hour and the rest agree', async () => {
+  curveOn();
+  await awayFromHourEdge();
+  const id = freshId('BIRDIEAGREE');
+  await scoredBeforeTheCollector(id);
+  const out = await executeTool('get_crowd_prediction', { place_id: id }, ++nextUser, { includeForecast: true });
+  assert.notStrictEqual(out.crowd_method, 'category_typical');
+  assert.notStrictEqual(out.confidence_measurement.metric, 'within_15_rule_engine_category_table');
+  for (const h of out.hourly_forecast) assert.notStrictEqual(h.predictionMethod, METHOD, h.hour);
+  assert.strictEqual(out.hourly_forecast[0].predictionMethod, 'ml', 'the first hour is the headline\'s');
+  assert.strictEqual(out.hourly_forecast[0].crowd_method, out.hourly_forecast[1].crowd_method);
+});
+
+// ===========================================================================
+// Switched off: the same statements.
+// ===========================================================================
+
+// The statements one request sent, by kind.
+function tally(list) {
+  const kinds = { presence: 0, slot: 0, curve: 0, total: list.length };
+  for (const sql of list) {
+    if (/^SELECT 1 FROM ml_venue_baselines/.test(sql)) kinds.presence += 1;
+    else if (/FROM ml_venue_baselines WHERE google_place_id = \$1 AND \(/.test(sql)) kinds.slot += 1;
+    else if (CURVE_READ.test(sql)) kinds.curve += 1;
+  }
+  return kinds;
+}
+
+test('switched off, in the production configuration, every surface sends exactly the statements it sent before, and never a presence probe', async () => {
+  // CROWD_SERVE_MODE=curve_offset and CROWD_NOWCAST_ENABLED=true are set in
+  // production and CROWD_NO_CURVE_FALLBACK is not, so this is what a deploy
+  // of the presence and agreement changes runs. The counts below were taken
+  // on the code before those changes: a venue with no rows and a venue with a
+  // full curve, through every surface that puts a headline beside a strip,
+  // each from cold caches, then the card again past the recheck window. A
+  // count that moves is a read added or removed with the switch off.
+  process.env.CROWD_SERVE_MODE = 'curve_offset';
+  process.env.CROWD_NOWCAST_ENABLED = 'true';
+  publicCrowdRouter.__testables.resetDemoLimitsForTest();
+  await awayFromHourEdge();
+  const cold = freshId('PARCOLD');
+  const curved = freshId('PARCURVE');
+  curves[curved] = { ...ALL_SLOTS };
+  const owner = { id: ++nextUser, name: 'Owner', role: 'venue_owner' };
+  const cleanSlate = () => {
+    mlPredictor._internals.__resetVenueLookupCaches();
+    mlPredictor._internals.__resetNeighborCaches();
+    mlPredictor._internals.__resetRecentDeviationCache();
+    crowdRouter.__test.clearCache();
+    placeDetailsCache.__test.reset();
+    statements = [];
+  };
+  const counts = {};
+  // A beat for anything a route writes after it has answered.
+  const take = async (label) => {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    counts[label] = tally(statements);
+    statements = [];
+  };
+  for (const [kind, id] of [['cold', cold], ['curved', curved]]) {
+    cleanSlate();
+    assert.strictEqual((await call('GET', `/api/crowd/${id}`)).status, 200);
+    await take(`card ${kind}`);
+    cleanSlate();
+    assert.strictEqual((await call('GET', `/api/public/demo/venue/${id}`)).status, 200);
+    await take(`demo ${kind}`);
+    cleanSlate();
+    const out = await executeTool('get_crowd_prediction', { place_id: id }, ++nextUser, { includeForecast: true });
+    assert.ok(out.hourly_forecast.length > 0);
+    await take(`birdie ${kind}`);
+    CURRENT_USER = owner;
+    venueCtx = { id: 90, google_place_id: id, verified: true };
+    cleanSlate();
+    assert.strictEqual((await call('GET', '/api/venue-dashboard/intelligence')).body.available, true);
+    await take(`intelligence ${kind}`);
+    cleanSlate();
+    assert.strictEqual((await call('GET', '/api/venue-dashboard/strip')).body.available, true);
+    await take(`strip ${kind}`);
+  }
+  cleanSlate();
+  areaPlaces = [cold, curved];
+  assert.strictEqual((await call('GET', '/api/public/demo/venues?lat=39.95&lng=-75.16&q=parity')).status, 200);
+  await take('area');
+  // The card again, warm, past the recheck window: no probe asks again.
+  const realNow = Date.now;
+  Date.now = () => realNow() + 6 * 60 * 1000;
+  try {
+    for (const [kind, id] of [['cold', cold], ['curved', curved]]) {
+      crowdRouter.__test.clearCache();
+      statements = [];
+      assert.strictEqual((await call('GET', `/api/crowd/${id}`)).status, 200);
+      await take(`card ${kind} again`);
+    }
+  } finally {
+    Date.now = realNow;
+  }
+  // Measured on the code before the change, three runs, identical each time.
+  // A cold strip reads each unprimed hour's slot (24 for the card, 61 for the
+  // dashboard's day and six evenings); a full curve is one whole-curve read
+  // and the headline's one slot.
+  const same = (presence, slot, curve, total) => ({ presence, slot, curve, total });
+  assert.deepStrictEqual(counts, {
+    'card cold': same(0, 24, 1, 30),
+    'demo cold': same(0, 24, 1, 27),
+    'birdie cold': same(0, 24, 1, 28),
+    'intelligence cold': same(0, 61, 1, 65),
+    'strip cold': same(0, 8, 1, 12),
+    'card curved': same(0, 1, 1, 8),
+    'demo curved': same(0, 1, 1, 5),
+    'birdie curved': same(0, 1, 1, 6),
+    'intelligence curved': same(0, 1, 1, 6),
+    'strip curved': same(0, 1, 1, 6),
+    area: same(0, 2, 1, 7),
+    'card cold again': same(0, 23, 1, 27),
+    'card curved again': same(0, 0, 0, 4),
+  });
 });

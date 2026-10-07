@@ -1997,11 +1997,17 @@ router.get('/intelligence', requirePro, async (req, res) => {
     // route's response time for no ordering anybody needs. The /strip route in
     // this same file already runs exactly this pair under one Promise.all (see
     // scoreOne).
-    const [current, todayHourly] = await Promise.all([
+    const [scored, todayHourly] = await Promise.all([
       mlPredictor.predictBusyness(venue, weather, scoreTime),
       // Full day today, 6 AM start.
       mlPredictor.predictHourlyForecast(venue, weather, 6, 18, venueBase),
     ]);
+    // The dial and the bars agree on whether the venue has a curve: a dial
+    // that decided on a no from before the collector reached the venue, while
+    // the bars read its first rows, is scored again (mlPredictor
+    // .agreeWithStrip). Any other dial, and every dial with
+    // CROWD_NO_CURVE_FALLBACK off, comes back as it went in.
+    const current = await mlPredictor.agreeWithStrip(scored, todayHourly, venue, weather, scoreTime);
 
     // THE SIX EVENINGS ARE ONE ROUND, NOT SIX. Each iteration built its own
     // `day` from venueBase and read nothing from the iteration before it, so six
@@ -2258,10 +2264,13 @@ router.get('/strip', requirePro, async (req, res) => {
       base.setDate(base.getDate() + crowdEngine.weekdayOffset(base.getDay(), localDay));
       const scoreTime = new Date(base);
       scoreTime.setHours(localHour, 0, 0, 0);
-      const [current, hours] = await Promise.all([
+      const [scored, hours] = await Promise.all([
         mlPredictor.predictBusyness(v, weather, scoreTime),
         mlPredictor.predictHourlyForecast(v, weather, peakStart, peakHours, base),
       ]);
+      // Same rule as the dial on /intelligence: the row's number and its
+      // peak agree on whether the venue has a curve (mlPredictor.agreeWithStrip).
+      const current = await mlPredictor.agreeWithStrip(scored, hours, v, weather, scoreTime);
       const peak = hours.reduce((a, b) => (b.score > a.score ? b : a), { score: -1 });
       return {
         name: v.name,

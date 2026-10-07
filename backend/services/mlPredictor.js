@@ -326,6 +326,16 @@ function countPrediction(method) {
   predictionMethodCounts[key] = (predictionMethodCounts[key] || 0) + 1;
 }
 
+// Takes one count back, for an answer that was replaced before anybody was
+// served it (agreeWithStrip), so one venue-hour is still counted once. A key
+// that falls to zero goes, so byMethod reads as if it had never been counted.
+function uncountPrediction(method) {
+  const key = typeof method === 'string' && method ? method : 'unknown';
+  if (!(predictionMethodCounts[key] > 0)) return;
+  predictionMethodCounts[key] -= 1;
+  if (predictionMethodCounts[key] === 0) delete predictionMethodCounts[key];
+}
+
 // HOW MANY OF THE `ml` ANSWERS A SWITCH MADE (CROWD_SERVE_MODE,
 // CROWD_NOWCAST_ENABLED). `ml` above still counts every venue-hour the corpus
 // path answered, whichever arithmetic it used, because what that tally exists
@@ -4431,6 +4441,14 @@ function noteCurvePresence(placeId, hasCurve, askedAt, sentAfter) {
   boundedSet(curvePresenceCache, placeId, { ts: askedAt, data: hasCurve === true, seq: curvePresenceWrites });
 }
 
+// Whether a read in this process has seen the venue's rows, from memory
+// alone: a yes still inside the day it is held. Asks nothing and costs
+// nothing; with the switch off the map is empty and this is always false.
+function curveSeen(placeId) {
+  const held = placeId ? curvePresenceCache.get(placeId) : null;
+  return Boolean(held && held.data && Date.now() - held.ts < BASELINE_CACHE_TTL);
+}
+
 // The table's value when every gate holds, or null for the rule engine. The
 // switch is read first (noCurveFallbackState), so with it off this returns
 // before anything else runs. Never throws: whatever goes wrong in here, the
@@ -5328,6 +5346,55 @@ async function predictHourlyForecast(venue, weather, startHour, count, baseTimes
   return forecast;
 }
 
+// ---------------------------------------------------------------------------
+// ONE RESPONSE, ONE ANSWER TO "DOES THIS VENUE HAVE A CURVE".
+//
+// The card (routes/crowd.js), the public demo (routes/publicCrowd.js
+// buildCard), the venue dashboard's dial and strip rows
+// (routes/venueDashboard.js) and Birdie (routes/ai.js) each publish a
+// headline beside a strip of hours for the same venue, and score them as two
+// calls: one after the other, or both at once for latency. The headline can
+// therefore decide on a no from before the collector reached the venue, and
+// the strip, whose whole-curve read comes later, then read the venue's first
+// rows. That response put the category's typical level on the dial and the
+// venue's own curve on the bars beside it; on the public demo, a category
+// dial beside a "Live from the model" note and a green dot.
+//
+// So once both halves are in, a headline that came back as the table is
+// scored again if the strip scored an hour from the venue's own curve, or if
+// any read since has seen its rows (curveSeen). By then the strip has primed
+// this hour's slot and noted the yes, so the second answer is the venue's own
+// curve where it has a row at this hour and the rule engine where its curve is
+// zero, which is what the strip shows. It costs no query in practice: every
+// read it makes was just made by the two calls in front of it. The replaced
+// answer is taken back out of the coverage count, so the venue-hour is still
+// counted once.
+//
+// Any other headline comes back as the same object with nothing read, and
+// that is every headline while CROWD_NO_CURVE_FALLBACK is off, since nothing
+// else is ever tagged NO_CURVE_FALLBACK_METHOD. A headline this cannot
+// re-score comes back unchanged too: the step exists to make two answers
+// agree, never to cost the response its first one.
+async function agreeWithStrip(headline, strip, venue, weather, timestamp, options = {}) {
+  if (!headline || headline.predictionMethod !== NO_CURVE_FALLBACK_METHOD) return headline;
+  try {
+    const placeId = (venue && (venue.place_id || venue.placeId || venue.google_place_id)) || null;
+    // An 'ml' hour stood on a stored baseline: the table is only served beside
+    // the starling artifact, a delta model, and a delta model answers no hour
+    // without one.
+    const stripScoredCurve = Array.isArray(strip) && strip.some((h) => h && h.predictionMethod === 'ml');
+    if (!stripScoredCurve && !curveSeen(placeId)) return headline;
+    // A yes this process has just seen, noted so the second answer cannot
+    // stand on the no the first one read.
+    if (stripScoredCurve) noteCurvePresence(placeId, true, Date.now());
+    const rescored = await predictBusyness(venue, weather, timestamp, options);
+    uncountPrediction(NO_CURVE_FALLBACK_METHOD);
+    return rescored;
+  } catch {
+    return headline;
+  }
+}
+
 // Re-export crowdEngine functions that ML doesn't replace
 const { estimateCapacity, estimateWait, findBestTime, findPeakTime,
   findQuieterAlternatives, buildCalibrationAdjustment } = crowdEngine;
@@ -5335,6 +5402,10 @@ const { estimateCapacity, estimateWait, findBestTime, findPeakTime,
 module.exports = {
   predictBusyness,
   predictHourlyForecast,
+  // The headline beside a strip, made to agree with it about whether the
+  // venue has a curve. Every route that publishes the two together calls it
+  // once both are in; see the block above it.
+  agreeWithStrip,
   // The third Ticketmaster ledger's reader. routes/admin.js's cost panel had
   // meters for the other two and none for this one, so both the observed count
   // and the worst-case ceiling it published were short by a whole ledger.
