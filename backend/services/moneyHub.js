@@ -3824,8 +3824,20 @@ function buildOwnerActions({ roundTrip, expensesRead, revenuecat }) {
     {
       id: 'vercel_plan',
       label: 'A Vercel plan that allows a business',
-      words: 'Vercel\'s free Hobby plan is for non-commercial, personal use only, and the website sells Flock Pro. The plan that fits is Pro, $20 a month per developer seat, under Settings, then Billing. The Vercel line under Costs says which plan the cost figures assume.',
+      words: 'Vercel\'s free Hobby plan is for non-commercial, personal use only, and the website sells Flock Pro. The plan that fits is Pro, $20 a month per developer seat, under Settings, then Billing. The Vercel line under Costs says which plan the cost figures assume. Vercel also wrote on 2026-10-07 that deployment storage was at 75% of the free plan\'s 10 GB and warned of disruption at 100%; Pro is its own answer, and removing old deployments in the dashboard frees space too.',
       link: { href: 'https://vercel.com/dashboard', text: 'Vercel' },
+    },
+    {
+      id: 'app_privacy_crash_data',
+      label: 'App Privacy: crash data',
+      words: 'The App Privacy answers in App Store Connect do not list crash data, and the app reports crashes. The reports carry no account and no IP address (client_crash_reports), so the answer is Crash Data: collected, not linked to the person, not used for tracking, for App Functionality. App Privacy has no API, so this is done by hand: the app in App Store Connect, then App Privacy, then Edit.',
+      link: { href: 'https://appstoreconnect.apple.com/apps', text: 'App Store Connect apps' },
+    },
+    {
+      id: 'eu_trader_status',
+      label: 'EU trader status',
+      words: 'App Store Connect asks every developer for its trader status under the EU Digital Services Act, and the app is not offered in EU countries until it is given. It is under the app\'s App Information, and for a company that sells subscriptions the answer is trader, with the contact details the EU requires shown on the listing.',
+      link: { href: 'https://developer.apple.com/help/app-store-connect/manage-compliance-information/manage-european-union-digital-services-act-trader-requirements/', text: 'Apple: EU trader requirements' },
     },
   ].map((s) => ({ ...s, checkedBy: 'you', state: null, optional: false, fix: null }));
 
