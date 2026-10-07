@@ -124,6 +124,12 @@ async function ensureAxisColumn() {
   await pool.query(`ALTER TABLE ml_training_data ADD COLUMN IF NOT EXISTS hour_axis VARCHAR(16)`);
 }
 
+// Same for the stamp an unanswered by-name lookup leaves (stampFailedAsk),
+// which arrives with migration 125 and which ORDER_BY_STALEST names.
+async function ensureNameUnansweredColumn() {
+  await pool.query('ALTER TABLE ml_venues ADD COLUMN IF NOT EXISTS besttime_name_unanswered_at TIMESTAMPTZ');
+}
+
 // The INSERT below names a conflict target. A missing column can be created
 // here; a missing unique INDEX cannot — building one requires first collapsing
 // whatever duplicates the database is already holding, which is migration 024's
@@ -207,16 +213,22 @@ const ORDER_BY_SERVED = `(SELECT COUNT(*) FROM served_predictions sp
                              AND sp.served_at > NOW() - INTERVAL '60 days') DESC,
                          review_count DESC NULLS LAST, id`;
 
-// --order=stalest is for a by-id refresh (--only-found). A venue's place in
-// line is the later of two stamps on its own row, oldest first:
-// last_collected_at, which every writer of weekly rows sets when they land
-// (this collector, the harvest and discoverBestTime.js; migration 125 filled
-// in the venues discoverBestTime left without one), and besttime_attempted_at,
-// which this collector sets on every ask by id whatever came back, a 503 or a
-// failed call included (stampFailedAsk; a key-level failure ends the run with
-// that venue unstamped). GREATEST skips a NULL and is NULL only when both are,
-// so a venue with neither comes before all of them: one never asked and with
-// no curve.
+// --order=stalest is for a by-id refresh (--only-found), and an admission run
+// may use it too. A venue's place in line is the latest of three stamps on
+// its own row, oldest first:
+//   last_collected_at, which every writer of weekly rows sets when they land
+//     (this collector, the harvest and discoverBestTime.js; migration 125
+//     filled in the venues discoverBestTime left without one);
+//   besttime_attempted_at, which this collector sets on every ask by id
+//     whatever came back, a 503 or a failed call included, and on every ask
+//     by name that BestTime answered;
+//   besttime_name_unanswered_at, which it sets on an ask by name that got no
+//     answer, the one case besttime_attempted_at stays NULL for so that
+//     --skip-attempted still offers the venue's admission.
+// stampFailedAsk writes the failure stamps; a key-level failure ends the run
+// with that venue unstamped. GREATEST skips a NULL and is NULL only when all
+// three are, so a venue with none comes before all of them: one never asked
+// and with no curve.
 //
 // The order used to read the newest weekly row alone. A miss writes no rows,
 // so the venues BestTime has no forecast for kept their place at the head of
@@ -230,7 +242,8 @@ const ORDER_BY_SERVED = `(SELECT COUNT(*) FROM served_predictions sp
 // synthetic table shaped like the corpus, by walking idx_ml_training_collected
 // backward past every newer row, once per venue. The third fixed string;
 // nothing from argv reaches the SQL.
-const ORDER_BY_STALEST = 'GREATEST(last_collected_at, besttime_attempted_at) ASC NULLS FIRST, id';
+const ORDER_BY_STALEST =
+  'GREATEST(last_collected_at, besttime_attempted_at, besttime_name_unanswered_at) ASC NULLS FIRST, id';
 
 function selectionOptions(argv) {
   const orderArg = argv.find((a) => a.startsWith('--order='));
@@ -299,6 +312,7 @@ function maxCreditsFrom(argv) {
 
 async function collectWeekly() {
   await ensureAxisColumn();
+  await ensureNameUnansweredColumn();
   await requireSlotIndex(pool, WEEKLY_SLOT_INDEX);
   // Support --city=lehigh, --exclude-cities=beijing,foo, and --limit=10 flags
   const cityArg = process.argv.find(a => a.startsWith('--city='));
@@ -470,24 +484,55 @@ async function collectWeekly() {
     throw lastErr;
   };
 
-  // A venue asked by id whose ask drew a 503 or failed on the way is stamped
-  // as asked all the same, because --order=stalest reads the stamp. Unstamped,
-  // such a venue kept its old place while every venue around it moved back,
-  // and after one pass it opened every piece: on 2026-10-06 the same seven
-  // lehigh venues drew a 503 every time they were asked, each with its 60 s
-  // wait. Nothing else is written, since a failure says nothing about the
-  // venue. A by-name venue is left alone so --skip-attempted still offers its
-  // admission, and so is a row that no longer holds the id it was asked by
-  // (the repair can unmap it mid-run). This runs inside the loop's catch, so
-  // a failed stamp is logged and never thrown.
+  // A venue whose ask drew a 503 or failed on the way is stamped all the
+  // same, because --order=stalest reads the stamp. Unstamped, such a venue
+  // kept its old place while every venue around it moved back, and after one
+  // pass it opened every piece: on 2026-10-06 the same seven lehigh venues
+  // drew a 503 every time they were asked, each with its 60 s wait. Nothing
+  // else is written, since a failure says nothing about the venue.
+  //
+  // Asked by id, the stamp is besttime_attempted_at, and only onto a row that
+  // still holds the id it was asked by (the repair can unmap it mid-run).
+  //
+  // Asked by name, it is besttime_name_unanswered_at and never
+  // besttime_attempted_at, which is what --skip-attempted reads: a lookup
+  // that got no answer has not been given its admission, so the venue stays
+  // on offer for one. Unstamped, a by-name venue that always drew a 503 (or a
+  // 429, or a timeout) was first in every --order=stalest run, and under
+  // --limit=1 the only venue ever asked. Only while the row holds no id: a
+  // row that got its id from this very lookup was answered, whatever failed
+  // after.
+  //
+  // A TIMEOUT IS THE AMBIGUOUS CASE. The lookup may have reached BestTime and
+  // admitted the venue, with the answer, and the venue's id in it, lost on
+  // the way back. It is stamped like a 503 all the same: it goes to the back
+  // of the stalest line and stays on offer for admission. Marking it as
+  // attempted would not give back an admission already spent; it would take
+  // the venue out of every later admission run with no id, no rows and no
+  // status to show for the spend, and since the id was in the lost answer,
+  // asking by name again is the only way this collector has to fetch the
+  // week such an admission paid for. No second ask happens on its own: a
+  // by-name lookup runs only in a run whose --max-new counts it. Whether
+  // BestTime bills a second lookup of a venue it already admitted is not
+  // documented; the admission counter at besttime.app/settings shows it.
+  //
+  // This runs inside the loop's catch, so a failed stamp is logged and never
+  // thrown.
   const stampFailedAsk = async (venue) => {
-    if (!venue.besttime_venue_id) return;
     try {
-      await safeQuery(
-        `UPDATE ml_venues SET besttime_attempted_at = NOW()
-          WHERE id = $1 AND besttime_venue_id = $2`,
-        [venue.id, venue.besttime_venue_id]
-      );
+      if (venue.besttime_venue_id) {
+        await safeQuery(
+          `UPDATE ml_venues SET besttime_attempted_at = NOW()
+            WHERE id = $1 AND besttime_venue_id = $2`,
+          [venue.id, venue.besttime_venue_id]
+        );
+      } else {
+        await safeQuery(
+          `UPDATE ml_venues SET besttime_name_unanswered_at = NOW()
+            WHERE id = $1 AND besttime_venue_id IS NULL`,
+          [venue.id]
+        );
+      }
     } catch (err) {
       console.error(`  Could not stamp the attempt: ${describeDbError(err)}`);
     }
