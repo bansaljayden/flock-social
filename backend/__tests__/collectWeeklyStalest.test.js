@@ -505,6 +505,85 @@ test('a by-name venue that never gets an answer stops starving the rest of a lim
   ]);
 });
 
+// Serves of a venue's place in the last day, by one user, for --order=served.
+async function serve(venueId, times) {
+  const { rows: [user] } = await pool.query(
+    `INSERT INTO users (email, password, name) VALUES ($1, 'x', 'Order Test') RETURNING id`,
+    [`order.serves.${venueId}@example.com`]
+  );
+  await pool.query(
+    `INSERT INTO served_predictions (user_id, venue_place_id, score, served_at)
+     SELECT $1, v.google_place_id, 50, NOW() - interval '1 day'
+       FROM ml_venues v, generate_series(1, $3) n
+      WHERE v.id = $2`,
+    [user.id, venueId, times]
+  );
+}
+
+test('--order=reviews and --order=served move a by-name venue back once its ask goes unanswered', async () => {
+  // Neither order changes between runs. A by-name venue whose lookup drew a
+  // 503 every time was the most reviewed (or most served) venue in line in
+  // every run, so it was asked first every time, and under --limit=1 the
+  // venue behind it never was. The stamp the failure leaves now moves it back.
+  for (const order of ['reviews', 'served']) {
+    const city = `order_${order}`;
+    const failing = `${order} Always 503`;
+    const waiting = `${order} Never Asked`;
+    FAILS.set(failing, throttle);
+    const a = await addVenue(city, failing, null);
+    const b = await addVenue(city, waiting, null);
+    if (order === 'reviews') {
+      await pool.query('UPDATE ml_venues SET review_count = 500 WHERE id = $1', [a]);
+      await pool.query('UPDATE ml_venues SET review_count = 20 WHERE id = $1', [b]);
+    } else {
+      // Ahead on serves alone: by reviews alone the other venue would lead.
+      await pool.query('UPDATE ml_venues SET review_count = 20 WHERE id = $1', [a]);
+      await pool.query('UPDATE ml_venues SET review_count = 500 WHERE id = $1', [b]);
+      await serve(a, 3);
+      await serve(b, 1);
+    }
+    byNameAnswer = `ven_order_${order}_waiting`;
+
+    const args = [`--city=${city}`, '--skip-attempted', `--order=${order}`, '--limit=1', '--max-new=1'];
+    // Nothing has gone unanswered yet, so the order's own first venue.
+    assert.deepStrictEqual(await piece(args), [failing], `--order=${order}, first run`);
+    // The old order asked it again here, and in every run after.
+    assert.deepStrictEqual(await piece(args), [waiting], `--order=${order}, second run`);
+    // The other venue was answered and leaves the line; the unanswered one is
+    // still in it, moved back and not dropped.
+    assert.deepStrictEqual(await piece(args), [failing], `--order=${order}, third run`);
+  }
+});
+
+test('an unanswered ask that BestTime has answered since does not move a venue back', async () => {
+  // A 404 retry selects venues that were answered before. A venue that drew a
+  // 503 and was answered after it is not one that keeps failing, so it keeps
+  // its place; one whose newest ask went unanswered does not.
+  for (const [label, unansweredAgo, first] of [
+    ['Answered Since', '50 days', 'most'],
+    ['Unanswered Last', '35 days', 'less'],
+  ]) {
+    const names = { most: `${label} Most Reviewed`, less: `${label} Less Reviewed` };
+    const city = `order_${label.replace(' ', '_').toLowerCase()}`;
+    const most = await addVenue(city, names.most, null, '40 days');
+    const less = await addVenue(city, names.less, null, '40 days');
+    await pool.query(
+      `UPDATE ml_venues SET review_count = 500, besttime_status = '404',
+              besttime_name_unanswered_at = NOW() - $2::interval
+        WHERE id = $1`,
+      [most, unansweredAgo]
+    );
+    await pool.query(`UPDATE ml_venues SET review_count = 20, besttime_status = '404' WHERE id = $1`, [less]);
+    NO_FORECAST.add(names.most);
+    NO_FORECAST.add(names.less);
+    assert.deepStrictEqual(
+      await piece([`--city=${city}`, '--skip-collected', '--retry-404', '--order=reviews', '--limit=1', '--max-new=1']),
+      [names[first]],
+      `unanswered ${unansweredAgo} ago, answered 40 days ago`
+    );
+  }
+});
+
 test('the throttle budget counts 503s in a row, not 503s in a run', async () => {
   // The count was never reset, so a run stopped at its fortieth 503 however
   // many answers came between them, and said "40 consecutive throttles". The
