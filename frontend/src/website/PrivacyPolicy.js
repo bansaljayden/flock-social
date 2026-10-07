@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import './PrivacyPolicy.css';
 import SiteFooter from './SiteFooter';
 
-const EFFECTIVE_DATE = 'October 6, 2026';
+const EFFECTIVE_DATE = 'October 7, 2026';
 const CONTACT_EMAIL = 'social@flockcorp.com';
 
 // THE OPERATOR IS A REGISTERED COMPANY NOW, and this name is its legal name.
@@ -468,12 +468,21 @@ export default function PrivacyPolicy() {
               </p>
 
               <h3>Birdie, the assistant in the app</h3>
+              {/* The time zone sentence is backend/routes/ai.js userZone: the
+                  zone this request sent, read only on a recorded yes to the
+                  question that names it (birdie_ai_consent_copy 2 or more). The
+                  Now line and the device's hour and day handed to the crowd tool
+                  both go through it. legalPagesMatchCode.test.js pins the
+                  sentence to those lines. */}
               <p>
                 When you chat with Birdie, what goes to Google to produce the reply is
                 your first name, your age bracket (under 18, under 21, or adult, never
-                your birthday), your messages in that conversation, your time zone with
-                the date and time it is there, and, only if you have allowed location,
-                your approximate position rounded to about a kilometer.
+                your birthday), your messages in that conversation, and, only if you
+                have allowed location, your approximate position
+                rounded to about a kilometer. Your time zone and the date and time it
+                is there go too, but only if you said yes to the version of Birdie's
+                question that names them, and only when your device reports its time
+                zone. A yes to an earlier version leaves them out.
               </p>
               <p>
                 Every message also carries where you are in the app, because otherwise Birdie
