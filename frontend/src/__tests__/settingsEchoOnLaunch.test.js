@@ -17,7 +17,7 @@ jest.mock('../services/api', () => ({
   isLoggedIn: jest.fn(() => true),
 }));
 const api = require('../services/api');
-const { sameAsAccount, queueSync, pullSettings } = require('../services/userSettings');
+const { sameAsAccount, queueSync, pullSettings, latestPull } = require('../services/userSettings');
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 // What a pull hands on to the screen (the flock-settings-loaded detail).
@@ -282,4 +282,84 @@ test('the listener records what it adopts, and all three effects ask before send
   }
   // Declared before the first effect that reads it.
   expect(app.indexOf('const accountListsRef = useRef({});')).toBeLessThan(app.indexOf("sameAsAccount(accountListsRef.current, 'pinnedFlockIds'"));
+});
+
+describe('an answer that lands before the screen is listening', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    window.dispatchEvent(new CustomEvent('flock-session-cleared'));
+    api.isLoggedIn.mockReturnValue(true);
+    api.updateUserSettings.mockReset();
+    api.updateUserSettings.mockImplementation(() => Promise.resolve({}));
+  });
+
+  test('is kept, numbered, and checked again against what this device changed since', async () => {
+    api.getUserSettings.mockImplementation(() => Promise.resolve({ settings: { pinnedFlockIds: [1, 5], flockOrder: [5, 1] } }));
+    let seq = null;
+    const on = (e) => { seq = e.pullSeq; };
+    window.addEventListener('flock-settings-loaded', on);
+    await pullSettings();
+    window.removeEventListener('flock-settings-loaded', on);
+    expect(seq).toBeGreaterThan(0);
+    expect(latestPull()).toEqual({ seq, values: { pinnedFlockIds: [1, 5], flockOrder: [5, 1] } });
+    queueSync({ flockOrder: [1, 5] }); // changed here after the pull asked
+    expect(latestPull()).toEqual({ seq, values: { pinnedFlockIds: [1, 5] } });
+    await wait(700);
+  });
+
+  test("is not kept past the session's end", async () => {
+    api.getUserSettings.mockImplementation(() => Promise.resolve({ settings: { userInterests: ['A'] } }));
+    await pullSettings();
+    expect(latestPull()).not.toBeNull();
+    window.dispatchEvent(new CustomEvent('flock-session-cleared'));
+    expect(latestPull()).toBeNull();
+  });
+
+  test('the main screen takes it when its listener attaches, once', () => {
+    expect(app).toContain('const missed = latestPull();');
+    expect(app).toContain('if (missed && missed.seq > appliedPullRef.current) onSettings({ detail: missed.values, pullSeq: missed.seq });');
+    expect(app).toContain('if (e.pullSeq) appliedPullRef.current = Math.max(appliedPullRef.current, e.pullSeq);');
+  });
+});
+
+describe('a save while the device wrongly says it is offline', () => {
+  test('is still tried again', async () => {
+    const was = Object.getOwnPropertyDescriptor(window.navigator, 'onLine');
+    Object.defineProperty(window.navigator, 'onLine', { configurable: true, get: () => false });
+    try {
+      api.isLoggedIn.mockReturnValue(true);
+      api.updateUserSettings.mockReset();
+      api.updateUserSettings
+        .mockImplementationOnce(() => Promise.reject(Object.assign(new Error('timeout'), { isNetworkError: true })))
+        .mockImplementation(() => Promise.resolve({}));
+      queueSync({ crowdAlerts: 'false' });
+      await wait(700);
+      expect(api.updateUserSettings).toHaveBeenCalledTimes(1);
+      await wait(5200); // no 'online' event will come
+      expect(api.updateUserSettings).toHaveBeenCalledTimes(2);
+    } finally {
+      if (was) Object.defineProperty(window.navigator, 'onLine', was);
+      else delete window.navigator.onLine;
+    }
+  }, 15000);
+});
+
+test('every mode choice reaches the account, not only the picker', () => {
+  // rememberMode writes this device's copy and queues the account's.
+  expect(app).toContain("function rememberMode(mode) {");
+  expect(app).toContain('queueSync({ userMode: mode || null });');
+  // No mode write in App.js goes around it, except the first launch's default
+  // for a regular user, which is not a choice.
+  const writes = app.match(/localStorage\.(setItem|removeItem)\('flockUserMode'[^;]*;/g) || [];
+  expect(writes).toEqual([
+    "localStorage.setItem('flockUserMode', mode);",
+    "localStorage.removeItem('flockUserMode');",
+  ]);
+  expect(app.match(/lsSet\('flockUserMode', '[a-z]+'\);/g)).toEqual(["lsSet('flockUserMode', 'user');"]);
+  for (const call of ["rememberMode('venue');", "rememberMode('admin');", "rememberMode('user');", 'rememberMode(mode);', 'rememberMode(null);']) {
+    expect(app).toContain(call);
+  }
+  const onboarding = fs.readFileSync(path.join(__dirname, '..', 'screens', 'VenueOnboarding.js'), 'utf8');
+  expect(onboarding).toContain("queueSync({ userMode: 'venue' });");
+  expect(onboarding).toContain("queueSync({ userMode: 'user' });");
 });
