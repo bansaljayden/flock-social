@@ -5,11 +5,11 @@
 // routes/revenuecat.js is the ONLY writer of users.is_premium anywhere in this
 // repo. There is no subscription table, no expiry column and no admin grant
 // path: whatever this one handler decides is the entirety of "who has paid".
-// The consumer paywall is dormant (PAYWALL_ENABLED and REVENUECAT_WEBHOOK_SECRET
-// are both unset on Railway), so none of this decides anything today — which is
-// exactly why it is pinned now. The flip is a config change made by one person
-// on one evening, not a code review, so every property this file asserts has to
-// already be true before that evening starts.
+// REVENUECAT_WEBHOOK_SECRET is set on Railway, so this route is live: it answers
+// RevenueCat's deliveries today, and every property below is already in use.
+// The consumer paywall (PAYWALL_ENABLED) is still off, and switching it on is a
+// config change made by one person on one evening, not a code review, so
+// nothing here may wait for that evening to become true.
 //
 // The central question, asserted first and with a reproduction: with the secret
 // UNSET, does an unsigned POST get anywhere? An open webhook is a one-curl
@@ -147,9 +147,11 @@ const premiumWrites = () => log.filter((q) => /UPDATE users SET is_premium/i.tes
 // 1. THE CENTRAL QUESTION — an unsigned request with the secret unset
 // ===========================================================================
 //
-// This is the production state today. If the answer were "accepted", the URL
-// itself would be the credential and anyone who read a HAR file, a proxy log or
-// this repo's own PAYWALL.md could POST themselves Flock Pro.
+// This was the production state until the secret was set, and it is the state
+// of any deployment that loses the variable: a cleared Railway value, a new
+// environment, a service restored without it. If the answer were "accepted",
+// the URL itself would be the credential and anyone who read a HAR file, a
+// proxy log or this repo's own PAYWALL.md could POST themselves Flock Pro.
 
 test('with the secret UNSET an unsigned request is refused and touches nothing', async () => {
   delete process.env.REVENUECAT_WEBHOOK_SECRET;
