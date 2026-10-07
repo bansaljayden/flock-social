@@ -40,9 +40,11 @@ const refunds = {};
 const invoicePayments = {};
 const invoices = {};
 // How an invoice was paid (invoice id to PaymentIntent), for a refund made by
-// invoice, and every refund Stripe was asked to make, in order.
+// invoice, and every refund Stripe was asked to make, in order, and the
+// PaymentIntents whose next refund Stripe fails.
 const paidWith = {};
 const refundsMade = [];
+const failNextRefund = new Set();
 // Checkout sessions that completed, by id, for a confirm.
 const completedSessions = {};
 // Every cancel Stripe was asked for, in order, with its request options, and
@@ -132,7 +134,14 @@ function FakeStripe() {
     },
     refunds: {
       list: async ({ charge }) => ({ data: (refunds[charge] || []).map((r) => ({ ...r })), has_more: false }),
-      create: async (args, opts) => { refundsMade.push({ args, options: opts || null }); return { id: `re_made_${refundsMade.length}`, status: 'succeeded' }; },
+      create: async (args, opts) => {
+        if (failNextRefund.has(args.payment_intent)) {
+          failNextRefund.delete(args.payment_intent);
+          throw Object.assign(new Error('simulated Stripe outage'), { statusCode: 500 });
+        }
+        refundsMade.push({ args, options: opts || null });
+        return { id: `re_made_${refundsMade.length}`, status: 'succeeded' };
+      },
     },
     invoicePayments: {
       // By PaymentIntent (which invoices a charge paid), or by invoice (how an
@@ -1831,6 +1840,96 @@ test('a plan the deletion already ended is neither cancelled nor refunded when i
   await venueBilling.handleVenueEvent(completedEvent(session));
   assert.strictEqual(cancels.length, cancelsBefore);
   assert.deepStrictEqual(refundsMade.slice(refundsBefore), [], 'a plan used before the account was deleted was refunded on a replay');
+});
+
+// A REFUSAL IS OWED UNTIL IT IS FINISHED. The cancel and the refund are two
+// calls to Stripe, and a refund that failed after the cancel went through was
+// never tried again: the retry found the plan cancelled, read that as nothing
+// left to do, and the payment for a purchase never delivered was kept. The
+// refusal is recorded before the cancel (migration 123), outlives the account,
+// and every later handling of the checkout finishes it.
+test('a refund that failed after a gone account\'s plan was cancelled is made when Stripe sends the checkout again', async () => {
+  const [PLACE] = placePair();
+  const gone = await venue({ verified: true, placeId: PLACE });
+  await testPool.query('DELETE FROM users WHERE id = $1', [gone]);
+  sub('sub_gone_refund_retry', gone, 'active', { customer: 'cus_KEPT_GONE_RETRY', metadata: boundTo(PLACE)(gone) });
+  const session = completedCheckout('cs_gone_refund_retry', 'sub_gone_refund_retry', gone, PLACE, 'in_gone_refund_retry');
+  const refunded = () => refundsMade.filter((r) => r.args.payment_intent === 'pi_in_gone_refund_retry');
+  const owedRows = async () => (await testPool.query(
+    'SELECT reason, stripe_invoice_id, finished_at FROM roost_refused_purchases WHERE stripe_subscription_id = $1', ['sub_gone_refund_retry'])).rows;
+  // First the cancel fails: the refusal is on record before it was asked for.
+  failNextCancel.add('sub_gone_refund_retry');
+  await assert.rejects(venueBilling.handleVenueEvent(completedEvent(session)), /simulated Stripe outage/);
+  assert.deepStrictEqual((await owedRows()).map((r) => [r.reason, r.finished_at]), [['account_deleted', null]],
+    'the refusal was not recorded before the plan was cancelled');
+  // Then the cancel goes through and the refund fails.
+  failNextRefund.add('pi_in_gone_refund_retry');
+  await assert.rejects(venueBilling.handleVenueEvent(completedEvent(session)), /simulated Stripe outage/);
+  assert.strictEqual(subs.sub_gone_refund_retry.status, 'canceled', 'the case under test is a cancel that went through');
+  assert.deepStrictEqual(refunded(), []);
+
+  // Stripe sends the event again, and the plan is already cancelled.
+  await venueBilling.handleVenueEvent(completedEvent(session));
+  assert.deepStrictEqual(refunded().map((r) => [r.args.metadata, r.options]),
+    [[{ flock_reason: 'account_deleted' }, { idempotencyKey: 'flock-account-deleted-refund-in_gone_refund_retry' }]],
+    'the retry found the plan cancelled and kept the payment for a purchase nobody can be served');
+  assert.strictEqual(cancels.filter((c) => c.id === 'sub_gone_refund_retry').length, 1);
+  // Finished: a later replay asks Stripe for nothing more.
+  await venueBilling.handleVenueEvent(completedEvent(session));
+  assert.strictEqual(refunded().length, 1);
+  const owed = await owedRows();
+  assert.strictEqual(owed.length, 1);
+  assert.strictEqual(owed[0].stripe_invoice_id, 'in_gone_refund_retry');
+  assert.ok(owed[0].finished_at, 'the refusal was never marked finished');
+});
+
+test('a refused purchase whose refund failed is still refunded after its owner deletes the account', async () => {
+  const [PLACE] = placePair();
+  const id = await venue({ verified: false, placeId: PLACE });
+  sub('sub_refused_then_gone', id, 'active', { customer: 'cus_REFUSED_THEN_GONE', metadata: boundTo(PLACE)(id) });
+  const session = completedCheckout('cs_refused_then_gone', 'sub_refused_then_gone', id, PLACE, 'in_refused_then_gone');
+  const refunded = () => refundsMade.filter((r) => r.args.payment_intent === 'pi_in_refused_then_gone');
+  failNextRefund.add('pi_in_refused_then_gone');
+  await assert.rejects(venueBilling.handleVenueEvent(completedEvent(session)), /simulated Stripe outage/);
+  assert.strictEqual(subs.sub_refused_then_gone.status, 'canceled');
+  assert.deepStrictEqual(refunded(), []);
+
+  // The owner deletes the account before Stripe sends the event again.
+  await venueBilling.closeVenueCustomer(id);
+  await testPool.query('DELETE FROM users WHERE id = $1', [id]);
+  await venueBilling.handleVenueEvent(completedEvent(session));
+  assert.deepStrictEqual(refunded().map((r) => [r.args.metadata, r.options]),
+    [[{ flock_reason: 'claim_not_verified' }, { idempotencyKey: 'flock-claim-revoked-refund-in_refused_then_gone' }]],
+    'the refund owed for a refused purchase went with the account');
+});
+
+test('a refusal recorded before the claim is verified keeps the plan undelivered, and the retry finishes it', async () => {
+  const [PLACE] = placePair();
+  const id = await venue({ verified: false, placeId: PLACE });
+  const adminId = await admin();
+  sub('sub_refused_first', id, 'active', { metadata: boundTo(PLACE)(id) });
+  // The created event arrives first: recorded, and not served to a claim
+  // nobody has confirmed.
+  await venueBilling.syncVenueSubscription('sub_refused_first');
+  const session = completedCheckout('cs_refused_first', 'sub_refused_first', id, PLACE, 'in_refused_first');
+  failNextCancel.add('sub_refused_first');
+  await assert.rejects(venueBilling.handleVenueEvent(completedEvent(session)), /simulated Stripe outage/);
+
+  // The claim is verified before Stripe sends the event again.
+  const res = await adminCall('PUT', `/api/admin/venues/${await profileIdOf(id)}/verify`, { as: adminId, body: { verified: true, googlePlaceId: PLACE } });
+  assert.strictEqual(res.status, 200, res.text);
+  assert.strictEqual((await state(id)).served, 'free', 'a purchase already refused was served once the claim was verified');
+  const rec = await testPool.query('SELECT served_at FROM venue_stripe_subscriptions WHERE stripe_subscription_id = $1', ['sub_refused_first']);
+  assert.strictEqual(rec.rows[0].served_at, null, 'a refused purchase was recorded as delivered');
+
+  // The retry finishes what was decided.
+  const retry = await venueBilling.handleVenueEvent(completedEvent(session));
+  assert.strictEqual(retry.refused, 'CLAIM_NOT_VERIFIED');
+  assert.deepStrictEqual(cancels.filter((c) => c.id === 'sub_refused_first').map((c) => c.options),
+    [{ idempotencyKey: 'flock-claim-revoked-cancel-sub_refused_first' }]);
+  assert.deepStrictEqual(refundsMade.filter((r) => r.args.payment_intent === 'pi_in_refused_first').map((r) => r.options),
+    [{ idempotencyKey: 'flock-claim-revoked-refund-in_refused_first' }], 'a refusal decided before the verification was dropped by it');
+  assert.strictEqual((await state(id)).served, 'free');
 });
 
 // ---------------------------------------------------------------------------

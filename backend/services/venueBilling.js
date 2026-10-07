@@ -87,13 +87,15 @@ const LIVE_STATUSES = new Set(['active', 'trialing', 'past_due', 'unpaid']);
 const ENDED_STATUSES = new Set(['canceled', 'incomplete_expired']);
 
 // What a subscription WE ended early is written as in venue_subscriptions.status
-// (stripe_subscription_endings.cause, migration 118). Not Stripe's word on
-// purpose: Stripe can still call such a subscription active, and the row says
-// why the grant ended. Any status outside GRANT_LIVE_STATUSES revokes in the
-// resolver, so these two need nothing there.
+// (stripe_subscription_endings.cause, migration 118, or a purchase refused at
+// fulfillment, migration 123). Not Stripe's word on purpose: Stripe can still
+// call such a subscription active, and the row says why the grant ended. Any
+// status outside GRANT_LIVE_STATUSES revokes in the resolver, so these need
+// nothing there.
 function endingStatus(cause) {
   if (cause === 'refund') return 'refunded';
   if (cause === 'dispute') return 'disputed';
+  if (cause === 'refused') return 'refused';
   return 'ended';
 }
 
@@ -176,11 +178,10 @@ function isVenueObject(obj) {
 // Customers and sessions
 // ---------------------------------------------------------------------------
 
+const PROFILE_SQL = 'SELECT id, verified, business_name, stripe_customer_id, google_place_id FROM venue_profiles WHERE user_id = $1';
+
 async function venueProfileFor(userId) {
-  const r = await pool.query(
-    'SELECT id, verified, business_name, stripe_customer_id, google_place_id FROM venue_profiles WHERE user_id = $1',
-    [userId]
-  );
+  const r = await pool.query(PROFILE_SQL, [userId]);
   const rows = r && Array.isArray(r.rows) ? r.rows : [];
   return rows[0] || null;
 }
@@ -1043,13 +1044,43 @@ const RECORD_SUBSCRIPTION_SQL = `INSERT INTO venue_stripe_subscriptions (stripe_
     user_id = EXCLUDED.user_id,
     stripe_customer_id = COALESCE(EXCLUDED.stripe_customer_id, venue_stripe_subscriptions.stripe_customer_id),
     google_place_id = COALESCE($4::varchar, venue_stripe_subscriptions.google_place_id, EXCLUDED.google_place_id)
-  RETURNING google_place_id`;
+  RETURNING google_place_id, refused_at`;
 
 // THE FIRST TIME A SUBSCRIPTION IS SERVED (migration 121). Fulfillment never
 // refuses or refunds a subscription that has been (fulfillVenueCheckout), so
 // it is written on the sync's own transaction, by the read that served it.
-const MARK_SERVED_SQL = 'UPDATE venue_stripe_subscriptions SET served_at = NOW() WHERE stripe_subscription_id = $1::text AND served_at IS NULL';
-const SERVED_SQL = 'SELECT served_at FROM venue_stripe_subscriptions WHERE stripe_subscription_id = $1::text';
+// Never over a refusal (migration 123): the two are decided on this one row,
+// each only while the other is unset, so whichever lands first stands. The
+// admin's verify writes the same mark when it is the step that starts serving
+// a plan (routes/admin.js).
+const MARK_SERVED_SQL = 'UPDATE venue_stripe_subscriptions SET served_at = NOW() WHERE stripe_subscription_id = $1::text AND served_at IS NULL AND refused_at IS NULL';
+
+// A PURCHASE REFUSED AT FULFILLMENT, DECIDED UNDER THE VENUE'S LOCK
+// (decideRefusal). The claim is read with its row locked, so a verification
+// landing at the same moment either finishes first, and the claim is good, or
+// waits until the refusal is written. The refusal is then marked on the
+// subscription's record only while it has never been served, inserting the
+// record when the writer has not seen the subscription yet (the binding is
+// RECORD_SUBSCRIPTION_SQL's). No row back means it was served: delivered,
+// and never refused.
+const PROFILE_FOR_UPDATE_SQL = `${PROFILE_SQL} FOR UPDATE`;
+const REFUSE_SQL = `INSERT INTO venue_stripe_subscriptions (stripe_subscription_id, user_id, stripe_customer_id, google_place_id, refused_at)
+  SELECT $1::text, u.id, $3::text, COALESCE($4::varchar, vp.google_place_id), NOW()
+    FROM users u
+    LEFT JOIN venue_profiles vp ON vp.user_id = u.id
+   WHERE u.id = $2::int
+  ON CONFLICT (stripe_subscription_id) DO UPDATE SET refused_at = COALESCE(venue_stripe_subscriptions.refused_at, NOW())
+   WHERE venue_stripe_subscriptions.served_at IS NULL
+  RETURNING refused_at`;
+
+// WHAT A REFUSAL STILL OWES (migration 123). Written before anything is
+// cancelled, kept with no account in it, and finished (finishRefusal) the
+// next time the checkout is handled, whoever and whatever is left by then.
+const RECORD_REFUSAL_SQL = `INSERT INTO roost_refused_purchases (stripe_subscription_id, stripe_checkout_session_id, stripe_invoice_id, reason)
+  VALUES ($1::text, $2::text, $3::text, $4::varchar)
+  ON CONFLICT (stripe_subscription_id) DO NOTHING`;
+const REFUSAL_SQL = 'SELECT stripe_subscription_id, stripe_checkout_session_id, stripe_invoice_id, reason, created_at, finished_at FROM roost_refused_purchases WHERE stripe_subscription_id = $1::text';
+const FINISH_REFUSAL_SQL = 'UPDATE roost_refused_purchases SET finished_at = NOW() WHERE stripe_subscription_id = $1::text AND finished_at IS NULL';
 
 // The listing's trial is used, whoever's account bought the plan (migration
 // 121, TRIAL_USED_SQL). Written for an account that no longer exists too, from
@@ -1148,7 +1179,15 @@ const ENDED_SQL = 'SELECT cause, created_at FROM stripe_subscription_endings WHE
 //
 // A DEAD subscription on an unknown price is still written, because revoking
 // is what a dead subscription means whatever it was on.
-async function syncVenueSubscription(subscriptionId) {
+//
+// A REFUSED PURCHASE STAYS ENDED. A subscription refused at fulfillment
+// (refused_at on its record, migration 123) is written as ended by us on this
+// and every later event, like a refund or a dispute, so a cancel that has not
+// landed yet never lets a later event serve it. `refuse` is fulfillment asking
+// for that refusal to be decided here, under this venue's lock
+// (decideRefusal); the answer comes back as `decision`, with the refusal when
+// one was recorded.
+async function syncVenueSubscription(subscriptionId, { refuse = null } = {}) {
   // Whose venue this is, and nothing else: see READ, LOCK, READ AGAIN.
   const first = await stripe().subscriptions.retrieve(subscriptionId);
   if (!isVenueObject(first)) return { ignored: 'not_venue' };
@@ -1164,27 +1203,31 @@ async function syncVenueSubscription(subscriptionId) {
     if (owner !== userId) {
       throw new Error(`Roost subscription ${subscriptionId} named venue user ${userId} and then ${owner ? `venue user ${owner}` : 'no venue account'} on the read under the lock. Nothing was written; Stripe's retry reads it again.`);
     }
+    const customerId = typeof sub.customer === 'string' ? sub.customer : sub.customer && sub.customer.id;
+    // The listing this subscription pays for (ONE VENUE PER PLAN).
+    const metaPlace = venuePlaceIdFrom(sub.metadata);
+    const decided = refuse ? await decideRefusal(client, refuse, sub, userId, customerId, metaPlace) : null;
     const ended = await client.query(ENDED_SQL, [sub.id]);
     const endingRow = ended && Array.isArray(ended.rows) && ended.rows[0] ? ended.rows[0] : null;
-    const endedBy = endingRow ? endingRow.cause : null;
-    let g = grantFromSubscription(sub, Date.now(), { endedBy, endedAt: endingRow ? endingRow.created_at : null });
+    const recorded = await client.query(RECORD_SUBSCRIPTION_SQL, [sub.id, userId, customerId || null, metaPlace]);
+    const recordRow = recorded && Array.isArray(recorded.rows) ? recorded.rows[0] : null;
+    const boundPlace = recordRow ? recordRow.google_place_id : metaPlace;
+    const refusedAt = (decided && decided.refusedAt) || (recordRow && recordRow.refused_at) || null;
+    const endedBy = endingRow ? endingRow.cause : refusedAt ? 'refused' : null;
+    const endedAt = endingRow ? endingRow.created_at : refusedAt;
+    let g = grantFromSubscription(sub, Date.now(), { endedBy, endedAt });
     if (!g.priceOk && KEEP_STATUSES.has(sub.status) && !endedBy) {
       console.error(`[venue-billing] subscription ${sub.id} is ${g.status} on price ${g.priceId}, which is not a configured Roost price. Stripe is billing it, so Roost is kept through the period being billed. If the price is real, set it in STRIPE_PRICE_ROOST_* (a price no longer sold goes in STRIPE_PRICE_ROOST_LEGACY).`);
       g = grantFromSubscription(sub, Date.now(), { unknownPriceIsRoost: true });
     }
-    if (endedBy && KEEP_STATUSES.has(sub.status)) {
+    // The refusal decided just now is cancelled straight after this commits
+    // (finishRefusal), so only a later event finding it still billing says so.
+    if (endedBy && KEEP_STATUSES.has(sub.status) && !(decided && decided.decision === 'refused')) {
       console.error(`[venue-billing] subscription ${sub.id} is ${sub.status} at Stripe, but we ended it (${endedBy}), so the grant stays revoked. Cancel it in Stripe if it is still billing.`);
     }
     if (!g.priceOk) {
       console.error(`[venue-billing] subscription ${sub.id} is ${g.status} on price ${g.priceId}, which is not a configured Roost price. It is not live, so the grant is revoked as for any ended subscription.`);
     }
-    const customerId = typeof sub.customer === 'string' ? sub.customer : sub.customer && sub.customer.id;
-    // The listing this subscription pays for (ONE VENUE PER PLAN).
-    const metaPlace = venuePlaceIdFrom(sub.metadata);
-    const recorded = await client.query(RECORD_SUBSCRIPTION_SQL, [sub.id, userId, customerId || null, metaPlace]);
-    const boundPlace = recorded && Array.isArray(recorded.rows) && recorded.rows[0]
-      ? recorded.rows[0].google_place_id
-      : metaPlace;
     if (boundPlace) await client.query(RECORD_TRIAL_LISTING_SQL, [boundPlace]);
     if (customerId) await client.query(FILL_CUSTOMER_SQL, [userId, customerId]);
     const r = await client.query(SYNC_SQL, [
@@ -1197,7 +1240,8 @@ async function syncVenueSubscription(subscriptionId) {
     const served = !!row.profiles && g.live && row.verified === true && !otherListing;
     if (served) await client.query(MARK_SERVED_SQL, [sub.id]);
     await client.query('COMMIT');
-    if (!row.profiles) return { ignored: 'no_venue_profile' };
+    const asked = decided ? { decision: decided.decision, refusal: decided.refusal || null } : {};
+    if (!row.profiles) return { ignored: 'no_venue_profile', ...asked };
     if (g.live && otherListing) {
       console.error(`[venue-billing] venue user ${userId} holds a live Roost subscription (${sub.id}) bought for listing ${boundPlace || 'none'}, but the claim names ${row.place_id || 'no listing'}, so it is not served there. To move the plan, set flock_venue_place_id on the subscription in Stripe to the listing the claim names; otherwise cancel it.`);
     }
@@ -1213,13 +1257,59 @@ async function syncVenueSubscription(subscriptionId) {
     if (g.live && row.verified !== true) {
       console.error(`[venue-billing] venue user ${userId} holds a live Roost subscription (${sub.id}) but the profile is not verified, so no tier is served. Verify the claim or refund it.`);
     }
-    return { userId, tier: served ? g.cachedTier : 'free', status: g.status, written: row.written > 0 };
+    return { userId, tier: served ? g.cachedTier : 'free', status: g.status, written: row.written > 0, ...asked };
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     throw err;
   } finally {
     client.release();
   }
+}
+
+// THE REFUSAL, DECIDED WHERE A DELIVERY IS. Fulfillment used to read the claim
+// and then whether the subscription had been served, each in a query of its
+// own, and cancel and refund on what it read: a verification that landed in
+// between made the plan served (the resolver serves a Stripe grant the moment
+// its claim is verified) while fulfillment went on to refund it. Here, inside
+// the sync's transaction and under the venue's lock, the claim is read with its
+// row locked and the refusal is marked on the subscription's record only while
+// it has never been served (REFUSE_SQL), and the grant written in this same
+// transaction is ended by it. Answers 'good' (the claim is good now; nothing
+// is refused), 'gone' (the account's venue is gone), 'moved' (an operator has
+// since moved the plan to another account, whose it is), 'delivered' (it was
+// served, so it is never refused), or 'refused', with what the refusal owes.
+async function decideRefusal(client, { session, userId: buyer, placeId, why }, sub, userId, customerId, metaPlace) {
+  if (buyer !== userId) return { decision: 'moved' };
+  const claim = await client.query(PROFILE_FOR_UPDATE_SQL, [userId]);
+  const profile = claim && Array.isArray(claim.rows) ? claim.rows[0] : null;
+  if (!profile) return { decision: 'gone' };
+  if (claimIsGood(profile, placeId)) return { decision: 'good' };
+  const marked = await client.query(REFUSE_SQL, [sub.id, userId, customerId || null, metaPlace]);
+  const mark = marked && Array.isArray(marked.rows) ? marked.rows[0] : null;
+  if (!mark) return { decision: 'delivered' };
+  const refusal = await recordRefusal(client, session, sub.id, why);
+  return { decision: 'refused', refusal, refusedAt: mark.refused_at };
+}
+
+// The invoice a refused purchase paid, or null when it took nothing (a trial).
+function refundableInvoice(session) {
+  return session && session.payment_status !== 'no_payment_required' ? idOf(session.invoice) : null;
+}
+
+async function refusalOnRecord(subscriptionId, db = pool) {
+  const r = await db.query(REFUSAL_SQL, [subscriptionId]);
+  const rows = r && Array.isArray(r.rows) ? r.rows : [];
+  return rows[0] || null;
+}
+
+// Records what a refusal owes, once per subscription: a second handling of
+// the same checkout finds the first record and finishes that one.
+async function recordRefusal(db, session, subscriptionId, why) {
+  const sessionId = session && typeof session.id === 'string' ? session.id : null;
+  await db.query(RECORD_REFUSAL_SQL, [subscriptionId, sessionId, refundableInvoice(session), why.reason]);
+  const refusal = await refusalOnRecord(subscriptionId, db);
+  if (!refusal) throw new Error(`the refusal of Roost subscription ${subscriptionId} was written and then not found`);
+  return refusal;
 }
 
 // ---------------------------------------------------------------------------
@@ -1445,45 +1535,82 @@ async function stopRoostForRevokedClaim(userId, { customerIds = null } = {}) {
 // is not, and 'gone' when the account has no venue any more (its deletion
 // took the profile with it). A session from before flock_venue_place_id
 // existed names no listing, and then verified alone decides.
+function claimIsGood(profile, placeId) {
+  return !!profile && profile.verified === true && (!placeId || profile.google_place_id === placeId);
+}
+
 async function claimFor(userId, placeId) {
   const profile = await venueProfileFor(userId);
   if (!profile) return 'gone';
-  return profile.verified === true && (!placeId || profile.google_place_id === placeId) ? 'good' : 'bad';
+  return claimIsGood(profile, placeId) ? 'good' : 'bad';
 }
 
-async function wasServed(subscriptionId) {
-  const r = await pool.query(SERVED_SQL, [subscriptionId]);
-  const row = r && Array.isArray(r.rows) ? r.rows[0] : null;
-  return !!(row && row.served_at);
-}
+// Why a purchase was refused: the reason the refusal is recorded under and the
+// refund carries at Stripe, the prefixes of the idempotency keys that make a
+// retried cancel and refund happen once, and the code a return from Stripe is
+// answered with.
+const CLAIM_NOT_VERIFIED_REFUND = {
+  reason: 'claim_not_verified', key: 'flock-claim-revoked-refund', cancelKey: 'flock-claim-revoked-cancel', code: 'CLAIM_NOT_VERIFIED',
+};
+const ACCOUNT_DELETED_REFUND = {
+  reason: 'account_deleted', key: 'flock-account-deleted-refund', cancelKey: 'flock-account-deleted-cancel', code: 'ACCOUNT_DELETED',
+};
+const REFUSALS = new Map([CLAIM_NOT_VERIFIED_REFUND, ACCOUNT_DELETED_REFUND].map((why) => [why.reason, why]));
 
-// Why a purchase was refused, as the refund records it at Stripe, and the
-// prefix of the key that makes a retried event refund once.
-const CLAIM_NOT_VERIFIED_REFUND = { reason: 'claim_not_verified', key: 'flock-claim-revoked-refund' };
-const ACCOUNT_DELETED_REFUND = { reason: 'account_deleted', key: 'flock-account-deleted-refund' };
-
-// The money a refused purchase took, given back. A trial took none. The first
-// invoice of the session is paid by one PaymentIntent (InvoicePayments, the
-// same lookup proBilling.subscriptionsFundedBy documents), and the refund is
-// keyed on the invoice, so a retried event refunds once. A payment already
-// refunded is the outcome wanted.
-async function refundRefusedPurchase(session, why = CLAIM_NOT_VERIFIED_REFUND) {
-  if (!session || session.payment_status === 'no_payment_required') return null;
-  const invoiceId = idOf(session.invoice);
-  if (!invoiceId) return null;
+// The money a refused purchase took, given back. A trial took none (its
+// refusal records no invoice). The first invoice of the session is paid by one
+// PaymentIntent (InvoicePayments, the same lookup proBilling.subscriptionsFundedBy
+// documents), and the refund is keyed on the invoice, so every retry asks for
+// the same refund and Stripe makes it once. A payment already refunded is the
+// outcome wanted. Answers whether nothing more is owed: an invoice that shows
+// no payment yet leaves the refusal open, and the next handling of its
+// checkout tries again.
+async function refundRefusedInvoice(invoiceId, why) {
+  if (!invoiceId) return true;
   const list = await stripe().invoicePayments.list({ invoice: invoiceId, status: 'paid', limit: 10 });
   const paid = (list && Array.isArray(list.data) ? list.data : [])
     .find((p) => p && p.status === 'paid' && p.payment && idOf(p.payment.payment_intent));
-  if (!paid) return null;
+  if (!paid) {
+    console.error(`[venue-billing] invoice ${invoiceId} of a refused Roost purchase shows no payment to refund yet, so the refusal stays open until its checkout is handled again.`);
+    return false;
+  }
   try {
-    return await stripe().refunds.create(
+    await stripe().refunds.create(
       { payment_intent: idOf(paid.payment.payment_intent), metadata: { flock_reason: why.reason } },
       { idempotencyKey: `${why.key}-${invoiceId}` }
     );
   } catch (err) {
-    if (err && err.code === 'charge_already_refunded') return null;
-    throw err;
+    if (!(err && err.code === 'charge_already_refunded')) throw err;
   }
+  return true;
+}
+
+// A REFUSAL ON RECORD IS FINISHED, WHATEVER CAME AFTER IT. The cancel and the
+// refund are two calls to Stripe, and the refund used to be asked for only
+// when this handling's cancel was the one that ended the plan: a refund that
+// failed after its cancel went through was never asked for again, because the
+// retry found the plan cancelled. Now every handling of a refused checkout
+// finishes its recorded refusal: the plan is cancelled unless Stripe already
+// ended it (and only while it still names the buyer's account; one an operator
+// has since moved is that account's), and the refund is asked for under the
+// same idempotency key, whatever the subscription's status, the claim or the
+// account is by then. finished_at is set once nothing more is owed, so a later
+// replay asks Stripe for nothing. Then the grant is written from Stripe, ended
+// by the refusal.
+async function finishRefusal(session, refusal) {
+  const why = REFUSALS.get(refusal.reason) || CLAIM_NOT_VERIFIED_REFUND;
+  const subscriptionId = refusal.stripe_subscription_id;
+  if (!refusal.finished_at) {
+    const sub = await stripe().subscriptions.retrieve(subscriptionId);
+    const buyer = venueUserIdFrom(session && session.metadata);
+    if (isVenueObject(sub) && venueUserIdFrom(sub.metadata) === buyer) await cancelNow(sub, `${why.cancelKey}-${sub.id}`);
+    if (await refundRefusedInvoice(refusal.stripe_invoice_id, why)) {
+      await pool.query(FINISH_REFUSAL_SQL, [subscriptionId]);
+      console.error(`[venue-billing] checkout ${refusal.stripe_checkout_session_id || 'unknown'} was refused (${why.reason}), so subscription ${subscriptionId} was cancelled and what it took refunded.`);
+    }
+  }
+  const result = await syncVenueSubscription(subscriptionId);
+  return { ...result, tier: 'free', refused: why.code };
 }
 
 // A PURCHASE FOR AN ACCOUNT THAT IS GONE. The deletion ended every Roost plan
@@ -1493,20 +1620,21 @@ async function refundRefusedPurchase(session, why = CLAIM_NOT_VERIFIED_REFUND) {
 // it. Fulfillment used to write it from Stripe and stop, which records
 // nothing for an account that does not exist, so it renewed every period
 // with nothing in Flock pointing at it. An account that is gone
-// can never be served, so that plan is cancelled now and what it took is
-// refunded. A plan the deletion already ended is left as it is: whether it
-// was ever served went with the account's records, and a replay must not
-// refund a plan used for months. Only a plan that still names the account is
-// touched; one an operator has since moved to another account is theirs.
+// can never be served, so that plan is refused: the refusal is recorded first
+// (no account in it, migration 123), then the plan is cancelled now and what
+// it took refunded (finishRefusal). A plan the deletion already ended is left
+// as it is: whether it was ever served went with the account's records, and a
+// replay must not refund a plan used for months. Only a plan that still names
+// the account is touched; one an operator has since moved to another account
+// is theirs.
 async function fulfillForGoneAccount(session, subscriptionId, userId) {
   const sub = await stripe().subscriptions.retrieve(subscriptionId);
   const theirs = isVenueObject(sub) && venueUserIdFrom(sub.metadata) === userId;
-  if (theirs && await cancelNow(sub, `flock-account-deleted-cancel-${sub.id}`)) {
-    await refundRefusedPurchase(session, ACCOUNT_DELETED_REFUND);
-    console.error(`[venue-billing] checkout ${session.id} completed for venue user ${userId}, whose account is gone, so subscription ${subscriptionId} was cancelled and its payment refunded.`);
-  } else {
-    console.log(`[venue-billing] checkout ${session.id} was handed back for venue user ${userId}, whose account is gone, and subscription ${subscriptionId} is not billing for it, so nothing was cancelled or refunded.`);
+  if (theirs && !ENDED_STATUSES.has(sub.status)) {
+    const refusal = await recordRefusal(pool, session, sub.id, ACCOUNT_DELETED_REFUND);
+    return finishRefusal(session, refusal);
   }
+  console.log(`[venue-billing] checkout ${session.id} was handed back for venue user ${userId}, whose account is gone, and subscription ${subscriptionId} is not billing for it, so nothing was cancelled or refunded.`);
   return syncVenueSubscription(subscriptionId);
 }
 
@@ -1529,31 +1657,35 @@ async function fulfillForGoneAccount(session, subscriptionId, userId) {
 // ROOST_LISTING_MSG gives), had its first payment refunded on any replay, and
 // so did a plan that had already ended, or one whose claim an admin revoked,
 // where whether to refund is a person's call (stopRoostForRevokedClaim). So a
-// subscription the writer has ever served (served_at, migration 121) is never
+// subscription ever served (served_at, migration 121: written by the writer,
+// or by the admin's verify when that is what starts serving it) is never
 // refused or refunded here: it is only written from Stripe as usual, and the
-// writer serves nothing to a claim that is not good. A purchase whose account
-// is gone is decided apart (fulfillForGoneAccount).
+// writer serves nothing to a claim that is not good. The refusal itself is
+// decided under the venue's lock, against the claim and the delivery mark as
+// they are there (decideRefusal), and recorded before anything is cancelled;
+// a refusal already on record is finished first, whatever has changed since
+// (finishRefusal). A purchase whose account is gone is decided apart
+// (fulfillForGoneAccount).
 async function fulfillVenueCheckout(session) {
   const subscriptionId = idOf(session && session.subscription);
   if (!subscriptionId) return { ignored: 'no_subscription' };
+  const recorded = await refusalOnRecord(subscriptionId);
+  if (recorded) return finishRefusal(session, recorded);
   const userId = venueUserIdFrom(session.metadata);
   const placeId = venuePlaceIdFrom(session.metadata);
   if (!userId) return syncVenueSubscription(subscriptionId);
   const claim = await claimFor(userId, placeId);
   if (claim === 'good') return syncVenueSubscription(subscriptionId);
   if (claim === 'gone') return fulfillForGoneAccount(session, subscriptionId, userId);
-  if (await wasServed(subscriptionId)) {
+  const { decision, refusal, ...result } = await syncVenueSubscription(subscriptionId, {
+    refuse: { session, userId, placeId, why: CLAIM_NOT_VERIFIED_REFUND },
+  });
+  if (decision === 'refused') return finishRefusal(session, refusal);
+  if (decision === 'gone') return fulfillForGoneAccount(session, subscriptionId, userId);
+  if (decision === 'delivered') {
     console.log(`[venue-billing] checkout ${session.id} was handed back for venue user ${userId}, whose claim is not verified for listing ${placeId || 'none'} now, but subscription ${subscriptionId} was already delivered, so nothing was cancelled or refunded.`);
-    return syncVenueSubscription(subscriptionId);
   }
-  const sub = await stripe().subscriptions.retrieve(subscriptionId);
-  if (isVenueObject(sub)) {
-    await cancelNow(sub, `flock-claim-revoked-cancel-${sub.id}`);
-    await refundRefusedPurchase(session);
-  }
-  console.error(`[venue-billing] checkout ${session.id} completed for venue user ${userId}, whose claim is not verified for listing ${placeId || 'none'} any more, so subscription ${subscriptionId} was cancelled and its payment refunded.`);
-  const result = await syncVenueSubscription(subscriptionId);
-  return { ...result, tier: 'free', refused: 'CLAIM_NOT_VERIFIED' };
+  return result;
 }
 
 // The Stripe webhook's venue branch. Only called for objects that carry
