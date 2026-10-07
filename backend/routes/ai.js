@@ -821,7 +821,7 @@ const LOCKED_FORECAST_NOTE_NO_SALES = 'This venue is past this account\'s limit 
 // hour's, so the result says so in words the model reads, instead of letting
 // either pass as the time there. Addressed to the model, like the locked notes.
 const SERVER_CLOCK = 'UTC';
-const SERVER_CLOCK_NOTE = 'Flock does not know the local time at this venue, so this was worked out as if the venue kept UTC, the clock in your Now line. Every hour in best_time, peak_hours and hourly_forecast is a UTC hour, not the time at the venue. Unless crowd_source is "owner_report", crowd_score is the number for the current UTC hour, which may not be the hour it is there. Never present those hours as the venue\'s local time, and never present that crowd_score as how busy it is there right now. If you give one of those hours, say it is UTC.';
+const SERVER_CLOCK_NOTE = 'Flock does not know the local time at this venue, so this was worked out as if the venue kept UTC, the clock in your Now line. Every hour in best_time, peak_hours and hourly_forecast is a UTC hour, and "now" in any of them means the current UTC hour, which may not be the hour it is at the venue. Unless crowd_source is "owner_report", crowd_score is the number for that current UTC hour too. Never present any of these hours as the venue\'s local time, or any of these numbers as how busy it is there right now. If you give one of those hours, say it is UTC.';
 // A LOCKED VENUE CARRIES NO CROWD NUMBER, the same rule as the card
 // (routes/crowd.js lockedCard): since 2026-09-24 a spent month covers the live
 // level as well as the forecast, for any venue not already opened this month.

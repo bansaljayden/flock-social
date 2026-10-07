@@ -236,8 +236,9 @@ function assertScoredOnUtc(out, utc, phone, what) {
   // The result says its hours are UTC hours, in words the model reads.
   assert.strictEqual(out.clock, 'UTC', `${what}: the result does not say its hours are UTC hours`);
   assert.match(out.clock_note, /does not know the local time at this venue/);
-  assert.match(out.clock_note, /UTC hour/);
-  assert.match(out.clock_note, /Never present those hours as the venue's local time/);
+  assert.match(out.clock_note, /is a UTC hour, and "now" in any of them means the current UTC hour/);
+  assert.match(out.clock_note, /crowd_score is the number for that current UTC hour too/);
+  assert.match(out.clock_note, /Never present any of these hours as the venue's local time, or any of these numbers as how busy it is there right now/);
 }
 
 test("a yes to the earlier question keeps the phone's hour and day out of the crowd tool", async () => {
