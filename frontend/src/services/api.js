@@ -3209,7 +3209,10 @@ export async function getVenueDetails(placeId) {
 // the same rails: offline fail-fast, a long upload leash instead of the 15s
 // default, honest errors with err.status attached. Never retried — the server
 // may have stored the image even when the response got lost.
-export async function uploadProfileImage(file) {
+export async function uploadProfileImage(file, { account } = {}) {
+  // `account` as request() takes it (currentAccount): a caller that waited
+  // first holds the upload to the account that asked.
+  if (account === null) throw sessionEndedError();
   if (isOffline()) throw connectionError();
   // The same renewal request() does, ahead of time and once after a 401
   // "Token expired" (see RENEWING THE SESSION). Sending the upload again then
@@ -3219,7 +3222,7 @@ export async function uploadProfileImage(file) {
   // The account the photo is for, checked after each renewal and on the
   // answer, as request() does: a renewal can wait long enough for this
   // account to sign out on this tab and another to sign in.
-  const madeFor = accountOf(getToken());
+  const madeFor = account !== undefined ? String(account) : accountOf(getToken());
   if (renewalIsDue()) await renewIfDue();
   let token = getToken();
   // The photo would land on whichever account is stored, so a tab whose
@@ -3252,15 +3255,16 @@ export async function uploadProfileImage(file) {
   return data;
 }
 
-export async function saveProfileImageUrl(url) {
+export async function saveProfileImageUrl(url, { account } = {}) {
   return request('/api/users/profile-image', {
     method: 'PUT',
+    ...(account !== undefined ? { account } : {}),
     body: JSON.stringify({ url }),
   });
 }
 
-export async function removeProfileImage() {
-  return request('/api/users/profile-image', { method: 'DELETE' });
+export async function removeProfileImage({ account } = {}) {
+  return request('/api/users/profile-image', { method: 'DELETE', ...(account !== undefined ? { account } : {}) });
 }
 
 // Users
@@ -3444,11 +3448,12 @@ export async function sendEmergencyAlert({ latitude, longitude, accuracy, includ
 // to tell the people they had just frightened that they were fine. Same 30
 // second leash as the alert, and for the same reason: this one fans out emails
 // too, and giving up early leaves contacts holding an alert nobody withdrew.
-export async function cancelEmergencyAlert() {
+export async function cancelEmergencyAlert({ account } = {}) {
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   return request('/api/safety/alert/cancel', {
     method: 'POST',
     timeout: 30000,
+    ...(account !== undefined ? { account } : {}),
     body: JSON.stringify({ timezone }),
   });
 }

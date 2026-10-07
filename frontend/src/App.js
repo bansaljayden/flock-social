@@ -13127,6 +13127,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // history reload replaced it.
   const profilePicRef = useRef(profilePic);
   profilePicRef.current = profilePic;
+  // ONE PROFILE PICTURE CHANGE AT A TIME, IN THE ORDER THEY WERE MADE. A photo
+  // upload waits on moderation, and a removal made while it was pending
+  // finished first, then the upload landed and put the picture back, on the
+  // server and on screen. Each change now waits for the one before it, and
+  // only the newest is allowed to change what is on screen (isNewest).
+  const pictureChainRef = useRef(Promise.resolve());
+  const pictureChangeRef = useRef(0);
+  const changePicture = useCallback((run) => {
+    pictureChangeRef.current += 1;
+    const mine = pictureChangeRef.current;
+    const isNewest = () => mine === pictureChangeRef.current;
+    const next = pictureChainRef.current.catch(() => {}).then(() => run(isNewest));
+    pictureChainRef.current = next;
+    return next;
+  }, []);
   const transmitFlockMessage = useCallback(async (flockId, text, opts = {}) => {
     const image = opts.image_url || null;
     const venueData = opts.venue_data || null;
@@ -13141,7 +13156,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // pair and a retry regenerates it from the same bytes. ~50ms of canvas
     // work per photo, before the optimistic bubble, which renders the FULL
     // image either way.
+    // A photo waits for its thumbnail before it goes. A sign-out and another
+    // sign-in in that wait sent it, caption and all, as the next account, so
+    // it goes only if the account that sent it is still the one signed in.
+    const sentBy = currentAccount();
     const thumb = image ? await makeChatThumb(image) : null;
+    if (image && currentAccount() !== sentBy) return;
     // This send's own name, which the server hands back on the echo (see
     // newClientId), and the newest row it was sent after, which is how a later
     // history read tells a stored row that could be this send from one that
@@ -14049,12 +14069,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setProfilePic(encoded);
     setCropImageSrc(null);
 
-    // Upload
+    // Upload, after any picture change still on the wire, and held to the
+    // account that picked it.
+    const account = currentAccount();
     try {
       const file = new File([blob], 'profile.jpg', { type: 'image/jpeg' });
-      const data = await uploadProfileImage(file);
-      const url = data.profile_image_url;
-      setProfilePic(url.startsWith('data:') || url.startsWith('http') ? url : `${BASE_URL}${url}`);
+      await changePicture(async (isNewest) => {
+        const data = await uploadProfileImage(file, { account });
+        const url = data.profile_image_url;
+        if (isNewest()) setProfilePic(url.startsWith('data:') || url.startsWith('http') ? url : `${BASE_URL}${url}`);
+      });
       showToast('Profile picture updated.', 'success');
     } catch (err) {
       console.error('Profile pic upload failed:', err);
@@ -14087,16 +14111,24 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     avatarRefitTriedRef.current = true;
     const marker = `${authUser.id}:${original.length}`;
     if (lsGet(AVATAR_REFIT_MARKER_KEY) === marker) return;
+    // Whose picture this is, taken before the redraw: a sign-out and another
+    // sign-in while it drew uploaded the first person's picture onto the next
+    // account. The cleanup ends it too, once this screen is gone.
+    const account = currentAccount();
+    let ended = false;
     (async () => {
       const refit = await refitAvatar(original);
       const blob = dataUrlToBlob(refit);
       // The person may have picked a new photo while this was drawing, and
       // that one must not be overwritten by a copy of the old one.
-      if (!blob || profilePicRef.current !== original) return;
+      if (ended || !blob || profilePicRef.current !== original) return;
       try {
-        const data = await uploadProfileImage(new File([blob], 'profile.jpg', { type: 'image/jpeg' }));
-        const url = data?.profile_image_url;
-        if (typeof url === 'string') setProfilePic((cur) => (cur === original ? url : cur));
+        await changePicture(async () => {
+          if (ended || profilePicRef.current !== original) return;
+          const data = await uploadProfileImage(new File([blob], 'profile.jpg', { type: 'image/jpeg' }), { account });
+          const url = data?.profile_image_url;
+          if (typeof url === 'string') setProfilePic((cur) => (cur === original ? url : cur));
+        });
       } catch (err) {
         if (err?.status >= 400 && err?.status < 500 && err.status !== 401 && err.status !== 429) {
           lsSet(AVATAR_REFIT_MARKER_KEY, marker);
@@ -14104,7 +14136,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         console.warn('[AvatarRefit] kept the stored avatar:', err?.status || err?.message);
       }
     })();
-  }, [authUser?.id, profilePic]);
+    return () => { ended = true; };
+  }, [authUser?.id, profilePic]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The other button in this same sheet, confirmCrop above, has had the honest
   // contract for weeks: the toast comes after the await and a refusal says so.
@@ -14129,13 +14162,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     const previousPic = profilePic;
     setProfilePic(url);
     setShowPicModal(false);
+    const account = currentAccount();
 
     try {
-      const saved = await saveProfileImageUrl(url);
-      // The server stores one canonical form; show the one it kept.
-      if (typeof saved?.profile_image_url === 'string') {
-        setProfilePic((cur) => (cur === url ? saved.profile_image_url : cur));
-      }
+      await changePicture(async () => {
+        const saved = await saveProfileImageUrl(url, { account });
+        // The server stores one canonical form; show the one it kept.
+        if (typeof saved?.profile_image_url === 'string') {
+          setProfilePic((cur) => (cur === url ? saved.profile_image_url : cur));
+        }
+      });
       showToast('Profile picture updated.', 'success');
     } catch (err) {
       console.error('Avatar save failed:', err);
@@ -14144,7 +14180,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       if (err?.sessionExpired) return;
       showToast(err?.message || "That avatar didn't save. Try again.", 'error');
     }
-  }, [profilePic, showToast]);
+  }, [profilePic, showToast, changePicture]);
 
   // A photo could be replaced but never taken down (settings audit,
   // 2026-09-05): the only two writers set a URL, so a person who had put
@@ -14154,8 +14190,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     const previousPic = profilePic;
     setProfilePic(null);
     setShowPicModal(false);
+    const account = currentAccount();
     try {
-      await removeProfileImage();
+      // After any upload still on the wire, so the removal is what stays.
+      await changePicture(() => removeProfileImage({ account }));
       showToast('Photo removed.', 'success');
     } catch (err) {
       console.error('Photo removal failed:', err);
@@ -14163,7 +14201,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       if (err?.sessionExpired) return;
       showToast(err?.message || "That photo didn't come off. Try again.", 'error');
     }
-  }, [profilePic, showToast]);
+  }, [profilePic, showToast, changePicture]);
 
   // Bottom Navigation — hidden only when actually on venue/admin dashboard screens
   const BottomNav = () => {
@@ -14836,9 +14874,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const handleStandDown = useCallback(async () => {
     setSosStandingDown(true);
     cancelSosLocationFollowUp();
+    // Whose alert this stands down, taken before the wait for a follow-up on
+    // the wire: after a sign-out and another sign-in it withdrew the next
+    // account's live alert and sent its contacts an all-clear.
+    const account = currentAccount();
     try {
       await sosFollowUp.settled();
-      const data = await cancelEmergencyAlert();
+      const data = await cancelEmergencyAlert({ account });
       rememberSosAlert(0);
       showToast(data.message || 'Your contacts have been told you are OK');
       setShowSOS(false);
@@ -15864,7 +15906,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const transmitDm = useCallback(async (userId, payload) => {
     // Same rule as the flock transmit above: one thumb, both transports, and
     // a retry (which re-calls this with the stored payload) regenerates it.
+    // As the flock transmit above: a photo goes only from the account that
+    // sent it, never from whoever signed in while its thumbnail was drawn.
+    const sentBy = currentAccount();
     const dmThumb = payload.image_url ? await makeChatThumb(payload.image_url) : null;
+    if (payload.image_url && currentAccount() !== sentBy) return;
     const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     // The flock twin's two marks: this send's own name for the echo, and (set
     // below, from the thread it joins) the newest row it was sent after.
