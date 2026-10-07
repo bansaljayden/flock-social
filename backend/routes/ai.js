@@ -1261,9 +1261,12 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
       // the venue's own curve for every hour after it. The headline is scored
       // again when that happens (mlPredictor.agreeWithStrip); any other
       // headline, and every headline with CROWD_NO_CURVE_FALLBACK off, comes
-      // back as it went in. The owner reading and the reporters' blend below
-      // read nothing the strip writes, so scoring it before them changes no
-      // number, and a locked result still never walks the 24 hours.
+      // back as it went in. An hour the strip took from the category table
+      // before those rows were read is scored again inside fullDay itself,
+      // and hourly_forecast is cut from fullDay further down, after this. The
+      // owner reading and the reporters' blend below read nothing the strip
+      // writes, so scoring it before them changes no number, and a locked
+      // result still never walks the 24 hours.
       const fullDay = opts.includeForecast
         ? await mlPredictor.predictHourlyForecast(venue, weather, localHour, 24, scoreTime, { userId })
         : null;

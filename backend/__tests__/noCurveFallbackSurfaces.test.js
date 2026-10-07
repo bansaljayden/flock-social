@@ -98,6 +98,11 @@ let statements = [];
 // How long a whole-curve read takes to come back, so a test can make a strip
 // read the curve after the headline beside it has decided.
 let curveDelayMs = 0;
+// A venue whose rows the collector writes while its strip is being scored,
+// with the rows it writes (landMidStrip): written as the venue's next
+// whole-curve read is answered, which still answers with what the table held
+// when it was sent.
+let landAfterCurveRead = null;
 const CURVE_READ = /^SELECT day_of_week, hour, baseline, source, updated_at FROM ml_venue_baselines WHERE google_place_id = \$1$/;
 const curveRows = (placeId) => Object.entries(curves[placeId] || {}).map(([k, v]) => {
   const [d, h] = k.split('_').map(Number);
@@ -116,6 +121,10 @@ pool.query = (sql, params) => {
   }
   if (CURVE_READ.test(flat)) {
     const rows = curveRows(params[0]);
+    if (landAfterCurveRead && landAfterCurveRead.id === params[0]) {
+      curves[params[0]] = { ...landAfterCurveRead.curve };
+      landAfterCurveRead = null;
+    }
     return curveDelayMs > 0
       ? new Promise((resolve) => setTimeout(() => resolve({ rows }), curveDelayMs))
       : Promise.resolve({ rows });
@@ -222,6 +231,7 @@ test.beforeEach(() => {
   curves = {};
   statements = [];
   curveDelayMs = 0;
+  landAfterCurveRead = null;
   areaPlaces = [];
   delete process.env[SWITCH];
   delete process.env.CROWD_SERVE_MODE;
@@ -666,6 +676,132 @@ test('Birdie: a headline scored before the strip read the venue\'s first rows is
   for (const h of out.hourly_forecast) assert.notStrictEqual(h.predictionMethod, METHOD, h.hour);
   assert.strictEqual(out.hourly_forecast[0].predictionMethod, 'ml', 'the first hour is the headline\'s');
   assert.strictEqual(out.hourly_forecast[0].crowd_method, out.hourly_forecast[1].crowd_method);
+});
+
+// ===========================================================================
+// One strip, one answer.
+//
+// The collector can write a venue's rows while a strip is being scored. The
+// strip's whole-curve read comes back empty, its first hour takes the table
+// off that hour's cached miss, and every hour after it reads the rows, so one
+// array held the category's typical level beside the venue's own curve. Each
+// surface publishes the array it handed to mlPredictor.agreeWithStrip, which
+// scores that hour again inside it.
+// ===========================================================================
+
+// Every hour of the week below any typical level the table has for a bar at
+// 5 PM, so an evening hour left on the table would be the evening's peak.
+const LOW_SLOTS = (() => {
+  const c = {};
+  for (let d = 0; d < 7; d++) for (let h = 0; h < 24; h++) c[`${d}_${h}`] = 10;
+  return c;
+})();
+
+// An earlier request at `hour` today on the venue's clock (UTC, offset 0),
+// before the collector reached the venue: the probe's no is held and that
+// hour's slot is a cached zero. Unlike scoredBeforeTheCollector this writes
+// no rows; landMidStrip writes them in the middle of the next strip.
+async function heldMissAt(id, hour) {
+  const at = new Date();
+  at.setUTCHours(hour, 0, 0, 0);
+  const r = await mlPredictor.predictBusyness({
+    place_id: id, types: ['bar'], user_ratings_total: 300, rating: 4.4, price_level: 2,
+    location: { latitude: 39.95, longitude: -75.16 }, utcOffsetMinutes: 0,
+  }, null, at);
+  assert.strictEqual(r.predictionMethod, METHOD, 'setup: no rows yet, so the table');
+}
+
+// The venue's rows, written as its next whole-curve read is answered: after
+// the strip's read and before its first hour.
+const landMidStrip = (id, curve = ALL_SLOTS) => { landAfterCurveRead = { id, curve }; };
+
+test('the card: a curve that lands between two hours of its strip leaves no bar on the table, and the dial is the Now bar', async () => {
+  curveOn();
+  await awayFromHourEdge();
+  const id = freshId('CARDMID');
+  await heldMissAt(id, new Date().getUTCHours());
+  landMidStrip(id);
+  const res = await call('GET', `/api/crowd/${id}`);
+  assert.strictEqual(res.status, 200, res.text);
+  assert.strictEqual(landAfterCurveRead, null, 'setup: the rows landed during the strip');
+  const c = res.body;
+  for (const h of c.hourly) assert.notStrictEqual(h.predictionMethod, METHOD, h.hour);
+  assert.strictEqual(c.hourly[0].predictionMethod, 'ml', 'the first bar was scored again from the rows');
+  assert.strictEqual(c.predictionMethod, 'ml', 'the headline agrees with its strip');
+  assert.strictEqual(c.score, c.hourly[0].score);
+  assert.strictEqual(c.numberSource, c.hourly[0].numberSource);
+  assert.deepStrictEqual(served[0][3], ['ml'], 'the serve is recorded as the number shown');
+});
+
+test('the public demo: a curve that lands between two hours of its strip leaves no bar on the table, and the dial is the first bar', async () => {
+  curveOn();
+  publicCrowdRouter.__testables.resetDemoLimitsForTest();
+  await awayFromHourEdge();
+  const id = freshId('DEMOMID');
+  await heldMissAt(id, new Date().getUTCHours());
+  landMidStrip(id);
+  const res = await call('GET', `/api/public/demo/venue/${id}`);
+  assert.strictEqual(res.status, 200, res.text);
+  assert.strictEqual(landAfterCurveRead, null, 'setup: the rows landed during the strip');
+  const d = res.body;
+  for (const h of d.hourly) assert.notStrictEqual(h.predictionMethod, METHOD, h.hour);
+  assert.strictEqual(d.hourly[0].predictionMethod, 'ml');
+  assert.strictEqual(d.number_source, d.hourly[0].numberSource, 'the dial and the first bar name one source');
+  assert.strictEqual(d.score, d.hourly[0].score);
+});
+
+test('Birdie: a curve that lands between two hours of the strip leaves no hour on the table, and the first hour is the headline', async () => {
+  curveOn();
+  await awayFromHourEdge();
+  const id = freshId('BIRDIEMID');
+  await heldMissAt(id, new Date().getUTCHours());
+  landMidStrip(id);
+  const out = await executeTool('get_crowd_prediction', { place_id: id }, ++nextUser, { includeForecast: true });
+  assert.strictEqual(landAfterCurveRead, null, 'setup: the rows landed during the strip');
+  for (const h of out.hourly_forecast) assert.notStrictEqual(h.predictionMethod, METHOD, h.hour);
+  assert.notStrictEqual(out.crowd_method, 'category_typical');
+  assert.strictEqual(out.hourly_forecast[0].predictionMethod, 'ml', 'the first hour is the headline, scored from the rows');
+  assert.strictEqual(out.hourly_forecast[0].crowd_method, out.hourly_forecast[1].crowd_method);
+});
+
+test('the venue dashboard: a curve that lands between two hours of the day leaves no bar on the table, and the dial agrees with its own bar', async () => {
+  curveOn();
+  await awayFromHourEdge();
+  CURRENT_USER = { id: ++nextUser, name: 'Owner', role: 'venue_owner' };
+  const id = freshId('INTELMID');
+  venueCtx = { id: 83, google_place_id: id, verified: true };
+  // The day's bars start at 6 AM, so that is the hour held from before.
+  await heldMissAt(id, 6);
+  landMidStrip(id);
+  const res = await call('GET', '/api/venue-dashboard/intelligence');
+  assert.strictEqual(res.status, 200, res.text);
+  assert.strictEqual(res.body.available, true, res.text);
+  assert.strictEqual(landAfterCurveRead, null, 'setup: the rows landed during the strip');
+  const bars = res.body.todayHourly;
+  for (const h of bars) assert.notStrictEqual(h.predictionMethod, METHOD, h.hour);
+  assert.strictEqual(bars[0].predictionMethod, 'ml', 'the 6 AM bar was scored again from the rows');
+  assert.notStrictEqual(res.body.now.method, METHOD);
+  // The dial is this hour; from 6 AM on, this hour is one of the bars.
+  const hour = new Date().getUTCHours();
+  if (hour >= 6) assert.strictEqual(res.body.now.method, bars[hour - 6].predictionMethod, 'the dial and its own bar are one answer');
+});
+
+test('the venue dashboard\'s strip: a curve that lands between two hours of the evening leaves the owner\'s peak off the table', async () => {
+  curveOn();
+  await awayFromHourEdge();
+  CURRENT_USER = { id: ++nextUser, name: 'Owner', role: 'venue_owner' };
+  const id = freshId('STRIPMID');
+  venueCtx = { id: 84, google_place_id: id, verified: true };
+  // A bar's row is the evening; its first hour is the one held from before.
+  await heldMissAt(id, venueDashboardRouter.__test.STRIP_PEAK_WINDOWS.evening.startHour);
+  landMidStrip(id, LOW_SLOTS);
+  const res = await call('GET', '/api/venue-dashboard/strip');
+  assert.strictEqual(res.status, 200, res.text);
+  assert.strictEqual(res.body.available, true, res.text);
+  assert.strictEqual(landAfterCurveRead, null, 'setup: the rows landed during the strip');
+  assert.notStrictEqual(res.body.you.method, METHOD);
+  assert.strictEqual(typeof res.body.you.peakLiveReadings, 'boolean', 'setup: the row names what made its peak');
+  assert.notStrictEqual(res.body.you.peakMethod, METHOD, 'the peak is an hour the table answered before the rows were read');
 });
 
 // ===========================================================================

@@ -971,7 +971,10 @@ router.get('/:placeId',
       // category's typical level on the dial over the venue's own bars. The
       // headline is scored again when that happens (mlPredictor.agreeWithStrip);
       // any other headline, and every headline with CROWD_NO_CURVE_FALLBACK
-      // off, comes back as it went in, with nothing read.
+      // off, comes back as it went in, with nothing read. The same call
+      // scores again, inside fullDay itself, any hour the strip took from the
+      // category table before those rows were read, so fullDay is read only
+      // below this line.
       const crowdResult = await mlPredictor.agreeWithStrip(scored, fullDay, venue, weather, clientTime, { userId: req.user.id });
       const hourly = fullDay.slice(0, 12);
       // Each bar's hour and day, for the per-bar open flags below.
