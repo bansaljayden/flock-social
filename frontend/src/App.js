@@ -5365,9 +5365,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         const ask = locationAskRef.current;
         getCurrentPosition(
           (pos) => {
+            // A stale answer leaves the spinner to the request that replaced
+            // it; switching Location off clears the spinner itself (below).
+            if (ask !== locationAskRef.current) return;
             const { latitude, longitude } = pos.coords;
             setLocationLoading(false);
-            if (ask !== locationAskRef.current || !locationEnabledRef.current) return;
+            if (!locationEnabledRef.current) return;
             deviceFixRef.current = stampFix(latitude, longitude);
             setUserLocation({ lat: latitude, lng: longitude });
             lsSet('flock_user_lat', latitude.toString());
@@ -5375,8 +5378,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             setLocationError('');
           },
           (err) => {
-            setLocationLoading(false);
             if (ask !== locationAskRef.current) return;
+            setLocationLoading(false);
             trackLocationError(err, 'toggle');
             // Flipping the switch back on cannot conjure a permission the
             // device has refused. The banner that WAS explaining the empty map
@@ -5392,6 +5395,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         );
       }
     } else {
+      // Any request still in flight is stale now, and a stale answer no longer
+      // clears the spinner, so switching off does.
+      setLocationLoading(false);
       setUserLocation(null);
       lsRemove('flock_user_lat');
       lsRemove('flock_user_lng');
@@ -9682,9 +9688,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     const ask = locationAskRef.current;
     getCurrentPosition(
       (pos) => {
+        if (ask !== locationAskRef.current) return;
         const { latitude, longitude } = pos.coords;
         setLocationLoading(false);
-        if (ask !== locationAskRef.current || !locationEnabledRef.current) return;
+        if (!locationEnabledRef.current) return;
         deviceFixRef.current = stampFix(latitude, longitude);
         loadVenuesAtLocation(latitude, longitude);
         if (forceRefresh && window.__flockGoToMyLocation) {
@@ -9693,8 +9700,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       },
       (err) => {
         console.warn('[Geo] Geolocation error:', err.code, err.message);
-        setLocationLoading(false);
         if (ask !== locationAskRef.current) return;
+        setLocationLoading(false);
         trackLocationError(err, 'discover');
         if (savedLat && savedLng && !forceRefresh) {
           // Already loaded from saved above

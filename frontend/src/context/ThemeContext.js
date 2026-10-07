@@ -68,8 +68,13 @@ export const ThemeProvider = ({ children }) => {
   // its 60 second phase.
   const themeRef = useRef(theme);
   // The settings listener below reads the mode on screen without re-running.
+  // Set where the mode is set, not in an effect: an effect runs a commit later,
+  // and a pull that landed in between read the old mode and put it back.
   const themeModeRef = useRef(themeMode);
-  useEffect(() => { themeModeRef.current = themeMode; }, [themeMode]);
+  const setMode = useCallback((mode) => {
+    themeModeRef.current = mode;
+    setThemeMode(mode);
+  }, []);
 
   const applyTheme = useCallback((newTheme) => {
     themeRef.current = newTheme;
@@ -112,17 +117,17 @@ export const ThemeProvider = ({ children }) => {
 
   const toggleTheme = useCallback(() => {
     const newTheme = themeRef.current === 'light' ? 'dark' : 'light';
-    setThemeMode('manual');
+    setMode('manual');
     setIsNightModeActive(false);
     applyTheme(newTheme);
     writeStore(THEME_KEY, newTheme);
     writeStore(MODE_KEY, 'manual');
     queueSync({ theme: newTheme, themeMode: 'manual' });
-  }, [applyTheme]);
+  }, [applyTheme, setMode]);
 
   const setAutoMode = useCallback((auto) => {
     const newMode = auto ? 'auto' : 'manual';
-    setThemeMode(newMode);
+    setMode(newMode);
     writeStore(MODE_KEY, newMode);
 
     if (auto) {
@@ -138,7 +143,7 @@ export const ThemeProvider = ({ children }) => {
       writeStore(THEME_KEY, current);
       queueSync({ themeMode: 'manual', theme: current });
     }
-  }, [applyTheme]);
+  }, [applyTheme, setMode]);
 
   // Re-apply theme settings when the user logs in and server settings are
   // pulled. The pull's own values, not a re-read of storage: a write the pull
@@ -151,7 +156,7 @@ export const ThemeProvider = ({ children }) => {
     const onSync = (e) => {
       const pulled = (e && e.detail) || {};
       const savedMode = pulled.themeMode === 'manual' || pulled.themeMode === 'auto' ? pulled.themeMode : themeModeRef.current;
-      setThemeMode(savedMode);
+      setMode(savedMode);
       if (savedMode === 'auto') {
         const nightTime = isNightTime();
         setIsNightModeActive(nightTime);
@@ -163,7 +168,7 @@ export const ThemeProvider = ({ children }) => {
     };
     window.addEventListener('flock-settings-loaded', onSync);
     return () => window.removeEventListener('flock-settings-loaded', onSync);
-  }, [applyTheme]);
+  }, [applyTheme, setMode]);
 
   const value = useMemo(() => ({
     theme,

@@ -599,8 +599,12 @@ describe('location answers and storage at quota', () => {
     // The two requests that store a position, and the two share starters.
     const asks = APP_SRC.split('const ask = locationAskRef.current;').length - 1;
     expect(asks).toBe(4);
-    const guards = APP_SRC.split('if (ask !== locationAskRef.current || !locationEnabledRef.current) return;').length - 1;
+    // The stamp is checked before anything is touched, the spinner included,
+    // and only then whether Location is still on.
+    const guards = (APP_SRC.match(/if \(ask !== locationAskRef\.current\) return;\s*const \{ latitude, longitude \} = pos\.coords;\s*setLocationLoading\(false\);\s*if \(!locationEnabledRef\.current\) return;/g) || []).length;
     expect(guards).toBe(2);
+    // Switching off clears the spinner a stale answer no longer clears.
+    expect(APP_SRC).toMatch(/\} else \{\s*\/\/[^\n]*\n[^\n]*\n\s*setLocationLoading\(false\);\s*setUserLocation\(null\);/);
   });
 
   test('a synced toggle cannot be stopped before the queue by a storage write that throws', () => {
