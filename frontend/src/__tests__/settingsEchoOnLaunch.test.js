@@ -110,9 +110,25 @@ describe('what a pull hands on', () => {
     await wait(5);
     api.getUserSettings.mockImplementationOnce(() => Promise.resolve({ settings: { pinnedFlockIds: [3] } }));
     expect(await handedOn(pullSettings())).toEqual({ pinnedFlockIds: [3] });
-    // The older answer lands last. It asked before the pin, so it cannot pass for current.
+    // The older answer lands last. An answer older than one already applied
+    // is the account as it was, so it is neither written nor handed on.
     first.answer({ settings: { pinnedFlockIds: [] } });
-    expect(await handedOn(pullA)).toEqual({});
+    expect(await handedOn(pullA)).toBeNull();
+    expect(localStorage.getItem('flock_pinned')).toBe(JSON.stringify([3]));
+  });
+
+  test('an older answer is not applied even when nothing changed on this device', async () => {
+    // Another device changed the pins between two pulls; the older answer
+    // landing last must not step the screen back.
+    const first = held();
+    api.getUserSettings.mockImplementationOnce(() => first.promise);
+    const pullA = pullSettings();
+    await wait(5);
+    api.getUserSettings.mockImplementationOnce(() => Promise.resolve({ settings: { pinnedFlockIds: [1, 2] } }));
+    expect(await handedOn(pullSettings())).toEqual({ pinnedFlockIds: [1, 2] });
+    first.answer({ settings: { pinnedFlockIds: [1] } });
+    expect(await handedOn(pullA)).toBeNull();
+    expect(localStorage.getItem('flock_pinned')).toBe(JSON.stringify([1, 2]));
   });
 
   test('the pull does not write its older value over one this device changed while it was on the wire', async () => {
@@ -133,9 +149,8 @@ describe('what a pull hands on', () => {
   });
 
   // A brand-new account: the pull finds nothing and pushes this device's
-  // values itself. When that push fails, the values must stay owed, and an
-  // edit made while it was on the wire must not be overwritten by them.
-  test('a failed initial push queues what is still owed, keeps a newer edit, and hands on neither', async () => {
+  // values itself, through the same one-at-a-time path as every save.
+  test('a failed initial push stays owed, and an edit made while it was on the wire goes up over it', async () => {
     localStorage.setItem('flock_interests', JSON.stringify(['Sports']));
     localStorage.setItem('flock_order', JSON.stringify([4]));
     api.getUserSettings.mockImplementation(() => Promise.resolve({ settings: {} }));
@@ -143,13 +158,105 @@ describe('what a pull hands on', () => {
     api.updateUserSettings.mockImplementationOnce(() => new Promise((resolve, reject) => { fail = reject; }));
     const pulling = pullSettings();
     await wait(5); // the initial push is on the wire
+    expect(api.updateUserSettings).toHaveBeenCalledWith({ flockOrder: [4], userInterests: ['Sports'] });
     queueSync({ flockOrder: [8] }); // an edit meanwhile
     fail(Object.assign(new Error('offline'), { isNetworkError: true }));
     expect(await handedOn(pulling)).toEqual({});
+    window.dispatchEvent(new Event('online'));
     await wait(700);
     expect(api.updateUserSettings).toHaveBeenLastCalledWith({ flockOrder: [8], userInterests: ['Sports'] });
-    localStorage.removeItem('flock_interests');
-    localStorage.removeItem('flock_order');
+  });
+});
+
+describe('the queue', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    api.isLoggedIn.mockReturnValue(true);
+    api.updateUserSettings.mockReset();
+    api.updateUserSettings.mockImplementation(() => Promise.resolve({}));
+  });
+
+  test('one save is on the wire at a time, and what queued meanwhile goes next', async () => {
+    const send = held();
+    api.updateUserSettings.mockImplementationOnce(() => send.promise);
+    queueSync({ pinnedFlockIds: [1] });
+    await wait(700);
+    queueSync({ pinnedFlockIds: [1, 2] });
+    await wait(700);
+    expect(api.updateUserSettings).toHaveBeenCalledTimes(1); // still waiting on the first
+    send.answer({});
+    await wait(5);
+    expect(api.updateUserSettings).toHaveBeenCalledTimes(2);
+    expect(api.updateUserSettings).toHaveBeenLastCalledWith({ pinnedFlockIds: [1, 2] });
+  });
+
+  test('an older save that fails cannot be sent again over a newer value', async () => {
+    let fail;
+    api.updateUserSettings.mockImplementationOnce(() => new Promise((resolve, reject) => { fail = reject; }));
+    queueSync({ pinnedFlockIds: [1] });
+    await wait(700);
+    queueSync({ pinnedFlockIds: [1, 2] });
+    fail(Object.assign(new Error('offline'), { isNetworkError: true }));
+    window.dispatchEvent(new Event('online'));
+    await wait(700);
+    expect(api.updateUserSettings).toHaveBeenLastCalledWith({ pinnedFlockIds: [1, 2] });
+  });
+
+  test('a save lost while the device says it is online is tried again by itself', async () => {
+    api.updateUserSettings.mockImplementationOnce(() => Promise.reject(Object.assign(new Error('blip'), { isNetworkError: true })));
+    queueSync({ safetyOn: 'false' });
+    await wait(700);
+    expect(api.updateUserSettings).toHaveBeenCalledTimes(1);
+    await wait(5200); // the first retry waits 5 s; no 'online' event comes
+    expect(api.updateUserSettings).toHaveBeenCalledTimes(2);
+    expect(api.updateUserSettings).toHaveBeenLastCalledWith({ safetyOn: 'false' });
+  }, 15000);
+});
+
+describe('the end of a session', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    api.isLoggedIn.mockReturnValue(true);
+    api.updateUserSettings.mockReset();
+    api.updateUserSettings.mockImplementation(() => Promise.resolve({}));
+  });
+  const endSession = () => window.dispatchEvent(new CustomEvent('flock-session-cleared'));
+
+  test("a queued save does not go up under the next account", async () => {
+    queueSync({ userInterests: ['A'] });
+    endSession();
+    await wait(700);
+    expect(api.updateUserSettings).not.toHaveBeenCalled();
+  });
+
+  test("a save that fails after the session ended is not queued for the next account", async () => {
+    let fail;
+    api.updateUserSettings.mockImplementationOnce(() => new Promise((resolve, reject) => { fail = reject; }));
+    queueSync({ userInterests: ['A'] });
+    await wait(700);
+    endSession();
+    fail(Object.assign(new Error('offline'), { isNetworkError: true }));
+    window.dispatchEvent(new Event('online'));
+    await wait(700);
+    expect(api.updateUserSettings).toHaveBeenCalledTimes(1);
+  });
+
+  test("a pull asked for the last account is not written or handed to the next one", async () => {
+    const answer = held();
+    api.getUserSettings.mockImplementationOnce(() => answer.promise);
+    const pulling = pullSettings();
+    endSession();
+    answer.answer({ settings: { userInterests: ['A'] } });
+    expect(await handedOn(pulling)).toBeNull();
+    expect(localStorage.getItem('flock_interests')).toBeNull();
+  });
+
+  test('the sign-out sweep announces it, and adopting Location sends nothing back', () => {
+    const api = fs.readFileSync(path.join(__dirname, '..', 'services', 'api.js'), 'utf8');
+    const sweep = api.slice(api.indexOf('export function clearLocalSession('));
+    expect(sweep.slice(0, sweep.indexOf('\n}\n'))).toContain("window.dispatchEvent(new CustomEvent('flock-session-cleared'))");
+    expect(app).toContain("if (!fromAccount) queueSync({ locationEnabled: enable ? 'true' : 'false' });");
+    expect(app).toContain('toggleLocation(on, { fromAccount: true })');
   });
 });
 

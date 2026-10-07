@@ -5315,10 +5315,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // search failing used to be answered with eight invented venues.
   const [venueLoadError, setVenueLoadError] = useState('');
 
-  const toggleLocation = useCallback((enable) => {
+  const toggleLocation = useCallback((enable, { fromAccount = false } = {}) => {
     setLocationEnabled(enable);
     localStorage.setItem('flock_location_enabled', enable ? 'true' : 'false');
-    queueSync({ locationEnabled: enable ? 'true' : 'false' });
+    // Adopting the account's own value (the flock-settings-loaded listener)
+    // is not a change to send back: that echo could land after another
+    // device's newer choice and overwrite it.
+    if (!fromAccount) queueSync({ locationEnabled: enable ? 'true' : 'false' });
     if (enable) {
       if (geolocationAvailable()) {
         // The wait is state, not silence: the Events gate shows it, and
@@ -9230,7 +9233,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // the whole app mid-session is not a sync.
       if (fresh('locationEnabled')) {
         const on = String(s.locationEnabled) !== 'false';
-        if (on !== locationEnabledRef.current) toggleLocation(on);
+        if (on !== locationEnabledRef.current) toggleLocation(on, { fromAccount: true });
       }
       if (fresh('pinnedFlockIds') && Array.isArray(s.pinnedFlockIds)) setPinnedFlockIds(s.pinnedFlockIds);
       if (fresh('flockOrder') && Array.isArray(s.flockOrder)) setFlockOrder(s.flockOrder);
