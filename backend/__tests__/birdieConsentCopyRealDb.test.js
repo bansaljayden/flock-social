@@ -216,6 +216,34 @@ test('a repeated yes keeps the first time and the fullest question agreed to', a
   assertZoneRead(await turn(bo));
 });
 
+// No build sends the zone without the flag: the zone joined the turn together
+// with the question that names it. A turn made by hand that sends one and
+// leaves the flag off is held to the same recorded yes, read on this database.
+const unflaggedTurn = (who) => call('POST', '/api/ai/chat', who, {
+  messages: [{ role: 'user', text: "what's the move friday" }],
+  timeZone: ZONE,
+});
+
+test('a turn that sends the zone without the flag gets it only on a yes to the question that names it', async () => {
+  const none = await user();
+  assertZoneWithheld(await unflaggedTurn(none));
+
+  const earlier = await user();
+  assert.strictEqual((await call('POST', '/api/ai/consent', earlier)).status, 200);
+  chatCreates = [];
+  assertZoneWithheld(await unflaggedTurn(earlier));
+
+  const named = await user();
+  assert.strictEqual((await call('POST', '/api/ai/consent', named, { copy: 2 })).status, 200);
+  chatCreates = [];
+  assertZoneRead(await unflaggedTurn(named));
+
+  // Withdrawn, the zone goes back out with everything else the yes covered.
+  assert.strictEqual((await call('DELETE', '/api/ai/consent', named)).status, 200);
+  chatCreates = [];
+  assertZoneWithheld(await unflaggedTurn(named));
+});
+
 test('the question number takes one value, and anything else saves nothing', async () => {
   const ava = await user();
   for (const copy of ['2', 1, 3, 2.5, true, [2], { copy: 2 }]) {

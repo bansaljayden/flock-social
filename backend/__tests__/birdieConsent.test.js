@@ -35,7 +35,8 @@
 // Allow also says which question it answered (migration 122), and /chat reads
 // the zone a turn carries only on a yes to one that names it. The app's half
 // is pinned at the bottom; the route's, on a real database, is
-// birdieConsentCopyRealDb.test.js.
+// birdieConsentCopyRealDb.test.js. A turn that sends a zone without the flag
+// is held to that same yes, and a turn with neither still reads nothing.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -95,14 +96,18 @@ let CURRENT_USER = { id: 1, name: 'Ava' };
 authMod.authenticate = (req, _res, next) => { req.user = CURRENT_USER; next(); };
 
 // --- Gemini, faked, and counted ---------------------------------------------
+// Every chat it is asked to open is kept, because the system instruction is
+// where a zone that got through would show.
 const genaiMod = require('@google/genai');
 let chatsCreated = 0;
 let sendCalls = 0;
+let chatParams = [];
 genaiMod.GoogleGenAI = function FakeGenAI() {
   return {
     chats: {
-      create: () => {
+      create: (params) => {
         chatsCreated += 1;
+        chatParams.push(params);
         return {
           sendMessage: async () => {
             sendCalls += 1;
@@ -139,6 +144,7 @@ test.beforeEach(() => {
   sql = [];
   chatsCreated = 0;
   sendCalls = 0;
+  chatParams = [];
 });
 
 async function call(method, urlPath, body) {
@@ -315,6 +321,90 @@ test('the flag takes one value; anything else is refused before any spend', asyn
   // A null is the absent flag, the same as an installed build.
   assert.strictEqual((await chat({ consentFlow: null })).status, 200);
   assert.strictEqual(chatsCreated, 1, 'only the null turn reached Gemini');
+});
+
+// --- a zone sent without the flag -------------------------------------------
+// Every client that sends a zone also sends the flag: the zone joined the turn
+// together with the question that names it. A turn with a zone and no flag is
+// made by hand, and leaving the flag off must not be the way past the answer.
+// The zone is read only on the account's recorded yes to the question that
+// names it. On anything else Birdie is told the zone is unknown, and the turn
+// is still answered, since no flag is also how an installed build looks.
+
+const ZONE = 'America/New_York';
+const nowLine = () => (chatParams[0]?.config?.systemInstruction || '').split('\n').find((l) => l.startsWith('- Now: ')) || '';
+const consentReads = () => sql.filter((s) => /birdie_ai_consent/.test(s));
+
+function assertZoneWithheld(res) {
+  assert.strictEqual(res.status, 200, `expected an answer, got ${res.status} ${JSON.stringify(res.body)}`);
+  assert.strictEqual(chatsCreated, 1);
+  assert.match(nowLine(), /^- Now: .* UTC\.$/, `the turn was read in a zone: ${nowLine()}`);
+  assert.ok(!JSON.stringify(chatParams).includes(ZONE), 'the zone reached Gemini without a yes to the question that names it');
+}
+
+test('a zone sent without the flag stays out of Gemini on an account with no yes on record', async () => {
+  // The second row cannot be written by the consent routes (withdrawing
+  // clears both columns); it is here so the time is what decides, not the
+  // number alone.
+  for (const [at, copy] of [[null, null], [null, 2]]) {
+    consentAt.set(CURRENT_USER.id, at);
+    consentCopy.set(CURRENT_USER.id, copy);
+    chatParams = [];
+    chatsCreated = 0;
+    assertZoneWithheld(await installedBuildChat({ timeZone: ZONE }));
+  }
+});
+
+test('a zone sent without the flag stays out of Gemini on a yes to the question that did not name it', async () => {
+  consentAt.set(CURRENT_USER.id, new Date());
+  consentCopy.set(CURRENT_USER.id, null);
+  assertZoneWithheld(await installedBuildChat({ timeZone: ZONE }));
+});
+
+test('a zone is read on a yes to the question that names it, flag or not, on one read', async () => {
+  consentAt.set(CURRENT_USER.id, new Date());
+  consentCopy.set(CURRENT_USER.id, 2);
+  for (const send of [installedBuildChat, chat]) {
+    sql = [];
+    chatParams = [];
+    const res = await send({ timeZone: ZONE });
+    assert.strictEqual(res.status, 200, `expected an answer, got ${res.status} ${JSON.stringify(res.body)}`);
+    assert.match(nowLine(), /, America\/New_York time, where the user is\.$/, `the zone was not read: ${nowLine()}`);
+    assert.deepStrictEqual(consentReads(), ['SELECT birdie_ai_consent_at, birdie_ai_consent_copy FROM users WHERE id = $1']);
+  }
+});
+
+test('a turn with no flag and no zone ICU accepts still reads no answer', async () => {
+  // The read decides whether a zone may go, so a turn with none to send pays
+  // for no read: no field, a null, an empty string, or a name that is not a zone.
+  consentAt.set(CURRENT_USER.id, new Date());
+  consentCopy.set(CURRENT_USER.id, 2);
+  for (const extra of [{}, { timeZone: null }, { timeZone: '' }, { timeZone: 'Mars/Olympus_Mons' }]) {
+    sql = [];
+    chatParams = [];
+    chatsCreated = 0;
+    const res = await installedBuildChat(extra);
+    assert.strictEqual(res.status, 200, `${JSON.stringify(extra)}: got ${res.status} ${JSON.stringify(res.body)}`);
+    assert.deepStrictEqual(consentReads(), [], `${JSON.stringify(extra)} read the consent columns`);
+    assert.match(nowLine(), /^- Now: .* UTC\.$/);
+  }
+});
+
+test('a zone sent without the flag is never let through by a consent read that fails', async () => {
+  const real = pool.query;
+  pool.query = (text, params) => (/birdie_ai_consent_at/.test(String(text))
+    ? Promise.reject(new Error('connection terminated unexpectedly'))
+    : real(text, params));
+  const errors = console.error;
+  console.error = () => {};
+  try {
+    const res = await installedBuildChat({ timeZone: ZONE });
+    assert.strictEqual(res.status, 500);
+    assert.strictEqual(sendCalls, 0);
+  } finally {
+    pool.query = real;
+    console.error = errors;
+  }
 });
 
 test('the frontend sends exactly the flag this route holds to the answer', () => {
