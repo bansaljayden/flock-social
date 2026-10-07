@@ -392,7 +392,10 @@ function serveRouter(mountPath, router) {
   return app;
 }
 
-function request(app, method, path, { headers = {}, body } = {}) {
+// `bodiless` sends a POST with neither Content-Length nor Transfer-Encoding,
+// which is a request with no body at all. Left to itself Node's client adds
+// `Content-Length: 0`, which is a body, just an empty one.
+function request(app, method, path, { headers = {}, body, bodiless = false } = {}) {
   return new Promise((resolve, reject) => {
     const server = app.listen(0, () => {
       const req = http.request({ agent: false,
@@ -403,6 +406,10 @@ function request(app, method, path, { headers = {}, body } = {}) {
         res.on('end', () => { server.close(); resolve({ status: res.statusCode, text, headers: res.headers }); });
       });
       req.on('error', (e) => { server.close(); reject(e); });
+      if (bodiless) {
+        req.removeHeader('content-length');
+        req.removeHeader('transfer-encoding');
+      }
       if (body !== undefined) req.write(body);
       req.end();
     });
@@ -485,21 +492,36 @@ test('a write that failed answers 500, not the page that says it worked', async 
 
 const WEBHOOK_SECRET_RAW = crypto.randomBytes(24).toString('base64');
 
+// server.js counts every 5xx other than 502-504 as a server fault, and ten in
+// fifteen minutes send the day's one server_errors alert. The apps below mount
+// the same counter first, as server.js does, so a test can read what a
+// request would have cost.
+const { faultMiddleware, serverFaultStatus, __resetServerFaults } = require('../utils/serverFault');
+// 'finish', where a response is counted, can land after the client has it.
+const settle = () => new Promise((r) => setTimeout(r, 20));
+
+// The same parser shape server.js gives this path: JSON that keeps its raw
+// bytes, then the form parser every path gets.
 function webhookApp() {
   const app = express();
+  app.use(faultMiddleware);
   app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf; } }));
+  app.use(express.urlencoded({ extended: true }));
   app.use('/api/email-events', require('../routes/emailWebhook'));
   return app;
 }
 
-function signedPost(app, payload, { secret = WEBHOOK_SECRET_RAW, id = 'msg_1', timestamp, tamper } = {}) {
+function signedPost(app, payload, {
+  secret = WEBHOOK_SECRET_RAW, id = 'msg_1', timestamp, tamper,
+  path = '/api/email-events', contentType = 'application/json',
+} = {}) {
   const body = JSON.stringify(payload);
   const ts = String(timestamp != null ? timestamp : Math.floor(Date.now() / 1000));
   const mac = crypto.createHmac('sha256', Buffer.from(secret, 'base64'))
     .update(`${id}.${ts}.${body}`).digest('base64');
-  return request(app, 'POST', '/api/email-events', {
+  return request(app, 'POST', path, {
     headers: {
-      'content-type': 'application/json',
+      'content-type': contentType,
       'content-length': Buffer.byteLength(tamper || body),
       'svix-id': id,
       'svix-timestamp': ts,
@@ -622,6 +644,152 @@ test('a delivered event is acknowledged and changes nothing', async () => {
       assert.strictEqual(res.status, 200, 'a 200 is what stops Resend retrying an event we have no opinion about');
       assert.strictEqual(suppressionRows.size, 0);
     });
+  } finally { cap.restore(); }
+});
+
+// ---------------------------------------------------------------------------
+// 5b. What an outsider can make the webhook answer, and what that costs
+// ---------------------------------------------------------------------------
+// The svix headers are not secret and a current timestamp is free, so every
+// check ahead of the body passes for anybody who sends three made-up headers.
+// A body that never reached the raw-body parser was then answered 500 with a
+// line blaming server.js. A 500 is a counted server fault, so ten of those
+// requests sent the day's one server_errors alert, with the wrong diagnosis,
+// and left nothing to send when a real storm of 500s came later that day.
+
+function madeUpSvixHeaders(extra = {}) {
+  return {
+    'svix-id': 'msg_x',
+    'svix-timestamp': String(Math.floor(Date.now() / 1000)),
+    'svix-signature': 'v1,x',
+    ...extra,
+  };
+}
+
+// Every shape of request that reaches the route with no raw bytes and is not
+// the server's fault. A function, so each use gets a current timestamp.
+const notAJsonBody = () => [
+  ['a text/plain body', {
+    headers: madeUpSvixHeaders({ 'content-type': 'text/plain', 'content-length': 1 }), body: 'x',
+  }],
+  ['a form-encoded body', {
+    headers: madeUpSvixHeaders({ 'content-type': 'application/x-www-form-urlencoded', 'content-length': 3 }), body: 'a=b',
+  }],
+  ['a body with no Content-Type', { headers: madeUpSvixHeaders({ 'content-length': 2 }), body: '{}' }],
+  ['an empty body with no Content-Type', { headers: madeUpSvixHeaders({ 'content-length': 0 }), body: '' }],
+  ['a JSON Content-Type and no body at all', {
+    headers: madeUpSvixHeaders({ 'content-type': 'application/json' }), bodiless: true,
+  }],
+];
+
+test('a body that is not JSON, or no body at all, is a client error: 415, never a counted 500', async () => {
+  resetWorld();
+  __resetServerFaults();
+  const cap = silence();
+  try {
+    await withEnv({ RESEND_WEBHOOK_SECRET: `whsec_${WEBHOOK_SECRET_RAW}` }, async () => {
+      const app = webhookApp();
+      for (const [what, opts] of notAJsonBody()) {
+        const res = await request(app, 'POST', '/api/email-events', opts);
+        assert.strictEqual(res.status, 415, `${what} answered ${res.status} ${res.text}`);
+      }
+      // Signed or not makes no difference. Resend never sends another type, so
+      // a body in one is not read.
+      const signedAsText = await signedPost(app, bounced('dead@example.com'), { contentType: 'text/plain' });
+      assert.strictEqual(signedAsText.status, 415);
+      assert.strictEqual(suppressionRows.size, 0);
+    });
+    await settle();
+    assert.strictEqual(serverFaultStatus().total, 0,
+      'a request anybody can send must not count toward the alert that pages the admins');
+    assert.ok(!/raw body/.test(cap.text()), 'none of these is a mount bug, and the log must not say one is');
+  } finally { cap.restore(); }
+});
+
+test('a JSON body with no raw bytes beside it is still the mount bug: a counted 500 and the line that says so', async () => {
+  // The two ways server.js could lose the bytes: a parser that does not keep
+  // them, or no parser at all. Either turns every genuine event into this, so
+  // it has to stay loud.
+  const behindPlainJson = express();
+  behindPlainJson.use(faultMiddleware);
+  behindPlainJson.use(express.json());
+  behindPlainJson.use('/api/email-events', require('../routes/emailWebhook'));
+  const behindNothing = express();
+  behindNothing.use(faultMiddleware);
+  behindNothing.use('/api/email-events', require('../routes/emailWebhook'));
+
+  for (const [what, app] of [['express.json() without verify', behindPlainJson], ['no body parser', behindNothing]]) {
+    resetWorld();
+    __resetServerFaults();
+    const cap = silence();
+    try {
+      // eslint-disable-next-line no-loop-func
+      await withEnv({ RESEND_WEBHOOK_SECRET: `whsec_${WEBHOOK_SECRET_RAW}` }, async () => {
+        const res = await signedPost(app, bounced('dead@example.com'));
+        assert.strictEqual(res.status, 500, `${what}: answered ${res.status} ${res.text}`);
+      });
+      await settle();
+      assert.match(cap.text(), /no raw body[\s\S]*mounted without its raw-body parser in server\.js/, what);
+      assert.strictEqual(serverFaultStatus().total, 1, `${what}: the mount bug has to reach the fault count`);
+      assert.strictEqual(suppressionRows.size, 0);
+    } finally { cap.restore(); }
+  }
+});
+
+// server.js's own parser table, lifted out of the source the way
+// __tests__/bodyLimitAudit.test.js lifts it. The 500 above is out of an
+// outsider's reach only if every JSON request that gets through the real table
+// to this route carries its bytes, so the two halves are tested together.
+function appBehindServerParsers() {
+  const src = require('node:fs').readFileSync(require.resolve('../server.js'), 'utf8');
+  const start = src.indexOf('const JSON_BODY_ENVELOPE_BYTES');
+  const endAt = src.indexOf('app.use(express.urlencoded(');
+  assert.ok(start > 0 && endAt > start, 'the parser block in server.js has moved; retarget this lift');
+  const app = express();
+  app.use(faultMiddleware);
+  // Only the image routes read CHAT_IMAGE_MAX_BYTES, and nothing here posts one.
+  // eslint-disable-next-line no-new-func
+  new Function('express', 'CHAT_IMAGE_MAX_BYTES', 'app', src.slice(start, src.indexOf('\n', endAt)))(
+    express, 1024 * 1024, app
+  );
+  app.use('/api/email-events', require('../routes/emailWebhook'));
+  app.use((_req, res) => res.status(404).json({ error: 'Route not found' }));
+  return app;
+}
+
+test('behind the parsers server.js really mounts, a genuine event verifies at every spelling and an outsider cannot reach the 500', async () => {
+  __resetServerFaults();
+  const cap = silence();
+  try {
+    await withEnv({ RESEND_WEBHOOK_SECRET: `whsec_${WEBHOOK_SECRET_RAW}` }, async () => {
+      const app = appBehindServerParsers();
+      // Express routes all four to the same handler, so each has to get the bytes.
+      for (const path of ['/api/email-events', '/api/email-events/', '/API/EMAIL-EVENTS', '/api/email-events//']) {
+        resetWorld();
+        const res = await signedPost(app, bounced('dead@example.com'), { path });
+        assert.strictEqual(res.status, 200, `${path} answered ${res.status} ${res.text}`);
+        assert.strictEqual(suppressionRows.get('dead@example.com'), 'bounce', path);
+      }
+
+      resetWorld();
+      for (const [what, opts] of notAJsonBody()) {
+        const res = await request(app, 'POST', '/api/email-events', opts);
+        assert.strictEqual(res.status, 415, `${what} answered ${res.status} ${res.text}`);
+      }
+      // A JSON body, even an empty one, arrives with its bytes, so the furthest
+      // an outsider gets is the signature check.
+      const emptyJson = await request(app, 'POST', '/api/email-events', {
+        headers: madeUpSvixHeaders({ 'content-type': 'application/json', 'content-length': 0 }), body: '',
+      });
+      assert.strictEqual(emptyJson.status, 401);
+      const forged = await signedPost(app, bounced('victim@example.com'),
+        { secret: crypto.randomBytes(24).toString('base64') });
+      assert.strictEqual(forged.status, 401);
+      assert.strictEqual(suppressionRows.size, 0);
+    });
+    await settle();
+    assert.strictEqual(serverFaultStatus().total, 0, 'nothing an outsider sent may count as a server fault');
+    assert.ok(!/raw body/.test(cap.text()));
   } finally { cap.restore(); }
 });
 

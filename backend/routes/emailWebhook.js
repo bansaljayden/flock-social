@@ -138,12 +138,29 @@ router.post('/', async (req, res) => {
     return res.status(400).json({ error: 'Stale signature' });
   }
 
-  // server.js hands this route a parser that keeps the bytes. No raw body means
-  // the mount is wrong, and verifying against a re-serialised object would be
-  // verifying against something Resend never signed, so this refuses instead.
+  // Resend only ever posts application/json, and that is the only type the
+  // raw-body parser in server.js reads. A request of any other type, or with no
+  // body at all, never reached that parser, so its missing raw bytes are the
+  // caller's doing and not a mount bug. It is refused as a client error, which
+  // utils/serverFault.js does not count. It used to fall through to the 500
+  // below, so ten unsigned text/plain requests carrying made-up svix headers
+  // were ten counted server faults: enough to send the day's one server_errors
+  // alert, blaming a mount bug that did not exist. req.is() reads the
+  // Content-Type with the same check body-parser uses to decide whether to
+  // parse, and answers null when there is no body, so this holds even with no
+  // parser in front of the route at all.
+  if (!req.is('application/json')) {
+    return res.status(415).json({ error: 'Expected an application/json body' });
+  }
+
+  // A JSON body with no raw bytes beside it is the mount bug: server.js has put
+  // this route behind a parser that does not keep them, or behind none. Every
+  // genuine event fails the same way, so it is a 500 and a log line, and
+  // verifying against a re-serialised object instead would be verifying
+  // something Resend never signed.
   const rawBody = Buffer.isBuffer(req.rawBody) ? req.rawBody.toString('utf8') : null;
   if (rawBody === null) {
-    console.error('[emailWebhook] no raw body on the request. The route is mounted without its raw-body parser in server.js.');
+    console.error('[emailWebhook] a JSON request arrived with no raw body. The route is mounted without its raw-body parser in server.js.');
     return res.status(500).json({ error: 'Server error' });
   }
   if (!signatureMatches(signature, key, id, timestamp, rawBody)) {
