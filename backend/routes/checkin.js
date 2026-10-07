@@ -89,8 +89,66 @@ const router = express.Router();
 // echo, the 'nfc'-only allowlist downstream — are pinned in
 // __tests__/nfcTrustPath.test.js.
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// THE SECRET HAS A FLOOR (audit of the inbound secrets, 2026-10-07).
+//
+// Every tag shows a matching pair to anyone at the venue: a place id, and in
+// its URL the first 128 bits of the HMAC of that id. The pair is all it takes
+// to test guesses at NFC_TAG_SECRET offline, as fast as the guesser's hardware
+// allows, with no request to us and no limiter in the way. The Stripe,
+// RevenueCat and Resend webhook secrets can only be guessed online, one
+// request at a time, and each of them already had a minimum length; this one
+// had none. A short value is not a weaker key, it is a key somebody will
+// recover, and with it they can sign 'nfc' taps for every venue at once.
+//
+// So a value under MIN_TAG_SECRET_LENGTH characters is treated exactly like an
+// unset one: no tap verifies and no tag can be minted. It refuses LOUDLY, once
+// per process and at boot in production (the end of this file), the way
+// routes/revenuecat.js refuses a short secret of its own. Without the log line
+// the only symptom would be every tap landing as 'nfc_unverified', which looks
+// like broken tags rather than like a variable to fix. `openssl rand -hex 32`
+// gives 64 characters and clears the floor with room to spare.
+//
+// The value is the HMAC key exactly as set. Every tag in the field was cut
+// under those bytes, so trimming them here would quietly re-key all of them.
+// Whitespace around the value does not count toward the floor, though, since a
+// guesser gets it for free. And a length is only a proxy: thirty-two copies of
+// one letter clear it, so the value still has to come from a generator.
+// ---------------------------------------------------------------------------
+const MIN_TAG_SECRET_LENGTH = 32;
+
+const announced = new Set();
+function announceOnce(key, message) {
+  if (announced.has(key)) return;
+  announced.add(key);
+  console.error(message);
+}
+
+// The one place that decides what "configured" means, so the verifier below
+// and the minter at the end of this file cannot disagree about it. The line it
+// logs names the length and never the value.
+function tagSecret() {
+  const raw = process.env.NFC_TAG_SECRET;
+  if (typeof raw !== 'string') return null;
+  const length = raw.trim().length;
+  if (!length) return null;
+  if (length < MIN_TAG_SECRET_LENGTH) {
+    announceOnce(
+      `short-secret:${length}`,
+      `[Checkin] NFC_TAG_SECRET is ${length} characters. Every tag shows its place id and a MAC of it in public, `
+      + `so a secret under ${MIN_TAG_SECRET_LENGTH} characters can be worked out offline, and with it anyone can `
+      + `sign a verified tap at any venue. It is treated as UNSET: every tap is recorded as nfc_unverified and no `
+      + `tag can be minted. Set a long random value (openssl rand -hex 32) and re-cut every tag, since tags cut `
+      + `under the old value will not verify.`
+    );
+    return null;
+  }
+  return raw;
+}
+
 function nfcSigValid(placeId, sig) {
-  const secret = process.env.NFC_TAG_SECRET;
+  const secret = tagSecret();
   if (!secret || !sig || typeof sig !== 'string') return false;
   const expected = crypto.createHmac('sha256', secret).update(String(placeId)).digest('hex').slice(0, 32);
   try {
@@ -777,10 +835,11 @@ router.post('/:placeId', authenticate, async (req, res) => {
 
 module.exports = router;
 // The tag signature, for the admin route that mints a tag URL
-// (routes/admin.js). Null when the secret is unset, so a caller cannot mint
-// a tag the verifier above would then refuse.
+// (routes/admin.js). Null when there is no usable secret, unset or under
+// MIN_TAG_SECRET_LENGTH, so a caller cannot mint a tag the verifier above
+// would then refuse.
 module.exports.nfcTagSig = (placeId) => {
-  const secret = process.env.NFC_TAG_SECRET;
+  const secret = tagSecret();
   if (!secret) return null;
   return crypto.createHmac('sha256', secret).update(String(placeId)).digest('hex').slice(0, 32);
 };
@@ -797,6 +856,8 @@ module.exports.__test = {
   tapCache,
   validPlaceId,
   nfcSigValid,
+  tagSecret,
+  MIN_TAG_SECRET_LENGTH,
   recordTap,
   markFlockAttendance,
   tapBudget,
@@ -805,3 +866,12 @@ module.exports.__test = {
   ANON_TAPS_PER_HOUR,
   TAP_DEDUPE_MS,
 };
+
+// SAY IT AT BOOT. tagSecret() names a short secret the first time anything
+// asks for it, which on a quiet night can be hours after a deploy, and the
+// deploy log is where somebody looks when a variable has just changed. So
+// production asks once at require time, the way routes/emailWebhook.js names
+// its own missing secret at boot. An unset secret stays quiet here: that is
+// the degrade backend/.env.example documents, not a value somebody believes
+// is working.
+if (process.env.NODE_ENV === 'production') tagSecret();
