@@ -408,13 +408,20 @@ test('a venue asked by id moves back when its ask draws a 503 or fails', async (
   ]);
 });
 
-test('a 503 on a by-name ask, or on a row unmapped while it was asked, stamps nothing', async () => {
-  // A by-name venue keeps its NULL stamp, so --skip-attempted still offers
-  // its admission. A row the venue repair unmaps mid-run keeps the stamp the
-  // repair preserved, the same way the found stamp is held to the id the
-  // forecast was bought with.
+// What bestTimeService throws for a 429.
+const rateLimited = () => Object.assign(new Error('BestTime 429 (weekly)'), { transient: true });
+
+test('a by-name ask that gets no answer is stamped apart from the attempt; a row unmapped mid-ask keeps its stamp', async () => {
+  // A by-name venue that got no answer has not had its admission, so its
+  // besttime_attempted_at stays NULL and --skip-attempted still offers it.
+  // It gets besttime_name_unanswered_at instead, which only --order=stalest
+  // reads. A timeout is handled the same way (stampFailedAsk says why). A row
+  // the venue repair unmaps mid-run keeps the stamp the repair preserved, the
+  // same way the found stamp is held to the id the forecast was bought with.
   const city = 'stalest_unstamped';
   FAILS.set('By Name 503', throttle);
+  FAILS.set('By Name 429', rateLimited);
+  FAILS.set('By Name Times Out', timeout);
   FAILS.set('Unmapped While Asked', async () => {
     // What repairBestTimeDiscoveredVenues.js writes on a rival row.
     await pool.query(
@@ -426,21 +433,59 @@ test('a 503 on a by-name ask, or on a row unmapped while it was asked, stamps no
     return throttle();
   });
   await addVenue(city, 'By Name 503', null);
+  await addVenue(city, 'By Name 429', null);
+  await addVenue(city, 'By Name Times Out', null);
   await addVenue(city, 'Unmapped While Asked', 'ven_unmapped_mid_ask', '40 days');
 
   assert.deepStrictEqual(
-    await piece([`--city=${city}`, '--max-new=1']),
-    ['By Name 503', 'Unmapped While Asked']
+    await piece([`--city=${city}`, '--max-new=3']),
+    ['By Name 503', 'By Name 429', 'By Name Times Out', 'Unmapped While Asked']
   );
   const { rows } = await pool.query(
-    `SELECT name, besttime_attempted_at IS NULL AS never_asked,
-            besttime_attempted_at < NOW() - interval '39 days' AS old_stamp_kept
+    `SELECT name, besttime_status, besttime_attempted_at IS NULL AS never_asked,
+            besttime_attempted_at < NOW() - interval '39 days' AS old_stamp_kept,
+            besttime_name_unanswered_at IS NOT NULL AS unanswered
        FROM ml_venues WHERE city = $1 ORDER BY name`,
     [city]
   );
   assert.deepStrictEqual(rows, [
-    { name: 'By Name 503', never_asked: true, old_stamp_kept: null },
-    { name: 'Unmapped While Asked', never_asked: false, old_stamp_kept: true },
+    { name: 'By Name 429', besttime_status: null, never_asked: true, old_stamp_kept: null, unanswered: true },
+    { name: 'By Name 503', besttime_status: null, never_asked: true, old_stamp_kept: null, unanswered: true },
+    { name: 'By Name Times Out', besttime_status: null, never_asked: true, old_stamp_kept: null, unanswered: true },
+    { name: 'Unmapped While Asked', besttime_status: 'duplicate', never_asked: false, old_stamp_kept: true, unanswered: false },
+  ]);
+});
+
+test('a by-name venue that never gets an answer stops starving the rest of a limited run', async () => {
+  // Under --order=stalest --limit=N --max-new=M, a by-name venue whose
+  // lookup drew a 503 every time was first in every run, because nothing was
+  // stamped on it, and with --limit=1 the venue behind it was never asked.
+  // A 429 or a timeout did the same.
+  const city = 'stalest_by_name';
+  FAILS.set('By Name Always 503', throttle);
+  await addVenue(city, 'By Name Always 503', null);
+  await addVenue(city, 'By Name Never Asked', null);
+  byNameAnswer = 'ven_by_name_never_asked';
+
+  const args = [`--city=${city}`, '--order=stalest', '--limit=1', '--max-new=1'];
+  assert.deepStrictEqual(await piece(args), ['By Name Always 503']);
+  // The old code asked it again here, and in every run after.
+  assert.deepStrictEqual(await piece(args), ['By Name Never Asked']);
+
+  // No answer, so no admission: an admission run still offers it, and it is
+  // the one venue in the city BestTime never answered about.
+  assert.deepStrictEqual(
+    await piece([`--city=${city}`, '--skip-attempted', '--order=stalest', '--max-new=1']),
+    ['By Name Always 503']
+  );
+  const { rows } = await pool.query(
+    `SELECT name, besttime_venue_id, besttime_status, besttime_attempted_at IS NULL AS never_answered
+       FROM ml_venues WHERE city = $1 ORDER BY name`,
+    [city]
+  );
+  assert.deepStrictEqual(rows, [
+    { name: 'By Name Always 503', besttime_venue_id: null, besttime_status: null, never_answered: true },
+    { name: 'By Name Never Asked', besttime_venue_id: 'ven_by_name_never_asked', besttime_status: 'found', never_answered: false },
   ]);
 });
 

@@ -174,19 +174,21 @@ test('--order=served puts the venues people were served first, then the rest by 
   assert.deepStrictEqual(selects[0].params, ['lehigh', 30, 40]);
 });
 
-test('--order=stalest asks first the venue refreshed or asked longest ago, one with neither before them', async () => {
+test('--order=stalest asks first the venue refreshed or asked longest ago, one with no stamp before them', async () => {
   // The wiring only. collectWeeklyStalest.test.js runs the order against a
   // real table, piece after piece.
   const { orderBy } = selectionOptions(['--order=stalest']);
-  assert.strictEqual(orderBy, 'GREATEST(last_collected_at, besttime_attempted_at) ASC NULLS FIRST, id');
-  // Two columns of the venue row. A per-venue subquery over ml_training_data
+  assert.strictEqual(orderBy,
+    'GREATEST(last_collected_at, besttime_attempted_at, besttime_name_unanswered_at) ASC NULLS FIRST, id');
+  // Three columns of the venue row. A per-venue subquery over ml_training_data
   // is what the planner walked idx_ml_training_collected backward to answer.
   assert.doesNotMatch(orderBy, /ml_training_data|SELECT/);
   const { exitCode, selects } = await selectsFor(['--city=philly', '--only-found', '--order=stalest', '--limit=300']);
   assert.notStrictEqual(exitCode, 1);
   assert.strictEqual(selects.length, 1);
   assert.match(selects[0].sql, / AND besttime_venue_id IS NOT NULL /);
-  assert.match(selects[0].sql, / ORDER BY GREATEST\(last_collected_at, besttime_attempted_at\) ASC NULLS FIRST, id LIMIT \$2$/);
+  assert.match(selects[0].sql,
+    / ORDER BY GREATEST\(last_collected_at, besttime_attempted_at, besttime_name_unanswered_at\) ASC NULLS FIRST, id LIMIT \$2$/);
   assert.deepStrictEqual(selects[0].params, ['philly', 300]);
 });
 
