@@ -2104,6 +2104,95 @@ test('a claim that stops being verified is served nothing from a live Stripe gra
   assert.strictEqual(s.served, 'free', 'an unverified claim was served Roost from the cache');
 });
 
+// DELIVERY IS RECORDED BY THE VERIFICATION THAT STARTS IT. The resolver serves
+// a Stripe grant the moment its claim is verified, with no Stripe event, and
+// only the writer recorded delivery (served_at, migration 121), so a plan
+// served that way still read as never delivered: a checkout completion that
+// arrived late, or was sent again, after the claim was revoked refunded a
+// purchase that had been used.
+test('a plan its claim\'s verification started serving is delivered: a late checkout after a revocation refunds nothing', async () => {
+  const [PLACE] = placePair();
+  const id = await venue({ verified: false, placeId: PLACE });
+  const adminId = await admin();
+  await testPool.query("UPDATE venue_profiles SET stripe_customer_id = 'cus_VERIFIED_DELIVERY' WHERE user_id = $1", [id]);
+  sub('sub_verified_delivery', id, 'active', { customer: 'cus_VERIFIED_DELIVERY', metadata: boundTo(PLACE)(id) });
+  const servedAt = async () => (await testPool.query(
+    'SELECT served_at FROM venue_stripe_subscriptions WHERE stripe_subscription_id = $1', ['sub_verified_delivery'])).rows[0].served_at;
+  // The created event arrives while the claim waits on verification.
+  await venueBilling.syncVenueSubscription('sub_verified_delivery');
+  assert.strictEqual(await servedAt(), null);
+  const verified = await adminCall('PUT', `/api/admin/venues/${await profileIdOf(id)}/verify`, { as: adminId, body: { verified: true, googlePlaceId: PLACE } });
+  assert.strictEqual(verified.status, 200, verified.text);
+  assert.deepStrictEqual(verified.body, { id: await profileIdOf(id), business_name: 'The Owl', verified: true });
+  assert.strictEqual((await state(id)).served, 'pro');
+  assert.ok(await servedAt(), 'the verification started serving the plan and recorded no delivery');
+
+  // The claim is revoked later: the plan is cancelled now, the refund left to
+  // a person.
+  const revoked = await adminCall('PUT', `/api/admin/venues/${await profileIdOf(id)}/verify`, { as: adminId, body: { verified: false } });
+  assert.strictEqual(revoked.status, 200, revoked.text);
+  // And the checkout completion arrives late, or is sent again.
+  const refundsBefore = refundsMade.length;
+  const session = completedCheckout('cs_verified_delivery', 'sub_verified_delivery', id, PLACE, 'in_verified_delivery');
+  const late = await venueBilling.handleVenueEvent(completedEvent(session));
+  assert.ok(!late.refused, 'a purchase its verification delivered was refused');
+  assert.deepStrictEqual(refundsMade.slice(refundsBefore), [], 'a purchase its verification delivered was refunded');
+});
+
+test('a verification records delivery only for the Stripe plan it starts serving', async () => {
+  const [PLACE_A, PLACE_B] = placePair();
+  const [PLACE_C] = placePair();
+  const adminId = await admin();
+  const servedAt = async (subId) => (await testPool.query(
+    'SELECT served_at FROM venue_stripe_subscriptions WHERE stripe_subscription_id = $1', [subId])).rows[0].served_at;
+  // A plan bought for another listing than the one verified is not served
+  // there, so it is not delivered.
+  const elsewhere = await venue({ verified: false, placeId: PLACE_B });
+  await venueBilling.syncVenueSubscription(sub('sub_verify_elsewhere', elsewhere, 'active', { metadata: boundTo(PLACE_A)(elsewhere) }));
+  const res = await adminCall('PUT', `/api/admin/venues/${await profileIdOf(elsewhere)}/verify`, { as: adminId, body: { verified: true, googlePlaceId: PLACE_B } });
+  assert.strictEqual(res.status, 200, res.text);
+  assert.strictEqual((await state(elsewhere)).served, 'free');
+  assert.strictEqual(await servedAt('sub_verify_elsewhere'), null, 'a plan for another listing was recorded as delivered');
+  // Nor is a plan that has ended.
+  const ended = await venue({ verified: false, placeId: PLACE_C });
+  await venueBilling.syncVenueSubscription(sub('sub_verify_ended', ended, 'canceled', { metadata: boundTo(PLACE_C)(ended) }));
+  const late = await adminCall('PUT', `/api/admin/venues/${await profileIdOf(ended)}/verify`, { as: adminId, body: { verified: true, googlePlaceId: PLACE_C } });
+  assert.strictEqual(late.status, 200, late.text);
+  assert.strictEqual(await servedAt('sub_verify_ended'), null, 'an ended plan was recorded as delivered');
+});
+
+test('a verification that lands while a refusal is being written waits for it, and delivers nothing', async () => {
+  const [PLACE] = placePair();
+  const id = await venue({ verified: false, placeId: PLACE });
+  const adminId = await admin();
+  await testPool.query("UPDATE venue_profiles SET stripe_customer_id = 'cus_REFUSAL_RACE' WHERE user_id = $1", [id]);
+  sub('sub_refusal_race', id, 'active', { customer: 'cus_REFUSAL_RACE', metadata: boundTo(PLACE)(id) });
+  await venueBilling.syncVenueSubscription('sub_refusal_race');
+  const session = completedCheckout('cs_refusal_race', 'sub_refusal_race', id, PLACE, 'in_refusal_race');
+  const profileId = await profileIdOf(id);
+
+  // Fulfillment has decided the refusal, and its grant write is held.
+  const hold = armWriteHold();
+  const fulfilling = venueBilling.handleVenueEvent(completedEvent(session));
+  await hold.writeReached;
+  // The admin verifies the claim in that moment.
+  let verifyAnswered = false;
+  const verifying = adminCall('PUT', `/api/admin/venues/${profileId}/verify`, { as: adminId, body: { verified: true, googlePlaceId: PLACE } })
+    .then((r) => { verifyAnswered = true; return r; });
+  await sleep(300);
+  assert.strictEqual(verifyAnswered, false, 'the verification did not wait for the refusal being written');
+  hold.release();
+  const [fulfilled, verified] = await Promise.all([fulfilling, verifying]);
+  assert.strictEqual(verified.status, 200, verified.text);
+  assert.strictEqual(fulfilled.refused, 'CLAIM_NOT_VERIFIED');
+  const rec = await testPool.query('SELECT served_at, refused_at FROM venue_stripe_subscriptions WHERE stripe_subscription_id = $1', ['sub_refusal_race']);
+  assert.strictEqual(rec.rows[0].served_at, null, 'a refused purchase was recorded as delivered by the verification that raced it');
+  assert.ok(rec.rows[0].refused_at);
+  assert.strictEqual((await state(id)).served, 'free', 'a refused purchase was served');
+  assert.deepStrictEqual(refundsMade.filter((r) => r.args.payment_intent === 'pi_in_refusal_race').map((r) => r.options),
+    [{ idempotencyKey: 'flock-claim-revoked-refund-in_refusal_race' }]);
+});
+
 test('verifying a claim, or declining one that never paid, touches no billing', async () => {
   const [PLACE] = placePair();
   const id = await venue({ verified: false, placeId: PLACE });
