@@ -3241,10 +3241,20 @@ const aiResetsAtFromReply = (reply) => (reply && reply.remaining === 0
 // had not turned yet, or a read that failed) left the box shut with no timer
 // at all. Now it reads again every AI_RESET_RECHECK_MS until a read says the
 // chirps are back, which clears the time and ends it.
+//
+// And it never sleeps longer than AI_RESET_MAX_WAIT_MS, however far off the
+// time is. It used to wait the whole way, so a time later than the real reset
+// kept the box shut until then with nothing read in between: a snapshot read
+// across midnight once named the midnight after next, and a phone clock behind
+// the server's makes every time look later. Each read replaces the time with
+// the server's, or clears it once the chirps are back, so a wrong time keeps
+// the box shut at most one wait past the real reset, given a read that gets
+// through.
 const AI_RESET_RECHECK_MS = 30000;
+const AI_RESET_MAX_WAIT_MS = 5 * 60 * 1000;
 const aiResetWaitMs = (resetsAt, nowMs) => {
   const ms = Date.parse(resetsAt) - nowMs;
-  return ms > 0 ? Math.min(ms + 1000, 2147483647) : AI_RESET_RECHECK_MS;
+  return ms > 0 ? Math.min(ms + 1000, AI_RESET_MAX_WAIT_MS) : AI_RESET_RECHECK_MS;
 };
 
 // What actually goes on the wire: {role, text}. The venue names Birdie showed

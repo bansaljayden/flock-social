@@ -619,19 +619,46 @@ describe('a reply that spends the last chirp arms the unlock timer', () => {
 // clock ahead of the server's, or a failed read) left it shut with no timer.
 // ───────────────────────────────────────────────────────────────────────────
 describe('the unlock timer survives a relaunch and a read that still says zero', () => {
-  const lift = () => evaluate(
-    ['AI_RESET_RECHECK_MS', 'aiResetWaitMs'].map((n) => extractDeclaration(appSource, n)),
-    ['AI_RESET_RECHECK_MS', 'aiResetWaitMs'],
-  );
+  const NAMES = ['AI_RESET_RECHECK_MS', 'AI_RESET_MAX_WAIT_MS', 'aiResetWaitMs'];
+  const lift = () => evaluate(NAMES.map((n) => extractDeclaration(appSource, n)), NAMES);
   const RESET = '2026-10-07T00:00:00.000Z';
   const at = Date.parse(RESET);
 
-  test('before the reset it wakes just past it', () => {
+  test('before a near reset it wakes just past it', () => {
     const { aiResetWaitMs } = lift();
     expect(aiResetWaitMs(RESET, at - 60000)).toBe(61000);
     expect(aiResetWaitMs(RESET, at - 1)).toBe(1001);
-    // setTimeout's own ceiling, so a far reset is not a timer that fires now.
-    expect(aiResetWaitMs('2099-01-01T00:00:00.000Z', at)).toBe(2147483647);
+  });
+
+  // A FAR TIME IS NOT WAITED FOR. The timer slept until the time it was given,
+  // so a time later than the real reset kept the box shut until then with
+  // nothing read in between, while the day's chirps were already back: the
+  // snapshot read across midnight named the midnight after next, and a phone
+  // clock behind the server's makes every time look later than it is. Now the
+  // meter is read at least every AI_RESET_MAX_WAIT_MS, and that read decides.
+  test('a reset further off than the bound is read again within it', () => {
+    const { aiResetWaitMs, AI_RESET_MAX_WAIT_MS } = lift();
+    expect(AI_RESET_MAX_WAIT_MS).toBe(5 * 60000);
+    // The snapshot read across midnight: a day off, with the chirps back now.
+    expect(aiResetWaitMs('2026-10-08T00:00:00.000Z', at + 50)).toBe(AI_RESET_MAX_WAIT_MS);
+    expect(aiResetWaitMs(RESET, at - 10 * 60000)).toBe(AI_RESET_MAX_WAIT_MS);
+    expect(aiResetWaitMs('2099-01-01T00:00:00.000Z', at)).toBe(AI_RESET_MAX_WAIT_MS);
+    // Where waiting for the reset itself stops.
+    expect(aiResetWaitMs(RESET, at - (AI_RESET_MAX_WAIT_MS - 1000))).toBe(AI_RESET_MAX_WAIT_MS);
+    expect(aiResetWaitMs(RESET, at - (AI_RESET_MAX_WAIT_MS - 1001))).toBe(AI_RESET_MAX_WAIT_MS - 1);
+  });
+
+  test('whatever time it is handed, the next read is a bounded wait away and never at once', () => {
+    const { aiResetWaitMs, AI_RESET_RECHECK_MS, AI_RESET_MAX_WAIT_MS } = lift();
+    const DAY = 86400000;
+    for (const offset of [-400 * DAY, -DAY, -1, 0, 1, 999, 60000, 3600000, DAY, 2 * DAY, 400 * DAY]) {
+      const wait = aiResetWaitMs(new Date(at + offset).toISOString(), at);
+      expect(wait).toBeGreaterThanOrEqual(1000);
+      expect(wait).toBeLessThanOrEqual(AI_RESET_MAX_WAIT_MS);
+    }
+    for (const bad of ['not a time', '', null, undefined]) {
+      expect(aiResetWaitMs(bad, at)).toBe(AI_RESET_RECHECK_MS);
+    }
   });
 
   test('once the reset has passed it reads again in half a minute, never at once', () => {
