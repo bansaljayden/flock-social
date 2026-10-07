@@ -863,7 +863,7 @@ const DEPENDENCIES = [
     fixedId: 'vercel',
     configuredEnv: null,
     observedLineId: null,
-    usageNote: 'Bandwidth and build minutes are not read from here.',
+    usageNote: 'Bandwidth, build minutes and deployment storage are not read from here. Vercel\'s own email of 2026-10-07 put deployment storage at 75% of Hobby\'s 10 GB.',
   },
   {
     id: 'apple-developer',
@@ -2127,12 +2127,12 @@ const LICENCE_EXPOSURES = [
     id: 'vercel',
     vendor: 'Vercel',
     plan: 'Hobby (free)',
-    why: 'Hobby is for non-commercial, personal use under Vercel\'s fair use guidelines, and flockcorp.com is a commercial site.',
+    why: 'Hobby is for non-commercial, personal use under Vercel\'s fair use guidelines, and flockcorp.com is a commercial site. Vercel also emailed on 2026-10-07 that deployment storage was at 75% of Hobby\'s 10 GB, warning of disruption at 100%. Builds stopped shipping source maps that day (about 13 MB per deployment instead of 30), but storage already used stays until old deployments are deleted.',
     fix: 'Vercel Pro',
     fixUsdPerMonth: 20,
     resolvedBy: { codeLine: 'vercel', expenseVendor: 'vercel' },
     source: 'https://vercel.com/docs/limits/fair-use-guidelines',
-    checked: '2026-09-29',
+    checked: '2026-10-07',
   },
   {
     id: 'maptiler',
