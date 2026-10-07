@@ -97,7 +97,7 @@ describe('revenue simulator: projections labelled as projections', () => {
 describe('break-even: impossible inputs read as a sentence, not Infinity', () => {
   test('the render is gated on Number.isFinite', () => {
     expect(app).toContain('const breakEvenReachable = Number.isFinite(breakEvenVenues)');
-    expect(app).toContain('breakEvenReachable ? `${breakEvenVenues} venues` : \'Not reachable\'');
+    expect(app).toContain("breakEvenReachable ? hubPlural(breakEvenVenues, 'venue', 'venues') : 'Not reachable'");
   });
 
   test('arithmetic on the figure is behind the same gate', () => {

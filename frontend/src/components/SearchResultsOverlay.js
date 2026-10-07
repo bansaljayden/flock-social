@@ -176,7 +176,7 @@ export default function SearchResultsOverlay({
                       {/* Same split as the dropdown: a search that failed must
                           not be reported as a search that found nothing. */}
                       <h3 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-title)', fontWeight: '600', color: 'var(--text-primary)', margin: '12px 0 0', letterSpacing: '-0.005em' }}>{venueLoadError ? 'Search is not answering' : 'No venues found'}</h3>
-                      <p style={{ fontSize: 'var(--t-body)', color: 'var(--text-secondary)', margin: '6px 0 0', maxWidth: '280px' }}>{venueLoadError || (allVenues.length > 0 && budgetFilteredVenues.length === 0 ? `All ${allVenues.length} spots here are above your group's budget, so none show. The search worked.` : 'Try a different search or location.')}</p>
+                      <p style={{ fontSize: 'var(--t-body)', color: 'var(--text-secondary)', margin: '6px 0 0', maxWidth: '280px' }}>{venueLoadError || (allVenues.length > 0 && budgetFilteredVenues.length === 0 ? (allVenues.length === 1 ? "The one spot here is above your group's budget, so it does not show. The search worked." : `All ${allVenues.length} spots here are above your group's budget, so none show. The search worked.`) : 'Try a different search or location.')}</p>
                     </div>
                   ) : !venueSearching && sorted.map((venue) => {
                     const dist = calcDist(venue.location);

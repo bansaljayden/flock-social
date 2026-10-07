@@ -628,8 +628,8 @@ export default function AddFriends({
                       {contactsResult.total === 0
                         ? 'None of your contacts have a phone number Flock can check. Add someone by their number below.'
                         : partial
-                          ? `We checked ${contactsResult.checked} of your ${contactsResult.total} numbers and none of them are on Flock yet. Try the rest in an hour.`
-                          : `None of the ${contactsResult.checked} numbers we checked are on Flock yet. Invite someone below and they will show up here.`}
+                          ? (contactsResult.checked === 1 ? `We checked 1 of your ${contactsResult.total} numbers and it is not on Flock yet. Try the rest in an hour.` : `We checked ${contactsResult.checked} of your ${contactsResult.total} numbers and none of them are on Flock yet. Try the rest in an hour.`)
+                          : (contactsResult.checked === 1 ? 'The number we checked is not on Flock yet. Invite someone below and they will show up here.' : `None of the ${contactsResult.checked} numbers we checked are on Flock yet. Invite someone below and they will show up here.`)}
                     </p>
                     {checkAgainButton}
                   </div>
