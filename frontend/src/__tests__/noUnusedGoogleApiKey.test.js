@@ -24,6 +24,11 @@
  * only question that matters is "is it in the build env?". So this file guards
  * the build env, not the import graph.
  *
+ * Since 2026-10-07 `npm run build` goes through scripts/build.js, which hands
+ * the bundler only the variables the code reads (buildClientEnv.test.js), so
+ * an unread key no longer reaches the bundle that way. This file still guards
+ * the output: a plain `react-scripts build` of this code publishes every one.
+ *
  * WHAT IS ASSERTED, IN ORDER OF USEFULNESS
  *
  * 1. The BUILT bundle carries no `AIza`-shaped Google API key except the short
