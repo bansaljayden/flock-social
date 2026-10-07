@@ -91,6 +91,15 @@ pool.query = (sql) => {
   if (/fm\.user_id = \$2/.test(flat)) {
     return Promise.resolve({ rows: dbVoteMembership, rowCount: dbVoteMembership.length });
   }
+  // The account's answer to Birdie's question, read for any turn that sends
+  // a zone (routes/ai.js WHICH QUESTION A YES ANSWERED). A yes to the question
+  // that names the time zone, which is what an account on today's web app has
+  // on record, so the zone a turn sends is read. Matched BEFORE the name and
+  // birthday branch below, which it would otherwise fall into; who is held to
+  // the answer is birdieConsent.test.js's subject.
+  if (/^SELECT birdie_ai_consent_at, birdie_ai_consent_copy FROM users WHERE id = \$1$/.test(flat)) {
+    return Promise.resolve({ rows: [{ birdie_ai_consent_at: new Date('2026-10-06T12:00:00Z'), birdie_ai_consent_copy: 2 }], rowCount: 1 });
+  }
   if (/FROM users WHERE id/.test(flat)) {
     return Promise.resolve({ rows: [{ name: FULL_NAME, date_of_birth: DOB }] });
   }

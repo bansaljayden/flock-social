@@ -854,10 +854,12 @@ function lockForecastResult(result, { salesOff = false } = {}) {
 // registered for push. Sending it is not enough on its own: the client that
 // sends it shows its question only to an account with no yes on record, so an
 // account that said yes to the earlier question sends the zone without ever
-// having seen it named. For a client held to the recorded answer the zone is
-// read only when that yes was given to a question that names it (WHICH
-// QUESTION A YES ANSWERED, below). With no usable zone it is unknown, and
-// Birdie is told so rather than handed UTC as if it were theirs.
+// having seen it named. So the zone is read only when the account's recorded
+// yes was given to a question that names it (WHICH QUESTION A YES ANSWERED,
+// below), whether or not the turn says it asks: no build sends a zone without
+// saying so, and a turn made by hand that does is held to the same answer.
+// With no usable zone it is unknown, and Birdie is told so rather than handed
+// UTC as if it were theirs.
 
 // A moment as somebody in `zone` reads it: "Friday, October 9, 2026, 8:00 PM".
 // Put together from parts, because the joined form moves between ICU versions
@@ -1933,7 +1935,10 @@ router.use(authenticate);
 // switch Birdie off for everyone on that build, App Review's own device
 // included, with nothing they could tap to turn it back on. Those builds are
 // served exactly as before, without this column being read; the web and every
-// build from here on send the flag and are asked.
+// build from here on send the flag and are asked. None of those builds sends
+// a time zone either, so a turn that sends one without the flag is not one of
+// them: /chat reads this column for it and sends the zone only on a yes to the
+// question that names it, though it does not refuse the turn.
 const BIRDIE_CONSENT_REQUIRED = 'BIRDIE_CONSENT_REQUIRED';
 const BIRDIE_CONSENT_FLOW = 'ask';
 // Only a client that sent BIRDIE_CONSENT_FLOW ever receives this, and that
@@ -2144,20 +2149,28 @@ router.post('/chat',
       // NO RECORDED CONSENT, NOTHING LEAVES, for a client that asks. Read
       // before either meter and before Gemini, so a refused turn costs the
       // user no message from their day and sends Google nothing. `code` is
-      // what the app answers by showing the question. A client that does not
-      // send the flag is an installed build with no question to show, and it
-      // skips this read entirely (see WHO IS HELD TO IT above).
+      // what the app answers by showing the question.
       //
-      // The same read says which question the yes answered, and a yes to one
-      // that did not name the time zone keeps the zone this turn carries out
-      // of it (WHICH QUESTION A YES ANSWERED above).
-      let zoneWithheld = false;
-      if (req.body.consentFlow === BIRDIE_CONSENT_FLOW) {
+      // The same read says which question the yes answered, and the zone this
+      // turn carries goes to Gemini only on a recorded yes to one that names
+      // it (WHICH QUESTION A YES ANSWERED above), with the flag or without.
+      // No build sends a zone without the flag, because the zone came in with
+      // the question that names it, so a turn that does was made by hand, and
+      // leaving the flag off must not be the way past the answer. That turn
+      // is answered, as a turn without the flag always is, with the zone left
+      // out unless the answer covers it. A turn with neither the flag nor a
+      // zone ICU accepts is an installed build with no question to show, and
+      // it skips this read entirely (see WHO IS HELD TO IT above).
+      const asksConsent = req.body.consentFlow === BIRDIE_CONSENT_FLOW;
+      const sentZone = validTimeZone(req.body.timeZone);
+      let zoneConsented = false;
+      if (asksConsent || sentZone) {
         const consent = await pool.query('SELECT birdie_ai_consent_at, birdie_ai_consent_copy FROM users WHERE id = $1', [req.user.id]);
-        if (!consent.rows[0]?.birdie_ai_consent_at) {
+        const answer = consent.rows[0];
+        if (asksConsent && !answer?.birdie_ai_consent_at) {
           return res.status(403).json({ error: BIRDIE_CONSENT_MESSAGE, code: BIRDIE_CONSENT_REQUIRED });
         }
-        zoneWithheld = !consentNamesZone(consent.rows[0].birdie_ai_consent_copy);
+        zoneConsented = Boolean(answer?.birdie_ai_consent_at) && consentNamesZone(answer.birdie_ai_consent_copy);
       }
 
       const genAI = getGenAI();
@@ -2271,9 +2284,10 @@ router.post('/chat',
       // The user's clock (WHOSE CLOCK BIRDIE PLANS ON): the zone this client
       // sent if ICU accepts it, else unknown. Never the push zone: a client
       // that sends no zone is a build whose consent copy does not list it.
-      // And unknown on a yes given to a question that did not name it:
+      // And unknown unless the account's recorded yes was given to a question
+      // that names it (read above, whether or not the turn sent the flag):
       // today's client sends its zone whichever question that yes answered.
-      const userZone = zoneWithheld ? null : (validTimeZone(req.body.timeZone) || null);
+      const userZone = zoneConsented ? sentZone : null;
       const clock = { nowMs: Date.now(), timeZone: userZone };
 
       // Build Gemini chat history (must start with 'user' role, no consecutive same-role)
