@@ -254,7 +254,7 @@ const VenueDetailSheet = ({
                           {Icons.starFilled('#F59E0B', 16)}
                           <span style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy }}>{venueDetailModal.rating}</span>
                         </div>
-                        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>{venueDetailModal.user_ratings_total ? `${venueDetailModal.user_ratings_total} reviews` : 'Rating'}</p>
+                        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>{venueDetailModal.user_ratings_total ? `${Number(venueDetailModal.user_ratings_total).toLocaleString('en-US')} review${Number(venueDetailModal.user_ratings_total) === 1 ? '' : 's'}` : 'Rating'}</p>
                       </div>
                     )}
                     {venueDetailModal.price_level > 0 && (

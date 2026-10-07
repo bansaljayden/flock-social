@@ -398,6 +398,9 @@ function HubSummary({ h, colors, loading, onRefresh }) {
   // empties the net, which carries Stripe and says so.
   const netNeeds = hubNeeds(netMissing.filter((g) => !HUB_APP_STORE_GAPS.includes(g)));
   const needed = (b) => (b && Number.isFinite(b.needed) ? hubCount(b.needed) : 'Not reachable');
+  // The Roost tile said "Not reachable venues" when break-even could not be
+  // reached, and "1 venues" at one.
+  const venuesNeeded = (b) => (b && Number.isFinite(b.needed) ? hubPlural(b.needed, 'venue', 'venues') : 'Not reachable');
   // The App Store price is Apple's, read through RevenueCat, and can differ
   // from the web price, so it is named on its own.
   const appPriceWords = (b) => (b ? `${hubMoney(b.priceCents)} a month in the App Store, ${b.source === 'app_store'
@@ -421,7 +424,7 @@ function HubSummary({ h, colors, loading, onRefresh }) {
   const endingWords = Number.isFinite(n.burnCents) && after && Number.isFinite(after.burnCents) && after.changeCents
     ? ` It ${after.changeCents < 0 ? 'falls' : 'rises'} to ${hubMoney(after.burnCents)} ${after.bills === 1 && after.label
       ? `on ${hubDay(after.by)}, when ${after.label} ends`
-      : `by ${hubDay(after.by)}, once the ${hubCount(after.bills)} bills set to end have ended`}.`
+      : `by ${hubDay(after.by)}, once the ${after.bills === 1 ? 'bill set to end has' : `${hubCount(after.bills)} bills set to end have`} ended`}.`
     : '';
   const cachedAge = stripe.cached && Number.isFinite(stripe.cachedAgeSeconds) ? stripe.cachedAgeSeconds : null;
   return (
@@ -487,7 +490,7 @@ function HubSummary({ h, colors, loading, onRefresh }) {
         <HubRow
           navy={navy}
           label="Break-even, Roost"
-          value={burnMissing.length > 0 ? 'Not read' : `${needed(be.roost)} venues`}
+          value={burnMissing.length > 0 ? 'Not read' : venuesNeeded(be.roost)}
           note={`At ${priceWords(be.roost)}, after Stripe fees. Paying now: ${payingWords(be.payingRoost, be.payingRoostMissing)}.`}
         />
         {h.unitCosts && h.unitCosts.status === 'ok' && (
@@ -502,7 +505,7 @@ function HubSummary({ h, colors, loading, onRefresh }) {
         )}
       </div>
       <p style={hubStyle.foot}>
-        Read at {hubTime(h.generatedAt)}. Stripe and RevenueCat answers are held for {Math.round(((h.cache && h.cache.ttlSeconds) || 300) / 60)} minutes{cachedAge !== null ? `, and this one is ${cachedAge} seconds old` : ''}.
+        Read at {hubTime(h.generatedAt)}. Stripe and RevenueCat answers are held for {Math.round(((h.cache && h.cache.ttlSeconds) || 300) / 60)} minutes{cachedAge !== null ? `, and this one is ${hubPlural(cachedAge, 'second', 'seconds')} old` : ''}.
       </p>
     </div>
   );
@@ -798,7 +801,7 @@ function HubRevenue({ h, colors }) {
           : s.promotionCodes.codes.map((pc) => {
             const c = pc.coupon;
             const off = c ? (Number.isFinite(c.percentOff) ? `${c.percentOff}% off` : Number.isFinite(c.amountOffCents) ? `${hubMoney(c.amountOffCents)} off` : 'a discount') : 'a discount';
-            const how = c && c.duration ? (c.duration === 'repeating' && c.durationInMonths ? `for ${c.durationInMonths} months` : c.duration === 'forever' ? 'for as long as they subscribe' : 'on the first payment') : '';
+            const how = c && c.duration ? (c.duration === 'repeating' && c.durationInMonths ? `for ${hubPlural(c.durationInMonths, 'month', 'months')}` : c.duration === 'forever' ? 'for as long as they subscribe' : 'on the first payment') : '';
             return (
               <HubRow
                 key={`code-${pc.code}`}
@@ -1681,7 +1684,7 @@ function HubCrowdData({ h, colors }) {
       />
       <p style={hubStyle.foot}>
         {ready
-          ? `Read from BestTime's key endpoint at ${hubTime(b.asOf)} and held for ${holdMinutes} minutes${cachedAge !== null ? `; this answer is ${cachedAge} seconds old` : ''}. The key itself never reaches this page.`
+          ? `Read from BestTime's key endpoint at ${hubTime(b.asOf)} and held for ${holdMinutes} minutes${cachedAge !== null ? `; this answer is ${hubPlural(cachedAge, 'second', 'seconds')} old` : ''}. The key itself never reaches this page.`
           : 'Nothing was read from BestTime, so no counter is shown. The plan rows come from the code either way.'}
       </p>
     </div>
@@ -1813,7 +1816,7 @@ function HubModel({ h, colors }) {
   const versions = ready && Array.isArray(a.versions) ? a.versions : [];
   const holdMinutes = Math.round(((m.cache && m.cache.ttlSeconds) || 3600) / 60);
   const cachedAge = ready && a.cached && Number.isFinite(a.cachedAgeSeconds) ? a.cachedAgeSeconds : null;
-  const age = cachedAge === null ? '' : `; this answer is ${cachedAge < 120 ? `${cachedAge} seconds` : `${Math.round(cachedAge / 60)} minutes`} old`;
+  const age = cachedAge === null ? '' : `; this answer is ${cachedAge < 120 ? hubPlural(cachedAge, 'second', 'seconds') : `${Math.round(cachedAge / 60)} minutes`} old`;
   let versionNote;
   if (v.status !== 'ok') versionNote = v.reason || 'The version could not be read.';
   else if (v.loaded) {
@@ -2894,14 +2897,14 @@ export default function RevenueScreen({
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
                   <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>Break-Even Point</span>
-                  <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy }}>{breakEvenReachable ? `${breakEvenVenues} venues` : 'Not reachable'}</span>
+                  <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy }}>{breakEvenReachable ? hubPlural(breakEvenVenues, 'venue', 'venues') : 'Not reachable'}</span>
                 </div>
                 <div style={{ padding: '8px', borderRadius: '8px', backgroundColor: isAboveBreakEven ? 'var(--accent-green-bg)' : 'var(--accent-amber-bg)', textAlign: 'center' }}>
                   <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: isAboveBreakEven ? 'var(--accent-green-text)' : 'var(--accent-amber-text)' }}>
                     {!breakEvenReachable
                       ? 'A venue brings in nothing at these inputs, so there is no break-even point.'
                       : isAboveBreakEven
-                        ? `${numVenues - breakEvenVenues} venues above break-even`
+                        ? `${hubPlural(numVenues - breakEvenVenues, 'venue', 'venues')} above break-even`
                         : `Need ${breakEvenVenues - numVenues} more venues`}
                   </span>
                 </div>
