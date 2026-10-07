@@ -1616,6 +1616,12 @@ function primeBaselineCache(placeId, rows) {
     boundedSet(baselineCache, `${placeId}_${slot}`, { data: entry.data, ts, meta: entry.meta });
     primed += 1;
   }
+  // Rows of the venue's own curve, so the venue has one: the no-curve
+  // fallback's question, answered from rows the caller already paid for. This
+  // is also how the strip's remembered curve answers it on a replay
+  // (primeVenueCurve), as the read that fetched it did. Nothing while the
+  // switch is off.
+  if (primed > 0) noteCurvePresence(placeId, true, ts);
   return primed;
 }
 
@@ -1680,6 +1686,8 @@ async function primeVenueCurve(placeId, userId) {
   // miss.
   if (!allowVenueLookup(placeId, userId)) return 0;
 
+  const askedAt = Date.now();
+  const sentAfter = curvePresenceWrites;
   const pending = pool.query(
     `SELECT day_of_week, hour, baseline, source, updated_at
        FROM ml_venue_baselines
@@ -1688,9 +1696,11 @@ async function primeVenueCurve(placeId, userId) {
   ).then(({ rows }) => {
     boundedSet(curveCache, placeId, { ts: Date.now(), rows }, CURVE_CACHE_MAX);
     // The same read says whether the venue has a curve at all, which is the
-    // no-curve fallback's question, and says it newer than any answer that
-    // fallback is holding (noteCurvePresence).
-    noteCurvePresence(placeId, rows);
+    // no-curve fallback's question (noteCurvePresence): a yes for any row,
+    // and a no for none that stands only if nothing newer has landed since
+    // this read was sent. A remembered empty curve replayed above writes
+    // nothing, so it never makes an old no look fresh.
+    noteCurvePresence(placeId, rows.length > 0, askedAt, sentAfter);
     return rows;
   });
   curveInflight.set(placeId, pending);
@@ -1746,6 +1756,7 @@ async function getBaseline(placeId, dayOfWeek, hour, userId, miss = null) {
     // Fetch current hour + neighbors for smoothing
     const { prevHour, nextHour, prevDay, nextDay } = baselineNeighborSlots(dayOfWeek, hour);
 
+    const askedAt = Date.now();
     const { rows } = await pool.query(
       // `source, updated_at` join the SELECT so the answer can say how old it
       // is — see BASELINE_STALE_AFTER_MS. They are read, never filtered on: a
@@ -1760,6 +1771,11 @@ async function getBaseline(placeId, dayOfWeek, hour, userId, miss = null) {
        )`,
       [placeId, dayOfWeek, hour, prevDay, prevHour, nextDay, nextHour]
     );
+
+    // Any row is a row of the venue's own curve, so the venue has one, even
+    // when this hour blends to zero (noteCurvePresence; nothing while the
+    // no-curve fallback is off). No row says nothing about the other hours.
+    if (rows.length > 0) noteCurvePresence(placeId, true, askedAt);
 
     if (rows.length === 0) {
       noteBaselineMiss(cacheKey, 'none');
@@ -2666,6 +2682,7 @@ async function getSelfBaselines(placeId, userId) {
   if (cached && Date.now() - cached.ts < NEIGHBOR_CACHE_TTL) return cached.data;
   if (!allowVenueLookup(placeId, userId)) return null;
   try {
+    const askedAt = Date.now();
     const r = await pool.query(
       `SELECT v.latitude AS lat, v.longitude AS lng, b.day_of_week AS dow, b.hour, b.baseline
          FROM ml_venues v
@@ -2676,6 +2693,10 @@ async function getSelfBaselines(placeId, userId) {
     );
     let data = null;
     if (r.rows.length > 0) {
+      // The venue's own curve rows, so it has a curve (noteCurvePresence;
+      // nothing while the no-curve fallback is off). No rows here says
+      // nothing: the join and the harvest filter drop venues that have one.
+      noteCurvePresence(placeId, true, askedAt);
       const byDowHour = new Map();
       for (const row of r.rows) {
         byDowHour.set(`${row.dow}_${row.hour}`, parseFloat(row.baseline) || 0);
@@ -4309,15 +4330,46 @@ function noCurveFallbackValue(venue, ts) {
 // nothing. Both answer null, and the fallback needs a no: unknown is not one.
 //
 // A YES IS HELD A DAY, like the slot answers it is read beside
-// (BASELINE_CACHE_TTL). A NO IS HELD AN HOUR. A stale no is the one answer
-// that could put a category value over a venue's own curve, and a venue gets
-// its first rows within the hour of being collected. A stale yes only keeps
-// the rule engine, which is the answer every venue had before this existed.
-// Either is replaced as soon as a strip reads the venue's whole curve
-// (noteCurvePresence), because that read is the newer answer.
+// (BASELINE_CACHE_TTL). A stale yes only keeps the rule engine, which is the
+// answer every venue had before this existed.
+//
+// A NO IS TRUSTED FOR CURVE_ABSENT_RECHECK_MS, FIVE MINUTES, and asked again
+// after that at the moment the gate would serve the table, which is the only
+// place a no is ever read. A stale no is the one answer that could put a
+// category value over a venue's own curve. The collector gives a venue its
+// first rows at whatever hour it reaches it, and a headline that never builds
+// a strip (a pin, a badge, a vote-list row) used to stand on the no from
+// before that for the hour a no was held.
+//
+// WHY FIVE MINUTES. Measured 2026-10-06 on a local Postgres holding
+// production's row count (3,455,592 rows over 20,569 venues, migration 006's
+// table and index): the probe is an index-only scan touching 3 or 4 buffers,
+// 0.04 to 0.07 ms inside Postgres and a 0.3 ms median, 0.7 ms p99, round trip,
+// under the 0.44 ms slot lookup every cold headline already makes. Only a
+// venue that passes every other gate is ever probed (the switch, the starling
+// artifact loaded, no stored baseline at this hour, 200 or more reviews, no
+// popular_times, a category its own types name), so the cost is at most
+// twelve probes an hour for each such venue that people keep looking at,
+// each one charged like the slot lookup to the venue-lookup budget of the
+// account whose request reached the gate (1,500 an hour). Twenty such venues
+// looked at all hour long is 240 of those units at five minutes, and would be
+// 600 at two. In exchange, a no from before the collector reached a venue
+// stands for five minutes at most. That is shorter than the ten minutes a
+// strip remembers a curve for (CURVE_CACHE_TTL), which is why replaying a
+// remembered empty curve writes nothing here (primeVenueCurve): replayed as
+// a fresh no, it would keep restarting the five minutes.
+//
+// EVERY READ THAT SEES THE VENUE'S ROWS ANSWERS IT, AND AN OLDER NO NEVER
+// OVERWRITES A NEWER ANSWER (noteCurvePresence): a strip's whole-curve read,
+// the rows it remembers and replays (primeBaselineCache), a slot lookup that
+// finds rows (getBaseline) and the neighbour self-read (getSelfBaselines). So
+// once any read in this process has seen a venue's rows, no response puts the
+// table beside them.
 // ---------------------------------------------------------------------------
-const curvePresenceCache = new Map(); // placeId -> { ts, data: boolean }
-const CURVE_ABSENT_CACHE_TTL = 60 * 60 * 1000;
+const curvePresenceCache = new Map(); // placeId -> { ts, data: boolean, seq }
+// How many presence answers have been written, ever: the order they landed in.
+let curvePresenceWrites = 0;
+const CURVE_ABSENT_RECHECK_MS = 5 * 60 * 1000;
 const CURVE_PRESENCE_SQL = `SELECT 1 FROM ml_venue_baselines
         WHERE google_place_id = $1
         LIMIT 1`;
@@ -4327,34 +4379,56 @@ const CURVE_PRESENCE_SQL = `SELECT 1 FROM ml_venue_baselines
 async function venueHasCurve(placeId, userId) {
   if (!pool || !placeId) return null;
   const cached = curvePresenceCache.get(placeId);
-  if (cached && Date.now() - cached.ts < (cached.data ? BASELINE_CACHE_TTL : CURVE_ABSENT_CACHE_TTL)) {
+  if (cached && Date.now() - cached.ts < (cached.data ? BASELINE_CACHE_TTL : CURVE_ABSENT_RECHECK_MS)) {
     return cached.data;
   }
   if (!allowVenueLookup(placeId, userId)) return null;
+  const askedAt = Date.now();
+  const sentAfter = curvePresenceWrites;
   try {
     const { rows } = await pool.query(CURVE_PRESENCE_SQL, [placeId]);
     const data = Array.isArray(rows) && rows.length > 0;
-    boundedSet(curvePresenceCache, placeId, { ts: Date.now(), data });
-    return data;
+    noteCurvePresence(placeId, data, askedAt, sentAfter);
+    // An answer that landed while this probe was in flight is newer than it,
+    // and is the one the gate acts on.
+    const held = curvePresenceCache.get(placeId);
+    return held && held.seq > sentAfter ? held.data : data;
   } catch (err) {
     console.error('[MLPredictor] Curve presence lookup failed:', err.message);
     return null;
   }
 }
 
-// A WHOLE-CURVE READ ANSWERS THE SAME QUESTION, AND IT IS NEWER. Before a strip
-// scores a venue's hours, primeVenueCurve reads every row the venue has. A
-// venue that gained its first rows inside the hour a cached no is held would
-// otherwise be scored by that strip from its own rows in its open hours and
-// given its category's typical level in the hours its own curve says zero, by
-// the very request that had just read those rows. So a finished read writes
-// its answer here: a yes for any row, a no for none, exactly what the probe
-// would say. It costs nothing, because the read was already made and charged,
-// and a refused or failed read never reaches this. Only while the switch is
-// on, the only time anything reads this map.
-function noteCurvePresence(placeId, rows) {
-  if (!placeId || !Array.isArray(rows) || !noCurveFallbackEnabled()) return;
-  boundedSet(curvePresenceCache, placeId, { ts: Date.now(), data: rows.length > 0 });
+// THE ONE WRITER, AND THE RULE THAT KEEPS AN OLDER NO FROM UNDOING A NEWER YES.
+//
+// Every read of ml_venue_baselines for one venue answers the question the
+// probe asks, and it costs nothing to keep, because the read was already made
+// and charged; a refused or failed read never reaches this. `askedAt` is when
+// that read was sent, and it is the answer's age: a no is trusted for
+// CURVE_ABSENT_RECHECK_MS from it, so a read that took its time, or rows
+// replayed from memory, never make a no look fresher than it is.
+// `sentAfter` is curvePresenceWrites as it stood when that read was sent.
+//
+//   * A YES LANDS, unless a yes asked no earlier is already held. Rows were
+//     there, the collector adds a venue's rows and almost never takes them all
+//     away, and a yes held too long only keeps the rule engine.
+//   * A NO LANDS ONLY IF NOTHING WAS WRITTEN AFTER ITS READ WAS SENT. The race
+//     this closes: a headline's probe is sent while the venue has no rows and
+//     is slow to come back, the collector writes the rows, a strip reads them
+//     and writes yes, and the probe lands last. Written unconditionally, its
+//     no stood for the whole window over a venue with a curve.
+//
+// Only while the switch is on, the only time anything reads this map, so with
+// it off no read anywhere writes or keeps anything here.
+function noteCurvePresence(placeId, hasCurve, askedAt, sentAfter) {
+  if (!placeId || !noCurveFallbackEnabled()) return;
+  const held = curvePresenceCache.get(placeId);
+  if (held) {
+    if (hasCurve && held.data && held.ts >= askedAt) return;
+    if (!hasCurve && held.seq > sentAfter) return;
+  }
+  curvePresenceWrites += 1;
+  boundedSet(curvePresenceCache, placeId, { ts: askedAt, data: hasCurve === true, seq: curvePresenceWrites });
 }
 
 // The table's value when every gate holds, or null for the rule engine. The
@@ -5442,7 +5516,8 @@ module.exports = {
     NO_CURVE_FALLBACK_TYPES_READ,
     NO_CURVE_FALLBACK_MEASURED,
     NO_CURVE_FALLBACK_POPULATION,
-    CURVE_ABSENT_CACHE_TTL,
+    CURVE_ABSENT_RECHECK_MS,
+    CURVE_CACHE_TTL,
     BASELINE_CACHE_TTL,
     neighborCacheSize: () => neighborCache.size,
     selfBaselineCacheSize: () => selfBaselineCache.size,

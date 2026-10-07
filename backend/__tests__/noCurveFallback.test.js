@@ -23,10 +23,15 @@
 //     table was measured on, never the whole list, and only when those types
 //     name one of its categories (an airport, a hotel or no types at all is
 //     not given the catch-all restaurant row);
-//   * the presence probe: cached (a no for an hour, a yes for a day), charged
-//     to the venue-lookup budget, silent on a refusal or a failure, and
-//     answered by a strip's own whole-curve read, so a cached no older than
-//     the rows that strip just read never puts the table beside them;
+//   * the presence probe: cached (a no for a few minutes, a yes for a day),
+//     charged to the venue-lookup budget, silent on a refusal or a failure,
+//     and answered by every read that sees the venue's rows (a strip's
+//     whole-curve read, the rows it remembers, a slot lookup), so a cached no
+//     older than rows this process has read never puts the table beside them;
+//   * a stale no: a probe never writes its no over an answer that landed
+//     after it was sent, a remembered empty curve never makes an old no look
+//     fresh, and a no older than the recheck window is asked again, charged,
+//     at the moment the table would be served;
 //   * the name: a rule_engine one, so app builds already shipped never show
 //     it as LIVE, and still read by its exact name;
 //   * the strip, the coverage counter, the coverage block's switch (on only
@@ -104,9 +109,16 @@ function todaysAnswer(v, weather, ts, method = 'rule_engine_no_baseline') {
 
 // A scripted Postgres. `curves` maps a place id to its ml_venue_baselines rows
 // as { 'day_hour': baseline }; a place id it does not name has no row at all.
-// `fail` is a pattern for statements that throw.
-function scriptedDb({ curves = {}, fail = null } = {}) {
+// `fail` is a pattern for statements that throw. Every read answers with what
+// the table held when it was SENT, the way a Postgres snapshot does, so a read
+// that is slow to come back still says what it saw. `holdPresence` keeps each
+// presence probe in flight until releasePresence(); `curveDelayMs` holds every
+// whole-curve read that long.
+const CURVE_READ = /^SELECT day_of_week, hour, baseline, source, updated_at FROM ml_venue_baselines WHERE google_place_id = \$1$/;
+function scriptedDb({ curves = {}, fail = null, holdPresence = false, curveDelayMs = 0 } = {}) {
   const sent = [];
+  const held = [];
+  const heldWaiters = [];
   const rowsOf = (placeId) => Object.entries(curves[placeId] || {}).map(([k, v]) => {
     const [d, h] = k.split('_').map(Number);
     return { day_of_week: d, hour: h, baseline: String(v), source: 'collected', updated_at: new Date() };
@@ -116,20 +128,38 @@ function scriptedDb({ curves = {}, fail = null } = {}) {
     sent.push({ sql, params });
     if (fail && fail.test(sql)) throw new Error('scripted failure');
     if (/^SELECT 1 FROM ml_venue_baselines WHERE google_place_id = \$1 LIMIT 1$/.test(sql)) {
-      return { rows: rowsOf(params[0]).length ? [{ '?column?': 1 }] : [] };
+      const answer = { rows: rowsOf(params[0]).length ? [{ '?column?': 1 }] : [] };
+      if (!holdPresence) return answer;
+      return new Promise((resolve) => {
+        held.push(() => resolve(answer));
+        while (heldWaiters.length) heldWaiters.shift()();
+      });
     }
     if (/FROM ml_venue_baselines WHERE google_place_id = \$1 AND \(/.test(sql)) {
       const slots = [[params[1], params[2]], [params[3], params[4]], [params[5], params[6]]];
       return { rows: rowsOf(params[0]).filter((r) => slots.some(([d, h]) => r.day_of_week === d && r.hour === h)) };
     }
-    if (/^SELECT day_of_week, hour, baseline, source, updated_at FROM ml_venue_baselines WHERE google_place_id = \$1$/.test(sql)) {
-      return { rows: rowsOf(params[0]) };
+    if (CURVE_READ.test(sql)) {
+      const rows = rowsOf(params[0]);
+      if (curveDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, curveDelayMs));
+      return { rows };
     }
     if (/FROM venue_feedback/.test(sql)) return { rows: [{}] };
     return { rows: [] };
   };
   const presence = () => sent.filter((s) => /^SELECT 1 FROM ml_venue_baselines/.test(s.sql));
-  return { query, sent, presence };
+  const curveReads = () => sent.filter((s) => CURVE_READ.test(s.sql)).length;
+  // Resolves once a presence probe is in flight and held.
+  const presenceSent = () => (held.length ? Promise.resolve() : new Promise((resolve) => heldWaiters.push(resolve)));
+  const releasePresence = () => { while (held.length) held.shift()(); };
+  return { query, sent, presence, curveReads, presenceSent, releasePresence };
+}
+
+// Every hour of the week at one level: a venue the collector has fully read.
+function allSlots(level) {
+  const curve = {};
+  for (let d = 0; d < 7; d++) for (let h = 0; h < 24; h++) curve[`${d}_${h}`] = level;
+  return curve;
 }
 
 // The shape a real artifact presents, so every load gate opens, and a run()
@@ -459,9 +489,12 @@ test('a venue with any curve row keeps today\'s answer, even where its own curve
     for (const v of [closedTonight, quietHere]) {
       const r = await p.predictBusyness(v, WX, TS);
       assert.deepStrictEqual(r, todaysAnswer(v, WX, TS), v.place_id);
-      // The probe asked, and the answer kept the rule engine.
-      assert.ok(db.presence().some((s) => s.params[0] === v.place_id));
     }
+    // No rows near this hour: only the probe could tell, and it asked.
+    assert.ok(db.presence().some((s) => s.params[0] === closedTonight.place_id));
+    // Zero rows at this hour: the slot lookup read them, which answered the
+    // question, so nothing was probed.
+    assert.ok(!db.presence().some((s) => s.params[0] === quietHere.place_id));
     // And the strip of the venue whose curve is zero tonight is today's too.
     for (const h of await p.predictHourlyForecast(quietHere, WX, HOUR, 1, TS)) {
       assert.equal(h.predictionMethod, 'rule_engine_no_baseline', h.hour);
@@ -549,7 +582,7 @@ test('another artifact\'s table has not been measured, so another version keeps 
 // 3. The presence probe.
 // ---------------------------------------------------------------------------
 
-test('the presence probe: a no is held an hour and a yes a day, and a refusal or a failure is not remembered', async () => {
+test('the presence probe: a no is trusted for a few minutes and a yes a day, and a refusal or a failure is not remembered', async () => {
   const curved = placeIdFor('C');
   const bare = placeIdFor('B');
   const db = scriptedDb({ curves: { [curved]: { '5_21': 60 } } });
@@ -562,13 +595,13 @@ test('the presence probe: a no is held an hour and a yes a day, and a refusal or
       assert.equal(await I.venueHasCurve(bare), false);
       assert.equal(await I.venueHasCurve(curved), true);
       assert.equal(db.presence().length, 2);
-      // Inside an hour both are answered from memory.
-      shift = I.CURVE_ABSENT_CACHE_TTL - 1000;
+      // Inside the recheck window both are answered from memory.
+      shift = I.CURVE_ABSENT_RECHECK_MS - 1000;
       assert.equal(await I.venueHasCurve(bare), false);
       assert.equal(await I.venueHasCurve(curved), true);
       assert.equal(db.presence().length, 2);
-      // Past the hour the no is asked again, and the yes is not.
-      shift = I.CURVE_ABSENT_CACHE_TTL + 1000;
+      // Past it the no is asked again, and the yes is not.
+      shift = I.CURVE_ABSENT_RECHECK_MS + 1000;
       assert.equal(await I.venueHasCurve(bare), false);
       assert.equal(await I.venueHasCurve(curved), true);
       assert.deepStrictEqual(db.presence().slice(2).map((s) => s.params[0]), [bare]);
@@ -579,7 +612,11 @@ test('the presence probe: a no is held an hour and a yes a day, and a refusal or
     } finally {
       Date.now = realNow;
     }
-    assert.ok(I.CURVE_ABSENT_CACHE_TTL < I.BASELINE_CACHE_TTL);
+    // A few minutes: long enough that a venue looked at again and again is
+    // probed a handful of times an hour, short enough that a no from before
+    // the collector reached the venue does not stand for long.
+    assert.ok(I.CURVE_ABSENT_RECHECK_MS >= 60 * 1000 && I.CURVE_ABSENT_RECHECK_MS <= 10 * 60 * 1000);
+    assert.ok(I.CURVE_ABSENT_RECHECK_MS < I.BASELINE_CACHE_TTL);
     // A refused caller neither asks nor teaches the cache anything.
     const size = I.curvePresenceCacheSize();
     const sent = db.presence().length;
@@ -670,6 +707,191 @@ test('a probe is charged to the account like the slot lookup it follows', async 
     // A cache hit costs nothing.
     await p.predictBusyness(v, WX, TS, { userId: uid });
     assert.equal(before.hourly - I.venueLookupBudgetRemaining(uid).hourly, 3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 3b. A no that went stale, and one response, one answer.
+//
+// The table may only stand on a no that nothing newer contradicts. Once any
+// read in this process has seen the venue's rows, no response serves the
+// table for it, and inside one response the headline and the strip agree on
+// whether the venue has a curve.
+// ---------------------------------------------------------------------------
+
+// Date.now, shifted by clock.shift for the length of fn.
+async function shiftedClock(fn) {
+  const realNow = Date.now;
+  const clock = { shift: 0 };
+  Date.now = () => realNow() + clock.shift;
+  try {
+    return await fn(clock);
+  } finally {
+    Date.now = realNow;
+  }
+}
+
+test('a presence probe never puts its no over an answer that landed after it was sent', async () => {
+  // A headline's probe is sent while the venue has no rows and is slow to
+  // come back. Meanwhile the collector writes the rows and a strip reads
+  // them, which says yes. The probe then lands with the no it saw. Written
+  // last, that no stood for the whole window, and every hour whose slot was
+  // still a zero took the category's level over a venue with a curve.
+  const v = venue();
+  const curves = {};
+  const db = scriptedDb({ curves, holdPresence: true });
+  await withPredictor({ db, env: { [SWITCH]: ON, CROWD_SERVE_MODE: 'curve_offset' } }, async (p) => {
+    const I = p._internals;
+    const headline = p.predictBusyness(v, WX, TS);
+    await db.presenceSent();
+    curves[v.place_id] = allSlots(50);
+    const strip = await p.predictHourlyForecast(v, WX, HOUR, 3, TS);
+    for (const h of strip) assert.equal(h.predictionMethod, 'ml', `${h.hour}: the strip read the rows`);
+    db.releasePresence();
+    const r = await headline;
+    assert.notEqual(r.predictionMethod, METHOD, 'the probe\'s no is older than the strip\'s yes');
+    // Its own slot lookup ran before the rows existed, so the rule engine
+    // answers it, exactly as before the fallback existed.
+    assert.equal(r.predictionMethod, 'rule_engine_no_baseline');
+    // The yes stands, and is answered from memory.
+    assert.equal(await I.venueHasCurve(v.place_id), true);
+    assert.equal(db.presence().length, 1);
+  });
+});
+
+test('a remembered curve with rows says the venue has a curve, as the read that fetched it did', async () => {
+  // A strip remembers a venue's rows for ten minutes and replays them instead
+  // of reading again. The replay is the same evidence as the read: rows, so a
+  // curve. Here the rows were read while the switch was off, so that read
+  // answered nothing, and the no from before the collector reached the venue
+  // is still held when the switch is back on.
+  const v = venue();
+  const curves = {};
+  const db = scriptedDb({ curves });
+  await withPredictor({ db, env: { CROWD_SERVE_MODE: 'curve_offset' } }, async (p) => {
+    const I = p._internals;
+    process.env[SWITCH] = ON;
+    assert.equal((await p.predictBusyness(v, WX, TS)).predictionMethod, METHOD, 'no rows yet: the probe says no');
+    assert.equal(db.presence().length, 1);
+    // Busy until 9 PM, then closed by the venue's own curve.
+    curves[v.place_id] = {
+      [`${DOW}_18`]: 40, [`${DOW}_19`]: 55, [`${DOW}_20`]: 60, [`${DOW}_21`]: 0, [`${DOW}_22`]: 0, [`${DOW}_23`]: 0,
+    };
+    delete process.env[SWITCH];
+    await p.predictHourlyForecast(v, WX, 18, 6, TS);
+    assert.equal(db.curveReads(), 1);
+    process.env[SWITCH] = ON;
+    const strip = await p.predictHourlyForecast(v, WX, 18, 6, TS);
+    assert.equal(db.curveReads(), 1, 'the remembered rows were replayed, not read again');
+    const byHour = Object.fromEntries(strip.map((h) => [h.hour, h.predictionMethod]));
+    for (const [hour, method] of Object.entries(byHour)) assert.notEqual(method, METHOD, `${hour}: the venue has a curve`);
+    assert.equal(byHour['10 PM'], 'rule_engine_no_baseline');
+    assert.equal(byHour['11 PM'], 'rule_engine_no_baseline');
+    assert.equal(db.presence().length, 1, 'the replay answered it, so nothing was probed');
+    assert.equal(await I.venueHasCurve(v.place_id), true);
+  });
+});
+
+test('an empty remembered curve is not a fresh no: past the recheck window the gate asks again', async () => {
+  // A strip reads a venue with no rows: that read's no is noted, and the empty
+  // curve is remembered for ten minutes. The collector then writes the
+  // venue's first rows. Replaying the remembered empty curve says nothing new,
+  // so it must not make the old no look fresh: past the recheck window the
+  // gate asks again, and the venue keeps the rule engine.
+  const v = venue();
+  const curves = {};
+  const db = scriptedDb({ curves });
+  await withPredictor({ db, env: { [SWITCH]: ON } }, async (p) => {
+    const I = p._internals;
+    assert.equal(typeof I.CURVE_ABSENT_RECHECK_MS, 'number');
+    await shiftedClock(async (clock) => {
+      for (const h of await p.predictHourlyForecast(v, WX, 18, 4, TS)) assert.equal(h.predictionMethod, METHOD, h.hour);
+      assert.equal(db.curveReads(), 1);
+      assert.equal(db.presence().length, 0, 'the read answered the question');
+      // Rows away from these hours: their slots stay cached zeros and the
+      // remembered curve is empty, so only a fresh presence answer can tell.
+      curves[v.place_id] = { '1_12': 40, '1_13': 55 };
+      clock.shift = I.CURVE_ABSENT_RECHECK_MS - 1000;
+      for (const h of await p.predictHourlyForecast(v, WX, 18, 4, TS)) assert.equal(h.predictionMethod, METHOD, h.hour);
+      assert.equal(db.presence().length, 0, 'inside the window the no stands, from memory');
+      clock.shift = I.CURVE_ABSENT_RECHECK_MS + 1000;
+      assert.ok(clock.shift < I.CURVE_CACHE_TTL, 'the empty curve is still remembered');
+      const later = await p.predictHourlyForecast(v, WX, 18, 4, TS);
+      assert.equal(db.curveReads(), 1, 'the remembered empty curve was replayed, not read again');
+      for (const h of later) assert.equal(h.predictionMethod, 'rule_engine_no_baseline', h.hour);
+      assert.equal(db.presence().length, 1, 'one probe, and then its yes is held');
+    });
+  });
+});
+
+test('a no older than the recheck window is asked again where the table would be served, and charged like the lookups beside it', async () => {
+  const v = venue();
+  const curves = {};
+  const db = scriptedDb({ curves });
+  await withPredictor({ db, env: { [SWITCH]: ON } }, async (p) => {
+    const I = p._internals;
+    I.__resetVenueLookupCaches();
+    assert.equal(typeof I.CURVE_ABSENT_RECHECK_MS, 'number');
+    const uid = 434343;
+    const start = I.venueLookupBudgetRemaining(uid).hourly;
+    const spent = () => start - I.venueLookupBudgetRemaining(uid).hourly;
+    await shiftedClock(async (clock) => {
+      assert.equal((await p.predictBusyness(v, WX, TS, { userId: uid })).predictionMethod, METHOD);
+      assert.equal(db.presence().length, 1);
+      assert.equal(spent(), 3, 'the slot lookup, the feedback lookup and the probe');
+      // The collector writes rows away from this hour: the slot stays a
+      // cached zero, and only the presence answer can tell.
+      curves[v.place_id] = { '1_12': 40 };
+      clock.shift = I.CURVE_ABSENT_RECHECK_MS - 1000;
+      assert.equal((await p.predictBusyness(v, WX, TS, { userId: uid })).predictionMethod, METHOD);
+      assert.equal(db.presence().length, 1);
+      assert.equal(spent(), 3, 'answered from memory, free');
+      clock.shift = I.CURVE_ABSENT_RECHECK_MS + 1000;
+      const r = await p.predictBusyness(v, WX, TS, { userId: uid });
+      assert.equal(r.predictionMethod, 'rule_engine_no_baseline', 'asked again, and the venue has a curve now');
+      assert.equal(db.presence().length, 2);
+      assert.equal(spent(), 4, 'one unit for the probe');
+      // The yes is then held a day.
+      clock.shift = 3 * I.CURVE_ABSENT_RECHECK_MS;
+      assert.equal((await p.predictBusyness(v, WX, TS, { userId: uid })).predictionMethod, 'rule_engine_no_baseline');
+      assert.equal(db.presence().length, 2);
+    });
+  });
+  // A probe the account may not make answers unknown, and unknown is not a
+  // no: past the window the venue keeps the rule engine rather than standing
+  // on the old no.
+  await withPredictor({ env: { [SWITCH]: ON } }, async (p, db) => {
+    const I = p._internals;
+    const w = venue();
+    await shiftedClock(async (clock) => {
+      assert.equal((await p.predictBusyness(w, WX, TS)).predictionMethod, METHOD);
+      clock.shift = I.CURVE_ABSENT_RECHECK_MS + 1000;
+      const refused = await p.predictBusyness(w, WX, TS, { userId: 'not-an-account' });
+      assert.equal(refused.predictionMethod, 'rule_engine_no_baseline');
+      assert.equal(db.presence().length, 1, 'refused, so nothing was sent');
+    });
+  });
+});
+
+test('the slot lookup that finds the venue\'s rows says the venue has a curve too', async () => {
+  // A no is held from before the collector reached the venue. A headline for
+  // another hour then reads that hour's three rows and finds the neighbours:
+  // the venue has a curve, zero at this hour, and that read is newer than the
+  // no. The table must not be put over it.
+  const v = venue();
+  const curves = {};
+  const db = scriptedDb({ curves });
+  await withPredictor({ db, env: { [SWITCH]: ON } }, async (p) => {
+    const I = p._internals;
+    assert.equal((await p.predictBusyness(v, WX, TS)).predictionMethod, METHOD, 'no rows: the probe says no');
+    // Rows either side of 7 PM and none at 7 PM, so 7 PM blends to zero.
+    curves[v.place_id] = { [`${DOW}_18`]: 40, [`${DOW}_20`]: 60 };
+    const seven = new Date(TS);
+    seven.setHours(19);
+    const r = await p.predictBusyness(v, WX, seven);
+    assert.equal(r.predictionMethod, 'rule_engine_no_baseline', 'zero at 7 PM on a curve it has');
+    assert.equal(db.presence().length, 1, 'the slot lookup answered it, so nothing was probed');
+    assert.equal(await I.venueHasCurve(v.place_id), true);
   });
 });
 
