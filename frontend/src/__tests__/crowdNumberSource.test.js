@@ -158,8 +158,13 @@ test('every surface that credits the crowd model reads the number source first',
   // payloads below, words it and says whether it is live.
   expect(demo).toMatch(/const crowdBars = hourly\.filter\(\(h\) => h && h\.open !== false\);/);
   expect(demo).toMatch(/const note = demoNoteLead\(crowdBars, selected\);/);
-  expect(demo).toMatch(/\{note\.live && \(\s*<span/);
-  expect(demo).toMatch(/\{note\.text\}\{ageMs != null/);
+  expect(demo).toMatch(/\{note\?\.live && \(\s*<span/);
+  expect(demo).toMatch(/\{note && <>\{note\.text\}\{ageMs != null/);
+  // A covered card's note is null (below): no dot, no lead, no "updated", and
+  // the paragraph is drawn only when the compare hint has somewhere to point,
+  // with no leading space then.
+  expect(demo).toMatch(/\{\(note \|\| comparable > 1\) && \(\s*<p className="lpd-note">/);
+  expect(demo).toMatch(/\{comparable > 1 && `\$\{note \? ' ' : ''\}\$\{mapState === 'ready' \? 'Tap another pin to compare\.' : 'Pick another spot to compare\.'\}`\}/);
   // No note is worded in the component any more, so no strip can fall back
   // to the model's words there.
   expect(demo).not.toMatch(/'Live from the model inside Flock'/);
@@ -235,6 +240,28 @@ describe("the public demo's note names what made its numbers, and is live only w
     expect(demoNoteLead([{ score: 40 }, null], null)).toEqual({ text: DEMO_RULE_ENGINE_NOTE, live: false });
     expect(demoNoteLead([], {})).toEqual({ text: DEMO_RULE_ENGINE_NOTE, live: false });
     expect(demoNoteLead(null, null)).toEqual({ text: DEMO_RULE_ENGINE_NOTE, live: false });
+  });
+
+  // Past three venues a day with the paywall on, the demo covers the card
+  // (backend routes/publicCrowd.js coverDemoCard): venue facts only, no score,
+  // no basis, no bars, crowd_locked. No number is on screen, so a note naming
+  // where one came from would describe a number the visitor was not given,
+  // and for a venue Flock has a weekly pattern for, name the wrong source too.
+  test('a covered card gets no note, and a card that keeps its number keeps one', () => {
+    const covered = {
+      place_id: 'PLACE_COVERED', name: 'Good Dog Bar', address: '1 Main St', is_open: true, age_ms: 1200,
+      score: null, label: null, confidence_basis: null, confidence: null, confidence_measurement: null,
+      best_time: null, best_hour: null, best_index: null, best_is_now: null, peak_hours: null, hourly: [],
+      forecast_locked: true, crowd_locked: true,
+    };
+    expect(demoNoteLead([], covered)).toBeNull();
+    expect(demoNoteLead(covered.hourly, covered)).toBeNull();
+    // Only the forecast locked (backend gateDemoCard): the headline number is
+    // still on the dial, so the note still says what made it.
+    expect(demoNoteLead([], { score: 40, confidence_basis: 'category_pattern', forecast_locked: true, hourly: [] }))
+      .toEqual({ text: DEMO_RULE_ENGINE_NOTE, live: false });
+    expect(demoNoteLead([], { score: 40, number_source: 'venue_pattern_live', confidence_basis: 'model_holdout', forecast_locked: true }))
+      .toEqual({ text: "Live from this venue's usual pattern and its recent live readings", live: true });
   });
 
   test('no note carries an em dash', () => {
