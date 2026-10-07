@@ -1143,7 +1143,24 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
       // whole day's event budget for everyone, which is the exact thing
       // EVENT_USER_DAILY exists to stop. routes/crowd.js passes the caller on
       // the same two calls.
-      const crowdResult = await mlPredictor.predictBusyness(venue, weather, scoreTime, { userId });
+      const scored = await mlPredictor.predictBusyness(venue, weather, scoreTime, { userId });
+      // THE 24-HOUR STRIP, WHEN THIS RESULT CARRIES ONE, IS SCORED HERE, before
+      // anything reads the headline, so the two can be made to agree on whether
+      // the venue has a curve. The headline can decide on a no from before the
+      // collector reached the venue while the strip goes on to read its first
+      // rows; Birdie was then handed the category's typical level as "now" and
+      // the venue's own curve for every hour after it. The headline is scored
+      // again when that happens (mlPredictor.agreeWithStrip); any other
+      // headline, and every headline with CROWD_NO_CURVE_FALLBACK off, comes
+      // back as it went in. The owner reading and the reporters' blend below
+      // read nothing the strip writes, so scoring it before them changes no
+      // number, and a locked result still never walks the 24 hours.
+      const fullDay = opts.includeForecast
+        ? await mlPredictor.predictHourlyForecast(venue, weather, localHour, 24, scoreTime, { userId })
+        : null;
+      const crowdResult = fullDay
+        ? await mlPredictor.agreeWithStrip(scored, fullDay, venue, weather, scoreTime, { userId })
+        : scored;
 
       // The owner's live reading outranks the MODEL here for the same reason
       // it does on the card (services/ownerReports.js): Birdie quoting the
@@ -1336,9 +1353,9 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
         // Round 13: forward-looking window (see crowdEngine.recommendBestTime).
         // Birdie must never suggest an hour that already passed, and its answer
         // has to agree with the score it quotes in the same sentence.
-        // The caller again: the 24-hour walk prefetches the day's events and
-        // the hourly weather, and both meter an account only when told which.
-        const fullDay = await mlPredictor.predictHourlyForecast(venue, weather, localHour, 24, scoreTime, { userId });
+        // The caller again: the 24-hour walk, scored above beside the headline,
+        // prefetches the day's events and the hourly weather, and both meter
+        // an account only when told which.
         const next12 = fullDay.slice(0, 12);
         // Peak off the next 12 hours: the rush that is coming, not tomorrow's.
         // Indexes still line up with fullDay for the best-time exclusion. Both

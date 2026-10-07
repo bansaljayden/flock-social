@@ -961,10 +961,18 @@ router.get('/:placeId',
       // off the 6 AM entry instead of the score on screen. It starts at the
       // current hour and runs forward, and the hourly strip is its first 12
       // entries so the chart and the recommendation can never disagree.
-      const [crowdResult, fullDay] = await Promise.all([
+      const [scored, fullDay] = await Promise.all([
         mlPredictor.predictBusyness(venue, weather, clientTime, { userId: req.user.id }),
         mlPredictor.predictHourlyForecast(venue, weather, localHour, 24, clientTime, { userId: req.user.id }),
       ]);
+      // ONE ANSWER PER CARD TO WHETHER THIS VENUE HAS A CURVE. Started together,
+      // the headline can decide on a no from before the collector reached the
+      // venue while the strip goes on to read its first rows, which left the
+      // category's typical level on the dial over the venue's own bars. The
+      // headline is scored again when that happens (mlPredictor.agreeWithStrip);
+      // any other headline, and every headline with CROWD_NO_CURVE_FALLBACK
+      // off, comes back as it went in, with nothing read.
+      const crowdResult = await mlPredictor.agreeWithStrip(scored, fullDay, venue, weather, clientTime, { userId: req.user.id });
       const hourly = fullDay.slice(0, 12);
       // Each bar's hour and day, for the per-bar open flags below.
       const barClock = crowdEngine.stripClock(hourly, localHour);

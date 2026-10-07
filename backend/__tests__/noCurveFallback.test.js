@@ -32,6 +32,10 @@
 //     after it was sent, a remembered empty curve never makes an old no look
 //     fresh, and a no older than the recheck window is asked again, charged,
 //     at the moment the table would be served;
+//   * one response, one answer: a headline that came back the table before
+//     its strip read the curve is scored again (agreeWithStrip) and counted
+//     once, and with the switch off that step hands the headline back
+//     untouched with nothing read;
 //   * the name: a rule_engine one, so app builds already shipped never show
 //     it as LIVE, and still read by its exact name;
 //   * the strip, the coverage counter, the coverage block's switch (on only
@@ -892,6 +896,73 @@ test('the slot lookup that finds the venue\'s rows says the venue has a curve to
     assert.equal(r.predictionMethod, 'rule_engine_no_baseline', 'zero at 7 PM on a curve it has');
     assert.equal(db.presence().length, 1, 'the slot lookup answered it, so nothing was probed');
     assert.equal(await I.venueHasCurve(v.place_id), true);
+  });
+});
+
+test('one response: a headline that came back the table before its strip read the curve is scored again, and counted once', async () => {
+  const v = venue();
+  const curves = {};
+  // The strip's whole-curve read is slow, so the headline decides first, the
+  // way the card and the venue dashboard start the two together.
+  const db = scriptedDb({ curves, curveDelayMs: 25 });
+  await withPredictor({ db, env: { [SWITCH]: ON, CROWD_SERVE_MODE: 'curve_offset' } }, async (p) => {
+    // An earlier request, before the collector reached the venue: the probe's
+    // no is held and this hour's slot is a cached zero.
+    assert.equal((await p.predictBusyness(v, WX, TS)).predictionMethod, METHOD);
+    curves[v.place_id] = allSlots(50);
+    const before = p.predictionCoverage();
+    const [headline, strip] = await Promise.all([
+      p.predictBusyness(v, WX, TS),
+      p.predictHourlyForecast(v, WX, HOUR, 4, TS),
+    ]);
+    assert.equal(headline.predictionMethod, METHOD, 'the headline decided before the strip read the curve');
+    assert.equal(strip[0].predictionMethod, 'ml');
+    const agreed = await p.agreeWithStrip(headline, strip, v, WX, TS);
+    assert.equal(agreed.predictionMethod, 'ml');
+    assert.equal(agreed.score, strip[0].score, 'the dial and the Now bar are one number again');
+    assert.equal(crowdEngine.describeServedArithmetic(agreed), strip[0].numberSource);
+    const after = p.predictionCoverage();
+    assert.equal(after.total - before.total, 1 + 4, 'one headline and four hours: the replaced answer is not counted');
+    assert.equal(after.categoryCurve, before.categoryCurve);
+    // A headline its strip agrees with comes back as it went in, with nothing read.
+    const sent = db.sent.length;
+    assert.strictEqual(await p.agreeWithStrip(agreed, strip, v, WX, TS), agreed);
+    assert.equal(db.sent.length, sent);
+  });
+  // The table stays where the strip found no curve either: same object back.
+  await withPredictor({ env: { [SWITCH]: ON } }, async (p, db) => {
+    const w = venue();
+    const headline = await p.predictBusyness(w, WX, TS);
+    const strip = await p.predictHourlyForecast(w, WX, HOUR, 3, TS);
+    for (const h of strip) assert.equal(h.predictionMethod, METHOD, h.hour);
+    const sent = db.sent.length;
+    assert.strictEqual(await p.agreeWithStrip(headline, strip, w, WX, TS), headline);
+    assert.equal(db.sent.length, sent);
+  });
+});
+
+test('switched off, the agreement step and every read leave nothing behind: the same headline, no statement, no presence answer', async () => {
+  const v = venue();
+  const db = scriptedDb({ curves: { [v.place_id]: { [`${DOW}_18`]: 40, [`${DOW}_20`]: 60 } } });
+  await withPredictor({ db, env: { CROWD_SERVE_MODE: 'curve_offset', CROWD_NOWCAST_ENABLED: 'true' } }, async (p) => {
+    const I = p._internals;
+    const [headline, strip] = await Promise.all([
+      p.predictBusyness(v, WX, TS),
+      p.predictHourlyForecast(v, WX, 18, 6, TS),
+    ]);
+    const sent = db.sent.length;
+    assert.strictEqual(await p.agreeWithStrip(headline, strip, v, WX, TS), headline);
+    assert.equal(db.sent.length, sent, 'nothing read');
+    // The slot lookup found rows, the strip read the curve, the strip below
+    // replays it from memory, and a caller primes the cache the advisor's
+    // way: none of it writes a presence answer while the switch is off.
+    const seven = new Date(TS);
+    seven.setHours(19);
+    await p.predictBusyness(v, WX, seven);
+    await p.predictHourlyForecast(v, WX, 18, 6, TS);
+    p.primeBaselineCache(v.place_id, [{ day_of_week: DOW, hour: 12, baseline: '30' }]);
+    assert.equal(I.curvePresenceCacheSize(), 0);
+    assert.equal(db.presence().length, 0);
   });
 });
 

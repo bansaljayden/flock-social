@@ -399,8 +399,15 @@ async function buildCard(v, weather, clock, preScored, place) {
   // instant, so they must be the same prediction, not two calls that could
   // straddle an event-cache refill and print 78% on the pin and 76% in the
   // ring. The caller hands its score in when it already has one.
-  const scored = preScored || await mlPredictor.predictBusyness(v, weather, clock.time, ANON);
+  const first = preScored || await mlPredictor.predictBusyness(v, weather, clock.time, ANON);
   const fullDay = await mlPredictor.predictHourlyForecast(v, weather, clock.localHour, 24, clock.time, ANON);
+  // The dial and the bars agree on whether the venue has a curve. A dial
+  // scored before the strip read the venue's first rows is scored again
+  // (mlPredictor.agreeWithStrip), so a category dial never sits beside the
+  // curve's bars under the "Live from the model" note and its green dot. The
+  // area answer copies the result onto the featured venue's pin, which is the
+  // same prediction (round 14, above).
+  const scored = await mlPredictor.agreeWithStrip(first, fullDay, v, weather, clock.time, ANON);
   const hourly = fullDay.slice(0, 12);
   const barClock = stripClock(hourly, clock.localHour);
   // Peak is read off the 12 hours the chart draws, so the rush it names is a
@@ -911,6 +918,14 @@ router.get('/demo/venues',
           const rank = (a, b) => (Number(b.is_open !== false) - Number(a.is_open !== false)) || (b.score - a.score);
           const feature = [...venues].sort(rank)[0];
           card = await buildCard(feature._shape, weather, feature._clock, feature._scored, feature._place);
+          // The pin and the dial stay one prediction when the card scored its
+          // dial again beside its strip (mlPredictor.agreeWithStrip), so the
+          // pin takes the card's three crowd fields. They are built by the
+          // same expressions from the same answer, so a card that was not
+          // scored again writes back exactly the values the pin holds.
+          feature.score = card.score;
+          feature.label = card.label;
+          feature.confidence_basis = card.confidence_basis;
         } catch { /* card arrives via the venue endpoint instead */ }
       }
 
