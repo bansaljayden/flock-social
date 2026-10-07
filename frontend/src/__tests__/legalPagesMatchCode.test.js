@@ -1148,3 +1148,103 @@ describe("the privacy policy lists Birdie's consent record, and the code keeps e
     expect(ai).toMatch(/- Now: \$\{now\} UTC\.\\n- You do not know the user's time zone/);
   });
 });
+
+// THE PROVIDER NOTICES IN THE SECURITY LIST. The list said two routes were
+// exempt from rate limits, that neither was reachable without the shared
+// secret it was checked against, and that our subscription provider signs
+// nothing. /api/stripe-webhook had made the routes three, the email and
+// payment routes check a signature over the bytes rather than a shared
+// secret, and RevenueCat can sign its notices; this server just never checks
+// that signature. Each sentence is now held to the lines that decide it, so a
+// fourth unlimited route, a signature check on the subscription route, or a
+// verifier handed anything but the raw bytes fails here before the page says
+// something untrue.
+describe('the security list says which routes have no limit of their own and how each checks its sender', () => {
+  const server = read('backend', 'server.js');
+  const stripeRoute = read('backend', 'routes', 'stripeWebhook.js');
+  const proBilling = read('backend', 'services', 'proBilling.js');
+  const emailRoute = read('backend', 'routes', 'emailWebhook.js');
+  const revenuecat = read('backend', 'routes', 'revenuecat.js');
+  const mirror = read('frontend', 'api', 'marketing-page.js');
+  const copies = [['PrivacyPolicy.js', flat(privacy)], ['marketing-page.js', mirror]];
+
+  // "Before reading a word of the message": inside the handler, the check comes
+  // first and the parsed body, if it is read at all, only after it.
+  const readsBodyOnlyAfter = (src, start, check) => {
+    const handler = src.slice(src.indexOf(start));
+    const checked = handler.indexOf(check);
+    const body = handler.search(/\breq\.body\b/);
+    return checked > -1 && (body === -1 || body > checked);
+  };
+
+  test('the routes mounted with no limiter are the three provider notices, under the one ceiling on every request', () => {
+    // Every /api mount names its limiters in the same app.use call, so a mount
+    // that names none is a route with no limit of its own.
+    const unlimited = [...server.matchAll(/^app\.use\('(\/api[^']*)',(.*?)\);/gm)]
+      .filter(([, , args]) => !/Limiter\b/.test(args))
+      .map(([, route]) => route)
+      .sort();
+    expect(unlimited).toEqual(['/api/email-events', '/api/revenuecat', '/api/stripe-webhook']);
+    // The app-wide ceiling is mounted once, above every route.
+    expect(server.match(/^app\.use\(globalBackstopLimiter\);/gm)).toHaveLength(1);
+    expect(server.search(/^app\.use\(globalBackstopLimiter\);/m)).toBeLessThan(server.search(/^app\.use\('\/api/m));
+
+    const sentence = 'Three routes have no limit of their own, only the app-wide ceiling every request counts toward, and all three are machine-to-machine: the notices our email provider, our payment processor and our subscription provider send us.';
+    for (const [name, src] of copies) {
+      expect([name, src.includes(sentence)]).toEqual([name, true]);
+      expect([name, /Two routes are exempt|Neither is reachable without/.test(src)]).toEqual([name, false]);
+    }
+  });
+
+  test('the email and payment routes verify a signature over the raw bytes before reading the body', () => {
+    // Stripe: the SDK's check, handed the bytes the scoped parser kept.
+    expect(stripeRoute).toMatch(/event = billing\.constructWebhookEvent\(req\.rawBody, signature\);/);
+    expect(proBilling).toMatch(/return stripe\(\)\.webhooks\.constructEvent\(rawBody, signature, secret\);/);
+    expect(readsBodyOnlyAfter(stripeRoute, "router.post('/'", 'constructWebhookEvent(')).toBe(true);
+    // Resend: an HMAC over the message id, the timestamp and the raw body.
+    expect(emailRoute).toMatch(/\.update\(`\$\{id\}\.\$\{timestamp\}\.\$\{rawBody\}`\)/);
+    expect(emailRoute).toMatch(/const rawBody = Buffer\.isBuffer\(req\.rawBody\) \? req\.rawBody\.toString\('utf8'\) : null;/);
+    expect(emailRoute).toMatch(/if \(!signatureMatches\(signature, key, id, timestamp, rawBody\)\)/);
+    expect(readsBodyOnlyAfter(emailRoute, "router.post('/'", 'signatureMatches(')).toBe(true);
+
+    const sentence = 'Notices from our email provider and our payment processor carry a signature over the exact bytes they sent, and we verify it before reading a word of the message.';
+    for (const [name, src] of copies) {
+      expect([name, src.includes(sentence)]).toEqual([name, true]);
+    }
+  });
+
+  test('the subscription route compares a shared secret from the Authorization header in constant time, and checks no signature', () => {
+    expect(revenuecat).toMatch(/if \(!secretMatches\(req\.headers\.authorization, expected\)\)/);
+    expect(revenuecat).toMatch(/function constantTimeEquals\(presented, expected\) \{[\s\S]{0,200}?return crypto\.timingSafeEqual\(a, b\);/);
+    // RevenueCat can sign a notice (an X-RevenueCat-Webhook-Signature header).
+    // The day this route checks one, the page has to stop saying it does not.
+    expect(withoutComments(revenuecat)).not.toMatch(/createHmac|webhook-signature/i);
+
+    const sentence = 'We do not check a signature on notices from our subscription provider; each one presents a shared secret in its Authorization header, which we compare in constant time.';
+    for (const [name, src] of copies) {
+      expect([name, src.includes(sentence)]).toEqual([name, true]);
+      expect([name, /does not sign anything/.test(src)]).toEqual([name, false]);
+    }
+  });
+
+  test('all three refuse every notice while the secret on our side is missing or too short', () => {
+    // RevenueCat: a value under its floor reads as unconfigured, which is a 503.
+    expect(revenuecat).toMatch(/const MIN_SECRET_LENGTH = 16;/);
+    expect(revenuecat).toMatch(/if \(value\.length < MIN_SECRET_LENGTH\) \{[\s\S]{0,700}?return null;/);
+    expect(revenuecat).toMatch(/const expected = configuredSecret\(\);\s*if \(!expected\) \{\s*return res\.status\(503\)/);
+    // Stripe: the same floor through keyValue, and the route answers 503 without it.
+    expect(proBilling).toMatch(/const MIN_KEY_LENGTH = 16;/);
+    expect(proBilling).toMatch(/return v\.length >= MIN_KEY_LENGTH \? v : null;/);
+    expect(proBilling).toMatch(/const stripeWebhookSecret = \(\) => keyValue\(process\.env\.STRIPE_WEBHOOK_SECRET\);/);
+    expect(proBilling).toMatch(/stripeWebhookConfigured: \(\) => !!stripeWebhookSecret\(\),/);
+    expect(stripeRoute).toMatch(/if \(!billing\.stripeWebhookConfigured\(\)[^\n]*\) \{\s*return res\.status\(503\)/);
+    // Resend: a secret under its floor reads as none, and none is a 503.
+    expect(emailRoute).toMatch(/function webhookSecret\(\) \{[\s\S]*?< MIN_\w+/);
+    expect(emailRoute).toMatch(/const key = webhookSecret\(\);\s*if \(!key\) \{[\s\S]{0,300}?return res\.status\(503\)/);
+
+    for (const [name, src] of copies) {
+      expect([name, src.includes('All three are refused outright if the secret on our side is missing or too short to be one.')]).toEqual([name, true]);
+      expect([name, /Both are refused outright/.test(src)]).toEqual([name, false]);
+    }
+  });
+});
