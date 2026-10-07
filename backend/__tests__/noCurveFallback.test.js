@@ -1088,6 +1088,61 @@ test('one strip: once any read has seen the venue\'s rows, every hour the table 
   });
 });
 
+// The venue's row in ml_venue_recent_deviation as the nowcast reads it: no
+// offset, and `readings` as its newest live readings ({ d, h, v }).
+function withRecentReadings(db, placeId, readings) {
+  const send = db.query;
+  db.query = async (text, params = []) => {
+    if (params[0] === placeId && /FROM ml_venue_recent_deviation WHERE google_place_id = \$1/.test(String(text).replace(/\s+/g, ' '))) {
+      db.sent.push({ sql: String(text).replace(/\s+/g, ' ').trim(), params });
+      return { rows: [{ offset_pct: null, n_readings: 0, updated_at: new Date(), recent_readings: readings, offset_readings: null }] };
+    }
+    return send(text, params);
+  };
+  return db;
+}
+
+// A whole-week curve as the rows primeBaselineCache takes.
+const curveRowsOf = (curve) => Object.entries(curve).map(([k, baseline]) => {
+  const [d, h] = k.split('_').map(Number);
+  return { day_of_week: d, hour: h, baseline: String(baseline) };
+});
+
+test('one strip: an answer the agreement replaces takes back every count it added, so the coverage block counts each venue-hour once', async () => {
+  // Three hours on the table; then the venue's curve is loaded and primed
+  // before the headline, so the headline is already the curve's number, made
+  // under curve_offset with an hour-old reading blended in. The agreement
+  // scores the three hours again, and the headline with them because its own
+  // hour was one of them. Each replaced answer has to take back what it
+  // added: its method, its curve_offset answer and its nowcast lag bucket.
+  const v = venue();
+  const curves = {};
+  const db = withRecentReadings(scriptedDb({ curves }), v.place_id, [{ d: '2026-09-04', h: HOUR - 1, v: 80 }]);
+  await withPredictor({ db, env: { [SWITCH]: ON, CROWD_SERVE_MODE: 'curve_offset', CROWD_NOWCAST_ENABLED: 'true' } }, async (p) => {
+    const strip = await p.predictHourlyForecast(v, WX, HOUR, 3, TS);
+    assert.deepEqual(strip.map((h) => h.predictionMethod), [METHOD, METHOD, METHOD], 'setup: no curve yet');
+    curves[v.place_id] = allSlots(50);
+    p.primeBaselineCache(v.place_id, curveRowsOf(curves[v.place_id]));
+    const headline = await p.predictBusyness(v, WX, TS);
+    assert.equal(headline.predictionMethod, 'ml', 'setup: the headline read the primed curve');
+    assert.equal(headline.serveMode, 'curve_offset');
+    assert.equal(headline.nowcast && headline.nowcast.bucket, 1, 'setup: an hour-old reading moved it');
+    const agreed = await p.agreeWithStrip(headline, strip, v, WX, TS);
+    assert.deepEqual(strip.map((h) => h.predictionMethod), ['ml', 'ml', 'ml']);
+    assert.equal(agreed.predictionMethod, 'ml');
+    assert.equal(agreed.score, strip[0].score);
+    // Four venue-hours, three bars and the headline, every one the curve's
+    // number with a reading 1, 2, 3 and 1 hours old in it.
+    const c = p.predictionCoverage();
+    assert.equal(c.total, 4);
+    assert.equal(c.ml, 4);
+    assert.equal(c.categoryCurve, 0);
+    assert.deepEqual(c.byMethod, { ml: 4 });
+    assert.equal(c.curveOffsetAnswers, 4, 'a replaced answer left its curve_offset count behind');
+    assert.deepEqual(c.nowcastAnswersByLag, { 1: 2, 2: 1, 3: 1, 4: 0 }, 'a replaced answer left its nowcast count behind');
+  });
+});
+
 test('switched off, the agreement step and every read leave nothing behind: the same headline, no statement, no presence answer', async () => {
   const v = venue();
   const db = scriptedDb({ curves: { [v.place_id]: { [`${DOW}_18`]: 40, [`${DOW}_20`]: 60 } } });
