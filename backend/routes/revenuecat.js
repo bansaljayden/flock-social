@@ -116,6 +116,63 @@ function secretMatches(header, expected) {
   return constantTimeEquals(presented.replace(BEARER_PREFIX, ''), expected);
 }
 
+// ---------------------------------------------------------------------------
+// A REFUSAL IS COUNTED, AND SAID ALOUD AT MOST ONCE EVERY TEN MINUTES
+// ---------------------------------------------------------------------------
+// The 401 below, and the 503 for a secret that is simply unset, used to answer
+// with no log line at all (a too-short secret was the one refusal anything
+// announced), and utils/serverFault.js counts only 5xx answers. A rolled
+// secret, an Authorization value in the RevenueCat dashboard that no longer
+// matches, or a variable cleared in a redeploy therefore refused every purchase
+// event in silence, and RevenueCat drops each event after five retries over
+// about two and a half hours.
+//
+// Not one line per refusal, though. Anyone can reach this route, and a log line
+// per request is a free write into the log for whoever wants to bury something
+// in it. So each refusal is counted by its reason, the first one after a quiet
+// spell is reported at once, and the rest are summed into at most one line
+// every ten minutes, each line carrying the counts since the line before. The
+// presented header is never logged, whole or in part: on this route it is
+// either the credential itself or somebody's guess at it.
+const REFUSAL_LOG_INTERVAL_MS = 10 * 60 * 1000;
+const REFUSAL_REASONS = {
+  unconfigured: 'arrived while REVENUECAT_WEBHOOK_SECRET is unset, blank or too short (503)',
+  no_header: 'carried no Authorization header (401)',
+  mismatch: 'carried an Authorization value that did not match (401)',
+};
+// Fixed keys, set by this file and never by a request.
+const refusalCounts = { unconfigured: 0, no_header: 0, mismatch: 0 };
+let refusalsSince = null;
+let refusalTimer = null;
+
+function reportRefusals() {
+  refusalTimer = null;
+  const reasons = Object.keys(refusalCounts).filter((r) => refusalCounts[r] > 0);
+  // Nothing new since the last line: the window closes, and the next refusal
+  // is reported the moment it happens.
+  if (reasons.length === 0) return;
+  const total = reasons.reduce((sum, r) => sum + refusalCounts[r], 0);
+  console.error(
+    `[RevenueCat] webhook refused ${total} ${total === 1 ? 'request' : 'requests'} since ${new Date(refusalsSince).toISOString()}: `
+    + reasons.map((r) => `${refusalCounts[r]} ${REFUSAL_REASONS[r]}`).join('; ')
+    + '. Nothing was written. If RevenueCat sent them, every purchase event is being refused and each is dropped '
+    + 'after five retries: compare REVENUECAT_WEBHOOK_SECRET on this service with the Authorization value in the '
+    + 'RevenueCat dashboard.'
+  );
+  for (const r of reasons) refusalCounts[r] = 0;
+  refusalsSince = null;
+  // Refusals inside the next ten minutes are only counted, and this timer
+  // reports them. Unref'd, so it never holds a process open.
+  refusalTimer = setTimeout(reportRefusals, REFUSAL_LOG_INTERVAL_MS);
+  refusalTimer.unref?.();
+}
+
+function noteRefusal(reason) {
+  refusalCounts[reason] += 1;
+  if (refusalsSince === null) refusalsSince = Date.now();
+  if (!refusalTimer) reportRefusals();
+}
+
 // Which RevenueCat entitlement means "Flock Pro". Must match the identifier the
 // client reads (frontend/src/services/purchases.js -> entitlements.active['pro']).
 const PRO_ENTITLEMENT = process.env.REVENUECAT_ENTITLEMENT_ID || 'pro';
@@ -355,9 +412,12 @@ router.post('/webhook', async (req, res) => {
     // found the URL could flip users.is_premium for any user id.
     const expected = configuredSecret();
     if (!expected) {
+      noteRefusal('unconfigured');
       return res.status(503).json({ error: 'Webhook not configured' });
     }
     if (!secretMatches(req.headers.authorization, expected)) {
+      // Which kind of miss, and nothing about what was presented.
+      noteRefusal(String(req.headers.authorization ?? '').trim() ? 'mismatch' : 'no_header');
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
@@ -606,3 +666,16 @@ module.exports.syncPremiumFromRevenueCat = syncPremiumFromRevenueCat;
 // Exported off the router object because the router is this module's export;
 // it carries no request state, so a service reading it is a pure call.
 module.exports.configuredSecret = configuredSecret;
+
+// For the tests: the refusal summary is timed, and a suite has to be able to
+// start it from a known state and drive it without a real clock.
+module.exports.__testing = {
+  REFUSAL_LOG_INTERVAL_MS,
+  noteRefusal,
+  resetRefusals() {
+    if (refusalTimer) clearTimeout(refusalTimer);
+    refusalTimer = null;
+    refusalsSince = null;
+    for (const r of Object.keys(refusalCounts)) refusalCounts[r] = 0;
+  },
+};

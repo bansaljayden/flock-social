@@ -333,6 +333,92 @@ test('a secret of a realistic length is accepted', async () => {
 });
 
 // ===========================================================================
+// 3b. A refusal is said aloud, briefly, and never repeats what it was sent
+// ===========================================================================
+//
+// The 401 and the 503 used to be silent, and utils/serverFault.js counts only
+// 5xx. A rolled secret or a dashboard value that drifted refused every purchase
+// event with nothing in the log, while RevenueCat gave up on each one after five
+// retries. The route is reachable by anyone, so the answer is a count by reason
+// and at most one line every ten minutes, not a line per request.
+
+function captureErrors() {
+  const lines = [];
+  const real = console.error;
+  console.error = (...a) => { lines.push(a.map(String).join(' ')); };
+  return { lines, restore: () => { console.error = real; } };
+}
+
+test('a refused delivery is reported at once by kind, and the header it carried never is', async () => {
+  const rc = revenuecatRouter.__testing;
+  rc.resetRefusals();
+  const cap = captureErrors();
+  // Distinctive, so a log line carrying any of it cannot pass by accident.
+  const guess = 'guessed-credential-that-must-never-reach-a-log';
+  const event = { event: { type: 'INITIAL_PURCHASE', app_user_id: '4242', entitlement_ids: ['pro'] } };
+  try {
+    process.env.REVENUECAT_WEBHOOK_SECRET = SECRET;
+    const first = await post(event, { Authorization: `Bearer ${guess}` });
+    assert.equal(first.status, 401);
+    assert.equal(cap.lines.length, 1, 'the first refusal after a quiet spell has to be reported at once');
+    assert.match(cap.lines[0], /\[RevenueCat\] webhook refused 1 request since \d{4}-\d\d-\d\dT/);
+    assert.match(cap.lines[0], /1 carried an Authorization value that did not match \(401\)/);
+
+    // Inside the window every refusal is counted and none is a line of its own.
+    assert.equal((await post(event, { Authorization: `Bearer ${guess}` })).status, 401);
+    assert.equal((await post(event)).status, 401);
+    delete process.env.REVENUECAT_WEBHOOK_SECRET;
+    assert.equal((await post(event, { Authorization: `Bearer ${guess}` })).status, 503);
+    assert.equal(cap.lines.length, 1, 'a refusal inside the ten-minute window wrote a line of its own');
+    assert.deepEqual(log, [], 'a refused delivery reached the database');
+
+    for (const line of cap.lines) {
+      assert.ok(!line.includes(guess), `a presented credential reached the log: ${line}`);
+      assert.ok(!line.includes(SECRET), `the configured secret reached the log: ${line}`);
+    }
+  } finally {
+    cap.restore();
+    rc.resetRefusals();
+  }
+});
+
+test('the refusal summary goes out at most once every ten minutes and keeps every count', (t) => {
+  const rc = revenuecatRouter.__testing;
+  // Cleared on the real clock first: the requests above left a real timer.
+  rc.resetRefusals();
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const cap = captureErrors();
+  try {
+    rc.noteRefusal('mismatch');
+    assert.equal(cap.lines.length, 1);
+
+    for (let i = 0; i < 40; i += 1) rc.noteRefusal('mismatch');
+    rc.noteRefusal('no_header');
+    rc.noteRefusal('unconfigured');
+    t.mock.timers.tick(rc.REFUSAL_LOG_INTERVAL_MS - 1);
+    assert.equal(cap.lines.length, 1, 'a second line went out inside ten minutes');
+
+    t.mock.timers.tick(1);
+    assert.equal(cap.lines.length, 2, 'the refusals counted in the window were never reported');
+    assert.match(cap.lines[1], /refused 42 requests since /);
+    assert.match(cap.lines[1], /40 carried an Authorization value that did not match \(401\)/);
+    assert.match(cap.lines[1], /1 carried no Authorization header \(401\)/);
+    assert.match(cap.lines[1], /1 arrived while REVENUECAT_WEBHOOK_SECRET is unset, blank or too short \(503\)/);
+
+    // A quiet window writes nothing and closes, so the next refusal after it is
+    // reported the moment it happens rather than ten minutes late.
+    t.mock.timers.tick(rc.REFUSAL_LOG_INTERVAL_MS);
+    assert.equal(cap.lines.length, 2, 'a window with no refusals in it still wrote a line');
+    rc.noteRefusal('no_header');
+    assert.equal(cap.lines.length, 3);
+    assert.match(cap.lines[2], /refused 1 request since .*: 1 carried no Authorization header \(401\)/);
+  } finally {
+    cap.restore();
+    rc.resetRefusals();
+  }
+});
+
+// ===========================================================================
 // 4. The event mapping table
 // ===========================================================================
 
