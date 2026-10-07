@@ -593,8 +593,9 @@ describe('location answers and storage at quota', () => {
     expect(APP_SRC).toMatch(/locationEnabledRef\.current = enable;\s*if \(!enable\) locationAskRef\.current \+= 1;/);
     expect(APP_SRC).toMatch(/window\.addEventListener\('flock-session-cleared', forget\);/);
     // Both requests that store a position check it before storing anything.
+    // The two requests that store a position, and the two share starters.
     const asks = APP_SRC.split('const ask = locationAskRef.current;').length - 1;
-    expect(asks).toBe(2);
+    expect(asks).toBe(4);
     const guards = APP_SRC.split('if (ask !== locationAskRef.current || !locationEnabledRef.current) return;').length - 1;
     expect(guards).toBe(2);
   });
@@ -605,5 +606,49 @@ describe('location answers and storage at quota', () => {
     }
     expect(APP_SRC).toMatch(/lsSet\('flock_safety_on', on \? 'true' : 'false'\);\s*queueSync\(\{ safetyOn:/);
     expect(APP_SRC).toMatch(/lsSet\('flock_crowd_alerts', on \? 'true' : 'false'\);\s*queueSync\(\{ crowdAlerts:/);
+  });
+});
+
+// code review 11 (2026-10-07).
+describe('a share started before a sign-out, and storage at quota', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const APP_SRC = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8').replace(/\r\n/g, '\n');
+  const MAP_SRC = fs.readFileSync(path.join(__dirname, '..', 'components', 'map', 'MapLibreMapView.js'), 'utf8');
+
+  test('a location fix that lands after a sign-out sends nothing and arms no share', () => {
+    const flockShare = APP_SRC.slice(APP_SRC.indexOf("trackLocationError(err, 'flock_share')") - 900, APP_SRC.indexOf("trackLocationError(err, 'flock_share')"));
+    expect(flockShare).toMatch(/const ask = locationAskRef\.current;\s*getCurrentPosition\(\s*\(pos\) => \{\s*if \(ask !== locationAskRef\.current\) return;/);
+    const dmShare = APP_SRC.slice(APP_SRC.indexOf("trackLocationError(err, 'dm_share')") - 700, APP_SRC.indexOf("trackLocationError(err, 'dm_share')"));
+    expect(dmShare).toMatch(/const ask = locationAskRef\.current;\s*getCurrentPosition\(\s*\(pos\) => \{\s*if \(ask !== locationAskRef\.current\) return;/);
+  });
+
+  test('switching Location off ends a live share through the share stops', () => {
+    expect(APP_SRC).toMatch(/useEffect\(\(\) => \{\s*if \(locationEnabled\) return;\s*if \(sharingLocationRef\.current\) stopLocationSharingRef\.current\(\);\s*if \(dmSharingLocation\) \{\s*dmStopSharingLocation\(dmSharingLocation\);\s*setDmSharingLocation\(null\);/);
+  });
+
+  test('the map style choice reaches the queue even when storage refuses it', () => {
+    expect(MAP_SRC).not.toContain("localStorage.setItem('flock_map_type'");
+    expect(MAP_SRC).toMatch(/lsSet\('flock_map_type', newType\);\s*queueSync\(\{ mapType: newType \}\);/);
+  });
+
+  test('a pull whose storage write fails still hands on every key and is recorded', async () => {
+    localStorage.clear();
+    api.isLoggedIn.mockReturnValue(true);
+    api.getUserSettings.mockImplementation(() => Promise.resolve({ settings: { pinnedFlockIds: [4, 5], flockOrder: [9], crowdAlerts: 'false' } }));
+    const realSet = Storage.prototype.setItem;
+    const spy = jest.spyOn(Storage.prototype, 'setItem').mockImplementation(function set(key, value) {
+      if (key === 'flock_pinned') throw new DOMException('full', 'QuotaExceededError');
+      return realSet.call(this, key, value);
+    });
+    try {
+      const detail = await handedOn(pullSettings());
+      expect(detail).toEqual({ pinnedFlockIds: [4, 5], flockOrder: [9], crowdAlerts: 'false' });
+      expect(localStorage.getItem('flock_order')).toBe('[9]');
+      expect(localStorage.getItem('flock_crowd_alerts')).toBe('false');
+      expect(latestPull().values).toEqual({ pinnedFlockIds: [4, 5], flockOrder: [9], crowdAlerts: 'false' });
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

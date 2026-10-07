@@ -12121,8 +12121,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       showToast("This device can't share a location", 'error');
       return;
     }
+    // The same stamp as the location toggle (locationAskRef). A fix that
+    // lands after a sign-out went out over the socket of whoever was signed
+    // in by then, so a share one person started could be sent as the next.
+    const ask = locationAskRef.current;
     getCurrentPosition(
       (pos) => {
+        if (ask !== locationAskRef.current) return;
         const { latitude, longitude } = pos.coords;
         deviceFixRef.current = stampFix(latitude, longitude);
         setUserLocation({ lat: latitude, lng: longitude });
@@ -12130,6 +12135,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         setSharingLocationForFlock(flockId);
       },
       (err) => {
+        if (ask !== locationAskRef.current) return;
         trackLocationError(err, 'flock_share');
         showToast(err?.code === 1
           ? 'Flock needs location access to share where you are. Turn it on in Settings.'
@@ -12171,6 +12177,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // by calling exactly this, so it reads the current one here.
   const stopLocationSharingRef = useRef(stopLocationSharing);
   stopLocationSharingRef.current = stopLocationSharing;
+
+  // LOCATION OFF ENDS A LIVE SHARE. Switching Location off, here or on another
+  // device through the settings pull, left a running share going: the watch
+  // below kept putting the position on the map and the emitters kept sending
+  // it. Only the switch to off ends one, through the same stops the share
+  // buttons use; a share started while Location was already off is the
+  // person's own explicit choice and is left alone.
+  useEffect(() => {
+    if (locationEnabled) return;
+    if (sharingLocationRef.current) stopLocationSharingRef.current();
+    if (dmSharingLocation) {
+      dmStopSharingLocation(dmSharingLocation);
+      setDmSharingLocation(null);
+    }
+  }, [locationEnabled]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Emit location every 10 seconds while sharing is active
   const userLocationRef = useRef(userLocation);
@@ -16425,13 +16446,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       showToast("This device can't share a location", 'error');
       return;
     }
+    // Stamped like the flock share above: a fix that lands after a sign-out,
+    // or after Location was switched off, arms nothing.
+    const ask = locationAskRef.current;
     getCurrentPosition(
       (pos) => {
+        if (ask !== locationAskRef.current) return;
         deviceFixRef.current = stampFix(pos.coords.latitude, pos.coords.longitude);
         setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
         setDmSharingLocation(dmId);
       },
       (err) => {
+        if (ask !== locationAskRef.current) return;
         trackLocationError(err, 'dm_share');
         showToast(err?.code === 1
           ? 'Flock needs location access to share where you are. Turn it on in Settings.'

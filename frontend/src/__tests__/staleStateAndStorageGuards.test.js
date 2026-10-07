@@ -129,7 +129,7 @@ describe('lib/storage answers a blocked storage with a value, never a throw', ()
     expect(APP).toContain("import { lsGet, lsSet, lsRemove } from './lib/storage';");
     // The basemap choice is read in the map module now, so both halves of the
     // property are pinned there: the helper is imported, and the read uses it.
-    expect(MAP).toContain("import { lsGet } from '../../lib/storage';");
+    expect(MAP).toContain("import { lsGet, lsSet } from '../../lib/storage';");
     expect(MAP).toContain("lsGet('flock_map_type') === 'hybrid'");
     const userMode = region(APP, 'const [userMode, setUserMode] = useState(() => {', '});');
     expect(userMode).toContain("const saved = lsGet('flockUserMode');");
