@@ -416,6 +416,27 @@ function stripeWebhookSecretProblem() {
   return null;
 }
 
+// What keeps the Stripe webhook from applying anything, in words. Empty when it
+// can, and empty when Stripe is not set up at all, which is the dormant state
+// and not a fault. routes/stripeWebhook.js says these once at boot and the
+// money hub's setup step shows them, so the two cannot disagree.
+function stripeWebhookSetupProblems() {
+  const problems = [];
+  const keySet = stripeConfigured();
+  const secretSet = !!stripeWebhookSecret();
+  if (keySet && !secretSet) {
+    problems.push('STRIPE_SECRET_KEY is set but STRIPE_WEBHOOK_SECRET is not set to a usable value (16 characters or more), so POST /api/stripe-webhook answers 503 to every Stripe event and no Pro or Roost change made at Stripe is applied. Copy the signing secret of the endpoint for /api/stripe-webhook (Webhooks in the Stripe dashboard) into it.');
+  }
+  if (secretSet && !keySet) {
+    problems.push('STRIPE_WEBHOOK_SECRET is set but STRIPE_SECRET_KEY is not, and the webhook needs both, so POST /api/stripe-webhook answers 503 to every Stripe event.');
+  }
+  const problem = stripeWebhookSecretProblem();
+  if (problem) {
+    problems.push(`STRIPE_WEBHOOK_SECRET ${problem}, so every Stripe delivery will fail its signature check. Copy the endpoint's signing secret (Webhooks in the Stripe dashboard) exactly as shown.`);
+  }
+  return problems;
+}
+
 // ONE CHECKOUT BEING BUILT PER ACCOUNT AT A TIME. Expiring the open sessions,
 // checking for a live subscription and creating the new session are three
 // Stripe calls, and two requests that interleave them (a double click, two
@@ -891,6 +912,7 @@ module.exports = {
   constructWebhookEvent,
   stripeWebhookConfigured: () => !!stripeWebhookSecret(),
   stripeWebhookSecretProblem,
+  stripeWebhookSetupProblems,
   stripeConfigured,
   // The one Stripe client, shared with services/venueBilling.js (Roost), so
   // both products use the same key and the same retry and timeout settings.

@@ -3654,6 +3654,18 @@ function revenueCatWebhookConfigured() {
   }
 }
 
+// The email webhook route's own reading of RESEND_WEBHOOK_SECRET, asked for the
+// same reason as the RevenueCat one above. null when the route could not be
+// asked.
+function emailWebhookSecretStatus() {
+  try {
+    return require('../routes/emailWebhook').secretStatus();
+  } catch (err) {
+    console.error('[money] email webhook secret check failed:', (err && err.name) || 'unknown error');
+    return null;
+  }
+}
+
 // What the last RevenueCat read did with the v2 key, from the block the hub
 // already built. The step is done once the key is set; this says whether
 // RevenueCat took it, so a refused key is never shown as simply done.
@@ -3710,6 +3722,36 @@ function buildOwnerActions({ roundTrip, expensesRead, revenuecat }) {
     webhookWords = 'REVENUECAT_WEBHOOK_SECRET is not set to a usable value, 16 characters or more, so the server refuses every webhook RevenueCat sends. Set a long random one on the server (openssl rand -hex 32 makes one), and put the same value in the Authorization header of RevenueCat\'s webhook, under Integrations, then Webhooks. The server cannot see RevenueCat\'s side.';
   }
 
+  // Stripe's webhook, in the words routes/stripeWebhook.js says at boot. Both
+  // variables set and a secret of the right shape is done; whether it is the
+  // endpoint's own secret shows only in Stripe.
+  const stripeProblems = billing.stripeWebhookSetupProblems();
+  const stripeHookReady = billing.stripeConfigured() && billing.stripeWebhookConfigured() && stripeProblems.length === 0;
+  let stripeHookWords;
+  if (stripeHookReady) {
+    stripeHookWords = 'STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET are set, and the secret has the shape of an endpoint signing secret, so the events Stripe sends for Flock Pro and Roost are checked and applied. Whether it is the signing secret of the endpoint for /api/stripe-webhook shows only in Stripe, where that endpoint lists each delivery and whether it failed.';
+  } else if (stripeProblems.length > 0) {
+    stripeHookWords = stripeProblems.join(' ');
+  } else {
+    stripeHookWords = 'Neither STRIPE_SECRET_KEY nor STRIPE_WEBHOOK_SECRET is set, so web checkout stays off (it needs both) and POST /api/stripe-webhook answers 503 to every Stripe event. Set the secret key, and the signing secret of the endpoint for /api/stripe-webhook.';
+  }
+
+  // Resend's webhook, judged by the route's own reading of its secret.
+  const emailSecret = emailWebhookSecretStatus();
+  const emailHookCost = 'so POST /api/email-events refuses every event Resend sends: no hard bounce or spam complaint is recorded, and Flock keeps mailing addresses that no longer exist.';
+  let emailHookState = 'unknown';
+  let emailHookWords = 'The server could not ask the email webhook route about its secret, so this step cannot be checked right now.';
+  if (emailSecret && emailSecret.usable) {
+    emailHookState = 'done';
+    emailHookWords = 'RESEND_WEBHOOK_SECRET is a usable signing secret, so the hard bounces and spam complaints Resend reports are checked and recorded, and Flock stops mailing those addresses. Whether it is the secret of the webhook in Resend shows only there, where the webhook lists each delivery and whether it failed.';
+  } else if (emailSecret && emailSecret.notSet) {
+    emailHookState = 'todo';
+    emailHookWords = `RESEND_WEBHOOK_SECRET is not set, ${emailHookCost} Create the webhook in Resend, point it at /api/email-events, subscribe it to email.bounced and email.complained, and copy its signing secret into RESEND_WEBHOOK_SECRET.`;
+  } else if (emailSecret) {
+    emailHookState = 'todo';
+    emailHookWords = `RESEND_WEBHOOK_SECRET ${emailSecret.problem}, ${emailHookCost} Copy the signing secret from the webhook's page in Resend exactly as shown, whsec_ included, with no quotes around it.`;
+  }
+
   let expensesState = 'unknown';
   let expensesWords = 'The expense list could not be read, so this step cannot be checked right now.';
   if (expensesRead && expensesRead.ok && expensesRead.rows > 0) {
@@ -3752,6 +3794,20 @@ function buildOwnerActions({ roundTrip, expensesRead, revenuecat }) {
       state: webhookState,
       words: webhookWords,
       link: { href: REVENUECAT_DASHBOARD_URL, text: 'RevenueCat' },
+    },
+    {
+      id: 'stripe_webhook',
+      label: 'Stripe webhook',
+      state: stripeHookReady ? 'done' : 'todo',
+      words: stripeHookWords,
+      link: { href: 'https://dashboard.stripe.com/webhooks', text: 'Stripe webhooks' },
+    },
+    {
+      id: 'email_events_webhook',
+      label: 'Email bounces and complaints',
+      state: emailHookState,
+      words: emailHookWords,
+      link: { href: 'https://resend.com/webhooks', text: 'Resend webhooks' },
     },
     {
       id: 'expense_list',

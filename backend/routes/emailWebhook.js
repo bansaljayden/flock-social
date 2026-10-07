@@ -305,4 +305,11 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 module.exports = router;
+// The money hub's setup step reads the secret through this, so the step and the
+// route judge it the same way: whether it is usable and, if not, what is wrong
+// with it. Never any part of the value.
+module.exports.secretStatus = () => {
+  const { key, problem } = webhookSecret();
+  return { usable: !!key, notSet: problem === SECRET_NOT_SET, problem };
+};
 module.exports.__testing = { signatureMatches, isPermanentBounce, recipientsOf, timestampFresh, webhookSecret };
