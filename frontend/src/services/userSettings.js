@@ -61,17 +61,25 @@ const JSON_KEYS = new Set(['pinnedFlockIds', 'flockOrder', 'userInterests']);
 let pending = {};
 let timer = null;
 
-// When the latest pull asked the server, and when each key last went into
-// the queue (localIsNewer).
-let pullAskedAt = 0;
+// WHICH VALUES THIS DEVICE HOLDS NEWER THAN A PULL'S ANSWER.
+//
+// A pull's answer is the account as the server read it, and a change this
+// device made around then can be newer: still in the queue, in a PATCH that
+// has not settled, or queued or settled after the pull asked (a PATCH sent
+// just before can still commit after the server read the answer).
+// pullSettings leaves those keys out of what it writes and hands on, so the
+// screen keeps the change and the account gets it. Each pull is judged by
+// the moment it asked, so an older answer that lands after a newer one, two
+// pulls overlapping, cannot pass for current.
 const queuedAt = {};
+const settledAt = {};
+const inFlight = {};
 
-// Whether this device holds a value for `key` newer than any answer a pull
-// can bring: one still waiting in the queue, or one queued after the latest
-// pull asked. The settings-loaded listener in App.js leaves such a key alone.
-export function localIsNewer(key) {
+function newerHere(key, askedAt) {
   if (Object.prototype.hasOwnProperty.call(pending, key)) return true;
-  return queuedAt[key] !== undefined && queuedAt[key] >= pullAskedAt;
+  if (inFlight[key]) return true;
+  if (queuedAt[key] !== undefined && queuedAt[key] >= askedAt) return true;
+  return settledAt[key] !== undefined && settledAt[key] >= askedAt;
 }
 
 // Whether `value` is what the account already holds for `key`, by JSON, in
@@ -98,7 +106,18 @@ export function queueSync(partial) {
     pending = {};
     timer = null;
     if (!isLoggedIn()) return;
-    updateUserSettings(payload).catch(err => {
+    const keys = Object.keys(payload);
+    keys.forEach((key) => { inFlight[key] = (inFlight[key] || 0) + 1; });
+    const settle = () => {
+      const at = Date.now();
+      keys.forEach((key) => {
+        inFlight[key] -= 1;
+        if (!inFlight[key]) delete inFlight[key];
+        settledAt[key] = at;
+      });
+    };
+    updateUserSettings(payload).then(settle, (err) => {
+      settle();
       console.warn('[settings] sync failed:', err.message);
       // A sync lost to a dead spot is still the user's intent. Put it back in
       // the queue (anything queued since the flush wins a conflict) so the
@@ -145,7 +164,13 @@ function readLocalSettings() {
 
 export async function pullSettings() {
   if (!isLoggedIn()) return null;
-  pullAskedAt = Date.now();
+  const askedAt = Date.now();
+  // The part of `values` this device holds nothing newer for.
+  const takeable = (values) => {
+    const out = {};
+    Object.keys(values).forEach((key) => { if (!newerHere(key, askedAt)) out[key] = values[key]; });
+    return out;
+  };
   try {
     const { settings } = await getUserSettings();
     const serverHasSettings = settings && typeof settings === 'object' && Object.keys(settings).length > 0;
@@ -160,26 +185,26 @@ export async function pullSettings() {
         } catch (err) {
           console.warn('[settings] initial push failed:', err.message);
           // Not on the account yet. The queue owns it from here, with its
-          // retry when the connection comes back, and because it is queued
-          // the listener does not record it as held.
-          queueSync(local);
+          // retry when the connection comes back. A key changed since this
+          // pull asked is already queued with its newer value and stays so.
+          const owed = takeable(local);
+          if (Object.keys(owed).length > 0) queueSync(owed);
         }
       }
-      window.dispatchEvent(new CustomEvent('flock-settings-loaded', { detail: local }));
+      window.dispatchEvent(new CustomEvent('flock-settings-loaded', { detail: takeable(local) }));
       return local;
     }
 
+    // Only what this device holds nothing newer for is written and handed
+    // on. Writing a newer value over here left the next launch starting from
+    // the older one, and ThemeContext re-reads these keys on the event below.
+    const taken = takeable(settings);
     for (const [key, lsKey] of Object.entries(SYNCED_KEYS)) {
-      if (settings[key] === undefined || settings[key] === null) continue;
-      // A value this device changed while the pull was on the wire, or has
-      // not sent yet, is newer than this answer and stays. Writing it over
-      // here left the next launch starting from the older value, and
-      // ThemeContext re-reads these keys on the event below.
-      if (localIsNewer(key)) continue;
-      const value = JSON_KEYS.has(key) ? JSON.stringify(settings[key]) : String(settings[key]);
+      if (taken[key] === undefined || taken[key] === null) continue;
+      const value = JSON_KEYS.has(key) ? JSON.stringify(taken[key]) : String(taken[key]);
       localStorage.setItem(lsKey, value);
     }
-    window.dispatchEvent(new CustomEvent('flock-settings-loaded', { detail: settings }));
+    window.dispatchEvent(new CustomEvent('flock-settings-loaded', { detail: taken }));
     return settings;
   } catch (err) {
     console.warn('[settings] pull failed:', err.message);

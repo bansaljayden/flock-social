@@ -17,7 +17,22 @@ jest.mock('../services/api', () => ({
   isLoggedIn: jest.fn(() => true),
 }));
 const api = require('../services/api');
-const { sameAsAccount, queueSync, localIsNewer, pullSettings } = require('../services/userSettings');
+const { sameAsAccount, queueSync, pullSettings } = require('../services/userSettings');
+
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+// What a pull hands on to the screen (the flock-settings-loaded detail).
+async function handedOn(pulling) {
+  let detail = null;
+  const on = (e) => { detail = e.detail; };
+  window.addEventListener('flock-settings-loaded', on);
+  try { await pulling; } finally { window.removeEventListener('flock-settings-loaded', on); }
+  return detail;
+}
+function held() {
+  let answer;
+  const promise = new Promise((resolve) => { answer = resolve; });
+  return { promise, answer };
+}
 
 const app = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8').replace(/\r\n/g, '\n');
 
@@ -38,35 +53,66 @@ describe('sameAsAccount', () => {
   });
 });
 
-describe('localIsNewer', () => {
+describe('what a pull hands on', () => {
   beforeEach(() => {
-    jest.useRealTimers();
+    // Each pull writes what it takes into localStorage; a value left by one
+    // test must not reach the next one's initial push.
+    localStorage.clear();
     api.isLoggedIn.mockReturnValue(true);
+    api.updateUserSettings.mockReset();
     api.updateUserSettings.mockImplementation(() => Promise.resolve({}));
   });
 
   // A change made while the pull is on the wire (a pin on a slow connection)
   // is newer on this device than the pull's answer.
-  test('a key queued after the pull asked is newer here; one already sent before it asked is not', async () => {
+  test('a key sent before the pull asked is taken from the answer; one queued after it asked is not', async () => {
     queueSync({ flockOrder: [1] });
-    await new Promise((r) => setTimeout(r, 700)); // the debounce sends it
-    let answer;
-    api.getUserSettings.mockImplementation(() => new Promise((resolve) => { answer = resolve; }));
+    await wait(700); // the debounce sends it, and it settles
+    const answer = held();
+    api.getUserSettings.mockImplementation(() => answer.promise);
     const pulling = pullSettings();
-    expect(localIsNewer('flockOrder')).toBe(false);
-    expect(localIsNewer('safetyOn')).toBe(false);
     queueSync({ pinnedFlockIds: [7] });
-    expect(localIsNewer('pinnedFlockIds')).toBe(true);
-    answer({ settings: { pinnedFlockIds: [], flockOrder: [1] } });
-    await pulling;
+    answer.answer({ settings: { pinnedFlockIds: [], flockOrder: [1] } });
+    expect(await handedOn(pulling)).toEqual({ flockOrder: [1] });
+    await wait(700);
   });
 
-  test('a key still waiting in the queue is newer here, whenever the pull asked', async () => {
+  test('a key still waiting in the queue is left out, whenever the pull asked', async () => {
     queueSync({ crowdAlerts: 'false' });
-    api.getUserSettings.mockImplementation(() => Promise.resolve({ settings: { crowdAlerts: 'true' } }));
-    await pullSettings(); // asks after the queueing, answers before the debounce
-    expect(localIsNewer('crowdAlerts')).toBe(true);
-    await new Promise((r) => setTimeout(r, 700));
+    api.getUserSettings.mockImplementation(() => Promise.resolve({ settings: { crowdAlerts: 'true', safetyOn: 'true' } }));
+    expect(await handedOn(pullSettings())).toEqual({ safetyOn: 'true' });
+    await wait(700);
+  });
+
+  test('a key in a PATCH that has not settled is left out, and so is one that settled after the pull asked', async () => {
+    const send = held();
+    api.updateUserSettings.mockImplementation(() => send.promise);
+    queueSync({ userInterests: ['A'] });
+    await wait(700); // on the wire now, unsettled
+    api.getUserSettings.mockImplementation(() => Promise.resolve({ settings: { userInterests: [], flockOrder: [2] } }));
+    expect(await handedOn(pullSettings())).toEqual({ flockOrder: [2] });
+    const answer = held();
+    api.getUserSettings.mockImplementation(() => answer.promise);
+    const pulling = pullSettings();
+    send.answer({});
+    await wait(5); // it settles after this pull asked
+    answer.answer({ settings: { userInterests: [] } });
+    expect(await handedOn(pulling)).toEqual({});
+  });
+
+  test('overlapping pulls are each judged by when they asked', async () => {
+    const first = held();
+    api.getUserSettings.mockImplementationOnce(() => first.promise);
+    const pullA = pullSettings();
+    await wait(5);
+    queueSync({ pinnedFlockIds: [3] });
+    await wait(700); // sent and settled
+    await wait(5);
+    api.getUserSettings.mockImplementationOnce(() => Promise.resolve({ settings: { pinnedFlockIds: [3] } }));
+    expect(await handedOn(pullSettings())).toEqual({ pinnedFlockIds: [3] });
+    // The older answer lands last. It asked before the pin, so it cannot pass for current.
+    first.answer({ settings: { pinnedFlockIds: [] } });
+    expect(await handedOn(pullA)).toEqual({});
   });
 
   test('the pull does not write its older value over one this device changed while it was on the wire', async () => {
@@ -87,21 +133,28 @@ describe('localIsNewer', () => {
   });
 
   // A brand-new account: the pull finds nothing and pushes this device's
-  // values itself. When that push fails, the values must stay owed.
-  test('a failed initial push leaves the values queued, so they are retried and not taken as held', async () => {
+  // values itself. When that push fails, the values must stay owed, and an
+  // edit made while it was on the wire must not be overwritten by them.
+  test('a failed initial push queues what is still owed, keeps a newer edit, and hands on neither', async () => {
     localStorage.setItem('flock_interests', JSON.stringify(['Sports']));
+    localStorage.setItem('flock_order', JSON.stringify([4]));
     api.getUserSettings.mockImplementation(() => Promise.resolve({ settings: {} }));
-    api.updateUserSettings.mockImplementationOnce(() => Promise.reject(Object.assign(new Error('offline'), { isNetworkError: true })));
-    await pullSettings();
-    expect(localIsNewer('userInterests')).toBe(true);
-    await new Promise((r) => setTimeout(r, 700));
-    expect(api.updateUserSettings).toHaveBeenLastCalledWith(expect.objectContaining({ userInterests: ['Sports'] }));
+    let fail;
+    api.updateUserSettings.mockImplementationOnce(() => new Promise((resolve, reject) => { fail = reject; }));
+    const pulling = pullSettings();
+    await wait(5); // the initial push is on the wire
+    queueSync({ flockOrder: [8] }); // an edit meanwhile
+    fail(Object.assign(new Error('offline'), { isNetworkError: true }));
+    expect(await handedOn(pulling)).toEqual({});
+    await wait(700);
+    expect(api.updateUserSettings).toHaveBeenLastCalledWith({ flockOrder: [8], userInterests: ['Sports'] });
     localStorage.removeItem('flock_interests');
+    localStorage.removeItem('flock_order');
   });
 });
 
 test('the listener records what it adopts, and all three effects ask before sending', () => {
-  expect(app).toContain("const fresh = (key) => s[key] !== undefined && s[key] !== null && !localIsNewer(key);");
+  expect(app).toContain('const fresh = (key) => s[key] !== undefined && s[key] !== null;');
   // Each effect's first run records this device's copy, so React's
   // development re-run of a mount effect sends nothing over the account.
   for (const key of ['pinnedFlockIds', 'flockOrder', 'userInterests']) {
