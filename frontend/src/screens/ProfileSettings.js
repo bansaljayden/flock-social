@@ -671,11 +671,14 @@ export default function ProfileSettings({
                   {/* Read by every account with a yes on record, including one
                       given to an earlier version of the question, which did not
                       name the time zone. The server leaves the zone out for that
-                      yes (backend routes/ai.js, WHICH QUESTION A YES ANSWERED).
+                      yes (backend routes/ai.js, WHICH QUESTION A YES ANSWERED),
+                      and for any yes on a device that reports no zone, since it
+                      reads only the zone a turn sends. The privacy policy states
+                      both conditions in the same words.
                       Off clears the answer, and on records a yes to this wording
                       (grantBirdieConsent sends BIRDIE_CONSENT_COPY), which names
                       the zone, so off and on again is what brings it in. */}
-                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px', lineHeight: '1.5' }}>Birdie runs on Google's Gemini. To answer you, it sends Google your messages to Birdie, your first name, your age range, and what you have open in Flock. It also sends your time zone with the date and time it is there, unless you said yes to an earlier version of Birdie's question, which did not name them. That earlier yes keeps them out until you turn this off and on again. If location is on, your area goes too, rounded to about a kilometer. If you ask about your plans or friends, your plans and your friends' names go as well.</p>
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px', lineHeight: '1.5' }}>Birdie runs on Google's Gemini. To answer you, it sends Google your messages to Birdie, your first name, your age range, and what you have open in Flock. It also sends your time zone with the date and time it is there, but only when your device reports its time zone. A yes to an earlier version of Birdie's question, which did not name them, keeps them out until you turn this off and on again. If location is on, your area goes too, rounded to about a kilometer. If you ask about your plans or friends, your plans and your friends' names go as well.</p>
                   <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: '1.5' }}>Off means Birdie sends nothing and cannot answer. The rest of Flock works the same either way.</p>
                   {birdieConsentError && (
                     <div role="alert" style={{ marginTop: '12px', padding: '10px 12px', borderRadius: '10px', backgroundColor: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)' }}>
