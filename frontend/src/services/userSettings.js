@@ -61,6 +61,20 @@ const JSON_KEYS = new Set(['pinnedFlockIds', 'flockOrder', 'userInterests']);
 let pending = {};
 let timer = null;
 
+// Whether `value` is what the account already holds for `key`, by JSON, in
+// `held` (a component's record of what the settings pull delivered and what
+// it has sent since). When it is not, it is recorded as held, because the
+// caller is about to send it. Adopting the pull's lists sets fresh arrays,
+// and the effects that persist them used to queue those same lists straight
+// back to the account on every launch; one sent after a change made on
+// another device in the debounce window wrote that change away.
+export function sameAsAccount(held, key, value) {
+  const json = JSON.stringify(value);
+  if (held[key] === json) return true;
+  held[key] = json;
+  return false;
+}
+
 export function queueSync(partial) {
   pending = { ...pending, ...partial };
   if (timer) clearTimeout(timer);

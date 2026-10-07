@@ -38,8 +38,8 @@ test('synced Location, pins and order reach the running screen', () => {
 
 test('the mount run of the pin and order effects does not push this device over the account', () => {
   const app = read('App.js');
-  expect(app).toContain("if (!pinsSyncedRef.current) { pinsSyncedRef.current = true; return; }\n    queueSync({ pinnedFlockIds });");
-  expect(app).toContain("if (!orderSyncedRef.current) { orderSyncedRef.current = true; return; }\n    queueSync({ flockOrder });");
+  expect(app).toContain("if (!pinsSyncedRef.current) { pinsSyncedRef.current = true; return; }\n    if (sameAsAccount(accountListsRef.current, 'pinnedFlockIds', pinnedFlockIds)) return;\n    queueSync({ pinnedFlockIds });");
+  expect(app).toContain("if (!orderSyncedRef.current) { orderSyncedRef.current = true; return; }\n    if (sameAsAccount(accountListsRef.current, 'flockOrder', flockOrder)) return;\n    queueSync({ flockOrder });");
   expect(app).not.toContain("useEffect(() => { localStorage.setItem('flock_pinned', JSON.stringify(pinnedFlockIds)); queueSync({ pinnedFlockIds }); }, [pinnedFlockIds]);");
 });
 

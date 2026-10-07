@@ -27,7 +27,7 @@ import { resendVerificationEmail, trackPurchaseCompleted, hasRenewableSession, r
 import { redeemPendingInvite, openJoinedFlock, rememberInvite, storedGuestTokens } from './services/inviteHandoff';
 import { setAvailability, clearAvailability, getMyAvailability, getFriendsAvailability, getSensorCurrent, getSensorHistory, checkInManual, getNfcCheckin, getCalendarEvents, createCalendarEvent, deleteCalendarEvent } from './services/api';
 import { joinVenueRoom, leaveVenueRoom, joinVenueContentRoom, leaveVenueContentRoom, onVenueSensorUpdate, onVenueCheckin, onSessionRevoked, onSocketError, onAvailabilityUpdated, onBlockedBy, onUnblockedBy, onContentRemoved, onContentRestored } from './services/socket';
-import { pullSettings, queueSync } from './services/userSettings';
+import { pullSettings, queueSync, sameAsAccount } from './services/userSettings';
 import { liftReaders } from './services/flockReaders';
 // html5-qrcode is NOT imported here on purpose. It is loaded with a dynamic
 // import() inside startQrScanner, the one place that uses it. See the note
@@ -7674,16 +7674,27 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // the account before pullSettings had delivered the account's, so a fresh
   // install could write [] over the pins the person made elsewhere (settings
   // audit, 2026-09-05). Same first-run guard interests have.
+  //
+  // And a list the account already holds is not sent to it. Adopting the
+  // pull's lists (the flock-settings-loaded listener below) set fresh arrays,
+  // which re-ran these effects and sent pins, order and interests straight
+  // back on every launch: one PATCH per boot, and one that, landing just
+  // after a change made on another device, wrote that change away.
+  // accountListsRef holds, as JSON, what the pull delivered and what has been
+  // sent since (sameAsAccount in services/userSettings.js).
+  const accountListsRef = useRef({});
   const pinsSyncedRef = useRef(false);
   useEffect(() => {
     lsSet('flock_pinned', JSON.stringify(pinnedFlockIds));
     if (!pinsSyncedRef.current) { pinsSyncedRef.current = true; return; }
+    if (sameAsAccount(accountListsRef.current, 'pinnedFlockIds', pinnedFlockIds)) return;
     queueSync({ pinnedFlockIds });
   }, [pinnedFlockIds]);
   const orderSyncedRef = useRef(false);
   useEffect(() => {
     lsSet('flock_order', JSON.stringify(flockOrder));
     if (!orderSyncedRef.current) { orderSyncedRef.current = true; return; }
+    if (sameAsAccount(accountListsRef.current, 'flockOrder', flockOrder)) return;
     queueSync({ flockOrder });
   }, [flockOrder]);
 
@@ -9117,6 +9128,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       interestsSyncedRef.current = true;
       return;
     }
+    if (sameAsAccount(accountListsRef.current, 'userInterests', userInterests)) return;
     queueSync({ userInterests });
   }, [userInterests]);
   const [newInterest, setNewInterest] = useState('');
@@ -9183,6 +9195,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   useEffect(() => {
     const onSettings = (e) => {
       const s = e.detail || {};
+      // What the account holds now, so adopting it below is not sent back.
+      ['userInterests', 'pinnedFlockIds', 'flockOrder'].forEach((key) => {
+        if (Array.isArray(s[key])) accountListsRef.current[key] = JSON.stringify(s[key]);
+      });
       if (s.safetyOn !== undefined && s.safetyOn !== null) {
         const on = String(s.safetyOn) !== 'false';
         setSafetyOn(on);
