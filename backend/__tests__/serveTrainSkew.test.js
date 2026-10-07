@@ -33,6 +33,18 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 
+// The clock is pinned to 16:00 UTC on 2026-10-07 (helpers/pinnedClock.js),
+// midday in the zones the suite runs in and a date with no daylight-saving
+// change, before the predictor loads. The park in the 24-hour strip test has
+// no UTC offset, so the strip lays its slots on the machine's local clock. In
+// the hour a fall-back repeats, the slot for 1 AM resolves to the first of the
+// two, an hour and a half before now, so slot 0 was scored on the forecast
+// instead of the live reading and the test failed: on a machine on Eastern
+// time, from 01:00 to 02:00 EST on the first Sunday of November.
+const { pinClock } = require('./helpers/pinnedClock');
+const pinnedClock = pinClock(Date.UTC(2026, 9, 7, 16, 0, 0));
+test.after(() => pinnedClock.restore());
+
 const crowdEngine = require('../services/crowdEngine');
 const weatherService = require('../services/weatherService');
 const mlPredictor = require('../services/mlPredictor');
