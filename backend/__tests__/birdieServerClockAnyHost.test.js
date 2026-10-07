@@ -204,6 +204,17 @@ test("on an ordinary hour, every venue clock is read as itself on this host", as
   await assertOnClock(t, NOW, onOffset(60));
 });
 
+test("a venue read on the user's clock has its weather and events read in the user's zone", async (t) => {
+  // No clock from Google or the corpus, on a turn that carries the user's
+  // clock: a phone in London at 7:30 PM on Wednesday. The hour is the phone's,
+  // and the instant it stands for is 7 PM in London, 18:00Z. With no zone
+  // beside it the predictor read the phone's 7 PM on the host's clock: 23:00Z
+  // here, and 19:00Z on a host that keeps UTC, which is production.
+  await assertOnClock(t, '2026-10-07T18:30:00Z', onZone('Europe/London'), {
+    opts: { localHour: 19, localDay: 3, timeZone: 'Europe/London' },
+  });
+});
+
 // INSIDE THE HOST'S SPRING-FORWARD GAP. 02:30Z on 2027-03-14 is 2 AM on UTC's
 // clock and on London's (on GMT until the 28th), and the predictor reads its
 // hour off the host's clock, which has no 2 AM that day. Each of these used to
