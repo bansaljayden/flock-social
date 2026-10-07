@@ -2253,19 +2253,19 @@ function hubAttention(h) {
   if (doubles.length > 0) {
     add({ key: 'doubles', tone: 'warn', label: 'Bills possibly counted twice', value: hubCount(doubles.length), note: `${doubles.map((d) => `${d.expenseLabel} on the list and ${d.codeLabel} in the code`).join('; ')}.`, card: HUB_CARD.costs });
   }
-  // A bill charged after the day it was set to end (moneyHub.js, THE END OF
-  // A BILL). The hub counts it as running. A bill paid ahead renewed if it
-  // was charged on or after that day, so the date on its row is wrong. A
-  // usage bill's last bill comes after it, so the server lists one only for
-  // a charge after the day that bill was expected by, and each kind is said
-  // on its own: the paid-ahead rule stated alone would make the last bill of
-  // an ended usage row read as a renewal (second review 2026-10-06). The hub
-  // holds only the day a usage charge was paid, so its words stop at what the
-  // dates show and send the owner to the invoice: an August invoice paid on
-  // Oct 2 on a bill set to end Sep 1 is later than its last bill was
-  // expected, with no use after the end date (review 2026-10-06). Each kind
-  // carries its own next step. A payload from before the cadence was sent
-  // lists only bills paid ahead.
+  // A bill charged after the day it was set to end is listed here
+  // (moneyHub.js, THE END OF A BILL), and the hub counts it as running. A
+  // bill paid ahead renewed if it was charged on or after that day, so the
+  // date on its row is wrong. A usage bill's last bill comes after it, so the
+  // server lists one only for a charge after the day that bill was expected
+  // by, and each kind is said on its own: the paid-ahead rule stated alone
+  // would make the last bill of an ended usage row read as a renewal (second
+  // review 2026-10-06). The hub holds only the day a usage charge was paid,
+  // so its words stop at what the dates show and send the owner to the
+  // invoice: an August invoice paid on Oct 2 on a bill set to end Sep 1 is
+  // later than its last bill was expected, with no use after the end date
+  // (review 2026-10-06). Each kind carries its own next step. A payload from
+  // before the cadence was sent lists only bills paid ahead.
   const pastEnd = Array.isArray(costs.chargedPastEnd) ? costs.chargedPastEnd : [];
   if (pastEnd.length > 0) {
     const ahead = pastEnd.filter((x) => x.cadence !== 'usage');
