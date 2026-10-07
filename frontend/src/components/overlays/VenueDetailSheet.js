@@ -52,6 +52,7 @@
  */
 import React from 'react';
 import Icons from '../ui/Icons';
+import { openMapsChooser } from '../ui/MapsChooser';
 import { BirdNote, WARM_BIRD } from '../ui/BirdieBird';
 import { onVenuePhotoError } from '../../lib/venuePhoto';
 import { submitVenueReview, getPublicReviews } from '../../services/api';
@@ -493,14 +494,26 @@ const VenueDetailSheet = ({
 
             {/* Bottom action buttons */}
             <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)', flexShrink: 0, display: 'flex', gap: '8px' }}>
-              {httpUrl(venueDetailModal.google_maps_url) ? (
-                <a href={httpUrl(venueDetailModal.google_maps_url)} target="_blank" rel="noopener noreferrer" style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `2px solid ${directionsIsPrimary ? colors.navyBg : colors.navy}`, backgroundColor: directionsIsPrimary ? colors.navyBg : 'var(--bg-card-solid)', color: directionsIsPrimary ? 'white' : colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', textDecoration: 'none', boxShadow: directionsIsPrimary ? '0 4px 12px rgba(13,40,71,0.10)' : 'none' }}>
+              {/* Directions offers Apple Maps and Google Maps
+                  (components/ui/MapsChooser.js); App Review asked for the
+                  Apple Maps option. Google keeps the place page it had,
+                  Google's own url or the place id; Apple Maps is located by
+                  the place's coordinates, address and name. */}
+              {footerHasDirections ? (
+                <button type="button" onClick={() => {
+                  const at = venueDetailModal.location || {};
+                  openMapsChooser({
+                    place: {
+                      name: venueDetailModal.name,
+                      address: venueDetailModal.formatted_address,
+                      lat: at.latitude ?? at.lat ?? venueDetailModal.lat,
+                      lng: at.longitude ?? at.lng ?? venueDetailModal.lng,
+                    },
+                    googleUrl: httpUrl(venueDetailModal.google_maps_url) || `https://www.google.com/maps/place/?q=place_id:${venueDetailModal.place_id}`,
+                  });
+                }} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `2px solid ${directionsIsPrimary ? colors.navyBg : colors.navy}`, backgroundColor: directionsIsPrimary ? colors.navyBg : 'var(--bg-card-solid)', color: directionsIsPrimary ? 'white' : colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', textDecoration: 'none', boxShadow: directionsIsPrimary ? '0 4px 12px rgba(13,40,71,0.10)' : 'none' }}>
                   {Icons.mapPin(directionsIsPrimary ? 'white' : colors.navy, 16)} Get Directions
-                </a>
-              ) : venueDetailModal.place_id ? (
-                <a href={`https://www.google.com/maps/place/?q=place_id:${venueDetailModal.place_id}`} target="_blank" rel="noopener noreferrer" style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `2px solid ${directionsIsPrimary ? colors.navyBg : colors.navy}`, backgroundColor: directionsIsPrimary ? colors.navyBg : 'var(--bg-card-solid)', color: directionsIsPrimary ? 'white' : colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', textDecoration: 'none', boxShadow: directionsIsPrimary ? '0 4px 12px rgba(13,40,71,0.10)' : 'none' }}>
-                  {Icons.mapPin(directionsIsPrimary ? 'white' : colors.navy, 16)} Get Directions
-                </a>
+                </button>
               ) : null}
               <button onClick={(e) => {
                 confirmClick(e);

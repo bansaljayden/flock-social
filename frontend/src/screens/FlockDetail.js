@@ -60,6 +60,7 @@ import { lsGet } from '../lib/storage';
 import { isNightOver } from '../lib/planNight';
 import { BirdieStill, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
+import { openMapsChooser } from '../components/ui/MapsChooser';
 import useEdgeSwipeBack from '../hooks/useEdgeSwipeBack';
 import useSheetDrag from '../hooks/useSheetDrag';
 import { hapticTap } from '../services/haptics';
@@ -104,7 +105,6 @@ export default function FlockDetail({
   MOMENTUM_STAGES,
   momentumStageKey,
   onVenuePhotoError,
-  openExternal,
   resolveEventTime,
   voteTotal,
   // Everything else is declared in FlockAppInner and stays declared there.
@@ -438,10 +438,16 @@ export default function FlockDetail({
                        dropped people at a bare lat,lng pin with no name,
                        hours, or entrance, on the one tap whose whole job is
                        getting them in the door. Coordinates stay as the
-                       fallback for a venue with no id. */
-                    <button className="hit44 glass-btn glass-navy" onClick={() => openExternal(flock.venueId
-                      ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(flock.venue || 'venue')}&query_place_id=${flock.venueId}`
-                      : `https://maps.google.com/?q=${flock.venueLat},${flock.venueLng}`)} style={{ flex: 1, padding: '10px', background: colors.navyBg, border: 'none', borderRadius: '10px', color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
+                       fallback for a venue with no id. The tap offers
+                       Apple Maps too (components/ui/MapsChooser.js), which
+                       App Review asked for; Apple Maps cannot read a Google
+                       place id, so it gets the coordinates, address and name. */
+                    <button className="hit44 glass-btn glass-navy" onClick={() => openMapsChooser({
+                      place: { name: flock.venue, address: flock.venueAddress, lat: flock.venueLat, lng: flock.venueLng },
+                      googleUrl: flock.venueId
+                        ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(flock.venue || 'venue')}&query_place_id=${flock.venueId}`
+                        : `https://maps.google.com/?q=${flock.venueLat},${flock.venueLng}`,
+                    })} style={{ flex: 1, padding: '10px', background: colors.navyBg, border: 'none', borderRadius: '10px', color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
                       {Icons.mapPin('white', 14)} Directions
                     </button>
                   )}

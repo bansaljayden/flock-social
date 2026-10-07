@@ -123,6 +123,7 @@ import { BirdieStill, BirdNote, WARM_BIRD } from './components/ui/BirdieBird';
 // chunk would fail for exactly the person it is meant for.
 import FloppyBird from './components/ui/FloppyBird';
 import Icons from './components/ui/Icons';
+import MapsChooserHost, { openMapsChooser } from './components/ui/MapsChooser';
 // Add Friends left App.js in the same sweep as the venue dashboard below and
 // for the same review reason, but it is imported normally rather than lazily.
 // It is a consumer screen the empty home state points a brand new account
@@ -20855,10 +20856,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               <a className="hit44" href="tel:911" style={{ minHeight: '48px', borderRadius: '10px', backgroundColor: '#b91c1c', color: '#ffffff', fontWeight: '700', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', textDecoration: 'none' }}>
                 {Icons.phone('currentColor', 18)} Call 911
               </a>
+              {/* Apple Maps or Google Maps (components/ui/MapsChooser.js),
+                  pinned at the alarm's position and labelled with the name. */}
               {safetyAlert.lat !== null && (
-                <a className="hit44" href={`https://maps.google.com/?q=${safetyAlert.lat},${safetyAlert.lng}`} target="_blank" rel="noreferrer" style={{ minHeight: '44px', borderRadius: '10px', border: '1px solid var(--border-mid)', color: 'var(--text-primary)', fontWeight: '600', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', textDecoration: 'none' }}>
+                <button type="button" className="hit44" onClick={() => openMapsChooser({
+                  place: { name: safetyAlert.name, lat: safetyAlert.lat, lng: safetyAlert.lng },
+                  googleUrl: `https://maps.google.com/?q=${safetyAlert.lat},${safetyAlert.lng}`,
+                })} style={{ minHeight: '44px', borderRadius: '10px', border: '1px solid var(--border-mid)', background: 'none', color: 'var(--text-primary)', fontSize: 'inherit', fontWeight: '600', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', cursor: 'pointer' }}>
                   {Icons.mapPin('currentColor', 16)} {safetyAlert.accuracy > SOS_COARSE_FIX_METRES || safetyAlert.approximate === true ? 'See the area they are in' : 'See where they are'}
-                </a>
+                </button>
               )}
               <button className="hit44" onClick={() => setSafetyAlert(null)} style={{ minHeight: '44px', borderRadius: '10px', border: 'none', background: 'none', color: 'var(--text-tertiary)', fontWeight: '600', cursor: 'pointer' }}>Dismiss</button>
             </div>
@@ -20866,6 +20872,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         </div>
       )}
       {SOSModal()}
+      <MapsChooserHost DialogBehavior={DialogBehavior} />
       {/* THE WRAP-UP SHEET IS components/overlays/AttendanceModal.js AS OF
           2026-09-13. It asks the host which of the accepted members actually
           turned up, and it is 6.7 KB of JSX nobody else ever opens, so inline it
