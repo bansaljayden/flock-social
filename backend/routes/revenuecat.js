@@ -539,8 +539,10 @@ router.post('/webhook', async (req, res) => {
           return res.status(400).json({ error: 'Too many accounts in transfer' });
         }
         if (accounts.length === 0) return res.json({ ok: true, ignored: 'no_such_account' });
+        // One after another, each through the account's queue (syncFresh), so
+        // a transfer holds at most one pooled connection at a time.
         for (const id of accounts) {
-          await syncPremiumFromRevenueCat(id);
+          await syncFresh(id);
         }
         const skipped = named.length - accounts.length;
         console.log(`[RevenueCat] TRANSFER re-read [${accounts}]${skipped ? `, skipped ${skipped} id(s) with no Flock account` : ''}`);
@@ -646,7 +648,7 @@ router.post('/webhook', async (req, res) => {
       // EXPIRATION. routes/stripeWebhook.js stops the same way.
       const exists = await pool.query('SELECT 1 FROM users WHERE id = $1', [appUserId]);
       if (!exists.rows || exists.rows.length === 0) return res.json({ ok: true, ignored: 'no_such_account' });
-      await syncPremiumFromRevenueCat(appUserId);
+      await syncFresh(appUserId);
       return res.json({ ok: true, source: 'subscriber' });
     }
 
@@ -692,8 +694,9 @@ router.post('/webhook', async (req, res) => {
 module.exports = router;
 
 // THE ONE WRITE THAT ASKS REVENUECAT. Used by the webhook above whenever the
-// API key is configured, by routes/stripeWebhook.js, and by routes/pro.js
-// right after a web checkout so the buyer lands in the app already Pro.
+// API key is configured (through syncFresh, below), by routes/stripeWebhook.js,
+// and by routes/pro.js right after a web checkout so the buyer lands in the app
+// already Pro.
 // Returns what it wrote. Throws when RevenueCat could not give a clear answer,
 // and writes nothing in that case.
 //
@@ -711,9 +714,13 @@ module.exports = router;
 // the last write is always the freshest read.
 //
 // The cost is a pooled connection held for one RevenueCat read, which
-// fetchProActive bounds at ten seconds. Syncs for different accounts do not
-// wait on each other. The two-int lock form keys on the exact account id, the
-// way routes/feedback.js does, so no two accounts can share a lock by hash.
+// fetchProActive bounds at ten seconds, and a waiter holds one too: the
+// connection is checked out before the lock is asked for. A caller that can
+// arrive in bursts for one account therefore queues in front of this function
+// rather than in it (syncFresh below, and routes/pro.js's own copy of it).
+// Syncs for different accounts do not wait on each other. The two-int lock
+// form keys on the exact account id, the way routes/feedback.js does, so no
+// two accounts can share a lock by hash.
 const PREMIUM_SYNC_LOCK_NAMESPACE = 81431;
 
 async function syncPremiumFromRevenueCat(userId) {
@@ -738,6 +745,53 @@ async function syncPremiumFromRevenueCat(userId) {
   }
 }
 module.exports.syncPremiumFromRevenueCat = syncPremiumFromRevenueCat;
+
+// ONE RE-READ PER ACCOUNT AT A TIME FROM THE WEBHOOK, AND NONE WAITING ON A
+// CONNECTION. The webhook used to call syncPremiumFromRevenueCat directly, so
+// every delivery for one account held one of the pool's twenty connections
+// while it waited on the account lock behind the read already running. A burst
+// of events for a single account, from a retry storm after an outage or from
+// anyone holding the header, could take the whole pool, and every other
+// route's queries then waited seconds or failed. routes/pro.js met the same
+// hazard on POST /api/pro/sync and answered it with a per-account queue; this
+// is that queue, for the webhook. At most one read runs and one waits, per
+// account, and every delivery that arrives before the waiting one starts shares
+// it. Each delivery is only a prompt to read the subscriber's current state
+// (REPLAY AND ORDERING, above), and the shared read begins after all of them
+// arrived, so a burst collapses into two reads and loses nothing. A failed read
+// fails every delivery that shared it, each answers 500, and RevenueCat
+// retries them. The advisory lock still orders these reads against the Stripe
+// webhook's and routes/pro.js's.
+//
+// Keyed by account id, and only after the handler has found a users row for
+// it, so the map holds real accounts with a read in flight and nothing else:
+// an entry deletes itself when its last queued read settles.
+const syncQueues = new Map();
+const settle = () => {};
+function syncFresh(userId) {
+  let queue = syncQueues.get(userId);
+  if (queue && queue.waiting) return queue.waiting;
+  if (!queue) {
+    queue = { tail: null, waiting: null };
+    syncQueues.set(userId, queue);
+  }
+  const before = queue.tail;
+  const read = (before ? before.then(settle, settle) : Promise.resolve())
+    .then(() => {
+      // Started: anybody who asks from now on needs the read after this one.
+      if (queue.waiting === read) queue.waiting = null;
+      return syncPremiumFromRevenueCat(userId);
+    })
+    .finally(() => { if (queue.tail === read) syncQueues.delete(userId); });
+  queue.tail = read;
+  if (before) queue.waiting = read;
+  return read;
+}
+// Exported so the other callers of syncPremiumFromRevenueCat can share this
+// queue rather than keep their own: a webhook delivery and an in-app sync for
+// the same account would then share one read.
+module.exports.syncFresh = syncFresh;
+
 // One view of "configured", shared rather than duplicated. The cross-file gap
 // described at the top of this file is closed by services/entitlements.js
 // calling this instead of reading the raw variable: two copies of a security

@@ -10,7 +10,9 @@
 //   * that the second path is announced, at boot in production and again on
 //     the first event applied that way;
 //   * which ids the first path asks RevenueCat about: Flock accounts only, and
-//     at most MAX_TRANSFER_REREADS of them for one TRANSFER.
+//     at most MAX_TRANSFER_REREADS of them for one TRANSFER;
+//   * that one account's re-reads go through a queue, so a burst of deliveries
+//     for it holds one pooled connection and makes at most two reads.
 //
 // A file of its own because "once per process" can only be asserted in a
 // process whose first event this file controls: billingWebhookTrust.test.js
@@ -57,10 +59,50 @@ function dispatch(sql, params) {
 }
 
 pool.query = (sql, params) => dispatch(sql, params);
-pool.connect = async () => ({
-  query: (sql, params) => dispatch(sql, params),
-  release: () => {},
-});
+
+// A checked-out client counts against the pool until it is released, and
+// pg_advisory_xact_lock blocks the way Postgres's does: a second holder of the
+// same key waits, connection in hand, until the first transaction ends. That
+// wait is the hazard the webhook's queue exists to avoid, so the fake has to
+// be able to show it.
+let connected = 0;
+let peakConnected = 0;
+const lockTails = new Map();
+pool.connect = async () => {
+  connected += 1;
+  peakConnected = Math.max(peakConnected, connected);
+  let unlock = null;
+  let released = false;
+  const endTransaction = () => { if (unlock) { unlock(); unlock = null; } };
+  return {
+    query: async (sql, params) => {
+      const flat = String(sql).replace(/\s+/g, ' ').trim();
+      if (/pg_advisory_xact_lock/.test(flat)) {
+        log.push({ sql: flat, params });
+        const key = params.join(':');
+        const before = lockTails.get(key) || Promise.resolve();
+        let release;
+        const mine = new Promise((resolve) => { release = resolve; });
+        lockTails.set(key, before.then(() => mine));
+        await before;
+        unlock = release;
+        return { rows: [], rowCount: 0 };
+      }
+      if (/^(COMMIT|ROLLBACK)$/i.test(flat)) {
+        log.push({ sql: flat, params: null });
+        endTransaction();
+        return { rows: [], rowCount: 0 };
+      }
+      return dispatch(sql, params);
+    },
+    release: () => {
+      if (released) return;
+      released = true;
+      endTransaction();
+      connected -= 1;
+    },
+  };
+};
 
 // The users table, as far as the route's existence checks can see it: the
 // single-account check and the TRANSFER's one int[] lookup.
@@ -79,15 +121,23 @@ function accountsAre(ids) {
 
 // ---------------------------------------------------------------------------
 // Fake RevenueCat. Every subscriber read is recorded by the id it asked about,
-// and every subscriber is Pro. Anything else goes to the real fetch, which is
-// how the tests reach the router.
+// and every subscriber is Pro. rcHold(id, n) can hand back a promise the n-th
+// read waits on, and rcFail(id, n) can make it answer 500. Anything else goes
+// to the real fetch, which is how the tests reach the router.
 // ---------------------------------------------------------------------------
 const realFetch = global.fetch;
 let rcReads = [];
+let rcHold = () => null;
+let rcFail = () => false;
 global.fetch = async (url, init) => {
   const u = String(url);
   if (!u.startsWith('https://api.revenuecat.com/')) return realFetch(url, init);
-  rcReads.push(decodeURIComponent(u.split('/subscribers/')[1] || ''));
+  const id = decodeURIComponent(u.split('/subscribers/')[1] || '');
+  rcReads.push(id);
+  const n = rcReads.length;
+  const hold = rcHold(id, n);
+  if (hold) await hold;
+  if (rcFail(id, n)) return new Response('upstream error', { status: 500 });
   const future = new Date(Date.now() + 30 * 864e5).toISOString();
   return new Response(JSON.stringify({ subscriber: { entitlements: { pro: { expires_date: future } } } }), { status: 200 });
 };
@@ -109,12 +159,18 @@ test.before(() => new Promise((resolve) => {
 test.after(() => new Promise((resolve) => {
   global.fetch = realFetch;
   server.close(() => resolve());
+  // Anything a failed test still has open would otherwise hold close() for
+  // Node's five-minute request timeout.
+  server.closeAllConnections();
 }));
 
 test.beforeEach(() => {
   handlers = [];
   log = [];
   rcReads = [];
+  rcHold = () => null;
+  rcFail = () => false;
+  peakConnected = connected;
   delete process.env.REVENUECAT_SECRET_API_KEY;
 });
 
@@ -298,5 +354,151 @@ test('a TRANSFER naming more Flock accounts than it may re-read is refused whole
       'a refused transfer has to be visible in the log');
   } finally {
     cap.restore();
+  }
+});
+
+// ===========================================================================
+// 3. One account's re-reads queue, instead of parking on pooled connections
+// ===========================================================================
+//
+// syncPremiumFromRevenueCat checks out a connection and then waits on the
+// account's lock. Called straight from the handler, a burst of deliveries for
+// one account held one of the pool's twenty connections each while a single
+// RevenueCat read ran, and every other route's queries waited or failed.
+
+async function until(check, what, ms = 5000) {
+  const deadline = Date.now() + ms;
+  while (!check()) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+// Each handler goes on to the queue in the same turn its existence check
+// answers; one more pause makes sure every one of them has got there.
+const pause = (ms = 20) => new Promise((resolve) => setTimeout(resolve, ms));
+const existenceChecks = () => log.filter((q) => /^SELECT 1 FROM users WHERE id = \$1$/.test(q.sql)).length;
+const renewal = (id) => signed({ event: { type: 'RENEWAL', app_user_id: String(id), entitlement_ids: ['pro'] } });
+
+// Holds every RevenueCat read `which(id, n)` picks until the returned function
+// is called. Each test below calls it again in a finally and waits for its
+// requests to settle, so a failed assertion fails that test alone instead of
+// leaving requests parked on the server, holding the fake pool, until Node's
+// five-minute request timeout closes them.
+function holdReads(which) {
+  let open;
+  const gate = new Promise((resolve) => { open = resolve; });
+  rcHold = (id, n) => (which(id, n) ? gate : null);
+  return open;
+}
+
+test('a burst of deliveries for one account holds one pooled connection and makes two reads', async () => {
+  process.env.REVENUECAT_SECRET_API_KEY = API_KEY;
+  accountsAre([4242]);
+  const open = holdReads((id, n) => n === 1);
+  const BURST = 12;
+  const replies = Array.from({ length: BURST }, () => renewal(4242));
+  try {
+    await until(() => existenceChecks() === BURST && rcReads.length === 1, 'every delivery to arrive with the first read out');
+    await pause();
+    assert.equal(connected, 1,
+      `${connected} connections are held for one account while a single RevenueCat read runs`);
+
+    open();
+    const answers = await Promise.all(replies);
+    for (const a of answers) assert.equal(a.status, 200, a.text);
+    assert.equal(peakConnected, 1, 'one account held more than one pooled connection at a time');
+    assert.equal(connected, 0, 'a connection was never given back');
+    assert.deepEqual(rcReads, ['4242', '4242'],
+      'every delivery that arrived during the first read shares the one read after it');
+    assert.ok(premiumWrites().every((q) => q.params[1] === 4242));
+  } finally {
+    open();
+    await Promise.allSettled(replies);
+  }
+});
+
+test('deliveries for different accounts do not wait on each other', async () => {
+  process.env.REVENUECAT_SECRET_API_KEY = API_KEY;
+  accountsAre([31, 32, 33]);
+  const open = holdReads((id) => id === '31');
+  const slow = renewal(31);
+  let others = null;
+  try {
+    await until(() => rcReads.includes('31'), 'the first account\'s read to start');
+    // Raced against a clock rather than awaited bare: if they did wait behind
+    // account 31, awaiting them would wait for ever.
+    others = Promise.all([renewal(32), renewal(33)]);
+    const finished = await Promise.race([others.then(() => true), pause(2000).then(() => false)]);
+    assert.ok(finished, 'another account\'s delivery waited behind a slow read');
+    for (const a of await others) assert.equal(a.status, 200, a.text);
+    assert.deepEqual([...rcReads].sort(), ['31', '32', '33']);
+
+    open();
+    assert.equal((await slow).status, 200);
+    assert.equal(connected, 0);
+  } finally {
+    open();
+    await Promise.allSettled([slow, others]);
+  }
+});
+
+test('a failed shared read fails every delivery that shared it, and the next delivery reads again', async () => {
+  process.env.REVENUECAT_SECRET_API_KEY = API_KEY;
+  accountsAre([4242]);
+  const open = holdReads((id, n) => n === 1);
+  rcFail = (id, n) => n === 2;
+  const cap = captureErrors();
+  const pending = [];
+  try {
+    pending.push(renewal(4242));
+    await until(() => rcReads.length === 1, 'the first read to start');
+    pending.push(renewal(4242), renewal(4242));
+    await until(() => existenceChecks() === 3, 'both later deliveries to arrive');
+    await pause();
+    open();
+
+    const [a, b, c] = await Promise.all(pending);
+    assert.equal(a.status, 200, a.text);
+    // A 500 is what makes RevenueCat send them again; a 200 here would drop
+    // both events for good.
+    assert.equal(b.status, 500, 'a delivery that shared a failed read was answered as if it had succeeded');
+    assert.equal(c.status, 500);
+    assert.equal(rcReads.length, 2);
+
+    // Nothing is left queued behind the failure.
+    const again = await renewal(4242);
+    assert.equal(again.status, 200, again.text);
+    assert.equal(rcReads.length, 3, 'the delivery after a failure was handed the failed read instead of a new one');
+    assert.equal(connected, 0);
+  } finally {
+    open();
+    await Promise.allSettled(pending);
+    cap.restore();
+  }
+});
+
+test('a TRANSFER re-reads its accounts one at a time, through the same queue', async () => {
+  process.env.REVENUECAT_SECRET_API_KEY = API_KEY;
+  accountsAre([41, 42]);
+  const open = holdReads((id, n) => n === 1);
+  // A renewal for 41 is mid-read when a transfer naming 41 and 42 arrives.
+  const renewing = renewal(41);
+  let transfer = null;
+  try {
+    await until(() => rcReads.length === 1, 'the renewal\'s read to start');
+    transfer = signed({ event: { type: 'TRANSFER', transferred_from: ['41'], transferred_to: ['42'] } });
+    await until(() => log.some((q) => /^SELECT id FROM users WHERE id = ANY/.test(q.sql)), 'the transfer to arrive');
+    await pause();
+    assert.equal(connected, 1, 'the transfer took a second connection to wait behind the renewal');
+
+    open();
+    assert.equal((await renewing).status, 200);
+    const moved = await transfer;
+    assert.equal(moved.status, 200, moved.text);
+    assert.deepEqual(rcReads, ['41', '41', '42'], 'the transfer read 41 after the renewal\'s read, then 42');
+    assert.equal(peakConnected, 1);
+  } finally {
+    open();
+    await Promise.allSettled([renewing, transfer]);
   }
 });
