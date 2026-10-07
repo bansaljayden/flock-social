@@ -287,11 +287,16 @@ export const hourlyTypicalOnly = (bars) => hourlySourcePhrase(bars) === CATEGORY
  * touched, and that case now says so in the in-app card's words for the same
  * number. Live follows the card's LIVE chip: only a model-path number, and
  * never one that is the venue's weekly pattern alone.
+ *
+ * Null for a covered card (the demo's crowd_locked, past three venues a day):
+ * it draws no bars and no dial, so there is no number to describe, and naming
+ * a source would describe one the visitor was not given.
  */
 export const DEMO_RULE_ENGINE_NOTE = 'An estimate from typical patterns for this kind of place';
 const MODEL_BASES = ['model_holdout', 'model_unverified_axis'];
 export const demoNoteLead = (crowdBars, card) => {
   const bars = Array.isArray(crowdBars) ? crowdBars.filter(Boolean) : [];
+  if (!bars.length && card?.crowd_locked === true) return null;
   const madeFrom = bars.length
     ? hourlySourcePhrase(bars, { reader: 'visitor' })
     : numberSourcePhrase(card?.number_source);

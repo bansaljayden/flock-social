@@ -946,7 +946,8 @@ export default function LiveDemo() {
   // What made the numbers the note under the chart describes. The bars drawn
   // as a crowd come first (a closed hour is a stub with no crowd in it), then
   // the headline when no chart is drawn. lib/crowd demoNoteLead words it, and
-  // says whether it is live: a strip the rule engine made alone is not.
+  // says whether it is live: a strip the rule engine made alone is not. Null
+  // on a covered card, which shows no number for a note to describe.
   const crowdBars = hourly.filter((h) => h && h.open !== false);
   const note = demoNoteLead(crowdBars, selected);
   const shut = isShut(selected);
@@ -1319,29 +1320,32 @@ export default function LiveDemo() {
                 </div>
               )}
 
-              <p className="lpd-note">
-                {note.live && (
-                  <span
-                    key={`${venueName(selected)}|${selected.fetched_at || ''}`}
-                    className="lpd-live-dot"
-                    aria-hidden
-                  />
-                )}
-                {/* The note sits under the chart, so it is read off the bars
-                    drawn when there are any: while a serving switch is on,
-                    each bar carries its own source, and the next hour can be
-                    a carried reading while the evening is the venue's
-                    pattern. The headline answers only when no chart is
-                    drawn. A strip the rule engine made alone, or the venue's
-                    pattern alone, is not live, so it gets no dot and no
-                    "Live". */}
-                {note.text}{ageMs != null ? ` · updated ${agoLabel(ageMs)}` : ''}.
-                {/* Counted off whatever the visitor can actually reach: pins
-                    when there is a map, the fallback list when there is not.
-                    Reading the pin count while showing the list is how "tap
-                    another pin" survives on a page with no pins. */}
-                {comparable > 1 && (mapState === 'ready' ? ' Tap another pin to compare.' : ' Pick another spot to compare.')}
-              </p>
+              {(note || comparable > 1) && (
+                <p className="lpd-note">
+                  {note?.live && (
+                    <span
+                      key={`${venueName(selected)}|${selected.fetched_at || ''}`}
+                      className="lpd-live-dot"
+                      aria-hidden
+                    />
+                  )}
+                  {/* The note sits under the chart, so it is read off the bars
+                      drawn when there are any: while a serving switch is on,
+                      each bar carries its own source, and the next hour can be
+                      a carried reading while the evening is the venue's
+                      pattern. The headline answers only when no chart is
+                      drawn. A strip the rule engine made alone, or the venue's
+                      pattern alone, is not live, so it gets no dot and no
+                      "Live". A covered card has no number, so it gets neither
+                      the note nor the "updated" age of a reading it hides. */}
+                  {note && <>{note.text}{ageMs != null ? ` · updated ${agoLabel(ageMs)}` : ''}.</>}
+                  {/* Counted off whatever the visitor can actually reach: pins
+                      when there is a map, the fallback list when there is not.
+                      Reading the pin count while showing the list is how "tap
+                      another pin" survives on a page with no pins. */}
+                  {comparable > 1 && `${note ? ' ' : ''}${mapState === 'ready' ? 'Tap another pin to compare.' : 'Pick another spot to compare.'}`}
+                </p>
+              )}
               <a className="lp-btn lp-btn-navy lpd-cta" href="#get">Get the full picture in Flock</a>
             </>
           )}
