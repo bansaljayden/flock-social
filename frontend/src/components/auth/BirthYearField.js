@@ -62,7 +62,7 @@ const BirthYearField = ({ id, hintId, value, onChange, label = 'Year of birth', 
     {/* Says what the year is for and nothing else. The number this field used
         to print above itself was the part that taught a child which birthday to
         type instead, so the hint names no threshold. */}
-    <p className="auth-hint" id={hintId}>{hint || 'We use this to check your age.'}</p>
+    <p className="auth-hint" id={hintId}>{hint || 'We use this to check your age, which the law requires.'}</p>
   </div>
 );
 

@@ -174,8 +174,12 @@ export default function AppleYearStep({ idPrefix, provider = 'apple', error, val
   return (
     <div className="auth-apple-step" id={`${id}-step`}>
       <AuthError>{error}</AuthError>
+      {/* Apple's Sign in with Apple guidance allows data asked for after the
+          sheet when it is legally required, if the person understands it is
+          needed to finish the account and why: this line says the first,
+          the field's hint the second. Neither names a threshold. */}
       <p className="auth-step-line" id={`${id}-step-line`}>
-        One more step: the year you were born.
+        One more step to finish your account: the year you were born.
       </p>
       <BirthYearField
         id={`${id}-year`}
