@@ -1187,6 +1187,31 @@ describe('the Costs tab: what answered the forecasts', () => {
     expect(card.textContent).not.toMatch(/no-curve fallback|typical level/);
   });
 
+  // The server calls the fallback on only while the table can be served: the
+  // switch, a loaded model, and the artifact the table was measured on
+  // (mlPredictor noCurveFallbackState, the gate's own rule). The switch alone
+  // is reported as set, with the reason nothing is being served.
+  const SET_NOT_SERVED = { categoryCurve: 0, noCurveFallback: false, noCurveFallbackSwitch: true, noCurveFallbackFittedOn: '2.6.0-starling' };
+
+  test('with the switch set and no model loaded, the panel says the table is not being served, and why', () => {
+    show({ ...COUNTER, ...SET_NOT_SERVED, modelLoaded: false, ml: 0, modelShare: 0, noCurveFallbackOff: 'model_not_loaded' });
+    const card = panel();
+    expect(card.textContent).toMatch(/The no-curve fallback switch is set, but the category table is not being served: no model is loaded\./);
+    expect(card.textContent).not.toMatch(/The no-curve fallback is on/);
+  });
+
+  test('with the switch set beside another model version, the panel names the version it found and the one the table needs', () => {
+    show({ ...COUNTER, ...SET_NOT_SERVED, modelVersion: '2.7.0-candidate', noCurveFallbackOff: 'model_version' });
+    const card = panel();
+    expect(card.textContent).toMatch(/The no-curve fallback switch is set, but the category table is not being served: it was measured on 2\.6\.0-starling, and the loaded model is 2\.7\.0-candidate\./);
+    expect(card.textContent).not.toMatch(/The no-curve fallback is on/);
+  });
+
+  test('a loaded model that names no version is said so, never printed as blank', () => {
+    show({ ...COUNTER, ...SET_NOT_SERVED, modelVersion: null, noCurveFallbackOff: 'model_version' });
+    expect(panel().textContent).toMatch(/it was measured on 2\.6\.0-starling, and the loaded model names no version\./);
+  });
+
   test('a server from before the split claims nothing about what made the share, and no model loaded says so', () => {
     const older = { ...COUNTER, modelLoaded: false, ml: 0, total: 40, modelShare: 0, byMethod: { rule_engine: 40 } };
     delete older.curveOffsetAnswers;
