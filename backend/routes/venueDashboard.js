@@ -2006,7 +2006,9 @@ router.get('/intelligence', requirePro, async (req, res) => {
     // that decided on a no from before the collector reached the venue, while
     // the bars read its first rows, is scored again (mlPredictor
     // .agreeWithStrip). Any other dial, and every dial with
-    // CROWD_NO_CURVE_FALLBACK off, comes back as it went in.
+    // CROWD_NO_CURVE_FALLBACK off, comes back as it went in. A bar taken
+    // from the category table before those rows were read is scored again
+    // inside todayHourly itself, so todayHourly is read only below this line.
     const current = await mlPredictor.agreeWithStrip(scored, todayHourly, venue, weather, scoreTime);
 
     // THE SIX EVENINGS ARE ONE ROUND, NOT SIX. Each iteration built its own
@@ -2270,6 +2272,8 @@ router.get('/strip', requirePro, async (req, res) => {
       ]);
       // Same rule as the dial on /intelligence: the row's number and its
       // peak agree on whether the venue has a curve (mlPredictor.agreeWithStrip).
+      // Hours taken from the category table before the venue's rows were read
+      // are scored again inside `hours` itself, so the peak is read after it.
       const current = await mlPredictor.agreeWithStrip(scored, hours, v, weather, scoreTime);
       const peak = hours.reduce((a, b) => (b.score > a.score ? b : a), { score: -1 });
       return {

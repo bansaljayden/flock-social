@@ -406,7 +406,9 @@ async function buildCard(v, weather, clock, preScored, place) {
   // (mlPredictor.agreeWithStrip), so a category dial never sits beside the
   // curve's bars under the "Live from the model" note and its green dot. The
   // area answer copies the result onto the featured venue's pin, which is the
-  // same prediction (round 14, above).
+  // same prediction (round 14, above). A bar the strip took from the category
+  // table before it read those rows is scored again inside fullDay itself, so
+  // fullDay is read only below this line.
   const scored = await mlPredictor.agreeWithStrip(first, fullDay, v, weather, clock.time, ANON);
   const hourly = fullDay.slice(0, 12);
   const barClock = stripClock(hourly, clock.localHour);
