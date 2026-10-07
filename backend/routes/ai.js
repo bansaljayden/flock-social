@@ -1165,7 +1165,11 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
       const corpusZone = wall ? null : await corpusVenueZone(p.id || placeId);
       if (corpusZone) wall = wallClockAt(nowMs, corpusZone, null);
       const userHour = Number.isInteger(opts.localHour) && opts.localHour >= 0 && opts.localHour <= 23;
-      if (!wall && userHour) wall = userWallClock(nowMs, opts.localHour, opts.localDay);
+      const onUserClock = !wall && userHour;
+      if (onUserClock) wall = userWallClock(nowMs, opts.localHour, opts.localDay);
+      // The user's zone, which the tool loop sends with their hour and day,
+      // so a venue read on their clock is read in their zone too (below).
+      const userZone = onUserClock ? validTimeZone(opts.timeZone) : null;
       // Neither the venue's clock nor the user's: the hours below are UTC's.
       const onServerClock = !wall;
       if (onServerClock) wall = wallClockAt(nowMs, SERVER_CLOCK, null);
@@ -1218,8 +1222,12 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
         // The corpus's when Google sent none, so the strip walks the clock the
         // headline was scored on, and UTC for a venue scored on UTC, so the
         // predictor reads its hours as UTC hours on any host (ONE TIMESTAMP,
-        // BUILT ONE WAY, above).
-        timeZone: timeZone || corpusZone || (onServerClock ? SERVER_CLOCK : null),
+        // BUILT ONE WAY, above). A venue read on the user's clock goes in with
+        // the user's zone. The predictor reads a venue with no zone and no
+        // offset as if its hours were on the host's clock, so on a host that
+        // keeps UTC a phone's 7 PM had its weather and events read at 19:00Z,
+        // wherever the phone was.
+        timeZone: timeZone || corpusZone || userZone || (onServerClock ? SERVER_CLOCK : null),
       };
 
       const lat = venue.location?.latitude;
