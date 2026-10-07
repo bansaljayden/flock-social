@@ -1750,6 +1750,25 @@ function hubRestWords(total, ml, categoryCurve) {
   return rule > 0 ? `${words}, and the rest from the rule engine.` : `${words}.`;
 }
 
+// The no-curve fallback's switch, set while the category table is not being
+// served. The server calls the fallback on only while its gate can serve the
+// table (mlPredictor noCurveFallbackState: the switch, a loaded model, and
+// the artifact the table was measured on), and otherwise says why not. A
+// reason this screen does not know is not guessed at.
+function hubFallbackNotServedWords(p) {
+  const lead = 'The no-curve fallback switch is set, but the category table is not being served';
+  if (p.noCurveFallbackOff === 'model_not_loaded') return `${lead}: no model is loaded.`;
+  if (p.noCurveFallbackOff === 'model_version') {
+    const found = typeof p.modelVersion === 'string' && p.modelVersion
+      ? `the loaded model is ${p.modelVersion}`
+      : 'the loaded model names no version';
+    return typeof p.noCurveFallbackFittedOn === 'string' && p.noCurveFallbackFittedOn
+      ? `${lead}: it was measured on ${p.noCurveFallbackFittedOn}, and ${found}.`
+      : `${lead}: ${found}, and the table was measured on another.`;
+  }
+  return `${lead}.`;
+}
+
 // The serve mode in words, for the Overview and the Costs tab alike.
 function hubServeModeWords(mode, nowcast) {
   let words = null;
@@ -3841,6 +3860,9 @@ export default function RevenueScreen({
                       )}
                       {p.noCurveFallback === true && (
                         <p style={{ ...sub, margin: '10px 0 0' }}>The no-curve fallback is on: a venue with no baseline and 200 or more Google reviews gets its category&apos;s typical level for the hour instead of the rule engine.</p>
+                      )}
+                      {p.noCurveFallback !== true && p.noCurveFallbackSwitch === true && (
+                        <p style={{ ...sub, margin: '10px 0 0' }}>{hubFallbackNotServedWords(p)}</p>
                       )}
                       {p.since && (
                         <p style={{ ...sub, margin: '10px 0 0' }}>Counting since {new Date(p.since).toLocaleString()}.</p>
