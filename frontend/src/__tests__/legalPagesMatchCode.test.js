@@ -1231,13 +1231,15 @@ describe('the security list says which routes have no limit of their own and how
     // RevenueCat: a value under its floor reads as unconfigured, which is a 503.
     expect(revenuecat).toMatch(/const MIN_SECRET_LENGTH = 16;/);
     expect(revenuecat).toMatch(/if \(value\.length < MIN_SECRET_LENGTH\) \{[\s\S]{0,700}?return null;/);
-    expect(revenuecat).toMatch(/const expected = configuredSecret\(\);\s*if \(!expected\) \{\s*return res\.status\(503\)/);
+    expect(revenuecat).toMatch(/const expected = configuredSecret\(\);\s*if \(!expected\) \{[\s\S]{0,300}?return res\.status\(503\)/);
     // Stripe: the same floor through keyValue, and the route answers 503 without it.
     expect(proBilling).toMatch(/const MIN_KEY_LENGTH = 16;/);
     expect(proBilling).toMatch(/return v\.length >= MIN_KEY_LENGTH \? v : null;/);
-    expect(proBilling).toMatch(/const stripeWebhookSecret = \(\) => keyValue\(process\.env\.STRIPE_WEBHOOK_SECRET\);/);
-    expect(proBilling).toMatch(/stripeWebhookConfigured: \(\) => !!stripeWebhookSecret\(\),/);
-    expect(stripeRoute).toMatch(/if \(!billing\.stripeWebhookConfigured\(\)[^\n]*\) \{\s*return res\.status\(503\)/);
+    // Loose on purpose: a stricter check layered on top (a whsec_ prefix, say)
+    // keeps the sentence true, so only the floor itself is pinned.
+    expect(proBilling).toMatch(/const stripeWebhookSecret = [^\n]*keyValue\(process\.env\.STRIPE_WEBHOOK_SECRET\)/);
+    expect(proBilling).toMatch(/stripeWebhookConfigured: [^\n]*stripeWebhookSecret\(\)/);
+    expect(stripeRoute).toMatch(/if \(!billing\.stripeWebhookConfigured\(\)[^\n]*\) \{[\s\S]{0,400}?return res\.status\(503\)/);
     // Resend: a secret under its floor reads as none, and none is a 503.
     expect(emailRoute).toMatch(/function webhookSecret\(\) \{[\s\S]*?< MIN_\w+/);
     expect(emailRoute).toMatch(/const key = webhookSecret\(\);\s*if \(!key\) \{[\s\S]{0,300}?return res\.status\(503\)/);
