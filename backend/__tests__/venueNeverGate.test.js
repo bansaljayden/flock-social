@@ -155,7 +155,9 @@ function world() {
 
     // The venue profile, read and saved.
     [/^SELECT \* FROM venue_profiles WHERE user_id = \$1/, () => ({ rows: [{ ...PROFILE_ROW }] })],
-    [/^UPDATE venue_profiles SET business_name = COALESCE/, (p) => ({ rows: [{ ...PROFILE_ROW, business_name: p[0] || PROFILE_ROW.business_name }], rowCount: 1 })],
+    // One statement opening with a WITH (a claim's first listing is written
+    // onto an unbound Roost plan in it), so not anchored at the start.
+    [/UPDATE venue_profiles SET business_name = COALESCE/, (p) => ({ rows: [{ ...PROFILE_ROW, business_name: p[0] || PROFILE_ROW.business_name }], rowCount: 1 })],
   ];
 }
 
