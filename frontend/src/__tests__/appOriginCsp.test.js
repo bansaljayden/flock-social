@@ -229,6 +229,19 @@ describe('CSP covers the hosts the code actually talks to', () => {
     expect(allows(directive('img-src'), 'https://api.dicebear.com')).toBe(true);
   });
 
+  it('covers both hosts Ticketmaster serves seat maps from', () => {
+    // backend/routes/events.js passes the Discovery API's seatmap.staticUrl
+    // through as seatmap_url, and the event page puts it straight into an img.
+    // Ticketmaster serves those PNGs from two hosts, by event id, over https:
+    // maps.ticketmaster.com and mapsapi.tmol.io. Either answers 204 for an
+    // event with no map, and the page then hides the section. Event photos
+    // come from *.ticketm.net.
+    for (const host of ['https://maps.ticketmaster.com', 'https://mapsapi.tmol.io']) {
+      expect([host, allows(directive('img-src'), host)]).toEqual([host, true]);
+      expect([host, allows(metaDirective('img-src'), host)]).toEqual([host, true]);
+    }
+  });
+
   it('does not let a Google profile photo draw as an avatar', () => {
     // Google sign-in stored the token's picture link as the avatar, unscreened,
     // until 2026-10-06; backend migration 120 cleared the links it had stored.
