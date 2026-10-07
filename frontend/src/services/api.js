@@ -544,6 +544,16 @@ function sessionEndedError() {
   return err;
 }
 
+// The account signed in now, for a caller that has to wait before it sends.
+// The SOS alert and "Share location with contacts" ask the phone for a fix
+// first, which can take seconds; a sign-out and another sign-in in that time
+// sent the first person's alert or position from the second person's account.
+// They capture this before the wait and pass it as `account`, and request()
+// refuses to send for anyone else.
+export function currentAccount() {
+  return accountOf(getToken());
+}
+
 // The sign-in doors are never refused: they mint a session of their own, and
 // the tab that signs in becomes that account's (storeSession below).
 const SIGN_IN_DOORS = ['/api/auth/login', '/api/auth/signup', '/api/auth/google', '/api/auth/apple'];
@@ -1545,7 +1555,11 @@ function buildHttpError(res, data, endpoint, hadToken) {
 }
 
 async function request(endpoint, options = {}) {
-  const { timeout, retry, ...fetchOptions } = options;
+  const { timeout, retry, account, ...fetchOptions } = options;
+  // `account` (see currentAccount below) holds a request to the account that
+  // asked for it before a wait of its own, such as a location fix. Captured
+  // with nobody signed in, there is nobody to send it for.
+  if (account === null) throw sessionEndedError();
   // Nothing goes out from a tab whose account another tab has replaced, not
   // even a renewal (see WHOSE TAB THIS IS). Asked again after the renewal,
   // which awaits.
@@ -1555,7 +1569,7 @@ async function request(endpoint, options = {}) {
   // tab's account NOW, and a renewal can wait long enough for this account to
   // sign out on this tab and another to sign in, which makes the next account
   // the tab's: a save made for the first went out on the second one's token.
-  const madeFor = signingIn ? null : accountOf(getToken());
+  const madeFor = signingIn ? null : (account !== undefined ? String(account) : accountOf(getToken()));
   // Renew first when the token is nearly out (see RENEWING THE SESSION above),
   // so the request goes out on a live one instead of earning a 401.
   const mayRenew = mayRenewBefore(endpoint);
@@ -3397,7 +3411,7 @@ export async function deleteTrustedContact(id) {
 // Safety endpoints get double the default leash. The server fans the alert
 // out to trusted contacts before answering, and an SOS is the one request
 // that must not give up early on a weak connection.
-export async function sendEmergencyAlert({ latitude, longitude, accuracy, includeLocation, followUpTo, fresh }) {
+export async function sendEmergencyAlert({ latitude, longitude, accuracy, includeLocation, followUpTo, fresh, account }) {
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   // accuracy is the phone's own radius for the fix, in metres. The server has
   // labelled coarse fixes honestly since round 23 ("treat it as the area to
@@ -3416,6 +3430,7 @@ export async function sendEmergencyAlert({ latitude, longitude, accuracy, includ
   return request('/api/safety/alert', {
     method: 'POST',
     timeout: 30000,
+    ...(account !== undefined ? { account } : {}),
     body: JSON.stringify({
       latitude, longitude, accuracy, includeLocation, timezone, followUpTo,
       ...(fresh === true ? { fresh: true } : {}),
@@ -3438,11 +3453,12 @@ export async function cancelEmergencyAlert() {
   });
 }
 
-export async function shareLocationWithContacts({ latitude, longitude }) {
+export async function shareLocationWithContacts({ latitude, longitude, account }) {
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   return request('/api/safety/share-location', {
     method: 'POST',
     timeout: 30000,
+    ...(account !== undefined ? { account } : {}),
     body: JSON.stringify({ latitude, longitude, timezone }),
   });
 }
