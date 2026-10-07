@@ -285,8 +285,9 @@ const realConnect = appPool.connect;
 
 // A test may hold the grant write, the one statement services/venueBilling.js
 // sends (it starts `WITH old AS`), to open the window between a sync's Stripe
-// read and its write. Whichever way the writer reaches the database, a pooled
-// query or a checked-out client, the write stops here until it is released.
+// read and its write, or any other statement it names. Whichever way the
+// writer reaches the database, a pooled query or a checked-out client, the
+// statement stops here until it is released.
 let holdWrite = null;
 // A test may also make the next statement matching a pattern fail, the way a
 // database write can fail after Stripe has already answered.
@@ -296,19 +297,19 @@ async function maybeHold(text) {
     failNextQuery = null;
     throw new Error('simulated database failure');
   }
-  if (holdWrite && /^\s*WITH old AS/.test(String(text))) {
+  if (holdWrite && holdWrite.pattern.test(String(text))) {
     const h = holdWrite;
     holdWrite = null;
     h.reached();
     await h.released;
   }
 }
-function armWriteHold() {
+function armWriteHold(pattern = /^\s*WITH old AS/) {
   let reached;
   let release;
   const writeReached = new Promise((r) => { reached = r; });
   const released = new Promise((r) => { release = r; });
-  holdWrite = { reached, released };
+  holdWrite = { pattern, reached, released };
   return { writeReached, release };
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -2530,6 +2531,45 @@ test('an attempt interrupted after Stripe made its refund is asked again with th
   assert.strictEqual(row.stripe_refund_id, first.id);
   assert.strictEqual(row.refund_attempt_outcome, 'refund');
   assert.strictEqual(row.finished_at, null, 'the refund is still pending');
+});
+
+// ONE SETTLEMENT AT A TIME, FROM THE READ TO THE DECISION. A handling that had
+// read the money as back and was still writing finished_at when the refund
+// failed used to finish the refusal after the failure had been handled and
+// acknowledged: finished with the payment owed, and a replayed checkout skips
+// a finished refusal.
+test('a settlement that read the money as back cannot finish the refusal over a failure handled while it was writing', async () => {
+  const p = await refusedPurchase('refund_stale_finish', { refundStatuses: ['failed', 'failed', 'pending'] });
+  await venueBilling.handleVenueEvent(completedEvent(p.session));
+  let row = await refusalRow(p.subId);
+  assert.strictEqual(row.refund_attempt, 3, 'the case under test is a refusal on its last attempt');
+  assert.strictEqual(row.finished_at, null);
+  const third = madeFor(p.pi)[2].id;
+
+  // The third refund lands, and its refund.updated reads the whole $99 back;
+  // that handling is held just before it writes finished_at.
+  refundsById[third].status = 'succeeded';
+  const hold = armWriteHold(/^UPDATE roost_refused_purchases SET finished_at = NOW\(\)/);
+  const { lines } = await logged(async () => {
+    const landed = refundUpdated(third);
+    await hold.writeReached;
+    // Before that write the refund fails, and Stripe says so.
+    Object.assign(refundsById[third], { status: 'failed', failure_reason: 'insufficient_funds' });
+    const failed = venueBilling.revokeRefundedSubscription({
+      object: 'refund', id: third, charge: `ch_${p.pi}`, payment_intent: p.pi, status: 'failed',
+    });
+    // The failure is handled to the end, or waits on the settlement already
+    // under way; either way the first one then resumes.
+    await Promise.race([failed, sleep(300)]);
+    hold.release();
+    await Promise.all([landed, failed]);
+  });
+  row = await refusalRow(p.subId);
+  assert.strictEqual(row.finished_at, null, 'a settlement that read the money as back finished the refusal after its refund failed');
+  assert.ok(await stillOpen(p.subId));
+  assert.strictEqual(madeFor(p.pi).length, 3, 'a fourth refund was asked for');
+  const said = saidAbout(lines, p.session);
+  assert.ok(said.some((l) => l.includes('$0.00 of the $99.00') && /another way/.test(l)), `the shortfall was not said: ${said.join(' | ')}`);
 });
 
 test('a refusal finished on its refund asks Stripe for nothing more when the checkout or the return comes again, and a refund event only reads its refunds', async () => {
