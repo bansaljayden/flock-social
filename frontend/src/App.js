@@ -27,7 +27,7 @@ import { resendVerificationEmail, trackPurchaseCompleted, hasRenewableSession, r
 import { redeemPendingInvite, openJoinedFlock, rememberInvite, storedGuestTokens } from './services/inviteHandoff';
 import { setAvailability, clearAvailability, getMyAvailability, getFriendsAvailability, getSensorCurrent, getSensorHistory, checkInManual, getNfcCheckin, getCalendarEvents, createCalendarEvent, deleteCalendarEvent } from './services/api';
 import { joinVenueRoom, leaveVenueRoom, joinVenueContentRoom, leaveVenueContentRoom, onVenueSensorUpdate, onVenueCheckin, onSessionRevoked, onSocketError, onAvailabilityUpdated, onBlockedBy, onUnblockedBy, onContentRemoved, onContentRestored } from './services/socket';
-import { pullSettings, queueSync, sameAsAccount, queuedSincePull } from './services/userSettings';
+import { pullSettings, queueSync, sameAsAccount, localIsNewer } from './services/userSettings';
 import { liftReaders } from './services/flockReaders';
 // html5-qrcode is NOT imported here on purpose. It is loaded with a dynamic
 // import() inside startQrScanner, the one place that uses it. See the note
@@ -7681,19 +7681,22 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // back on every launch: one PATCH per boot, and one that, landing just
   // after a change made on another device, wrote that change away.
   // accountListsRef holds, as JSON, what the pull delivered and what has been
-  // sent since (sameAsAccount in services/userSettings.js).
+  // sent since (sameAsAccount in services/userSettings.js). Until the pull
+  // answers, each effect's first run records this device's copy there, so a
+  // second run with the same value (React runs mount effects twice in
+  // development) sends nothing over the account.
   const accountListsRef = useRef({});
   const pinsSyncedRef = useRef(false);
   useEffect(() => {
     lsSet('flock_pinned', JSON.stringify(pinnedFlockIds));
-    if (!pinsSyncedRef.current) { pinsSyncedRef.current = true; return; }
+    if (!pinsSyncedRef.current) { pinsSyncedRef.current = true; accountListsRef.current.pinnedFlockIds = JSON.stringify(pinnedFlockIds); return; }
     if (sameAsAccount(accountListsRef.current, 'pinnedFlockIds', pinnedFlockIds)) return;
     queueSync({ pinnedFlockIds });
   }, [pinnedFlockIds]);
   const orderSyncedRef = useRef(false);
   useEffect(() => {
     lsSet('flock_order', JSON.stringify(flockOrder));
-    if (!orderSyncedRef.current) { orderSyncedRef.current = true; return; }
+    if (!orderSyncedRef.current) { orderSyncedRef.current = true; accountListsRef.current.flockOrder = JSON.stringify(flockOrder); return; }
     if (sameAsAccount(accountListsRef.current, 'flockOrder', flockOrder)) return;
     queueSync({ flockOrder });
   }, [flockOrder]);
@@ -9126,6 +9129,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     lsSet('flock_interests', JSON.stringify(userInterests));
     if (!interestsSyncedRef.current) {
       interestsSyncedRef.current = true;
+      accountListsRef.current.userInterests = JSON.stringify(userInterests);
       return;
     }
     if (sameAsAccount(accountListsRef.current, 'userInterests', userInterests)) return;
@@ -9195,13 +9199,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   useEffect(() => {
     const onSettings = (e) => {
       const s = e.detail || {};
-      // A key this device queued after the pull asked is newer here than
-      // anything the pull can say about it, so it is neither adopted nor
-      // recorded, and the queued value goes up as it was going to. Without
-      // this, a pin made on a slow connection before the pull answered was
-      // replaced on screen by the account's older list while the queued save
-      // still put the pin on the account.
-      const fresh = (key) => s[key] !== undefined && s[key] !== null && !queuedSincePull(key);
+      // A key this device holds a newer value for (still queued, or queued
+      // after the pull asked) is neither adopted nor recorded, and the queued
+      // value goes up as it was going to. Without this, a pin made on a slow
+      // connection before the pull answered was replaced on screen by the
+      // account's older list while the queued save still put the pin on the
+      // account.
+      const fresh = (key) => s[key] !== undefined && s[key] !== null && !localIsNewer(key);
       // What the account holds now, so adopting it below is not sent back.
       ['userInterests', 'pinnedFlockIds', 'flockOrder'].forEach((key) => {
         if (fresh(key) && Array.isArray(s[key])) accountListsRef.current[key] = JSON.stringify(s[key]);
