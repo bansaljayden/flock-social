@@ -42,3 +42,12 @@ test('a key the pull did not hand on leaves the screen as it is', () => {
   expect(seen.themeMode).toBe('manual');
   expect(seen.theme).toBe('dark');
 });
+
+test('the mode the listener falls back on is set with the mode, not a commit later', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'context', 'ThemeContext.js'), 'utf8');
+  expect(src).toMatch(/const setMode = useCallback\(\(mode\) => \{\s*themeModeRef\.current = mode;\s*setThemeMode\(mode\);/);
+  expect(src).not.toMatch(/useEffect\(\(\) => \{ themeModeRef\.current = themeMode; \}/);
+  expect((src.match(/setThemeMode\(/g) || []).length).toBe(1);
+});

@@ -119,7 +119,9 @@ test('the events gate reads the list once a location lands, and says what it is 
   // The request is stamped first, so an answer that lands after Location was
   // switched off or after a sign-out is dropped.
   expect(toggle).toMatch(/setLocationLoading\(true\);\s*const ask = locationAskRef\.current;\s*getCurrentPosition\(/);
-  expect((toggle.match(/setLocationLoading\(false\);/g) || []).length).toBe(2);
+  // The answer, the error, and switching Location off (a stale answer no
+  // longer clears it).
+  expect((toggle.match(/setLocationLoading\(false\);/g) || []).length).toBe(3);
 });
 
 test('the empty calendar has a next action', () => {
