@@ -30,11 +30,26 @@ function setOnline(value) {
 }
 const urls = () => global.fetch.mock.calls.map(([u]) => String(u).replace(/^https?:\/\/[^/]+/, ''));
 
-// Answers by path, so the order the two reads go out in does not matter.
+// The Nest's own reads, primed beside the two lists. Answered by default in
+// every test here, so a read nobody scripted cannot fail into request()'s GET
+// retries and land in the next test's fetch mock.
+const NEST_READS = {
+  '/api/users/stats': () => jsonRes({ streak: 0, friendCount: 0 }),
+  '/api/friends/pending': () => jsonRes({ requests: [] }),
+  '/api/availability/me': () => jsonRes({ pulse: null }),
+  '/api/availability/friends': () => jsonRes({ friends: [] }),
+  '/api/entitlements': () => jsonRes({}),
+  '/api/users/profile': () => jsonRes({ user: {} }),
+  '/api/blocks': () => jsonRes({ blocked: [] }),
+  '/api/safety/contacts': () => jsonRes({ contacts: [] }),
+};
+const pathOf = (u) => String(u).replace(/^https?:\/\/[^/]+/, '').split('?')[0];
+// Answers by path, so the order the reads go out in does not matter.
 function serve(routes) {
+  const all = { ...NEST_READS, ...routes };
   global.fetch = jest.fn((url) => {
-    const p = String(url).replace(/^https?:\/\/[^/]+/, '');
-    const answer = routes[p];
+    const p = pathOf(url);
+    const answer = all[p];
     if (!answer) return Promise.reject(new TypeError(`unscripted ${p}`));
     return Promise.resolve(typeof answer === 'function' ? answer() : answer);
   });
@@ -51,7 +66,7 @@ describe('primeBootReads and takeBootRead', () => {
     localStorage.setItem('flockToken', 'tok-a');
     serve({ '/api/flocks': jsonRes({ flocks: [{ id: 3 }] }), '/api/dm': jsonRes({ conversations: [] }) });
     primeBootReads();
-    expect(urls().sort()).toEqual(['/api/dm', '/api/flocks']);
+    expect(global.fetch.mock.calls.map(([u]) => pathOf(u)).sort()).toEqual(['/api/dm', '/api/flocks', ...Object.keys(NEST_READS)].sort());
     expect(global.fetch.mock.calls[0][1].headers.Authorization).toBe('Bearer tok-a');
 
     await expect(takeBootRead('flocks')).resolves.toEqual({ flocks: [{ id: 3 }] });
@@ -59,7 +74,34 @@ describe('primeBootReads and takeBootRead', () => {
     // Once each, and no second request was made for either.
     expect(takeBootRead('flocks')).toBeNull();
     expect(takeBootRead('dms')).toBeNull();
-    expect(global.fetch).toHaveBeenCalledTimes(2);
+    expect(global.fetch).toHaveBeenCalledTimes(2 + Object.keys(NEST_READS).length);
+  });
+
+  test("the Nest's own reads are handed out once each", async () => {
+    localStorage.setItem('flockToken', 'tok-a');
+    serve({ '/api/flocks': jsonRes({ flocks: [] }), '/api/dm': jsonRes({ conversations: [] }) });
+    primeBootReads();
+    for (const key of ['userStats', 'pendingRequests', 'myAvailability', 'friendsAvailability', 'entitlements', 'profile', 'blocks', 'trustedContacts']) {
+      const held = takeBootRead(key);
+      expect(`${key} ${held === null ? 'missing' : 'held'}`).toBe(`${key} held`);
+      await held;
+      expect(takeBootRead(key)).toBeNull();
+    }
+  });
+
+  test('/me goes out ahead of the primed reads', () => {
+    const app = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8');
+    const at = app.indexOf('const me = getCurrentUser();');
+    expect(at).toBeGreaterThan(-1);
+    expect(app.indexOf('primeBootReads();', at)).toBeGreaterThan(at);
+    expect(app.slice(at, at + 120)).toMatch(/const me = getCurrentUser\(\);\s*primeBootReads\(\);\s*me\s*\.then/);
+  });
+
+  test('each Nest loader takes its read at its first call only', () => {
+    const app = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8');
+    for (const [key, fn] of [['trustedContacts', 'getTrustedContacts'], ['userStats', 'getUserStats'], ['pendingRequests', 'getPendingRequests'], ['myAvailability', 'getMyAvailability'], ['friendsAvailability', 'getFriendsAvailability'], ['entitlements', 'getEntitlements'], ['profile', 'getUserProfile'], ['blocks', 'getBlockedUsers']]) {
+      expect(app.split(`(takeBootRead('${key}') || ${fn}())`).length - 1).toBe(1);
+    }
   });
 
   test('no stored session, nothing is asked for and nothing is handed out', () => {
@@ -225,7 +267,7 @@ describe('the loaders take the primed reads', () => {
 
   test('the boot primes both reads right beside /api/auth/me, and only with a stored session', () => {
     const boot = app.slice(app.indexOf('    if (!isLoggedIn()) {\n      setAuthChecking(false);'), app.indexOf('.finally(() => setAuthChecking(false));'));
-    expect(boot).toMatch(/primeBootReads\(\);\n\s*getCurrentUser\(\)/);
+    expect(boot).toMatch(/const me = getCurrentUser\(\);\n\s*primeBootReads\(\);\n\s*me\n\s*\.then/);
     // The retry loop, which runs only after a failed boot, primes nothing.
     expect((boot.match(/primeBootReads\(\)/g) || []).length).toBe(1);
   });

@@ -6755,7 +6755,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
   const refreshFriendsPulses = useCallback(async () => {
     try {
-      const data = await getFriendsAvailability();
+      const data = await (takeBootRead('friendsAvailability') || getFriendsAvailability());
       setFriendsPulses(data.friends || []);
     } catch { /* ignore */ }
   }, []);
@@ -6769,7 +6769,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const refreshMyPulse = useCallback(async () => {
     const seq = ++myPulseSeqRef.current;
     try {
-      const d = await getMyAvailability();
+      const d = await (takeBootRead('myAvailability') || getMyAvailability());
       if (seq === myPulseSeqRef.current) setMyPulse(d.pulse || null);
     } catch { /* keep what is shown; the expiry check below still applies */ }
   }, []);
@@ -7605,14 +7605,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // goes to, and a silent catch left the Safety screen saying the user had
   // none. See loadTrustedContacts for the retry.
   useEffect(() => {
-    getTrustedContacts()
+    (takeBootRead('trustedContacts') || getTrustedContacts())
       .then((d) => { setTrustedContacts(d.contacts || []); setTrustedContactsLoaded(true); setTrustedContactsError(''); })
       .catch((err) => setTrustedContactsError(err?.message || "Your trusted contacts couldn't be loaded."));
   }, []);
 
   // Load real user stats on mount (streak, friends)
   useEffect(() => {
-    getUserStats().then(d => {
+    (takeBootRead('userStats') || getUserStats()).then(d => {
       setStreak(typeof d.streak === 'number' ? d.streak : null);
       setFriendCount(typeof d.friendCount === 'number' ? d.friendCount : null);
       setReliabilityScore(readReliability(d.reliabilityScore));
@@ -7621,7 +7621,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // when Add Friends was opened, so three people could ask and the app
     // showed nothing: no badge, and a tapped "New friend request" push landed
     // on a screen with nothing on it.
-    getPendingRequests().then(rows => setPendingRequests(Array.isArray(rows) ? rows : (rows?.requests || []))).catch(() => {});
+    (takeBootRead('pendingRequests') || getPendingRequests()).then(rows => setPendingRequests(Array.isArray(rows) ? rows : (rows?.requests || []))).catch(() => {});
   }, []);
 
   // Availability pulse: load my current + friends' on mount, listen for updates
@@ -8787,7 +8787,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   }, []);
   const refreshEntitlements = useCallback(() => {
     const seq = ++entitlementsSentRef.current;
-    getEntitlements().then((data) => applyEntitlements(seq, data)).catch(() => {});
+    (takeBootRead('entitlements') || getEntitlements()).then((data) => applyEntitlements(seq, data)).catch(() => {});
   }, [applyEntitlements]);
   // A purchase only becomes premium once RevenueCat's webhook reaches our
   // backend, which can land after the app asks. One request could lose that
@@ -14262,7 +14262,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
   const loadPhoneDiscovery = useCallback(async () => {
     try {
-      const data = await getUserProfile();
+      const data = await (takeBootRead('profile') || getUserProfile());
       setPhoneDiscoverable(Boolean(data.user?.phone_discoverable));
       setProfilePhone(data.user?.phone || '');
     } catch {
@@ -14297,7 +14297,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setBlockedLoading(true);
     setBlockedError('');
     try {
-      const data = await getBlockedUsers();
+      const data = await (takeBootRead('blocks') || getBlockedUsers());
       const list = data.blocked || [];
       setBlockedUsers(list);
       // Re-seed rather than merge. This response is the server's whole answer,
@@ -21720,8 +21720,14 @@ const FlockApp = () => {
     // after /me answers and the whole signed-in tree has mounted, which put
     // the plan list last of eleven requests (primeBootReads in services/api.js
     // has the measurement, and the rules for when a primed read is not used).
+    //
+    // /me goes out FIRST: it is the request this splash waits on. Sent after
+    // the ten primed reads, it queued behind them on an HTTP/1.1 connection
+    // (a browser opens six per host) and the tab bar came ~130 ms later
+    // (local stack, 150 ms round trip, 2026-10-07).
+    const me = getCurrentUser();
     primeBootReads();
-    getCurrentUser()
+    me
       .then((data) => {
         beginSession(data.user || data);
         // Register this device for push IF the OS has already granted it.
