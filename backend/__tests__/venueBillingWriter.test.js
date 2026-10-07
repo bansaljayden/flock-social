@@ -45,6 +45,23 @@ const invoices = {};
 const paidWith = {};
 const refundsMade = [];
 const failNextRefund = new Set();
+// The refunds Stripe holds, by id, as it holds them now (a test moves one from
+// pending to succeeded or failed, the way Stripe does days later), every read
+// of one, every list of a PaymentIntent's refunds, the statuses the next
+// refunds of a PaymentIntent are made with (succeeded when none is queued),
+// the PaymentIntents Stripe calls already refunded, and the first answer to
+// each idempotency key, which Stripe gives again for any later request
+// carrying that key.
+const refundsById = {};
+const refundReads = [];
+const refundLists = [];
+const refundStatusesFor = {};
+const alreadyRefunded = new Set();
+const answeredKeys = {};
+// Runs once Stripe has made a refund and before its answer is back: the
+// moment in which a webhook about that refund can arrive before the refusal
+// has recorded it.
+let afterRefundMade = null;
 // Checkout sessions that completed, by id, for a confirm.
 const completedSessions = {};
 // Every cancel Stripe was asked for, in order, with its request options, and
@@ -133,14 +150,40 @@ function FakeStripe() {
       retrieve: async (id) => (charges[id] ? JSON.parse(JSON.stringify(charges[id])) : null),
     },
     refunds: {
-      list: async ({ charge }) => ({ data: (refunds[charge] || []).map((r) => ({ ...r })), has_more: false }),
+      // By charge (the refund tests' own lists), or by PaymentIntent (every
+      // refund Stripe holds for it, as it holds them now).
+      list: async ({ charge, payment_intent: pi }) => {
+        if (!pi) return { data: (refunds[charge] || []).map((r) => ({ ...r })), has_more: false };
+        refundLists.push(pi);
+        return { data: Object.values(refundsById).filter((r) => r.payment_intent === pi).map((r) => ({ ...r })), has_more: false };
+      },
+      retrieve: async (id) => {
+        refundReads.push(id);
+        if (!refundsById[id]) throw Object.assign(new Error(`No such refund: '${id}'`), { code: 'resource_missing', statusCode: 404 });
+        return { ...refundsById[id] };
+      },
       create: async (args, opts) => {
         if (failNextRefund.has(args.payment_intent)) {
           failNextRefund.delete(args.payment_intent);
           throw Object.assign(new Error('simulated Stripe outage'), { statusCode: 500 });
         }
-        refundsMade.push({ args, options: opts || null });
-        return { id: `re_made_${refundsMade.length}`, status: 'succeeded' };
+        const key = opts && opts.idempotencyKey;
+        if (key && answeredKeys[key]) {
+          refundsMade.push({ args, options: opts || null, id: answeredKeys[key].id, replayed: true });
+          return { ...answeredKeys[key] };
+        }
+        if (alreadyRefunded.has(args.payment_intent)) {
+          throw Object.assign(new Error('Charge has already been refunded.'), { code: 'charge_already_refunded', statusCode: 400 });
+        }
+        const queued = refundStatusesFor[args.payment_intent];
+        const status = queued && queued.length ? queued.shift() : 'succeeded';
+        const refund = { id: `re_made_${refundsMade.length + 1}`, object: 'refund', status, payment_intent: args.payment_intent, metadata: args.metadata };
+        refundsMade.push({ args, options: opts || null, id: refund.id });
+        refundsById[refund.id] = refund;
+        if (key) answeredKeys[key] = { ...refund };
+        const answer = { ...refund };
+        if (afterRefundMade) await afterRefundMade(refund);
+        return answer;
       },
     },
     invoicePayments: {
@@ -2060,6 +2103,233 @@ test('a refusal recorded before the claim is verified keeps the plan undelivered
   assert.deepStrictEqual(refundsMade.filter((r) => r.args.payment_intent === 'pi_in_refused_first').map((r) => r.options),
     [{ idempotencyKey: 'flock-claim-revoked-refund-in_refused_first' }], 'a refusal decided before the verification was dropped by it');
   assert.strictEqual((await state(id)).served, 'free');
+});
+
+// ---------------------------------------------------------------------------
+// A REFUSAL IS FINISHED WHEN THE MONEY IS BACK, NOT WHEN A REFUND IS ASKED FOR.
+//
+// Stripe answers a refund request with a Refund whose status can be pending,
+// requires_action, failed or canceled as well as succeeded, and a pending one
+// can stay pending for days and then fail. Every request that did not throw
+// used to finish the refusal and be logged as refunded, and nothing asks for
+// a finished refusal's money again: a replayed checkout skips it,
+// refund.updated refunds nothing, and the idempotency key hands back the same
+// failed Refund for a day. The plan was cancelled and the charge kept.
+// ---------------------------------------------------------------------------
+
+// A purchase refused at fulfillment because its claim was never verified,
+// paid through pi_in_<tag>. refundStatuses are the statuses Stripe gives its
+// refunds, in the order they are made.
+async function refusedPurchase(tag, { refundStatuses = null } = {}) {
+  const [PLACE] = placePair();
+  const id = await venue({ verified: false, placeId: PLACE });
+  const subId = `sub_${tag}`;
+  sub(subId, id, 'active', { metadata: boundTo(PLACE)(id) });
+  const session = completedCheckout(`cs_${tag}`, subId, id, PLACE, `in_${tag}`);
+  if (refundStatuses) refundStatusesFor[`pi_in_${tag}`] = [...refundStatuses];
+  return { id, subId, session, pi: `pi_in_${tag}`, baseKey: `flock-claim-revoked-refund-in_${tag}` };
+}
+
+async function refusalRow(subId) {
+  const r = await testPool.query('SELECT * FROM roost_refused_purchases WHERE stripe_subscription_id = $1', [subId]);
+  return r.rows[0];
+}
+
+// Whether the refusal is among the open ones: the rows the open-refusal index
+// (migration 123) covers.
+async function stillOpen(subId) {
+  const r = await testPool.query('SELECT stripe_subscription_id FROM roost_refused_purchases WHERE finished_at IS NULL');
+  return r.rows.some((row) => row.stripe_subscription_id === subId);
+}
+
+// Every console.error line written while fn runs.
+async function logged(fn) {
+  const lines = [];
+  const realError = console.error;
+  console.error = (...args) => { lines.push(args.map(String).join(' ')); };
+  try {
+    return { value: await fn(), lines };
+  } finally {
+    console.error = realError;
+  }
+}
+
+// Stripe saying a refund changed: refund.updated carries the Refund.
+function refundUpdated(refundId) {
+  const r = refundsById[refundId];
+  return venueBilling.revokeRefundedSubscription({
+    object: 'refund', id: r.id, charge: `ch_${r.payment_intent}`, payment_intent: r.payment_intent, status: r.status,
+  });
+}
+
+const madeFor = (pi) => refundsMade.filter((r) => r.args.payment_intent === pi);
+const saidAbout = (lines, session) => lines.filter((l) => l.includes(session.id));
+
+test('a refused purchase whose refund is pending stays open and says pending, and refund.updated finishes it once the refund succeeded', async () => {
+  const p = await refusedPurchase('refund_pending_ok', { refundStatuses: ['pending'] });
+  const { value: first, lines } = await logged(() => venueBilling.handleVenueEvent(completedEvent(p.session)));
+  assert.strictEqual(first.refused, 'CLAIM_NOT_VERIFIED');
+  assert.strictEqual(subs[p.subId].status, 'canceled');
+  assert.strictEqual(madeFor(p.pi).length, 1);
+  assert.strictEqual((await refusalRow(p.subId)).finished_at, null, 'a refund still pending was taken as the money returned');
+  assert.ok(await stillOpen(p.subId), 'a refusal still owed its refund left the open refusals');
+  const said = saidAbout(lines, p.session);
+  assert.ok(said.some((l) => /\bpending\b/.test(l)), `nothing said the refund is pending: ${said.join(' | ')}`);
+  assert.ok(!said.some((l) => /refunded/.test(l)), `a pending refund was logged as refunded: ${said.join(' | ')}`);
+  const refundId = madeFor(p.pi)[0].id;
+  assert.strictEqual((await refusalRow(p.subId)).stripe_refund_id, refundId, 'the refusal does not say which refund it waits on');
+
+  // Days later the refund lands, and Stripe says so.
+  refundsById[refundId].status = 'succeeded';
+  const { lines: later } = await logged(() => refundUpdated(refundId));
+  assert.ok((await refusalRow(p.subId)).finished_at, 'the refund succeeded and the refusal was never finished');
+  assert.ok(!(await stillOpen(p.subId)));
+  assert.strictEqual(madeFor(p.pi).length, 1, 'a second refund was asked for a payment already on its way back');
+  assert.ok(saidAbout(later, p.session).some((l) => /refunded/.test(l) && l.includes(refundId)), `the finish was not said: ${later.join(' | ')}`);
+});
+
+test('a pending refund that then fails is asked for again under a new key, and the refusal is finished only when that one succeeds', async () => {
+  const p = await refusedPurchase('refund_pending_failed', { refundStatuses: ['pending', 'pending'] });
+  await venueBilling.handleVenueEvent(completedEvent(p.session));
+  assert.strictEqual((await refusalRow(p.subId)).finished_at, null, 'a refund still pending was taken as the money returned');
+  const first = madeFor(p.pi)[0].id;
+
+  // The refund fails (the card was closed), and Stripe says so.
+  Object.assign(refundsById[first], { status: 'failed', failure_reason: 'expired_or_canceled_card' });
+  const { lines } = await logged(() => refundUpdated(first));
+  assert.deepStrictEqual(madeFor(p.pi).map((r) => r.options.idempotencyKey), [p.baseKey, `${p.baseKey}-attempt-2`],
+    'a failed refund was not asked for again, or was asked under the key that hands the failed one back');
+  const second = madeFor(p.pi)[1].id;
+  assert.notStrictEqual(second, first);
+  let row = await refusalRow(p.subId);
+  assert.strictEqual(row.finished_at, null, 'the new refund is still pending');
+  assert.strictEqual(row.stripe_refund_id, second);
+  assert.strictEqual(row.refund_attempt, 2);
+  const said = saidAbout(lines, p.session);
+  assert.ok(said.some((l) => l.includes(first) && /failed/.test(l) && /expired_or_canceled_card/.test(l)), `the failure was not said: ${said.join(' | ')}`);
+  assert.ok(said.some((l) => l.includes(second) && /\bpending\b/.test(l)), said.join(' | '));
+  assert.ok(!said.some((l) => /refunded/.test(l)), said.join(' | '));
+
+  // A late copy of the first refund's event asks for nothing: the refusal
+  // waits on the second.
+  await refundUpdated(first);
+  assert.strictEqual(madeFor(p.pi).length, 2);
+
+  refundsById[second].status = 'succeeded';
+  await refundUpdated(second);
+  row = await refusalRow(p.subId);
+  assert.ok(row.finished_at, 'the refund that succeeded did not finish the refusal');
+  assert.strictEqual(madeFor(p.pi).length, 2);
+});
+
+test('a refund waiting on the customer keeps the refusal open, a replay only reads it, and once it is cancelled a new one is asked for under a new key', async () => {
+  const p = await refusedPurchase('refund_requires_action', { refundStatuses: ['requires_action'] });
+  const { lines } = await logged(() => venueBilling.handleVenueEvent(completedEvent(p.session)));
+  assert.strictEqual((await refusalRow(p.subId)).finished_at, null, 'a refund waiting on the customer was taken as the money returned');
+  const said = saidAbout(lines, p.session);
+  assert.ok(said.some((l) => /requires_action/.test(l)), `nothing said the refund waits on the customer: ${said.join(' | ')}`);
+  assert.ok(!said.some((l) => /refunded/.test(l)), said.join(' | '));
+  const refundId = madeFor(p.pi)[0].id;
+
+  // Stripe sends the checkout again and the owner reopens the success link
+  // while it still waits.
+  const readsBefore = refundReads.length;
+  await venueBilling.handleVenueEvent(completedEvent(p.session));
+  const confirmed = await venueBilling.confirmVenueCheckout(p.id, p.session.id);
+  assert.strictEqual(confirmed.refused, 'CLAIM_NOT_VERIFIED');
+  assert.strictEqual(madeFor(p.pi).length, 1, 'a second refund was asked for while the first waited on the customer');
+  assert.ok(refundReads.slice(readsBefore).includes(refundId), 'the replay did not read the refund it waits on');
+  assert.ok(await stillOpen(p.subId));
+
+  // The customer never acts and the refund is cancelled.
+  refundsById[refundId].status = 'canceled';
+  await refundUpdated(refundId);
+  assert.deepStrictEqual(madeFor(p.pi).map((r) => r.options.idempotencyKey), [p.baseKey, `${p.baseKey}-attempt-2`]);
+  assert.ok((await refusalRow(p.subId)).finished_at, 'the new refund succeeded and the refusal stayed open');
+});
+
+test('a payment Stripe calls already refunded finishes the refusal only when no refund of it is still on its way', async () => {
+  // Refunded by hand in the dashboard and that refund still pending: Stripe
+  // makes no second one, and the refusal waits on the one in flight.
+  const p = await refusedPurchase('refund_by_hand_pending');
+  refundsById.re_by_hand_pending = { id: 're_by_hand_pending', object: 'refund', status: 'pending', payment_intent: p.pi };
+  alreadyRefunded.add(p.pi);
+  const { lines } = await logged(() => venueBilling.handleVenueEvent(completedEvent(p.session)));
+  let row = await refusalRow(p.subId);
+  assert.strictEqual(row.finished_at, null, 'a payment whose only refund is still pending was taken as returned');
+  assert.strictEqual(row.stripe_refund_id, 're_by_hand_pending', 'the refusal does not wait on the refund in flight');
+  const said = saidAbout(lines, p.session);
+  assert.ok(said.some((l) => /\bpending\b/.test(l)), said.join(' | '));
+  assert.ok(!said.some((l) => /refunded/.test(l)), said.join(' | '));
+  refundsById.re_by_hand_pending.status = 'succeeded';
+  await refundUpdated('re_by_hand_pending');
+  assert.ok((await refusalRow(p.subId)).finished_at, 'the refund made by hand landed and the refusal stayed open');
+
+  // Refunded by hand and already back: finished at once, naming that refund.
+  const q = await refusedPurchase('refund_by_hand_done');
+  refundsById.re_by_hand_done = { id: 're_by_hand_done', object: 'refund', status: 'succeeded', payment_intent: q.pi };
+  alreadyRefunded.add(q.pi);
+  const { lines: done } = await logged(() => venueBilling.handleVenueEvent(completedEvent(q.session)));
+  row = await refusalRow(q.subId);
+  assert.ok(row.finished_at, 'a payment Stripe says is already refunded left the refusal open');
+  assert.strictEqual(row.stripe_refund_id, 're_by_hand_done');
+  assert.ok(saidAbout(done, q.session).some((l) => /already refunded/.test(l)), done.join(' | '));
+});
+
+test('a refusal finished on its refund asks Stripe for nothing more when the checkout, the return or the refund event comes again', async () => {
+  const p = await refusedPurchase('refund_replay_after', { refundStatuses: ['pending'] });
+  await venueBilling.handleVenueEvent(completedEvent(p.session));
+  assert.strictEqual((await refusalRow(p.subId)).finished_at, null, 'a refund still pending was taken as the money returned');
+  const refundId = madeFor(p.pi)[0].id;
+  refundsById[refundId].status = 'succeeded';
+  await refundUpdated(refundId);
+  assert.ok((await refusalRow(p.subId)).finished_at);
+
+  const asked = () => ({ made: refundsMade.length, reads: refundReads.length, lists: refundLists.length, cancels: cancels.length });
+  const before = asked();
+  const replay = await venueBilling.handleVenueEvent(completedEvent(p.session));
+  assert.strictEqual(replay.refused, 'CLAIM_NOT_VERIFIED');
+  const confirmed = await venueBilling.confirmVenueCheckout(p.id, p.session.id);
+  assert.strictEqual(confirmed.refused, 'CLAIM_NOT_VERIFIED');
+  await refundUpdated(refundId);
+  assert.deepStrictEqual(asked(), before, 'a finished refusal asked Stripe for more');
+  assert.strictEqual((await state(p.id)).served, 'free');
+});
+
+test('refunds that keep failing are asked for three times in all, then the refusal stays open and says the money has to go back another way', async () => {
+  const p = await refusedPurchase('refund_keeps_failing', { refundStatuses: ['failed', 'failed', 'failed', 'succeeded'] });
+  const { lines } = await logged(() => venueBilling.handleVenueEvent(completedEvent(p.session)));
+  assert.deepStrictEqual(madeFor(p.pi).map((r) => r.options.idempotencyKey), [p.baseKey, `${p.baseKey}-attempt-2`, `${p.baseKey}-attempt-3`]);
+  const row = await refusalRow(p.subId);
+  assert.strictEqual(row.finished_at, null, 'a refusal whose refunds all failed was finished');
+  assert.strictEqual(row.refund_attempt, 3);
+  assert.strictEqual(row.stripe_refund_id, madeFor(p.pi)[2].id);
+  assert.ok(await stillOpen(p.subId));
+  const said = saidAbout(lines, p.session);
+  assert.ok(said.some((l) => /another way/.test(l)), `nothing said a person has to return the money: ${said.join(' | ')}`);
+  assert.ok(!said.some((l) => /refunded/.test(l)), said.join(' | '));
+  // Sent again, it reads the last refund, asks for no fourth, and says so again.
+  const { lines: again } = await logged(() => venueBilling.handleVenueEvent(completedEvent(p.session)));
+  assert.strictEqual(madeFor(p.pi).length, 3);
+  assert.strictEqual((await refusalRow(p.subId)).finished_at, null);
+  assert.ok(saidAbout(again, p.session).some((l) => /another way/.test(l)), again.join(' | '));
+});
+
+test('a refund that lands before its refusal has recorded it is still seen, with no later event to say so', async () => {
+  const p = await refusedPurchase('refund_lands_early', { refundStatuses: ['pending'] });
+  afterRefundMade = async (refund) => {
+    afterRefundMade = null;
+    refund.status = 'succeeded';
+    // Its refund.updated arrives now, and no refusal is waiting on it yet.
+    await refundUpdated(refund.id);
+  };
+  try {
+    await venueBilling.handleVenueEvent(completedEvent(p.session));
+  } finally {
+    afterRefundMade = null;
+  }
+  assert.ok((await refusalRow(p.subId)).finished_at, 'the refund landed before it was recorded, and the refusal waits on an event that already came');
+  assert.strictEqual(madeFor(p.pi).length, 1);
 });
 
 // ---------------------------------------------------------------------------

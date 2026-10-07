@@ -1074,13 +1074,24 @@ const REFUSE_SQL = `INSERT INTO venue_stripe_subscriptions (stripe_subscription_
   RETURNING refused_at`;
 
 // WHAT A REFUSAL STILL OWES (migration 123). Written before anything is
-// cancelled, kept with no account in it, and finished (finishRefusal) the
-// next time the checkout is handled, whoever and whatever is left by then.
+// cancelled, kept with no account in it, and worked on (finishRefusal) every
+// time the checkout is handled, whoever and whatever is left by then, and
+// whenever Stripe says the refund it waits on changed (settleRefusalsWaitingOn).
+// It is finished only once its refund has succeeded (settleRefusalRefund,
+// migration 124), never because a refund was asked for.
 const RECORD_REFUSAL_SQL = `INSERT INTO roost_refused_purchases (stripe_subscription_id, stripe_checkout_session_id, stripe_invoice_id, reason)
   VALUES ($1::text, $2::text, $3::text, $4::varchar)
   ON CONFLICT (stripe_subscription_id) DO NOTHING`;
-const REFUSAL_SQL = 'SELECT stripe_subscription_id, stripe_checkout_session_id, stripe_invoice_id, reason, created_at, finished_at FROM roost_refused_purchases WHERE stripe_subscription_id = $1::text';
-const FINISH_REFUSAL_SQL = 'UPDATE roost_refused_purchases SET finished_at = NOW() WHERE stripe_subscription_id = $1::text AND finished_at IS NULL';
+const REFUSAL_SQL = 'SELECT stripe_subscription_id, stripe_checkout_session_id, stripe_invoice_id, reason, created_at, finished_at, stripe_refund_id, refund_attempt FROM roost_refused_purchases WHERE stripe_subscription_id = $1::text';
+// The open refusal waiting on one refund, for refund.updated.
+const REFUSAL_WAITING_ON_SQL = 'SELECT stripe_subscription_id, stripe_checkout_session_id, stripe_invoice_id, reason, created_at, finished_at, stripe_refund_id, refund_attempt FROM roost_refused_purchases WHERE stripe_refund_id = $1::text AND finished_at IS NULL';
+// The refund a refusal waits on, and which attempt it is, once Stripe has
+// made it. Never moved back to an earlier attempt by a handling that read the
+// row before a later one wrote it.
+const RECORD_REFUND_SQL = 'UPDATE roost_refused_purchases SET stripe_refund_id = $2::text, refund_attempt = $3::int WHERE stripe_subscription_id = $1::text AND finished_at IS NULL AND refund_attempt <= $3::int';
+// Finished, once: the money is back (the refund that returned it is kept on
+// the row when known), or the purchase took none.
+const FINISH_REFUSAL_SQL = 'UPDATE roost_refused_purchases SET finished_at = NOW(), stripe_refund_id = COALESCE($2::text, stripe_refund_id) WHERE stripe_subscription_id = $1::text AND finished_at IS NULL';
 
 // The listing's trial is used, whoever's account bought the plan (migration
 // 121, TRIAL_USED_SQL). Written for an account that no longer exists too, from
@@ -1441,12 +1452,20 @@ async function paysCurrentPeriod(invoice, sub) {
 //
 // A Pro subscription is left alone: RevenueCat reads Stripe's refunds itself
 // and revokes on its own path (routes/revenuecat.js).
+//
+// A REFUSED PURCHASE WAITING ON THIS REFUND is settled first
+// (settleRefusalsWaitingOn): that is how a refund that was still pending when
+// it was asked for finishes its refusal, or is asked for again after failing.
 async function revokeRefundedSubscription(obj) {
+  const refusals = await settleRefusalsWaitingOn(obj);
+  const revoked = [];
+  const answer = (ignored) => (revoked.length || refusals.length
+    ? { ...(revoked.length ? { revoked } : {}), ...(refusals.length ? { refusals } : {}) }
+    : { ignored });
   const chargeId = obj && obj.object === 'charge'
     ? (typeof obj.id === 'string' ? obj.id : null)
     : (typeof (obj && obj.charge) === 'string' ? obj.charge : obj && obj.charge && obj.charge.id) || null;
-  if (!chargeId) return { ignored: 'no_charge' };
-  const revoked = [];
+  if (!chargeId) return answer('no_charge');
   const recorded = await billing.endingsRecordedFor('refund', chargeId);
   for (const r of recorded) {
     if (revoked.includes(r.stripe_subscription_id)) continue;
@@ -1456,7 +1475,6 @@ async function revokeRefundedSubscription(obj) {
     await syncVenueSubscription(sub.id);
     revoked.push(sub.id);
   }
-  const answer = (ignored) => (revoked.length ? { revoked } : { ignored });
   const charge = await stripe().charges.retrieve(chargeId);
   const amount = charge && Number.isFinite(charge.amount) ? charge.amount : 0;
   if (!(amount > 0)) return answer('no_payment');
@@ -1558,8 +1576,9 @@ async function claimFor(userId, placeId) {
 
 // Why a purchase was refused: the reason the refusal is recorded under and the
 // refund carries at Stripe, the prefixes of the idempotency keys that make a
-// retried cancel and refund happen once, and the code a return from Stripe is
-// answered with.
+// retried cancel and refund happen once (a refund asked for again after one
+// failed adds its attempt number, refusalRefundKey), and the code a return
+// from Stripe is answered with.
 const CLAIM_NOT_VERIFIED_REFUND = {
   reason: 'claim_not_verified', key: 'flock-claim-revoked-refund', cancelKey: 'flock-claim-revoked-cancel', code: 'CLAIM_NOT_VERIFIED',
 };
@@ -1569,46 +1588,182 @@ const ACCOUNT_DELETED_REFUND = {
 // The kind a recorded refusal names (migration 123 allows only these two).
 const refusalKind = (reason) => (reason === ACCOUNT_DELETED_REFUND.reason ? ACCOUNT_DELETED_REFUND : CLAIM_NOT_VERIFIED_REFUND);
 
-// The money a refused purchase took, given back. A trial took none (its
-// refusal records no invoice). The first invoice of the session is paid by one
+// A REFUSAL IS FINISHED WHEN THE MONEY IS BACK, NOT WHEN A REFUND IS ASKED FOR
+// (migration 124). Stripe answers a refund request with a Refund whose status
+// is succeeded, pending, requires_action, failed or canceled, and a pending one
+// can stay pending for days and then fail. Any request that did not throw used
+// to finish the refusal and be logged as refunded, and nothing asks for a
+// finished refusal's money again: a replayed checkout skipped it,
+// refund.updated refunds nothing (revokeRefundedSubscription only counts what
+// came back), and the idempotency key would have handed back the same failed
+// Refund for about a day. The plan was cancelled and the charge kept.
+//
+//   succeeded         the money is back, and the refusal is finished.
+//   pending,          it can still go either way. The refusal stays open with
+//   requires_action   the refund recorded on it, and refund.updated finishes
+//                     it once that refund succeeded (settleRefusalsWaitingOn).
+//                     A later handling of the checkout reads the refund from
+//                     Stripe instead of asking for another.
+//   failed,           nothing came back, and that refund never changes again.
+//   canceled          A new one is asked for under a new idempotency key (the
+//                     old key would hand the failed one back), up to
+//                     MAX_REFUND_ATTEMPTS in all. After that the refusal stays
+//                     open, said, for a person to return the money another way.
+//
+// A charge Stripe calls already refunded (refunded by hand in the dashboard,
+// say) finishes the refusal too, unless a refund of that payment is still
+// pending or waiting on the customer: a refund counts against its charge from
+// the moment it is made, so "already refunded" can mean "on its way". The
+// refusal then waits on that refund as if it were its own.
+//
+// A refusal left open stays among the open ones (the partial index of
+// migration 123), and every way of leaving it open says why in the log.
+const REFUND_IN_FLIGHT = new Set(['pending', 'requires_action']);
+const REFUND_RETURNED_NOTHING = new Set(['failed', 'canceled']);
+const MAX_REFUND_ATTEMPTS = 3;
+
+// The idempotency key of a refused purchase's attempt-th refund. The first
+// keeps the key it always had, so a refund asked for before attempts were
+// counted is the same refund to Stripe.
+function refusalRefundKey(why, invoiceId, attempt) {
+  return attempt > 1 ? `${why.key}-${invoiceId}-attempt-${attempt}` : `${why.key}-${invoiceId}`;
+}
+
+// The PaymentIntent that paid a refused purchase's invoice, or null while the
+// invoice shows no payment. The first invoice of a session is paid by one
 // PaymentIntent (InvoicePayments, the same lookup proBilling.subscriptionsFundedBy
-// documents), and the refund is keyed on the invoice, so every retry asks for
-// the same refund and Stripe makes it once. A payment already refunded is the
-// outcome wanted. Answers whether nothing more is owed: an invoice that shows
-// no payment yet leaves the refusal open, and the next handling of its
-// checkout tries again.
-async function refundRefusedInvoice(invoiceId, why) {
-  if (!invoiceId) return true;
+// documents).
+async function paymentIntentPaying(invoiceId) {
   const list = await stripe().invoicePayments.list({ invoice: invoiceId, status: 'paid', limit: 10 });
   const paid = (list && Array.isArray(list.data) ? list.data : [])
     .find((p) => p && p.status === 'paid' && p.payment && idOf(p.payment.payment_intent));
-  if (!paid) {
-    console.error(`[venue-billing] invoice ${invoiceId} of a refused Roost purchase shows no payment to refund yet, so the refusal stays open until its checkout is handled again.`);
-    return false;
-  }
+  return paid ? idOf(paid.payment.payment_intent) : null;
+}
+
+// Asks Stripe for a refused purchase's attempt-th refund, and answers the
+// Refund. When Stripe answers that the charge is already refunded, it answers
+// the refund of that payment still on its way, if one is, and otherwise
+// { alreadyRefunded: true, id } with the refund that returned the money, or a
+// null id when Stripe lists none.
+async function askForRefusalRefund(paymentIntent, invoiceId, why, attempt) {
   try {
-    await stripe().refunds.create(
-      { payment_intent: idOf(paid.payment.payment_intent), metadata: { flock_reason: why.reason } },
-      { idempotencyKey: `${why.key}-${invoiceId}` }
+    return await stripe().refunds.create(
+      { payment_intent: paymentIntent, metadata: { flock_reason: why.reason } },
+      { idempotencyKey: refusalRefundKey(why, invoiceId, attempt) }
     );
   } catch (err) {
     if (!(err && err.code === 'charge_already_refunded')) throw err;
   }
-  return true;
+  const all = await listAll((p, o) => stripe().refunds.list(p, o), { payment_intent: paymentIntent });
+  const onItsWay = all.find((r) => r && REFUND_IN_FLIGHT.has(r.status));
+  if (onItsWay) return onItsWay;
+  const back = all.find((r) => r && r.status === 'succeeded');
+  return { alreadyRefunded: true, id: back ? back.id : null };
 }
 
-// A REFUSAL ON RECORD IS FINISHED, WHATEVER CAME AFTER IT. The cancel and the
+async function finishRefusalRow(subscriptionId, refundId) {
+  const r = await pool.query(FINISH_REFUSAL_SQL, [subscriptionId, refundId || null]);
+  return !!(r && r.rowCount > 0);
+}
+
+// Settles what a recorded refusal owes in money, from Stripe's own record of
+// its refund. Answers 'finished' when the money is back or none was taken,
+// and otherwise why the refusal stays open: 'unpaid' (the invoice shows no
+// payment to refund yet), 'pending' or 'requires_action' (the refund is on
+// its way; also 'pending' for a status Stripe has not documented, which is
+// never taken as either outcome), or 'failed' (every attempt returned
+// nothing). The refund is asked for only when none is recorded or the one
+// recorded failed or was cancelled, so a handling that finds a refund on its
+// way only reads it.
+async function settleRefusalRefund(refusal, why) {
+  const subscriptionId = refusal.stripe_subscription_id;
+  const invoiceId = refusal.stripe_invoice_id;
+  const refused = `checkout ${refusal.stripe_checkout_session_id || 'unknown'} was refused (${why.reason}), so subscription ${subscriptionId} was cancelled`;
+  if (!invoiceId) {
+    if (await finishRefusalRow(subscriptionId, null)) {
+      console.error(`[venue-billing] ${refused}; it took no payment, so there was nothing to give back.`);
+    }
+    return 'finished';
+  }
+  let attempt = Number(refusal.refund_attempt) || 0;
+  let refund = refusal.stripe_refund_id ? await stripe().refunds.retrieve(refusal.stripe_refund_id) : null;
+  for (;;) {
+    if (refund && refund.status === 'succeeded') {
+      if (await finishRefusalRow(subscriptionId, refund.id)) {
+        console.error(`[venue-billing] ${refused} and the payment refunded (refund ${refund.id}).`);
+      }
+      return 'finished';
+    }
+    if (refund && !REFUND_RETURNED_NOTHING.has(refund.status)) {
+      const where = refund.status === 'requires_action'
+        ? 'is waiting on the customer at Stripe (requires_action)'
+        : refund.status === 'pending'
+          ? `is pending at Stripe${refund.pending_reason ? ` (${refund.pending_reason})` : ''}`
+          : `is ${refund.status || 'without a status'} at Stripe, which is neither succeeded nor failed`;
+      console.error(`[venue-billing] ${refused}; refund ${refund.id} ${where}, so the refusal stays open until refund.updated says it succeeded.`);
+      return refund.status === 'requires_action' ? 'requires_action' : 'pending';
+    }
+    if (refund) {
+      const failed = `refund ${refund.id} ${refund.status}${refund.failure_reason ? ` (${refund.failure_reason})` : ''}`;
+      if (attempt >= MAX_REFUND_ATTEMPTS) {
+        console.error(`[venue-billing] ${refused}; ${failed}, and that was refund ${attempt} of ${MAX_REFUND_ATTEMPTS}, so no more are asked for and the refusal stays open. The payment has to go back to the venue another way; then set finished_at on its roost_refused_purchases row.`);
+        return 'failed';
+      }
+      console.error(`[venue-billing] ${refused}; ${failed}, so refund ${attempt + 1} of ${MAX_REFUND_ATTEMPTS} is asked for under a new key.`);
+    }
+    const paymentIntent = await paymentIntentPaying(invoiceId);
+    if (!paymentIntent) {
+      console.error(`[venue-billing] invoice ${invoiceId} of a refused Roost purchase shows no payment to refund yet, so the refusal stays open until its checkout is handled again.`);
+      return 'unpaid';
+    }
+    const next = refund ? attempt + 1 : Math.max(attempt, 1);
+    const asked = await askForRefusalRefund(paymentIntent, invoiceId, why, next);
+    if (asked.alreadyRefunded) {
+      if (await finishRefusalRow(subscriptionId, asked.id)) {
+        console.error(`[venue-billing] ${refused}; Stripe says the payment was already refunded${asked.id ? ` (refund ${asked.id})` : ''}.`);
+      }
+      return 'finished';
+    }
+    await pool.query(RECORD_REFUND_SQL, [subscriptionId, asked.id, next]);
+    attempt = next;
+    // Read again once it is on record: a refund that landed or failed in the
+    // moment before, whose refund.updated found no refusal waiting on it yet,
+    // is seen here, and any change after this finds the refusal by the id.
+    refund = REFUND_IN_FLIGHT.has(asked.status) ? await stripe().refunds.retrieve(asked.id) : asked;
+  }
+}
+
+// A REFUND A REFUSAL IS WAITING ON (migration 124). refund.updated, and
+// charge.refund.updated (its older name) and refund.created, carry the Refund.
+// The open refusal waiting on that refund, found by its id, is settled from
+// Stripe's own record of the refund, never from the event's copy: finished
+// when it succeeded, asked for again when it failed or was cancelled, and left
+// open, said, while it is still on its way. A refund no open refusal waits on
+// (a Pro refund, an earlier attempt, one already settled) asks Stripe for
+// nothing. Answers what became of each refusal it found.
+async function settleRefusalsWaitingOn(obj) {
+  const refundId = obj && obj.object === 'refund' && typeof obj.id === 'string' ? obj.id : null;
+  if (!refundId) return [];
+  const r = await pool.query(REFUSAL_WAITING_ON_SQL, [refundId]);
+  const settled = [];
+  for (const refusal of (r && Array.isArray(r.rows) ? r.rows : [])) {
+    settled.push({ subscription: refusal.stripe_subscription_id, refund: await settleRefusalRefund(refusal, refusalKind(refusal.reason)) });
+  }
+  return settled;
+}
+
+// A REFUSAL ON RECORD IS WORKED ON, WHATEVER CAME AFTER IT. The cancel and the
 // refund are two calls to Stripe, and the refund used to be asked for only
 // when this handling's cancel was the one that ended the plan: a refund that
 // failed after its cancel went through was never asked for again, because the
 // retry found the plan cancelled. Now every handling of a refused checkout
-// finishes its recorded refusal: the plan is cancelled unless Stripe already
-// ended it (and only while it still names the buyer's account; one an operator
-// has since moved is that account's), and the refund is asked for under the
-// same idempotency key, whatever the subscription's status, the claim or the
-// account is by then. finished_at is set once nothing more is owed, so a later
-// replay asks Stripe for nothing. Then the grant is written from Stripe, ended
-// by the refusal.
+// works on its recorded refusal until it is finished: the plan is cancelled
+// unless Stripe already ended it (and only while it still names the buyer's
+// account; one an operator has since moved is that account's), and the refund
+// is settled (settleRefusalRefund), whatever the subscription's status, the
+// claim or the account is by then. finished_at is set only once the refund has
+// succeeded, so a later replay asks Stripe for nothing. Then the grant is
+// written from Stripe, ended by the refusal.
 async function finishRefusal(session, refusal) {
   const why = refusalKind(refusal.reason);
   const subscriptionId = refusal.stripe_subscription_id;
@@ -1616,10 +1771,7 @@ async function finishRefusal(session, refusal) {
     const sub = await stripe().subscriptions.retrieve(subscriptionId);
     const buyer = venueUserIdFrom(session && session.metadata);
     if (isVenueObject(sub) && venueUserIdFrom(sub.metadata) === buyer) await cancelNow(sub, `${why.cancelKey}-${sub.id}`);
-    if (await refundRefusedInvoice(refusal.stripe_invoice_id, why)) {
-      await pool.query(FINISH_REFUSAL_SQL, [subscriptionId]);
-      console.error(`[venue-billing] checkout ${refusal.stripe_checkout_session_id || 'unknown'} was refused (${why.reason}), so subscription ${subscriptionId} was cancelled and what it took refunded.`);
-    }
+    await settleRefusalRefund(refusal, why);
   }
   const result = await syncVenueSubscription(subscriptionId);
   return { ...result, tier: 'free', refused: why.code };
