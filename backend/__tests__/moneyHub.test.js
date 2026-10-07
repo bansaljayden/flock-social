@@ -2397,7 +2397,7 @@ const PRIVATE_NETWORK_FIX = 'railway variables --service Flock-app- --set PGHOST
 const OWNER_STEP_IDS = [
   'database_private_network', 'revenuecat_project_figures', 'revenuecat_webhook', 'expense_list', 'error_reporting', 'sales_tax',
   'paid_apps_agreement', 'small_business_program', 'subscription_review_screenshot', 'apple_organization_account', 'besttime_admissions',
-  'vercel_plan',
+  'vercel_plan', 'app_privacy_crash_data', 'eu_trader_status',
 ];
 const ownerStep = (body, id) => body.ownerActions.items.find((s) => s.id === id);
 const roundTrips = () => log.filter((q) => q.sql === 'SELECT 1').length;
@@ -2447,7 +2447,7 @@ test('with nothing set, every step the server checks reads to do, and the databa
   }
   // Four required steps to do and two optional ones (error reporting, sales
   // tax), counted apart.
-  assert.deepStrictEqual(oa.counts, { todo: 4, optionalTodo: 2, done: 0, unknown: 0, checkYourself: 6 });
+  assert.deepStrictEqual(oa.counts, { todo: 4, optionalTodo: 2, done: 0, unknown: 0, checkYourself: 8 });
 
   // A good round trip is held for the vendor reads' five minutes: a reload
   // and an early refresh reuse it rather than ping the database again.
@@ -2484,7 +2484,7 @@ test('each step reads done once it is in place, and a v2 key is judged with what
   assert.strictEqual(ownerStep(r.body, 'expense_list').words, 'The expense list has bills on it, so the costs on this page count them.');
   assert.strictEqual(ownerStep(r.body, 'error_reporting').words, 'SENTRY_DSN is set, so server errors are collected in Sentry with their stack, including the ones a route catches and answers with a 500.');
   // Sales tax stays an optional to do: STRIPE_AUTOMATIC_TAX is its own test below.
-  assert.deepStrictEqual(r.body.ownerActions.counts, { todo: 0, optionalTodo: 1, done: 5, unknown: 0, checkYourself: 6 });
+  assert.deepStrictEqual(r.body.ownerActions.counts, { todo: 0, optionalTodo: 1, done: 5, unknown: 0, checkYourself: 8 });
   // With no v1 key the hub asks RevenueCat nothing, so the v2 key is set and
   // not yet used, and the step says so rather than implying it works.
   let rc = ownerStep(r.body, 'revenuecat_project_figures');
@@ -2665,6 +2665,8 @@ test('the steps the server cannot see carry no state, and each links to the page
     ['apple_organization_account', 'https://developer.apple.com/contact/'],
     ['besttime_admissions', 'https://besttime.app/settings'],
     ['vercel_plan', 'https://vercel.com/dashboard'],
+    ['app_privacy_crash_data', 'https://appstoreconnect.apple.com/apps'],
+    ['eu_trader_status', 'https://developer.apple.com/help/app-store-connect/manage-compliance-information/manage-european-union-digital-services-act-trader-requirements/'],
   ]);
   for (const s of yours) {
     assert.strictEqual(s.state, null, `${s.id} made a claim the server cannot check`);
@@ -2672,7 +2674,9 @@ test('the steps the server cannot see carry no state, and each links to the page
     assert.ok(typeof s.label === 'string' && s.label && typeof s.words === 'string' && s.words, s.id);
     assert.ok(typeof s.link.text === 'string' && s.link.text, s.id);
   }
-  assert.strictEqual(r.body.ownerActions.counts.checkYourself, 6);
+  assert.strictEqual(r.body.ownerActions.counts.checkYourself, 8);
+  assert.match(yours.find((s) => s.id === 'vercel_plan').words, /deployment storage was at 75% of the free plan's 10 GB/);
+  assert.match(yours.find((s) => s.id === 'app_privacy_crash_data').words, /not linked to the person, not used for tracking, for App Functionality/);
   assert.match(yours[0].words, /Apple sells no in-app purchase until the Account Holder signs it/);
   // The Small Business Program step quotes the cost model's two rates, and the
   // break-even it talks about is worked from the standard one.
