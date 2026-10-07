@@ -22,6 +22,14 @@ const { mock } = require('node:test');
 process.env.VISION_API_KEY = 'vision-budget-test-key';
 process.env.IMAGE_MODERATION_REQUIRED = 'true';
 
+// The clock is pinned to the middle of a UTC day (helpers/pinnedClock.js)
+// before the budget loads. utils/visionBudget.js keys its count on the UTC
+// date, so from the real clock a test that spent the day and read it back
+// across 00:00 UTC found it empty.
+const { pinClock } = require('./helpers/pinnedClock');
+const pinnedClock = pinClock(Date.UTC(2026, 6, 15, 12, 0, 0));
+test.after(() => pinnedClock.restore());
+
 const visionBudget = require('../utils/visionBudget');
 const {
   allowVisionCall,

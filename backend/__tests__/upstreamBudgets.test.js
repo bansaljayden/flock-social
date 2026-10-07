@@ -8,6 +8,15 @@
 const test = require('node:test');
 const assert = require('node:assert');
 
+// The clock is pinned to the middle of a UTC day (helpers/pinnedClock.js)
+// before the ledgers load. utils/placesBudget.js and the weather budget count
+// per UTC day, so from the real clock a test that filled a day and read it
+// back across 00:00 UTC found it empty. The tests that step a clock of their
+// own still do.
+const { pinClock } = require('./helpers/pinnedClock');
+const pinnedClock = pinClock(Date.UTC(2026, 6, 15, 12, 0, 0));
+test.after(() => pinnedClock.restore());
+
 const placesBudget = require('../utils/placesBudget');
 const { createUserBudget } = require('../utils/probeBudget');
 const { UPSTREAM_TIMEOUT_MS, upstreamSignal } = require('../utils/upstream');

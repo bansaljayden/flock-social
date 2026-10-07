@@ -35,6 +35,14 @@ const express = require('express');
 process.env.JWT_SECRET = 'test-secret-events-resilience';
 process.env.TICKETMASTER_API_KEY = 'tm-test-key'; // routes/events.js reads this at load
 
+// The clock is pinned to the middle of a UTC day (helpers/pinnedClock.js)
+// before the route loads. routes/events.js keeps the Ticketmaster ledger per
+// UTC day, so from the real clock a test that filled it and read it back
+// across 00:00 UTC found it empty.
+const { pinClock } = require('./helpers/pinnedClock');
+const pinnedClock = pinClock(Date.UTC(2026, 6, 15, 12, 0, 0));
+test.after(() => pinnedClock.restore());
+
 const pool = require('../config/database');
 const { signUserToken } = require('../middleware/auth');
 
