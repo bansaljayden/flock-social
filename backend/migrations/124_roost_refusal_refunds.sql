@@ -1,5 +1,6 @@
--- 124: a refused Roost purchase is finished only once its refund has
--- succeeded, and it records which refund it is waiting on.
+-- 124: a refused Roost purchase is finished only once the refunds of its
+-- payment that succeeded add up to what it paid, and it records the payment
+-- and the refund it last asked for.
 --
 -- ASCII only, like 094 and 100-102: the embedded server the boot-safety suite
 -- runs is WIN1252.
@@ -7,24 +8,29 @@
 -- WHY. 123 set roost_refused_purchases.finished_at as soon as Stripe accepted
 -- the refund request, whatever the Refund it answered with said. A Refund can
 -- be pending, requires_action, failed or canceled as well as succeeded, and a
--- pending one can stay pending for days and then fail. Once finished_at was
--- set nothing asked for the money again: a replayed checkout skipped the
--- refusal, refund.updated refunded nothing, and the idempotency key would have
--- handed back the same failed Refund for about a day. The plan was cancelled
--- and the charge kept (billing review 2026-10-06). finished_at now waits for a
--- refund that succeeded (services/venueBilling.js settleRefusalRefund).
+-- pending one can stay pending for days and then fail. Stripe also allows
+-- several partial refunds of one payment, some made by hand in the dashboard.
+-- Once finished_at was set nothing asked for the money again: a replayed
+-- checkout skipped the refusal, refund.updated refunded nothing, and the
+-- idempotency key would have handed back the same failed Refund for about a
+-- day. The plan was cancelled and the charge kept (billing review 2026-10-06).
+-- finished_at now waits until the refunds of the payment that succeeded add
+-- up to what it paid (services/venueBilling.js settleRefusalRefund).
 --
--- stripe_refund_id is the refund the refusal is waiting on. refund.updated is
--- matched to the refusal by it, and a later handling of the checkout reads
--- that refund from Stripe instead of asking for another. refund_attempt is
--- which refund that is, counting from 1: one that failed or was cancelled is
--- asked for again under a new idempotency key carrying the next number, up to
--- three in all, and the refusal stays open after that for a person to finish.
+-- stripe_payment_intent_id is the payment the refusal is waiting on: an event
+-- about any refund of that payment, made by us or by hand, finds the refusal
+-- by it. stripe_refund_id is the refund the refusal last asked for, and
+-- refund_attempt how many it has asked for: one asked for again after the
+-- money fell short asks for the balance under a new idempotency key carrying
+-- the next number, up to three in all, and the refusal stays open after that
+-- for a person to finish.
 --
--- NO ACCOUNT IN IT, as in 123: a Stripe refund id and a count.
+-- NO ACCOUNT IN IT, as in 123: Stripe ids and a count.
 --
 -- Nothing to backfill: no Roost subscription has been sold through Stripe yet.
+-- @requires column roost_refused_purchases.stripe_payment_intent_id
 -- @requires column roost_refused_purchases.stripe_refund_id
 -- @requires column roost_refused_purchases.refund_attempt
+ALTER TABLE roost_refused_purchases ADD COLUMN IF NOT EXISTS stripe_payment_intent_id TEXT;
 ALTER TABLE roost_refused_purchases ADD COLUMN IF NOT EXISTS stripe_refund_id TEXT;
 ALTER TABLE roost_refused_purchases ADD COLUMN IF NOT EXISTS refund_attempt INTEGER NOT NULL DEFAULT 0;
