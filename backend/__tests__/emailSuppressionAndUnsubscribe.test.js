@@ -511,21 +511,26 @@ function webhookApp(router = require('../routes/emailWebhook')) {
   return app;
 }
 
+// `signatureHeader(mac, signed)` writes the svix-signature header from our MAC
+// and the exact string it covers, for the tests that send more than one entry.
 function signedPost(app, payload, {
   secret = WEBHOOK_SECRET_RAW, id = 'msg_1', timestamp, tamper,
-  path = '/api/email-events', contentType = 'application/json',
+  path = '/api/email-events', contentType = 'application/json', signatureHeader,
 } = {}) {
-  const body = JSON.stringify(payload);
+  // Indented, so these bytes differ from what JSON.stringify gives back after
+  // a parse. A route that verified a re-serialised object instead of the raw
+  // bytes would refuse every event below that expects a 200.
+  const body = JSON.stringify(payload, null, 2);
   const ts = String(timestamp != null ? timestamp : Math.floor(Date.now() / 1000));
-  const mac = crypto.createHmac('sha256', Buffer.from(secret, 'base64'))
-    .update(`${id}.${ts}.${body}`).digest('base64');
+  const signed = `${id}.${ts}.${body}`;
+  const mac = crypto.createHmac('sha256', Buffer.from(secret, 'base64')).update(signed).digest('base64');
   return request(app, 'POST', path, {
     headers: {
       'content-type': contentType,
       'content-length': Buffer.byteLength(tamper || body),
       'svix-id': id,
       'svix-timestamp': ts,
-      'svix-signature': `v1,${mac}`,
+      'svix-signature': signatureHeader ? signatureHeader(mac, signed) : `v1,${mac}`,
     },
     body: tamper || body,
   });
@@ -618,6 +623,55 @@ test('a captured event cannot be replayed a day later', async () => {
       const res = await signedPost(webhookApp(), bounced('dead@example.com'), { timestamp: stale });
       assert.strictEqual(res.status, 400);
       assert.strictEqual(suppressionRows.size, 0);
+    });
+  } finally { cap.restore(); }
+});
+
+test('a timestamp from the future is refused too, not only one from the past', async () => {
+  resetWorld();
+  const cap = silence();
+  try {
+    await withEnv({ RESEND_WEBHOOK_SECRET: `whsec_${WEBHOOK_SECRET_RAW}` }, async () => {
+      // A day ahead, the mirror of the case above. The exact edge is pinned on a
+      // fixed clock below; over HTTP a margin is needed that no tick of the
+      // clock between this line and the route's own reading can close.
+      const ahead = Math.floor(Date.now() / 1000) + 24 * 3600;
+      const res = await signedPost(webhookApp(), bounced('dead@example.com'), { timestamp: ahead });
+      assert.strictEqual(res.status, 400);
+      assert.strictEqual(suppressionRows.size, 0);
+    });
+  } finally { cap.restore(); }
+});
+
+test('the replay window is five minutes either side, to the second', () => {
+  const { timestampFresh } = require('../routes/emailWebhook').__testing;
+  const now = 1_800_000_000;
+  assert.strictEqual(timestampFresh(String(now - 300), now), true);
+  assert.strictEqual(timestampFresh(String(now + 300), now), true);
+  assert.strictEqual(timestampFresh(String(now - 301), now), false);
+  assert.strictEqual(timestampFresh(String(now + 301), now), false);
+  for (const junk of ['abc', 'Infinity']) assert.strictEqual(timestampFresh(junk, now), false, junk);
+});
+
+test('during a secret rotation the matching signature is found wherever it sits in the header', async () => {
+  // While a rotation is under way the sender signs with both secrets, so the
+  // header carries two entries and the one that matches is not always first.
+  // Checking only the first, or only the last, refuses real events until the
+  // rotation ends.
+  const otherKey = crypto.randomBytes(24);
+  const otherMac = (signed) => crypto.createHmac('sha256', otherKey).update(signed).digest('base64');
+  const cap = silence();
+  try {
+    await withEnv({ RESEND_WEBHOOK_SECRET: `whsec_${WEBHOOK_SECRET_RAW}` }, async () => {
+      for (const [where, header] of [
+        ['second', (mac, signed) => `v1,${otherMac(signed)} v1,${mac}`],
+        ['first', (mac, signed) => `v1,${mac} v1,${otherMac(signed)}`],
+      ]) {
+        resetWorld();
+        const res = await signedPost(webhookApp(), bounced('dead@example.com'), { signatureHeader: header });
+        assert.strictEqual(res.status, 200, `the matching entry ${where}: answered ${res.status} ${res.text}`);
+        assert.strictEqual(suppressionRows.get('dead@example.com'), 'bounce', `the matching entry ${where}`);
+      }
     });
   } finally { cap.restore(); }
 });
