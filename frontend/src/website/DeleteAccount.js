@@ -191,6 +191,11 @@ export default function DeleteAccount() {
             messages, and no individual budget amounts.
           </li>
           <li>
+            If your venue ever had a Roost plan, the Google listing it was bought for and the
+            date we first saw it. It has no link to your account, and it is kept so the
+            listing does not get a second free trial.
+          </li>
+          <li>
             <strong>Your email address, if it is on our do-not-mail list.</strong> An address
             goes on that list when mail to it hard-bounces, when someone reports us as spam,
             or when someone uses an unsubscribe link. The list is keyed on the address itself

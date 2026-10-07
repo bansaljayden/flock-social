@@ -537,6 +537,9 @@ test('the delete-account page names every survivor a reader could have', () => {
   // A plan the account created survives it when somebody else is still owed on
   // its bill (HAND_ON_OWED_PLANS_SQL in routes/users.js).
   assert.match(DELETE_PAGE, /A plan you created whose bill split somebody else paid and somebody besides you\s+still owes on/);
+  // The listing a Roost plan was bought for (roost_trial_listings, migration
+  // 121) has no account in it and outlives the venue account on purpose.
+  assert.match(DELETE_PAGE, /the Google listing it was bought for/);
 });
 
 test('the delete-account page and the privacy policy agree on what survives', () => {
@@ -547,7 +550,8 @@ test('the delete-account page and the privacy policy agree on what survives', ()
   // delete page is claiming something the policy no longer backs; if the policy
   // adds one, this test is where somebody notices the delete page is behind.
   for (const claim of [/do-not-mail list/, /Reports filed about content/, /ban tombstone/i,
-    /One row per finished plan/i, /emptied rather than removed/, /A plan you created that is still being settled up/]) {
+    /One row per finished plan/i, /emptied rather than removed/, /A plan you created that is still being settled up/,
+    /The Google listing a Roost plan was ever bought for/]) {
     assert.match(policy, claim,
       'PrivacyPolicy.js no longer states a survivor that DeleteAccount.js repeats. Two ' +
       'pages that disagree about what deletion means is its own defect.'
