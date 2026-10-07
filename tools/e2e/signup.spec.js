@@ -214,9 +214,10 @@ test('a plainly under 13 date is refused, and the refusal teaches no age', async
   const formText = normalise(await page.locator('form').innerText());
   expect(formText).not.toMatch(/\b(13|thirteen)\b/i);
   expect(formText).not.toMatch(/\d+\s*(\+|or older|years old|and over)/i);
-  // The hint under the field says what the date is for and stops there.
+  // The hint under the field says what the date is for and why it is asked,
+  // and stops there.
   expect(normalise(await page.locator('#signup-dob-hint').innerText()))
-    .toBe('We use this to check your age.');
+    .toBe('We use this to check your age, which the law requires.');
 
   const nineYearsOld = `${new Date().getFullYear() - 9}-04-04`;
   await submitSignup(page, { email: newEmail('young'), dob: nineYearsOld });
