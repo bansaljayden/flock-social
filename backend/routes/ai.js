@@ -670,7 +670,7 @@ const toolDeclarations = [
         },
         profile_section: {
           type: 'STRING',
-          description: 'If navigating to profile, which section to open: "safety" (trusted contacts/SOS), "payment" (payment methods), "edit" (edit profile)',
+          description: 'If navigating to profile, which section to open: "safety" (trusted contacts/SOS), "payment" (pay-back handles: Venmo, Cash App, Zelle), "edit" (edit profile)',
           enum: ['safety', 'payment', 'edit'],
         },
       },
@@ -2011,7 +2011,7 @@ The app, as it ships today (use the user-facing names on the left; the tool enum
 - **Discover** (tab: explore): map + venue search with live crowd levels; each venue page has the crowd dial, best time, and a one-tap "reality check" where people at the venue confirm how busy it really is
 - **Plans** (tab: calendar): calendar of upcoming flocks and events
 - **Messages** (tab: chat): flock group chats and DMs; both support photos, venue cards, voting on spots, pins, and live location sharing
-- **You** (tab: profile): profile, settings, payment methods, appearance
+- **You** (tab: profile): profile, settings, pay-back handles (Venmo, Cash App, Zelle), appearance
 - **Create a flock** (screen: create): name the night, pick a date, invite friends; they RSVP in one tap
 - **Add friends** (screen: addFriends): search, friend code, QR, phone contacts
 - **Safety** (profile_section: safety): trusted contacts and SOS. One tap sends their live location to their people
