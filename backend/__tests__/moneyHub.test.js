@@ -318,7 +318,7 @@ const ENV_KEYS = [
   'BESTTIME_API_KEY',
   // The operator's steps (section 10) read these. The pool itself never sees
   // them change: it is scripted below and was built before any test ran.
-  'REVENUECAT_WEBHOOK_SECRET', 'SENTRY_DSN',
+  'REVENUECAT_WEBHOOK_SECRET', 'SENTRY_DSN', 'STRIPE_WEBHOOK_SECRET', 'RESEND_WEBHOOK_SECRET',
   'DATABASE_URL', 'PGHOST', 'PGPORT', 'PGUSER', 'PGPASSWORD', 'PGDATABASE',
 ];
 const savedEnv = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
@@ -416,6 +416,8 @@ function clearVendors() {
   delete process.env.BESTTIME_API_KEY;
   delete process.env.REVENUECAT_WEBHOOK_SECRET;
   delete process.env.SENTRY_DSN;
+  delete process.env.STRIPE_WEBHOOK_SECRET;
+  delete process.env.RESEND_WEBHOOK_SECRET;
   for (const k of ['DATABASE_URL', 'PGHOST', 'PGPORT', 'PGUSER', 'PGPASSWORD', 'PGDATABASE']) delete process.env[k];
   for (const k of ENV_KEYS.filter((x) => x.startsWith('STRIPE_PRICE_'))) delete process.env[k];
 }
@@ -2388,6 +2390,11 @@ const DB_NAME = ['moneyhub', 'fixture', 'db'].join('_');
 const DB_PORT = '47913';
 const WEBHOOK_SECRET = ['rcwh', 'moneyhub', 'fixture', '0123456789abcdef'].join('_');
 const SENTRY_DSN_FAKE = ['https://', 'e'.repeat(32), '@', 'o0.ingest.example.invalid/0'].join('');
+// An endpoint signing secret's shape, and a Resend one: whsec_ and the standard
+// base64 of 24 different bytes.
+const STRIPE_HOOK_FAKE = ['whsec', 'moneyhub', 'fixture', 'stripe', '0123456789'].join('_');
+const RESEND_HOOK_BYTES = Buffer.from(Array.from({ length: 24 }, (_, i) => (i * 37 + 11) % 256)).toString('base64');
+const RESEND_HOOK_FAKE = ['whsec', RESEND_HOOK_BYTES].join('_');
 const dbUrl = (host) => ['postgresql://', DB_USER, ':', DB_PASSWORD, '@', host, ':', DB_PORT, '/', DB_NAME].join('');
 
 // The command the database step offers, word for word, as the operator will
@@ -2395,7 +2402,8 @@ const dbUrl = (host) => ['postgresql://', DB_USER, ':', DB_PASSWORD, '@', host, 
 const PRIVATE_NETWORK_FIX = 'railway variables --service Flock-app- --set PGHOST=postgres.railway.internal --set PGPORT=5432';
 
 const OWNER_STEP_IDS = [
-  'database_private_network', 'revenuecat_project_figures', 'revenuecat_webhook', 'expense_list', 'error_reporting', 'sales_tax',
+  'database_private_network', 'revenuecat_project_figures', 'revenuecat_webhook', 'stripe_webhook', 'email_events_webhook',
+  'expense_list', 'error_reporting', 'sales_tax',
   'paid_apps_agreement', 'small_business_program', 'subscription_review_screenshot', 'apple_organization_account', 'besttime_admissions',
   'vercel_plan', 'app_privacy_crash_data', 'eu_trader_status',
 ];
@@ -2445,9 +2453,14 @@ test('with nothing set, every step the server checks reads to do, and the databa
   for (const id of ['revenuecat_project_figures', 'revenuecat_webhook']) {
     assert.deepStrictEqual(ownerStep(r.body, id).link, { href: 'https://app.revenuecat.com/', text: 'RevenueCat' });
   }
-  // Four required steps to do and two optional ones (error reporting, sales
+  // Neither webhook has a secret, so both read to do, with the route's words.
+  assert.strictEqual(ownerStep(r.body, 'stripe_webhook').state, 'todo');
+  assert.match(ownerStep(r.body, 'stripe_webhook').words, /^Neither STRIPE_SECRET_KEY nor STRIPE_WEBHOOK_SECRET is set, so web checkout stays off \(it needs both\)/);
+  assert.strictEqual(ownerStep(r.body, 'email_events_webhook').state, 'todo');
+  assert.match(ownerStep(r.body, 'email_events_webhook').words, /^RESEND_WEBHOOK_SECRET is not set, so POST \/api\/email-events refuses every event Resend sends: /);
+  // Six required steps to do and two optional ones (error reporting, sales
   // tax), counted apart.
-  assert.deepStrictEqual(oa.counts, { todo: 4, optionalTodo: 2, done: 0, unknown: 0, checkYourself: 8 });
+  assert.deepStrictEqual(oa.counts, { todo: 6, optionalTodo: 2, done: 0, unknown: 0, checkYourself: 8 });
 
   // A good round trip is held for the vendor reads' five minutes: a reload
   // and an early refresh reuse it rather than ping the database again.
@@ -2466,6 +2479,9 @@ test('each step reads done once it is in place, and a v2 key is judged with what
   process.env.REVENUECAT_V2_SECRET_API_KEY = RC_V2_KEY;
   process.env.REVENUECAT_WEBHOOK_SECRET = WEBHOOK_SECRET;
   process.env.SENTRY_DSN = SENTRY_DSN_FAKE;
+  seedStripe();
+  process.env.STRIPE_WEBHOOK_SECRET = STRIPE_HOOK_FAKE;
+  process.env.RESEND_WEBHOOK_SECRET = RESEND_HOOK_FAKE;
   expenseRows = [aBill];
   handlers = hubHandlers();
   let r = await req('GET', '/api/admin/money');
@@ -2476,7 +2492,7 @@ test('each step reads done once it is in place, and a v2 key is judged with what
   assert.strictEqual(db.via, 'PGHOST');
   assert.strictEqual(db.fix, null, 'nothing to fix, so no command');
   assert.strictEqual(db.words, 'PGHOST names a railway.internal address, so every query stays on Railway\'s private network.');
-  for (const id of ['revenuecat_project_figures', 'revenuecat_webhook', 'expense_list', 'error_reporting']) {
+  for (const id of ['revenuecat_project_figures', 'revenuecat_webhook', 'stripe_webhook', 'email_events_webhook', 'expense_list', 'error_reporting']) {
     assert.strictEqual(ownerStep(r.body, id).state, 'done', id);
   }
   assert.match(ownerStep(r.body, 'revenuecat_webhook').words,
@@ -2484,7 +2500,7 @@ test('each step reads done once it is in place, and a v2 key is judged with what
   assert.strictEqual(ownerStep(r.body, 'expense_list').words, 'The expense list has bills on it, so the costs on this page count them.');
   assert.strictEqual(ownerStep(r.body, 'error_reporting').words, 'SENTRY_DSN is set, so server errors are collected in Sentry with their stack, including the ones a route catches and answers with a 500.');
   // Sales tax stays an optional to do: STRIPE_AUTOMATIC_TAX is its own test below.
-  assert.deepStrictEqual(r.body.ownerActions.counts, { todo: 0, optionalTodo: 1, done: 5, unknown: 0, checkYourself: 8 });
+  assert.deepStrictEqual(r.body.ownerActions.counts, { todo: 0, optionalTodo: 1, done: 7, unknown: 0, checkYourself: 8 });
   // With no v1 key the hub asks RevenueCat nothing, so the v2 key is set and
   // not yet used, and the step says so rather than implying it works.
   let rc = ownerStep(r.body, 'revenuecat_project_figures');
@@ -2530,6 +2546,55 @@ test('a secret too short to use counts as not set, the way the webhook route and
   process.env.REVENUECAT_WEBHOOK_SECRET = '   ';
   const blank = await req('GET', '/api/admin/money');
   assert.strictEqual(ownerStep(blank.body, 'revenuecat_webhook').state, 'todo');
+});
+
+test('the Stripe and email webhook steps say what is wrong with a secret in the routes\' own words, and never its value', async () => {
+  handlers = hubHandlers();
+  // A Resend secret pasted with an upper-case prefix, the shape production
+  // held when this step was added.
+  const shouting = ['WHSEC', RESEND_HOOK_BYTES].join('_');
+  process.env.RESEND_WEBHOOK_SECRET = shouting;
+  // A Stripe secret with quotes around it, and no Stripe key.
+  const quoted = `"${STRIPE_HOOK_FAKE}"`;
+  process.env.STRIPE_WEBHOOK_SECRET = quoted;
+  let r = await req('GET', '/api/admin/money');
+  assert.strictEqual(r.status, 200, r.text);
+  const email = ownerStep(r.body, 'email_events_webhook');
+  assert.strictEqual(email.checkedBy, 'server');
+  assert.strictEqual(email.state, 'todo');
+  assert.match(email.words, /^RESEND_WEBHOOK_SECRET is set but is not whsec_ followed by standard base64 \(.*\), so POST \/api\/email-events refuses every event Resend sends: .*Copy the signing secret from the webhook's page in Resend exactly as shown, whsec_ included, with no quotes around it\.$/);
+  assert.deepStrictEqual(email.link, { href: 'https://resend.com/webhooks', text: 'Resend webhooks' });
+  let stripe = ownerStep(r.body, 'stripe_webhook');
+  assert.strictEqual(stripe.state, 'todo');
+  // Both of the route's problems, in its order: no key, then the shape.
+  assert.match(stripe.words, /^STRIPE_WEBHOOK_SECRET is set but STRIPE_SECRET_KEY is not, and the webhook needs both, .* STRIPE_WEBHOOK_SECRET does not start with whsec_, /);
+  assert.deepStrictEqual(stripe.link, { href: 'https://dashboard.stripe.com/webhooks', text: 'Stripe webhooks' });
+  for (const value of [shouting, quoted, STRIPE_HOOK_FAKE, RESEND_HOOK_BYTES]) {
+    assert.ok(!r.text.includes(value), 'a secret reached the payload');
+  }
+
+  // The key without the secret.
+  moneyHub.__test.resetCache();
+  delete process.env.STRIPE_WEBHOOK_SECRET;
+  seedStripe();
+  r = await req('GET', '/api/admin/money');
+  stripe = ownerStep(r.body, 'stripe_webhook');
+  assert.strictEqual(stripe.state, 'todo');
+  assert.match(stripe.words, /^STRIPE_SECRET_KEY is set but STRIPE_WEBHOOK_SECRET is not set to a usable value \(16 characters or more\), so POST \/api\/stripe-webhook answers 503 to every Stripe event/);
+
+  // Both, and a usable Resend secret: done, and the words say what the server
+  // cannot see.
+  moneyHub.__test.resetCache();
+  process.env.STRIPE_WEBHOOK_SECRET = STRIPE_HOOK_FAKE;
+  process.env.RESEND_WEBHOOK_SECRET = RESEND_HOOK_FAKE;
+  r = await req('GET', '/api/admin/money');
+  stripe = ownerStep(r.body, 'stripe_webhook');
+  assert.strictEqual(stripe.state, 'done');
+  assert.match(stripe.words, /shows only in Stripe, where that endpoint lists each delivery and whether it failed\.$/);
+  const ok = ownerStep(r.body, 'email_events_webhook');
+  assert.strictEqual(ok.state, 'done');
+  assert.match(ok.words, /^RESEND_WEBHOOK_SECRET is a usable signing secret, .*shows only there, where the webhook lists each delivery and whether it failed\.$/);
+  assert.ok(!r.text.includes(RESEND_HOOK_BYTES) && !r.text.includes(STRIPE_HOOK_FAKE));
 });
 
 test('the database step follows DATABASE_URL when it is set, because the pool takes its host from it before PGHOST', async () => {
@@ -2699,7 +2764,9 @@ test('no variable\'s value reaches the payload or a log line: not a key, the hos
   process.env.BESTTIME_API_KEY = BT_KEY;
   process.env.REVENUECAT_WEBHOOK_SECRET = WEBHOOK_SECRET;
   process.env.SENTRY_DSN = SENTRY_DSN_FAKE;
-  const values = [STRIPE_KEY, RC_KEY, RC_V2_KEY, BT_KEY, WEBHOOK_SECRET, SENTRY_DSN_FAKE, DB_PUBLIC_HOST, DB_PRIVATE_HOST, DB_USER, DB_PASSWORD, DB_NAME, DB_PORT];
+  process.env.STRIPE_WEBHOOK_SECRET = STRIPE_HOOK_FAKE;
+  process.env.RESEND_WEBHOOK_SECRET = RESEND_HOOK_FAKE;
+  const values = [STRIPE_KEY, RC_KEY, RC_V2_KEY, BT_KEY, WEBHOOK_SECRET, SENTRY_DSN_FAKE, STRIPE_HOOK_FAKE, RESEND_HOOK_FAKE, RESEND_HOOK_BYTES, DB_PUBLIC_HOST, DB_PRIVATE_HOST, DB_USER, DB_PASSWORD, DB_NAME, DB_PORT];
   // Twice: with the pool reading PGHOST and its siblings, and with a
   // DATABASE_URL that carries all of them at once. Each time the SELECT 1
   // fails with the words a real authentication error uses, user and host in

@@ -352,21 +352,10 @@ router.post('/', async (req, res) => {
 // variables can only ever refuse says so once when it starts, the way
 // routes/emailWebhook.js names a missing Resend secret. A process with neither
 // variable is the dormant state and says nothing.
+// The words live in services/proBilling.js, which the money hub's setup step
+// reads too.
 function setupProblems() {
-  const problems = [];
-  const keySet = billing.stripeConfigured();
-  const secretSet = billing.stripeWebhookConfigured();
-  if (keySet && !secretSet) {
-    problems.push('STRIPE_SECRET_KEY is set but STRIPE_WEBHOOK_SECRET is not set to a usable value (16 characters or more), so POST /api/stripe-webhook answers 503 to every Stripe event and no Pro or Roost change made at Stripe is applied. Copy the signing secret of the endpoint for /api/stripe-webhook (Webhooks in the Stripe dashboard) into it.');
-  }
-  if (secretSet && !keySet) {
-    problems.push('STRIPE_WEBHOOK_SECRET is set but STRIPE_SECRET_KEY is not, and the webhook needs both, so POST /api/stripe-webhook answers 503 to every Stripe event.');
-  }
-  const problem = billing.stripeWebhookSecretProblem();
-  if (problem) {
-    problems.push(`STRIPE_WEBHOOK_SECRET ${problem}, so every Stripe delivery will fail its signature check. Copy the endpoint's signing secret (Webhooks in the Stripe dashboard) exactly as shown.`);
-  }
-  return problems;
+  return billing.stripeWebhookSetupProblems();
 }
 
 if (process.env.NODE_ENV === 'production') {
