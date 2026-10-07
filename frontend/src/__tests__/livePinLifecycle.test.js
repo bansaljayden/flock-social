@@ -250,6 +250,9 @@ describe('a share moved to another plan ends in the first one the way a stop doe
   } = {}) {
     const calls = [];
     const myTravelRef = { current: null };
+    // App.js locationAskRef: moved on by a sign-out or Location switched off.
+    const locationAskRef = { current: 0 };
+    const asked = [];
     const stop = runLifted(`return ${liftCallbackFn('stopLocationSharing')};`, {
       sharingLocationForFlock: sharing,
       socketStopSharing: (id) => calls.push(['stop sent', id]),
@@ -274,11 +277,12 @@ describe('a share moved to another plan ends in the first one the way a stop doe
       emitLocation: (id, lat, lng, travel) => calls.push(['position sent', id, travel]),
       setSharingLocationForFlock: (v) => calls.push(['sharing', v]),
       geolocationAvailable: () => true,
-      getCurrentPosition: () => calls.push(['fix asked']),
+      getCurrentPosition: (ok, fail) => { calls.push(['fix asked']); asked.push({ ok, fail }); },
       setUserLocation: () => {},
       trackLocationError: () => {},
+      locationAskRef,
     });
-    return { calls, start, myTravelRef };
+    return { calls, start, myTravelRef, locationAskRef, asked };
   }
 
   test("plan 4's stop goes out and its room is left before anything goes to plan 5", () => {
@@ -320,6 +324,23 @@ describe('a share moved to another plan ends in the first one the way a stop doe
     const { calls, start } = startWith({ sharing: null, fix: null });
     start(5);
     expect(calls).toEqual([['travel', null], ['fix asked']]);
+  });
+
+  // A fix that landed after a sign-out went out over the socket of whoever
+  // was signed in by then, so a share one person started was sent as the next.
+  test('a fix that lands after a sign-out, or after Location went off, sends nothing', () => {
+    const { calls, start, locationAskRef, asked } = startWith({ sharing: null, fix: null });
+    start(5);
+    locationAskRef.current += 1;
+    asked[0].ok({ coords: { latitude: 40.7, longitude: -74 } });
+    expect(calls).toEqual([['travel', null], ['fix asked']]);
+  });
+
+  test('a fix that lands in the same session is sent as before', () => {
+    const { calls, start, asked } = startWith({ sharing: null, fix: null });
+    start(5);
+    asked[0].ok({ coords: { latitude: 40.7, longitude: -74 } });
+    expect(calls).toEqual([['travel', null], ['fix asked'], ['position sent', 5, null], ['sharing', 5]]);
   });
 
   test('a plan that is over is refused before the running share is touched', () => {

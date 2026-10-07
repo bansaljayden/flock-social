@@ -424,9 +424,15 @@ export async function pullSettings() {
       if (taken[key] === undefined) continue;
       // A null is a value the account cleared (Switch mode sends userMode:
       // null). Skipped, another device kept its old copy for good.
-      if (taken[key] === null) { localStorage.removeItem(lsKey); continue; }
-      const value = JSON_KEYS.has(key) ? JSON.stringify(taken[key]) : String(taken[key]);
-      localStorage.setItem(lsKey, value);
+      // One write that fails (storage at quota, say, on a long pinned list)
+      // must not stop the rest: it used to jump to the catch below, so the keys
+      // before it had changed in storage, the screen heard nothing, and every
+      // later pull failed the same way. The value still reaches the screen.
+      try {
+        if (taken[key] === null) { localStorage.removeItem(lsKey); continue; }
+        const value = JSON_KEYS.has(key) ? JSON.stringify(taken[key]) : String(taken[key]);
+        localStorage.setItem(lsKey, value);
+      } catch (_) { /* storage full or blocked */ }
     }
     pullSeq += 1;
     lastPull = { seq: pullSeq, askedAt, session: mine, values: taken };

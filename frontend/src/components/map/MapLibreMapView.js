@@ -71,7 +71,7 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { useTheme } from '../../context/ThemeContext';
 import { starSvgString } from '../ui/Icons';
-import { lsGet } from '../../lib/storage';
+import { lsGet, lsSet } from '../../lib/storage';
 import { queueSync } from '../../services/userSettings';
 import { geolocationAvailable, getCurrentPosition, watchPosition, clearWatch } from '../../services/geolocation';
 
@@ -1072,7 +1072,9 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     if (!SATELLITE_AVAILABLE) return;
     const newType = mapType === 'roadmap' ? 'hybrid' : 'roadmap';
     setMapType(newType);
-    localStorage.setItem('flock_map_type', newType);
+    // lsSet: at quota a bare write threw before queueSync and the style swap,
+    // so the choice never reached the account and the map kept its old style.
+    lsSet('flock_map_type', newType);
     queueSync({ mapType: newType });
     map.setStyle(newType === 'roadmap' ? ROADMAP_STYLE(mapIsDark) : SATELLITE_STYLE);
     map.once('styledata', () => rehydrateAfterStyleSwap(map));
