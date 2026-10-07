@@ -31,6 +31,10 @@
 //   5. an answer with no consent on record, and the column is never read, not
 //      even when reading it would fail
 //   6. the flag takes one value, and the frontend sends that value
+//
+// Allow also says which question it answered (migration 122), and /chat reads
+// the zone a turn carries only on a yes to one that names it. That is run on a
+// real database in birdieConsentCopyRealDb.test.js.
 
 const test = require('node:test');
 const assert = require('node:assert');
@@ -45,26 +49,38 @@ process.env.GOOGLE_PLACES_API_KEY = 'test-places-key';
 delete process.env.PAYWALL_ENABLED;
 delete process.env.NODE_ENV;
 
-// --- a users table with one column that matters ----------------------------
+// --- a users table with the two columns that matter -------------------------
+// The consent time (migration 100) and which question it answered (migration
+// 122). The statements' own Postgres semantics are run for real in
+// birdieConsentCopyRealDb.test.js; this file is about who is held to them.
 const pool = require('../config/database');
 const consentAt = new Map(); // user id -> Date | null
+const consentCopy = new Map(); // user id -> number | null
 let sql = [];
 pool.query = (text, params = []) => {
   const flat = String(text).replace(/\s+/g, ' ').trim();
   sql.push(flat);
   const id = params[0];
-  if (/^SELECT birdie_ai_consent_at FROM users WHERE id = \$1$/.test(flat)) {
+  // GET /consent reads the time; /chat reads it with the question.
+  if (/^SELECT birdie_ai_consent_at(, birdie_ai_consent_copy)? FROM users WHERE id = \$1$/.test(flat)) {
     if (!consentAt.has(id)) return Promise.resolve({ rows: [], rowCount: 0 });
+    return Promise.resolve({ rows: [{ birdie_ai_consent_at: consentAt.get(id), birdie_ai_consent_copy: consentCopy.get(id) ?? null }], rowCount: 1 });
+  }
+  if (/^UPDATE users SET birdie_ai_consent_copy = CASE WHEN birdie_ai_consent_at IS NULL THEN \$2::smallint ELSE GREATEST\(birdie_ai_consent_copy, \$2::smallint\) END, birdie_ai_consent_at = COALESCE\(birdie_ai_consent_at, NOW\(\)\) WHERE id = \$1 RETURNING birdie_ai_consent_at$/.test(flat)) {
+    if (!consentAt.has(id)) return Promise.resolve({ rows: [], rowCount: 0 });
+    const copy = params[1] ?? null;
+    if (!consentAt.get(id)) {
+      consentAt.set(id, new Date());
+      consentCopy.set(id, copy);
+    } else if (copy !== null) {
+      consentCopy.set(id, Math.max(consentCopy.get(id) ?? copy, copy));
+    }
     return Promise.resolve({ rows: [{ birdie_ai_consent_at: consentAt.get(id) }], rowCount: 1 });
   }
-  if (/^UPDATE users SET birdie_ai_consent_at = COALESCE\(birdie_ai_consent_at, NOW\(\)\) WHERE id = \$1 RETURNING birdie_ai_consent_at$/.test(flat)) {
-    if (!consentAt.has(id)) return Promise.resolve({ rows: [], rowCount: 0 });
-    if (!consentAt.get(id)) consentAt.set(id, new Date());
-    return Promise.resolve({ rows: [{ birdie_ai_consent_at: consentAt.get(id) }], rowCount: 1 });
-  }
-  if (/^UPDATE users SET birdie_ai_consent_at = NULL WHERE id = \$1 RETURNING id$/.test(flat)) {
+  if (/^UPDATE users SET birdie_ai_consent_at = NULL, birdie_ai_consent_copy = NULL WHERE id = \$1 RETURNING id$/.test(flat)) {
     if (!consentAt.has(id)) return Promise.resolve({ rows: [], rowCount: 0 });
     consentAt.set(id, null);
+    consentCopy.set(id, null);
     return Promise.resolve({ rows: [{ id }], rowCount: 1 });
   }
   if (/FROM users WHERE id/.test(flat)) {
@@ -118,6 +134,7 @@ let nextUserId = 5000;
 test.beforeEach(() => {
   CURRENT_USER = { id: ++nextUserId, name: 'Ava' };
   consentAt.set(CURRENT_USER.id, null);
+  consentCopy.set(CURRENT_USER.id, null);
   sql = [];
   chatsCreated = 0;
   sendCalls = 0;
@@ -158,7 +175,7 @@ test('with no recorded consent, a turn is refused and nothing reaches Gemini', a
   assert.strictEqual(sendCalls, 0, 'nothing is sent to Gemini');
   // The consent read is the only thing the refused turn did. The name and
   // birthday the prompt is built from were never read.
-  assert.deepStrictEqual(sql, ['SELECT birdie_ai_consent_at FROM users WHERE id = $1']);
+  assert.deepStrictEqual(sql, ['SELECT birdie_ai_consent_at, birdie_ai_consent_copy FROM users WHERE id = $1']);
 });
 
 test('a refused turn costs no message from the day', async () => {

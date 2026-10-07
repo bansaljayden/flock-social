@@ -851,8 +851,13 @@ function lockForecastResult(result, { salesOff = false } = {}) {
 // sent. Only a client that shows consent copy naming the time zone sends one;
 // a build from before it (the installed iOS build, a stale web tab) showed
 // copy that did not, so its turns are never read in the zone its device
-// registered for push. With no usable zone it is unknown, and Birdie is told
-// so rather than handed UTC as if it were theirs.
+// registered for push. Sending it is not enough on its own: the client that
+// sends it shows its question only to an account with no yes on record, so an
+// account that said yes to the earlier question sends the zone without ever
+// having seen it named. For a client held to the recorded answer the zone is
+// read only when that yes was given to a question that names it (WHICH
+// QUESTION A YES ANSWERED, below). With no usable zone it is unknown, and
+// Birdie is told so rather than handed UTC as if it were theirs.
 
 // A moment as somebody in `zone` reads it: "Friday, October 9, 2026, 8:00 PM".
 // Put together from parts, because the joined form moves between ICU versions
@@ -1909,7 +1914,9 @@ router.use(authenticate);
 // ---------------------------------------------------------------------------
 // Every Birdie turn sends the user's messages, first name, age range, what
 // they have open in the app, their area when location is on, and on request
-// their plans and friends' names to Google. App Store Guideline 5.1.2(i) asks
+// their plans and friends' names to Google, and on a yes to a question that
+// names it, their time zone with the date and time there (WHICH QUESTION A
+// YES ANSWERED below). App Store Guideline 5.1.2(i) asks
 // for explicit permission before personal data goes to a third-party AI, so
 // the app asks once, before the first message, and records the answer here.
 //
@@ -1934,6 +1941,19 @@ const BIRDIE_CONSENT_FLOW = 'ask';
 // fallback wording and names nothing it cannot do.
 const BIRDIE_CONSENT_MESSAGE = "Birdie needs your OK before it sends anything to Google's Gemini.";
 
+// WHICH QUESTION A YES ANSWERED (migration 122). The question has changed
+// once in a way that decides what a turn may carry: since October 6, 2026 it
+// names the time zone, with the date and time it is there, and the client
+// that shows it sends the zone on every turn (WHOSE CLOCK BIRDIE PLANS ON).
+// That client asks only an account with no yes on record, so an account that
+// said yes to the earlier question is never asked again. POST /consent records
+// the number of the question the client showed: 2 is the first that names the
+// zone. A client that sends none (App Store build 1.0, a web tab on an older
+// bundle) showed the earlier one, and every yes from before the column reads
+// the same, so on those the zone stays out of the turn.
+const BIRDIE_CONSENT_COPY_ZONE = 2;
+const consentNamesZone = (copy) => Number.isInteger(copy) && copy >= BIRDIE_CONSENT_COPY_ZONE;
+
 const consentBody = (consentedAt) => ({
   consented: Boolean(consentedAt),
   consentedAt: consentedAt ? new Date(consentedAt).toISOString() : null,
@@ -1952,28 +1972,50 @@ router.get('/consent', async (req, res) => {
 });
 
 // POST /api/ai/consent. Allow. A repeated Allow keeps the first time it was
-// given, which is the moment the record exists to show.
-router.post('/consent', async (req, res) => {
-  try {
-    const result = await pool.query(
-      `UPDATE users SET birdie_ai_consent_at = COALESCE(birdie_ai_consent_at, NOW())
-        WHERE id = $1 RETURNING birdie_ai_consent_at`,
-      [req.user.id]
-    );
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Account not found' });
-    res.json(consentBody(result.rows[0].birdie_ai_consent_at));
-  } catch (err) {
-    console.error('Birdie consent grant error:', err);
-    res.status(500).json({ error: 'That did not save. Try again.' });
+// given, which is the moment the record exists to show. `copy` is the number
+// of the question the client showed (WHICH QUESTION A YES ANSWERED). A fresh
+// yes records exactly that, nothing when none was sent; a repeated one keeps
+// the highest given since the last withdrawal, because the earlier yes still
+// stands. Every value on the right reads the row as it was before this write.
+router.post('/consent',
+  [
+    // A JSON number and one value, so a typo in a future client is a 400 in
+    // testing rather than a yes recorded against words it did not show. Null
+    // and absent are the builds that name no question.
+    body('copy').optional({ values: 'null' })
+      .custom((v) => v === BIRDIE_CONSENT_COPY_ZONE)
+      .withMessage('copy names a question this server does not know'),
+  ],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
+      const copy = req.body?.copy ?? null;
+      const result = await pool.query(
+        `UPDATE users
+            SET birdie_ai_consent_copy = CASE WHEN birdie_ai_consent_at IS NULL THEN $2::smallint
+                                              ELSE GREATEST(birdie_ai_consent_copy, $2::smallint) END,
+                birdie_ai_consent_at = COALESCE(birdie_ai_consent_at, NOW())
+          WHERE id = $1 RETURNING birdie_ai_consent_at`,
+        [req.user.id, copy]
+      );
+      if (result.rows.length === 0) return res.status(404).json({ error: 'Account not found' });
+      res.json(consentBody(result.rows[0].birdie_ai_consent_at));
+    } catch (err) {
+      console.error('Birdie consent grant error:', err);
+      res.status(500).json({ error: 'That did not save. Try again.' });
+    }
   }
-});
+);
 
 // DELETE /api/ai/consent. Withdraw. Birdie stops sending anything from the
-// next message, and the app asks again the next time Birdie opens.
+// next message, and the app asks again the next time Birdie opens. The
+// question goes with the time, so a later yes on a client that shows the
+// earlier question inherits nothing from this one.
 router.delete('/consent', async (req, res) => {
   try {
     const result = await pool.query(
-      'UPDATE users SET birdie_ai_consent_at = NULL WHERE id = $1 RETURNING id',
+      'UPDATE users SET birdie_ai_consent_at = NULL, birdie_ai_consent_copy = NULL WHERE id = $1 RETURNING id',
       [req.user.id]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Account not found' });
@@ -2105,11 +2147,17 @@ router.post('/chat',
       // what the app answers by showing the question. A client that does not
       // send the flag is an installed build with no question to show, and it
       // skips this read entirely (see WHO IS HELD TO IT above).
+      //
+      // The same read says which question the yes answered, and a yes to one
+      // that did not name the time zone keeps the zone this turn carries out
+      // of it (WHICH QUESTION A YES ANSWERED above).
+      let zoneWithheld = false;
       if (req.body.consentFlow === BIRDIE_CONSENT_FLOW) {
-        const consent = await pool.query('SELECT birdie_ai_consent_at FROM users WHERE id = $1', [req.user.id]);
+        const consent = await pool.query('SELECT birdie_ai_consent_at, birdie_ai_consent_copy FROM users WHERE id = $1', [req.user.id]);
         if (!consent.rows[0]?.birdie_ai_consent_at) {
           return res.status(403).json({ error: BIRDIE_CONSENT_MESSAGE, code: BIRDIE_CONSENT_REQUIRED });
         }
+        zoneWithheld = !consentNamesZone(consent.rows[0].birdie_ai_consent_copy);
       }
 
       const genAI = getGenAI();
@@ -2223,7 +2271,9 @@ router.post('/chat',
       // The user's clock (WHOSE CLOCK BIRDIE PLANS ON): the zone this client
       // sent if ICU accepts it, else unknown. Never the push zone: a client
       // that sends no zone is a build whose consent copy does not list it.
-      const userZone = validTimeZone(req.body.timeZone) || null;
+      // And unknown on a yes given to a question that did not name it:
+      // today's client sends its zone whichever question that yes answered.
+      const userZone = zoneWithheld ? null : (validTimeZone(req.body.timeZone) || null);
       const clock = { nowMs: Date.now(), timeZone: userZone };
 
       // Build Gemini chat history (must start with 'user' role, no consecutive same-role)

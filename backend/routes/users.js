@@ -2850,7 +2850,7 @@ router.get('/export', async (req, res) => {
               reliability_score, total_plans_joined, total_plans_attended,
               created_at, updated_at, password,
               phone_discoverable, phone_discoverable_at, grace_forfeited, friend_code,
-              birdie_ai_consent_at, analytics_opt_out
+              birdie_ai_consent_at, birdie_ai_consent_copy, analytics_opt_out
          FROM users WHERE id = $1`,
       [userId]
     );
@@ -3137,6 +3137,10 @@ router.get('/export', async (req, res) => {
         // or null while they have not (migration 100). A consent record, for
         // the same reason as phone_discoverable_at above.
         birdie_ai_consent_at: account.birdie_ai_consent_at ?? null,
+        // Which wording of Birdie's question that yes answered (migration
+        // 122): 2 for the first that names the time zone, null for an earlier
+        // one or none on record. Part of the same consent record.
+        birdie_ai_consent_copy: account.birdie_ai_consent_copy ?? null,
         // Whether the account switched off "Share usage analytics" (migration
         // 111). A choice the user made, so it is theirs to see.
         analytics_opt_out: account.analytics_opt_out ?? false,

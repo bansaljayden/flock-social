@@ -159,6 +159,12 @@ const SUITE_SLOTS = {
                                  // Far from 69-72, which suites written the
                                  // same day in other branches are likeliest
                                  // to take.
+  birdieConsentCopyRealDb: 90,   // new in 2026-10-06; which question a Birdie
+                                 // yes answered (migration 122) and the zone
+                                 // /chat reads on it, through the real router.
+                                 // Far from 69-72 and 81, which suites written
+                                 // the same day in other branches took or are
+                                 // likeliest to take.
 };
 
 // Two suites sharing a slot would silently reintroduce exactly the collision the
