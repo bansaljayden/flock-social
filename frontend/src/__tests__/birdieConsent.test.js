@@ -18,7 +18,9 @@
  *      and every Birdie turn says this client asks (consentFlow: 'ask'),
  *      which is what makes the server hold it to the recorded answer.
  *   4. Settings: the switch that takes the answer back exists, under Safety
- *      and privacy, and flips through the same function the panel uses.
+ *      and privacy, and flips through the same function the panel uses. Its
+ *      paragraph says a yes to the question before the time zone was named
+ *      leaves the zone out until the switch goes off and on again.
  *
  * The server half (the route refuses a client that asks and has no yes on
  * record, and serves a build installed before the question exactly as
@@ -360,7 +362,27 @@ describe('Settings: the answer can be taken back', () => {
     expect(settings).toContain('<Toggle label="Let Birdie use Google\'s Gemini" on={birdieConsented} onChange={() => { if (!birdieConsentBusy) answerBirdieConsent(!birdieConsented); }} />');
   });
 
-  test('the screen behind it lists what is sent the way the panel does, time zone included', () => {
-    expect(settings).toContain('it sends Google your messages to Birdie, your first name, your age range, your time zone with the date and time it is there, and what you have open in Flock.');
+  test('the screen behind it lists what is sent the way the panel does, and says when the time zone goes', () => {
+    // Every account with a yes reads this, a yes given to the question before
+    // it named the time zone included, and the server leaves the zone out for
+    // that one (backend routes/ai.js, WHICH QUESTION A YES ANSWERED).
+    expect(settings).toContain("it sends Google your messages to Birdie, your first name, your age range, and what you have open in Flock. It also sends your time zone with the date and time it is there, unless you said yes before Birdie's question named them. That earlier yes keeps them out until you turn this off and on again.");
+  });
+
+  test('off and on again is a yes to the question that names the zone', () => {
+    // What "turn this off and on again" rests on. Off withdraws, and the server
+    // clears the question with the time; on is a fresh yes, sent with the
+    // number of this build's question, which names the zone (the client calls
+    // above pin both requests; backend birdieConsentCopyRealDb.test.js pins
+    // what the server records for each).
+    const app = read('App.js');
+    const start = app.indexOf('const answerBirdieConsent = useCallback(');
+    expect(start).toBeGreaterThan(-1);
+    const answer = app.slice(start, app.indexOf('}, [onUserPatch]);', start));
+    expect(answer).toContain('const data = allow ? await grantBirdieConsent() : await withdrawBirdieConsent();');
+    expect(settings).toContain('answerBirdieConsent(!birdieConsented)');
+    const api = read('services', 'api.js');
+    expect(api).toContain('export const BIRDIE_CONSENT_COPY = 2;');
+    expect(api).toContain("return request('/api/ai/consent', { method: 'POST', body: JSON.stringify({ copy: BIRDIE_CONSENT_COPY }) });");
   });
 });
