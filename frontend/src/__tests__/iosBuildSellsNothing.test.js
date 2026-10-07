@@ -264,7 +264,7 @@ describe('the You tab', () => {
     // read leaves behind: refreshEntitlements swallows the error and the
     // snapshot stays null, so isPro reads false for a real subscriber.
     expect(app).toContain("const entitlementsUnknown = typeof entitlements?.isPremium !== 'boolean';");
-    expect(app).toContain('getEntitlements().then((data) => applyEntitlements(seq, data)).catch(() => {});');
+    expect(app).toContain("(takeBootRead('entitlements') || getEntitlements()).then((data) => applyEntitlements(seq, data)).catch(() => {});");
     expect(app).toMatch(/\n {10}entitlements,\n {10}entitlementsUnknown,\n/);
     expect(read('screens', 'ProfileSettings.js')).toMatch(/\n {2}entitlements,\n {2}entitlementsUnknown,\n/);
     // The rule, for each state the snapshot can be in.
