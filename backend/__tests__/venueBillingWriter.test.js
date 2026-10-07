@@ -1637,6 +1637,64 @@ test('a checkout handed back after the plan was used and its claim moved on is n
   assert.deepStrictEqual(refundsMade.slice(refundsBefore), [], 'an ended plan was refunded on a replay');
 });
 
+test('after the documented move, the old plan\'s later events never take the grant from the new listing\'s plan', async () => {
+  // Checkout sells the listing the claim names now a plan of its own while
+  // the old one runs out its period, and the account has one grant row. Any
+  // live event of the old plan (an update, a resent checkout, the old success
+  // link) wrote that row back to the old listing, and the new plan, paid for,
+  // served nothing until its own next event, up to a year away. The listing
+  // guard read the old plan's cancel date off the row and let the claim move
+  // again while the new plan renewed.
+  const [PLACE_A, PLACE_B] = placePair();
+  const [PLACE_C] = placePair();
+  const id = await venue({ verified: true, placeId: PLACE_A });
+  const adminId = await admin();
+  await testPool.query("UPDATE venue_profiles SET stripe_customer_id = 'cus_TWO_PLANS' WHERE user_id = $1", [id]);
+  const yearEnds = Math.floor(Date.now() / 1000) + 300 * DAY_S;
+  const oldPlan = (extra = {}) => ({ customer: 'cus_TWO_PLANS', metadata: boundTo(PLACE_A)(id), ...period('price_roost_year', yearEnds), ...extra });
+  sub('sub_old_listing', id, 'active', oldPlan());
+  const oldCheckout = completedCheckout('cs_old_listing', 'sub_old_listing', id, PLACE_A, 'in_old_listing');
+  await venueBilling.handleVenueEvent(completedEvent(oldCheckout));
+  assert.strictEqual((await state(id)).served, 'pro');
+
+  // Set to end, the claim moved, the new listing verified.
+  await venueBilling.syncVenueSubscription(sub('sub_old_listing', id, 'active', oldPlan({ cancel_at: yearEnds, cancel_at_period_end: true })));
+  const moved = await profileCall('PUT', '/api/venue-profile', { as: id, body: { googlePlaceId: PLACE_B } });
+  assert.strictEqual(moved.status, 200, moved.text);
+  const verified = await adminCall('PUT', `/api/admin/venues/${await profileIdOf(id)}/verify`, { as: adminId, body: { verified: true, googlePlaceId: PLACE_B } });
+  assert.strictEqual(verified.status, 200, verified.text);
+
+  // The new listing buys its own plan, and it is served.
+  await venueBilling.createVenueCheckout({ id, email: `owner-two-plans-${id}@example.com`, name: 'Owner' }, 'monthly');
+  await venueBilling.syncVenueSubscription(sub('sub_new_listing', id, 'active', { customer: 'cus_TWO_PLANS', metadata: boundTo(PLACE_B)(id) }));
+  assert.strictEqual((await state(id)).served, 'pro');
+
+  // The old plan, still active until its year ends: an update event, Stripe
+  // resending its completed checkout, and the owner's old success link.
+  const cancelsBefore = cancels.length;
+  const refundsBefore = refundsMade.length;
+  await venueBilling.syncVenueSubscription('sub_old_listing');
+  await venueBilling.handleVenueEvent(completedEvent(oldCheckout));
+  const confirmed = await venueBilling.confirmVenueCheckout(id, 'cs_old_listing');
+  assert.ok(!confirmed.refused);
+  let s = await state(id);
+  assert.strictEqual(s.grant.stripe_subscription_id, 'sub_new_listing', 'the old listing\'s plan took the grant back');
+  assert.strictEqual(s.served, 'pro', 'the new listing\'s paid plan stopped being served');
+  assert.strictEqual(cancels.length, cancelsBefore);
+  assert.deepStrictEqual(refundsMade.slice(refundsBefore), []);
+  // The plan that renews still holds the claim where it is.
+  const third = await profileCall('PUT', '/api/venue-profile', { as: id, body: { googlePlaceId: PLACE_C } });
+  assert.strictEqual(third.status, 409, `the claim moved off a renewing plan: ${third.text}`);
+  assert.strictEqual(third.body.code, 'ROOST_ON_LISTING');
+
+  // The old plan's year runs out, and its end changes nothing either.
+  sub('sub_old_listing', id, 'canceled', oldPlan({ ended_at: Math.floor(Date.now() / 1000) }));
+  await venueBilling.syncVenueSubscription('sub_old_listing');
+  s = await state(id);
+  assert.strictEqual(s.grant.stripe_subscription_id, 'sub_new_listing');
+  assert.strictEqual(s.served, 'pro');
+});
+
 test('a checkout handed back after an admin revoked the claim refunds nothing: that refund is a person\'s call', async () => {
   const [PLACE] = placePair();
   const id = await venue({ verified: true, placeId: PLACE });

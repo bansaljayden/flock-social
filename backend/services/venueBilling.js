@@ -888,6 +888,17 @@ function grantFromSubscription(sub, now = Date.now(), { unknownPriceIsRoost = fa
 //            subscription ever take the row from a live grant WE wrote for a
 //            different listing, whatever its dates: a plan for venue A is not
 //            a reason to end a comp given to venue B.
+//            And a subscription bound to another listing than the one the
+//            claim names never takes the row from a different, live Stripe
+//            plan that serves the claim (bound to the claim's listing, or to
+//            none). After the move ROOST_LISTING_MSG describes, the old plan
+//            runs out its period while the new listing has a plan of its own,
+//            and any live event of the old one (an update, a resent checkout,
+//            the old success link) wrote the row back to the old listing: the
+//            new plan, paid for, served nothing until its own next event, up
+//            to a year away, and the listing guard (routes/venueProfile.js),
+//            which reads this row, saw the old plan's cancel date and let the
+//            claim move again while the new plan renewed.
 //   upd      moves the cache only when it changes, only when the grant was
 //            written, never to a paid tier for an unverified profile, and
 //            never to a paid tier for a claim that names a different listing
@@ -943,6 +954,14 @@ const SYNC_SQL = `WITH old AS (
        AND NOT ($11::boolean AND venue_subscriptions.expires_at IS NOT NULL
                 AND EXCLUDED.expires_at >= venue_subscriptions.expires_at
                 AND venue_subscriptions.google_place_id IS NOT DISTINCT FROM EXCLUDED.google_place_id))
+      AND NOT (EXCLUDED.google_place_id IS NOT NULL
+       AND EXCLUDED.google_place_id IS DISTINCT FROM (SELECT google_place_id FROM old)
+       AND venue_subscriptions.source = 'stripe'
+       AND venue_subscriptions.stripe_subscription_id IS DISTINCT FROM EXCLUDED.stripe_subscription_id
+       AND venue_subscriptions.status IN ('active', 'trialing', 'past_due')
+       AND venue_subscriptions.expires_at > NOW()
+       AND (venue_subscriptions.google_place_id IS NULL
+            OR venue_subscriptions.google_place_id IS NOT DISTINCT FROM (SELECT google_place_id FROM old)))
     RETURNING user_id
   ),
   upd AS (
@@ -1144,11 +1163,13 @@ async function syncVenueSubscription(subscriptionId) {
     if (g.live && otherListing) {
       console.error(`[venue-billing] venue user ${userId} holds a live Roost subscription (${sub.id}) bought for listing ${boundPlace || 'none'}, but the claim names ${row.place_id || 'no listing'}, so it is not served there. To move the plan, set flock_venue_place_id on the subscription in Stripe to the listing the claim names; otherwise cancel it.`);
     }
-    // Live and not written can only be the rule in SYNC_SQL that keeps a
-    // grant we wrote: Stripe is billing a venue that already holds Roost from
-    // us for longer than this period. Nothing is taken from the venue, but
-    // somebody is paying for what we gave away, so it is said out loud.
-    if (g.live && !(row.written > 0)) {
+    // Live and not written, for a plan not bound to another listing, can
+    // only be the rule in SYNC_SQL that keeps a grant we wrote: Stripe is
+    // billing a venue that already holds Roost from us for longer than this
+    // period. Nothing is taken from the venue, but somebody is paying for
+    // what we gave away, so it is said out loud. A plan for another listing
+    // that was kept off the row is said just above.
+    if (g.live && !(row.written > 0) && !otherListing) {
       console.error(`[venue-billing] venue user ${userId} holds a Roost grant from us (a comp or a hand-sold plan) that runs past Stripe subscription ${sub.id} (${g.status}), so the grant was kept and the subscription was not written over it. Stripe has billed a venue we already cover: refund or cancel it in Stripe, or end the grant.`);
     }
     if (g.live && row.verified !== true) {
