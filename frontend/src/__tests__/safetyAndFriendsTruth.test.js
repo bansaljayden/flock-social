@@ -81,7 +81,7 @@ test('an address book with no readable numbers says that, not "0 numbers"', () =
 });
 
 test('requests that arrived while the app was closed are loaded at boot', () => {
-  expect(app).toMatch(/getPendingRequests\(\)\.then\(rows => setPendingRequests\(/);
+  expect(app).toMatch(/\(takeBootRead\('pendingRequests'\) \|\| getPendingRequests\(\)\)\.then\(rows => setPendingRequests\(/);
 });
 
 test('the friend count moves when a request is accepted', () => {

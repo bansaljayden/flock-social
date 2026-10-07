@@ -491,7 +491,7 @@ describe('the safety screen, which is the one that matters most', () => {
   });
 
   test('the mount read reports its failure too', () => {
-    const mount = region(APP, 'getTrustedContacts()\n', '}, []);');
+    const mount = region(APP, "(takeBootRead('trustedContacts') || getTrustedContacts())\n", '}, []);');
     expect(mount).toMatch(/setTrustedContactsError\(/);
     expect(mount).not.toMatch(/\.catch\(\(\) => \{\}\)/);
   });

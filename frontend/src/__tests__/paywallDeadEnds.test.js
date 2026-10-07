@@ -125,7 +125,7 @@ describe('Pro bought somewhere else', () => {
     // A resume read sent before the webhook lands can arrive after the upgrade
     // poll's Pro answer; applying it would flip a paying user back to free.
     expect(app).toMatch(/const applyEntitlements = useCallback\(\(seq, data\) => \{\n\s+if \(seq < entitlementsAppliedRef\.current\) return;/);
-    expect(app).toMatch(/const seq = \+\+entitlementsSentRef\.current;\n\s+getEntitlements\(\)\.then\(\(data\) => applyEntitlements\(seq, data\)\)/);
+    expect(app).toMatch(/const seq = \+\+entitlementsSentRef\.current;\n\s+\(takeBootRead\('entitlements'\) \|\| getEntitlements\(\)\)\.then\(\(data\) => applyEntitlements\(seq, data\)\)/);
     expect(app).toMatch(/applyEntitlements\(seq, data\);\n[\s\S]{0,200}if \(!data\?\.isPremium\) again\(\);/);
     // Both readers go through it; nothing else sets the snapshot from a fetch.
     expect((app.match(/setEntitlements\(data\)/g) || []).length).toBe(1);
