@@ -125,7 +125,8 @@ async function ensureAxisColumn() {
 }
 
 // Same for the stamp an unanswered by-name lookup leaves (stampFailedAsk),
-// which arrives with migration 125 and which ORDER_BY_STALEST names.
+// which arrives with migration 125 and which ORDER_BY_STALEST and
+// NAME_UNANSWERED_LAST name.
 async function ensureNameUnansweredColumn() {
   await pool.query('ALTER TABLE ml_venues ADD COLUMN IF NOT EXISTS besttime_name_unanswered_at TIMESTAMPTZ');
 }
@@ -208,7 +209,23 @@ function createdAfterFrom(argv) {
 // venues among the retry-eligible misses sat at ranks 3 to 217 by reviews, so a
 // month spent by reviews alone reached few of them. The ORDER BY is one of two
 // fixed strings; nothing from argv is spliced into the SQL.
-const ORDER_BY_SERVED = `(SELECT COUNT(*) FROM served_predictions sp
+//
+// Both orders first move back a venue whose last ask by name got no answer (a
+// 503, a 429, a timeout: stampFailedAsk stamps besttime_name_unanswered_at and
+// leaves besttime_attempted_at alone). Neither order changes from one run to
+// the next, so such a venue came first in every run, and under --limit=1 it
+// was the only venue ever asked. So the venues with no such stamp come
+// first, in the order's own sequence, and the unanswered ones after them,
+// the one asked longest ago first, so they take turns. When
+// nothing has gone unanswered every key here is NULL and the order is what it
+// always was. A stamp older than the venue's last answer (a 404 or a find
+// after an earlier 503) is history and does not count.
+const NAME_UNANSWERED_LAST = `CASE WHEN besttime_attempted_at IS NULL
+                                    OR besttime_name_unanswered_at > besttime_attempted_at
+                                  THEN besttime_name_unanswered_at END ASC NULLS FIRST`;
+const ORDER_BY_REVIEWS = `${NAME_UNANSWERED_LAST}, review_count DESC NULLS LAST, id`;
+const ORDER_BY_SERVED = `${NAME_UNANSWERED_LAST},
+                         (SELECT COUNT(*) FROM served_predictions sp
                            WHERE sp.venue_place_id = ml_venues.google_place_id
                              AND sp.served_at > NOW() - INTERVAL '60 days') DESC,
                          review_count DESC NULLS LAST, id`;
@@ -253,7 +270,7 @@ function selectionOptions(argv) {
   }
   return {
     withoutWeekly: argv.includes('--without-weekly'),
-    orderBy: order === 'reviews' ? 'review_count DESC NULLS LAST, id'
+    orderBy: order === 'reviews' ? ORDER_BY_REVIEWS
       : order === 'served' ? ORDER_BY_SERVED
         : order === 'stalest' ? ORDER_BY_STALEST
           : 'city, id',
@@ -499,7 +516,8 @@ async function collectWeekly() {
   // that got no answer has not been given its admission, so the venue stays
   // on offer for one. Unstamped, a by-name venue that always drew a 503 (or a
   // 429, or a timeout) was first in every --order=stalest run, and under
-  // --limit=1 the only venue ever asked. Only while the row holds no id: a
+  // --limit=1 the only venue ever asked; --order=reviews and --order=served
+  // read the stamp too (NAME_UNANSWERED_LAST). Only while the row holds no id: a
   // row that got its id from this very lookup was answered, whatever failed
   // after.
   //

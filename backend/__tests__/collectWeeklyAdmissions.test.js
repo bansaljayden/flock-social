@@ -147,12 +147,19 @@ test('the collector wires both into the run before the first call', () => {
   assert.ok(check > 0 && firstCall > check, 'the admission check must run before the first BestTime call');
 });
 
+// The key --order=reviews and --order=served lead with, whitespace squashed:
+// a venue whose last ask by name went unanswered goes after the rest.
+// collectWeeklyStalest.test.js runs both orders against a real table.
+const UNANSWERED_LAST = 'CASE WHEN besttime_attempted_at IS NULL OR besttime_name_unanswered_at > besttime_attempted_at '
+  + 'THEN besttime_name_unanswered_at END ASC NULLS FIRST';
+const squash = (sql) => sql.replace(/\s+/g, ' ').trim();
+const literally = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 test('--order=reviews and --without-weekly aim the rest of a month at uncovered, well-reviewed places', () => {
   assert.deepStrictEqual(selectionOptions([]), { withoutWeekly: false, orderBy: 'city, id' });
-  assert.deepStrictEqual(
-    selectionOptions(['--order=reviews', '--without-weekly']),
-    { withoutWeekly: true, orderBy: 'review_count DESC NULLS LAST, id' }
-  );
+  const reviews = selectionOptions(['--order=reviews', '--without-weekly']);
+  assert.strictEqual(reviews.withoutWeekly, true);
+  assert.strictEqual(squash(reviews.orderBy), `${UNANSWERED_LAST}, review_count DESC NULLS LAST, id`);
   // Anything else refuses: a typo must not quietly fall back to the oldest rows.
   for (const bad of ['--order=', '--order=rating', '--order=reviews;drop']) {
     assert.match(selectionOptions([bad]).error, /--order must be "reviews"/, bad);
@@ -161,7 +168,7 @@ test('--order=reviews and --without-weekly aim the rest of a month at uncovered,
 
 test('--order=served puts the venues people were served first, then the rest by reviews', async () => {
   const { orderBy } = selectionOptions(['--order=served']);
-  assert.match(orderBy, /FROM served_predictions sp/);
+  assert.ok(squash(orderBy).startsWith(`${UNANSWERED_LAST}, (SELECT COUNT(*) FROM served_predictions sp `), orderBy);
   assert.match(orderBy, /sp\.venue_place_id = ml_venues\.google_place_id/);
   assert.match(orderBy, /INTERVAL '60 days'\) DESC,\s+review_count DESC NULLS LAST, id$/);
   const { exitCode, selects } = await selectsFor([
@@ -169,7 +176,8 @@ test('--order=served puts the venues people were served first, then the rest by 
   ]);
   assert.notStrictEqual(exitCode, 1);
   assert.strictEqual(selects.length, 1);
-  assert.match(selects[0].sql, / ORDER BY \(SELECT COUNT\(\*\) FROM served_predictions sp /);
+  assert.match(selects[0].sql,
+    new RegExp(` ORDER BY ${literally(UNANSWERED_LAST)}, \\(SELECT COUNT\\(\\*\\) FROM served_predictions sp `));
   assert.match(selects[0].sql, / LIMIT \$3$/);
   assert.deepStrictEqual(selects[0].params, ['lehigh', 30, 40]);
 });
@@ -261,7 +269,7 @@ test('the month-end command selects uncovered, never-tried venues, most reviewed
   assert.match(sql, / AND besttime_venue_id IS NULL /);
   assert.match(sql, / AND besttime_attempted_at IS NULL /);
   assert.match(sql, / AND NOT EXISTS \(SELECT 1 FROM ml_training_data t WHERE t\.venue_id = ml_venues\.id AND t\.collection_mode = 'weekly'\) /);
-  assert.match(sql, / ORDER BY review_count DESC NULLS LAST, id LIMIT \$2$/);
+  assert.match(sql, new RegExp(` ORDER BY ${literally(UNANSWERED_LAST)}, review_count DESC NULLS LAST, id LIMIT \\$2$`));
   assert.deepStrictEqual(params, ['philly', 5]);
 });
 
