@@ -99,7 +99,15 @@ test('a screen is at least ten times faster than the library on a clean message'
   const text = 'running late, save me a seat by the window';
   const time = (fn) => { const t = process.hrtime.bigint(); for (let i = 0; i < 200; i += 1) fn(text); return Number(process.hrtime.bigint() - t); };
   time((t) => lib.isProfane(t)); time(screen); // warm both
-  const libNs = time((t) => lib.isProfane(t));
-  const screenNs = time(screen);
+  // The fastest of five rounds each. A round of the screen takes about 5 ms,
+  // so a collection or a busy machine landing in it doubled the time: timed
+  // once, the speed-up of about 19 read as 11 in one run of twelve, and as 9.5
+  // in a run of the whole suite, which failed.
+  let libNs = Infinity;
+  let screenNs = Infinity;
+  for (let round = 0; round < 5; round += 1) {
+    libNs = Math.min(libNs, time((t) => lib.isProfane(t)));
+    screenNs = Math.min(screenNs, time(screen));
+  }
   assert.ok(screenNs * 10 < libNs, `library ${(libNs / 200 / 1000).toFixed(1)} µs, screen ${(screenNs / 200 / 1000).toFixed(1)} µs per call`);
 });
