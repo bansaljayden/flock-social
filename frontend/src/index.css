@@ -408,6 +408,18 @@ button, a, [role="button"], input, select, textarea {
   z-index: 0;
 }
 
+/* THE TAB BAR IN A WINDOW NARROWER THAN A PHONE. Five tabs with 14 px side
+   padding ran 3 px off a 320 px window ("You", measured 2026-10-07). No phone
+   that runs iOS 18 is that narrow, but iPadOS 27 makes iPhone-only apps freely
+   resizable, so the app can be opened in one. Below 360 px the side padding
+   drops to 8 px. !important because the buttons set their padding inline. */
+@media (max-width: 359px) {
+  .main-nav-tab {
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+  }
+}
+
 /* Film-grain texture — fixed, non-interactive, barely-there. Gives surfaces a
    physical, editorial feel instead of flat digital vectors (high-end technique).
    Self-contained SVG so it works offline inside the Capacitor WebView. */

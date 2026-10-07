@@ -14198,7 +14198,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           { id: 'chat', label: 'Messages' },
           { id: 'profile', label: 'You' },
         ].map(t => (
-          <button className="hit44" key={t.id} onClick={() => handleTabClick(t.id)}
+          <button className="hit44 main-nav-tab" key={t.id} onClick={() => handleTabClick(t.id)}
             aria-current={currentTab === t.id ? 'page' : undefined}
             aria-label={t.id === 'chat' ? messagesTabLabel : undefined}
             style={{
