@@ -762,8 +762,8 @@ export default function ProfileSettings({
                       // nothing refreshed, so a saved handle read as blank on
                       // the next visit.
                       onUserUpdated?.({ venmo_username: venmoUsername, cashapp_cashtag: cashappCashtag, zelle_identifier: zelleIdentifier });
-                      showToast('Payment methods saved');
-                    } catch (err) { if (!needsEmailVerification(err, 'save a payment handle')) showToast(err.message, 'error'); }
+                      showToast('Pay-back handles saved');
+                    } catch (err) { if (!needsEmailVerification(err, 'save a pay-back handle')) showToast(err.message, 'error'); }
                     setPaymentSaving(false);
                   }} style={{ ...styles.gradientButton, marginTop: '4px', opacity: paymentSaving ? 0.5 : 1 }}>
                     {paymentSaving ? 'Saving...' : 'Save'}

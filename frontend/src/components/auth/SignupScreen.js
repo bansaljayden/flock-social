@@ -330,7 +330,7 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
       )}>
         <p className="auth-sub" style={{ margin: '0 0 18px' }}>
           {linkSent
-            ? 'Your account exists. Clicking the link is what lets you start a flock, add friends and save a payment handle. If it has not landed in a minute, check your spam folder.'
+            ? 'Your account exists. Clicking the link is what lets you start a flock, add friends and save a pay-back handle. If it has not landed in a minute, check your spam folder.'
             : 'Your account exists and your password works. Our mail did not leave, so there is nothing in your inbox to look for yet. Ask for the link below, and check your spam folder once it arrives.'}
         </p>
         {resendNote && <p role="status" className="auth-hint" style={{ margin: '0 0 12px' }}>{resendNote}</p>}
