@@ -353,6 +353,18 @@ const INVENTORY = [
     why: 'It only orders one account\'s own syncs, so a caller can queue behind nobody but themselves, and every caller still gets a read that began after it asked. Empty at rest; proven in proWebCheckout.test.js (five at once: one connection at a time, two reads).',
   },
 
+  // ── routes/revenuecat.js ──────────────────────────────────────────────────
+  {
+    file: 'routes/revenuecat.js', name: 'syncQueues', kind: 'inflight',
+    key: 'a Flock account id the webhook has already found a users row for',
+    callerControls: 'nothing a stranger can reach: the route answers 401 before this without the shared secret, and an id with no users row never gets an entry',
+    protects: 'the database pool: each subscriber re-read checks out a pooled connection and waits on the account lock, so a burst of deliveries for one account could hold every connection while one read ran',
+    denominator: 'n/a, a per-account queue of at most one running and one waiting read, not a counter',
+    bound: 'one entry per account with a re-read running right now; the entry deletes itself when its last queued read settles, success or failure',
+    verdict: 'SAFE',
+    why: 'It only orders one account\'s own re-reads, the same queue routes/pro.js keeps for POST /api/pro/sync. Every delivery still gets a read that began after it arrived, so collapsing a burst loses nothing. Empty at rest.',
+  },
+
   // ── routes/publicCrowd.js ─────────────────────────────────────────────────
   {
     file: 'routes/publicCrowd.js', name: 'ipHits', kind: 'counter',

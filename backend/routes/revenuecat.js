@@ -270,8 +270,10 @@ const MAX_TRANSFER_IDS = 50;
 // inside a single delivery, and RevenueCat hangs up on a delivery that has not
 // answered within 60 seconds and sends it again. Fifty is far too many to
 // re-read: one TRANSFER used to cost up to a hundred reads. A real transfer
-// names the accounts on its two sides, rarely more than two, and five reads at
-// that ceiling still answer inside the minute.
+// names the accounts on its two sides, rarely more than two. Five reads at
+// that ceiling answer inside the minute when they start together; one that
+// first waits behind another read of the same account (syncFresh) can take
+// longer, so this caps the reads and does not promise the time.
 //
 // Counted after the ids with no users row are dropped (flockAccounts, below),
 // since those are never read, and refused rather than truncated for the reason
@@ -435,7 +437,7 @@ const PREMIUM_BY_EVENT = new Map([
 function announceBodyTrust(type, ids) {
   announceOnce(
     'body-trust',
-    `[RevenueCat] REVENUECAT_SECRET_API_KEY is not set, so this ${String(type || 'event').slice(0, 40)} for [${ids}] `
+    `[RevenueCat] REVENUECAT_SECRET_API_KEY is not set or too short to be a key, so this ${String(type || 'event').slice(0, 40)} for [${ids}] `
     + 'and every event after it is applied from what the event says, with no RevenueCat re-read. The webhook secret '
     + 'is then the only check on users.is_premium, and late or retried events apply in arrival order. Set the '
     + 'RevenueCat secret API key. Said once per process.'
@@ -824,7 +826,7 @@ module.exports.__testing = {
 // one itself.
 if (process.env.NODE_ENV === 'production' && configuredSecret() && !proBilling.revenueCatApiConfigured()) {
   console.error(
-    '[RevenueCat] REVENUECAT_SECRET_API_KEY is not set, so POST /api/revenuecat/webhook writes users.is_premium '
+    '[RevenueCat] REVENUECAT_SECRET_API_KEY is not set or too short to be a key, so POST /api/revenuecat/webhook writes users.is_premium '
     + 'from what each event says, with no RevenueCat re-read. Whoever holds REVENUECAT_WEBHOOK_SECRET can then grant '
     + 'or revoke Pro on any account, and late or retried events apply in arrival order. Set the RevenueCat secret '
     + 'API key on this service.'

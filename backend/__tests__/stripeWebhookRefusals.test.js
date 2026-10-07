@@ -165,7 +165,7 @@ test('the 503 line names whichever Stripe variable is missing', () => {
     noteRefusal('not_configured', T0);
     resetRefusals(T0);
     // A value too short to be a secret is the same as none.
-    setEnv({ STRIPE_SECRET_KEY: API_KEY, STRIPE_WEBHOOK_SECRET: 'whsec_short' });
+    setEnv({ STRIPE_SECRET_KEY: API_KEY, STRIPE_WEBHOOK_SECRET: ['whsec', 'short'].join('_') });
     noteRefusal('not_configured', T0);
   } finally { cap.restore(); }
   const [keyOnly, both, short] = cap.lines.map((l) => l.text);

@@ -512,7 +512,7 @@ test('sync with no RevenueCat key, or a failed read, answers 503 and writes noth
 test('the webhook writes RevenueCat state, so an Apple EXPIRATION cannot switch off a paid web subscriber', async () => {
   setEnv(ON);
   rcEntitlement = { expires_date: new Date(Date.now() + 10 * 864e5).toISOString() };
-  const { calls, restore } = stubPool(async () => null);
+  const { calls, restore } = stubPool(async (sql, params) => (sql.includes('FROM users WHERE id = ANY') ? { rows: params[0].map((id) => ({ id })) } : sql.includes('SELECT 1 FROM users WHERE id = $1') ? { rows: [{ '?column?': 1 }] } : null));
   try {
     const res = await call('/api/revenuecat', revenuecatRoutes, 'POST', '/api/revenuecat/webhook',
       { event: { type: 'EXPIRATION', app_user_id: '7', entitlement_ids: ['pro'] } },
@@ -530,7 +530,7 @@ test('under the subscriber re-read order does not matter: a stale purchase repla
   // re-reads the subscriber and writes "not Pro" instead of granting it again.
   setEnv(ON);
   rcEntitlement = null;
-  const { calls, restore } = stubPool(async () => null);
+  const { calls, restore } = stubPool(async (sql, params) => (sql.includes('FROM users WHERE id = ANY') ? { rows: params[0].map((id) => ({ id })) } : sql.includes('SELECT 1 FROM users WHERE id = $1') ? { rows: [{ '?column?': 1 }] } : null));
   try {
     const res = await call('/api/revenuecat', revenuecatRoutes, 'POST', '/api/revenuecat/webhook',
       { event: { id: 'evt_A', type: 'INITIAL_PURCHASE', app_user_id: '7', entitlement_ids: ['pro'], event_timestamp_ms: 1700000000000 } },
@@ -545,7 +545,7 @@ test('the webhook answers 500 when RevenueCat cannot be asked, so it retries ins
   setEnv(ON);
   const prev = global.fetch;
   global.fetch = async (url, init) => (String(url).includes('revenuecat.com') ? new Response('nope', { status: 502 }) : prev(url, init));
-  const { calls, restore } = stubPool(async () => null);
+  const { calls, restore } = stubPool(async (sql, params) => (sql.includes('FROM users WHERE id = ANY') ? { rows: params[0].map((id) => ({ id })) } : sql.includes('SELECT 1 FROM users WHERE id = $1') ? { rows: [{ '?column?': 1 }] } : null));
   try {
     const res = await call('/api/revenuecat', revenuecatRoutes, 'POST', '/api/revenuecat/webhook',
       { event: { type: 'RENEWAL', app_user_id: '7', entitlement_ids: ['pro'] } },
@@ -646,7 +646,7 @@ test('a 500 never carries a Stripe or Node error code to the client', async () =
 test('a TRANSFER under the subscriber re-read re-reads both sides instead of trusting the event', async () => {
   setEnv(ON);
   rcEntitlement = { expires_date: new Date(Date.now() + 5 * 864e5).toISOString() };
-  const { calls, restore } = stubPool(async () => null);
+  const { calls, restore } = stubPool(async (sql, params) => (sql.includes('FROM users WHERE id = ANY') ? { rows: params[0].map((id) => ({ id })) } : sql.includes('SELECT 1 FROM users WHERE id = $1') ? { rows: [{ '?column?': 1 }] } : null));
   try {
     const res = await call('/api/revenuecat', revenuecatRoutes, 'POST', '/api/revenuecat/webhook',
       { event: { type: 'TRANSFER', transferred_from: ['7'], transferred_to: ['8'] } },
@@ -1171,6 +1171,32 @@ test('a sandbox lifetime unlock is not production Pro either: one-time purchases
   setEnv({ REVENUECAT_SANDBOX_USER_IDS: '7' });
   assert.strictEqual(await billing.fetchProActive(7), true, 'App Review and the operator can still test a lifetime unlock');
   assert.strictEqual(await billing.fetchProActive(8), false);
+});
+
+test('a paid one-time purchase that is not a lifetime unlock never stands in for a sandbox source', async () => {
+  // A one-time entry carries no expiry, so a non-renewing pass that ran out
+  // long ago would read as live forever beside a TestFlight subscription.
+  setEnv({ ...ON, REVENUECAT_SANDBOX_USER_IDS: undefined });
+  const future = new Date(Date.now() + 30 * 864e5).toISOString();
+  rcEntitlement = { expires_date: future, product_identifier: 'flock_pro_monthly' };
+  rcSubscriptions = { flock_pro_monthly: { expires_date: future, is_sandbox: true } };
+  rcNonSubscriptions = { flock_pro_pass_30d: [{ id: 'np_pass', is_sandbox: false }] };
+  assert.strictEqual(await billing.fetchProActive(7), false);
+  rcNonSubscriptions = {};
+});
+
+test('a sandbox lifetime unlock is refused without claiming RevenueCat listed no purchase of it', async () => {
+  setEnv({ ...ON, REVENUECAT_SANDBOX_USER_IDS: undefined });
+  rcEntitlement = { expires_date: null, product_identifier: 'flock_pro_lifetime' };
+  rcSubscriptions = {};
+  rcNonSubscriptions = { flock_pro_lifetime: [{ id: 'np_sandbox', is_sandbox: true }] };
+  const errors = [];
+  const realError = console.error;
+  console.error = (...a) => errors.push(a.join(' '));
+  try {
+    assert.strictEqual(await billing.fetchProActive(7), false);
+  } finally { console.error = realError; rcNonSubscriptions = {}; }
+  assert.deepStrictEqual(errors.filter((e) => /lists no purchase/.test(e)), []);
 });
 
 test('a paid lifetime unlock counts, alone or beside a sandbox subscription RevenueCat names as the source', async () => {
