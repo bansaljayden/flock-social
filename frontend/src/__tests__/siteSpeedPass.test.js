@@ -81,10 +81,31 @@ describe('the app routes open the Google sign-in connection early', () => {
     for (const src of ['/app', '/app/(.*)', '/signup']) {
       const h = vercel.headers.find((x) => x.source === src && !x.has);
       const link = h && h.headers.find((x) => x.key === 'Link');
-      expect(`${src} ${link && link.value}`).toBe(`${src} <https://accounts.google.com>; rel=preconnect`);
+      expect(`${src} ${link && link.value}`).toBe(`${src} <https://accounts.google.com>; rel=preconnect, </bg-city-poster.jpg>; rel=preload; as=image; fetchpriority=high`);
     }
     const home = vercel.headers.find((x) => x.source === '/' && !x.has);
     expect(home.headers.find((x) => x.key === 'Link').value).not.toContain('accounts.google.com');
+  });
+
+  // The sign-in screen's largest paint is the city poster behind the form
+  // (components/auth/AuthShell.js POSTER). React requests it only once the
+  // app's JS has run: ~2.4 s on a throttled phone, so the paint landed at
+  // 3.1 s (2026-10-07). Preloaded from /app's own headers it starts with the
+  // HTML. Only the routes that draw that screen carry it; the landing page
+  // never shows the poster and must not fetch it.
+  test('the app routes preload the sign-in poster, and the landing page does not', () => {
+    const authShell = read('src/components/auth/AuthShell.js');
+    expect(authShell).toMatch(/const POSTER = '\/bg-city-poster\.jpg';/);
+    for (const src of ['/app', '/app/(.*)', '/signup']) {
+      const h = vercel.headers.find((x) => x.source === src && !x.has);
+      expect(h.headers.find((x) => x.key === 'Link').value).toContain('</bg-city-poster.jpg>; rel=preload; as=image');
+    }
+    for (const src of ['/', '/landing', '/about']) {
+      const h = vercel.headers.find((x) => x.source === src && !x.has);
+      const link = h && h.headers.find((x) => x.key === 'Link');
+      expect(`${src} ${link ? link.value : ''}`).not.toContain('bg-city-poster');
+    }
+    expect(fs.existsSync(path.join(FRONTEND, 'public', 'bg-city-poster.jpg'))).toBe(true);
   });
 });
 
