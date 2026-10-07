@@ -846,7 +846,7 @@ export default function ProfileSettings({
                 ...((authUser?.role === 'venue_owner' || authUser?.role === 'admin') ? [{ l: 'Venue dashboard', s: 'venue', icon: Icons.mapPin }] : []),
                 // And the admin console, for the one account that has it.
                 ...(authUser?.role === 'admin' ? [{ l: 'Admin dashboard', s: 'admin', icon: Icons.barChart }] : []),
-                { l: 'Interests', s: 'interests', icon: Icons.target, v: userInterests.length > 0 ? `${userInterests.length} interests` : 'None yet' },
+                { l: 'Interests', s: 'interests', icon: Icons.target, v: userInterests.length > 0 ? `${userInterests.length} interest${userInterests.length === 1 ? '' : 's'}` : 'None yet' },
                 { l: 'Pay-back handles', s: 'payment', icon: Icons.dollar, v: [authUser?.venmo_username && 'Venmo', authUser?.cashapp_cashtag && 'Cash App', authUser?.zelle_identifier && 'Zelle'].filter(Boolean).join(', ') || 'Not set' },
               ],
             },

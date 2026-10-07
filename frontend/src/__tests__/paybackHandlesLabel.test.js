@@ -36,3 +36,8 @@ test('the words around it say the same thing: the save toast, the verify hint, s
   expect(usersRoute).toContain("{ error: 'Failed to save pay-back handles' }");
   expect(usersRoute).not.toMatch(/error: '[^']*payment methods/i);
 });
+
+test('the Interests row counts in the singular for one', () => {
+  // It read "1 interests" (found on the local stack, 2026-10-07).
+  expect(settings).toContain("`${userInterests.length} interest${userInterests.length === 1 ? '' : 's'}`");
+});
