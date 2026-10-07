@@ -20,7 +20,7 @@ import { setStatusBarOverDark, screenTopIsNavy } from './services/systemBars';
 import { geolocationAvailable, getCurrentPosition, watchPosition, clearWatch } from './services/geolocation';
 import { connectSocket, disconnectSocket, getSocket, joinFlock, leaveFlock, sendMessage as socketSendMessage, startTyping, stopTyping, onNewMessage, onUserTyping, onUserStoppedTyping, emitLocation, stopSharingLocation as socketStopSharing, onLocationUpdate, onMemberStoppedSharing, socketSendDm, onNewDm, dmStartTyping, dmStopTyping, onDmUserTyping, onDmUserStoppedTyping, onDmReactionAdded, onDmReactionRemoved, onDmNewVote, dmShareLocation, dmStopSharingLocation, onDmLocationUpdate, onDmMemberStoppedSharing, dmPinVenue, onDmVenuePinned, onFlockInviteReceived, onFlockInviteResponded, onFriendRequestReceived, onFriendRequestResponded, onBudgetUpdated, onBudgetLocked, onBudgetReminder, onBillCreated, onShareSettled, onShareUnsettled, onBillTally, onBillFullySettled, onBillReminder, onGhostCommitted, onNewVote, onVenueSelected, onFlockReactionAdded, onFlockReactionRemoved, onFlockDeleted, onFlockUpdated, onFlockReconfirmOpened, onFlockReconfirmed, onFlockMemberLeft, onReliabilityUpdated, onFlockMessageUnsent, onDmMessageUnsent, onGuestRsvp, onSafetyAlert, onSafetyAlertCancelled, sendDmAck, sendDmOpen, sendFlockAck, sendFlockOpen, onDmDelivered, onDmOpened, onFlockRead, onFlockPinsChanged, onSocketDisconnect } from './services/socket';
 import { syncPushRegistration, readNotificationPermission, onForegroundMessage, onPushNavigate, unregisterPushToken, watchPendingNavigation, safetyIntentIsFor, noteSafetyStandDown, safetyAlarmWasStoodDown, standDownCovers, forgetDeliveredNotifications } from './services/firebase';
-import { resendVerificationEmail, trackPurchaseCompleted, hasRenewableSession, renewSession, primeBootReads, takeBootRead } from './services/api';
+import { resendVerificationEmail, trackPurchaseCompleted, hasRenewableSession, renewSession, primeBootReads, takeBootRead, currentAccount } from './services/api';
 // The last two steps of the invite-link trip: redeem the token this person was
 // carrying when they made an account, then open the flock they were invited to.
 // The reasoning, and everything the token has to survive, is in the service.
@@ -14751,6 +14751,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // anything at all. Nothing is worth that in an emergency. Wait a few
       // seconds for a fix, send either way, and chase the location afterwards.
       hapticAlarm();
+      // Whose alert this is, taken before the wait for a fix: a sign-out and
+      // another sign-in in those seconds must not send it from the next account.
+      const account = currentAccount();
       const first = geolocationAvailable() ? await getSosPosition(SOS_FIRST_FIX_MS, 60000) : { coords: null, denied: false };
       const loc = first.coords;
       // `fresh` says this is somebody pressing SOS, not the location chase,
@@ -14762,6 +14765,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         accuracy: loc?.accuracy,
         includeLocation: !!loc,
         fresh: true,
+        account,
       });
       // There is now something to withdraw. Recorded before the toast so a
       // render triggered by the toast already knows. A 200 means at least one
@@ -14965,12 +14969,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     }
     setSosAlertSending(true);
     try {
+      // Taken before the wait for a fix, as the SOS alert does.
+      const account = currentAccount();
       const pos = await new Promise((resolve, reject) => {
         getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 });
       });
       const data = await shareLocationWithContacts({
         latitude: pos.coords.latitude,
         longitude: pos.coords.longitude,
+        account,
       });
       showToast(data.message || 'Location shared');
       setShowSOS(false);

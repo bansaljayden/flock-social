@@ -67,6 +67,9 @@ export const ThemeProvider = ({ children }) => {
   // dependency, otherwise every sunset tears the interval down and restarts
   // its 60 second phase.
   const themeRef = useRef(theme);
+  // The settings listener below reads the mode on screen without re-running.
+  const themeModeRef = useRef(themeMode);
+  useEffect(() => { themeModeRef.current = themeMode; }, [themeMode]);
 
   const applyTheme = useCallback((newTheme) => {
     themeRef.current = newTheme;
@@ -138,10 +141,16 @@ export const ThemeProvider = ({ children }) => {
   }, [applyTheme]);
 
   // Re-apply theme settings when the user logs in and server settings are
-  // pulled. pullSettings() writes to localStorage, then dispatches this event.
+  // pulled. The pull's own values, not a re-read of storage: a write the pull
+  // could not make (storage at quota) left storage holding the old mode, and
+  // reading it back put the screen in a mode the account no longer had, on
+  // every pull. A key the pull did not hand on is one this device holds
+  // something newer for (services/userSettings.js, newerHere), so what is on
+  // screen stays.
   useEffect(() => {
-    const onSync = () => {
-      const savedMode = readMode();
+    const onSync = (e) => {
+      const pulled = (e && e.detail) || {};
+      const savedMode = pulled.themeMode === 'manual' || pulled.themeMode === 'auto' ? pulled.themeMode : themeModeRef.current;
       setThemeMode(savedMode);
       if (savedMode === 'auto') {
         const nightTime = isNightTime();
@@ -149,7 +158,7 @@ export const ThemeProvider = ({ children }) => {
         applyTheme(nightTime ? 'dark' : 'light');
       } else {
         setIsNightModeActive(false);
-        applyTheme(readSavedTheme());
+        applyTheme(pulled.theme === 'dark' || pulled.theme === 'light' ? pulled.theme : themeRef.current);
       }
     };
     window.addEventListener('flock-settings-loaded', onSync);
