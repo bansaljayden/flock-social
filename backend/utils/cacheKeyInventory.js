@@ -963,7 +963,8 @@ const INVENTORY = [
       + 'after every gate that needs no query has passed. Every read that sees the venue\'s '
       + 'rows also writes it (noteCurvePresence) from rows it already paid for: a strip\'s '
       + 'whole-curve read, the rows it replays from curveCache, a slot lookup that finds '
-      + 'rows, the neighbour self-read. A no lands only if nothing was written after its '
+      + 'rows, the neighbour self-read, the row count a venue profile save makes '
+      + '(services/venueCorpus.js). A no lands only if nothing was written after its '
       + 'read was sent, so a slow probe cannot put an old no back over a newer yes',
     denominator: 'uncached presence probes, charged to the same crowd-venue-lookup budget '
       + 'as the slot lookup in front of it (1500/hr, 5000/day per account). A hit is '
