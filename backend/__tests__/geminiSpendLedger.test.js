@@ -245,19 +245,29 @@ test('waiting out the hour does not buy an unlimited day', () => {
   // patient caller does not experience frozen time — they wait an hour and come
   // back, and the daily ceiling is the only thing standing between that and 24
   // hours of full-rate spend. So the clock is advanced here.
-  __resetGeminiSpend();
+  //
+  // From 01:00 UTC, not from whenever the suite runs. The four bursts and the
+  // refused fifth span 4h04m, so a start after 19:56 UTC put the fifth on the
+  // next UTC day, where the daily ceiling had reset, and it went through.
   const uid = 505;
+  const STEP_MS = 61 * 60 * 1000;
+  const start = Date.UTC(2026, 6, 15, 1, 0, 0);
+  const utcDay = (ms) => new Date(ms).toISOString().slice(0, 10);
+  const bursts = PER_USER_DAILY_TOKENS / PER_USER_HOURLY_TOKENS;
+  assert.strictEqual(utcDay(start + bursts * STEP_MS), utcDay(start),
+    'precondition: the refused burst must fall on the first burst\'s UTC day, or a day rollover could be what decides it');
   const realNow = Date.now;
-  let clock = realNow();
+  let clock = start;
   Date.now = () => clock;
   try {
+    __resetGeminiSpend();
     let hours = 0;
     let charged = 0;
     // Each pass spends a full hourly allowance, then waits out the rolling hour.
     // The UTC day is not advanced, so only the daily ceiling can stop this.
     while (realAllow(uid, PER_USER_HOURLY_TOKENS)) {
       charged += PER_USER_HOURLY_TOKENS;
-      clock += 61 * 60 * 1000;
+      clock += STEP_MS;
       if (++hours > 24) break;
     }
     assert.strictEqual(charged, PER_USER_DAILY_TOKENS,
