@@ -44,6 +44,7 @@
 import React from 'react';
 import { checkVenueClaim, createVenueProfile, getVenueDetails, searchVenues } from '../services/api';
 import { lsSet } from '../lib/storage';
+import { queueSync } from '../services/userSettings';
 import { BirdieStill, WARM_BIRD } from '../components/ui/BirdieBird';
 
 export default function VenueOnboarding({
@@ -503,6 +504,9 @@ export default function VenueOnboarding({
         if (created?.role && typeof onUserPatch === 'function') onUserPatch({ role: created.role });
         setUserMode('venue');
         try { localStorage.setItem('flockUserMode', 'venue'); } catch (e) { /* storage blocked */ }
+        // And the account's copy, or the next settings pull puts its older
+        // mode back (rememberMode in App.js says why).
+        queueSync({ userMode: 'venue' });
         if (typeof setShowModeSelection === 'function') setShowModeSelection(false);
         setShowVenueOnboarding(false);
         setCurrentScreen('venueDashboard');
@@ -529,7 +533,7 @@ export default function VenueOnboarding({
                  force-quitting the app or crashing the screen. This walks
                  them back to the consumer app they came from; a real owner
                  just doesn't tap it. */
-              <button className="hit44" onClick={() => { setShowVenueOnboarding(false); setUserMode('user'); try { localStorage.setItem('flockUserMode', 'user'); } catch { /* mode still flips for this session */ } setCurrentTab('home'); setCurrentScreen('main'); }} style={{ background: 'none', border: 'none', color: 'rgba(148,163,184,0.6)', fontSize: 'var(--t-label)', cursor: 'pointer', padding: '8px 0', fontWeight: '500' }}>Not a venue? Back to Flock</button>
+              <button className="hit44" onClick={() => { setShowVenueOnboarding(false); setUserMode('user'); try { localStorage.setItem('flockUserMode', 'user'); } catch { /* mode still flips for this session */ } queueSync({ userMode: 'user' }); setCurrentTab('home'); setCurrentScreen('main'); }} style={{ background: 'none', border: 'none', color: 'rgba(148,163,184,0.6)', fontSize: 'var(--t-label)', cursor: 'pointer', padding: '8px 0', fontWeight: '500' }}>Not a venue? Back to Flock</button>
             )}
             {/* Visible skip on every optional step. The owner can fill any of
                 these in later from Settings, and saying so here is what stops

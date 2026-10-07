@@ -94,6 +94,24 @@ const settledAt = {};
 const inFlight = {};
 let appliedAskedAt = 0;
 
+// THE LAST ANSWER, KEPT FOR A SCREEN THAT WAS NOT LISTENING YET. The pull
+// goes out as the session starts, before the app's main screen has mounted
+// and attached its listener, and an answer that lands in between was missed:
+// the screen kept the device's older copy and wrote it back. latestPull()
+// hands that answer over when the listener attaches, numbered so it is taken
+// once, and checked again against anything this device changed since.
+let pullSeq = 0;
+let lastPull = null;
+
+export function latestPull() {
+  if (!lastPull || lastPull.session !== session) return null;
+  const values = {};
+  Object.keys(lastPull.values).forEach((key) => {
+    if (!newerHere(key, lastPull.askedAt)) values[key] = lastPull.values[key];
+  });
+  return { seq: lastPull.seq, values };
+}
+
 function newerHere(key, askedAt) {
   if (Object.prototype.hasOwnProperty.call(pending, key)) return true;
   if (inFlight[key]) return true;
@@ -186,8 +204,11 @@ function flush() {
 
 function retryLater() {
   if (retryTimer) return;
-  // Offline: the 'online' listener sends it when the connection is back.
-  if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+  // Armed whatever the device says about being online. navigator.onLine can
+  // stay false on a connection that works (a WebView does this, and api.js
+  // keeps sending once the offline gate's probe gets through), and then
+  // 'online' never fires, so a save waiting for it waited for good. An
+  // attempt made while really offline just fails again, and the pause grows.
   retryDelay = Math.min(retryDelay ? retryDelay * 2 : 5000, 5 * 60 * 1000);
   retryTimer = setTimeout(() => { retryTimer = null; flush(); }, retryDelay);
 }
@@ -205,6 +226,7 @@ if (typeof window !== 'undefined') {
     if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
     retryDelay = 0;
     appliedAskedAt = 0;
+    lastPull = null;
     [queuedAt, settledAt, inFlight].forEach((record) => {
       Object.keys(record).forEach((key) => { delete record[key]; });
     });
@@ -269,7 +291,11 @@ export async function pullSettings() {
       const value = JSON_KEYS.has(key) ? JSON.stringify(taken[key]) : String(taken[key]);
       localStorage.setItem(lsKey, value);
     }
-    window.dispatchEvent(new CustomEvent('flock-settings-loaded', { detail: taken }));
+    pullSeq += 1;
+    lastPull = { seq: pullSeq, askedAt, session: mine, values: taken };
+    const loaded = new CustomEvent('flock-settings-loaded', { detail: taken });
+    loaded.pullSeq = pullSeq;
+    window.dispatchEvent(loaded);
     return settings;
   } catch (err) {
     console.warn('[settings] pull failed:', err.message);

@@ -27,7 +27,7 @@ import { resendVerificationEmail, trackPurchaseCompleted, hasRenewableSession, r
 import { redeemPendingInvite, openJoinedFlock, rememberInvite, storedGuestTokens } from './services/inviteHandoff';
 import { setAvailability, clearAvailability, getMyAvailability, getFriendsAvailability, getSensorCurrent, getSensorHistory, checkInManual, getNfcCheckin, getCalendarEvents, createCalendarEvent, deleteCalendarEvent } from './services/api';
 import { joinVenueRoom, leaveVenueRoom, joinVenueContentRoom, leaveVenueContentRoom, onVenueSensorUpdate, onVenueCheckin, onSessionRevoked, onSocketError, onAvailabilityUpdated, onBlockedBy, onUnblockedBy, onContentRemoved, onContentRestored } from './services/socket';
-import { pullSettings, queueSync, sameAsAccount } from './services/userSettings';
+import { pullSettings, queueSync, sameAsAccount, latestPull } from './services/userSettings';
 import { liftReaders } from './services/flockReaders';
 // html5-qrcode is NOT imported here on purpose. It is loaded with a dynamic
 // import() inside startQrScanner, the one place that uses it. See the note
@@ -4958,6 +4958,19 @@ const readReliability = (v) => {
   return Number.isFinite(n) ? n : null;
 };
 
+// The mode this device opens in, and the account's copy of it. A mode chosen
+// anywhere (the picker, You's Venue and Admin dashboard rows, the venue
+// sign-in door, the admin link, Switch mode) is the person's choice. Only the
+// picker used to tell the account, so the next settings pull put the
+// account's older mode back and the launch after that opened in it.
+function rememberMode(mode) {
+  try {
+    if (mode) localStorage.setItem('flockUserMode', mode);
+    else localStorage.removeItem('flockUserMode');
+  } catch (e) { /* storage blocked: the mode still applies this session */ }
+  queueSync({ userMode: mode || null });
+}
+
 const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // Theme — shadows the outer static colors/styles with reactive versions
   const { toggleTheme, isDark, themeMode, isNightModeActive, setAutoMode } = useTheme();
@@ -5038,12 +5051,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // Regular users are forced to user mode — clear any stale venue/admin mode
     if (!isPrivileged && (userMode === 'venue' || userMode === 'admin')) {
       setUserMode('user');
-      localStorage.setItem('flockUserMode', 'user');
+      rememberMode('user');
     }
     if (showModeSelection && !isPrivileged) {
       setUserMode('user');
       setShowModeSelection(false);
-      localStorage.setItem('flockUserMode', 'user');
+      rememberMode('user');
     }
   }, [showModeSelection, authUser, userMode]);
 
@@ -5112,7 +5125,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     if (venueLoginFlag) {
       setUserMode('venue');
       setShowModeSelection(false);
-      localStorage.setItem('flockUserMode', 'venue');
+      rememberMode('venue');
       // Check if venue profile already exists — skip onboarding if so
       const gen = venueRouteGenRef.current;
       getVenueProfile().then(p => {
@@ -9199,8 +9212,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
   // pullSettings() broadcasts the account's stored settings once it has them.
   // Adopt the two this screen owns so a second device agrees with the first.
+  const appliedPullRef = useRef(0);
   useEffect(() => {
     const onSettings = (e) => {
+      if (e.pullSeq) appliedPullRef.current = Math.max(appliedPullRef.current, e.pullSeq);
       const s = e.detail || {};
       // pullSettings hands on only the keys this device holds nothing newer
       // for (newerHere in services/userSettings.js): a change still queued,
@@ -9239,6 +9254,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       if (fresh('flockOrder') && Array.isArray(s.flockOrder)) setFlockOrder(s.flockOrder);
     };
     window.addEventListener('flock-settings-loaded', onSettings);
+    // The pull goes out as the session starts, before this screen mounts, so
+    // its answer can land before this listener exists. Take it now if so
+    // (latestPull in services/userSettings.js), once.
+    const missed = latestPull();
+    if (missed && missed.seq > appliedPullRef.current) onSettings({ detail: missed.values, pullSeq: missed.seq });
     return () => window.removeEventListener('flock-settings-loaded', onSettings);
   }, [toggleLocation]);
 
@@ -9383,7 +9403,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // mode picker's Admin Dashboard and Access (handleAdminModeSelect).
       // Without this, a browser that had never picked a mode opened the picker
       // over the console, and the link took three taps to arrive.
-      lsSet('flockUserMode', 'admin');
+      rememberMode('admin');
       setUserMode('admin');
       setShowModeSelection(false);
       setCurrentScreen('adminRevenue');
@@ -15264,7 +15284,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     if (authUser?.role === 'admin') {
       // Same as openAdminDashboard: a venue read in flight no longer answers.
       venueRouteGenRef.current += 1;
-      localStorage.setItem('flockUserMode', 'admin');
+      rememberMode('admin');
       setUserMode('admin');
       setShowModeSelection(false);
       setShowAdminPrompt(false);
@@ -16655,7 +16675,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       if (gen !== venueRouteGenRef.current) return;
       setShowVenueOnboarding(!(p && p.business_name));
     }).catch(() => { if (gen === venueRouteGenRef.current) setShowVenueOnboarding(true); });
-    try { localStorage.setItem('flockUserMode', 'venue'); } catch (e) { /* storage blocked */ }
+    rememberMode('venue');
     setShowModeSelection(false);
     setCurrentScreen('venueDashboard');
   }, []);
@@ -16669,7 +16689,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // take the console away when it lands (venueRouteGenRef).
     venueRouteGenRef.current += 1;
     setUserMode('admin');
-    try { localStorage.setItem('flockUserMode', 'admin'); } catch (e) { /* storage blocked */ }
+    rememberMode('admin');
     setShowModeSelection(false);
     setCurrentScreen('adminRevenue');
   }, [authUser]);
@@ -16775,8 +16795,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     if (mode === 'admin') {
       setShowAdminPrompt(true);
     } else {
-      localStorage.setItem('flockUserMode', mode);
-      queueSync({ userMode: mode });
+      rememberMode(mode);
       setUserMode(mode);
       setShowModeSelection(false);
       if (mode === 'venue') {
@@ -16794,7 +16813,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     launchChoseScreenRef.current = false;
     venueBootRoutedRef.current = false;
     venueRouteGenRef.current += 1;
-    localStorage.removeItem('flockUserMode');
+    rememberMode(null);
     setUserMode(null);
     setShowModeSelection(true);
     setCurrentScreen('main');
