@@ -85,6 +85,7 @@ const venueEntitlements = require('../services/venueEntitlements');
 const { requireVenueTier, getVenueTier, venueBillingEnabled } = venueEntitlements;
 const { PREMIUM_DAILY_LIMIT, FREE_DAILY_LIMIT, checkUserRateLimit, getUsedToday } = require('../services/birdieUsage');
 const { FREE_MONTHLY_FORECASTS, getUsedThisMonth, recordView } = require('../services/forecastUsage');
+const { withSteppingClock } = require('./helpers/steppingClock');
 
 const entitlementsRouter = require('../routes/entitlements');
 
@@ -367,30 +368,6 @@ test('a spent day carries the next UTC midnight as its reset, and a day with chi
   assert.strictEqual(left.birdie.remaining, FREE_DAILY_LIMIT);
   assert.strictEqual(left.birdie.resetsAt, null);
 });
-
-// A clock for the cases that need two reads of "now" to land on two days. It
-// starts where the case puts it and moves forward a millisecond every time
-// anything reads it, through Date.now() or new Date(), and it is installed only
-// for the length of one case.
-async function withSteppingClock(startMs, fn) {
-  const RealDate = global.Date;
-  let next = startMs;
-  const read = () => { const v = next; next += 1; return v; };
-  class SteppingDate extends RealDate {
-    constructor(...args) {
-      if (args.length === 0) super(read());
-      else super(...args);
-    }
-
-    static now() { return read(); }
-  }
-  global.Date = SteppingDate;
-  try {
-    return await fn({ set: (ms) => { next = ms; } });
-  } finally {
-    global.Date = RealDate;
-  }
-}
 
 // ONE INSTANT FOR THE WHOLE BIRDIE BLOCK. The count and the reset time were
 // two reads of the clock, so a snapshot that straddled UTC midnight could count
