@@ -53,6 +53,14 @@ process.env.NODE_ENV = process.env.NODE_ENV || 'test';
 process.env.WEATHER_API_KEY = process.env.WEATHER_API_KEY || 'test-key';
 process.env.TICKETMASTER_API_KEY = process.env.TICKETMASTER_API_KEY || 'test-key';
 
+// The clock is pinned to the middle of a UTC day (helpers/pinnedClock.js)
+// before either service is loaded. The weather and event ledgers key their day
+// on the UTC date, so from the real clock a flood that was under way at 00:00
+// UTC had its counters reset partway through and missed its exact counts.
+const { pinClock } = require('./helpers/pinnedClock');
+const pinnedClock = pinClock(Date.UTC(2026, 6, 15, 12, 0, 0));
+test.after(() => pinnedClock.restore());
+
 const weatherService = require('../services/weatherService');
 const mlPredictor = require('../services/mlPredictor');
 
@@ -89,7 +97,7 @@ function restoreFetch() { global.fetch = realFetch; }
 // in real time is impossible inside one test. The clock is advanced instead,
 // by a minute every fifty charges, which exercises the real minute rollover
 // rather than stepping around it. The UTC day never rolls: eighteen virtual
-// minutes.
+// minutes on a clock pinned to noon UTC (top of this file).
 test('an anonymous flood cannot spend the whole weather day', async () => {
   stubFetch();
   const realNow = Date.now.bind(Date);

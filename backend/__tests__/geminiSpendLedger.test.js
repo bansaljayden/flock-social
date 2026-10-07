@@ -50,6 +50,15 @@ process.env.GOOGLE_PLACES_API_KEY = 'test-places-key';
 delete process.env.PAYWALL_ENABLED;
 delete process.env.NODE_ENV;
 
+// The clock is pinned to the middle of a UTC day (helpers/pinnedClock.js)
+// before anything below can read it. Both meters in this file key their day on
+// the UTC date and most tests charge and then read back, so from the real
+// clock whichever test was under way at 00:00 UTC read the new day's empty
+// counter and failed.
+const { pinClock } = require('./helpers/pinnedClock');
+const pinnedClock = pinClock(Date.UTC(2026, 6, 15, 12, 0, 0));
+test.after(() => pinnedClock.restore());
+
 const BACKEND = path.join(__dirname, '..');
 const serverSrc = fs.readFileSync(path.join(BACKEND, 'server.js'), 'utf8');
 const handlersSrc = fs.readFileSync(path.join(BACKEND, 'sockets', 'handlers.js'), 'utf8');
