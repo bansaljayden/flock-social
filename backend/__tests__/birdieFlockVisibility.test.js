@@ -24,8 +24,13 @@ test('navigate_app teaches the model the tab id the enum accepts', () => {
 test('the daily refusal is in voice and names its window', () => {
   const i = ai.indexOf("if (rateCheck.reason === 'daily') {");
   assert.ok(i > -1);
-  const block = ai.slice(i, i + 700);
-  assert.match(block, /const ms = msUntilUtcMidnight\(\);\s*return res\.status\(429\)\.json\(refusalBody\(res, ms, `that's my limit for today\. i'm back \$\{waitPhrase\(ms\)\}`\)\);/);
+  const end = ai.indexOf('return res.status(429).json({ error: rateCheck.error });', i);
+  assert.ok(end > i);
+  const block = ai.slice(i, end);
+  // The window runs to the end of the day the meter found spent (its `day`),
+  // not to a midnight read off the clock again, which across midnight was the
+  // next day's and sent the person away for a day.
+  assert.match(block, /const ms = Date\.parse\(chargeDayEndsAt\(rateCheck\.day\)\) - Date\.now\(\);\s*return res\.status\(429\)\.json\(refusalBody\(res, ms, `that's my limit for today\. i'm back \$\{waitPhrase\(ms\)\}`\)\);/);
 });
 
 test('the turn budget is checked before the send that follows tool work', () => {
