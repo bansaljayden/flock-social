@@ -240,7 +240,7 @@ function bootStderr(env) {
 }
 
 test('at boot in production, a live webhook without the API key is announced', () => {
-  const said = /REVENUECAT_SECRET_API_KEY is not set, so POST \/api\/revenuecat\/webhook writes users\.is_premium from what each event says/;
+  const said = /REVENUECAT_SECRET_API_KEY is not set or too short to be a key, so POST \/api\/revenuecat\/webhook writes users\.is_premium from what each event says/;
 
   const missing = bootStderr({ NODE_ENV: 'production', REVENUECAT_WEBHOOK_SECRET: WEBHOOK_SECRET });
   assert.match(missing, said, 'production with the webhook secret and no API key started in silence');
@@ -258,7 +258,7 @@ test('at boot in production, a live webhook without the API key is announced', (
 
   // A secret too short to count refuses everything too. It is not announced as
   // a webhook taking events at their word; it is announced for what it is.
-  const short = bootStderr({ NODE_ENV: 'production', REVENUECAT_WEBHOOK_SECRET: 'tooshort' });
+  const short = bootStderr({ NODE_ENV: 'production', REVENUECAT_WEBHOOK_SECRET: 'x'.repeat(8) });
   assert.doesNotMatch(short, said);
   assert.match(short, /REVENUECAT_WEBHOOK_SECRET is 8 characters/);
 });

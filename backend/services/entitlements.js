@@ -237,10 +237,10 @@ function previewUserIds() {
 // REVENUECAT_WEBHOOK_SECRET is unset. So turning the paywall on without the
 // secret meters every account down to the free tier and makes it impossible for
 // any of them to ever leave it: the purchase succeeds in the App Store, the
-// entitlement event is refused, and the customer has paid for nothing. Both
-// variables are unset today, which is the correct dormant state; they have to be
-// turned on in the right ORDER, and this is the only place in the process that
-// can notice they were not.
+// entitlement event is refused, and the customer has paid for nothing. The
+// webhook secret is set in production and PAYWALL_ENABLED is off, which is the
+// correct dormant state; they have to be turned on in the right ORDER, and this
+// is the only place in the process that can notice they were not.
 //
 // It warns rather than overriding. Quietly ignoring an operator's explicit
 // PAYWALL_ENABLED=true because of the value of a different variable is a worse

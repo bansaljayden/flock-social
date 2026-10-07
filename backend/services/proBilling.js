@@ -57,6 +57,11 @@ const rcSecret = () => keyValue(process.env.REVENUECAT_SECRET_API_KEY);
 const rcStripePublic = () => keyValue(process.env.REVENUECAT_STRIPE_PUBLIC_KEY);
 const stripeConfigured = () => !!stripeSecret();
 
+// The one-time products that grant Pro for life (fetchProActive). Nothing
+// one-time is sold today; a time-limited pass, if one is ever sold, does not
+// belong here, because a one-time purchase carries no expiry to read.
+const LIFETIME_PRO_PRODUCTS = new Set(['flock_pro_lifetime']);
+
 // Accounts allowed to be Pro through a SANDBOX purchase: App Review's demo
 // account and the operator's own test account, as numeric ids, comma
 // separated. Everyone else's sandbox purchase unlocks nothing (fetchProActive).
@@ -230,10 +235,12 @@ async function fetchProActive(userId) {
   // An entitlement that names no product is not a shape RevenueCat sends, has
   // no purchase to match, and is read as it always was.
   //
-  // "Nothing but Pro" covers one-time purchases too: a paid purchase in either
-  // list stands in for a sandbox source. Selling anything else through
-  // RevenueCat (a consumable, say) breaks that, and this would first have to
-  // learn which products are Pro.
+  // "Nothing but Pro" covers a paid subscription, and a paid one-time purchase
+  // only when it is a lifetime unlock (LIFETIME_PRO_PRODUCTS). A one-time entry
+  // carries no expiry, so live() reads every one of them as live forever, and a
+  // non-renewing pass that ran out long ago would otherwise count beside a
+  // TestFlight subscription for good. Selling anything else through RevenueCat
+  // (a consumable, a pass) means adding it to neither list.
   const pid = ent.product_identifier;
   if (typeof pid !== 'string' || !pid) return true;
   const subs = body.subscriber.subscriptions || {};
@@ -246,7 +253,7 @@ async function fetchProActive(userId) {
   if (sandboxAllowed(userId)) return true;
   const paid = (p) => !!p && p.is_sandbox !== true && !p.refunded_at && live(p);
   const paidElsewhere = Object.values(subs).some(paid)
-    || Object.values(oneTime).some((list) => Array.isArray(list) && list.some(paid));
+    || Object.entries(oneTime).some(([product, list]) => LIFETIME_PRO_PRODUCTS.has(product) && Array.isArray(list) && list.some(paid));
   if (!paidElsewhere && !(purchases && purchases.length)) {
     console.error(`[pro] RevenueCat's ${PRO_ENTITLEMENT} entitlement for account ${userId} names product ${JSON.stringify(pid.slice(0, 80))} but lists no purchase of it, and nothing else paid is live, so it does not count as Pro.`);
   }
