@@ -48,12 +48,14 @@
 #                                      sets this to the old Railway host, the
 #                                      group wins over the code default: check it.
 #
-#    Add ONLY vars the app reads. CRA's DefinePlugin emits the whole process.env
-#    object, so any REACT_APP_* present in the build env is published verbatim in
-#    build/static/js/*.js whether or not a line of code reads it: an unused
-#    billable key in this group is an unused billable key on every visitor's
-#    machine. Maps are MapTiler + MapLibre (App.js), so there is NO Google Maps
-#    key here: REACT_APP_GOOGLE_MAPS_API_KEY has no consumer and must not be set.
+#    Add ONLY vars the app reads. Each one it reads is published verbatim in
+#    build/static/js/*.js. `npm run build` (frontend/scripts/build.js) keeps the
+#    others out, but plain CRA writes its whole process.env object, every
+#    REACT_APP_* in the build env included, wherever code reads a var the env
+#    does not set: an unused billable key in this group is one build-command
+#    change away from every visitor's machine. Maps are MapTiler + MapLibre
+#    (App.js), so there is NO Google Maps key here:
+#    REACT_APP_GOOGLE_MAPS_API_KEY has no consumer and must not be set.
 #    Enforced by frontend/src/__tests__/noUnusedGoogleApiKey.test.js.
 #    Non-REACT_APP vars the scripts below also read from this group:
 #      CM_CERTIFICATE_PRIVATE_KEY   PEM private key. Pins ONE distribution cert

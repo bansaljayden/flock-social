@@ -68,9 +68,10 @@ if touched "frontend/"; then
   # into a failure, and `import/first` and `no-undef` are not gates Jest runs.
   # A build that fails leaves the previous deployment live and says nothing, so
   # the live site silently keeps the old bundle. That happened for seven
-  # commits on 2026-09-05.
+  # commits on 2026-09-05. It runs `npm run build`, not react-scripts directly,
+  # so it builds through frontend/scripts/build.js as the shipped builds do.
   echo "pre-push: frontend production build"
-  ( cd frontend && CI=true npx react-scripts build >/dev/null ) || FAILED="$FAILED frontend-build"
+  ( cd frontend && CI=true npm run build >/dev/null ) || FAILED="$FAILED frontend-build"
 fi
 
 if touched "backend/"; then
