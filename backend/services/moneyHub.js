@@ -782,20 +782,21 @@ function perMonthCents(cadence, amountCents) {
 // ends, for use up to the day before. A vendor that bills each cycle on its
 // own billing day sends it when the cycle holding that last day closes. The
 // cycle billed on that day's own date closes last, a month on, on the same
-// date clamped to a short month's last day: Jan 30 is billed by Feb 28 in
-// 2027. A last day that ends its month is the billing date of every cycle
-// billed on that day or later, and the one billed on the 31st closes last,
-// on the next month's last day: Feb 28, 2027 is billed by Mar 31. A vendor
-// that bills by the calendar month sends it in the first days of the month
-// after the one that last day is in. A usage charge later than both is
-// counted as running and named the same way, since it may be a bill still
-// being paid, and one of those had left the burn (review 2026-10-06: a $30
-// usage plan set to end Sep 30 and still paid on Dec 2, with nothing naming
-// the date). The table holds only the day a charge was paid, so the hub does
-// not say what such a charge paid for. It may be use from the end date on,
-// which leaves the date out of date, or a last bill paid late, such as an
-// August invoice paid Oct 2 on a bill set to end Sep 1 (review 2026-10-06).
-// The screen names the charge and sends the owner to the invoice.
+// date clamped to a short month's last day: use on Jan 30 is billed by
+// Feb 28 in 2027. A last day that ends its month is the billing date of
+// every cycle billed on that day or later, and the one billed on the 31st
+// closes last, on the next month's last day: use on Feb 28, 2027 is billed
+// by Mar 31. A vendor that bills by the calendar month sends it in the first
+// days of the month after the one that last day is in. A usage charge later
+// than both is counted as running and named the same way, since it may be a
+// bill still being paid, and one of those had left the burn (review
+// 2026-10-06: a $30 usage plan set to end Sep 30 and still paid on Dec 2,
+// with nothing naming the date). The table holds only the day a charge was
+// paid, so the hub does not say what such a charge paid for. It may be use
+// from the end date on, which leaves the date out of date, or a last bill
+// paid late, such as an August invoice paid Oct 2 on a bill set to end Sep 1
+// (review 2026-10-06). The screen names the charge and sends the owner to
+// the invoice.
 //
 // A month and a week after the end date, the room this gave at first, read
 // the first charge for use after the date as the last bill whenever the date
