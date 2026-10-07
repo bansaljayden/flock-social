@@ -3601,7 +3601,7 @@ test('a usage bill is billed after the use, so its last bill after the end date 
   assert.strictEqual(moneyHub.__test.endOf({ ...metered, cadence: 'monthly' }, '2026-10-06'), 'renewed');
 });
 
-test('a usage bill still charged long after its end date outran it: it runs, and is named so the date is cleared', () => {
+test('a usage bill still charged long after its end date outran it: it runs, and is named so the charge is checked against its invoice', () => {
   // Review 2026-10-06: set to end Sep 30 and still paid on Dec 2, it had left
   // the burn, the price sheet and the CSV, its licence came back as unpaid,
   // and nothing named the date.
@@ -3612,7 +3612,9 @@ test('a usage bill still charged long after its end date outran it: it runs, and
   assert.strictEqual(pic.totals.perMonthCents - base.totals.perMonthCents, 3000, 'a bill still being paid left the burn');
   // Named as a usage bill, with the day its last bill was expected by, so
   // the screen does not say any charge after the end date is a renewal
-  // (second review 2026-10-06).
+  // (second review 2026-10-06), and says what the dates show: a charge later
+  // than that day, to check against the invoice. The dates alone do not show
+  // that it paid for use after the end date (review 2026-10-06).
   assert.deepStrictEqual(pic.chargedPastEnd, [{ expenseId: 4, label: 'MapTiler, Flex', endsOn: '2026-09-30', lastChargedOn: '2026-12-02', cadence: 'usage', lastBillBy: '2026-10-29' }]);
   assert.ok(!pic.licence.items.some((i) => i.id === 'maptiler'), 'a plan being paid for read as unlicensed');
   assert.ok(moneyHub.buildPriceSheet({ expenses: [flex], todayYmd: '2026-12-10' }).rows.some((r) => r.id === 'expense-4'));
@@ -3622,6 +3624,16 @@ test('a usage bill still charged long after its end date outran it: it runs, and
   assert.strictEqual(moneyHub.__test.endOf({ ...flex, endsOn: '2026-10-01', lastChargedOn: '2026-12-01' }, '2026-12-10'), 'renewed');
   // A stopped row is out either way, so there is nothing to clear.
   assert.deepStrictEqual(pictureOn('2026-12-10', [{ ...flex, active: false }]).chargedPastEnd, []);
+});
+
+test('a usage charge later than its last bill was expected is listed with its dates alone, which do not say what it paid for', () => {
+  // Review 2026-10-06: set to end Sep 1, its August invoice paid on Oct 2 is
+  // later than the Sep 30 its last bill was expected by, with no use in
+  // September. It runs and is listed with the dates, for the screen to send
+  // the owner to the invoice; nothing in the entry says what it paid for.
+  const metered = expense({ id: 9, vendor: 'Build service', kind: 'tooling', cadence: 'usage', amountCents: 13015, lastChargedOn: '2026-10-02', endsOn: '2026-09-01' });
+  assert.strictEqual(moneyHub.__test.endOf(metered, '2026-10-06'), 'renewed');
+  assert.deepStrictEqual(pictureOn('2026-10-06', [metered]).chargedPastEnd, [{ expenseId: 9, label: 'Build service', endsOn: '2026-09-01', lastChargedOn: '2026-10-02', cadence: 'usage', lastBillBy: '2026-09-30' }]);
 });
 
 test('a usage bill\'s last bill has only until its vendor could send it, so the first charge for use after the end date outruns it', () => {

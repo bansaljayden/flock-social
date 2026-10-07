@@ -787,10 +787,15 @@ function perMonthCents(cadence, amountCents) {
 // billed on that day or later, and the one billed on the 31st closes last,
 // on the next month's last day: Feb 28, 2027 is billed by Mar 31. A vendor
 // that bills by the calendar month sends it in the first days of the month
-// after the one that last day is in. A usage charge later than both pays for
-// use from the end date on, so the date is out of date the same way (review
-// 2026-10-06: a $30 usage plan set to end Sep 30 and still paid on Dec 2 had
-// left the burn, with nothing naming the date).
+// after the one that last day is in. A usage charge later than both is
+// counted as running and named the same way, since it may be a bill still
+// being paid, and one of those had left the burn (review 2026-10-06: a $30
+// usage plan set to end Sep 30 and still paid on Dec 2, with nothing naming
+// the date). The table holds only the day a charge was paid, so the hub does
+// not say what such a charge paid for. It may be use from the end date on,
+// which leaves the date out of date, or a last bill paid late, such as an
+// August invoice paid Oct 2 on a bill set to end Sep 1 (review 2026-10-06).
+// The screen names the charge and sends the owner to the invoice.
 //
 // A month and a week after the end date, the room this gave at first, read
 // the first charge for use after the date as the last bill whenever the date
@@ -826,6 +831,9 @@ function usageLastBillBy(endsOn) {
   return cycle > calendarMonth ? cycle : calendarMonth;
 }
 
+// 'ending', 'ended', 'renewed' or 'none'. For a usage bill, 'renewed' means
+// only a charge later than its last bill was expected: it runs, and the
+// screen asks for the invoice before calling it anything more.
 function endOf(x, todayYmd) {
   if (!x || !isYmd(x.endsOn) || x.cadence === 'one_time') return 'none';
   if (isYmd(x.lastChargedOn)) {
@@ -1358,7 +1366,7 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
       replacesLine: x.replacesLine,
       isCredit: x.isCredit === true,
       // The day it stops, while that day is still to come or has passed; null
-      // for a bill that renews, and for one a later charge renewed.
+      // for a bill that renews, and for one a later charge outran.
       endsOn: stop,
       ended: endOf(x, today) === 'ended',
       counted: usd && (live || stoppedButPaidThisMonth),
@@ -1582,13 +1590,15 @@ function buildCostPicture({ expenses = [], reconciled = null, month }) {
     .map((l) => ({ id: l.id, label: l.label, byExpenseIds: l.replacedBy || [] }));
 
   // A bill still marked as charged whose last charge outran its end date
-  // renewed after all (THE END OF A BILL): a subscription charged on or after
-  // it, or a usage bill charged after the last bill it leaves room for. It is
-  // counted as running, and named so the stale date is cleared or moved. The
-  // cadence and the day a usage bill's last bill was expected by go with it,
-  // so the screen words each case on its own: a usage charge after the end
-  // date is a renewal only once it is later than that day (second review
-  // 2026-10-06).
+  // (THE END OF A BILL): a subscription charged on or after it, which renewed
+  // after all, or a usage bill charged later than its last bill was
+  // expected, which needs checking against the invoice. It is counted as
+  // running and named, so the date is cleared or moved, or the row stopped.
+  // The cadence and the day a usage bill's last bill was expected by go with
+  // it, so the screen words each case on its own: a usage charge after the
+  // end date is listed only once it is later than that day (second review
+  // 2026-10-06), and the screen never calls it use past the end date, which
+  // the dates cannot show (review 2026-10-06).
   const chargedPastEnd = expenses
     .filter((x) => x.active && endOf(x, today) === 'renewed')
     .map((x) => ({
