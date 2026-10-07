@@ -1869,6 +1869,21 @@ BestTime id, so `--skip-collected` alone would select it and pay an admission
 for a week the corpus already holds. `--order=reviews` puts the places BestTime
 is likeliest to find first; a 404 still spends the lookup.
 
+Under `--order=reviews` and `--order=served`, a venue whose last lookup by
+name got no answer (a 503, a 429, a timeout) goes after the rest, oldest
+failure first, so a limited run moves on instead of asking the same venue
+first every time; it is still offered, and an answer since then (a 404, say)
+puts it back in its place. `--order=stalest` already did this.
+
+Duplicates in the never-asked list (a Places row beside a harvested row of the
+same venue that holds an id) are asked as they come. A lookup that finds a
+venue BestTime already has does not count against the month (the counter read
+0/100 after such hits on 2026-10-06), so a duplicate costs one free call. A
+filter that leaves them out by name and distance was tried and dropped: no
+address rule told a mall's two branches, two terminals or two floors apart
+from one venue's two rows reliably, and a wrong match would never ask a real
+venue at all.
+
 After the September harvests that selection was empty in both markets: every
 active venue had an id, a curve or an attempt, and addDemandVenues had nothing
 new in the area. What remains is the venues that answered 404 before and still
