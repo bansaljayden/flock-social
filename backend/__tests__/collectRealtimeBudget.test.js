@@ -252,12 +252,25 @@ test('a weekly venue whose insert failed is not stamped as collected', () => {
   // written. --skip-collected and --skip-attempted then excluded it from every
   // later pass, permanently, and consecutiveErrors was reset so ten such
   // venues in a row could not trip the abort.
+  //
+  // The stamp is written once, inside the insert's own locked transaction,
+  // after the INSERT and only when it returned rows: a failed INSERT rolls it
+  // back with the rows, and nothing after COMMIT writes it (a stamp there let
+  // the venue repair unmap the venue in between; collectWeeklyStalest.test.js
+  // runs that race).
   const stamp = weekly.indexOf("UPDATE ml_venues SET last_collected_at = NOW()");
   assert.ok(stamp > -1, 'the collected stamp is gone');
-  const before = weekly.slice(Math.max(0, stamp - 1200), stamp);
-  assert.match(before, /if \(insertFailed \|\| venueRows === 0\)/,
-    'last_collected_at is written without checking that any row landed');
-  assert.match(before, /consecutiveErrors\+\+/,
+  assert.strictEqual(weekly.indexOf("UPDATE ml_venues SET last_collected_at = NOW()", stamp + 1), -1,
+    'last_collected_at is written in a second place');
+  const insert = weekly.search(/INSERT INTO ml_training_data\s+\(venue_id, collection_mode, hour_axis/);
+  const afterCommit = weekly.indexOf('if (!res) {', insert);
+  assert.ok(insert > -1 && insert < stamp && stamp < afterCommit,
+    'last_collected_at is not written between the INSERT and the end of its transaction');
+  assert.match(weekly.slice(Math.max(0, stamp - 200), stamp), /if \(written\.rows\.length > 0\) \{\s*await client\.query\('$/,
+    'last_collected_at is written without checking that any row landed, or outside the locked transaction');
+  const noRows = weekly.indexOf('if (insertFailed || venueRows === 0)');
+  assert.ok(noRows > afterCommit, 'the no-rows check is gone');
+  assert.match(weekly.slice(noRows, noRows + 400), /consecutiveErrors\+\+/,
     'a venue that wrote nothing does not count toward the abort');
   // And the failure path must still be paced: skipping the sleep would lift
   // the rate limit exactly when the run is going wrong.

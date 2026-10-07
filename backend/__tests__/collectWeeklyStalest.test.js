@@ -20,6 +20,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { spawn } = require('node:child_process');
 
 const { Pool } = require('pg');
 const EP = require('embedded-postgres');
@@ -49,6 +50,11 @@ const NO_FORECAST = new Set();
 const FAILS = new Map();
 // The id a by-name lookup is answered with.
 let byNameAnswer = null;
+// Venue names, each with something to run once, right after the corpus-locked
+// transaction that follows BestTime's week for it commits. Asked by id, a
+// venue takes the lock for its weekly insert alone, so that is the commit.
+const AFTER_COMMIT = new Map();
+let afterNextCommit = null;
 
 function stubModule(request, exports) {
   const filename = require.resolve(request);
@@ -62,15 +68,25 @@ stubModule('../scripts/ml/bestTimeService', {
     EVENTS.push(['call', name]);
     if (FAILS.has(name)) throw await FAILS.get(name)();
     if (NO_FORECAST.has(name)) return null;
+    afterNextCommit = AFTER_COMMIT.get(name) || null;
     return { venueId: venueId || byNameAnswer, days: WEEK, epochAnalysis: 1786000000 };
   },
 });
 // The one-second pacing is load-bearing in production and pure latency here,
-// so sleep records the pause and returns at once.
+// so sleep records the pause and returns at once. The lock is the real one,
+// with a place to stand between its COMMIT and whatever the collector does
+// next.
 const realConfig = require('../scripts/ml/config');
 stubModule('../scripts/ml/config', {
   ...realConfig,
   sleep: async (ms) => { EVENTS.push(['sleep', ms]); },
+  withCorpusWriteLock: async (lockPool, fn) => {
+    const out = await realConfig.withCorpusWriteLock(lockPool, fn);
+    const then = afterNextCommit;
+    afterNextCommit = null;
+    if (then) await then();
+    return out;
+  },
 });
 
 const { migrate } = require('../db/migrate');
@@ -515,4 +531,90 @@ test('the throttle budget counts 503s in a row, not 503s in a run', async () => 
   const walled = await piece([`--city=${wall}`, '--only-found']);
   assert.strictEqual(walled.length, 40);
   assert.strictEqual(walled.at(-1), 'Wall 503 49');
+});
+
+// The venue repair run the way an operator runs it: its own process,
+// --commit, pointed at this suite's database through the variables pinned at
+// the top of the file. Resolves with its exit code and output.
+const REPAIR_SCRIPT = path.join(__dirname, '..', 'scripts', 'ml', 'repairBestTimeDiscoveredVenues.js');
+function runRepair() {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [REPAIR_SCRIPT, '--commit'], {
+      cwd: path.join(__dirname, '..'),
+      env: { ...process.env, DATABASE_URL: CONN, PGSSLMODE: 'disable' },
+    });
+    let stdout = '';
+    let stderr = '';
+    const timer = setTimeout(() => child.kill(), 120000);
+    child.stdout.on('data', (d) => { stdout += d; });
+    child.stderr.on('data', (d) => { stderr += d; });
+    child.on('error', (err) => { clearTimeout(timer); resolve({ status: null, stdout, stderr: `${stderr}${err}` }); });
+    child.on('close', (status) => { clearTimeout(timer); resolve({ status, stdout, stderr }); });
+  });
+}
+
+const VENUE_ID_INDEX = 'ml_venues_besttime_venue_id_uniq';
+
+test('a venue the repair unmaps right after its week commits ends with no stamp', async () => {
+  // Two Google places BestTime resolves to one venue id. The repair keeps the
+  // richer listing's mapping and takes from the other the weekly rows bought
+  // with the shared id, the mapping and the stamp that said those rows landed.
+  // The collector wrote that stamp in its own UPDATE after the insert had
+  // committed, so a repair that ran between the two was undone: the rival
+  // ended with a fresh stamp, no id and no weekly rows.
+  const city = 'stamp_race';
+  // 060 built the unique index on this empty database; production held such
+  // pairs because it could not, and the repair builds it again at the end.
+  await pool.query(`DROP INDEX IF EXISTS ${VENUE_ID_INDEX}`);
+  try {
+    // The keeper sits outside the run's city, so only the rival and the
+    // control are asked. A week each and more reviews: the repair keeps it.
+    const keeper = await addVenue('stamp_race_keeper', 'Race Keeper', 'ven_stamp_race');
+    await addWeek(keeper, '2 days');
+    const rival = await addVenue(city, 'Race Rival', 'ven_stamp_race');
+    // Asked after the rival (ids in order): the run goes on past the race,
+    // and a venue nothing unmapped is stamped in the commit that holds its rows.
+    const control = await addVenue(city, 'Race Control', 'ven_stamp_race_control');
+    await pool.query('UPDATE ml_venues SET review_count = 900 WHERE id = $1', [keeper]);
+    await pool.query('UPDATE ml_venues SET review_count = 16 WHERE id = $1', [rival]);
+
+    let repair = null;
+    AFTER_COMMIT.set('Race Rival', async () => { repair = await runRepair(); });
+    assert.deepStrictEqual(await piece([`--city=${city}`, '--only-found']), ['Race Rival', 'Race Control']);
+    assert.ok(repair, "the repair never ran after the rival's week committed");
+    assert.strictEqual(repair.status, 0, `the repair exited ${repair.status}\n${repair.stdout}\n${repair.stderr}`);
+    assert.match(repair.stdout, /1 real rows unmapped \(168 weekly rows/, 'the repair did not strip the rival of its week');
+
+    const { rows } = await pool.query(
+      `SELECT v.name, v.besttime_venue_id, v.besttime_status, v.last_collected_at,
+              COUNT(t.id)::int AS weekly, MAX(t.collected_at) AS newest
+         FROM ml_venues v
+         LEFT JOIN ml_training_data t ON t.venue_id = v.id AND t.collection_mode = 'weekly'
+        WHERE v.id = ANY($1)
+        GROUP BY v.id
+        ORDER BY v.name`,
+      [[keeper, rival, control]]
+    );
+    const at = Object.fromEntries(rows.map((r) => [r.name, r]));
+    assert.deepStrictEqual(
+      {
+        id: at['Race Rival'].besttime_venue_id,
+        status: at['Race Rival'].besttime_status,
+        weekly: at['Race Rival'].weekly,
+        stamp: at['Race Rival'].last_collected_at,
+      },
+      { id: null, status: 'duplicate', weekly: 0, stamp: null },
+      'the rival was left with a stamp for a week it no longer has'
+    );
+    assert.strictEqual(at['Race Keeper'].besttime_venue_id, 'ven_stamp_race');
+    assert.strictEqual(at['Race Keeper'].weekly, 168);
+    assert.strictEqual(at['Race Control'].weekly, 168);
+    assert.deepStrictEqual(at['Race Control'].last_collected_at, at['Race Control'].newest,
+      "the control's stamp was not made in the transaction that wrote its rows");
+  } finally {
+    AFTER_COMMIT.clear();
+    await pool.query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS ${VENUE_ID_INDEX} ON ml_venues (besttime_venue_id) WHERE besttime_venue_id IS NOT NULL`
+    ).catch(() => {});
+  }
 });
