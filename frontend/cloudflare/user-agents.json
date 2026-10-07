@@ -1,0 +1,5 @@
+{
+  "//": "The two user-agent lists vercel.json repeats by hand (frontend/vercel.json lines 174, 271, 299, 310, 321). Case-sensitive and unanchored, as Vercel matched them: .*(a|b).* as a full match is the same as an unanchored search for any one entry.",
+  "previewBots": "facebookexternalhit|Facebot|Twitterbot|Slackbot|Slack-ImgProxy|Discordbot|WhatsApp|TelegramBot|LinkedInBot|Applebot|redditbot|Pinterest|SkypeUriPreview|Iframely|Embedly|vkShare|Bluesky|bskylink|Mastodon|Snapchat|nuzzel",
+  "aiCrawlers": "GPTBot|OAI-SearchBot|ChatGPT-User|ClaudeBot|Claude-User|Claude-SearchBot|anthropic-ai|PerplexityBot|Perplexity-User|DuckAssistBot|Amazonbot|Meta-ExternalAgent|meta-externalagent|Meta-ExternalFetcher|meta-externalfetcher|Bytespider|CCBot|cohere-ai|cohere-training-data-crawler|MistralAI-User"
+}

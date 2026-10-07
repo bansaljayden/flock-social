@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "description": "Paths that run functions/_middleware.js. Everything else (JS, CSS, images, every other SPA route, the app-site-association file) is served straight from build/ by Pages: free, unmetered, with _headers applied. /about also matches /about/, and /i/* also matches /i.",
+  "include": [
+    "/",
+    "/landing",
+    "/about",
+    "/support",
+    "/privacy",
+    "/terms",
+    "/i/*",
+    "/relay/public/*",
+    "/api/*",
+    "/bg-city.mp4"
+  ],
+  "exclude": []
+}

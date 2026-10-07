@@ -1,0 +1,16 @@
+# Cloudflare Pages redirects for flockcorp.com.
+# Port of the unconditional entries in frontend/vercel.json.
+#
+# Only one vercel.json rule fits here. _redirects matches the path only: it
+# cannot look at the User-Agent or the query string, so the crawler redirect
+# on "/" and every conditional rewrite live in functions/_middleware.js.
+#
+# Do not add an SPA catch-all ("/* /index.html 200"). With no top-level
+# 404.html, Pages already answers every path that is not a file with
+# index.html and a 200, which is what vercel.json's "/(.*)" rewrite did.
+# Wrangler drops that exact line as an infinite loop, and "/* / 200" would
+# also rewrite /static/js/*.js to the HTML shell, because a _redirects rule
+# runs whether or not a file exists at the path.
+#
+# vercel.json "permanent": true is a 308, so this is a 308, not a 301.
+/research/flock-research-paper.pdf /papers/flock-research-paper.pdf 308
