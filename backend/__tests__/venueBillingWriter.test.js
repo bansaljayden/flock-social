@@ -59,6 +59,9 @@ let customersMade = 0;
 const sessionsMade = [];
 const openSessions = [];
 const expiredSessions = [];
+// Sessions paid in the moment before an expire reaches them: the expire
+// fails, the session reads complete, and what paying it made now exists.
+const paidBeforeExpire = new Map();
 // One page of a Stripe list, the way Stripe answers one: `limit` items (ten
 // when none is asked for) after `starting_after`, and has_more when there are
 // more, newest first as given.
@@ -88,8 +91,15 @@ function FakeStripe() {
         list: async ({ customer, status, limit, starting_after: after }) => page(
           status === 'open' ? openSessions.filter((s) => s.customer === customer).map((s) => ({ ...s })) : [], limit, after),
         expire: async (id) => {
-          expiredSessions.push(id);
           const i = openSessions.findIndex((s) => s.id === id);
+          if (paidBeforeExpire.has(id)) {
+            const pay = paidBeforeExpire.get(id);
+            paidBeforeExpire.delete(id);
+            if (i >= 0) openSessions.splice(i, 1);
+            pay();
+            throw Object.assign(new Error('simulated: the session is no longer open'), { statusCode: 400 });
+          }
+          expiredSessions.push(id);
           if (i >= 0) openSessions.splice(i, 1);
           return { id, status: 'expired' };
         },
@@ -1381,6 +1391,55 @@ test('a customer is shared when Stripe holds a plan on it for another account, r
   }
 });
 
+test('deleting an account on a shared customer expires its own open checkouts there, and no other venue\'s', async () => {
+  // The customer stays for the other venue, and so did this account's open
+  // checkout on it: paid after the account was gone, it became a plan billed
+  // every period with nothing in Flock pointing at it.
+  process.env.STRIPE_PRICE_ROOST_FOUNDING = 'price_roost_founding';
+  try {
+    const { holder, other } = await twoVenuesOneCustomer('cus_SHARED_SESSIONS', 'shared_sessions');
+    openSessions.push(
+      { id: 'cs_shared_departing', customer: 'cus_SHARED_SESSIONS', status: 'open', metadata: { kind: 'venue', flock_venue_user_id: String(other) } },
+      { id: 'cs_shared_staying', customer: 'cus_SHARED_SESSIONS', status: 'open', metadata: { kind: 'venue', flock_venue_user_id: String(holder) } },
+    );
+    const deletedBefore = deletedCustomers.length;
+    await venueBilling.closeVenueCustomer(other);
+    assert.ok(expiredSessions.includes('cs_shared_departing'), 'the deleted account\'s checkout stayed payable on the customer kept for another venue');
+    assert.ok(!expiredSessions.includes('cs_shared_staying'), 'the other venue\'s checkout was expired with the account');
+    assert.deepStrictEqual(deletedCustomers.slice(deletedBefore), []);
+    assert.strictEqual(subs.sub_shared_sessions_other.status, 'canceled');
+    assert.strictEqual(subs.sub_shared_sessions_holder.status, 'active');
+  } finally {
+    delete process.env.STRIPE_PRICE_ROOST_FOUNDING;
+    for (const id of ['cs_shared_departing', 'cs_shared_staying']) {
+      const i = openSessions.findIndex((s) => s.id === id);
+      if (i >= 0) openSessions.splice(i, 1);
+    }
+  }
+});
+
+test('a checkout paid while the deletion of its account was looking is among the plans the deletion cancels', async () => {
+  // Read only before the checkouts are expired, the subscriptions would miss
+  // one paid in between, and that plan would bill on for an account that is
+  // gone. They are read again after.
+  process.env.STRIPE_PRICE_ROOST_FOUNDING = 'price_roost_founding';
+  try {
+    const { holder, other } = await twoVenuesOneCustomer('cus_SHARED_RACE', 'shared_race');
+    openSessions.push({ id: 'cs_paid_mid_deletion', customer: 'cus_SHARED_RACE', status: 'open', metadata: { kind: 'venue', flock_venue_user_id: String(other) } });
+    paidBeforeExpire.set('cs_paid_mid_deletion', () => {
+      sub('sub_paid_mid_deletion', other, 'active', { customer: 'cus_SHARED_RACE' });
+      completedSessions.cs_paid_mid_deletion = { id: 'cs_paid_mid_deletion', status: 'complete', subscription: 'sub_paid_mid_deletion' };
+    });
+    const done = await venueBilling.closeVenueCustomer(other);
+    assert.strictEqual(subs.sub_paid_mid_deletion.status, 'canceled', 'a plan paid while the deletion was looking was left billing');
+    assert.ok(done.cancelled.includes('sub_paid_mid_deletion'), 'the deletion did not say it ended that plan');
+    assert.strictEqual(subs.sub_shared_race_holder.status, 'active');
+  } finally {
+    delete process.env.STRIPE_PRICE_ROOST_FOUNDING;
+    paidBeforeExpire.delete('cs_paid_mid_deletion');
+  }
+});
+
 test('Manage billing never opens the portal on a shared customer, for either venue', async () => {
   process.env.STRIPE_PRICE_ROOST_FOUNDING = 'price_roost_founding';
   try {
@@ -1723,6 +1782,55 @@ test('a purchase completed against a claim revoked before it was ever served is 
   assert.ok(cancels.some((c) => c.id === 'sub_never_served'), 'a purchase never delivered was left billing');
   assert.deepStrictEqual(refundsMade.filter((r) => r.args.payment_intent === 'pi_in_never_served').map((r) => r.options),
     [{ idempotencyKey: 'flock-claim-revoked-refund-in_never_served' }]);
+});
+
+// A PURCHASE FOR AN ACCOUNT THAT IS GONE. A deletion that keeps a customer
+// another venue shares cancels only the plans it finds there, so a checkout
+// paid in the moment after it looked became a plan naming an account that no
+// longer exists. Fulfillment only wrote it from Stripe, which records nothing
+// for a missing account, and Stripe renewed it every period.
+test('a purchase still billing for an account that is gone is cancelled and refunded at fulfillment, once', async () => {
+  const [PLACE] = placePair();
+  const gone = await venue({ verified: true, placeId: PLACE });
+  await testPool.query('DELETE FROM users WHERE id = $1', [gone]);
+  sub('sub_paid_after_gone', gone, 'active', { customer: 'cus_KEPT_FOR_ANOTHER', metadata: boundTo(PLACE)(gone) });
+  const session = completedCheckout('cs_paid_after_gone', 'sub_paid_after_gone', gone, PLACE, 'in_paid_after_gone');
+  await venueBilling.handleVenueEvent(completedEvent(session));
+  assert.deepStrictEqual(cancels.filter((c) => c.id === 'sub_paid_after_gone').map((c) => c.options),
+    [{ idempotencyKey: 'flock-account-deleted-cancel-sub_paid_after_gone' }], 'a plan for an account that no longer exists was left billing');
+  const refunded = () => refundsMade.filter((r) => r.args.payment_intent === 'pi_in_paid_after_gone');
+  assert.deepStrictEqual(refunded().map((r) => [r.args.metadata, r.options]),
+    [[{ flock_reason: 'account_deleted' }, { idempotencyKey: 'flock-account-deleted-refund-in_paid_after_gone' }]],
+    'the payment for a plan nobody can be served was kept');
+  // Stripe sends it again: the plan has ended, so nothing more happens.
+  await venueBilling.handleVenueEvent(completedEvent(session));
+  assert.strictEqual(cancels.filter((c) => c.id === 'sub_paid_after_gone').length, 1);
+  assert.strictEqual(refunded().length, 1);
+
+  // A plan an operator has since moved to another account is that account's.
+  const keeper = await venue({ verified: true });
+  sub('sub_moved_off_gone', keeper, 'active', { customer: 'cus_KEPT_FOR_ANOTHER' });
+  await venueBilling.handleVenueEvent(completedEvent(completedCheckout('cs_moved_off_gone', 'sub_moved_off_gone', gone, PLACE, 'in_moved_off_gone')));
+  assert.ok(!cancels.some((c) => c.id === 'sub_moved_off_gone'), 'another account\'s plan was cancelled over a deleted one');
+  assert.ok(!refundsMade.some((r) => r.args.payment_intent === 'pi_in_moved_off_gone'));
+});
+
+test('a plan the deletion already ended is neither cancelled nor refunded when its checkout comes back', async () => {
+  // Whether it was ever served went with the account's records, and it may
+  // have been used for months.
+  const [PLACE] = placePair();
+  const gone = await venue({ verified: true, placeId: PLACE });
+  sub('sub_ended_by_deletion', gone, 'active', { customer: 'cus_ENDED_BY_DELETION', metadata: boundTo(PLACE)(gone) });
+  const session = completedCheckout('cs_ended_by_deletion', 'sub_ended_by_deletion', gone, PLACE, 'in_ended_by_deletion');
+  await venueBilling.handleVenueEvent(completedEvent(session));
+  assert.strictEqual((await state(gone)).served, 'pro');
+  await venueBilling.closeVenueCustomer(gone);
+  await testPool.query('DELETE FROM users WHERE id = $1', [gone]);
+  const cancelsBefore = cancels.length;
+  const refundsBefore = refundsMade.length;
+  await venueBilling.handleVenueEvent(completedEvent(session));
+  assert.strictEqual(cancels.length, cancelsBefore);
+  assert.deepStrictEqual(refundsMade.slice(refundsBefore), [], 'a plan used before the account was deleted was refunded on a replay');
 });
 
 // ---------------------------------------------------------------------------

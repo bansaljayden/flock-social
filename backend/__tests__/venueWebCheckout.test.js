@@ -893,8 +893,9 @@ test('the return from Stripe checks the claim too: a confirm against a revoked c
 
 // A completed session can be handed back at any time: the old success link,
 // a confirm sent by hand, Stripe resending the event. A purchase that was
-// already delivered, or whose account is gone, is written from Stripe and
-// never refused or refunded over the claim as it is now.
+// already delivered, or one whose account is gone and whose plan the deletion
+// already ended, is written from Stripe and never refused or refunded over
+// the claim as it is now.
 test('the return for a purchase already delivered refunds nothing, whatever the claim says now', async () => {
   setEnv(ON);
   stripeState.sessions.cs_done_1 = completedSession();
@@ -914,7 +915,7 @@ test('the return for a purchase already delivered refunds nothing, whatever the 
   } finally { restore(); }
 });
 
-test('a checkout handed back after its account was deleted is neither cancelled nor refunded', async () => {
+test('a checkout handed back after its account was deleted, for a plan the deletion ended, is neither cancelled nor refunded', async () => {
   setEnv(ON);
   stripeState.subById.sub_V1 = sub({ status: 'canceled', metadata: { kind: 'venue', flock_venue_user_id: String(ME.id), flock_venue_place_id: PLACE } });
   stripeState.paidWith.in_first = 'pi_first';

@@ -329,6 +329,35 @@ const subscriptionsOn = (customerId, requestOptions) =>
 const openSessionsOn = (customerId) =>
   listAll((p, o) => stripe().checkout.sessions.list(p, o), { customer: customerId, status: 'open' });
 
+// Expires every open Roost checkout of this account's on one customer, and
+// none of another account's: on a customer two venues share
+// (customersOnRecordElsewhere), an open checkout naming the other venue is its
+// own business. Answers how many it expired. A session that completed or
+// expired in between is the outcome wanted; one still open after a failed
+// expire throws. A customer Stripe has deleted (a failed account deletion
+// keeps its id on file) holds nothing to expire.
+async function expireOwnSessions(customerId, userId) {
+  let open;
+  try {
+    open = await openSessionsOn(customerId);
+  } catch (err) {
+    if (missingAtStripe(err)) return 0;
+    throw err;
+  }
+  let expired = 0;
+  for (const s of open) {
+    if (!isVenueObject(s) || venueUserIdFrom(s.metadata) !== userId) continue;
+    try {
+      await stripe().checkout.sessions.expire(s.id);
+      expired += 1;
+    } catch (err) {
+      const again = await stripe().checkout.sessions.retrieve(s.id).catch(() => null);
+      if (!again || again.status === 'open') throw err;
+    }
+  }
+  return expired;
+}
+
 // The Roost subscription that matters now, on any of the account's customers,
 // with the customer it is on, or null: the newest one Stripe may still bill,
 // else the newest of all. Only subscriptions naming this account. A plan that
@@ -394,6 +423,13 @@ async function latestVenueSubscription(userId, customerIds, requestOptions, { sk
 // cancelled the other venue's plan at once, with no refund, and left that
 // venue's profile pointing at a customer that was gone. Only this account's
 // own subscriptions on it are cancelled, at once, and the customer stays.
+// Its open checkouts stay with it too, and this account's could be paid after
+// the account was gone: a plan billed every period with nothing in Flock
+// pointing at it. So this account's checkouts on it are expired first, and
+// its subscriptions are read again after that, so a checkout paid before the
+// expire landed is among the plans cancelled. One that still slips past is
+// cancelled and refunded if its checkout completes once the account is gone
+// (fulfillForGoneAccount).
 //
 // WHAT WAS CANCELLED IS SAID, on the way out either way: { cancelled } lists
 // the plans still billing that this call ended, and a throw carries the ones
@@ -408,22 +444,24 @@ async function closeVenueCustomer(userId) {
     throw refusal(503, `Roost Stripe customers ${customerIds.join(', ')} were not cancelled; Stripe is not configured`, 'STRIPE_NOT_CONFIGURED');
   }
   const cancelled = [];
+  // A customer Stripe has deleted (a failed deletion keeps its id on file)
+  // holds nothing.
+  const heldBy = (customerId) => subscriptionsOn(customerId).catch((err) => {
+    if (missingAtStripe(err)) return [];
+    throw err;
+  });
   try {
     const elsewhere = await customersOnRecordElsewhere(userId, customerIds);
     for (const customerId of customerIds) {
-      let held;
-      try {
-        held = await subscriptionsOn(customerId);
-      } catch (err) {
-        if (!missingAtStripe(err)) throw err;
-        held = [];
-      }
+      let held = await heldBy(customerId);
       if (elsewhere.has(customerId) || held.some((s) => namesAnotherAccount(s, userId))) {
+        await expireOwnSessions(customerId, userId);
+        held = await heldBy(customerId);
         for (const s of held) {
           if (!isVenueObject(s) || venueUserIdFrom(s.metadata) !== userId) continue;
           if (await cancelNow(s, `flock-account-deleted-cancel-${s.id}`)) cancelled.push(s.id);
         }
-        console.error(`[venue-billing] venue user ${userId}'s Roost customer ${customerId} is shared with another account, so it was kept and only this account's subscriptions on it were cancelled.`);
+        console.error(`[venue-billing] venue user ${userId}'s Roost customer ${customerId} is shared with another account, so it was kept and only this account's subscriptions and open checkouts on it were ended.`);
         continue;
       }
       const closed = await billing.closeCustomer(customerId);
@@ -1385,19 +1423,8 @@ async function stopRoostForRevokedClaim(userId, { customerIds = null } = {}) {
       throw err;
     };
     for (const customerId of customers) {
-      for (const s of await openSessionsOn(customerId).catch(orNothing)) {
-        // Only this account's: on a customer another venue shares
-        // (customersOnRecordElsewhere), an open checkout naming that venue is
-        // its own business.
-        if (!isVenueObject(s) || venueUserIdFrom(s.metadata) !== userId) continue;
-        try {
-          await stripe().checkout.sessions.expire(s.id);
-          outcome.checkoutsExpired += 1;
-        } catch (err) {
-          const again = await stripe().checkout.sessions.retrieve(s.id).catch(() => null);
-          if (!again || again.status === 'open') throw err;
-        }
-      }
+      // Only this account's checkouts (expireOwnSessions).
+      outcome.checkoutsExpired += await expireOwnSessions(customerId, userId);
       for (const s of await subscriptionsOn(customerId).catch(orNothing)) {
         if (!isVenueObject(s) || venueUserIdFrom(s.metadata) !== userId) continue;
         if (await cancelNow(s, `flock-claim-revoked-cancel-${s.id}`)) outcome.subscriptionsCancelled.push(s.id);
@@ -1430,12 +1457,17 @@ async function wasServed(subscriptionId) {
   return !!(row && row.served_at);
 }
 
+// Why a purchase was refused, as the refund records it at Stripe, and the
+// prefix of the key that makes a retried event refund once.
+const CLAIM_NOT_VERIFIED_REFUND = { reason: 'claim_not_verified', key: 'flock-claim-revoked-refund' };
+const ACCOUNT_DELETED_REFUND = { reason: 'account_deleted', key: 'flock-account-deleted-refund' };
+
 // The money a refused purchase took, given back. A trial took none. The first
 // invoice of the session is paid by one PaymentIntent (InvoicePayments, the
 // same lookup proBilling.subscriptionsFundedBy documents), and the refund is
 // keyed on the invoice, so a retried event refunds once. A payment already
 // refunded is the outcome wanted.
-async function refundRefusedPurchase(session) {
+async function refundRefusedPurchase(session, why = CLAIM_NOT_VERIFIED_REFUND) {
   if (!session || session.payment_status === 'no_payment_required') return null;
   const invoiceId = idOf(session.invoice);
   if (!invoiceId) return null;
@@ -1445,13 +1477,37 @@ async function refundRefusedPurchase(session) {
   if (!paid) return null;
   try {
     return await stripe().refunds.create(
-      { payment_intent: idOf(paid.payment.payment_intent), metadata: { flock_reason: 'claim_not_verified' } },
-      { idempotencyKey: `flock-claim-revoked-refund-${invoiceId}` }
+      { payment_intent: idOf(paid.payment.payment_intent), metadata: { flock_reason: why.reason } },
+      { idempotencyKey: `${why.key}-${invoiceId}` }
     );
   } catch (err) {
     if (err && err.code === 'charge_already_refunded') return null;
     throw err;
   }
+}
+
+// A PURCHASE FOR AN ACCOUNT THAT IS GONE. The deletion ended every Roost plan
+// of the account's that Stripe held, or was refused (closeVenueCustomer), so
+// a plan of its still billing now was not there when the deletion looked: a
+// checkout paid in the moment after, on a customer the deletion kept because
+// another venue shares it. Fulfillment used to write it from Stripe and stop,
+// which records nothing for an account that does not exist, so it renewed
+// every period with nothing in Flock pointing at it. An account that is gone
+// can never be served, so that plan is cancelled now and what it took is
+// refunded. A plan the deletion already ended is left as it is: whether it
+// was ever served went with the account's records, and a replay must not
+// refund a plan used for months. Only a plan that still names the account is
+// touched; one an operator has since moved to another account is theirs.
+async function fulfillForGoneAccount(session, subscriptionId, userId) {
+  const sub = await stripe().subscriptions.retrieve(subscriptionId);
+  const theirs = isVenueObject(sub) && venueUserIdFrom(sub.metadata) === userId;
+  if (theirs && await cancelNow(sub, `flock-account-deleted-cancel-${sub.id}`)) {
+    await refundRefusedPurchase(session, ACCOUNT_DELETED_REFUND);
+    console.error(`[venue-billing] checkout ${session.id} completed for venue user ${userId}, whose account is gone, so subscription ${subscriptionId} was cancelled and its payment refunded.`);
+  } else {
+    console.log(`[venue-billing] checkout ${session.id} was handed back for venue user ${userId}, whose account is gone, and subscription ${subscriptionId} is not billing for it, so nothing was cancelled or refunded.`);
+  }
+  return syncVenueSubscription(subscriptionId);
 }
 
 // FULFILLMENT CHECKS THE CLAIM AGAIN. Checkout refuses an unverified claim
@@ -1474,9 +1530,9 @@ async function refundRefusedPurchase(session) {
 // so did a plan that had already ended, or one whose claim an admin revoked,
 // where whether to refund is a person's call (stopRoostForRevokedClaim). So a
 // subscription the writer has ever served (served_at, migration 121) is never
-// refused or refunded here, and nor is a purchase whose account is gone: its
-// deletion closed the customer. Both are only written from Stripe as usual,
-// and the writer serves nothing to a claim that is not good.
+// refused or refunded here: it is only written from Stripe as usual, and the
+// writer serves nothing to a claim that is not good. A purchase whose account
+// is gone is decided apart (fulfillForGoneAccount).
 async function fulfillVenueCheckout(session) {
   const subscriptionId = idOf(session && session.subscription);
   if (!subscriptionId) return { ignored: 'no_subscription' };
@@ -1485,8 +1541,9 @@ async function fulfillVenueCheckout(session) {
   if (!userId) return syncVenueSubscription(subscriptionId);
   const claim = await claimFor(userId, placeId);
   if (claim === 'good') return syncVenueSubscription(subscriptionId);
-  if (claim === 'gone' || await wasServed(subscriptionId)) {
-    console.log(`[venue-billing] checkout ${session.id} was handed back for venue user ${userId}, whose claim is not verified for listing ${placeId || 'none'} now, but ${claim === 'gone' ? 'the account is gone' : `subscription ${subscriptionId} was already delivered`}, so nothing was cancelled or refunded.`);
+  if (claim === 'gone') return fulfillForGoneAccount(session, subscriptionId, userId);
+  if (await wasServed(subscriptionId)) {
+    console.log(`[venue-billing] checkout ${session.id} was handed back for venue user ${userId}, whose claim is not verified for listing ${placeId || 'none'} now, but subscription ${subscriptionId} was already delivered, so nothing was cancelled or refunded.`);
     return syncVenueSubscription(subscriptionId);
   }
   const sub = await stripe().subscriptions.retrieve(subscriptionId);
