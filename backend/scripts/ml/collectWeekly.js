@@ -209,13 +209,14 @@ const ORDER_BY_SERVED = `(SELECT COUNT(*) FROM served_predictions sp
 
 // --order=stalest is for a by-id refresh (--only-found). A venue's place in
 // line is the later of two stamps on its own row, oldest first:
-// last_collected_at, which this collector and the harvest set when weekly rows
-// land, and besttime_attempted_at, which this collector sets on every ask by
-// id whatever came back, a 503 or a failed call included (stampFailedAsk; a
-// key-level failure ends the run with that venue unstamped). GREATEST skips a
-// NULL and is NULL only when both are, so a venue with neither comes before
-// all of them: one never asked and with no curve, or one whose curve only
-// discoverBestTime.js wrote (it stamps neither; the first refresh does).
+// last_collected_at, which every writer of weekly rows sets when they land
+// (this collector, the harvest and discoverBestTime.js; migration 125 filled
+// in the venues discoverBestTime left without one), and besttime_attempted_at,
+// which this collector sets on every ask by id whatever came back, a 503 or a
+// failed call included (stampFailedAsk; a key-level failure ends the run with
+// that venue unstamped). GREATEST skips a NULL and is NULL only when both are,
+// so a venue with neither comes before all of them: one never asked and with
+// no curve.
 //
 // The order used to read the newest weekly row alone. A miss writes no rows,
 // so the venues BestTime has no forecast for kept their place at the head of

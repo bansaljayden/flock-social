@@ -130,7 +130,8 @@ async function addVenue(city, name, besttimeId, askedAgo = null) {
 }
 
 // A full week of weekly rows written `age` ago, stamped on the venue row the
-// way both writers of weekly rows (this collector and the harvest) stamp it.
+// way every writer of weekly rows (this collector, the harvest and
+// discoverBestTime.js) stamps it.
 async function addWeek(venueId, age) {
   await pool.query(
     `INSERT INTO ml_training_data
@@ -195,6 +196,137 @@ test('each piece moves past the venues the last one asked, misses included', asy
     { name: 'No Forecast 3', weekly: 0 },
     { name: 'No Forecast 4', weekly: 0 },
   ]);
+});
+
+// discoverBestTime.js run for real, BestTime's venue search answered by a
+// stub in place of fetch: the first query of the city returns `venues`, every
+// other query none. Anything else it asks for throws, so nothing leaves.
+async function runDiscovery(cityKey, venues) {
+  const savedFetch = globalThis.fetch;
+  const savedArgv = process.argv;
+  let answered = false;
+  globalThis.fetch = async (url) => {
+    const { pathname } = new URL(String(url));
+    if (pathname === '/api/v1/venues/search') {
+      return new Response(JSON.stringify({ status: 'OK', job_id: 'job_stalest', collection_id: 'col_stalest' }));
+    }
+    if (pathname === '/api/v1/venues/progress') {
+      const answer = answered ? [] : venues;
+      answered = true;
+      return new Response(JSON.stringify({ job_finished: true, venues: answer }));
+    }
+    throw new Error(`discoverBestTime asked for ${pathname}, which this stub does not answer`);
+  };
+  process.argv = [savedArgv[0], savedArgv[1], `--cities=${cityKey}`];
+  try {
+    delete require.cache[require.resolve('../scripts/ml/discoverBestTime')];
+    await require('../scripts/ml/discoverBestTime').discover();
+  } finally {
+    globalThis.fetch = savedFetch;
+    process.argv = savedArgv;
+  }
+}
+
+// One venue as BestTime's venue search returns it, forecast included.
+function searchHit(venueId, name) {
+  return {
+    venue_id: venueId,
+    venue_name: name,
+    venue_address: '1 Test Street, Philadelphia',
+    venue_lat: 39.95,
+    venue_lon: -75.16,
+    venue_type: 'BAR',
+    venue_types: ['bar'],
+    venue_foot_traffic_forecast: [0, 1, 2, 3, 4, 5, 6].map((dayInt) => ({
+      day_int: dayInt, day_raw: Array.from({ length: 24 }, (_, slot) => 20 + slot),
+    })),
+  };
+}
+
+test('a venue discoverBestTime found today is not refreshed ahead of a month-old curve', async () => {
+  // discoverBestTime.js writes a full week for every venue its search
+  // returns, and it stamped neither column this order reads, so the venue it
+  // found today was first in line at the next refresh.
+  const stale = await addVenue('philly', 'Philly Month Old Curve', 'ven_stalest_philly_old', '30 days');
+  await addWeek(stale, '30 days');
+  await runDiscovery('philly', [searchHit('ven_stalest_discovered', 'Discovered Today')]);
+
+  assert.deepStrictEqual(
+    await piece(['--city=philly', '--only-found', '--order=stalest', '--limit=1']),
+    ['Philly Month Old Curve']
+  );
+  // The stamp says when the rows landed: no earlier than the newest of them.
+  const { rows } = await pool.query(
+    `SELECT COUNT(t.id)::int AS weekly, v.last_collected_at >= MAX(t.collected_at) AS stamped
+       FROM ml_venues v
+       JOIN ml_training_data t ON t.venue_id = v.id AND t.collection_mode = 'weekly'
+      WHERE v.besttime_venue_id = 'ven_stalest_discovered'
+      GROUP BY v.id`
+  );
+  assert.deepStrictEqual(rows, [{ weekly: 168, stamped: true }]);
+});
+
+const MIGRATION_125 = '125_ml_venues_stalest_stamps.sql';
+
+test('migration 125 stamps a venue holding weekly rows and no stamp from its newest row, once', async () => {
+  const city = 'stalest_backfill';
+  // What discoverBestTime.js left before it stamped: a fresh week, written
+  // over a few minutes, and no stamp at all.
+  const fresh = await addVenue(city, 'Discovered Before The Fix', 'ven_backfill_fresh');
+  await pool.query(
+    `INSERT INTO ml_training_data
+       (venue_id, collection_mode, hour_axis, day_of_week, hour, venue_category, busyness_pct, collected_at)
+     SELECT $1, 'weekly', 'venue_local', d, h, 'restaurant', 40,
+            NOW() - interval '2 hours' - d * interval '1 minute'
+       FROM generate_series(0, 6) d, generate_series(0, 23) h`,
+    [fresh]
+  );
+  const stale = await addVenue(city, 'Backfill Month Old Curve', 'ven_backfill_old', '30 days');
+  await addWeek(stale, '30 days');
+  // Two the backfill must leave alone, out of the pieces' city: a venue with
+  // only a live reading has no curve, and a stamp already set is kept even
+  // when a newer weekly row exists (the file fills NULLs and nothing else).
+  const liveOnly = await addVenue('stalest_backfill_other', 'Live Reading Only', 'ven_backfill_live');
+  await pool.query(
+    `INSERT INTO ml_training_data
+       (venue_id, collection_mode, hour_axis, day_of_week, hour, venue_category, busyness_pct, collected_at)
+     VALUES ($1, 'realtime', 'venue_local', 2, 19, 'restaurant', 55, NOW() - interval '1 hour')`,
+    [liveOnly]
+  );
+  const kept = await addVenue('stalest_backfill_other', 'Stamp Already Set', 'ven_backfill_kept');
+  await addWeek(kept, '1 hour');
+  await pool.query(`UPDATE ml_venues SET last_collected_at = NOW() - interval '10 days' WHERE id = $1`, [kept]);
+  const stampOf = async (id) => (await pool.query('SELECT last_collected_at FROM ml_venues WHERE id = $1', [id])).rows[0].last_collected_at;
+  const keptBefore = await stampOf(kept);
+
+  // 125 again, now that there is something for it to do.
+  await pool.query('DELETE FROM schema_migrations WHERE name = $1', [MIGRATION_125]);
+  await migrate(pool);
+
+  assert.deepStrictEqual(
+    await piece([`--city=${city}`, '--only-found', '--order=stalest', '--limit=1']),
+    ['Backfill Month Old Curve']
+  );
+  const { rows: [exact] } = await pool.query(
+    `SELECT v.last_collected_at = MAX(t.collected_at) AS exact
+       FROM ml_venues v
+       JOIN ml_training_data t ON t.venue_id = v.id AND t.collection_mode = 'weekly'
+      WHERE v.id = $1
+      GROUP BY v.id`,
+    [fresh]
+  );
+  assert.deepStrictEqual(exact, { exact: true }, 'the stamp is not the newest weekly row');
+  assert.strictEqual(await stampOf(liveOnly), null, 'a venue with no weekly row was stamped');
+  assert.deepStrictEqual(await stampOf(kept), keptBefore, 'a stamp that was already set moved');
+
+  // A replay writes nothing: not a value, not a row version.
+  const snapshot = async () => (await pool.query(
+    'SELECT id, last_collected_at, xmin::text AS version FROM ml_venues ORDER BY id'
+  )).rows;
+  const before = await snapshot();
+  await pool.query('DELETE FROM schema_migrations WHERE name = $1', [MIGRATION_125]);
+  await migrate(pool);
+  assert.deepStrictEqual(await snapshot(), before, 'a replay of 125 rewrote a venue row');
 });
 
 // The BestTime calls that were not followed by the one-second pause before

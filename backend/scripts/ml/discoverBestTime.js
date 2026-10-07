@@ -70,9 +70,13 @@ if (!process.env.DATABASE_URL && process.env.PGHOST) {
   process.env.DATABASE_URL = `postgresql://${user}:${pass}@${host}:${port}/${db}`;
 }
 
+// An explicit PGSSLMODE wins, the rule config/database.js and collectWeekly.js
+// follow; without one, the Railway default (TLS, self-signed tolerated). This
+// is what lets __tests__/collectWeeklyStalest.test.js run this script against
+// the embedded Postgres harness.
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
+  ssl: process.env.PGSSLMODE === 'disable' ? false : { rejectUnauthorized: false },
 });
 
 const API_KEY = process.env.BESTTIME_API_KEY;
@@ -400,6 +404,21 @@ async function insertForecastData(dbVenue, venue, city) {
         // there is no expected error left to suppress.
         console.error(`  Row insert error (${err.code || 'no code'}): ${describeDbError(err)}`);
       }
+    }
+  }
+
+  // THE VENUE ROW SAYS WHEN ITS WEEK LANDED. collectWeekly --order=stalest
+  // reads last_collected_at and besttime_attempted_at off the venue row, not
+  // the weekly rows, and puts a venue with neither at the head of the line.
+  // This script stamped neither, so a venue it found today, holding a full
+  // fresh week, was refreshed ahead of venues whose curves were a month old.
+  // A claim about data, made only when a row landed (collectWeekly's rule).
+  // Migration 125 filled in the venues written before this line existed.
+  if (rows > 0) {
+    try {
+      await pool.query('UPDATE ml_venues SET last_collected_at = NOW() WHERE id = $1', [dbVenue.id]);
+    } catch (err) {
+      console.error(`  last_collected_at not stamped (${err.code || 'no code'}): ${describeDbError(err)}`);
     }
   }
   return rows;
