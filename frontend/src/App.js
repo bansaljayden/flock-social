@@ -55,7 +55,7 @@ import { createSosFollowUp } from './services/sosFollowUp';
 // site keeps all of it off the boot path.
 import { crowdLabelFor } from './lib/crowd';
 import { onVenuePhotoError } from './lib/venuePhoto';
-import { lsGet, lsSet } from './lib/storage';
+import { lsGet, lsSet, lsRemove } from './lib/storage';
 import { AVATAR_EDGE, AVATAR_REFIT_MARKER_KEY, encodeAvatar, dataUrlToBlob, needsAvatarRefit, refitAvatar } from './lib/avatarImage';
 // `process.env.REACT_APP_PURCHASES !== 'off'` below is the App Store build's
 // switch: off, there is no purchase surface at all. lib/purchasesBuild.js has
@@ -5304,6 +5304,22 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // render cycle and must not toggle what is already so.
   const locationEnabledRef = useRef(locationEnabled);
   useEffect(() => { locationEnabledRef.current = locationEnabled; }, [locationEnabled]);
+  // WHICH LOCATION ANSWER MAY STILL LAND. A device can take ten seconds to
+  // answer, and an answer that arrived after Location was switched off, or
+  // after a sign-out, put the position back: the blue dot and
+  // flock_user_lat/lng, which the next account on this device then inherited.
+  // Switching Location off, the sign-out sweep (clearLocalSession in
+  // services/api.js) and leaving the app each move this on, and an answer
+  // asked for under an older value is dropped.
+  const locationAskRef = useRef(0);
+  useEffect(() => {
+    const forget = () => { locationAskRef.current += 1; };
+    window.addEventListener('flock-session-cleared', forget);
+    return () => {
+      window.removeEventListener('flock-session-cleared', forget);
+      forget();
+    };
+  }, []);
   const [userLocation, setUserLocation] = useState(() => {
     if (lsGet('flock_location_enabled') === 'false') return null;
     const savedLat = lsGet('flock_user_lat');
@@ -5331,7 +5347,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
   const toggleLocation = useCallback((enable, { fromAccount = false } = {}) => {
     setLocationEnabled(enable);
-    localStorage.setItem('flock_location_enabled', enable ? 'true' : 'false');
+    locationEnabledRef.current = enable;
+    if (!enable) locationAskRef.current += 1;
+    // lsSet, not a bare write: at quota a throw here stopped the change before
+    // queueSync, and the next pull switched it back.
+    lsSet('flock_location_enabled', enable ? 'true' : 'false');
     // Adopting the account's own value (the flock-settings-loaded listener)
     // is not a change to send back: that echo could land after another
     // device's newer choice and overwrite it.
@@ -5342,18 +5362,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // before this the tap there changed nothing on screen for the ten
         // seconds a device can take to answer.
         setLocationLoading(true);
+        const ask = locationAskRef.current;
         getCurrentPosition(
           (pos) => {
             const { latitude, longitude } = pos.coords;
             setLocationLoading(false);
+            if (ask !== locationAskRef.current || !locationEnabledRef.current) return;
             deviceFixRef.current = stampFix(latitude, longitude);
             setUserLocation({ lat: latitude, lng: longitude });
-            localStorage.setItem('flock_user_lat', latitude.toString());
-            localStorage.setItem('flock_user_lng', longitude.toString());
+            lsSet('flock_user_lat', latitude.toString());
+            lsSet('flock_user_lng', longitude.toString());
             setLocationError('');
           },
           (err) => {
             setLocationLoading(false);
+            if (ask !== locationAskRef.current) return;
             trackLocationError(err, 'toggle');
             // Flipping the switch back on cannot conjure a permission the
             // device has refused. The banner that WAS explaining the empty map
@@ -5370,8 +5393,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       }
     } else {
       setUserLocation(null);
-      localStorage.removeItem('flock_user_lat');
-      localStorage.removeItem('flock_user_lng');
+      lsRemove('flock_user_lat');
+      lsRemove('flock_user_lng');
     }
   }, []);
 
@@ -8719,7 +8742,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [safetyOn, setSafetyOn] = useState(() => localStorage.getItem('flock_safety_on') !== 'false');
   const setSafetyEnabled = useCallback((on) => {
     setSafetyOn(on);
-    localStorage.setItem('flock_safety_on', on ? 'true' : 'false');
+    lsSet('flock_safety_on', on ? 'true' : 'false');
     queueSync({ safetyOn: on ? 'true' : 'false' });
   }, []);
   // Crowd alerts, the pre-peak "about to get busy" push. Absent means ON to
@@ -8730,7 +8753,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [crowdAlertsOn, setCrowdAlertsOn] = useState(() => localStorage.getItem('flock_crowd_alerts') !== 'false');
   const setCrowdAlertsEnabled = useCallback((on) => {
     setCrowdAlertsOn(on);
-    localStorage.setItem('flock_crowd_alerts', on ? 'true' : 'false');
+    lsSet('flock_crowd_alerts', on ? 'true' : 'false');
     queueSync({ crowdAlerts: on ? 'true' : 'false' });
   }, []);
 
@@ -9095,13 +9118,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       const corner = `${isTop ? 'top' : 'bottom'}-${isLeft ? 'left' : 'right'}`;
       if (d.id === 'birdie') {
         setBirdieCorner(corner);
-        localStorage.setItem('flock_birdie_corner', corner);
+        lsSet('flock_birdie_corner', corner);
         queueSync({ birdieCorner: corner });
       } else {
         // SOS only moves left/right — it stays docked above the tab bar.
         const sos = isLeft ? 'bottom-left' : 'bottom-right';
         setSosCorner(sos);
-        localStorage.setItem('flock_sos_corner', sos);
+        lsSet('flock_sos_corner', sos);
         queueSync({ sosCorner: sos });
       }
     }
@@ -9232,12 +9255,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       if (fresh('safetyOn')) {
         const on = String(s.safetyOn) !== 'false';
         setSafetyOn(on);
-        localStorage.setItem('flock_safety_on', on ? 'true' : 'false');
+        lsSet('flock_safety_on', on ? 'true' : 'false');
       }
       if (fresh('crowdAlerts')) {
         const on = String(s.crowdAlerts) !== 'false';
         setCrowdAlertsOn(on);
-        localStorage.setItem('flock_crowd_alerts', on ? 'true' : 'false');
+        lsSet('flock_crowd_alerts', on ? 'true' : 'false');
       }
       if (fresh('userInterests') && Array.isArray(s.userInterests)) setUserInterests(s.userInterests);
       // The rest of the synced keys reached localStorage and nothing else
@@ -9551,8 +9574,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const loadVenuesAtLocation = useCallback((lat, lng) => {
     setLocationError('');
     setUserLocation({ lat, lng });
-    localStorage.setItem('flock_user_lat', String(lat));
-    localStorage.setItem('flock_user_lng', String(lng));
+    lsSet('flock_user_lat', String(lat));
+    lsSet('flock_user_lng', String(lng));
     const locStr = `${lat},${lng}`;
     const cacheKey = `nearby|${locStr}`;
     const cached = searchCacheRef.current[cacheKey];
@@ -9653,10 +9676,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     }
 
     setLocationLoading(true);
+    const ask = locationAskRef.current;
     getCurrentPosition(
       (pos) => {
         const { latitude, longitude } = pos.coords;
         setLocationLoading(false);
+        if (ask !== locationAskRef.current || !locationEnabledRef.current) return;
         deviceFixRef.current = stampFix(latitude, longitude);
         loadVenuesAtLocation(latitude, longitude);
         if (forceRefresh && window.__flockGoToMyLocation) {
@@ -9665,8 +9690,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       },
       (err) => {
         console.warn('[Geo] Geolocation error:', err.code, err.message);
-        trackLocationError(err, 'discover');
         setLocationLoading(false);
+        if (ask !== locationAskRef.current) return;
+        trackLocationError(err, 'discover');
         if (savedLat && savedLng && !forceRefresh) {
           // Already loaded from saved above
         } else {

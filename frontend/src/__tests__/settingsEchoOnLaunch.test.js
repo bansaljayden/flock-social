@@ -579,3 +579,31 @@ test("the listener puts the Birdie and SOS buttons where the account has them", 
   expect(app).toContain("if (fresh('birdieCorner') && /^(top|bottom)-(left|right)$/.test(String(s.birdieCorner))) setBirdieCorner(String(s.birdieCorner));");
   expect(app).toContain("if (fresh('sosCorner')) setSosCorner(String(s.sosCorner).includes('left') ? 'bottom-left' : 'bottom-right');");
 });
+
+// code review 10 (2026-10-07). App.js is too large to mount here, so these
+// read its source, the way the rest of the App.js settings tests do.
+describe('location answers and storage at quota', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const APP_SRC = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8');
+
+  test('a location answer that lands after Location was switched off, or after a sign-out, is dropped', () => {
+    expect(APP_SRC).toContain('const locationAskRef = useRef(0);');
+    // Switching off, the sign-out sweep and leaving the app each move it on.
+    expect(APP_SRC).toMatch(/locationEnabledRef\.current = enable;\s*if \(!enable\) locationAskRef\.current \+= 1;/);
+    expect(APP_SRC).toMatch(/window\.addEventListener\('flock-session-cleared', forget\);/);
+    // Both requests that store a position check it before storing anything.
+    const asks = APP_SRC.split('const ask = locationAskRef.current;').length - 1;
+    expect(asks).toBe(2);
+    const guards = APP_SRC.split('if (ask !== locationAskRef.current || !locationEnabledRef.current) return;').length - 1;
+    expect(guards).toBe(2);
+  });
+
+  test('a synced toggle cannot be stopped before the queue by a storage write that throws', () => {
+    for (const key of ['flock_location_enabled', 'flock_safety_on', 'flock_crowd_alerts', 'flock_birdie_corner', 'flock_sos_corner', 'flock_user_lat', 'flock_user_lng']) {
+      expect([key, APP_SRC.includes(`localStorage.setItem('${key}'`)]).toEqual([key, false]);
+    }
+    expect(APP_SRC).toMatch(/lsSet\('flock_safety_on', on \? 'true' : 'false'\);\s*queueSync\(\{ safetyOn:/);
+    expect(APP_SRC).toMatch(/lsSet\('flock_crowd_alerts', on \? 'true' : 'false'\);\s*queueSync\(\{ crowdAlerts:/);
+  });
+});
