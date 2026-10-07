@@ -171,6 +171,11 @@ export async function pullSettings() {
 
     for (const [key, lsKey] of Object.entries(SYNCED_KEYS)) {
       if (settings[key] === undefined || settings[key] === null) continue;
+      // A value this device changed while the pull was on the wire, or has
+      // not sent yet, is newer than this answer and stays. Writing it over
+      // here left the next launch starting from the older value, and
+      // ThemeContext re-reads these keys on the event below.
+      if (localIsNewer(key)) continue;
       const value = JSON_KEYS.has(key) ? JSON.stringify(settings[key]) : String(settings[key]);
       localStorage.setItem(lsKey, value);
     }
