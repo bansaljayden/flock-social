@@ -17,6 +17,8 @@
 // - REACT_APP_* variables no code reads are left out of the bundle.
 // A variable the app does read still ships to every visitor, so REACT_APP_*
 // is for public values only.
+//
+// On Vercel it also turns source maps off (vercelDefaults below).
 const fs = require('fs');
 const path = require('path');
 
@@ -54,13 +56,25 @@ function narrowClientEnvironment({ raw, stringified }, reads) {
   return { raw, stringified: { 'process.env': defined } };
 }
 
-module.exports = { envReadsIn, narrowClientEnvironment, DEPENDENCY_READS };
+// Vercel serves everything under build/, so a source map there hands anyone
+// the app's whole source with its comments, and the maps were 18 of the
+// ~30 MB each deployment keeps against the plan's 10 GB of deployment
+// storage. Nothing on the web reads them: Sentry has no DSN there and
+// PostHog's capture_exceptions is off. Other builds keep them, because the
+// Codemagic purchase check reads the iOS build's maps. An explicit
+// GENERATE_SOURCEMAP still wins.
+function vercelDefaults(env) {
+  return env.VERCEL && env.GENERATE_SOURCEMAP === undefined ? { GENERATE_SOURCEMAP: 'false' } : {};
+}
+
+module.exports = { envReadsIn, narrowClientEnvironment, vercelDefaults, DEPENDENCY_READS };
 
 if (require.main === module) {
   // What react-scripts/scripts/build.js sets first. config/env.js throws
   // without NODE_ENV, and it is loaded here, before that script runs.
   process.env.BABEL_ENV = 'production';
   process.env.NODE_ENV = 'production';
+  Object.assign(process.env, vercelDefaults(process.env));
   const envModule = require.resolve('react-scripts/config/env');
   const getClientEnvironment = require(envModule);
   const reads = new Set([...envReadsIn(SRC), ...DEPENDENCY_READS]);

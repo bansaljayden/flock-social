@@ -11,7 +11,7 @@
  */
 const fs = require('fs');
 const path = require('path');
-const { envReadsIn, narrowClientEnvironment, DEPENDENCY_READS } = require('../../scripts/build');
+const { envReadsIn, narrowClientEnvironment, vercelDefaults, DEPENDENCY_READS } = require('../../scripts/build');
 
 const FRONTEND = path.join(__dirname, '..', '..');
 const SRC = path.join(FRONTEND, 'src');
@@ -87,6 +87,21 @@ describe('what the app reads', () => {
     };
     walk(SRC);
     expect(offenders).toEqual([]);
+  });
+});
+
+describe('source maps', () => {
+  // Vercel publishes build/ to everyone; the maps were the app's full source
+  // and most of each deployment's storage. Codemagic's purchase check reads
+  // the iOS build's maps, so only Vercel turns them off.
+  test('a Vercel build turns them off', () => {
+    expect(vercelDefaults({ VERCEL: '1' })).toEqual({ GENERATE_SOURCEMAP: 'false' });
+  });
+
+  test('every other build keeps them, and an explicit setting wins', () => {
+    expect(vercelDefaults({})).toEqual({});
+    expect(vercelDefaults({ CI: 'true' })).toEqual({});
+    expect(vercelDefaults({ VERCEL: '1', GENERATE_SOURCEMAP: 'true' })).toEqual({});
   });
 });
 
