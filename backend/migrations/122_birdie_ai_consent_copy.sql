@@ -1,0 +1,34 @@
+-- 122: which wording of Birdie's question a recorded yes answered.
+--
+-- ASCII only, like 100 and 111: the embedded server the boot-safety suite
+-- runs is WIN1252.
+--
+-- WHY. Since October 6, 2026 the web app sends the device's time zone with
+-- every Birdie turn, and Birdie is told the date and time it is there. The
+-- question the app asks before the first message names both since the same
+-- day; the question before it did not, and App Store build 1.0 and a web tab
+-- still running an older bundle show that earlier question. Migration 100
+-- records that a yes was given and when, not which question it answered, and
+-- the app asks only while that time is NULL, so an account that said yes to
+-- the earlier question is never shown the new one. Without this column the
+-- server cannot tell that yes from one given to the question that names the
+-- zone.
+--
+-- WHO WRITES IT. POST /api/ai/consent, with the number of the question the
+-- client showed (2 is the first that names the time zone). A client that
+-- sends none showed the earlier question and leaves it NULL. A repeated yes
+-- keeps the highest number given since the last withdrawal, and DELETE
+-- /api/ai/consent clears it with the time.
+--
+-- WHO READS IT. POST /api/ai/chat, in the same read as the consent time, for
+-- a client held to the recorded answer: the zone that turn carries is read
+-- only when this is 2 or more. The data export carries it, beside the time.
+--
+-- ADDITIVE. A nullable column with no default is a catalog change: no
+-- rewrite, no scan, and every existing row reads NULL. That is the safe
+-- reading for all of them: no client said which question it showed before
+-- this column existed, so no yes on record is taken to have named the zone.
+-- A replay is a no-op.
+-- @requires column users.birdie_ai_consent_copy
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS birdie_ai_consent_copy SMALLINT;
