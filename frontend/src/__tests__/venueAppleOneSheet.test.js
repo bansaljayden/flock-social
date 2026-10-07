@@ -108,7 +108,7 @@ describe('the venue sign-in half, a brand-new Apple ID', () => {
     const field = utils.getByLabelText('Year of birth');
     expect(field.id).toBe('venue-apple-year');
     expect(document.activeElement).toBe(field);
-    expect(utils.getByText('One more step: the year you were born.')).toBeTruthy();
+    expect(utils.getByText('One more step to finish your account: the year you were born.')).toBeTruthy();
     // Nothing failed, so nothing is red, and "tap Continue with Apple again"
     // is exactly what the step makes unnecessary.
     expect(utils.queryByRole('alert')).toBeNull();
@@ -147,7 +147,7 @@ describe('the venue sign-in half, a brand-new Apple ID', () => {
     api.appleLogin.mockResolvedValueOnce({ user: { id: 82 } });
     fireEvent.click(appleButton(utils));
     await waitFor(() => expect(utils.onLoginSuccess).toHaveBeenCalledWith({ id: 82 }));
-    expect(utils.queryByText('One more step: the year you were born.')).toBeNull();
+    expect(utils.queryByText('One more step to finish your account: the year you were born.')).toBeNull();
   });
 
   it('an under-13 refusal is shown in the server\'s words, in the step, and nothing is tried again', async () => {
@@ -168,7 +168,7 @@ describe('the venue sign-in half, a brand-new Apple ID', () => {
     await firstTap(utils);
     fireEvent.click(utils.getByRole('button', { name: 'Create an account' }));
     expect(continueButton(utils)).toBeNull();
-    expect(utils.queryByText('One more step: the year you were born.')).toBeNull();
+    expect(utils.queryByText('One more step to finish your account: the year you were born.')).toBeNull();
     expect(appleButton(utils)).not.toBeNull();
     // The sign-up half's own year field, and only that one.
     expect(yearFields(utils).length).toBe(1);

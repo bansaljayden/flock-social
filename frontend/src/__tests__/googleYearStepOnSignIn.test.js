@@ -149,7 +149,7 @@ SCREENS.forEach((screen) => {
       const field = utils.getByLabelText('Year of birth');
       expect(field.id).toBe(screen.fieldId);
       expect(document.activeElement).toBe(field);
-      expect(utils.getByText('One more step: the year you were born.')).toBeTruthy();
+      expect(utils.getByText('One more step to finish your account: the year you were born.')).toBeTruthy();
       expect(utils.queryByRole('alert')).toBeNull();
       expect(utils.container.textContent).not.toContain('Continue with Google again');
       expect(googleButton(utils)).toBeNull();

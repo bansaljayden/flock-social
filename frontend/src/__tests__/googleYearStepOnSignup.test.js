@@ -137,7 +137,7 @@ describe('the first Google tap for a new account, with the year empty', () => {
     const field = utils.getByLabelText('Year of birth');
     expect(field.id).toBe('signup-google-year');
     expect(document.activeElement).toBe(field);
-    expect(utils.getByText('One more step: the year you were born.')).toBeTruthy();
+    expect(utils.getByText('One more step to finish your account: the year you were born.')).toBeTruthy();
     // Nothing failed, so nothing is red, and the server's "tap Continue with
     // Google again" is not repeated: the step is what makes that unnecessary.
     expect(utils.queryByRole('alert')).toBeNull();
@@ -150,7 +150,7 @@ describe('the first Google tap for a new account, with the year empty', () => {
     // Apple is still offered above it, and the consent line above that.
     expect(appleButton(utils)).not.toBeNull();
     expect(utils.container.querySelector('.auth-legal')).not.toBeNull();
-    expect(utils.getByText('One more step: the year you were born.').textContent).not.toMatch(/\d/);
+    expect(utils.getByText('One more step to finish your account: the year you were born.').textContent).not.toMatch(/\d/);
   });
 
   it('Continue posts the SAME token plus the year and never opens a second sheet', async () => {
@@ -181,7 +181,7 @@ describe('the first Google tap for a new account, with the year empty', () => {
     api.googleLogin.mockResolvedValueOnce({ user: { id: 62 } });
     fireEvent.click(googleButton(utils));
     await waitFor(() => expect(utils.onSignupSuccess).toHaveBeenCalledWith({ id: 62 }));
-    expect(utils.queryByText('One more step: the year you were born.')).toBeNull();
+    expect(utils.queryByText('One more step to finish your account: the year you were born.')).toBeNull();
   });
 
   it('an account that exists with no birth date on file is sent to sign in, not left at a dead end', async () => {
@@ -327,7 +327,7 @@ describe('one step at a time', () => {
     expect(utils.getByLabelText('Name')).toBeTruthy();
     expect(continueButton(utils)).toBeNull();
     expect(googleButton(utils)).not.toBeNull();
-    expect(utils.queryByText('One more step: the year you were born.')).toBeNull();
+    expect(utils.queryByText('One more step to finish your account: the year you were born.')).toBeNull();
   });
 
   it('Apple\'s step opening closes Google\'s, so there is still one year field', async () => {

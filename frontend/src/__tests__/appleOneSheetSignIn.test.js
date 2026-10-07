@@ -114,7 +114,7 @@ describe('the first Apple tap for a new account', () => {
 
     const field = utils.getByLabelText('Year of birth');
     expect(document.activeElement).toBe(field);
-    expect(utils.getByText('One more step: the year you were born.')).toBeTruthy();
+    expect(utils.getByText('One more step to finish your account: the year you were born.')).toBeTruthy();
     // No stale "date of birth" sentence, and no error at all: nothing failed.
     expect(utils.queryByRole('alert')).toBeNull();
     expect(utils.container.textContent).not.toMatch(/date of birth/i);
@@ -126,7 +126,7 @@ describe('the first Apple tap for a new account', () => {
     // The consent line the account needs is on screen before Continue.
     expect(utils.container.querySelector('.auth-legal')).not.toBeNull();
     // The line names no age, the same rule as every other age screen.
-    expect(utils.getByText('One more step: the year you were born.').textContent).not.toMatch(/\d/);
+    expect(utils.getByText('One more step to finish your account: the year you were born.').textContent).not.toMatch(/\d/);
   });
 
   it('Continue posts the SAME credentials plus the year and never opens a second sheet', async () => {
@@ -440,7 +440,7 @@ describe('a new Apple account on the signup screen finishes on one sheet', () =>
     const field = utils.getByLabelText('Year of birth');
     expect(field.id).toBe('signup-apple-year');
     expect(document.activeElement).toBe(field);
-    expect(utils.getByText('One more step: the year you were born.')).toBeTruthy();
+    expect(utils.getByText('One more step to finish your account: the year you were born.')).toBeTruthy();
     expect(utils.queryByRole('alert')).toBeNull();
     // One year field and one thing to tap: the email form is not drawn under
     // the step, and Continue has taken the Apple button's place.
@@ -449,7 +449,7 @@ describe('a new Apple account on the signup screen finishes on one sheet', () =>
     expect(appleButton(utils)).toBeNull();
     // The consent line is still above it all, since Continue creates the account.
     expect(utils.container.querySelector('.auth-legal')).not.toBeNull();
-    expect(utils.getByText('One more step: the year you were born.').textContent).not.toMatch(/\d/);
+    expect(utils.getByText('One more step to finish your account: the year you were born.').textContent).not.toMatch(/\d/);
   });
 
   it('Continue posts the SAME credentials plus the year, name included, and never opens a second sheet', async () => {
@@ -476,7 +476,7 @@ describe('a new Apple account on the signup screen finishes on one sheet', () =>
     api.appleLogin.mockResolvedValueOnce({ user: { id: 52 } });
     fireEvent.click(appleButton(utils));
     await waitFor(() => expect(utils.onSignupSuccess).toHaveBeenCalledWith({ id: 52 }));
-    expect(utils.queryByText('One more step: the year you were born.')).toBeNull();
+    expect(utils.queryByText('One more step to finish your account: the year you were born.')).toBeNull();
   });
 
   it('an under-13 year is shown in the server\'s words, in the step, and nothing is tried again', async () => {
@@ -521,7 +521,7 @@ describe('a new Apple account on the signup screen finishes on one sheet', () =>
     expect(utils.getByLabelText('Name')).toBeTruthy();
     expect(continueButton(utils)).toBeNull();
     expect(appleButton(utils)).not.toBeNull();
-    expect(utils.queryByText('One more step: the year you were born.')).toBeNull();
+    expect(utils.queryByText('One more step to finish your account: the year you were born.')).toBeNull();
   });
 
   it('a half-typed year is not sent to Apple as no year at all', async () => {
