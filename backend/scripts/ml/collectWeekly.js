@@ -503,18 +503,20 @@ async function collectWeekly() {
   // row that got its id from this very lookup was answered, whatever failed
   // after.
   //
-  // A TIMEOUT IS THE AMBIGUOUS CASE. The lookup may have reached BestTime and
-  // admitted the venue, with the answer, and the venue's id in it, lost on
-  // the way back. It is stamped like a 503 all the same: it goes to the back
-  // of the stalest line and stays on offer for admission. Marking it as
-  // attempted would not give back an admission already spent; it would take
-  // the venue out of every later admission run with no id, no rows and no
-  // status to show for the spend, and since the id was in the lost answer,
-  // asking by name again is the only way this collector has to fetch the
-  // week such an admission paid for. No second ask happens on its own: a
-  // by-name lookup runs only in a run whose --max-new counts it. Whether
-  // BestTime bills a second lookup of a venue it already admitted is not
-  // documented; the admission counter at besttime.app/settings shows it.
+  // A TIMEOUT IS THE AMBIGUOUS CASE, and so is a connection dropped
+  // mid-answer. The lookup may have reached BestTime and admitted the venue,
+  // with the answer, and the venue's id in it, lost on the way back. It is
+  // stamped like a 503 all the same: it goes to the back of the stalest line
+  // and stays on offer for admission. Marking it as attempted would not give
+  // back an admission already spent. It would hide the venue from
+  // --skip-attempted until a --retry-404 pass (thirty days on, by default),
+  // with no id, no rows and no status to show for the spend, and since the
+  // id was in the lost answer, asking by name again is the only way this
+  // collector has to fetch the week such an admission paid for. No second
+  // ask happens on its own: a by-name lookup runs only in a run whose
+  // --max-new counts it. Whether BestTime bills a second lookup of a venue
+  // it already admitted is not documented; the admission counter at
+  // besttime.app/settings shows it.
   //
   // This runs inside the loop's catch, so a failed stamp is logged and never
   // thrown.
