@@ -484,3 +484,44 @@ test("a 401 for an account that signed out meanwhile does not sign out the next 
   expect(after).toContain('if (madeFor && accountOf(next || getToken()) !== madeFor) throw sessionEndedError();');
   expect(after.indexOf('accountOf(next || getToken())')).toBeLessThan(after.indexOf('if (next) {'));
 });
+
+describe('another tab', () => {
+  beforeEach(() => {
+    window.dispatchEvent(new CustomEvent('flock-session-cleared'));
+    localStorage.clear();
+    api.isLoggedIn.mockReturnValue(true);
+    api.updateUserSettings.mockReset();
+    api.updateUserSettings.mockImplementation(() => Promise.resolve({}));
+  });
+
+  test("a retry yields when another tab has since saved the key", async () => {
+    api.updateUserSettings.mockImplementationOnce(() => Promise.reject(Object.assign(new Error('offline'), { isNetworkError: true })));
+    queueSync({ pinnedFlockIds: [1] });
+    await wait(700); // fails, waits to retry
+    // The other tab saved [1, 2] and settled it: the record no longer owes pins.
+    localStorage.removeItem('flock_settings_owed');
+    window.dispatchEvent(new Event('online'));
+    await wait(700);
+    expect(api.updateUserSettings).toHaveBeenCalledTimes(1);
+  });
+
+  test("a retry yields when another tab has queued a newer value, and a key still owed goes", async () => {
+    api.updateUserSettings.mockImplementationOnce(() => Promise.reject(Object.assign(new Error('offline'), { isNetworkError: true })));
+    queueSync({ pinnedFlockIds: [1], flockOrder: [2] });
+    await wait(700);
+    const record = JSON.parse(localStorage.getItem('flock_settings_owed'));
+    localStorage.setItem('flock_settings_owed', JSON.stringify({ ...record, pinnedFlockIds: [1, 2] }));
+    window.dispatchEvent(new Event('online'));
+    await wait(700);
+    expect(api.updateUserSettings).toHaveBeenLastCalledWith({ flockOrder: [2] });
+  });
+});
+
+test('every answer for an account that signed out meanwhile is set aside before it is handled', () => {
+  const apiSource = fs.readFileSync(path.join(__dirname, '..', 'services', 'api.js'), 'utf8');
+  const body = apiSource.slice(apiSource.indexOf('async function request(endpoint, options = {}) {'));
+  const check = body.indexOf('if (madeFor && accountOf(getToken()) !== madeFor) throw sessionEndedError();');
+  expect(check).toBeGreaterThan(body.indexOf('await fetchWithTimeout('));
+  expect(check).toBeLessThan(body.indexOf("if (res.status === 401 && token && mayRenew"));
+  expect(check).toBeLessThan(body.indexOf('if (!res.ok) throw buildHttpError('));
+});

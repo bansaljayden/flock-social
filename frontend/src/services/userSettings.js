@@ -120,10 +120,30 @@ function writeOwed(record) {
   try {
     if (Object.keys(record).length > 0) localStorage.setItem(OWED_KEY, JSON.stringify(record));
     else localStorage.removeItem(OWED_KEY);
-  } catch (_) { /* storage blocked: the queue still holds it for this load */ }
+    return true;
+  } catch (_) {
+    return false; // storage blocked: the queue still holds it for this load
+  }
 }
+// Keys whose queued value this tab put in the shared record. Only those are
+// checked against it before sending (dropSuperseded); a key whose write to
+// the record failed is this tab's alone and goes as it is.
+const recorded = {};
 function oweKeys(partial) {
-  writeOwed({ ...readOwed(), ...partial });
+  const ok = writeOwed({ ...readOwed(), ...partial });
+  Object.keys(partial).forEach((key) => { recorded[key] = ok; });
+}
+// Before sending: a key this tab recorded whose value the record no longer
+// holds was saved since by another tab, or queued there with a newer value.
+// Sent anyway, this tab's older copy (a retry, say) overwrote it.
+function dropSuperseded() {
+  const record = readOwed();
+  Object.keys(pending).forEach((key) => {
+    if (recorded[key] && JSON.stringify(record[key]) !== JSON.stringify(pending[key])) {
+      delete pending[key];
+      delete recorded[key];
+    }
+  });
 }
 // What a settled write no longer owes: each key still recorded with the value
 // that was sent. A newer value, from this tab or another, stays owed.
@@ -143,6 +163,7 @@ function takeOwed() {
   Object.keys(record).forEach((key) => {
     if (Object.prototype.hasOwnProperty.call(pending, key) || inFlight[key]) return;
     pending[key] = record[key];
+    recorded[key] = true;
     queuedAt[key] = now;
     took = true;
   });
@@ -201,7 +222,9 @@ export function queueSync(partial) {
 // this when it settles). Returns the write, which never rejects, or null.
 function flush() {
   if (timer) { clearTimeout(timer); timer = null; }
-  if (writing || Object.keys(pending).length === 0) return null;
+  if (writing) return null;
+  dropSuperseded();
+  if (Object.keys(pending).length === 0) return null;
   const payload = pending;
   pending = {};
   if (!isLoggedIn()) return null;
@@ -287,6 +310,7 @@ if (typeof window !== 'undefined') {
     retryDelay = 0;
     lastPull = null;
     writeOwed({});
+    Object.keys(recorded).forEach((key) => { delete recorded[key]; });
     [queuedAt, settledAt, inFlight].forEach((record) => {
       Object.keys(record).forEach((key) => { delete record[key]; });
     });
