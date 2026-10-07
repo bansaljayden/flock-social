@@ -1342,9 +1342,12 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
   useEffect(() => {
     const map = mapInstanceRef.current;
 
+    // The pin's coordinates go into the venue card's seed (here and for the
+    // temp pin below), so its Get Directions can pin the place in Apple Maps
+    // before Place Details answers, or after it fails, instead of searching.
     window.__flockOpenVenue = (placeId) => {
       const v = venues.find(venue => venue.place_id === placeId);
-      if (v) openVenueDetail(placeId, { name: v.name, formatted_address: v.addr, place_id: placeId, rating: v.stars, photo_url: v.photo_url });
+      if (v) openVenueDetail(placeId, { name: v.name, formatted_address: v.addr, place_id: placeId, rating: v.stars, photo_url: v.photo_url, lat: v.location?.latitude, lng: v.location?.longitude });
     };
 
     window.__flockPanToVenue = (target) => {
@@ -1414,7 +1417,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
             markersRef.current.push({ marker, el, venue: tempVenue });
           }
           setActiveVenue(tempVenue);
-          if (placeId) openVenueDetail(placeId, { name: venueName, formatted_address: venueAddr, place_id: placeId, rating: venueRating, photo_url: venuePhoto });
+          if (placeId) openVenueDetail(placeId, { name: venueName, formatted_address: venueAddr, place_id: placeId, rating: venueRating, photo_url: venuePhoto, lat: fLat, lng: fLng });
         }
       }
     };
