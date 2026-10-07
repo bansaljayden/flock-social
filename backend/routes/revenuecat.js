@@ -260,6 +260,35 @@ function isAnonymousSubscriber(value) {
 // cannot produce should show up.
 const MAX_TRANSFER_IDS = 50;
 
+// How many Flock accounts one TRANSFER may re-read from RevenueCat, which is a
+// different question from how many ids it may name.
+//
+// MAX_TRANSFER_IDS bounds the arrays, anonymous aliases and all, and on the
+// fallback path that is the whole cost: one UPDATE over the set. Under the
+// subscriber re-read every account is a RevenueCat round trip of up to ten
+// seconds (fetchProActive's ceiling) on a pooled connection, one after another
+// inside a single delivery, and RevenueCat hangs up on a delivery that has not
+// answered within 60 seconds and sends it again. Fifty is far too many to
+// re-read: one TRANSFER used to cost up to a hundred reads. A real transfer
+// names the accounts on its two sides, rarely more than two, and five reads at
+// that ceiling still answer inside the minute.
+//
+// Counted after the ids with no users row are dropped (flockAccounts, below),
+// since those are never read, and refused rather than truncated for the reason
+// MAX_TRANSFER_IDS gives.
+const MAX_TRANSFER_REREADS = 5;
+
+// The ids among `ids` that are Flock accounts, in the order given. RevenueCat's
+// subscriber lookup is "get or create": asking about an id it has never seen
+// creates a customer for it, so an id with no users row is never asked about.
+// There is nothing here to write for one either.
+async function flockAccounts(ids) {
+  if (ids.length === 0) return [];
+  const { rows } = await pool.query('SELECT id FROM users WHERE id = ANY($1::int[])', [ids]);
+  const known = new Set(rows.map((r) => Number(r.id)));
+  return ids.filter((id) => known.has(id));
+}
+
 // True when the event carries entitlement identifiers and none of them is the
 // Pro entitlement. Events that carry no identifiers at all fall through to the
 // old behavior — RevenueCat omits them on some legacy payloads and dropping
@@ -496,15 +525,25 @@ router.post('/webhook', async (req, res) => {
       const to = ids(event.transferred_to);
 
       // Under the subscriber re-read, a transfer is a prompt to re-read every
-      // account on both sides. Writing from the event would switch off an
+      // Flock account on both sides. Writing from the event would switch off an
       // account whose App Store purchase moved away while its Stripe
       // subscription is still paid. Any read that fails answers 500 so
-      // RevenueCat retries the whole event.
+      // RevenueCat retries the whole event. Ids with no account are dropped
+      // before RevenueCat is asked, and at most MAX_TRANSFER_REREADS accounts
+      // are read.
       if (proBilling.revenueCatApiConfigured()) {
-        for (const id of new Set([...from, ...to])) {
+        const named = [...new Set([...from, ...to])];
+        const accounts = await flockAccounts(named);
+        if (accounts.length > MAX_TRANSFER_REREADS) {
+          console.error(`[RevenueCat] TRANSFER naming ${accounts.length} Flock accounts, more than the ${MAX_TRANSFER_REREADS} one transfer may re-read, refused`);
+          return res.status(400).json({ error: 'Too many accounts in transfer' });
+        }
+        if (accounts.length === 0) return res.json({ ok: true, ignored: 'no_such_account' });
+        for (const id of accounts) {
           await syncPremiumFromRevenueCat(id);
         }
-        console.log(`[RevenueCat] TRANSFER re-read [${from}] and [${to}]`);
+        const skipped = named.length - accounts.length;
+        console.log(`[RevenueCat] TRANSFER re-read [${accounts}]${skipped ? `, skipped ${skipped} id(s) with no Flock account` : ''}`);
         return res.json({ ok: true, source: 'subscriber' });
       }
 
@@ -601,6 +640,12 @@ router.post('/webhook', async (req, res) => {
     // read throws into the catch below, which answers 500, and RevenueCat
     // retries: nothing is written from a guess.
     if (proBilling.revenueCatApiConfigured()) {
+      // Only an account that exists is re-read, for the reason flockAccounts
+      // gives. An event can name one that is gone: an account deleted while its
+      // App Store subscription ran on still gets that subscription's
+      // EXPIRATION. routes/stripeWebhook.js stops the same way.
+      const exists = await pool.query('SELECT 1 FROM users WHERE id = $1', [appUserId]);
+      if (!exists.rows || exists.rows.length === 0) return res.json({ ok: true, ignored: 'no_such_account' });
       await syncPremiumFromRevenueCat(appUserId);
       return res.json({ ok: true, source: 'subscriber' });
     }
@@ -702,9 +747,11 @@ module.exports.syncPremiumFromRevenueCat = syncPremiumFromRevenueCat;
 // it carries no request state, so a service reading it is a pure call.
 module.exports.configuredSecret = configuredSecret;
 
-// For the tests: the refusal summary is timed, and a suite has to be able to
-// start it from a known state and drive it without a real clock.
+// For the tests: the TRANSFER re-read cap, so a suite can stand at it, and the
+// refusal summary, which is timed and has to be started from a known state and
+// driven without a real clock.
 module.exports.__testing = {
+  MAX_TRANSFER_REREADS,
   REFUSAL_LOG_INTERVAL_MS,
   noteRefusal,
   resetRefusals() {
