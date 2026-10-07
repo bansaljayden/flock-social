@@ -11,7 +11,13 @@
  */
 const fs = require('fs');
 const path = require('path');
-const { sameAsAccount } = require('../services/userSettings');
+jest.mock('../services/api', () => ({
+  getUserSettings: jest.fn(),
+  updateUserSettings: jest.fn(() => Promise.resolve({})),
+  isLoggedIn: jest.fn(() => true),
+}));
+const api = require('../services/api');
+const { sameAsAccount, queueSync, queuedSincePull, pullSettings } = require('../services/userSettings');
 
 const app = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8').replace(/\r\n/g, '\n');
 
@@ -32,8 +38,33 @@ describe('sameAsAccount', () => {
   });
 });
 
+describe('queuedSincePull', () => {
+  // A change made while the pull is on the wire (a pin on a slow connection)
+  // is newer on this device than the pull's answer.
+  test('a key queued after the pull asked is newer here; one queued before is not', async () => {
+    let answer;
+    api.isLoggedIn.mockReturnValue(true);
+    api.getUserSettings.mockImplementation(() => new Promise((resolve) => { answer = resolve; }));
+    queueSync({ flockOrder: [1] });
+    await new Promise((r) => setTimeout(r, 5));
+    const pulling = pullSettings();
+    expect(queuedSincePull('flockOrder')).toBe(false);
+    expect(queuedSincePull('pinnedFlockIds')).toBe(false);
+    queueSync({ pinnedFlockIds: [7] });
+    expect(queuedSincePull('pinnedFlockIds')).toBe(true);
+    answer({ settings: { pinnedFlockIds: [], flockOrder: [1] } });
+    await pulling;
+  });
+});
+
 test('the listener records what it adopts, and all three effects ask before sending', () => {
-  expect(app).toContain("['userInterests', 'pinnedFlockIds', 'flockOrder'].forEach((key) => {\n        if (Array.isArray(s[key])) accountListsRef.current[key] = JSON.stringify(s[key]);");
+  expect(app).toContain("const fresh = (key) => s[key] !== undefined && s[key] !== null && !queuedSincePull(key);");
+  expect(app).toContain("['userInterests', 'pinnedFlockIds', 'flockOrder'].forEach((key) => {\n        if (fresh(key) && Array.isArray(s[key])) accountListsRef.current[key] = JSON.stringify(s[key]);");
+  // Every synced value the listener adopts goes through fresh().
+  for (const key of ['safetyOn', 'crowdAlerts', 'locationEnabled']) {
+    expect(app).toContain(`if (fresh('${key}')) {`);
+  }
+  expect(app).toContain("if (fresh('userInterests') && Array.isArray(s.userInterests)) setUserInterests(s.userInterests);");
   // Recorded before anything is adopted.
   const listener = app.indexOf('const onSettings = (e) => {');
   expect(app.indexOf('accountListsRef.current[key] = JSON.stringify(s[key])', listener))

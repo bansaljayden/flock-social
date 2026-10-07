@@ -61,6 +61,16 @@ const JSON_KEYS = new Set(['pinnedFlockIds', 'flockOrder', 'userInterests']);
 let pending = {};
 let timer = null;
 
+// When the latest pull asked the server, and when each key last went into
+// the queue. A key queued after the pull asked is newer on this device than
+// anything that pull can deliver for it (queuedSincePull).
+let pullAskedAt = 0;
+const queuedAt = {};
+
+export function queuedSincePull(key) {
+  return queuedAt[key] !== undefined && queuedAt[key] >= pullAskedAt;
+}
+
 // Whether `value` is what the account already holds for `key`, by JSON, in
 // `held` (a component's record of what the settings pull delivered and what
 // it has sent since). When it is not, it is recorded as held, because the
@@ -76,6 +86,8 @@ export function sameAsAccount(held, key, value) {
 }
 
 export function queueSync(partial) {
+  const now = Date.now();
+  Object.keys(partial).forEach((key) => { queuedAt[key] = now; });
   pending = { ...pending, ...partial };
   if (timer) clearTimeout(timer);
   timer = setTimeout(() => {
@@ -130,6 +142,7 @@ function readLocalSettings() {
 
 export async function pullSettings() {
   if (!isLoggedIn()) return null;
+  pullAskedAt = Date.now();
   try {
     const { settings } = await getUserSettings();
     const serverHasSettings = settings && typeof settings === 'object' && Object.keys(settings).length > 0;
