@@ -99,25 +99,54 @@ let appliedAsk = 0;
 
 // WHAT IS STILL OWED TO THE ACCOUNT, KEPT ACROSS A RELOAD. The queue is
 // memory, so a reload lost a save that was waiting to retry, and the next
-// pull put the account's older value back over the change. Everything queued
-// and not yet confirmed is mirrored here and restored on load (restoreOwed);
-// it is a flock* key, so the sign-out sweep in api.js removes it with the
-// account it belongs to.
+// pull put the account's older value back over the change. Every value queued
+// and not yet confirmed is recorded here, KEY BY KEY and read fresh each
+// time, because every tab of this origin shares the record: written whole
+// from one tab's memory, a tab settling its own save erased another tab's
+// owed keys, and a tab that copied the record on load later sent a value
+// another tab had since saved over. A pull reads it as it starts
+// (takeOwed). It is a flock* key, so the sign-out sweep in api.js removes it
+// with the account it belongs to.
 const OWED_KEY = 'flock_settings_owed';
-let owed = {};
-function saveOwed() {
+function readOwed() {
   try {
-    if (Object.keys(owed).length > 0) localStorage.setItem(OWED_KEY, JSON.stringify(owed));
+    const saved = JSON.parse(localStorage.getItem(OWED_KEY) || 'null');
+    return saved && typeof saved === 'object' && !Array.isArray(saved) ? saved : {};
+  } catch (_) {
+    return {};
+  }
+}
+function writeOwed(record) {
+  try {
+    if (Object.keys(record).length > 0) localStorage.setItem(OWED_KEY, JSON.stringify(record));
     else localStorage.removeItem(OWED_KEY);
   } catch (_) { /* storage blocked: the queue still holds it for this load */ }
 }
-// What a settled write no longer owes: each key whose owed value is the one
-// that was sent (a newer value queued since stays owed).
+function oweKeys(partial) {
+  writeOwed({ ...readOwed(), ...partial });
+}
+// What a settled write no longer owes: each key still recorded with the value
+// that was sent. A newer value, from this tab or another, stays owed.
 function settleOwed(payload) {
+  const record = readOwed();
   Object.keys(payload).forEach((key) => {
-    if (JSON.stringify(owed[key]) === JSON.stringify(payload[key])) delete owed[key];
+    if (JSON.stringify(record[key]) === JSON.stringify(payload[key])) delete record[key];
   });
-  saveOwed();
+  writeOwed(record);
+}
+// At a pull's start: what the record says is owed and this tab has nothing
+// newer for goes into the queue, counted as newer than the pull's answer.
+function takeOwed() {
+  const record = readOwed();
+  const now = Date.now();
+  let took = false;
+  Object.keys(record).forEach((key) => {
+    if (Object.prototype.hasOwnProperty.call(pending, key) || inFlight[key]) return;
+    pending[key] = record[key];
+    queuedAt[key] = now;
+    took = true;
+  });
+  return took;
 }
 
 // THE LAST ANSWER, KEPT FOR A SCREEN THAT WAS NOT LISTENING YET. The pull
@@ -163,10 +192,7 @@ export function queueSync(partial) {
   const now = Date.now();
   Object.keys(partial).forEach((key) => { queuedAt[key] = now; });
   pending = { ...pending, ...partial };
-  if (Object.keys(partial).length > 0) {
-    owed = { ...owed, ...partial };
-    saveOwed();
-  }
+  if (Object.keys(partial).length > 0) oweKeys(partial);
   if (timer) clearTimeout(timer);
   timer = setTimeout(flush, 600);
 }
@@ -260,25 +286,12 @@ if (typeof window !== 'undefined') {
     if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
     retryDelay = 0;
     lastPull = null;
-    owed = {};
-    saveOwed();
+    writeOwed({});
     [queuedAt, settledAt, inFlight].forEach((record) => {
       Object.keys(record).forEach((key) => { delete record[key]; });
     });
   });
 }
-
-// On load, what an earlier load still owed goes back in the queue. It is not
-// sent yet: the first pull confirms there is a live session and sends it
-// (pullSettings), and meanwhile it counts as newer than any answer.
-function restoreOwed() {
-  let saved = null;
-  try { saved = JSON.parse(localStorage.getItem(OWED_KEY) || 'null'); } catch (_) { saved = null; }
-  if (!saved || typeof saved !== 'object' || Array.isArray(saved) || Object.keys(saved).length === 0) return;
-  owed = { ...saved, ...owed };
-  pending = { ...saved, ...pending };
-}
-if (typeof window !== 'undefined') restoreOwed();
 
 function readLocalSettings() {
   const out = {};
@@ -296,8 +309,9 @@ function readLocalSettings() {
 
 export async function pullSettings() {
   if (!isLoggedIn()) return null;
-  // A session is live, so whatever an earlier load still owed can go up.
-  if (Object.keys(pending).length > 0 && !timer) queueSync({});
+  // A session is live: what is still owed (by an earlier load, or by another
+  // tab that has not sent it yet) goes up, and outranks this pull's answer.
+  if (takeOwed() || (Object.keys(pending).length > 0 && !timer)) queueSync({});
   const askedAt = Date.now();
   const ask = ++askCount;
   const mine = session;
@@ -337,7 +351,10 @@ export async function pullSettings() {
     // the older one, and ThemeContext re-reads these keys on the event below.
     const taken = takeable(settings);
     for (const [key, lsKey] of Object.entries(SYNCED_KEYS)) {
-      if (taken[key] === undefined || taken[key] === null) continue;
+      if (taken[key] === undefined) continue;
+      // A null is a value the account cleared (Switch mode sends userMode:
+      // null). Skipped, another device kept its old copy for good.
+      if (taken[key] === null) { localStorage.removeItem(lsKey); continue; }
       const value = JSON_KEYS.has(key) ? JSON.stringify(taken[key]) : String(taken[key]);
       localStorage.setItem(lsKey, value);
     }

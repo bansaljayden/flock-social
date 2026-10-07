@@ -405,7 +405,7 @@ describe('what is still owed survives a reload', () => {
     expect(localStorage.getItem('flock_settings_owed')).toBeNull();
   });
 
-  test('is restored on load, wins over the pull, and is sent once a pull confirms the session', async () => {
+  test('is taken back after a reload when a pull starts, wins over its answer, and is sent', async () => {
     localStorage.setItem('flock_settings_owed', JSON.stringify({ pinnedFlockIds: [9] }));
     let fresh;
     let freshApi;
@@ -416,6 +416,7 @@ describe('what is still owed survives a reload', () => {
     freshApi.isLoggedIn.mockReturnValue(true);
     freshApi.updateUserSettings.mockImplementation(() => Promise.resolve({}));
     freshApi.getUserSettings.mockImplementation(() => Promise.resolve({ settings: { pinnedFlockIds: [1], flockOrder: [3] } }));
+    await wait(700);
     expect(freshApi.updateUserSettings).not.toHaveBeenCalled(); // nothing goes out before a pull
     let detail = null;
     const on = (e) => { detail = e.detail; };
@@ -425,6 +426,25 @@ describe('what is still owed survives a reload', () => {
     expect(detail).toEqual({ flockOrder: [3] });
     await wait(700);
     expect(freshApi.updateUserSettings).toHaveBeenCalledWith({ pinnedFlockIds: [9] });
+  });
+
+  test("one tab settling its save leaves another tab's owed keys alone", async () => {
+    queueSync({ theme: 'dark' }); // this tab
+    // Another tab owes interests in the shared record.
+    localStorage.setItem('flock_settings_owed', JSON.stringify({ ...JSON.parse(localStorage.getItem('flock_settings_owed')), userInterests: ['B'] }));
+    await wait(700); // this tab's theme lands
+    expect(JSON.parse(localStorage.getItem('flock_settings_owed'))).toEqual({ userInterests: ['B'] });
+  });
+
+  test('a value another tab has since saved is not sent again by this tab', async () => {
+    // This tab's view of the record was {pins:[1]}; the other tab saved [1,2]
+    // since and the record no longer owes pins.
+    localStorage.setItem('flock_settings_owed', JSON.stringify({ pinnedFlockIds: [1] }));
+    localStorage.removeItem('flock_settings_owed');
+    api.getUserSettings.mockImplementation(() => Promise.resolve({ settings: { pinnedFlockIds: [1, 2] } }));
+    expect(await handedOn(pullSettings())).toEqual({ pinnedFlockIds: [1, 2] });
+    await wait(700);
+    expect(api.updateUserSettings).not.toHaveBeenCalled();
   });
 
   test('is swept with the account: it is a flock* key, and the session end clears it', () => {
@@ -439,9 +459,28 @@ test('a request made for an account that signed out while it waited is not sent 
   const apiSource = fs.readFileSync(path.join(__dirname, '..', 'services', 'api.js'), 'utf8');
   expect(apiSource).toContain('const madeFor = signingIn ? null : accountOf(getToken());');
   expect(apiSource).toContain('if (madeFor && accountOf(token) !== madeFor) throw sessionEndedError();');
-  expect(apiSource).toContain('if (madeFor && accountOf(next) !== madeFor) throw sessionEndedError();');
+  expect(apiSource).toContain('if (madeFor && accountOf(next || getToken()) !== madeFor) throw sessionEndedError();');
   // Checked after the renewal, before the token is used.
   const body = apiSource.slice(apiSource.indexOf('async function request(endpoint, options = {}) {'));
   expect(body.indexOf('await renewIfDue();')).toBeLessThan(body.indexOf('if (madeFor && accountOf(token) !== madeFor)'));
   expect(body.indexOf('if (madeFor && accountOf(token) !== madeFor)')).toBeLessThan(body.indexOf("headers['Authorization'] = `Bearer ${token}`;"));
+});
+
+test('a value the account cleared clears this device too', async () => {
+  window.dispatchEvent(new CustomEvent('flock-session-cleared'));
+  localStorage.clear();
+  localStorage.setItem('flockUserMode', 'venue');
+  api.isLoggedIn.mockReturnValue(true);
+  api.getUserSettings.mockImplementation(() => Promise.resolve({ settings: { userMode: null, theme: 'dark' } }));
+  await pullSettings();
+  expect(localStorage.getItem('flockUserMode')).toBeNull();
+  expect(localStorage.getItem('flock-theme')).toBe('dark');
+});
+
+test("a 401 for an account that signed out meanwhile does not sign out the next one", () => {
+  const apiSource = fs.readFileSync(path.join(__dirname, '..', 'services', 'api.js'), 'utf8');
+  const at = apiSource.indexOf('const next = await renewAfterExpiry(token);');
+  const after = apiSource.slice(at, at + 600);
+  expect(after).toContain('if (madeFor && accountOf(next || getToken()) !== madeFor) throw sessionEndedError();');
+  expect(after.indexOf('accountOf(next || getToken())')).toBeLessThan(after.indexOf('if (next) {'));
 });
