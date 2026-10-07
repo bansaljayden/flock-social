@@ -58,6 +58,15 @@ const express = require('express');
 
 process.env.JWT_SECRET = 'abuse-reliability-farming-test-secret';
 
+// The clock is pinned to 14:00 UTC (helpers/pinnedClock.js), the middle of a
+// four-hour slot, before the routes load. routes/flocks.js credits plans by
+// four-hour slot of UTC time, and these tests seed plans at the current time
+// and count the slots they land in, so from the real clock a loop running
+// across 00:00, 04:00, 08:00, 12:00, 16:00 or 20:00 UTC spread over two slots.
+const { pinClock } = require('./helpers/pinnedClock');
+const pinnedClock = pinClock(Date.UTC(2026, 6, 15, 14, 0, 0));
+test.after(() => pinnedClock.restore());
+
 const pool = require('../config/database');
 
 const authMod = require('../middleware/auth');
