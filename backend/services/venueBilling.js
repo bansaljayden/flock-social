@@ -1555,7 +1555,8 @@ const CLAIM_NOT_VERIFIED_REFUND = {
 const ACCOUNT_DELETED_REFUND = {
   reason: 'account_deleted', key: 'flock-account-deleted-refund', cancelKey: 'flock-account-deleted-cancel', code: 'ACCOUNT_DELETED',
 };
-const REFUSALS = new Map([CLAIM_NOT_VERIFIED_REFUND, ACCOUNT_DELETED_REFUND].map((why) => [why.reason, why]));
+// The kind a recorded refusal names (migration 123 allows only these two).
+const refusalKind = (reason) => (reason === ACCOUNT_DELETED_REFUND.reason ? ACCOUNT_DELETED_REFUND : CLAIM_NOT_VERIFIED_REFUND);
 
 // The money a refused purchase took, given back. A trial took none (its
 // refusal records no invoice). The first invoice of the session is paid by one
@@ -1598,7 +1599,7 @@ async function refundRefusedInvoice(invoiceId, why) {
 // replay asks Stripe for nothing. Then the grant is written from Stripe, ended
 // by the refusal.
 async function finishRefusal(session, refusal) {
-  const why = REFUSALS.get(refusal.reason) || CLAIM_NOT_VERIFIED_REFUND;
+  const why = refusalKind(refusal.reason);
   const subscriptionId = refusal.stripe_subscription_id;
   if (!refusal.finished_at) {
     const sub = await stripe().subscriptions.retrieve(subscriptionId);
