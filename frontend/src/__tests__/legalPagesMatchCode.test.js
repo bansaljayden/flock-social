@@ -600,12 +600,13 @@ describe('privacy claims that depend on how the code behaves', () => {
     expect(ai).toMatch(/toFixed\(2\)/);                      // ~1km rounding
     expect(privacy).toMatch(/your first name, your age bracket/);
     expect(privacy).toMatch(/rounded to about a kilometer/);
-    // The device's time zone rides every turn and the date and time there go
-    // into Birdie's instructions (routes/ai.js, WHOSE CLOCK BIRDIE PLANS ON),
-    // so the list of what goes to Google names them.
+    // The device's time zone and the date and time there go into Birdie's
+    // instructions (routes/ai.js, WHOSE CLOCK BIRDIE PLANS ON), so the policy
+    // names them, with the condition they go on. The condition is pinned to the
+    // route in the consent-record block at the end of this file.
     expect(ai).toMatch(/validTimeZone\(req\.body\.timeZone\)/);
     expect(ai).toMatch(/- Now: \$\{now\}, \$\{zone\} time, where the user is\./);
-    expect(privacy).toMatch(/your messages in that conversation, your time zone with\s+the date and time it is there,/);
+    expect(flat(privacy)).toMatch(/Your time zone and the date and time it is there go too, but only if/);
     // Rosters and message bodies are deliberately not in the payload.
     expect(ai).toMatch(/member COUNT instead of/);
     expect(privacy).toMatch(/we don't send your email, exact coordinates, or messages/);
@@ -1116,5 +1117,34 @@ describe("the privacy policy lists Birdie's consent record, and the code keeps e
     expect(ai).toMatch(/birdie_ai_consent_at = COALESCE\(birdie_ai_consent_at, NOW\(\)\)/);
     expect(ai).toMatch(/zoneConsented = Boolean\(answer\?\.birdie_ai_consent_at\) && consentNamesZone\(answer\.birdie_ai_consent_copy\);/);
     expect(ai).toMatch(/'UPDATE users SET birdie_ai_consent_at = NULL, birdie_ai_consent_copy = NULL WHERE id = \$1 RETURNING id'/);
+  });
+
+  // WHEN THE TIME ZONE GOES. The policy said Birdie sends it on every turn, and
+  // the server only ever sent it on a yes to the version of the question that
+  // names it, with a zone the request carried. The sentence now says exactly
+  // that, and each half of it is one line in routes/ai.js.
+  const zoneSentence = "Your time zone and the date and time it is there go too, but only if you said yes to the version of Birdie's question that names them, and only when your device reports its time zone. A yes to an earlier version leaves them out.";
+
+  test('both copies of the policy say when the time zone goes, and the route gates it on exactly that', () => {
+    expect(flat(privacy)).toContain(zoneSentence);
+    expect(mirror).toContain(zoneSentence);
+    // "only when your device reports its time zone": the zone this request
+    // sent, when ICU accepts it, and no other (never the zone registered for push).
+    expect(ai).toMatch(/const sentZone = validTimeZone\(req\.body\.timeZone\);/);
+    // "only if you said yes to the version of Birdie's question that names
+    // them": a recorded yes whose question is numbered at or past the first one
+    // that names the zone. "An earlier version" is a lower number or none.
+    expect(ai).toMatch(/const BIRDIE_CONSENT_COPY_ZONE = 2;/);
+    expect(ai).toMatch(/const consentNamesZone = \(copy\) => Number\.isInteger\(copy\) && copy >= BIRDIE_CONSENT_COPY_ZONE;/);
+    expect(ai).toMatch(/zoneConsented = Boolean\(answer\?\.birdie_ai_consent_at\) && consentNamesZone\(answer\.birdie_ai_consent_copy\);/);
+    expect(ai).toMatch(/const userZone = zoneConsented \? sentZone : null;/);
+    // Everything that carries the user's clock to Gemini reads that one value:
+    // the Now line, the tools that read plan times in it, and the device's hour
+    // and day handed to the crowd tool.
+    expect(ai).toMatch(/const clock = \{ nowMs: Date\.now\(\), timeZone: userZone \};/);
+    expect(ai).toMatch(/\.\.\.\(userZone \? \{ localHour: req\.body\.localHour, localDay: req\.body\.localDay \} : \{\}\),\s+salesOff,\s+searchedPlaces,\s+timeZone: userZone,/);
+    // Without it the Now line is UTC and names no zone.
+    expect(ai).toMatch(/const zone = validTimeZone\(clock\.timeZone\);/);
+    expect(ai).toMatch(/- Now: \$\{now\} UTC\.\\n- You do not know the user's time zone/);
   });
 });

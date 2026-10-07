@@ -250,7 +250,7 @@ const PAGE_BLOCKS = {
   ],
   privacy: [
     ["h1", "Privacy Policy"],
-    ["p", "Effective October 6, 2026"],
+    ["p", "Effective October 7, 2026"],
     ["h2", "The short version"],
     ["li", "We collect what Flock needs to work: your account, your plans, your messages."],
     ["li", "Location is used only while you're using the app. Never in the background."],
@@ -347,7 +347,7 @@ const PAGE_BLOCKS = {
     ["h2", "Birdie and Roost"],
     ["p", "Flock has two features that send text to a large language model. Both use Google's Gemini API. They are separate features with separate audiences and separate payloads, so they get separate paragraphs. Neither one has any ability to write to your account, post on your behalf, or change anything. They read and they answer."],
     ["h3", "Birdie, the assistant in the app"],
-    ["p", "When you chat with Birdie, what goes to Google to produce the reply is your first name, your age bracket (under 18, under 21, or adult, never your birthday), your messages in that conversation, your time zone with the date and time it is there, and, only if you have allowed location, your approximate position rounded to about a kilometer."],
+    ["p", "When you chat with Birdie, what goes to Google to produce the reply is your first name, your age bracket (under 18, under 21, or adult, never your birthday), your messages in that conversation, and, only if you have allowed location, your approximate position rounded to about a kilometer. Your time zone and the date and time it is there go too, but only if you said yes to the version of Birdie's question that names them, and only when your device reports its time zone. A yes to an earlier version leaves them out."],
     ["p", "Every message also carries where you are in the app, because otherwise Birdie cannot answer \"is this place busy\". That means the screen and tab you are on and, when you have one open, the name of the flock you are looking at with its venue and status, and the name of the venue you are looking at with its Google place identifier. This goes with every message, not only when you ask about a plan."],
     ["p", "On top of that, if you ask Birdie about your plans or your friends, the names, venues and times of your flocks and your friends' display names are included so it can answer. When Birdie looks up a venue, the venue and the crowd numbers we hold for it go with the question."],
     ["p", "What is not sent: we don't send your email, exact coordinates, or messages from your flocks or your direct messages. The roster of who is in a flock is replaced by a count. Birdie conversations are not used by us for advertising and we do not use them to train any model of our own. What Google may do with the text it receives is governed by Google's own terms for the Gemini API."],
