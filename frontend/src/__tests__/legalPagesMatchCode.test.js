@@ -1189,7 +1189,7 @@ describe('the security list says which routes have no limit of their own and how
     expect(server.match(/^app\.use\(globalBackstopLimiter\);/gm)).toHaveLength(1);
     expect(server.search(/^app\.use\(globalBackstopLimiter\);/m)).toBeLessThan(server.search(/^app\.use\('\/api/m));
 
-    const sentence = 'Three routes have no limit of their own, only the app-wide ceiling every request counts toward, and all three are machine-to-machine: the notices our email provider, our payment processor and our subscription provider send us.';
+    const sentence = 'Apart from a status check that only says whether the service is up, three routes have no limit of their own, only the app-wide ceiling every request counts toward, and all three are machine-to-machine: the notices our email provider, our payment processor and our subscription provider send us.';
     for (const [name, src] of copies) {
       expect([name, src.includes(sentence)]).toEqual([name, true]);
       expect([name, /Two routes are exempt|Neither is reachable without/.test(src)]).toEqual([name, false]);
@@ -1242,7 +1242,7 @@ describe('the security list says which routes have no limit of their own and how
     expect(stripeRoute).toMatch(/if \(!billing\.stripeWebhookConfigured\(\)[^\n]*\) \{[\s\S]{0,400}?return res\.status\(503\)/);
     // Resend: a secret under its floor reads as none, and none is a 503.
     expect(emailRoute).toMatch(/function webhookSecret\(\) \{[\s\S]*?< MIN_\w+/);
-    expect(emailRoute).toMatch(/const key = webhookSecret\(\);\s*if \(!key\) \{[\s\S]{0,300}?return res\.status\(503\)/);
+    expect(emailRoute).toMatch(/const \{ key, problem \} = webhookSecret\(\);\s*if \(!key\) \{[\s\S]{0,400}?return res\.status\(503\)/);
 
     for (const [name, src] of copies) {
       expect([name, src.includes('All three are refused outright if the secret on our side is missing or too short to be one.')]).toEqual([name, true]);

@@ -384,7 +384,8 @@ workflows:
           # to
           #   ~/Library/Developer/Xcode/UserData/Provisioning Profiles  (Xcode 16+)
           #
-          # This file pins `xcode: latest`, so the image rolled onto 16 without
+          # This file pinned `xcode: latest` then (it pins 26.6 now, see the
+          # top of ios-capacitor), so the image rolled onto 16 without
           # anything here changing. fetch-signing-files kept working and
           # installed into the NEW directory; this check kept reading the OLD
           # one, found it empty, and failed with "no provisioning profile was

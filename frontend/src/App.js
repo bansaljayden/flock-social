@@ -20928,8 +20928,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           through, it says the location was not shared rather than leaving a
           space where a map would be, because "no map" and "no location" look
           identical and only one of them is true. */}
+      {/* Above every sheet: at zIndex 220 an alarm that arrived while the venue
+          card (9998) or the maps chooser (10050) was open was drawn underneath
+          them, where nobody would see it. */}
       {safetyAlert && (
-        <div style={{ position: 'absolute', inset: 0, zIndex: 220, backgroundColor: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
+        <div style={{ position: 'absolute', inset: 0, zIndex: 10100, backgroundColor: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
           {/* This dialog arrives unprompted over a socket, and aria-modal on a
               node no focus has entered hides the rest of the app from the VO
               cursor while DOM focus stays outside it: the recipient of an SOS
