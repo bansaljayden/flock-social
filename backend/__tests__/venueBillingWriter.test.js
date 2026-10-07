@@ -1194,6 +1194,98 @@ test('a hand-made plan bound to no listing lets its claim name a first listing, 
   assert.strictEqual(created.status, 201, created.text);
 });
 
+// THE FIRST LISTING IS WRITTEN ONTO THE PLAN BY THE SAVE THAT NAMES IT. Only
+// Stripe's next event used to bind a plan made for a claim with no listing.
+// A plan already set to end lets its claim move on, so a claim that named
+// listing A, was verified, and moved to B before any event had the same paid
+// grant served at B too (a grant bound to nothing binds nothing), and the next
+// event bound the plan to B, forgetting A.
+test('a plan bound to no listing is bound to the first listing its claim names, in the save that names it', async () => {
+  const [PLACE_A, PLACE_B] = placePair();
+  const id = await venue({ verified: true });
+  const adminId = await admin();
+  const yearEnds = Math.floor(Date.now() / 1000) + 300 * DAY_S;
+  // A hand-made yearly plan for a claim with no listing, already set to end.
+  await venueBilling.syncVenueSubscription(sub('sub_first_listing', id, 'active', {
+    ...period('price_roost_year', yearEnds), cancel_at: yearEnds, cancel_at_period_end: true,
+  }));
+  const bindings = async () => ({
+    grant: (await testPool.query('SELECT google_place_id FROM venue_subscriptions WHERE user_id = $1', [id])).rows[0].google_place_id,
+    record: (await testPool.query('SELECT google_place_id FROM venue_stripe_subscriptions WHERE stripe_subscription_id = $1', ['sub_first_listing'])).rows[0].google_place_id,
+    trial: (await testPool.query('SELECT 1 FROM roost_trial_listings WHERE google_place_id = $1', [PLACE_A])).rows.length === 1,
+  });
+  assert.deepStrictEqual(await bindings(), { grant: null, record: null, trial: false });
+
+  const first = await profileCall('PUT', '/api/venue-profile', { as: id, body: { googlePlaceId: PLACE_A } });
+  assert.strictEqual(first.status, 200, first.text);
+  assert.deepStrictEqual(await bindings(), { grant: PLACE_A, record: PLACE_A, trial: true },
+    'the first listing the claim named was not written onto its plan');
+  const verifyA = await adminCall('PUT', `/api/admin/venues/${await profileIdOf(id)}/verify`, { as: adminId, body: { verified: true, googlePlaceId: PLACE_A } });
+  assert.strictEqual(verifyA.status, 200, verifyA.text);
+  assert.strictEqual((await state(id)).served, 'pro');
+
+  // Set to end, the plan lets the claim move, and stays with A.
+  const moved = await profileCall('PUT', '/api/venue-profile', { as: id, body: { googlePlaceId: PLACE_B } });
+  assert.strictEqual(moved.status, 200, moved.text);
+  assert.strictEqual((await bindings()).grant, PLACE_A, 'moving the claim moved the plan');
+  const verifyB = await adminCall('PUT', `/api/admin/venues/${await profileIdOf(id)}/verify`, { as: adminId, body: { verified: true, googlePlaceId: PLACE_B } });
+  assert.strictEqual(verifyB.status, 200, verifyB.text);
+  assert.strictEqual((await state(id)).served, 'free', 'the plan bought before the first listing was served on the second one');
+  // Stripe's next event keeps it there.
+  await venueBilling.syncVenueSubscription('sub_first_listing');
+  assert.strictEqual((await bindings()).record, PLACE_A, 'the next event bound the plan to the listing the claim moved to');
+  assert.strictEqual((await state(id)).served, 'free');
+});
+
+test('re-onboarding that names a first listing binds an unbound plan the same way, and so does a first profile', async () => {
+  const [PLACE_A, PLACE_C] = placePair();
+  const record = async (subId) => (await testPool.query(
+    'SELECT google_place_id FROM venue_stripe_subscriptions WHERE stripe_subscription_id = $1', [subId])).rows[0].google_place_id;
+  const trialUsed = async (placeId) => (await testPool.query('SELECT 1 FROM roost_trial_listings WHERE google_place_id = $1', [placeId])).rows.length === 1;
+  // Re-onboarding over a claim with no listing.
+  const id = await venue({ verified: true });
+  await venueBilling.syncVenueSubscription(sub('sub_first_listing_post', id, 'active'));
+  const again = await profileCall('POST', '/api/venue-profile', { as: id, body: { businessName: 'The Owl', googlePlaceId: PLACE_A } });
+  assert.strictEqual(again.status, 201, again.text);
+  const grant = await testPool.query('SELECT google_place_id FROM venue_subscriptions WHERE user_id = $1', [id]);
+  assert.strictEqual(grant.rows[0].google_place_id, PLACE_A, 're-onboarding left the plan bound to no listing');
+  assert.strictEqual(await record('sub_first_listing_post'), PLACE_A);
+  assert.ok(await trialUsed(PLACE_A));
+
+  // An account whose plan arrived before it had a venue profile at all.
+  n += 1;
+  const u = await testPool.query(
+    "INSERT INTO users (email, password, name, role, email_verified) VALUES ($1, 'x', 'Owner', 'user', true) RETURNING id",
+    [`owner${n}@example.com`]
+  );
+  const early = u.rows[0].id;
+  await venueBilling.syncVenueSubscription(sub('sub_before_profile', early, 'active'));
+  assert.strictEqual(await record('sub_before_profile'), null);
+  const created = await profileCall('POST', '/api/venue-profile', { as: early, body: { businessName: 'The Wren', googlePlaceId: PLACE_C } });
+  assert.strictEqual(created.status, 201, created.text);
+  assert.strictEqual(await record('sub_before_profile'), PLACE_C, 'a first profile left the plan bound to no listing');
+  assert.ok(await trialUsed(PLACE_C));
+});
+
+test('a comp given to a claim with no listing is left as it was by the claim\'s first listing', async () => {
+  // Comps keep the rule they have always had (VENUE-BILLING.md): only a
+  // Stripe plan is bound by the first listing.
+  const [PLACE_A] = placePair();
+  const id = await venue({ verified: true });
+  const adminId = await admin();
+  const comp = await adminCall('POST', `/api/admin/venues/${id}/tier`, { as: adminId, body: { tier: 'pro', grantReason: 'admin', durationDays: 30 } });
+  assert.strictEqual(comp.status, 200, comp.text);
+  const first = await profileCall('PUT', '/api/venue-profile', { as: id, body: { googlePlaceId: PLACE_A } });
+  assert.strictEqual(first.status, 200, first.text);
+  const g = await testPool.query('SELECT source, google_place_id FROM venue_subscriptions WHERE user_id = $1', [id]);
+  assert.deepStrictEqual(g.rows[0], { source: 'admin', google_place_id: null });
+  assert.ok(!(await testPool.query('SELECT 1 FROM roost_trial_listings WHERE google_place_id = $1', [PLACE_A])).rows.length,
+    'a comp used up a listing\'s trial');
+  const verified = await adminCall('PUT', `/api/admin/venues/${await profileIdOf(id)}/verify`, { as: adminId, body: { verified: true, googlePlaceId: PLACE_A } });
+  assert.strictEqual(verified.status, 200, verified.text);
+  assert.strictEqual((await state(id)).served, 'pro');
+});
+
 test('after the documented move, the listing the claim names now can buy its own plan', async () => {
   // End the plan, move the claim, get the new listing verified: the steps
   // ROOST_LISTING_MSG gives. The old plan is active at Stripe until its year

@@ -312,14 +312,21 @@ const CLAIMED_MSG = 'That business is already claimed by a verified owner. If it
 // the rest of its period stays with the old listing) or ours: we re-bind the
 // plan in Stripe, after which moving the claim to its new listing is allowed.
 // Comps never block a move; they stay with the listing they were given for.
-// A plan bound to no listing (one made by hand for a claim that had none)
-// binds to the first listing the claim names, the way the Stripe writer binds
-// it: it never stops a claim from naming its first listing, and from then on
-// it holds the claim there like any other plan, even before Stripe's next
-// event has written that binding down.
-// Only while venue billing is on (VENUE_BILLING_ENABLED, bound into both
-// statements): with it off no plan is enforced anywhere, so a profile save
-// behaves exactly as it did before Roost had a price.
+// FIRST LISTING. A plan bound to no listing (one made by hand for a claim that
+// had none) binds to the first listing the claim names. It never stops a
+// claim from naming its first listing, and the save that names it writes the
+// binding down in the same statement: on the grant, on the subscription's
+// record and in the trial record (roost_trial_listings), for every Stripe plan
+// of the account's still bound to nothing. That used to wait for Stripe's
+// next event, so a plan already set to end, which lets its claim move,
+// followed the claim to its second listing: the paid grant was served there
+// too, and the next event bound it there for good. From then on it holds the
+// claim like any other plan. A comp bound to no listing is left as it was.
+// That binding is a record, written whether or not venue billing is on, as
+// the Stripe writer's bindings are. The refusal runs only while venue billing
+// is on (VENUE_BILLING_ENABLED, bound into both statements): with it off no
+// plan is enforced anywhere, so a profile save behaves exactly as it did
+// before Roost had a price.
 // SET TO RENEW means Stripe will invoice the plan again: it has no cancel
 // date, or its cancel date is past its current period end. Stripe invoices
 // every period until a cancel date, so a "cancel on a date" months out still
@@ -557,7 +564,11 @@ router.post('/', requireVerified, [
 
     // Upsert venue profile
     const result = await pool.query(
-      `INSERT INTO venue_profiles (user_id, business_name, category, location, description, goals, google_place_id)
+      `WITH before AS (
+         SELECT vp.google_place_id FROM venue_profiles vp WHERE vp.user_id = $1
+       ),
+       saved AS (
+       INSERT INTO venue_profiles (user_id, business_name, category, location, description, goals, google_place_id)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (user_id) DO UPDATE SET
          business_name = EXCLUDED.business_name,
@@ -593,7 +604,35 @@ router.post('/', requireVerified, [
                                  AND (vs.cancel_at IS NULL OR vs.current_period_end IS NULL OR vs.cancel_at > vs.current_period_end)
                                  AND COALESCE(vs.google_place_id, venue_profiles.google_place_id) IS NOT NULL
                                  AND COALESCE(vs.google_place_id, venue_profiles.google_place_id) IS DISTINCT FROM EXCLUDED.google_place_id))
-       RETURNING *`,
+       RETURNING *
+       ),
+       -- The claim's first listing, written onto its unbound Stripe plans
+       -- (FIRST LISTING above). The same block as the update route's, and
+       -- the two must not drift. A new profile has no row in before.
+       first_listing AS (
+         SELECT s.user_id, s.google_place_id FROM saved s
+          WHERE s.google_place_id IS NOT NULL
+            AND NOT EXISTS (SELECT 1 FROM before b WHERE b.google_place_id IS NOT NULL)
+       ),
+       bound_grant AS (
+         UPDATE venue_subscriptions vs SET google_place_id = f.google_place_id, updated_at = NOW()
+           FROM first_listing f
+          WHERE vs.user_id = f.user_id AND vs.source = 'stripe' AND vs.google_place_id IS NULL
+         RETURNING vs.user_id
+       ),
+       bound_plans AS (
+         UPDATE venue_stripe_subscriptions vss SET google_place_id = f.google_place_id
+           FROM first_listing f
+          WHERE vss.user_id = f.user_id AND vss.google_place_id IS NULL
+         RETURNING vss.stripe_subscription_id
+       ),
+       trial_listing AS (
+         INSERT INTO roost_trial_listings (google_place_id)
+         SELECT f.google_place_id FROM first_listing f
+          WHERE EXISTS (SELECT 1 FROM bound_plans) OR EXISTS (SELECT 1 FROM bound_grant)
+         ON CONFLICT (google_place_id) DO NOTHING
+       )
+       SELECT * FROM saved`,
       [req.user.id, businessName, category || null, location || null, description || null, goals || [], googlePlaceId || null,
        venueBillingEnabled()]
     );
@@ -968,7 +1007,11 @@ router.put('/', [
     }
 
     const result = await pool.query(
-      `UPDATE venue_profiles SET
+      `WITH before AS (
+        SELECT vp.google_place_id FROM venue_profiles vp WHERE vp.user_id = $11
+      ),
+      saved AS (
+      UPDATE venue_profiles SET
         business_name = COALESCE($1, business_name),
         category = COALESCE($2, category),
         location = COALESCE($3, location),
@@ -1022,7 +1065,35 @@ router.put('/', [
                                 AND (vs.cancel_at IS NULL OR vs.current_period_end IS NULL OR vs.cancel_at > vs.current_period_end)
                                 AND COALESCE(vs.google_place_id, venue_profiles.google_place_id) IS NOT NULL
                                 AND COALESCE(vs.google_place_id, venue_profiles.google_place_id) IS DISTINCT FROM $9::varchar))
-      RETURNING *`,
+      RETURNING *
+      ),
+      -- The claim's first listing, written onto its unbound Stripe plans
+      -- (FIRST LISTING above). The same block as the create route's, and the
+      -- two must not drift.
+      first_listing AS (
+        SELECT s.user_id, s.google_place_id FROM saved s
+         WHERE s.google_place_id IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM before b WHERE b.google_place_id IS NOT NULL)
+      ),
+      bound_grant AS (
+        UPDATE venue_subscriptions vs SET google_place_id = f.google_place_id, updated_at = NOW()
+          FROM first_listing f
+         WHERE vs.user_id = f.user_id AND vs.source = 'stripe' AND vs.google_place_id IS NULL
+        RETURNING vs.user_id
+      ),
+      bound_plans AS (
+        UPDATE venue_stripe_subscriptions vss SET google_place_id = f.google_place_id
+          FROM first_listing f
+         WHERE vss.user_id = f.user_id AND vss.google_place_id IS NULL
+        RETURNING vss.stripe_subscription_id
+      ),
+      trial_listing AS (
+        INSERT INTO roost_trial_listings (google_place_id)
+        SELECT f.google_place_id FROM first_listing f
+         WHERE EXISTS (SELECT 1 FROM bound_plans) OR EXISTS (SELECT 1 FROM bound_grant)
+        ON CONFLICT (google_place_id) DO NOTHING
+      )
+      SELECT * FROM saved`,
       [businessName || null, category || null, location || null, description || null, goals || null,
        phone || null, operatingHours ? JSON.stringify(operatingHours) : null,
        notificationPrefs ? JSON.stringify(sanitizePrefs(notificationPrefs)) : null, googlePlaceId || null,

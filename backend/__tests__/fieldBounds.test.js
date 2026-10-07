@@ -258,6 +258,12 @@ const accountRow = () => ({
 // rows. The search case below does.
 const SEARCH_HIT = { id: 2, name: 'Bea', profile_image_url: null };
 
+// The venue profile's own writes, PUT and POST. Each is one statement that
+// opens with a WITH (a claim's first listing is written onto an unbound Roost
+// plan in that same statement), so these are not anchored at the start.
+const PROFILE_UPDATE = /UPDATE venue_profiles SET business_name = COALESCE/i;
+const PROFILE_INSERT = /INSERT INTO venue_profiles \(user_id, business_name/i;
+
 function DEFAULT_HANDLERS() {
   return [
     [/^SELECT \* FROM users WHERE id = \$1$/i, () => ({ rows: [accountRow()] })],
@@ -280,8 +286,10 @@ function DEFAULT_HANDLERS() {
     // match and it names this route alone.
     [/FROM users WHERE name ILIKE \$1 AND id != \$2/i, () => ({ rows: [SEARCH_HIT] })],
     [/FROM venue_profiles WHERE google_place_id/i, () => ({ rows: [] })],
+    [PROFILE_UPDATE, () => ({ rows: [{ id: 3, business_name: 'Bar' }] })],
+    [PROFILE_INSERT, () => ({ rows: [{ id: 3 }] })],
+    // The intake follow-up, which still opens with its UPDATE.
     [/^UPDATE venue_profiles SET/i, () => ({ rows: [{ id: 3, business_name: 'Bar' }] })],
-    [/^INSERT INTO venue_profiles/i, () => ({ rows: [{ id: 3 }] })],
     [/^UPDATE users SET role/i, () => ({ rows: [] })],
   ];
 }
@@ -297,7 +305,9 @@ function clearLimiters() {
 }
 
 const wrote = (re) => log.filter((q) => re.test(q.sql));
-const noWrites = () => log.filter((q) => /^(INSERT|UPDATE|DELETE)/i.test(q.sql));
+// A write inside a WITH statement is a write too.
+const noWrites = () => log.filter((q) => /^(INSERT|UPDATE|DELETE)/i.test(q.sql)
+  || /^WITH\b.*\b(INSERT INTO|UPDATE \w+(?: \w+)? SET|DELETE FROM)\b/i.test(q.sql));
 
 // ---------------------------------------------------------------------------
 // 4. THE CENSUS: no field on these routes escapes this file
@@ -891,7 +901,7 @@ test('an unknown key is still dropped rather than refused, and its value never r
     notificationPrefs: { bookings: true, junk: pad(5000), reviews: false },
   });
   assert.equal(res.status, 200, res.text);
-  const update = wrote(/^UPDATE venue_profiles SET/i)[0];
+  const update = wrote(PROFILE_UPDATE)[0];
   const sent = JSON.parse(update.params.find((p) => typeof p === 'string' && p.startsWith('{')));
   assert.deepEqual(sent, { bookings: true, reviews: false });
 });
@@ -906,7 +916,7 @@ test('a partial notificationPrefs write MERGES; it does not replace the other sw
   clearLimiters();
   const res = await call('PUT', '/api/venue-profile', { notificationPrefs: { bookings: false } });
   assert.equal(res.status, 200, res.text);
-  const update = wrote(/^UPDATE venue_profiles SET/i)[0];
+  const update = wrote(PROFILE_UPDATE)[0];
   const clause = /notification_prefs = ([\s\S]*?),\s+google_place_id/.exec(update.sql);
   assert.ok(clause, `the notification_prefs assignment is not where this expected it: ${update.sql}`);
   assert.match(clause[1], /\|\|/,
@@ -916,7 +926,7 @@ test('a partial notificationPrefs write MERGES; it does not replace the other sw
   // Sending nothing must still leave the column alone.
   clearLimiters();
   await call('PUT', '/api/venue-profile', { businessName: 'Bar' });
-  const none = wrote(/^UPDATE venue_profiles SET/i)[0];
+  const none = wrote(PROFILE_UPDATE)[0];
   assert.equal(none.params[7], null, 'an absent notificationPrefs must reach the statement as NULL');
 });
 
@@ -1020,7 +1030,7 @@ test('venue prose cannot BE markup on the way into the column', async () => {
     description: 'Great <script>alert(1)</script>beer',
   });
   assert.equal(res.status, 200, res.text);
-  const update = wrote(/^UPDATE venue_profiles SET/i)[0];
+  const update = wrote(PROFILE_UPDATE)[0];
   assert.equal(update.params[0], "Joe's Bar");
   assert.equal(update.params[3], 'Great beer');
 });
@@ -1037,7 +1047,7 @@ test('the CREATE route strips prose too, not just the update', async () => {
     description: 'Great <script>alert(1)</script>beer',
   });
   assert.equal(res.status, 201, res.text);
-  const insert = wrote(/^INSERT INTO venue_profiles/i)[0];
+  const insert = wrote(PROFILE_INSERT)[0];
   assert.ok(insert, 'the insert never ran');
   assert.equal(insert.params[1], "Joe's Bar");
   assert.equal(insert.params[2], 'Bar');
