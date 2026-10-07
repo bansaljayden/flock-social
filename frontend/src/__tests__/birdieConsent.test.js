@@ -269,6 +269,17 @@ describe('the client calls', () => {
     expect(data.consentedAt).toBe('2026-09-27T12:00:00.000Z');
   });
 
+  // The server reads the zone every turn sends only on a yes to a question
+  // that names it (backend migration 122), and this build's question does, so
+  // Allow says so. Without it the yes reads as one to the earlier question.
+  test('Allow says it answered the question that names the time zone', async () => {
+    global.fetch = answer({ consented: true, consentedAt: '2026-10-06T12:00:00.000Z' });
+    await api.grantBirdieConsent();
+    const [, init] = global.fetch.mock.calls[0];
+    expect(api.BIRDIE_CONSENT_COPY).toBe(2);
+    expect(JSON.parse(init.body)).toEqual({ copy: 2 });
+  });
+
   test('withdraw is DELETE /api/ai/consent', async () => {
     global.fetch = answer({ consented: false, consentedAt: null });
     await api.withdrawBirdieConsent();
@@ -304,7 +315,8 @@ describe('the client calls', () => {
   // Birdie was never told the date or the zone, so "Friday at 8" became 4 PM
   // Eastern on the card (backend routes/ai.js, WHOSE CLOCK BIRDIE PLANS ON).
   // Every turn now carries the device's own zone, and a runtime that cannot
-  // answer sends none rather than a guess; the server falls back on its own.
+  // answer sends none rather than a guess; the server then tells Birdie the
+  // zone is unknown.
   const chatBody = () => {
     const call = global.fetch.mock.calls.find(([url]) => String(url).includes('/api/ai/chat'));
     return JSON.parse(call[1].body);
