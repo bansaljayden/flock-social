@@ -1607,6 +1607,10 @@ async function request(endpoint, options = {}) {
       }
       throw err;
     }
+    // An answer for an account that has signed out on this tab since it was
+    // asked, with another signed in, is not the new account's: a revoked
+    // session's 401 handled below would sign the newcomer out.
+    if (madeFor && accountOf(getToken()) !== madeFor) throw sessionEndedError();
 
     if (canRetry && RETRYABLE_STATUSES.includes(res.status) && attempt < RETRY_DELAYS_MS.length) {
       await sleep(RETRY_DELAYS_MS[attempt] * (0.75 + Math.random() * 0.5));
