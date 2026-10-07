@@ -958,21 +958,26 @@ const INVENTORY = [
       + 'the query, so an unshaped id is refused for free and a shaped id that names '
       + 'nothing reads no row',
     protects: 'one indexed SELECT 1 ... LIMIT 1 on ml_venue_baselines on the 20-connection '
-      + 'primary pool, asked at the no-baseline exit and only while CROWD_NO_CURVE_FALLBACK '
-      + 'is on, after every gate that needs no query has passed. primeVenueCurve also writes '
-      + 'it (noteCurvePresence) when a whole-curve read finishes, from rows that read already '
-      + 'paid for, so a strip never answers from an older no than the rows it just read',
+      + 'primary pool (an index-only scan, 0.3 ms median round trip at production\'s row '
+      + 'count), asked at the no-baseline exit and only while CROWD_NO_CURVE_FALLBACK is on, '
+      + 'after every gate that needs no query has passed. Every read that sees the venue\'s '
+      + 'rows also writes it (noteCurvePresence) from rows it already paid for: a strip\'s '
+      + 'whole-curve read, the rows it replays from curveCache, a slot lookup that finds '
+      + 'rows, the neighbour self-read. A no lands only if nothing was written after its '
+      + 'read was sent, so a slow probe cannot put an old no back over a newer yes',
     denominator: 'uncached presence probes, charged to the same crowd-venue-lookup budget '
       + 'as the slot lookup in front of it (1500/hr, 5000/day per account). A hit is '
       + 'answered above the gate and costs nothing',
     bound: 'boundedSet at PREDICTOR_CACHE_MAX = 2000, delete-then-set, oldest-first; a '
-      + 'yes is held BASELINE_CACHE_TTL (24h), a no one hour',
+      + 'yes is held BASELINE_CACHE_TTL (24h), a no is trusted for CURVE_ABSENT_RECHECK_MS '
+      + '(5 min) and then asked again at the gate, charged',
     verdict: 'SAFE',
     why: 'Same key, same gate and same ceiling as baselineCache, which it is only ever read '
-      + 'beside, so it cannot grow faster or cost more than that cache already does. A '
-      + 'refused or failed probe writes nothing and answers unknown, which keeps the rule '
-      + 'engine, so an account that cannot query can neither evict a real venue\'s answer '
-      + 'nor buy a category value for one. The no is held an hour rather than a day because '
+      + 'beside, so it cannot grow faster than that cache already does, and the re-ask is at '
+      + 'most twelve probes an hour per venue that reaches the gate. A refused or failed '
+      + 'probe writes nothing and answers unknown, which keeps the rule engine, so an '
+      + 'account that cannot query can neither evict a real venue\'s answer nor buy a '
+      + 'category value for one. The no is trusted for minutes rather than a day because '
       + 'a stale no is the answer that could put a category value over a venue that has '
       + 'since gained a curve of its own.',
   },
