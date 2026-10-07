@@ -97,8 +97,9 @@ const USER_PER_MIN_LIMIT = 15;   // everyone, always
 const MAX_TRACKED_USERS = 20000;
 const EVICT_TARGET = 18000;
 
-function todayKey() {
-  return new Date().toISOString().slice(0, 10); // YYYY-MM-DD (UTC)
+// The UTC day an instant falls in, now unless told otherwise.
+function todayKey(nowMs = Date.now()) {
+  return new Date(nowMs).toISOString().slice(0, 10); // YYYY-MM-DD (UTC)
 }
 
 // '5' and 5 are the same account and must share one bucket, and anything that
@@ -184,10 +185,6 @@ function checkUserRateLimit(userId, dailyLimit = PREMIUM_DAILY_LIMIT) {
   return { allowed: true, remaining: dailyLimit - limit.dailyCount, chargeDay: key };
 }
 
-// How many Birdie messages this user has used today (0 if none or stale day).
-// Reads through accountKey for the same reason checkUserRateLimit writes
-// through it: '5' and 5 must be one account, or the number the client is shown
-// in its entitlements can disagree with the number the meter is enforcing.
 // Hands one daily chirp back. The meter charges before the model is called,
 // so a failed call (provider 5xx or 429, a spend-ledger refusal, a safety
 // block, an empty answer) used to cost a free-tier message that delivered
@@ -206,17 +203,26 @@ function refundTurn(userId, chargeDay) {
   }
 }
 
-function getUsedToday(userId) {
+// How many Birdie messages this user has used today (0 if none or stale day).
+// Reads through accountKey for the same reason checkUserRateLimit writes
+// through it: '5' and 5 must be one account, or the number the client is shown
+// in its entitlements can disagree with the number the meter is enforcing.
+//
+// "Today" is the UTC day `nowMs` falls in. A caller that also says when that
+// day's count resets passes the same instant to nextUtcMidnightISO, so the two
+// cannot come from either side of midnight (services/entitlements.js).
+function getUsedToday(userId, nowMs = Date.now()) {
   const id = accountKey(userId);
   if (id === null) return 0;
   const limit = userRateLimits.get(id);
-  if (!limit || limit.day !== todayKey()) return 0;
+  if (!limit || limit.day !== todayKey(nowMs)) return 0;
   return limit.dailyCount;
 }
 
-// ISO timestamp of the next UTC midnight — when daily counts reset.
-function nextUtcMidnightISO() {
-  const now = new Date();
+// ISO timestamp of the UTC midnight that ends the day `nowMs` falls in, which
+// is when that day's counts reset. The next one, unless told otherwise.
+function nextUtcMidnightISO(nowMs = Date.now()) {
+  const now = new Date(nowMs);
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1)).toISOString();
 }
 

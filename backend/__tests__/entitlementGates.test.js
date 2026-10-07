@@ -368,6 +368,67 @@ test('a spent day carries the next UTC midnight as its reset, and a day with chi
   assert.strictEqual(left.birdie.resetsAt, null);
 });
 
+// A clock for the cases that need two reads of "now" to land on two days. It
+// starts where the case puts it and moves forward a millisecond every time
+// anything reads it, through Date.now() or new Date(), and it is installed only
+// for the length of one case.
+async function withSteppingClock(startMs, fn) {
+  const RealDate = global.Date;
+  let next = startMs;
+  const read = () => { const v = next; next += 1; return v; };
+  class SteppingDate extends RealDate {
+    constructor(...args) {
+      if (args.length === 0) super(read());
+      else super(...args);
+    }
+
+    static now() { return read(); }
+  }
+  global.Date = SteppingDate;
+  try {
+    return await fn({ set: (ms) => { next = ms; } });
+  } finally {
+    global.Date = RealDate;
+  }
+}
+
+// ONE INSTANT FOR THE WHOLE BIRDIE BLOCK. The count and the reset time were
+// two reads of the clock, so a snapshot that straddled UTC midnight could count
+// the day that had just ended, spent, and name the midnight after the day that
+// had just begun: remaining 0 with the reset a full day off, while the new
+// day's chirps sat unused, and the app keeps the box shut until the time it is
+// given. The clock here is moved to the last millisecond of October 6 as the
+// tier read answers, the last wait before the meter is read, so any two reads
+// after it fall on two days.
+test('a snapshot read across UTC midnight counts and resets on the same day', async () => {
+  process.env.PAYWALL_ENABLED = 'true';
+  const OCT_7 = Date.UTC(2026, 9, 7);
+  const tierAnswersAt = (ms, clock) => handlers.push([/SELECT is_premium\b[\s\S]*?\bFROM users\b/, () => {
+    clock.set(ms);
+    return { rows: [{ is_premium: false }] };
+  }]);
+  await withSteppingClock(OCT_7 - 60000, async (clock) => {
+    const spent = freshId();
+    for (let i = 0; i < FREE_DAILY_LIMIT; i++) {
+      assert.strictEqual(checkUserRateLimit(spent, FREE_DAILY_LIMIT).allowed, true);
+    }
+
+    // Read in the last millisecond of the spent day: that day's count, and
+    // that day's own end as the reset.
+    tierAnswersAt(OCT_7 - 1, clock);
+    const late = await getEntitlements(spent);
+    assert.deepStrictEqual(late.birdie,
+      { limit: FREE_DAILY_LIMIT, used: FREE_DAILY_LIMIT, remaining: 0, resetsAt: new Date(OCT_7).toISOString() },
+      'the count and the reset came from two different days');
+
+    // Read in the first millisecond of the next day: its chirps are all there.
+    handlers = [];
+    tierAnswersAt(OCT_7, clock);
+    const next = await getEntitlements(spent);
+    assert.deepStrictEqual(next.birdie, { limit: FREE_DAILY_LIMIT, used: 0, remaining: FREE_DAILY_LIMIT, resetsAt: null });
+  });
+});
+
 // ===========================================================================
 // SECTION 3 — the kill switches themselves
 // ===========================================================================

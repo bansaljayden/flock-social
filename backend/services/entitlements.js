@@ -283,9 +283,9 @@ function paywallEnabled(userId) {
 //               resetsAt },                   // ISO, or null while chirps are left
 //   forecast: { limit, used, remaining } }    // per calendar month
 //
-// birdie.resetsAt is the next UTC midnight, when the day's count resets, and
-// it is sent only once the day is spent: the same time the 429 and the reply
-// that spends the last chirp carry (routes/ai.js). The app arms the timer
+// birdie.resetsAt is the UTC midnight that ends the day `used` was counted on,
+// when that count resets, and it is sent only once the day is spent: the same
+// time the 429 and the reply that spends the last chirp carry (routes/ai.js). The app arms the timer
 // that opens Birdie's box from it, and a relaunch with the day spent reads
 // only this snapshot, so without it the box stayed shut past the reset.
 //
@@ -316,7 +316,14 @@ async function getEntitlements(userId) {
   const grace = enabled && !premium && state.inGrace === true ? state.graceEndsAt : null;
   const metered = enabled && !premium && grace === null;
   const birdieLimit = metered ? FREE_DAILY_LIMIT : PREMIUM_DAILY_LIMIT;
-  const birdieUsed = getUsedToday(userId);
+  // One instant for the count and the reset. Two reads of the clock could
+  // fall either side of UTC midnight: the day that had just ended counted as
+  // spent, and the reset named the midnight after the day that had just
+  // begun, so the app kept Birdie's box shut a whole day while the new day's
+  // chirps sat unused. The count is the day this instant falls in, and
+  // resetsAt is that same day's end.
+  const nowMs = Date.now();
+  const birdieUsed = getUsedToday(userId, nowMs);
   // Clamped: switching the paywall on mid-day drops the limit from 150 to 10
   // under accounts that have already spent more than 10, and a negative
   // "remaining" would render as a negative number on a screen.
@@ -330,7 +337,7 @@ async function getEntitlements(userId) {
       limit: birdieLimit,
       used: birdieUsed,
       remaining: birdieRemaining,
-      resetsAt: birdieRemaining === 0 ? nextUtcMidnightISO() : null,
+      resetsAt: birdieRemaining === 0 ? nextUtcMidnightISO(nowMs) : null,
     },
     forecast: {
       limit: metered ? FREE_MONTHLY_FORECASTS : null,
