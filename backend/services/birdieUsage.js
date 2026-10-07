@@ -141,8 +141,9 @@ function evictLeastConsumed(map, spentOf) {
 }
 
 function checkUserRateLimit(userId, dailyLimit = PREMIUM_DAILY_LIMIT) {
+  // One read of the clock, so the minute window and the day are one instant's.
   const now = Date.now();
-  const key = todayKey();
+  const key = todayKey(now);
 
   const id = accountKey(userId);
   if (id === null) {
@@ -163,9 +164,12 @@ function checkUserRateLimit(userId, dailyLimit = PREMIUM_DAILY_LIMIT) {
     limit.dailyCount = 0;
   }
 
-  // Check daily limit
+  // Check daily limit. `day` is the day found spent, so a refusal can say when
+  // that day ends without reading the clock again (routes/ai.js
+  // chargeDayEndsAt): read again, a check that straddled UTC midnight named
+  // the end of the day after.
   if (limit.dailyCount >= dailyLimit) {
-    return { allowed: false, reason: 'daily', error: `you've been chatting up a storm 🐦 catch up tomorrow!` };
+    return { allowed: false, reason: 'daily', day: key, error: `you've been chatting up a storm 🐦 catch up tomorrow!` };
   }
 
   // Check per-minute limit

@@ -377,7 +377,9 @@ function birdieRefusal(res, leg) {
 // When the day a turn was charged to ends, which is when its last chirp comes
 // back. Read off the charge day (services/birdieUsage.js chargeDay) rather than
 // the clock at reply time, because a turn that straddles UTC midnight spent the
-// day before's chirp and today's are already back.
+// day before's chirp and today's are already back. The daily refusals read it
+// off the day the meter found spent (its `day`) for the same reason: off the
+// clock, a refusal that straddled midnight named the end of the next day.
 function chargeDayEndsAt(chargeDay) {
   const start = typeof chargeDay === 'string' ? Date.parse(`${chargeDay}T00:00:00.000Z`) : NaN;
   return Number.isFinite(start) ? new Date(start + 24 * HOUR_MS).toISOString() : nextUtcMidnightISO();
@@ -2255,7 +2257,7 @@ router.post('/chat',
             code: 'UPGRADE_REQUIRED',
             feature: 'birdie',
             limit: FREE_DAILY_LIMIT,
-            resetsAt: nextUtcMidnightISO(),
+            resetsAt: chargeDayEndsAt(rateCheck.day),
           });
         }
         if (rateCheck.reason === 'daily') {
@@ -2263,7 +2265,9 @@ router.post('/chat',
           // tomorrow!") broke the voice the system prompt sets (no
           // exclamation, no emoji) and "tomorrow" is a UTC day, which is the
           // afternoon in the US. Same body the spend ledger refusals use.
-          const ms = msUntilUtcMidnight();
+          // The wait runs to the end of the day the meter found spent, which
+          // is no wait at all once that day is over.
+          const ms = Date.parse(chargeDayEndsAt(rateCheck.day)) - Date.now();
           return res.status(429).json(refusalBody(res, ms, `that's my limit for today. i'm back ${waitPhrase(ms)}`));
         }
         return res.status(429).json({ error: rateCheck.error });
