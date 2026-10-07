@@ -856,12 +856,23 @@ test('an SOS with non-scalar coordinates degrades to no location, never a crash'
 });
 
 test('an NFC tap with a non-scalar signature is unverified, never trusted', async () => {
+  const crypto = require('node:crypto');
   const { nfcSigValid } = require('../routes/checkin').__test;
-  process.env.NFC_TAG_SECRET = 'shape-sweep-secret';
-  for (const sig of [['x'], {}, [], null, undefined, 5]) {
-    assert.strictEqual(nfcSigValid('ChIJrTLr', sig), false, JSON.stringify(sig));
+  // Generated, and long enough to be a key. A secret under the route's floor
+  // refuses every signature before its shape is looked at, which would pass
+  // this test for the wrong reason.
+  process.env.NFC_TAG_SECRET = crypto.randomBytes(32).toString('hex');
+  try {
+    for (const sig of [['x'], {}, [], null, undefined, 5]) {
+      assert.strictEqual(nfcSigValid('ChIJrTLr', sig), false, JSON.stringify(sig));
+    }
+    // The control: the same secret verifies the real signature as a string, so
+    // the refusals above are about the shape.
+    const real = crypto.createHmac('sha256', process.env.NFC_TAG_SECRET).update('ChIJrTLr').digest('hex').slice(0, 32);
+    assert.strictEqual(nfcSigValid('ChIJrTLr', real), true);
+  } finally {
+    delete process.env.NFC_TAG_SECRET;
   }
-  delete process.env.NFC_TAG_SECRET;
 });
 
 // ── One definition, not twelve ──────────────────────────────────────────────

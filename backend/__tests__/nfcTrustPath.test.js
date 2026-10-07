@@ -9,7 +9,8 @@
 // trusts (30 days) to let someone review a venue. This file attacks that path
 // the way an outsider would — forged and re-pointed signatures, captured-URL
 // replay from a second account, revoked tokens, a deploy with no secret
-// configured, client-supplied clocks — and pins what held.
+// configured or one short enough to guess, client-supplied clocks — and pins
+// what held.
 //
 // The comment on each test is the failure it prevents, not the assertion.
 const test = require('node:test');
@@ -22,7 +23,9 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 
 process.env.JWT_SECRET = 'nfc-trust-path-test-secret';
-process.env.NFC_TAG_SECRET = 'nfc-trust-path-tag-secret';
+// Generated, and long enough to be a key: the route treats a secret under
+// MIN_TAG_SECRET_LENGTH as no secret at all.
+process.env.NFC_TAG_SECRET = crypto.randomBytes(32).toString('hex');
 
 const pool = require('../config/database');
 
@@ -212,7 +215,7 @@ test('nothing attacker-controlled outside the MAC reaches the trust decision', a
 });
 
 // ---------------------------------------------------------------------------
-// 2. Degraded mode: NFC_TAG_SECRET missing or empty
+// 2. Degraded mode: NFC_TAG_SECRET missing, empty or too short
 // ---------------------------------------------------------------------------
 
 test('with no secret configured, real tag URLs still check in — as nfc_unverified, never nfc', async () => {
@@ -256,6 +259,128 @@ test('an empty-string secret is treated as missing, not as an HMAC key', async (
     assert.strictEqual(res.status, 200);
     assert.strictEqual(insertQueries()[0].params[2], 'nfc_unverified');
   } finally { process.env.NFC_TAG_SECRET = saved; }
+});
+
+// console.error, captured for one test and put back after it.
+function captureErrors() {
+  const original = console.error;
+  const lines = [];
+  console.error = (...args) => { lines.push(args.map(String).join(' ')); };
+  return { lines, restore() { console.error = original; } };
+}
+
+test('a secret short enough to work out from a tag is treated as missing, and said so once', async () => {
+  // Every tag shows its place id and the MAC of it, so a short secret can be
+  // recovered offline from any one tag and then signs 'nfc' for every venue.
+  // Under the floor it must verify nothing and mint nothing, exactly like no
+  // secret, and the log has to say why: otherwise the only symptom is every
+  // tap landing as nfc_unverified, which reads as broken tags.
+  reset();
+  script();
+  const saved = process.env.NFC_TAG_SECRET;
+  const short = crypto.randomBytes(32).toString('hex').slice(0, checkin.MIN_TAG_SECRET_LENGTH - 1);
+  const logged = captureErrors();
+  process.env.NFC_TAG_SECRET = short;
+  try {
+    const shortSig = sigFor(VENUE_A, short);
+    assert.strictEqual(checkin.nfcSigValid(VENUE_A, shortSig), false, 'a MAC under a short key must not verify');
+    assert.strictEqual(checkinRouter.nfcTagSig(VENUE_A), null, 'and no tag can be minted under it');
+    const first = await call('GET', `/api/checkin/${VENUE_A}?sig=${shortSig}`, { token: tokenFor(1) });
+    const second = await call('GET', `/api/checkin/${VENUE_A}?sig=${shortSig}`, { token: tokenFor(2) });
+    assert.strictEqual(first.status, 200, 'the tap is still recorded, not refused');
+    assert.strictEqual(second.status, 200);
+    assert.deepStrictEqual(insertQueries().map((q) => q.params[2]), ['nfc_unverified', 'nfc_unverified']);
+
+    const said = logged.lines.filter((line) => line.includes('NFC_TAG_SECRET'));
+    assert.strictEqual(said.length, 1, 'said once per process, not on every tap');
+    assert.match(said[0], new RegExp(`NFC_TAG_SECRET is ${short.length} characters`));
+    assert.match(said[0], /treated as UNSET/);
+    assert.ok(!said[0].includes(short), 'the line names the length, never the value');
+  } finally {
+    logged.restore();
+    process.env.NFC_TAG_SECRET = saved;
+  }
+});
+
+test('the floor is 32 characters of key: padding does not count, and the key is used exactly as set', () => {
+  // Spaces or a pasted newline around a short value are still a short value to
+  // a guesser. But the value itself is the key every tag in the field was cut
+  // under, so the route must not trim it: a tag cut under a value with a
+  // trailing newline has to keep verifying, and the minter has to keep cutting
+  // the same signature.
+  const saved = process.env.NFC_TAG_SECRET;
+  const logged = captureErrors();
+  try {
+    assert.strictEqual(checkin.MIN_TAG_SECRET_LENGTH, 32);
+    const key = crypto.randomBytes(32).toString('hex');
+
+    const atFloor = key.slice(0, 32);
+    process.env.NFC_TAG_SECRET = atFloor;
+    assert.strictEqual(checkin.nfcSigValid(VENUE_A, sigFor(VENUE_A, atFloor)), true, 'exactly 32 characters is enough');
+    assert.strictEqual(checkinRouter.nfcTagSig(VENUE_A), sigFor(VENUE_A, atFloor));
+
+    const padded = `  ${key.slice(0, 30)}\n\n`; // 34 characters, 30 of them key
+    process.env.NFC_TAG_SECRET = padded;
+    assert.strictEqual(checkin.tagSecret(), null, 'padding does not count toward the floor');
+    assert.strictEqual(checkin.nfcSigValid(VENUE_A, sigFor(VENUE_A, padded)), false);
+    assert.strictEqual(checkinRouter.nfcTagSig(VENUE_A), null);
+
+    const pasted = `${key}\n`;
+    process.env.NFC_TAG_SECRET = pasted;
+    assert.strictEqual(checkin.nfcSigValid(VENUE_A, sigFor(VENUE_A, pasted)), true, 'a tag cut under the value as set still verifies');
+    assert.strictEqual(checkin.nfcSigValid(VENUE_A, sigFor(VENUE_A, key)), false, 'because the key was not trimmed');
+    assert.strictEqual(checkinRouter.nfcTagSig(VENUE_A), sigFor(VENUE_A, pasted), 'and the minter signs under the same bytes');
+
+    // Whitespace alone is a cleared variable, the same quiet "off" as empty.
+    process.env.NFC_TAG_SECRET = '   ';
+    const before = logged.lines.length;
+    assert.strictEqual(checkin.tagSecret(), null);
+    assert.strictEqual(logged.lines.length, before, 'a cleared variable is not announced as a short one');
+  } finally {
+    logged.restore();
+    process.env.NFC_TAG_SECRET = saved;
+  }
+});
+
+test('in production a short secret is named at boot, before any tap', () => {
+  // On a quiet night the first tap can come hours after a deploy, and the
+  // deploy log is where somebody looks when a variable has just changed. A
+  // fresh copy of the route is loaded the way a boot loads it, and the copy
+  // the rest of this file uses is put back afterwards.
+  const id = require.resolve('../routes/checkin');
+  const original = require.cache[id];
+  const saved = { NODE_ENV: process.env.NODE_ENV, NFC_TAG_SECRET: process.env.NFC_TAG_SECRET };
+  const setEnv = (env) => {
+    for (const [name, value] of Object.entries(env)) {
+      if (value === undefined) delete process.env[name]; else process.env[name] = value;
+    }
+  };
+  const boot = (env) => {
+    const logged = captureErrors();
+    try {
+      setEnv(env);
+      delete require.cache[id];
+      require(id);
+      return logged.lines.filter((line) => line.includes('NFC_TAG_SECRET'));
+    } finally {
+      logged.restore();
+      setEnv(saved);
+      require.cache[id] = original;
+    }
+  };
+
+  const short = crypto.randomBytes(8).toString('hex'); // 16 characters
+  const said = boot({ NODE_ENV: 'production', NFC_TAG_SECRET: short });
+  assert.strictEqual(said.length, 1, 'one line, at require time');
+  assert.match(said[0], /NFC_TAG_SECRET is 16 characters/);
+  assert.ok(!said[0].includes(short), 'naming the length, never the value');
+
+  assert.deepStrictEqual(boot({ NODE_ENV: 'production', NFC_TAG_SECRET: crypto.randomBytes(32).toString('hex') }), [],
+    'a real secret boots quietly');
+  assert.deepStrictEqual(boot({ NODE_ENV: 'production', NFC_TAG_SECRET: undefined }), [],
+    'unset is the documented degrade, and boots quietly');
+  assert.deepStrictEqual(boot({ NODE_ENV: 'development', NFC_TAG_SECRET: short }), [],
+    'outside production the line waits for the first tap');
 });
 
 // ---------------------------------------------------------------------------

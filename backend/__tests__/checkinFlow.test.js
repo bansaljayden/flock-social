@@ -18,7 +18,9 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 
 process.env.JWT_SECRET = 'checkin-flow-test-secret';
-process.env.NFC_TAG_SECRET = 'checkin-flow-tag-secret';
+// Generated, and long enough to be a key: the route treats a secret under
+// MIN_TAG_SECRET_LENGTH as no secret at all.
+process.env.NFC_TAG_SECRET = crypto.randomBytes(32).toString('hex');
 
 const pool = require('../config/database');
 

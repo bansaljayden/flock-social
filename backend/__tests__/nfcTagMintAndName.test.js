@@ -25,6 +25,17 @@ test('the signature the minter writes is the one the verifier expects', () => {
   assert.match(verifier, /createHmac\('sha256', secret\)\.update\(String\(placeId\)\)\.digest\('hex'\)\.slice\(0, 32\)/);
 });
 
+test('the minter and the verifier take the secret from the one gate that refuses a short one', () => {
+  // A minter reading the variable raw would cut tags under a secret the
+  // verifier refuses, and a verifier reading it raw would trust a key short
+  // enough to be worked out from any tag. One read of the variable, behind
+  // tagSecret(), and both callers go through it.
+  assert.strictEqual((checkin.match(/process\.env\.NFC_TAG_SECRET/g) || []).length, 1);
+  assert.match(checkin, /function tagSecret\(\) \{\s*const raw = process\.env\.NFC_TAG_SECRET;/);
+  assert.match(checkin, /function nfcSigValid\(placeId, sig\) \{\s*const secret = tagSecret\(\);/);
+  assert.match(checkin, /module\.exports\.nfcTagSig = \(placeId\) => \{\s*const secret = tagSecret\(\);/);
+});
+
 test('a tap answers with the venue name, best effort, on both the fresh and the deduped path', () => {
   // The whole function, to its closing brace, rather than a fixed window that
   // a longer comment would push the second answer out of.
