@@ -502,12 +502,12 @@ const settle = () => new Promise((r) => setTimeout(r, 20));
 
 // The same parser shape server.js gives this path: JSON that keeps its raw
 // bytes, then the form parser every path gets.
-function webhookApp() {
+function webhookApp(router = require('../routes/emailWebhook')) {
   const app = express();
   app.use(faultMiddleware);
   app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf; } }));
   app.use(express.urlencoded({ extended: true }));
-  app.use('/api/email-events', require('../routes/emailWebhook'));
+  app.use('/api/email-events', router);
   return app;
 }
 
@@ -791,6 +791,150 @@ test('behind the parsers server.js really mounts, a genuine event verifies at ev
     assert.strictEqual(serverFaultStatus().total, 0, 'nothing an outsider sent may count as a server fault');
     assert.ok(!/raw body/.test(cap.text()));
   } finally { cap.restore(); }
+});
+
+// ---------------------------------------------------------------------------
+// 5c. The secret is judged by what it decodes to
+// ---------------------------------------------------------------------------
+// The route used to count the characters after `whsec_` and hand the rest to
+// Buffer.from(_, 'base64'), which never throws and skips what it cannot read.
+// Every value below got past that, became a key that is not the real one, and
+// said nothing. A genuine event then failed its signature, or, where the value
+// was typed junk, anybody who signed with what it decodes to could suppress
+// any address they liked. Each one now answers 503 and says what is wrong.
+
+// A fresh copy of the route module, so its require-time check and its
+// once-per-process warning run again under the environment given. The cached
+// copy every other test uses is put back.
+function freshEmailWebhook(env) {
+  const id = require.resolve('../routes/emailWebhook');
+  const kept = require.cache[id];
+  delete require.cache[id];
+  try {
+    return withEnv(env, () => require('../routes/emailWebhook'));
+  } finally {
+    if (kept) require.cache[id] = kept; else delete require.cache[id];
+  }
+}
+
+// Built rather than written out, so no line here looks like a real secret to
+// the secret scanners.
+const W = 'whsec_';
+// A key whose standard base64 has '+' and '/' in it, so its base64url spelling
+// has '-' and '_'.
+const URL_SAFE_KEY = Buffer.concat([Buffer.from([0xfb, 0xff, 0xbf]), crypto.randomBytes(21)]);
+const NOT_BASE64 = /is not whsec_ followed by standard base64/;
+const unusableSecrets = () => [
+  ['wrapped in double quotes', `"${W}${WEBHOOK_SECRET_RAW}"`, NOT_BASE64],
+  ['wrapped in single quotes', `'${W}${WEBHOOK_SECRET_RAW}'`, NOT_BASE64],
+  ['an upper-case prefix', `WHSEC_${WEBHOOK_SECRET_RAW}`, NOT_BASE64],
+  ['the prefix twice', `${W}${W}${WEBHOOK_SECRET_RAW}`, NOT_BASE64],
+  ['a pasted NAME=value line', `RESEND_WEBHOOK_SECRET=${W}${WEBHOOK_SECRET_RAW}`, NOT_BASE64],
+  ['the base64url alphabet', `${W}${URL_SAFE_KEY.toString('base64url')}`, NOT_BASE64],
+  ['an = before the end', `${W}${WEBHOOK_SECRET_RAW.slice(0, 8)}=${WEBHOOK_SECRET_RAW.slice(8)}`, NOT_BASE64],
+  ['one character too many', `${W}${WEBHOOK_SECRET_RAW}A`, NOT_BASE64],
+  ['padding that does not finish a group', `${W}${crypto.randomBytes(25).toString('base64').slice(0, -1)}`, NOT_BASE64],
+  ['24 characters that decoded to one byte', `${W}AA${'!'.repeat(22)}`, NOT_BASE64],
+  ['a typed placeholder', `${W}change-me-before-launch-pls`, NOT_BASE64],
+  ['a template placeholder', 'your_webhook_secret_here', NOT_BASE64],
+  ['a 16-byte key', `${W}${crypto.randomBytes(16).toString('base64')}`,
+    /decodes to 16 bytes, and a Resend signing secret is at least 24/],
+  ['one character typed 32 times', `${W}${'A'.repeat(32)}`, /repeats a short pattern/],
+  ['a word typed four times', `${W}${'changeme'.repeat(4)}`, /repeats a short pattern/],
+];
+
+test('a secret that is set but malformed is refused with 503 and named as malformed, never as missing', async () => {
+  const fresh = freshEmailWebhook({ NODE_ENV: 'test', RESEND_WEBHOOK_SECRET: undefined });
+  const app = webhookApp(fresh);
+  const cases = unusableSecrets();
+  const cap = silence();
+  try {
+    for (const [what, value, why] of cases) {
+      resetWorld();
+      // eslint-disable-next-line no-loop-func
+      await withEnv({ RESEND_WEBHOOK_SECRET: value }, async () => {
+        const state = fresh.__testing.webhookSecret();
+        assert.strictEqual(state.key, null, `${what} was accepted as a key`);
+        assert.match(state.problem, /^is set but /, what);
+        assert.match(state.problem, why, what);
+        // Signed with what Node's decoder makes of the value, which is the key
+        // the route used to verify with. For the junk values, that was a forged
+        // suppression of somebody else's address.
+        const lenient = Buffer.from(value.trim().replace(/^whsec_/, ''), 'base64');
+        const res = await signedPost(app, bounced('victim@example.com'), { secret: lenient.toString('base64') });
+        assert.strictEqual(res.status, 503, `${what} answered ${res.status} ${res.text}`);
+        assert.strictEqual(suppressionRows.size, 0, `${what}: an address was suppressed`);
+      });
+    }
+    const text = cap.text();
+    assert.ok(!/RESEND_WEBHOOK_SECRET is not set/.test(text), 'a value that is set must not be reported as missing');
+    assert.strictEqual(
+      (text.match(/RESEND_WEBHOOK_SECRET is set but is not a usable signing secret, so this delivery event was refused/g) || []).length,
+      cases.length, 'every refused event logs its own line');
+    const named = text.match(/EMAIL: RESEND_WEBHOOK_SECRET is set but [^\n]*Copy the value out of the Resend dashboard/g) || [];
+    assert.strictEqual(named.length, 1, 'what is wrong with the value is said once per process, not on every event');
+    assert.match(named[0], /quotes around it/, 'and it describes the first value it read');
+  } finally { cap.restore(); }
+});
+
+test('the real secret still verifies with whitespace around or inside it, with no prefix, and padded or not', async () => {
+  const padded25 = crypto.randomBytes(25).toString('base64');
+  const cases = [
+    ['whitespace around it', `  ${W}${WEBHOOK_SECRET_RAW}\n`, WEBHOOK_SECRET_RAW],
+    ['wrapped onto two lines', `${W}${WEBHOOK_SECRET_RAW.slice(0, 16)}\r\n${WEBHOOK_SECRET_RAW.slice(16)}`, WEBHOOK_SECRET_RAW],
+    ['no whsec_ prefix', WEBHOOK_SECRET_RAW, WEBHOOK_SECRET_RAW],
+    ['a 25-byte key, padded', `${W}${padded25}`, padded25],
+    ['a 25-byte key, unpadded', `${W}${padded25.replace(/=+$/, '')}`, padded25],
+  ];
+  const cap = silence();
+  try {
+    for (const [what, value, signingSecret] of cases) {
+      resetWorld();
+      // eslint-disable-next-line no-loop-func
+      await withEnv({ RESEND_WEBHOOK_SECRET: value }, async () => {
+        const res = await signedPost(webhookApp(), bounced('dead@example.com'), { secret: signingSecret });
+        assert.strictEqual(res.status, 200, `${what} answered ${res.status} ${res.text}`);
+        assert.strictEqual(suppressionRows.get('dead@example.com'), 'bounce', what);
+      });
+    }
+    assert.ok(!/RESEND_WEBHOOK_SECRET/.test(cap.text()), 'a usable secret is never warned about');
+  } finally { cap.restore(); }
+});
+
+// What a fresh copy of the route logs as it is required in production.
+function bootLog(env) {
+  const cap = silence();
+  try {
+    const mod = freshEmailWebhook({ NODE_ENV: 'production', ...env });
+    return { mod, text: cap.text() };
+  } finally { cap.restore(); }
+}
+
+test('at boot in production a missing secret and a malformed one are each named for what they are', async () => {
+  const missing = bootLog({ RESEND_WEBHOOK_SECRET: undefined }).text;
+  assert.match(missing, /RESEND_WEBHOOK_SECRET is not set, so POST \/api\/email-events refuses every delivery event/);
+  assert.match(missing, /Create the webhook in the Resend dashboard/);
+
+  const quoted = `"${W}${WEBHOOK_SECRET_RAW}"`;
+  const malformed = bootLog({ RESEND_WEBHOOK_SECRET: quoted });
+  assert.ok(!/is not set/.test(malformed.text), 'a value that is set must not be reported as missing');
+  assert.match(malformed.text, /RESEND_WEBHOOK_SECRET is set but is not whsec_ followed by standard base64/);
+  assert.match(malformed.text, /Copy the value out of the Resend dashboard webhook page exactly as shown/);
+
+  // Named at boot, so the first event it refuses does not name it again.
+  resetWorld();
+  const cap = silence();
+  try {
+    await withEnv({ RESEND_WEBHOOK_SECRET: quoted }, async () => {
+      const res = await signedPost(webhookApp(malformed.mod), bounced('dead@example.com'));
+      assert.strictEqual(res.status, 503);
+    });
+    assert.ok(!/EMAIL: RESEND_WEBHOOK_SECRET/.test(cap.text()), 'the boot line already said what is wrong');
+    assert.match(cap.text(), /is set but is not a usable signing secret, so this delivery event was refused/);
+  } finally { cap.restore(); }
+
+  assert.ok(!/RESEND_WEBHOOK_SECRET/.test(bootLog({ RESEND_WEBHOOK_SECRET: `${W}${WEBHOOK_SECRET_RAW}` }).text),
+    'a usable secret says nothing at boot');
 });
 
 // ===========================================================================

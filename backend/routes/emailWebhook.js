@@ -31,7 +31,7 @@
 //
 // NO SECRET, NO ROUTE. An unauthenticated version of this endpoint is a way for
 // anyone on the internet to permanently stop Flock from mailing any address
-// they name, including a password reset. So a missing or short
+// they name, including a password reset. So a missing or malformed
 // RESEND_WEBHOOK_SECRET answers 503 and refuses loudly, the same posture
 // routes/revenuecat.js takes with its own shared secret.
 // ---------------------------------------------------------------------------
@@ -41,35 +41,84 @@ const crypto = require('crypto');
 const { suppress } = require('../services/emailSuppression');
 const { maskAddress } = require('../services/emailService');
 
-// A Svix secret is `whsec_` + base64 of 24 random bytes. Anything materially
-// shorter is a placeholder somebody typed, not a secret.
-const MIN_SECRET_LENGTH = 24;
+// A Resend signing secret is `whsec_` followed by the standard base64 of 24
+// random bytes, and Svix issues none shorter. The HMAC key is those bytes, so
+// the value is judged by what it decodes to, not by how many characters it
+// has. Counting characters let junk through, because Buffer.from(_, 'base64')
+// never throws: it skips any character outside the alphabet, reads the
+// base64url one as well, and stops at the first '='. A quoted paste, an
+// upper-case or doubled prefix, or a pasted NAME=value line decoded to some
+// other key with no warning, so every genuine event then failed its signature,
+// and 24 characters of typed junk could decode to a key of a byte or two that
+// anybody could forge against. Resend's own SDK reads the secret with a strict
+// decoder that throws on all of those, and this refuses them.
+const MIN_SECRET_BYTES = 24;
+// Standard base64, padded or not, which is what that decoder takes: its
+// alphabet, then at most two '=' and only at the end.
+const STANDARD_BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
+// A generated 24-byte key has about 23 different byte values, and the chance
+// it has fewer than 12 is about 1 in 400 trillion. A placeholder that happens
+// to be valid base64 ('A' or 'x' typed 32 times, 'changeme' four times) has a
+// handful. A guessable value that does not repeat itself still gets past this:
+// nothing about its format tells it apart from a real one.
+const MIN_DISTINCT_SECRET_BYTES = 12;
+const SECRET_NOT_SET = 'is not set';
 // Svix's own recommendation. Five minutes bounds a replay without breaking a
 // webhook that queued behind a slow deploy.
 const TIMESTAMP_TOLERANCE_SECONDS = 5 * 60;
 
-let warnedAboutSecret = false;
+// What RESEND_WEBHOOK_SECRET holds: { key } when it is a usable signing secret,
+// otherwise { key: null, problem } saying what is wrong with it. A value that
+// is set but unusable gets its own words, because "is not set" sent the reader
+// looking for a variable that was sitting right there.
 function webhookSecret() {
   const raw = process.env.RESEND_WEBHOOK_SECRET;
-  if (typeof raw !== 'string') return null;
-  const value = raw.trim().replace(/^whsec_/, '');
-  if (value.length < MIN_SECRET_LENGTH) {
-    if (value.length && !warnedAboutSecret) {
-      warnedAboutSecret = true;
-      console.error(
-        `[emailWebhook] RESEND_WEBHOOK_SECRET is only ${value.length} characters after the whsec_ prefix. ` +
-        'That is not a Svix signing secret, so every delivery event will be refused and no bounce will ever be recorded. ' +
-        'Copy the value out of the Resend dashboard webhook page.'
-      );
-    }
-    return null;
+  // Whitespace is never key material, and Node's decoder always skipped it, so
+  // removing it cannot change a key that works today. A trailing newline from
+  // a paste is the usual one.
+  const compact = typeof raw === 'string' ? raw.replace(/\s+/g, '') : '';
+  if (!compact) return { key: null, problem: SECRET_NOT_SET };
+  const value = compact.startsWith('whsec_') ? compact.slice('whsec_'.length) : compact;
+  // Padding only ever completes a group of four characters, and one character
+  // left over after the last full group encodes nothing, so a value showing
+  // either has been damaged on its way here.
+  const fitsGroups = value.endsWith('=') ? value.length % 4 === 0 : value.length % 4 !== 1;
+  if (!STANDARD_BASE64.test(value) || !fitsGroups) {
+    return {
+      key: null,
+      problem: 'is set but is not whsec_ followed by standard base64 (quotes around it, an upper-case or '
+        + 'doubled prefix, or a pasted NAME=value line all look like this)',
+    };
   }
-  try {
-    const key = Buffer.from(value, 'base64');
-    return key.length ? key : null;
-  } catch {
-    return null;
+  const key = Buffer.from(value, 'base64');
+  if (key.length < MIN_SECRET_BYTES) {
+    return {
+      key: null,
+      problem: `is set but decodes to ${key.length} byte${key.length === 1 ? '' : 's'}, `
+        + `and a Resend signing secret is at least ${MIN_SECRET_BYTES}`,
+    };
   }
+  if (new Set(key).size < MIN_DISTINCT_SECRET_BYTES) {
+    return {
+      key: null,
+      problem: 'is set but repeats a short pattern, which is a typed placeholder and not a generated secret',
+    };
+  }
+  return { key, problem: null };
+}
+
+// An unusable value is named once per process: at boot in production (the end
+// of this file), otherwise on the first event it refuses. Each refused event
+// still logs its own line in the route.
+let warnedAboutSecret = false;
+function warnAboutUnusableSecret(problem) {
+  if (warnedAboutSecret) return;
+  warnedAboutSecret = true;
+  console.error(
+    `🛡️ EMAIL: RESEND_WEBHOOK_SECRET ${problem}, so POST /api/email-events refuses every delivery event and no `
+    + 'hard bounce or spam complaint will ever be recorded. Copy the value out of the Resend dashboard webhook '
+    + 'page exactly as shown, whsec_ included, with no quotes around it.'
+  );
 }
 
 function timingSafeEqualStr(a, b) {
@@ -122,9 +171,13 @@ function recipientsOf(data) {
 }
 
 router.post('/', async (req, res) => {
-  const key = webhookSecret();
+  const { key, problem } = webhookSecret();
   if (!key) {
-    console.error('[emailWebhook] RESEND_WEBHOOK_SECRET is not set, so this delivery event was refused and no bounce was recorded.');
+    if (problem !== SECRET_NOT_SET) warnAboutUnusableSecret(problem);
+    console.error(
+      `[emailWebhook] RESEND_WEBHOOK_SECRET ${problem === SECRET_NOT_SET ? problem : 'is set but is not a usable signing secret'}, `
+      + 'so this delivery event was refused and no bounce was recorded.'
+    );
     return res.status(503).json({ error: 'Webhook not configured' });
   }
 
@@ -228,14 +281,20 @@ router.post('/', async (req, res) => {
 // password reset landing in spam.
 //
 // So the absence is named once, at require time, in production only, where it
-// is a gap rather than the ordinary local state.
-if (process.env.NODE_ENV === 'production' && !webhookSecret()) {
-  console.error(
-    '🛡️ EMAIL: RESEND_WEBHOOK_SECRET is not set, so POST /api/email-events refuses every delivery event. '
-    + 'No hard bounce and no spam complaint will ever be recorded, email_suppressions stays empty, and Flock keeps '
-    + 'mailing addresses that no longer exist. Create the webhook in the Resend dashboard, point it at '
-    + '/api/email-events, subscribe it to email.bounced and email.complained, and copy its whsec_ secret here.'
-  );
+// is a gap rather than the ordinary local state. A value that is set but
+// unusable is named here too, with what is wrong with it, and not as missing.
+if (process.env.NODE_ENV === 'production') {
+  const { key, problem } = webhookSecret();
+  if (!key && problem === SECRET_NOT_SET) {
+    console.error(
+      '🛡️ EMAIL: RESEND_WEBHOOK_SECRET is not set, so POST /api/email-events refuses every delivery event. '
+      + 'No hard bounce and no spam complaint will ever be recorded, email_suppressions stays empty, and Flock keeps '
+      + 'mailing addresses that no longer exist. Create the webhook in the Resend dashboard, point it at '
+      + '/api/email-events, subscribe it to email.bounced and email.complained, and copy its whsec_ secret here.'
+    );
+  } else if (!key) {
+    warnAboutUnusableSecret(problem);
+  }
 }
 
 module.exports = router;
