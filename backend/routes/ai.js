@@ -60,8 +60,9 @@ const { isGonePlace } = require('../services/placeDetailsCache');
 const { upstreamSignal } = require('../utils/upstream');
 // The venue's IANA zone off a Places payload (utils/venueZone.js). The same
 // module checks the user's zone and reads a plan time on it (WHOSE CLOCK
-// BIRDIE PLANS ON, below).
-const { placeTimeZone, validTimeZone, instantForWallClock } = require('../utils/venueZone');
+// BIRDIE PLANS ON, below), and builds the timestamp a venue scored on UTC is
+// handed to the predictor with (WHOSE CLOCK, in get_crowd_prediction).
+const { placeTimeZone, validTimeZone, instantForWallClock, civilTime, serverWallDate } = require('../utils/venueZone');
 const { waitPhrase, refusalBody, msUntilUtcMidnight } = require('../utils/retryAfter');
 const {
   checkUserRateLimit,
@@ -820,8 +821,14 @@ const LOCKED_FORECAST_NOTE_NO_SALES = 'This venue is past this account\'s limit 
 // Now line. Its hours are then UTC hours and its number is the current UTC
 // hour's, so the result says so in words the model reads, instead of letting
 // either pass as the time there. Addressed to the model, like the locked notes.
+// SERVER_CLOCK is also the IANA zone that venue is handed to the predictor in,
+// so the predictor reads its hours as UTC hours on any host.
 const SERVER_CLOCK = 'UTC';
 const SERVER_CLOCK_NOTE = 'Flock does not know the local time at this venue, so this was worked out as if the venue kept UTC, the clock in your Now line. Every hour in best_time, peak_hours and hourly_forecast is a UTC hour, and "now" in any of them means the current UTC hour, which may not be the hour it is at the venue. Unless crowd_source is "owner_report", crowd_score is the number for that current UTC hour too. Never present any of these hours as the venue\'s local time, or any of these numbers as how busy it is there right now. If you give one of those hours, say it is UTC.';
+// The one hour that venue cannot be scored at: a UTC hour this process's own
+// clock skips (WHOSE CLOCK, in the tool). Production's host keeps UTC and has
+// none; a host in New York has one a year. An error like the tool's others.
+const NO_SERVER_CLOCK_HOUR = 'There is no crowd reading for this venue right now. Do not guess how busy it is.';
 // A LOCKED VENUE CARRIES NO CROWD NUMBER, the same rule as the card
 // (routes/crowd.js lockedCard): since 2026-09-24 a spent month covers the live
 // level as well as the forecast, for any venue not already opened this month.
@@ -1115,8 +1122,8 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
       // then the caller's hour and day, which the tool loop hands over only on
       // a turn that may carry the user's clock (THE PHONE'S HOUR IS THE USER'S
       // CLOCK, at the loop); and last UTC, the server's clock and the one in
-      // Birdie's Now line, read as a venue clock at offset 0 so it is UTC on any
-      // host. No other source in the codebase knows a venue's time:
+      // Birdie's Now line, read as UTC whatever the host's own zone is (UTC ON
+      // ANY HOST, below). No other source in the codebase knows a venue's time:
       // routes/badge.js estimates an offset from longitude, which is an hour out
       // for most US venues while daylight saving time is on, and its own header
       // keeps that to a status pill. On UTC the result says so
@@ -1135,9 +1142,29 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
       }
       // Neither the venue's clock nor the user's: the hours below are UTC's.
       const onServerClock = !venueClock && !Number.isInteger(opts.localHour);
-      const scoreTime = new Date(now);
-      scoreTime.setDate(scoreTime.getDate() + weekdayOffset(scoreTime.getDay(), localDay));
-      scoreTime.setHours(localHour, 0, 0, 0);
+      // UTC ON ANY HOST. The predictor reads every feature off this
+      // timestamp's fields on THIS process's clock (the venue wall clock
+      // encoded in server time), and reads its weather and events at the
+      // instant the venue's zone gives it. A venue scored on UTC therefore goes
+      // in with the zone 'UTC' (below) and a timestamp built from the UTC date
+      // and hour by serverWallDate, never by setHours on the host's clock. On a
+      // host in New York, with no zone on the venue, the predictor read 6 PM
+      // UTC's weather and events at 22:00Z, and inside New York's
+      // spring-forward gap setHours turned 2 AM into 3 AM under the current
+      // hour's name. A UTC hour the host's clock skips
+      // cannot be handed to the predictor at all, so serverWallDate refuses it
+      // and there is no reading for that hour rather than a wrong one.
+      // Production's host keeps UTC, and every hour exists there.
+      let scoreTime;
+      if (onServerClock) {
+        const utcWall = civilTime(now.getTime(), SERVER_CLOCK);
+        scoreTime = utcWall ? serverWallDate(utcWall.year, utcWall.month, utcWall.day, utcWall.hour) : null;
+        if (!scoreTime) return { error: NO_SERVER_CLOCK_HOUR };
+      } else {
+        scoreTime = new Date(now);
+        scoreTime.setDate(scoreTime.getDate() + weekdayOffset(scoreTime.getDay(), localDay));
+        scoreTime.setHours(localHour, 0, 0, 0);
+      }
 
       // THE CARD'S HOURS, from the card's construction (crowdEngine
       // venueHoursForDay, which routes/crowd.js fetchVenueFromGoogle reads).
@@ -1169,8 +1196,9 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
         // The zone, preferred over the offset wherever it is usable, so the
         // 24-hour strip below stays right across the venue's own clock change.
         // The corpus's when Google sent none, so the strip walks the clock the
-        // headline was scored on.
-        timeZone: timeZone || corpusZone,
+        // headline was scored on, and UTC for a venue scored on UTC, so the
+        // predictor reads its hours as UTC hours on any host (UTC ON ANY HOST).
+        timeZone: timeZone || corpusZone || (onServerClock ? SERVER_CLOCK : null),
       };
 
       const lat = venue.location?.latitude;
