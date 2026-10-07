@@ -29,7 +29,9 @@
 //     the rows that strip just read never puts the table beside them;
 //   * the name: a rule_engine one, so app builds already shipped never show
 //     it as LIVE, and still read by its exact name;
-//   * the strip, the coverage counter, and the words crowdEngine gives it.
+//   * the strip, the coverage counter, the coverage block's switch (on only
+//     while the gate's own rule can serve the table), and the words
+//     crowdEngine gives it.
 //
 // __tests__/noCurveFallbackSurfaces.test.js takes the same number through the
 // real routes. No network, no database. Run: node --test  (from backend/)
@@ -131,8 +133,9 @@ function scriptedDb({ curves = {}, fail = null } = {}) {
 }
 
 // The shape a real artifact presents, so every load gate opens, and a run()
-// that throws: nothing in this file may reach the model.
-function stubOrt() {
+// that throws: nothing in this file may reach the model. `sessionFails` makes
+// the session itself fail to open, which leaves the server with no model.
+function stubOrt({ sessionFails = false } = {}) {
   const inputName = META.onnx_input_name || 'input';
   const session = {
     inputNames: [inputName],
@@ -142,7 +145,12 @@ function stubOrt() {
     run: async () => { throw new Error('the model ran on a path that must not run it'); },
   };
   return {
-    InferenceSession: { create: async () => session },
+    InferenceSession: {
+      create: async () => {
+        if (sessionFails) throw new Error('the ONNX session could not be opened');
+        return session;
+      },
+    },
     Tensor: class Tensor {
       constructor(type, data, dims) { this.type = type; this.data = data; this.dims = dims; }
     },
@@ -152,7 +160,8 @@ function stubOrt() {
 // A fresh predictor on `db`, with the switches set to `env` for the whole call
 // (they are read at call time) and the metadata rewritten on the way in when
 // `mutateMeta` is given. Load logs are kept out of the test output.
-async function withPredictor({ db = scriptedDb(), env = {}, mutateMeta } = {}, fn) {
+// `modelLoads: false` opens no session, so the server serves without a model.
+async function withPredictor({ db = scriptedDb(), env = {}, mutateMeta, modelLoads = true } = {}, fn) {
   const saved = Object.fromEntries(SWITCH_ENV.map((k) => [k, process.env[k]]));
   const savedMod = require.cache[MOD];
   const savedOrt = require.cache[ORT];
@@ -161,7 +170,7 @@ async function withPredictor({ db = scriptedDb(), env = {}, mutateMeta } = {}, f
   for (const k of SWITCH_ENV) delete process.env[k];
   Object.assign(process.env, env);
   try {
-    require.cache[ORT] = { id: ORT, filename: ORT, loaded: true, exports: stubOrt() };
+    require.cache[ORT] = { id: ORT, filename: ORT, loaded: true, exports: stubOrt({ sessionFails: !modelLoads }) };
     require.cache[DB] = { id: DB, filename: DB, loaded: true, exports: db };
     if (mutateMeta) {
       fs.readFileSync = (p, ...rest) => (String(p).endsWith('model_metadata.json')
@@ -171,11 +180,16 @@ async function withPredictor({ db = scriptedDb(), env = {}, mutateMeta } = {}, f
     delete require.cache[MOD];
     const predictor = require(MOD);
     const quiet = console.log;
+    const quietWarn = console.warn;
     console.log = () => {};
+    if (!modelLoads) console.warn = () => {};
     try {
-      assert.equal(await predictor.init(), true, 'the artifact must load: this file is about what it serves');
+      assert.equal(await predictor.init(), modelLoads, modelLoads
+        ? 'the artifact must load: this file is about what it serves'
+        : 'the session must fail to open');
     } finally {
       console.log = quiet;
+      console.warn = quietWarn;
     }
     return await fn(predictor, db);
   } finally {
@@ -702,6 +716,49 @@ test('the coverage counter gives the table its own leg, and the three legs add u
     assert.equal(c.ml + c.categoryCurve + c.ruleEngine, c.total);
     assert.equal(c.modelShare, 0, 'none of it is a venue\'s own data');
     assert.equal(c.noCurveFallback, true);
+  });
+});
+
+test('the coverage block calls the fallback on only while the table can be served, by the gate\'s own rule, and says why not', async () => {
+  // Served: the switch, a loaded model, and the artifact the table was measured on.
+  await withPredictor({ env: { [SWITCH]: ON } }, async (p) => {
+    const c = p.predictionCoverage();
+    assert.equal(c.noCurveFallback, true);
+    assert.equal(c.noCurveFallbackSwitch, true);
+    assert.equal(c.noCurveFallbackOff, null);
+    assert.equal(c.noCurveFallbackFittedOn, '2.6.0-starling');
+  });
+  // Off: nothing set, nothing to explain.
+  await withPredictor({}, async (p) => {
+    const c = p.predictionCoverage();
+    assert.equal(c.noCurveFallback, false);
+    assert.equal(c.noCurveFallbackSwitch, false);
+    assert.equal(c.noCurveFallbackOff, null);
+  });
+  // The switch set beside another artifact: the panel's answer and the gate's
+  // are the same answer, so the venue keeps the rule engine.
+  for (const version of ['2.7.0-candidate', '2.6.0', '']) {
+    await withPredictor({ env: { [SWITCH]: ON }, mutateMeta: (m) => ({ ...m, model_version: version }) }, async (p, db) => {
+      const c = p.predictionCoverage();
+      assert.equal(c.noCurveFallback, false, JSON.stringify(version));
+      assert.equal(c.noCurveFallbackSwitch, true);
+      assert.equal(c.noCurveFallbackOff, 'model_version');
+      assert.equal(c.modelVersion, version || null, 'the version it found travels beside the reason');
+      const v = venue();
+      assert.deepStrictEqual(await p.predictBusyness(v, WX, TS), todaysAnswer(v, WX, TS));
+      assert.equal(db.presence().length, 0);
+    });
+  }
+  // The switch set with no model loaded: every forecast is the rule engine's.
+  await withPredictor({ env: { [SWITCH]: ON }, modelLoads: false }, async (p, db) => {
+    const c = p.predictionCoverage();
+    assert.equal(c.modelLoaded, false);
+    assert.equal(c.noCurveFallback, false);
+    assert.equal(c.noCurveFallbackSwitch, true);
+    assert.equal(c.noCurveFallbackOff, 'model_not_loaded');
+    const r = await p.predictBusyness(venue(), WX, TS);
+    assert.equal(r.predictionMethod, 'rule_engine');
+    assert.equal(db.presence().length, 0);
   });
 });
 

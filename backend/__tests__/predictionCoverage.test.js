@@ -44,9 +44,14 @@ function venueAt(placeId) {
 
 test('predictionCoverage is a non-consuming read with a stable shape', () => {
   const a = mlPredictor.predictionCoverage();
-  for (const key of ['since', 'total', 'ml', 'categoryCurve', 'ruleEngine', 'modelShare', 'byMethod', 'modelVersion', 'modelLoaded', 'noCurveFallback', 'inMemory']) {
+  for (const key of ['since', 'total', 'ml', 'categoryCurve', 'ruleEngine', 'modelShare', 'byMethod', 'modelVersion', 'modelLoaded',
+    'noCurveFallback', 'noCurveFallbackSwitch', 'noCurveFallbackOff', 'noCurveFallbackFittedOn', 'inMemory']) {
     assert.ok(key in a, `predictionCoverage must always carry ${key}`);
   }
+  // Off in this suite: neither served nor set, and nothing to explain.
+  assert.equal(a.noCurveFallback, false);
+  assert.equal(a.noCurveFallbackSwitch, false);
+  assert.equal(a.noCurveFallbackOff, null);
   assert.equal(a.inMemory, true);
   assert.equal(typeof a.total, 'number');
   assert.equal(typeof a.byMethod, 'object');

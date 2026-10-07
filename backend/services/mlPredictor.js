@@ -357,6 +357,7 @@ function predictionCoverage() {
   // count would put it in the rule engine's leg. Zero whenever that switch is
   // off.
   const categoryCurve = byMethod[NO_CURVE_FALLBACK_METHOD] || 0;
+  const fallback = noCurveFallbackState();
   return {
     since: predictionCountsSince,
     total,
@@ -371,7 +372,17 @@ function predictionCoverage() {
     // answers above each one produced since the counters started.
     serveMode: serveMode(),
     nowcastEnabled: nowcastEnabled(),
-    noCurveFallback: noCurveFallbackEnabled(),
+    // CROWD_NO_CURVE_FALLBACK, by the gate's own rule (noCurveFallbackState):
+    // noCurveFallback is true only while the table can actually be served.
+    // This used to be the switch alone, and the money hub then said the table
+    // was answering beside a server with no model loaded, or with an artifact
+    // the table was never measured on, where the gate serves nothing. The
+    // switch itself, the reason a set switch serves nothing, and the version
+    // the table needs travel beside it, so the panel can say which.
+    noCurveFallback: fallback.serving,
+    noCurveFallbackSwitch: fallback.switchSet,
+    noCurveFallbackOff: fallback.offReason,
+    noCurveFallbackFittedOn: NO_CURVE_FALLBACK_FITTED_ON,
     curveOffsetAnswers: switchedCounts.curveOffset,
     nowcastAnswersByLag: { ...switchedCounts.nowcastByLag },
     inMemory: true,
@@ -4241,11 +4252,36 @@ function noCurveFallbackEnabled() {
   return false;
 }
 
+// WHETHER THIS PROCESS CAN SERVE THE TABLE AT ALL, and if not, why not. The
+// switch is only the first of three things it takes: predictBusyness answers
+// every venue from the rule engine before it reaches the no-baseline exit
+// when no model is loaded, and a loaded artifact other than the one the table
+// was measured on (NO_CURVE_FALLBACK_FITTED_ON) carries a table nobody has
+// measured. The gate (noCurveFallback) and the coverage block the money hub
+// prints (predictionCoverage) both read this one answer, so the panel cannot
+// say the table is being served while the gate refuses it.
+//   serving    true only when all three hold;
+//   switchSet  CROWD_NO_CURVE_FALLBACK is exactly "category_curve";
+//   offReason  null, or why a set switch serves nothing: 'model_not_loaded'
+//              or 'model_version' (the version found is
+//              metadata.model_version, which predictionCoverage already
+//              publishes as modelVersion).
+function noCurveFallbackState() {
+  if (!noCurveFallbackEnabled()) return { serving: false, switchSet: false, offReason: null };
+  if (!useML || !metadata) return { serving: false, switchSet: true, offReason: 'model_not_loaded' };
+  if (metadata.model_version !== NO_CURVE_FALLBACK_FITTED_ON) {
+    return { serving: false, switchSet: true, offReason: 'model_version' };
+  }
+  return { serving: true, switchSet: true, offReason: null };
+}
+
 // The table's value for this venue at this hour, rounded and clamped to 0-100,
 // or null when a gate that needs no query says no. Pure. `ts` is the venue wall
 // clock predictBusyness scores on, read with the getters buildFeatureMap uses.
+// Read only after noCurveFallbackState has said the table is served, which is
+// where the artifact's version is checked.
 function noCurveFallbackValue(venue, ts) {
-  if (!metadata || metadata.model_version !== NO_CURVE_FALLBACK_FITTED_ON) return null;
+  if (!metadata) return null;
   const reviews = storedNumber(venue.user_ratings_total ?? venue.review_count);
   if (reviews === null || reviews < NO_CURVE_FALLBACK_MIN_REVIEWS) return null;
   const types = Array.isArray(venue.types) ? venue.types.slice(0, NO_CURVE_FALLBACK_TYPES_READ) : [];
@@ -4322,12 +4358,12 @@ function noteCurvePresence(placeId, rows) {
 }
 
 // The table's value when every gate holds, or null for the rule engine. The
-// switch is read first, so with it off this returns before anything else
-// runs. Never throws: whatever goes wrong in here, the venue keeps the answer
-// it had before this existed.
+// switch is read first (noCurveFallbackState), so with it off this returns
+// before anything else runs. Never throws: whatever goes wrong in here, the
+// venue keeps the answer it had before this existed.
 async function noCurveFallback(venue, ts, placeId, userId) {
   try {
-    if (!noCurveFallbackEnabled()) return null;
+    if (!noCurveFallbackState().serving) return null;
     if (venue.popular_times) return null;
     const value = noCurveFallbackValue(venue, ts);
     if (value === null) return null;
@@ -5394,6 +5430,7 @@ module.exports = {
     // its gates and the figure it publishes, for
     // __tests__/noCurveFallback.test.js.
     noCurveFallbackEnabled,
+    noCurveFallbackState,
     noCurveFallbackValue,
     noCurveFallbackCategory,
     venueHasCurve,
