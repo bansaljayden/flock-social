@@ -22,6 +22,7 @@
     "@dicebear/pixel-art": "9.4.2",
     "@google/genai": "^2.17.0",
     "@sentry/node": "^10.58.0",
+    "@vercel/og": "0.8.6",
     "bcrypt": "^6.0.0",
     "bcryptjs": "^3.0.3",
     "compression": "^1.8.1",
