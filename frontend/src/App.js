@@ -19026,7 +19026,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         MOMENTUM_STAGES,
         momentumStageKey,
         onVenuePhotoError,
-        openExternal,
         resolveEventTime,
         voteTotal,
         MissingFlockPanel,
