@@ -62,12 +62,15 @@ let pending = {};
 let timer = null;
 
 // When the latest pull asked the server, and when each key last went into
-// the queue. A key queued after the pull asked is newer on this device than
-// anything that pull can deliver for it (queuedSincePull).
+// the queue (localIsNewer).
 let pullAskedAt = 0;
 const queuedAt = {};
 
-export function queuedSincePull(key) {
+// Whether this device holds a value for `key` newer than any answer a pull
+// can bring: one still waiting in the queue, or one queued after the latest
+// pull asked. The settings-loaded listener in App.js leaves such a key alone.
+export function localIsNewer(key) {
+  if (Object.prototype.hasOwnProperty.call(pending, key)) return true;
   return queuedAt[key] !== undefined && queuedAt[key] >= pullAskedAt;
 }
 
@@ -156,6 +159,10 @@ export async function pullSettings() {
           await updateUserSettings(local);
         } catch (err) {
           console.warn('[settings] initial push failed:', err.message);
+          // Not on the account yet. The queue owns it from here, with its
+          // retry when the connection comes back, and because it is queued
+          // the listener does not record it as held.
+          queueSync(local);
         }
       }
       window.dispatchEvent(new CustomEvent('flock-settings-loaded', { detail: local }));

@@ -17,7 +17,7 @@ jest.mock('../services/api', () => ({
   isLoggedIn: jest.fn(() => true),
 }));
 const api = require('../services/api');
-const { sameAsAccount, queueSync, queuedSincePull, pullSettings } = require('../services/userSettings');
+const { sameAsAccount, queueSync, localIsNewer, pullSettings } = require('../services/userSettings');
 
 const app = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8').replace(/\r\n/g, '\n');
 
@@ -38,27 +38,58 @@ describe('sameAsAccount', () => {
   });
 });
 
-describe('queuedSincePull', () => {
+describe('localIsNewer', () => {
+  beforeEach(() => {
+    jest.useRealTimers();
+    api.isLoggedIn.mockReturnValue(true);
+    api.updateUserSettings.mockImplementation(() => Promise.resolve({}));
+  });
+
   // A change made while the pull is on the wire (a pin on a slow connection)
   // is newer on this device than the pull's answer.
-  test('a key queued after the pull asked is newer here; one queued before is not', async () => {
-    let answer;
-    api.isLoggedIn.mockReturnValue(true);
-    api.getUserSettings.mockImplementation(() => new Promise((resolve) => { answer = resolve; }));
+  test('a key queued after the pull asked is newer here; one already sent before it asked is not', async () => {
     queueSync({ flockOrder: [1] });
-    await new Promise((r) => setTimeout(r, 5));
+    await new Promise((r) => setTimeout(r, 700)); // the debounce sends it
+    let answer;
+    api.getUserSettings.mockImplementation(() => new Promise((resolve) => { answer = resolve; }));
     const pulling = pullSettings();
-    expect(queuedSincePull('flockOrder')).toBe(false);
-    expect(queuedSincePull('pinnedFlockIds')).toBe(false);
+    expect(localIsNewer('flockOrder')).toBe(false);
+    expect(localIsNewer('safetyOn')).toBe(false);
     queueSync({ pinnedFlockIds: [7] });
-    expect(queuedSincePull('pinnedFlockIds')).toBe(true);
+    expect(localIsNewer('pinnedFlockIds')).toBe(true);
     answer({ settings: { pinnedFlockIds: [], flockOrder: [1] } });
     await pulling;
+  });
+
+  test('a key still waiting in the queue is newer here, whenever the pull asked', async () => {
+    queueSync({ crowdAlerts: 'false' });
+    api.getUserSettings.mockImplementation(() => Promise.resolve({ settings: { crowdAlerts: 'true' } }));
+    await pullSettings(); // asks after the queueing, answers before the debounce
+    expect(localIsNewer('crowdAlerts')).toBe(true);
+    await new Promise((r) => setTimeout(r, 700));
+  });
+
+  // A brand-new account: the pull finds nothing and pushes this device's
+  // values itself. When that push fails, the values must stay owed.
+  test('a failed initial push leaves the values queued, so they are retried and not taken as held', async () => {
+    localStorage.setItem('flock_interests', JSON.stringify(['Sports']));
+    api.getUserSettings.mockImplementation(() => Promise.resolve({ settings: {} }));
+    api.updateUserSettings.mockImplementationOnce(() => Promise.reject(Object.assign(new Error('offline'), { isNetworkError: true })));
+    await pullSettings();
+    expect(localIsNewer('userInterests')).toBe(true);
+    await new Promise((r) => setTimeout(r, 700));
+    expect(api.updateUserSettings).toHaveBeenLastCalledWith(expect.objectContaining({ userInterests: ['Sports'] }));
+    localStorage.removeItem('flock_interests');
   });
 });
 
 test('the listener records what it adopts, and all three effects ask before sending', () => {
-  expect(app).toContain("const fresh = (key) => s[key] !== undefined && s[key] !== null && !queuedSincePull(key);");
+  expect(app).toContain("const fresh = (key) => s[key] !== undefined && s[key] !== null && !localIsNewer(key);");
+  // Each effect's first run records this device's copy, so React's
+  // development re-run of a mount effect sends nothing over the account.
+  for (const key of ['pinnedFlockIds', 'flockOrder', 'userInterests']) {
+    expect(app).toContain(`accountListsRef.current.${key} = JSON.stringify(${key});`);
+  }
   expect(app).toContain("['userInterests', 'pinnedFlockIds', 'flockOrder'].forEach((key) => {\n        if (fresh(key) && Array.isArray(s[key])) accountListsRef.current[key] = JSON.stringify(s[key]);");
   // Every synced value the listener adopts goes through fresh().
   for (const key of ['safetyOn', 'crowdAlerts', 'locationEnabled']) {
