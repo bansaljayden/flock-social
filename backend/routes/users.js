@@ -2578,7 +2578,7 @@ router.put('/payment-methods',
       }
 
       if (sets.length === 0) {
-        return res.status(400).json({ error: 'No payment methods provided' });
+        return res.status(400).json({ error: 'No pay-back handles provided' });
       }
 
       sets.push('updated_at = NOW()');
@@ -2596,7 +2596,7 @@ router.put('/payment-methods',
       });
     } catch (err) {
       console.error('Update payment methods error:', err);
-      res.status(500).json({ error: 'Failed to update payment methods' });
+      res.status(500).json({ error: 'Failed to save pay-back handles' });
     }
   }
 );
