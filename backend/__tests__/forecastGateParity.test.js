@@ -48,6 +48,14 @@ process.env.GEMINI_API_KEY = 'test-gemini-key';
 delete process.env.PAYWALL_ENABLED;
 delete process.env.VENUE_BILLING_ENABLED;
 
+// The clock is pinned to the middle of a UTC day (helpers/pinnedClock.js)
+// before the routes load. The demo's venue reveals and the free message cap
+// count per UTC day, so from the real clock a test that spent a day and asked
+// again across 00:00 UTC was handed a new one.
+const { pinClock } = require('./helpers/pinnedClock');
+const pinnedClock = pinClock(Date.UTC(2026, 6, 15, 12, 0, 0));
+test.after(() => pinnedClock.restore());
+
 const BACKEND = path.join(__dirname, '..');
 
 // --- scripted pg fake -------------------------------------------------------

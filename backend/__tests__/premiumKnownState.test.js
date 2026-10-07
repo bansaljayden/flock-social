@@ -49,6 +49,15 @@ process.env.REVENUECAT_WEBHOOK_SECRET = 'premium-known-state-test-webhook';
 delete process.env.PAYWALL_ENABLED;
 delete process.env.VENUE_BILLING_ENABLED;
 
+// The clock is pinned to the middle of a UTC day (helpers/pinnedClock.js)
+// before the services load. services/birdieUsage.js counts Birdie's turns per
+// UTC day, so from the real clock a test that spent the day and read it back
+// across 00:00 UTC saw a fresh one. The tests that need two days set their
+// own instants with helpers/steppingClock.js.
+const { pinClock } = require('./helpers/pinnedClock');
+const pinnedClock = pinClock(Date.UTC(2026, 6, 15, 12, 0, 0));
+test.after(() => pinnedClock.restore());
+
 const BACKEND = path.join(__dirname, '..');
 
 // --- scripted pg fake -------------------------------------------------------

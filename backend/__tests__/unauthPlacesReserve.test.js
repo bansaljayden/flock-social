@@ -49,6 +49,14 @@ const path = require('node:path');
 process.env.NODE_ENV = process.env.NODE_ENV || 'test';
 process.env.GOOGLE_PLACES_API_KEY = process.env.GOOGLE_PLACES_API_KEY || 'test-places-key';
 
+// The clock is pinned to the middle of a UTC day (helpers/pinnedClock.js)
+// before the ledger is loaded. utils/placesBudget.js keys its count on the UTC
+// date, so from the real clock a test that charged before 00:00 UTC and read
+// the count after it saw the new day's zero and failed.
+const { pinClock } = require('./helpers/pinnedClock');
+const pinnedClock = pinClock(Date.UTC(2026, 6, 15, 12, 0, 0));
+test.after(() => pinnedClock.restore());
+
 const {
   allowPlacesSearch,
   allowGlobalPlacesCall,

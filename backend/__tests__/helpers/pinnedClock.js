@@ -24,8 +24,8 @@
 // must land on two different days; helpers/virtualClock.js drives code that
 // takes `now` as an argument and leaves the global clock alone.
 //
-// Used by geminiSpendLedger.test.js, unauthUpstreamReserve.test.js,
-// placeDetailsSharedCache.test.js and placesProxyAbuse.test.js.
+// Used by every test file that calls pinClock (grep -l pinClock __tests__),
+// each with a comment at the pin saying which of its assertions needs it.
 // ---------------------------------------------------------------------------
 
 function pinClock(startMs) {

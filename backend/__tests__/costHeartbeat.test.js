@@ -28,6 +28,14 @@ process.env.MODERATION_ALERT_EMAIL = 'jayden@example.com';
 // reached somebody must not be what holds or releases a claim here.
 delete process.env.ADMIN_USER_IDS;
 
+// The clock is pinned to the middle of a UTC day (helpers/pinnedClock.js)
+// before the service loads. The alert ledger below dedupes per UTC day, so
+// from the real clock checks either side of 00:00 UTC were two days and
+// mailed twice.
+const { pinClock } = require('./helpers/pinnedClock');
+const pinnedClock = pinClock(Date.UTC(2026, 6, 15, 12, 0, 0));
+test.after(() => pinnedClock.restore());
+
 const pool = require('../config/database');
 const emailService = require('../services/emailService');
 const costModel = require('../services/costModel');
