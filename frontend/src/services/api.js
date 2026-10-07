@@ -2973,7 +2973,25 @@ export async function getDMConversations() {
  * the same answer.
  */
 const BOOT_READ_TTL_MS = 10000;
-const BOOT_READERS = { flocks: getFlocks, dms: getDMConversations };
+// The Nest's own reads go out at the same moment (2026-10-07): measured the
+// same way, stats, friend requests, both availability reads, entitlements,
+// the profile, blocks and trusted contacts started only once the signed-in
+// tree had mounted, a full round trip after /me, so those parts of the Nest
+// filled in after the tab bar was already on screen. Each loader takes its
+// read once, at its first call, which is the one at mount; every later call
+// (a refresh, a retry, the way back to the app) reads fresh.
+const BOOT_READERS = {
+  flocks: getFlocks,
+  dms: getDMConversations,
+  userStats: getUserStats,
+  pendingRequests: getPendingRequests,
+  myAvailability: getMyAvailability,
+  friendsAvailability: getFriendsAvailability,
+  entitlements: getEntitlements,
+  profile: getUserProfile,
+  blocks: getBlockedUsers,
+  trustedContacts: getTrustedContacts,
+};
 let bootReads = null;
 
 export function primeBootReads() {
