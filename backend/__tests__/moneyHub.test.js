@@ -3661,6 +3661,105 @@ test('a usage bill\'s last bill has only until its vendor could send it, so the 
   assert.strictEqual(endOn('2026-10-03', '2026-11-08'), 'renewed');
 });
 
+// Review 2026-10-06, the short months: the cycle rule counted a month on from
+// the end date and then took a day off, and a month on from the 29th, 30th or
+// 31st is clamped to a short month's last day before the day comes off. Set
+// to end Jan 31, 2027, the last bill had until Feb 27, while the cycle billed
+// on the 30th holds Jan 30, the last day of use, and closes on Feb 28, the
+// 30th clamped into February. That last bill read as a renewal and put a $30
+// bill back into March and into the burn.
+//
+// [end date, last bill expected by, the last day of use and the cycle that
+// closes last on it]
+const USAGE_LAST_BILL_BY = [
+  // A month on from the last day of use, on the same date clamped to a short
+  // month's last day.
+  ['2027-01-29', '2027-02-28', 'Jan 28, billed on the 28th'],
+  ['2027-01-30', '2027-02-28', 'Jan 29, billed on the 29th, clamped to Feb 28'],
+  ['2027-01-31', '2027-02-28', 'Jan 30, billed on the 30th, clamped to Feb 28'],
+  ['2028-01-29', '2028-02-28', 'Jan 28, billed on the 28th; on Feb 29 the 29th bills a cycle that began on the end date'],
+  ['2028-01-30', '2028-02-29', 'Jan 29, billed on the 29th, in a leap year'],
+  ['2028-01-31', '2028-02-29', 'Jan 30, billed on the 30th, clamped to Feb 29'],
+  ['2026-03-31', '2026-04-30', 'Mar 30, billed on the 30th'],
+  ['2026-05-31', '2026-06-30', 'May 30, billed on the 30th'],
+  ['2026-08-31', '2026-09-30', 'Aug 30, billed on the 30th'],
+  ['2026-10-31', '2026-11-30', 'Oct 30, billed on the 30th'],
+  ['2026-12-31', '2027-01-30', 'Dec 30, billed on the 30th; on Jan 31 the 31st bills a cycle that began on the end date'],
+  // A last day of use that ends its month is the billing date of every cycle
+  // billed on that day or later, and the one billed on the 31st closes last.
+  ['2027-02-01', '2027-02-28', 'Jan 31, billed on the 31st, clamped to Feb 28'],
+  ['2028-02-01', '2028-02-29', 'Jan 31, billed on the 31st, clamped to Feb 29'],
+  ['2027-03-01', '2027-03-31', 'Feb 28, the billing date of the 28th to the 31st, and the 31st bills next on Mar 31'],
+  ['2028-03-01', '2028-03-31', 'Feb 29, the billing date of the 29th to the 31st, and the 31st bills next on Mar 31'],
+  ['2026-04-01', '2026-04-30', 'Mar 31, billed on the 31st, clamped to Apr 30'],
+  ['2026-09-01', '2026-09-30', 'Aug 31, billed on the 31st, clamped to Sep 30'],
+  ['2027-01-01', '2027-01-31', 'Dec 31, billed on the 31st'],
+  // Nothing clamped.
+  ['2026-07-31', '2026-08-30', 'Jul 30, billed on the 30th'],
+  ['2026-09-30', '2026-10-29', 'Sep 29, billed on the 29th'],
+  ['2028-02-29', '2028-03-28', 'Feb 28, billed on the 28th'],
+  // The calendar month, billed in the first week of the next one, is later.
+  ['2026-10-03', '2026-11-07', 'Oct 2, in October, billed by Nov 7'],
+];
+
+const dayAfter = (ymd) => new Date(Date.parse(`${ymd}T00:00:00Z`) + 86400000).toISOString().slice(0, 10);
+
+test('a usage bill\'s last bill has until a month on from its last day of use, on that date clamped to a short month\'s last day', () => {
+  const flex = expense({ id: 4, vendor: 'MapTiler', product: 'Flex', kind: 'infrastructure', cadence: 'usage', amountCents: 3000 });
+  for (const [endsOn, by, why] of USAGE_LAST_BILL_BY) {
+    assert.strictEqual(moneyHub.__test.usageLastBillBy(endsOn), by, `set to end ${endsOn}: ${why}`);
+    // A charge on that day is the last bill; one the day after is later than it.
+    assert.strictEqual(moneyHub.__test.endOf({ ...flex, endsOn, lastChargedOn: by }, '2029-01-01'), 'ended', `set to end ${endsOn}, charged ${by}`);
+    assert.strictEqual(moneyHub.__test.endOf({ ...flex, endsOn, lastChargedOn: dayAfter(by) }, '2029-01-01'), 'renewed', `set to end ${endsOn}, charged ${dayAfter(by)}`);
+  }
+});
+
+test('the last bill is expected by the latest day any monthly billing day, or the calendar month, could send it, for every end date from 2024 to 2032', () => {
+  // Worked out from the billing dates themselves, apart from the hub's date
+  // helpers: for each billing day from the 1st to the 31st, clamped to each
+  // month's last day, the first billing date after the last day of use closes
+  // the cycle that holds it. A vendor that bills the calendar month sends the
+  // month holding that day by the 7th of the next one.
+  const ymd = (t) => new Date(t).toISOString().slice(0, 10);
+  const wrong = [];
+  for (let t = Date.UTC(2024, 0, 1); t <= Date.UTC(2032, 11, 31); t += 86400000) {
+    const endsOn = ymd(t);
+    const lastUse = new Date(t - 86400000);
+    const y = lastUse.getUTCFullYear();
+    const m = lastUse.getUTCMonth();
+    let latest = ymd(Date.UTC(y, m + 1, 7));
+    for (let day = 1; day <= 31; day += 1) {
+      const billed = (k) => ymd(Date.UTC(y, m + k, Math.min(day, new Date(Date.UTC(y, m + k + 1, 0)).getUTCDate())));
+      const closes = billed(0) >= endsOn ? billed(0) : billed(1);
+      if (closes > latest) latest = closes;
+    }
+    const got = moneyHub.__test.usageLastBillBy(endsOn);
+    if (got !== latest) wrong.push(`set to end ${endsOn}: ${got}, the latest is ${latest}`);
+  }
+  assert.deepStrictEqual(wrong, []);
+});
+
+test('set to end Jan 31, a usage bill\'s last bill on Feb 28 ends it: February carries it, and March and the burn do not', () => {
+  const flex = expense({ id: 4, vendor: 'MapTiler', product: 'Flex', kind: 'infrastructure', cadence: 'usage', amountCents: 3000, lastChargedOn: '2027-02-28', endsOn: '2027-01-31' });
+  const march = pictureOn('2027-03-05', [flex]);
+  const marchBase = pictureOn('2027-03-05', []);
+  assert.strictEqual(march.totals.perMonthCents, marchBase.totals.perMonthCents, 'a bill that ended came back into the burn');
+  assert.strictEqual(march.totals.thisMonthCents, marchBase.totals.thisMonthCents, 'March carried a bill that ended in January');
+  assert.deepStrictEqual(march.chargedPastEnd, []);
+  // February, the month its last bill was paid in, carries it; the burn does not.
+  const feb = pictureOn('2027-02-28', [flex]);
+  const febBase = pictureOn('2027-02-28', []);
+  assert.strictEqual(feb.totals.thisMonthCents - febBase.totals.thisMonthCents, 3000);
+  assert.strictEqual(feb.totals.perMonthCents, febBase.totals.perMonthCents);
+  assert.deepStrictEqual(feb.chargedPastEnd, []);
+  // Set to end Mar 31, a last bill on Apr 30 the same way. A charge on May 1
+  // is later than it, and is listed with the day the last bill was expected by.
+  const april = pictureOn('2026-05-05', [{ ...flex, endsOn: '2026-03-31', lastChargedOn: '2026-04-30' }]);
+  assert.strictEqual(april.totals.perMonthCents, pictureOn('2026-05-05', []).totals.perMonthCents);
+  assert.deepStrictEqual(april.chargedPastEnd, []);
+  assert.deepStrictEqual(pictureOn('2026-05-05', [{ ...flex, endsOn: '2026-03-31', lastChargedOn: '2026-05-01' }]).chargedPastEnd.map((x) => x.lastBillBy), ['2026-04-30']);
+});
+
 // Review of the forecast (2026-10-06): the burn after a bill ends is worked
 // out by the burn's own rules on that day, not as the burn less the bill.
 test('a bill that stood in for a code line gives it back the day it ends, and the forecast counts it', () => {
