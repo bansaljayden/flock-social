@@ -52,6 +52,19 @@ const CORPUS_TTL_MS = 24 * 60 * 60 * 1000;
 
 const STATUSES = ['baselines', 'venue_only', 'absent', 'unknown'];
 
+// Rows of this venue's own curve, counted. The crowd predictor's no-curve
+// fallback keeps the same yes every read of those rows gives it, so it never
+// puts a category's typical level over a venue this process has seen rows
+// for (mlPredictor.noteCurveRowsSeen, which keeps nothing while
+// CROWD_NO_CURVE_FALLBACK is off). Required here rather than at the top, so a
+// save that counts no rows never loads the predictor, and wrapped, because the
+// membership answer must never fail on the predictor's account.
+function noteCurveRowsSeen(placeId) {
+  try {
+    require('./mlPredictor').noteCurveRowsSeen(placeId);
+  } catch { /* the membership answer stands either way */ }
+}
+
 /**
  * Look up corpus membership for a place id.
  *
@@ -75,6 +88,7 @@ async function checkCorpusMembership(placeId) {
     const row = rows[0] || {};
     const baselineRows = Number(row.baseline_rows) || 0;
     const status = baselineRows > 0 ? 'baselines' : (row.in_venues === true ? 'venue_only' : 'absent');
+    if (baselineRows > 0) noteCurveRowsSeen(placeId);
     return { status, baselineRows };
   } catch (err) {
     console.error('Corpus membership check failed:', err.message);

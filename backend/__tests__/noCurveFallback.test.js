@@ -26,8 +26,9 @@
 //   * the presence probe: cached (a no for a few minutes, a yes for a day),
 //     charged to the venue-lookup budget, silent on a refusal or a failure,
 //     and answered by every read that sees the venue's rows (a strip's
-//     whole-curve read, the rows it remembers, a slot lookup), so a cached no
-//     older than rows this process has read never puts the table beside them;
+//     whole-curve read, the rows it remembers, a slot lookup, the count a
+//     venue profile save makes), so a cached no older than rows this process
+//     has read never puts the table beside them;
 //   * a stale no: a probe never writes its no over an answer that landed
 //     after it was sent, a remembered empty curve never makes an old no look
 //     fresh, and a no older than the recheck window is asked again, charged,
@@ -147,6 +148,11 @@ function scriptedDb({ curves = {}, fail = null, holdPresence = false, curveDelay
       const rows = rowsOf(params[0]);
       if (curveDelayMs > 0) await new Promise((resolve) => setTimeout(resolve, curveDelayMs));
       return { rows };
+    }
+    // services/venueCorpus.js checkCorpusMembership: no ml_venues row, and
+    // the venue's baseline rows counted.
+    if (/\(SELECT COUNT\(\*\)::int FROM ml_venue_baselines WHERE google_place_id = \$1\) AS baseline_rows/.test(sql)) {
+      return { rows: [{ in_venues: false, baseline_rows: rowsOf(params[0]).length }] };
     }
     if (/FROM venue_feedback/.test(sql)) return { rows: [{}] };
     return { rows: [] };
@@ -897,6 +903,44 @@ test('the slot lookup that finds the venue\'s rows says the venue has a curve to
     assert.equal(db.presence().length, 1, 'the slot lookup answered it, so nothing was probed');
     assert.equal(await I.venueHasCurve(v.place_id), true);
   });
+});
+
+test('a venue\'s rows counted when its owner saves the profile say it has a curve too', async () => {
+  // routes/venueProfile.js counts a claimed venue's rows on every save
+  // (services/venueCorpus.js checkCorpusMembership). That count is a read of
+  // the same table, so it is the same yes.
+  const CORPUS = require.resolve('../services/venueCorpus');
+  const freshCorpus = () => {
+    delete require.cache[CORPUS];
+    return require(CORPUS);
+  };
+  const v = venue();
+  const curves = {};
+  const db = scriptedDb({ curves });
+  try {
+    await withPredictor({ db, env: { [SWITCH]: ON } }, async (p) => {
+      const corpus = freshCorpus();
+      assert.equal((await p.predictBusyness(v, WX, TS)).predictionMethod, METHOD, 'no rows: the probe says no');
+      // Rows away from this hour, so only a presence answer can tell.
+      curves[v.place_id] = { '1_12': 40, '1_13': 55 };
+      assert.deepStrictEqual(await corpus.checkCorpusMembership(v.place_id), { status: 'baselines', baselineRows: 2 });
+      assert.equal((await p.predictBusyness(v, WX, TS)).predictionMethod, 'rule_engine_no_baseline');
+      assert.equal(db.presence().length, 1, 'the count answered it, so nothing was probed');
+    });
+    // Switched off, the count keeps nothing, and a count of none says nothing.
+    await withPredictor({ db: scriptedDb({ curves: { [v.place_id]: { '1_12': 40 } } }) }, async (p) => {
+      const corpus = freshCorpus();
+      assert.equal((await corpus.checkCorpusMembership(v.place_id)).status, 'baselines');
+      assert.equal(p._internals.curvePresenceCacheSize(), 0);
+    });
+    await withPredictor({ env: { [SWITCH]: ON } }, async (p) => {
+      const corpus = freshCorpus();
+      assert.equal((await corpus.checkCorpusMembership(venue().place_id)).status, 'absent');
+      assert.equal(p._internals.curvePresenceCacheSize(), 0);
+    });
+  } finally {
+    delete require.cache[CORPUS];
+  }
 });
 
 test('one response: a headline that came back the table before its strip read the curve is scored again, and counted once', async () => {

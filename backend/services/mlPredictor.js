@@ -4371,8 +4371,10 @@ function noCurveFallbackValue(venue, ts) {
 //
 // EVERY READ THAT SEES THE VENUE'S ROWS ANSWERS IT, AND AN OLDER NO NEVER
 // OVERWRITES A NEWER ANSWER (noteCurvePresence): a strip's whole-curve read,
-// the rows it remembers and replays (primeBaselineCache), a slot lookup that
-// finds rows (getBaseline) and the neighbour self-read (getSelfBaselines). So
+// the rows it remembers and replays (primeBaselineCache, which the advisor's
+// curve read also goes through), a slot lookup that finds rows
+// (getBaseline), the neighbour self-read (getSelfBaselines) and the count a
+// venue profile save makes (services/venueCorpus.js, noteCurveRowsSeen). So
 // once any read in this process has seen a venue's rows, no response puts the
 // table beside them.
 // ---------------------------------------------------------------------------
@@ -5406,6 +5408,10 @@ module.exports = {
   // venue has a curve. Every route that publishes the two together calls it
   // once both are in; see the block above it.
   agreeWithStrip,
+  // A venue's rows counted outside this file (services/venueCorpus.js): the
+  // same yes any read of them gives the no-curve fallback (noteCurvePresence).
+  // Keeps nothing while CROWD_NO_CURVE_FALLBACK is off.
+  noteCurveRowsSeen: (placeId) => noteCurvePresence(placeId, true, Date.now()),
   // The third Ticketmaster ledger's reader. routes/admin.js's cost panel had
   // meters for the other two and none for this one, so both the observed count
   // and the worst-case ceiling it published were short by a whole ledger.
