@@ -3727,26 +3727,36 @@ test('a usage bill\'s last bill has until a month on from its last day of use, o
 });
 
 test('the last bill is expected by the latest day any monthly billing day, or the calendar month, could send it, for every end date from 2024 to 2032', () => {
-  // Worked out from the billing dates themselves, apart from the hub's date
-  // helpers: for each billing day from the 1st to the 31st, clamped to each
-  // month's last day, the first billing date after the last day of use closes
-  // the cycle that holds it. A vendor that bills the calendar month sends the
-  // month holding that day by the 7th of the next one.
-  const ymd = (t) => new Date(t).toISOString().slice(0, 10);
+  // Worked out from the calendar itself, apart from the hub's date helpers:
+  // for each billing day from the 1st to the 31st, clamped to each month's
+  // last day, the first billing date after the last day of use closes the
+  // cycle that holds it. A vendor that bills the calendar month sends the
+  // month holding that day by the 7th of the next one. Dates are whole
+  // numbers (yyyymmdd), so the sweep takes milliseconds: built from Date
+  // objects and strings it took 430ms of a loaded run's CPU, beside suites
+  // that time themselves.
+  const daysIn = (y, m) => (m === 2 ? (y % 4 === 0 && (y % 100 !== 0 || y % 400 === 0) ? 29 : 28) : [4, 6, 9, 11].includes(m) ? 30 : 31);
+  const key = (y, m, d) => y * 10000 + m * 100 + d;
+  const text = (k) => `${Math.floor(k / 10000)}-${String(Math.floor(k / 100) % 100).padStart(2, '0')}-${String(k % 100).padStart(2, '0')}`;
   const wrong = [];
-  for (let t = Date.UTC(2024, 0, 1); t <= Date.UTC(2032, 11, 31); t += 86400000) {
-    const endsOn = ymd(t);
-    const lastUse = new Date(t - 86400000);
-    const y = lastUse.getUTCFullYear();
-    const m = lastUse.getUTCMonth();
-    let latest = ymd(Date.UTC(y, m + 1, 7));
-    for (let day = 1; day <= 31; day += 1) {
-      const billed = (k) => ymd(Date.UTC(y, m + k, Math.min(day, new Date(Date.UTC(y, m + k + 1, 0)).getUTCDate())));
-      const closes = billed(0) >= endsOn ? billed(0) : billed(1);
-      if (closes > latest) latest = closes;
+  for (let y = 2024; y <= 2032; y += 1) {
+    for (let m = 1; m <= 12; m += 1) {
+      for (let d = 1; d <= daysIn(y, m); d += 1) {
+        // The last day of use, and the month after the one it is in.
+        const [uy, um] = d > 1 ? [y, m] : (m > 1 ? [y, m - 1] : [y - 1, 12]);
+        const ud = d > 1 ? d - 1 : daysIn(uy, um);
+        const [ny, nm] = um < 12 ? [uy, um + 1] : [uy + 1, 1];
+        let latest = key(ny, nm, 7);
+        for (let day = 1; day <= 31; day += 1) {
+          const sameMonth = Math.min(day, daysIn(uy, um));
+          const closes = sameMonth > ud ? key(uy, um, sameMonth) : key(ny, nm, Math.min(day, daysIn(ny, nm)));
+          if (closes > latest) latest = closes;
+        }
+        const endsOn = text(key(y, m, d));
+        const got = moneyHub.__test.usageLastBillBy(endsOn);
+        if (got !== text(latest)) wrong.push(`set to end ${endsOn}: ${got}, the latest is ${text(latest)}`);
+      }
     }
-    const got = moneyHub.__test.usageLastBillBy(endsOn);
-    if (got !== latest) wrong.push(`set to end ${endsOn}: ${got}, the latest is ${latest}`);
   }
   assert.deepStrictEqual(wrong, []);
 });
