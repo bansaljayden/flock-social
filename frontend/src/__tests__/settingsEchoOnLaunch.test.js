@@ -363,3 +363,85 @@ test('every mode choice reaches the account, not only the picker', () => {
   expect(onboarding).toContain("queueSync({ userMode: 'venue' });");
   expect(onboarding).toContain("queueSync({ userMode: 'user' });");
 });
+
+describe('pulls asked in the same millisecond', () => {
+  test('are still applied in the order they were asked', async () => {
+    window.dispatchEvent(new CustomEvent('flock-session-cleared'));
+    localStorage.clear();
+    api.isLoggedIn.mockReturnValue(true);
+    const now = jest.spyOn(Date, 'now').mockReturnValue(1791400000000);
+    try {
+      const first = held();
+      api.getUserSettings.mockImplementationOnce(() => first.promise);
+      const pullA = pullSettings();
+      api.getUserSettings.mockImplementationOnce(() => Promise.resolve({ settings: { pinnedFlockIds: [1, 2] } }));
+      expect(await handedOn(pullSettings())).toEqual({ pinnedFlockIds: [1, 2] });
+      first.answer({ settings: { pinnedFlockIds: [1] } });
+      expect(await handedOn(pullA)).toBeNull();
+      expect(localStorage.getItem('flock_pinned')).toBe(JSON.stringify([1, 2]));
+    } finally {
+      now.mockRestore();
+    }
+  });
+});
+
+describe('what is still owed survives a reload', () => {
+  beforeEach(() => {
+    window.dispatchEvent(new CustomEvent('flock-session-cleared'));
+    localStorage.clear();
+    api.isLoggedIn.mockReturnValue(true);
+    api.updateUserSettings.mockReset();
+    api.updateUserSettings.mockImplementation(() => Promise.resolve({}));
+  });
+
+  test('is mirrored while owed and cleared once it lands', async () => {
+    api.updateUserSettings.mockImplementationOnce(() => Promise.reject(Object.assign(new Error('offline'), { isNetworkError: true })));
+    queueSync({ pinnedFlockIds: [4] });
+    expect(JSON.parse(localStorage.getItem('flock_settings_owed'))).toEqual({ pinnedFlockIds: [4] });
+    await wait(700); // the first send fails: still owed
+    expect(JSON.parse(localStorage.getItem('flock_settings_owed'))).toEqual({ pinnedFlockIds: [4] });
+    window.dispatchEvent(new Event('online'));
+    await wait(700); // the retry lands
+    expect(localStorage.getItem('flock_settings_owed')).toBeNull();
+  });
+
+  test('is restored on load, wins over the pull, and is sent once a pull confirms the session', async () => {
+    localStorage.setItem('flock_settings_owed', JSON.stringify({ pinnedFlockIds: [9] }));
+    let fresh;
+    let freshApi;
+    jest.isolateModules(() => {
+      freshApi = require('../services/api');
+      fresh = require('../services/userSettings');
+    });
+    freshApi.isLoggedIn.mockReturnValue(true);
+    freshApi.updateUserSettings.mockImplementation(() => Promise.resolve({}));
+    freshApi.getUserSettings.mockImplementation(() => Promise.resolve({ settings: { pinnedFlockIds: [1], flockOrder: [3] } }));
+    expect(freshApi.updateUserSettings).not.toHaveBeenCalled(); // nothing goes out before a pull
+    let detail = null;
+    const on = (e) => { detail = e.detail; };
+    window.addEventListener('flock-settings-loaded', on);
+    await fresh.pullSettings();
+    window.removeEventListener('flock-settings-loaded', on);
+    expect(detail).toEqual({ flockOrder: [3] });
+    await wait(700);
+    expect(freshApi.updateUserSettings).toHaveBeenCalledWith({ pinnedFlockIds: [9] });
+  });
+
+  test('is swept with the account: it is a flock* key, and the session end clears it', () => {
+    queueSync({ userInterests: ['Z'] });
+    expect(localStorage.getItem('flock_settings_owed')).not.toBeNull();
+    window.dispatchEvent(new CustomEvent('flock-session-cleared'));
+    expect(localStorage.getItem('flock_settings_owed')).toBeNull();
+  });
+});
+
+test('a request made for an account that signed out while it waited is not sent on the next one', () => {
+  const apiSource = fs.readFileSync(path.join(__dirname, '..', 'services', 'api.js'), 'utf8');
+  expect(apiSource).toContain('const madeFor = signingIn ? null : accountOf(getToken());');
+  expect(apiSource).toContain('if (madeFor && accountOf(token) !== madeFor) throw sessionEndedError();');
+  expect(apiSource).toContain('if (madeFor && accountOf(next) !== madeFor) throw sessionEndedError();');
+  // Checked after the renewal, before the token is used.
+  const body = apiSource.slice(apiSource.indexOf('async function request(endpoint, options = {}) {'));
+  expect(body.indexOf('await renewIfDue();')).toBeLessThan(body.indexOf('if (madeFor && accountOf(token) !== madeFor)'));
+  expect(body.indexOf('if (madeFor && accountOf(token) !== madeFor)')).toBeLessThan(body.indexOf("headers['Authorization'] = `Bearer ${token}`;"));
+});

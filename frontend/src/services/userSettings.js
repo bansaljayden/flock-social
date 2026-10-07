@@ -92,7 +92,33 @@ let session = 0;
 const queuedAt = {};
 const settledAt = {};
 const inFlight = {};
-let appliedAskedAt = 0;
+// Pulls are ordered by a count, not the clock: two asked in one millisecond
+// tied, and the older answer could land last and be applied.
+let askCount = 0;
+let appliedAsk = 0;
+
+// WHAT IS STILL OWED TO THE ACCOUNT, KEPT ACROSS A RELOAD. The queue is
+// memory, so a reload lost a save that was waiting to retry, and the next
+// pull put the account's older value back over the change. Everything queued
+// and not yet confirmed is mirrored here and restored on load (restoreOwed);
+// it is a flock* key, so the sign-out sweep in api.js removes it with the
+// account it belongs to.
+const OWED_KEY = 'flock_settings_owed';
+let owed = {};
+function saveOwed() {
+  try {
+    if (Object.keys(owed).length > 0) localStorage.setItem(OWED_KEY, JSON.stringify(owed));
+    else localStorage.removeItem(OWED_KEY);
+  } catch (_) { /* storage blocked: the queue still holds it for this load */ }
+}
+// What a settled write no longer owes: each key whose owed value is the one
+// that was sent (a newer value queued since stays owed).
+function settleOwed(payload) {
+  Object.keys(payload).forEach((key) => {
+    if (JSON.stringify(owed[key]) === JSON.stringify(payload[key])) delete owed[key];
+  });
+  saveOwed();
+}
 
 // THE LAST ANSWER, KEPT FOR A SCREEN THAT WAS NOT LISTENING YET. The pull
 // goes out as the session starts, before the app's main screen has mounted
@@ -137,6 +163,10 @@ export function queueSync(partial) {
   const now = Date.now();
   Object.keys(partial).forEach((key) => { queuedAt[key] = now; });
   pending = { ...pending, ...partial };
+  if (Object.keys(partial).length > 0) {
+    owed = { ...owed, ...partial };
+    saveOwed();
+  }
   if (timer) clearTimeout(timer);
   timer = setTimeout(flush, 600);
 }
@@ -169,7 +199,10 @@ function flush() {
   const next = () => { if (!timer && Object.keys(pending).length > 0) flush(); };
   return updateUserSettings(payload).then(() => {
     settle();
-    if (mine === session) retryDelay = 0;
+    if (mine === session) {
+      retryDelay = 0;
+      settleOwed(payload);
+    }
     next();
   }, (err) => {
     settle();
@@ -189,6 +222,7 @@ function flush() {
       pending = { ...payload, ...pending };
       retryLater();
     } else if (typeof window !== 'undefined') {
+      settleOwed(payload); // dropped, so not owed any more either
       // A save that cannot be retried used to be a console warning and
       // nothing else, so a switch could move on screen, never reach the
       // account, and keep disagreeing with the person's other device. Both
@@ -225,13 +259,26 @@ if (typeof window !== 'undefined') {
     if (timer) { clearTimeout(timer); timer = null; }
     if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
     retryDelay = 0;
-    appliedAskedAt = 0;
     lastPull = null;
+    owed = {};
+    saveOwed();
     [queuedAt, settledAt, inFlight].forEach((record) => {
       Object.keys(record).forEach((key) => { delete record[key]; });
     });
   });
 }
+
+// On load, what an earlier load still owed goes back in the queue. It is not
+// sent yet: the first pull confirms there is a live session and sends it
+// (pullSettings), and meanwhile it counts as newer than any answer.
+function restoreOwed() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(OWED_KEY) || 'null'); } catch (_) { saved = null; }
+  if (!saved || typeof saved !== 'object' || Array.isArray(saved) || Object.keys(saved).length === 0) return;
+  owed = { ...saved, ...owed };
+  pending = { ...saved, ...pending };
+}
+if (typeof window !== 'undefined') restoreOwed();
 
 function readLocalSettings() {
   const out = {};
@@ -249,7 +296,10 @@ function readLocalSettings() {
 
 export async function pullSettings() {
   if (!isLoggedIn()) return null;
+  // A session is live, so whatever an earlier load still owed can go up.
+  if (Object.keys(pending).length > 0 && !timer) queueSync({});
   const askedAt = Date.now();
+  const ask = ++askCount;
   const mine = session;
   // The part of `values` this device holds nothing newer for.
   const takeable = (values) => {
@@ -262,8 +312,8 @@ export async function pullSettings() {
     // An answer for a session that has since ended belongs to another
     // account's screen, and one older than an answer already applied is the
     // account as it was: neither is written or handed on.
-    if (mine !== session || askedAt < appliedAskedAt) return null;
-    appliedAskedAt = askedAt;
+    if (mine !== session || ask < appliedAsk) return null;
+    appliedAsk = ask;
     const serverHasSettings = settings && typeof settings === 'object' && Object.keys(settings).length > 0;
 
     if (!serverHasSettings) {

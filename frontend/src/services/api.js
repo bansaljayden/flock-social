@@ -536,6 +536,13 @@ function accountSwitchedError() {
   err.accountSwitched = true;
   return err;
 }
+// A request made for an account that signed out on this tab while it waited
+// for a renewal, with another account signed in since (request() below).
+function sessionEndedError() {
+  const err = new Error('That was for the account that signed out, so it was not sent.');
+  err.sessionEnded = true;
+  return err;
+}
 
 // The sign-in doors are never refused: they mint a session of their own, and
 // the tab that signs in becomes that account's (storeSession below).
@@ -1544,12 +1551,18 @@ async function request(endpoint, options = {}) {
   // which awaits.
   const signingIn = SIGN_IN_DOORS.some((p) => endpoint.startsWith(p));
   if (!signingIn) refuseIfAccountMoved();
+  // The account this request was made for. The tab check compares with the
+  // tab's account NOW, and a renewal can wait long enough for this account to
+  // sign out on this tab and another to sign in, which makes the next account
+  // the tab's: a save made for the first went out on the second one's token.
+  const madeFor = signingIn ? null : accountOf(getToken());
   // Renew first when the token is nearly out (see RENEWING THE SESSION above),
   // so the request goes out on a live one instead of earning a 401.
   const mayRenew = mayRenewBefore(endpoint);
   if (mayRenew && renewalIsDue()) await renewIfDue();
   let token = getToken();
   if (!signingIn) refuseIfAccountMoved(token);
+  if (madeFor && accountOf(token) !== madeFor) throw sessionEndedError();
   const headers = {
     'Content-Type': 'application/json',
     ...fetchOptions.headers,
@@ -1610,6 +1623,7 @@ async function request(endpoint, options = {}) {
       renewedAfterExpiry = true;
       const next = await renewAfterExpiry(token);
       if (next) {
+        if (madeFor && accountOf(next) !== madeFor) throw sessionEndedError();
         token = next;
         headers['Authorization'] = `Bearer ${token}`;
         continue;
