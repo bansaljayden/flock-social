@@ -27,7 +27,7 @@ import { resendVerificationEmail, trackPurchaseCompleted, hasRenewableSession, r
 import { redeemPendingInvite, openJoinedFlock, rememberInvite, storedGuestTokens } from './services/inviteHandoff';
 import { setAvailability, clearAvailability, getMyAvailability, getFriendsAvailability, getSensorCurrent, getSensorHistory, checkInManual, getNfcCheckin, getCalendarEvents, createCalendarEvent, deleteCalendarEvent } from './services/api';
 import { joinVenueRoom, leaveVenueRoom, joinVenueContentRoom, leaveVenueContentRoom, onVenueSensorUpdate, onVenueCheckin, onSessionRevoked, onSocketError, onAvailabilityUpdated, onBlockedBy, onUnblockedBy, onContentRemoved, onContentRestored } from './services/socket';
-import { pullSettings, queueSync, sameAsAccount } from './services/userSettings';
+import { pullSettings, queueSync, sameAsAccount, queuedSincePull } from './services/userSettings';
 import { liftReaders } from './services/flockReaders';
 // html5-qrcode is NOT imported here on purpose. It is loaded with a dynamic
 // import() inside startQrScanner, the one place that uses it. See the note
@@ -9195,21 +9195,28 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   useEffect(() => {
     const onSettings = (e) => {
       const s = e.detail || {};
+      // A key this device queued after the pull asked is newer here than
+      // anything the pull can say about it, so it is neither adopted nor
+      // recorded, and the queued value goes up as it was going to. Without
+      // this, a pin made on a slow connection before the pull answered was
+      // replaced on screen by the account's older list while the queued save
+      // still put the pin on the account.
+      const fresh = (key) => s[key] !== undefined && s[key] !== null && !queuedSincePull(key);
       // What the account holds now, so adopting it below is not sent back.
       ['userInterests', 'pinnedFlockIds', 'flockOrder'].forEach((key) => {
-        if (Array.isArray(s[key])) accountListsRef.current[key] = JSON.stringify(s[key]);
+        if (fresh(key) && Array.isArray(s[key])) accountListsRef.current[key] = JSON.stringify(s[key]);
       });
-      if (s.safetyOn !== undefined && s.safetyOn !== null) {
+      if (fresh('safetyOn')) {
         const on = String(s.safetyOn) !== 'false';
         setSafetyOn(on);
         localStorage.setItem('flock_safety_on', on ? 'true' : 'false');
       }
-      if (s.crowdAlerts !== undefined && s.crowdAlerts !== null) {
+      if (fresh('crowdAlerts')) {
         const on = String(s.crowdAlerts) !== 'false';
         setCrowdAlertsOn(on);
         localStorage.setItem('flock_crowd_alerts', on ? 'true' : 'false');
       }
-      if (Array.isArray(s.userInterests)) setUserInterests(s.userInterests);
+      if (fresh('userInterests') && Array.isArray(s.userInterests)) setUserInterests(s.userInterests);
       // The rest of the synced keys reached localStorage and nothing else
       // (settings audit, 2026-09-05): Location switched off on one device read
       // On here until a force quit, and the Explore tab kept asking for a
@@ -9217,12 +9224,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // so Off drops the stored position too. userMode and mapType stay
       // boot-time reads on purpose: the map owns its own state, and flipping
       // the whole app mid-session is not a sync.
-      if (s.locationEnabled !== undefined && s.locationEnabled !== null) {
+      if (fresh('locationEnabled')) {
         const on = String(s.locationEnabled) !== 'false';
         if (on !== locationEnabledRef.current) toggleLocation(on);
       }
-      if (Array.isArray(s.pinnedFlockIds)) setPinnedFlockIds(s.pinnedFlockIds);
-      if (Array.isArray(s.flockOrder)) setFlockOrder(s.flockOrder);
+      if (fresh('pinnedFlockIds') && Array.isArray(s.pinnedFlockIds)) setPinnedFlockIds(s.pinnedFlockIds);
+      if (fresh('flockOrder') && Array.isArray(s.flockOrder)) setFlockOrder(s.flockOrder);
     };
     window.addEventListener('flock-settings-loaded', onSettings);
     return () => window.removeEventListener('flock-settings-loaded', onSettings);
