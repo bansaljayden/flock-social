@@ -45,19 +45,31 @@ const invoices = {};
 const paidWith = {};
 const refundsMade = [];
 const failNextRefund = new Set();
-// The refunds Stripe holds, by id, as it holds them now (a test moves one from
-// pending to succeeded or failed, the way Stripe does days later), every read
-// of one, every list of a PaymentIntent's refunds, the statuses the next
-// refunds of a PaymentIntent are made with (succeeded when none is queued),
-// the PaymentIntents Stripe calls already refunded, and the first answer to
-// each idempotency key, which Stripe gives again for any later request
-// carrying that key.
+// Every refund request Stripe turned down, with the error code it answered.
+const refundsRefused = [];
+// What each invoice's payment took, in cents ($99.00 when a test names no
+// other amount). The refunds Stripe holds, by id, as it holds them now (a test
+// moves one from pending to succeeded or failed, the way Stripe does days
+// later, and puts in the ones made by hand in the dashboard), every read of
+// one, every list of a PaymentIntent's refunds, the statuses the next refunds
+// of a PaymentIntent are made with (succeeded when none is queued), the
+// PaymentIntents whose next refund Stripe answers "already refunded" whatever
+// it holds (a full refund pending at that moment, which failed before anything
+// read the refunds again), and the first answer to each idempotency key, which
+// Stripe gives again for any later request carrying that key.
+const paidAmounts = {};
 const refundsById = {};
 const refundReads = [];
 const refundLists = [];
 const refundStatusesFor = {};
-const alreadyRefunded = new Set();
+const answerAlreadyRefundedOnce = new Set();
 const answeredKeys = {};
+const DEFAULT_PAID = 9900;
+// What the invoice a PaymentIntent paid took.
+const amountPaidThrough = (pi) => {
+  const invoice = Object.keys(paidWith).find((inv) => paidWith[inv] === pi);
+  return invoice && Number.isFinite(paidAmounts[invoice]) ? paidAmounts[invoice] : DEFAULT_PAID;
+};
 // Runs once Stripe has made a refund and before its answer is back: the
 // moment in which a webhook about that refund can arrive before the refusal
 // has recorded it.
@@ -169,15 +181,33 @@ function FakeStripe() {
         }
         const key = opts && opts.idempotencyKey;
         if (key && answeredKeys[key]) {
+          if (answeredKeys[key].error) {
+            refundsRefused.push({ args, options: opts || null, code: answeredKeys[key].error.code, replayed: true });
+            throw answeredKeys[key].error;
+          }
           refundsMade.push({ args, options: opts || null, id: answeredKeys[key].id, replayed: true });
           return { ...answeredKeys[key] };
         }
-        if (alreadyRefunded.has(args.payment_intent)) {
-          throw Object.assign(new Error('Charge has already been refunded.'), { code: 'charge_already_refunded', statusCode: 400 });
+        // Stripe refunds no more than the payment took, counting every refund
+        // of it that has not failed or been cancelled (a pending one counts),
+        // and a request that names no amount asks for all that is left.
+        const left = amountPaidThrough(args.payment_intent) - Object.values(refundsById)
+          .filter((r) => r.payment_intent === args.payment_intent && r.status !== 'failed' && r.status !== 'canceled')
+          .reduce((total, r) => total + r.amount, 0);
+        const refuse = (code, message) => {
+          const error = Object.assign(new Error(message), { code, statusCode: 400 });
+          if (key) answeredKeys[key] = { error };
+          refundsRefused.push({ args, options: opts || null, code });
+          return error;
+        };
+        if (answerAlreadyRefundedOnce.delete(args.payment_intent) || left <= 0) {
+          throw refuse('charge_already_refunded', 'Charge has already been refunded.');
         }
+        const amount = args.amount === undefined ? left : args.amount;
+        if (amount > left) throw refuse('amount_too_large', `Refund amount is greater than the unrefunded amount on the charge (${left}).`);
         const queued = refundStatusesFor[args.payment_intent];
         const status = queued && queued.length ? queued.shift() : 'succeeded';
-        const refund = { id: `re_made_${refundsMade.length + 1}`, object: 'refund', status, payment_intent: args.payment_intent, metadata: args.metadata };
+        const refund = { id: `re_made_${refundsMade.length + 1}`, object: 'refund', status, amount, payment_intent: args.payment_intent, metadata: args.metadata };
         refundsMade.push({ args, options: opts || null, id: refund.id });
         refundsById[refund.id] = refund;
         if (key) answeredKeys[key] = { ...refund };
@@ -192,7 +222,11 @@ function FakeStripe() {
       list: async ({ payment, invoice }) => {
         if (invoice) {
           const pi = paidWith[invoice];
-          return { data: pi ? [{ id: `inpay_${invoice}`, invoice, status: 'paid', payment: { type: 'payment_intent', payment_intent: pi } }] : [], has_more: false };
+          const amountPaid = Number.isFinite(paidAmounts[invoice]) ? paidAmounts[invoice] : DEFAULT_PAID;
+          return {
+            data: pi ? [{ id: `inpay_${invoice}`, invoice, status: 'paid', amount_paid: amountPaid, currency: 'usd', payment: { type: 'payment_intent', payment_intent: pi } }] : [],
+            has_more: false,
+          };
         }
         return {
           data: (invoicePayments[payment.payment_intent] || []).map((inv, i) => ({ id: `inpay_${i}_${inv}`, invoice: inv, status: 'paid' })),
@@ -2118,16 +2152,24 @@ test('a refusal recorded before the claim is verified keeps the plan undelivered
 // ---------------------------------------------------------------------------
 
 // A purchase refused at fulfillment because its claim was never verified,
-// paid through pi_in_<tag>. refundStatuses are the statuses Stripe gives its
-// refunds, in the order they are made.
-async function refusedPurchase(tag, { refundStatuses = null } = {}) {
+// paid through pi_in_<tag>: `paid` cents ($99.00 unless named).
+// refundStatuses are the statuses Stripe gives the refunds asked for, in the
+// order they are made.
+async function refusedPurchase(tag, { refundStatuses = null, paid = null } = {}) {
   const [PLACE] = placePair();
   const id = await venue({ verified: false, placeId: PLACE });
   const subId = `sub_${tag}`;
   sub(subId, id, 'active', { metadata: boundTo(PLACE)(id) });
   const session = completedCheckout(`cs_${tag}`, subId, id, PLACE, `in_${tag}`);
+  if (paid !== null) paidAmounts[`in_${tag}`] = paid;
   if (refundStatuses) refundStatusesFor[`pi_in_${tag}`] = [...refundStatuses];
   return { id, subId, session, pi: `pi_in_${tag}`, baseKey: `flock-claim-revoked-refund-in_${tag}` };
+}
+
+// A refund made by hand in the Stripe dashboard.
+function refundByHand(id, pi, amount, status) {
+  refundsById[id] = { id, object: 'refund', status, amount, payment_intent: pi };
+  return id;
 }
 
 async function refusalRow(subId) {
@@ -2233,12 +2275,12 @@ test('a refund waiting on the customer keeps the refusal open, a replay only rea
 
   // Stripe sends the checkout again and the owner reopens the success link
   // while it still waits.
-  const readsBefore = refundReads.length;
+  const listsBefore = refundLists.length;
   await venueBilling.handleVenueEvent(completedEvent(p.session));
   const confirmed = await venueBilling.confirmVenueCheckout(p.id, p.session.id);
   assert.strictEqual(confirmed.refused, 'CLAIM_NOT_VERIFIED');
   assert.strictEqual(madeFor(p.pi).length, 1, 'a second refund was asked for while the first waited on the customer');
-  assert.ok(refundReads.slice(readsBefore).includes(refundId), 'the replay did not read the refund it waits on');
+  assert.ok(refundLists.slice(listsBefore).includes(p.pi), 'the replay did not read the refunds of the payment');
   assert.ok(await stillOpen(p.subId));
 
   // The customer never acts and the refund is cancelled.
@@ -2248,32 +2290,116 @@ test('a refund waiting on the customer keeps the refusal open, a replay only rea
   assert.ok((await refusalRow(p.subId)).finished_at, 'the new refund succeeded and the refusal stayed open');
 });
 
-test('a payment Stripe calls already refunded finishes the refusal only when no refund of it is still on its way', async () => {
-  // Refunded by hand in the dashboard and that refund still pending: Stripe
-  // makes no second one, and the refusal waits on the one in flight.
+test('a payment refunded by hand is waited on while that refund is pending, and finishes the refusal with no refund asked for once it is back', async () => {
+  // Refunded by hand in the dashboard, and that refund still pending.
   const p = await refusedPurchase('refund_by_hand_pending');
-  refundsById.re_by_hand_pending = { id: 're_by_hand_pending', object: 'refund', status: 'pending', payment_intent: p.pi };
-  alreadyRefunded.add(p.pi);
+  refundByHand('re_by_hand_pending', p.pi, DEFAULT_PAID, 'pending');
   const { lines } = await logged(() => venueBilling.handleVenueEvent(completedEvent(p.session)));
-  let row = await refusalRow(p.subId);
+  const row = await refusalRow(p.subId);
   assert.strictEqual(row.finished_at, null, 'a payment whose only refund is still pending was taken as returned');
-  assert.strictEqual(row.stripe_refund_id, 're_by_hand_pending', 'the refusal does not wait on the refund in flight');
+  assert.strictEqual(row.stripe_payment_intent_id, p.pi, 'the refusal does not say which payment it waits on');
   const said = saidAbout(lines, p.session);
-  assert.ok(said.some((l) => /\bpending\b/.test(l)), said.join(' | '));
+  assert.ok(said.some((l) => /\bpending\b/.test(l) && l.includes('re_by_hand_pending')), said.join(' | '));
   assert.ok(!said.some((l) => /refunded/.test(l)), said.join(' | '));
   refundsById.re_by_hand_pending.status = 'succeeded';
   await refundUpdated('re_by_hand_pending');
   assert.ok((await refusalRow(p.subId)).finished_at, 'the refund made by hand landed and the refusal stayed open');
+  assert.deepStrictEqual(madeFor(p.pi), []);
 
   // Refunded by hand and already back: finished at once, naming that refund.
   const q = await refusedPurchase('refund_by_hand_done');
-  refundsById.re_by_hand_done = { id: 're_by_hand_done', object: 'refund', status: 'succeeded', payment_intent: q.pi };
-  alreadyRefunded.add(q.pi);
+  refundByHand('re_by_hand_done', q.pi, DEFAULT_PAID, 'succeeded');
   const { lines: done } = await logged(() => venueBilling.handleVenueEvent(completedEvent(q.session)));
-  row = await refusalRow(q.subId);
-  assert.ok(row.finished_at, 'a payment Stripe says is already refunded left the refusal open');
-  assert.strictEqual(row.stripe_refund_id, 're_by_hand_done');
-  assert.ok(saidAbout(done, q.session).some((l) => /already refunded/.test(l)), done.join(' | '));
+  assert.ok((await refusalRow(q.subId)).finished_at, 'a payment already refunded in full left the refusal open');
+  assert.deepStrictEqual(madeFor(q.pi), []);
+  assert.ok(saidAbout(done, q.session).some((l) => /refunded/.test(l) && l.includes('re_by_hand_done')), done.join(' | '));
+});
+
+// WHAT CAME BACK IS ADDED UP. Stripe allows several partial refunds of one
+// charge, and one refund that succeeded used to finish the refusal however
+// much of the payment it returned; Stripe answering "already refunded" was
+// taken as proof the money was back even when the refund behind that answer
+// then failed.
+test('two refunds made by hand, $60 and $40: the $60 landing finishes nothing, and when the $40 fails the $40 still owed is asked for', async () => {
+  const p = await refusedPurchase('refund_sixty_forty', { paid: 10000 });
+  refundByHand('re_hand_sixty', p.pi, 6000, 'pending');
+  refundByHand('re_hand_forty', p.pi, 4000, 'pending');
+  await venueBilling.handleVenueEvent(completedEvent(p.session));
+  assert.strictEqual((await refusalRow(p.subId)).finished_at, null);
+
+  // The $60 lands.
+  refundsById.re_hand_sixty.status = 'succeeded';
+  const { lines: sixty } = await logged(() => refundUpdated('re_hand_sixty'));
+  assert.strictEqual((await refusalRow(p.subId)).finished_at, null, '$60 of the $100 back finished the refusal while the other $40 was still on its way');
+  const saidSixty = saidAbout(sixty, p.session);
+  assert.ok(saidSixty.some((l) => l.includes('$60.00 of the $100.00') && l.includes('re_hand_forty') && l.includes('$40.00')), saidSixty.join(' | '));
+  assert.ok(!saidSixty.some((l) => /refunded/.test(l)), saidSixty.join(' | '));
+  assert.deepStrictEqual(madeFor(p.pi), [], 'a refund was asked for while the rest was on its way');
+
+  // The $40 fails.
+  Object.assign(refundsById.re_hand_forty, { status: 'failed', failure_reason: 'declined' });
+  const { lines: forty } = await logged(() => refundUpdated('re_hand_forty'));
+  assert.deepStrictEqual(madeFor(p.pi).map((r) => [r.args.amount, r.options.idempotencyKey]), [[4000, p.baseKey]],
+    'the $40 still owed was not asked for, or more than that was');
+  assert.ok((await refusalRow(p.subId)).finished_at, 'the whole $100 is back and the refusal stayed open');
+  assert.ok(saidAbout(forty, p.session).some((l) => l.includes('re_hand_forty') && /declined/.test(l) && l.includes('$40.00')), forty.join(' | '));
+});
+
+test('"already refunded" from Stripe is no proof: with only a failed refund on the payment, the refunds are read again and the money asked for under the next key', async () => {
+  const p = await refusedPurchase('refund_said_already', { refundStatuses: ['pending'] });
+  refundByHand('re_hand_failed', p.pi, DEFAULT_PAID, 'failed');
+  // A full refund pending at the moment of the request, which failed before
+  // anything read the refunds again.
+  answerAlreadyRefundedOnce.add(p.pi);
+  const { lines } = await logged(() => venueBilling.handleVenueEvent(completedEvent(p.session)));
+  assert.strictEqual((await refusalRow(p.subId)).finished_at, null, '"already refunded" finished a refusal whose only refund had failed');
+  assert.deepStrictEqual(refundsRefused.filter((r) => r.args.payment_intent === p.pi).map((r) => [r.code, r.options.idempotencyKey]),
+    [['charge_already_refunded', p.baseKey]]);
+  assert.deepStrictEqual(madeFor(p.pi).map((r) => [r.args.amount, r.options.idempotencyKey]), [[DEFAULT_PAID, `${p.baseKey}-attempt-2`]],
+    'no new refund was asked for, or it was asked for under the key Stripe had already answered');
+  const row = await refusalRow(p.subId);
+  assert.strictEqual(row.refund_attempt, 2);
+  assert.strictEqual(row.stripe_refund_id, madeFor(p.pi)[0].id);
+  const said = saidAbout(lines, p.session);
+  assert.ok(said.some((l) => /\bpending\b/.test(l) && l.includes('$0.00 of the $99.00')), said.join(' | '));
+  assert.ok(!said.some((l) => /refunded/.test(l)), said.join(' | '));
+
+  refundsById[madeFor(p.pi)[0].id].status = 'succeeded';
+  await refundUpdated(madeFor(p.pi)[0].id);
+  assert.ok((await refusalRow(p.subId)).finished_at);
+});
+
+test('a partial refund made by hand counts: the refund asked for is the balance only, and the refusal finishes when the whole payment is back', async () => {
+  const p = await refusedPurchase('refund_partial_by_hand', { paid: 10000 });
+  refundByHand('re_hand_thirty', p.pi, 3000, 'succeeded');
+  const { lines } = await logged(() => venueBilling.handleVenueEvent(completedEvent(p.session)));
+  assert.deepStrictEqual(madeFor(p.pi).map((r) => [r.args.amount, r.options.idempotencyKey]), [[7000, p.baseKey]],
+    'the refund asked for was not the $70.00 still owed');
+  assert.ok((await refusalRow(p.subId)).finished_at, 'the whole $100 is back and the refusal stayed open');
+  const said = saidAbout(lines, p.session);
+  assert.ok(said.some((l) => l.includes('$30.00 of the $100.00') && l.includes('$70.00')), said.join(' | '));
+  assert.ok(said.some((l) => /refunded/.test(l) && l.includes('re_hand_thirty')), said.join(' | '));
+});
+
+test('refund.updated for a refund the refusal never recorded still finds it through the payment, and it waits on the rest', async () => {
+  const p = await refusedPurchase('refund_unrecorded', { paid: 10000 });
+  refundByHand('re_hand_first', p.pi, 6000, 'pending');
+  refundByHand('re_hand_second', p.pi, 4000, 'pending');
+  await venueBilling.handleVenueEvent(completedEvent(p.session));
+  assert.strictEqual((await refusalRow(p.subId)).finished_at, null);
+
+  // The second lands first.
+  refundsById.re_hand_second.status = 'succeeded';
+  const { value: result, lines } = await logged(() => refundUpdated('re_hand_second'));
+  assert.deepStrictEqual(result.refusals, [{ subscription: p.subId, refund: 'pending' }],
+    'refund.updated for a refund of the payment did not find the refusal waiting on it');
+  assert.ok(saidAbout(lines, p.session).some((l) => l.includes('$40.00 of the $100.00') && l.includes('re_hand_first')), lines.join(' | '));
+
+  refundsById.re_hand_first.status = 'succeeded';
+  const { value: last } = await logged(() => refundUpdated('re_hand_first'));
+  assert.deepStrictEqual(last.refusals, [{ subscription: p.subId, refund: 'finished' }]);
+  assert.ok((await refusalRow(p.subId)).finished_at);
+  assert.deepStrictEqual(madeFor(p.pi), []);
 });
 
 test('a refusal finished on its refund asks Stripe for nothing more when the checkout, the return or the refund event comes again', async () => {

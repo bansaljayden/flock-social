@@ -35,7 +35,7 @@ const stripeCalls = [];
 // refund tests. A charge is paid through a PaymentIntent, which names the
 // invoice it paid, which names its subscription (Stripe API 2025-03-31 basil
 // and later).
-const stripeState = { subscriptions: [], sessions: {}, openSessions: [], subById: {}, keepCreatedOpen: false, charges: {}, refunds: {}, invoicePayments: {}, invoices: {}, paidWith: {} };
+const stripeState = { subscriptions: [], sessions: {}, openSessions: [], subById: {}, keepCreatedOpen: false, charges: {}, refunds: {}, invoicePayments: {}, invoices: {}, paidWith: {}, refundsMade: [] };
 let createdSessions = 0;
 function FakeStripe() {
   return {
@@ -66,8 +66,19 @@ function FakeStripe() {
       retrieve: async (id) => { stripeCalls.push(['charges.retrieve', id]); return stripeState.charges[id] || null; },
     },
     refunds: {
-      list: async (args) => { stripeCalls.push(['refunds.list', args]); return { data: stripeState.refunds[args.charge] || [], has_more: false }; },
-      create: async (args, opts) => { stripeCalls.push(['refunds.create', args, opts]); return { id: 're_made', status: 'succeeded' }; },
+      // By charge (the refund tests' lists), or by PaymentIntent (the refunds
+      // made of it here).
+      list: async (args) => {
+        stripeCalls.push(['refunds.list', args]);
+        const data = args.payment_intent ? stripeState.refundsMade.filter((r) => r.payment_intent === args.payment_intent) : stripeState.refunds[args.charge] || [];
+        return { data, has_more: false };
+      },
+      create: async (args, opts) => {
+        stripeCalls.push(['refunds.create', args, opts]);
+        const refund = { id: 're_made', status: 'succeeded', amount: args.amount, payment_intent: args.payment_intent };
+        stripeState.refundsMade.push(refund);
+        return refund;
+      },
     },
     invoicePayments: {
       // By PaymentIntent (which invoices a charge paid), or by invoice (how an
@@ -76,7 +87,10 @@ function FakeStripe() {
       list: async (args) => {
         if (args.invoice) {
           const pi = stripeState.paidWith[args.invoice];
-          return { data: pi ? [{ id: `inpay_${args.invoice}`, invoice: args.invoice, status: 'paid', payment: { type: 'payment_intent', payment_intent: pi } }] : [], has_more: false };
+          return {
+            data: pi ? [{ id: `inpay_${args.invoice}`, invoice: args.invoice, status: 'paid', amount_paid: 9900, currency: 'usd', payment: { type: 'payment_intent', payment_intent: pi } }] : [],
+            has_more: false,
+          };
         }
         return {
           data: (stripeState.invoicePayments[args.payment.payment_intent] || []).map((invoice, i) => ({ id: `inpay_${i}`, invoice, status: 'paid' })),
@@ -231,6 +245,7 @@ test.beforeEach(() => {
   stripeState.invoicePayments = {};
   stripeState.invoices = {};
   stripeState.paidWith = {};
+  stripeState.refundsMade = [];
   createdSessions = 0;
   billing.__test.resetStripe();
 });
