@@ -314,6 +314,16 @@ describe('deletion copy matches the deletion path', () => {
     expect(privacy).toMatch(/<strong>The Google listing a Roost plan was ever bought for,<\/strong>/);
     expect(privacy).toMatch(/<strong>Roost trial record:<\/strong>[^<]*no expiry/);
     expect(deletePage).toMatch(/the Google listing it was bought for/);
+
+    // A refused Roost purchase (migration 123): Stripe's identifiers, the
+    // reason and the dates, with no account in the row, kept after the venue
+    // account is deleted so the refusal's cancel and refund are finished once.
+    const roostRefusals = read('backend', 'migrations', '123_roost_refusals.sql');
+    expect(roostRefusals).toMatch(/CREATE TABLE IF NOT EXISTS roost_refused_purchases \(\s*stripe_subscription_id TEXT PRIMARY KEY,\s*stripe_checkout_session_id TEXT,\s*stripe_invoice_id TEXT,\s*reason VARCHAR\(32\) NOT NULL,\s*created_at TIMESTAMPTZ NOT NULL DEFAULT NOW\(\),\s*finished_at TIMESTAMPTZ\s*\);/);
+    expect(privacy).toMatch(/<strong>Refused Roost purchases:<\/strong>[^<]*no expiry/);
+    expect(privacy).toMatch(/<strong>A Roost purchase we turned down,<\/strong>/);
+    expect(read('frontend', 'api', 'marketing-page.js')).toMatch(/"Refused Roost purchases: [^"]*no expiry/);
+    expect(deletePage).toMatch(/If we turned down a Roost purchase for your venue/);
   });
 
   test('created flocks cascade, so both pages warn that the whole plan goes', () => {
