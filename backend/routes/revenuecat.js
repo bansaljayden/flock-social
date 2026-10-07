@@ -370,12 +370,11 @@ const PREMIUM_BY_EVENT = new Map([
 // leaves the account premium until the next real event, and a late EXPIRATION
 // after a RENEWAL drops a paying subscriber until the following month's
 // renewal. That path is for a deployment that never configured the API key,
-// and services/entitlements.js warns at startup whenever the paywall is on
-// without it. If the fallback ever has to carry real traffic, the fix is a
-// per-account watermark: `users.premium_event_at TIMESTAMPTZ` written with
-// is_premium, the UPDATE conditioned on `premium_event_at IS NULL OR
-// premium_event_at < $3` from the event's own `event_timestamp_ms`, which
-// RevenueCat supplies on every event.
+// and it is never taken quietly (WRITING FROM THE EVENT BODY, below). If the
+// fallback ever has to carry real traffic, the fix is a per-account watermark:
+// `users.premium_event_at TIMESTAMPTZ` written with is_premium, the UPDATE
+// conditioned on `premium_event_at IS NULL OR premium_event_at < $3` from the
+// event's own `event_timestamp_ms`, which RevenueCat supplies on every event.
 //
 // Why a nonce cache is NOT the answer, and would be worse than nothing: dedupe
 // by event id in memory dies at every deploy and is per-instance, so it would
@@ -385,6 +384,34 @@ const PREMIUM_BY_EVENT = new Map([
 //
 // __tests__/billingWebhookTrust.test.js reproduces the reordering above and
 // asserts this paragraph still exists, so the limit stays a known one.
+
+// ---------------------------------------------------------------------------
+// WRITING FROM THE EVENT BODY IS SAID ALOUD
+// ---------------------------------------------------------------------------
+// Which path an event takes is decided on every request by whether
+// REVENUECAT_SECRET_API_KEY is configured. Without it the route stops asking
+// RevenueCat and writes users.is_premium from what the event itself says: its
+// type, its app_user_id, its environment, its transfer lists. The webhook
+// secret is then the only thing between a caller and the column that decides
+// who has paid, and late or retried events apply in arrival order. That switch
+// used to happen with no log line at all. services/entitlements.js warns about
+// it only while the paywall is on, and the webhook is live with the paywall
+// off, so a key lost in a rotation would have gone unnoticed for as long as
+// nothing visibly broke.
+//
+// So it is said twice per process, and no more: at boot in production (at the
+// foot of this file), where a live webhook without the key is a mistake and
+// not the ordinary local state, and on the first event applied this way,
+// wherever that happens.
+function announceBodyTrust(type, ids) {
+  announceOnce(
+    'body-trust',
+    `[RevenueCat] REVENUECAT_SECRET_API_KEY is not set, so this ${String(type || 'event').slice(0, 40)} for [${ids}] `
+    + 'and every event after it is applied from what the event says, with no RevenueCat re-read. The webhook secret '
+    + 'is then the only check on users.is_premium, and late or retried events apply in arrival order. Set the '
+    + 'RevenueCat secret API key. Said once per process.'
+  );
+}
 
 // RevenueCat webhook. Live in production: REVENUECAT_WEBHOOK_SECRET is set
 // there, so this route accepts RevenueCat's events now, while the consumer
@@ -481,6 +508,10 @@ router.post('/webhook', async (req, res) => {
         return res.json({ ok: true, source: 'subscriber' });
       }
 
+      // From here the transfer is taken at its word (WRITING FROM THE EVENT
+      // BODY, above).
+      announceBodyTrust(type, [...new Set([...from, ...to])]);
+
       // A SANDBOX TRANSFER MOVES NOTHING ANYBODY PAID FOR. TestFlight and App
       // Review restore purchases in Apple's sandbox, and RevenueCat reports that
       // as a TRANSFER like any other. This branch used to grant is_premium to
@@ -573,6 +604,10 @@ router.post('/webhook', async (req, res) => {
       await syncPremiumFromRevenueCat(appUserId);
       return res.json({ ok: true, source: 'subscriber' });
     }
+
+    // From here the event is taken at its word (WRITING FROM THE EVENT BODY,
+    // above).
+    announceBodyTrust(type, [appUserId]);
 
     // A sandbox event (TestFlight, App Review) cost nobody anything and
     // writes nothing, except for the allowlisted accounts; the same rule
@@ -679,3 +714,18 @@ module.exports.__testing = {
     for (const r of Object.keys(refusalCounts)) refusalCounts[r] = 0;
   },
 };
+
+// SAID AT BOOT, before any event can arrive (WRITING FROM THE EVENT BODY,
+// above). Production only, where the webhook is live and running it without
+// the API key is a mistake; a local run without either is the ordinary state.
+// With no usable webhook secret the route refuses every event, nothing is
+// taken at its word, and this stays quiet; configuredSecret announces a short
+// one itself.
+if (process.env.NODE_ENV === 'production' && configuredSecret() && !proBilling.revenueCatApiConfigured()) {
+  console.error(
+    '[RevenueCat] REVENUECAT_SECRET_API_KEY is not set, so POST /api/revenuecat/webhook writes users.is_premium '
+    + 'from what each event says, with no RevenueCat re-read. Whoever holds REVENUECAT_WEBHOOK_SECRET can then grant '
+    + 'or revoke Pro on any account, and late or retried events apply in arrival order. Set the RevenueCat secret '
+    + 'API key on this service.'
+  );
+}
