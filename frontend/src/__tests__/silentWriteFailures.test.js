@@ -464,7 +464,9 @@ describe('an avatar that did not save', () => {
 
   test('success is claimed only after the write came back', () => {
     const fn = avatar();
-    const awaited = fn.indexOf('await saveProfileImageUrl(url);');
+    // Inside the one-at-a-time picture queue (changePicture), and held to the
+    // account that asked.
+    const awaited = fn.indexOf('await saveProfileImageUrl(url, { account });');
     const claimed = fn.indexOf("showToast('Profile picture updated.', 'success')");
     expect(awaited).toBeGreaterThan(-1);
     expect(claimed).toBeGreaterThan(awaited);

@@ -569,9 +569,10 @@ test('every answer for an account that signed out meanwhile is set aside before 
 
 test('the profile photo upload keeps to its account across a renewal and on the answer', () => {
   const apiSource = fs.readFileSync(path.join(__dirname, '..', 'services', 'api.js'), 'utf8');
-  const body = apiSource.slice(apiSource.indexOf('export async function uploadProfileImage(file) {'));
+  const body = apiSource.slice(apiSource.indexOf('export async function uploadProfileImage(file, { account } = {}) {'));
   const fn = body.slice(0, body.indexOf('\n}\n'));
-  expect(fn).toContain('const madeFor = accountOf(getToken());');
+  // A caller that waited first passes the account it captured (currentAccount).
+  expect(fn).toContain('const madeFor = account !== undefined ? String(account) : accountOf(getToken());');
   expect(fn).toContain('if (madeFor && accountOf(token) !== madeFor) throw sessionEndedError();');
   expect(fn).toContain('if (madeFor && accountOf(next || getToken()) !== madeFor) throw sessionEndedError();');
   expect(fn.indexOf('let { res, data } = await send(token);')).toBeLessThan(fn.indexOf('if (madeFor && accountOf(getToken()) !== madeFor) throw sessionEndedError();'));

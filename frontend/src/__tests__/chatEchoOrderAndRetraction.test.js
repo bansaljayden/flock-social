@@ -1210,6 +1210,7 @@ function liftedFlockTransmit(flocks) {
   const transmit = runLifted(`${liftCallback(appSource, 'transmitFlockMessage')}\nreturn transmitFlockMessage;`, {
     useCallback: (fn) => fn,
     makeChatThumb: async () => PHOTO_THUMB,
+    currentAccount: () => '7',
     newClientId: H.newClientId,
     newestServerId: H.newestServerId,
     flocksRef: { get current() { return state.flocks; } },
@@ -1239,6 +1240,7 @@ function liftedDmTransmit(threads) {
   const transmit = runLifted(`${liftCallback(appSource, 'transmitDm')}\nreturn transmitDm;`, {
     useCallback: (fn) => fn,
     makeChatThumb: async () => PHOTO_THUMB,
+    currentAccount: () => '7',
     newClientId: H.newClientId,
     authUser: { id: ME },
     setDirectMessages: setterOn(state, 'threads'),
@@ -1575,6 +1577,7 @@ describe('a send delivered while its echo was lost never comes back as a failed 
     const transmit = runLifted(`${liftCallback(appSource, 'transmitFlockMessage')}\nreturn transmitFlockMessage;`, {
       useCallback: (fn) => fn,
       makeChatThumb: async () => PHOTO_THUMB,
+      currentAccount: () => '7',
       newClientId: H.newClientId,
       newestServerId: H.newestServerId,
       flocksRef,
@@ -1830,6 +1833,7 @@ describe("a send's failure is decided by the newest state, whatever the transpor
     const transmit = runLifted(`${liftCallback(appSource, 'transmitFlockMessage')}\nreturn transmitFlockMessage;`, {
       useCallback: (fn) => fn,
       makeChatThumb: async () => PHOTO_THUMB,
+      currentAccount: () => '7',
       newClientId: H.newClientId,
       newestServerId: H.newestServerId,
       flocksRef,

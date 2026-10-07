@@ -475,7 +475,8 @@ describe('SOS stand-down', () => {
     const body = h.slice(0, h.indexOf('const handleShareLocationWithContacts'));
     const cancel = body.indexOf('cancelSosLocationFollowUp();');
     const settle = body.indexOf('await sosFollowUp.settled();');
-    const standDown = body.indexOf('await cancelEmergencyAlert();');
+    // Held to the account that pressed it (currentAccount, taken before the wait).
+    const standDown = body.indexOf('await cancelEmergencyAlert({ account });');
     expect(cancel).toBeGreaterThan(-1);
     expect(settle).toBeGreaterThan(cancel);
     expect(standDown).toBeGreaterThan(settle);

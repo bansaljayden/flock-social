@@ -19,7 +19,7 @@ test('Sign out everywhere says which one happened when the server call fails', (
 test('a profile photo can be removed, and the row only shows when there is one', () => {
   const app = read('App.js');
   const api = read('services/api.js');
-  expect(api).toContain("export async function removeProfileImage() {\n  return request('/api/users/profile-image', { method: 'DELETE' });");
+  expect(api).toContain("export async function removeProfileImage({ account } = {}) {\n  return request('/api/users/profile-image', { method: 'DELETE', ...(account !== undefined ? { account } : {}) });");
   expect(app).toContain('const removePhoto = useCallback(async () => {');
   expect(app).toContain('{profilePic && (');
   expect(app).toContain('onClick={removePhoto}');
