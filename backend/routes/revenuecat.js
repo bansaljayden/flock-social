@@ -166,10 +166,10 @@ function userIdFrom(value) {
 // RevenueCat spells differently one day stops matching and gets the old 400 back,
 // which is noisy rather than wrong.
 //
-// Harmless today because the paywall is dormant (PAYWALL_ENABLED is unset and
-// REVENUECAT_WEBHOOK_SECRET with it, so the 503 above answers first). It has to
-// be right BEFORE the paywall is switched on, because that is the moment these
-// events start arriving.
+// Live, not latent. REVENUECAT_WEBHOOK_SECRET is set in production, so the 503
+// above does not answer first: RevenueCat's deliveries reach this branch today,
+// with PAYWALL_ENABLED still off, and the first anonymous purchase it delivers
+// is answered here rather than on the day the paywall is switched on.
 //
 // Answered 200 with a reason, the same shape isForeignEntitlement uses: this is
 // an event we understood and deliberately did nothing with, not one we failed.
@@ -329,8 +329,9 @@ const PREMIUM_BY_EVENT = new Map([
 // __tests__/billingWebhookTrust.test.js reproduces the reordering above and
 // asserts this paragraph still exists, so the limit stays a known one.
 
-// RevenueCat webhook (D-lite scaffolding). Dormant in v1.0; wired so turning the
-// paywall on in v1.1 is a config flip. Flips users.is_premium on entitlement
+// RevenueCat webhook. Live in production: REVENUECAT_WEBHOOK_SECRET is set
+// there, so this route accepts RevenueCat's events now, while the consumer
+// paywall (PAYWALL_ENABLED) is still off. Flips users.is_premium on entitlement
 // events. The client must call Purchases.logIn(userId) so RevenueCat's
 // app_user_id IS our numeric user id.
 //
