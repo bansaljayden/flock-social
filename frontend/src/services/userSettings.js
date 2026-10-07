@@ -61,6 +61,24 @@ const JSON_KEYS = new Set(['pinnedFlockIds', 'flockOrder', 'userInterests']);
 let pending = {};
 let timer = null;
 
+// ONE WRITE ON THE WIRE AT A TIME. Two PATCHes in flight can commit in
+// either order, so a pin made while an older save was still travelling could
+// end up under it on the account, and an older save that failed after a newer
+// one had landed went back in the queue and was sent over it. A flush now
+// waits for the write on the wire to settle, and what queued meanwhile goes
+// next, merged, newest value winning.
+let writing = false;
+let retryTimer = null;
+let retryDelay = 0;
+
+// THE SESSION THESE WRITES AND PULLS BELONG TO. Signing out does not reload
+// the page, so a save that failed for one account sat in the queue and went
+// up under the next account's token, and a pull asked for one account could
+// land on the next one's screen. api.js clearLocalSession announces
+// 'flock-session-cleared'; the listener at the bottom drops what is held, and
+// a write or pull from before then is ignored when it settles.
+let session = 0;
+
 // WHICH VALUES THIS DEVICE HOLDS NEWER THAN A PULL'S ANSWER.
 //
 // A pull's answer is the account as the server read it, and a change this
@@ -69,11 +87,12 @@ let timer = null;
 // just before can still commit after the server read the answer).
 // pullSettings leaves those keys out of what it writes and hands on, so the
 // screen keeps the change and the account gets it. Each pull is judged by
-// the moment it asked, so an older answer that lands after a newer one, two
-// pulls overlapping, cannot pass for current.
+// the moment it asked, and an answer older than one already applied is not
+// applied at all, so two overlapping pulls cannot step the screen backwards.
 const queuedAt = {};
 const settledAt = {};
 const inFlight = {};
+let appliedAskedAt = 0;
 
 function newerHere(key, askedAt) {
   if (Object.prototype.hasOwnProperty.call(pending, key)) return true;
@@ -101,43 +120,76 @@ export function queueSync(partial) {
   Object.keys(partial).forEach((key) => { queuedAt[key] = now; });
   pending = { ...pending, ...partial };
   if (timer) clearTimeout(timer);
-  timer = setTimeout(() => {
-    const payload = pending;
-    pending = {};
-    timer = null;
-    if (!isLoggedIn()) return;
-    const keys = Object.keys(payload);
-    keys.forEach((key) => { inFlight[key] = (inFlight[key] || 0) + 1; });
-    const settle = () => {
-      const at = Date.now();
-      keys.forEach((key) => {
-        inFlight[key] -= 1;
-        if (!inFlight[key]) delete inFlight[key];
-        settledAt[key] = at;
-      });
-    };
-    updateUserSettings(payload).then(settle, (err) => {
-      settle();
-      console.warn('[settings] sync failed:', err.message);
-      // A sync lost to a dead spot is still the user's intent. Put it back in
-      // the queue (anything queued since the flush wins a conflict) so the
-      // next queueSync — or coming back online below — carries it up. Non-
-      // network failures (413 payload too large, expired session) stay
-      // dropped: re-sending those would fail identically forever.
-      if (err && err.isNetworkError) {
-        pending = { ...payload, ...pending };
-      } else if (typeof window !== 'undefined') {
-        // A save that cannot be retried used to be a console warning and
-        // nothing else, so a switch could move on screen, never reach the
-        // account, and keep disagreeing with the person's other device. Both
-        // halves belong in the sentence: the local change stuck, the
-        // account-wide one did not.
-        window.dispatchEvent(new CustomEvent('flock-toast', {
-          detail: { message: 'That setting did not save to your account. It still applies on this device.', type: 'error' },
-        }));
-      }
+  timer = setTimeout(flush, 600);
+}
+
+// Sends what is queued, unless a write is already on the wire (it sends
+// this when it settles). Returns the write, which never rejects, or null.
+function flush() {
+  if (timer) { clearTimeout(timer); timer = null; }
+  if (writing || Object.keys(pending).length === 0) return null;
+  const payload = pending;
+  pending = {};
+  if (!isLoggedIn()) return null;
+  if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+  const mine = session;
+  const keys = Object.keys(payload);
+  keys.forEach((key) => { inFlight[key] = (inFlight[key] || 0) + 1; });
+  writing = true;
+  const settle = () => {
+    writing = false;
+    if (mine !== session) return;
+    const at = Date.now();
+    keys.forEach((key) => {
+      inFlight[key] -= 1;
+      if (!inFlight[key]) delete inFlight[key];
+      settledAt[key] = at;
     });
-  }, 600);
+  };
+  // What queued while this was on the wire goes next, unless its own
+  // debounce is still running, whichever session it belongs to.
+  const next = () => { if (!timer && Object.keys(pending).length > 0) flush(); };
+  return updateUserSettings(payload).then(() => {
+    settle();
+    if (mine === session) retryDelay = 0;
+    next();
+  }, (err) => {
+    settle();
+    // A write for a session that has ended: its settings are not the next
+    // account's, so it is neither re-queued nor announced.
+    if (mine !== session) { next(); return; }
+    console.warn('[settings] sync failed:', err.message);
+    // A sync lost to a dead spot is still the user's intent. Put it back in
+    // the queue (anything queued since the flush wins a conflict) and send it
+    // again: when the connection comes back (the 'online' listener below), or
+    // after a growing pause while the device says it is online, because
+    // 'online' can fire before a dying request has failed and then never
+    // fire again. Non-network failures (413 payload too large, expired
+    // session) stay dropped: re-sending those would fail identically forever.
+    const retryable = Boolean(err && err.isNetworkError);
+    if (retryable) {
+      pending = { ...payload, ...pending };
+      retryLater();
+    } else if (typeof window !== 'undefined') {
+      // A save that cannot be retried used to be a console warning and
+      // nothing else, so a switch could move on screen, never reach the
+      // account, and keep disagreeing with the person's other device. Both
+      // halves belong in the sentence: the local change stuck, the
+      // account-wide one did not.
+      window.dispatchEvent(new CustomEvent('flock-toast', {
+        detail: { message: 'That setting did not save to your account. It still applies on this device.', type: 'error' },
+      }));
+    }
+    if (!retryable) next();
+  });
+}
+
+function retryLater() {
+  if (retryTimer) return;
+  // Offline: the 'online' listener sends it when the connection is back.
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+  retryDelay = Math.min(retryDelay ? retryDelay * 2 : 5000, 5 * 60 * 1000);
+  retryTimer = setTimeout(() => { retryTimer = null; flush(); }, retryDelay);
 }
 
 if (typeof window !== 'undefined') {
@@ -145,6 +197,17 @@ if (typeof window !== 'undefined') {
     // Flush anything a dead spot stranded. queueSync({}) merges nothing and
     // arms the normal debounce timer over the surviving pending payload.
     if (Object.keys(pending).length > 0) queueSync({});
+  });
+  window.addEventListener('flock-session-cleared', () => {
+    session += 1;
+    pending = {};
+    if (timer) { clearTimeout(timer); timer = null; }
+    if (retryTimer) { clearTimeout(retryTimer); retryTimer = null; }
+    retryDelay = 0;
+    appliedAskedAt = 0;
+    [queuedAt, settledAt, inFlight].forEach((record) => {
+      Object.keys(record).forEach((key) => { delete record[key]; });
+    });
   });
 }
 
@@ -165,6 +228,7 @@ function readLocalSettings() {
 export async function pullSettings() {
   if (!isLoggedIn()) return null;
   const askedAt = Date.now();
+  const mine = session;
   // The part of `values` this device holds nothing newer for.
   const takeable = (values) => {
     const out = {};
@@ -173,25 +237,26 @@ export async function pullSettings() {
   };
   try {
     const { settings } = await getUserSettings();
+    // An answer for a session that has since ended belongs to another
+    // account's screen, and one older than an answer already applied is the
+    // account as it was: neither is written or handed on.
+    if (mine !== session || askedAt < appliedAskedAt) return null;
+    appliedAskedAt = askedAt;
     const serverHasSettings = settings && typeof settings === 'object' && Object.keys(settings).length > 0;
 
     if (!serverHasSettings) {
-      // First-time sync: this account has no saved settings on the server.
-      // If localStorage has anything, push it up so this device's state becomes the source of truth.
-      const local = readLocalSettings();
+      // First-time sync: this account has nothing saved, so this device's
+      // values become the account's. They go up at once, through the same
+      // one-at-a-time path as every save, so they land in order with anything
+      // changed meanwhile and are retried if the connection drops. Nothing
+      // is handed on, because nothing came from the account.
+      const local = takeable(readLocalSettings());
       if (Object.keys(local).length > 0) {
-        try {
-          await updateUserSettings(local);
-        } catch (err) {
-          console.warn('[settings] initial push failed:', err.message);
-          // Not on the account yet. The queue owns it from here, with its
-          // retry when the connection comes back. A key changed since this
-          // pull asked is already queued with its newer value and stays so.
-          const owed = takeable(local);
-          if (Object.keys(owed).length > 0) queueSync(owed);
-        }
+        queueSync(local);
+        const sending = flush();
+        if (sending) await sending;
       }
-      window.dispatchEvent(new CustomEvent('flock-settings-loaded', { detail: takeable(local) }));
+      window.dispatchEvent(new CustomEvent('flock-settings-loaded', { detail: {} }));
       return local;
     }
 

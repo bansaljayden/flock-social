@@ -29,7 +29,7 @@ test('a profile photo can be removed, and the row only shows when there is one',
 
 test('synced Location, pins and order reach the running screen', () => {
   const app = read('App.js');
-  expect(app).toContain("if (on !== locationEnabledRef.current) toggleLocation(on);");
+  expect(app).toContain("if (on !== locationEnabledRef.current) toggleLocation(on, { fromAccount: true });");
   expect(app).toContain("if (fresh('pinnedFlockIds') && Array.isArray(s.pinnedFlockIds)) setPinnedFlockIds(s.pinnedFlockIds);");
   expect(app).toContain("if (fresh('flockOrder') && Array.isArray(s.flockOrder)) setFlockOrder(s.flockOrder);");
   // The listener names the handler it calls, so a stale closure cannot creep in.

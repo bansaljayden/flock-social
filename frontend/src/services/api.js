@@ -861,6 +861,11 @@ export function clearLocalSession({ keepInviteHandoff = false } = {}) {
   // The lists read at boot for this session (primeBootReads) are memory, not
   // storage, and belong to it all the same.
   dropBootReads();
+  // So does the settings sync queue (services/userSettings.js), which listens
+  // for this: a save that failed for this account must not go up under the
+  // next one's token, and a pull asked for this account must not land on the
+  // next one's screen. An event because that module imports this one.
+  try { window.dispatchEvent(new CustomEvent('flock-session-cleared')); } catch (_) { /* no window */ }
   held.forEach(([key, value]) => {
     try { window.localStorage.setItem(key, value); } catch (_) { /* storage blocked */ }
   });
