@@ -15,7 +15,10 @@
 // clock, fails whenever 00:00 UTC falls between the charge and the read: the
 // counter rolls to the new day and reads zero. Which test fails then depends on
 // when the suite ran rather than on the code. A file pinned to the middle of a
-// UTC day has no day boundary anywhere near it.
+// UTC day has no day boundary anywhere near it. The same goes for the top of
+// an hour or a four-hour slot, and for an expected value that holds only at
+// some hours or on some dates, such as a count of the forecast slots a route
+// reads, or of a monthly bill's charges in the next 90 days.
 //
 // Pin before requiring the code under test, so a value a module reads from the
 // clock at load (a day key, say) comes from the same clock as everything after.
