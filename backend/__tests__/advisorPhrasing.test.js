@@ -34,6 +34,16 @@ const path = require('node:path');
 
 process.env.JWT_SECRET = 'advisor-phrasing-test-secret';
 
+// The clock is pinned (helpers/pinnedClock.js) to noon UTC on 2026-10-07, in
+// the same year as the dated facts below, before the services load. A date in
+// the current UTC year is printed without its year (services/advisorPhrasing.js
+// and services/advisorFacts.js), so on the real clock every expected sentence
+// here that names a 2026 date would gain ", 2026" on 2027-01-01, and the tests
+// would fail from that day on.
+const { pinClock } = require('./helpers/pinnedClock');
+const pinnedClock = pinClock(Date.UTC(2026, 9, 7, 12, 0, 0));
+test.after(() => pinnedClock.restore());
+
 const pool = require('../config/database');
 
 // pg fake: scripted per test; every statement logged.
