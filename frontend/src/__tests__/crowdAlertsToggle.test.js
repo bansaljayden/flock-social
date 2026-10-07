@@ -161,7 +161,9 @@ describe('sync wiring', () => {
   it('flipping the switch writes localStorage and queues the sync, house pattern', () => {
     // Same shape as setSafetyEnabled: explicit 'true'/'false' strings both
     // directions; toggling back ON writes 'true' rather than removing the key.
-    expect(APP).toContain("localStorage.setItem('flock_crowd_alerts', on ? 'true' : 'false');");
+    // Through lsSet: a bare write that threw at quota stopped the change
+    // before queueSync, and the next pull switched it back.
+    expect(APP).toContain("lsSet('flock_crowd_alerts', on ? 'true' : 'false');");
     expect(APP).toContain("queueSync({ crowdAlerts: on ? 'true' : 'false' });");
   });
 
