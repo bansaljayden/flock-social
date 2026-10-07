@@ -1,0 +1,212 @@
+# Cloudflare Pages response headers for flockcorp.com: the per-path half.
+# Port of the "headers" block in frontend/vercel.json.
+#
+# scripts/build-cloudflare.js writes build/_headers as a "/*" block built from
+# cloudflare/security-headers.json followed by this file. Edit the security
+# headers there, not here.
+#
+# How Pages reads _headers (developers.cloudflare.com/pages/configuration/headers/):
+# - Every rule whose pattern matches the request path applies. The first rule
+#   to name a header replaces Pages' default for it; a later rule naming the
+#   same header is joined onto it with ", ". So no two rules that can match
+#   the same path set the same header below.
+# - Two blocks with the same path do not merge: the last one replaces the
+#   first. vercel.json has two "/i/(.*)" rules; they are one block here.
+# - These rules never touch a response a Pages Function builds; the middleware
+#   adds the security headers to those.
+# - Limits: 100 rules, 2,000 characters per line.
+
+# The project's own <project>.pages.dev host serves the same site as
+# www.flockcorp.com. Pages marks preview hosts (<hash>.<project>.pages.dev)
+# noindex by itself, but not this one.
+https://:project.pages.dev/*
+  X-Robots-Tag: noindex
+
+# Apple's app-site-association file, written into the build by
+# scripts/build-cloudflare.js from APPLE_TEAM_ID (the same body the
+# api/apple-app-site-association.js handler returns). Served as a file so it
+# never depends on the Functions quota. No extension, so the type is stated.
+/.well-known/apple-app-site-association
+  Content-Type: application/json; charset=utf-8
+  Cache-Control: public, max-age=3600
+
+# Cache rules for files.
+/static/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/marks/*
+  Cache-Control: public, max-age=86400, stale-while-revalidate=604800
+
+/birdie/*
+  Cache-Control: public, max-age=86400, stale-while-revalidate=604800
+
+/screenshots/*
+  Cache-Control: public, max-age=86400, stale-while-revalidate=604800
+
+# vercel.json matches these eleven with one regex; _headers has no
+# alternation, so each file is its own rule.
+/og-image.png
+  Cache-Control: public, max-age=86400, stale-while-revalidate=604800
+
+/favicon.ico
+  Cache-Control: public, max-age=86400, stale-while-revalidate=604800
+
+/logo192.png
+  Cache-Control: public, max-age=86400, stale-while-revalidate=604800
+
+/logo512.png
+  Cache-Control: public, max-age=86400, stale-while-revalidate=604800
+
+/apple-touch-icon.png
+  Cache-Control: public, max-age=86400, stale-while-revalidate=604800
+
+/appstore-icon-1024.png
+  Cache-Control: public, max-age=86400, stale-while-revalidate=604800
+
+/flock-logo.png
+  Cache-Control: public, max-age=86400, stale-while-revalidate=604800
+
+/birdie-avatar.png
+  Cache-Control: public, max-age=86400, stale-while-revalidate=604800
+
+/birdie-avatar-light.png
+  Cache-Control: public, max-age=86400, stale-while-revalidate=604800
+
+/bg-city.mp4
+  Cache-Control: public, max-age=86400, stale-while-revalidate=604800
+
+/bg-city-poster.jpg
+  Cache-Control: public, max-age=86400, stale-while-revalidate=604800
+
+/firebase-messaging-sw.js
+  Cache-Control: public, max-age=0, must-revalidate
+
+/manifest.json
+  Cache-Control: public, max-age=3600
+
+/robots.txt
+  Cache-Control: public, max-age=3600
+
+/sitemap.xml
+  Cache-Control: public, max-age=3600
+
+/llms.txt
+  Content-Type: text/plain; charset=utf-8
+  Cache-Control: public, max-age=3600
+
+# Public pages. All of these are the SPA's index.html.
+/
+  Link: <https://www.flockcorp.com/>; rel="canonical", </screenshots/nest-dark@2x.webp>; rel=preload; as=image; type="image/webp"; fetchpriority=high
+  Cache-Control: public, max-age=0, must-revalidate
+
+/landing
+  Link: <https://www.flockcorp.com/>; rel="canonical"
+  Cache-Control: public, max-age=0, must-revalidate
+
+# Pages answers /index.html with a 308 to /, so this only ever decorates that
+# redirect. Kept so the file stays a one-to-one port.
+/index.html
+  Link: <https://www.flockcorp.com/>; rel="canonical"
+  Cache-Control: public, max-age=0, must-revalidate
+
+/about
+  Link: <https://www.flockcorp.com/about>; rel="canonical"
+  Cache-Control: public, max-age=0, must-revalidate
+
+/research
+  Link: <https://www.flockcorp.com/research>; rel="canonical"
+  Cache-Control: public, max-age=0, must-revalidate
+
+/support
+  Link: <https://www.flockcorp.com/support>; rel="canonical"
+  Cache-Control: public, max-age=0, must-revalidate
+
+/privacy
+  Link: <https://www.flockcorp.com/privacy>; rel="canonical"
+  Cache-Control: public, max-age=0, must-revalidate
+
+/terms
+  Link: <https://www.flockcorp.com/terms>; rel="canonical"
+  Cache-Control: public, max-age=0, must-revalidate
+
+/guidelines
+  Link: <https://www.flockcorp.com/guidelines>; rel="canonical"
+  Cache-Control: public, max-age=0, must-revalidate
+
+/delete-account
+  Link: <https://www.flockcorp.com/delete-account>; rel="canonical"
+  Cache-Control: public, max-age=0, must-revalidate
+
+/tap
+  X-Robots-Tag: noindex
+  Cache-Control: public, max-age=0, must-revalidate
+
+# Invite links. vercel.json splits /i/(.*) into two rules so that
+# "private, no-store" skips preview bots. Here a preview bot's response is
+# built by a Function and never sees this file, so one unconditional block
+# covers exactly the responses the two Vercel rules covered. The one
+# difference: a preview bot that asks for /i/<token>?open=1 gets the SPA with
+# no-store, where Vercel sent the SPA with its default revalidate header.
+/i
+  X-Robots-Tag: noindex, noarchive
+  Referrer-Policy: no-referrer
+  Cache-Control: private, no-store
+
+/i/*
+  X-Robots-Tag: noindex, noarchive
+  Referrer-Policy: no-referrer
+  Cache-Control: private, no-store
+
+/app
+  X-Robots-Tag: noindex
+  Link: <https://accounts.google.com>; rel=preconnect
+  Cache-Control: public, max-age=0, must-revalidate
+
+/app/*
+  X-Robots-Tag: noindex
+  Link: <https://accounts.google.com>; rel=preconnect
+  Cache-Control: public, max-age=0, must-revalidate
+
+/signup
+  X-Robots-Tag: noindex
+  Link: <https://accounts.google.com>; rel=preconnect
+  Cache-Control: public, max-age=0, must-revalidate
+
+/reset-password
+  X-Robots-Tag: noindex, noarchive
+  Referrer-Policy: no-referrer
+  Cache-Control: private, no-store
+
+/verify-email
+  X-Robots-Tag: noindex, noarchive
+  Referrer-Policy: no-referrer
+  Cache-Control: private, no-store
+
+/checkin/*
+  X-Robots-Tag: noindex
+  Referrer-Policy: no-referrer
+  Cache-Control: private, no-store
+
+/f/*
+  X-Robots-Tag: noindex
+  Cache-Control: private, no-store
+
+/flock/*
+  X-Robots-Tag: noindex
+  Cache-Control: private, no-store
+
+/dm/*
+  X-Robots-Tag: noindex
+  Cache-Control: private, no-store
+
+/admin/*
+  X-Robots-Tag: noindex, nofollow
+  Referrer-Policy: no-referrer
+  Cache-Control: private, no-store
+
+# The Function at this path builds its own response, so the middleware adds
+# this header there. This copy only shows if the path ever reaches the static
+# fallback (for example, when the Functions daily quota runs out and the
+# project fails open).
+/api/marketing-page
+  X-Robots-Tag: noindex
