@@ -717,7 +717,7 @@ async function collectWeekly() {
       // Insert 168 rows (7 days × 24 hours) — batched into a single multi-row INSERT
       let venueRows = 0;
       let venueNew = 0;
-      // Set by the batch insert's catch; read by the last_collected_at guard.
+      // Set by the batch insert's catch; read by the no-rows check below.
       let insertFailed = false;
       const params = [];
       const valueRows = [];
@@ -826,7 +826,7 @@ async function collectWeekly() {
               [venue.id, claimedId]
             );
             if (still.length === 0) return null;
-            return client.query(
+            const written = await client.query(
             `INSERT INTO ml_training_data
               (venue_id, collection_mode, hour_axis, day_of_week, hour, month, season,
                venue_category, price_level, rating, review_count,
@@ -879,6 +879,25 @@ async function collectWeekly() {
              RETURNING (xmax = 0) AS inserted`,
             params
             );
+            // THE STAMP COMMITS WITH THE ROWS, in this transaction and under
+            // this lock, as the harvest's does (harvestVenueFilter.js). It was
+            // a separate UPDATE after COMMIT, and the venue repair could run
+            // in the gap: with two Google places on one BestTime id and this
+            // venue the rival, the repair deleted these rows, unmapped the
+            // venue and cleared its stamp, and the late UPDATE then put a
+            // fresh stamp on a venue with no id and no weekly rows. Here the
+            // check above (the venue still holds claimedId) covers the stamp
+            // as it covers the rows, and a repair that waits for this COMMIT
+            // clears both together. A stamp after COMMIT held to claimedId,
+            // the pattern of the 'found' stamp and stampFailedAsk, would also
+            // stay off an unmapped venue, but it would leave the rows and the
+            // claim about them in two commits: a run killed between the two
+            // left a fresh week under an old stamp. NOW() is this
+            // transaction's clock, so the stamp equals the rows' collected_at.
+            if (written.rows.length > 0) {
+              await client.query('UPDATE ml_venues SET last_collected_at = NOW() WHERE id = $1', [venue.id]);
+            }
+            return written;
           });
           if (!res) {
             vanished = true;
@@ -918,16 +937,19 @@ async function collectWeekly() {
       // The batch insert's catch above logs and continues, so a venue whose
       // 168-row statement died - a check violation, a numeric overflow, a pool
       // failure that outlives safeQuery's retries - fell straight through to
-      // this stamp with venueRows at 0. last_collected_at then said the venue
-      // had been collected, --skip-collected and --skip-attempted excluded it
-      // from every later scoped pass, and consecutiveErrors was reset so ten
-      // such venues in a row could not trip the abort. The venue simply had no
-      // rows, permanently, and nothing anywhere said so.
+      // the stamp that stood here with venueRows at 0. last_collected_at then
+      // said the venue had been collected, --skip-collected and
+      // --skip-attempted excluded it from every later scoped pass, and
+      // consecutiveErrors was reset so ten such venues in a row could not trip
+      // the abort. The venue simply had no rows, permanently, and nothing
+      // anywhere said so.
       //
       // last_collected_at is a claim about DATA. It is only made when data
-      // landed. (besttime_attempted_at and besttime_status='found' are stamped
-      // earlier and stay there: we did attempt, and BestTime did find it. Those
-      // two are true regardless of what the insert then did.)
+      // landed, by the insert's own transaction above, so a failed insert
+      // rolls it back with the rows. (besttime_attempted_at and
+      // besttime_status='found' are stamped earlier and stay there: we did
+      // attempt, and BestTime did find it. Those two are true regardless of
+      // what the insert then did.)
       if (insertFailed || venueRows === 0) {
         consecutiveErrors++;
         console.error(`  [NO ROWS WRITTEN ${consecutiveErrors}] ${venue.name}: `
@@ -939,10 +961,6 @@ async function collectWeekly() {
         // Deliberately NOT `continue`: the pacing sleep is below, and skipping
         // it would lift the rate limit exactly when the run is going wrong.
       } else {
-        await safeQuery(
-          'UPDATE ml_venues SET last_collected_at = NOW() WHERE id = $1',
-          [venue.id]
-        );
         consecutiveErrors = 0;
       }
 
