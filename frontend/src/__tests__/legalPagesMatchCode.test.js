@@ -1087,3 +1087,24 @@ describe("Terms 7 and 9.5 say what a venue's reading and the dashboard's curves 
     }
   });
 });
+
+describe("the privacy policy lists Birdie's consent record, and the code keeps exactly that", () => {
+  const ai = read('backend', 'routes', 'ai.js');
+  const migration = read('backend', 'migrations', '122_birdie_ai_consent_copy.sql');
+  const mirror = read('frontend', 'api', 'marketing-page.js');
+  const item = "before Birdie sends anything to Google, the app asks whether it may. We store the moment you said yes and which version of the question you answered, because Birdie sends only what that version named.";
+
+  test('both copies of the policy carry the same item', () => {
+    expect(flat(privacy)).toContain(`<li><strong>Your answer to Birdie's question:</strong> ${item}`);
+    expect(mirror).toContain(`Your answer to Birdie's question: ${item}`);
+    expect(flat(privacy)).toContain('Turning off "Let Birdie use Google\'s Gemini" in your settings erases both.');
+    expect(mirror).toContain('Turning off \\"Let Birdie use Google\'s Gemini\\" in your settings erases both.');
+  });
+
+  test('the server stores the moment and the version, sends the zone only on the version that names it, and the switch erases both', () => {
+    expect(migration).toMatch(/ALTER TABLE users ADD COLUMN IF NOT EXISTS birdie_ai_consent_copy SMALLINT;/);
+    expect(ai).toMatch(/birdie_ai_consent_at = COALESCE\(birdie_ai_consent_at, NOW\(\)\)/);
+    expect(ai).toMatch(/zoneConsented = Boolean\(answer\?\.birdie_ai_consent_at\) && consentNamesZone\(answer\.birdie_ai_consent_copy\);/);
+    expect(ai).toMatch(/'UPDATE users SET birdie_ai_consent_at = NULL, birdie_ai_consent_copy = NULL WHERE id = \$1 RETURNING id'/);
+  });
+});
