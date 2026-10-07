@@ -812,6 +812,16 @@ const LOCKED_FORECAST_NOTE = 'This user has used their free venues for this mont
 // sends `purchases: 'off'`; see SALES COPY OFF below). It names no plan, no
 // upgrade and no price, only the limit.
 const LOCKED_FORECAST_NOTE_NO_SALES = 'This venue is past this account\'s limit for now, so there is no crowd level, best time to go, peak hours or hour-by-hour forecast for it. There is no crowd reading here: do not guess, estimate or infer how busy it is, now or later. If they ask, say that is past this account\'s limit for now. Do not mention any plan, subscription, upgrade, price or purchase.';
+// THE HOURS WHEN NOTHING KNOWS THE TIME AT THE VENUE. get_crowd_prediction
+// scores a venue on its own clock, or on the user's where the turn may carry
+// it (WHOSE CLOCK, in the tool). A venue Google sends no zone or offset for,
+// and the crowd corpus holds no zone for, asked about on a turn without the
+// user's clock, is scored on UTC: the server's clock, and the one in Birdie's
+// Now line. Its hours are then UTC hours and its number is the current UTC
+// hour's, so the result says so in words the model reads, instead of letting
+// either pass as the time there. Addressed to the model, like the locked notes.
+const SERVER_CLOCK = 'UTC';
+const SERVER_CLOCK_NOTE = 'Flock does not know the local time at this venue, so this was worked out as if the venue kept UTC, the clock in your Now line. Every hour in best_time, peak_hours and hourly_forecast is a UTC hour, not the time at the venue. Unless crowd_source is "owner_report", crowd_score is the number for the current UTC hour, which may not be the hour it is there. Never present those hours as the venue\'s local time, and never present that crowd_score as how busy it is there right now. If you give one of those hours, say it is UTC.';
 // A LOCKED VENUE CARRIES NO CROWD NUMBER, the same rule as the card
 // (routes/crowd.js lockedCard): since 2026-09-24 a spent month covers the live
 // level as well as the forecast, for any venue not already opened this month.
@@ -830,6 +840,9 @@ function lockForecastResult(result, { salesOff = false } = {}) {
   delete result.crowd_method;
   delete result.confidence;
   delete result.confidence_measurement;
+  // The UTC note qualifies hours and a number this result no longer carries.
+  delete result.clock;
+  delete result.clock_note;
   result.forecast_locked = true;
   result.forecast_note = salesOff ? LOCKED_FORECAST_NOTE_NO_SALES : LOCKED_FORECAST_NOTE;
   return result;
@@ -862,6 +875,11 @@ function lockForecastResult(result, { salesOff = false } = {}) {
 // saying so, and a turn made by hand that does is held to the same answer.
 // With no usable zone it is unknown, and Birdie is told so rather than handed
 // UTC as if it were theirs.
+//
+// The device's hour and weekday (localHour, localDay) are the same clock, and
+// every build sends them, the installed ones included. They follow the zone:
+// the crowd tool gets them only on a turn whose zone may be read (THE PHONE'S
+// HOUR IS THE USER'S CLOCK, at the tool loop).
 
 // A moment as somebody in `zone` reads it: "Friday, October 9, 2026, 8:00 PM".
 // Put together from parts, because the joined form moves between ICU versions
@@ -932,6 +950,22 @@ function readPlanTime(value, zone, nowMs) {
   }
   if (!(ms > nowMs)) return { problem: 'past' };
   return { ms };
+}
+
+// A VENUE'S ZONE FROM THE CROWD CORPUS, for a venue Google sends no clock for.
+// ml_venues holds an IANA name for every venue the collector follows, and
+// routes/feedback.js reads it first for the same job: the venue's own hour
+// with no Places offset. Null for a venue the corpus does not hold, for a name
+// ICU refuses (the column is not guaranteed usable), and for a failed read,
+// which costs the lookup its zone and never the answer.
+async function corpusVenueZone(placeId) {
+  try {
+    const { rows } = await pool.query('SELECT timezone FROM ml_venues WHERE google_place_id = $1 LIMIT 1', [placeId]);
+    return validTimeZone(rows[0]?.timezone);
+  } catch (err) {
+    console.error('[Birdie] Venue zone lookup failed, scoring without it:', err.message);
+    return null;
+  }
 }
 
 async function executeTool(toolName, toolInput, userId, opts = {}) {
@@ -1070,21 +1104,37 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
       const p = details.place;
 
       // WHOSE CLOCK: the VENUE's, not Railway's UTC and not the caller's phone.
-      // Same contract as /api/crowd. The caller's localHour/localDay start as
-      // the fallback, but when Google gives us the venue's offset we score on
-      // the venue's wall clock. Round 15: this used the caller's localHour with
-      // no offset and a raw `localDay - getDay()` day shift (the signed-diff bug
-      // weekdayOffset fixes), so the holiday/event features could land on the
-      // wrong date.
+      // Same contract as /api/crowd: whenever anything knows the venue's wall
+      // clock, the venue is scored on it. Round 15: this used the caller's
+      // localHour with no offset and a raw `localDay - getDay()` day shift (the
+      // signed-diff bug weekdayOffset fixes), so the holiday/event features
+      // could land on the wrong date.
+      //
+      // In order: Google's zone or offset for the venue; for a venue Google
+      // gave neither, the zone the crowd corpus holds for it (corpusVenueZone);
+      // then the caller's hour and day, which the tool loop hands over only on
+      // a turn that may carry the user's clock (THE PHONE'S HOUR IS THE USER'S
+      // CLOCK, at the loop); and last UTC, the server's clock and the one in
+      // Birdie's Now line, read as a venue clock at offset 0 so it is UTC on any
+      // host. No other source in the codebase knows a venue's time:
+      // routes/badge.js estimates an offset from longitude, which is an hour out
+      // for most US venues while daylight saving time is on, and its own header
+      // keeps that to a status pill. On UTC the result says so
+      // (SERVER_CLOCK_NOTE), because its hours are not the venue's.
       const now = new Date();
-      let localHour = Number.isInteger(opts.localHour) ? opts.localHour : now.getHours();
-      let localDay = Number.isInteger(opts.localDay) ? opts.localDay : now.getDay();
+      const utcNow = venueLocalNow(0, now);
+      let localHour = Number.isInteger(opts.localHour) ? opts.localHour : utcNow.hour;
+      let localDay = Number.isInteger(opts.localDay) ? opts.localDay : utcNow.day;
       const timeZone = placeTimeZone(p);
-      const venueClock = venueLocalNow(p.utcOffsetMinutes, now, timeZone);
+      let venueClock = venueLocalNow(p.utcOffsetMinutes, now, timeZone);
+      const corpusZone = venueClock ? null : await corpusVenueZone(p.id || placeId);
+      if (corpusZone) venueClock = venueLocalNow(null, now, corpusZone);
       if (venueClock) {
         localHour = venueClock.hour;
         localDay = venueClock.day;
       }
+      // Neither the venue's clock nor the user's: the hours below are UTC's.
+      const onServerClock = !venueClock && !Number.isInteger(opts.localHour);
       const scoreTime = new Date(now);
       scoreTime.setDate(scoreTime.getDate() + weekdayOffset(scoreTime.getDay(), localDay));
       scoreTime.setHours(localHour, 0, 0, 0);
@@ -1118,7 +1168,9 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
         utcOffsetMinutes: p.utcOffsetMinutes != null ? p.utcOffsetMinutes : null,
         // The zone, preferred over the offset wherever it is usable, so the
         // 24-hour strip below stays right across the venue's own clock change.
-        timeZone,
+        // The corpus's when Google sent none, so the strip walks the clock the
+        // headline was scored on.
+        timeZone: timeZone || corpusZone,
       };
 
       const lat = venue.location?.latitude;
@@ -1316,6 +1368,10 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
         confidence_measurement: confidenceMeasurementFor(crowdResult, crowdResult.confidence, 0),
         is_open: venue.isOpen,
         weather: weather ? { temp: weather.temp, conditions: weather.conditions } : null,
+        // Scored on UTC because nothing knew the time at the venue (WHOSE
+        // CLOCK, above): the hours below are UTC hours, and the note says so.
+        // A locked result carries neither, and lockForecastResult removes both.
+        ...(onServerClock ? { clock: SERVER_CLOCK, clock_note: SERVER_CLOCK_NOTE } : {}),
       };
 
       // THE PAID HALF, AND WHY BIRDIE IS METERED THE SAME WAY THE CARD IS.
@@ -2513,7 +2569,22 @@ router.post('/chat',
           // tool-backed turns come back empty (round 6).
           const { name, args, id } = part.functionCall;
           try {
-            const toolOpts = { localHour: req.body.localHour, localDay: req.body.localDay, salesOff, searchedPlaces, timeZone: userZone };
+            // THE PHONE'S HOUR IS THE USER'S CLOCK. localHour and localDay are
+            // the device's own hour and weekday, and the crowd tool falls back
+            // to them for a venue nothing else knows the time of. Its hours are
+            // then labelled on them, and one hour beside the UTC Now line gives
+            // away the user's offset as surely as the zone's name. So they go
+            // only on a turn whose zone Birdie may read (userZone: a yes to the
+            // question that names it, and a zone this request sent), which keeps
+            // the Now line and the tool agreed on whether the user's clock is
+            // known. Without them that venue is scored on the corpus's zone for
+            // it or on UTC, and the result says which (WHOSE CLOCK, in the tool).
+            const toolOpts = {
+              ...(userZone ? { localHour: req.body.localHour, localDay: req.body.localDay } : {}),
+              salesOff,
+              searchedPlaces,
+              timeZone: userZone,
+            };
             // The exact string the tool fetches, so the meter and Google agree
             // on which venue this is. No id means every lookup counts, which is
             // the metered direction.
@@ -2573,9 +2644,13 @@ router.post('/chat',
               venueVoteAction = { flock_id: result.flock_id, flock_name: result.flock_name, venue: result.venue };
             }
             if (name === 'get_crowd_prediction' && result.venue_name) {
-              // Enrich any matching venue with crowd data
+              // Enrich any matching venue with crowd data. Not with a number
+              // scored on UTC for a venue nothing knew the time of
+              // (SERVER_CLOCK_NOTE): a card shows its number as the level there
+              // now, and that one is the current UTC hour's. An owner's live
+              // reading is the venue's own now, and goes on the card as ever.
               const match = collectedVenues.find(v => v.place_id === args.place_id);
-              if (match) {
+              if (match && (result.clock !== SERVER_CLOCK || result.crowd_source === 'owner_report')) {
                 match.crowd = result.crowd_score;
                 match.crowd_label = result.crowd_label;
               }
