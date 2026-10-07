@@ -55,8 +55,11 @@ const refundsRefused = [];
 // of a PaymentIntent are made with (succeeded when none is queued), the
 // PaymentIntents whose next refund Stripe answers "already refunded" whatever
 // it holds (a full refund pending at that moment, which failed before anything
-// read the refunds again), and the first answer to each idempotency key, which
-// Stripe gives again for any later request carrying that key.
+// read the refunds again), the first request and answer for each idempotency
+// key (Stripe gives that answer again for a later request carrying the key
+// with the same parameters, and refuses one with other parameters), and the
+// refunds a list leaves out for now (Stripe's list lagging behind a refund it
+// has just made).
 const paidAmounts = {};
 const refundsById = {};
 const refundReads = [];
@@ -64,6 +67,17 @@ const refundLists = [];
 const refundStatusesFor = {};
 const answerAlreadyRefundedOnce = new Set();
 const answeredKeys = {};
+const hiddenFromLists = new Set();
+// The same request, as Stripe compares two requests under one key.
+const sameRequest = (a, b) => {
+  const canon = (v) => (v && typeof v === 'object' && !Array.isArray(v)
+    ? Object.keys(v).sort().reduce((o, k) => ({ ...o, [k]: canon(v[k]) }), {})
+    : v);
+  return JSON.stringify(canon(a)) === JSON.stringify(canon(b));
+};
+// Runs just before Stripe makes a refund, with the request: a test reads the
+// database at that moment.
+let beforeRefundMade = null;
 const DEFAULT_PAID = 9900;
 // What the invoice a PaymentIntent paid took.
 const amountPaidThrough = (pi) => {
@@ -167,7 +181,10 @@ function FakeStripe() {
       list: async ({ charge, payment_intent: pi }) => {
         if (!pi) return { data: (refunds[charge] || []).map((r) => ({ ...r })), has_more: false };
         refundLists.push(pi);
-        return { data: Object.values(refundsById).filter((r) => r.payment_intent === pi).map((r) => ({ ...r })), has_more: false };
+        return {
+          data: Object.values(refundsById).filter((r) => r.payment_intent === pi && !hiddenFromLists.has(r.id)).map((r) => ({ ...r })),
+          has_more: false,
+        };
       },
       retrieve: async (id) => {
         refundReads.push(id);
@@ -181,12 +198,19 @@ function FakeStripe() {
         }
         const key = opts && opts.idempotencyKey;
         if (key && answeredKeys[key]) {
+          // Stripe refuses a key sent again with other parameters, every time.
+          if (!sameRequest(answeredKeys[key].args, args)) {
+            refundsRefused.push({ args, options: opts || null, code: 'idempotency_error' });
+            throw Object.assign(new Error(`Keys for idempotent requests can only be used with the same parameters they were first used with. Try using a key other than '${key}' if you meant to execute a different request.`), {
+              type: 'StripeIdempotencyError', rawType: 'idempotency_error', statusCode: 400,
+            });
+          }
           if (answeredKeys[key].error) {
             refundsRefused.push({ args, options: opts || null, code: answeredKeys[key].error.code, replayed: true });
             throw answeredKeys[key].error;
           }
-          refundsMade.push({ args, options: opts || null, id: answeredKeys[key].id, replayed: true });
-          return { ...answeredKeys[key] };
+          refundsMade.push({ args, options: opts || null, id: answeredKeys[key].refund.id, replayed: true });
+          return { ...answeredKeys[key].refund };
         }
         // Stripe refunds no more than the payment took, counting every refund
         // of it that has not failed or been cancelled (a pending one counts),
@@ -194,9 +218,9 @@ function FakeStripe() {
         const left = amountPaidThrough(args.payment_intent) - Object.values(refundsById)
           .filter((r) => r.payment_intent === args.payment_intent && r.status !== 'failed' && r.status !== 'canceled')
           .reduce((total, r) => total + r.amount, 0);
-        const refuse = (code, message) => {
-          const error = Object.assign(new Error(message), { code, statusCode: 400 });
-          if (key) answeredKeys[key] = { error };
+        const refuse = (code, message, extra = {}) => {
+          const error = Object.assign(new Error(message), { code, statusCode: 400, type: 'StripeInvalidRequestError', ...extra });
+          if (key) answeredKeys[key] = { args: JSON.parse(JSON.stringify(args)), error };
           refundsRefused.push({ args, options: opts || null, code });
           return error;
         };
@@ -204,13 +228,16 @@ function FakeStripe() {
           throw refuse('charge_already_refunded', 'Charge has already been refunded.');
         }
         const amount = args.amount === undefined ? left : args.amount;
-        if (amount > left) throw refuse('amount_too_large', `Refund amount is greater than the unrefunded amount on the charge (${left}).`);
+        if (amount > left) {
+          throw refuse('amount_too_large', `Refund amount is greater than the unrefunded amount on the charge (${left}).`, { param: 'amount' });
+        }
+        if (beforeRefundMade) await beforeRefundMade(args, opts);
         const queued = refundStatusesFor[args.payment_intent];
         const status = queued && queued.length ? queued.shift() : 'succeeded';
         const refund = { id: `re_made_${refundsMade.length + 1}`, object: 'refund', status, amount, payment_intent: args.payment_intent, metadata: args.metadata };
         refundsMade.push({ args, options: opts || null, id: refund.id });
         refundsById[refund.id] = refund;
-        if (key) answeredKeys[key] = { ...refund };
+        if (key) answeredKeys[key] = { args: JSON.parse(JSON.stringify(args)), refund: { ...refund } };
         const answer = { ...refund };
         if (afterRefundMade) await afterRefundMade(refund);
         return answer;
@@ -261,7 +288,14 @@ const realConnect = appPool.connect;
 // read and its write. Whichever way the writer reaches the database, a pooled
 // query or a checked-out client, the write stops here until it is released.
 let holdWrite = null;
+// A test may also make the next statement matching a pattern fail, the way a
+// database write can fail after Stripe has already answered.
+let failNextQuery = null;
 async function maybeHold(text) {
+  if (failNextQuery && failNextQuery.test(String(text))) {
+    failNextQuery = null;
+    throw new Error('simulated database failure');
+  }
   if (holdWrite && /^\s*WITH old AS/.test(String(text))) {
     const h = holdWrite;
     holdWrite = null;
@@ -2016,7 +2050,7 @@ test('a purchase still billing for an account that is gone is cancelled and refu
     [{ idempotencyKey: 'flock-account-deleted-cancel-sub_paid_after_gone' }], 'a plan for an account that no longer exists was left billing');
   const refunded = () => refundsMade.filter((r) => r.args.payment_intent === 'pi_in_paid_after_gone');
   assert.deepStrictEqual(refunded().map((r) => [r.args.metadata, r.options]),
-    [[{ flock_reason: 'account_deleted' }, { idempotencyKey: 'flock-account-deleted-refund-in_paid_after_gone' }]],
+    [[{ flock_reason: 'account_deleted', flock_refund_attempt: '1' }, { idempotencyKey: 'flock-account-deleted-refund-in_paid_after_gone' }]],
     'the payment for a plan nobody can be served was kept');
   // Stripe sends it again: the plan has ended, so nothing more happens.
   await venueBilling.handleVenueEvent(completedEvent(session));
@@ -2078,7 +2112,7 @@ test('a refund that failed after a gone account\'s plan was cancelled is made wh
   // Stripe sends the event again, and the plan is already cancelled.
   await venueBilling.handleVenueEvent(completedEvent(session));
   assert.deepStrictEqual(refunded().map((r) => [r.args.metadata, r.options]),
-    [[{ flock_reason: 'account_deleted' }, { idempotencyKey: 'flock-account-deleted-refund-in_gone_refund_retry' }]],
+    [[{ flock_reason: 'account_deleted', flock_refund_attempt: '1' }, { idempotencyKey: 'flock-account-deleted-refund-in_gone_refund_retry' }]],
     'the retry found the plan cancelled and kept the payment for a purchase nobody can be served');
   assert.strictEqual(cancels.filter((c) => c.id === 'sub_gone_refund_retry').length, 1);
   // Finished: a later replay asks Stripe for nothing more.
@@ -2106,7 +2140,7 @@ test('a refused purchase whose refund failed is still refunded after its owner d
   await testPool.query('DELETE FROM users WHERE id = $1', [id]);
   await venueBilling.handleVenueEvent(completedEvent(session));
   assert.deepStrictEqual(refunded().map((r) => [r.args.metadata, r.options]),
-    [[{ flock_reason: 'claim_not_verified' }, { idempotencyKey: 'flock-claim-revoked-refund-in_refused_then_gone' }]],
+    [[{ flock_reason: 'claim_not_verified', flock_refund_attempt: '1' }, { idempotencyKey: 'flock-claim-revoked-refund-in_refused_then_gone' }]],
     'the refund owed for a refused purchase went with the account');
 });
 
@@ -2402,7 +2436,103 @@ test('refund.updated for a refund the refusal never recorded still finds it thro
   assert.deepStrictEqual(madeFor(p.pi), []);
 });
 
-test('a refusal finished on its refund asks Stripe for nothing more when the checkout, the return or the refund event comes again', async () => {
+// A FINISHED REFUSAL CAN OPEN AGAIN. Stripe can move a refund it reported
+// succeeded to failed when the bank sends the money back, and nothing looked
+// at a finished refusal again: the refund event's lookup skipped finished
+// rows and a replayed checkout skips settlement.
+test('a refund that succeeded and then failed opens its finished refusal again, says so with the amounts, and the balance is asked for again', async () => {
+  const p = await refusedPurchase('refund_failed_after_finish', { refundStatuses: ['succeeded', 'pending'] });
+  await venueBilling.handleVenueEvent(completedEvent(p.session));
+  assert.ok((await refusalRow(p.subId)).finished_at, 'the refund succeeded and the refusal was not finished');
+  const [first] = madeFor(p.pi);
+
+  // Days later the bank sends the money back and Stripe marks the refund failed.
+  Object.assign(refundsById[first.id], { status: 'failed', failure_reason: 'expired_or_canceled_card' });
+  const { value: result, lines } = await logged(() => refundUpdated(first.id));
+  assert.deepStrictEqual(madeFor(p.pi).map((r) => [r.args.amount, r.options.idempotencyKey]),
+    [[DEFAULT_PAID, p.baseKey], [DEFAULT_PAID, `${p.baseKey}-attempt-2`]], 'the money that came back to us was not asked for again');
+  let row = await refusalRow(p.subId);
+  assert.strictEqual(row.finished_at, null, 'the refusal stayed finished with the payment back in our account');
+  assert.ok(await stillOpen(p.subId));
+  assert.strictEqual(row.refund_attempt, 2);
+  assert.deepStrictEqual(result.refusals, [{ subscription: p.subId, refund: 'pending' }]);
+  const said = saidAbout(lines, p.session);
+  assert.ok(said.some((l) => /open again/.test(l) && l.includes('$0.00 of the $99.00') && l.includes(first.id) && /expired_or_canceled_card/.test(l)), said.join(' | '));
+
+  const second = madeFor(p.pi)[1].id;
+  refundsById[second].status = 'succeeded';
+  await refundUpdated(second);
+  row = await refusalRow(p.subId);
+  assert.ok(row.finished_at, 'the new refund succeeded and the refusal stayed open');
+});
+
+// AN ATTEMPT IS RESERVED BEFORE STRIPE IS ASKED. When what Stripe answered was
+// never written down, the next handling read the old attempt number and sent
+// the same idempotency key with a new amount, which Stripe refuses for good.
+const OUTCOME_WRITE = /^UPDATE roost_refused_purchases SET (stripe_refund_id|refund_attempt_outcome)/;
+
+test('a refund Stripe made whose recording failed is found again by its attempt, and the balance is asked for under a new key, never the old key with a new amount', async () => {
+  const p = await refusedPurchase('refund_write_failed', { paid: 10000, refundStatuses: ['pending'] });
+  failNextQuery = OUTCOME_WRITE;
+  try {
+    await assert.rejects(venueBilling.handleVenueEvent(completedEvent(p.session)), /simulated database failure/);
+  } finally {
+    failNextQuery = null;
+  }
+  const [first] = madeFor(p.pi);
+  assert.deepStrictEqual([first.args.amount, first.options.idempotencyKey], [10000, p.baseKey]);
+
+  // That refund fails later, and somebody refunds $30 by hand.
+  Object.assign(refundsById[first.id], { status: 'failed', failure_reason: 'declined' });
+  refundByHand('re_hand_thirty_after_write', p.pi, 3000, 'succeeded');
+  await refundUpdated(first.id);
+  assert.deepStrictEqual(refundsRefused.filter((r) => r.args.payment_intent === p.pi).map((r) => r.code), [],
+    'an idempotency key was sent again with another amount');
+  assert.deepStrictEqual(madeFor(p.pi).map((r) => [r.args.amount, r.options.idempotencyKey]),
+    [[10000, p.baseKey], [7000, `${p.baseKey}-attempt-2`]]);
+  const row = await refusalRow(p.subId);
+  assert.ok(row.finished_at, 'the whole $100 is back and the refusal stayed open');
+  assert.strictEqual(row.refund_attempt, 2);
+});
+
+test('an attempt interrupted after Stripe made its refund is asked again with the same key and amount, and Stripe hands back that refund instead of a second', async () => {
+  const p = await refusedPurchase('refund_key_replayed', { refundStatuses: ['pending'] });
+  // What the refusal held at the moment Stripe was asked.
+  let heldWhenAsked = null;
+  beforeRefundMade = async () => { heldWhenAsked = await refusalRow(p.subId); };
+  failNextQuery = OUTCOME_WRITE;
+  try {
+    await assert.rejects(venueBilling.handleVenueEvent(completedEvent(p.session)), /simulated database failure/);
+  } finally {
+    failNextQuery = null;
+    beforeRefundMade = null;
+  }
+  assert.strictEqual(heldWhenAsked.refund_attempt, 1, 'Stripe was asked for a refund before the attempt was on record');
+  assert.strictEqual(heldWhenAsked.refund_attempt_amount, DEFAULT_PAID);
+  assert.strictEqual(heldWhenAsked.refund_attempt_key, p.baseKey);
+  const [first] = madeFor(p.pi);
+
+  // Stripe's list does not show the refund yet when the checkout comes again.
+  hiddenFromLists.add(first.id);
+  try {
+    await venueBilling.handleVenueEvent(completedEvent(p.session));
+  } finally {
+    hiddenFromLists.delete(first.id);
+  }
+  const asked = madeFor(p.pi);
+  assert.strictEqual(asked.length, 2, 'the interrupted attempt was not asked again');
+  assert.ok(sameRequest(asked[1].args, asked[0].args), 'the attempt was asked again with other parameters');
+  assert.deepStrictEqual(asked[1].options, asked[0].options);
+  assert.strictEqual(asked[1].id, first.id, 'Stripe made a second refund');
+  assert.ok(asked[1].replayed);
+  assert.strictEqual(Object.values(refundsById).filter((r) => r.payment_intent === p.pi).length, 1);
+  const row = await refusalRow(p.subId);
+  assert.strictEqual(row.stripe_refund_id, first.id);
+  assert.strictEqual(row.refund_attempt_outcome, 'refund');
+  assert.strictEqual(row.finished_at, null, 'the refund is still pending');
+});
+
+test('a refusal finished on its refund asks Stripe for nothing more when the checkout or the return comes again, and a refund event only reads its refunds', async () => {
   const p = await refusedPurchase('refund_replay_after', { refundStatuses: ['pending'] });
   await venueBilling.handleVenueEvent(completedEvent(p.session));
   assert.strictEqual((await refusalRow(p.subId)).finished_at, null, 'a refund still pending was taken as the money returned');
@@ -2417,8 +2547,12 @@ test('a refusal finished on its refund asks Stripe for nothing more when the che
   assert.strictEqual(replay.refused, 'CLAIM_NOT_VERIFIED');
   const confirmed = await venueBilling.confirmVenueCheckout(p.id, p.session.id);
   assert.strictEqual(confirmed.refused, 'CLAIM_NOT_VERIFIED');
+  assert.deepStrictEqual(asked(), before, 'a finished refusal asked Stripe for more when its checkout came again');
+  // A refund event reads the payment's refunds once more (a refund that
+  // succeeded can still fail), finds the money back, and asks for nothing.
   await refundUpdated(refundId);
-  assert.deepStrictEqual(asked(), before, 'a finished refusal asked Stripe for more');
+  assert.deepStrictEqual(asked(), { ...before, lists: before.lists + 1 }, 'a refund event over a finished refusal asked Stripe for more than its refunds');
+  assert.ok((await refusalRow(p.subId)).finished_at);
   assert.strictEqual((await state(p.id)).served, 'free');
 });
 

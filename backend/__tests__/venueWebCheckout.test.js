@@ -853,12 +853,28 @@ function refusalTables({ served = false } = {}) {
       if (!owed[subscriptionId]) {
         owed[subscriptionId] = {
           stripe_subscription_id: subscriptionId, stripe_checkout_session_id: sessionId, stripe_invoice_id: invoiceId,
-          reason, created_at: new Date(), finished_at: null,
+          reason, created_at: new Date(), finished_at: null, refund_attempt: 0, refund_attempt_outcome: null,
         };
       }
       return { rows: [], rowCount: 1 };
     }
-    if (sql.includes('UPDATE roost_refused_purchases SET finished_at')) {
+    // The next refund attempt is reserved only while the row holds the attempt
+    // the caller read, with that attempt's answer recorded (migration 124).
+    if (sql.includes('SET refund_attempt = $3::int')) {
+      const row = owed[params[0]];
+      if (!row || row.finished_at || row.refund_attempt !== params[1] || (row.refund_attempt > 0 && !row.refund_attempt_outcome)) {
+        return { rows: [], rowCount: 0 };
+      }
+      Object.assign(row, { refund_attempt: params[2], refund_attempt_amount: params[3], refund_attempt_key: params[4], refund_attempt_outcome: null });
+      return { rows: [{ refund_attempt: params[2] }], rowCount: 1 };
+    }
+    if (sql.includes('SET refund_attempt_outcome')) {
+      const row = owed[params[0]];
+      if (!row || row.refund_attempt !== params[1] || row.refund_attempt_outcome) return { rows: [], rowCount: 0 };
+      Object.assign(row, { refund_attempt_outcome: params[2], stripe_refund_id: params[3] || row.stripe_refund_id || null });
+      return { rows: [], rowCount: 1 };
+    }
+    if (sql.includes('UPDATE roost_refused_purchases SET finished_at = NOW()')) {
       if (owed[params[0]]) owed[params[0]].finished_at = new Date();
       return { rows: [], rowCount: 1 };
     }
@@ -1144,6 +1160,26 @@ test('a partial refund event is acknowledged and changes nothing', async () => {
     assert.strictEqual(res.body.ignored, 'partial_refund');
     assert.ok(!stripeCalls.some(([n]) => n === 'subscriptions.cancel'));
     assert.ok(!calls.some((c) => c.text.startsWith('WITH old AS')));
+  } finally { restore(); }
+});
+
+// A refund Stripe reported succeeded can fail later, when the bank sends the
+// money back, and refund.failed is the event that says so. It used to be
+// acknowledged as ignored, so a refused purchase finished on that refund was
+// never looked at again.
+test('refund.failed reaches the refund handler, which looks for the refusal waiting on that payment', async () => {
+  setEnv(ON);
+  const { calls, restore } = stubPool(async () => null);
+  try {
+    const res = await stripeWebhook({
+      id: 'evt_refund_failed', type: 'refund.failed',
+      data: { object: { id: 're_failed_later', object: 'refund', charge: 'ch_failed_later', payment_intent: 'pi_failed_later', status: 'failed', amount: 9900 } },
+    });
+    assert.strictEqual(res.status, 200, JSON.stringify(res.body));
+    assert.notStrictEqual(res.body.ignored, 'refund.failed', 'a failed refund was acknowledged without being looked at');
+    const lookup = calls.find((c) => c.text.includes('FROM roost_refused_purchases'));
+    assert.ok(lookup, 'the refusal waiting on the payment was not looked for');
+    assert.deepStrictEqual(lookup.params, ['re_failed_later', 'pi_failed_later']);
   } finally { restore(); }
 });
 

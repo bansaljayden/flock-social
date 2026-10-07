@@ -46,15 +46,18 @@ const HANDLED = new Set([
   'customer.subscription.deleted',
 ]);
 
-// The refund events: charge.refunded carries the Charge, the other three a
-// Refund (refund.updated is the one that says a pending refund landed, and
-// charge.refund.updated is its older name). The endpoint has to be
-// subscribed to them in the Stripe dashboard (VENUE-BILLING.md).
+// The refund events: charge.refunded carries the Charge, the others a Refund
+// (refund.updated is the one that says a pending refund landed, and
+// charge.refund.updated is its older name; refund.failed says a refund failed,
+// including one Stripe had reported succeeded, which reopens a refused Roost
+// purchase it finished). The endpoint has to be subscribed to them in the
+// Stripe dashboard (VENUE-BILLING.md).
 const REFUND_EVENTS = new Set([
   'charge.refunded',
   'charge.refund.updated',
   'refund.created',
   'refund.updated',
+  'refund.failed',
 ]);
 
 // Roost also needs `created`: a subscription can exist (a trial that starts
