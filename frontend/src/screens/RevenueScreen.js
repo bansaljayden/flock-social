@@ -1228,15 +1228,23 @@ function HubExpenseRow({ x, codeLines, colors, onEdit, onChanged }) {
   // last bill comes after its end date, so one outran it only by a charge
   // after the day the server expected that bill by, and its row says that:
   // "on or after its end date" would make the last bill of an ended usage
-  // row read as a renewal (second review 2026-10-06).
+  // row read as a renewal (second review 2026-10-06). The dates cannot say
+  // what that later charge paid for, use after the end date or a last bill
+  // paid late, so a usage row sends the owner to the invoice (review
+  // 2026-10-06).
   const end = x.endState || null;
   const stops = (end === 'ending' || end === 'ended') && x.endsOn;
   const running = x.active && end !== 'ended';
   let outran = null;
+  let runs = ', so it counts as running until the date is cleared';
   if (end === 'renewed') {
     if (x.cadence !== 'usage') outran = `charged on or after its end date of ${hubDay(x.endsOn)}`;
-    else if (x.lastBillBy) outran = `after the last bill expected by ${hubDay(x.lastBillBy)} for its end date of ${hubDay(x.endsOn)}`;
-    else outran = `later than the last bill for its end date of ${hubDay(x.endsOn)}`;
+    else {
+      outran = x.lastBillBy
+        ? `after the last bill expected by ${hubDay(x.lastBillBy)} for its end date of ${hubDay(x.endsOn)}`
+        : `later than the last bill for its end date of ${hubDay(x.endsOn)}`;
+      runs = ', so it counts as running until the charge is checked against its invoice';
+    }
   }
   const facts = [
     HUB_KIND_LABEL[x.kind] || x.kind,
@@ -1245,7 +1253,7 @@ function HubExpenseRow({ x, codeLines, colors, onEdit, onChanged }) {
     x.lastChargedOn ? `last charged ${hubDay(x.lastChargedOn)}` : null,
     end === 'ending' ? `ends ${hubDay(x.endsOn)}` : null,
     end === 'ended' ? `ended ${hubDay(x.endsOn)}` : null,
-    outran ? `${outran}${x.active ? ', so it counts as running until the date is cleared' : ''}` : null,
+    outran ? `${outran}${x.active ? runs : ''}` : null,
     line ? `counts instead of ${line} in the code` : null,
   ].filter(Boolean).join(', ');
   return (
@@ -2245,15 +2253,19 @@ function hubAttention(h) {
   if (doubles.length > 0) {
     add({ key: 'doubles', tone: 'warn', label: 'Bills possibly counted twice', value: hubCount(doubles.length), note: `${doubles.map((d) => `${d.expenseLabel} on the list and ${d.codeLabel} in the code`).join('; ')}.`, card: HUB_CARD.costs });
   }
-  // A bill charged after the day it was set to end is still being charged
-  // (moneyHub.js, THE END OF A BILL). The hub counts it as running; the date
-  // on the row is the thing that is wrong. A bill paid ahead renewed if it
-  // was charged on or after that day. A usage bill's last bill comes after
-  // it, so the server lists one only for a charge after the day that bill
-  // was expected by, and each kind is said on its own: the paid-ahead rule
-  // stated alone would make the last bill of an ended usage row read as a
-  // renewal (second review 2026-10-06). A payload from before the cadence
-  // was sent lists only bills paid ahead.
+  // A bill charged after the day it was set to end (moneyHub.js, THE END OF
+  // A BILL). The hub counts it as running. A bill paid ahead renewed if it
+  // was charged on or after that day, so the date on its row is wrong. A
+  // usage bill's last bill comes after it, so the server lists one only for
+  // a charge after the day that bill was expected by, and each kind is said
+  // on its own: the paid-ahead rule stated alone would make the last bill of
+  // an ended usage row read as a renewal (second review 2026-10-06). The hub
+  // holds only the day a usage charge was paid, so its words stop at what the
+  // dates show and send the owner to the invoice: an August invoice paid on
+  // Oct 2 on a bill set to end Sep 1 is later than its last bill was
+  // expected, with no use after the end date (review 2026-10-06). Each kind
+  // carries its own next step. A payload from before the cadence was sent
+  // lists only bills paid ahead.
   const pastEnd = Array.isArray(costs.chargedPastEnd) ? costs.chargedPastEnd : [];
   if (pastEnd.length > 0) {
     const ahead = pastEnd.filter((x) => x.cadence !== 'usage');
@@ -2268,10 +2280,8 @@ function hubAttention(h) {
       label: 'Charged after the end date',
       value: hubCount(pastEnd.length),
       note: [
-        ahead.length > 0 ? `${listed(ahead)}. For a bill paid ahead, a charge on or after the end date means it renewed, so it counts as running.` : null,
-        byUse.length > 0 ? `${listed(byUse)}. For a usage bill, a charge after its last bill was expected pays for use past the end date, so it counts as running.` : null,
-        'Clear the end date, or set the new one.',
-        byUse.length > 0 ? 'If a usage charge was the last bill, mark its row stopped.' : null,
+        ahead.length > 0 ? `${listed(ahead)}. For a bill paid ahead, a charge on or after the end date means it renewed, so it counts as running. Clear the end date, or set the new one.` : null,
+        byUse.length > 0 ? `${listed(byUse)}. For a usage bill, a charge later than its last bill was expected counts as running. Check it against the invoice. If the invoice covers use after the end date, clear the end date or set the new one. If it was the last bill, mark its row stopped.` : null,
       ].filter(Boolean).join(' '),
       card: HUB_CARD.expenses,
     });
