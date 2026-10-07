@@ -2191,6 +2191,34 @@ router.put('/venues/:profileId/verify', async (req, res) => {
                 CASE WHEN $1::boolean THEN 'venue_verified' ELSE 'venue_unverified' END,
                 'venue_profile', t.id, $4
          FROM upd u JOIN target t ON t.id = u.id
+       ),
+       -- A STRIPE PLAN THIS DECISION STARTS SERVING IS DELIVERED NOW. The
+       -- resolver serves a Stripe grant the moment its claim is verified
+       -- for the grant's listing, with no Stripe event, and only the writer
+       -- recorded delivery, so a plan served this way still read as never
+       -- delivered and a late or resent checkout refunded it
+       -- (services/venueBilling.js fulfillVenueCheckout). The mark rides in
+       -- this statement, with the grant, on the same terms the resolver
+       -- serves it: a live Stripe grant for Roost, unexpired, bound to the
+       -- listing checked or to none. Never over a refusal: fulfillment marks
+       -- the same row refused only while it was never served, so whichever
+       -- lands first stands.
+       served AS (
+         UPDATE venue_stripe_subscriptions vss SET served_at = NOW()
+           FROM upd u
+           JOIN target t ON t.id = u.id
+           JOIN venue_subscriptions vs ON vs.user_id = t.user_id
+          WHERE $1::boolean = true
+            AND vss.stripe_subscription_id = vs.stripe_subscription_id
+            AND vss.user_id = t.user_id
+            AND vss.served_at IS NULL
+            AND vss.refused_at IS NULL
+            AND vs.source = 'stripe'
+            AND vs.tier IN ('premium', 'pro')
+            AND vs.status IN ('active', 'trialing', 'past_due')
+            AND (vs.expires_at IS NULL OR vs.expires_at > NOW())
+            AND (vs.google_place_id IS NULL OR vs.google_place_id = $5::varchar)
+         RETURNING vss.stripe_subscription_id
        )
        SELECT u.id, u.business_name, u.verified,
               t.google_place_id,
