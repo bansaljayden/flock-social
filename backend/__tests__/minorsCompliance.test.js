@@ -43,6 +43,15 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 
+// The clock is pinned to noon UTC on 2026-10-07 (helpers/pinnedClock.js)
+// before the routes load. dobYearsAgo() below builds a birthday that many
+// years before today, and on February 29 there is no such day thirteen years
+// back: Date.UTC rolls it to March 1, so the account that "turned 13 today"
+// is still 12 and the sign-in test failed on every leap day (2028-02-29 next).
+const { pinClock } = require('./helpers/pinnedClock');
+const pinnedClock = pinClock(Date.UTC(2026, 9, 7, 12, 0, 0));
+test.after(() => pinnedClock.restore());
+
 // ---------------------------------------------------------------------------
 // Module stubs, installed in the require cache BEFORE routes/auth.js loads.
 // ---------------------------------------------------------------------------
