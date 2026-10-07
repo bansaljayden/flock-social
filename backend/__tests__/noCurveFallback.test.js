@@ -985,6 +985,109 @@ test('one response: a headline that came back the table before its strip read th
   });
 });
 
+// The collector writes `curve` for the venue right after its next whole-curve
+// read comes back: after a strip's read and before the strip's first hour.
+// That read still answers with what the table held when it was sent.
+function landsAfterCurveRead(db, curves, placeId, curve) {
+  const send = db.query;
+  db.query = async (text, params = []) => {
+    const answer = await send(text, params);
+    if (!curves[placeId] && params[0] === placeId && CURVE_READ.test(String(text).replace(/\s+/g, ' ').trim())) {
+      curves[placeId] = curve;
+    }
+    return answer;
+  };
+  return db;
+}
+
+const SLOT_READ = /FROM ml_venue_baselines WHERE google_place_id = \$1 AND \(/;
+
+test('one strip: a curve that lands between two of its hours leaves no table hour in the array it was handed, and the headline agrees with every hour', async () => {
+  // The strip's whole-curve read comes back empty and the rows land right
+  // after it, so the first hour stands on its slot's cached miss and takes the
+  // table while every later hour reads the rows. The caller publishes the
+  // array it handed over, so that is where the first hour has to change.
+  const v = venue();
+  const curves = {};
+  const db = landsAfterCurveRead(scriptedDb({ curves }), curves, v.place_id, allSlots(50));
+  await withPredictor({ db, env: { [SWITCH]: ON, CROWD_SERVE_MODE: 'curve_offset' } }, async (p) => {
+    const I = p._internals;
+    // An earlier request: the probe's no is held and this hour's slot is a
+    // cached zero.
+    assert.equal((await p.predictBusyness(v, WX, TS)).predictionMethod, METHOD);
+    const before = p.predictionCoverage();
+    const headline = await p.predictBusyness(v, WX, TS);
+    const strip = await p.predictHourlyForecast(v, WX, HOUR, 4, TS);
+    assert.equal(headline.predictionMethod, METHOD, 'setup: the headline decided before the rows');
+    assert.deepEqual(strip.map((h) => h.predictionMethod), [METHOD, 'ml', 'ml', 'ml'],
+      'setup: the rows landed between the first two hours');
+    assert.equal(I.baselineCacheEntry(v.place_id, DOW, HOUR).data, 0, 'setup: the first hour stood on a cached miss');
+    const sent = db.sent.length;
+    const agreed = await p.agreeWithStrip(headline, strip, v, WX, TS);
+    for (const h of strip) assert.notEqual(h.predictionMethod, METHOD, h.hour);
+    assert.equal(strip[0].predictionMethod, 'ml', 'the first hour read the rows once its miss was dropped');
+    assert.deepEqual(Object.keys(strip[0]), Object.keys(strip[1]), 'the hour written back has the keys of the hours beside it');
+    assert.equal(agreed.predictionMethod, 'ml');
+    assert.equal(agreed.score, strip[0].score, 'the dial and the Now bar are one number');
+    assert.equal(crowdEngine.describeServedArithmetic(agreed), strip[0].numberSource);
+    // One slot read: the slot whose cached miss was dropped. The headline
+    // read what that hour had just read.
+    const slotReads = db.sent.slice(sent).filter((s) => SLOT_READ.test(s.sql));
+    assert.deepEqual(slotReads.map((s) => s.params.slice(0, 3)), [[v.place_id, DOW, HOUR]]);
+    const after = p.predictionCoverage();
+    assert.equal(after.total - before.total, 1 + 4, 'one headline and four hours: the replaced answers are not counted');
+    assert.equal(after.categoryCurve, before.categoryCurve);
+    // Agreed, it comes back as it went in, with nothing read.
+    const settled = db.sent.length;
+    assert.strictEqual(await p.agreeWithStrip(agreed, strip, v, WX, TS), agreed);
+    assert.equal(db.sent.length, settled);
+  });
+});
+
+test('one strip: a headline that is not the table is scored again when its own hour was, so the dial and that bar read one slot', async () => {
+  // The strip first and the headline after it. By then the strip has noted
+  // the yes, so the headline reads the same cached miss its first hour read
+  // and comes back as the rule engine rather than the table.
+  const v = venue();
+  const curves = {};
+  const db = landsAfterCurveRead(scriptedDb({ curves }), curves, v.place_id, allSlots(50));
+  await withPredictor({ db, env: { [SWITCH]: ON, CROWD_SERVE_MODE: 'curve_offset' } }, async (p) => {
+    assert.equal((await p.predictBusyness(v, WX, TS)).predictionMethod, METHOD);
+    const strip = await p.predictHourlyForecast(v, WX, HOUR, 3, TS);
+    const headline = await p.predictBusyness(v, WX, TS);
+    assert.deepEqual(strip.map((h) => h.predictionMethod), [METHOD, 'ml', 'ml'], 'setup');
+    assert.equal(headline.predictionMethod, 'rule_engine_no_baseline', 'setup: the same miss, read after the yes');
+    const before = p.predictionCoverage();
+    const agreed = await p.agreeWithStrip(headline, strip, v, WX, TS);
+    for (const h of strip) assert.notEqual(h.predictionMethod, METHOD, h.hour);
+    assert.equal(agreed.predictionMethod, 'ml');
+    assert.equal(agreed.score, strip[0].score);
+    const after = p.predictionCoverage();
+    assert.equal(after.total, before.total, 'both replaced answers are taken back out');
+    assert.equal(after.byMethod.rule_engine_no_baseline || 0, (before.byMethod.rule_engine_no_baseline || 0) - 1);
+  });
+});
+
+test('one strip: once any read has seen the venue\'s rows, every hour the table answered is scored again from them', async () => {
+  const v = venue();
+  const curves = {};
+  const db = scriptedDb({ curves });
+  await withPredictor({ db, env: { [SWITCH]: ON, CROWD_SERVE_MODE: 'curve_offset' } }, async (p) => {
+    const headline = await p.predictBusyness(v, WX, TS);
+    const strip = await p.predictHourlyForecast(v, WX, HOUR, 3, TS);
+    for (const h of strip) assert.equal(h.predictionMethod, METHOD, h.hour);
+    // The collector reaches the venue and a read elsewhere in this process
+    // counts its rows (a profile save does; services/venueCorpus.js). No hour
+    // of this strip read them.
+    curves[v.place_id] = allSlots(50);
+    p.noteCurveRowsSeen(v.place_id);
+    const agreed = await p.agreeWithStrip(headline, strip, v, WX, TS);
+    assert.deepEqual(strip.map((h) => h.predictionMethod), ['ml', 'ml', 'ml']);
+    assert.equal(agreed.predictionMethod, 'ml');
+    assert.equal(agreed.score, strip[0].score);
+  });
+});
+
 test('switched off, the agreement step and every read leave nothing behind: the same headline, no statement, no presence answer', async () => {
   const v = venue();
   const db = scriptedDb({ curves: { [v.place_id]: { [`${DOW}_18`]: 40, [`${DOW}_20`]: 60 } } });

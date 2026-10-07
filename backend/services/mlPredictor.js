@@ -1849,6 +1849,20 @@ function baselineMissFor(placeId, dayOfWeek, hour) {
   return e.reason || null;
 }
 
+// Drops a slot's cached miss (the zero getBaseline keeps for BASELINE_CACHE_TTL
+// when the slot read found no row), so the next lookup of that slot reads the
+// table again. A slot holding a usable number is left as it is. Only
+// agreeWithStrip calls this, for an hour the category table answered on a miss
+// recorded before a read in this process saw the venue's rows: answered from
+// that miss again, the hour could never take the rows into account. The miss
+// reason beside it is not touched; the lookup that follows writes its own.
+function forgetBaselineMiss(placeId, dayOfWeek, hour) {
+  if (!placeId) return;
+  const cacheKey = `${placeId}_${dayOfWeek}_${hour}`;
+  const cached = baselineCache.get(cacheKey);
+  if (cached && !(cached.data > 0)) baselineCache.delete(cacheKey);
+}
+
 // ---------------------------------------------------------------------------
 // BASELINE FRESHNESS
 //
@@ -5101,6 +5115,76 @@ function liveReadingsReached(result) {
   return Boolean(result.recentDeviation);
 }
 
+// ONE HOUR OF A STRIP, built from the answer predictBusyness gave for it.
+// predictHourlyForecast builds every scored hour with this, and agreeWithStrip
+// builds an hour it scores again with it, so the hour it writes back has the
+// same keys in the same order as the hours beside it.
+function stripHourEntry(result, hour, attributed) {
+  // Which arithmetic made THIS hour's number when a switch changed it,
+  // per entry for the reason predictionMethod is: a strip can mix hours
+  // the nowcast moved with hours it had no reading for, and a chart
+  // captioned off the current hour alone would credit live readings to
+  // bars that never used one. Absent with every switch off, so a
+  // switched-off entry keeps exactly its keys.
+  const numberSource = crowdEngine.describeServedArithmetic(result);
+  // predictionMethod per entry (skew fix c): without it a strip silently
+  // mixed ML hours and rule-engine hours — a baseline exists at 19:00 but
+  // not at 03:00 — and no client could tell which bars were which.
+  return {
+    hour,
+    score: result.score,
+    label: result.label,
+    predictionMethod: result.predictionMethod || null,
+    ...(numberSource ? { numberSource } : {}),
+    // Whether a live reading reached THIS hour's number, as an explicit
+    // yes or no on every hour while a switch is on (hourlyAttributionOn;
+    // a rule-engine or category-table hour is a no). numberSource cannot
+    // answer it by being absent: it is absent both for an hour no reading
+    // touched and for one whose live offset happened to land on the
+    // stored offset's score. Absent with every switch off, like
+    // numberSource.
+    ...(attributed ? { liveReadings: liveReadingsReached(result) } : {}),
+    // The ordering axis for this hour, carried per entry because
+    // crowdEngine picks it for the whole candidate set at once and has to
+    // be able to see that EVERY hour it is about to compare has one. Null
+    // on any hour the rule engine answered, which is what makes a mixed
+    // strip fall back to model ordering instead of ranking half the night
+    // on one number and half on another.
+    baselineScore: result.baselineScore ?? null,
+    // WHETHER THIS HOUR'S EVENT LOOKUP HAPPENED. predictBusyness has
+    // carried this since the contract landed and the strip dropped it, so
+    // the one view that shows a whole night at once was the one view with
+    // no way to tell an outage from a quiet street. Exhaust the
+    // Ticketmaster budget for a venue that still has a usable baseline and
+    // every hour is scored through the identical branch that runs when the
+    // provider answered and listed nothing; without this field the bars
+    // are indistinguishable.
+    //
+    // PER ENTRY, NOT PER STRIP, and that is the honest granularity rather
+    // than the convenient one. Each hour is its own predictBusyness call
+    // with its own event-cache key, and allowEventFetch is a running daily
+    // ledger, so a 24-hour strip can and does drain the budget partway
+    // through: the early hours are readings and the later ones are blanks.
+    // A single strip-level flag would have to pick one of those and
+    // publish it over hours it is false for. (It would also not survive
+    // JSON.stringify, since this function returns an array.)
+    eventsObserved: result.eventsObserved !== false,
+    eventsUnavailableReason: result.eventsObserved === false
+      ? (result.eventsUnavailableReason || 'unknown')
+      : null,
+  };
+}
+
+// WHAT EACH HOUR OF A STRIP WAS SCORED WITH, kept beside the array
+// predictHourlyForecast returned: the venue and options it was handed, whether
+// its hours carry attribution, and per hour, in the array's order, the
+// timestamp, the slot's real instant and the weather that hour was given. An
+// hour carries only its label, and agreeWithStrip needs the rest to score an
+// hour again exactly as the strip scored it. A WeakMap, so nothing is added to
+// the array or its entries (nothing reaches a response), and an entry goes
+// when its array does.
+const stripScoring = new WeakMap();
+
 // `options.userId` is forwarded to every hour's predictBusyness. This path is
 // the largest single-request event fan-out in the app — 24 hours, each its own
 // UTC hour slot in the event cache key, so a cold venue can be 24 upstream calls
@@ -5261,67 +5345,19 @@ async function predictHourlyForecast(venue, weather, startHour, count, baseTimes
 
   // Read once, so every hour of one strip carries the same keys.
   const attributed = hourlyAttributionOn();
+  // What each hour is scored with, one per hour in the strip's order
+  // (stripScoring, below the loop).
+  const scoredWith = [];
 
   for (const slot of slots) {
     // One timestamp for the label and the score, one instant for the weather
     // and the event window, both from forecastSlots.
     const ts = slot.ts;
     const slotWeather = weatherForSlot(hourlyWx, slot.instantMs, weather, nowMs);
+    scoredWith.push({ ts, instantMs: slot.instantMs, weather: slotWeather });
     try {
       const result = await predictBusyness(venue, slotWeather, ts, options, slot.instantMs);
-      // Which arithmetic made THIS hour's number when a switch changed it,
-      // per entry for the reason predictionMethod is: a strip can mix hours
-      // the nowcast moved with hours it had no reading for, and a chart
-      // captioned off the current hour alone would credit live readings to
-      // bars that never used one. Absent with every switch off, so a
-      // switched-off entry keeps exactly its keys.
-      const numberSource = crowdEngine.describeServedArithmetic(result);
-      // predictionMethod per entry (skew fix c): without it a strip silently
-      // mixed ML hours and rule-engine hours — a baseline exists at 19:00 but
-      // not at 03:00 — and no client could tell which bars were which.
-      forecast.push({
-        hour: labelFor(ts),
-        score: result.score,
-        label: result.label,
-        predictionMethod: result.predictionMethod || null,
-        ...(numberSource ? { numberSource } : {}),
-        // Whether a live reading reached THIS hour's number, as an explicit
-        // yes or no on every hour while a switch is on (hourlyAttributionOn;
-        // a rule-engine or category-table hour is a no). numberSource cannot
-        // answer it by being absent: it is absent both for an hour no reading
-        // touched and for one whose live offset happened to land on the
-        // stored offset's score. Absent with every switch off, like
-        // numberSource.
-        ...(attributed ? { liveReadings: liveReadingsReached(result) } : {}),
-        // The ordering axis for this hour, carried per entry because
-        // crowdEngine picks it for the whole candidate set at once and has to
-        // be able to see that EVERY hour it is about to compare has one. Null
-        // on any hour the rule engine answered, which is what makes a mixed
-        // strip fall back to model ordering instead of ranking half the night
-        // on one number and half on another.
-        baselineScore: result.baselineScore ?? null,
-        // WHETHER THIS HOUR'S EVENT LOOKUP HAPPENED. predictBusyness has
-        // carried this since the contract landed and the strip dropped it, so
-        // the one view that shows a whole night at once was the one view with
-        // no way to tell an outage from a quiet street. Exhaust the
-        // Ticketmaster budget for a venue that still has a usable baseline and
-        // every hour is scored through the identical branch that runs when the
-        // provider answered and listed nothing; without this field the bars
-        // are indistinguishable.
-        //
-        // PER ENTRY, NOT PER STRIP, and that is the honest granularity rather
-        // than the convenient one. Each hour is its own predictBusyness call
-        // with its own event-cache key, and allowEventFetch is a running daily
-        // ledger, so a 24-hour strip can and does drain the budget partway
-        // through: the early hours are readings and the later ones are blanks.
-        // A single strip-level flag would have to pick one of those and
-        // publish it over hours it is false for. (It would also not survive
-        // JSON.stringify, since this function returns an array.)
-        eventsObserved: result.eventsObserved !== false,
-        eventsUnavailableReason: result.eventsObserved === false
-          ? (result.eventsUnavailableReason || 'unknown')
-          : null,
-      });
+      forecast.push(stripHourEntry(result, labelFor(ts), attributed));
     } catch (err) {
       // Fallback for this hour
       const fallback = crowdEngine.calculateCrowdScore(venue, slotWeather, ts);
@@ -5345,6 +5381,7 @@ async function predictHourlyForecast(venue, weather, startHour, count, baseTimes
     }
   }
 
+  stripScoring.set(forecast, { venue, options, attributed, slots: scoredWith });
   return forecast;
 }
 
@@ -5362,23 +5399,43 @@ async function predictHourlyForecast(venue, weather, startHour, count, baseTimes
 // venue's own curve on the bars beside it; on the public demo, a category
 // dial beside a "Live from the model" note and a green dot.
 //
-// So once both halves are in, a headline that came back as the table is
-// scored again if the strip scored an hour from the venue's own curve, or if
-// any read since has seen its rows (curveSeen). By then the strip has primed
-// this hour's slot and noted the yes, so the second answer is the venue's own
-// curve where it has a row at this hour and the rule engine where its curve is
-// zero, which is what the strip shows. It costs no query in practice: every
-// read it makes was just made by the two calls in front of it. The replaced
-// answer is taken back out of the coverage count, so the venue-hour is still
+// THE STRIP CAN SAY BOTH ON ITS OWN. Its whole-curve read comes before its
+// first hour and its hours are scored one after another, so rows the
+// collector writes between two hours leave the hours before them on the
+// table and the hours after them on the venue's own curve, in one array. An
+// hour the table answered stood on its slot's cached miss, which getBaseline
+// keeps for a day (BASELINE_CACHE_TTL), so scored again as it stands it would
+// answer from that miss and never read the rows.
+//
+// So once both halves are in, if the strip scored an hour from the venue's
+// own curve or any read since has seen its rows (curveSeen):
+//   * every hour of the strip the table answered is scored again with what
+//     the strip scored it with (stripScoring), after its slot's cached miss
+//     is dropped (forgetBaselineMiss), and written back into THE SAME ARRAY
+//     at the same index. That array is what each caller publishes: all five
+//     read it (a slice, a map, a peak) after this returns, so no caller takes
+//     a second strip from here;
+//   * then a headline that came back as the table is scored again, and so is
+//     a headline whose own hour was one of those hours, whatever it came back
+//     as, so the dial and the bar for one hour read one slot. The hours go
+//     first, so the headline reads what they just read.
+// The second answers are the venue's own curve where it has a row at that
+// hour and the rule engine where its curve is zero, which is what the rest of
+// the strip shows. Each hour scored again costs the one slot read its dropped
+// miss stood in for, charged like any slot lookup; the headline reads only
+// what the hours and the two calls in front of it just read. Every replaced
+// answer is taken back out of the coverage count, so each venue-hour is still
 // counted once.
 //
-// Any other headline comes back as the same object with nothing read, and
-// that is every headline while CROWD_NO_CURVE_FALLBACK is off, since nothing
-// else is ever tagged NO_CURVE_FALLBACK_METHOD. A headline this cannot
-// re-score comes back unchanged too: the step exists to make two answers
+// A headline and a strip with nothing on the table come back as they went in,
+// with nothing read, and that is every response while CROWD_NO_CURVE_FALLBACK
+// is off, since nothing else is ever tagged NO_CURVE_FALLBACK_METHOD. An
+// answer this cannot score again is kept: the step exists to make two answers
 // agree, never to cost the response its first one.
 async function agreeWithStrip(headline, strip, venue, weather, timestamp, options = {}) {
-  if (!headline || headline.predictionMethod !== NO_CURVE_FALLBACK_METHOD) return headline;
+  const onTable = (answer) => Boolean(answer) && answer.predictionMethod === NO_CURVE_FALLBACK_METHOD;
+  const tableHours = Array.isArray(strip) && strip.some(onTable);
+  if (!onTable(headline) && !tableHours) return headline;
   try {
     const placeId = (venue && (venue.place_id || venue.placeId || venue.google_place_id)) || null;
     // An 'ml' hour stood on a stored baseline: the table is only served beside
@@ -5386,15 +5443,52 @@ async function agreeWithStrip(headline, strip, venue, weather, timestamp, option
     // without one.
     const stripScoredCurve = Array.isArray(strip) && strip.some((h) => h && h.predictionMethod === 'ml');
     if (!stripScoredCurve && !curveSeen(placeId)) return headline;
-    // A yes this process has just seen, noted so the second answer cannot
-    // stand on the no the first one read.
+    // A yes this process has just seen, noted so the second answers cannot
+    // stand on the no the first ones read.
     if (stripScoredCurve) noteCurvePresence(placeId, true, Date.now());
+    const hoursScoredAgain = tableHours ? await rescoreTableHours(strip) : new Set();
+    if (!headline) return headline;
+    // The headline's slot, keyed the way getBaseline keys the slot
+    // predictBusyness reads for it.
+    const at = timestamp ? new Date(timestamp) : new Date();
+    const ownSlot = `${(venue && (venue.place_id || venue.google_place_id)) || null}_${at.getDay()}_${at.getHours()}`;
+    if (!onTable(headline) && !hoursScoredAgain.has(ownSlot)) return headline;
     const rescored = await predictBusyness(venue, weather, timestamp, options);
-    uncountPrediction(NO_CURVE_FALLBACK_METHOD);
+    uncountPrediction(headline.predictionMethod);
     return rescored;
   } catch {
     return headline;
   }
+}
+
+// Every hour of `strip` the category table answered, scored again in place
+// with what the strip scored it with (stripScoring), each after its slot's
+// cached miss is dropped. Returns the slots it scored again, keyed the way
+// getBaseline keys them. A strip predictHourlyForecast did not return, or one
+// whose length no longer matches what was recorded for it, is left as it is,
+// and so is an hour whose second scoring throws.
+async function rescoreTableHours(strip) {
+  const done = new Set();
+  const scoring = stripScoring.get(strip);
+  if (!scoring || scoring.slots.length !== strip.length) return done;
+  const { venue, options, attributed, slots } = scoring;
+  // The place id predictBusyness keys a slot on.
+  const placeId = venue.place_id || venue.google_place_id || null;
+  for (let i = 0; i < strip.length; i++) {
+    const hour = strip[i];
+    if (!hour || hour.predictionMethod !== NO_CURVE_FALLBACK_METHOD) continue;
+    const slot = slots[i];
+    const day = slot.ts.getDay();
+    const hourOfDay = slot.ts.getHours();
+    forgetBaselineMiss(placeId, day, hourOfDay);
+    try {
+      const result = await predictBusyness(venue, slot.weather, slot.ts, options, slot.instantMs);
+      strip[i] = stripHourEntry(result, hour.hour, attributed);
+      uncountPrediction(NO_CURVE_FALLBACK_METHOD);
+      done.add(`${placeId}_${day}_${hourOfDay}`);
+    } catch { /* the hour keeps the answer it had */ }
+  }
+  return done;
 }
 
 // Re-export crowdEngine functions that ML doesn't replace
@@ -5404,9 +5498,11 @@ const { estimateCapacity, estimateWait, findBestTime, findPeakTime,
 module.exports = {
   predictBusyness,
   predictHourlyForecast,
-  // The headline beside a strip, made to agree with it about whether the
-  // venue has a curve. Every route that publishes the two together calls it
-  // once both are in; see the block above it.
+  // The headline beside a strip, and the strip's own hours, made to agree
+  // about whether the venue has a curve. It rewrites the strip's table hours
+  // inside the array it is handed, so every route that publishes the two
+  // together calls it once both are in and reads the strip after it; see the
+  // block above it.
   agreeWithStrip,
   // A venue's rows counted outside this file (services/venueCorpus.js): the
   // same yes any read of them gives the no-curve fallback (noteCurvePresence).
