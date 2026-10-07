@@ -217,12 +217,40 @@ async function fetchProActive(userId) {
   // for the accounts in REVENUECAT_SANDBOX_USER_IDS. An entitlement whose
   // source is sandbox still counts when another purchase that did cost money
   // is live, since this project sells nothing but Pro.
-  const subs = (body.subscriber && body.subscriber.subscriptions) || {};
-  const source = subs[ent.product_identifier];
-  if (source && source.is_sandbox === true && !sandboxAllowed(userId)) {
-    return Object.values(subs).some((s) => s && s.is_sandbox !== true && !s.refunded_at && live(s));
+  //
+  // THE SOURCE IS LOOKED UP WHERE REVENUECAT FILES IT: a subscription under
+  // `subscriptions`, a one-time purchase (a lifetime unlock) as a list under
+  // `non_subscriptions`. This looked in subscriptions alone, so a sandbox
+  // lifetime unlock found no source, was taken on trust, and became free
+  // production Pro for good. A product the entitlement names but neither list
+  // holds is not taken on trust either. It counts only where a sandbox source
+  // would (an allowlisted account, or another paid purchase that is live), and
+  // a refusal on those grounds is logged, so that if RevenueCat ever files
+  // purchases somewhere new, the Pro it withholds is seen rather than silent.
+  // An entitlement that names no product is not a shape RevenueCat sends, has
+  // no purchase to match, and is read as it always was.
+  //
+  // "Nothing but Pro" covers one-time purchases too: a paid purchase in either
+  // list stands in for a sandbox source. Selling anything else through
+  // RevenueCat (a consumable, say) breaks that, and this would first have to
+  // learn which products are Pro.
+  const pid = ent.product_identifier;
+  if (typeof pid !== 'string' || !pid) return true;
+  const subs = body.subscriber.subscriptions || {};
+  const oneTime = body.subscriber.non_subscriptions || {};
+  const holds = (map) => Object.prototype.hasOwnProperty.call(map, pid);
+  let purchases = null;
+  if (holds(subs)) purchases = [subs[pid]];
+  else if (holds(oneTime) && Array.isArray(oneTime[pid])) purchases = oneTime[pid];
+  if (purchases && purchases.some((p) => p && p.is_sandbox !== true)) return true;
+  if (sandboxAllowed(userId)) return true;
+  const paid = (p) => !!p && p.is_sandbox !== true && !p.refunded_at && live(p);
+  const paidElsewhere = Object.values(subs).some(paid)
+    || Object.values(oneTime).some((list) => Array.isArray(list) && list.some(paid));
+  if (!paidElsewhere && !(purchases && purchases.length)) {
+    console.error(`[pro] RevenueCat's ${PRO_ENTITLEMENT} entitlement for account ${userId} names product ${JSON.stringify(pid.slice(0, 80))} but lists no purchase of it, and nothing else paid is live, so it does not count as Pro.`);
   }
-  return true;
+  return paidElsewhere;
 }
 
 // Tells RevenueCat about a Stripe subscription right away. Its Stripe
