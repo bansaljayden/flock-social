@@ -3184,11 +3184,16 @@ export async function uploadProfileImage(file) {
   // is not the retry this function refuses: authenticate turned the first one
   // away before the image was read, let alone stored.
   refuseIfAccountMoved();
+  // The account the photo is for, checked after each renewal and on the
+  // answer, as request() does: a renewal can wait long enough for this
+  // account to sign out on this tab and another to sign in.
+  const madeFor = accountOf(getToken());
   if (renewalIsDue()) await renewIfDue();
   let token = getToken();
   // The photo would land on whichever account is stored, so a tab whose
   // account was replaced sends nothing (see WHOSE TAB THIS IS).
   refuseIfAccountMoved(token);
+  if (madeFor && accountOf(token) !== madeFor) throw sessionEndedError();
   const formData = new FormData();
   formData.append('image', file);
   const send = (bearer) => fetchWithTimeout(`${BASE_URL}/api/users/upload-image`, {
@@ -3197,11 +3202,14 @@ export async function uploadProfileImage(file) {
     body: formData,
   }, UPLOAD_TIMEOUT_MS);
   let { res, data } = await send(token);
+  if (madeFor && accountOf(getToken()) !== madeFor) throw sessionEndedError();
   if (res.status === 401 && token && data && data !== PARSE_FAILED && data.error === 'Token expired') {
     const next = await renewAfterExpiry(token);
+    if (madeFor && accountOf(next || getToken()) !== madeFor) throw sessionEndedError();
     if (next) {
       token = next;
       ({ res, data } = await send(token));
+      if (madeFor && accountOf(getToken()) !== madeFor) throw sessionEndedError();
     }
   }
   if (!res.ok) throw buildHttpError(res, data === PARSE_FAILED ? null : data, '/api/users/upload-image', !!token);

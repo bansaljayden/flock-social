@@ -125,31 +125,75 @@ function writeOwed(record) {
     return false; // storage blocked: the queue still holds it for this load
   }
 }
-// Keys whose queued value this tab put in the shared record. Only those are
-// checked against it before sending (dropSuperseded); a key whose write to
-// the record failed is this tab's alone and goes as it is.
-const recorded = {};
 function oweKeys(partial) {
-  const ok = writeOwed({ ...readOwed(), ...partial });
-  Object.keys(partial).forEach((key) => { recorded[key] = ok; });
+  writeOwed({ ...readOwed(), ...partial });
 }
-// Before sending: a key this tab recorded whose value the record no longer
-// holds was saved since by another tab, or queued there with a newer value.
-// Sent anyway, this tab's older copy (a retry, say) overwrote it.
-function dropSuperseded() {
+function forgetOwed(key, value) {
   const record = readOwed();
-  Object.keys(pending).forEach((key) => {
-    if (recorded[key] && JSON.stringify(record[key]) !== JSON.stringify(pending[key])) {
-      delete pending[key];
-      delete recorded[key];
+  if (JSON.stringify(record[key]) !== JSON.stringify(value)) return;
+  delete record[key];
+  writeOwed(record);
+}
+
+// A SETTING IS SENT ONLY WHILE IT IS STILL THIS DEVICE'S VALUE. queueSync
+// writes each value to its localStorage key as it queues it (every caller
+// already did), so a fresh edit always qualifies; a retry, an entry restored
+// from the owed record, or any value since replaced on this device (by an
+// edit in another tab, or a pull) does not, and is dropped rather than sent
+// over the newer one. Checking against the shared owed record instead kept
+// finding ways to be wrong: a failed record write left a stale entry, and an
+// earlier failed save could erase a newer, equal one.
+//
+// What this does not cover: two tabs that each send an edit of the SAME key
+// with both requests on the wire at once can commit in either order on the
+// server. That needs two tabs changing one setting within a request's
+// latency, and the next edit or pull settles it.
+//
+// A key whose local write failed (storage that throws) cannot be checked,
+// and goes as queued.
+const unverifiable = {};
+function localForm(key, value) {
+  if (value === null || value === undefined) return null;
+  return JSON_KEYS.has(key) ? JSON.stringify(value) : String(value);
+}
+function holdLocally(partial) {
+  Object.keys(partial).forEach((key) => {
+    const lsKey = SYNCED_KEYS[key];
+    if (!lsKey) return;
+    const form = localForm(key, partial[key]);
+    try {
+      if (form === null) localStorage.removeItem(lsKey);
+      else localStorage.setItem(lsKey, form);
+      delete unverifiable[key];
+    } catch (_) {
+      unverifiable[key] = true;
     }
   });
 }
+function stillHeld(key, value) {
+  const lsKey = SYNCED_KEYS[key];
+  if (!lsKey || unverifiable[key]) return true;
+  try {
+    return localStorage.getItem(lsKey) === localForm(key, value);
+  } catch (_) {
+    return true; // cannot read it either: send as queued
+  }
+}
+function dropReplaced() {
+  Object.keys(pending).forEach((key) => {
+    if (stillHeld(key, pending[key])) return;
+    forgetOwed(key, pending[key]);
+    delete pending[key];
+  });
+}
 // What a settled write no longer owes: each key still recorded with the value
-// that was sent. A newer value, from this tab or another, stays owed.
+// that was sent, unless this tab has queued the key again since (an equal
+// value queued after an older save failed is still owed). A newer value,
+// from this tab or another, stays owed.
 function settleOwed(payload) {
   const record = readOwed();
   Object.keys(payload).forEach((key) => {
+    if (Object.prototype.hasOwnProperty.call(pending, key)) return;
     if (JSON.stringify(record[key]) === JSON.stringify(payload[key])) delete record[key];
   });
   writeOwed(record);
@@ -163,7 +207,6 @@ function takeOwed() {
   Object.keys(record).forEach((key) => {
     if (Object.prototype.hasOwnProperty.call(pending, key) || inFlight[key]) return;
     pending[key] = record[key];
-    recorded[key] = true;
     queuedAt[key] = now;
     took = true;
   });
@@ -213,7 +256,10 @@ export function queueSync(partial) {
   const now = Date.now();
   Object.keys(partial).forEach((key) => { queuedAt[key] = now; });
   pending = { ...pending, ...partial };
-  if (Object.keys(partial).length > 0) oweKeys(partial);
+  if (Object.keys(partial).length > 0) {
+    holdLocally(partial);
+    oweKeys(partial);
+  }
   if (timer) clearTimeout(timer);
   timer = setTimeout(flush, 600);
 }
@@ -223,7 +269,7 @@ export function queueSync(partial) {
 function flush() {
   if (timer) { clearTimeout(timer); timer = null; }
   if (writing) return null;
-  dropSuperseded();
+  dropReplaced();
   if (Object.keys(pending).length === 0) return null;
   const payload = pending;
   pending = {};
@@ -310,7 +356,7 @@ if (typeof window !== 'undefined') {
     retryDelay = 0;
     lastPull = null;
     writeOwed({});
-    Object.keys(recorded).forEach((key) => { delete recorded[key]; });
+    Object.keys(unverifiable).forEach((key) => { delete unverifiable[key]; });
     [queuedAt, settledAt, inFlight].forEach((record) => {
       Object.keys(record).forEach((key) => { delete record[key]; });
     });

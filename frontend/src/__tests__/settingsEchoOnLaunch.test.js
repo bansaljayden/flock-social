@@ -407,6 +407,7 @@ describe('what is still owed survives a reload', () => {
 
   test('is taken back after a reload when a pull starts, wins over its answer, and is sent', async () => {
     localStorage.setItem('flock_settings_owed', JSON.stringify({ pinnedFlockIds: [9] }));
+    localStorage.setItem('flock_pinned', JSON.stringify([9])); // the edit was this device's value
     let fresh;
     let freshApi;
     jest.isolateModules(() => {
@@ -494,26 +495,64 @@ describe('another tab', () => {
     api.updateUserSettings.mockImplementation(() => Promise.resolve({}));
   });
 
-  test("a retry yields when another tab has since saved the key", async () => {
+  test("a retry yields when another tab has since changed the setting on this device", async () => {
     api.updateUserSettings.mockImplementationOnce(() => Promise.reject(Object.assign(new Error('offline'), { isNetworkError: true })));
     queueSync({ pinnedFlockIds: [1] });
     await wait(700); // fails, waits to retry
-    // The other tab saved [1, 2] and settled it: the record no longer owes pins.
-    localStorage.removeItem('flock_settings_owed');
+    // The other tab pinned [1, 2] (and saved it): this device's value moved on.
+    localStorage.setItem('flock_pinned', JSON.stringify([1, 2]));
     window.dispatchEvent(new Event('online'));
     await wait(700);
     expect(api.updateUserSettings).toHaveBeenCalledTimes(1);
   });
 
-  test("a retry yields when another tab has queued a newer value, and a key still owed goes", async () => {
+  test("a retry sends what is still this device's value and drops what is not", async () => {
     api.updateUserSettings.mockImplementationOnce(() => Promise.reject(Object.assign(new Error('offline'), { isNetworkError: true })));
     queueSync({ pinnedFlockIds: [1], flockOrder: [2] });
     await wait(700);
-    const record = JSON.parse(localStorage.getItem('flock_settings_owed'));
-    localStorage.setItem('flock_settings_owed', JSON.stringify({ ...record, pinnedFlockIds: [1, 2] }));
+    localStorage.setItem('flock_pinned', JSON.stringify([1, 2]));
     window.dispatchEvent(new Event('online'));
     await wait(700);
     expect(api.updateUserSettings).toHaveBeenLastCalledWith({ flockOrder: [2] });
+  });
+
+  test("a stale entry in the owed record is not sent over this device's current value", async () => {
+    // A record write failed once and left an older value behind.
+    localStorage.setItem('flock_settings_owed', JSON.stringify({ pinnedFlockIds: [1] }));
+    localStorage.setItem('flock_pinned', JSON.stringify([1, 2]));
+    api.getUserSettings.mockImplementation(() => Promise.resolve({ settings: { pinnedFlockIds: [1, 2] } }));
+    await pullSettings();
+    await wait(700);
+    expect(api.updateUserSettings).not.toHaveBeenCalled();
+    expect(localStorage.getItem('flock_settings_owed')).toBeNull();
+  });
+
+  test('a failed older save leaves a newer equal edit owed, and it is sent', async () => {
+    let fail;
+    api.updateUserSettings.mockImplementationOnce(() => new Promise((resolve, reject) => { fail = reject; }));
+    queueSync({ pinnedFlockIds: [1] });
+    await wait(700); // on the wire
+    queueSync({ pinnedFlockIds: [1, 2] });
+    queueSync({ pinnedFlockIds: [1] });
+    fail(Object.assign(new Error('Server error'), { status: 500 })); // not saved, not retried
+    await wait(700);
+    expect(api.updateUserSettings).toHaveBeenLastCalledWith({ pinnedFlockIds: [1] });
+    expect(api.updateUserSettings).toHaveBeenCalledTimes(2);
+  });
+
+  test('storage that refuses writes cannot swallow a save', async () => {
+    const setItem = Storage.prototype.setItem;
+    Storage.prototype.setItem = function guarded(key, value) {
+      if (key === 'flock_pinned') throw new Error('QuotaExceededError');
+      return setItem.call(this, key, value);
+    };
+    try {
+      queueSync({ pinnedFlockIds: [7] });
+      await wait(700);
+      expect(api.updateUserSettings).toHaveBeenLastCalledWith({ pinnedFlockIds: [7] });
+    } finally {
+      Storage.prototype.setItem = setItem;
+    }
   });
 });
 
@@ -524,4 +563,14 @@ test('every answer for an account that signed out meanwhile is set aside before 
   expect(check).toBeGreaterThan(body.indexOf('await fetchWithTimeout('));
   expect(check).toBeLessThan(body.indexOf("if (res.status === 401 && token && mayRenew"));
   expect(check).toBeLessThan(body.indexOf('if (!res.ok) throw buildHttpError('));
+});
+
+test('the profile photo upload keeps to its account across a renewal and on the answer', () => {
+  const apiSource = fs.readFileSync(path.join(__dirname, '..', 'services', 'api.js'), 'utf8');
+  const body = apiSource.slice(apiSource.indexOf('export async function uploadProfileImage(file) {'));
+  const fn = body.slice(0, body.indexOf('\n}\n'));
+  expect(fn).toContain('const madeFor = accountOf(getToken());');
+  expect(fn).toContain('if (madeFor && accountOf(token) !== madeFor) throw sessionEndedError();');
+  expect(fn).toContain('if (madeFor && accountOf(next || getToken()) !== madeFor) throw sessionEndedError();');
+  expect(fn.indexOf('let { res, data } = await send(token);')).toBeLessThan(fn.indexOf('if (madeFor && accountOf(getToken()) !== madeFor) throw sessionEndedError();'));
 });
