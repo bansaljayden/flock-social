@@ -1074,6 +1074,17 @@ test('F3 and F4: the repair, run for real, merges twins, strips rivals of the ke
       [day, hour, baseline, source]
     );
   }
+  // The rival's stamp says its week landed; the repair deletes that week.
+  await pool.query(`UPDATE ml_venues SET last_collected_at = '2026-09-02T00:00:00Z' WHERE id = $1`, [rival]);
+
+  // Group 3: the twin's week is NEWER than everything the keeper holds, and
+  // the keeper's stamp is as old as its own week. discoverBestTime.js wrote
+  // such weeks onto the bt_ twin and stamped neither row.
+  const keep3 = await mkVenue('ChIJdedupeStampKeep1', 'bt_grp_stamp', { name: 'Stamp Keeper', category: 'bar', rating: 4.2, reviews: 300 });
+  const twin3 = await mkVenue('bt_bt_grp_stamp', 'bt_grp_stamp', { name: 'Stamp Keeper', category: 'bar' });
+  await seedWeek(keep3, 30, '2026-08-01T00:00:00Z', 300, 'bar', 168);
+  await seedWeek(twin3, 35, '2026-09-03T00:00:00Z', null, 'bar', 168);
+  await pool.query(`UPDATE ml_venues SET last_collected_at = '2026-08-01T00:00:00Z' WHERE id = $1`, [keep3]);
 
   const res = runRepair('--commit');
   assert.strictEqual(res.status, 0, `repair exited ${res.status}\n${res.stdout}\n${res.stderr}`);
@@ -1111,6 +1122,16 @@ test('F3 and F4: the repair, run for real, merges twins, strips rivals of the ke
   assert.strictEqual(k2.besttime_venue_id, 'bt_grp_rival');
   assert.strictEqual(await trainingCount(keep2, 'weekly'), 168);
   assert.match(res.stdout, /1 real rows unmapped \(168 weekly rows, 2 realtime rows and 2 collected baseline slots removed/);
+
+  // last_collected_at stays a claim about the weekly rows each venue holds
+  // now, which is what collectWeekly --order=stalest reads in their place.
+  const stamp = async (id) => (await pool.query('SELECT last_collected_at FROM ml_venues WHERE id = $1', [id])).rows[0].last_collected_at;
+  assert.strictEqual(await trainingCount(keep3, 'weekly'), 168);
+  assert.deepStrictEqual(await stamp(keep3), new Date('2026-09-03T00:00:00Z'),
+    "the keeper kept a stamp older than the week its twin brought, so the stalest order refreshes it ahead of older curves");
+  assert.deepStrictEqual(await stamp(keep1), new Date('2026-09-02T00:00:00Z'),
+    'a keeper with no stamp was left without one after the merge, although it holds a week');
+  assert.strictEqual(await stamp(rival), null, "the rival's stamp still says a week landed after the repair deleted it");
 
   // F4: the index is in place and the script says so from the catalog.
   const ix = await indexState(VENUE_ID_INDEX);

@@ -283,6 +283,23 @@ const MOVE_ROWS_SQL = `
     FROM ml_venues k
    WHERE k.id = $1 AND t.venue_id = $2`;
 
+// The keeper's last_collected_at, once the orphans' rows are its own. It is
+// a claim about the newest weekly row the venue holds, and collectWeekly
+// --order=stalest reads it instead of the rows: a keeper whose stamp predates
+// the week an orphan brought (discoverBestTime.js wrote those weeks and
+// stamped neither row) is put ahead of venues whose curves are older than the
+// one it now holds. GREATEST keeps a stamp that is already later. GROUP BY
+// because an ungrouped MAX(collected_at) can be planned as a backward walk of
+// idx_ml_training_collected, past every newer row in the corpus.
+const RESTAMP_KEEPER_SQL = `
+  UPDATE ml_venues k
+     SET last_collected_at = GREATEST(k.last_collected_at, w.newest)
+    FROM (SELECT venue_id, MAX(collected_at) AS newest
+            FROM ml_training_data
+           WHERE venue_id = $1 AND collection_mode = 'weekly'
+           GROUP BY venue_id) w
+   WHERE k.id = w.venue_id`;
+
 // ml_venue_baselines is keyed on google_place_id, not venue_id, so the FK
 // cascade that clears ml_training_data does not reach it. A baseline row under a
 // place id that no longer names anything is dead weight that buildBaselines.js
@@ -378,6 +395,9 @@ async function mergeGroup(g) {
       await client.query('DELETE FROM ml_venues WHERE id = $1', [orphan.id]);
       g.movedRows = (g.movedRows || 0) + moved.rowCount;
     }
+    if (g.orphans.length > 0) {
+      await client.query(RESTAMP_KEEPER_SQL, [g.keeper.id]);
+    }
     for (const rival of g.rivals) {
       // The venue row is NOT deleted: it keeps its Google identity and its
       // coordinates and stops claiming a BestTime venue another row also
@@ -385,6 +405,9 @@ async function mergeGroup(g) {
       // are the keeper's data under this row's name (header, "Their TRAINING
       // ROWS"). besttime_attempted_at is preserved when it exists so the
       // record of when we last tried is not rewritten by a cleanup.
+      // last_collected_at is not: it says when the venue's weekly rows
+      // landed, those rows are deleted here, and a stamp kept for them would
+      // describe a curve the venue no longer has.
       const dropped = await client.query(DROP_RIVAL_ROWS_SQL, [rival.id]);
       for (const r of dropped.rows) {
         if (r.collection_mode === 'weekly') g.rivalWeeklyDropped = (g.rivalWeeklyDropped || 0) + 1;
@@ -397,6 +420,7 @@ async function mergeGroup(g) {
             SET besttime_venue_id = NULL,
                 besttime_status = 'duplicate',
                 besttime_attempted_at = COALESCE(besttime_attempted_at, NOW()),
+                last_collected_at = NULL,
                 updated_at = NOW()
           WHERE id = $1`,
         [rival.id]
