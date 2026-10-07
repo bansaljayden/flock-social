@@ -845,10 +845,26 @@ function tally(list) {
 // no-argument constructor started at that time and ran forward from it, so
 // every other test in the file read the moved clock. Every test passed every
 // time; before the pin, this one failed from 06:20 on.
+//
+// AND THE SERVE PRUNE IS KEPT OUT OF THE COUNT. routes/crowd.js
+// recordServedPredictions also sends `DELETE FROM served_predictions ...
+// 180 days` when Math.random() < 0.01, on every card that records a serve.
+// Four cards below record one, so about one run in twenty-five counted a
+// statement more than was measured, at any hour (seen 2026-10-07: 'card cold
+// again' at 28). While this test runs, Math.random draws from [0.01, 1):
+// still random, never inside the prune's one percent. With every draw forced
+// into it, the four cards came out one statement over each before this line,
+// and the counts held after it.
 const STATEMENTS_MEASURED_AT = Date.UTC(2026, 9, 7, 3, 20, 0);
 
 test('switched off, in the production configuration, every surface sends exactly the statements it sent before, and never a presence probe', async () => {
-  await withSteppingClock(STATEMENTS_MEASURED_AT, sendsTheStatementsItSentBefore);
+  const random = Math.random;
+  Math.random = () => 0.01 + 0.99 * random();
+  try {
+    await withSteppingClock(STATEMENTS_MEASURED_AT, sendsTheStatementsItSentBefore);
+  } finally {
+    Math.random = random;
+  }
 });
 
 async function sendsTheStatementsItSentBefore() {
