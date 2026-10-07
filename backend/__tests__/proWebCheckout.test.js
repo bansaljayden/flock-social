@@ -119,6 +119,7 @@ require.cache[require.resolve('stripe')] = { id: require.resolve('stripe'), file
 const rcCalls = [];
 let rcEntitlement = null; // null = no pro entitlement
 let rcSubscriptions = null; // the subscriber's subscriptions map, when a test needs one
+let rcNonSubscriptions = null; // its non_subscriptions map: one-time purchases, as lists
 const realFetch = global.fetch;
 global.fetch = async (url, init) => {
   const u = String(url);
@@ -128,6 +129,7 @@ global.fetch = async (url, init) => {
       return new Response(JSON.stringify({ subscriber: {
         entitlements: rcEntitlement ? { pro: rcEntitlement } : {},
         ...(rcSubscriptions ? { subscriptions: rcSubscriptions } : {}),
+        ...(rcNonSubscriptions ? { non_subscriptions: rcNonSubscriptions } : {}),
       } }), { status: 200 });
     }
     return new Response('{}', { status: 200 });
@@ -221,6 +223,7 @@ test.beforeEach(() => {
   rcCalls.length = 0;
   rcEntitlement = null;
   rcSubscriptions = null;
+  rcNonSubscriptions = null;
   stripeState.subscriptions = [];
   stripeState.charges = {};
   stripeState.invoicePayments = {};
@@ -1143,6 +1146,88 @@ test('a sandbox purchase unlocks nothing unless the account is allowlisted, and 
   setEnv({ REVENUECAT_SANDBOX_USER_IDS: '41, 7' });
   assert.strictEqual(await billing.fetchProActive(7), true, 'App Review and the operator can still test');
   assert.strictEqual(await billing.fetchProActive(8), false);
+});
+
+// A lifetime unlock never expires, and RevenueCat files its purchases as a list
+// under non_subscriptions, not under subscriptions. Looking in subscriptions
+// alone found no source for one, and a free TestFlight purchase of it read as
+// production Pro for good.
+test('a sandbox lifetime unlock is not production Pro either: one-time purchases follow the same rule', async () => {
+  setEnv({ ...ON, REVENUECAT_SANDBOX_USER_IDS: undefined });
+  const future = new Date(Date.now() + 30 * 864e5).toISOString();
+  rcEntitlement = { expires_date: null, product_identifier: 'flock_pro_lifetime' };
+  rcSubscriptions = {};
+  rcNonSubscriptions = { flock_pro_lifetime: [{ id: 'np_sandbox', is_sandbox: true }] };
+  assert.strictEqual(await billing.fetchProActive(7), false, 'a free TestFlight lifetime unlock is not production Pro');
+
+  rcNonSubscriptions = { flock_pro_lifetime: [{ id: 'np_sandbox', is_sandbox: true }, { id: 'np_paid', is_sandbox: false }] };
+  assert.strictEqual(await billing.fetchProActive(7), true, 'the same unlock bought for real counts');
+
+  rcNonSubscriptions = { flock_pro_lifetime: [{ id: 'np_sandbox', is_sandbox: true }] };
+  rcSubscriptions = { price_live: { expires_date: future, is_sandbox: false } };
+  assert.strictEqual(await billing.fetchProActive(7), true, 'a live paid subscription beside it still counts');
+
+  rcSubscriptions = {};
+  setEnv({ REVENUECAT_SANDBOX_USER_IDS: '7' });
+  assert.strictEqual(await billing.fetchProActive(7), true, 'App Review and the operator can still test a lifetime unlock');
+  assert.strictEqual(await billing.fetchProActive(8), false);
+});
+
+test('a paid lifetime unlock counts, alone or beside a sandbox subscription RevenueCat names as the source', async () => {
+  setEnv({ ...ON, REVENUECAT_SANDBOX_USER_IDS: undefined });
+  const future = new Date(Date.now() + 30 * 864e5).toISOString();
+  rcEntitlement = { expires_date: null, product_identifier: 'flock_pro_lifetime' };
+  rcNonSubscriptions = { flock_pro_lifetime: [{ id: 'np_paid', is_sandbox: false }] };
+  assert.strictEqual(await billing.fetchProActive(7), true);
+
+  rcEntitlement = { expires_date: future, product_identifier: 'flock_pro_monthly' };
+  rcSubscriptions = { flock_pro_monthly: { expires_date: future, is_sandbox: true } };
+  rcNonSubscriptions = { flock_pro_lifetime: [{ id: 'np_paid', is_sandbox: false }] };
+  assert.strictEqual(await billing.fetchProActive(7), true,
+    'somebody who paid for a lifetime unlock is not switched off by a TestFlight subscription');
+});
+
+test('an entitlement naming a product RevenueCat lists nowhere is not taken on trust, and withholding it is logged', async () => {
+  setEnv({ ...ON, REVENUECAT_SANDBOX_USER_IDS: undefined });
+  const future = new Date(Date.now() + 30 * 864e5).toISOString();
+  const past = new Date(Date.now() - 30 * 864e5).toISOString();
+  const errors = [];
+  const realError = console.error;
+  console.error = (...a) => errors.push(a.join(' '));
+  try {
+    rcEntitlement = { expires_date: future, product_identifier: 'flock_pro_somewhere_new' };
+    rcSubscriptions = { flock_pro_monthly: { expires_date: past, is_sandbox: false } };
+    assert.strictEqual(await billing.fetchProActive(7), false, 'nothing paid is live and the source cannot be checked');
+    assert.strictEqual(errors.length, 1);
+    assert.match(errors[0], /"flock_pro_somewhere_new" but lists no purchase of it/);
+
+    errors.length = 0;
+    rcSubscriptions = { price_live: { expires_date: future, is_sandbox: false } };
+    assert.strictEqual(await billing.fetchProActive(7), true, 'a live paid subscription filed under another key still counts');
+    rcSubscriptions = {};
+    setEnv({ REVENUECAT_SANDBOX_USER_IDS: '7' });
+    assert.strictEqual(await billing.fetchProActive(7), true, 'an allowlisted account still counts');
+    assert.deepStrictEqual(errors, [], 'only a refusal is logged');
+
+    // RevenueCat names a product on every entitlement; one that names none has
+    // nothing to match and reads as it always did.
+    setEnv({ REVENUECAT_SANDBOX_USER_IDS: undefined });
+    rcEntitlement = { expires_date: future };
+    assert.strictEqual(await billing.fetchProActive(7), true);
+  } finally { console.error = realError; }
+});
+
+test('the subscriber re-read writes is_premium false for a sandbox lifetime unlock', async () => {
+  // The RevenueCat webhook, the Stripe webhook, /confirm and /sync all write
+  // through this one re-read.
+  setEnv({ ...ON, REVENUECAT_SANDBOX_USER_IDS: undefined });
+  rcEntitlement = { expires_date: null, product_identifier: 'flock_pro_lifetime' };
+  rcNonSubscriptions = { flock_pro_lifetime: [{ id: 'np_sandbox', is_sandbox: true }] };
+  const { calls, restore } = stubPool(async () => null);
+  try {
+    assert.strictEqual(await revenuecatRoutes.syncPremiumFromRevenueCat(7), false);
+    assert.deepStrictEqual(calls.find((c) => c.text.includes('SET is_premium')).params, [false, 7]);
+  } finally { restore(); }
 });
 
 test('on the fallback path a sandbox event writes nothing unless the account is allowlisted', async () => {
