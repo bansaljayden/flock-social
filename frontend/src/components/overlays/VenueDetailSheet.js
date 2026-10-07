@@ -501,7 +501,10 @@ const VenueDetailSheet = ({
                   the place's coordinates, address and name. */}
               {footerHasDirections ? (
                 <button type="button" onClick={() => {
-                  const at = venueDetailModal.location || {};
+                  // Place Details sends location {latitude, longitude}; an
+                  // older payload carried geometry.location, and a map pin's
+                  // seed object carries lat and lng.
+                  const at = venueDetailModal.location || (venueDetailModal.geometry && venueDetailModal.geometry.location) || {};
                   openMapsChooser({
                     place: {
                       name: venueDetailModal.name,

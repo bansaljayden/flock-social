@@ -157,4 +157,9 @@ describe('every way to a map goes through the sheet', () => {
     expect(flockDetail).toMatch(/openMapsChooser\(\{\s*place: \{ name: flock\.venue, address: flock\.venueAddress, lat: flock\.venueLat, lng: flock\.venueLng \}/);
     expect(app).toMatch(/openMapsChooser\(\{\s*place: \{ name: safetyAlert\.name, lat: safetyAlert\.lat, lng: safetyAlert\.lng \}/);
   });
+
+  test("a plan's Details hands the venue card the plan's coordinates, so Apple Maps has the pin before the details load", () => {
+    expect(flockDetail).toContain('photo_url: flock.venuePhoto, lat: flock.venueLat, lng: flock.venueLng })}');
+    expect(venueSheet).toMatch(/lat: at\.latitude \?\? at\.lat \?\? venueDetailModal\.lat,/);
+  });
 });
