@@ -256,14 +256,35 @@ const RATES = {
     nextTierIncluded: 50000,
   },
 
-  // MapTiler. The frontend's map styles. Metered in SESSIONS (one map load),
-  // not tiles.
+  // MapTiler, the map on Discover, the venue dashboard and the landing demo.
+  // Flex since 2026-10-07. The plan has two meters that matter here: map
+  // SESSIONS (one map load through MapTiler's own SDK, with unlimited tiles
+  // inside it) and API REQUESTS (every vector tile a plain MapLibre map loads,
+  // and 15 per static map image). Map and weather sessions share one pool;
+  // search and 3D sessions each have their own. Past an allowance the extra use
+  // bills automatically at the end of the billing period, up to the spending
+  // limit below, where every key stops until the next period.
+  //
+  // baseUsd is here to describe the plan. The bill itself is the live expense
+  // row ($30.00 plus $1.80 Pennsylvania tax), so no code line carries it: a
+  // second copy would count the same $30 twice next to that row.
   maptiler: {
-    checked: '2026-10-03',
+    checked: '2026-10-07',
     source: 'https://www.maptiler.com/cloud/pricing/',
-    freeSessionsPerMonth: 5000,
-    freeApiRequestsPerMonth: 100000,
-    nextTierUsd: 30.00,
+    plan: 'Flex',
+    baseUsd: 30.00,
+    includedSessionsPerMonth: 25000, // map and weather sessions share it
+    includedSearchSessionsPerMonth: 3000,
+    included3dSessionsPerMonth: 10000, // GeoSplats only; fill-extrusion buildings are an ordinary map session
+    includedApiRequestsPerMonth: 500000,
+    includedCustomStyles: 20,
+    includedStorageGb: 10,
+    overSessionPer1kUsd: 2.50,
+    overSearchSessionPer1kUsd: 2.50,
+    over3dSessionPer1kUsd: 6.00,
+    overRequestPer1kUsd: 0.15,
+    requestsPerVectorTile: 1,
+    requestsPerStaticImage: 15,
   },
 
   // PostHog. Product analytics events.
@@ -326,6 +347,16 @@ const RATES = {
     appleAfterYearOnePct: 15,
   },
 };
+
+// The MapTiler spending limit, in dollars a month above the Flex fee. This is
+// an account setting, not a price, which is why it is not in RATES: it was set
+// to $20 on 2026-10-07 and read back on the account page the same day
+// (Enabled, 20). At the limit MapTiler stops answering every key on the account
+// until the next billing period, so every Flock map goes blank, which is why
+// the money hub warns before usage gets there. Change this when the setting
+// changes.
+const MAPTILER_SPEND_CAP_USD = 20;
+const MAPTILER_SPEND_CAP_CHECKED = '2026-10-07';
 
 // ---------------------------------------------------------------------------
 // FIXED COSTS — the bills that arrive whether anybody uses the app or not.
@@ -520,11 +551,11 @@ async function readReconciled(pool) {
 const WATCHLIST = [
   {
     id: 'maptiler-satellite',
-    label: 'MapTiler map sessions (basemap + satellite)',
+    label: 'MapTiler usage past the Flex allowance',
     where: 'frontend/src/components/map/MapLibreMapView.js and frontend/src/website/LiveDemo.js, every Discover map load and every landing-page demo',
     usd: null,
     severity: 'watch',
-    note: 'Free plan is 5,000 map sessions and 100,000 API requests a month, for non-commercial use only, and it does not bill past those limits: it pauses the map until the next month. The next tier up is Flex at $30/month, licensed for commercial use, and Flex overages bill automatically (maptiler.com pricing, read 2026-09-30). This became the ONLY satellite source on 2026-08-20, when the unkeyed Esri ArcGIS World_Imagery fallback was removed from the satellite style. That fallback was a licence exposure rather than a bill — Esri basemaps are not free for commercial use and Flock has no Esri account — and it was already dead in every shipping build, because Vercel and Codemagic both set REACT_APP_MAPTILER_KEY and the MapTiler branch won whenever it was present. It was removed because the repo is public: a contributor cloning Flock without a key and tapping the satellite toggle was making unlicensed Esri requests from their own address. With no key the toggle is now hidden rather than falling back.',
+    note: 'Flex includes 25,000 map sessions and 500,000 API requests a month; past those, MapTiler bills $2.50 per 1,000 sessions and $0.15 per 1,000 requests at the end of the billing period (maptiler.com pricing, read 2026-10-07). A map drawn with plain MapLibre is billed per tile request, because only MapTiler\'s own SDK gets session billing, so every tile a Discover open loads comes out of the request pool; the app is moving to the SDK, where one app launch is one session however much the map is used. In request mode satellite is the hungriest path: it loads imagery and label tiles for every view, and it is the only satellite source the app has. The account\'s spending limit is $20 a month above the fee, and at the limit every key stops until the next billing period, so every Flock map goes blank.',
   },
   {
     id: 'carto-basemaps',
@@ -787,14 +818,20 @@ const DEPENDENCIES = [
     what: 'The map on Discover, including the only satellite layer the app has, and the landing page\'s live demo map.',
     where: 'frontend/src/components/map/MapLibreMapView.js and frontend/src/website/LiveDemo.js',
     group: 'metered',
-    pricing: { type: 'unknown', rateGroup: 'maptiler' },
-    configuredEnv: null,
-    configuredNote: 'REACT_APP_MAPTILER_KEY is a build-time variable set on Vercel and Codemagic, so the backend cannot see whether it is set.',
+    pricing: { type: 'maptiler', rateGroup: 'maptiler' },
+    // The variable named here is the usage meter's, read by
+    // services/maptilerUsage.js. The map key itself is not something this
+    // process can see; configuredNote says so.
+    configuredEnv: ['MAPTILER_SERVICE_TOKEN'],
+    configuredNote: 'The map key, REACT_APP_MAPTILER_KEY, is a build-time variable set on Vercel and Codemagic, so the backend cannot see whether it is set. MAPTILER_SERVICE_TOKEN is only the usage meter\'s.',
     observedLineId: null,
     watchlistId: 'maptiler-satellite',
-    usageNote: 'Map loads are not counted anywhere in this repo. Nothing here can say how many of the free plan sessions are left.',
+    usageNote: 'With MAPTILER_SERVICE_TOKEN set, the money hub reads this billing period\'s sessions and requests from MapTiler\'s service API, held for 30 minutes. Nothing in this repo counts map loads itself.',
+    // Unknown only while the meter has no token: buildDependencies turns this
+    // off once MAPTILER_SERVICE_TOKEN is present.
     unknownCost: true,
-    unknownAction: 'Open the MapTiler dashboard and read the session count and the plan; it is the only place either exists. The Free plan is for non-commercial use and pauses the map until the next month once it passes 5,000 sessions or 100,000 requests (maptiler.com pricing, read 2026-09-30). Flock is commercial, so the plan that fits is Flex at $30 a month, which bills extra traffic instead of pausing.',
+    unknownCostWhileUnset: true,
+    unknownAction: 'Create a Service credential in MapTiler (Account, then Credentials) and set it on Railway as MAPTILER_SERVICE_TOKEN; the money hub then reads this period\'s sessions and requests itself. Until then, read them at cloud.maptiler.com/account/analytics. The plan is Flex, $30 a month, bought 2026-10-07, and its bill is on the expense list.',
   },
   {
     id: 'carto',
@@ -1870,7 +1907,7 @@ function freeTierTextFor(groupName) {
     case 'stripe':
       return `No monthly fee. ${g.percent}% + $${g.fixedUsd.toFixed(2)} per successful card payment, plus ${g.billingPercent}% on subscriptions`;
     case 'maptiler':
-      return `${n(g.freeSessionsPerMonth)} map sessions and ${n(g.freeApiRequestsPerMonth)} API requests a month. The next tier is $${g.nextTierUsd.toFixed(2)} a month and it bills overages automatically`;
+      return `${g.plan}, $${g.baseUsd.toFixed(0)} a month: ${n(g.includedSessionsPerMonth)} map sessions, ${n(g.includedApiRequestsPerMonth)} API requests and ${n(g.includedSearchSessionsPerMonth)} search sessions included; past those $${g.overSessionPer1kUsd.toFixed(2)} per 1,000 sessions and $${g.overRequestPer1kUsd.toFixed(2)} per 1,000 requests, billed automatically up to the spending limit, where every key stops until the next month`;
     case 'push':
       return 'No charge published on either leg';
     default:
@@ -1937,10 +1974,16 @@ function buildDependencies(ctx = {}) {
     } else if (p && p.type === 'vision') {
       unitPrice = `$${RATES.vision.perThousand.toFixed(2)} per 1,000 images`;
       freeTier = `The first ${Number(RATES.vision.freePerMonth).toLocaleString('en-US')} images each month`;
+    } else if (p && p.type === 'maptiler') {
+      const m = RATES.maptiler;
+      unitPrice = `$${m.overSessionPer1kUsd.toFixed(2)} per 1,000 map sessions and $${m.overRequestPer1kUsd.toFixed(2)} per 1,000 API requests past the ${m.plan} allowance, up to a $${MAPTILER_SPEND_CAP_USD} spending limit`;
     }
 
     const envNames = Array.isArray(d.configuredEnv) ? d.configuredEnv : null;
     const found = envNames ? envNames.filter(present) : [];
+    // A cost that a meter can read stops being unknown once the meter's
+    // variable is present (MapTiler: the service token).
+    const unknownCost = !!d.unknownCost && !(d.unknownCostWhileUnset && found.length > 0);
 
     return {
       id: d.id,
@@ -1952,8 +1995,10 @@ function buildDependencies(ctx = {}) {
       freeTier,
       unpriceable,
       model,
-      unknownCost: !!d.unknownCost,
-      unknownAction: d.unknownAction || null,
+      unknownCost,
+      // The meter's how-to goes once the meter can read; every other row keeps
+      // its action whatever its cost reads.
+      unknownAction: d.unknownCostWhileUnset && !unknownCost ? null : (d.unknownAction || null),
       costsNothingBecause: d.costsNothingBecause || null,
       usageNote: d.usageNote || null,
       note: d.note || null,
@@ -2160,7 +2205,7 @@ const LICENCE_EXPOSURES = [
     fixUsdPerMonth: 30,
     resolvedBy: { expenseVendor: 'maptiler' },
     source: 'https://www.maptiler.com/cloud/pricing/',
-    checked: '2026-09-30',
+    checked: '2026-10-07',
   },
   {
     id: 'carto',
@@ -2177,6 +2222,8 @@ const LICENCE_EXPOSURES = [
 
 module.exports = {
   LICENCE_EXPOSURES,
+  MAPTILER_SPEND_CAP_USD,
+  MAPTILER_SPEND_CAP_CHECKED,
   readReconciled,
   RATES,
   GOOGLE_QUOTAS,
