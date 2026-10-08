@@ -14177,8 +14177,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setShowPicModal(false);
     const account = currentAccount();
 
+    let stillNewest = () => true;
     try {
-      await changePicture(async () => {
+      await changePicture(async (isNewest) => {
+        stillNewest = isNewest;
         const saved = await saveProfileImageUrl(url, { account });
         // The server stores one canonical form; show the one it kept.
         if (typeof saved?.profile_image_url === 'string') {
@@ -14191,7 +14193,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // Only while this avatar is still what is showing: a newer change made
       // during the wait (a removal, a photo) must not be covered by the old
       // picture, as confirmCrop already does.
-      setProfilePic((cur) => (cur === url ? previousPic : cur));
+      // Only while this is still the newest change and still what shows.
+      if (stillNewest()) setProfilePic((cur) => (cur === url ? previousPic : cur));
       // A dead session has already announced itself through api.js's own toast.
       if (err?.sessionExpired) return;
       showToast(err?.message || "That avatar didn't save. Try again.", 'error');
@@ -14207,15 +14210,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setProfilePic(null);
     setShowPicModal(false);
     const account = currentAccount();
+    let stillNewest = () => true;
     try {
       // After any upload still on the wire, so the removal is what stays.
-      await changePicture(() => removeProfileImage({ account }));
+      await changePicture((isNewest) => { stillNewest = isNewest; return removeProfileImage({ account }); });
       showToast('Photo removed.', 'success');
     } catch (err) {
       console.error('Photo removal failed:', err);
       // Only while the removal is still what is showing (no picture): an
       // avatar or photo picked during the wait stays.
-      setProfilePic((cur) => (cur === null ? previousPic : cur));
+      // Only while this is still the newest change: a later removal also
+      // shows no picture, and this one failing must not restore over it.
+      if (stillNewest()) setProfilePic((cur) => (cur === null ? previousPic : cur));
       if (err?.sessionExpired) return;
       showToast(err?.message || "That photo didn't come off. Try again.", 'error');
     }
