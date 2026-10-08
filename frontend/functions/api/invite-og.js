@@ -31,6 +31,20 @@ async function staticBanner(context) {
   });
 }
 
+// A card is kept a day in browsers and thirty days at the edge, unless the
+// route said to keep it less: a card drawn with downloaded fonts or emoji is
+// kept an hour there, so a picture missing from it is not held for a month.
+const CARD_BROWSER_SECONDS = 86400;
+const CARD_EDGE_SECONDS = 2592000;
+export function cardCacheControl(upstreamCacheControl) {
+  const m = /(?:^|[,\s])max-age=(\d+)/.exec(upstreamCacheControl || '');
+  const said = m ? Number(m[1]) : null;
+  if (said === null || said >= CARD_EDGE_SECONDS) {
+    return `public, max-age=${CARD_BROWSER_SECONDS}, s-maxage=${CARD_EDGE_SECONDS}`;
+  }
+  return `public, max-age=${Math.min(CARD_BROWSER_SECONDS, said)}, s-maxage=${said}`;
+}
+
 async function render(query) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), RENDER_TIMEOUT_MS);
@@ -45,7 +59,7 @@ async function render(query) {
       status: 200,
       headers: {
         'Content-Type': 'image/png',
-        'Cache-Control': 'public, max-age=86400, s-maxage=2592000',
+        'Cache-Control': cardCacheControl(upstream.headers.get('Cache-Control')),
         'X-Content-Type-Options': 'nosniff',
       },
     });

@@ -369,10 +369,20 @@ describe('who gets what', () => {
   });
 
   test('a Function that throws has already handed the request back to Pages\' static answer', async () => {
-    global.caches = { default: { match: async () => { throw new Error('cache unavailable'); }, put: async () => {} } };
+    // A cache that fails to answer no longer throws (it is a miss), so the
+    // failure here comes from the runtime itself.
+    global.caches = { default: { match: async () => undefined, put: async () => {} } };
     const context = pagesContext(SITE + '/i/' + GOOD_TOKEN, { headers: { 'User-Agent': UA.twitterbot } });
-    await expect(middleware(context)).rejects.toThrow('cache unavailable');
+    context.waitUntil = () => { throw new Error('runtime unavailable'); };
+    await expect(middleware(context)).rejects.toThrow('runtime unavailable');
     expect(context.passThroughOnException).toHaveBeenCalledTimes(1);
+  });
+
+  test('a cache that fails to answer is a miss: the bot still gets its preview', async () => {
+    global.caches = { default: { match: async () => { throw new Error('cache unavailable'); }, put: async () => {} } };
+    const { res } = await run(SITE + '/i/' + GOOD_TOKEN, { headers: { 'User-Agent': UA.twitterbot } });
+    expect(res.status).toBe(200);
+    expect(res.headers.get('Content-Type') || '').toMatch(/text\/html/);
   });
 });
 
@@ -1011,5 +1021,21 @@ describe('the node adapter runs an api/ handler unchanged', () => {
   test('a handler that throws rejects, which hands the request to the static fallback', async () => {
     await expect(runNodeHandler(() => { throw new Error('boom'); }, {})).rejects.toThrow('boom');
     await expect(runNodeHandler(async () => { throw new Error('later'); }, {})).rejects.toThrow('later');
+  });
+});
+
+// Follow-ups from the second review (2026-10-07).
+describe('card lifetime at the edge and a failing cache', () => {
+  test('a card keeps the route\'s shorter lifetime, and an ordinary card keeps thirty days', async () => {
+    const { cardCacheControl } = inviteOgFunction;
+    expect(cardCacheControl('public, max-age=31536000, immutable')).toBe('public, max-age=86400, s-maxage=2592000');
+    expect(cardCacheControl(null)).toBe('public, max-age=86400, s-maxage=2592000');
+    expect(cardCacheControl('public, max-age=3600')).toBe('public, max-age=3600, s-maxage=3600');
+  });
+
+  test('the cache lookup is guarded, so a cache failure is a miss', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', '..', 'functions', '_lib', 'edge-cache.js'), 'utf8');
+    expect(src).toMatch(/try \{ hit = await caches\.default\.match\(cacheKey\); \} catch \(_\) \{ hit = null; \}/);
+    expect(src).not.toMatch(/const hit = await caches\.default\.match/);
   });
 });
