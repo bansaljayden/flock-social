@@ -65,7 +65,7 @@ try:
 except ImportError:  # pragma: no cover
     fcntl = None
 
-VERSION = '1.17.1'
+VERSION = '1.17.0'
 
 # ---------------------------------------------------------------------------
 # Config
@@ -133,7 +133,6 @@ DEFAULTS = {
     # Each LED needs a 330 ohm resistor in series. README.md, The lights.
     'LED_POWER_GPIO': '0',
     'LED_LINK_GPIO': '0',
-    'LED_HEAD_GPIO': '0',
     # The V4L2 node the Lepton's USB breakout came up on. /dev/video0 on a Pi
     # with nothing else plugged in; `v4l2-ctl --list-devices` says for certain.
     'THERMAL_DEVICE': '/dev/video0',
@@ -327,7 +326,6 @@ IR_ACTIVE_LOW = bool(_cfg_number('IR_ACTIVE_LOW', int, 0, 1, 1))
 IR_DEBOUNCE_SECONDS = _cfg_number('IR_DEBOUNCE_SECONDS', float, 0.05, 10.0, 0.5)
 LED_POWER_GPIO = _cfg_number('LED_POWER_GPIO', int, 0, 27, 0)
 LED_LINK_GPIO = _cfg_number('LED_LINK_GPIO', int, 0, 27, 0)
-LED_HEAD_GPIO = _cfg_number('LED_HEAD_GPIO', int, 0, 27, 0)
 
 # The bench measured the pair (4, 12) and nothing else, and the two settings are
 # not independent: a cell is bin x bin pixels, so the SAME 12 means 48 raw pixels
@@ -3101,22 +3099,10 @@ def link_lit(now, pushed_at, sensors_live, push_interval=None):
     return int(now / (LINK_BLINK_SECONDS / 2)) % 2 == 0
 
 
-def head_lit(talking):
-    """Whether the head's own light is on: steady while its sensors answer.
-
-    It says one thing, at the wall, to whoever is fitting the unit: the cable
-    from the base reaches this head and the head is talking. LINK, on the base,
-    also needs readings to be going out, which is not something a person on a
-    ladder can fix.
-    """
-    return bool(talking)
-
-
 def led_loop():
     beam = IR_GPIO_PIN if DOOR_SENSOR in ('auto', 'beam') else None
     pins = {}
-    for name, pin in (('POWER', LED_POWER_GPIO), ('LINK', LED_LINK_GPIO),
-                      ('HEAD', LED_HEAD_GPIO)):
+    for name, pin in (('POWER', LED_POWER_GPIO), ('LINK', LED_LINK_GPIO)):
         problem = led_pin_problem(pin, beam)
         if problem:
             logger.error(f'{name} light not driven: {problem}. Pick another pin.')
@@ -3134,9 +3120,9 @@ def led_loop():
         return
     if 'POWER' in pins:
         GPIO.output(pins['POWER'], GPIO.HIGH)
-    lit = {}
+    lit = None
     while not _stop.is_set():
-        if 'LINK' in pins or 'HEAD' in pins:
+        if 'LINK' in pins:
             now = time.monotonic()
             with _lock:
                 fresh = [(_state['thermal_at'], THERMAL_STALE_AFTER),
@@ -3145,11 +3131,10 @@ def led_loop():
                 counter = _state['door_source'] == 'tof'
             talking = counter or any(at is not None and now - at <= stale
                                      for at, stale in fresh)
-            for name, want in (('LINK', link_lit(now, pushed_at, talking)),
-                               ('HEAD', head_lit(talking))):
-                if name in pins and want != lit.get(name):
-                    GPIO.output(pins[name], GPIO.HIGH if want else GPIO.LOW)
-                    lit[name] = want
+            want = link_lit(now, pushed_at, talking)
+            if want != lit:
+                GPIO.output(pins['LINK'], GPIO.HIGH if want else GPIO.LOW)
+                lit = want
         _stop.wait(0.05)
 
 
@@ -6573,7 +6558,7 @@ def main():
 
     push_thread = threading.Thread(target=push_loop, daemon=True, name='push')
     push_thread.start()
-    if LED_POWER_GPIO >= 2 or LED_LINK_GPIO >= 2 or LED_HEAD_GPIO >= 2:
+    if LED_POWER_GPIO >= 2 or LED_LINK_GPIO >= 2:
         threading.Thread(target=led_loop, daemon=True, name='leds').start()
 
     if DISPLAY_ON:
