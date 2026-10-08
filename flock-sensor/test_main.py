@@ -3632,7 +3632,7 @@ class EnclosureFiles(unittest.TestCase):
         for part in ('front', 'back'):
             self.assertIn('fill="none" stroke="#FF0000"', self.svg(part), part)
         # The back's port labels are engraved; the pill carries none, the
-        # wordmark being pressed into the printed front and filled navy.
+        # wordmark being pressed into the printed front and filled cream.
         self.assertIn('fill="#000000" stroke="none"', self.svg('back'))
         self.assertNotIn('fill="#000000"', self.svg('front'))
 
@@ -3655,8 +3655,17 @@ class EnclosureFiles(unittest.TestCase):
         for name in ('Body (printed, navy)', 'Sensor pill (cream)', 'Flux wordmark (cream)', 'Back sheet (navy)',
                      'USB port', 'Ethernet port',
                      'Raspberry Pi 5', 'PureThermal 3 + Lepton 3.5', 'VL53L8CX door counter',
-                     'Decibel meter', 'Anker A1336 battery', '7 inch touchscreen'):
+                     'Decibel meter', 'Anker A1336 battery', '7 inch touchscreen',
+                     'Stand (printed, cream)', 'Stand screw (1/4-20 x 5/8)',
+                     'Arm mount block (printed, navy)', 'CAMVATE C1991 ball head'):
             self.assertIn(name, step, name)
+        # Every connection is in the model as a named cable, so the ports on
+        # the back visibly run to the Pi and nothing is left to guess.
+        for cable in ('back USB port to Pi USB', 'back Ethernet port to Pi Ethernet',
+                      'back CHARGE port to battery', 'battery to power converter',
+                      'power converter to Pi USB-C', 'camera to Pi USB', 'screen touch to Pi USB',
+                      'screen video ribbon to Pi HDMI', '4G modem to Pi USB'):
+            self.assertIn(f'Cable: {cable}', step, cable)
         for part in ('sleeve', 'sensor-pill', 'back-sheet'):
             self.assertTrue((self.ENC / 'step' / f'flux-{part}.step').exists(), part)
 

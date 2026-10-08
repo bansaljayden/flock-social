@@ -94,7 +94,7 @@
   if (RENDER) document.body.classList.add('render');
 
   // Box size and the model frame: X across, Y front to back, Z up, millimetres.
-  const BOX = { w: 180, h: 171.5, d: 71.7 };
+  const BOX = { w: 180, h: 171.5, d: 71.7, tilt: 12, lift: 19.91, armTilt: 15, armLift: 89.01 };
 
   // How each part looks, and how far it moves when the box is pulled apart
   // (in the model's millimetres: +y is toward the back).
@@ -119,10 +119,32 @@
     'CHARGE port':               { color: 0xd8d8dc, rough: 0.3, metal: 0.7, apart: [0, 90, 0] },
     'LINK light':                { color: 0x4fd67c, rough: 0.3, glow: 0x2fa85a, apart: [0, -40, 0] },
     '1/4-20 mount nut':          { color: 0xa9abb2, rough: 0.35, metal: 0.9, apart: [0, 0, -30] },
+    'Stand (printed, cream)':    { color: 0xf4efe3, rough: 0.8, apart: [0, 0, -40] },
+    'Stand screw (1/4-20 x 5/8)':{ color: 0xa9abb2, rough: 0.35, metal: 0.9, apart: [0, 0, -60] },
+    'Arm mount block (printed, navy)': { color: 0x0f172a, rough: 0.78, apart: [0, 90, 0] },
+    'Arm mount nut':             { color: 0xa9abb2, rough: 0.35, metal: 0.9, apart: [0, 90, 0] },
+    'CAMVATE C1991 ball head':   { color: 0x141518, rough: 0.35, metal: 0.4, apart: [0, 0, 0] },
+    'C1991 screw and stem':      { color: 0xc3c6cc, rough: 0.2, metal: 1, apart: [0, 0, 0] },
+    'Wall (for scale)':          { color: 0xebe8e2, rough: 0.95, apart: [0, 0, 0] },
+    '4G antenna (flexible)':     { color: 0x9ca3af, rough: 0.5, apart: [30, 0, 0] },
     'Brass M3 inserts (8)':      { color: 0xc9a14a, rough: 0.35, metal: 0.95, apart: [0, 0, 0] },
   };
 
-  // The six assembly steps: which parts show, and which are lifted out.
+  // What sits under the box only when it stands on its stand.
+  const STAND = ['Stand (printed, cream)', 'Stand screw (1/4-20 x 5/8)'];
+  const ARM = ['CAMVATE C1991 ball head', 'C1991 screw and stem', 'Wall (for scale)'];
+  // Too big to frame the camera on: the wall runs out of the picture.
+  const NOFRAME = ['Wall (for scale)'];
+  // The back sheet and everything fixed to it, which lift off together.
+  const BACK = ['Back sheet (navy)', 'Back engraving', 'Raspberry Pi 5', 'Pi 5 ports', 'Active Cooler',
+                'SIM7600G-H 4G HAT', 'CHARGE port', 'USB port', 'Ethernet port',
+                'Arm mount block (printed, navy)', 'Arm mount nut'];
+  // Cables that run between two parts on the back sheet travel with it.
+  const BACK_CABLES = /^Cable: (back |4G modem)/;
+  const lifted = d => Object.fromEntries(BACK.map(n => [n, d]));
+
+  // The seven assembly steps: which parts show, and which are lifted out.
+  // `cables` shows every cable ('all') or only the back sheet's ('back').
   const STEPS = [
     { text: '1. Melt the eight brass inserts into the sleeve: four on the screen posts, four in the back corners.',
       show: ['Body (printed, navy)', 'Brass M3 inserts (8)'], lift: {}, view: [0.7, 1.1, 0.75] },
@@ -136,21 +158,24 @@
       show: ['Body (printed, navy)', '7 inch touchscreen', 'Sensor pill (cream)', 'Flux wordmark (cream)',
              'PureThermal 3 + Lepton 3.5', 'VL53L8CX door counter', 'LINK light'],
       lift: { 'Sensor pill (cream)': [0, -35, 0], 'Flux wordmark (cream)': [0, -25, 0] }, view: [0.75, -1.1, 0.5] },
-    { text: '5. On the back sheet: the Pi on four spacers, the Active Cooler, the 18 mm standoffs and the 4G board. The USB, Ethernet and charging ports into their holes.',
-      show: ['Back sheet (navy)', 'Back engraving', 'Raspberry Pi 5', 'Pi 5 ports', 'Active Cooler', 'SIM7600G-H 4G HAT', 'CHARGE port', 'USB port', 'Ethernet port'],
-      lift: { 'SIM7600G-H 4G HAT': [0, -28, 0], 'Active Cooler': [0, -12, 0] }, view: [-0.6, -1.1, 0.6] },
-    { text: '6. Battery in on its end, ports up. Plug every cable, stick the sound meter in its frame. Back sheet on with four M3 screws.',
-      show: Object.keys(LOOK),
-      lift: { 'Anker A1336 battery': [0, 0, 45], 'Back sheet (navy)': [0, 60, 0], 'Back engraving': [0, 60, 0],
-              'Raspberry Pi 5': [0, 60, 0], 'Pi 5 ports': [0, 60, 0], 'Active Cooler': [0, 60, 0],
-              'SIM7600G-H 4G HAT': [0, 60, 0], 'CHARGE port': [0, 60, 0] }, view: [0.75, 1.1, 0.6] },
+    { text: '5. On the back sheet: the Pi on four spacers, the Active Cooler, the 18 mm standoffs and the 4G board. The USB, Ethernet and charging ports into their holes. Press the nut into the arm mount block and screw it on from outside, plug through the sheet.',
+      show: BACK,
+      lift: { 'SIM7600G-H 4G HAT': [0, -28, 0], 'Active Cooler': [0, -12, 0],
+              'Arm mount block (printed, navy)': [0, -16, 0], 'Arm mount nut': [0, -30, 0] }, view: [-0.6, -1.1, 0.6] },
+    { text: '6. Battery in on its end, ports up. Hold the back sheet behind the box and plug every cable, each one drawn here in the colour of what it carries. Stick the sound meter in its frame.',
+      show: Object.keys(LOOK).filter(n => !STAND.includes(n) && n !== 'Back sheet (navy)' && n !== 'Back engraving'),
+      cables: 'all', lift: {}, view: [0.6, 1.0, 0.55] },
+    { text: '7. Fold the cables in and close the back sheet with four M3 screws. On a table, set it on the cream stand and turn the thumbscrew up into the nut.',
+      show: Object.keys(LOOK), cables: 'back', stand: true,
+      lift: Object.assign(lifted([0, 55, 0]), { 'Stand screw (1/4-20 x 5/8)': [0, 0, -30] }), view: [0.75, 1.1, 0.5] },
   ];
 
   const VIEWS = {
-    Assembled: { view: [0.62, -1.0, 0.42] },
-    Front: { view: [0, -1, 0.02], fov: 14 },
-    Back: { view: [0, 1, 0.02], fov: 14 },
+    Assembled: { view: [0.62, -1.0, 0.42], stand: true },
+    Front: { view: [0, -1, 0.12], fov: 14, stand: true },
+    Back: { view: [0, 1, 0.12], fov: 14, stand: true },
     Inside: { view: [0.6, 1.0, 0.55], hide: ['Back sheet (navy)', 'Back engraving'] },
+    'On the wall': { view: [1.0, -0.2, 0.06], arm: true },
   };
 
   const canvas = document.getElementById('c');
@@ -183,7 +208,24 @@
   ground.receiveShadow = true;
   scene.add(ground);
 
-  let scale = 0.001, yUp = true, center = new THREE.Vector3();
+  let scale = 0.001, yUp = true, center = new THREE.Vector3(), model = null, mode = 'stand', visRadius = 0;
+
+  // On its stand the box leans back about its front bottom edge, which is the
+  // model's origin, and sits up on the stand. On the wall it looks down at
+  // the door, lifted so the wall behind it stands on the floor. Otherwise
+  // its base is the floor.
+  function pose(m) {
+    mode = m;
+    model.rotation.x = THREE.MathUtils.degToRad(m === 'stand' ? -BOX.tilt : m === 'arm' ? BOX.armTilt : 0);
+    model.position.y = (m === 'stand' ? BOX.lift : m === 'arm' ? BOX.armLift : 0) * scale;
+    model.updateMatrixWorld(true);
+  }
+
+  function centreOnVisible() {
+    const box = new THREE.Box3();
+    Object.entries(parts).forEach(([n, p]) => { if (p.obj.visible && !NOFRAME.includes(n)) box.expandByObject(p.obj); });
+    if (!box.isEmpty()) { box.getCenter(center); visRadius = box.getBoundingSphere(new THREE.Sphere()).radius; }
+  }
   const parts = {};       // name -> { obj, base: Vector3 }
   let explode = 0, stepIndex = -1, current = 'Assembled';
 
@@ -209,7 +251,8 @@
     camera.fov = fov || 32;
     const d = new THREE.Vector3(...dir);
     const t = m2t([d.x, d.y, d.z]).normalize();
-    const radius = Math.hypot(BOX.w, BOX.h, BOX.d) * scale * 0.62;
+    // Room for the box, or for whatever is showing if that is bigger (the arm).
+    const radius = Math.max(Math.hypot(BOX.w, BOX.h, BOX.d) * scale * 0.62, visRadius * 0.92);
     const dist = radius / Math.sin(THREE.MathUtils.degToRad(camera.fov) / 2) * (camera.aspect < 1 ? 1.35 : 1.0);
     camera.position.copy(center).addScaledVector(t, dist);
     controls.target.copy(center);
@@ -227,9 +270,15 @@
     const step = stepIndex >= 0 ? STEPS[stepIndex] : null;
     const hide = (!step && VIEWS[current] && VIEWS[current].hide) || [];
     for (const [name, p] of Object.entries(parts)) {
-      const shown = step ? step.show.includes(name) : !p.userHidden && !hide.includes(name);
+      const cable = /^Cable: /.test(name);
+      const inStep = step && (cable
+        ? step.cables === 'all' || (step.cables === 'back' && BACK_CABLES.test(name))
+        : step.show.includes(name));
+      const shown = (step ? inStep : !p.userHidden && !hide.includes(name))
+        && (!STAND.includes(name) || mode === 'stand') && (!ARM.includes(name) || mode === 'arm');
+      const off0 = step && cable && step.cables === 'back' && BACK_CABLES.test(name) ? step.lift['Back sheet (navy)'] : null;
       p.obj.visible = shown;
-      const off = step ? (step.lift[name] || [0, 0, 0]) : (LOOK[name] ? LOOK[name].apart : [0, 0, 0]).map(v => v * explode);
+      const off = step ? (off0 || step.lift[name] || [0, 0, 0]) : (LOOK[name] ? LOOK[name].apart : [0, 0, 0]).map(v => v * explode);
       p.obj.position.copy(p.base).add(m2t(off));
     }
     renderList();
@@ -238,14 +287,18 @@
   function setView(name) {
     stepIndex = -1; current = name;
     document.getElementById('stepText').textContent = '';
+    pose(VIEWS[name].stand ? 'stand' : VIEWS[name].arm ? 'arm' : 'flat');
+    place(); centreOnVisible();
     frame(VIEWS[name].view, VIEWS[name].fov);
-    place(); markButtons();
+    markButtons();
   }
   function setStep(i) {
     stepIndex = i; current = 'Step ' + (i + 1);
     document.getElementById('stepText').textContent = STEPS[i].text;
+    pose(STEPS[i].stand ? 'stand' : 'flat');
+    place(); centreOnVisible();
     frame(STEPS[i].view);
-    place(); markButtons();
+    markButtons();
   }
 
   function markButtons() {
@@ -293,6 +346,13 @@
     renderList();
   });
 
+  function cableLook(name) {
+    const n = name.toLowerCase();
+    const color = /charge|battery|power|usb-c/.test(n) ? 0xe07a3f : /ribbon/.test(n) ? 0xc9a227
+      : /qwiic/.test(n) ? 0x3b82f6 : /light/.test(n) ? 0x22c55e : /antenna/.test(n) ? 0x9ca3af : 0xd6d8dd;
+    return { color, rough: 0.6, apart: [0, 0, 0], cable: true };
+  }
+
   function material(name, fallback) {
     const L = LOOK[name] || {};
     // Colours here are sRGB, as written; the renderer works in linear light.
@@ -312,14 +372,15 @@
     const size = bb.getSize(new THREE.Vector3());
     yUp = size.y > size.z;
     scale = size.x / BOX.w;
-    // Stand the box on the ground.
-    root.position.y -= yUp ? bb.min.y : 0;
+    model = root;
     scene.add(root);
-    root.updateMatrixWorld(true);
-    new THREE.Box3().setFromObject(root).getCenter(center);
     // The loader rewrites node names (spaces to underscores, slashes and dots
     // dropped) and keeps the original in userData.name; match on either.
     const plain = s => String(s || '').replace(/[\[\]\.:\/]/g, '').replace(/\s/g, '_');
+    root.traverse(o => {
+      const original = (o.userData && o.userData.name) || '';
+      if (/^Cable: /.test(original) && !LOOK[original]) LOOK[original] = cableLook(original);
+    });
     const byPlain = {};
     Object.keys(LOOK).forEach(k => { byPlain[plain(k)] = k; });
     root.traverse(o => {
@@ -336,6 +397,10 @@
         });
       }
     });
+    // Millimetres to the file's units, measured on the body: the whole model
+    // is wider than the box once the wall is in it.
+    const body = parts['Body (printed, navy)'];
+    if (body) scale = new THREE.Box3().setFromObject(body.obj).getSize(new THREE.Vector3()).x / BOX.w;
     // Keep the list in the order the parts are described.
     const ordered = {};
     Object.keys(LOOK).forEach(k => { if (parts[k]) ordered[k] = parts[k]; });
