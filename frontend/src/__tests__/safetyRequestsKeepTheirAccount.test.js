@@ -190,6 +190,13 @@ describe('a slow answer does not act on the next account, and a failure does not
     expect(removal).toMatch(/setProfilePic\(\(cur\) => \(cur === null \? previousPic : cur\)\);/);
     expect(avatar).not.toMatch(/setProfilePic\(previousPic\)/);
     expect(removal).not.toMatch(/setProfilePic\(previousPic\)/);
+    // Round 16: and only while it is still the newest change. Two removals
+    // around an avatar both show no picture, so the on-screen check alone let
+    // the first one's failure restore the old photo over the second.
+    expect(avatar).toMatch(/await changePicture\(async \(isNewest\) => \{\s*stillNewest = isNewest;/);
+    expect(avatar).toMatch(/if \(stillNewest\(\)\) setProfilePic\(\(cur\) => \(cur === url \? previousPic : cur\)\);/);
+    expect(removal).toMatch(/await changePicture\(\(isNewest\) => \{ stillNewest = isNewest; return removeProfileImage\(\{ account \}\); \}\);/);
+    expect(removal).toMatch(/if \(stillNewest\(\)\) setProfilePic\(\(cur\) => \(cur === null \? previousPic : cur\)\);/);
 
     // The reported sequence, played through the two updaters: picture P, a
     // removal (screen: none), then avatar G picked while it waits (screen: G).

@@ -607,6 +607,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
   // 'load', which used to mark a blank basemap ready and hide the failure panel.
   const [keyRefused, setKeyRefused] = useState(false);
   const keyRefusedRef = useRef(false);
+  const keyProbeAtRef = useRef(0);
   /* The map surface's own height, watched because the controls on it are
      positioned from its bottom edge and this box has no floor: it is the
      flex remainder under a search bar, whatever banners are up and the
@@ -1082,10 +1083,21 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         const raw = e?.error?.message || e?.error || e;
         console.warn('[Map]', typeof raw === 'string' ? scrubUrlTokens(raw) : scrubUrlTokens(String(raw && raw.message ? raw.message : raw)));
         const status = Number(e?.error?.status);
-        if (status === 401 || status === 403) {
+        const refuse = () => {
+          if (cancelled) return;
           keyRefusedRef.current = true;
           setKeyRefused(true);
           setMapFailed(true);
+        };
+        if (status === 401 || status === 403) refuse();
+        else if (!status && MAPTILER_KEY && !keyRefusedRef.current && Date.now() - keyProbeAtRef.current > 60000) {
+          // With the SDK's device cache on, a refused tile arrives as bytes
+          // and fails to parse with no status. A TileJSON request is free
+          // (not billed) and answers 401/403 when the key itself is refused.
+          keyProbeAtRef.current = Date.now();
+          fetch(`https://api.maptiler.com/tiles/v4/tiles.json?key=${encodeURIComponent(MAPTILER_KEY)}`, { cache: 'no-store' })
+            .then((r) => { if (r.status === 401 || r.status === 403) refuse(); })
+            .catch(() => {});
         }
       });
       failTimer = setTimeout(() => { if (!mapLoadedRef.current) setMapFailed(true); }, 12000);
@@ -1303,6 +1315,9 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
      the light/dark swap below. (HTML markers survive a style swap; sources and
      layers do not.) */
   const rehydrateAfterStyleSwap = useCallback((map) => {
+    // A fresh style is a fresh test of the key: a refusal from before clears
+    // here and is set again by the error handler if the key is still refused.
+    if (keyRefusedRef.current) { keyRefusedRef.current = false; setKeyRefused(false); }
     addOverlayLayers(map, mapIsDarkRef.current);
     hideBasemapTwins(map, venuesRef.current, mapIsDarkRef.current);
     // Re-feed accuracy data

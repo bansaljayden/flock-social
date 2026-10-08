@@ -241,6 +241,29 @@ describe('code review of the map work (2026-10-08)', () => {
     unmount();
   });
 
+  test('a tile error with no status (the device cache hides it) asks the free TileJSON once, and a refusal there shows the panel', async () => {
+    const realFetch = global.fetch;
+    global.fetch = jest.fn(async () => ({ status: 403 }));
+    try {
+      const { map, unmount, findByText } = await builtMap();
+      act(() => { map.fire('load'); });
+      act(() => { map.fire('error', { error: { message: 'Unimplemented type: 4' } }); });
+      act(() => { map.fire('error', { error: { message: 'Unimplemented type: 4' } }); });
+      await findByText('The map could not load. Search still works.');
+      const probes = global.fetch.mock.calls.filter(([u]) => String(u).includes('/tiles/v4/tiles.json'));
+      expect(probes).toHaveLength(1);
+      unmount();
+    } finally {
+      global.fetch = realFetch;
+    }
+  });
+
+  test('a refusal clears when a new style loads, so a key that works again does not stay covered', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'components', 'map', 'MapLibreMapView.js'), 'utf8');
+    const body = src.slice(src.indexOf('const rehydrateAfterStyleSwap = useCallback((map) => {'));
+    expect(body.slice(0, 400)).toMatch(/if \(keyRefusedRef\.current\) \{ keyRefusedRef\.current = false; setKeyRefused\(false\); \}/);
+  });
+
   test('Sentry scrubs console breadcrumb arguments and exception values, not only messages', () => {
     const src = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
     const block = src.slice(src.indexOf('beforeSend(event) {'), src.indexOf('beforeSendTransaction(event) {'));
