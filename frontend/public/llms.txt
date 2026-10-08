@@ -55,19 +55,20 @@ Updated: October 6, 2026.
 
 ## Key facts about the crowd model
 
-How the crowd numbers in the app perform, measured on 4,183 real live readings
-at venues in the Lehigh Valley and Miami, held out from September 6 to 8, 2026:
+How the crowd numbers in the app perform, measured on 119,939 real live readings
+at venues in Philadelphia, the Lehigh Valley and Miami, held out from September 9
+to October 8, 2026:
 
 - Flock collects live busyness readings every hour. A venue's number is its own
   usual pattern for that hour, moved by its newest live readings where Flock has
   them.
-- 56.0% of Flock's crowd numbers named the exact crowd level of the live
-  reading, 78.8% landed within one level, and 53.8% within 10 points. Before
-  the September 2026 upgrade the same readings scored 32.2%, 58.5% and 28.6%.
-- The average miss was 17.1 points, down from 30.6, with no systematic lean
+- 54.9% of Flock's crowd numbers named the exact crowd level of the live
+  reading, 78.4% landed within one level, and 55.2% within 10 points. Before
+  the September 2026 upgrade the same readings scored 30.8%, 58.3% and 26.9%.
+- The average miss was 18.0 points, down from 30.9, with no systematic lean
   high or low.
-- Where the venue had a live reading from the hour before, which 1,716 of those
-  4,183 readings did, 86.1% of numbers named the exact crowd level and 91.7%
+- Where the venue had a live reading from the hour before, which 57,900 of those
+  119,939 readings did, 77.0% of numbers named the exact crowd level and 88.6%
   landed within one.
 - When Flock has no pattern for a venue yet, a rule-based engine answers and
   the number is tagged with the engine that produced it.

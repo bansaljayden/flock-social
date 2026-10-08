@@ -418,7 +418,7 @@ test('with curve_offset and the nowcast on, Birdie can quote the measured accura
   // checked against it.
   assert.match(served.population, /Lehigh/);
   assert.match(served.population, /Miami/);
-  assert.ok(prompt.includes(`Tested against ${served.rows.toLocaleString('en-US')} real live readings it had not seen (September 6 to 8, 2026), all from venues in the Lehigh Valley and Miami that have live readings`),
+  assert.ok(prompt.includes(`Tested against ${served.rows.toLocaleString('en-US')} real live readings it had not seen (September 9 to October 8, 2026), all from venues in Philadelphia, the Lehigh Valley and Miami that have live readings`),
     'the line no longer says which readings the figures were measured on');
   assert.ok(!/numbers overall/.test(prompt), 'Birdie is still told the figure describes every number Flock makes');
   assert.match(prompt, /not every venue or city Flock covers/);
