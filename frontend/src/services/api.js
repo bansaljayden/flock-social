@@ -2456,8 +2456,8 @@ export async function updateProfile({ name, email, phone, bio, current_password,
 
 // POST /api/auth/logout-all bumps token_version: every device is signed out,
 // this one included. Built and tested long before anything called it.
-export async function logoutAll() {
-  return request('/api/auth/logout-all', { method: 'POST' });
+export async function logoutAll({ account } = {}) {
+  return request('/api/auth/logout-all', { method: 'POST', ...(account !== undefined ? { account } : {}) });
 }
 
 // The whole profile row, which is where `phone_discoverable` lives.

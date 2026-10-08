@@ -14188,7 +14188,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       showToast('Profile picture updated.', 'success');
     } catch (err) {
       console.error('Avatar save failed:', err);
-      setProfilePic(previousPic);
+      // Only while this avatar is still what is showing: a newer change made
+      // during the wait (a removal, a photo) must not be covered by the old
+      // picture, as confirmCrop already does.
+      setProfilePic((cur) => (cur === url ? previousPic : cur));
       // A dead session has already announced itself through api.js's own toast.
       if (err?.sessionExpired) return;
       showToast(err?.message || "That avatar didn't save. Try again.", 'error');
@@ -14210,7 +14213,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       showToast('Photo removed.', 'success');
     } catch (err) {
       console.error('Photo removal failed:', err);
-      setProfilePic(previousPic);
+      // Only while the removal is still what is showing (no picture): an
+      // avatar or photo picked during the wait stays.
+      setProfilePic((cur) => (cur === null ? previousPic : cur));
       if (err?.sessionExpired) return;
       showToast(err?.message || "That photo didn't come off. Try again.", 'error');
     }

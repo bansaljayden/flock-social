@@ -58,7 +58,7 @@
  * character. Nothing was renamed, reformatted or improved on the way across.
  */
 import React from 'react';
-import { deleteAccount, trackNotificationPermission, updatePaymentMethods, logoutAll, getCurrentUser, clearLocalSession, getProStatus, openProPortal, cancelProSubscription, resumeProSubscription, getAnalyticsChoice, setAnalyticsChoice, knownAnalyticsChoice } from '../services/api';
+import { deleteAccount, trackNotificationPermission, updatePaymentMethods, logoutAll, currentAccount, getCurrentUser, clearLocalSession, getProStatus, openProPortal, cancelProSubscription, resumeProSubscription, getAnalyticsChoice, setAnalyticsChoice, knownAnalyticsChoice } from '../services/api';
 import { getNotificationStatus, requestNotificationPermission } from '../services/firebase';
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
@@ -1006,8 +1006,17 @@ export default function ProfileSettings({
               // out. When it fails, this phone still signs out, and the login
               // screen says which one happened instead of claiming both
               // (settings audit, 2026-09-05).
+              // Held to the account that tapped it. The answer can arrive after
+              // a plain sign-out and somebody else's sign-in, and signing out
+              // whoever is here by then ended their session and threw away
+              // their unsent settings.
+              const account = currentAccount();
               let everywhere = true;
-              try { await logoutAll(); } catch (_) { everywhere = false; }
+              try { await logoutAll({ account }); } catch (err) {
+                if (err?.sessionEnded) return;
+                everywhere = false;
+              }
+              if (currentAccount() !== account) return;
               if (onLogout) onLogout(sessionEndCopy ? sessionEndCopy(everywhere ? 'signed_out_everywhere' : 'signed_out_here_only') : undefined);
             }} style={{ width: '100%', minHeight: '44px', marginTop: '16px', padding: '12px', textAlign: 'left', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)', cursor: 'pointer', fontWeight: '600' }}>
               Sign out everywhere
