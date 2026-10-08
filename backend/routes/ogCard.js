@@ -7,10 +7,12 @@
 // points og:image at the website's own /api/invite-og, and on Cloudflare Pages
 // that URL is a cached proxy in front of this route. Drawing the card there
 // does not fit the free plan (one render is 20-130 ms of CPU against a 10 ms
-// limit), so it is drawn here, by the same renderer (@vercel/og, pinned to the
-// website's 0.8.6) from the same element tree (frontend/api/_og-card.js, copied
-// below). __tests__/ogCard.test.js holds the copy to that file and the picture
-// to the one the library draws for the website, byte for byte.
+// limit), so it is drawn here, from the same element tree
+// (frontend/api/_og-card.js, copied below) by the same renderer the website
+// uses: @vercel/og 0.8.6 is satori 0.16.0 and resvg 2.4.0 with one bundled
+// font, and this file calls those two directly with that font (the renderer
+// section below says why). __tests__/ogCard.test.js holds the copy to that
+// file and the picture to the one the library draws, byte for byte.
 //
 // ONLY SIGNED CARDS ARE DRAWN. The preview signs each card URL with
 // OG_CARD_SECRET, which the website and this service share: HMAC-SHA256 over
@@ -30,6 +32,7 @@ const express = require('express');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { UPSTREAM_TIMEOUT_MS, upstreamSignal } = require('../utils/upstream');
 
 // ── The card: a copy of frontend/api/_og-card.js ────────────────────────────
 // Constants and functions verbatim, so the two can be compared as text. The
@@ -204,20 +207,36 @@ function oneValue(value) {
 }
 
 // ── The renderer, loaded once ───────────────────────────────────────────────
-// On the first card rather than at boot: the library is an ES module carrying
-// two wasm binaries, about 30 MB of the process once it has drawn a card, and
-// most boots never draw one. A failed load is not remembered, so the next
-// request tries again.
+// On the first card rather than at boot: satori and resvg carry two wasm
+// binaries, about 30 MB of the process once a card has been drawn, and most
+// boots never draw one. A failed load is not remembered, so the next request
+// tries again; a successful one is kept for good, because resvg can be
+// initialised only once per process.
 //
-// THE FONT IS PARSED ONCE, which is most of the memory story. As shipped, the
-// library hands satori a new font list on every render, and satori keeps a
-// parsed font per list, so it parses the bundled font again each time. In
-// Node, 200 renders back to back took the process from 81 MB to 249 MB
-// resident while heapUsed stayed at 12 MB: garbage, which V8 hands back only
-// after a quiet spell. Handing satori one list every time, holding the very
-// file the library reads for itself, took the same run to 115 MB and draws
-// the same bytes.
-let loading = null;
+// WHY NOT THE LIBRARY'S ImageResponse. @vercel/og's render step hands satori a
+// loader of its own for text the bundled font cannot draw (emoji, other
+// scripts), and in a process that lives until the next deploy that loader is
+// the problem. It keeps every download in a module-level map that never
+// shrinks. It keeps an error page from the emoji CDN as if it were the emoji,
+// for good. When a font download fails it draws the card without the text and
+// logs the text. And its downloads have no deadline. Nothing in ImageResponse's
+// options replaces it. So this file calls satori and resvg itself, with the
+// options, the font and the PNG step the library's render step uses, and
+// passes a loader of its own (the next section). The library stays a
+// dependency for its font file and because it pins the satori and resvg the
+// website draws with; __tests__/ogCard.test.js holds this service's copies of
+// both to those pins.
+//
+// THE FONT IS PARSED ONCE, which is most of the memory story. satori keeps a
+// parsed font per font LIST it is handed, and the library hands it a new list
+// on every render, so it parses the bundled font again each time. In Node, 200
+// renders back to back took the process to about 250 MB resident that way
+// while heapUsed stayed small: garbage, which V8 hands back only after a quiet
+// spell. One list for every card that needs nothing else, holding the very
+// file the library reads, took the same run to about 120 MB and draws the same
+// bytes.
+let realRenderer = null;
+let rendererForTests = null;
 
 // The one font entry the library builds for itself on every render
 // (dist/index.node.js): same name, weight and style.
@@ -226,79 +245,314 @@ function fontList(data) {
 }
 
 function loadRenderer() {
-  if (!loading) {
-    loading = (async () => {
-      const og = await import('@vercel/og');
-      const dist = path.join(path.dirname(require.resolve('@vercel/og/package.json')), 'dist');
-      const fontData = await fs.promises.readFile(path.join(dist, 'noto-sans-v27-latin-regular.ttf'));
-      return { ImageResponse: og.ImageResponse, fontData, sharedFonts: fontList(fontData) };
+  if (rendererForTests) return Promise.resolve(rendererForTests);
+  if (!realRenderer) {
+    realRenderer = (async () => {
+      const ogDist = path.join(path.dirname(require.resolve('@vercel/og/package.json')), 'dist');
+      const [satori, resvg, fontData, wasm] = await Promise.all([
+        import('satori'),
+        import('@resvg/resvg-wasm'),
+        fs.promises.readFile(path.join(ogDist, 'noto-sans-v27-latin-regular.ttf')),
+        fs.promises.readFile(require.resolve('@resvg/resvg-wasm/index_bg.wasm')),
+      ]);
+      await resvg.initWasm(wasm);
+      return { satori: satori.default, Resvg: resvg.Resvg, fontData, sharedFonts: fontList(fontData) };
     })().catch((err) => {
-      loading = null;
+      realRenderer = null;
       throw err;
     });
   }
-  return loading;
+  return realRenderer;
 }
 
 // Text the bundled font draws by itself: printable ASCII, Latin-1, and the
 // curly quotes, dashes, bullet and ellipsis that phones type for you. It has a
-// glyph for every one of these. For anything else, an emoji or another script,
-// satori asks the library for a fallback font or an emoji picture, which the
-// library downloads (fonts.googleapis.com, cdn.jsdelivr.net), and adds what it
-// gets to the font list it was given. On the shared list that would keep every
-// fallback font ever fetched, so those cards get a list of their own, parsed
-// for that one render, which is what the library does for every card anyway.
+// glyph for every one of these, so satori never asks for anything else and the
+// card can use the shared list. Anything outside this set, an emoji or another
+// script, may need a download, so those cards get a list of their own, parsed
+// for that one render and dropped after it, and the loader below.
 const SHARED_FONT_TEXT = /^[\u0020-\u007E\u00A0-\u00FF\u2013\u2014\u2018\u2019\u201C\u201D\u2022\u2026]*$/;
 
 function usesSharedFont(params) {
   return SHARED_FONT_TEXT.test(params.name + params.when);
 }
 
-async function drawPng(params, sharedFont) {
-  const { ImageResponse, fontData, sharedFonts } = await loadRenderer();
-  const response = new ImageResponse(cardTree(params), {
-    width: CARD_W,
-    height: CARD_H,
-    fonts: sharedFont ? sharedFonts : fontList(fontData),
-  });
-  return Buffer.from(await response.arrayBuffer());
+// The shared list must never grow, so a shared card that asks for anything
+// fails instead (the gate above says it cannot happen).
+async function refuseFallback() {
+  const err = new Error('A card on the shared font list asked for a fallback.');
+  err.name = 'SharedFontFallback';
+  throw err;
 }
 
-// Swapped only by __tests__/ogCard.test.js, to watch the line below without
+async function drawPng(params, sharedFont, signal) {
+  const { satori, Resvg, fontData, sharedFonts } = await loadRenderer();
+  const svg = await satori(cardTree(params), {
+    width: CARD_W,
+    height: CARD_H,
+    debug: false,
+    fonts: sharedFont ? sharedFonts : fontList(fontData),
+    loadAdditionalAsset: sharedFont ? refuseFallback : fallbackAssets(signal),
+  });
+  const resvg = new Resvg(svg, { fitTo: { mode: 'width', value: CARD_W } });
+  try {
+    const image = resvg.render();
+    try {
+      return Buffer.from(image.asPng());
+    } finally {
+      image.free();
+    }
+  } finally {
+    resvg.free();
+  }
+}
+
+// ── Text the bundled font cannot draw ───────────────────────────────────────
+// For an emoji satori asks for a picture, and for another script a font. Both
+// come from where the library gets them, with the same requests, so the card
+// draws the same bytes as the website's:
+//   * an emoji is Twemoji 14.0.2's SVG from cdn.jsdelivr.net, as a data URL;
+//   * another script is the Noto family Google Fonts serves for it. Which
+//     family draws which character comes from the unicode-range lines in the
+//     family's stylesheet (fonts.googleapis.com, read once per family), and
+//     the font itself is a subset Google cuts for exactly that text: a second
+//     stylesheet names the file, on fonts.gstatic.com. The two User-Agent
+//     strings are the library's, and they matter: Google answers each with a
+//     different stylesheet, the first listing unicode ranges and the second
+//     linking a TrueType file.
+// What differs from the library is everything around a download:
+//   * a non-2xx answer, a network error, or a stylesheet missing the piece it
+//     was asked for fails the render, so a card with a hole in it is answered
+//     503 and is never drawn, kept or cached anywhere;
+//   * every download carries the render's deadline (FALLBACK_DEADLINE_MS) and
+//     is abandoned when the render ends;
+//   * nothing is kept between renders except the unicode ranges, at most one
+//     entry per family in FALLBACK_FAMILIES, so memory cannot grow with card
+//     text;
+//   * nothing here logs, because a font URL carries card text.
+const EMOJI_SVG = 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/svg/';
+const FONT_CSS = 'https://fonts.googleapis.com/css2?';
+const FONT_FILES = 'https://fonts.gstatic.com/';
+const RANGES_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36';
+const FONT_FILE_AGENT = 'Mozilla/5.0 (Macintosh; U; Intel Mac OS X 10_6_8; de-at) AppleWebKit/533.21.1 (KHTML, like Gecko) Version/5.0.5 Safari/533.21.1';
+
+// The Google Fonts families for each script code satori names, the table the
+// library uses. A code that is not here gets no font, as in the library: the
+// character is left off the card.
+const FALLBACK_FAMILIES = Object.freeze({
+  'ja-JP': ['Noto+Sans+JP'],
+  'ko-KR': ['Noto+Sans+KR'],
+  'zh-CN': ['Noto+Sans+SC'],
+  'zh-TW': ['Noto+Sans+TC'],
+  'zh-HK': ['Noto+Sans+HK'],
+  'th-TH': ['Noto+Sans+Thai'],
+  'bn-IN': ['Noto+Sans+Bengali'],
+  'ar-AR': ['Noto+Sans+Arabic'],
+  'ta-IN': ['Noto+Sans+Tamil'],
+  'ml-IN': ['Noto+Sans+Malayalam'],
+  'he-IL': ['Noto+Sans+Hebrew'],
+  'te-IN': ['Noto+Sans+Telugu'],
+  devanagari: ['Noto+Sans+Devanagari'],
+  kannada: ['Noto+Sans+Kannada'],
+  symbol: ['Noto+Sans+Symbols', 'Noto+Sans+Symbols+2'],
+  math: ['Noto+Sans+Math'],
+  unknown: ['Noto+Sans'],
+});
+
+// family -> the code points it covers, from its stylesheet. Keys come only
+// from FALLBACK_FAMILIES, so this holds at most one entry per family there.
+const familyRanges = new Map();
+
+// Every download goes through this. The render's own deadline rides in as
+// `signal`; a caller that brings none still gets the same length on its own,
+// so no download here can outlive FALLBACK_DEADLINE_MS. Swapped only by
+// __tests__/ogCard.test.js.
+function downloadOnce(url, { headers, signal } = {}) {
+  return fetch(url, { headers, signal: signal || upstreamSignal('cardAssets') });
+}
+let download = downloadOnce;
+
+function refused(message) {
+  const err = new Error(message);
+  err.name = 'DownloadRefused';
+  return err;
+}
+
+async function fetchOk(url, init) {
+  const res = await download(url, init);
+  if (!res || !res.ok) {
+    try { await res.body.cancel(); } catch { /* nothing to free */ }
+    throw refused('A font or emoji download was not answered with its file.');
+  }
+  return res;
+}
+
+async function loadRanges(families, signal) {
+  const missing = families.filter((f) => !familyRanges.has(f));
+  if (!missing.length) return;
+  const url = FONT_CSS + missing.map((f) => `family=${f}&`).join('') + 'display=swap';
+  const css = await (await fetchOk(url, { headers: { 'User-Agent': RANGES_AGENT }, signal })).text();
+  const found = new Map();
+  for (const block of css.split('@font-face').slice(1)) {
+    const family = /font-family:\s*'([^']+)'/.exec(block);
+    const ranges = /unicode-range:\s*([^;]+);/.exec(block);
+    if (!family || !ranges) continue;
+    const name = family[1].replace(/ /g, '+');
+    const list = found.get(name) || [];
+    for (const part of ranges[1].split(',')) {
+      const [from, to] = part.trim().replace(/U\+/g, '').split('-').map((hex) => parseInt(hex, 16));
+      list.push(to === undefined || Number.isNaN(to) ? from : [from, to]);
+    }
+    found.set(name, list);
+  }
+  if (missing.some((f) => !found.has(f))) throw refused('A font stylesheet left out a family it was asked for.');
+  for (const f of missing) familyRanges.set(f, found.get(f));
+}
+
+function covers(family, ch) {
+  const ranges = familyRanges.get(family);
+  const point = ch.codePointAt(0);
+  return !!ranges && !!point && ranges.some((r) => (typeof r === 'number' ? r === point : r[0] <= point && point <= r[1]));
+}
+
+async function fontFile(family, part, signal) {
+  const url = `${FONT_CSS}family=${family}&text=${encodeURIComponent(part)}`;
+  const css = await (await fetchOk(url, { headers: { 'User-Agent': FONT_FILE_AGENT }, signal })).text();
+  const src = /src:\s*url\(([^)]+)\)\s*format\('(?:opentype|truetype)'\)/.exec(css);
+  // Only Google's own font host: the API makes outside calls to the three
+  // hosts named above and to nothing a stylesheet could point it at.
+  if (!src || !src[1].startsWith(FONT_FILES)) throw refused('A font stylesheet named no font file.');
+  return (await fetchOk(src[1], { signal })).arrayBuffer();
+}
+
+// Twemoji names a picture by its code points in hex, joined by dashes, with
+// the emoji presentation selector (U+FE0F) dropped unless the emoji is a
+// zero-width-joiner sequence.
+function twemojiName(grapheme) {
+  const bare = grapheme.includes('\u200d') ? grapheme : grapheme.replace(/\ufe0f/g, '');
+  return [...bare].map((ch) => ch.codePointAt(0).toString(16)).join('-');
+}
+
+// satori's loadAdditionalAsset for one render: (code, text) -> an emoji
+// picture as a data URL, or the fallback fonts for that text. The font entries
+// are built exactly as the library builds them, names and languages included,
+// because satori reads both when it picks a font for a character.
+function fallbackAssets(signal) {
+  return async (code, chars) => {
+    if (code === 'emoji') {
+      const res = await fetchOk(`${EMOJI_SVG}${twemojiName(chars)}.svg`, { signal });
+      return 'data:image/svg+xml;base64,' + btoa(await res.text());
+    }
+    const codes = code.split('|');
+    const families = codes.flatMap((c) => (Object.hasOwn(FALLBACK_FAMILIES, c) ? FALLBACK_FAMILIES[c] : []));
+    if (!families.length) return [];
+    await loadRanges(families, signal);
+    const partFor = new Map();
+    for (const ch of chars) {
+      const family = families.find((f) => covers(f, ch));
+      if (family) partFor.set(family, (partFor.get(family) || '') + ch);
+    }
+    const files = await Promise.all([...partFor].map(([family, part]) => fontFile(family, part, signal)));
+    return files.map((data, i) => ({
+      name: `satori_${codes[i]}_fallback_${chars}`,
+      data,
+      weight: 400,
+      style: 'normal',
+      lang: codes[i] === 'unknown' ? undefined : codes[i],
+    }));
+  };
+}
+
+// Swapped only by __tests__/ogCard.test.js, to watch the lines below without
 // drawing anything.
 let drawCard = drawPng;
+
+// ── A deadline for a card that downloads ────────────────────────────────────
+// A shared card is CPU alone, 15 to 30 ms, and needs none. A fallback card
+// waits on three outside hosts, and fetch's own timeouts run to minutes, which
+// would hold the fallback line for all of them. FALLBACK_DEADLINE_MS is the
+// outbound deadline utils/upstream.js records for these downloads, well inside
+// the website proxy's 4 s; past it the render's downloads are aborted, the
+// answer is a 503, and the line moves on at once.
+const FALLBACK_DEADLINE_MS = UPSTREAM_TIMEOUT_MS.cardAssets;
+let fallbackDeadlineMs = FALLBACK_DEADLINE_MS;
+
+async function drawWithDeadline(params, shared) {
+  if (shared) return drawCard(params, true);
+  const controller = new AbortController();
+  let timer = null;
+  const deadline = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const err = new Error('The card took too long to draw.');
+      err.name = 'TimeoutError';
+      controller.abort(err);
+      reject(err);
+    }, fallbackDeadlineMs);
+    timer.unref();
+  });
+  const drawing = drawCard(params, false, controller.signal);
+  // A render cut off by the deadline settles after nobody is listening.
+  drawing.catch(() => {});
+  try {
+    return await Promise.race([drawing, deadline]);
+  } finally {
+    clearTimeout(timer);
+    // Whatever this render still has in flight stops now, success or not.
+    controller.abort();
+  }
+}
 
 // ── One render at a time ────────────────────────────────────────────────────
 // A warm render is 15 to 30 ms of CPU on the only thread, nearly all of it
 // synchronous, so a second render alongside buys no throughput; it only adds
 // another render's garbage to the heap. Each kind of card gets its own line,
-// because only a fallback render waits on the network, and the library's
-// downloads carry no timeout of their own: a stalled one holds up other
-// emoji and non-Latin cards, never the rest. Past MAX_WAITING the answer is a
-// 503 at once. The website shows its static banner for that one fetch and
-// caches nothing, so the next fetch of the same URL can still get the card.
+// because only a fallback render waits on the network: a slow download holds
+// up other emoji and non-Latin cards, never the rest. Past MAX_WAITING the
+// answer is a 503 at once, and on the fallback line a card still waiting after
+// FALLBACK_WAIT_MS gives up the same way, since the website proxy stopped
+// listening at 4 s and a render nobody waits for only delays the next card.
+// The website shows its static banner for that one fetch and caches nothing,
+// so the next fetch of the same URL can still get the card.
 const MAX_WAITING = 8;
+const FALLBACK_WAIT_MS = 4000;
+let fallbackWaitMs = FALLBACK_WAIT_MS;
 
-function renderLine() {
+function renderLine(maxWaitMs) {
   let running = false;
   const waiting = [];
   return {
-    // Resolves true once this request holds the line, or false at once when
-    // the line is already full.
+    // Resolves true once this request holds the line, or false when the line
+    // is already full or the wait runs out first.
     enter() {
       if (!running) {
         running = true;
         return Promise.resolve(true);
       }
       if (waiting.length >= MAX_WAITING) return Promise.resolve(false);
-      return new Promise((resolve) => waiting.push(resolve));
+      return new Promise((resolve) => {
+        const turn = { resolve, timer: null };
+        const limit = maxWaitMs();
+        if (Number.isFinite(limit)) {
+          turn.timer = setTimeout(() => {
+            const at = waiting.indexOf(turn);
+            if (at !== -1) waiting.splice(at, 1);
+            resolve(false);
+          }, limit);
+          turn.timer.unref();
+        }
+        waiting.push(turn);
+      });
     },
     // The turn passes straight to the next in line, so a newcomer can never
     // overtake somebody who was already waiting.
     leave() {
       const next = waiting.shift();
-      if (next) next(true);
-      else running = false;
+      if (next) {
+        clearTimeout(next.timer);
+        next.resolve(true);
+      } else {
+        running = false;
+      }
     },
     state() {
       return { running: running ? 1 : 0, waiting: waiting.length };
@@ -306,15 +560,15 @@ function renderLine() {
   };
 }
 
-const sharedLine = renderLine();
-const fallbackLine = renderLine();
+const sharedLine = renderLine(() => Infinity);
+const fallbackLine = renderLine(() => fallbackWaitMs);
 
 // ── Recently drawn cards ────────────────────────────────────────────────────
 // Every input is in the URL, so a card URL always draws the same picture. The
-// website's proxy keeps each URL for 30 days, but per Cloudflare data center,
-// so one card can arrive here from several of them, and anybody can replay a
-// real card URL straight at this service. Keeping the last CACHE_MAX makes
-// both free. About 30 KB each; the oldest goes first.
+// website's proxy keeps each URL, but per Cloudflare data center, so one card
+// can arrive here from several of them, and anybody can replay a real card URL
+// straight at this service. Keeping the last CACHE_MAX makes both free. About
+// 30 KB each; the oldest goes first.
 const CACHE_MAX = 64;
 const drawnCards = new Map();
 
@@ -323,6 +577,45 @@ function rememberCard(key, png) {
   drawnCards.set(key, png);
   while (drawnCards.size > CACHE_MAX) drawnCards.delete(drawnCards.keys().next().value);
 }
+
+// ── One render per card ─────────────────────────────────────────────────────
+// Requests for a card that is already being drawn wait for that render rather
+// than queueing another: a preview shared into a group chat is fetched by
+// several bots at once, and each would otherwise take a place in the line and
+// find the card drawn when its turn came. The entry lives exactly as long as
+// its render and is deleted when it settles, success or not.
+const rendering = new Map();
+
+// Resolves with the PNG, or with null when the line had no room for it.
+async function drawInLine(key, params, shared) {
+  const line = shared ? sharedLine : fallbackLine;
+  if (!(await line.enter())) return null;
+  try {
+    const png = await drawWithDeadline(params, shared);
+    rememberCard(key, png);
+    return png;
+  } finally {
+    line.leave();
+  }
+}
+
+function cardFor(key, params, shared) {
+  let pending = rendering.get(key);
+  if (!pending) {
+    pending = drawInLine(key, params, shared).finally(() => rendering.delete(key));
+    rendering.set(key, pending);
+  }
+  return pending;
+}
+
+// What the answer tells the website's proxy, Cloudflare and the preview bots.
+// Every input is in the URL, so the picture at a URL never changes, and a card
+// the bundled font draws alone may be kept for a year. A card drawn with
+// downloaded fonts or emoji gets an hour, the time Vercel's CDN kept a card:
+// every download it used came back whole, but what Google or jsDelivr serve
+// is outside this repo, and an hour bounds any surprise in it.
+const SHARED_CACHE_CONTROL = 'public, max-age=31536000, immutable';
+const FALLBACK_CACHE_CONTROL = 'public, max-age=3600';
 
 const router = express.Router();
 
@@ -342,36 +635,24 @@ router.get('/invite', async (req, res) => {
     }
 
     const key = n + '\n' + w + '\n' + g;
-    let png = drawnCards.get(key);
+    const params = cardParams({ n, w, g });
+    const shared = usesSharedFont(params);
+    // A card already drawn is served without queueing, so a full line never
+    // turns a replayed real card into a 503.
+    const png = drawnCards.get(key) || await cardFor(key, params, shared);
     if (!png) {
-      const params = cardParams({ n, w, g });
-      const shared = usesSharedFont(params);
-      const line = shared ? sharedLine : fallbackLine;
-      if (!(await line.enter())) {
-        res.set('Retry-After', '5');
-        return refuse(503, 'Too many cards are being drawn. Try again in a moment.');
-      }
-      try {
-        // Somebody ahead in the line may have drawn this same card already.
-        png = drawnCards.get(key);
-        if (!png) {
-          png = await drawCard(params, shared);
-          rememberCard(key, png);
-        }
-      } finally {
-        line.leave();
-      }
+      res.set('Retry-After', '5');
+      return refuse(503, 'Too many cards are being drawn. Try again in a moment.');
     }
 
     res.set({
       'Content-Type': 'image/png',
-      // Every input is in the URL, so the picture at a URL never changes, and
-      // the website's proxy, Cloudflare and the preview bots may all keep it.
-      'Cache-Control': 'public, max-age=31536000, immutable',
+      'Cache-Control': shared ? SHARED_CACHE_CONTROL : FALLBACK_CACHE_CONTROL,
     });
     return res.send(png);
   } catch (err) {
-    // The error's name only: a message from the renderer can carry card text.
+    // The error's name only: a message from the renderer or a download can
+    // carry card text.
     console.error('[og-card] could not draw a card:', (err && err.name) || 'Error');
     return refuse(503, 'The card could not be drawn.');
   }
@@ -380,7 +661,8 @@ router.get('/invite', async (req, res) => {
 module.exports = router;
 
 // For __tests__/ogCard.test.js, which compares the card with the website's,
-// draws real cards, and swaps the renderer to watch the line and the cache.
+// draws real cards, and swaps the renderer, the downloads and the timings to
+// watch the lines, the cache and the loader.
 module.exports.__testables = {
   CARD_W,
   CARD_H,
@@ -393,11 +675,30 @@ module.exports.__testables = {
   usesSharedFont,
   loadRenderer,
   drawPng,
+  fallbackAssets,
+  FALLBACK_FAMILIES,
   MAX_WAITING,
   CACHE_MAX,
-  lineState: () => ({ shared: sharedLine.state(), fallback: fallbackLine.state(), cards: drawnCards.size }),
+  FALLBACK_DEADLINE_MS,
+  FALLBACK_WAIT_MS,
+  SHARED_CACHE_CONTROL,
+  FALLBACK_CACHE_CONTROL,
+  lineState: () => ({
+    shared: sharedLine.state(),
+    fallback: fallbackLine.state(),
+    cards: drawnCards.size,
+    rendering: rendering.size,
+    families: familyRanges.size,
+  }),
   setDrawForTests: (fn) => { drawCard = fn || drawPng; },
+  setRendererForTests: (renderer) => { rendererForTests = renderer || null; },
+  setDownloadForTests: (fn) => { download = fn || downloadOnce; },
+  setTimingForTests: (timing) => {
+    fallbackDeadlineMs = (timing && timing.deadlineMs) || FALLBACK_DEADLINE_MS;
+    fallbackWaitMs = (timing && timing.waitMs) || FALLBACK_WAIT_MS;
+  },
   forgetCardsForTests: () => drawnCards.clear(),
+  forgetRangesForTests: () => familyRanges.clear(),
 };
 
 // SAY IT AT BOOT. cardSecret() names a short secret the first time a card is

@@ -42,6 +42,8 @@
 //   gemini       PAID per token.
 //   email        PAID per send above the Resend free tier.
 //   oauth        free (Google/Apple token + userinfo endpoints).
+//   cardAssets   free (Google Fonts and jsDelivr, for an invite share card's
+//                fallback fonts and emoji pictures).
 //
 // ---------------------------------------------------------------------------
 // ABORT CLEANUP: what actually happens.
@@ -113,6 +115,13 @@ const UPSTREAM_TIMEOUT_MS = Object.freeze({
   // file should be migrated to upstreamSignal('moderation') so a future change
   // happens in one place.
   moderation: 15000,
+  // The invite share card's downloads (routes/ogCard.js): fonts from
+  // fonts.googleapis.com and fonts.gstatic.com, emoji pictures from
+  // cdn.jsdelivr.net, for a card the bundled font cannot draw alone. One
+  // render shares this deadline across all of its downloads, and it sits
+  // inside the 4 s the website's card proxy waits before it shows the static
+  // banner instead.
+  cardAssets: 3000,
 });
 
 // Usage: fetch(url, { signal: upstreamSignal('places') })
