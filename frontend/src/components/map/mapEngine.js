@@ -82,9 +82,16 @@ function isCatalogueStyle(sdk, style) {
 }
 
 function flockMapClass(sdk) {
+  // MapLibre's own Map, the class the SDK's Map extends.
+  const base = Object.getPrototypeOf(sdk.Map.prototype);
   return class FlockMap extends sdk.Map {
     setStyle(style, options) {
       if (isCatalogueStyle(sdk, style)) return this;
+      // remove() clears the style with setStyle(null) to release sources,
+      // cancel requests and free workers. The SDK reads null as an invalid
+      // style and keeps the current one, so every unmounted map held on to
+      // all of it. A null goes straight to MapLibre instead.
+      if (style === null && base && typeof base.setStyle === 'function') return base.setStyle.call(this, null, options);
       return super.setStyle(style, options);
     }
   };

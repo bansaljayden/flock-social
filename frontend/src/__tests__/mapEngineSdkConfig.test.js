@@ -46,11 +46,17 @@ jest.mock('@maptiler/sdk', () => {
   const MapStyle = { STREETS: new ReferenceMapStyle() };
   const config = { apiKey: '', session: false, caching: false, telemetry: true, primaryLanguage: 'auto' };
   class FakeSource { setData(d) { this.data = d; } }
+  // Stands in for MapLibre's Map, the class the SDK's Map extends. Only the
+  // style a null clear reaches is recorded here.
+  class MapLibreBase {
+    setStyle(style) { (this.baseStyles = this.baseStyles || []).push(style); return this; }
+  }
   // Stands in for the SDK's Map, which extends MapLibre's. Like the real one
   // it calls this.setStyle from its constructor, and it records the global
   // config as it stood at that moment.
-  class Map {
+  class Map extends MapLibreBase {
     constructor(opts) {
+      super();
       this.opts = opts;
       this.configAtConstruction = { ...config };
       this.appliedStyles = [];
@@ -202,6 +208,44 @@ describe('with a MapTiler key the view builds its map on the SDK', () => {
     act(() => { map.fire('load'); });
     expect(map.getSource('venue-heat')).toBeTruthy();
     unmount();
+  });
+});
+
+describe('code review of the map work (2026-10-08)', () => {
+  test('remove() clearing the style with null reaches MapLibre, not the SDK, so the map releases its resources', async () => {
+    const { map, unmount } = await builtMap();
+    const before = map.appliedStyles.length;
+    map.setStyle(null);
+    // The SDK keeps its current style for a null, so the clear must skip it.
+    expect(map.appliedStyles).toHaveLength(before);
+    expect(map.baseStyles).toEqual([null]);
+    unmount();
+  });
+
+  test('a refused key keeps the failure panel up even after the map reports load', async () => {
+    const { map, unmount, findByText } = await builtMap();
+    act(() => { map.fire('error', { error: { status: 403, message: 'Forbidden https://api.maptiler.com/tiles/v4/1/2/3.pbf?key=test-maptiler-key' } }); });
+    act(() => { map.fire('load'); });
+    await findByText('The map could not load. Search still works.');
+    unmount();
+  });
+
+  test('a map error is logged without the key', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const { map, unmount } = await builtMap();
+    act(() => { map.fire('error', { error: { status: 500, message: 'Failed https://api.maptiler.com/tiles/v4/1/2/3.pbf?key=test-maptiler-key' } }); });
+    const logged = warn.mock.calls.map((c) => c.join(' ')).join('\n');
+    expect(logged).toContain('[Map]');
+    expect(logged).not.toContain('test-maptiler-key');
+    warn.mockRestore();
+    unmount();
+  });
+
+  test('Sentry scrubs console breadcrumb arguments and exception values, not only messages', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
+    const block = src.slice(src.indexOf('beforeSend(event) {'), src.indexOf('beforeSendTransaction(event) {'));
+    expect(block).toMatch(/if \(b\?\.data\) scrubEventStrings\(b\.data\);/);
+    expect(block).toMatch(/ex\.value = scrubUrlTokens\(ex\.value\)/);
   });
 });
 
