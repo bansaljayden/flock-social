@@ -18,7 +18,8 @@
 // A variable the app does read still ships to every visitor, so REACT_APP_*
 // is for public values only.
 //
-// On Vercel it also turns source maps off (vercelDefaults below).
+// On Vercel and on Cloudflare Pages it also turns source maps off
+// (vercelDefaults below).
 const fs = require('fs');
 const path = require('path');
 
@@ -60,11 +61,14 @@ function narrowClientEnvironment({ raw, stringified }, reads) {
 // the app's whole source with its comments, and the maps were 18 of the
 // ~30 MB each deployment keeps against the plan's 10 GB of deployment
 // storage. Nothing on the web reads them: Sentry has no DSN there and
-// PostHog's capture_exceptions is off. Other builds keep them, because the
-// Codemagic purchase check reads the iOS build's maps. An explicit
-// GENERATE_SOURCEMAP still wins.
+// PostHog's capture_exceptions is off. Cloudflare Pages (`npm run
+// build:cloudflare`, which runs this script) publishes build/ the same way;
+// Pages sets CF_PAGES=1 on its builds and never sets VERCEL. Other builds
+// keep them, because the Codemagic purchase check reads the iOS build's maps.
+// An explicit GENERATE_SOURCEMAP still wins, and build-cloudflare.js refuses
+// a Pages output that holds a map whatever this returned.
 function vercelDefaults(env) {
-  return env.VERCEL && env.GENERATE_SOURCEMAP === undefined ? { GENERATE_SOURCEMAP: 'false' } : {};
+  return (env.VERCEL || env.CF_PAGES) && env.GENERATE_SOURCEMAP === undefined ? { GENERATE_SOURCEMAP: 'false' } : {};
 }
 
 module.exports = { envReadsIn, narrowClientEnvironment, vercelDefaults, DEPENDENCY_READS };

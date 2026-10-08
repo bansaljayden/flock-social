@@ -92,15 +92,26 @@ describe('what the app reads', () => {
 
 describe('source maps', () => {
   // Vercel publishes build/ to everyone; the maps were the app's full source
-  // and most of each deployment's storage. Codemagic's purchase check reads
-  // the iOS build's maps, so only Vercel turns them off.
+  // and most of each deployment's storage. Cloudflare Pages publishes build/
+  // the same way. Codemagic's purchase check reads the iOS build's maps, so
+  // only the two web hosts turn them off.
   test('a Vercel build turns them off', () => {
     expect(vercelDefaults({ VERCEL: '1' })).toEqual({ GENERATE_SOURCEMAP: 'false' });
+  });
+
+  test('a Cloudflare Pages build turns them off too', () => {
+    // Pages sets CF_PAGES=1 and never VERCEL. Without this default every
+    // Pages build stops at build-cloudflare.js's source-map refusal.
+    expect(vercelDefaults({ CF_PAGES: '1' })).toEqual({ GENERATE_SOURCEMAP: 'false' });
+    expect(vercelDefaults({ CF_PAGES: '1', CI: 'true' })).toEqual({ GENERATE_SOURCEMAP: 'false' });
+    expect(vercelDefaults({ CF_PAGES: '1', GENERATE_SOURCEMAP: 'true' })).toEqual({});
+    expect(vercelDefaults({ CF_PAGES: '1', GENERATE_SOURCEMAP: 'false' })).toEqual({});
   });
 
   test('every other build keeps them, and an explicit setting wins', () => {
     expect(vercelDefaults({})).toEqual({});
     expect(vercelDefaults({ CI: 'true' })).toEqual({});
+    expect(vercelDefaults({ CF_PAGES: '' })).toEqual({});
     expect(vercelDefaults({ VERCEL: '1', GENERATE_SOURCEMAP: 'true' })).toEqual({});
   });
 });
