@@ -113,9 +113,15 @@ describe('cloudflare/ is vercel.json, value for value', () => {
     // merged into /i/*: a preview bot's answer there is a Function's, which
     // _headers never touches.
     expect(byPath.get('/i/*')['Cache-Control']).toBe('private, no-store');
-    // Two additions with no vercel.json rule: the pages.dev copy is noindex,
+    // Additions with no vercel.json rule: the pages.dev copies are noindex,
+    // the project host and every deployment's <hash>.<project> host alike,
     // and the app-site-association file, which has no extension, is typed.
     expect(byPath.get('https://:project.pages.dev/*')).toEqual({ 'X-Robots-Tag': 'noindex' });
+    expect(byPath.get('https://:version.:project.pages.dev/*')).toEqual({ 'X-Robots-Tag': 'noindex' });
+    expect(blocks.filter((b) => /^https?:\/\//.test(b.path)).map((b) => b.path)).toEqual([
+      'https://:project.pages.dev/*',
+      'https://:version.:project.pages.dev/*',
+    ]);
     expect(byPath.has('/.well-known/apple-app-site-association')).toBe(true);
   });
 
