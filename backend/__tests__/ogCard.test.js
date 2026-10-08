@@ -965,6 +965,8 @@ test('every download carries a deadline: the render\'s own, or a fresh one of th
   const { UPSTREAM_TIMEOUT_MS } = require('../utils/upstream');
   assert.strictEqual(og.FALLBACK_DEADLINE_MS, UPSTREAM_TIMEOUT_MS.cardAssets);
   assert.ok(og.FALLBACK_DEADLINE_MS < 4000, 'the deadline outlasts the website proxy');
+  // Waiting plus drawing stays inside the proxy's 4 s.
+  assert.ok(og.FALLBACK_WAIT_MS + og.FALLBACK_DEADLINE_MS <= 4000, 'a card that waited its full turn would finish after the proxy gave up');
   const seen = [];
   try {
     await withGlobalFetch(async (url, init) => { seen.push(init || {}); return standInAnswer(String(url)); }, async () => {

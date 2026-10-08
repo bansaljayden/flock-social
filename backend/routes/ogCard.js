@@ -509,12 +509,15 @@ async function drawWithDeadline(params, shared) {
 // because only a fallback render waits on the network: a slow download holds
 // up other emoji and non-Latin cards, never the rest. Past MAX_WAITING the
 // answer is a 503 at once, and on the fallback line a card still waiting after
-// FALLBACK_WAIT_MS gives up the same way, since the website proxy stopped
-// listening at 4 s and a render nobody waits for only delays the next card.
+// FALLBACK_WAIT_MS gives up the same way: the website proxy stops listening at
+// 4 s and a fallback draw may take FALLBACK_DEADLINE_MS (3 s), so a card that
+// has waited longer than the difference would be drawn for nobody and only
+// delay the next one.
 // The website shows its static banner for that one fetch and caches nothing,
 // so the next fetch of the same URL can still get the card.
 const MAX_WAITING = 8;
-const FALLBACK_WAIT_MS = 4000;
+const PROXY_TIMEOUT_MS = 4000;
+const FALLBACK_WAIT_MS = PROXY_TIMEOUT_MS - FALLBACK_DEADLINE_MS;
 let fallbackWaitMs = FALLBACK_WAIT_MS;
 
 function renderLine(maxWaitMs) {

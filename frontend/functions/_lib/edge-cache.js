@@ -76,7 +76,10 @@ export async function edgeCached(context, key, produce) {
   if (method !== 'GET' && method !== 'HEAD') return produce();
   const cacheKey = new Request(key, { method: 'GET' });
 
-  const hit = await caches.default.match(cacheKey);
+  // A cache that fails to answer is a miss: the answer is produced directly.
+  // Thrown, it would end the Function and hand a preview bot the app shell.
+  let hit = null;
+  try { hit = await caches.default.match(cacheKey); } catch (_) { hit = null; }
   if (hit) return restore(hit);
 
   let shared = inFlight.get(key);
