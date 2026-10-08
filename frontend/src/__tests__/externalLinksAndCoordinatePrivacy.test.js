@@ -11,6 +11,9 @@
 //    to the account id api.js identifies with, for a user who may be 13.
 //    analyticsPrivacy.test.js already forbids a tracked property KEY that could
 //    carry coordinates; these tests cover the same value arriving inside a URL.
+//    The venue map previews carry a position in the URL path and the map key
+//    in the query, so both are swept too, and the previews may be built only
+//    for venues: the files allowed to draw one are listed below.
 //
 // 2. A NEW TAB GETS NO HANDLE BACK TO THE APP.
 //    Browsers imply noopener for an anchor with target="_blank" and do NOT
@@ -75,6 +78,107 @@ describe('scrubUrlTokens redacts a position, not a place name', () => {
     expect(scrubUrlTokens('/reset-password#token=abc.def')).toBe('/reset-password#token=redacted');
     expect(scrubUrlTokens(42)).toBe(42);
     expect(scrubUrlTokens(null)).toBe(null);
+  });
+});
+
+// The static map previews (lib/staticMapUrl.js) put coordinates in the URL
+// PATH and in markers=, and the MapTiler key in key=. Sentry's resource spans
+// record image URLs, so the sweep has to know those shapes too.
+describe('scrubUrlTokens redacts a static map preview', () => {
+  test('the /static/<lng>,<lat>,<zoom>/ path segment, and the bounds form', () => {
+    expect(scrubUrlTokens('https://api.maptiler.com/maps/streets-v4/static/-75.37461,40.61123,16/375x140@2x.webp'))
+      .toBe('https://api.maptiler.com/maps/streets-v4/static/redacted/375x140@2x.webp');
+    expect(scrubUrlTokens('GET https://api.maptiler.com/maps/x/static/-75.4,40.6,-75.3,40.7/430x220.png'))
+      .toBe('GET https://api.maptiler.com/maps/x/static/redacted/430x220.png');
+    expect(scrubUrlTokens('/maps/x/static/-75.4%2C40.6%2C16/88x88.png'))
+      .toBe('/maps/x/static/redacted/88x88.png');
+  });
+
+  test('markers= goes whole, encoded or not', () => {
+    expect(scrubUrlTokens('/s.webp?attribution=false&markers=icon%3Ahttps%3A%2F%2Fwww.flockcorp.com%2Fmap%2Fpin-light.svg%7Canchor%3Abottom%7Cscale%3A2%7C-75.37461%2C40.61123'))
+      .toBe('/s.webp?attribution=false&markers=redacted');
+    expect(scrubUrlTokens('/s.png?markers=icon:https://x/p.svg|anchor:bottom|-75.4,40.6&attribution=false'))
+      .toBe('/s.png?markers=redacted&attribution=false');
+  });
+
+  test('key= is redacted on any host, and only as a whole parameter name', () => {
+    expect(scrubUrlTokens('https://api.maptiler.com/maps/basic-v2/style.json?key=AbC123xyz'))
+      .toBe('https://api.maptiler.com/maps/basic-v2/style.json?key=redacted');
+    expect(scrubUrlTokens('/a?x=1&key=AbC&y=2')).toBe('/a?x=1&key=redacted&y=2');
+    expect(scrubUrlTokens('/a?monkey=1&keys=2&apikeyx=3')).toBe('/a?monkey=1&keys=2&apikeyx=3');
+  });
+
+  test('build assets and the auto-fit endpoint carry no coordinates and are untouched', () => {
+    expect(scrubUrlTokens('https://www.flockcorp.com/static/js/main.4f2a1c.js')).toBe('https://www.flockcorp.com/static/js/main.4f2a1c.js');
+    expect(scrubUrlTokens('/static/media/logo.2b3c.svg')).toBe('/static/media/logo.2b3c.svg');
+    expect(scrubUrlTokens('/maps/x/static/auto/375x140.png')).toBe('/maps/x/static/auto/375x140.png');
+  });
+
+  test('a URL the builder actually makes leaves with no coordinate and no key in it', () => {
+    jest.isolateModules(() => {
+      process.env.REACT_APP_MAPTILER_KEY = 'pk-preview-test-key';
+      try {
+        const { venueStaticMapUrl } = require('../lib/staticMapUrl');
+        for (const dark of [false, true]) {
+          for (const size of ['strip', 'sheet', 'thumb']) {
+            const url = venueStaticMapUrl({ lat: 40.611234, lng: -75.374612, size, dark });
+            expect(url).toContain('40.61123');
+            const out = scrubUrlTokens(`GET ${url}`);
+            expect(out).not.toMatch(/40\.6112|75\.3746/);
+            expect(out).not.toMatch(/40\.61123|%2C40/);
+            expect(out).not.toContain('pk-preview-test-key');
+            expect(out).toContain('key=redacted');
+            expect(out).toContain('markers=redacted');
+            expect(out).toContain('/static/redacted/');
+          }
+        }
+      } finally {
+        delete process.env.REACT_APP_MAPTILER_KEY;
+      }
+    });
+  });
+});
+
+// A person's position must never go into a third-party URL from the handset.
+// The static map builder is for venues, and this is the list of files allowed
+// to reach it. A live location card, an SOS alarm (App.js) or a member marker
+// that wanted a picture would have to be added here, in review, on purpose.
+describe('static map previews are for venues only', () => {
+  const walk = (dir, out = []) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name !== '__tests__') walk(full, out);
+      } else if (/\.jsx?$/.test(entry.name) && !/\.test\.jsx?$/.test(entry.name)) {
+        out.push(full);
+      }
+    }
+    return out;
+  };
+  const importers = (re) => walk(SRC)
+    .filter((file) => re.test(fs.readFileSync(file, 'utf8')))
+    .map((file) => path.relative(SRC, file).split(path.sep).join('/'))
+    .sort();
+
+  test('only the venue map component imports the URL builder', () => {
+    expect(importers(/from\s+['"][./]*(?:lib\/)?staticMapUrl['"]|require\(\s*['"][./]*(?:lib\/)?staticMapUrl['"]\s*\)/))
+      .toEqual(['components/map/StaticVenueMap.js']);
+  });
+
+  test("only a plan's venue card and the venue sheet draw a preview", () => {
+    expect(importers(/from\s+['"][./]*(?:components\/)?(?:map\/)?StaticVenueMap['"]|require\(\s*['"][./]*(?:components\/)?(?:map\/)?StaticVenueMap['"]\s*\)/))
+      .toEqual(['components/overlays/VenueDetailSheet.js', 'screens/FlockDetail.js']);
+  });
+
+  test('no location card, SOS surface or member file mentions it at all', () => {
+    const people = walk(SRC)
+      .map((file) => path.relative(SRC, file).split(path.sep).join('/'))
+      .filter((rel) => rel === 'App.js' || /LocationCard|SOS|Safety|Member|Roster|Trusted/i.test(rel));
+    expect(people).toContain('App.js');
+    for (const rel of people) {
+      const text = readSrc(...rel.split('/'));
+      expect(`${rel}: ${/staticMapUrl|StaticVenueMap|venueStaticMapUrl/.test(text)}`).toBe(`${rel}: false`);
+    }
   });
 });
 
