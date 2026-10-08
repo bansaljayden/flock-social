@@ -389,8 +389,9 @@ Three things about it are still open:
   default 100 kHz, which is slow enough for a few metres of twisted pair with
   each signal paired with a ground. Try it on the bench with the real cable
   before building around it.
-- **The head's indicator light is a hole in a panel.** `main.py` drives the
-  base's two (see The lights, above) and not that one.
+- **The head's light** is steady while the head's sensors answer
+  (`LED_HEAD_GPIO`, GPIO 25 on pin 22 in this build), so whoever fits the unit
+  can see at the wall that the cable reaches it.
 
 ### Pi 5
 
