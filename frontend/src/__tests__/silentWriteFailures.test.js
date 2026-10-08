@@ -451,7 +451,9 @@ describe('an avatar that did not save', () => {
     const optimistic = fn.indexOf('setProfilePic(url);');
     expect(captured).toBeGreaterThan(-1);
     expect(optimistic).toBeGreaterThan(captured);
-    expect(fn).toMatch(/setProfilePic\(previousPic\);/);
+    // Only while this avatar is still what shows: a newer change made during
+    // the wait is not covered by the old picture.
+    expect(fn).toMatch(/setProfilePic\(\(cur\) => \(cur === url \? previousPic : cur\)\);/);
   });
 
   test('and the user is told, in the same shape as the button beside it', () => {

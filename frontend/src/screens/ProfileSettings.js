@@ -1007,7 +1007,7 @@ export default function ProfileSettings({
               // screen says which one happened instead of claiming both
               // (settings audit, 2026-09-05).
               // Held to the account that tapped it. The answer can arrive after
-              // a plain sign-out and somebody else's sign-in, and signing out
+              // a plain sign-out and another person signing in, and signing out
               // whoever is here by then ended their session and threw away
               // their unsent settings.
               const account = currentAccount();
