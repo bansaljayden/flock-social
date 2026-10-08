@@ -13,10 +13,12 @@ its build sheet, with a picture for every assembly step.
 
 ## The box
 
-One unit, 180 x 166.5 x 72 mm, the width of its seven inch screen.
+One unit, 180 x 171.5 x 73 mm, the width of its seven inch screen.
 
-- **The front** is the screen, and under it a strip with the thermal camera's
-  eye, the door counter's window, the engraved Flux wordmark and one light.
+- **The front** is a black glass panel over the screen, flush in a chalk
+  printed body, with the Flux wordmark frosted into the glass under the
+  picture. Under it a black glass pill holds the thermal camera's eye, the
+  door counter's window and the one light.
 - **Inside**, behind the screen, the battery stands at the left and the Pi with
   its 4G board sits at the right. The sound meter listens through a small hole
   in the right side.
@@ -106,9 +108,11 @@ down, which depends on which way up the camera's board ended up.
 
 ## The case parts
 
-**Printed:** the sleeve (the whole box's sides, with every post and frame built
-in), four Pi spacers, and two fit tests to print first.
-**Laser cut from 3 mm black acrylic:** the front sheet and the back sheet.
+**Printed:** the body (the whole box but its back, with every post, pocket
+and frame built in), four Pi spacers, and two fit tests to print first.
+**Laser cut from 3 mm black acrylic:** the glass panel and the sensor pill
+(one piece of acrylic: the pill comes out of the panel's window), and the back
+sheet.
 
 ## The small parts, and what each is for
 
@@ -119,6 +123,6 @@ in), four Pi spacers, and two fit tests to print first.
 | 3 mm LEDs | The LINK light |
 | Camvate ball mount | Holds Flux on the wall and lets it tilt toward the door |
 | 1/4"-20 hex nut | Sits in the base; the ball mount screws into it |
-| VHB tape | Holds the front sheet on, so no screw shows on the front |
+| VHB tape | Holds the glass panel and the sensor pill in their pockets, so no screw shows on the front |
 | Double-sided foam tape | Seals the sound meter to its hole, so it hears the room and not the inside of the box |
 | Rubber feet | Under the base |
