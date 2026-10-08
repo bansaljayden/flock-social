@@ -389,7 +389,9 @@ export default function ExploreScreen({
 
       {/* Premium Map */}
       <div onClick={() => { setShowSearchDropdown(false); }} style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-        {/* MapLibre GL — Snap Map-style vector tiles (smooth, free, no API key) */}
+        {/* MapLibre GL vector map. Tiles come from MapTiler on the key in
+            REACT_APP_MAPTILER_KEY (a paid Flex plan, billed by use past its
+            allowance); a build with no key falls back to CARTO's basemaps. */}
         <MapLibreMapView
           venues={allVenues}
           filterCategory={category}

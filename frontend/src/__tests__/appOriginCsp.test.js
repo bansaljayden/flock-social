@@ -26,7 +26,7 @@
  * THE HOST LIST IS DERIVED FROM THE SOURCE, NOT TYPED OUT TWICE.
  * A CSP is a second copy of "what does this app talk to", and second copies
  * rot. Every host asserted below is read back out of the file that actually
- * requests it (api.js, index.js, App.js, firebase-messaging-sw.js), so adding
+ * requests it (api.js, index.js, the map files, firebase-messaging-sw.js), so adding
  * a new tile host or analytics host without adding it to the policy fails
  * here instead of failing as a blank map in production.
  *
@@ -195,11 +195,52 @@ describe('CSP covers the hosts the code actually talks to', () => {
     expect(allows(directive('connect-src'), 'https://us-assets.i.posthog.com')).toBe(true);
   });
 
-  it('covers every map host App.js and LiveDemo.js name', () => {
-    const DEMO = read('src', 'website', 'LiveDemo.js');
+  // Every file that names a map host. App.js has named none since the map moved
+  // into components/map/ (2026-09-13), so a scan of App.js alone let a new
+  // tile host through unchecked. The map view, the landing demo, the Flock map
+  // style and the static venue previews each build MapTiler URLs of their own.
+  const MAP_SOURCES = [
+    ['src', 'App.js'],
+    ['src', 'components', 'map', 'MapLibreMapView.js'],
+    ['src', 'website', 'LiveDemo.js'],
+    ['src', 'components', 'map', 'flockStyle'],
+    ['src', 'lib', 'staticMapUrl.js'],
+  ];
+  // The style directory and the static-map builder are being written beside
+  // this scan, so a path that does not exist yet is skipped and named here
+  // rather than failing. Once both exist this list should become strict: a
+  // missing path would then mean a renamed file the scan no longer reads.
+  const mapSourceTexts = () => {
+    const texts = [];
+    const skipped = [];
+    for (const parts of MAP_SOURCES) {
+      const full = path.join(FRONTEND, ...parts);
+      if (!fs.existsSync(full)) {
+        skipped.push(parts.join('/'));
+        continue;
+      }
+      if (fs.statSync(full).isDirectory()) {
+        for (const f of fs.readdirSync(full).filter((n) => n.endsWith('.js')).sort()) {
+          texts.push(fs.readFileSync(path.join(full, f), 'utf8'));
+        }
+      } else {
+        texts.push(fs.readFileSync(full, 'utf8'));
+      }
+    }
+    return { texts, skipped };
+  };
+
+  it('scans the files that build map URLs, and the two that exist today are among them', () => {
+    const { skipped } = mapSourceTexts();
+    // The map view and the landing demo exist; only the new style directory
+    // and the static-map builder may be absent.
+    expect(skipped.filter((p) => !['src/components/map/flockStyle', 'src/lib/staticMapUrl.js'].includes(p))).toEqual([]);
+  });
+
+  it('covers every map host the map files name, in the header and in the meta copy', () => {
     const hosts = new Set();
-    for (const src of [APP, DEMO]) {
-      for (const m of src.match(/https:\/\/[a-z0-9.-]+\.(?:com|net|org)/g) || []) {
+    for (const src of mapSourceTexts().texts) {
+      for (const m of src.match(/https:\/\/[a-z0-9.-]+\.(?:com|net|org|eu)/g) || []) {
         if (/maptiler|cartocdn/.test(m)) hosts.add(m);
       }
     }
@@ -215,8 +256,12 @@ describe('CSP covers the hosts the code actually talks to', () => {
     for (const host of hosts) {
       // Style JSON, tile JSON, vector tiles and glyph PBFs are all fetches.
       expect([host, allows(directive('connect-src'), host)]).toEqual([host, true]);
-      // Sprites and raster tiles are images.
+      // Sprites, raster tiles and static map images are images.
       expect([host, allows(directive('img-src'), host)]).toEqual([host, true]);
+      // The iPhone build reads only the meta copy, so it has to allow the
+      // same hosts or the map is blank there and nowhere else.
+      expect([host, allows(metaDirective('connect-src'), host)]).toEqual([host, true]);
+      expect([host, allows(metaDirective('img-src'), host)]).toEqual([host, true]);
     }
   });
 
