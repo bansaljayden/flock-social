@@ -212,8 +212,34 @@ function resetMt() {
   mtCalls.length = 0;
 }
 resetMt();
+// Resend's usage API, as services/resendUsage.js asks it. `body` is the JSON
+// it answers with; `status` a refusal.
+const RS_KEY = ['re', 'moneyhub', 'fixture', 'resend', '000'].join('_');
+const rsCalls = [];
+const rs = { status: 200, body: null };
+function rsUsage({ daily = 0, monthly = 0 } = {}) {
+  return {
+    object: 'usage',
+    emails: {
+      daily: { used: daily, limit: 100, sent: daily, received: 0, resets_at: '2026-10-08T23:59:59.999Z' },
+      monthly: { used: monthly, limit: 3000, sent: monthly, received: 0, resets_at: '2026-10-28T08:20:02.910Z' },
+    },
+    contacts: {},
+  };
+}
+function resetRs() {
+  rs.status = 200;
+  rs.body = rsUsage();
+  rsCalls.length = 0;
+}
+resetRs();
 global.fetch = async (url, init) => {
   const u = String(url);
+  if (u.startsWith('https://api.resend.com/')) {
+    rsCalls.push({ url: u, auth: init && init.headers && init.headers.Authorization });
+    if (rs.status !== 200) return json({ message: 'nope' }, rs.status);
+    return json(rs.body);
+  }
   if (u.startsWith('https://service.maptiler.com/')) {
     mtCalls.push({ url: u, auth: init && init.headers && init.headers.Authorization });
     if (mt.status !== 200) return json({ detail: 'nope' }, mt.status);
@@ -335,7 +361,7 @@ const ENV_KEYS = [
   // The operator's steps (section 10) read these. The pool itself never sees
   // them change: it is scripted below and was built before any test ran.
   'REVENUECAT_WEBHOOK_SECRET', 'SENTRY_DSN', 'STRIPE_WEBHOOK_SECRET', 'RESEND_WEBHOOK_SECRET',
-  'MAPTILER_SERVICE_TOKEN',
+  'MAPTILER_SERVICE_TOKEN', 'RESEND_API_KEY',
   'DATABASE_URL', 'PGHOST', 'PGPORT', 'PGUSER', 'PGPASSWORD', 'PGDATABASE',
 ];
 const savedEnv = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
@@ -436,6 +462,7 @@ function clearVendors() {
   delete process.env.STRIPE_WEBHOOK_SECRET;
   delete process.env.RESEND_WEBHOOK_SECRET;
   delete process.env.MAPTILER_SERVICE_TOKEN;
+  delete process.env.RESEND_API_KEY;
   for (const k of ['DATABASE_URL', 'PGHOST', 'PGPORT', 'PGUSER', 'PGPASSWORD', 'PGDATABASE']) delete process.env[k];
   for (const k of ENV_KEYS.filter((x) => x.startsWith('STRIPE_PRICE_'))) delete process.env[k];
 }
@@ -449,6 +476,7 @@ test.beforeEach(() => {
   resetRc();
   resetBt();
   resetMt();
+  resetRs();
   modelCoverage = LOADED_MODEL;
   clearVendors();
   moneyHub.__test.resetCache();
@@ -3420,6 +3448,111 @@ test('MapTiler usage: 80% of either allowance is near, and an overage at the spe
   const unread = moneyHub.judgeMaptilerUsage({ status: 'unset', reason: 'MAPTILER_SERVICE_TOKEN is not set, so MapTiler was not asked.' });
   assert.deepStrictEqual([unread.status, unread.near, unread.reachesCap, unread.headroomCents], ['unset', [], false, null]);
   assert.strictEqual(unread.cap.usd, 20);
+});
+
+// ===========================================================================
+// RESEND USAGE ON THE HUB (2026-10-08): today's and this month's emails
+// against the free plan's caps, and the alerts the Overview turns into rows.
+// ===========================================================================
+
+test('Resend usage: read with the key, carried as counts beside the caps, and the key goes nowhere', async () => {
+  process.env.RESEND_API_KEY = RS_KEY;
+  rs.body = rsUsage({ daily: 12, monthly: 340 });
+  handlers = hubHandlers();
+  const { result: r, lines } = await capturingLogs(() => req('GET', '/api/admin/money'));
+  assert.strictEqual(r.status, 200, r.text);
+  const u = r.body.costs.resendUsage;
+  assert.strictEqual(u.status, 'read');
+  assert.deepStrictEqual(
+    [u.daily.used, u.daily.limit, u.daily.resetsAt, u.daily.share],
+    [12, 100, '2026-10-08T23:59:59.999Z', 0.12]
+  );
+  assert.deepStrictEqual(
+    [u.monthly.used, u.monthly.limit, u.monthly.resetsAt],
+    [340, 3000, '2026-10-28T08:20:02.910Z']
+  );
+  assert.match(u.daily.resetsWords, /^\d{1,2}:\d{2} [AP]M (today|tomorrow|on [A-Z][a-z]{2} \d{1,2}(, \d{4})?), New York time$/);
+  assert.deepStrictEqual(u.included, { daily: 100, monthly: 3000 });
+  assert.deepStrictEqual(u.alerts, []);
+  // One call, with the key in the header Resend reads, and nowhere else.
+  assert.strictEqual(rsCalls.length, 1);
+  assert.strictEqual(rsCalls[0].url, 'https://api.resend.com/usage');
+  assert.strictEqual(rsCalls[0].auth, `Bearer ${RS_KEY}`);
+  assert.ok(!r.text.includes(RS_KEY), 'the key reached the payload');
+  assert.ok(!lines.includes(RS_KEY), 'the key reached a log line');
+  // Held: a reload does not ask Resend again.
+  await req('GET', '/api/admin/money');
+  assert.strictEqual(rsCalls.length, 1);
+});
+
+test('Resend usage: with no key Resend is not asked, and the reading says so with no numbers', async () => {
+  handlers = hubHandlers();
+  const r = await req('GET', '/api/admin/money');
+  assert.strictEqual(r.status, 200, r.text);
+  const u = r.body.costs.resendUsage;
+  assert.strictEqual(u.status, 'unset');
+  assert.strictEqual(u.reason, 'RESEND_API_KEY is not set, so Resend was not asked.');
+  assert.strictEqual(u.daily, undefined);
+  assert.deepStrictEqual(u.alerts, []);
+  assert.strictEqual(rsCalls.length, 0);
+});
+
+test('Resend usage: a refused key is a failed read with no numbers and no alert', async () => {
+  process.env.RESEND_API_KEY = RS_KEY;
+  rs.status = 401;
+  handlers = hubHandlers();
+  const { result: r, lines } = await capturingLogs(() => req('GET', '/api/admin/money'));
+  assert.strictEqual(r.status, 200, r.text);
+  const u = r.body.costs.resendUsage;
+  assert.strictEqual(u.status, 'failed');
+  assert.match(u.reason, /^Resend refused RESEND_API_KEY \(401\)/);
+  assert.strictEqual(u.daily, undefined, 'a failure is never a zero');
+  assert.strictEqual(u.monthly, undefined, 'a failure is never a zero');
+  assert.deepStrictEqual(u.alerts, []);
+  assert.match(lines, /\[resend\] usage read refused: 401/);
+  assert.ok(!lines.includes(RS_KEY) && !r.text.includes(RS_KEY));
+});
+
+test('Resend usage: 80% of a cap is near, the cap itself is at it, and the reset is said in New York time', () => {
+  const ru = require('../services/resendUsage');
+  // 11:00 AM in New York on Oct 8.
+  const noon = new Date(Date.UTC(2026, 9, 8, 15));
+  const judge = (daily, monthly, now = noon) => moneyHub.judgeResendUsage(
+    { status: 'read', reason: null, ...ru.parseUsage(rsUsage({ daily, monthly })), included: { daily: 100, monthly: 3000 } },
+    now
+  );
+  // Under 80% of both is quiet.
+  let j = judge(79, 2399);
+  assert.deepStrictEqual(j.alerts, []);
+  // Resend's day ends 23:59:59.999 UTC, so mail comes back at 8:00 PM, and
+  // the month at 08:20:02.910 UTC on Oct 28, so 4:21 AM.
+  assert.strictEqual(j.daily.resetsWords, '8:00 PM today, New York time');
+  assert.strictEqual(j.monthly.resetsWords, '4:21 AM on Oct 28, New York time');
+  // 80 of 100 is near; 2,400 of 3,000 is near.
+  j = judge(80, 2400);
+  assert.deepStrictEqual(j.alerts.map((a) => [a.window, a.level, a.used, a.limit, a.pct]), [
+    ['daily', 'near', 80, 100, 80],
+    ['monthly', 'near', 2400, 3000, 80],
+  ]);
+  // The cap itself, and past it, is at the cap, with the words for the reset.
+  j = judge(100, 3120);
+  assert.deepStrictEqual(j.alerts.map((a) => [a.window, a.level, a.pct]), [['daily', 'at', 100], ['monthly', 'at', 104]]);
+  assert.strictEqual(j.alerts[0].resetsWords, '8:00 PM today, New York time');
+  assert.strictEqual(j.alerts[0].resetsAt, '2026-10-08T23:59:59.999Z');
+  // Late in the evening in New York the UTC day has already turned, so the
+  // daily reset is tomorrow's.
+  j = judge(99, 0, new Date(Date.UTC(2026, 9, 8, 1)));
+  assert.strictEqual(j.daily.resetsWords, '8:00 PM tomorrow, New York time');
+  assert.deepStrictEqual(j.alerts.map((a) => [a.window, a.level]), [['daily', 'near']]);
+  // A window with no cap raises nothing.
+  const uncapped = moneyHub.judgeResendUsage({ status: 'read', daily: { used: 500, limit: null, resetsAt: null, share: null }, monthly: { used: 0, limit: 3000, resetsAt: null, share: 0 } }, noon);
+  assert.deepStrictEqual(uncapped.alerts, []);
+  assert.strictEqual(uncapped.daily.resetsWords, null);
+  // An unread meter judges nothing and keeps its reason.
+  const unread = moneyHub.judgeResendUsage({ status: 'failed', reason: 'Resend answered 502, so there is no reading.' });
+  assert.deepStrictEqual([unread.status, unread.reason, unread.alerts], ['failed', 'Resend answered 502, so there is no reading.', []]);
+  assert.deepStrictEqual(moneyHub.judgeResendUsage(null).alerts, []);
+  assert.strictEqual(moneyHub.judgeResendUsage(null).status, 'failed');
 });
 
 test('category and kind rows add up to the total they sit under', () => {
