@@ -73,6 +73,14 @@ if (process.env.REACT_APP_SENTRY_DSN) {
           for (const b of event.breadcrumbs) {
             if (b?.data?.url) b.data.url = scrubUrlTokens(b.data.url);
             if (typeof b?.message === 'string') b.message = scrubUrlTokens(b.message);
+            // A console breadcrumb keeps the logged values in data.arguments, so
+            // a URL with a key or token in one rode out unscrubbed.
+            if (b?.data) scrubEventStrings(b.data);
+          }
+        }
+        if (Array.isArray(event.exception?.values)) {
+          for (const ex of event.exception.values) {
+            if (typeof ex?.value === 'string') ex.value = scrubUrlTokens(ex.value);
           }
         }
         scrubSentrySpans(event);

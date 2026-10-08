@@ -76,6 +76,7 @@ import { queueSync } from '../../services/userSettings';
 import { geolocationAvailable, getCurrentPosition, watchPosition, clearWatch } from '../../services/geolocation';
 import { crowdLabelFor } from '../../lib/crowd';
 import { loadMapEngine } from './mapEngine';
+import { scrubUrlTokens } from '../../lib/scrubUrlTokens';
 import { buildFlockStyle, satelliteStyleUrl } from './flockStyle';
 
 // HTML-escape a user-derived string before it is interpolated into any raw
@@ -601,6 +602,11 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
   // A rejected tile key or a style that never loads used to be an endless
   // spinner (Explore audit, 2026-09-05).
   const [mapFailed, setMapFailed] = useState(false);
+  // MapTiler refused the key (401/403): the spending limit was reached or the
+  // key was revoked. MapLibre treats failed sources as settled and still fires
+  // 'load', which used to mark a blank basemap ready and hide the failure panel.
+  const [keyRefused, setKeyRefused] = useState(false);
+  const keyRefusedRef = useRef(false);
   /* The map surface's own height, watched because the controls on it are
      positioned from its bottom edge and this box has no floor: it is the
      flex remainder under a search bar, whatever banners are up and the
@@ -1071,9 +1077,16 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       // network) rather than failing quietly. Swallow them so a broken basemap
       // leaves Discover usable.
       map.on('error', (e) => {
-        console.warn('[Map]', e?.error?.message || e?.error || e);
+        // The message carries the failed request's URL, key included, and the
+        // console is what error reporting records, so it is scrubbed first.
+        const raw = e?.error?.message || e?.error || e;
+        console.warn('[Map]', typeof raw === 'string' ? scrubUrlTokens(raw) : scrubUrlTokens(String(raw && raw.message ? raw.message : raw)));
         const status = Number(e?.error?.status);
-        if (!mapLoadedRef.current && (status === 401 || status === 403)) setMapFailed(true);
+        if (status === 401 || status === 403) {
+          keyRefusedRef.current = true;
+          setKeyRefused(true);
+          setMapFailed(true);
+        }
       });
       failTimer = setTimeout(() => { if (!mapLoadedRef.current) setMapFailed(true); }, 12000);
       map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-left');
@@ -1163,6 +1176,8 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         hideBasemapTwins(map, venuesRef.current, mapIsDarkRef.current);
         mapLoadedRef.current = true;
         setMapReady(true);
+        // A refused key leaves the basemap empty even though 'load' fired; the
+        // failure panel stays up (keyRefused) rather than pins over nothing.
       });
 
       // The fresh fix behind a map that opened at a known place (see `known`).
@@ -1798,7 +1813,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
           light mode before every map. Loading is a skeleton of that ground,
           not a spinner and a sentence: the map is the page here, and a page
           loads as a skeleton. */}
-      {!mapReady && mapFailed && (
+      {((!mapReady && mapFailed) || keyRefused) && (
         <div style={{ position: 'absolute', inset: 0, zIndex: 10, backgroundColor: mapIsDark ? MAP_GROUND.dark : MAP_GROUND.light, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '24px', textAlign: 'center' }}>
           <p style={{ color: 'var(--text-secondary)', fontSize: 'var(--t-label)', fontWeight: '500', margin: 0 }}>The map could not load. Search still works.</p>
         </div>
