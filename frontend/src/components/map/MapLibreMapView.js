@@ -74,6 +74,7 @@ import { starSvgString } from '../ui/Icons';
 import { lsGet, lsSet } from '../../lib/storage';
 import { queueSync } from '../../services/userSettings';
 import { geolocationAvailable, getCurrentPosition, watchPosition, clearWatch } from '../../services/geolocation';
+import { loadMapEngine } from './mapEngine';
 
 // HTML-escape a user-derived string before it is interpolated into any raw
 // HTML sink (e.g. MapLibre Popup.setHTML, which assigns innerHTML). This must
@@ -189,12 +190,26 @@ const VENUE_HEAT_PAINT = {
   ],
 };
 
+/* The fallback extrusion's colour per theme. It was one navy, #243651 at 0.75,
+   whatever the theme, so in light mode every block from zoom 14 up was a navy
+   box on the cream map, and a dark pin standing on one measured 2.22:1. Light
+   is a tan a step off the paper; dark a navy a step off the night land. */
+const EXTRUSION_PAINT = {
+  light: { color: '#d9cfb8', opacity: 0.85 },
+  dark: { color: '#1b2942', opacity: 0.9 },
+};
+
+// The ground the map stands on before (or instead of) its first frame: the
+// land colour of the light and dark basemaps. Light land is the app's paper.
+const MAP_GROUND = { light: 'var(--bg-primary)', dark: '#0b1220' };
+
 // Add accuracy ring + venue heatmap + 3D buildings.
 // Inserts heat UNDER the first symbol layer so road/place labels stay readable
 // on top of the heat. 3D building extrusion uses the basemap's existing
 // building vector tiles (free, no extra fetch) — gives the map Snap-Map-style
-// city depth when zoomed in.
-function addOverlayLayers(map) {
+// city depth when zoomed in. A style that brings its own `flock-3d-buildings`
+// keeps it: this one is only the fallback for basemaps that do not.
+function addOverlayLayers(map, dark = false) {
   const layers = map.getStyle().layers || [];
   const firstSymbolId = layers.find(l => l.type === 'symbol')?.id;
 
@@ -214,6 +229,7 @@ function addOverlayLayers(map) {
   if (!map.getLayer('flock-3d-buildings')) {
     const buildingLayer = layers.find(l => l['source-layer'] === 'building' && (l.type === 'fill' || l.type === 'fill-extrusion'));
     if (buildingLayer) {
+      const tone = dark ? EXTRUSION_PAINT.dark : EXTRUSION_PAINT.light;
       try {
         map.addLayer({
           id: 'flock-3d-buildings',
@@ -222,14 +238,16 @@ function addOverlayLayers(map) {
           type: 'fill-extrusion',
           minzoom: 14,
           paint: {
-            'fill-extrusion-color': '#243651',
+            'fill-extrusion-color': tone.color,
             'fill-extrusion-height': [
               'interpolate', ['linear'], ['zoom'],
               14, 0,
               16, ['coalesce', ['get', 'render_height'], ['get', 'height'], 8],
             ],
-            'fill-extrusion-base': ['coalesce', ['get', 'render_min_height'], ['get', 'min_height'], 0],
-            'fill-extrusion-opacity': 0.75,
+            // Planet v4 names the base height_min (v3: render_min_height).
+            // Without it a v4 building part would extrude from the ground.
+            'fill-extrusion-base': ['coalesce', ['get', 'render_min_height'], ['get', 'min_height'], ['get', 'height_min'], 0],
+            'fill-extrusion-opacity': tone.opacity,
           },
         }, firstSymbolId);
       } catch {}
@@ -434,7 +452,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
   const photoCacheRef = useRef({}); // place_id -> dataURL
   const prevActiveRef = useRef(null);
   const watchIdRef = useRef(null);
-  const mapLibreRef = useRef(null); // holds the maplibre-gl module after dynamic import
+  const mapLibreRef = useRef(null); // Marker, Popup, LngLatBounds from the map engine, once it has loaded
   const venuesRef = useRef([]);     // latest venues for non-React consumers (toggleMapType, etc.)
   const fittedKeyRef = useRef(null); // result set the viewport was last framed to
   const [mapReady, setMapReady] = useState(false);
@@ -482,6 +500,10 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
   const { isDark: mapIsDark } = useTheme();
   const mapPalette = mapIsDark ? colorsDark : colorsLight;
   const appliedDarkRef = useRef(null);
+  // For the map's own event handlers, which outlive the render they were
+  // registered in. Read only from those handlers, never during render.
+  const mapIsDarkRef = useRef(mapIsDark);
+  mapIsDarkRef.current = mapIsDark;
 
   const DEFAULT_ZOOM = 12;
 
@@ -761,6 +783,12 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     if (!mapRef.current || mapInstanceRef.current) return;
     let cancelled = false;
     let resizeObs = null;
+    // Timers and the permission listener are held here, outside init, so the
+    // cleanup below can stop them: none of them may touch a removed map.
+    let failTimer = 0;
+    let overlapTimer = 0;
+    let permStatus = null;
+    let onPermChange = null;
     const init = async () => {
       // The stylesheet travels with the engine, not with App.js. Both requests
       // start together so the CSS costs no extra round trip, and the map is
@@ -775,9 +803,23 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       // <head> after the entry stylesheet whichever import fetched it, so the
       // two `.maplibregl-ctrl-attrib` overrides in index.css still resolve
       // exactly as they did.
+      //
+      // The engine is @maptiler/sdk when there is a MapTiler key and plain
+      // maplibre-gl when there is not; mapEngine.js says why. Its stylesheet
+      // is maplibre-gl's either way: the SDK's own adds rules for controls
+      // this map never shows, on top of the same sheet.
       const styleSheetReady = import('maplibre-gl/dist/maplibre-gl.css').catch(() => {});
-      const maplibregl = (await import('maplibre-gl')).default;
+      let engine;
+      try {
+        engine = await loadMapEngine({ key: MAPTILER_KEY });
+      } catch (err) {
+        // The engine chunk did not arrive. Say so instead of loading for ever.
+        console.warn('[Map] Map engine failed to load:', err?.message || err);
+        if (!cancelled) setMapFailed(true);
+        return;
+      }
       await styleSheetReady;
+      const maplibregl = engine.lib;
       mapLibreRef.current = maplibregl;
       if (cancelled) return;
       // A caller that already knows where the map should open (the venue
@@ -805,8 +847,8 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       const located = (initialCenter || !locationAllowed)
         ? (initialCenter ? { lat: initialCenter.lat, lng: initialCenter.lng } : null)
         : (known || await getUserLocation());
-      const userLoc = located || UNKNOWN_LOCATION_VIEW;
       if (cancelled) return;
+      const userLoc = located || UNKNOWN_LOCATION_VIEW;
       // Same expression as the mapType useState above, and it has to stay the
       // same one: a stored 'hybrid' from a build that HAD a MapTiler key must
       // not construct the map with a null style in one that does not.
@@ -819,9 +861,16 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       // is caught here; the async style/tile fetch failures are swallowed by the
       // 'error' listener below. Either way Discover degrades to an empty map
       // instead of throwing up to the root error boundary.
+      //
+      // A MAP IS BUILT ONLY HERE, for a surface on screen. In session billing
+      // the session is counted when a map is constructed, so a hidden or
+      // pre-warmed map would bill a session nobody looked at. The first-visible
+      // latch in App.js (exploreEverVisibleRef) is what keeps this effect from
+      // running before Discover is opened.
       let map;
       try {
-        map = new maplibregl.Map({
+        map = new engine.Map({
+          ...engine.options,
           container: mapRef.current,
           style: savedMapType === 'roadmap' ? ROADMAP_STYLE() : SATELLITE_STYLE,
           center: [userLoc.lng, userLoc.lat],
@@ -834,9 +883,17 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
           // Snap-style smoothness
           fadeDuration: 200,
           antialias: true,
+          // Discover stays mounted for hours. MapLibre re-requests every
+          // visible tile whose cache lifetime runs out, and on a per-request
+          // bill each of those is a charge for a basemap that changes about
+          // monthly. The tiles already on screen stay until the view moves.
+          refreshExpiredTiles: false,
         });
       } catch (err) {
         console.warn('[Map] Failed to initialize basemap:', err?.message || err);
+        // No WebGL, or a style the engine refused outright. The failure panel
+        // says so; the loading ground would otherwise stay up for ever.
+        if (!cancelled) setMapFailed(true);
         return;
       }
       // Without a listener, MapLibre surfaces style/tile load errors (bad key,
@@ -847,7 +904,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         const status = Number(e?.error?.status);
         if (!mapLoadedRef.current && (status === 401 || status === 403)) setMapFailed(true);
       });
-      setTimeout(() => { if (!mapLoadedRef.current) setMapFailed(true); }, 12000);
+      failTimer = setTimeout(() => { if (!mapLoadedRef.current) setMapFailed(true); }, 12000);
       map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-left');
 
       // KEYBOARD ORDER. MapLibre injects its control containers as the FIRST
@@ -957,7 +1014,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       };
 
       map.on('load', () => {
-        addOverlayLayers(map);
+        addOverlayLayers(map, mapIsDarkRef.current);
         applyZoomTier();
         boostNativePoiLabels();
         mapLoadedRef.current = true;
@@ -990,7 +1047,6 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       // moves: at most one pass per animation frame and per
       // PIN_OVERLAP_MIN_INTERVAL_MS while the map is in motion, and one more
       // when it settles. Pins are never moved by this (see resolvePinOverlaps).
-      let overlapTimer = 0;
       let lastOverlapAt = 0;
       const overlapPass = () => {
         overlapTimer = 0;
@@ -1019,20 +1075,49 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       // Re-pan when geolocation permission flips to granted
       if (followUser && navigator.permissions) {
         navigator.permissions.query({ name: 'geolocation' }).then((perm) => {
-          perm.addEventListener('change', () => {
-            if (perm.state === 'granted') {
-              getCurrentPosition(
-                (pos) => mapEase(map, { center: [pos.coords.longitude, pos.coords.latitude], zoom: DEFAULT_ZOOM }),
-                () => {},
-                { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 },
-              );
-            }
-          });
+          if (cancelled) return;
+          permStatus = perm;
+          onPermChange = () => {
+            if (perm.state !== 'granted' || mapInstanceRef.current !== map) return;
+            getCurrentPosition(
+              (pos) => { if (mapInstanceRef.current === map) mapEase(map, { center: [pos.coords.longitude, pos.coords.latitude], zoom: DEFAULT_ZOOM }); },
+              () => {},
+              { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 },
+            );
+          };
+          perm.addEventListener('change', onPermChange);
         }).catch(() => {});
       }
     };
     init();
-    return () => { cancelled = true; if (resizeObs) resizeObs.disconnect(); };
+    /* TEARDOWN. Discover never unmounts (it is parked, not removed), but the
+       venue dashboard mounts this view each time its Map tab opens. Without a
+       remove() every visit left a live map behind: its WebGL context (a
+       browser keeps about sixteen, then drops the oldest, which is how the tab
+       eventually drew a blank map), its worker, its tile cache and its timers.
+       The landing page demo already tears down this way (LiveDemo.js). */
+    return () => {
+      cancelled = true;
+      if (resizeObs) resizeObs.disconnect();
+      clearTimeout(failTimer);
+      clearTimeout(overlapTimer);
+      if (permStatus && onPermChange) permStatus.removeEventListener('change', onPermChange);
+      const map = mapInstanceRef.current;
+      if (!map) return;
+      markersRef.current.forEach(({ marker }) => marker.remove());
+      markersRef.current = [];
+      Object.values(memberMarkersRef.current).forEach(({ marker }) => marker.remove());
+      memberMarkersRef.current = {};
+      if (userMarkerRef.current) {
+        userMarkerRef.current.remove();
+        userMarkerRef.current = null;
+        userElRef.current = null;
+      }
+      overlapPassRef.current = null;
+      mapInstanceRef.current = null;
+      mapLoadedRef.current = false;
+      try { map.remove(); } catch { /* already gone */ }
+    };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* setStyle throws away every source and layer the app added, so anything
@@ -1040,7 +1125,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
      the light/dark swap below. (HTML markers survive a style swap; sources and
      layers do not.) */
   const rehydrateAfterStyleSwap = useCallback((map) => {
-    addOverlayLayers(map);
+    addOverlayLayers(map, mapIsDarkRef.current);
     // Re-feed accuracy data
     if (userLocation) {
       const src = map.getSource('user-accuracy');
@@ -1494,10 +1579,10 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
             <span style="color:white;font-size:15px;font-weight:700">${initial}</span>
           </div>
           <div style="flex:1;min-width:0">
-            <div style="font-size:13px;font-weight:700;color:#1e293b;margin:0 0 2px">${escapeHtml(loc.name)}</div>
+            <div style="font-size:13px;font-weight:700;color:var(--text-primary);margin:0 0 2px">${escapeHtml(loc.name)}</div>
             <div style="display:flex;align-items:center;gap:4px">
               <span style="width:6px;height:6px;border-radius:3px;background:#22c55e;display:inline-block"></span>
-              <span style="font-size: 12px;color:#4b5563;font-weight:500">${dist ? dist + ' away · ' + ageStr : 'Live'}</span>
+              <span style="font-size: 12px;color:var(--text-secondary);font-weight:500">${dist ? dist + ' away · ' + ageStr : 'Live'}</span>
             </div>
           </div>
         </div>`;
@@ -1530,15 +1615,19 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       {mapReady && filterHidesAll && filterCategory && filterCategory !== 'All' && (
         <p role="status" style={{ position: 'absolute', top: '10px', left: '50%', transform: 'translateX(-50%)', zIndex: 20, margin: 0, padding: '8px 12px', borderRadius: '10px', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-default)', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', whiteSpace: 'nowrap' }}>No {filterCategory.toLowerCase()} spots on this map. Pick another filter or move the map.</p>
       )}
+      {/* Both panels stand on the map's own ground, the land colour of the
+          theme's basemap, instead of a fixed navy that flashed a dark box in
+          light mode before every map. Loading is a skeleton of that ground,
+          not a spinner and a sentence: the map is the page here, and a page
+          loads as a skeleton. */}
       {!mapReady && mapFailed && (
-        <div style={{ position: 'absolute', inset: 0, zIndex: 10, backgroundColor: '#1a2a3a', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '24px', textAlign: 'center' }}>
-          <p style={{ color: '#8ec3b9', fontSize: 'var(--t-label)', fontWeight: '500', margin: 0 }}>The map could not load. Search still works.</p>
+        <div style={{ position: 'absolute', inset: 0, zIndex: 10, backgroundColor: mapIsDark ? MAP_GROUND.dark : MAP_GROUND.light, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '24px', textAlign: 'center' }}>
+          <p style={{ color: 'var(--text-secondary)', fontSize: 'var(--t-label)', fontWeight: '500', margin: 0 }}>The map could not load. Search still works.</p>
         </div>
       )}
       {!mapReady && !mapFailed && (
-        <div style={{ position: 'absolute', inset: 0, zIndex: 10, backgroundColor: '#1a2a3a', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '12px' }}>
-          <div style={{ width: '32px', height: '32px', border: '3px solid rgba(255,255,255,0.15)', borderTopColor: '#6d9ac3', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-          <p style={{ color: '#8ec3b9', fontSize: 'var(--t-label)', fontWeight: '500', margin: 0 }}>Loading map...</p>
+        <div role="status" style={{ position: 'absolute', inset: 0, zIndex: 10, backgroundColor: mapIsDark ? MAP_GROUND.dark : MAP_GROUND.light }}>
+          <span className="sr-only">Loading map</span>
         </div>
       )}
       <style>{`
@@ -1547,6 +1636,19 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         .maplibregl-ctrl-attrib { font-size: 12px !important; opacity: 1; }
         .maplibregl-ctrl-attrib a { color: #33475e; }
         .maplibregl-ctrl-logo { display: none !important; }
+        /* The member popup on the theme's card, not MapLibre's fixed white,
+           which in dark mode was a white slab with the app's light-mode
+           text colours inside it. The tip is the same card colour on
+           whichever side the popup opened. */
+        .maplibregl-popup-content { background: var(--bg-card-solid); color: var(--text-primary); }
+        .maplibregl-popup-anchor-top .maplibregl-popup-tip,
+        .maplibregl-popup-anchor-top-left .maplibregl-popup-tip,
+        .maplibregl-popup-anchor-top-right .maplibregl-popup-tip { border-bottom-color: var(--bg-card-solid); }
+        .maplibregl-popup-anchor-bottom .maplibregl-popup-tip,
+        .maplibregl-popup-anchor-bottom-left .maplibregl-popup-tip,
+        .maplibregl-popup-anchor-bottom-right .maplibregl-popup-tip { border-top-color: var(--bg-card-solid); }
+        .maplibregl-popup-anchor-left .maplibregl-popup-tip { border-right-color: var(--bg-card-solid); }
+        .maplibregl-popup-anchor-right .maplibregl-popup-tip { border-left-color: var(--bg-card-solid); }
         .mlb-venue-marker { user-select: none; -webkit-user-select: none; transition: opacity 0.16s ease; }
         /* The zoom scale, about the point pinned to the coordinate (set per
            pin: the teardrop's tip, the disc's centre). No transition: the map

@@ -31,8 +31,13 @@ jest.mock('../services/userSettings', () => ({ queueSync: () => {} }));
 // The engine, reduced to what the view calls. setStyle drops every source and
 // layer the way MapLibre does; fire() runs `on` handlers and then drains the
 // `once` ones, which is how the view hears that a new style has loaded.
+//
+// It stands in for components/map/mapEngine.js, the one module the view loads
+// its engine through. With the key set above the real one would load
+// @maptiler/sdk, which ships as ES modules only and which Jest under
+// react-scripts does not transform.
 const mockMaps = [];
-jest.mock('maplibre-gl', () => {
+jest.mock('../components/map/mapEngine', () => {
   class FakeSource {
     constructor() { this.data = null; }
     setData(d) { this.data = d; }
@@ -71,6 +76,7 @@ jest.mock('maplibre-gl', () => {
     setLayoutProperty() {}
     setPaintProperty() {}
     setLayerZoomRange() {}
+    remove() {}
   }
   class FakeMarker {
     constructor(opts) { this.el = opts.element; }
@@ -84,9 +90,10 @@ jest.mock('maplibre-gl', () => {
   class FakeBounds {
     extend() { return this; }
   }
+  const lib = { Map: FakeMap, Marker: FakeMarker, AttributionControl: class {}, LngLatBounds: FakeBounds };
   return {
     __esModule: true,
-    default: { Map: FakeMap, Marker: FakeMarker, AttributionControl: class {}, LngLatBounds: FakeBounds },
+    loadMapEngine: async () => ({ kind: 'sdk', lib, Map: FakeMap, options: {}, locateByIp: null }),
   };
 });
 
