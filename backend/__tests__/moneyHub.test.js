@@ -201,8 +201,24 @@ resetBt();
 
 const realFetch = global.fetch;
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+// MapTiler's service API, as services/maptilerUsage.js asks it. `body` is the
+// JSON timeline it answers with; `status` a refusal.
+const MT_TOKEN = ['mt', 'service', 'moneyhub', 'fixture', '000'].join('_');
+const mtCalls = [];
+const mt = { status: 200, body: null };
+function resetMt() {
+  mt.status = 200;
+  mt.body = { since: '2026-09-07', until: '2026-10-06', datasets: [], legend: [] };
+  mtCalls.length = 0;
+}
+resetMt();
 global.fetch = async (url, init) => {
   const u = String(url);
+  if (u.startsWith('https://service.maptiler.com/')) {
+    mtCalls.push({ url: u, auth: init && init.headers && init.headers.Authorization });
+    if (mt.status !== 200) return json({ detail: 'nope' }, mt.status);
+    return json(mt.body);
+  }
   if (u.startsWith('https://besttime.app/')) {
     btCalls.push({ url: u, method: init && init.method });
     if (bt.mode === 'throw') throw bt.error;
@@ -319,6 +335,7 @@ const ENV_KEYS = [
   // The operator's steps (section 10) read these. The pool itself never sees
   // them change: it is scripted below and was built before any test ran.
   'REVENUECAT_WEBHOOK_SECRET', 'SENTRY_DSN', 'STRIPE_WEBHOOK_SECRET', 'RESEND_WEBHOOK_SECRET',
+  'MAPTILER_SERVICE_TOKEN',
   'DATABASE_URL', 'PGHOST', 'PGPORT', 'PGUSER', 'PGPASSWORD', 'PGDATABASE',
 ];
 const savedEnv = Object.fromEntries(ENV_KEYS.map((k) => [k, process.env[k]]));
@@ -418,6 +435,7 @@ function clearVendors() {
   delete process.env.SENTRY_DSN;
   delete process.env.STRIPE_WEBHOOK_SECRET;
   delete process.env.RESEND_WEBHOOK_SECRET;
+  delete process.env.MAPTILER_SERVICE_TOKEN;
   for (const k of ['DATABASE_URL', 'PGHOST', 'PGPORT', 'PGUSER', 'PGPASSWORD', 'PGDATABASE']) delete process.env[k];
   for (const k of ENV_KEYS.filter((x) => x.startsWith('STRIPE_PRICE_'))) delete process.env[k];
 }
@@ -430,6 +448,7 @@ test.beforeEach(() => {
   resetStripeState();
   resetRc();
   resetBt();
+  resetMt();
   modelCoverage = LOADED_MODEL;
   clearVendors();
   moneyHub.__test.resetCache();
@@ -2403,9 +2422,9 @@ const PRIVATE_NETWORK_FIX = 'railway variables --service Flock-app- --set PGHOST
 
 const OWNER_STEP_IDS = [
   'database_private_network', 'revenuecat_project_figures', 'revenuecat_webhook', 'stripe_webhook', 'email_events_webhook',
-  'expense_list', 'error_reporting', 'sales_tax',
+  'expense_list', 'maptiler_service_token', 'error_reporting', 'sales_tax',
   'paid_apps_agreement', 'small_business_program', 'subscription_review_screenshot', 'apple_organization_account', 'besttime_admissions',
-  'vercel_plan', 'app_privacy_crash_data', 'eu_trader_status',
+  'vercel_plan', 'app_privacy_crash_data', 'eu_trader_status', 'maptiler_keys_locked',
 ];
 const ownerStep = (body, id) => body.ownerActions.items.find((s) => s.id === id);
 const roundTrips = () => log.filter((q) => q.sql === 'SELECT 1').length;
@@ -2458,9 +2477,19 @@ test('with nothing set, every step the server checks reads to do, and the databa
   assert.match(ownerStep(r.body, 'stripe_webhook').words, /^Neither STRIPE_SECRET_KEY nor STRIPE_WEBHOOK_SECRET is set, so web checkout stays off \(it needs both\)/);
   assert.strictEqual(ownerStep(r.body, 'email_events_webhook').state, 'todo');
   assert.match(ownerStep(r.body, 'email_events_webhook').words, /^RESEND_WEBHOOK_SECRET is not set, so POST \/api\/email-events refuses every event Resend sends: /);
-  // Six required steps to do and two optional ones (error reporting, sales
+  // MapTiler's meter has no token, so it reads to do with the page to make one,
+  // and MapTiler was not asked.
+  const meter = ownerStep(r.body, 'maptiler_service_token');
+  assert.strictEqual(meter.checkedBy, 'server');
+  assert.strictEqual(meter.state, 'todo');
+  assert.strictEqual(meter.lastRead, null);
+  assert.match(meter.words, /^MAPTILER_SERVICE_TOKEN is not set, so the hub cannot read how many map sessions and API requests this billing period has used, or warn before the \$20 spending limit turns every map off\./);
+  assert.deepStrictEqual(meter.link, { href: 'https://cloud.maptiler.com/account/credentials/', text: 'MapTiler credentials' });
+  assert.strictEqual(r.body.costs.maptilerUsage.status, 'unset');
+  assert.strictEqual(mtCalls.length, 0, 'no token, so MapTiler was not asked');
+  // Seven required steps to do and two optional ones (error reporting, sales
   // tax), counted apart.
-  assert.deepStrictEqual(oa.counts, { todo: 6, optionalTodo: 2, done: 0, unknown: 0, checkYourself: 8 });
+  assert.deepStrictEqual(oa.counts, { todo: 7, optionalTodo: 2, done: 0, unknown: 0, checkYourself: 9 });
 
   // A good round trip is held for the vendor reads' five minutes: a reload
   // and an early refresh reuse it rather than ping the database again.
@@ -2482,6 +2511,7 @@ test('each step reads done once it is in place, and a v2 key is judged with what
   seedStripe();
   process.env.STRIPE_WEBHOOK_SECRET = STRIPE_HOOK_FAKE;
   process.env.RESEND_WEBHOOK_SECRET = RESEND_HOOK_FAKE;
+  process.env.MAPTILER_SERVICE_TOKEN = MT_TOKEN;
   expenseRows = [aBill];
   handlers = hubHandlers();
   let r = await req('GET', '/api/admin/money');
@@ -2492,15 +2522,17 @@ test('each step reads done once it is in place, and a v2 key is judged with what
   assert.strictEqual(db.via, 'PGHOST');
   assert.strictEqual(db.fix, null, 'nothing to fix, so no command');
   assert.strictEqual(db.words, 'PGHOST names a railway.internal address, so every query stays on Railway\'s private network.');
-  for (const id of ['revenuecat_project_figures', 'revenuecat_webhook', 'stripe_webhook', 'email_events_webhook', 'expense_list', 'error_reporting']) {
+  for (const id of ['revenuecat_project_figures', 'revenuecat_webhook', 'stripe_webhook', 'email_events_webhook', 'expense_list', 'maptiler_service_token', 'error_reporting']) {
     assert.strictEqual(ownerStep(r.body, id).state, 'done', id);
   }
+  assert.strictEqual(ownerStep(r.body, 'maptiler_service_token').lastRead, 'read');
+  assert.match(ownerStep(r.body, 'maptiler_service_token').words, /^MAPTILER_SERVICE_TOKEN is set, so the hub reads this billing period's map sessions and API requests from MapTiler/);
   assert.match(ownerStep(r.body, 'revenuecat_webhook').words,
     /^REVENUECAT_WEBHOOK_SECRET is set on the server\..*Authorization header, with or without Bearer in front\. The server cannot see RevenueCat's side, so that half is yours to check\.$/);
   assert.strictEqual(ownerStep(r.body, 'expense_list').words, 'The expense list has bills on it, so the costs on this page count them.');
   assert.strictEqual(ownerStep(r.body, 'error_reporting').words, 'SENTRY_DSN is set, so server errors are collected in Sentry with their stack, including the ones a route catches and answers with a 500.');
   // Sales tax stays an optional to do: STRIPE_AUTOMATIC_TAX is its own test below.
-  assert.deepStrictEqual(r.body.ownerActions.counts, { todo: 0, optionalTodo: 1, done: 7, unknown: 0, checkYourself: 8 });
+  assert.deepStrictEqual(r.body.ownerActions.counts, { todo: 0, optionalTodo: 1, done: 8, unknown: 0, checkYourself: 9 });
   // With no v1 key the hub asks RevenueCat nothing, so the v2 key is set and
   // not yet used, and the step says so rather than implying it works.
   let rc = ownerStep(r.body, 'revenuecat_project_figures');
@@ -2732,6 +2764,7 @@ test('the steps the server cannot see carry no state, and each links to the page
     ['vercel_plan', 'https://vercel.com/dashboard'],
     ['app_privacy_crash_data', 'https://appstoreconnect.apple.com/apps'],
     ['eu_trader_status', 'https://developer.apple.com/help/app-store-connect/manage-compliance-information/manage-european-union-digital-services-act-trader-requirements/'],
+    ['maptiler_keys_locked', 'https://cloud.maptiler.com/account/keys/'],
   ]);
   for (const s of yours) {
     assert.strictEqual(s.state, null, `${s.id} made a claim the server cannot check`);
@@ -2739,7 +2772,12 @@ test('the steps the server cannot see carry no state, and each links to the page
     assert.ok(typeof s.label === 'string' && s.label && typeof s.words === 'string' && s.words, s.id);
     assert.ok(typeof s.link.text === 'string' && s.link.text, s.id);
   }
-  assert.strictEqual(r.body.ownerActions.counts.checkYourself, 8);
+  assert.strictEqual(r.body.ownerActions.counts.checkYourself, 9);
+  // The key step says which key goes where, and the one thing never to do.
+  const keys = yours.find((s) => s.id === 'maptiler_keys_locked').words;
+  assert.match(keys, /origins flockcorp\.com and \*\.flockcorp\.com/);
+  assert.match(keys, /User-Agent FlockiOS/);
+  assert.match(keys, /Never limit the old key to flockcorp\.com/);
   assert.match(yours.find((s) => s.id === 'vercel_plan').words, /deployment storage was at 75% of the free plan's 10 GB/);
   assert.match(yours.find((s) => s.id === 'app_privacy_crash_data').words, /not linked to the person, not used for tracking, for App Functionality/);
   assert.match(yours[0].words, /Apple sells no in-app purchase until the Account Holder signs it/);
@@ -2766,7 +2804,8 @@ test('no variable\'s value reaches the payload or a log line: not a key, the hos
   process.env.SENTRY_DSN = SENTRY_DSN_FAKE;
   process.env.STRIPE_WEBHOOK_SECRET = STRIPE_HOOK_FAKE;
   process.env.RESEND_WEBHOOK_SECRET = RESEND_HOOK_FAKE;
-  const values = [STRIPE_KEY, RC_KEY, RC_V2_KEY, BT_KEY, WEBHOOK_SECRET, SENTRY_DSN_FAKE, STRIPE_HOOK_FAKE, RESEND_HOOK_FAKE, RESEND_HOOK_BYTES, DB_PUBLIC_HOST, DB_PRIVATE_HOST, DB_USER, DB_PASSWORD, DB_NAME, DB_PORT];
+  process.env.MAPTILER_SERVICE_TOKEN = MT_TOKEN;
+  const values = [STRIPE_KEY, RC_KEY, RC_V2_KEY, BT_KEY, WEBHOOK_SECRET, SENTRY_DSN_FAKE, STRIPE_HOOK_FAKE, RESEND_HOOK_FAKE, RESEND_HOOK_BYTES, MT_TOKEN, DB_PUBLIC_HOST, DB_PRIVATE_HOST, DB_USER, DB_PASSWORD, DB_NAME, DB_PORT];
   // Twice: with the pool reading PGHOST and its siblings, and with a
   // DATABASE_URL that carries all of them at once. Each time the SELECT 1
   // fails with the words a real authentication error uses, user and host in
@@ -3263,6 +3302,124 @@ test('plans outside their terms are listed with what licensing them adds, and a 
     month: MONTH,
   });
   assert.ok(stopped.licence.items.some((i) => i.id === 'maptiler'));
+  // The row on the live list, tax included, clears it, and no code line
+  // carries MapTiler, so the same $30 is never counted twice beside it.
+  const live = moneyHub.buildCostPicture({
+    expenses: [expense({ id: 4, vendor: 'MapTiler', product: 'Cloud Flex', kind: 'infrastructure', amountCents: 3180, renewsOn: '2026-11-07' })],
+    month: MONTH,
+  });
+  assert.ok(!live.licence.items.some((i) => i.id === 'maptiler'));
+  assert.ok(!live.lines.some((l) => l.origin !== 'expense' && /maptiler/i.test(`${l.id} ${l.label}`)), 'a MapTiler code line would count the bill twice');
+  assert.ok(live.lines.some((l) => l.origin === 'expense' && l.counted !== false && /MapTiler/.test(l.label)), 'the row itself counts');
+  assert.deepStrictEqual(live.possibleDoubles, []);
+});
+
+// ===========================================================================
+// MAPTILER USAGE ON THE HUB (2026-10-07): the meter's reading beside the
+// allowances and the spending limit, and the two warnings the Overview raises.
+// ===========================================================================
+
+// A timeline as MapTiler answers it: the period's first day and one dataset
+// per service and group.
+function mtTimeline({ since = '2026-09-07', sessions = 0, requests = 0, search = 0 } = {}) {
+  const day = (value) => [{ date: since, value }];
+  return {
+    since,
+    until: '2026-10-06',
+    datasets: [
+      { group_id: 'session', item_id: 'maps', data: day(sessions) },
+      { group_id: 'session', item_id: 'geocoding', data: day(search) },
+      { group_id: 'request', item_id: 'tiles', data: day(requests) },
+    ],
+    legend: [
+      { item_id: 'maps', label: 'Map sessions', description: null },
+      { item_id: 'geocoding', label: 'Search sessions', description: null },
+      { item_id: 'tiles', label: 'Tiles', description: null },
+    ],
+  };
+}
+
+test('MapTiler usage: read with the token, carried as counts beside the allowances, and the token goes nowhere', async () => {
+  process.env.MAPTILER_SERVICE_TOKEN = MT_TOKEN;
+  // 2026-10-07 is day 31 of the period that began 2026-09-07.
+  mt.body = mtTimeline({ sessions: 1240, requests: 18300, search: 12 });
+  handlers = hubHandlers();
+  const { result: r, lines } = await capturingLogs(() => req('GET', '/api/admin/money'));
+  assert.strictEqual(r.status, 200, r.text);
+  const u = r.body.costs.maptilerUsage;
+  assert.strictEqual(u.status, 'read');
+  assert.strictEqual(u.sessions, 1240);
+  assert.strictEqual(u.requests, 18300);
+  assert.strictEqual(u.searchSessions, 12);
+  assert.deepStrictEqual(u.included, { sessions: 25000, searchSessions: 3000, sessions3d: 10000, requests: 500000 });
+  assert.strictEqual(u.period.since, '2026-09-07');
+  assert.strictEqual(u.period.renewsOn, '2026-10-07');
+  assert.strictEqual(u.overProjectedCents, 0);
+  assert.deepStrictEqual(u.cap, { usd: 20, cents: 2000, checked: '2026-10-07' });
+  assert.deepStrictEqual(u.near, []);
+  assert.strictEqual(u.reachesCap, false);
+  assert.strictEqual(u.headroomCents, 2000);
+  // One call, with the token in the header MapTiler reads, and nowhere else.
+  assert.strictEqual(mtCalls.length, 1);
+  assert.strictEqual(mtCalls[0].auth, `Token ${MT_TOKEN}`);
+  assert.ok(!mtCalls[0].url.includes(MT_TOKEN));
+  assert.ok(!r.text.includes(MT_TOKEN), 'the token reached the payload');
+  assert.ok(!lines.includes(MT_TOKEN), 'the token reached a log line');
+  // Held: a reload does not ask MapTiler again.
+  await req('GET', '/api/admin/money');
+  assert.strictEqual(mtCalls.length, 1);
+});
+
+test('MapTiler usage: a refused token is a failed read with no numbers, said on the meter step', async () => {
+  process.env.MAPTILER_SERVICE_TOKEN = MT_TOKEN;
+  mt.status = 401;
+  handlers = hubHandlers();
+  const { result: r, lines } = await capturingLogs(() => req('GET', '/api/admin/money'));
+  assert.strictEqual(r.status, 200, r.text);
+  const u = r.body.costs.maptilerUsage;
+  assert.strictEqual(u.status, 'failed');
+  assert.match(u.reason, /refused the service token \(401\)/);
+  assert.strictEqual(u.sessions, undefined, 'a failure is never a zero');
+  assert.strictEqual(u.reachesCap, false);
+  const step = ownerStep(r.body, 'maptiler_service_token');
+  assert.strictEqual(step.state, 'done', 'the variable is set');
+  assert.strictEqual(step.lastRead, 'failed');
+  assert.match(step.words, /^MAPTILER_SERVICE_TOKEN is set, and the last read did not work: MapTiler refused the service token \(401\)/);
+  assert.match(lines, /\[maptiler\] usage read refused: 401/);
+  assert.ok(!lines.includes(MT_TOKEN) && !r.text.includes(MT_TOKEN));
+});
+
+test('MapTiler usage: 80% of either allowance is near, and an overage at the spending limit reaches it', () => {
+  const mtu = require('../services/maptilerUsage');
+  const judge = (counts, now = new Date(Date.UTC(2026, 9, 22, 12))) => moneyHub.judgeMaptilerUsage(
+    mtu.summarize(mtu.parseTimeline(mtTimeline({ since: '2026-10-07', ...counts })), now)
+  );
+  // Day 16 of 31: 12,500 sessions is on pace for 24,219, which is 96%.
+  let j = judge({ sessions: 12500, requests: 1000 });
+  assert.deepStrictEqual(j.near.map((n) => [n.pool, n.pct]), [['sessions', 96]]);
+  assert.strictEqual(j.reachesCap, false);
+  // 80% already used counts even with no pace yet (day 1 withholds it).
+  j = judge({ requests: 400000 }, new Date(Date.UTC(2026, 9, 7, 12)));
+  assert.strictEqual(j.projected, null);
+  assert.deepStrictEqual(j.near.map((n) => [n.pool, n.used, n.pct]), [['requests', 400000, 80]]);
+  // Under 80% on both is quiet.
+  j = judge({ sessions: 10000, requests: 100000 });
+  assert.deepStrictEqual(j.near, []);
+  // 18,000 sessions by day 16 is on pace for 34,875: 9,875 over at $2.50 per
+  // 1,000 is $24.69, past the $20 limit.
+  j = judge({ sessions: 18000 });
+  assert.strictEqual(j.overProjectedCents, 2469);
+  assert.strictEqual(j.reachesCap, true);
+  assert.strictEqual(j.capReached, false, 'on pace for it, not there yet');
+  assert.strictEqual(j.headroomCents, -469);
+  // Already past it: 34,000 sessions used is $22.50 over.
+  j = judge({ sessions: 34000 });
+  assert.strictEqual(j.overSoFarCents, 2250);
+  assert.strictEqual(j.capReached, true);
+  // An unread meter judges nothing and keeps its reason.
+  const unread = moneyHub.judgeMaptilerUsage({ status: 'unset', reason: 'MAPTILER_SERVICE_TOKEN is not set, so MapTiler was not asked.' });
+  assert.deepStrictEqual([unread.status, unread.near, unread.reachesCap, unread.headroomCents], ['unset', [], false, null]);
+  assert.strictEqual(unread.cap.usd, 20);
 });
 
 test('category and kind rows add up to the total they sit under', () => {
