@@ -94,7 +94,7 @@
   if (RENDER) document.body.classList.add('render');
 
   // Box size and the model frame: X across, Y front to back, Z up, millimetres.
-  const BOX = { w: 180, h: 171.5, d: 71.7, tilt: 12, lift: 19.91, armTilt: 15, armLift: 89.01 };
+  const BOX = { w: 180, h: 171.5, d: 71.7, tilt: 12, lift: 19.91, armTilt: 15, armLift: 142.71 };
 
   // How each part looks, and how far it moves when the box is pulled apart
   // (in the model's millimetres: +y is toward the back).
@@ -115,16 +115,14 @@
     'PureThermal 3 + Lepton 3.5':{ color: 0x3a3d44, rough: 0.25, metal: 0.4, apart: [0, 18, -10] },
     'VL53L8CX door counter':     { color: 0x2b2440, rough: 0.35, apart: [10, 18, -10] },
     'Decibel meter':             { color: 0x157a7a, rough: 0.5, apart: [35, 10, 0] },
-    'Power converter':           { color: 0xc8553d, rough: 0.5, apart: [0, 20, 40] },
+    'RPi5 PD Power board (52Pi)':{ color: 0x17181b, rough: 0.45, apart: [0, 60, 0] },
     'CHARGE port':               { color: 0xd8d8dc, rough: 0.3, metal: 0.7, apart: [0, 90, 0] },
     'LINK light':                { color: 0x4fd67c, rough: 0.3, glow: 0x2fa85a, apart: [0, -40, 0] },
     '1/4-20 mount nut':          { color: 0xa9abb2, rough: 0.35, metal: 0.9, apart: [0, 0, -30] },
     'Stand (printed, cream)':    { color: 0xf4efe3, rough: 0.8, apart: [0, 0, -40] },
     'Stand screw (1/4-20 x 5/8)':{ color: 0xa9abb2, rough: 0.35, metal: 0.9, apart: [0, 0, -60] },
-    'Arm mount block (printed, navy)': { color: 0x0f172a, rough: 0.78, apart: [0, 90, 0] },
-    'Arm mount nut':             { color: 0xa9abb2, rough: 0.35, metal: 0.9, apart: [0, 90, 0] },
-    'CAMVATE C1991 ball head':   { color: 0x141518, rough: 0.35, metal: 0.4, apart: [0, 0, 0] },
-    'C1991 screw and stem':      { color: 0xc3c6cc, rough: 0.2, metal: 1, apart: [0, 0, 0] },
+    'CAMVATE wall arm (24007)':  { color: 0x141518, rough: 0.35, metal: 0.4, apart: [0, 0, 0] },
+    'Arm screw and stem':        { color: 0xc3c6cc, rough: 0.2, metal: 1, apart: [0, 0, 0] },
     'Wall (for scale)':          { color: 0xebe8e2, rough: 0.95, apart: [0, 0, 0] },
     '4G antenna (flexible)':     { color: 0x9ca3af, rough: 0.5, apart: [30, 0, 0] },
     'Brass M3 inserts (8)':      { color: 0xc9a14a, rough: 0.35, metal: 0.95, apart: [0, 0, 0] },
@@ -132,15 +130,15 @@
 
   // What sits under the box only when it stands on its stand.
   const STAND = ['Stand (printed, cream)', 'Stand screw (1/4-20 x 5/8)'];
-  const ARM = ['CAMVATE C1991 ball head', 'C1991 screw and stem', 'Wall (for scale)'];
+  const ARM = ['CAMVATE wall arm (24007)', 'Arm screw and stem', 'Wall (for scale)'];
   // Too big to frame the camera on: the wall runs out of the picture.
   const NOFRAME = ['Wall (for scale)'];
   // The back sheet and everything fixed to it, which lift off together.
   const BACK = ['Back sheet (navy)', 'Back engraving', 'Raspberry Pi 5', 'Pi 5 ports', 'Active Cooler',
                 'SIM7600G-H 4G HAT', 'CHARGE port', 'USB port', 'Ethernet port',
-                'Arm mount block (printed, navy)', 'Arm mount nut'];
+                'RPi5 PD Power board (52Pi)'];
   // Cables that run between two parts on the back sheet travel with it.
-  const BACK_CABLES = /^Cable: (back |4G modem)/;
+  const BACK_CABLES = /^Cable: (back |4G modem|PD board to Pi)/;
   const lifted = d => Object.fromEntries(BACK.map(n => [n, d]));
 
   // The seven assembly steps: which parts show, and which are lifted out.
@@ -158,10 +156,10 @@
       show: ['Body (printed, navy)', '7 inch touchscreen', 'Sensor pill (cream)', 'Flux wordmark (cream)',
              'PureThermal 3 + Lepton 3.5', 'VL53L8CX door counter', 'LINK light'],
       lift: { 'Sensor pill (cream)': [0, -35, 0], 'Flux wordmark (cream)': [0, -25, 0] }, view: [0.75, -1.1, 0.5] },
-    { text: '5. On the back sheet: the Pi on four spacers, the Active Cooler, the 18 mm standoffs and the 4G board. The USB, Ethernet and charging ports into their holes. Press the nut into the arm mount block and screw it on from outside, plug through the sheet.',
+    { text: '5. On the back sheet: the Pi on four spacers, the Active Cooler, the 18 mm standoffs and the 4G board. The USB, Ethernet and charging ports into their holes. The RPi5 PD Power board above the Pi on its four 18 mm brass pillars, its AlwaysON switch on.',
       show: BACK,
       lift: { 'SIM7600G-H 4G HAT': [0, -28, 0], 'Active Cooler': [0, -12, 0],
-              'Arm mount block (printed, navy)': [0, -16, 0], 'Arm mount nut': [0, -30, 0] }, view: [-0.6, -1.1, 0.6] },
+              'RPi5 PD Power board (52Pi)': [0, -22, 0] }, view: [-0.6, -1.1, 0.6] },
     { text: '6. Battery in on its end, ports up. Hold the back sheet behind the box and plug every cable, each one drawn here in the colour of what it carries. Stick the sound meter in its frame.',
       show: Object.keys(LOOK).filter(n => !STAND.includes(n) && n !== 'Back sheet (navy)' && n !== 'Back engraving'),
       cables: 'all', lift: {}, view: [0.6, 1.0, 0.55] },

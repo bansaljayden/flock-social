@@ -106,7 +106,7 @@ def main():
     others = {
         'body (printed)': sl, 'sensor pill': c.sensor_pill(), 'wordmark': c.logo_inlay(),
         'back sheet': c.back_sheet(), 'screen': c.screen_body(), 'battery': c.battery_body(),
-        'battery plugs': c.battery_plugs(), 'sound meter': c.meter_body(), 'converter': c.converter_body(),
+        'battery plugs': c.battery_plugs(), 'sound meter': c.meter_body(), 'PD board': c.pd_board(),
         'charging port': c.charge_jack(), 'USB port': c.usb_jack(), 'Ethernet port': c.lan_jack(),
         'mount nut': c.mount_nut(), 'light': c.led_body(),
     }

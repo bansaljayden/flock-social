@@ -26,9 +26,9 @@ body with cream accents.
 - **The back** carries the Pi and a port panel: ETHERNET, USB and CHARGE.
 
 On a table it leans back on a cream stand, like a desk display. On the wall
-above a door, the CAMVATE ball head holds it by the mount on its back, tilted
-down so the camera and the counter look at the doorway and the screen faces
-the people coming in.
+above a door, it sits on the CAMVATE arm by the nut in its base, tilted down
+so the camera and the counter look at the doorway and the screen faces the
+people coming in.
 
 ## What it does, step by step
 
@@ -47,15 +47,15 @@ the people coming in.
 
 | Part | What it does in Flux | Where it sits | Plugs into |
 |---|---|---|---|
-| **Raspberry Pi 5 (8 GB)** | The computer: reads the sensors, runs Owl, draws the screen, sends the readings | On the back sheet, right | Power from the converter; everything else plugs into it |
+| **Raspberry Pi 5 (8 GB)** | The computer: reads the sensors, runs Owl, draws the screen, sends the readings | On the back sheet, right | Power from the PD Power board; everything else plugs into it |
 | **Raspberry Pi Active Cooler** | Keeps the Pi cool while Owl runs nonstop | On the Pi, under the 4G board | The Pi's FAN socket |
 | **microSD card** | Holds Raspberry Pi OS and the Flux software | The Pi's card slot | |
 | **Waveshare SIM7600G-H 4G HAT** | Gets Flux online where there is no Wi-Fi | On the Pi's 40 pins, 18 mm up on standoffs over the cooler | Its USB port to a Pi USB port |
 | **4G antenna** (flexible, stick-on) | The modem's signal | Stuck inside the right wall, low: plastic and acrylic let radio through. The kit's 14.5 cm blade antenna would stick out of a box this size, so it stays in its bag | The HAT's MAIN connector |
 | **SIM card** (standard size) | The data plan | The HAT's SIM holder, underneath it: put it in before stacking | |
 | **7 inch 1024 x 600 HDMI touchscreen** | Shows the live count, the loudness and the heat view; tap a card to open it | The front | Video ribbon to the Pi; touch USB to the Pi |
-| **Anker Prime 20K 200W power bank (A1336)** | Runs Flux with no wall plug | Standing on its end, left | USB-C to the power converter; charges through the back |
-| **Power converter (USB-C PD to 5 V 5 A)** | Gives the Pi the 5 A it wants from a battery whose own 5 V stops at 3 A | Over the Pi | Battery in, Pi's USB-C out |
+| **Anker Prime 20K 200W power bank (A1336)** | Runs Flux with no wall plug | Standing on its end, left | USB-C to the PD Power board; charges through the back |
+| **52Pi RPi5 PD Power board (EP-0225)** | Lets the battery run everything: asks it for 15 V and gives the Pi the 5 V at 5 A it wants, so the camera, screen and modem never run short. AlwaysON makes Flux start whenever the battery is on | On the back sheet, over the Pi, on four 18 mm brass pillars | Battery into its INPUT, its OUTPUT to the Pi's USB-C |
 | **FLIR Lepton 3.5 on a GroupGets PureThermal 3** | The thermal camera: Owl counts people in what it sees | Behind the eye in the strip | USB-C to the Pi |
 | **VL53L8CX door counter (Pololu #3419)** | Counts people in and out of the doorway | Behind the window right of the eye | I2C, through the Qwiic MultiPort; its SPI/I2C pin capped to GND |
 | **PCB Artists I2C Decibel Meter PRO** | Measures loudness in real decibels; no audio ever reaches the Pi | In its frame on the right wall, hearing through the hole | I2C, through the Qwiic MultiPort (5-pin lead, INT left empty) |
@@ -77,7 +77,7 @@ shared bus where each part answers to its own address: 0x29 for the counter,
 | **Touch** | Screen's "5V+Touch" micro-USB (right-angle) | Pi USB |
 | **Video** | Screen's flat HDMI ribbon socket | Pi micro HDMI 0, through a ribbon adapter |
 | **Modem** | 4G board's "USB" micro-USB (right-angle) | Pi USB |
-| **Power** | Battery | Converter, then the Pi's USB-C |
+| **Power** | Battery | PD Power board, then the Pi's USB-C |
 | **Charging** | Back's CHARGE port | Battery |
 | **USB** | Back's USB port | Pi USB |
 | **Ethernet** | Back's ETHERNET port | Pi Ethernet |
@@ -128,9 +128,8 @@ printer (or a cream paint pen in its pocket).
 | Brass M3 heat-set inserts | Melted into the sleeve with the soldering iron, eight of them, so the screws grip metal: four for the screen, four for the back |
 | Nylon standoff kit | Spares for the Pi stack |
 | 3 mm LEDs | The LINK light |
-| CAMVATE C1991 ball head (pair, 24007) | Screws to the wall over the door and holds Flux by the arm mount on its back, tilted down at the doorway |
-| Arm mount block | A printed plug through the back sheet with a 1/4"-20 nut in it; the ball head screws in here |
-| 1/4"-20 hex nuts (2) | One in the arm mount block, one in the base for the stand; each 1 mm under its face so the ball head's short screw takes four threads |
+| CAMVATE wall arm (pair, 24007) | A ball head on a post, 120 mm tall. Screws to the wall over the door, post level, head tipped up; Flux sits on it by the nut in its base, tilted down at the doorway |
+| 1/4"-20 hex nut | In the base, 1 mm above its outside, so the arm's short screw (or the stand's) takes all of it |
 | VHB tape | Holds the sensor pill in its pocket, so no screw shows on the front |
 | Double-sided foam tape | Seals the sound meter to its hole, so it hears the room and not the inside of the box |
 | Rubber feet | Under the base |

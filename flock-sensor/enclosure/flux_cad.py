@@ -195,35 +195,40 @@ lan_cut = (16.5, 14.0)         # ETHERNET: panel-mount RJ45 extension, the jack'
 lan_ear_dx = 30.0              # its two screw ears, centre to centre
 lan_body = (20.0, 18.0, 32.0)  # MEASURE when in hand: across, up, deep
 
-# The power converter between the battery and the Pi: a Pi 5 wants 5 V at
-# 5 A and a power bank's 5 V stops at 3 A, so this asks the battery for more
-# over USB-C PD and steps it down. A block until the part is in hand.
-conv_size = (26.0, 40.0, 55.0)  # MEASURE: across, front to back, up
+# The power board between the battery and the Pi: 52Pi's "RPi5 PD Power"
+# (EP-0225). A Pi 5 wants 5 V at 5 A and a power bank's own 5 V stops at 3 A,
+# which leaves the Pi's USB ports on a trickle; this asks the battery for 15 V
+# over USB-C PD and gives the Pi 5.15 V at 5 A through its USB-C, which the
+# Pi reads as a full supply. The board is the Pi's size with the Pi's four
+# holes, and stands on the four M2.5 x 18 brass pillars it comes with.
+# 52Pi's drawing: 87 x 57 over its connectors.
+pd_pcb = (85.0, 56.0, 1.6)
+pd_pillar = 18.0
+pd_parts_h = 4.0               # most of its parts; the capacitor and the jacks stand taller
+pd_out_u = 12.6                # MEASURE: its OUTPUT USB-C, on the bottom edge, from the left
+pd_in_v = 24.4                 # MEASURE: its INPUT USB-C, on the right edge, up from the bottom
 
 mount_nut_af = 11.4            # a 1/4"-20 hex nut, across its flats, with clearance
 mount_nut_th = 5.8
 mount_boss = 20.0
-# The ball head bought for the wall, a CAMVATE C1991 (sold as a pair, 24007):
-# an oval foot 50 x 27 with two M4 holes, a ball in a cup with a wing knob, a
-# knurled wheel, and a 1/4"-20 screw standing about 5.5 mm proud of the wheel,
-# 55 mm tall in all (CAMVATE's drawing; measure yours). Rated 2 kg; the box is
-# about 1.4. Its screw is short, so each nut sits 1 mm under the face the
-# wheel tightens against, where the screw takes four threads. Set 4 mm deep,
-# as the base nut first was, it caught two and could strip.
+# The arm bought for the wall: CAMVATE's 1/4"-20 mini ball head on a post
+# (sold as a pair, 24007), 120 mm tall in all, measured off CAMVATE's
+# drawing: an oval foot 50 x 28 x 5 with two screw holes, a 13.3 mm post, the
+# ball head (a 23 mm body with a wing knob, and a slot that lets it tilt 90
+# degrees), a 22 mm knurled wheel, and a 1/4"-20 screw about 7.3 mm proud of
+# the wheel. Rated 2 kg; the box is about 1.4. On the wall the post stands
+# out level and the head tilts up through its slot, so the screw stands
+# about 90 mm off the wall: far enough for the box to sit on it by the nut
+# in its base, its back about 40 mm clear of the wall.
+# The nut sits 1 mm above the base's outside so that short screw takes all
+# of it; 4 mm up, where it first was, the screw caught well under half.
 mount_floor = 1.0
-c1991_screw = 5.5
-c1991_wheel = (23.0, 6.0)      # diameter, thickness
-c1991_foot = (50.0, 27.0, 4.0)
-c1991_tall = 55.0
-
-# The back mount, for the wall: a printed block whose round plug passes
-# through the back sheet and is flush with it, the nut 1 mm under the plug's
-# face. Its flange sits inside, held to the sheet by two M3 screws into
-# brass inserts. The wheel tightens on the plug, so the load goes block to
-# sheet to the four corner screws, and the acrylic is never squeezed by a nut.
-arm_plug = 22.0
-arm_flange = 30.0
-arm_flange_t = 8.0
+arm_screw = 7.3
+arm_wheel = (22.0, 4.6)        # diameter, thickness
+arm_ball = 8.5                 # radius; its centre 15.7 under the wheel
+arm_head = (23.0, 23.3)        # the ball head's body: diameter, length
+arm_post = (13.3, 65.0)        # diameter, length
+arm_foot = (50.0, 28.0, 5.0)
 arm_tilt = 15.0                # how far the box looks down at the door, on the wall
 
 # The stand: a cream wedge the box leans back on, like a desk display. One
@@ -292,24 +297,28 @@ PI_FRONT = PI_BACK - pi_pcb
 PI_HOLES = [(PI_X0 + pi_hole_inset + hx, PI_ZBOT + pi_hole_inset + hy)
             for hx in (0, pi_hole_dx) for hy in (0, pi_hole_dy)]
 
-DBM_C = (SL_Y1 - 34.0, PI_ZBOT + pi_d + 12.0 + dbm_h / 2)   # (y, z) of its centre, on the right wall
-# The port panel, high on the back, clear of the converter and the Pi.
+# Forward on the right wall, so the power board's input plug passes behind it.
+DBM_C = (SL_Y1 - 39.5, PI_ZBOT + pi_d + 12.0 + dbm_h / 2)   # (y, z) of its centre, on the right wall
+# The port panel, high on the back, clear of the power board and the Pi.
 IO_Z = IN_Z1 - 21.0
 CHG_POS = (106.0, IO_Z)
 USB_POS = (129.0, IO_Z)
 LAN_POS = (156.0, IO_Z)
-CONV_X0 = PI_X0 + 2.0
-CONV_Z0 = PI_ZBOT + pi_d + 22.0
+# The power board on the back sheet over the Pi: high enough that the
+# right-angle plug under its output clears the Pi's header, and under the
+# port panel. Its parts face forward.
+PD_X0 = PI_X0
+PD_Z0 = PI_ZBOT + pi_d + 7.0
+PD_Y1 = SL_Y1 - pd_pillar                  # its back face, on the pillars
+PD_Y0 = PD_Y1 - pd_pcb[2]                  # its front face
+PD_HOLES = [(PD_X0 + pi_hole_inset + hx, PD_Z0 + pi_hole_inset + hy)
+            for hx in (0, pi_hole_dx) for hy in (0, pi_hole_dy)]
+PD_OUT = (PD_X0 + pd_out_u, PD_Y0 - 1.7, PD_Z0)            # opening down
+PD_IN = (PD_X0 + pd_pcb[0], PD_Y0 - 1.7, PD_Z0 + pd_in_v)  # opening right
 # As near the box's balance point as the base allows: the battery's weight
 # pulls it left, and the battery's own footprint is the one place a boss
 # cannot go. Clear of the camera's plug in front and the 4G board's behind.
 MOUNT_C = (88.0, LAY_Y0 + 7.9)
-
-# On the box's back, as near its balance point as the parts inside allow:
-# right of the battery, above the Pi, behind the converter, and clear of the
-# back's wordmark and both grilles.
-ARM_C = (78.0, 88.0)           # (x, z)
-ARM_SCREWS = [(ARM_C[0] + s * 11.0, ARM_C[1] + s * 11.0) for s in (-1, 1)]
 
 CORNER_IN = wall + 4.5
 # The lower left one moves in past the battery, which stands in that corner.
@@ -543,9 +552,8 @@ def back_cut_sketch():
         sk -= Pos(a(x), z) * Circle(screw_dia / 2)
     for x, z in PI_HOLES:
         sk -= Pos(a(x), z) * Circle(pi_screw_dia / 2)
-    sk -= Pos(a(ARM_C[0]), ARM_C[1]) * Circle(arm_plug / 2 + 0.2)
-    for x, z in ARM_SCREWS:
-        sk -= Pos(a(x), z) * Circle(screw_dia / 2)
+    for x, z in PD_HOLES:
+        sk -= Pos(a(x), z) * Circle(pi_screw_dia / 2)
     sk -= Pos(a(CHG_POS[0]), CHG_POS[1]) * Circle(chg_hole / 2)
     sk -= Pos(a(USB_POS[0]), USB_POS[1]) * RectangleRounded(usb_cut[0], usb_cut[1], 1.0)
     sk -= Pos(a(LAN_POS[0]), LAN_POS[1]) * RectangleRounded(lan_cut[0], lan_cut[1], 0.8)
@@ -561,7 +569,7 @@ def back_cut_sketch():
 
 def back_engrave_sketch():
     def label(txt, pos):
-        return Pos(BOX_W - pos[0], pos[1] - 13.0) * Text(
+        return Pos(BOX_W - pos[0], pos[1] + 12.5) * Text(
             txt, font_size=3.0 * 1.38, font_path=flat_font(FONT_LABEL), align=(Align.CENTER, Align.CENTER))
     label = label('CHARGE', CHG_POS) + label('USB', USB_POS) + label('ETHERNET', LAN_POS)
     mark = Pos(BOX_W - (PI_X0 + pi_w / 2), PI_ZBOT + pi_d + 10) * Text(
@@ -727,9 +735,23 @@ def meter_body():
     return span(IN_X1 - dbm_stack, IN_X1 - 0.8, fy - dbm_w / 2, fy + dbm_w / 2, fz - dbm_h / 2, fz + dbm_h / 2)
 
 
-def converter_body():
-    return span(CONV_X0, CONV_X0 + conv_size[0], LAY_Y0 + 1, LAY_Y0 + 1 + conv_size[1],
-                CONV_Z0, CONV_Z0 + conv_size[2])
+def pd_board():
+    """52Pi's RPi5 PD Power board on its four pillars: the board, its low
+    parts, and the ones that stand taller (the capacitor, the DC jack, the
+    two USB-C and the white 4-pin header)."""
+    x0, z0 = PD_X0, PD_Z0
+    w, h, _ = pd_pcb
+    front = PD_Y0
+    part = span(x0, x0 + w, front, PD_Y1, z0, z0 + h)
+    part += span(x0 + 4, x0 + w - 4, front - pd_parts_h, front, z0 + 4, z0 + h - 4)
+    part += cyl_y(x0 + 44.0, front - 10.0, z0 + 38.0, 8.0, 10.0)
+    part += span(x0 + w - 12, x0 + w + 1.5, front - 11, front, z0 + 4, z0 + 14)
+    part += span(x0 + w - 7.5, x0 + w + 1.0, front - 3.4, front, z0 + pd_in_v - 4.5, z0 + pd_in_v + 4.5)
+    part += span(x0 + pd_out_u - 4.5, x0 + pd_out_u + 4.5, front - 3.4, front, z0 - 1.0, z0 + 7.5)
+    part += span(x0 + w - 9, x0 + w - 1, front - 8, front, z0 + 30, z0 + 50)
+    for px, pz in PD_HOLES:
+        part += cyl_y(px, PD_Y1, pz, 5.5, pd_pillar)
+    return part
 
 
 def usb_jack():
@@ -795,7 +817,7 @@ CABLES = {
         _usb_port('lower', True)]),
     'Cable: screen touch to Pi USB': (4.0, 'data', [
         (IN_X0 + 2.5, SCREEN_Y1 - 1, SCREEN_Z0 + screen_touch_z), (IN_X0 + 2.5, SCREEN_Y1 + 2, SCREEN_Z0 + screen_touch_z),
-        (150, SCREEN_Y1 + 2, SCREEN_Z0 + screen_touch_z), (170, 22, 80), (172, 48, 70),
+        (150, SCREEN_Y1 + 2, SCREEN_Z0 + screen_touch_z), (170, 18, 78), (172, 48, 70),
         (_usb_port('upper', False)[0] + 14, _usb_port('upper', False)[1], _usb_port('upper', False)[2]),
         _usb_port('upper', False)]),
     'Cable: 4G modem to Pi USB': (4.0, 'data', [
@@ -805,27 +827,32 @@ CABLES = {
     'Cable: back USB port to Pi USB': (4.0, 'data', [
         (USB_POS[0], SL_Y1 - usb_body[2], USB_POS[1]), (USB_POS[0], SL_Y1 - usb_body[2] - 6, USB_POS[1]),
         (USB_POS[0], 24, USB_POS[1] - 10),
-        (142, 30, 120), (146, 36, 84), (168, 46, 76),
+        (142, 30, 120), (144, 32, 90), (150, 34, 78), (168, 46, 76),
         (_usb_port('upper', True)[0] + 14, _usb_port('upper', True)[1], _usb_port('upper', True)[2]),
         _usb_port('upper', True)]),
     'Cable: back Ethernet port to Pi Ethernet': (5.0, 'data', [
         (LAN_POS[0], SL_Y1 - lan_body[2], LAN_POS[1]), (LAN_POS[0], SL_Y1 - lan_body[2] - 6, LAN_POS[1]),
         (LAN_POS[0] - 4, 28, LAN_POS[1] - 12),
-        (150, 34, 118), (152, 38, 82), (174, 56, 74), (175, 57, 40), (PI_LAN[0] + 16, PI_LAN[1], PI_LAN[2]), PI_LAN]),
+        (150, 34, 118), (150, 32, 80), (174, 56, 74), (175, 57, 40), (PI_LAN[0] + 16, PI_LAN[1], PI_LAN[2]), PI_LAN]),
     'Cable: back CHARGE port to battery': (4.5, 'power', [
         (CHG_POS[0], SL_Y1 - chg_body[1], CHG_POS[1]), (CHG_POS[0], SL_Y1 - chg_body[1] - 6, CHG_POS[1]),
         (CHG_POS[0] - 6, 30, CHG_POS[1] + 8),
         (75, 38, 160), (BATT_PORTS[1][0] + 4, BATT_PORTS[1][1], 160), BATT_PORTS[1]]),
-    'Cable: battery to power converter': (4.5, 'power', [
-        BATT_PORTS[0], (BATT_PORTS[0][0], BATT_PORTS[0][1], 158), (60, 40, 158),
-        (CONV_X0 + conv_size[0] / 2, LAY_Y0 + 1 + conv_size[1] / 2, CONV_Z0 + conv_size[2])]),
-    'Cable: power converter to Pi USB-C': (4.5, 'power', [
-        (CONV_X0 + conv_size[0] / 2, LAY_Y0 + 2, CONV_Z0), (CONV_X0 + 13, 18.6, 80), (CONV_X0 + 13, 18.6, 46),
-        (CONV_X0 - 3, 23, 30), (CONV_X0 - 3, 30, 12), (CONV_X0 - 3, 55, 10), (PI_USBC[0] - 3, PI_USBC[1] - 3, 9),
-        PI_USBC]),
+    # Up out of the battery, over the port panel, down the right side behind
+    # the meter, and into the board's input from the right.
+    'Cable: battery to PD board': (4.5, 'power', [
+        BATT_PORTS[0], (BATT_PORTS[0][0], BATT_PORTS[0][1], 158), (40, 30, 164), (160, 30, 164),
+        (172, 36, 150), (172, PD_IN[1], 114), (PD_IN[0] + 14, PD_IN[1], PD_IN[2]), PD_IN]),
+    # Right-angle plugs at both ends: off the board's output, left over the
+    # top of the Pi, down behind the end of the battery's wall (the gap beside
+    # it is narrower than the cable), and under the Pi into its USB-C.
+    'Cable: PD board to Pi USB-C': (4.5, 'power', [
+        PD_OUT, (PD_OUT[0], PD_OUT[1], PD_OUT[2] - 3.5), (PI_X0 - 1.5, 54, PD_OUT[2] - 3.5),
+        (PI_X0 - 2.1, 61, PI_ZBOT + pi_d), (PI_X0 - 2.1, 61, PI_ZBOT), (PI_X0 + 6, 56, 11),
+        (PI_USBC[0] - 3, PI_USBC[1] - 3, 9), PI_USBC]),
     'Cable: screen video ribbon to Pi HDMI': (2.0, 'ribbon', [
-        (SCREEN_X0 + screen_fpc_x + 4, SCREEN_Y1 + 1, SCREEN_Z0 + 15), (CONV_X0 - 4, SCREEN_Y1 + 1.5, SCREEN_Z0 + 15),
-        (CONV_X0 - 4, 18.6, 46), (CONV_X0 - 4, 26, 30), (CONV_X0 - 4, 30, 13), (CONV_X0 + 2, 50, 12),
+        (SCREEN_X0 + screen_fpc_x + 4, SCREEN_Y1 + 1, SCREEN_Z0 + 15), (PI_X0 - 2, SCREEN_Y1 + 1.5, SCREEN_Z0 + 15),
+        (PI_X0 - 2, 18.6, 46), (PI_X0 - 2, 26, 30), (PI_X0 - 2, 30, 13), (PI_X0 + 4, 50, 12),
         (PI_HDMI[0], 54, PI_HDMI[2]), PI_HDMI]),
     'Cable: Qwiic to door counter': (2.0, 'i2c', [
         _pin(3), (_pin(3)[0], 30, 60), (TOF_C[0], 31, TOF_C[1] + tof_h / 2 + 4), (TOF_C[0], 30, TOF_C[1] + 2)]),
@@ -869,20 +896,20 @@ def hard_parts(sl, back):
     return {'sleeve': sl, 'back sheet': back, 'screen': screen_body(), 'battery': battery_body(),
             'Pi': pi_board() + pi_ports(), 'cooler': cooler_body(), '4G board': hat_body(),
             'camera': camera_body(), 'counter': counter_body(), 'sound meter': meter_body(),
-            'converter': converter_body(), 'charging port': charge_jack(), 'USB port': usb_jack(),
-            'Ethernet port': lan_jack(), 'mount nut': mount_nut(), 'arm block': arm_block()}
+            'PD board': pd_board(), 'charging port': charge_jack(), 'USB port': usb_jack(),
+            'Ethernet port': lan_jack(), 'mount nut': mount_nut()}
 
 
 def screw_report(hard):
     """The stand's screw must reach through the whole nut, and what sticks
-    out above the nut must touch nothing: no part, no cable. The ball
-    head's short screw must take most of either nut too."""
+    out above the nut must touch nothing: no part, no cable. The arm's
+    short screw must take the whole nut too."""
     nut_top = mount_floor + mount_nut_th
     tip = -stand_seat + stand_screw_len
     if tip < nut_top - 0.01:
         return [f'the stand screw stops {nut_top - tip:.1f} mm short of the top of the nut']
-    if c1991_screw - mount_floor < 0.75 * mount_nut_th:
-        return [f'the ball head\'s {c1991_screw} mm screw takes only {c1991_screw - mount_floor:.1f} mm of a nut']
+    if arm_screw - mount_floor < mount_nut_th:
+        return [f'the arm\'s {arm_screw} mm screw takes only {arm_screw - mount_floor:.1f} mm of the nut']
     above = cyl_z(MOUNT_C[0], MOUNT_C[1], nut_top + 0.01, 6.35, tip - nut_top)
     found = []
     others = dict(hard)
@@ -958,69 +985,65 @@ def stand_screw():
 BACK_FACE = SL_Y1 + plate          # the back sheet's outside
 
 
-def arm_block():
-    """The back mount, printed: a flange inside the box and a plug through
-    the back sheet, flush with its outside, with a nut pocket open to the
-    inside and a 1 mm floor under the plug's face."""
-    x, z = ARM_C
-    flange = Pos(x, SL_Y1 - arm_flange_t / 2, z) * extrude(
-        Plane.XZ * RectangleRounded(arm_flange, arm_flange, 4.0), amount=arm_flange_t / 2, both=True)
-    plug = cyl_y(x, SL_Y1 - 0.5, z, arm_plug, plate + 0.5)
-    part = flange + plug
-    part -= cyl_y(x, SL_Y1 - arm_flange_t - 1, z, 6.8, arm_flange_t + plate + 2)
-    nut = Plane(origin=(x, BACK_FACE - mount_floor, z), x_dir=(1, 0, 0), z_dir=(0, -1, 0)) * RegularHex(mount_nut_af)
-    part -= extrude(nut, amount=arm_flange_t + plate)
-    for sx, sz in ARM_SCREWS:
-        part -= cyl_y(sx, SL_Y1 - insert_depth, sz, insert_dia, insert_depth + 0.01)
-    return part
-
-
-def arm_nut():
-    x, z = ARM_C
-    nut = Plane(origin=(x, BACK_FACE - mount_floor, z), x_dir=(1, 0, 0), z_dir=(0, -1, 0)) * RegularHex(mount_nut_af - 0.4)
-    return extrude(nut, amount=mount_nut_th)
-
-
-def _c1991_parts():
-    """The C1991 on the wall, holding the box by its back mount, the box
-    tilted down `arm_tilt` at the door. In the box's frame: what holds the
-    box (screw, wheel, stem, ball) is square to its back; the cup, the foot
-    and the wall are turned back by the tilt about the ball, so that once the
-    box is tilted they stand square to the floor."""
-    x, z = ARM_C
-    y0 = BACK_FACE
-    wheel_d, wheel_t = c1991_wheel
-    steel = cyl_y(x, y0 - c1991_screw, z, 6.35, c1991_screw) + cyl_y(x, y0 + wheel_t - 0.5, z, 6.0, 9.0)
-    wheel = cyl_y(x, y0, z, wheel_d, wheel_t)
-    for i in range(36):                          # the knurling
+def _arm_parts():
+    """The CAMVATE arm on the wall, holding the box by the nut in its base,
+    the box tilted down `arm_tilt` at the door. In the box's frame: what
+    holds the box (screw, wheel, stem, ball) is square to its base; the
+    head's body, the post, the foot and the wall are turned back by the tilt
+    about the ball, so that once the box is tilted they stand square to the
+    floor and the post sticks straight out of the wall."""
+    x, y = MOUNT_C
+    wheel_d, wheel_t = arm_wheel
+    bz = -(wheel_t + 15.7)                          # the ball's centre
+    steel = cyl_z(x, y, 0, 6.35, arm_screw) + cyl_z(x, y, bz, 6.0, -bz - wheel_t + 0.5)
+    wheel = cyl_z(x, y, -wheel_t, wheel_d, wheel_t)
+    for i in range(36):                             # the knurling
         a = math.radians(i * 10)
-        wheel -= cyl_y(x + wheel_d / 2 * math.cos(a), y0 - 0.1, z + wheel_d / 2 * math.sin(a), 1.2, wheel_t + 0.2)
-    ball_y = y0 + wheel_t + 8.5 + 6.5
-    ball = Pos(x, ball_y, z) * Sphere(8.0)
-    foot_y = y0 + c1991_tall - c1991_screw - c1991_foot[2]
-    collar = cyl_y(x, ball_y - 4.0, z, 18.0, 11.0) - Pos(x, ball_y + 1.0, z + 7.0) * Box(6.5, 12.0, 8.0)
-    cup = collar + cyl_y(x, ball_y + 7.0, z, 20.0, foot_y - ball_y - 7.0)
-    knob = cyl_x(x + 9.5, ball_y + 15.0, z, 5.0, 6.0) + Pos(x + 18.5, ball_y + 15.0, z) * Box(5.0, 7.0, 16.0)
-    foot_plane = Plane(origin=(x, foot_y, z), x_dir=(0, 0, 1), z_dir=(0, 1, 0))
-    foot = extrude(foot_plane * SlotOverall(c1991_foot[0], c1991_foot[1]), amount=c1991_foot[2])
+        wheel -= cyl_z(x + wheel_d / 2 * math.cos(a), y + wheel_d / 2 * math.sin(a), -wheel_t - 0.1, 1.2, wheel_t + 0.2)
+    ball = Pos(x, y, bz) * Sphere(arm_ball)
+    # Level, back toward the wall: the head's collar and body (with the slot
+    # the stem tilts up through), the wing knob, the post, the oval foot.
+    hd, hl = arm_head
+    post_d, post_l = arm_post
+    head = cyl_y(x, y - 3.2, bz, 17.7, 3.4) + cyl_y(x, y + 0.2, bz, hd, hl)
+    head -= Pos(x, y + 2.0, bz + hd / 2) * Box(7.0, 14.0, hd)
+    knob = cyl_x(x + hd / 2 - 0.5, y + 12.0, bz, 5.0, 4.5) + Pos(x + hd / 2 + 9.5, y + 12.0, bz) * Box(11.0, 7.0, 23.0)
+    post = cyl_y(x, y + 0.2 + hl - 0.5, bz, post_d, post_l + 1.0)
+    foot_y = y + 0.2 + hl + post_l
+    foot_plane = Plane(origin=(x, foot_y, bz), x_dir=(0, 0, 1), z_dir=(0, 1, 0))
+    foot = extrude(foot_plane * SlotOverall(arm_foot[0], arm_foot[1]), amount=arm_foot[2])
     for s in (-1, 1):
-        foot -= cyl_y(x, foot_y - 0.1, z + s * 19.0, 4.5, c1991_foot[2] + 0.2)
-    wall_y = foot_y + c1991_foot[2]
-    wall = span(-60, BOX_W + 60, wall_y, wall_y + 14, -110, BOX_H + 110)
-    turn = Pos(x, ball_y, z) * Rot(-arm_tilt, 0, 0) * Pos(-x, -ball_y, -z)
-    return {'black': wheel + ball + (turn * (cup + knob + foot)), 'steel': steel, 'wall': turn * wall}
+        foot -= cyl_y(x, foot_y - 0.1, bz + s * 19.0, 4.5, arm_foot[2] + 0.2)
+    wall_y = foot_y + arm_foot[2]
+    wall = span(-60, BOX_W + 60, wall_y, wall_y + 14, -150, BOX_H + 90)
+    turn = Pos(x, y, bz) * Rot(-arm_tilt, 0, 0) * Pos(-x, -y, -bz)
+    level = turn * (head + knob + post + foot)
+    return {'black': wheel + ball + level, 'level': level, 'steel': steel, 'wall': turn * wall}
 
 
 def camera_arm():
-    return _c1991_parts()['black']
+    return _arm_parts()['black']
 
 
 def camera_arm_steel():
-    return _c1991_parts()['steel']
+    return _arm_parts()['steel']
 
 
 def wall_part():
-    return _c1991_parts()['wall']
+    return _arm_parts()['wall']
+
+
+def arm_report(sl, back):
+    """On the wall, tilted down at the door, the box must clear the arm's
+    head, its post and the wall."""
+    parts = _arm_parts()
+    found = []
+    for aname in ('level', 'wall'):
+        for bname, b in (('sleeve', sl), ('back sheet', back)):
+            common = parts[aname] & b
+            if common and sum(s.volume for s in common.solids()) > 0.01:
+                found.append(f'on the wall, the arm\'s {aname} part touches the {bname}')
+    return found
 
 
 def arm_world_lift():
@@ -1041,9 +1064,9 @@ INSIDE = {
     'Pi': lambda: pi_board() + pi_ports(), 'cooler': cooler_body, '4G board': hat_body,
     'jumpers': jumpers, 'Pi lower plugs': pi_low_plugs, 'Pi USB plugs': pi_usb_plugs,
     'camera': camera_body, 'camera plug': camera_plug, 'counter': counter_body,
-    'counter leads': counter_leads, 'sound meter': meter_body, 'converter': converter_body,
+    'counter leads': counter_leads, 'sound meter': meter_body, 'PD board': pd_board,
     'charging port': charge_jack, 'USB port': usb_jack, 'Ethernet port': lan_jack,
-    'light': led_body, 'mount nut': mount_nut, 'arm block': arm_block, 'arm nut': arm_nut,
+    'light': led_body, 'mount nut': mount_nut,
     'touch plug': touch_plug, 'touch cable': touch_cable, 'video ribbon': video_ribbon,
 }
 # What each part is meant to touch: what it is fixed to or plugged into.
@@ -1051,7 +1074,7 @@ ALLOWED = {
     frozenset(p) for p in [
         ('sleeve', 'camera'), ('sleeve', 'counter'), ('sleeve', 'sound meter'), ('sleeve', 'light'),
         ('sleeve', 'mount nut'), ('sleeve', 'touch plug'), ('sleeve', 'video ribbon'),
-        ('back sheet', 'arm block'), ('arm block', 'arm nut'),
+        ('back sheet', 'PD board'),
         ('back sheet', 'charging port'), ('sleeve', 'charging port'),
         ('back sheet', 'USB port'), ('back sheet', 'Ethernet port'),
         ('camera', 'camera plug'), ('counter', 'counter leads'),
@@ -1125,7 +1148,7 @@ def assembly(sleeve_part, front, back):
         labelled(camera_body(), 'PureThermal 3 + Lepton 3.5', Color(0.6, 0.1, 0.15)),
         labelled(counter_body(), 'VL53L8CX door counter', Color(0.45, 0.3, 0.65)),
         labelled(meter_body(), 'Decibel meter', Color(0.1, 0.55, 0.55)),
-        labelled(converter_body(), 'Power converter', Color(0.9, 0.4, 0.35)),
+        labelled(pd_board(), 'RPi5 PD Power board (52Pi)', Color(0.08, 0.08, 0.09)),
         labelled(charge_jack(), 'CHARGE port', Color(0.85, 0.85, 0.85)),
         labelled(led_body(), 'LINK light', Color(0.5, 0.95, 0.5)),
         labelled(mount_nut(), '1/4-20 mount nut', Color(0.7, 0.7, 0.72)),
@@ -1133,10 +1156,8 @@ def assembly(sleeve_part, front, back):
         labelled(antenna_body(), '4G antenna (flexible)', Color(0.6, 0.62, 0.66)),
         labelled(stand_in_box_frame(), 'Stand (printed, cream)', CREAM),
         labelled(stand_screw(), 'Stand screw (1/4-20 x 5/8)', Color(0.66, 0.67, 0.7)),
-        labelled(arm_block(), 'Arm mount block (printed, navy)', NAVY),
-        labelled(arm_nut(), 'Arm mount nut', Color(0.66, 0.67, 0.7)),
-        labelled(camera_arm(), 'CAMVATE C1991 ball head', Color(0.07, 0.07, 0.08)),
-        labelled(camera_arm_steel(), 'C1991 screw and stem', Color(0.75, 0.76, 0.78)),
+        labelled(camera_arm(), 'CAMVATE wall arm (24007)', Color(0.07, 0.07, 0.08)),
+        labelled(camera_arm_steel(), 'Arm screw and stem', Color(0.75, 0.76, 0.78)),
         labelled(wall_part(), 'Wall (for scale)', Color(0.92, 0.91, 0.89)),
     ] + [labelled(cable_part(n), n, CABLE_COLOURS[CABLES[n][1]]) for n in CABLES]
     return Compound(children=parts, label='Flux')
@@ -1173,6 +1194,9 @@ def main():
     for problem in screw_report(hard):
         sys.exit(problem)
     print('stand check: the screw takes the whole nut and touches nothing past it')
+    for problem in arm_report(sl, back):
+        sys.exit(problem)
+    print('wall check: tilted down on the arm, the box clears the arm and the wall')
     if args.check:
         return
 
