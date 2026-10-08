@@ -6,7 +6,7 @@
  * before the wait (currentAccount) and request() refuses to send for anyone
  * else.
  */
-import { currentAccount, sendEmergencyAlert, shareLocationWithContacts, cancelEmergencyAlert, uploadProfileImage, saveProfileImageUrl, removeProfileImage } from '../services/api';
+import { currentAccount, sendEmergencyAlert, shareLocationWithContacts, cancelEmergencyAlert, uploadProfileImage, saveProfileImageUrl, removeProfileImage, logoutAll } from '../services/api';
 
 jest.mock('@capgo/capacitor-social-login', () => ({ SocialLogin: { logout: jest.fn() } }));
 
@@ -155,5 +155,53 @@ describe('one profile picture change at a time', () => {
     let ran = false;
     await changePicture(async (isNewest) => { ran = isNewest(); });
     expect(ran).toBe(true);
+  });
+});
+
+// code review 14 (2026-10-07): "Sign out everywhere" waited on the server and
+// then signed out whoever was signed in by then, so a slow answer ended the
+// next account's session and threw away its unsent settings. And a failed
+// avatar save or photo removal put its old picture back over a newer change
+// that had already gone through.
+describe('a slow answer does not act on the next account, and a failure does not cover a newer picture', () => {
+  test('sign-out-everywhere asked for by one account is not sent once another has signed in', async () => {
+    localStorage.setItem('flockToken', tokenFor(41));
+    const account = currentAccount();
+    localStorage.setItem('flockToken', tokenFor(42));
+    await expect(logoutAll({ account })).rejects.toMatchObject({ sessionEnded: true });
+    expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  test('the button signs out only the account that tapped it', () => {
+    const settings = fs.readFileSync(path.join(__dirname, '..', 'screens', 'ProfileSettings.js'), 'utf8').replace(/\r\n/g, '\n');
+    const at = settings.indexOf('Sign out everywhere\n');
+    const handler = settings.slice(settings.lastIndexOf('<button', at), at);
+    expect(handler).toMatch(/const account = currentAccount\(\);[\s\S]*await logoutAll\(\{ account \}\)/);
+    expect(handler).toMatch(/if \(err\?\.sessionEnded\) return;/);
+    // Checked again after the wait, before anything is torn down.
+    expect(handler).toMatch(/if \(currentAccount\(\) !== account\) return;\s*if \(onLogout\) onLogout\(/);
+  });
+
+  test('a failed save or removal puts the old picture back only while it is still what shows', () => {
+    const app = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8').replace(/\r\n/g, '\n');
+    const avatar = app.slice(app.indexOf('const generateAIAvatar = useCallback('), app.indexOf('const removePhoto = useCallback('));
+    const removal = app.slice(app.indexOf('const removePhoto = useCallback('), app.indexOf('const BottomNav = () =>'));
+    expect(avatar).toMatch(/setProfilePic\(\(cur\) => \(cur === url \? previousPic : cur\)\);/);
+    expect(removal).toMatch(/setProfilePic\(\(cur\) => \(cur === null \? previousPic : cur\)\);/);
+    expect(avatar).not.toMatch(/setProfilePic\(previousPic\)/);
+    expect(removal).not.toMatch(/setProfilePic\(previousPic\)/);
+
+    // The reported sequence, played through the two updaters: picture P, a
+    // removal (screen: none), then avatar G picked while it waits (screen: G).
+    // The removal fails: G stays. Had G failed while the removal still showed,
+    // the removal's empty screen would have stayed instead.
+    const P = 'https://example.invalid/p.jpg';
+    const G = 'https://example.invalid/g.svg';
+    const removalFailed = (cur) => (cur === null ? P : cur);
+    const avatarFailed = (url, previous) => (cur) => (cur === url ? previous : cur);
+    expect(removalFailed(G)).toBe(G);
+    expect(removalFailed(null)).toBe(P);
+    expect(avatarFailed(G, null)(G)).toBeNull();
+    expect(avatarFailed(G, null)('https://example.invalid/newer.jpg')).toBe('https://example.invalid/newer.jpg');
   });
 });

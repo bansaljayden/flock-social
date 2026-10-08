@@ -12,7 +12,7 @@ test('Sign out everywhere says which one happened when the server call fails', (
   const app = read('App.js');
   const settings = read('screens/ProfileSettings.js');
   expect(app).toMatch(/signed_out_here_only: 'Signed out on this phone only\./);
-  expect(settings).toContain("try { await logoutAll(); } catch (_) { everywhere = false; }");
+  expect(settings).toMatch(/try \{ await logoutAll\(\{ account \}\); \} catch \(err\) \{\s*if \(err\?\.sessionEnded\) return;\s*everywhere = false;\s*\}/);
   expect(settings).toContain("sessionEndCopy(everywhere ? 'signed_out_everywhere' : 'signed_out_here_only')");
 });
 
@@ -23,7 +23,7 @@ test('a profile photo can be removed, and the row only shows when there is one',
   expect(app).toContain('const removePhoto = useCallback(async () => {');
   expect(app).toContain('{profilePic && (');
   expect(app).toContain('onClick={removePhoto}');
-  expect(app).toContain('setProfilePic(previousPic);');
+  expect(app).toContain('setProfilePic((cur) => (cur === null ? previousPic : cur));');
   expect(app).not.toContain('Remove photo\u2014');
 });
 
