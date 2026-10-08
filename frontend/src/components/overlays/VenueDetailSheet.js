@@ -53,6 +53,7 @@
 import React from 'react';
 import Icons from '../ui/Icons';
 import { openMapsChooser } from '../ui/MapsChooser';
+import StaticVenueMap, { paletteIsDark } from '../map/StaticVenueMap';
 import { BirdNote, WARM_BIRD } from '../ui/BirdieBird';
 import { onVenuePhotoError } from '../../lib/venuePhoto';
 import { submitVenueReview, getPublicReviews } from '../../services/api';
@@ -176,6 +177,29 @@ const VenueDetailSheet = ({
         const footerReturnsToChat = !pickingVenueForDm && !!venueDetailReturnTo;
         const footerHasDirections = !!(httpUrl(venueDetailModal.google_maps_url) || venueDetailModal.place_id);
         const directionsIsPrimary = footerReturnsToChat && footerHasDirections;
+        // Where the venue is, for Get Directions and the header map. Place
+        // Details sends location {latitude, longitude}; an older payload
+        // carried geometry.location. Until the details answer, or when they
+        // fail, the card holds the seed its caller passed, and only some seeds
+        // carry lat and lng: a plan's Details, the two MapLibreMapView builds,
+        // and a quieter place nearby that has a pin on the map. Without them
+        // Apple Maps searches for the name at its address (lib/mapsLinks.js)
+        // and the header keeps its plain box.
+        const at = venueDetailModal.location || (venueDetailModal.geometry && venueDetailModal.geometry.location) || {};
+        const venueMapAt = { lat: at.latitude ?? at.lat ?? venueDetailModal.lat, lng: at.longitude ?? at.lng ?? venueDetailModal.lng };
+        // Get Directions and a tap on the header map both open the chooser.
+        // The Google link needs a url or a place id; a card holding neither
+        // (a seed the header map can still draw from coordinates) offers
+        // Apple Maps alone rather than a Google link to "place_id:undefined".
+        const openVenueDirections = () => openMapsChooser({
+          place: {
+            name: venueDetailModal.name,
+            address: venueDetailModal.formatted_address,
+            lat: at.latitude ?? at.lat ?? venueDetailModal.lat,
+            lng: at.longitude ?? at.lng ?? venueDetailModal.lng,
+          },
+          googleUrl: httpUrl(venueDetailModal.google_maps_url) || (venueDetailModal.place_id ? `https://www.google.com/maps/place/?q=place_id:${venueDetailModal.place_id}` : null),
+        });
         return (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 9998, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
           onClick={(e) => { if (e.target === e.currentTarget) closeVenueDetail(); }}
@@ -206,7 +230,25 @@ const VenueDetailSheet = ({
               ) : venueDetailModal.photo_url ? (
                 <img src={venueDetailModal.photo_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} onError={onVenuePhotoError} />
               ) : (
-                <div style={{ width: '100%', height: '100%', background: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.mapPin('rgba(255,255,255,0.3)', 48)}</div>
+                /* No photo, which is every venue Places has none for and
+                   every venue once the photo spend cap is reached: the block
+                   it is on, in the app theme, with its credit top left where
+                   the name and the close button leave room. A real photo beats
+                   a map in a header, so this is the no-photo branch only. With
+                   no key, no coordinates or a failed image it is the navy box
+                   with a pin it always was. A tap opens the same chooser as
+                   Get Directions. */
+                <StaticVenueMap
+                  lat={venueMapAt.lat}
+                  lng={venueMapAt.lng}
+                  name={venueDetailModal.name}
+                  size="sheet"
+                  height={220}
+                  dark={paletteIsDark(colors)}
+                  creditCorner="topleft"
+                  onOpen={openVenueDirections}
+                  fallback={<div style={{ width: '100%', height: '100%', background: colors.navyBg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.mapPin('rgba(255,255,255,0.3)', 48)}</div>}
+                />
               )}
               {/* Overlay gradient */}
               <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, height: '80px', background: 'linear-gradient(transparent, rgba(0,0,0,0.7))' }} />
@@ -500,26 +542,7 @@ const VenueDetailSheet = ({
                   Google's own url or the place id; Apple Maps is located by
                   the place's coordinates, address and name. */}
               {footerHasDirections ? (
-                <button type="button" onClick={() => {
-                  // Place Details sends location {latitude, longitude}; an
-                  // older payload carried geometry.location. Until the details
-                  // answer, or when they fail, the card holds the seed its
-                  // caller passed, and only some seeds carry lat and lng: a
-                  // plan's Details, the two MapLibreMapView builds, and a
-                  // quieter place nearby that has a pin on the map. Without
-                  // them Apple Maps searches for the name at its address
-                  // (lib/mapsLinks.js).
-                  const at = venueDetailModal.location || (venueDetailModal.geometry && venueDetailModal.geometry.location) || {};
-                  openMapsChooser({
-                    place: {
-                      name: venueDetailModal.name,
-                      address: venueDetailModal.formatted_address,
-                      lat: at.latitude ?? at.lat ?? venueDetailModal.lat,
-                      lng: at.longitude ?? at.lng ?? venueDetailModal.lng,
-                    },
-                    googleUrl: httpUrl(venueDetailModal.google_maps_url) || `https://www.google.com/maps/place/?q=place_id:${venueDetailModal.place_id}`,
-                  });
-                }} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `2px solid ${directionsIsPrimary ? colors.navyBg : colors.navy}`, backgroundColor: directionsIsPrimary ? colors.navyBg : 'var(--bg-card-solid)', color: directionsIsPrimary ? 'white' : colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', textDecoration: 'none', boxShadow: directionsIsPrimary ? '0 4px 12px rgba(13,40,71,0.10)' : 'none' }}>
+                <button type="button" onClick={openVenueDirections} style={{ flex: 1, padding: '12px', borderRadius: '12px', border: `2px solid ${directionsIsPrimary ? colors.navyBg : colors.navy}`, backgroundColor: directionsIsPrimary ? colors.navyBg : 'var(--bg-card-solid)', color: directionsIsPrimary ? 'white' : colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', textDecoration: 'none', boxShadow: directionsIsPrimary ? '0 4px 12px rgba(13,40,71,0.10)' : 'none' }}>
                   {Icons.mapPin(directionsIsPrimary ? 'white' : colors.navy, 16)} Get Directions
                 </button>
               ) : null}

@@ -61,6 +61,7 @@ import { isNightOver } from '../lib/planNight';
 import { BirdieStill, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
 import { openMapsChooser } from '../components/ui/MapsChooser';
+import StaticVenueMap, { paletteIsDark } from '../components/map/StaticVenueMap';
 import useEdgeSwipeBack from '../hooks/useEdgeSwipeBack';
 import useSheetDrag from '../hooks/useSheetDrag';
 import { hapticTap } from '../services/haptics';
@@ -216,6 +217,22 @@ export default function FlockDetail({
     const soloMember = acceptedMembers.length === 1 && goingGuests.length === 0 ? acceptedMembers[0] : null;
     const justYou = soloMember != null &&
       (typeof soloMember !== 'object' || String(soloMember.id) === String(authUser?.id));
+    // Directions, by place id when there is one: the coordinate form dropped
+    // people at a bare lat,lng pin with no name, hours, or entrance, on the
+    // one tap whose whole job is getting them in the door. Coordinates stay as
+    // the fallback for a venue with no id. The tap offers Apple Maps too
+    // (components/ui/MapsChooser.js), which App Review asked for; Apple Maps
+    // cannot read a Google place id, so it gets the coordinates, address and
+    // name. The Directions button and a tap on the venue map both call it.
+    const openPlanDirections = () => openMapsChooser({
+      place: { name: flock.venue, address: flock.venueAddress, lat: flock.venueLat, lng: flock.venueLng },
+      googleUrl: flock.venueId
+        ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(flock.venue || 'venue')}&query_place_id=${flock.venueId}`
+        : `https://maps.google.com/?q=${flock.venueLat},${flock.venueLng}`,
+    });
+    // The venue map follows the app theme. colors is the theme-aware palette
+    // App.js hands every screen, so it already says which theme is on screen.
+    const venueMapDark = paletteIsDark(colors);
 
     return (
       <div key="flock-detail-screen-container" ref={edgeBack} className="screen-enter" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
@@ -415,6 +432,13 @@ export default function FlockDetail({
               {flock.venuePhoto && (
                 <img src={flock.venuePhoto} alt="" width="375" height="170" style={{ width: '100%', height: '170px', objectFit: 'cover', display: 'block' }} onError={onVenuePhotoError} />
               )}
+              {/* No photo: the block the venue is on takes the photo's place,
+                  full width. With a photo the map sits under the address
+                  instead (below). StaticVenueMap draws nothing without a key
+                  or coordinates, or when the image fails. */}
+              {!flock.venuePhoto && (
+                <StaticVenueMap lat={flock.venueLat} lng={flock.venueLng} name={flock.venue} size="strip" dark={venueMapDark} onOpen={openPlanDirections} />
+              )}
               <div style={{ padding: '14px' }}>
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', marginBottom: '6px' }}>
                   <h3 style={{ color: colors.navy, margin: 0, fontSize: 'var(--t-title)', fontWeight: '700', flex: 1 }}>{flock.venue}</h3>
@@ -427,6 +451,12 @@ export default function FlockDetail({
                     {Icons.mapPin(colors.textSecondary, 13)} <span style={{ lineHeight: '1.3' }}>{flock.venueAddress}</span>
                   </p>
                 )}
+                {/* Under the address, because this is where a guest works out
+                    how to get there. A tap opens the same maps chooser as
+                    Directions. */}
+                {flock.venuePhoto && (
+                  <StaticVenueMap lat={flock.venueLat} lng={flock.venueLng} name={flock.venue} size="strip" dark={venueMapDark} onOpen={openPlanDirections} style={{ borderRadius: '10px', marginBottom: '12px' }} />
+                )}
                 <div style={{ display: 'flex', gap: '8px' }}>
                   {flock.venueId && (
                     <button className="hit44 glass-btn glass-secondary" onClick={() => openVenueDetail(flock.venueId, { name: flock.venue, formatted_address: flock.venueAddress, place_id: flock.venueId, rating: flock.venueRating, photo_url: flock.venuePhoto, lat: flock.venueLat, lng: flock.venueLng })} style={{ flex: 1, padding: '10px', background: 'var(--icon-bg)', border: `1.5px solid ${colors.navyMid}`, borderRadius: '10px', color: colors.navyMid, fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
@@ -434,20 +464,9 @@ export default function FlockDetail({
                     </button>
                   )}
                   {(flock.venueId || (flock.venueLat && flock.venueLng)) && (
-                    /* By place id when there is one: the coordinate form
-                       dropped people at a bare lat,lng pin with no name,
-                       hours, or entrance, on the one tap whose whole job is
-                       getting them in the door. Coordinates stay as the
-                       fallback for a venue with no id. The tap offers
-                       Apple Maps too (components/ui/MapsChooser.js), which
-                       App Review asked for; Apple Maps cannot read a Google
-                       place id, so it gets the coordinates, address and name. */
-                    <button className="hit44 glass-btn glass-navy" onClick={() => openMapsChooser({
-                      place: { name: flock.venue, address: flock.venueAddress, lat: flock.venueLat, lng: flock.venueLng },
-                      googleUrl: flock.venueId
-                        ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(flock.venue || 'venue')}&query_place_id=${flock.venueId}`
-                        : `https://maps.google.com/?q=${flock.venueLat},${flock.venueLng}`,
-                    })} style={{ flex: 1, padding: '10px', background: colors.navyBg, border: 'none', borderRadius: '10px', color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
+                    /* openPlanDirections, above the return, says which link
+                       each maps app gets and why. */
+                    <button className="hit44 glass-btn glass-navy" onClick={openPlanDirections} style={{ flex: 1, padding: '10px', background: colors.navyBg, border: 'none', borderRadius: '10px', color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}>
                       {Icons.mapPin('white', 14)} Directions
                     </button>
                   )}
