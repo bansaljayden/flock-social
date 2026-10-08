@@ -946,6 +946,32 @@ describe('the edge cache keeps what Vercel\'s CDN kept, and nothing else', () =>
   });
 });
 
+describe('startup warms the time zone data a preview formats with', () => {
+  // A cold Intl.DateTimeFormat for the preview's zone costs more CPU than the
+  // Free plan gives a request; loading the Functions pays it instead.
+  test('loading the Functions builds both of the preview\'s formatters before any request', () => {
+    const zoneName = /const DISPLAY_TZ = '([^']+)';/.exec(read('api/invite-preview.js'))[1];
+    const RealFormat = Intl.DateTimeFormat;
+    const seen = [];
+    const spy = jest.spyOn(Intl, 'DateTimeFormat').mockImplementation(function (locale, options) {
+      seen.push({ locale, ...options });
+      return new RealFormat(locale, options);
+    });
+    try {
+      jest.isolateModules(() => {
+        require('../../functions/_lib/handlers.js');
+      });
+    } finally {
+      spy.mockRestore();
+    }
+    const zone = seen.filter((o) => o.timeZone === zoneName && o.locale === 'en-US');
+    // The day ("Fri, Oct 9") and the time with its zone name ("9:00 PM EDT"),
+    // exactly as whenLabel builds them for a request.
+    expect(zone.some((o) => o.weekday === 'short' && o.month === 'short')).toBe(true);
+    expect(zone.some((o) => o.hour === 'numeric' && o.timeZoneName === 'short')).toBe(true);
+  });
+});
+
 describe('the node adapter runs an api/ handler unchanged', () => {
   test('statusCode, setHeader, getHeader, removeHeader and end become a Response', async () => {
     const res = await runNodeHandler((req, r) => {
