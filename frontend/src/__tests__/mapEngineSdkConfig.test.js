@@ -71,6 +71,7 @@ jest.mock('@maptiler/sdk', () => {
     once(evt, fn) { return this.on(evt, fn); }
     fire(evt, e) { (this.handlers[evt] || []).forEach((fn) => fn(e)); }
     getStyle() { return { layers: [] }; }
+    isStyleLoaded() { return true; }
     addSource(id) { this.sources[id] = new FakeSource(); }
     getSource(id) { return this.sources[id]; }
     addLayer(layer) { this.layers[layer.id] = layer; }
@@ -260,10 +261,12 @@ describe('code review of the map work (2026-10-08)', () => {
 
   test('a refusal clears after a style swap only through the free TileJSON check and a whole reload', () => {
     const src = fs.readFileSync(path.join(__dirname, '..', 'components', 'map', 'MapLibreMapView.js'), 'utf8').replace(/\r\n/g, '\n');
-    const body = src.slice(src.indexOf('const rehydrateAfterStyleSwap = useCallback((map) => {')).slice(0, 1600);
+    const body = src.slice(src.indexOf('const rehydrateAfterStyleSwap = useCallback((map) => {')).slice(0, 2800);
     expect(body).toMatch(/tiles\/v4\/tiles\.json/);
     expect(body).toMatch(/if \(!r\.ok \|\| mapInstanceRef\.current !== map\) return;/);
-    expect(body).toMatch(/map\.reloadStyle\(map\.getStyle\(\)\);/);
+    expect(body).toMatch(/if \(swap !== styleSwapRef\.current\) return;/);
+    expect(body).toMatch(/if \(!current \|\| \(typeof map\.isStyleLoaded === 'function' && !map\.isStyleLoaded\(\)\)\) return;/);
+    expect(body).toMatch(/map\.reloadStyle\(current\);/);
     // Never cleared unconditionally on the swap itself.
     expect(body).not.toMatch(/if \(keyRefusedRef\.current\) \{ keyRefusedRef\.current = false;/);
   });
