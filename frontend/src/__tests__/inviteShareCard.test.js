@@ -11,9 +11,18 @@
 //      after the page is gone (the preview file's own rule 3).
 //   2. A cancelled or completed plan keeps the static banner: a dead plan
 //      does not advertise itself.
+//
+// And the signature the card URL carries once OG_CARD_SECRET is set (the
+// Cloudflare Pages project and the API hold it, Vercel never does): without
+// a secret of 32 characters or more the page is byte for byte what Vercel
+// serves today, and Vercel's own renderer draws the same card either way.
 
 import fs from 'fs';
 import path from 'path';
+
+// api/invite-og.js renders through @vercel/og at Vercel's edge. Here only the
+// arguments it hands the renderer matter.
+jest.mock('@vercel/og', () => ({ ImageResponse: jest.fn() }));
 
 const ogCard = require('../../api/_og-card.js');
 const PREVIEW = fs.readFileSync(path.join(__dirname, '..', '..', 'api', 'invite-preview.js'), 'utf8');
@@ -72,6 +81,8 @@ describe('the preview page wires the card in without the token', () => {
     expect(block).toContain('n: opts.card.name');
     expect(block).toContain('w: opts.card.when');
     expect(block).toContain('g: String(opts.card.going)');
+    // The three fields, and their signature when a secret is set.
+    expect(block).toContain('new URLSearchParams(signedCardQuery({');
     expect(block).not.toMatch(/token/);
   });
 
@@ -91,5 +102,122 @@ describe('the edge function stays thin and cacheable', () => {
     expect(OG_FN).toContain('ogCard.cardParams(');
     expect(OG_FN).toContain('ogCard.cardTree(');
     expect(OG_FN).toContain('s-maxage=3600');
+  });
+
+  test('it reads n, w and g only, so a signed card URL draws the same card on Vercel', () => {
+    const { ImageResponse } = require('@vercel/og');
+    const handler = require('../../api/invite-og.js').default;
+    const unsigned = 'https://www.flockcorp.com/api/invite-og?n=Friday+Tacos&w=Fri%2C+Oct+9+at+9%3A00+PM+EDT&g=4';
+    ImageResponse.mockClear();
+    handler({ url: unsigned });
+    handler({ url: unsigned + '&s=vY2GCt-sA90cCCipNMEOKC' });
+    handler({ url: unsigned + '&s=' + 'A'.repeat(22) });
+    expect(ImageResponse).toHaveBeenCalledTimes(3);
+    const [plain, ...signed] = ImageResponse.mock.calls.map((call) => JSON.stringify(call));
+    expect(plain).toContain('Friday Tacos');
+    expect(plain).toContain('4 going');
+    for (const call of signed) expect(call).toBe(plain);
+  });
+});
+
+describe('the card URL is signed only with a secret of 32 characters or more', () => {
+  const preview = require('../../api/invite-preview.js');
+  const SITE = 'https://www.flockcorp.com';
+  const TOKEN = 'GoodToken0123456789abcd';
+  const CARD = { name: 'Friday Tacos', when: 'Fri, Oct 9 at 9:00 PM EDT', going: 4 };
+  const UNSIGNED = SITE + '/api/invite-og?n=Friday+Tacos&w=Fri%2C+Oct+9+at+9%3A00+PM+EDT&g=4';
+  const hmac = (secret, n, w, g) => require('crypto').createHmac('sha256', secret)
+    .update(n + '\n' + w + '\n' + g).digest('base64url').slice(0, 22);
+  const page = () => preview.renderPage({
+    title: 'Sam invited you to Friday Tacos',
+    description: 'Fri, Oct 9 at 9:00 PM EDT ' + String.fromCharCode(0xb7) + ' El Vez',
+    card: CARD,
+    token: TOKEN,
+  });
+  // og:image and twitter:image, unescaped.
+  const imageUrls = (html) => [...html.matchAll(/<meta (?:property="og:image"|name="twitter:image") content="([^"]*)">/g)]
+    .map((m) => m[1].replace(/&amp;/g, '&'));
+
+  let saved;
+  const setSecret = (value) => {
+    if (value === undefined) delete process.env.OG_CARD_SECRET;
+    else process.env.OG_CARD_SECRET = value;
+  };
+  beforeEach(() => { saved = process.env.OG_CARD_SECRET; });
+  afterEach(() => { setSecret(saved); });
+
+  test('unset, blank or under 32 characters: no s, the unsigned URL Vercel serves today', () => {
+    const quiet = jest.spyOn(console, 'error').mockImplementation(() => {});
+    for (const value of [undefined, '', ' '.repeat(40), 'k'.repeat(16), 'k'.repeat(31), ' ' + 'k'.repeat(31) + '\n']) {
+      setSecret(value);
+      expect([JSON.stringify(value), imageUrls(page())]).toEqual([JSON.stringify(value), [UNSIGNED, UNSIGNED]]);
+      expect(preview.signedCardQuery({ n: 'a', w: 'b', g: '1' })).toEqual({ n: 'a', w: 'b', g: '1' });
+    }
+    quiet.mockRestore();
+  });
+
+  test('32 characters or more: the same URL plus s, and nothing else on the page changes', () => {
+    setSecret(undefined);
+    const before = page();
+    for (const secret of ['k'.repeat(32), require('crypto').randomBytes(32).toString('base64url')]) {
+      // A pasted value often carries a newline; the secret is the trimmed value.
+      setSecret(' ' + secret + '\n');
+      const s = hmac(secret, CARD.name, CARD.when, '4');
+      const after = page();
+      expect(imageUrls(after)).toEqual([UNSIGNED + '&s=' + s, UNSIGNED + '&s=' + s]);
+      expect(after.split('&amp;s=' + s)).toHaveLength(3);
+      expect(after.split('&amp;s=' + s).join('')).toBe(before);
+      expect(after).not.toContain(secret);
+      expect(after).not.toContain(TOKEN + '&');
+    }
+  });
+
+  test('the signature is the contract every side shares: a pinned vector', () => {
+    // HMAC-SHA256 over n + "\n" + w + "\n" + g, base64url, first 22
+    // characters. The same vector is pinned against the Pages check,
+    // functions/_lib/card-signature.js, in cloudflarePagesFunctions.test.js.
+    expect(preview.cardSignature('k'.repeat(43), 'Friday dinner', 'Fri 8:00 PM', '3 going')).toBe('vY2GCt-sA90cCCipNMEOKC');
+    setSecret('k'.repeat(43));
+    expect(preview.signedCardQuery({ n: 'Friday dinner', w: 'Fri 8:00 PM', g: '3 going' }))
+      .toEqual({ n: 'Friday dinner', w: 'Fri 8:00 PM', g: '3 going', s: 'vY2GCt-sA90cCCipNMEOKC' });
+    expect(preview.OG_CARD_SECRET_MIN).toBe(32);
+  });
+
+  test('the handler as Vercel runs it signs only when the secret is set', async () => {
+    const payload = {
+      flock: { name: 'Friday Tacos', when: null, chosenVenue: 'El Vez', status: 'confirmed' },
+      host: 'Sam',
+      going: 4,
+    };
+    const answer = () => new Promise((resolve) => {
+      const res = { setHeader() {}, end: (body) => resolve(body) };
+      preview({ query: { token: TOKEN } }, res);
+    });
+    const savedFetch = global.fetch;
+    global.fetch = jest.fn(async () => ({ status: 200, json: async () => payload }));
+    try {
+      setSecret(undefined);
+      const plain = imageUrls(await answer());
+      expect(plain[0]).toBe(SITE + '/api/invite-og?n=Friday+Tacos&w=Time+not+set+yet&g=4');
+      setSecret('k'.repeat(43));
+      const signed = imageUrls(await answer());
+      expect(signed[0]).toBe(plain[0] + '&s=' + hmac('k'.repeat(43), 'Friday Tacos', 'Time not set yet', '4'));
+    } finally {
+      global.fetch = savedFetch;
+    }
+  });
+
+  test('a secret that is set but short is named by its length once, never by its value', () => {
+    const quiet = jest.spyOn(console, 'error').mockImplementation(() => {});
+    jest.isolateModules(() => {
+      const fresh = require('../../api/invite-preview.js');
+      setSecret('k'.repeat(31));
+      fresh.signedCardQuery({ n: 'a', w: 'b', g: '1' });
+      fresh.signedCardQuery({ n: 'a', w: 'b', g: '1' });
+    });
+    expect(quiet).toHaveBeenCalledTimes(1);
+    expect(quiet.mock.calls[0].join(' ')).toContain('31 characters');
+    expect(quiet.mock.calls[0].join(' ')).not.toContain('k'.repeat(31));
+    quiet.mockRestore();
   });
 });
