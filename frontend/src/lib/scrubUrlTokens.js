@@ -28,6 +28,18 @@
 // person's position and does not. A parameter has to be the whole name after
 // ? # or & to match, so `?flat=`, `?tokens=` and `?relocation=` are untouched.
 //
+// AND THE STATIC MAP PREVIEWS, which carry both at once. lib/staticMapUrl.js
+// puts a venue's coordinates in the URL PATH (/static/<lng>,<lat>,<zoom>/) and
+// again in the markers= value, and the MapTiler key in key=. Sentry's resource
+// spans record image URLs, so all three would ride out with the account id.
+// The previews are venues only, but this sweep does not get to know that: the
+// path rule takes any /static/ segment made of two to four numbers, and
+// markers= goes whole. key= is redacted on every host, which also covers the
+// live map's style and tile requests, the other place the same key rides in a
+// URL. The key is public in the bundle and guarded by its origin rules, but a
+// bug report or a pasted breadcrumb is not where it should be read from.
+// `/static/js/main.js` and `/static/auto/` have no numbers and are untouched.
+//
 // It lives here rather than in index.js so the crash report
 // (services/crashReport.js, reached from components/ErrorBoundary.js) can use
 // the same rules without importing the entry module that imports it. index.js
@@ -43,4 +55,7 @@ export const scrubUrlTokens = (v) =>
         new RegExp(`([?#&]location=)${COORD}(?:,|%2C)${COORD}`, 'gi'),
         '$1redacted',
       )
+      .replace(new RegExp(`(/static/)${COORD}(?:(?:,|%2C)${COORD}){1,3}(?=/)`, 'gi'), '$1redacted')
+      .replace(/([?#&]markers=)[^&#\s"']*/gi, '$1redacted')
+      .replace(/([?#&]key=)[^&#\s"']*/gi, '$1redacted')
     : v);
