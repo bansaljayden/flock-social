@@ -168,10 +168,10 @@ backer = 1.6                   # the printed plate behind the front sheet's stri
 side_room = 6.5                # beside the screen, each side: the touch plug on the left
 cable_gap = 4.0                # behind the screen: the touch cable and the video ribbon
 strip_h = 48.0                 # the strip under the screen, base included
-pill = (68.0, 17.0)            # the sensor window under the screen, a navy pill
+pill = (68.0, 17.0)            # the sensor window under the screen, a cream pill
 lip = 1.6                      # the front's thickness in front of the screen's glass
 screen_border = 2.5            # the screen's own black glass showing round its picture
-logo_depth = 0.8               # the wordmark, pressed in and filled navy
+logo_depth = 0.8               # the wordmark, pressed in and filled cream
 pocket_gap = 0.2               # round each acrylic piece in its pocket
 
 insert_dia = 4.2               # the brass M3 x 4 inserts, 4.2 across
@@ -534,8 +534,8 @@ def back_engrave_sketch():
 
 
 def logo_inlay():
-    """The wordmark as its own part, filling its 0.8 mm pocket: printed in navy
-    on a multi-colour printer, or painted in with a navy paint pen instead."""
+    """The wordmark as its own part, filling its 0.8 mm pocket: printed in cream
+    on a multi-colour printer, or painted in with a cream paint pen instead."""
     return slab(logo_sketch(), 0, logo_depth)
 
 
@@ -794,10 +794,10 @@ def brass_inserts():
 
 def assembly(sleeve_part, front, back):
     parts = [
-        labelled(sleeve_part, 'Body (printed, cream)', CREAM),
-        labelled(front, 'Sensor pill (navy)', NAVY),
-        labelled(logo_inlay(), 'Flux wordmark (navy)', NAVY),
-        labelled(back, 'Back sheet (cream)', CREAM),
+        labelled(sleeve_part, 'Body (printed, navy)', NAVY),
+        labelled(front, 'Sensor pill (cream)', CREAM),
+        labelled(logo_inlay(), 'Flux wordmark (cream)', CREAM),
+        labelled(back, 'Back sheet (navy)', NAVY),
         labelled(usb_jack(), 'USB port', Color(0.75, 0.75, 0.78)),
         labelled(lan_jack(), 'Ethernet port', Color(0.75, 0.75, 0.78)),
         labelled(engraving(back_engrave_sketch(), SL_Y1 + plate, flip=True), 'Back engraving', Color(0.8, 0.8, 0.82)),

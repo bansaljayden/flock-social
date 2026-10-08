@@ -3652,7 +3652,7 @@ class EnclosureFiles(unittest.TestCase):
         # The STEP file is what opens in Fusion 360 or Onshape; every part in
         # it carries its name, so the tree there reads like the parts list.
         step = (self.ENC / 'step' / 'flux-assembly.step').read_text(encoding='utf-8', errors='replace')
-        for name in ('Body (printed, cream)', 'Sensor pill (navy)', 'Flux wordmark (navy)', 'Back sheet (cream)',
+        for name in ('Body (printed, navy)', 'Sensor pill (cream)', 'Flux wordmark (cream)', 'Back sheet (navy)',
                      'USB port', 'Ethernet port',
                      'Raspberry Pi 5', 'PureThermal 3 + Lepton 3.5', 'VL53L8CX door counter',
                      'Decibel meter', 'Anker A1336 battery', '7 inch touchscreen'):

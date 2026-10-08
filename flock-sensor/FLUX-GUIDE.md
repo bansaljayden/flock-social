@@ -13,13 +13,13 @@ its build sheet, with a picture for every assembly step.
 
 ## The box
 
-One unit, 180 x 171.5 x 72 mm, the width of its seven inch screen, in cream
-and navy.
+One unit, 180 x 171.5 x 72 mm, the width of its seven inch screen: a navy
+body with cream accents.
 
-- **The front** is the screen, behind a thin cream lip that shows only its
-  picture and its own slim black border. Under it a navy pill holds the
+- **The front** is the screen, behind a thin navy lip that shows only its
+  picture and its own slim black border. Under it a cream pill holds the
   thermal camera's eye, the door counter's window and the one light, and
-  under that the Flux wordmark in navy.
+  under that the Flux wordmark in cream.
 - **Inside**, behind the screen, the battery stands at the left and the Pi with
   its 4G board sits at the right. The sound meter listens through a small hole
   in the right side.
@@ -115,9 +115,9 @@ down, which depends on which way up the camera's board ended up.
 
 **Printed:** the body (the whole box but its back, with every post, pocket
 and frame built in), four Pi spacers, and two fit tests to print first.
-**Also printed:** the sensor pill in navy, and the wordmark in navy on a two-colour
-printer (or a navy paint pen in its pocket).
-**Laser cut from 3 mm cream acrylic:** the back sheet.
+**Also printed:** the sensor pill in cream, and the wordmark in cream on a two-colour
+printer (or a cream paint pen in its pocket).
+**Laser cut from 3 mm dark blue acrylic:** the back sheet.
 
 ## The small parts, and what each is for
 

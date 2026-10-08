@@ -99,11 +99,11 @@
   // How each part looks, and how far it moves when the box is pulled apart
   // (in the model's millimetres: +y is toward the back).
   const LOOK = {
-    'Body (printed, cream)':     { color: 0xf4efe3, rough: 0.82, apart: [0, 0, 0] },
-    'Sensor pill (navy)':        { color: 0x0f172a, rough: 0.12, coat: 1, apart: [0, -50, 0] },
-    'Flux wordmark (navy)':      { color: 0x0f172a, rough: 0.55, apart: [0, -40, 0] },
-    'Back sheet (cream)':        { color: 0xefe8d8, rough: 0.2, coat: 0.6, apart: [0, 90, 0] },
-    'Back engraving':            { color: 0x8c8371, rough: 0.9, apart: [0, 90, 0] },
+    'Body (printed, navy)':      { color: 0x0f172a, rough: 0.78, apart: [0, 0, 0] },
+    'Sensor pill (cream)':       { color: 0xf4efe3, rough: 0.35, apart: [0, -50, 0] },
+    'Flux wordmark (cream)':     { color: 0xf4efe3, rough: 0.6, apart: [0, -40, 0] },
+    'Back sheet (navy)':         { color: 0x111a30, rough: 0.15, coat: 0.6, apart: [0, 90, 0] },
+    'Back engraving':            { color: 0xc9c3b4, rough: 0.9, apart: [0, 90, 0] },
     'USB port':                  { color: 0x9a9ca3, rough: 0.35, metal: 0.6, apart: [0, 90, 0] },
     'Ethernet port':             { color: 0x9a9ca3, rough: 0.35, metal: 0.6, apart: [0, 90, 0] },
     '7 inch touchscreen':        { color: 0x141b26, rough: 0.05, coat: 1, apart: [0, -25, 0] },
@@ -125,23 +125,23 @@
   // The six assembly steps: which parts show, and which are lifted out.
   const STEPS = [
     { text: '1. Melt the eight brass inserts into the sleeve: four on the screen posts, four in the back corners.',
-      show: ['Body (printed, cream)', 'Brass M3 inserts (8)'], lift: {}, view: [0.7, 1.1, 0.75] },
+      show: ['Body (printed, navy)', 'Brass M3 inserts (8)'], lift: {}, view: [0.7, 1.1, 0.75] },
     { text: '2. Screw the camera onto its four posts and the counter onto its two, from inside. Push the light in.',
-      show: ['Body (printed, cream)', 'Brass M3 inserts (8)', 'PureThermal 3 + Lepton 3.5', 'VL53L8CX door counter', 'LINK light'],
+      show: ['Body (printed, navy)', 'Brass M3 inserts (8)', 'PureThermal 3 + Lepton 3.5', 'VL53L8CX door counter', 'LINK light'],
       lift: { 'PureThermal 3 + Lepton 3.5': [0, 30, 0], 'VL53L8CX door counter': [0, 30, 0], 'LINK light': [0, 22, 0] }, view: [0.7, 1.1, 0.75] },
     { text: '3. Plug the touch cable and video ribbon into the screen, then drop it in glass first. Four M3 screws through its ears.',
-      show: ['Body (printed, cream)', 'Brass M3 inserts (8)', 'PureThermal 3 + Lepton 3.5', 'VL53L8CX door counter', 'LINK light', '7 inch touchscreen'],
+      show: ['Body (printed, navy)', 'Brass M3 inserts (8)', 'PureThermal 3 + Lepton 3.5', 'VL53L8CX door counter', 'LINK light', '7 inch touchscreen'],
       lift: { '7 inch touchscreen': [0, 45, 0] }, view: [0.7, 1.1, 0.75] },
-    { text: '4. VHB tape in the pill’s pocket; press the navy sensor pill in. Fill the pressed-in Flux with a navy paint pen, or print it in navy if your printer does two colours.',
-      show: ['Body (printed, cream)', '7 inch touchscreen', 'Sensor pill (navy)', 'Flux wordmark (navy)',
+    { text: '4. VHB tape in the pill’s pocket; press the cream sensor pill in. Fill the pressed-in Flux with a cream paint pen, or print it in cream if your printer does two colours.',
+      show: ['Body (printed, navy)', '7 inch touchscreen', 'Sensor pill (cream)', 'Flux wordmark (cream)',
              'PureThermal 3 + Lepton 3.5', 'VL53L8CX door counter', 'LINK light'],
-      lift: { 'Sensor pill (navy)': [0, -35, 0], 'Flux wordmark (navy)': [0, -25, 0] }, view: [0.75, -1.1, 0.5] },
+      lift: { 'Sensor pill (cream)': [0, -35, 0], 'Flux wordmark (cream)': [0, -25, 0] }, view: [0.75, -1.1, 0.5] },
     { text: '5. On the back sheet: the Pi on four spacers, the Active Cooler, the 18 mm standoffs and the 4G board. The USB, Ethernet and charging ports into their holes.',
-      show: ['Back sheet (cream)', 'Back engraving', 'Raspberry Pi 5', 'Pi 5 ports', 'Active Cooler', 'SIM7600G-H 4G HAT', 'CHARGE port', 'USB port', 'Ethernet port'],
+      show: ['Back sheet (navy)', 'Back engraving', 'Raspberry Pi 5', 'Pi 5 ports', 'Active Cooler', 'SIM7600G-H 4G HAT', 'CHARGE port', 'USB port', 'Ethernet port'],
       lift: { 'SIM7600G-H 4G HAT': [0, -28, 0], 'Active Cooler': [0, -12, 0] }, view: [-0.6, -1.1, 0.6] },
     { text: '6. Battery in on its end, ports up. Plug every cable, stick the sound meter in its frame. Back sheet on with four M3 screws.',
       show: Object.keys(LOOK),
-      lift: { 'Anker A1336 battery': [0, 0, 45], 'Back sheet (cream)': [0, 60, 0], 'Back engraving': [0, 60, 0],
+      lift: { 'Anker A1336 battery': [0, 0, 45], 'Back sheet (navy)': [0, 60, 0], 'Back engraving': [0, 60, 0],
               'Raspberry Pi 5': [0, 60, 0], 'Pi 5 ports': [0, 60, 0], 'Active Cooler': [0, 60, 0],
               'SIM7600G-H 4G HAT': [0, 60, 0], 'CHARGE port': [0, 60, 0] }, view: [0.75, 1.1, 0.6] },
   ];
@@ -150,7 +150,7 @@
     Assembled: { view: [0.62, -1.0, 0.42] },
     Front: { view: [0, -1, 0.02], fov: 14 },
     Back: { view: [0, 1, 0.02], fov: 14 },
-    Inside: { view: [0.6, 1.0, 0.55], hide: ['Back sheet (cream)', 'Back engraving'] },
+    Inside: { view: [0.6, 1.0, 0.55], hide: ['Back sheet (navy)', 'Back engraving'] },
   };
 
   const canvas = document.getElementById('c');
