@@ -126,7 +126,7 @@ function pagesContext(url, { method = 'GET', headers = {}, env = {}, next } = {}
   const context = {
     request: new Request(url, { method, headers }),
     env: { ASSETS: { fetch: jest.fn(async () => new Response(BANNER, { headers: { 'Content-Type': 'image/png' } })) }, ...env },
-    waitUntil: (promise) => { waits.push(promise); },
+    waitUntil: jest.fn((promise) => { waits.push(promise); }),
     passThroughOnException: jest.fn(),
     settled: () => Promise.all(waits),
     staticAnswer: new Response(SHELL, { headers: { 'Content-Type': 'text/html; charset=utf-8' } }),
@@ -253,6 +253,29 @@ describe('who gets what', () => {
       expect(context.next).not.toHaveBeenCalled();
     }
     // The first answer is kept for its s-maxage ten minutes.
+    expect(upstream.map((u) => u.path)).toEqual(['/api/guest/' + GOOD_TOKEN]);
+  });
+
+  test('a preview bot\'s HEAD fills the edge copy its GET then uses', async () => {
+    let { res } = await run(SITE + '/i/' + GOOD_TOKEN, { method: 'HEAD', headers: { 'User-Agent': UA.twitterbot } });
+    expect([res.status, res.headers.get('Content-Type')]).toEqual([200, 'text/html; charset=utf-8']);
+    ({ res } = await run(SITE + '/i/' + GOOD_TOKEN, { headers: { 'User-Agent': UA.twitterbot } }));
+    expect(await res.text()).toBe(invitePage(GOOD_TOKEN));
+    expect(upstream.map((u) => u.path)).toEqual(['/api/guest/' + GOOD_TOKEN]);
+  });
+
+  test('preview fetches that arrive together, as from a group chat, make one backend read', async () => {
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    backend = async (u) => { await gate; return railway(u); };
+    const agents = [UA.imessage, UA.twitterbot, ...AGENTS.previewBots.split('|').slice(0, 2).map(botUa)];
+    const pending = agents.map((ua) => run(SITE + '/i/' + GOOD_TOKEN, { headers: { 'User-Agent': ua } }));
+    await until(() => upstream.length === 1);
+    for (let i = 0; i < 10; i++) await new Promise((resolve) => setImmediate(resolve));
+    release();
+    for (const { res } of await Promise.all(pending)) {
+      expect([res.status, await res.text()]).toEqual([200, invitePage(GOOD_TOKEN)]);
+    }
     expect(upstream.map((u) => u.path)).toEqual(['/api/guest/' + GOOD_TOKEN]);
   });
 
@@ -566,6 +589,36 @@ describe('the share-card proxy draws only signed cards', () => {
     expect((await bytes(res)).equals(CARD_PNG)).toBe(true);
   });
 
+  test('a HEAD of a signed card fills the edge copy the GET then uses: one render', async () => {
+    const secret = crypto.randomBytes(32).toString('base64url');
+    const s = sign(secret, CARD);
+    const env = { OG_CARD_SECRET: secret };
+    let { res } = await og(cardUrl(CARD, s), env, { method: 'HEAD' });
+    expect([res.status, res.headers.get('Content-Type')]).toEqual([200, 'image/png']);
+    expect(upstream).toHaveLength(1);
+    // The renderer is always asked with GET, so the copy is the whole image.
+    expect(upstream[0].init.method).toBeUndefined();
+    ({ res } = await og(cardUrl(CARD, s), env));
+    expect(upstream).toHaveLength(1);
+    expect((await bytes(res)).equals(CARD_PNG)).toBe(true);
+  });
+
+  test('fetches of one uncached card that arrive together make one render', async () => {
+    const secret = crypto.randomBytes(32).toString('base64url');
+    const s = sign(secret, CARD);
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    backend = async (u) => { await gate; return railway(u); };
+    const pending = ['GET', 'HEAD', 'GET', 'GET'].map((method) => og(cardUrl(CARD, s), { OG_CARD_SECRET: secret }, { method }));
+    await until(() => upstream.length === 1);
+    for (let i = 0; i < 10; i++) await new Promise((resolve) => setImmediate(resolve));
+    release();
+    const answers = await Promise.all(pending);
+    for (const { res } of answers) expect([res.status, res.headers.get('Content-Type')]).toEqual([200, 'image/png']);
+    expect((await bytes(answers[0].res)).equals(CARD_PNG)).toBe(true);
+    expect(upstream).toHaveLength(1);
+  });
+
   test('junk parameters on a signed card are an edge-cache hit, not another render', async () => {
     const secret = crypto.randomBytes(32).toString('base64url');
     const s = sign(secret, CARD);
@@ -804,7 +857,7 @@ describe('the edge cache keeps what Vercel\'s CDN kept, and nothing else', () =>
     expect(global.caches.default.put).not.toHaveBeenCalled();
   });
 
-  test('HEAD reads the cache but never fills it; other methods never touch it', async () => {
+  test('a HEAD miss fills the cache with the full GET answer; other methods never touch it', async () => {
     const produce = jest.fn(answer(200, 'public, s-maxage=600'));
     const call = async (method) => {
       const context = pagesContext(SITE + '/x', { method });
@@ -812,16 +865,84 @@ describe('the edge cache keeps what Vercel\'s CDN kept, and nothing else', () =>
       await context.settled();
       return res;
     };
-    await call('HEAD');
-    expect(global.caches.default.store.size).toBe(0);
-    await call('GET');
+    expect((await call('HEAD')).status).toBe(200);
     expect(global.caches.default.store.size).toBe(1);
+    expect(global.caches.default.store.get(KEY).body.toString()).toBe('body 200');
+    expect(await (await call('GET')).text()).toBe('body 200');
     await call('HEAD');
-    expect(produce).toHaveBeenCalledTimes(2);
+    expect(produce).toHaveBeenCalledTimes(1);
     const matches = global.caches.default.match.mock.calls.length;
     await call('POST');
-    expect(produce).toHaveBeenCalledTimes(3);
+    expect(produce).toHaveBeenCalledTimes(2);
     expect(global.caches.default.match.mock.calls.length).toBe(matches);
+  });
+
+  test('an answer with no body is never kept, so a HEAD-only answer cannot stand in for a GET', async () => {
+    const context = pagesContext(SITE + '/x', { method: 'HEAD' });
+    await edgeCached(context, KEY, async () => new Response(null, { status: 200, headers: { 'Cache-Control': 'public, s-maxage=600' } }));
+    await context.settled();
+    expect(global.caches.default.put).not.toHaveBeenCalled();
+  });
+
+  // Starts one miss for KEY per method, all at once, and holds the single
+  // produce until every one of them is waiting on it.
+  async function together(methods, make) {
+    let release;
+    const gate = new Promise((resolve) => { release = resolve; });
+    const produce = jest.fn(async () => { await gate; return make(); });
+    const contexts = methods.map((method) => pagesContext(SITE + '/x', { method }));
+    const looked = global.caches.default.match.mock.calls.length + methods.length;
+    const pending = contexts.map((context) => edgeCached(context, KEY, produce).then(
+      (res) => ({ res }),
+      (error) => ({ error }),
+    ));
+    await until(() => global.caches.default.match.mock.calls.length === looked);
+    for (let i = 0; i < 10; i++) await new Promise((resolve) => setImmediate(resolve));
+    release();
+    const results = await Promise.all(pending);
+    await Promise.all(contexts.map((context) => context.settled()));
+    return { produce, contexts, results };
+  }
+
+  test('misses that arrive together share one produce, and each caller gets its own copy', async () => {
+    const { produce, contexts, results } = await together(['GET', 'HEAD', 'GET', 'GET'],
+      answer(200, 'public, max-age=0, s-maxage=600', { 'X-Robots-Tag': 'noindex' }));
+    expect(produce).toHaveBeenCalledTimes(1);
+    for (const { res } of results) {
+      expect([res.status, res.headers.get('X-Robots-Tag'), await res.text()]).toEqual([200, 'noindex', 'body 200']);
+    }
+    expect(global.caches.default.put).toHaveBeenCalledTimes(1);
+    // The request that produced it hands the shared work (and the put) to
+    // waitUntil, so its client leaving cannot strand the ones waiting.
+    expect(contexts.map((context) => context.waitUntil.mock.calls.length).sort()).toEqual([0, 0, 0, 2]);
+  });
+
+  test('an answer that is not kept is shared only with the callers already waiting', async () => {
+    const first = await together(['GET', 'GET', 'HEAD'], answer(200, 'private, no-store'));
+    expect(first.produce).toHaveBeenCalledTimes(1);
+    for (const { res } of first.results) expect(await res.text()).toBe('body 200');
+    const second = await together(['GET'], answer(200, 'private, no-store'));
+    expect(second.produce).toHaveBeenCalledTimes(1);
+    expect(global.caches.default.put).not.toHaveBeenCalled();
+  });
+
+  test('a produce that fails fails every caller waiting on it, and the next miss tries again', async () => {
+    const { produce, results } = await together(['GET', 'GET', 'HEAD'], () => { throw new Error('backend down'); });
+    expect(produce).toHaveBeenCalledTimes(1);
+    expect(results.map((r) => r.error && r.error.message)).toEqual(['backend down', 'backend down', 'backend down']);
+    const again = await together(['GET'], answer(200, 'public, s-maxage=600'));
+    expect(again.produce).toHaveBeenCalledTimes(1);
+    expect(await again.results[0].res.text()).toBe('body 200');
+  });
+
+  test('different keys never share an answer', async () => {
+    const produce = jest.fn(async (n) => new Response('body ' + n, { headers: { 'Cache-Control': 'private, no-store' } }));
+    const [a, b] = await Promise.all([
+      edgeCached(pagesContext(SITE + '/x'), SITE + '/__edge-cache/a', () => produce('a')),
+      edgeCached(pagesContext(SITE + '/x'), SITE + '/__edge-cache/b', () => produce('b')),
+    ]);
+    expect([await a.text(), await b.text()]).toEqual(['body a', 'body b']);
+    expect(produce).toHaveBeenCalledTimes(2);
   });
 });
 
