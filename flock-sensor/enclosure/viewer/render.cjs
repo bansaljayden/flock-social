@@ -23,7 +23,8 @@ const TYPES = { '.html': 'text/html; charset=utf-8', '.glb': 'model/gltf-binary'
 const VIEWS = [
   ['Assembled', 'flux-assembled'], ['Front', 'flux-front'], ['Back', 'flux-back'], ['Inside', 'flux-inside'],
   ['Step 1', 'flux-step1'], ['Step 2', 'flux-step2'], ['Step 3', 'flux-step3'],
-  ['Step 4', 'flux-step4'], ['Step 5', 'flux-step5'], ['Step 6', 'flux-step6'],
+  ['Step 4', 'flux-step4'], ['Step 5', 'flux-step5'], ['Step 6', 'flux-step6'], ['Step 7', 'flux-step7'],
+  ['On the wall', 'flux-arm'],
 ];
 
 (async () => {

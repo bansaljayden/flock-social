@@ -36,6 +36,8 @@ PRINTED = [
     ('pi_spacer', 'flux-4-pi_spacer'),
     ('sensor_pill', 'flux-5-sensor_pill'),
     ('logo_inlay', 'flux-6-logo_inlay'),
+    ('stand', 'flux-7-stand'),
+    ('arm_block', 'flux-8-arm_block'),
 ]
 
 # (sheet, cut sketch, engraving sketch). Every laser-cut sheet.
@@ -156,6 +158,10 @@ def main():
         # Both print face down, the face that shows on the bed.
         'sensor_pill': cad.Rot(90, 0, 0) * front,
         'logo_inlay': cad.Rot(90, 0, 0) * cad.logo_inlay(),
+        'stand': cad.stand(),
+        # Flange on the bed, plug up: the nut pocket opens downward and the
+        # 1 mm floor over it is a short bridge.
+        'arm_block': cad.Rot(90, 0, 0) * cad.arm_block(),
     }
     # The wordmark is one solid per letter; everything else must be one piece.
     pieces = {'logo_inlay': len(cad.wordmark)}
@@ -170,6 +176,14 @@ def main():
                   f'y {bb.min.Y:.1f}..{bb.max.Y:.1f} z {bb.min.Z:.1f}..{bb.max.Z:.1f}')
         sys.exit(f'{len(found)} pair(s) collide inside the box')
     print('clash check: nothing overlaps')
+    hard = cad.hard_parts(sleeve, back)
+    bad = cad.cable_report(hard)
+    if bad:
+        sys.exit(f'{len(bad)} cable route(s) pass through a part; run flux_cad.py --check')
+    print('cable check: every cable clears every part')
+    for problem in cad.screw_report(hard):
+        sys.exit(problem)
+    print('stand check: the screw takes the whole nut and touches nothing past it')
 
     for name, out in PRINTED:
         path = HERE / 'stl' / f'{out}.stl'
@@ -204,7 +218,9 @@ def main():
     viewer = HERE / 'viewer' / 'index.html'
     size = f'{cad.BOX_W:g} &times; {cad.BOX_H:g} &times; {cad.BOX_D:g} mm'
     page = re.sub(r'<p class="dims">[^<]*</p>', f'<p class="dims">{size}, one box</p>', viewer.read_text(encoding='utf-8'))
-    page = re.sub(r'const BOX = \{[^}]*\};', f'const BOX = {{ w: {cad.BOX_W:g}, h: {cad.BOX_H:g}, d: {cad.BOX_D:g} }};', page)
+    page = re.sub(r'const BOX = \{[^}]*\};', f'const BOX = {{ w: {cad.BOX_W:g}, h: {cad.BOX_H:g}, d: {cad.BOX_D:g}, '
+                  f'tilt: {cad.tilt:g}, lift: {round(cad.stand_world_lift(), 2):g}, '
+                  f'armTilt: {cad.arm_tilt:g}, armLift: {round(cad.arm_world_lift(), 2):g} }};', page)
     viewer.write_text(page, encoding='utf-8', newline='\n')
 
     if not args.no_preview:

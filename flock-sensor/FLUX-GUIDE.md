@@ -25,9 +25,10 @@ body with cream accents.
   in the right side.
 - **The back** carries the Pi and a port panel: ETHERNET, USB and CHARGE.
 
-It stands on a table, or screws onto a camera ball mount on the wall above a
-door, tilted down so the camera and the counter look at the doorway and the
-screen faces the people coming in.
+On a table it leans back on a cream stand, like a desk display. On the wall
+above a door, the CAMVATE ball head holds it by the mount on its back, tilted
+down so the camera and the counter look at the doorway and the screen faces
+the people coming in.
 
 ## What it does, step by step
 
@@ -114,7 +115,8 @@ down, which depends on which way up the camera's board ended up.
 ## The case parts
 
 **Printed:** the body (the whole box but its back, with every post, pocket
-and frame built in), four Pi spacers, and two fit tests to print first.
+and frame built in), four Pi spacers, the cream stand, and two fit tests to
+print first.
 **Also printed:** the sensor pill in cream, and the wordmark in cream on a two-colour
 printer (or a cream paint pen in its pocket).
 **Laser cut from 3 mm dark blue acrylic:** the back sheet.
@@ -126,8 +128,9 @@ printer (or a cream paint pen in its pocket).
 | Brass M3 heat-set inserts | Melted into the sleeve with the soldering iron, eight of them, so the screws grip metal: four for the screen, four for the back |
 | Nylon standoff kit | Spares for the Pi stack |
 | 3 mm LEDs | The LINK light |
-| Camvate ball mount | Holds Flux on the wall and lets it tilt toward the door |
-| 1/4"-20 hex nut | Sits in the base; the ball mount screws into it |
+| CAMVATE C1991 ball head (pair, 24007) | Screws to the wall over the door and holds Flux by the arm mount on its back, tilted down at the doorway |
+| Arm mount block | A printed plug through the back sheet with a 1/4"-20 nut in it; the ball head screws in here |
+| 1/4"-20 hex nuts (2) | One in the arm mount block, one in the base for the stand; each 1 mm under its face so the ball head's short screw takes four threads |
 | VHB tape | Holds the sensor pill in its pocket, so no screw shows on the front |
 | Double-sided foam tape | Seals the sound meter to its hole, so it hears the room and not the inside of the box |
 | Rubber feet | Under the base |
