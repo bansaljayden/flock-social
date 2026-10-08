@@ -6,7 +6,8 @@
 //     the same PNG bytes the library draws for the website;
 //   * a signed URL draws a 1200x630 PNG that any cache may keep for a year;
 //   * an unsigned, tampered or malformed URL is a 403 that never reaches the
-//     renderer, and so is every card while OG_CARD_SECRET is unset or short;
+//     renderer, and so is every card while OG_CARD_SECRET is unset or shorter
+//     than 32 characters, which production names in its deploy log;
 //   * memory: the renderer and its font load once, the font's list is shared
 //     only for text the font draws by itself, one card is drawn at a time per
 //     kind with a short line behind it, and recently drawn cards are kept;
@@ -90,6 +91,21 @@ function assertCardPng(body) {
   assert.strictEqual(body.readUInt32BE(16), 1200, 'the card is not 1200 wide');
   assert.strictEqual(body.readUInt32BE(20), 630, 'the card is not 630 high');
   assert.ok(body.length > 5 * 1024 && body.length < 200 * 1024, `${body.length} bytes is not the size of a card`);
+}
+
+function assertRefused(res, status, error, why) {
+  assert.strictEqual(res.status, status, why);
+  assert.strictEqual(res.headers.get('cache-control'), 'no-store', `${why}: a refusal must not be cached`);
+  assert.match(res.headers.get('content-type'), /^application\/json/, why);
+  assert.deepStrictEqual(JSON.parse(res.body.toString()), { error }, why);
+}
+
+// console.error, captured for one test and put back after it.
+function captureErrors() {
+  const original = console.error;
+  const lines = [];
+  console.error = (...args) => { lines.push(args.map(String).join(' ')); };
+  return { lines, restore() { console.error = original; } };
 }
 
 // What the library draws for the website: its own default font list and the
@@ -262,32 +278,150 @@ test('an unsigned, tampered or malformed card is a 403 that never reaches the re
   }
 });
 
-test('every card is refused while OG_CARD_SECRET is unset or shorter than 16 characters', async () => {
+test('every card is refused while OG_CARD_SECRET is unset or shorter than 32 characters', async () => {
   await cleanup();
   const r = heldRenderer(() => false);
   og.setDrawForTests(r.draw);
   const { n, w, g } = BASIC;
   const saved = process.env.OG_CARD_SECRET;
+  const key = crypto.randomBytes(32).toString('base64url');
+  // The short-secret line belongs to the next test; here it is only kept off
+  // the console.
+  const logged = captureErrors();
   try {
+    assert.strictEqual(og.MIN_SECRET, 32);
     await withServer(async (base) => {
-      for (const value of [undefined, '', '   ', 'fifteen-chars-x', ' fifteen-chars-x\n', ' '.repeat(20)]) {
+      for (const value of [undefined, '', '   ', key.slice(0, 31), ` ${key.slice(0, 31)}\n\n`, ' '.repeat(40)]) {
         if (value === undefined) delete process.env.OG_CARD_SECRET;
         else process.env.OG_CARD_SECRET = value;
         const label = value === undefined ? 'unset' : JSON.stringify(value);
         // Signed with that very value, the strongest case for drawing it.
         const own = '/api/og/invite?' + new URLSearchParams({ n, w, g, s: sign(n, w, g, (value || '').trim()) });
         for (const urlPath of [own, cardPath(BASIC)]) {
-          const res = await get(base, urlPath);
-          assert.strictEqual(res.status, 403, `secret ${label}`);
-          assert.strictEqual(res.headers.get('cache-control'), 'no-store');
+          assertRefused(await get(base, urlPath), 403, 'This card is not signed.', `secret ${label}`);
         }
       }
+      // Exactly 32 characters is enough.
+      process.env.OG_CARD_SECRET = key.slice(0, 32);
+      const atFloor = '/api/og/invite?' + new URLSearchParams({ n, w, g, s: sign(n, w, g, key.slice(0, 32)) });
+      assert.strictEqual((await get(base, atFloor)).status, 200);
       // Trimmed the way the website trims it: a pasted trailing newline signs
       // the same cards.
       process.env.OG_CARD_SECRET = `  ${SECRET}\n`;
       assert.strictEqual((await get(base, cardPath(BASIC))).status, 200);
     });
     assert.strictEqual(r.calls.length, 1, 'a card was drawn without a usable secret');
+  } finally {
+    logged.restore();
+    process.env.OG_CARD_SECRET = saved;
+    await cleanup(r);
+  }
+});
+
+test('a short secret is named once per length, by its length and never its value', async () => {
+  await cleanup();
+  const r = heldRenderer(() => false);
+  og.setDrawForTests(r.draw);
+  const saved = process.env.OG_CARD_SECRET;
+  const logged = captureErrors();
+  // Lengths no other test uses, since each is named once per process.
+  const short = crypto.randomBytes(32).toString('base64url').slice(0, 29);
+  const shorter = crypto.randomBytes(32).toString('base64url').slice(0, 20);
+  try {
+    await withServer(async (base) => {
+      process.env.OG_CARD_SECRET = short;
+      await get(base, cardPath(BASIC));
+      await get(base, cardPath(BASIC));
+      process.env.OG_CARD_SECRET = shorter;
+      await get(base, cardPath(BASIC));
+      // A cleared variable is unset, not short.
+      process.env.OG_CARD_SECRET = '   ';
+      await get(base, cardPath(BASIC));
+    });
+    const said = logged.lines.filter((line) => line.includes('OG_CARD_SECRET'));
+    assert.strictEqual(said.length, 2, `one line per length, not one per request:\n${said.join('\n')}`);
+    assert.match(said[0], /OG_CARD_SECRET is 29 characters/);
+    assert.match(said[1], /OG_CARD_SECRET is 20 characters/);
+    for (const line of said) {
+      assert.match(line, /treated as UNSET/);
+      assert.ok(!line.includes(short) && !line.includes(shorter), 'the line names the length, never the value');
+    }
+    assert.strictEqual(r.calls.length, 0);
+  } finally {
+    logged.restore();
+    process.env.OG_CARD_SECRET = saved;
+    await cleanup(r);
+  }
+});
+
+test('in production the secret is named at boot when it is unset or short, and a good one boots quietly', () => {
+  // A fresh copy of the route is loaded the way a boot loads it, and the copy
+  // the rest of this file uses is put back afterwards.
+  const id = require.resolve('../routes/ogCard');
+  const original = require.cache[id];
+  const saved = { NODE_ENV: process.env.NODE_ENV, OG_CARD_SECRET: process.env.OG_CARD_SECRET };
+  const setEnv = (env) => {
+    for (const [name, value] of Object.entries(env)) {
+      if (value === undefined) delete process.env[name]; else process.env[name] = value;
+    }
+  };
+  const boot = (env) => {
+    const logged = captureErrors();
+    try {
+      setEnv(env);
+      delete require.cache[id];
+      require(id);
+      return logged.lines.filter((line) => line.includes('OG_CARD_SECRET'));
+    } finally {
+      logged.restore();
+      setEnv(saved);
+      require.cache[id] = original;
+    }
+  };
+
+  const unset = boot({ NODE_ENV: 'production', OG_CARD_SECRET: undefined });
+  assert.strictEqual(unset.length, 1, 'one line, at require time');
+  assert.match(unset[0], /OG_CARD_SECRET is not set/);
+  assert.deepStrictEqual(boot({ NODE_ENV: 'production', OG_CARD_SECRET: '  \n' }), unset, 'whitespace is unset too');
+
+  const short = crypto.randomBytes(8).toString('hex'); // 16 characters
+  const said = boot({ NODE_ENV: 'production', OG_CARD_SECRET: short });
+  assert.strictEqual(said.length, 1, 'one line, at require time');
+  assert.match(said[0], /OG_CARD_SECRET is 16 characters/);
+  assert.ok(!said[0].includes(short), 'naming the length, never the value');
+
+  assert.deepStrictEqual(boot({ NODE_ENV: 'production', OG_CARD_SECRET: crypto.randomBytes(32).toString('base64url') }), [],
+    'a real secret boots quietly');
+  assert.deepStrictEqual(boot({ NODE_ENV: 'development', OG_CARD_SECRET: short }), [],
+    'outside production the line waits for the first card');
+  assert.deepStrictEqual(boot({ NODE_ENV: 'development', OG_CARD_SECRET: undefined }), [],
+    'and an unset secret is the ordinary local state');
+  // The boot smoke test fails any boot whose output reads like a crash.
+  for (const line of [...unset, ...said]) assert.doesNotMatch(line, /ReferenceError|SyntaxError|is not defined/);
+});
+
+test('the signature is the contract the website shares: the pinned vector', async () => {
+  // Computed once with Node's crypto and pinned, so the website's signer, the
+  // Pages proxy and this route can each check the same 22 characters.
+  const VECTOR = { secret: 'k'.repeat(43), n: 'Friday dinner', w: 'Fri 8:00 PM', g: '3 going', s: 'vY2GCt-sA90cCCipNMEOKC' };
+  assert.strictEqual(og.cardSignature(VECTOR.secret, VECTOR.n, VECTOR.w, VECTOR.g), VECTOR.s);
+  assert.strictEqual(sign(VECTOR.n, VECTOR.w, VECTOR.g, VECTOR.secret), VECTOR.s);
+
+  await cleanup();
+  const r = heldRenderer(() => false);
+  og.setDrawForTests(r.draw);
+  const saved = process.env.OG_CARD_SECRET;
+  process.env.OG_CARD_SECRET = VECTOR.secret;
+  try {
+    await withServer(async (base) => {
+      const { n, w, g, s } = VECTOR;
+      const res = await get(base, '/api/og/invite?' + new URLSearchParams({ n, w, g, s }));
+      assert.strictEqual(res.status, 200, 'the route refuses the pinned vector');
+      const flipped = (s[0] === 'A' ? 'B' : 'A') + s.slice(1);
+      assertRefused(await get(base, '/api/og/invite?' + new URLSearchParams({ n, w, g, s: flipped })),
+        403, 'This card is not signed.', 'one character changed');
+    });
+    assert.deepStrictEqual(r.calls.map((c) => c.name), ['Friday dinner']);
   } finally {
     process.env.OG_CARD_SECRET = saved;
     await cleanup(r);
