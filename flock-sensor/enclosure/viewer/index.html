@@ -3,6 +3,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600&family=Fraunces:opsz,wght@9..144,700&display=swap">
 <style>
+  /* Layout: the model fills the stage; a quiet side panel names views, steps and every part, stacking under it on a phone.
+     Colour: the box's own chalk and black glass, one green for the light. Type: Fraunces for the name, Hanken Grotesk for the rest. */
   :root {
     --bg: #f4f3f1; --panel: #ffffff; --ink: #18171c; --muted: #6b6873; --line: #e3e1dd;
     --accent: #2f7d4f; --accent-ink: #ffffff; --chip: #efede9; --stage: #ebe9e5;
@@ -63,7 +65,7 @@
   <aside>
     <div>
       <h1>Flux</h1>
-      <p class="dims">180 × 166.5 × 72.2 mm, one box</p>
+      <p class="dims">180 &times; 171.5 &times; 73.1 mm, one box</p>
     </div>
     <div>
       <h2>Look</h2>
@@ -92,7 +94,7 @@
   if (RENDER) document.body.classList.add('render');
 
   // Box size and the model frame: X across, Y front to back, Z up, millimetres.
-  const BOX = { w: 180, h: 166.5, d: 72.2 };
+  const BOX = { w: 180, h: 171.5, d: 73.1 };
 
   // How each part looks, and how far it moves when the box is pulled apart
   // (in the model's millimetres: +y is toward the back).
@@ -133,7 +135,7 @@
       show: ['Sleeve (printed)', '7 inch touchscreen', 'Glass panel (acrylic)', 'Panel engraving', 'Sensor window (acrylic)',
              'PureThermal 3 + Lepton 3.5', 'VL53L8CX door counter', 'LINK light'],
       lift: { 'Glass panel (acrylic)': [0, -45, 0], 'Panel engraving': [0, -45, 0], 'Sensor window (acrylic)': [0, -35, 0] }, view: [0.75, -1.1, 0.5] },
-    { text: '5. On the back sheet: the Pi on four spacers, the Active Cooler, the 17 mm standoffs and the 4G board. The charging port through its hole.',
+    { text: '5. On the back sheet: the Pi on four spacers, the Active Cooler, the 18 mm standoffs and the 4G board. The charging port through its hole.',
       show: ['Back sheet (acrylic)', 'Back engraving', 'Raspberry Pi 5', 'Pi 5 ports', 'Active Cooler', 'SIM7600G-H 4G HAT', 'CHARGE port'],
       lift: { 'SIM7600G-H 4G HAT': [0, -28, 0], 'Active Cooler': [0, -12, 0] }, view: [-0.6, -1.1, 0.6] },
     { text: '6. Battery in on its end, ports up. Plug every cable, stick the sound meter in its frame. Back sheet on with four M3 screws.',

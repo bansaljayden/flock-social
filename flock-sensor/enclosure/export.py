@@ -194,6 +194,14 @@ def main():
                 linear_deflection=0.05, angular_deflection=0.2)
     print('preview/flux-assembly.glb')
 
+    # The viewer states the box's size; keep it the model's.
+    viewer = HERE / 'viewer' / 'index.html'
+    size = f'{cad.BOX_W:g} &times; {cad.BOX_H:g} &times; {cad.BOX_D:g} mm'
+    page = re.sub(r'<p class="dims">[^<]*</p>', f'<p class="dims">{size}, one box</p>', viewer.read_text(encoding='utf-8'))
+    page = re.sub(r'const BOX = \{[^}]*\};', f'const BOX = {{ w: {cad.BOX_W:g}, h: {cad.BOX_H:g}, d: {cad.BOX_D:g} }};', page)
+    viewer.write_text(page, encoding='utf-8', newline='
+')
+
     if not args.no_preview:
         r = subprocess.run(['node', str(HERE / 'viewer' / 'render.cjs')], cwd=HERE)
         if r.returncode:

@@ -34,7 +34,7 @@ VENDOR = {
 }
 
 PI_PCB_TOP = 1.31        # the Pi 5 file's board top, above its origin
-HAT_TOP_IN_PI = PI_PCB_TOP + 17.0 + 1.6   # the HAT file's z = 0 is its board's top
+HAT_TOP_IN_PI = None     # set from flux_cad's hat_gap: the HAT file's z = 0 is its board's top
 
 
 def main():
@@ -59,7 +59,7 @@ def main():
 
     placed = {}
     placed['Pi 5 (Raspberry Pi)'] = to_box_from_pi(load('pi5'))
-    placed['4G HAT (Waveshare)'] = to_box_from_pi(load('hat'), HAT_TOP_IN_PI)
+    placed['4G HAT (Waveshare)'] = to_box_from_pi(load('hat'), PI_PCB_TOP + c.hat_gap + 1.6)
     # The community cooler model is Y-up; a quarter turn makes it Z-up, and it
     # sits on the SoC with its push pins in the Pi's two cooler holes.
     cooler = Pos(23.53, 24.41, 13.5) * Rot(90, 0, 0) * load('cooler')
@@ -79,6 +79,9 @@ def main():
     lepton_on_pt3 = Pos(10.44, 18.78, 4.13)
     def to_box_from_pt3(shape):
         return Pos(hole0[0], c.PT3_FACE + pt3_face_z, hole0[1]) * Rot(90, 0, 0) * shape
+    # Its file includes pins in the two rows of breakout holes. Flux uses only
+    # the USB-C, so the board goes in without them; they would reach the battery.
+    pt3 = Compound([s for s in pt3.solids() if s.bounding_box().min.Z > -3.0])
     placed['PureThermal 3 (GroupGets)'] = to_box_from_pt3(pt3)
     placed['Lepton 3.5 (Teledyne FLIR)'] = to_box_from_pt3(lepton_on_pt3 * Compound(lep_body))
     fov = to_box_from_pt3(lepton_on_pt3 * Compound(lep_fov)) if lep_fov else None
@@ -108,7 +111,8 @@ def main():
     }
     # What a vendor part is meant to touch: the board it sits on.
     meant = {('Active Cooler', 'Pi 5 (Raspberry Pi)'), ('4G HAT (Waveshare)', 'Pi 5 (Raspberry Pi)'),
-             ('Lepton 3.5 (Teledyne FLIR)', 'PureThermal 3 (GroupGets)')}
+             ('Lepton 3.5 (Teledyne FLIR)', 'PureThermal 3 (GroupGets)'),
+             ('PureThermal 3 (GroupGets)', 'body (printed)'), ('VL53L8CX carrier (Pololu)', 'body (printed)')}
 
     def overlap(a, b):
         ba, bb = a.bounding_box(), b.bounding_box()

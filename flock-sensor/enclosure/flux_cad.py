@@ -99,10 +99,12 @@ pi_hole_inset = 3.5
 pi_hole_dx = 58.0
 pi_hole_dy = 49.0
 cooler_h = 12.5                # Raspberry Pi Active Cooler, to its fan screws
-# Waveshare SIM7600G-H 4G HAT on 17 mm standoffs and a long-pin stacking
+# Waveshare SIM7600G-H 4G HAT on 18 mm standoffs and a long-pin stacking
 # header: over an Active Cooler a HAT needs 15 mm or more, and this one has a
-# regulator and its SIM holder underneath. Its pins come through on top.
-hat_gap = 17.0
+# regulator and its SIM holder underneath. Its pins come through on top. At
+# 17 mm the makers' own models put its SIM holder half a millimetre into the
+# cooler's fan screws; 18 leaves a millimetre.
+hat_gap = 18.0
 hat_w = 65.0
 hat_pcb = 1.6
 hat_parts_h = 3.0

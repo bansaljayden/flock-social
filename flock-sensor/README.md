@@ -428,7 +428,7 @@ the pins on top of the HAT:
   meter (0x48). One bus, two addresses.
 - **GPIO 24**, pin 18, and ground on pin 20, for the LINK light.
 
-Over the Raspberry Pi Active Cooler the HAT stands on 17 to 18 mm standoffs and
+Over the Raspberry Pi Active Cooler the HAT stands on 18 mm standoffs and
 a long-pin stacking header: a HAT over that cooler needs at least 15 mm, and
 this one also has a regulator and its SIM holder underneath. The modem's data
 runs over USB, its micro-USB "USB" port to one of the Pi's.
