@@ -6,6 +6,7 @@ import { BASE_URL } from '../services/api';
 // product's own star, same path the app uses.
 import Icons from '../components/ui/Icons';
 import { demoNoteLead } from '../lib/crowd';
+import { buildFlockStyle } from '../components/map/flockStyle';
 
 // A PHOTO HREF THAT LEAVES THE SERVER'S ENCODING ALONE. The photo proxy path
 // arrives already percent-encoded (`/api/venues/photo?ref=places%2F...`), and
@@ -50,10 +51,21 @@ const DEMO_BASE = process.env.NODE_ENV === 'production'
 // initMap now, which is the only place a map can exist.
 // ---------------------------------------------------------------------------
 
+// The demo draws the product's own map: "Flock Paper", the light Flock style,
+// built as an object (components/map/flockStyle), so the landing page and the
+// app show the same ground, the same POIs and the same labels. The site paper
+// is the same #f1ede0 as the map's land, which is why only the light theme is
+// used here. Tiles, glyphs and the icon sprite still load straight from
+// https://api.maptiler.com, as the terms require.
+//
+// The demo stays on plain maplibre-gl, billed per tile request, and not on the
+// MapTiler SDK the app uses for session billing: a landing visitor loads a
+// handful of tiles and rarely pans, which costs less than a session would, and
+// it keeps the SDK out of the landing page's chunks. Keyless builds
+// (contributors, e2e) keep the openly licensed CARTO Positron style.
 const MAPTILER_KEY = process.env.REACT_APP_MAPTILER_KEY;
-const MAP_STYLE = MAPTILER_KEY
-  ? `https://api.maptiler.com/maps/basic-v2/style.json?key=${MAPTILER_KEY}`
-  : 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
+const MAP_STYLE = buildFlockStyle({ dark: false, key: MAPTILER_KEY })
+  || 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
 
 // Philadelphia by default: dense venues, works before anyone shares location.
 const DEFAULT_CENTER = { lat: 39.9526, lng: -75.1652 };
