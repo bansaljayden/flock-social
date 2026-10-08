@@ -1,0 +1,361 @@
+<title>Flux Enclosure</title>
+<meta name="description" content="Flux, the one-box venue sensor: every part, named, in 3D.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600&family=Fraunces:opsz,wght@9..144,700&display=swap">
+<style>
+  :root {
+    --bg: #f4f3f1; --panel: #ffffff; --ink: #18171c; --muted: #6b6873; --line: #e3e1dd;
+    --accent: #2f7d4f; --accent-ink: #ffffff; --chip: #efede9; --stage: #ebe9e5;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #121215; --panel: #1b1b1f; --ink: #ecebef; --muted: #9a97a3; --line: #2b2a30;
+      --accent: #5fbf86; --accent-ink: #0e1a13; --chip: #24232a; --stage: #17171b; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #121215; --panel: #1b1b1f; --ink: #ecebef; --muted: #9a97a3; --line: #2b2a30;
+    --accent: #5fbf86; --accent-ink: #0e1a13; --chip: #24232a; --stage: #17171b; color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 15px/1.5 "Hanken Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .app { display: grid; grid-template-columns: minmax(0, 1fr) 340px; height: 100%; }
+  .stage { position: relative; min-width: 0; background: var(--stage); }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+  .tag { position: absolute; left: 16px; bottom: 16px; padding: 6px 10px; border-radius: 6px;
+         background: var(--panel); border: 1px solid var(--line); font-weight: 500; pointer-events: none; }
+  .tag:empty { display: none; }
+  aside { background: var(--panel); border-left: 1px solid var(--line); overflow-y: auto;
+          padding: 20px 20px 28px; display: flex; flex-direction: column; gap: 20px; }
+  h1 { margin: 0; font: 700 26px/1.1 Fraunces, Georgia, serif; letter-spacing: -0.01em; }
+  .dims { margin: 4px 0 0; color: var(--muted); font-variant-numeric: tabular-nums; }
+  h2 { margin: 0 0 8px; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+  .views { display: flex; flex-wrap: wrap; gap: 6px; }
+  .views button { border: 1px solid var(--line); background: var(--chip); color: var(--ink); border-radius: 6px;
+                  padding: 6px 10px; font: inherit; font-size: 13px; cursor: pointer; }
+  .views button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .step { margin: 8px 0 0; color: var(--ink); min-height: 3em; }
+  label.slider { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--muted); }
+  input[type=range] { flex: 1; accent-color: var(--accent); }
+  ul.parts { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+  ul.parts li { display: grid; grid-template-columns: 14px minmax(0, 1fr) auto; gap: 10px; align-items: center;
+                padding: 7px 0; border-bottom: 1px solid var(--line); cursor: pointer; font-size: 14px; }
+  ul.parts li .sw { width: 12px; height: 12px; border-radius: 3px; border: 1px solid var(--line); }
+  ul.parts li .state { color: var(--muted); font-size: 12px; }
+  ul.parts li.off { color: var(--muted); }
+  ul.parts li.hot { color: var(--accent); }
+  .note { color: var(--muted); font-size: 13px; margin: 0; }
+  body.render aside, body.render .tag { display: none; }
+  body.render .app { grid-template-columns: 1fr; }
+  body.render .stage { background: #f6f5f3; }
+  @media (max-width: 760px) {
+    .app { grid-template-columns: 1fr; grid-template-rows: 58vh auto; height: auto; }
+    .stage { height: 58vh; }
+    aside { border-left: 0; border-top: 1px solid var(--line); padding: 16px 16px 28px; }
+  }
+</style>
+
+<div class="app">
+  <div class="stage"><canvas id="c" aria-label="3D model of Flux"></canvas><div class="tag" id="tag"></div></div>
+  <aside>
+    <div>
+      <h1>Flux</h1>
+      <p class="dims">180 × 166.5 × 72.2 mm, one box</p>
+    </div>
+    <div>
+      <h2>Look</h2>
+      <div class="views" id="views"></div>
+      <p class="step" id="stepText"></p>
+    </div>
+    <div>
+      <h2>Pull it apart</h2>
+      <label class="slider">closed <input type="range" id="explode" min="0" max="1" step="0.01" value="0"> apart</label>
+    </div>
+    <div>
+      <h2>Every part</h2>
+      <ul class="parts" id="parts"></ul>
+      <p class="note">Tap a part on the model to name it. Tap one in the list to hide or show it.</p>
+    </div>
+  </aside>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.137.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.137.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.137.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.137.0/examples/js/environments/RoomEnvironment.js"></script>
+<script>
+(() => {
+  const RENDER = location.hash === '#render';
+  if (RENDER) document.body.classList.add('render');
+
+  // Box size and the model frame: X across, Y front to back, Z up, millimetres.
+  const BOX = { w: 180, h: 166.5, d: 72.2 };
+
+  // How each part looks, and how far it moves when the box is pulled apart
+  // (in the model's millimetres: +y is toward the back).
+  const LOOK = {
+    'Sleeve (printed)':          { color: 0x2a2a2f, rough: 0.78, apart: [0, 0, 0] },
+    'Front sheet (acrylic)':     { color: 0x0b0b0d, rough: 0.06, coat: 1, apart: [0, -70, 0] },
+    'Front engraving':           { color: 0xd4d3d8, rough: 0.9, apart: [0, -70, 0] },
+    'Back sheet (acrylic)':      { color: 0x0b0b0d, rough: 0.06, coat: 1, apart: [0, 90, 0] },
+    'Back engraving':            { color: 0xd4d3d8, rough: 0.9, apart: [0, 90, 0] },
+    '7 inch touchscreen':        { color: 0x141b26, rough: 0.05, coat: 1, apart: [0, -25, 0] },
+    'Anker A1336 battery':       { color: 0x2a2c31, rough: 0.45, apart: [-40, 30, 30] },
+    'Raspberry Pi 5':            { color: 0x1f7a45, rough: 0.55, apart: [0, 60, 0] },
+    'Pi 5 ports':                { color: 0xb9bbc2, rough: 0.3, metal: 0.8, apart: [0, 60, 0] },
+    'Active Cooler':             { color: 0x55575d, rough: 0.35, metal: 0.6, apart: [0, 45, 0] },
+    'SIM7600G-H 4G HAT':         { color: 0x1d4f9c, rough: 0.5, apart: [0, 30, 0] },
+    'PureThermal 3 + Lepton 3.5':{ color: 0x3a3d44, rough: 0.25, metal: 0.4, apart: [0, 18, -10] },
+    'VL53L8CX door counter':     { color: 0x2b2440, rough: 0.35, apart: [10, 18, -10] },
+    'Decibel meter':             { color: 0x157a7a, rough: 0.5, apart: [35, 10, 0] },
+    'Power converter':           { color: 0xc8553d, rough: 0.5, apart: [0, 20, 40] },
+    'CHARGE port':               { color: 0xd8d8dc, rough: 0.3, metal: 0.7, apart: [0, 90, 0] },
+    'LINK light':                { color: 0x4fd67c, rough: 0.3, glow: 0x2fa85a, apart: [0, -40, 0] },
+    '1/4-20 mount nut':          { color: 0xa9abb2, rough: 0.35, metal: 0.9, apart: [0, 0, -30] },
+    'Brass M3 inserts (8)':      { color: 0xc9a14a, rough: 0.35, metal: 0.95, apart: [0, 0, 0] },
+  };
+
+  // The six assembly steps: which parts show, and which are lifted out.
+  const STEPS = [
+    { text: '1. Melt the eight brass inserts into the sleeve: four on the screen posts, four in the back corners.',
+      show: ['Sleeve (printed)', 'Brass M3 inserts (8)'], lift: {}, view: [0.7, 1.1, 0.75] },
+    { text: '2. Screw the camera onto its four posts and the counter onto its two, from inside. Push the light in.',
+      show: ['Sleeve (printed)', 'Brass M3 inserts (8)', 'PureThermal 3 + Lepton 3.5', 'VL53L8CX door counter', 'LINK light'],
+      lift: { 'PureThermal 3 + Lepton 3.5': [0, 30, 0], 'VL53L8CX door counter': [0, 30, 0], 'LINK light': [0, 22, 0] }, view: [0.7, 1.1, 0.75] },
+    { text: '3. Plug the touch cable and video ribbon into the screen, then drop it in glass first. Four M3 screws through its ears.',
+      show: ['Sleeve (printed)', 'Brass M3 inserts (8)', 'PureThermal 3 + Lepton 3.5', 'VL53L8CX door counter', 'LINK light', '7 inch touchscreen'],
+      lift: { '7 inch touchscreen': [0, 45, 0] }, view: [0.7, 1.1, 0.75] },
+    { text: '4. VHB tape on the sleeve’s front rim and across the strip. Line up the front sheet and press for thirty seconds.',
+      show: ['Sleeve (printed)', '7 inch touchscreen', 'Front sheet (acrylic)', 'Front engraving'],
+      lift: { 'Front sheet (acrylic)': [0, -45, 0], 'Front engraving': [0, -45, 0] }, view: [0.75, -1.1, 0.5] },
+    { text: '5. On the back sheet: the Pi on four spacers, the Active Cooler, the 17 mm standoffs and the 4G board. The charging port through its hole.',
+      show: ['Back sheet (acrylic)', 'Back engraving', 'Raspberry Pi 5', 'Pi 5 ports', 'Active Cooler', 'SIM7600G-H 4G HAT', 'CHARGE port'],
+      lift: { 'SIM7600G-H 4G HAT': [0, -28, 0], 'Active Cooler': [0, -12, 0] }, view: [-0.6, -1.1, 0.6] },
+    { text: '6. Battery in on its end, ports up. Plug every cable, stick the sound meter in its frame. Back sheet on with four M3 screws.',
+      show: Object.keys(LOOK),
+      lift: { 'Anker A1336 battery': [0, 0, 45], 'Back sheet (acrylic)': [0, 60, 0], 'Back engraving': [0, 60, 0],
+              'Raspberry Pi 5': [0, 60, 0], 'Pi 5 ports': [0, 60, 0], 'Active Cooler': [0, 60, 0],
+              'SIM7600G-H 4G HAT': [0, 60, 0], 'CHARGE port': [0, 60, 0] }, view: [0.75, 1.1, 0.6] },
+  ];
+
+  const VIEWS = {
+    Assembled: { view: [0.62, -1.0, 0.42] },
+    Front: { view: [0, -1, 0.02], fov: 14 },
+    Back: { view: [0, 1, 0.02], fov: 14 },
+    Inside: { view: [0.6, 1.0, 0.55], hide: ['Back sheet (acrylic)', 'Back engraving'] },
+  };
+
+  const canvas = document.getElementById('c');
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true, alpha: false });
+  renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.1;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+  const scene = new THREE.Scene();
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromScene(new THREE.RoomEnvironment(), 0.04).texture;
+
+  const camera = new THREE.PerspectiveCamera(32, 1, 0.001, 50);
+  const controls = new THREE.OrbitControls(camera, canvas);
+  controls.enableDamping = !RENDER;
+
+  const key = new THREE.DirectionalLight(0xffffff, 1.6);
+  key.castShadow = true;
+  key.shadow.mapSize.set(2048, 2048);
+  scene.add(key);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x99958f, 0.55));
+  const rim = new THREE.DirectionalLight(0xffffff, 0.9);
+  scene.add(rim);
+
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(4, 4), new THREE.ShadowMaterial({ opacity: 0.18 }));
+  ground.rotation.x = -Math.PI / 2;
+  ground.receiveShadow = true;
+  scene.add(ground);
+
+  let scale = 0.001, yUp = true, center = new THREE.Vector3();
+  const parts = {};       // name -> { obj, base: Vector3 }
+  let explode = 0, stepIndex = -1, current = 'Assembled';
+
+  // Model millimetres to this scene's units and axes.
+  function m2t(v) {
+    return yUp ? new THREE.Vector3(v[0], v[2], -v[1]).multiplyScalar(scale)
+               : new THREE.Vector3(v[0], v[1], v[2]).multiplyScalar(scale);
+  }
+
+  function themeBackground() {
+    const css = getComputedStyle(document.documentElement).getPropertyValue('--stage').trim() || '#ebe9e5';
+    scene.background = new THREE.Color(RENDER ? '#f6f5f3' : css);
+  }
+
+  function resize() {
+    const r = canvas.getBoundingClientRect();
+    renderer.setSize(r.width, r.height, false);
+    camera.aspect = r.width / Math.max(1, r.height);
+    camera.updateProjectionMatrix();
+  }
+
+  function frame(dir, fov) {
+    camera.fov = fov || 32;
+    const d = new THREE.Vector3(...dir);
+    const t = m2t([d.x, d.y, d.z]).normalize();
+    const radius = Math.hypot(BOX.w, BOX.h, BOX.d) * scale * 0.62;
+    const dist = radius / Math.sin(THREE.MathUtils.degToRad(camera.fov) / 2) * (camera.aspect < 1 ? 1.35 : 1.0);
+    camera.position.copy(center).addScaledVector(t, dist);
+    controls.target.copy(center);
+    camera.updateProjectionMatrix();
+    controls.update();
+    key.position.copy(center).add(m2t([60, -140, 220]).multiplyScalar(4));
+    rim.position.copy(center).add(m2t([-220, 160, 120]).multiplyScalar(4));
+    key.target.position.copy(center);
+    key.target.updateMatrixWorld();
+    const s = key.shadow.camera; const e = 0.25;
+    s.left = -e; s.right = e; s.top = e; s.bottom = -e; s.near = 0.01; s.far = 3; s.updateProjectionMatrix();
+  }
+
+  function place() {
+    const step = stepIndex >= 0 ? STEPS[stepIndex] : null;
+    const hide = (!step && VIEWS[current] && VIEWS[current].hide) || [];
+    for (const [name, p] of Object.entries(parts)) {
+      const shown = step ? step.show.includes(name) : !p.userHidden && !hide.includes(name);
+      p.obj.visible = shown;
+      const off = step ? (step.lift[name] || [0, 0, 0]) : (LOOK[name] ? LOOK[name].apart : [0, 0, 0]).map(v => v * explode);
+      p.obj.position.copy(p.base).add(m2t(off));
+    }
+    renderList();
+  }
+
+  function setView(name) {
+    stepIndex = -1; current = name;
+    document.getElementById('stepText').textContent = '';
+    frame(VIEWS[name].view, VIEWS[name].fov);
+    place(); markButtons();
+  }
+  function setStep(i) {
+    stepIndex = i; current = 'Step ' + (i + 1);
+    document.getElementById('stepText').textContent = STEPS[i].text;
+    frame(STEPS[i].view);
+    place(); markButtons();
+  }
+
+  function markButtons() {
+    document.querySelectorAll('#views button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.name === current)));
+  }
+
+  function buildUI() {
+    const views = document.getElementById('views');
+    const add = (label, fn) => {
+      const b = document.createElement('button'); b.type = 'button'; b.textContent = label; b.dataset.name = label;
+      b.addEventListener('click', fn); views.appendChild(b);
+    };
+    Object.keys(VIEWS).forEach(n => add(n, () => setView(n)));
+    STEPS.forEach((s, i) => add('Step ' + (i + 1), () => setStep(i)));
+    document.getElementById('explode').addEventListener('input', e => { explode = +e.target.value; if (stepIndex < 0) place(); });
+  }
+
+  let hot = null;
+  function renderList() {
+    const ul = document.getElementById('parts');
+    ul.textContent = '';
+    for (const [name, p] of Object.entries(parts)) {
+      const li = document.createElement('li');
+      li.className = (p.obj.visible ? '' : 'off') + (hot === name ? ' hot' : '');
+      const sw = document.createElement('span'); sw.className = 'sw';
+      sw.style.background = '#' + new THREE.Color(LOOK[name] ? LOOK[name].color : 0x888888).getHexString();
+      const t = document.createElement('span'); t.textContent = name;
+      const s = document.createElement('span'); s.className = 'state'; s.textContent = p.obj.visible ? '' : 'hidden';
+      li.append(sw, t, s);
+      li.addEventListener('click', () => { p.userHidden = !p.userHidden; if (stepIndex >= 0) setView('Assembled'); else place(); });
+      ul.appendChild(li);
+    }
+  }
+
+  const ray = new THREE.Raycaster(), ptr = new THREE.Vector2();
+  canvas.addEventListener('pointerup', e => {
+    const r = canvas.getBoundingClientRect();
+    ptr.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+    ray.setFromCamera(ptr, camera);
+    const hit = ray.intersectObjects(Object.values(parts).map(p => p.obj).filter(o => o.visible), true)[0];
+    let name = null;
+    if (hit) { let o = hit.object; while (o && !parts[o.name]) o = o.parent; name = o ? o.name : null; }
+    hot = name;
+    document.getElementById('tag').textContent = name || '';
+    renderList();
+  });
+
+  function material(name, fallback) {
+    const L = LOOK[name] || {};
+    // Colours here are sRGB, as written; the renderer works in linear light.
+    const m = new THREE.MeshPhysicalMaterial({
+      color: new THREE.Color(L.color !== undefined ? L.color : fallback).convertSRGBToLinear(),
+      roughness: L.rough !== undefined ? L.rough : 0.5,
+      metalness: L.metal || 0, clearcoat: L.coat || 0, clearcoatRoughness: 0.05,
+    });
+    if (L.coat) m.envMapIntensity = 0.55;   // glossy black acrylic: reflections, not grey
+    if (L.glow) { m.emissive = new THREE.Color(L.glow).convertSRGBToLinear(); m.emissiveIntensity = 0.9; }
+    return m;
+  }
+
+  new THREE.GLTFLoader().load('flux-assembly.glb', gltf => {
+    const root = gltf.scene;
+    const bb = new THREE.Box3().setFromObject(root);
+    const size = bb.getSize(new THREE.Vector3());
+    yUp = size.y > size.z;
+    scale = size.x / BOX.w;
+    // Stand the box on the ground.
+    root.position.y -= yUp ? bb.min.y : 0;
+    scene.add(root);
+    root.updateMatrixWorld(true);
+    new THREE.Box3().setFromObject(root).getCenter(center);
+    // The loader rewrites node names (spaces to underscores, slashes and dots
+    // dropped) and keeps the original in userData.name; match on either.
+    const plain = s => String(s || '').replace(/[\[\]\.:\/]/g, '').replace(/\s/g, '_');
+    const byPlain = {};
+    Object.keys(LOOK).forEach(k => { byPlain[plain(k)] = k; });
+    root.traverse(o => {
+      const name = LOOK[o.userData && o.userData.name] ? o.userData.name : byPlain[plain(o.name)];
+      if (name && !parts[name]) {
+        o.name = name;
+        parts[name] = { obj: o, base: o.position.clone(), userHidden: false };
+        o.traverse(m => {
+          if (m.isMesh) {
+            const base = m.material && m.material.color ? m.material.color.getHex() : 0x888888;
+            m.material = material(name, base);
+            m.castShadow = true; m.receiveShadow = true;
+          }
+        });
+      }
+    });
+    // Keep the list in the order the parts are described.
+    const ordered = {};
+    Object.keys(LOOK).forEach(k => { if (parts[k]) ordered[k] = parts[k]; });
+    Object.keys(parts).forEach(k => delete parts[k]);
+    Object.assign(parts, ordered);
+    themeBackground();
+    resize();
+    buildUI();
+    setView('Assembled');
+    window.fluxReady = true;
+  }, undefined, err => {
+    document.getElementById('tag').textContent = 'The model did not load.';
+    console.error(err);
+  });
+
+  // For the build sheet's pictures: one call per view.
+  window.fluxShow = name => {
+    const m = /^Step (\d)$/.exec(name);
+    if (m) setStep(+m[1] - 1); else setView(name);
+    renderer.render(scene, camera);
+    return true;
+  };
+
+  window.addEventListener('resize', () => { resize(); });
+  matchMedia('(prefers-color-scheme: dark)').addEventListener('change', themeBackground);
+  (function loop() { requestAnimationFrame(loop); controls.update(); renderer.render(scene, camera); })();
+})();
+</script>
