@@ -558,12 +558,54 @@ function hubStepSummary(counts) {
   return `${parts.join(', ')}.`;
 }
 
+// MapTiler's usage this billing period, in one line, from the hub's
+// costs.maptilerUsage (services/maptilerUsage.js, judged in moneyHub.js). The
+// Overview's Costs card and the Costs tab's MapTiler row both print it, so the
+// two cannot word the same reading differently. A meter that was not read says
+// why and prints no number.
+function hubMaptilerLine(u) {
+  if (!u) return null;
+  if (u.status === 'unset') return 'Not read yet: needs MAPTILER_SERVICE_TOKEN.';
+  if (u.status !== 'read') return `Not read: ${u.reason || 'MapTiler did not answer.'}`;
+  const inc = u.included || {};
+  const parts = [
+    `Sessions ${hubCount(u.sessions)} of ${hubCount(inc.sessions)}`,
+    `Requests ${hubCount(u.requests)} of ${hubCount(inc.requests)}`,
+  ];
+  if (u.searchSessions > 0) parts.push(`Search sessions ${hubCount(u.searchSessions)} of ${hubCount(inc.searchSessions)}`);
+  const capText = `the ${hubCapMoney(u.cap)} spending limit`;
+  let pace;
+  if (Number.isFinite(u.overProjectedCents)) {
+    pace = `on pace for ${hubMoney(u.overProjectedCents)} over`;
+  } else {
+    pace = `too early in the billing period for a pace, ${hubMoney(u.overSoFarCents)} over so far`;
+  }
+  parts.push(pace);
+  const renews = (u.period && hubDay(u.period.renewsOn)) || null;
+  const until = renews || 'the next billing period';
+  if (Number.isFinite(u.headroomCents) && u.headroomCents > 0) {
+    return `${parts.join(' · ')}, ${hubMoney(u.headroomCents)} under ${capText}.${renews ? ` The period renews ${renews}.` : ''}`;
+  }
+  const where = u.capReached
+    ? `at ${capText}, so every Flock map is stopped until ${until}`
+    : `which reaches ${capText} before the period ends, and at the limit every Flock map stops until ${until}`;
+  return `${parts.join(' · ')}, ${where}.`;
+}
+
+// The spending limit in whole dollars when it is whole ($20, not $20.00), as
+// it is set on MapTiler's account page.
+function hubCapMoney(cap) {
+  if (!cap || !Number.isFinite(cap.cents)) return 'account';
+  return cap.cents % 100 === 0 ? `$${(cap.cents / 100).toLocaleString('en-US')}` : hubMoney(cap.cents);
+}
+
 function HubOwnerStep({ step, navy }) {
   const checked = step.checkedBy === 'server';
   const state = checked ? (HUB_STEP_STATE[step.state] || HUB_STEP_STATE.unknown) : HUB_CHECK_YOURSELF;
   let tag = null;
   if (checked && HUB_NETWORK_TAG[step.network]) tag = HUB_NETWORK_TAG[step.network];
   else if (checked && step.lastRead === 'refused') tag = { tone: 'bad', text: 'Refused' };
+  else if (checked && step.lastRead === 'failed') tag = { tone: 'warn', text: 'Not read' };
   else if (step.optional) tag = { tone: 'muted', text: 'Optional' };
   const rt = checked ? step.roundTrip : null;
   const ms = rt && rt.status === 'ok' ? hubMs(rt.ms) : null;
@@ -997,6 +1039,11 @@ function HubCosts({ h, colors }) {
       {c.googleMeteredThisMonth && Number.isFinite(c.googleMeteredThisMonth.photosBought) && (
         <p style={hubStyle.foot}>
           Google photos bought this month: {hubCount(c.googleMeteredThisMonth.photosBought)}{Number.isFinite(c.googleMeteredThisMonth.photosUsd) ? `, ${hubMoney(Math.round(c.googleMeteredThisMonth.photosUsd * 100))}` : ''}, from places_photo_spend. That spend arrives on the Google Cloud invoice above and is not added twice.
+        </p>
+      )}
+      {c.maptilerUsage && (
+        <p style={hubStyle.foot}>
+          MapTiler this billing period: {hubMaptilerLine(c.maptilerUsage)} The Flex fee is the MapTiler row on the expense list; this is the use on top of it.
         </p>
       )}
       {c.reconciledReadError && <p style={hubStyle.foot}>{c.reconciledReadError}</p>}
@@ -2307,6 +2354,42 @@ function hubAttention(h) {
   if (ps && ps.stale > 0) {
     add({ key: 'price-sheet', tone: 'warn', label: 'Prices to re-check', value: hubCount(ps.stale), note: `Due for a check against a receipt or a pricing page: ${ps.rows.filter((r) => r.stale).map((r) => r.label).join('; ')}.`, card: HUB_CARD.priceSheet });
   }
+  // MapTiler (moneyHub.js, THE MAPTILER READING, JUDGED). A meter that was
+  // asked and did not answer is a row, like Stripe; one with no token is not,
+  // because the steps card already counts the token. Reaching the spending
+  // limit outranks being near an allowance, and only one of the two is shown.
+  const mtu = costs.maptilerUsage;
+  if (mtu && mtu.status === 'failed') {
+    add({ key: 'maptiler', tone: 'warn', label: 'MapTiler usage', value: 'Not read', note: `${mtu.reason || 'MapTiler did not answer.'} The Flex allowances and the spending limit were not checked.`, card: HUB_CARD.costs });
+  } else if (mtu && mtu.status === 'read') {
+    const until = (mtu.period && hubDay(mtu.period.renewsOn)) || 'the next billing period';
+    const capMoney = hubCapMoney(mtu.cap);
+    const near = Array.isArray(mtu.near) ? mtu.near : [];
+    if (mtu.reachesCap) {
+      add({
+        key: 'maptiler-cap',
+        tone: 'bad',
+        label: mtu.capReached ? 'MapTiler at the spending limit' : 'MapTiler would reach the spending limit',
+        value: mtu.capReached ? hubMoney(mtu.overSoFarCents) : `${hubMoney(mtu.overProjectedCents)} on pace`,
+        note: `${mtu.capReached
+          ? `${hubMoney(mtu.overSoFarCents)} over the Flex allowance so far`
+          : `On pace for ${hubMoney(mtu.overProjectedCents)} over the Flex allowance this billing period`}, against a ${capMoney} spending limit. At the limit every Flock map stops until ${until}. The limit is in MapTiler's account settings.`,
+        card: HUB_CARD.costs,
+      });
+    } else if (near.length > 0) {
+      const top = Math.max(...near.map((x) => x.pct));
+      add({
+        key: 'maptiler-near',
+        tone: 'warn',
+        // 80% and up warns; a pace or a reading past 100% says so in the label.
+        label: top >= 100 ? 'MapTiler past its allowance' : 'MapTiler near its allowance',
+        value: `${top}%`,
+        note: `${near.map((x) => `${x.label.charAt(0).toUpperCase()}${x.label.slice(1)} ${hubCount(x.used)} of ${hubCount(x.included)}${Number.isFinite(x.projected) ? `, on pace for ${hubCount(x.projected)}` : ''}`).join('; ')}. Past the allowance, extra use bills automatically up to the ${capMoney} spending limit, where every Flock map stops until ${until}.`,
+        card: HUB_CARD.costs,
+      });
+    }
+  }
+
   const lic = costs.licence;
   if (lic && Array.isArray(lic.items) && lic.items.length > 0) {
     add({
@@ -3165,6 +3248,16 @@ export default function RevenueScreen({
                     {e.freeTier ? ` Free tier: ${e.freeTier}.` : ''}
                   </p>
                   <p style={depLine}>Usage: {depUsage(e)} {depConfigured(e)}</p>
+                  {/* MapTiler's reading lives on the money hub's payload
+                      (costs.maptilerUsage), which this tab already reads for
+                      the break-evens; hubTick re-renders it when that lands. */}
+                  {e.id === 'maptiler' && (
+                    <p style={depLine}>
+                      {hubMemo.data && hubMemo.data.costs && hubMemo.data.costs.maptilerUsage
+                        ? `This billing period: ${hubMaptilerLine(hubMemo.data.costs.maptilerUsage)}`
+                        : 'This billing period\'s sessions and requests are read with the money hub, on the Overview tab.'}
+                    </p>
+                  )}
                   {e.costsNothingBecause && <p style={depLine}>{e.costsNothingBecause}</p>}
                   {e.unknownAction && <p style={depLine}>{e.unknownAction}</p>}
                   {e.note && <p style={depLine}>{e.note}</p>}
