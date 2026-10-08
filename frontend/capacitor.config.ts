@@ -45,6 +45,23 @@ const config: CapacitorConfig = {
     // html/body paint var(--bg-primary) edge to edge (see index.css) and this
     // colour is fully covered in both light and dark mode.
     backgroundColor: '#0b1a2e',
+    // A FIXED WORD ON THE END OF THE WEBVIEW'S USER-AGENT, FOR THE MAP KEY.
+    //
+    // MapTiler can limit a key to requests whose User-Agent contains one exact,
+    // case-sensitive substring. The website's key is limited by origin
+    // (flockcorp.com), but this WebView's origin is capacitor://localhost,
+    // which an origin rule cannot single out, so the iPhone build gets its own
+    // key limited to this word instead. Capacitor appends it after WebKit's
+    // own "Mobile/..." token with a space, so nothing that reads the rest of
+    // the User-Agent changes.
+    //
+    // Keep it one word with no version number: a key rule is a single
+    // substring, and a version in it would lock every older build out of the
+    // map on the day the word changed. The key is limited only after a
+    // TestFlight build carrying this word has been seen on MapTiler's side,
+    // including the tile requests MapLibre makes from its web worker; the
+    // builds already out do not send it, so their key stays as it is.
+    appendUserAgent: 'FlockiOS',
   },
   plugins: {
     // THE STATUS BAR STARTS WITH LIGHT GLYPHS.
