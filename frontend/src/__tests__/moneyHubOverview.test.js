@@ -415,6 +415,22 @@ async function renderHub(payload, over) {
 // One ruled row of the hub, label, value and note together, found by its label.
 const hubRow = (label) => screen.getByText(label).parentElement.parentElement;
 
+// Resend's meter as the hub sends it (backend/services/moneyHub.js,
+// judgeResendUsage): both windows with the reset worded in New York time, and
+// one alert per window at 80% of its cap or at it.
+const RESEND_WINDOWS = {
+  daily: { limit: 100, resetsAt: '2026-10-08T23:59:59.999Z', resetsWords: '8:00 PM today, New York time' },
+  monthly: { limit: 3000, resetsAt: '2026-10-28T08:20:02.910Z', resetsWords: '4:21 AM on Oct 28, New York time' },
+};
+function resendRead({ daily = 12, monthly = 340, alerts = [] } = {}) {
+  const w = (name, used) => ({ ...RESEND_WINDOWS[name], used, share: used / RESEND_WINDOWS[name].limit });
+  return { status: 'read', reason: null, asOf: '2026-10-08T15:00:00.000Z', daily: w('daily', daily), monthly: w('monthly', monthly), included: { daily: 100, monthly: 3000 }, alerts, cached: false };
+}
+function resendAlert(window, level, used) {
+  const { limit, resetsAt, resetsWords } = RESEND_WINDOWS[window];
+  return { window, level, used, limit, pct: Math.floor((used / limit) * 100), resetsAt, resetsWords };
+}
+
 describe('the console opens on the hub', () => {
   test('four tabs, Overview first, and an unknown or old tab id lands on the hub', async () => {
     await renderHub(NOT_CONNECTED, { adminTab: 'revenue' });
@@ -1608,6 +1624,18 @@ describe('needs attention: every live problem at the top, each linking to its ca
     // and sends the owner to the invoice (review 2026-10-06).
     ['a usage bill charged after its last bill was expected', { ...QUIET, costs: { ...COSTS, chargedPastEnd: [{ expenseId: 8, label: 'MapTiler, Flex', endsOn: '2026-07-31', lastChargedOn: '2026-09-02', cadence: 'usage', lastBillBy: '2026-08-30' }] } },
       'Charged after the end date', '1', /MapTiler, Flex, set to end Jul 31(, 2026)?, its last bill expected by Aug 30(, 2026)?, and charged Sep 2(, 2026)?\. For a usage bill, a charge later than its last bill was expected counts as running\. Check it against the invoice\. If the invoice covers use after the end date, clear the end date or set the new one\. If it was the last bill, mark its row stopped\. Go to the expense list$/, 'hub-expenses'],
+    // Resend's caps (2026-10-08): the server judges each window and words the
+    // reset in New York time; the screen makes one row per alert.
+    ['a Resend meter that was asked and did not answer', { ...QUIET, costs: { ...COSTS, resendUsage: { status: 'failed', reason: 'Resend answered 502, so there is no reading.', alerts: [] } } },
+      'Email usage', 'Not read', /Resend answered 502, so there is no reading\. The daily and monthly email caps were not checked\. Go to Costs$/, 'hub-costs'],
+    ['email at 80% of the daily cap', { ...QUIET, costs: { ...COSTS, resendUsage: resendRead({ alerts: [resendAlert('daily', 'near', 85)] }) } },
+      'Email near its daily limit', '85%', /85 of 100 emails today\. At 100 Resend sends nothing more, signup verifications and password resets included, until 8:00 PM today, New York time\. Go to Costs$/, 'hub-costs'],
+    ['email at the daily cap', { ...QUIET, costs: { ...COSTS, resendUsage: resendRead({ alerts: [resendAlert('daily', 'at', 100)] }) } },
+      'Email at its daily limit', '100 of 100', /Resend has counted 100 emails today, and the plan allows 100\. No more mail goes out, signup verifications and password resets included, until 8:00 PM today, New York time\. Go to Costs$/, 'hub-costs'],
+    ['email at 80% of the monthly cap', { ...QUIET, costs: { ...COSTS, resendUsage: resendRead({ alerts: [resendAlert('monthly', 'near', 2450)] }) } },
+      'Email near its monthly limit', '81%', /2,450 of 3,000 emails this month\. At 3,000 Resend sends nothing more, signup verifications and password resets included, until 4:21 AM on Oct 28, New York time\. Go to Costs$/, 'hub-costs'],
+    ['email at the monthly cap', { ...QUIET, costs: { ...COSTS, resendUsage: resendRead({ alerts: [resendAlert('monthly', 'at', 3000)] }) } },
+      'Email at its monthly limit', '3,000 of 3,000', /Resend has counted 3,000 emails this month, and the plan allows 3,000\. No more mail goes out, signup verifications and password resets included, until 4:21 AM on Oct 28, New York time\. Go to Costs$/, 'hub-costs'],
   ];
 
   test.each(TRIGGERS)('%s is a row that says so', async (_why, payload, label, value, note, target) => {
@@ -2316,5 +2344,66 @@ describe('the biggest bills', () => {
     });
     await screen.findByText(/Totals withheld until the expense list fits/);
     expect(screen.queryByText('Biggest bills')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// RESEND'S CAPS (2026-10-08). The free plan allows 100 emails a day and 3,000
+// a month, every email counted. The server reads both from Resend
+// (services/resendUsage.js); the Costs card and the Costs tab's Resend row
+// print the same one line, and a meter that was not read prints no number.
+// ---------------------------------------------------------------------------
+describe('Resend email usage', () => {
+  const resendLine = () => screen.getByText(/^Resend, live: /);
+  const withResend = (resendUsage) => ({ ...CONNECTED, costs: { ...COSTS, resendUsage } });
+
+  test('the Costs card says today and this month against each cap', async () => {
+    // Found by waiting: the hub paints the last payload it held first, and
+    // this one replaces it when the read lands.
+    await renderHub(withResend(resendRead({ daily: 12, monthly: 1340 })));
+    const line = await screen.findByText('Resend, live: Email today 12 of 100 · this month 1,340 of 3,000.');
+    expect(line.closest('#hub-costs')).not.toBeNull();
+  });
+
+  test('with no key, or a read that failed, it says not read yet and prints no number', async () => {
+    const { unmount } = await renderHub(withResend({ status: 'unset', reason: 'RESEND_API_KEY is not set, so Resend was not asked.', included: { daily: 100, monthly: 3000 }, alerts: [] }));
+    expect(await screen.findByText('Resend, live: Not read yet: needs RESEND_API_KEY.')).toBeInTheDocument();
+    unmount();
+    await renderHub(withResend({ status: 'failed', reason: 'Resend did not answer within 4 seconds.', included: { daily: 100, monthly: 3000 }, alerts: [] }));
+    expect(await screen.findByText('Resend, live: Not read yet: Resend did not answer within 4 seconds.')).toBeInTheDocument();
+    expect(resendLine().textContent).not.toMatch(/\d+ of \d/);
+  });
+
+  test('a meter with no key, or under 80% of both caps, raises no attention row', async () => {
+    const quiet = { ...CONNECTED, pricing: { ...CONNECTED.pricing, mismatches: 0 } };
+    const { unmount } = await renderHub({ ...quiet, costs: { ...COSTS, resendUsage: { status: 'unset', reason: 'RESEND_API_KEY is not set, so Resend was not asked.', alerts: [] } } });
+    await screen.findByText('Resend, live: Not read yet: needs RESEND_API_KEY.');
+    expect(screen.queryByText(/^Email (near|at) its|^Email usage$/)).toBeNull();
+    unmount();
+    await renderHub({ ...quiet, costs: { ...COSTS, resendUsage: resendRead({ daily: 79, monthly: 2399 }) } });
+    await screen.findByText('Resend, live: Email today 79 of 100 · this month 2,399 of 3,000.');
+    expect(screen.queryByText(/^Email (near|at) its|^Email usage$/)).toBeNull();
+  });
+
+  test('both caps can raise a row at once, the one at its cap first', async () => {
+    await renderHub(withResend(resendRead({ daily: 100, monthly: 2500, alerts: [resendAlert('daily', 'at', 100), resendAlert('monthly', 'near', 2500)] })));
+    await screen.findByText('Email near its monthly limit');
+    const card = screen.getByRole('heading', { name: /needs? you$/ }).parentElement;
+    const labels = Array.from(card.children).filter((el) => el.tagName === 'DIV').map((r) => r.firstChild.firstChild.firstChild.textContent);
+    expect(labels.indexOf('Email at its daily limit')).toBeGreaterThanOrEqual(0);
+    expect(labels.indexOf('Email near its monthly limit')).toBeGreaterThan(labels.indexOf('Email at its daily limit'));
+    expect(card.textContent).not.toMatch(/—/);
+  });
+
+  test('the Costs tab prints the same line under the Resend row, once the hub has been read', async () => {
+    const { unmount } = await renderHub(withResend(resendRead({ daily: 40, monthly: 900 })));
+    await screen.findByText('Resend, live: Email today 40 of 100 · this month 900 of 3,000.');
+    unmount();
+    const dependencies = {
+      total: 1,
+      groups: [{ id: 'free', label: 'Free tiers', short: 'free', note: 'Free at this volume.', entries: [{ id: 'resend', label: 'Resend', what: 'Email.', where: 'backend/services/emailService.js', group: 'free' }] }],
+    };
+    render(React.createElement(RevenueScreen, screenProps({ adminTab: 'costs', costsData: { dependencies } })));
+    expect(screen.getByText('Live from Resend: Email today 40 of 100 · this month 900 of 3,000.')).toBeInTheDocument();
   });
 });
