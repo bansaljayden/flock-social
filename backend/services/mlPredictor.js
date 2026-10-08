@@ -3966,21 +3966,26 @@ const NOWCAST_WEIGHTS = Object.freeze({
 // switched number reads. Re-measured after that became the served offset: the
 // replay's switched offset equals its strictly-past median on all 7,920 rows,
 // the fit returns these weights, and these figures reproduce to the decimal.
-const SERVE_MEASURED_POPULATION = 'live readings 2026-09-06..08 (Lehigh and Miami, local 2026-09-08 export); weights fitted on 2026-09-01..05';
+//
+// Re-measured 2026-10-08 on every model-served live reading from 09-09 to
+// 10-08 (119,939, weights unchanged). The three-day figures had a reading two
+// hours old at 62.8% within 15; over the month it is 40.7%, level with curve
+// and offset alone on the same rows, so the card no longer claims more for it.
+const SERVE_MEASURED_POPULATION = 'live readings 2026-09-09..10-08 (Philadelphia, Lehigh and Miami, read-only production export of 2026-10-08); weights fitted on 2026-09-01..05';
 const SERVE_MEASURED = Object.freeze({
-  curveOffset: Object.freeze({ within15: 41.7, rows: 4183 }),
+  curveOffset: Object.freeze({ within15: 42.7, rows: 119939 }),
   // Per base and lag bucket, on the scored readings the nowcast moved. A
   // bucket whose weight is zero never moves a number, so it carries no figure.
   nowcast: Object.freeze({
-    curve_offset: Object.freeze({ 1: { within15: 87.4, rows: 1716 }, 2: { within15: 62.8, rows: 368 }, 3: { within15: 43.5, rows: 184 }, 4: null }),
-    model_qmap: Object.freeze({ 1: { within15: 87.4, rows: 1716 }, 2: { within15: 63.3, rows: 368 }, 3: { within15: 37.0, rows: 184 }, 4: { within15: 41.3, rows: 712 } }),
-    model: Object.freeze({ 1: { within15: 87.4, rows: 1716 }, 2: { within15: 62.2, rows: 368 }, 3: { within15: 39.1, rows: 184 }, 4: null }),
+    curve_offset: Object.freeze({ 1: { within15: 83.0, rows: 57900 }, 2: { within15: 40.7, rows: 14778 }, 3: { within15: 38.6, rows: 7794 }, 4: null }),
+    model_qmap: Object.freeze({ 1: { within15: 83.0, rows: 57900 }, 2: { within15: 42.2, rows: 14778 }, 3: { within15: 35.8, rows: 7794 }, 4: { within15: 39.5, rows: 12285 } }),
+    model: Object.freeze({ 1: { within15: 83.0, rows: 57900 }, 2: { within15: 40.4, rows: 14778 }, 3: { within15: 36.1, rows: 7794 }, 4: null }),
   }),
 });
 
 // THE HEADLINE FOR THE CONFIGURATION AS A WHOLE, as opposed to SERVE_MEASURED's
 // per-number within-15. servedAccuracy.json holds what bandEval measured for
-// curve_offset + nowcast on the same 4,183 held-out readings (within one band,
+// curve_offset + nowcast on the same held-out readings (within one band,
 // within 10, MAE, bias, and the same readings as served before the switches).
 // It describes the numbers only while both switches are on, so this returns
 // null otherwise and nothing that quotes it (Birdie's prompt) says it.

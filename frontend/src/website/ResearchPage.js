@@ -20,8 +20,9 @@ const PAPER_PAGES = 39;
 //
 // Every number below is one the paper reports, on the data it names. The crowd
 // figures are the served number and the weekly curve on 4,183 held-out live
-// readings (paper Table 3; the same served figures the About page quotes from
-// servedAccuracy.json). The counter's figures are owl-4.9 and the heat rule on
+// readings, the paper's first, three-day test (servedAccuracy.json first_test;
+// the About page now quotes the month-long test, and this chart moves to it
+// with the paper that reports it). The counter's figures are owl-4.9 and the heat rule on
 // the real test sets (paper Section 13).
 const DESCRIPTION = 'Why Flock studies how busy places get, what the research found, and the full paper.';
 

@@ -269,7 +269,7 @@ test('every switched arithmetic that can move a number has a measured confidence
       }
     }
   }
-  assert.match(I.SERVE_MEASURED_POPULATION, /2026-09-06\.\.08/);
+  assert.match(I.SERVE_MEASURED_POPULATION, /2026-09-09\.\.10-08/);
 });
 
 test('the confidence names the arithmetic that ran, and the weather adjustment follows the model', () => {
@@ -816,14 +816,17 @@ test('migration 093 adds the offset readings column additively, in ASCII, and de
 // the families existed, and so must every statement it sends. Recorded
 // (sha256 of the fixture's 135 responses, `asOf` left out because it is the
 // wall clock, and of the statements in order) from the code before the
-// families were added.
+// families were added. Re-recorded 2026-10-08 for co, conow, now and
+// now_qmapoff when SERVE_MEASURED moved to the month-long measurement: with
+// every confidence field left out, all six configurations hash to what they
+// did before that change, so the confidence figures are the only difference.
 const PRE_FAMILY = {
   off: ['2c1c088f1d0937e4b3a71818dddce32051465a48b94f930140259c029f5aa9e1', 'c0fb5514e3b331fa2080c4aacf86fd9345558366dfc3a8269a3cb93cb38a719d'],
   off_qmapoff: ['fec289f0febb8c101c3ef9101bd2dd0d8fb3cc922856fdeab8b6b425394ce4c7', 'c0fb5514e3b331fa2080c4aacf86fd9345558366dfc3a8269a3cb93cb38a719d'],
-  co: ['5a457531c684479c013318fddcc7fdce662664bfb776469a5829295c1051e7f5', '8042bcfe0ce42e931a3adb64e366418e9f64be2f6af5cfc1b854f05493093ba2'],
-  conow: ['6eaaa13d2017ee6de88af71b077d2ac6668e7cd818c23e33c7c2211c90115a7a', '8042bcfe0ce42e931a3adb64e366418e9f64be2f6af5cfc1b854f05493093ba2'],
-  now: ['6e86b0594039e7f3097dc4cfcf8957936e2293999cc0f80f75902a94a327e096', '8042bcfe0ce42e931a3adb64e366418e9f64be2f6af5cfc1b854f05493093ba2'],
-  now_qmapoff: ['57b39eae7cbd6af3dc21cc47bd2bd56934997b73bc0f62536d5e5ef339dc0c0b', '8042bcfe0ce42e931a3adb64e366418e9f64be2f6af5cfc1b854f05493093ba2'],
+  co: ['4b1e2cb46823da79094118e82c4c7e3dcf7fe9d334241008cb364d7b8975b904', '8042bcfe0ce42e931a3adb64e366418e9f64be2f6af5cfc1b854f05493093ba2'],
+  conow: ['9583e0da4441a4c3de01d598c6db822125b520cac3c467cc7f57d8353cc18faa', '8042bcfe0ce42e931a3adb64e366418e9f64be2f6af5cfc1b854f05493093ba2'],
+  now: ['31dcf2310b8b52bbc605a04357a3ab7e65c4c1b3afa353f3d218d787ce0813c4', '8042bcfe0ce42e931a3adb64e366418e9f64be2f6af5cfc1b854f05493093ba2'],
+  now_qmapoff: ['5f597d855af8c01f661727511a9931707e2303ec7eb95dc186defdafed7b0420', '8042bcfe0ce42e931a3adb64e366418e9f64be2f6af5cfc1b854f05493093ba2'],
 };
 const PRE_FAMILY_ENV = {
   off: {},

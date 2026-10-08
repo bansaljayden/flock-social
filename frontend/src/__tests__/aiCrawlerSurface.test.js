@@ -385,8 +385,8 @@ describe('llms.txt stays true to the shipped model', () => {
       FRONTEND, '..', 'backend', 'services', 'servedAccuracy.json'
     )));
     const flat = llms.replace(/\s+/g, ' ');
-    expect(served.rows).toBe(4183);
-    expect(flat).toContain('4,183 real live readings');
+    expect(served.rows).toBe(119939);
+    expect(flat).toContain('119,939 real live readings');
     // Exact level beside within-one, for the reason given on the /about pin.
     expect(flat).toContain(`${served.band_exact.toFixed(1)}% of Flock's crowd numbers named the exact crowd level of the live reading, ${served.within_one_band}% landed within one level`);
     expect(flat).toContain(`${served.within_10}% within 10 points`);
@@ -396,8 +396,8 @@ describe('llms.txt stays true to the shipped model', () => {
     expect(flat).toContain(`${served.reading_one_hour_earlier.band_exact.toFixed(1)}% of numbers named the exact crowd level and ${served.reading_one_hour_earlier.within_one_band}% landed within one`);
     // The hour-before figures are on a subset, and say how big it is; the
     // pre-upgrade figures are on the whole set, as /about now says too.
-    expect(flat).toContain(`which ${served.reading_one_hour_earlier.rows.toLocaleString('en-US')} of those 4,183 readings did`);
-    expect(flat).toContain('4,183 real live readings at venues in the Lehigh Valley and Miami');
+    expect(flat).toContain(`which ${served.reading_one_hour_earlier.rows.toLocaleString('en-US')} of those 119,939 readings did`);
+    expect(flat).toContain('119,939 real live readings at venues in Philadelphia, the Lehigh Valley and Miami');
   });
 
   // A venue with no pattern is answered by the rule engine, and one with a

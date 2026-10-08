@@ -1040,8 +1040,8 @@ describe('copy rules (DESIGN-STANDARD)', () => {
     ));
     const copy = readJs('AboutPage.js').replace(/\s+/g, ' ');
 
-    expect(served.rows).toBe(4183);
-    expect(copy).toMatch(/Tested against 4,183 real live readings it had not seen, from September 6 to 8, 2026, at venues in the Lehigh Valley and Miami/);
+    expect(served.rows).toBe(119939);
+    expect(copy).toMatch(/Tested against 119,939 real live readings it had not seen, from September 9 to October 8, 2026, at venues in Philadelphia, the Lehigh Valley and Miami/);
     expect(served.population).toMatch(/Lehigh and Miami/);
     // The exact level sits beside within-one because within-one alone flatters
     // a lazy answer: a constant "Not Busy" scores high on it (MODEL-METRICS.md).
@@ -1064,7 +1064,7 @@ describe('copy rules (DESIGN-STANDARD)', () => {
   });
 
   // WHICH READINGS EACH FIGURE WAS MEASURED ON. The pre-upgrade figures were
-  // scored on all 4,183 readings and nobody scored the hour-before subset under
+  // scored on the whole set and nobody scored the hour-before subset under
   // the old arithmetic, but the page put "the same readings scored 32.2%" right
   // after the subset's 86.1%, which read as that subset going from 32.2 to 86.1.
   test('/about puts the pre-upgrade figures on the readings they were measured on', () => {

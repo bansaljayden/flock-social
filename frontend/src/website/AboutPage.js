@@ -117,15 +117,15 @@ export default function AboutPage() {
           Flock pulls live busyness readings every hour and sets each one against
           how that venue usually runs at that hour. Where Flock has those readings
           for a venue, the number you see moves with its newest ones, so a slow
-          Friday or a sudden rush shows up the same night. Tested against 4,183
-          real live readings it had not seen, from September 6 to 8, 2026, at
-          venues in the Lehigh Valley and Miami, 56.0% of Flock's crowd numbers
-          named the exact crowd level of the reading, 78.8% landed within one
-          level, and 53.8% within 10 points, with an average miss of 17 points and
-          no lean high or low. Before the September upgrade, those same 4,183
-          readings scored 32.2% on the exact level and 58.5% within one. On the
-          1,716 of them where the venue had a live reading from the hour before,
-          86.1% named the exact level and 91.7% landed within one.
+          Friday or a sudden rush shows up the same night. Tested against 119,939
+          real live readings it had not seen, from September 9 to October 8, 2026,
+          at venues in Philadelphia, the Lehigh Valley and Miami, 54.9% of Flock's
+          crowd numbers named the exact crowd level of the reading, 78.4% landed
+          within one level, and 55.2% within 10 points, with an average miss of 18
+          points and no lean high or low. Before the September upgrade, those same
+          119,939 readings scored 30.8% on the exact level and 58.3% within one. On
+          the 57,900 of them where the venue had a live reading from the hour
+          before, 77.0% named the exact level and 88.6% landed within one.
         </p>
         <p>
           Flock also trains its own machine-learning crowd model. The current

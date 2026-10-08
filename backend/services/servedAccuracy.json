@@ -1,29 +1,41 @@
 {
   "configuration": "CROWD_SERVE_MODE=curve_offset + CROWD_NOWCAST_ENABLED=true",
-  "population": "live readings 2026-09-06..08 (Lehigh and Miami, local 2026-09-08 export), held out; weights fitted on 2026-09-01..05",
-  "scored_dates": ["2026-09-06", "2026-09-07", "2026-09-08"],
-  "rows": 4183,
-  "within_one_band": 78.8,
-  "within_10": 53.8,
-  "within_15": 61.2,
-  "band_exact": 56.0,
-  "mae": 17.06,
-  "bias": -0.98,
+  "population": "live readings 2026-09-09..10-08 (Philadelphia, Lehigh and Miami, read-only production export of 2026-10-08), held out; weights fitted on 2026-09-01..05",
+  "scored_dates": [
+    "2026-09-09",
+    "2026-10-08"
+  ],
+  "scored_date_count": 30,
+  "rows": 119939,
+  "within_one_band": 78.4,
+  "within_10": 55.2,
+  "within_15": 62.2,
+  "band_exact": 54.9,
+  "mae": 18.00,
+  "bias": -1.24,
   "before": {
     "configuration": "v2.6.0-starling as served before the two switches (model mode, quantile map on)",
-    "rows": 4183,
-    "within_one_band": 58.5,
-    "within_10": 28.6,
-    "band_exact": 32.2,
-    "mae": 30.61
+    "rows": 119939,
+    "within_one_band": 58.3,
+    "within_10": 26.9,
+    "band_exact": 30.8,
+    "mae": 30.94
   },
   "reading_one_hour_earlier": {
     "what": "the scored readings whose venue had a live reading from the hour before, where the nowcast carries that reading at full weight",
-    "rows": 1716,
-    "within_one_band": 91.7,
-    "within_10": 85.5,
-    "band_exact": 86.1,
-    "mae": 6.05
+    "rows": 57900,
+    "within_one_band": 88.6,
+    "within_10": 80.5,
+    "band_exact": 77.0,
+    "mae": 9.99
   },
-  "reproduce": "from backend/: node scripts/ml/train/bandEval.js --train=scripts/ml/train/training_data.csv.partial --holdout=scripts/ml/train/holdout_data.csv.partial --model=scripts/ml/models --legacy --fit --rows-out=band_rows.csv (the 'scored dates, shipped weights' block; the one-hour-earlier figures are the rows-out file filtered to date >= 2026-09-06 and served_nowcast_lag_hours = 1)"
+  "first_test": {
+    "what": "the three held-out days the switches were shipped on",
+    "population": "live readings 2026-09-06..08 (Lehigh and Miami, local 2026-09-08 export)",
+    "rows": 4183,
+    "within_one_band": 78.8,
+    "band_exact": 56.0,
+    "mae": 17.06
+  },
+  "reproduce": "from backend/scripts/ml/train/: after a read-only export (export_training_data.js), CROWD_SERVE_MODE=curve_offset CROWD_NOWCAST_ENABLED=true node bandEval.js --from=2026-09-09 --rows-out=rows.csv (the live_time_holdout section; the one-hour-earlier figures are the rows-out file filtered to ml = 1 and served_nowcast_lag_hours = 1). scored_dates is the window's first and last date."
 }
