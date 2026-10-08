@@ -592,6 +592,21 @@ function hubMaptilerLine(u) {
   return `${parts.join(' · ')}, ${where}.`;
 }
 
+// Resend's email usage today and this month, in one line, from the hub's
+// costs.resendUsage (services/resendUsage.js, judged in moneyHub.js). The
+// Overview's Costs card and the Costs tab's Resend row both print it. A meter
+// that was not read says so and prints no number, never a zero.
+function hubResendLine(u) {
+  if (!u) return null;
+  if (u.status === 'unset') return 'Not read yet: needs RESEND_API_KEY.';
+  if (u.status !== 'read') return `Not read yet: ${u.reason || 'Resend did not answer.'}`;
+  const part = (w, when) => {
+    if (!w || !Number.isFinite(w.used)) return `${when} not reported`;
+    return Number.isFinite(w.limit) ? `${when} ${hubCount(w.used)} of ${hubCount(w.limit)}` : `${when} ${hubCount(w.used)}, no cap`;
+  };
+  return `Email ${part(u.daily, 'today')} · ${part(u.monthly, 'this month')}.`;
+}
+
 // The spending limit in whole dollars when it is whole ($20, not $20.00), as
 // it is set on MapTiler's account page.
 function hubCapMoney(cap) {
@@ -1044,6 +1059,11 @@ function HubCosts({ h, colors }) {
       {c.maptilerUsage && (
         <p style={hubStyle.foot}>
           MapTiler this billing period: {hubMaptilerLine(c.maptilerUsage)} The Flex fee is the MapTiler row on the expense list; this is the use on top of it.
+        </p>
+      )}
+      {c.resendUsage && (
+        <p style={hubStyle.foot}>
+          Resend, live: {hubResendLine(c.resendUsage)}
         </p>
       )}
       {c.reconciledReadError && <p style={hubStyle.foot}>{c.reconciledReadError}</p>}
@@ -2389,6 +2409,42 @@ function hubAttention(h) {
       });
     }
   }
+  // Resend (moneyHub.js, THE RESEND READING, JUDGED). A meter that was asked
+  // and did not answer is a row, like MapTiler's; one with no key is not. Each
+  // cap is its own row: near it at 80%, at it from 100%, when Resend sends
+  // nothing more until the window resets. The server words the reset in New
+  // York time.
+  const rsu = costs.resendUsage;
+  if (rsu && rsu.status === 'failed') {
+    add({ key: 'resend', tone: 'warn', label: 'Email usage', value: 'Not read', note: `${rsu.reason || 'Resend did not answer.'} The daily and monthly email caps were not checked.`, card: HUB_CARD.costs });
+  } else if (rsu && rsu.status === 'read') {
+    for (const a of Array.isArray(rsu.alerts) ? rsu.alerts : []) {
+      const daily = a.window === 'daily';
+      const span = daily ? 'today' : 'this month';
+      const cap = daily ? 'daily' : 'monthly';
+      const until = a.resetsWords || hubTime(a.resetsAt) || 'the reset';
+      const what = 'signup verifications and password resets included';
+      if (a.level === 'at') {
+        add({
+          key: `resend-${a.window}-at`,
+          tone: 'bad',
+          label: `Email at its ${cap} limit`,
+          value: `${hubCount(a.used)} of ${hubCount(a.limit)}`,
+          note: `Resend has counted ${hubCount(a.used)} emails ${span}, and the plan allows ${hubCount(a.limit)}. No more mail goes out, ${what}, until ${until}.`,
+          card: HUB_CARD.costs,
+        });
+      } else if (a.level === 'near') {
+        add({
+          key: `resend-${a.window}-near`,
+          tone: 'warn',
+          label: `Email near its ${cap} limit`,
+          value: `${a.pct}%`,
+          note: `${hubCount(a.used)} of ${hubCount(a.limit)} emails ${span}. At ${hubCount(a.limit)} Resend sends nothing more, ${what}, until ${until}.`,
+          card: HUB_CARD.costs,
+        });
+      }
+    }
+  }
 
   const lic = costs.licence;
   if (lic && Array.isArray(lic.items) && lic.items.length > 0) {
@@ -3256,6 +3312,15 @@ export default function RevenueScreen({
                       {hubMemo.data && hubMemo.data.costs && hubMemo.data.costs.maptilerUsage
                         ? `This billing period: ${hubMaptilerLine(hubMemo.data.costs.maptilerUsage)}`
                         : 'This billing period\'s sessions and requests are read with the money hub, on the Overview tab.'}
+                    </p>
+                  )}
+                  {/* Resend's whole count, transactional mail included, from
+                      the same payload (costs.resendUsage). */}
+                  {e.id === 'resend' && (
+                    <p style={depLine}>
+                      {hubMemo.data && hubMemo.data.costs && hubMemo.data.costs.resendUsage
+                        ? `Live from Resend: ${hubResendLine(hubMemo.data.costs.resendUsage)}`
+                        : 'Today\'s and this month\'s emails are read from Resend with the money hub, on the Overview tab.'}
                     </p>
                   )}
                   {e.costsNothingBecause && <p style={depLine}>{e.costsNothingBecause}</p>}
