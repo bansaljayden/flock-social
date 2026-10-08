@@ -7,22 +7,24 @@ faces; the door counter sees distances, not people; the sound meter turns sound
 into a decibel figure on its own chip. Only counts and levels ever leave the
 box.
 
-This page names every part, says what it does, where it lives, and what it
-plugs into. The case drawings are in `enclosure/`, and `enclosure/README.md` is
-the build sheet for them.
+This page names every part, says what it does, where it sits, and what it
+plugs into. The case is drawn in `enclosure/`, and `enclosure/README.md` is
+its build sheet, with a picture for every assembly step.
 
-## The two units
+## The box
 
-Flux is two boxes joined by two cables.
+One unit, 180 x 166.5 x 72 mm, the width of its seven inch screen.
 
-| Unit | Where it goes | What is in it | Its job |
-|---|---|---|---|
-| **The base** | On a table, shelf or the host stand | Screen, Raspberry Pi, 4G board, battery, two lights | Thinks, shows the live numbers, sends them to Flock |
-| **The head** | On the wall near the door, on a ball mount, tilted down | Thermal camera, door counter, sound meter, one light | Looks at and listens to the room |
+- **The front** is the screen, and under it a strip with the thermal camera's
+  eye, the door counter's window, the engraved Flux wordmark and one light.
+- **Inside**, behind the screen, the battery stands at the left and the Pi with
+  its 4G board sits at the right. The sound meter listens through a small hole
+  in the right side.
+- **The back** carries the Pi and the charging port.
 
-They are separate because each has to be somewhere different. The head has to
-see the room and the doorway from above; the base has to be where a person can
-see its screen and charge its battery.
+It stands on a table, or screws onto a camera ball mount on the wall above a
+door, tilted down so the camera and the counter look at the doorway and the
+screen faces the people coming in.
 
 ## What it does, step by step
 
@@ -31,113 +33,92 @@ see its screen and charge its battery.
 2. **Owl**, the people-counting model in `models/people.onnx`, finds the people
    in that picture and counts them. The picture is then thrown away.
 3. **The door counter** measures an 8 x 8 grid of distances fifteen times a
-   second and counts people walking in and out of the doorway.
-4. **The sound meter** measures the room's loudness in decibels and the Pi reads
-   that number twice a second.
-5. **The Pi** (`main.py`) combines them, shows them on the screen, and every
-   30 seconds sends the counts and the loudness to Flock over Wi-Fi or 4G.
+   second and counts people walking in and out of the doorway, and which way.
+4. **The sound meter** measures the room's loudness in decibels, and the Pi
+   reads that one number twice a second.
+5. **The Pi** (`main.py`) puts them together, shows them on the screen, and
+   every 30 seconds sends the counts and the loudness to Flock over Wi-Fi or 4G.
 
 ## Every part, named
 
-### In the base
-
-| Part | What it is | What it does in Flux | Plugs into |
+| Part | What it does in Flux | Where it sits | Plugs into |
 |---|---|---|---|
-| **Raspberry Pi 5 (8 GB)** | The computer | Runs everything: reads the sensors, runs Owl, draws the screen, sends the readings | Power from the battery; everything else plugs into it |
-| **Raspberry Pi Active Cooler** | A heatsink and small fan | Keeps the Pi cool while Owl runs nonstop | Clips onto the Pi, fan cable into the Pi's FAN socket |
-| **microSD card** | The Pi's storage | Holds Raspberry Pi OS and the Flux software | The Pi's card slot |
-| **Waveshare SIM7600G-H 4G HAT** | A cellular modem board | Gets Flux online where there is no Wi-Fi | Sits on the Pi's 40 pins on standoffs; its USB port goes to a Pi USB port |
-| **4G antenna** | Antenna for the modem | Without it the modem gets no signal | The HAT's MAIN connector |
-| **Nano SIM card** | The phone plan | Pays for the 4G data | The HAT's SIM slot |
-| **7 inch 1024 x 600 HDMI touchscreen** | The display | Shows the live count, the loudness and the heat view | HDMI to the Pi; USB for touch and power |
-| **Anker Prime 20K 200W power bank (A1336)** | The battery | Runs Flux with no wall plug | USB-C to the Pi's USB-C power port |
-| **POWER light** (green 3 mm LED + 330 ohm resistor) | Front, under the screen, right side | On while Flux is running | GPIO 23 (pin 16), ground |
-| **LINK light** (yellow 3 mm LED + 330 ohm resistor) | Beside POWER | Blinks while the head is answering and readings are going out | GPIO 24 (pin 18), ground |
-| **Half-size breadboard with the GPIO ribbon (T-cobbler)** | The wiring hub | Joins the Pi's pins to the head cable and the lights, with no soldering | Ribbon to the HAT's pins |
+| **Raspberry Pi 5 (8 GB)** | The computer: reads the sensors, runs Owl, draws the screen, sends the readings | On the back sheet, right | Power from the converter; everything else plugs into it |
+| **Raspberry Pi Active Cooler** | Keeps the Pi cool while Owl runs nonstop | On the Pi, under the 4G board | The Pi's FAN socket |
+| **microSD card** | Holds Raspberry Pi OS and the Flux software | The Pi's card slot | |
+| **Waveshare SIM7600G-H 4G HAT** | Gets Flux online where there is no Wi-Fi | On the Pi's 40 pins, 17 mm up on standoffs over the cooler | Its USB port to a Pi USB port |
+| **4G antenna** (flexible, stick-on) | The modem's signal | Stuck inside the right wall, low: plastic and acrylic let radio through. The kit's 14.5 cm blade antenna would stick out of a box this size, so it stays in its bag | The HAT's MAIN connector |
+| **SIM card** (standard size) | The data plan | The HAT's SIM holder, underneath it: put it in before stacking | |
+| **7 inch 1024 x 600 HDMI touchscreen** | Shows the live count, the loudness and the heat view; tap a card to open it | The front | Video ribbon to the Pi; touch USB to the Pi |
+| **Anker Prime 20K 200W power bank (A1336)** | Runs Flux with no wall plug | Standing on its end, left | USB-C to the power converter; charges through the back |
+| **Power converter (USB-C PD to 5 V 5 A)** | Gives the Pi the 5 A it wants from a battery whose own 5 V stops at 3 A | Over the Pi | Battery in, Pi's USB-C out |
+| **FLIR Lepton 3.5 on a GroupGets PureThermal 3** | The thermal camera: Owl counts people in what it sees | Behind the eye in the strip | USB-C to the Pi |
+| **VL53L8CX door counter (Pololu #3419)** | Counts people in and out of the doorway | Behind the window right of the eye | I2C, through the Qwiic MultiPort; its SPI/I2C pin capped to GND |
+| **PCB Artists I2C Decibel Meter PRO** | Measures loudness in real decibels; no audio ever reaches the Pi | In its frame on the right wall, hearing through the hole | I2C, through the Qwiic MultiPort (5-pin lead, INT left empty) |
+| **Qwiic SHIM and MultiPort** | Split the Pi's one I2C bus between the counter and the meter, all plug-in | On the 4G board's pins, and loose beside them | Pi pins 1, 3, 5, 6 |
+| **LINK light** (green 3 mm LED, 330 ohm resistor) | Blinks while the sensors are answering and readings are going out | The strip, far right | GPIO 24 (pin 18), ground (pin 20) |
+| **CHARGE port** (Adafruit #6069) | Charges the battery without opening the box | Back, high | The battery's other USB-C |
 
-### In the head
+The counter and the meter share the same wires. That works because I2C is a
+shared bus where each part answers to its own address: 0x29 for the counter,
+0x48 for the meter. `i2cdetect -y 1` on the Pi shows both.
 
-| Part | What it is | What it does in Flux | Plugs into |
-|---|---|---|---|
-| **FLIR Lepton 3.5 on a GroupGets PureThermal 3** | The thermal camera | Sees body heat across the room; Owl counts people in it | USB-C, through the 12 cm flat cable and the long USB cable, to the Pi |
-| **VL53L8CX door counter (Pololu #3419)** | A distance sensor with an 8 x 8 grid | Counts people in and out through the door, and which way | The head's junction: 3V3, GND, SDA, SCL; its SPI/I2C pin to GND |
-| **PCB Artists I2C Decibel Meter PRO** | A sound level meter on a chip | Measures loudness in real decibels; no audio ever reaches the Pi | Its JST-XH cable to the head's junction: 3V3, GND, SDA, SCL |
-| **Mini breadboard (the head junction)** | The wiring hub in the head | Joins the cable's four wires to both sensors | Stuck inside the head's right wall |
-| **HEAD light** (green 3 mm LED + 330 ohm resistor) | On the head's angled face | Steady while the head's sensors answer: the cable is good | GPIO 25 (pin 22), ground, through the head cable |
+## The cables
 
-The door counter and the sound meter share the same four wires. That works
-because I2C is a shared bus: each part answers to its own address, 0x29 for the
-counter and 0x48 for the meter. `i2cdetect -y 1` on the Pi shows both.
+| Cable | From | To |
+|---|---|---|
+| **Camera** | PureThermal 3 (right-angle USB-C) | Pi USB |
+| **Touch** | Screen's "5V+Touch" micro-USB (right-angle) | Pi USB |
+| **Video** | Screen's flat HDMI ribbon socket | Pi micro HDMI 0, through a ribbon adapter |
+| **Modem** | 4G board's "USB" micro-USB (right-angle) | Pi USB |
+| **Power** | Battery | Converter, then the Pi's USB-C |
+| **Charging** | Back's CHARGE port | Battery |
+| **I2C** | Qwiic SHIM on pins 1, 3, 5, 6 | MultiPort, then the counter and the meter |
 
-### The cables
+## The Pi's pins this build uses
 
-| Name | Cable | From | To |
-|---|---|---|---|
-| **C1 Pi power** | USB-C to USB-C, 30 cm | Battery | Pi USB-C |
-| **C2 Screen picture** | Micro-HDMI to HDMI, 30 cm | Pi HDMI 0 (the one by the power port) | Screen HDMI |
-| **C3 Screen touch** | USB-A to micro-USB, 30 cm | Pi USB | Screen touch port |
-| **C4 Modem** | USB-A to micro-USB, 15 to 20 cm | Pi USB | HAT port labelled USB |
-| **C5 Camera lead** | CableCreation CC0992, 12 cm flat USB-A to USB-C | Thermal camera, in the head | C6 |
-| **C6 Camera run** | USB 3.0 extension, USB-A male to USB-A female, 3 m | C5, in the head | Pi USB (blue) |
-| **C7 Head cable** | Cat6, 3 m, solid core | Base breadboard | Head junction |
-| **C8 Meter lead** | JST-XH 4-pin to female jumper | Sound meter | Head junction (onto 4 header pins) |
-| **C9 Counter leads** | 5 female-to-male jumpers | Door counter's pins | Head junction |
-| **C10 Charging** | USB-C, from a wall charger | Wall | Battery, in through the back slot |
-| **C11 Ribbon** | 40-pin GPIO ribbon (came with the T-cobbler) | HAT's pass-through pins | Base breadboard |
-
-**C7, the head cable, wire by wire.** Cat6 has four twisted pairs. Each signal
-rides with a ground, which is what lets I2C go three metres.
-
-| Pair | Wire | Signal | Pi pin |
-|---|---|---|---|
-| Orange | orange | SDA | 3 |
-| Orange | white-orange | GND | 6 |
-| Green | green | SCL | 5 |
-| Green | white-green | GND | 9 |
-| Blue | blue | 3V3 | 1 |
-| Blue | white-blue | GND | 14 |
-| Brown | brown | HEAD light | 22 (GPIO 25) |
-| Brown | white-brown | GND | 20 |
-
-### The Pi's pins this build uses
+All reached through the 4G board, whose pins carry the Pi's straight through.
 
 | Pin | Name | Goes to |
 |---|---|---|
-| 1 | 3V3 | Head cable (blue): the counter's VIN and the meter's VCC |
-| 3 | SDA (GPIO 2) | Head cable (orange) |
-| 5 | SCL (GPIO 3) | Head cable (green) |
-| 6, 9, 14, 20 | GND | Head cable grounds, the lights |
-| 16 | GPIO 23 | POWER light |
-| 18 | GPIO 24 | LINK light |
-| 22 | GPIO 25 | HEAD light, through the head cable |
+| 1 | 3V3 | The Qwiic SHIM: the counter's VIN and the meter's 3V3 |
+| 3 | SDA (GPIO 2) | The Qwiic SHIM |
+| 5 | SCL (GPIO 3) | The Qwiic SHIM |
+| 6 | GND | The Qwiic SHIM |
+| 18 | GPIO 24 | The LINK light, through its resistor |
+| 20 | GND | The LINK light |
 
-Never put the counter or the meter on a 5V pin. Both are 3.3 V parts.
+The 4G board itself uses pins 8 and 10 (its serial line) and pin 31 (its power
+key). Never put the counter or the meter on a 5 V pin; both are 3.3 V parts.
+
+## The settings that go with this box
+
+In `/etc/flock-sensor/flock_sensor.env`:
+
+```
+LED_LINK_GPIO=24
+DOOR_SENSOR=tof
+NOISE_SENSOR=auto
+```
+
+and `THERMAL_UPSIDE_DOWN=1` if the heat view on the screen comes out upside
+down, which depends on which way up the camera's board ended up.
 
 ## The case parts
 
-Every part below is a file in `enclosure/` and a named piece in the drawings.
-`enclosure/README.md` says how to make and assemble each one.
-
-**Base, laser cut from 3 mm acrylic:** front panel (window, screen screws,
-lights, engraved Flux wordmark), back panel (Pi screws, cable slot, exhaust
-vents), top, bottom (intake vents, tray screws), two sides.
-
-**Base, 3D printed:** eight corner blocks, four screen spacers, four Pi spacers,
-the battery tray, the cable grommet, and the screen fit test.
-
-**Head, 3D printed:** the shell, the back plate (ball-mount nut and cable
-notch), the lens ring, and the head fit test.
+**Printed:** the sleeve (the whole box's sides, with every post and frame built
+in), four Pi spacers, and two fit tests to print first.
+**Laser cut from 3 mm black acrylic:** the front sheet and the back sheet.
 
 ## The small parts, and what each is for
 
 | Part | For |
 |---|---|
-| Brass M3 heat-set inserts | Melted into the printed parts with the soldering iron so screws grip metal: 3 in each corner block, 4 in the head |
-| Nylon standoff kit (M2, M2.5, M3) | Holding boards off the walls: Pi (M2.5), 4G HAT on the Pi (M2.5), door counter (M2), screen (M3) |
-| 3 mm LEDs | The POWER, LINK and HEAD lights |
-| 330 ohm resistors | One per light, or the LED burns out |
-| Camvate ball mount | Holds the head on the wall and lets it tilt toward the door |
-| 1/4"-20 hex nut | Trapped in the head's back plate; the ball mount screws into it |
-| Double-sided foam tape | Seals the sound meter's microphone to its hole in the head, so it hears the room and not the inside of the box |
-| 25 mm hook-and-loop strap | Holds the battery in its tray |
-| Rubber feet | Under the base, so air reaches the vents underneath |
+| Brass M3 heat-set inserts | Melted into the sleeve with the soldering iron, eight of them, so the screws grip metal: four for the screen, four for the back |
+| Nylon standoff kit | Spares for the Pi stack |
+| 3 mm LEDs | The LINK light |
+| Camvate ball mount | Holds Flux on the wall and lets it tilt toward the door |
+| 1/4"-20 hex nut | Sits in the base; the ball mount screws into it |
+| VHB tape | Holds the front sheet on, so no screw shows on the front |
+| Double-sided foam tape | Seals the sound meter to its hole, so it hears the room and not the inside of the box |
+| Rubber feet | Under the base |
