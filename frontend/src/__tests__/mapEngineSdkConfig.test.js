@@ -258,10 +258,13 @@ describe('code review of the map work (2026-10-08)', () => {
     }
   });
 
-  test('a refusal clears when a new style loads, so a key that works again does not stay covered', () => {
+  test('a refusal clears after a style swap only when the free TileJSON check answers OK', () => {
     const src = fs.readFileSync(path.join(__dirname, '..', 'components', 'map', 'MapLibreMapView.js'), 'utf8');
-    const body = src.slice(src.indexOf('const rehydrateAfterStyleSwap = useCallback((map) => {'));
-    expect(body.slice(0, 400)).toMatch(/if \(keyRefusedRef\.current\) \{ keyRefusedRef\.current = false; setKeyRefused\(false\); \}/);
+    const body = src.slice(src.indexOf('const rehydrateAfterStyleSwap = useCallback((map) => {')).slice(0, 900);
+    expect(body).toMatch(/tiles\/v4\/tiles\.json/);
+    expect(body).toMatch(/if \(r\.ok && mapInstanceRef\.current === map\) \{ keyRefusedRef\.current = false; setKeyRefused\(false\); \}/);
+    // Never cleared unconditionally on the swap itself.
+    expect(body).not.toMatch(/if \(keyRefusedRef\.current\) \{ keyRefusedRef\.current = false;/);
   });
 
   test('Sentry scrubs console breadcrumb arguments and exception values, not only messages', () => {
