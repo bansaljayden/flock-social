@@ -4193,3 +4193,58 @@ class CrowdSecondLook(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class SoundMeterModule(unittest.TestCase):
+    """The PCB Artists I2C decibel meter, which replaced the analog microphone.
+
+    The analog path could not tell a quiet room from someone talking two feet
+    away: its own electrical noise sat at the level of speech. The module
+    measures A-weighted dB SPL on its own processor, and the Pi reads a byte.
+    """
+
+    def test_a_zero_after_power_up_is_no_reading_not_silence(self):
+        self.assertIsNone(main.sound_meter_value(0))
+        self.assertEqual(main.sound_meter_value(42), 42.0)
+        self.assertIsNone(main.sound_meter_value(255))
+
+    def test_the_meter_wins_when_it_answers(self):
+        self.assertEqual(main.noise_plan('auto', True), 'meter')
+        self.assertEqual(main.noise_plan('auto', False), 'mic')
+        self.assertEqual(main.noise_plan('meter', False), 'meter')
+        self.assertEqual(main.noise_plan('mic', True), 'mic')
+        self.assertEqual(main.noise_plan('off', True), 'off')
+
+    def test_it_reads_the_dba_register(self):
+        class Bus:
+            def __init__(self):
+                self.asked = []
+
+            def read(self, reg, n):
+                self.asked.append((reg, n))
+                return bytes([0x3A]) if reg == 0x00 else bytes([63])
+        bus = Bus()
+        meter = main.SoundMeter(bus)
+        self.assertEqual(meter.version(), 0x3A)
+        self.assertEqual(meter.read_dba(), 63.0)
+        self.assertEqual(bus.asked, [(0x00, 1), (0x0A, 1)])
+
+    def test_its_decibels_are_shown_as_decibels_without_calibration(self):
+        with mock.patch.object(main, 'NOISE_IS_SPL', True):
+            self.assertEqual(main.display_decibels(63.0), 63.0)
+            value, caption, basis = main.noise_reading(63.0)
+            self.assertEqual(value, '63 dB')
+            self.assertEqual(caption, 'measured sound level')
+            self.assertEqual(main.noise_band(basis)[0], 'Moderate')
+            self.assertIsNone(main.display_decibels(0.0))
+
+    def test_its_readings_are_not_divided_by_the_microphones_stretch(self):
+        # A meter's minute of steady 60 to 62 dB is steady, whatever NOISE_SCALE
+        # the old microphone left in the config.
+        minute = [60.0, 61.0, 62.0] * 40
+        with mock.patch.object(main, 'NOISE_SCALE', 4.4):
+            self.assertEqual(main.noise_insight(minute, scale=1.0)['character'], 'steady')
+
+    def test_the_meter_and_the_counter_answer_at_different_addresses(self):
+        # They share one I2C bus and four wires.
+        self.assertNotEqual(main.SOUND_METER_ADDR, main.TOF_I2C_ADDR)
