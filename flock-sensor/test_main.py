@@ -1974,15 +1974,15 @@ class NoiseSampleRate(unittest.TestCase):
         self.assertLessEqual(self.reads(250), 201)
         self.assertGreater(self.reads(0), 200)
 
-    def test_the_smallest_gap_that_is_nearly_as_clean_wins(self):
-        floors = {0: 41.0, 100: 30.0, 250: 16.5, 500: 15.2, 1000: 15.5, 2000: 15.0}
-        self.assertEqual(main.pick_sample_gap(floors), 250)
+    def test_the_calibration_reads_where_the_readings_stop_moving(self):
+        # A steady podcast read 39 back to back, 63 at 250us, 72 at 1ms and 75
+        # at 2ms: the calibration reads at 1ms, and so does a fresh unit.
+        self.assertEqual(main.CALIBRATION_GAP_US, 1000.0)
+        self.assertEqual(float(main.DEFAULTS['NOISE_SAMPLE_GAP_US']), main.CALIBRATION_GAP_US)
 
-    def test_back_to_back_is_kept_when_spacing_does_not_help(self):
-        self.assertEqual(main.pick_sample_gap({0: 15.0, 250: 15.2, 1000: 14.9}), 0)
-
-    def test_a_dead_channel_picks_no_gap(self):
-        self.assertIsNone(main.pick_sample_gap({0: 0.0, 1000: None}))
+    def test_no_spacing_is_picked_by_how_quiet_it_reads(self):
+        # Picking the quietest spacing picked the one that hid the voice.
+        self.assertFalse(hasattr(main, 'pick_sample_gap'))
 
     def test_the_resting_offset_is_not_counted_as_sound(self):
         # The first unit rests at 518 against a midpoint of 512.
@@ -2078,11 +2078,10 @@ class CalibrateByEar(unittest.TestCase):
         phases = iter([[(r, False) for r in quiet], [(r, False) for r in talk], claps])
         cfg = Path(tempfile.mkdtemp()) / 'flock_sensor.env'
         cfg.write_text('DEVICE_ID=sensor_001\n')
-        with mock.patch.object(main, 'measure_sample_gaps', return_value={0: 43.1, 250: 30.3}), \
-                mock.patch.object(main, '_collect_bursts', side_effect=lambda s: next(phases)), \
+        with mock.patch.object(main, '_collect_bursts', side_effect=lambda s: next(phases)), \
                 mock.patch.object(main.time, 'sleep'), \
                 mock.patch.object(main, 'CONFIG_PATH', cfg), \
-                mock.patch.object(main, 'NOISE_SAMPLE_GAP_US', 1000.0), \
+                mock.patch.object(main, 'NOISE_SAMPLE_GAP_US', 250.0), \
                 mock.patch('builtins.print'):
             code = main.calibrate_by_ear(write=write)
         return code, main._parse_config_text(cfg.read_text())
@@ -2096,7 +2095,8 @@ class CalibrateByEar(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertAlmostEqual(self.level(cfg, 16.0), 40.0, delta=0.5)
         self.assertAlmostEqual(self.level(cfg, 45.0), 60.0, delta=0.5)
-        self.assertEqual(cfg['NOISE_SAMPLE_GAP_US'], '250')
+        # Calibrated at 1ms whatever the unit was set to, and written as such.
+        self.assertEqual(cfg['NOISE_SAMPLE_GAP_US'], '1000')
 
     def test_the_run_that_asked_for_seven_is_held_at_the_cap(self):
         code, cfg = self.run_it([27.0] * 16, [45.0] * 16, [(58.6, False)])

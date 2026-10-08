@@ -65,7 +65,7 @@ try:
 except ImportError:  # pragma: no cover
     fcntl = None
 
-VERSION = '1.16.1'
+VERSION = '1.16.2'
 
 # ---------------------------------------------------------------------------
 # Config
@@ -207,11 +207,11 @@ DEFAULTS = {
     # shifting the window cannot widen it. --listen measures both ends and
     # recommends the pair. 1.0 leaves the old behaviour exactly as it was.
     'NOISE_SCALE': '1.0',
-    # Microseconds between the microphone's reads. Reading the converter back
-    # to back nearly tripled its noise floor on the first unit, which hid a
-    # quiet room under the microphone's own hiss. --listen measures the best
-    # gap for each unit and writes it here; 1000 is the spacing that measured
-    # clean.
+    # Microseconds between the microphone's reads. Reads closer than about a
+    # millisecond change what the converter sees: back to back nearly tripled
+    # the noise floor on the first unit, and on another night shrank a steady
+    # sound by half. --listen --write calibrates at CALIBRATION_GAP_US and
+    # writes it here, so the sensor reads exactly the way it was calibrated.
     'NOISE_SAMPLE_GAP_US': '1000',
     # One measured point against a phone sound level app turns the relative
     # index into an estimated dB SPL. Only the constant is unknown: the slope
@@ -2136,7 +2136,7 @@ def compute_noise_db(samples, ref_counts=None, offset=None, scale=None):
 # rms, and back-to-back bursts in the same room seconds later read 41. Whatever
 # reading back to back couples in, spacing the reads removes it, and a floor of
 # 41 had hidden everything quieter than conversation. NOISE_SAMPLE_GAP_US sets
-# the spacing and --listen finds the smallest gap that stays clean.
+# the spacing; CALIBRATION_GAP_US says which one, and why.
 #
 # Changing the gap changes the measured RMS, so it changes what
 # NOISE_REF_COUNTS should be. Re-run --listen after this.
@@ -2236,43 +2236,14 @@ def burst_rms(samples):
     return math.sqrt(sum(c * c for c in centred) / len(centred))
 
 
-# The gaps --listen tries between reads, in microseconds, and how close to the
-# quietest a gap has to come to be chosen. The smallest gap that is nearly as
-# clean as the best one wins, because more reads in a burst make each burst's
-# figure steadier.
-NOISE_GAP_CANDIDATES_US = (0, 100, 250, 500, 1000, 2000)
-NOISE_GAP_TOLERANCE = 1.15
-
-
-def measure_sample_gaps(rounds=6, candidates=None):
-    """Median burst RMS at each gap, in whatever the room is doing right now.
-
-    Taken round robin, one burst at each gap in turn, so a noise that comes and
-    goes during the test lands on every gap alike instead of on whichever gap
-    happened to be under test at the time.
-    """
-    candidates = NOISE_GAP_CANDIDATES_US if candidates is None else candidates
-    readings = {g: [] for g in candidates}
-    for _ in range(rounds):
-        for gap in candidates:
-            burst = noise_burst(gap_us=gap)
-            if len(burst) >= 8:
-                readings[gap].append(burst_rms(burst))
-    return {g: (sorted(r)[len(r) // 2] if r else None) for g, r in readings.items()}
-
-
-def pick_sample_gap(floors, tolerance=None):
-    """The smallest gap whose quiet floor is within tolerance of the lowest.
-
-    None when no gap read anything above zero, which is a dead channel rather
-    than a clean one.
-    """
-    tolerance = NOISE_GAP_TOLERANCE if tolerance is None else tolerance
-    usable = {g: f for g, f in floors.items() if f is not None and f > 0}
-    if not usable:
-        return None
-    best = min(usable.values())
-    return min(g for g, f in usable.items() if f <= best * tolerance)
+# The spacing the guided calibration reads at, and so the sensor after it.
+# Chosen by measurement, not by whichever spacing reads quietest. On the first
+# unit on 2026-10-07 one steady podcast read 39 with the reads back to back, 63
+# at 250us, 72 at 1ms and 75 at 2ms: close reads shrink the sound as well as
+# the hiss, so a picker that kept the quietest spacing kept the one that hid a
+# voice, and talking never stood clear of the quiet room. From about 1ms the
+# readings stop moving.
+CALIBRATION_GAP_US = 1000.0
 
 
 def typical_quiet(rms_values, share=0.25):
@@ -5798,12 +5769,10 @@ def calibrate_by_ear(write=True):
     free-running meter prints ten lines a second.
     """
     global NOISE_SAMPLE_GAP_US
+    NOISE_SAMPLE_GAP_US = CALIBRATION_GAP_US
     print('')
-    print('  1 of 3. Stay silent until it says done. About 15 seconds.')
-    floors = measure_sample_gaps()
-    gap = pick_sample_gap(floors)
-    if gap is not None:
-        NOISE_SAMPLE_GAP_US = float(gap)
+    print('  1 of 3. Pause anything playing and stay silent until it says done.')
+    print('     About 8 seconds.')
     quiet = [r for r, _ in _collect_bursts(8.0)]
     print('     done.')
     print('')
@@ -5824,10 +5793,7 @@ def calibrate_by_ear(write=True):
         print('  The microphone returned nothing to measure. Run --selftest.')
         return 1
 
-    for g in sorted(floors):
-        shown = f'{floors[g]:6.1f}' if floors[g] is not None else '    --'
-        mark = '  <- using this' if g == gap else ''
-        print(f'  reads {g:4d} us apart: noise {shown}{mark}')
+    print(f'  reads {NOISE_SAMPLE_GAP_US:.0f} us apart')
     quiet_rms, talk_rms = _middle(quiet), _middle(talk)
     clap_rms = max(r for r, _ in claps)
     clipped = any(c for _, c in claps)
