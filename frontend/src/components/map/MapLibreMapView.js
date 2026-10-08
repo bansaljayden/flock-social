@@ -1323,26 +1323,32 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     // proves nothing. The TileJSON request is free (not billed).
     if (keyRefusedRef.current && MAPTILER_KEY) {
       const swap = styleSwapRef.current;
+      // A newer swap is loading its own style and will run its own check;
+      // reloading now would cancel it. A style still loading is waited for
+      // (the next idle), not dropped, or the panel would stay over a map that
+      // finished loading fine.
+      const recover = () => {
+        if (mapInstanceRef.current !== map || swap !== styleSwapRef.current || !keyRefusedRef.current) return;
+        const current = map.getStyle && map.getStyle();
+        if (!current || (typeof map.isStyleLoaded === 'function' && !map.isStyleLoaded())) {
+          map.once('idle', recover);
+          return;
+        }
+        // The key works again, but the failed sources stay failed through a
+        // diff, so the style is reloaded whole. The panel comes down only
+        // once that reload settles with no new refusal (the error handler
+        // sets the ref again if there is one).
+        keyRefusedRef.current = false;
+        if (typeof map.reloadStyle !== 'function') { setKeyRefused(false); return; }
+        map.once('styledata', () => rehydrateAfterStyleSwap(map));
+        map.once('idle', () => {
+          if (!keyRefusedRef.current && mapInstanceRef.current === map) setKeyRefused(false);
+        });
+        map.reloadStyle(current);
+      };
       fetch(`https://api.maptiler.com/tiles/v4/tiles.json?key=${encodeURIComponent(MAPTILER_KEY)}`, { cache: 'no-store' })
         .then((r) => {
-          if (!r.ok || mapInstanceRef.current !== map) return;
-          // A newer swap is loading its own style and will run its own check;
-          // reloading now would cancel it, and an unloaded style has nothing
-          // to reload.
-          if (swap !== styleSwapRef.current) return;
-          const current = map.getStyle && map.getStyle();
-          if (!current || (typeof map.isStyleLoaded === 'function' && !map.isStyleLoaded())) return;
-          // The key works again, but the failed sources stay failed through a
-          // diff, so the style is reloaded whole. The panel comes down only
-          // once that reload settles with no new refusal (the error handler
-          // sets the ref again if there is one).
-          keyRefusedRef.current = false;
-          if (typeof map.reloadStyle !== 'function') { setKeyRefused(false); return; }
-          map.once('styledata', () => rehydrateAfterStyleSwap(map));
-          map.once('idle', () => {
-            if (!keyRefusedRef.current && mapInstanceRef.current === map) setKeyRefused(false);
-          });
-          map.reloadStyle(current);
+          if (r.ok && mapInstanceRef.current === map) recover();
         })
         .catch(() => {});
     }
