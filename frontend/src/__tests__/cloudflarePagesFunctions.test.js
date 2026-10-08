@@ -256,6 +256,17 @@ describe('who gets what', () => {
     expect(upstream.map((u) => u.path)).toEqual(['/api/guest/' + GOOD_TOKEN]);
   });
 
+  test('a query string on /i/<token> shares the token\'s edge copy: still one backend read', async () => {
+    // The handler reads the token alone, so the copy is keyed on the token
+    // alone; tracking parameters cannot turn every share into a backend read.
+    for (const route of ['/i/' + GOOD_TOKEN, '/i/' + GOOD_TOKEN + '?utm=1', '/i/' + GOOD_TOKEN + '?utm_source=x&fbclid=abc&s=1']) {
+      const { res } = await run(SITE + route, { headers: { 'User-Agent': UA.twitterbot } });
+      expect([route, await res.text()]).toEqual([route, invitePage(GOOD_TOKEN)]);
+    }
+    expect(upstream.map((u) => u.path)).toEqual(['/api/guest/' + GOOD_TOKEN]);
+    expect(global.caches.default.store.size).toBe(1);
+  });
+
   test('?open, people, AI crawlers and anything but one path segment get the app', async () => {
     const cases = [
       ['/i/' + GOOD_TOKEN + '?open=1', UA.twitterbot],
@@ -535,6 +546,44 @@ describe('the share-card proxy draws only signed cards', () => {
     ({ res } = await og(cardUrl(CARD, s), env));
     expect(upstream).toHaveLength(1);
     expect((await bytes(res)).equals(CARD_PNG)).toBe(true);
+  });
+
+  test('the caller cannot choose what is drawn: the renderer gets exactly the signed n, w, g and s', async () => {
+    const secret = crypto.randomBytes(32).toString('base64url');
+    const s = sign(secret, CARD);
+    const env = { OG_CARD_SECRET: secret };
+    // Repeated fields and extra parameters: the first n, w, g and s are the
+    // card that was signed, and nothing else the caller wrote goes upstream.
+    let { res } = await og(cardUrl(CARD, s) + '&n=Other&x=1', env);
+    expect(upstream.map((u) => u.url)).toEqual([rendererUrl({ ...CARD, s })]);
+    expect((await bytes(res)).equals(CARD_PNG)).toBe(true);
+
+    upstream.length = 0;
+    global.caches = { default: memoryCache() };
+    const reordered = SITE + '/api/invite-og?' + new URLSearchParams([['s', s], ['g', CARD.g], ['ref', 'x'], ['w', CARD.w], ['n', CARD.n]]);
+    ({ res } = await og(reordered, env));
+    expect(upstream.map((u) => u.url)).toEqual([rendererUrl({ ...CARD, s })]);
+    expect((await bytes(res)).equals(CARD_PNG)).toBe(true);
+  });
+
+  test('junk parameters on a signed card are an edge-cache hit, not another render', async () => {
+    const secret = crypto.randomBytes(32).toString('base64url');
+    const s = sign(secret, CARD);
+    const env = { OG_CARD_SECRET: secret };
+    await og(cardUrl(CARD, s), env);
+    expect(upstream).toHaveLength(1);
+    const variants = [
+      cardUrl(CARD, s) + '&utm_source=imessage',
+      cardUrl(CARD, s) + '&x=1&y=2',
+      cardUrl(CARD, s) + '&n=Other&s=' + 'A'.repeat(22),
+      SITE + '/api/invite-og?' + new URLSearchParams([['s', s], ['g', CARD.g], ['w', CARD.w], ['n', CARD.n], ['cb', '123']]),
+    ];
+    for (const url of variants) {
+      const { res } = await og(url, env);
+      expect([url, res.status, (await bytes(res)).equals(CARD_PNG)]).toEqual([url, 200, true]);
+    }
+    expect(upstream).toHaveLength(1);
+    expect(global.caches.default.store.size).toBe(1);
   });
 
   test('a tampered, truncated or foreign signature gets the banner without a backend call', async () => {
