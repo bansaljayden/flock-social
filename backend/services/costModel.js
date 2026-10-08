@@ -1080,6 +1080,23 @@ const DEPENDENCIES = [
     checked: '2026-10-05',
   },
   {
+    // Drawn on the API since the website's move to Cloudflare Pages, whose
+    // free plan cannot afford a render. The note names the outside hosts
+    // because they are new outbound calls from the API; costModel.test.js holds
+    // the list to the hosts routes/ogCard.js actually downloads from.
+    id: 'invite-share-card',
+    label: 'Invite share card',
+    what: 'The picture an invite link\'s preview shows in a chat: the plan\'s name, when it is and how many are going.',
+    where: 'backend/routes/ogCard.js (GET /api/og/invite), signed by frontend/api/invite-preview.js and fetched through the website\'s /api/invite-og',
+    group: 'free',
+    pricing: { type: 'free' },
+    configuredEnv: ['OG_CARD_SECRET'],
+    observedLineId: null,
+    usageNote: 'Renders are not counted. Each card is drawn on the API the first time it is asked for; the API keeps the last 64 it drew and the website\'s proxy keeps each card after that.',
+    note: 'A card whose text the bundled font cannot draw, an emoji or another script, makes outside downloads from the API while it is drawn: fonts from fonts.googleapis.com and fonts.gstatic.com, Twemoji pictures from cdn.jsdelivr.net. No account and no key, and the same hosts the renderer used when Vercel drew the card. A download that fails is a 503, and the preview shows the static banner.',
+    costsNothingBecause: 'Drawn on our own server by the open-source renderer @vercel/og pins (satori and resvg, MPL-2.0), so the cost is CPU on the API, 15 to 30 ms for each new card, and the fonts and emoji pictures come from free public CDNs.',
+  },
+  {
     id: 'venmo-cashapp',
     label: 'Venmo and Cash App',
     what: 'The bill split hands the phone a payment link. Flock never touches the money.',
