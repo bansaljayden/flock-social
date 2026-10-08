@@ -435,6 +435,7 @@ const AUTH_EXEMPT = new Map([
   ['waitlist.js', 'public landing-page signup; per-IP hourly and global daily caps inside the router'],
   ['clientCrash.js', 'POST /api/client-crash is the crash screen\'s report button, which has to work before sign-in and must not tie a report to an account; it stores no account, IP or device id, and is capped by clientCrashLimiter, a 4KB body ceiling, 200 new crash shapes a day and 10 alert emails a day'],
   ['proOffer.js', 'GET /api/pro-offer feeds the homepage Flock Pro card: whether Pro is on sale and at what price, the same answer for every caller, no account data, no body, a ten-minute price cache and the global limiter in front'],
+  ['ogCard.js', 'GET /api/og/invite draws the invite share card for the website\'s card proxy and the preview bots behind it, none of which hold a session. Only a card the invite preview signed with OG_CARD_SECRET is drawn (an HMAC over its three fields, compared with timingSafeEqual; 403 otherwise, and for every card while the secret is unset or too short), the card shows only what the preview page already publishes, and apiLimiter plus a one-render-at-a-time line per kind of card cap it'],
 ]);
 
 test('no router declares a route above its own authenticate gate', () => {

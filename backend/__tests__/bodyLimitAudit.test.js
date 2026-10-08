@@ -504,6 +504,9 @@ test('every route file that takes a body was actually looked at', () => {
     // most eight component names, under 1KB; the router refuses past 4KB with
     // its own 413 before a validator runs.
     'clientCrash',
+    // routes/ogCard.js enrolled 2026-10-07: the invite share card, one public
+    // GET whose four short fields ride the query string; no body is read.
+    'ogCard',
   ]);
   const actual = ROUTE_FILES.map((f) => path.basename(f, '.js'));
   for (const name of actual) {

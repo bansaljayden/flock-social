@@ -341,6 +341,18 @@ const INVENTORY = [
     why: 'Charged on hits and misses alike, and the exhausted answer is the same 404 body a missing row and a banned row get, so the refusal is not a new oracle. Limits sit above the friend probe on purpose: this is a safety control, and the worst legitimate hour is blocking every stranger in a 50-person link-joined flock.',
   },
 
+  // ── routes/ogCard.js ──────────────────────────────────────────────────────
+  {
+    file: 'routes/ogCard.js', name: 'drawnCards', kind: 'cache',
+    key: 'the signed card fields n, w and g joined by newlines, read only after the HMAC over exactly those fields has checked out',
+    callerControls: 'n and w indirectly, one key per edit: an owner who renames a flock or moves its time gets a newly signed card from the next invite preview. Nobody without OG_CARD_SECRET can mint a key, and anybody can replay a real card URL',
+    protects: 'milliseconds of the only thread: a miss is one satori + resvg render, 15-30 ms of CPU, plus the font or emoji downloads for a card the bundled font cannot draw alone',
+    denominator: 'drawn PNGs, about 30 KB each',
+    bound: 'CACHE_MAX 64, oldest first, delete-before-set; misses go through a render line per kind (one drawing, eight waiting, the rest a 503 at once)',
+    verdict: 'SAFE',
+    why: 'An unsigned or tampered card is a 403 before this map is read, so every key is a card some invite preview signed. Replaying a real URL is a hit after its first render. Minting misses costs a flock edit and a preview fetch per key; cycling more than 64 real URLs makes every request a miss, and then the render lines rather than this map are the control: one render at a time per kind, eight waiting, the rest refused at once, so the worst case is one core drawing cards back to back with every other request served between renders and no queue that grows. Raising CACHE_MAX would buy nothing against that.',
+  },
+
   // ── routes/pro.js ─────────────────────────────────────────────────────────
   {
     file: 'routes/pro.js', name: 'syncQueues', kind: 'inflight',
