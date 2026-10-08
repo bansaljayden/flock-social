@@ -69,6 +69,7 @@ const pool = require('../config/database');
 const costModel = require('./costModel');
 const billing = require('./proBilling');
 const besttime = require('./besttimeAccount');
+const maptilerUsage = require('./maptilerUsage');
 const { legacyRoostPrices } = require('./venueBilling');
 // The error-reporting step quotes the alert threshold, so it reads the numbers
 // the alert uses rather than a copy of them.
@@ -3679,12 +3680,59 @@ function rcV2LastRead(revenuecat) {
   return null;
 }
 
+// THE MAPTILER READING, JUDGED. The meter (services/maptilerUsage.js) says
+// what was used and what the period is on pace for; this adds what the owner
+// acts on: which allowance is at 80% or past it, and whether the overage
+// reaches the spending limit, where MapTiler stops every key on the account
+// until the next billing period and every Flock map goes blank. The 80% line
+// is the one MapTiler's own warning email uses. Both the reading so far and
+// the pace count, so a pool already past 80% warns before a pace exists.
+const MAPTILER_NEAR_SHARE = 0.8;
+const MAPTILER_POOL_LABEL = {
+  sessions: 'map sessions',
+  requests: 'API requests',
+  searchSessions: 'search sessions',
+  sessions3d: '3D sessions',
+};
+
+function judgeMaptilerUsage(usage) {
+  const capUsd = costModel.MAPTILER_SPEND_CAP_USD;
+  const cap = { usd: capUsd, cents: Math.round(capUsd * 100), checked: costModel.MAPTILER_SPEND_CAP_CHECKED };
+  if (!usage || usage.status !== 'read') {
+    return { ...(usage || { status: 'failed', reason: 'The MapTiler meter did not answer.' }), cap, near: [], reachesCap: false, capReached: false, headroomCents: null };
+  }
+  const near = [];
+  for (const pool of Object.keys(MAPTILER_POOL_LABEL)) {
+    const included = usage.included && usage.included[pool];
+    const used = usage[pool];
+    if (!Number.isFinite(included) || included <= 0 || !Number.isFinite(used)) continue;
+    const projected = usage.projected && Number.isFinite(usage.projected[pool]) ? usage.projected[pool] : null;
+    const worst = Math.max(used, projected === null ? 0 : projected);
+    if (worst >= included * MAPTILER_NEAR_SHARE) {
+      near.push({ pool, label: MAPTILER_POOL_LABEL[pool], used, projected, included, pct: Math.floor((worst / included) * 100) });
+    }
+  }
+  const soFar = usage.overSoFarCents;
+  const pace = usage.overProjectedCents;
+  const worstOver = Math.max(soFar, Number.isFinite(pace) ? pace : 0);
+  return {
+    ...usage,
+    cap,
+    near,
+    // At or past the limit, so the maps stop (or have stopped) before the period ends.
+    reachesCap: worstOver >= cap.cents,
+    capReached: soFar >= cap.cents,
+    // What is left under the limit on the figure that is furthest along.
+    headroomCents: cap.cents - worstOver,
+  };
+}
+
 const RC_V2_HOWTO = 'In RevenueCat, open Project settings, then API keys, and make a secret key for API v2 with read access to charts and metrics and to project configuration. Set it on the server as REVENUECAT_V2_SECRET_API_KEY, and leave REVENUECAT_SECRET_API_KEY as it is.';
 
 // expensesRead is { ok, rows }: whether the list was read, and how many bills
 // it returned. roundTrip is the cached SELECT 1 answer. revenuecat is the
 // block the hub built, read only for what it did with the v2 key.
-function buildOwnerActions({ roundTrip, expensesRead, revenuecat }) {
+function buildOwnerActions({ roundTrip, expensesRead, revenuecat, maptiler = null }) {
   const { network, via } = databaseNetwork();
   const onPrivate = network === 'private';
   let dbWords;
@@ -3762,6 +3810,19 @@ function buildOwnerActions({ roundTrip, expensesRead, revenuecat }) {
     expensesWords = 'The expense list is empty, so the costs on this page count only the code\'s own lines and the reconciled bills. Paste the list into Import a list, at the bottom of the Expense list card.';
   }
 
+  // MapTiler's usage meter. Done once the token is present, as the other
+  // variable steps are; what MapTiler did with it on the last read is said
+  // beside it, so a refused token is never shown as simply done.
+  const maptilerTokenSet = Boolean(plain(process.env.MAPTILER_SERVICE_TOKEN));
+  let maptilerWords;
+  if (!maptilerTokenSet) {
+    maptilerWords = `MAPTILER_SERVICE_TOKEN is not set, so the hub cannot read how many map sessions and API requests this billing period has used, or warn before the $${costModel.MAPTILER_SPEND_CAP_USD} spending limit turns every map off. In MapTiler, open Account, then Credentials, and create a Service credential; set its token on the server as MAPTILER_SERVICE_TOKEN.`;
+  } else if (maptiler && maptiler.status === 'failed') {
+    maptilerWords = `MAPTILER_SERVICE_TOKEN is set, and the last read did not work: ${maptiler.reason}`;
+  } else {
+    maptilerWords = "MAPTILER_SERVICE_TOKEN is set, so the hub reads this billing period's map sessions and API requests from MapTiler, every 30 minutes at most.";
+  }
+
   // instrument.js's own test, so this step and the boot log line agree.
   const sentrySet = Boolean(process.env.SENTRY_DSN);
   // The checkouts' own switch, so this step and what a buyer is charged agree.
@@ -3814,6 +3875,14 @@ function buildOwnerActions({ roundTrip, expensesRead, revenuecat }) {
       label: 'Company expense list',
       state: expensesState,
       words: expensesWords,
+    },
+    {
+      id: 'maptiler_service_token',
+      label: 'MapTiler usage meter',
+      state: maptilerTokenSet ? 'done' : 'todo',
+      lastRead: maptilerTokenSet && maptiler ? maptiler.status : null,
+      words: maptilerWords,
+      link: { href: 'https://cloud.maptiler.com/account/credentials/', text: 'MapTiler credentials' },
     },
     {
       id: 'error_reporting',
@@ -3895,6 +3964,12 @@ function buildOwnerActions({ roundTrip, expensesRead, revenuecat }) {
       words: 'App Store Connect asks every developer for its trader status under the EU Digital Services Act, and the app is not offered in EU countries until it is given. It is under the app\'s App Information, and for a company that sells subscriptions the answer is trader, with the contact details the EU requires shown on the listing.',
       link: { href: 'https://developer.apple.com/help/app-store-connect/manage-compliance-information/manage-european-union-digital-services-act-trader-requirements/', text: 'Apple: EU trader requirements' },
     },
+    {
+      id: 'maptiler_keys_locked',
+      label: 'MapTiler keys, one per platform',
+      words: "One MapTiler key ships in the public website and in every iPhone build, and on Flex a copied key bills the account up to the spending limit, then turns every map off for the month. Make a web key limited to the origins flockcorp.com and *.flockcorp.com and set it as REACT_APP_MAPTILER_KEY on Vercel. Make an iPhone key limited to the User-Agent FlockiOS, test it on a TestFlight build that carries that user agent, then set it on Codemagic. Never limit the old key to flockcorp.com: the iPhone builds already out use it. Deleting it once those builds are gone is a separate decision. The server cannot see MapTiler's key settings.",
+      link: { href: 'https://cloud.maptiler.com/account/keys/', text: 'MapTiler keys' },
+    },
   ].map((s) => ({ ...s, checkedBy: 'you', state: null, optional: false, fix: null }));
 
   return {
@@ -3943,7 +4018,7 @@ async function buildMoneyHub({
     { force, logMessage: false }
   );
 
-  const [expensesR, reconciled, premiumR, venuesR, photoR, health, besttimeRead, modelAccuracy, modelVersion, people, modelCoverage] = await Promise.all([
+  const [expensesR, reconciled, premiumR, venuesR, photoR, health, besttimeRead, modelAccuracy, modelVersion, people, modelCoverage, maptilerRead] = await Promise.all([
     safe(() => readExpenses(db), 'expenses'),
     costModel.readReconciled(db),
     safe(async () => {
@@ -3990,7 +4065,14 @@ async function buildMoneyHub({
       () => readModelCoverage(db, { windowDays: MODEL_COVERAGE_DAYS }),
       { force, ttlMs: MODEL_TTL_MS }
     ),
+    // Held for 30 minutes inside the meter itself. It never throws by design;
+    // the catch is for a bug, and turns it into a failed read, never a zero.
+    maptilerUsage.readUsage({ force, now }).catch((err) => {
+      console.error('[money] maptiler usage read failed:', (err && err.name) || 'unknown error');
+      return { status: 'failed', reason: 'The MapTiler meter failed before it could answer.' };
+    }),
   ]);
+  const maptiler = judgeMaptilerUsage(maptilerRead);
 
   const premiumIds = premiumR.ok ? premiumR.value.ids.slice(0, RC_SUBSCRIBER_CAP) : [];
   // More Pro accounts than RevenueCat is asked about means the App Store tally
@@ -4045,6 +4127,7 @@ async function buildMoneyHub({
     roundTrip,
     expensesRead: { ok: expensesR.ok, rows: expenses.length },
     revenuecat,
+    maptiler,
   });
   const planNets = buildPlanNets(pricing);
   const priceSheet = buildPriceSheet({ expenses, reconciled, todayYmd: month.todayYmd });
@@ -4085,6 +4168,10 @@ async function buildMoneyHub({
         photosBought: Number.isFinite(photoR.value.monthUsed) ? photoR.value.monthUsed : null,
         photosUsd: Number.isFinite(photoR.value.monthUsd) ? photoR.value.monthUsd : null,
       } : null,
+      // This billing period's MapTiler sessions and requests, the pace, and
+      // the allowances and spending limit they are judged against. Counts
+      // only; the token never leaves the meter.
+      maptilerUsage: maptiler,
     },
     expenses: {
       status: expensesR.ok ? 'ok' : 'error',
@@ -4148,6 +4235,7 @@ module.exports = {
   crowdBandLadder,
   SERVED_BAND_ACCURACY_SQL,
   buildOwnerActions,
+  judgeMaptilerUsage,
   importExpenses,
   expenseFromRow,
   expenseRowFromInput,
@@ -4166,7 +4254,7 @@ module.exports = {
   EXPENSE_IMPORT_INSERT_SQL,
   HUB_TZ,
   __test: {
-    resetCache: () => externalCache.clear(),
+    resetCache: () => { externalCache.clear(); maptilerUsage.__test.resetCache(); },
     summarizeSubscriptions,
     summarizeBalance,
     summarizeInvoices,
