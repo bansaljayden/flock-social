@@ -1,95 +1,54 @@
 #!/usr/bin/env python3
-"""Export every part of the enclosure from the two .scad files.
+"""Export every part of the enclosure from flux_cad.py.
 
-    python3 export.py                     # OpenSCAD found on PATH or in $OPENSCAD
-    python3 export.py --openscad /path/to/openscad
+    python export.py                # needs build123d (see README, Exporting)
+    python export.py --no-preview   # skip the pictures
 
-Writes stl/ (3D printed parts), dxf/ and svg/ (laser-cut panels) and
-preview/ (renders for the README), and checks as it goes that every solid is
-one closed piece and that nothing inside the base collides. Standard library
-only. The files it writes are committed, so nobody needs OpenSCAD to build
-the box; this is for whoever changes a number in a .scad file.
+Writes step/ (the solid model: the whole box as an assembly, and each made
+part), stl/ (the 3D printed parts), svg/ and dxf/ (the laser-cut sheets) and
+preview/ (the pictures in the README), and checks as it goes that every part
+is one valid solid and that nothing inside the box collides. The files it
+writes are committed, so nobody needs build123d to build the box.
 
 The SVGs follow the convention school laser software expects: a red hairline
-is a cut and a black fill is an engraving, at the panel's exact size in
-millimetres. OpenSCAD writes neither colours nor exact sizes (it rounds the
-page to whole millimetres), so each SVG is rebuilt from OpenSCAD's own path
-data rather than used as it comes out.
+is a cut and a black fill is an engraving, at the sheet's exact size in
+millimetres. Text and curves are written as fine straight segments, so every
+program reads them the same way.
+
+This module imports build123d only inside main(), so the tests can read its
+lists and helpers without it.
 """
 
 import argparse
-import os
+import datetime
 import re
-import shutil
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-BASE = HERE / 'flux-enclosure.scad'
-HEAD = HERE / 'flux-sensor-head.scad'
 
-# (file, part, output name). Every printed part, both files.
+# (part name in flux_cad, output name). Every printed part, in the order to print them.
 PRINTED = [
-    (BASE, 'screen_fit_test', 'base-screen_fit_test'),
-    (BASE, 'corner_block', 'base-corner_block'),
-    (BASE, 'screen_spacer', 'base-screen_spacer'),
-    (BASE, 'pi_spacer', 'base-pi_spacer'),
-    (BASE, 'battery_tray', 'base-battery_tray'),
-    (BASE, 'cable_grommet', 'base-cable_grommet'),
-    (HEAD, 'head_fit_test', 'head-head_fit_test'),
-    (HEAD, 'shell', 'head-shell'),
-    (HEAD, 'back_plate', 'head-back_plate'),
-    (HEAD, 'lens_ring', 'head-lens_ring'),
+    ('screen_fit_test', 'flux-1-screen_fit_test'),
+    ('strip_fit_test', 'flux-2-strip_fit_test'),
+    ('sleeve', 'flux-3-sleeve'),
+    ('pi_spacer', 'flux-4-pi_spacer'),
 ]
 
-# (part, engraving part or None). Every laser-cut panel of the base.
+# (sheet, cut sketch, engraving sketch). Every laser-cut sheet.
 PANELS = [
-    ('front', 'front_engrave'),
-    ('back', None),
-    ('top', None),
-    ('bottom', None),
-    ('side', None),
+    ('front', 'front_cut_sketch', 'front_engrave_sketch'),
+    ('back', 'back_cut_sketch', 'back_engrave_sketch'),
 ]
 
 TITLES = {
-    'front': 'front panel',
-    'back': 'back panel, seen from behind',
-    'top': 'top panel',
-    'bottom': 'bottom panel, seen from below',
-    'side': 'side panel, cut two',
+    'front': 'front sheet, seen from the front',
+    'back': 'back sheet, seen from behind',
 }
 
-
-def find_openscad(given):
-    for candidate in (given, os.environ.get('OPENSCAD'), shutil.which('openscad'),
-                      shutil.which('openscad.com')):
-        if candidate and Path(candidate).exists():
-            return candidate
-    sys.exit('OpenSCAD not found. Pass --openscad /path/to/openscad or set $OPENSCAD.')
-
-
-def run(openscad, scad, out, part, *extra, empty_is_pass=False):
-    cmd = [openscad, '-o', str(out), '-D', f'part="{part}"', *extra, str(scad)]
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    log = result.stdout + result.stderr
-    # OpenSCAD exits non-zero when there is nothing to write, which for the
-    # clash check is the answer wanted.
-    empty = 'Current top level object is empty' in log
-    if 'ERROR' in log or (result.returncode != 0 and not (empty and empty_is_pass)):
-        sys.exit(f'{scad.name} part={part} failed:\n{log}')
-    return log
-
-
-def solid_check(log, name):
-    """One closed piece: CGAL counts the outside as a volume, so a single
-    solid reports two."""
-    simple = re.search(r'Simple:\s+(\w+)', log)
-    volumes = re.search(r'Volumes:\s+(\d+)', log)
-    if not simple or simple.group(1) != 'yes' or not volumes or volumes.group(1) != '2':
-        sys.exit(f'{name} is not one closed solid:\n{log}')
-
+# A fixed timestamp, so an unchanged model writes an unchanged STEP file.
+STEP_STAMP = datetime.datetime(2026, 10, 7, 0, 0, 0)
 
 FACET = re.compile(
     r'facet normal\s+(\S+)\s+(\S+)\s+(\S+)\s+outer loop\s+'
@@ -100,117 +59,143 @@ FACET = re.compile(
 def canonical_stl(path):
     """Rewrite an ASCII STL with its triangles in one fixed order.
 
-    OpenSCAD writes the same solid with its triangles in a different order on
-    every run, so each export rewrote thousands of lines of every STL and a
-    real change could not be told from a reshuffle. Each triangle is rotated
-    to start at its smallest corner, which keeps its winding and so which way
-    it faces, and the triangles are then sorted. Same solid, same bytes.
+    A mesher can write the same solid with its triangles in a different order
+    on different runs, and then a real change cannot be told from a reshuffle.
+    Each triangle is rotated to start at its smallest corner, which keeps its
+    winding and so which way it faces, and the triangles are then sorted.
+    Coordinates are rounded to a micrometre. Same solid, same bytes.
     """
     facets = []
     for f in FACET.findall(path.read_text()):
-        normal, corners = f[0:3], [f[3:6], f[6:9], f[9:12]]
+        normal = tuple(f'{float(v):.6f}' for v in f[0:3])
+        corners = [tuple(f'{float(v):.4f}' for v in f[i:i + 3]) for i in (3, 6, 9)]
         key = [tuple(float(c) for c in v) for v in corners]
         start = key.index(min(key))
         corners = corners[start:] + corners[:start]
         key = key[start:] + key[:start]
         facets.append((key, normal, corners))
     facets.sort(key=lambda item: item[0])
-    lines = ['solid OpenSCAD_Model']
+    lines = ['solid flux']
     for _, normal, corners in facets:
         lines.append(f'  facet normal {" ".join(normal)}')
         lines.append('    outer loop')
         lines.extend(f'      vertex {" ".join(v)}' for v in corners)
         lines.append('    endloop')
         lines.append('  endfacet')
-    lines.append('endsolid OpenSCAD_Model')
+    lines.append('endsolid flux')
     path.write_text('\n'.join(lines) + '\n', encoding='utf-8', newline='\n')
     return len(facets)
 
 
-def path_data(svg_text):
-    m = re.search(r'<path d="([^"]+)"', svg_text)
-    return m.group(1).strip() if m else ''
+def fmt(v):
+    s = f'{v:.3f}'.rstrip('0').rstrip('.')
+    return '0' if s in ('-0', '') else s
 
 
-def extents(d):
-    nums = [float(n) for n in re.findall(r'-?\d+(?:\.\d+)?(?:e-?\d+)?', d)]
-    xs, ys = nums[0::2], nums[1::2]
-    return min(xs), min(ys), max(xs), max(ys)
+def wire_path(wire, step=0.05):
+    """One closed wire as SVG path data: straight edges exactly, curves as fine
+    segments. y is flipped, since an SVG's y runs down the page."""
+    pts = []
+    for edge in wire.order_edges():
+        if edge.geom_type.name == 'LINE':
+            seg = [edge.position_at(0), edge.position_at(1)]
+        else:
+            n = max(8, int(edge.length / step))
+            seg = [edge.position_at(i / n) for i in range(n + 1)]
+        if pts and (seg[0] - pts[-1]).length > 1e-3 and (seg[-1] - pts[-1]).length < 1e-3:
+            seg = seg[::-1]
+        pts.extend(seg if not pts else seg[1:])
+    d = f'M{fmt(pts[0].X)} {fmt(-pts[0].Y)}'
+    d += ''.join(f'L{fmt(p.X)} {fmt(-p.Y)}' for p in pts[1:])
+    return d + 'Z'
 
 
-def laser_svg(cut_d, engrave_d, title):
-    x0, y0, x1, y1 = extents(cut_d)
-    w, h = x1 - x0, y1 - y0
-    fmt = lambda v: f'{v:.3f}'.rstrip('0').rstrip('.')
+def sketch_path(sketch):
+    return ''.join(wire_path(w) for face in sketch.faces() for w in [face.outer_wire()] + list(face.inner_wires()))
+
+
+def laser_svg(cut, engrave, title):
+    bb = cut.bounding_box()
+    x0, y0, w, h = bb.min.X, -bb.max.Y, bb.max.X - bb.min.X, bb.max.Y - bb.min.Y
     parts = [
         '<?xml version="1.0" encoding="UTF-8" standalone="no"?>',
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{fmt(w)}mm" height="{fmt(h)}mm" '
         f'viewBox="{fmt(x0)} {fmt(y0)} {fmt(w)} {fmt(h)}">',
-        f'<title>Flux base, {title}. Red hairline: cut. Black: engrave. Millimetres.</title>',
+        f'<title>Flux, {title}. Red hairline: cut. Black: engrave. Millimetres.</title>',
     ]
-    if engrave_d:
-        parts.append(f'<path d="{engrave_d}" fill="#000000" stroke="none"/>')
-    parts.append(f'<path d="{cut_d}" fill="none" stroke="#FF0000" stroke-width="0.025"/>')
+    if engrave is not None:
+        parts.append(f'<path d="{sketch_path(engrave)}" fill="#000000" stroke="none" fill-rule="evenodd"/>')
+    parts.append(f'<path d="{sketch_path(cut)}" fill="none" stroke="#FF0000" stroke-width="0.025"/>')
     parts.append('</svg>')
     return '\n'.join(parts) + '\n'
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument('--openscad')
-    ap.add_argument('--no-preview', action='store_true', help='skip the PNG renders')
+    ap.add_argument('--no-preview', action='store_true', help='skip the pictures')
     args = ap.parse_args()
-    openscad = find_openscad(args.openscad)
 
-    for folder in ('stl', 'dxf', 'svg', 'preview'):
+    sys.path.insert(0, str(HERE))
+    import flux_cad as cad
+    from build123d import ExportDXF, export_step, export_stl, export_gltf
+    from build123d.exporters import ColorIndex
+
+    for folder in ('step', 'stl', 'dxf', 'svg', 'preview'):
         (HERE / folder).mkdir(exist_ok=True)
 
-    for scad, part, name in PRINTED:
-        out = HERE / 'stl' / f'{name}.stl'
-        log = run(openscad, scad, out, part)
-        solid_check(log, name)
-        canonical_stl(out)
-        print(f'stl/{name}.stl')
+    print(f'box {cad.BOX_W:.1f} x {cad.BOX_H:.1f} x {cad.BOX_D:.1f} mm')
+    sleeve = cad.sleeve()
+    front, back = cad.front_sheet(), cad.back_sheet()
+    made = {
+        'sleeve': sleeve,
+        'screen_fit_test': cad.screen_fit_test(),
+        'strip_fit_test': cad.strip_fit_test(sleeve),
+        'pi_spacer': cad.pi_spacer_part(),
+    }
+    for name, part in list(made.items()) + [('front sheet', front), ('back sheet', back)]:
+        if len(part.solids()) != 1 or not part.is_valid:
+            sys.exit(f'{name} is not one valid solid ({len(part.solids())} solids)')
 
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp = Path(tmp)
-        for part, engrave in PANELS:
-            log = run(openscad, BASE, tmp / f'{part}.stl', part)
-            solid_check(log, part)
-            dxf = HERE / 'dxf' / f'base-{part}.dxf'
-            run(openscad, BASE, dxf, part, '-D', 'flat=true')
-            # OpenSCAD writes CRLF on Windows and LF elsewhere; keep one.
-            dxf.write_text(dxf.read_text(), encoding='utf-8', newline='\n')
-            run(openscad, BASE, tmp / f'{part}.svg', part, '-D', 'flat=true')
-            cut_d = path_data((tmp / f'{part}.svg').read_text())
-            engrave_d = ''
-            if engrave:
-                run(openscad, BASE, tmp / f'{engrave}.svg', engrave)
-                engrave_d = path_data((tmp / f'{engrave}.svg').read_text())
-            (HERE / 'svg' / f'base-{part}.svg').write_text(
-                laser_svg(cut_d, engrave_d, TITLES[part]), encoding='utf-8', newline='\n')
-            print(f'dxf/base-{part}.dxf  svg/base-{part}.svg')
+    found = cad.clash_report(sleeve, front, back)
+    if found:
+        for a, b, vol, bb in found:
+            print(f'  CLASH {a} x {b}: {vol:.2f} mm3 at x {bb.min.X:.1f}..{bb.max.X:.1f} '
+                  f'y {bb.min.Y:.1f}..{bb.max.Y:.1f} z {bb.min.Z:.1f}..{bb.max.Z:.1f}')
+        sys.exit(f'{len(found)} pair(s) collide inside the box')
+    print('clash check: nothing overlaps')
 
-        # Nothing inside the base may overlap: an empty result is the pass.
-        log = run(openscad, BASE, tmp / 'clash.stl', 'clash', empty_is_pass=True)
-        if 'Current top level object is empty' not in log:
-            sys.exit(f'Parts collide inside the base:\n{log}')
-        print('clash check: nothing overlaps')
+    for name, out in PRINTED:
+        path = HERE / 'stl' / f'{out}.stl'
+        export_stl(made[name], path, tolerance=0.01, angular_tolerance=0.1, ascii_format=True)
+        print(f'stl/{out}.stl  {canonical_stl(path)} triangles')
+
+    for sheet, cut_name, engrave_name in PANELS:
+        cut, engrave = getattr(cad, cut_name)(), getattr(cad, engrave_name)()
+        (HERE / 'svg' / f'flux-{sheet}.svg').write_text(
+            laser_svg(cut, engrave, TITLES[sheet]), encoding='utf-8', newline='\n')
+        dxf = ExportDXF()
+        dxf.add_layer('CUT', color=ColorIndex.RED)
+        dxf.add_layer('ENGRAVE', color=ColorIndex.BLACK)
+        dxf.add_shape(cut, layer='CUT')
+        dxf.add_shape(engrave, layer='ENGRAVE')
+        dxf.write(HERE / 'dxf' / f'flux-{sheet}.dxf')
+        print(f'svg/flux-{sheet}.svg  dxf/flux-{sheet}.dxf')
+
+    # Each made part on its own first: once a part is inside the assembly it
+    # belongs to it, and OpenCascade will not write it out alone.
+    for name, part in (('sleeve', sleeve), ('front-sheet', front), ('back-sheet', back)):
+        export_step(part, HERE / 'step' / f'flux-{name}.step', timestamp=STEP_STAMP)
+    whole = cad.assembly(sleeve, front, back)
+    export_step(whole, HERE / 'step' / 'flux-assembly.step', timestamp=STEP_STAMP)
+    print('step/flux-assembly.step and each made part')
+    export_gltf(whole, HERE / 'preview' / 'flux-assembly.glb', binary=True,
+                linear_deflection=0.05, angular_deflection=0.2)
+    print('preview/flux-assembly.glb')
 
     if not args.no_preview:
-        # (file, part, output, rotation about x, y, z, projection). Each is
-        # framed whole by --viewall rather than by a hand-set distance.
-        views = [
-            (BASE, 'assembled', 'base-assembled', '65,0,-28', 'p'),
-            (BASE, 'inside', 'base-inside', '55,0,-30', 'p'),
-            (BASE, 'front_face', 'base-front', '90,0,0', 'o'),
-            (HEAD, 'assembled', 'head-assembled', '110,0,200', 'p'),
-        ]
-        for scad, part, name, rot, projection in views:
-            run(openscad, scad, HERE / 'preview' / f'{name}.png', part,
-                '--imgsize=1400,1000', f'--camera=0,0,0,{rot},0', '--viewall',
-                '--autocenter', f'--projection={projection}', '--colorscheme=Tomorrow')
-            print(f'preview/{name}.png')
+        r = subprocess.run(['node', str(HERE / 'viewer' / 'render.cjs')], cwd=HERE)
+        if r.returncode:
+            sys.exit('the pictures failed; see above')
 
 
 if __name__ == '__main__':

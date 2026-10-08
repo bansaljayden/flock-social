@@ -3588,28 +3588,35 @@ class InstallerHardwareAccess(unittest.TestCase):
 
 
 class EnclosureFiles(unittest.TestCase):
-    """The committed laser and print files, against the .scad they came from.
+    """The committed laser, print and STEP files, against the model they came from.
 
-    Nobody building the box opens OpenSCAD; they take svg/ to a laser and stl/
+    Nobody building the box runs the model; they take svg/ to a laser and stl/
     to a printer. So the files are what has to be right, and a number changed
-    in the .scad without a re-export is a box cut to the old drawing.
+    in flux_cad.py without a re-export is a box cut to the old drawing.
     """
 
     ENC = Path(__file__).resolve().parent / 'enclosure'
 
     def scad_number(self, name):
-        text = (self.ENC / 'flux-enclosure.scad').read_text(encoding='utf-8')
-        return float(re.search(rf'^{name}\s*=\s*([\d.]+);', text, re.M).group(1))
+        # The model's settings, read as text: the tests do not need build123d.
+        text = (self.ENC / 'flux_cad.py').read_text(encoding='utf-8')
+        return float(re.search(rf'^{name}\s*=\s*([\d.]+)', text, re.M).group(1))
 
     def svg(self, part):
-        return (self.ENC / 'svg' / f'base-{part}.svg').read_text(encoding='utf-8')
+        return (self.ENC / 'svg' / f'flux-{part}.svg').read_text(encoding='utf-8')
 
-    def test_every_panel_is_cut_to_the_size_the_drawing_says(self):
-        w, h, d, sheet = (self.scad_number(n) for n in ('box_w', 'box_h', 'box_d', 'sheet'))
-        # Butt joints: front and back full size, top and bottom between them,
-        # sides inside all four.
-        expected = {'front': (w, h), 'back': (w, h), 'top': (w, d - 2 * sheet),
-                    'bottom': (w, d - 2 * sheet), 'side': (d - 2 * sheet, h - 2 * sheet)}
+    def box_size(self):
+        # The box is the screen's width plus the room beside it and the walls,
+        # and the strip under the screen plus the screen and the top wall.
+        n = self.scad_number
+        w = n('screen_outer_w') + 2 * n('side_room') + 2 * n('wall')
+        h = n('strip_h') + n('screen_outer_h') + 2.0 + n('wall')
+        return w, h
+
+    def test_every_sheet_is_cut_to_the_size_the_drawing_says(self):
+        # Both sheets cover the whole face of the sleeve, edge to edge.
+        w, h = self.box_size()
+        expected = {'front': (w, h), 'back': (w, h)}
         for part, (ew, eh) in expected.items():
             m = re.search(r'width="([\d.]+)mm" height="([\d.]+)mm"', self.svg(part))
             self.assertIsNotNone(m, part)
@@ -3619,12 +3626,10 @@ class EnclosureFiles(unittest.TestCase):
     def test_cuts_are_red_hairlines_and_the_wordmark_is_an_engraving(self):
         # The convention school laser software reads: red stroke cuts, black
         # fill engraves. A fill on a cut path would engrave the whole panel.
-        for part in ('front', 'back', 'top', 'bottom', 'side'):
+        for part in ('front', 'back'):
             svg = self.svg(part)
             self.assertIn('fill="none" stroke="#FF0000"', svg, part)
-        self.assertIn('fill="#000000" stroke="none"', self.svg('front'))
-        for part in ('back', 'top', 'bottom', 'side'):
-            self.assertNotIn('fill="#000000"', self.svg(part), part)
+            self.assertIn('fill="#000000" stroke="none"', svg, part)
 
     def test_every_part_the_export_script_makes_is_committed(self):
         sys.path.insert(0, str(self.ENC))
@@ -3632,11 +3637,22 @@ class EnclosureFiles(unittest.TestCase):
             import export
         finally:
             sys.path.pop(0)
-        for _, _, name in export.PRINTED:
+        for _, name in export.PRINTED:
             self.assertTrue((self.ENC / 'stl' / f'{name}.stl').exists(), name)
-        for part, _ in export.PANELS:
-            self.assertTrue((self.ENC / 'dxf' / f'base-{part}.dxf').exists(), part)
-            self.assertTrue((self.ENC / 'svg' / f'base-{part}.svg').exists(), part)
+        for part, _, _ in export.PANELS:
+            self.assertTrue((self.ENC / 'dxf' / f'flux-{part}.dxf').exists(), part)
+            self.assertTrue((self.ENC / 'svg' / f'flux-{part}.svg').exists(), part)
+
+    def test_the_step_assembly_names_every_part(self):
+        # The STEP file is what opens in Fusion 360 or Onshape; every part in
+        # it carries its name, so the tree there reads like the parts list.
+        step = (self.ENC / 'step' / 'flux-assembly.step').read_text(encoding='utf-8', errors='replace')
+        for name in ('Sleeve (printed)', 'Front sheet (acrylic)', 'Back sheet (acrylic)',
+                     'Raspberry Pi 5', 'PureThermal 3 + Lepton 3.5', 'VL53L8CX door counter',
+                     'Decibel meter', 'Anker A1336 battery', '7 inch touchscreen'):
+            self.assertIn(name, step, name)
+        for part in ('sleeve', 'front-sheet', 'back-sheet'):
+            self.assertTrue((self.ENC / 'step' / f'flux-{part}.step').exists(), part)
 
     def test_the_stls_came_from_the_export_script(self):
         # It writes each solid's triangles in one fixed order. A file exported
