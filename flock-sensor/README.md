@@ -8,7 +8,13 @@ This is the only part of Flock that runs on hardware, in a building we do not
 control, on wifi we do not control, with nobody around to restart it. Every
 design choice below follows from that.
 
-> ## Status: two of the three sensors have been read on a Pi. The crossing sensor has not.
+> ## Status: all three sensors have been read on a Pi.
+>
+> 2026-10-07: the doorway counter ran on the board for the first time (a
+> VL53L8CX at 0x29, firmware loaded, 265 frames). The same day the analog
+> microphone was retired in favour of a decibel meter module, because no
+> setting could make it tell a quiet room from talking (see The sound meter).
+> The text below the next paragraph is the 2026-09-06 record and is kept as it was.
 >
 > Read this before you trust anything below. On 2026-09-06 this directory was
 > installed on a Raspberry Pi 5, `main.py` ran on the board, and the thermal
@@ -189,10 +195,11 @@ every row but the last.
 | Raspberry Pi 5, 8GB | | |
 | FLIR Lepton 3.5 (radiometric) on a PureThermal 3 breakout | USB | none. This is the whole point of the USB part |
 | IR crossing sensor: a one-sided IR proximity module (preferred) or a two-part break-beam | GPIO 17 by default (`IR_GPIO_PIN`). `IR_ACTIVE_LOW=1` (default): falling edge, internal pull-up. `IR_ACTIVE_LOW=0`: rising edge, pull-down | signal to pin 11, plus 3V3 and GND |
-| MCP3008 ADC | SPI bus 0, CE0 | CLK pin 23, DOUT pin 21, DIN pin 19, CS pin 24, VDD+VREF 3V3, AGND+DGND GND |
-| MAX4466 microphone | MCP3008 channel 0 | OUT to MCP3008 pin 1, VCC 3V3, GND |
+| MCP3008 ADC (older units; the decibel meter replaces it) | SPI bus 0, CE0 | CLK pin 23, DOUT pin 21, DIN pin 19, CS pin 24, VDD+VREF 3V3, AGND+DGND GND |
+| MAX4466 microphone (older units, with the MCP3008) | MCP3008 channel 0 | OUT to MCP3008 pin 1, VCC 3V3, GND |
 | 7 inch 1024x600 HDMI touchscreen, landscape (demo units only) | HDMI | none |
 | Two 3 mm LEDs, POWER green and LINK amber, each with a 330 ohm resistor | GPIO, off until `LED_POWER_GPIO` and `LED_LINK_GPIO` are set | GPIO 23 (pin 16), GPIO 24 (pin 18), ground pin 20. See The lights |
+| PCB Artists I2C decibel meter, PRO, JST-XH connector | I2C bus 1, address 0x48, on the same four wires as the doorway counter. Auto-detected | VCC to 3V3 (never 5V), GND, SDA pin 3, SCL pin 5. See The sound meter |
 | VL53L8CX time-of-flight doorway counter on a Pololu #3419 carrier | I2C bus 1, address 0x29. `main.py` loads its firmware at every start | VIN to 3V3 (pin 1, never 5V), GND, SDA pin 3, SCL pin 5, and the carrier's SPI/I2C pin to GND. See The doorway counter |
 
 Two things about that list that are decisions, not details.
@@ -203,11 +210,45 @@ in `count_thermal_clusters` is a temperature. A non-radiometric camera streams
 happily and counts nothing real; `main.py --selftest` will tell you which one
 you have, and `thermal_loop` reports 0 rather than a made-up number.
 
-**The microphone stays analog, through the ADC.** A USB microphone would be
-one cable instead of five wires and it is the wrong trade: it puts a real audio
-capture device and an audio library on the box, and "no audio recording" in the
-privacy policy is currently backed by the fact that neither exists here. The
-MAX4466 into an MCP3008 is load-bearing for that claim.
+**Loudness comes from a decibel meter, never from a microphone the Pi can
+hear.** A USB microphone would be one cable and it is the wrong trade: it puts
+a real audio capture device and an audio library on the box, and "no audio
+recording" in the privacy policy rests on neither existing here. The PCB
+Artists meter keeps that true and makes it stronger. Its microphone is wired
+to its own processor, which turns sound into an A-weighted level on the module,
+and the only thing that crosses the wire to the Pi is that number, one byte at
+a time. There is no audio on the bus to record. Units built before it use a
+MAX4466 into an MCP3008, which keeps the same promise a different way: the Pi
+sees samples and reduces each burst to one figure.
+
+### The sound meter
+
+The analog microphone could not tell a quiet room from someone talking two
+feet away. On 2026-10-07 a quiet room and talking measured 1 to 3 dB apart
+through it, because its own electrical hiss sat at the level of speech, and a
+finger on the board made it louder. No calibration fixes a sensor whose noise
+is as loud as what it is listening for. The decibel meter has a MEMS
+microphone and a processor on one small board and reports real dB SPL from 30
+to 120, A-weighted, to about 1 dB on the PRO. It needs no calibration and
+`--listen --write` and `--anchor` say so and change nothing.
+
+**Wiring, four wires, through the JST-XH to female jumper cable it plugs into:**
+VCC to 3V3 (pin 1 or 17; never 5V), GND to any ground, SDA to pin 3, SCL to
+pin 5. Those are the doorway counter's pins too: I2C is a shared bus, and the
+two parts answer at different addresses (0x48 and 0x29), so both sets of wires
+join the same four pins through a small junction. `i2cdetect -y 1` should then
+show both 29 and 48.
+
+**Bring it up with `main.py --listen`.** On a unit with the meter it prints the
+live reading in dB and the word the panel will show. `--selftest` reports
+`sound meter : ok (I2C 0x48, version ..., 54 dB now)`. `NOISE_SENSOR` picks the
+source: `auto` (the meter if it answers, else the analog microphone), `meter`,
+`mic` or `off`.
+
+**It has to hear the room.** Mounted inside a box, it reads the box. The
+enclosure puts its microphone hole against a matching hole in the wall unit's
+underside with a soft gasket between them, so sound reaches it from the room
+and not from the air inside.
 
 **The panel is whatever the framebuffer says it is.** `display_loop` asks for
 `DISPLAY_W` x `DISPLAY_H` (default 1024x600), then reads back the size
@@ -335,18 +376,19 @@ which.
 
 The enclosure splits the device in two (`enclosure/README.md`). The Pi, the
 battery and the screen stay in a base unit; a wall-mounted head carries the
-Lepton, the MAX4466 with its MCP3008, and a VL53L8CX time-of-flight counter,
-joined to the base by one Cat6 run carrying SPI and I2C. The converter goes in
-the head so the analog run is centimetres rather than three metres beside a 4G
-modem.
+Lepton, the decibel meter and the VL53L8CX time-of-flight counter. The meter
+and the counter share one I2C bus, so the head needs four signal wires and a
+USB cable, and nothing analog leaves it.
 
 Three things about it are still open:
 
 - **The counter is driven and has never run.** `main.py` has the VL53L8CX
   driver (see The doorway counter, above), and the part had not arrived when
   it was written.
-- **SPI over three metres of cable is untested.** `main.py` opens the MCP3008
-  at 1 MHz. Try it on the bench with the real cable before building around it.
+- **I2C over three metres of cable is untested.** The bus runs at the Pi's
+  default 100 kHz, which is slow enough for a few metres of twisted pair with
+  each signal paired with a ground. Try it on the bench with the real cable
+  before building around it.
 - **The head's indicator light is a hole in a panel.** `main.py` drives the
   base's two (see The lights, above) and not that one.
 
@@ -388,7 +430,8 @@ What this code still needs on the 40-pin header:
 - **I2C1** for the doorway counter: pins 3 and 5, plus 3V3 and a ground. Or,
   on a unit with a GPIO crossing sensor instead, **GPIO 17** (pin 11);
   `IR_GPIO_PIN` moves it if the HAT needs 17.
-- **SPI0 CE0** for the mic's ADC: pins 19, 21, 23, 24.
+- **SPI0 CE0** for the mic's ADC: pins 19, 21, 23, 24. Only on a unit with
+  the analog microphone; the decibel meter is on the I2C pins above.
 
 What the build plan puts on the same header: a SIM7600 4G HAT, with the note
 "single HAT only". A HAT in that form factor physically covers all forty pins
