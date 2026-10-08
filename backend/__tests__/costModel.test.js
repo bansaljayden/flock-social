@@ -1029,6 +1029,23 @@ test('a dependency with no meter is named as unmeasured rather than counted as z
   }
 });
 
+test('the invite share card is listed with the outside hosts the route really downloads from', () => {
+  // The card is drawn on the API (routes/ogCard.js), and a card with an emoji
+  // or another script downloads fonts and pictures while it is drawn. Those
+  // are outbound calls from the API, so the row names their hosts, and the
+  // hosts are read back out of the route so the row cannot drift from it.
+  const card = ALL_DEPS.find((d) => d.id === 'invite-share-card');
+  assert.ok(card, 'the share card is drawn on the API and the inventory does not list it');
+  assert.strictEqual(card.group, 'free');
+  assert.match(card.where, /backend\/routes\/ogCard\.js/);
+  assert.match(card.costsNothingBecause, /CPU on the API/);
+  assert.deepStrictEqual(card.configuredEnv, ['OG_CARD_SECRET']);
+  const route = require('fs').readFileSync(require('path').join(__dirname, '..', 'routes', 'ogCard.js'), 'utf8');
+  const hosts = new Set([...route.matchAll(/^const [A-Z_]+ = 'https:\/\/([a-z.]+)\//gm)].map((m) => m[1]));
+  assert.deepStrictEqual([...hosts].sort(), ['cdn.jsdelivr.net', 'fonts.googleapis.com', 'fonts.gstatic.com']);
+  for (const host of hosts) assert.ok(card.note.includes(host), `the row does not name ${host}`);
+});
+
 test('environment readings report presence and never a value', () => {
   // This payload goes over the wire to a browser. A key is a key even on an
   // admin screen.
