@@ -244,3 +244,24 @@ test('the meter reads MAPTILER_SERVICE_TOKEN from the environment only, and its 
     assert.doesNotMatch(m[1], /token|headers|Authorization|init/i, `a log line is handed ${m[1]}`);
   }
 });
+
+test("today's usage counts: MapTiler sends it as estimated_data, apart from the closed days", () => {
+  // The shape of a live answer on the first day of a period (2026-10-08).
+  const first = mtu.parseTimeline({
+    since: '2026-10-08', until: '2026-11-07',
+    legend: [{ item_id: 'request.tile', label: 'Tiles', description: null }],
+    datasets: [{ group_id: 'request', item_id: 'request.tile', data: [], estimated_data: { date: '2026-10-08', value: 126 } }],
+  });
+  assert.strictEqual(first.totals.requests, 126);
+  // A later day: closed days plus today's estimate, and an estimate for a day
+  // already in data is not counted twice.
+  const later = mtu.parseTimeline({
+    since: '2026-10-08', until: '2026-11-07', legend: [],
+    datasets: [
+      { group_id: 'request', item_id: 'request.tile', data: [{ date: '2026-10-08', value: 100 }, { date: '2026-10-09', value: 50 }], estimated_data: { date: '2026-10-10', value: 7 } },
+      { group_id: 'session', item_id: 'session.map', data: [{ date: '2026-10-09', value: 3 }], estimated_data: { date: '2026-10-09', value: 3 } },
+    ],
+  });
+  assert.strictEqual(later.totals.requests, 157);
+  assert.strictEqual(later.totals.sessions, 3);
+});

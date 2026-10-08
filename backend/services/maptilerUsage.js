@@ -120,6 +120,14 @@ function parseTimeline(body) {
       if (!Number.isFinite(v) || v < 0) return null;
       count += v;
     }
+    // Today's usage arrives apart from the closed days, as estimated_data
+    // ({date, value}) for a day already missing from data. Without it the
+    // meter read 0 through the whole first day of every period.
+    const est = ds.estimated_data;
+    if (est && typeof est === 'object' && !ds.data.some((p) => p && p.date === est.date)) {
+      const v = Number(est.value);
+      if (Number.isFinite(v) && v >= 0) count += v;
+    }
     const label = labels.get(ds.item_id) || ds.item_id;
     let pool = null;
     if (ds.group_id === 'session') pool = sessionPool(`${ds.item_id} ${label}`);
