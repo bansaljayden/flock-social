@@ -17,9 +17,17 @@
 # - Limits: 100 rules, 2,000 characters per line.
 
 # The project's own <project>.pages.dev host serves the same site as
-# www.flockcorp.com. Pages marks preview hosts (<hash>.<project>.pages.dev)
-# noindex by itself, but not this one.
+# www.flockcorp.com, and so does every deployment's own
+# <hash>.<project>.pages.dev URL, the production deployment's included. Pages'
+# asset server marks the second shape noindex by itself (wrangler 4.148.0's
+# copy decides by the host having more than three labels) but never the
+# first. Both are marked here anyway, the pair Cloudflare's docs give for
+# keeping pages.dev out of search results, so neither depends on that
+# internal check. Function answers get the same header from the middleware.
 https://:project.pages.dev/*
+  X-Robots-Tag: noindex
+
+https://:version.:project.pages.dev/*
   X-Robots-Tag: noindex
 
 # Apple's app-site-association file, written into the build by
