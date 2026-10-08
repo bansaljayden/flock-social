@@ -657,9 +657,13 @@ test('the watchlist carries no invented numbers', () => {
   // — it had never served a tile in production, because every shipping build
   // sets REACT_APP_MAPTILER_KEY and MapTiler hybrid won whenever it was set.
   // What replaces it on the watchlist is the dependency that removal creates:
-  // MapTiler is now the ONLY satellite source, so its free-plan session cap is
-  // the thing to watch. A licence question became a quota question.
-  assert.ok(ids.includes('maptiler-satellite'), 'MapTiler is now the only licensed satellite source, so its cap is the exposure');
+  // MapTiler is now the ONLY satellite source, so its allowance is the thing
+  // to watch. A licence question became a quota question, and on Flex
+  // (2026-10-07) a quota past which extra use bills up to the spending limit.
+  assert.ok(ids.includes('maptiler-satellite'), 'MapTiler is now the only licensed satellite source, so its allowance is the exposure');
+  const mt = cm.WATCHLIST.find((w) => w.id === 'maptiler-satellite');
+  assert.strictEqual(mt.usd, null, 'no reading on the watchlist, so no figure');
+  assert.match(mt.label, /past the Flex allowance/);
   assert.ok(!ids.includes('esri-satellite'), 'the Esri fallback is gone from App.js; it must not linger on the watchlist');
   // BestTime left the watchlist on 2026-09-01 by being answered rather than by
   // being ignored. It sat here as "a subscription with no code path is money for
@@ -1062,12 +1066,29 @@ test('environment readings report presence and never a value', () => {
     if (before === undefined) delete process.env.TICKETMASTER_API_KEY;
     else process.env.TICKETMASTER_API_KEY = before;
   }
-  // A dependency the server cannot see reads as unknown, not as unset. The
-  // MapTiler key is a build-time frontend variable and the backend has no
-  // business claiming it is missing.
+  // The MapTiler map key is a build-time frontend variable the backend cannot
+  // see, and the row says so. What the row CAN see is the usage meter's token
+  // (services/maptilerUsage.js): reported by name when present, never by value,
+  // and with it present the cost stops reading as unknown because the hub can
+  // read it.
   const mt = ALL_DEPS.find((x) => x.id === 'maptiler');
-  assert.strictEqual(mt.configured, null);
-  assert.ok(mt.configuredNote && mt.configuredNote.length > 0);
+  assert.deepStrictEqual(mt.configuredEnv, ['MAPTILER_SERVICE_TOKEN']);
+  assert.strictEqual(mt.configured, false);
+  assert.strictEqual(mt.unknownCost, true);
+  assert.match(mt.configuredNote, /REACT_APP_MAPTILER_KEY, is a build-time variable/);
+  const beforeMt = process.env.MAPTILER_SERVICE_TOKEN;
+  process.env.MAPTILER_SERVICE_TOKEN = 'mt-service-token-value';
+  try {
+    const set = cm.buildDependencies({}).groups.flatMap((g) => g.entries).find((x) => x.id === 'maptiler');
+    assert.strictEqual(set.configured, true);
+    assert.strictEqual(set.configuredVia, 'MAPTILER_SERVICE_TOKEN');
+    assert.strictEqual(set.unknownCost, false, 'the meter can read it, so it is not unknown');
+    assert.strictEqual(set.unknownAction, null, 'the how-to for the token goes once the token is set');
+    assert.ok(!JSON.stringify(set).includes('mt-service-token-value'), 'a token value reached the payload');
+  } finally {
+    if (beforeMt === undefined) delete process.env.MAPTILER_SERVICE_TOKEN;
+    else process.env.MAPTILER_SERVICE_TOKEN = beforeMt;
+  }
 });
 
 test('an unpriceable model reads as unpriced on the inventory too, never as free', () => {
