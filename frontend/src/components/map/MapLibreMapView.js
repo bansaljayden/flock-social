@@ -1315,9 +1315,16 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
      the light/dark swap below. (HTML markers survive a style swap; sources and
      layers do not.) */
   const rehydrateAfterStyleSwap = useCallback((map) => {
-    // A fresh style is a fresh test of the key: a refusal from before clears
-    // here and is set again by the error handler if the key is still refused.
-    if (keyRefusedRef.current) { keyRefusedRef.current = false; setKeyRefused(false); }
+    // A refusal clears only on evidence the key works again: tiles that failed
+    // are kept through a style diff and not asked for again, so a swap alone
+    // proves nothing. The TileJSON request is free (not billed).
+    if (keyRefusedRef.current && MAPTILER_KEY) {
+      fetch(`https://api.maptiler.com/tiles/v4/tiles.json?key=${encodeURIComponent(MAPTILER_KEY)}`, { cache: 'no-store' })
+        .then((r) => {
+          if (r.ok && mapInstanceRef.current === map) { keyRefusedRef.current = false; setKeyRefused(false); }
+        })
+        .catch(() => {});
+    }
     addOverlayLayers(map, mapIsDarkRef.current);
     hideBasemapTwins(map, venuesRef.current, mapIsDarkRef.current);
     // Re-feed accuracy data
