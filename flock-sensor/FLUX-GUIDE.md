@@ -13,16 +13,17 @@ its build sheet, with a picture for every assembly step.
 
 ## The box
 
-One unit, 180 x 171.5 x 73 mm, the width of its seven inch screen.
+One unit, 180 x 171.5 x 72 mm, the width of its seven inch screen, in cream
+and navy.
 
-- **The front** is a black glass panel over the screen, flush in a chalk
-  printed body, with the Flux wordmark frosted into the glass under the
-  picture. Under it a black glass pill holds the thermal camera's eye, the
-  door counter's window and the one light.
+- **The front** is the screen, behind a thin cream lip that shows only its
+  picture and its own slim black border. Under it a navy pill holds the
+  thermal camera's eye, the door counter's window and the one light, and
+  under that the Flux wordmark in navy.
 - **Inside**, behind the screen, the battery stands at the left and the Pi with
   its 4G board sits at the right. The sound meter listens through a small hole
   in the right side.
-- **The back** carries the Pi and the charging port.
+- **The back** carries the Pi and a port panel: ETHERNET, USB and CHARGE.
 
 It stands on a table, or screws onto a camera ball mount on the wall above a
 door, tilted down so the camera and the counter look at the doorway and the
@@ -59,7 +60,9 @@ screen faces the people coming in.
 | **PCB Artists I2C Decibel Meter PRO** | Measures loudness in real decibels; no audio ever reaches the Pi | In its frame on the right wall, hearing through the hole | I2C, through the Qwiic MultiPort (5-pin lead, INT left empty) |
 | **Qwiic SHIM and MultiPort** | Split the Pi's one I2C bus between the counter and the meter, all plug-in | On the 4G board's pins, and loose beside them | Pi pins 1, 3, 5, 6 |
 | **LINK light** (green 3 mm LED, 330 ohm resistor) | Blinks while the sensors are answering and readings are going out | The strip, far right | GPIO 24 (pin 18), ground (pin 20) |
-| **CHARGE port** (Adafruit #6069) | Charges the battery without opening the box | Back, high | The battery's other USB-C |
+| **CHARGE port** (Adafruit #6069) | Charges the battery without opening the box | Back, port panel | The battery's other USB-C |
+| **USB port** (Adafruit #4055) | Plug in a keyboard or a USB stick without opening the box | Back, port panel | The Pi's fourth USB port |
+| **ETHERNET port** (panel-mount RJ45) | A wired network, where a venue has one | Back, port panel | The Pi's Ethernet, through a right-angle adapter |
 
 The counter and the meter share the same wires. That works because I2C is a
 shared bus where each part answers to its own address: 0x29 for the counter,
@@ -75,6 +78,8 @@ shared bus where each part answers to its own address: 0x29 for the counter,
 | **Modem** | 4G board's "USB" micro-USB (right-angle) | Pi USB |
 | **Power** | Battery | Converter, then the Pi's USB-C |
 | **Charging** | Back's CHARGE port | Battery |
+| **USB** | Back's USB port | Pi USB |
+| **Ethernet** | Back's ETHERNET port | Pi Ethernet |
 | **I2C** | Qwiic SHIM on pins 1, 3, 5, 6 | MultiPort, then the counter and the meter |
 
 ## The Pi's pins this build uses
@@ -110,9 +115,9 @@ down, which depends on which way up the camera's board ended up.
 
 **Printed:** the body (the whole box but its back, with every post, pocket
 and frame built in), four Pi spacers, and two fit tests to print first.
-**Laser cut from 3 mm black acrylic:** the glass panel and the sensor pill
-(one piece of acrylic: the pill comes out of the panel's window), and the back
-sheet.
+**Also printed:** the sensor pill in navy, and the wordmark in navy on a two-colour
+printer (or a navy paint pen in its pocket).
+**Laser cut from 3 mm cream acrylic:** the back sheet.
 
 ## The small parts, and what each is for
 
@@ -123,6 +128,6 @@ sheet.
 | 3 mm LEDs | The LINK light |
 | Camvate ball mount | Holds Flux on the wall and lets it tilt toward the door |
 | 1/4"-20 hex nut | Sits in the base; the ball mount screws into it |
-| VHB tape | Holds the glass panel and the sensor pill in their pockets, so no screw shows on the front |
+| VHB tape | Holds the sensor pill in its pocket, so no screw shows on the front |
 | Double-sided foam tape | Seals the sound meter to its hole, so it hears the room and not the inside of the box |
 | Rubber feet | Under the base |

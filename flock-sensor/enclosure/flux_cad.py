@@ -157,7 +157,6 @@ plate = 3.0                    # MEASURE: the acrylic sheet
 
 wall = 2.5                     # the printed sleeve
 corner_r = 12.0                # the box's corners as you face it
-frame = 4.0                    # the body's frame round the glass panel, sides and top
 edge_front = 2.0               # the body's front edge, rounded
 edge_back = 1.2                # and its back edge
 inner_r = corner_r - wall      # inside, following the outside, so the wall is even all round
@@ -169,7 +168,10 @@ backer = 1.6                   # the printed plate behind the front sheet's stri
 side_room = 6.5                # beside the screen, each side: the touch plug on the left
 cable_gap = 4.0                # behind the screen: the touch cable and the video ribbon
 strip_h = 48.0                 # the strip under the screen, base included
-pill = (68.0, 17.0)            # the sensor window under the screen, a black glass pill
+pill = (68.0, 17.0)            # the sensor window under the screen, a navy pill
+lip = 1.6                      # the front's thickness in front of the screen's glass
+screen_border = 2.5            # the screen's own black glass showing round its picture
+logo_depth = 0.8               # the wordmark, pressed in and filled navy
 pocket_gap = 0.2               # round each acrylic piece in its pocket
 
 insert_dia = 4.2               # the brass M3 x 4 inserts, 4.2 across
@@ -182,10 +184,16 @@ post_len = 9.0                 # the back's corner posts
 
 led_dia = 3.1                  # a 3 mm LED pushes in and stops on its rim. Test-cut first.
 wordmark = 'Flux'
-wordmark_size = 7.0
+wordmark_size = 7.5
 
-chg_hole = 12.2                # Adafruit #6069 USB-C round panel mount, M12 thread
+# The ports on the back, each a panel-mount extension to the part inside.
+chg_hole = 12.2                # CHARGE: Adafruit #6069 USB-C round panel mount, M12 thread
 chg_body = (12.0, 30.0)        # across, and how far it reaches in with its bend
+usb_cut = (26.5, 12.3)         # USB: Adafruit #4055 snap-in USB-A extension, its cutout
+usb_body = (18.6, 13.0, 36.0)  # its body behind the panel: across, up, deep
+lan_cut = (16.5, 14.0)         # ETHERNET: panel-mount RJ45 extension, the jack's face
+lan_ear_dx = 30.0              # its two screw ears, centre to centre
+lan_body = (20.0, 18.0, 32.0)  # MEASURE when in hand: across, up, deep
 
 # The power converter between the battery and the Pi: a Pi 5 wants 5 V at
 # 5 A and a power bank's 5 V stops at 3 A, so this asks the battery for more
@@ -206,8 +214,8 @@ BOX_H = strip_h + screen_outer_h + 2.0 + wall
 IN_X0, IN_X1 = wall, BOX_W - wall
 IN_Z0, IN_Z1 = wall, BOX_H - wall
 
-SL_Y0 = plate                              # the sleeve's front
-FRONT_Y = SL_Y0 + backer                   # back face of the strip's backer
+SL_Y0 = lip                                # the screen's glass, just behind the front's lip
+FRONT_Y = plate + backer                   # back face of the strip's backer
 SCREEN_Y1 = SL_Y0 + screen_thick           # back of the screen
 LAY_Y0 = SCREEN_Y1 + cable_gap             # the layer behind the screen starts here
 BATT_Y1 = LAY_Y0 + batt_thk
@@ -234,11 +242,11 @@ TOF_C = (EYE[0] + 26.5, EYE[1])
 TOF_FACE = FRONT_Y + 0.3 + tof_sensor_h    # the counter board's sensor side
 LED_POS = (TOF_C[0] + 16.5, EYE[1])
 PILL_C = (BOX_W / 2, EYE[1])
-# The glass panel: the whole screen, in a pocket in the body's front.
-PANEL_Z0 = strip_h - 1.0
-PANEL = (frame, PANEL_Z0, BOX_W - frame, BOX_H - frame)
-# The wordmark, engraved in the glass's border under the picture.
-LOGO_C = (BOX_W / 2, (PANEL_Z0 + WIN_Z0) / 2)
+# The front's opening: the picture, and a thin border of the screen's own glass.
+OPENING = (SCREEN_X0 + screen_border_l - screen_border, SCREEN_Z0 + screen_border_b - screen_border,
+           screen_active_w + 2 * screen_border, screen_active_h + 2 * screen_border)
+# The wordmark, low in the strip under the pill.
+LOGO_C = (BOX_W / 2, (IN_Z0 + PILL_C[1] - pill[1] / 2) / 2 + 1.0)
 
 BATT_X0 = IN_X0 + batt_pad
 BATT_X1 = BATT_X0 + batt_wid
@@ -253,7 +261,11 @@ PI_HOLES = [(PI_X0 + pi_hole_inset + hx, PI_ZBOT + pi_hole_inset + hy)
             for hx in (0, pi_hole_dx) for hy in (0, pi_hole_dy)]
 
 DBM_C = (SL_Y1 - 34.0, PI_ZBOT + pi_d + 12.0 + dbm_h / 2)   # (y, z) of its centre, on the right wall
-CHG_POS = (PI_X0 + 60.0, IN_Z1 - 14.0)
+# The port panel, high on the back, clear of the converter and the Pi.
+IO_Z = IN_Z1 - 21.0
+CHG_POS = (106.0, IO_Z)
+USB_POS = (129.0, IO_Z)
+LAN_POS = (156.0, IO_Z)
 CONV_X0 = PI_X0 + 2.0
 CONV_Z0 = PI_ZBOT + pi_d + 22.0
 MOUNT_C = (100.0, LAY_Y0 + 11.0)   # in front of the Pi's plugs, clear of the camera's
@@ -324,10 +336,9 @@ def pi_box(X0, X1, Y0, Y1, H0, H1):
 # to back, straight up off the bed.
 # ===========================================================================
 
-def panel_outline(grow=0.0):
-    x0, z0, x1, z1 = PANEL
-    return Pos((x0 + x1) / 2, (z0 + z1) / 2) * RectangleRounded(
-        x1 - x0 + 2 * grow, z1 - z0 + 2 * grow, corner_r - frame + grow)
+def screen_opening():
+    x, z, w, h = OPENING
+    return Pos(x + w / 2, z + h / 2) * RectangleRounded(w, h, 2.5)
 
 
 def pill_outline(grow=0.0):
@@ -336,8 +347,10 @@ def pill_outline(grow=0.0):
 
 def sleeve():
     # The body: a solid with soft front and back edges, then hollowed. Its
-    # front is a 4.6 mm face with two pockets: one the black glass panel drops
-    # into over the screen, one for the sensor pill under it.
+    # front is a 4.6 mm face. Over the screen it thins to a 1.6 mm lip, the
+    # screen pressed up behind it, its opening showing the picture and a thin
+    # border of the screen's own glass. Under it, a pocket for the sensor pill
+    # and the wordmark pressed in.
     body = slab(face_outline(), 0, SL_Y1)
     front_edges = [e for e in body.edges() if abs(e.center().Y) < 1e-3]
     back_edges = [e for e in body.edges() if abs(e.center().Y - SL_Y1) < 1e-3]
@@ -345,12 +358,11 @@ def sleeve():
     body = fillet([e for e in body.edges() if abs(e.center().Y - SL_Y1) < 1e-3], edge_back)
     outer = body
     body -= slab(face_outline(wall, inner_r), FRONT_Y, SL_Y1 + 1)
-    body -= slab(panel_outline(pocket_gap), -1, plate)
+    body -= span(SCREEN_X0 - 0.5, SCREEN_X0 + screen_outer_w + 0.5, SL_Y0, FRONT_Y + 1,
+                 SCREEN_Z0 - 0.5, SCREEN_Z0 + screen_outer_h + 0.5)
+    body -= slab(screen_opening(), -1, SL_Y0 + 0.01)
     body -= slab(pill_outline(pocket_gap), -1, plate)
-    # Behind the panel, the screen's glass comes through to touch it; a 2.5 to
-    # 4 mm ledge is left all round for the panel's VHB tape.
-    body -= span(SCREEN_X0 - side_room + 5 - 2.5, SCREEN_X0 + screen_outer_w + side_room - 5 + 2.5, -1, FRONT_Y + 1,
-                 SCREEN_Z0 + 3.0, IN_Z1 - 5)
+    body -= slab(logo_sketch(), -1, logo_depth)
 
     # The camera's four posts and the counter's two, M2 screws from behind.
     # Each sinks half a millimetre into the backer so they print as one.
@@ -362,13 +374,14 @@ def sleeve():
         x, z = TOF_C[0] + s * tof_hole_dx / 2, TOF_C[1] + tof_hole_off
         body += cyl_y(x, FRONT_Y - 0.5, z, 4.0, TOF_FACE - FRONT_Y + 0.5)
 
-    # The screen's four posts, ribbed to the top wall or down into the strip.
+    # The screen's four posts, from the lip back to its ears, ribbed to the
+    # top wall or down into the strip.
     for x, z in SCREEN_HOLES:
-        body += cyl_y(x, FRONT_Y - 0.5, z, 8.0, EAR_Y0 - FRONT_Y + 0.5)
+        body += cyl_y(x, SL_Y0 - 0.5, z, 8.0, EAR_Y0 - SL_Y0 + 0.5)
         if z > BOX_H / 2:
-            body += span(x - 1.5, x + 1.5, FRONT_Y - 0.5, EAR_Y0, z, IN_Z1 + 0.5)
+            body += span(x - 1.5, x + 1.5, SL_Y0 - 0.5, EAR_Y0, z, IN_Z1 + 0.5)
         else:
-            body += span(x - 1.5, x + 1.5, FRONT_Y - 0.5, EAR_Y0, SCREEN_Z0 - 2.0, z)
+            body += span(x - 1.5, x + 1.5, SL_Y0 - 0.5, EAR_Y0, SCREEN_Z0 - 2.0, z)
 
     # The back's four posts, filled to the walls they sit against.
     for x, z in BACK_HOLES:
@@ -458,13 +471,6 @@ def slot_x(x0, y, z, length, width, depth):
 # the laser cuts, seen from outside, and only then given its thickness.
 # ===========================================================================
 
-def panel_cut_sketch():
-    """The glass panel: the screen's window cut from it."""
-    sk = panel_outline()
-    sk -= Pos(WIN_X0 + WIN_W / 2, WIN_Z0 + WIN_H / 2) * Rectangle(WIN_W, WIN_H)
-    return sk
-
-
 def pill_cut_sketch():
     """The sensor pill: the eye, the counter's window, the light."""
     sk = pill_outline()
@@ -476,10 +482,8 @@ def pill_cut_sketch():
 
 
 def front_cut_sketch():
-    """What the laser cuts for the front: the panel, and the pill nested in the
-    panel's own window offcut, so both come out of one piece of acrylic."""
-    win_c = (WIN_X0 + WIN_W / 2, WIN_Z0 + WIN_H / 2)
-    return panel_cut_sketch() + Pos(win_c[0] - PILL_C[0], win_c[1] - PILL_C[1]) * pill_cut_sketch()
+    """What the laser cuts for the front, if the pill is cut rather than printed."""
+    return pill_cut_sketch()
 
 
 def logo_sketch():
@@ -496,8 +500,8 @@ def tof_window():
 
 
 def front_engrave_sketch():
-    """The wordmark, frosted into the glass under the picture."""
-    return logo_sketch()
+    """Nothing is engraved on the pill."""
+    return None
 
 
 def back_cut_sketch():
@@ -510,22 +514,29 @@ def back_cut_sketch():
     for x, z in PI_HOLES:
         sk -= Pos(a(x), z) * Circle(pi_screw_dia / 2)
     sk -= Pos(a(CHG_POS[0]), CHG_POS[1]) * Circle(chg_hole / 2)
+    sk -= Pos(a(USB_POS[0]), USB_POS[1]) * RectangleRounded(usb_cut[0], usb_cut[1], 1.0)
+    sk -= Pos(a(LAN_POS[0]), LAN_POS[1]) * RectangleRounded(lan_cut[0], lan_cut[1], 0.8)
+    for s in (-1, 1):
+        sk -= Pos(a(LAN_POS[0] + s * lan_ear_dx / 2), LAN_POS[1]) * Circle(1.6)
     for i in range(6):
         sk -= Pos(a(PI_X0 + pi_w / 2), PI_ZBOT + 9 + i * 7.5) * SlotOverall(39, 3.0)
     return sk
 
 
 def back_engrave_sketch():
-    a = BOX_W - CHG_POS[0]
-    label = Pos(a, CHG_POS[1] - chg_hole / 2 - 5) * Text(
-        'CHARGE', font_size=3.2 * 1.38, font_path=flat_font(FONT_LABEL), align=(Align.CENTER, Align.CENTER))
+    def label(txt, pos):
+        return Pos(BOX_W - pos[0], pos[1] - 13.0) * Text(
+            txt, font_size=3.0 * 1.38, font_path=flat_font(FONT_LABEL), align=(Align.CENTER, Align.CENTER))
+    label = label('CHARGE', CHG_POS) + label('USB', USB_POS) + label('ETHERNET', LAN_POS)
     mark = Pos(BOX_W - (PI_X0 + pi_w / 2), PI_ZBOT + pi_d + 10) * Text(
         'Flux', font_size=7 * 1.38, font_path=flat_font(FONT_WORDMARK), align=(Align.CENTER, Align.CENTER))
     return label + mark
 
 
-def glass_panel():
-    return slab(panel_cut_sketch(), 0, plate)
+def logo_inlay():
+    """The wordmark as its own part, filling its 0.8 mm pocket: printed in navy
+    on a multi-colour printer, or painted in with a navy paint pen instead."""
+    return slab(logo_sketch(), 0, logo_depth)
 
 
 def sensor_pill():
@@ -670,7 +681,9 @@ def pi_low_plugs():
 
 
 def pi_usb_plugs():
-    return pi_box(88.0, 108.0, 21.5, 54.6, -1.0, 17.0)
+    # The four USB-A: camera, touch, modem, and the back's USB port. Below
+    # them the Ethernet, through a right-angle RJ45 adapter to the back's port.
+    return pi_box(88.0, 108.0, 21.5, 54.6, -1.0, 17.0) + pi_box(88.0, 106.0, 1.0, 19.5, -1.0, 15.0)
 
 
 def meter_body():
@@ -681,6 +694,18 @@ def meter_body():
 def converter_body():
     return span(CONV_X0, CONV_X0 + conv_size[0], LAY_Y0 + 1, LAY_Y0 + 1 + conv_size[1],
                 CONV_Z0, CONV_Z0 + conv_size[2])
+
+
+def usb_jack():
+    x, z = USB_POS
+    w, h, d = usb_body
+    return span(x - w / 2, x + w / 2, SL_Y1 - d, SL_Y1, z - h / 2, z + h / 2)
+
+
+def lan_jack():
+    x, z = LAN_POS
+    w, h, d = lan_body
+    return span(x - w / 2, x + w / 2, SL_Y1 - d, SL_Y1, z - h / 2, z + h / 2)
 
 
 def charge_jack():
@@ -706,7 +731,8 @@ INSIDE = {
     'jumpers': jumpers, 'Pi lower plugs': pi_low_plugs, 'Pi USB plugs': pi_usb_plugs,
     'camera': camera_body, 'camera plug': camera_plug, 'counter': counter_body,
     'counter leads': counter_leads, 'sound meter': meter_body, 'converter': converter_body,
-    'charging port': charge_jack, 'light': led_body, 'mount nut': mount_nut,
+    'charging port': charge_jack, 'USB port': usb_jack, 'Ethernet port': lan_jack,
+    'light': led_body, 'mount nut': mount_nut,
     'touch plug': touch_plug, 'touch cable': touch_cable, 'video ribbon': video_ribbon,
 }
 # What each part is meant to touch: what it is fixed to or plugged into.
@@ -715,6 +741,7 @@ ALLOWED = {
         ('sleeve', 'camera'), ('sleeve', 'counter'), ('sleeve', 'sound meter'), ('sleeve', 'light'),
         ('sleeve', 'mount nut'), ('sleeve', 'touch plug'), ('sleeve', 'video ribbon'),
         ('back sheet', 'charging port'), ('sleeve', 'charging port'),
+        ('back sheet', 'USB port'), ('back sheet', 'Ethernet port'),
         ('camera', 'camera plug'), ('counter', 'counter leads'),
         ('Pi', 'cooler'), ('Pi', 'jumpers'), ('Pi', 'Pi lower plugs'), ('Pi', 'Pi USB plugs'),
         ('cooler', '4G board'), ('4G board', 'jumpers'), ('4G board', 'Pi lower plugs'),
@@ -726,7 +753,7 @@ ALLOWED = {
 
 
 def clash_report(sleeve_part, front, back):
-    parts = {'sleeve': sleeve_part, 'glass panel': front, 'sensor pill': sensor_pill(), 'back sheet': back}
+    parts = {'sleeve': sleeve_part, 'sensor pill': front, 'back sheet': back}
     parts.update({k: f() for k, f in INSIDE.items()})
     names = list(parts)
     found = []
@@ -748,7 +775,8 @@ def clash_report(sleeve_part, front, back):
 
 BLACK_ACRYLIC = Color(0.05, 0.05, 0.06)
 BLACK_PLA = Color(0.11, 0.11, 0.12)
-CHALK_PLA = Color(0.90, 0.88, 0.84)
+NAVY = Color(15 / 255, 23 / 255, 42 / 255)        # the brand's --navy, #0f172a
+CREAM = Color(244 / 255, 239 / 255, 227 / 255)    # the brand's --cream, #f4efe3
 
 
 def labelled(shape, label, color):
@@ -766,11 +794,12 @@ def brass_inserts():
 
 def assembly(sleeve_part, front, back):
     parts = [
-        labelled(sleeve_part, 'Sleeve (printed)', CHALK_PLA),
-        labelled(front, 'Glass panel (acrylic)', BLACK_ACRYLIC),
-        labelled(sensor_pill(), 'Sensor window (acrylic)', BLACK_ACRYLIC),
-        labelled(engraving(front_engrave_sketch(), 0.0), 'Panel engraving', Color(0.8, 0.8, 0.82)),
-        labelled(back, 'Back sheet (acrylic)', BLACK_ACRYLIC),
+        labelled(sleeve_part, 'Body (printed, cream)', CREAM),
+        labelled(front, 'Sensor pill (navy)', NAVY),
+        labelled(logo_inlay(), 'Flux wordmark (navy)', NAVY),
+        labelled(back, 'Back sheet (cream)', CREAM),
+        labelled(usb_jack(), 'USB port', Color(0.75, 0.75, 0.78)),
+        labelled(lan_jack(), 'Ethernet port', Color(0.75, 0.75, 0.78)),
         labelled(engraving(back_engrave_sketch(), SL_Y1 + plate, flip=True), 'Back engraving', Color(0.8, 0.8, 0.82)),
         labelled(screen_body(), '7 inch touchscreen', Color(0.02, 0.03, 0.05)),
         labelled(battery_body(), 'Anker A1336 battery', Color(0.85, 0.45, 0.1)),
@@ -799,7 +828,7 @@ def main():
 
     print(f'box {BOX_W:.1f} x {BOX_H:.1f} x {BOX_D:.1f} mm')
     sl = sleeve()
-    front, back = glass_panel(), back_sheet()
+    front, back = sensor_pill(), back_sheet()
     for name, part in (('sleeve', sl), ('front sheet', front), ('back sheet', back)):
         if len(part.solids()) != 1 or not part.is_valid:
             sys.exit(f'{name} is not one valid solid ({len(part.solids())} solids)')

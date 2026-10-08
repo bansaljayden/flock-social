@@ -3615,11 +3615,11 @@ class EnclosureFiles(unittest.TestCase):
 
     def test_every_sheet_is_cut_to_the_size_the_drawing_says(self):
         # Both sheets cover the whole face of the sleeve, edge to edge.
-        # The back covers the whole box; the front is the glass panel, inset
-        # by the body's frame at the sides and top and sitting on the strip.
+        # The back covers the whole box; the front's one cut piece is the
+        # sensor pill, for anyone cutting it from acrylic rather than printing it.
         w, h = self.box_size()
-        frame, strip = self.scad_number('frame'), self.scad_number('strip_h')
-        expected = {'front': (w - 2 * frame, h - frame - (strip - 1.0)), 'back': (w, h)}
+        pill = re.search(r'^pill = \(([\d.]+), ([\d.]+)\)', (self.ENC / 'flux_cad.py').read_text(encoding='utf-8'), re.M)
+        expected = {'front': (float(pill.group(1)), float(pill.group(2))), 'back': (w, h)}
         for part, (ew, eh) in expected.items():
             m = re.search(r'width="([\d.]+)mm" height="([\d.]+)mm"', self.svg(part))
             self.assertIsNotNone(m, part)
@@ -3630,9 +3630,11 @@ class EnclosureFiles(unittest.TestCase):
         # The convention school laser software reads: red stroke cuts, black
         # fill engraves. A fill on a cut path would engrave the whole panel.
         for part in ('front', 'back'):
-            svg = self.svg(part)
-            self.assertIn('fill="none" stroke="#FF0000"', svg, part)
-            self.assertIn('fill="#000000" stroke="none"', svg, part)
+            self.assertIn('fill="none" stroke="#FF0000"', self.svg(part), part)
+        # The back's port labels are engraved; the pill carries none, the
+        # wordmark being pressed into the printed front and filled navy.
+        self.assertIn('fill="#000000" stroke="none"', self.svg('back'))
+        self.assertNotIn('fill="#000000"', self.svg('front'))
 
     def test_every_part_the_export_script_makes_is_committed(self):
         sys.path.insert(0, str(self.ENC))
@@ -3650,11 +3652,12 @@ class EnclosureFiles(unittest.TestCase):
         # The STEP file is what opens in Fusion 360 or Onshape; every part in
         # it carries its name, so the tree there reads like the parts list.
         step = (self.ENC / 'step' / 'flux-assembly.step').read_text(encoding='utf-8', errors='replace')
-        for name in ('Sleeve (printed)', 'Glass panel (acrylic)', 'Sensor window (acrylic)', 'Back sheet (acrylic)',
+        for name in ('Body (printed, cream)', 'Sensor pill (navy)', 'Flux wordmark (navy)', 'Back sheet (cream)',
+                     'USB port', 'Ethernet port',
                      'Raspberry Pi 5', 'PureThermal 3 + Lepton 3.5', 'VL53L8CX door counter',
                      'Decibel meter', 'Anker A1336 battery', '7 inch touchscreen'):
             self.assertIn(name, step, name)
-        for part in ('sleeve', 'glass-panel', 'sensor-pill', 'back-sheet'):
+        for part in ('sleeve', 'sensor-pill', 'back-sheet'):
             self.assertTrue((self.ENC / 'step' / f'flux-{part}.step').exists(), part)
 
     def test_the_stls_came_from_the_export_script(self):
