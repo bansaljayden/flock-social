@@ -17,8 +17,9 @@
 // "name\nwhen\ngoing", base64url, the first 22 characters. Anything else is a
 // 403 before any work is done, so nobody can have their own text drawn on a
 // Flock card, and a stream of made-up cards cannot keep the only thread busy.
-// With the secret unset, or shorter than 16 characters, every card is refused
-// and previews fall back to the website's static banner.
+// With the secret unset, or shorter than 32 characters, every card is refused
+// and previews fall back to the website's static banner, and production says
+// so in the deploy log.
 //
 // WHAT IT SHOWS. The three signed fields, which the preview page already
 // publishes as text (og:title, og:description, og:image:alt), and fixed copy.
@@ -147,15 +148,48 @@ function cardTree(params) {
 // ── The signature ───────────────────────────────────────────────────────────
 // Same contract as the signer in frontend/api/invite-preview.js and the
 // website proxy's check. 22 base64url characters is 132 bits of the MAC.
-const MIN_SECRET = 16;
+//
+// THE FLOOR IS 32 CHARACTERS, the same as NFC_TAG_SECRET's and for the same
+// reason. Every invite preview publishes n, w, g and the first 132 bits of
+// their MAC in its og:image URL, so one shared preview is all it takes to test
+// guesses at the secret offline, as fast as the guesser's hardware allows,
+// with no request to us. A short secret is a secret somebody will recover, and
+// with it they can sign their own text onto a Flock card and mint as many
+// distinct cards as they like. So a value under MIN_SECRET characters, not
+// counting surrounding whitespace, is treated exactly like an unset one, and
+// says so once per process. The documented generator gives 43 characters. A
+// length is only a proxy: thirty-two copies of one letter clear it, so the
+// value still has to come from a generator.
+const MIN_SECRET = 32;
 const SIGNATURE_RE = /^[A-Za-z0-9_-]{22}$/;
 
-// Read per request, trimmed the way the website trims it, so a value pasted
-// with a trailing newline signs the same cards on both sides.
+const announced = new Set();
+function announceOnce(key, message) {
+  if (announced.has(key)) return;
+  announced.add(key);
+  console.error(message);
+}
+
+// The one reader of OG_CARD_SECRET. Read per request, trimmed the way the
+// website trims it, so a value pasted with a trailing newline signs the same
+// cards on both sides. The line it logs names the length, never the value.
 function cardSecret() {
   const raw = process.env.OG_CARD_SECRET;
   const value = typeof raw === 'string' ? raw.trim() : '';
-  return value.length >= MIN_SECRET ? value : null;
+  if (!value) return null;
+  if (value.length < MIN_SECRET) {
+    announceOnce(
+      `short-secret:${value.length}`,
+      `[og-card] OG_CARD_SECRET is ${value.length} characters. Every invite preview publishes the card's three `
+      + `fields and a MAC of them, so a secret under ${MIN_SECRET} characters can be worked out offline from one `
+      + 'shared preview, and with it anyone can sign their own text onto a Flock card. It is treated as UNSET: '
+      + 'GET /api/og/invite refuses every card and invite previews show the static banner. Generate a new value '
+      + "with node -e \"console.log(require('crypto').randomBytes(32).toString('base64url'))\" and set it here and "
+      + 'on the website.'
+    );
+    return null;
+  }
+  return value;
 }
 
 function cardSignature(secret, n, w, g) {
@@ -354,6 +388,8 @@ module.exports.__testables = {
   cardParams,
   cardTree,
   cardSignature,
+  cardSecret,
+  MIN_SECRET,
   usesSharedFont,
   loadRenderer,
   drawPng,
@@ -363,3 +399,23 @@ module.exports.__testables = {
   setDrawForTests: (fn) => { drawCard = fn || drawPng; },
   forgetCardsForTests: () => drawnCards.clear(),
 };
+
+// SAY IT AT BOOT. cardSecret() names a short secret the first time a card is
+// asked for, which can be hours after a deploy, and the deploy log is where
+// somebody looks when a variable has just changed. So production asks once at
+// require time, the way routes/checkin.js does for NFC_TAG_SECRET, and here an
+// unset secret is named too: until it is set on this service and on the
+// website, every invite preview shows the static banner instead of its card,
+// and nothing else would ever say why.
+if (process.env.NODE_ENV === 'production') {
+  const raw = process.env.OG_CARD_SECRET;
+  if (typeof raw !== 'string' || !raw.trim()) {
+    announceOnce(
+      'unset',
+      '[og-card] OG_CARD_SECRET is not set, so GET /api/og/invite refuses every card and invite previews show the '
+      + 'static banner. Set the same value here and on the website (backend/.env.example says how) to draw them.'
+    );
+  } else {
+    cardSecret();
+  }
+}
