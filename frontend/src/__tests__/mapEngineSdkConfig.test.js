@@ -263,9 +263,11 @@ describe('code review of the map work (2026-10-08)', () => {
     const src = fs.readFileSync(path.join(__dirname, '..', 'components', 'map', 'MapLibreMapView.js'), 'utf8').replace(/\r\n/g, '\n');
     const body = src.slice(src.indexOf('const rehydrateAfterStyleSwap = useCallback((map) => {')).slice(0, 2800);
     expect(body).toMatch(/tiles\/v4\/tiles\.json/);
-    expect(body).toMatch(/if \(!r\.ok \|\| mapInstanceRef\.current !== map\) return;/);
-    expect(body).toMatch(/if \(swap !== styleSwapRef\.current\) return;/);
-    expect(body).toMatch(/if \(!current \|\| \(typeof map\.isStyleLoaded === 'function' && !map\.isStyleLoaded\(\)\)\) return;/);
+    expect(body).toMatch(/if \(r\.ok && mapInstanceRef\.current === map\) recover\(\);/);
+    expect(body).toMatch(/if \(mapInstanceRef\.current !== map \|\| swap !== styleSwapRef\.current \|\| !keyRefusedRef\.current\) return;/);
+    // A style still loading is waited for, not dropped.
+    expect(body).toMatch(/map\.once\('idle', recover\);/);
+    expect(body).toMatch(/if \(!current \|\| \(typeof map\.isStyleLoaded === 'function' && !map\.isStyleLoaded\(\)\)\) \{/);
     expect(body).toMatch(/map\.reloadStyle\(current\);/);
     // Never cleared unconditionally on the swap itself.
     expect(body).not.toMatch(/if \(keyRefusedRef\.current\) \{ keyRefusedRef\.current = false;/);
@@ -290,6 +292,28 @@ describe('code review of the map work (2026-10-08)', () => {
       expect(queryByText('The map could not load. Search still works.')).toBeTruthy();
       act(() => { map.fire('idle'); });
       await waitFor(() => expect(queryByText('The map could not load. Search still works.')).toBeNull(), { timeout: 5000 });
+      unmount();
+    } finally {
+      global.fetch = realFetch;
+    }
+  });
+
+  test('an OK check while the style is still loading waits for it instead of giving up', async () => {
+    const realFetch = global.fetch;
+    global.fetch = jest.fn(async () => ({ ok: true, status: 200 }));
+    try {
+      const { map, unmount, getByRole } = await builtMap();
+      act(() => { map.fire('load'); });
+      act(() => { map.fire('error', { error: { status: 403, message: 'Forbidden' } }); });
+      map.isStyleLoaded = () => false;
+      act(() => { getByRole('button', { name: /Switch to (satellite|map) view/ }).click(); });
+      await act(async () => { map.fire('styledata'); await Promise.resolve(); await Promise.resolve(); });
+      await act(async () => { await new Promise((r) => setTimeout(r, 20)); });
+      // Still loading: nothing reloaded yet, and the attempt is waiting.
+      expect(map.baseStyles || []).toHaveLength(0);
+      map.isStyleLoaded = () => true;
+      act(() => { map.fire('idle'); });
+      await waitFor(() => expect((map.baseStyles || []).length).toBeGreaterThan(0), { timeout: 5000 });
       unmount();
     } finally {
       global.fetch = realFetch;
