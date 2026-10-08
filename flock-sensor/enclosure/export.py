@@ -37,7 +37,6 @@ PRINTED = [
     ('sensor_pill', 'flux-5-sensor_pill'),
     ('logo_inlay', 'flux-6-logo_inlay'),
     ('stand', 'flux-7-stand'),
-    ('arm_block', 'flux-8-arm_block'),
 ]
 
 # (sheet, cut sketch, engraving sketch). Every laser-cut sheet.
@@ -159,9 +158,6 @@ def main():
         'sensor_pill': cad.Rot(90, 0, 0) * front,
         'logo_inlay': cad.Rot(90, 0, 0) * cad.logo_inlay(),
         'stand': cad.stand(),
-        # Flange on the bed, plug up: the nut pocket opens downward and the
-        # 1 mm floor over it is a short bridge.
-        'arm_block': cad.Rot(90, 0, 0) * cad.arm_block(),
     }
     # The wordmark is one solid per letter; everything else must be one piece.
     pieces = {'logo_inlay': len(cad.wordmark)}
@@ -184,6 +180,9 @@ def main():
     for problem in cad.screw_report(hard):
         sys.exit(problem)
     print('stand check: the screw takes the whole nut and touches nothing past it')
+    for problem in cad.arm_report(sleeve, back):
+        sys.exit(problem)
+    print('wall check: tilted down on the arm, the box clears the arm and the wall')
 
     for name, out in PRINTED:
         path = HERE / 'stl' / f'{out}.stl'
