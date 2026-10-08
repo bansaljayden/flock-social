@@ -1,5 +1,7 @@
 'use strict';
 
+const crypto = require('crypto');
+
 // ---------------------------------------------------------------------------
 // /api/invite-preview - per-request share tags for guest invite links.
 //
@@ -132,6 +134,56 @@ const CANONICAL_HOST = 'https://www.flockcorp.com';
 // the default tags in public/index.html; keep them in sync.
 const OG_IMAGE = CANONICAL_HOST + '/og-image.png';
 const OG_IMAGE_ALT = 'Flock. Nurturing friendship, one night at a time.';
+
+// The per-flock card URL carries a signature when OG_CARD_SECRET is set. The
+// Cloudflare Pages project and the API service hold that secret; Vercel never
+// does. The backend card route (/api/og/invite) and the Pages /api/invite-og
+// proxy in front of it draw only signed cards, so nobody can get their own
+// text drawn on a Flock card, and a stream of made-up cards cannot keep the
+// one API instance busy rendering.
+//
+// The contract, the same in functions/_lib/card-signature.js and the backend
+// route: HMAC-SHA256 over n + "\n" + w + "\n" + g with the trimmed secret,
+// base64url, first 22 characters (132 bits). The token never enters it.
+//
+// A secret shorter than 32 characters counts as unset on every side. Each
+// preview publishes n, w, g and the signature, so a short secret could be
+// worked out offline from one shared link (NFC_TAG_SECRET has the same
+// floor). Unset, the query goes out exactly as it always has: the unsigned
+// URL Vercel's edge renderer (api/invite-og.js) reads. That renderer reads
+// only n, w and g, so a signed URL would draw the same card there too.
+const OG_CARD_SECRET_MIN = 32;
+
+let shortCardSecretLogged = false;
+
+// The trimmed secret, or '' when it is unset or too short. The line it logs
+// names the length and never the value.
+function cardSecret() {
+  const raw = typeof process !== 'undefined' && process.env ? process.env.OG_CARD_SECRET : undefined;
+  const secret = typeof raw === 'string' ? raw.trim() : '';
+  if (secret.length >= OG_CARD_SECRET_MIN) return secret;
+  if (secret && !shortCardSecretLogged) {
+    shortCardSecretLogged = true;
+    console.error('invite-preview: OG_CARD_SECRET is ' + secret.length + ' characters; under '
+      + OG_CARD_SECRET_MIN + ' it counts as unset, so card URLs go out unsigned.');
+  }
+  return '';
+}
+
+function cardSignature(secret, name, when, going) {
+  return crypto.createHmac('sha256', secret)
+    .update(name + '\n' + when + '\n' + going)
+    .digest('base64url')
+    .slice(0, 22);
+}
+
+// { n, w, g } plus s when the secret is set; the same object, untouched,
+// when it is not.
+function signedCardQuery(query) {
+  const secret = cardSecret();
+  if (!secret) return query;
+  return Object.assign({}, query, { s: cardSignature(secret, query.n, query.w, query.g) });
+}
 
 // Preview bots give up fast. Facebook's scraper allows a few seconds and
 // iMessage is stricter, so a slow backend must not turn into a dead preview:
@@ -363,13 +415,14 @@ function renderPage(opts) {
   const description = esc(opts.description);
   // Per-flock image when the copy carries a card, the static banner
   // otherwise. Assembled from the card's three display fields and NOTHING
-  // else; the token must never enter an image URL (rule 3 above).
+  // else, plus their signature when OG_CARD_SECRET is set (signedCardQuery
+  // above); the token must never enter an image URL (rule 3 above).
   const ogImage = opts.card
-    ? CANONICAL_HOST + '/api/invite-og?' + new URLSearchParams({
+    ? CANONICAL_HOST + '/api/invite-og?' + new URLSearchParams(signedCardQuery({
         n: opts.card.name,
         w: opts.card.when,
         g: String(opts.card.going),
-      }).toString()
+      })).toString()
     : OG_IMAGE;
   const ogImageAlt = opts.card ? opts.card.name + ' on Flock' : OG_IMAGE_ALT;
   const url = opts.token ? esc(CANONICAL_HOST + '/i/' + opts.token) : '';
@@ -605,3 +658,6 @@ module.exports.whenLabel = whenLabel;
 module.exports.renderPage = renderPage;
 module.exports.readToken = readToken;
 module.exports.TOKEN_RE = TOKEN_RE;
+module.exports.cardSignature = cardSignature;
+module.exports.signedCardQuery = signedCardQuery;
+module.exports.OG_CARD_SECRET_MIN = OG_CARD_SECRET_MIN;
