@@ -76,6 +76,7 @@ import { queueSync } from '../../services/userSettings';
 import { geolocationAvailable, getCurrentPosition, watchPosition, clearWatch } from '../../services/geolocation';
 import { crowdLabelFor } from '../../lib/crowd';
 import { loadMapEngine } from './mapEngine';
+import { buildFlockStyle, satelliteStyleUrl } from './flockStyle';
 
 // HTML-escape a user-derived string before it is interpolated into any raw
 // HTML sink (e.g. MapLibre Popup.setHTML, which assigns innerHTML). This must
@@ -101,53 +102,66 @@ const mapEase = (map, opts) => {
 };
 
 // =============================================================================
-// MapLibre GL JS — Snap Map-style vector basemap (smooth GPU-rendered)
-// Prefers MapTiler Streets v2 Dark when REACT_APP_MAPTILER_KEY is set
-// (denser POIs, road hierarchies, neighborhood labels). Falls back to
-// CARTO Dark Matter (free, no key) when the env var is missing.
+// The basemap. With a MapTiler key it is Flock's own style on Planet v4:
+// "Flock Paper" by day and "Flock Night" in dark mode (components/map/
+// flockStyle). Shops, bars, cafes and other places fade in as the map zooms to
+// street level, and Flock's own venue pins sit above all of them. With no key
+// it falls back to CARTO's openly licensed Positron and Dark Matter.
 // =============================================================================
 const MAPTILER_KEY = process.env.REACT_APP_MAPTILER_KEY;
-// basic-v2 instead of streets-v2 (2026-08-12): streets renders every POI,
-// transit stop, and neighborhood label Google-style, which buried Flock's own
-// venue markers in basemap noise. Basic keeps roads/water/districts legible
-// and lets OUR pins be the loudest thing on the map.
-const DARK_VECTOR_STYLE = MAPTILER_KEY
-  ? `https://api.maptiler.com/maps/basic-v2-dark/style.json?key=${MAPTILER_KEY}`
-  : 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
-// Light-mode basemap (2026-07 redesign): the always-dark map read as a "weird
-// overlay" inside the cream app. Basic light in light mode; positron fallback.
-const LIGHT_VECTOR_STYLE = MAPTILER_KEY
-  ? `https://api.maptiler.com/maps/basic-v2/style.json?key=${MAPTILER_KEY}`
-  : 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
+const CARTO_DARK = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
+const CARTO_LIGHT = 'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json';
+// buildFlockStyle is pure, so each theme is built once. The cached copy is the
+// reference for the POI filters (hideBasemapTwins); setStyle gets a clone, so
+// nothing MapLibre does to its input can touch the reference.
+const flockStyleCache = {};
+const flockStyleFor = (dark) => {
+  if (!MAPTILER_KEY) return null;
+  const k = dark ? 'dark' : 'light';
+  if (!flockStyleCache[k]) flockStyleCache[k] = buildFlockStyle({ dark, key: MAPTILER_KEY });
+  return flockStyleCache[k];
+};
 const isAppDark = () => document.documentElement.getAttribute('data-theme') === 'dark';
 // Pass `dark` explicitly when you have it from React state; omit it to read the
 // live <html data-theme> (used at map construction, before any effect runs).
-const ROADMAP_STYLE = (dark) => ((dark === undefined ? isAppDark() : dark) ? DARK_VECTOR_STYLE : LIGHT_VECTOR_STYLE);
-// Satellite: MapTiler "hybrid" (imagery + roads + place labels overlaid), and
-// ONLY that. Null when there is no key, which is what SATELLITE_AVAILABLE below
-// reads to hide the toggle rather than offer a button that cannot answer.
+const ROADMAP_STYLE = (dark) => {
+  const isDark = dark === undefined ? isAppDark() : dark;
+  const style = flockStyleFor(isDark);
+  if (style) return JSON.parse(JSON.stringify(style));
+  return isDark ? CARTO_DARK : CARTO_LIGHT;
+};
+// Satellite: MapTiler hybrid-v4 (imagery with roads and place labels), with a
+// dark twin, and ONLY that. Null without a key, which hides the toggle rather
+// than offering a button that cannot answer.
 //
-// WHY THERE IS NO KEYLESS FALLBACK ANY MORE. This used to fall back to raster
-// tiles from server.arcgisonline.com, requested with no API key and no Esri
-// account. Esri's basemaps are not free for commercial use, so that was a
-// licensing exposure before it was ever a billing one — and it was the only
-// outbound host in the app with that shape (which is why it needed its own CSP
-// allowlist entry). It was already dead in every build that ships: Vercel and
-// Codemagic both set REACT_APP_MAPTILER_KEY, so the MapTiler branch always won
-// and the Esri branch had not served a tile in production. What it did still do
-// was ship unlicensed-request code in a repository, where anyone who clones
-// Flock without a MapTiler key and taps the satellite toggle starts making them
-// against Esri's servers under their own IP. Removing the branch costs
-// production nothing and stops handing that to contributors.
-//
-// The roadmap basemap keeps its keyless CARTO fallback — CARTO's Dark Matter and
-// Positron are openly licensed for this, which is exactly the property Esri's
-// imagery lacks. There is no comparable free satellite source, so the honest
-// keyless answer is "no satellite", not "someone else's imagery".
-const SATELLITE_STYLE = MAPTILER_KEY
-  ? `https://api.maptiler.com/maps/hybrid/style.json?key=${MAPTILER_KEY}`
-  : null;
-const SATELLITE_AVAILABLE = !!SATELLITE_STYLE;
+// WHY THERE IS NO KEYLESS FALLBACK. This used to fall back to raster tiles from
+// server.arcgisonline.com with no key and no Esri account. Esri's basemaps are
+// not free for commercial use, and the branch shipped unlicensed-request code in
+// a repository, so it was removed. The roadmap keeps its keyless CARTO fallback
+// because CARTO's styles are openly licensed for this; there is no comparable
+// free satellite source, so the honest keyless answer is "no satellite".
+const SATELLITE_STYLE = (dark) => satelliteStyleUrl({ dark: dark === undefined ? isAppDark() : dark, key: MAPTILER_KEY });
+const SATELLITE_AVAILABLE = !!MAPTILER_KEY;
+
+// A place Flock pins already has its pin and its name label. The basemap's own
+// icon and name for the same place printed a second label right under the pin,
+// so the stock POI layers leave out any place whose name matches a venue on
+// the map (compared without case). Only Flock's style has these layers, so
+// this does nothing on CARTO or satellite.
+const hideBasemapTwins = (map, venueList, dark) => {
+  const style = flockStyleFor(dark);
+  if (!style || !map || typeof map.getLayer !== 'function') return;
+  const names = [...new Set((venueList || [])
+    .map((v) => String((v && v.name) || '').trim().toLowerCase())
+    .filter(Boolean))];
+  for (const layer of style.layers) {
+    if (!layer.id.startsWith('flock-poi-') || !map.getLayer(layer.id)) continue;
+    const filter = names.length
+      ? ['all', layer.filter, ['!', ['in', ['downcase', ['to-string', ['get', 'name']]], ['literal', names]]]]
+      : layer.filter;
+    try { map.setFilter(layer.id, filter); } catch { /* a style mid-swap; the next pass sets it */ }
+  }
+};
 
 // AI crowd heatmap paint — matches the old Google HeatmapLayer gradient/radius/opacity.
 // MapLibre heatmap-intensity: 2 ≈ Google maxIntensity: 0.5 (1/0.5 = 2× per-point contribution).
@@ -1028,7 +1042,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         map = new engine.Map({
           ...engine.options,
           container: mapRef.current,
-          style: savedMapType === 'roadmap' ? ROADMAP_STYLE() : SATELLITE_STYLE,
+          style: savedMapType === 'roadmap' ? ROADMAP_STYLE() : SATELLITE_STYLE(),
           center: [userLoc.lng, userLoc.lat],
           zoom: located ? DEFAULT_ZOOM : UNKNOWN_LOCATION_VIEW.zoom,
           minZoom: 3,
@@ -1143,37 +1157,10 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         }
       };
 
-      // Brighten native basemap POI labels (MapTiler's Streets v2 Dark dims them
-      // hard, which is why the map feels emptier than Apple's). We bump opacity
-      // and lower the minzoom so cafés/restaurants show earlier.
-      const boostNativePoiLabels = () => {
-        if (!isAppDark()) return; // pale-label boost is tuned for the dark basemap only
-        const style = map.getStyle && map.getStyle();
-        if (!style?.layers) return;
-        for (const layer of style.layers) {
-          if (layer.type !== 'symbol') continue;
-          const id = layer.id || '';
-          const sl = layer['source-layer'] || '';
-          const looksPoi = /poi|place_label/i.test(id) || /poi|place/i.test(sl);
-          if (!looksPoi) continue;
-          try {
-            map.setLayoutProperty(layer.id, 'visibility', 'visible');
-            // Lower the zoom at which labels appear (default ~14 → 12.5)
-            if (typeof layer.minzoom === 'number' && layer.minzoom > 12.5) {
-              map.setLayerZoomRange(layer.id, 12.5, layer.maxzoom ?? 24);
-            }
-            map.setPaintProperty(layer.id, 'text-opacity', 0.95);
-            map.setPaintProperty(layer.id, 'text-color', '#e2e8f0');
-            map.setPaintProperty(layer.id, 'text-halo-color', 'rgba(15,23,42,0.85)');
-            map.setPaintProperty(layer.id, 'text-halo-width', 1.4);
-          } catch { /* layer may not support a property — ignore */ }
-        }
-      };
-
       map.on('load', () => {
         addOverlayLayers(map, mapIsDarkRef.current);
         applyZoomTier();
-        boostNativePoiLabels();
+        hideBasemapTwins(map, venuesRef.current, mapIsDarkRef.current);
         mapLoadedRef.current = true;
         setMapReady(true);
       });
@@ -1195,7 +1182,6 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       // Re-apply both on style swap (roadmap ↔ satellite)
       map.on('styledata', () => {
         applyZoomTier();
-        boostNativePoiLabels();
       });
 
       map.on('zoom', applyZoomTier);
@@ -1303,6 +1289,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
      layers do not.) */
   const rehydrateAfterStyleSwap = useCallback((map) => {
     addOverlayLayers(map, mapIsDarkRef.current);
+    hideBasemapTwins(map, venuesRef.current, mapIsDarkRef.current);
     // Re-feed accuracy data
     if (userLocation) {
       const src = map.getSource('user-accuracy');
@@ -1342,7 +1329,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     // so the choice never reached the account and the map kept its old style.
     lsSet('flock_map_type', newType);
     queueSync({ mapType: newType });
-    map.setStyle(newType === 'roadmap' ? ROADMAP_STYLE(mapIsDark) : SATELLITE_STYLE);
+    map.setStyle(newType === 'roadmap' ? ROADMAP_STYLE(mapIsDark) : SATELLITE_STYLE(mapIsDark));
     map.once('styledata', () => rehydrateAfterStyleSwap(map));
   }, [mapType, mapIsDark, rehydrateAfterStyleSwap]);
 
@@ -1355,10 +1342,17 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     if (appliedDarkRef.current === null) { appliedDarkRef.current = mapIsDark; return; }
     if (appliedDarkRef.current === mapIsDark) return;
     appliedDarkRef.current = mapIsDark;
-    if (mapType !== 'roadmap') return; // satellite imagery has no light/dark twin
-    map.setStyle(ROADMAP_STYLE(mapIsDark));
+    // Satellite has a dark twin on hybrid-v4, so both basemaps follow the theme.
+    map.setStyle(mapType === 'roadmap' ? ROADMAP_STYLE(mapIsDark) : SATELLITE_STYLE(mapIsDark));
     map.once('styledata', () => rehydrateAfterStyleSwap(map));
   }, [mapIsDark, mapReady, mapType, rehydrateAfterStyleSwap]);
+
+  // ---------- the basemap leaves out its own copy of a pinned place ----------
+  useEffect(() => {
+    const map = mapInstanceRef.current;
+    if (!mapReady || !map) return;
+    hideBasemapTwins(map, venues, mapIsDark);
+  }, [venues, mapReady, mapIsDark]);
 
   // ---------- user blue dot + accuracy ring ----------
   useEffect(() => {

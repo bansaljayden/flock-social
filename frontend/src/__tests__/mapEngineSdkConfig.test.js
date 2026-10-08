@@ -144,7 +144,7 @@ describe('with a MapTiler key the view builds its map on the SDK', () => {
       session: true,
       caching: true,
       telemetry: false,
-      primaryLanguage: 'style_lock',
+      primaryLanguage: 'style',
     });
     unmount();
   });
@@ -177,8 +177,9 @@ describe('with a MapTiler key the view builds its map on the SDK', () => {
     expect(map.opts.minZoom).toBe(3);
     expect(map.opts.maxZoom).toBe(18);
     expect(map.opts.container).toBeTruthy();
-    // Still the app's own style until the Flock style replaces it.
-    expect(String(map.opts.style)).toMatch(/^https:\/\/api\.maptiler\.com\/maps\//);
+    // The Flock style, built in the app, rather than a hosted style URL.
+    expect(map.opts.style).toMatchObject({ version: 8 });
+    expect(['Flock Paper', 'Flock Night']).toContain(map.opts.style.name);
     unmount();
   });
 
