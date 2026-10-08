@@ -189,7 +189,7 @@ test('the card here is the website card: the same code and the same output', () 
     BASIC,
     { n: 'x'.repeat(400), w: 'y'.repeat(100), g: '2000' },
     { n: `Taco${bell} Night\nwith\ttabs`, w: '  Fri  ', g: '-3' },
-    { n: 'the maintainer’s birthday 🎉', w: `Sat, Oct 10 at 8:30${NARROW_NBSP}PM EDT`, g: '1' },
+    { n: 'Birthday dinner 🎉', w: `Sat, Oct 10 at 8:30${NARROW_NBSP}PM EDT`, g: '1' },
     { n: ['an', 'array'], w: { an: 'object' }, g: ['5'] },
     { n: '', w: '', g: 'abc' },
     { g: '0' }, { g: '12abc' }, { g: '999' }, { g: '1000' },
@@ -486,7 +486,7 @@ test('text the bundled font draws by itself never sends the library for a fallba
   assert.ok(!og.usesSharedFont(og.cardParams({ n: 'Taco night 🌮' })), 'an emoji went to the shared list');
   assert.ok(!og.usesSharedFont(og.cardParams({ n: '東京の夜' })), 'Japanese went to the shared list');
   assert.ok(!og.usesSharedFont(og.cardParams({ n: 'Phở night' })), 'Vietnamese went to the shared list');
-  assert.ok(og.usesSharedFont(og.cardParams({ n: 'the maintainer’s café “night” – 9 • 10…', w: BASIC.w })));
+  assert.ok(og.usesSharedFont(og.cardParams({ n: 'Our café “night” – 9 • 10…', w: BASIC.w })));
 
   const realFetch = globalThis.fetch;
   const fetched = [];
@@ -523,7 +523,7 @@ test('the card shows nothing the invite preview page does not already publish', 
       chosenVenue: 'Taqueria Sol',
       status: 'planning',
     },
-    host: 'Maya',
+    host: 'The host',
     going: 4,
     venues: [],
   };
@@ -561,7 +561,7 @@ test('the card shows nothing the invite preview page does not already publish', 
   }
   // And it draws only its three fields: not the host, the venue or the token,
   // although the preview page names the first two.
-  for (const other of ['Maya', 'Taqueria Sol', token]) {
+  for (const other of ['The host', 'Taqueria Sol', token]) {
     assert.ok(!drawn.some((t) => t.includes(other)), `the card shows "${other}"`);
   }
 });
@@ -573,7 +573,7 @@ test('a parameter beyond n, w, g and s changes nothing on the card', async () =>
       const plain = await get(base, cardPath(BASIC));
       og.forgetCardsForTests(); // drawn again from scratch, not served from memory
       const padded = await get(base, cardPath(BASIC, {
-        token: inviteToken(), host: 'Maya', venue: 'Taqueria Sol', status: 'planning',
+        token: inviteToken(), host: 'The host', venue: 'Taqueria Sol', status: 'planning',
       }));
       assert.strictEqual(plain.status, 200);
       assert.strictEqual(padded.status, 200);
