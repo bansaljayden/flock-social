@@ -308,7 +308,8 @@ The firmware and ST's licence for it are in `vl53l8cx/`.
 | SPI/I2C | GND, a short jumper to the carrier's own GND pin | **The one that gets missed.** The carrier pulls it high, which puts the sensor in SPI mode, and then nothing answers on I2C at all |
 
 Everything else (LP, INT, CS, MISO, SYNC and the two regulator outputs) stays
-unconnected. In the Cat6 run to the head, twist SDA and SCL each with a ground.
+unconnected. In the one-box build these four come from a Qwiic female-jumper
+cable, a few centimetres long, and the SPI/I2C pin takes a jumper cap.
 
 **Bring it up with `main.py --tof`,** not the service; stop the service first,
 because two programs driving one sensor restart it under each other. It opens
@@ -329,7 +330,7 @@ Three settings, all install decisions:
 
 There is no floor distance to measure. It learns the empty doorway zone by
 zone over its first twenty frames at every start, which matters on this mount:
-the head looks down at an angle, so the far zones see floor a metre further
+the box looks down at an angle, so the far zones see floor a metre further
 off than the near ones, and one threshold for the whole grid reads the near
 rows as a crowd. Something that arrives and stays, a sign or a bouncer, joins
 the background after a minute.
@@ -341,29 +342,29 @@ directions show on the panel's door screen and go nowhere else.
 **The bus runs at the Pi's default 100 kHz,** which costs about eight seconds
 of loading at each start. On a short cable,
 `dtparam=i2c_arm_baudrate=400000` in `/boot/firmware/config.txt` cuts that to
-about two. `setup.sh` does not set it, because the head sits at the end of
-three metres of Cat6, and a bus too fast for its cable fails the firmware
-checksum instead of running slowly.
+about two. `setup.sh` does not set it: the decibel meter's maker does not
+publish its top speed, and a bus too fast for one of its parts fails the
+firmware checksum instead of running slowly. Try it on the bench with both
+parts on the bus before setting it on a unit.
 
 ### The lights
 
-The base has two 3 mm LEDs in the strip under the screen, and `main.py` drives
-them once it is told which pins they are on:
+The one-box enclosure has one 3 mm LED in the strip under the screen, LINK,
+and `main.py` drives it once it is told which pin it is on:
 
-- **POWER**, green, is on for as long as the program runs.
-- **LINK**, amber, blinks while the head is talking (a sensor with a fresh
+- **LINK**, green, blinks while the sensors are answering (one with a fresh
   reading) and readings are going out (one delivered within the last two push
-  intervals). Either failing leaves it dark. A head whose cable has come out,
-  and a backend nobody can reach, both look on the screen like a quiet room;
+  intervals). Either failing leaves it dark. A sensor that has come unplugged
+  and a backend nobody can reach both look on the screen like a quiet room;
   this is the one thing that says otherwise from across the room.
+- **POWER** is supported for builds with a second light (`LED_POWER_GPIO`),
+  on for as long as the program runs. This box leaves it out: the screen being
+  on already says the power is.
 
-Each LED goes GPIO pin, then a 330 ohm resistor, then the LED's long leg; its
-short leg to ground. GPIO 23 (pin 16) and GPIO 24 (pin 18), with ground on pin
-20, are free on the Pi as this build uses it, but check them against the 4G
-HAT's pinout first (see the pin conflict below). Then, in the config:
+The LED goes GPIO pin, then a 330 ohm resistor, then the LED's long leg; its
+short leg to ground. GPIO 24 (pin 18), with ground on pin 20:
 
 ```
-LED_POWER_GPIO=23
 LED_LINK_GPIO=24
 ```
 
@@ -372,25 +373,20 @@ somebody has wired a light to it. A pin that already carries the counter's I2C,
 the microphone's SPI or the crossing sensor is refused, with a log line saying
 which.
 
-### The sensor head, designed and not built
+### The box
 
-The enclosure splits the device in two (`enclosure/README.md`). The Pi, the
-battery and the screen stay in a base unit; a wall-mounted head carries the
-Lepton, the decibel meter and the VL53L8CX time-of-flight counter. The meter
-and the counter share one I2C bus, so the head needs four signal wires and a
-USB cable, and nothing analog leaves it.
+Everything is one unit the width of its screen (`enclosure/README.md`, with a
+picture for every assembly step; `FLUX-GUIDE.md` names every part). The
+thermal camera and the doorway counter look out of a strip under the screen,
+the sound meter listens through the right side, and every sensor wire stays a
+few centimetres long. An earlier design put the sensors in a separate head on
+the wall with a 3 m cable to the base, which the counter's and the meter's
+makers both advise against for I2C, so it was folded into one box.
 
-Three things about it are still open:
-
-- **The counter is driven and has never run.** `main.py` has the VL53L8CX
-  driver (see The doorway counter, above), and the part had not arrived when
-  it was written.
-- **I2C over three metres of cable is untested.** The bus runs at the Pi's
-  default 100 kHz, which is slow enough for a few metres of twisted pair with
-  each signal paired with a ground. Try it on the bench with the real cable
-  before building around it.
-- **The head's indicator light is a hole in a panel.** `main.py` drives the
-  base's two (see The lights, above) and not that one.
+On the wall, a camera ball mount screws into the 1/4"-20 nut in the base, and
+the box tilts down at the doorway. The camera stands on its USB edge in the
+strip; if the heat view comes out upside down, `THERMAL_UPSIDE_DOWN=1` turns it
+over.
 
 ### Pi 5
 
@@ -419,48 +415,27 @@ Not verified on this unit yet: whether the screen and camera together really
 cross the cap is the first thing to watch the first time it runs on the
 battery.
 
-### The pin conflict, which is still open
+### The 40 pins, shared with the 4G board
 
-Moving the thermal camera to USB freed the I2C pins (3 and 5), and the
-doorway counter now uses them. None of that dissolved the problem, and it is
-worth being precise about what is left rather than declaring it solved.
+This used to be open, and it is settled. The Waveshare SIM7600G-H 4G HAT
+carries all forty of the Pi's pins through to its top, and by its own pinout
+uses only pins 8 and 10 (its serial line) and 31 (its power key), plus pin 7
+for flight mode if a jumper enables it. Everything this build adds plugs onto
+the pins on top of the HAT:
 
-What this code still needs on the 40-pin header:
+- **I2C1**, pins 1 (3V3), 3 (SDA), 5 (SCL) and 6 (GND), through a Qwiic SHIM,
+  to a Qwiic MultiPort that feeds the doorway counter (0x29) and the decibel
+  meter (0x48). One bus, two addresses.
+- **GPIO 24**, pin 18, and ground on pin 20, for the LINK light.
 
-- **I2C1** for the doorway counter: pins 3 and 5, plus 3V3 and a ground. Or,
-  on a unit with a GPIO crossing sensor instead, **GPIO 17** (pin 11);
-  `IR_GPIO_PIN` moves it if the HAT needs 17.
-- **SPI0 CE0** for the mic's ADC: pins 19, 21, 23, 24. Only on a unit with
-  the analog microphone; the decibel meter is on the I2C pins above.
+Over the Raspberry Pi Active Cooler the HAT stands on 17 to 18 mm standoffs and
+a long-pin stacking header: a HAT over that cooler needs at least 15 mm, and
+this one also has a regulator and its SIM holder underneath. The modem's data
+runs over USB, its micro-USB "USB" port to one of the Pi's.
 
-What the build plan puts on the same header: a SIM7600 4G HAT, with the note
-"single HAT only". A HAT in that form factor physically covers all forty pins
-whether or not it electrically uses them, so the conflict is now a **mechanical
-one, not a bus one**, and USB did not make it go away.
-
-**Not verified from here:** which pins that specific HAT actually drives. The
-Waveshare SIM7600 boards are usually a UART pair plus a power-key line and can
-alternatively be run over USB, but nobody has read the datasheet for the exact
-board against this pin list, and guessing at it is how a unit gets built twice.
-
-Four ways out, in the order they cost least. **This is a hardware call, not the
-code's**, and none of them is picked here:
-
-1. **Stacking header.** A 2x20 extra-tall header raises the HAT and leaves the
-   pins reachable underneath. Cheapest, no code change. Only works if the HAT
-   does not itself use I2C1, SPI0 or, with a beam, GPIO 17, which is the
-   unverified part above.
-2. **Put the modem on USB too.** These HATs generally expose a USB interface
-   and can run as a plain USB modem off a cable instead of on the header. The
-   header is then completely free and the pass-through question disappears.
-   Costs a USB port and its own power; the Pi 5 has four and the Lepton takes
-   one.
-3. **Cellular only on the demo unit.** Venues have wifi, and the modem is a
-   pitch feature rather than a fleet requirement. This confines the problem to
-   one box instead of solving it.
-4. **Drop the SPI microphone.** Listed for completeness and argued against
-   above: the analog mic is what backs the "no audio recording" clause. Do not
-   trade it for a USB mic to free four pins.
+On a unit with the analog microphone instead of the meter, SPI0 CE0 (pins 19,
+21, 23, 24) is free under this HAT as well; with a GPIO crossing sensor,
+GPIO 17 (pin 11) is.
 
 ---
 
@@ -951,7 +926,7 @@ Commit it and have `setup.sh` install from it.
 | Doorway counter: `--tof` says nothing answered at 0x29 | The carrier's SPI/I2C pin is not tied to GND, I2C is off, or a wire | Tie SPI/I2C to GND; `sudo raspi-config nonint do_i2c 0`; `i2cdetect -y 1` should show 29 |
 | Doorway counter: firmware checksum failed | Bytes damaged on the bus | Reseat the connections, twist SDA and SCL each with a ground, and take out any raised `i2c_arm_baudrate` |
 | Doorway counter: people walk through and nothing counts, `--tof` shows them in the grid | They cross the grid sideways as mounted | `TOF_AXIS=col` |
-| Doorway counter: arrivals show as OUT | The head faces the other way round | `TOF_FLIP_DIRECTION=1` |
+| Doorway counter: arrivals show as OUT | The box faces the other way round | `TOF_FLIP_DIRECTION=1` |
 | Door screen says counter offline on a unit with the counter fitted | It stopped answering, or is still loading its firmware (about eight seconds) | Wait ten seconds; then `journalctl -u flock-sensor` names the failure, and `--tof` walks it |
 | Headcount stuck at 0, log says the node does not exist | Camera not enumerated | `v4l2-ctl --list-devices`; check the USB cable, then set `THERMAL_DEVICE` if it came up somewhere other than `/dev/video0` |
 | Headcount stuck at 0, log says "not radiometric" | The AGC video node, or a non-radiometric Lepton | `v4l2-ctl -d /dev/videoN --list-formats` and use the node offering `Y16`. A Lepton 3.0 cannot do this at all; it has to be a 3.5 |
@@ -1136,8 +1111,8 @@ Things that are still open, so nobody has to rediscover them.
    PureThermal firmware, and more than one person in frame. The cluster
    thresholds are calibrated against exactly one body at two distances. See
    Calibration.
-11. **The sensor head is drawn and exported, and not yet printed.** Every part
-   of `enclosure/` renders as one closed solid and the print files are in
-   `enclosure/stl`; the two fit tests come first. `main.py` now drives the
-   head's VL53L8CX, and SPI down the Cat6 run has still only run on the bench.
-   See "The sensor head, designed and not built" and `enclosure/README.md`.
+11. **The one-box enclosure is drawn and exported, and not yet printed.** Every
+   part of `enclosure/` renders as one closed solid, nothing inside collides,
+   and the print files are in `enclosure/stl`; the two fit tests come first.
+   Five numbers in it are still estimates from the maker's photographs of the
+   screen, marked MEASURE. See "The box" and `enclosure/README.md`.
