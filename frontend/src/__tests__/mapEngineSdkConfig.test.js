@@ -28,6 +28,8 @@
  * HOW TO RUN
  *   cd frontend && CI=true npx react-scripts test mapEngineSdkConfig --watchAll=false
  */
+const fs = require('fs');
+const path = require('path');
 const React = require('react');
 const { render, waitFor, act } = require('@testing-library/react');
 
@@ -37,6 +39,7 @@ jest.mock('../context/ThemeContext', () => ({ useTheme: () => ({ isDark: false }
 jest.mock('../services/userSettings', () => ({ queueSync: () => {} }));
 
 const mockSdkMaps = [];
+const mockIpAnswers = [];
 jest.mock('@maptiler/sdk', () => {
   class MapStyleVariant {}
   class ReferenceMapStyle {}
@@ -81,12 +84,20 @@ jest.mock('@maptiler/sdk', () => {
   }
   class LngLatBounds { extend() { return this; } }
   class AttributionControl {}
+  const geolocation = {
+    info: jest.fn(async () => {
+      const next = mockIpAnswers.shift();
+      if (next instanceof Error) throw next;
+      return next;
+    }),
+  };
   return {
     __esModule: true,
     Map, Marker, LngLatBounds, AttributionControl, Popup: class {},
     MapStyle, MapStyleVariant, ReferenceMapStyle,
     Language: { STYLE: 'style', STYLE_LOCK: 'style_lock' },
     config,
+    geolocation,
   };
 });
 
@@ -120,6 +131,7 @@ async function builtMap() {
 
 beforeEach(() => {
   mockSdkMaps.length = 0;
+  mockIpAnswers.length = 0;
 });
 
 describe('with a MapTiler key the view builds its map on the SDK', () => {
@@ -192,6 +204,58 @@ describe('with a MapTiler key the view builds its map on the SDK', () => {
   });
 });
 
+describe('the city the connection is in', () => {
+  // A fresh module per test, so the in-memory answer of one does not leak.
+  const freshEngine = () => {
+    jest.resetModules();
+    const sdk = require('@maptiler/sdk');
+    sdk.geolocation.info.mockClear();
+    const { loadMapEngine } = require('../components/map/mapEngine');
+    return { sdk, loadMapEngine };
+  };
+
+  test('is asked once per launch and kept in memory', async () => {
+    const { sdk, loadMapEngine } = freshEngine();
+    mockIpAnswers.push({ latitude: 40.6, longitude: -75.4, city: 'Allentown' });
+    const engine = await loadMapEngine({ key: 'k' });
+    expect(await engine.locateByIp()).toEqual({ lat: 40.6, lng: -75.4 });
+    expect(await engine.locateByIp()).toEqual({ lat: 40.6, lng: -75.4 });
+    const again = await loadMapEngine({ key: 'k' });
+    expect(await again.locateByIp()).toEqual({ lat: 40.6, lng: -75.4 });
+    expect(sdk.geolocation.info).toHaveBeenCalledTimes(1);
+    expect(sdk.geolocation.info).toHaveBeenCalledWith({ apiKey: 'k' });
+  });
+
+  test('a failure answers null and is not kept, so a later map can ask again', async () => {
+    const { sdk, loadMapEngine } = freshEngine();
+    mockIpAnswers.push(new Error('403'), { latitude: 'x' }, { latitude: 41, longitude: -76 });
+    const engine = await loadMapEngine({ key: 'k' });
+    expect(await engine.locateByIp()).toBeNull();
+    expect(await engine.locateByIp()).toBeNull();
+    expect(await engine.locateByIp()).toEqual({ lat: 41, lng: -76 });
+    expect(sdk.geolocation.info).toHaveBeenCalledTimes(3);
+  });
+
+  test('is never written to storage', async () => {
+    const { loadMapEngine } = freshEngine();
+    const writes = jest.spyOn(Storage.prototype, 'setItem');
+    mockIpAnswers.push({ latitude: 40.6, longitude: -75.4 });
+    const engine = await loadMapEngine({ key: 'k' });
+    await engine.locateByIp();
+    expect(writes).not.toHaveBeenCalled();
+    writes.mockRestore();
+  });
+
+  test('the engine module has no storage, analytics or network path of its own', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'components', 'map', 'mapEngine.js'), 'utf8')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+    expect(src).not.toMatch(/localStorage|sessionStorage|indexedDB|document\.cookie/);
+    expect(src).not.toMatch(/posthog|capture\(|track\(|sendBeacon|fetch\(/i);
+    expect(src).not.toMatch(/from '\.\.\/\.\.\/services\//);
+  });
+});
+
 // Last, because jest.doMock outlives resetModules and would replace the SDK
 // fake above for every test after it.
 describe('without a key the engine is plain maplibre-gl', () => {
@@ -207,6 +271,7 @@ describe('without a key the engine is plain maplibre-gl', () => {
     expect(engine.Map).toBe(fakeMl.Map);
     expect(engine.lib).toBe(fakeMl);
     expect(engine.options).toEqual({});
+    expect(engine.locateByIp).toBeNull();
     expect(sdkLoaded).not.toHaveBeenCalled();
   });
 });
