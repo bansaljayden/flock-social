@@ -608,6 +608,9 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
   const [keyRefused, setKeyRefused] = useState(false);
   const keyRefusedRef = useRef(false);
   const keyProbeAtRef = useRef(0);
+  // Counts style swaps. A recovery reload stands down when a newer swap has
+  // started, so it never cancels a style still on its way in.
+  const styleSwapRef = useRef(0);
   /* The map surface's own height, watched because the controls on it are
      positioned from its bottom edge and this box has no floor: it is the
      flex remainder under a search bar, whatever banners are up and the
@@ -1319,9 +1322,16 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     // are kept through a style diff and not asked for again, so a swap alone
     // proves nothing. The TileJSON request is free (not billed).
     if (keyRefusedRef.current && MAPTILER_KEY) {
+      const swap = styleSwapRef.current;
       fetch(`https://api.maptiler.com/tiles/v4/tiles.json?key=${encodeURIComponent(MAPTILER_KEY)}`, { cache: 'no-store' })
         .then((r) => {
           if (!r.ok || mapInstanceRef.current !== map) return;
+          // A newer swap is loading its own style and will run its own check;
+          // reloading now would cancel it, and an unloaded style has nothing
+          // to reload.
+          if (swap !== styleSwapRef.current) return;
+          const current = map.getStyle && map.getStyle();
+          if (!current || (typeof map.isStyleLoaded === 'function' && !map.isStyleLoaded())) return;
           // The key works again, but the failed sources stay failed through a
           // diff, so the style is reloaded whole. The panel comes down only
           // once that reload settles with no new refusal (the error handler
@@ -1332,7 +1342,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
           map.once('idle', () => {
             if (!keyRefusedRef.current && mapInstanceRef.current === map) setKeyRefused(false);
           });
-          map.reloadStyle(map.getStyle());
+          map.reloadStyle(current);
         })
         .catch(() => {});
     }
@@ -1377,6 +1387,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     // so the choice never reached the account and the map kept its old style.
     lsSet('flock_map_type', newType);
     queueSync({ mapType: newType });
+    styleSwapRef.current += 1;
     map.setStyle(newType === 'roadmap' ? ROADMAP_STYLE(mapIsDark) : SATELLITE_STYLE(mapIsDark));
     map.once('styledata', () => rehydrateAfterStyleSwap(map));
   }, [mapType, mapIsDark, rehydrateAfterStyleSwap]);
@@ -1391,6 +1402,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     if (appliedDarkRef.current === mapIsDark) return;
     appliedDarkRef.current = mapIsDark;
     // Satellite has a dark twin on hybrid-v4, so both basemaps follow the theme.
+    styleSwapRef.current += 1;
     map.setStyle(mapType === 'roadmap' ? ROADMAP_STYLE(mapIsDark) : SATELLITE_STYLE(mapIsDark));
     map.once('styledata', () => rehydrateAfterStyleSwap(map));
   }, [mapIsDark, mapReady, mapType, rehydrateAfterStyleSwap]);
