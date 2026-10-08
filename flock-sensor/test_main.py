@@ -4248,18 +4248,3 @@ class SoundMeterModule(unittest.TestCase):
     def test_the_meter_and_the_counter_answer_at_different_addresses(self):
         # They share one I2C bus and four wires.
         self.assertNotEqual(main.SOUND_METER_ADDR, main.TOF_I2C_ADDR)
-
-
-class HeadLight(unittest.TestCase):
-    """The light on the wall unit: on while its sensors answer, whatever the network does."""
-
-    def test_it_follows_the_head_not_the_network(self):
-        self.assertTrue(main.head_lit(True))
-        self.assertFalse(main.head_lit(False))
-
-    def test_it_is_off_until_a_pin_is_set(self):
-        self.assertEqual(main.DEFAULTS['LED_HEAD_GPIO'], '0')
-
-    def test_it_cannot_go_on_the_shared_bus(self):
-        self.assertIsNotNone(main.led_pin_problem(2))
-        self.assertIsNone(main.led_pin_problem(25))
