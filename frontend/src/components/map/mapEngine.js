@@ -94,6 +94,14 @@ function flockMapClass(sdk) {
       if (style === null && base && typeof base.setStyle === 'function') return base.setStyle.call(this, null, options);
       return super.setStyle(style, options);
     }
+
+    // A full reload, every source fetched again, for after a refused key
+    // works again. The SDK always diffs a style object, and a diff keeps the
+    // sources that failed (and their missing TileJSON) exactly as they were.
+    reloadStyle(style) {
+      if (base && typeof base.setStyle === 'function') return base.setStyle.call(this, style, { diff: false });
+      return this;
+    }
   };
 }
 

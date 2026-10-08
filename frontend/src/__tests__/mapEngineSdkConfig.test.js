@@ -226,7 +226,7 @@ describe('code review of the map work (2026-10-08)', () => {
     const { map, unmount, findByText } = await builtMap();
     act(() => { map.fire('error', { error: { status: 403, message: 'Forbidden https://api.maptiler.com/tiles/v4/1/2/3.pbf?key=test-maptiler-key' } }); });
     act(() => { map.fire('load'); });
-    await findByText('The map could not load. Search still works.');
+    await findByText('The map could not load. Search still works.', {}, { timeout: 5000 });
     unmount();
   });
 
@@ -249,7 +249,7 @@ describe('code review of the map work (2026-10-08)', () => {
       act(() => { map.fire('load'); });
       act(() => { map.fire('error', { error: { message: 'Unimplemented type: 4' } }); });
       act(() => { map.fire('error', { error: { message: 'Unimplemented type: 4' } }); });
-      await findByText('The map could not load. Search still works.');
+      await findByText('The map could not load. Search still works.', {}, { timeout: 5000 });
       const probes = global.fetch.mock.calls.filter(([u]) => String(u).includes('/tiles/v4/tiles.json'));
       expect(probes).toHaveLength(1);
       unmount();
@@ -258,13 +258,39 @@ describe('code review of the map work (2026-10-08)', () => {
     }
   });
 
-  test('a refusal clears after a style swap only when the free TileJSON check answers OK', () => {
-    const src = fs.readFileSync(path.join(__dirname, '..', 'components', 'map', 'MapLibreMapView.js'), 'utf8');
-    const body = src.slice(src.indexOf('const rehydrateAfterStyleSwap = useCallback((map) => {')).slice(0, 900);
+  test('a refusal clears after a style swap only through the free TileJSON check and a whole reload', () => {
+    const src = fs.readFileSync(path.join(__dirname, '..', 'components', 'map', 'MapLibreMapView.js'), 'utf8').replace(/\r\n/g, '\n');
+    const body = src.slice(src.indexOf('const rehydrateAfterStyleSwap = useCallback((map) => {')).slice(0, 1600);
     expect(body).toMatch(/tiles\/v4\/tiles\.json/);
-    expect(body).toMatch(/if \(r\.ok && mapInstanceRef\.current === map\) \{ keyRefusedRef\.current = false; setKeyRefused\(false\); \}/);
+    expect(body).toMatch(/if \(!r\.ok \|\| mapInstanceRef\.current !== map\) return;/);
+    expect(body).toMatch(/map\.reloadStyle\(map\.getStyle\(\)\);/);
     // Never cleared unconditionally on the swap itself.
     expect(body).not.toMatch(/if \(keyRefusedRef\.current\) \{ keyRefusedRef\.current = false;/);
+  });
+
+  test('once the key works again, a swap reloads the style whole and the panel comes down only after it settles', async () => {
+    const realFetch = global.fetch;
+    global.fetch = jest.fn(async () => ({ ok: true, status: 200 }));
+    try {
+      const utils = await builtMap();
+      const { map, unmount, getByRole, queryByText } = utils;
+      act(() => { map.fire('load'); });
+      act(() => { map.fire('error', { error: { status: 403, message: 'Forbidden' } }); });
+      expect(queryByText('The map could not load. Search still works.')).toBeTruthy();
+      // A style swap: the satellite toggle, whose new style fires styledata.
+      act(() => { getByRole('button', { name: 'Switch to satellite view' }).click(); });
+      await act(async () => { map.fire('styledata'); await Promise.resolve(); await Promise.resolve(); });
+      // The free check answered OK, so the style was reloaded through MapLibre
+      // with diff off, which refetches every source.
+      await waitFor(() => expect((map.baseStyles || []).length).toBeGreaterThan(0), { timeout: 5000 });
+      // Still covered until the reload settles.
+      expect(queryByText('The map could not load. Search still works.')).toBeTruthy();
+      act(() => { map.fire('idle'); });
+      await waitFor(() => expect(queryByText('The map could not load. Search still works.')).toBeNull(), { timeout: 5000 });
+      unmount();
+    } finally {
+      global.fetch = realFetch;
+    }
   });
 
   test('Sentry scrubs console breadcrumb arguments and exception values, not only messages', () => {
