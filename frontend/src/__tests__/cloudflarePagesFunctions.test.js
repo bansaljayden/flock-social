@@ -40,7 +40,7 @@ const inviteOgFunction = require('../../functions/api/invite-og.js');
 const { withByteRanges } = require('../../functions/_lib/range.js');
 const { edgeCached } = require('../../functions/_lib/edge-cache.js');
 const { runNodeHandler } = require('../../functions/_lib/node-adapter.js');
-const { cardSignature, sameSignature } = require('../../functions/_lib/card-signature.js');
+const { cardSignature, sameSignature, MIN_SECRET } = require('../../functions/_lib/card-signature.js');
 const marketing = require('../../api/marketing-page.js');
 const preview = require('../../api/invite-preview.js');
 const relay = require('../../api/demo-relay.js');
@@ -450,13 +450,69 @@ describe('the share-card proxy draws only signed cards', () => {
     expect((await bytes(res)).equals(BANNER)).toBe(true);
   };
 
-  test('without OG_CARD_SECRET every card is the static banner, and nothing goes upstream', async () => {
-    for (const env of [{}, { OG_CARD_SECRET: 'short-secret' }, { OG_CARD_SECRET: ' '.repeat(20) }]) {
+  test('without an OG_CARD_SECRET of 32 characters every card is the static banner, and nothing goes upstream', async () => {
+    const quiet = jest.spyOn(console, 'error').mockImplementation(() => {});
+    for (const env of [{}, { OG_CARD_SECRET: 'short-secret' }, { OG_CARD_SECRET: ' '.repeat(40) }]) {
       const { res } = await og(cardUrl(CARD, 'A'.repeat(22)), env);
       await expectBanner(res);
       expectSecurityHeaders(res);
     }
+    // Correctly signed with a secret one character short, trimmed or not:
+    // the length alone refuses it.
+    for (const secret of ['k'.repeat(31), ' ' + 'k'.repeat(31) + '\n', crypto.randomBytes(23).toString('base64url')]) {
+      const { res } = await og(cardUrl(CARD, sign(secret.trim(), CARD)), { OG_CARD_SECRET: secret });
+      await expectBanner(res);
+    }
     expect(upstream).toEqual([]);
+    quiet.mockRestore();
+  });
+
+  test('32 characters is enough, the floor the signer and the backend use', async () => {
+    expect(MIN_SECRET).toBe(32);
+    expect(preview.OG_CARD_SECRET_MIN).toBe(MIN_SECRET);
+    const secret = 'k'.repeat(32);
+    const { res } = await og(cardUrl(CARD, sign(secret, CARD)), { OG_CARD_SECRET: secret });
+    expect(upstream.map((u) => u.url)).toEqual([rendererUrl({ ...CARD, s: sign(secret, CARD) })]);
+    expect((await bytes(res)).equals(CARD_PNG)).toBe(true);
+  });
+
+  test('a secret that is set but short is named by its length once, never by its value', () => {
+    const quiet = jest.spyOn(console, 'error').mockImplementation(() => {});
+    jest.isolateModules(() => {
+      const { cardSecret } = require('../../functions/_lib/card-signature.js');
+      expect(cardSecret({ OG_CARD_SECRET: 'k'.repeat(31) })).toBe('');
+      expect(cardSecret({ OG_CARD_SECRET: 'k'.repeat(31) })).toBe('');
+      expect(cardSecret({})).toBe('');
+      expect(cardSecret(undefined)).toBe('');
+      expect(cardSecret({ OG_CARD_SECRET: ' ' + 'k'.repeat(32) + '\n' })).toBe('k'.repeat(32));
+    });
+    expect(quiet).toHaveBeenCalledTimes(1);
+    expect(quiet.mock.calls[0].join(' ')).toContain('31 characters');
+    expect(quiet.mock.calls[0].join(' ')).not.toContain('k'.repeat(31));
+    quiet.mockRestore();
+  });
+
+  test('the signature the preview page puts in og:image is the one this Function draws', async () => {
+    // The signer (api/invite-preview.js, reading process.env) and this check
+    // (reading the Function's env) hold the same secret on Pages.
+    const secret = crypto.randomBytes(32).toString('base64url');
+    process.env.OG_CARD_SECRET = secret;
+    try {
+      const { res: page } = await run(SITE + '/i/' + GOOD_TOKEN, { headers: { 'User-Agent': UA.imessage } });
+      const html = await page.text();
+      const image = /<meta property="og:image" content="([^"]+)">/.exec(html)[1].replace(/&amp;/g, '&');
+      const card = new URL(image).searchParams;
+      expect([...card.keys()]).toEqual(['n', 'w', 'g', 's']);
+      expect(card.get('s')).toBe(sign(secret, { n: card.get('n'), w: card.get('w'), g: card.get('g') }));
+      expect(image.startsWith(SITE + '/api/invite-og?')).toBe(true);
+
+      upstream.length = 0;
+      const { res } = await og(image, { OG_CARD_SECRET: secret });
+      expect(upstream.map((u) => u.url)).toEqual([rendererUrl(Object.fromEntries(card))]);
+      expect((await bytes(res)).equals(CARD_PNG)).toBe(true);
+    } finally {
+      delete process.env.OG_CARD_SECRET;
+    }
   });
 
   test('a signed card is drawn once by the backend and then served from the edge', async () => {
@@ -568,6 +624,9 @@ describe('the share-card proxy draws only signed cards', () => {
     // A second secret is a second key, never the first one reused.
     const other = crypto.randomBytes(32).toString('base64url');
     expect(await cardSignature(other, CARD.n, CARD.w, CARD.g)).toBe(sign(other, CARD));
+    // A fixed vector, pinned for the signer in inviteShareCard.test.js too.
+    expect(await cardSignature('k'.repeat(43), 'Friday dinner', 'Fri 8:00 PM', '3 going')).toBe('vY2GCt-sA90cCCipNMEOKC');
+    expect(preview.cardSignature('k'.repeat(43), 'Friday dinner', 'Fri 8:00 PM', '3 going')).toBe('vY2GCt-sA90cCCipNMEOKC');
     expect(sameSignature('abc', 'abc')).toBe(true);
     expect(sameSignature('abc', 'abd')).toBe(false);
     expect(sameSignature('abc', 'abcd')).toBe(false);

@@ -11,14 +11,13 @@
 //   URL can still get the real card.
 // - Every input to the image is in the URL, so one copy per URL per data
 //   center is always correct; it is kept for 30 days (edge-cache.js).
-import { cardSignature, sameSignature } from '../_lib/card-signature.js';
+import { cardSecret, cardSignature, sameSignature } from '../_lib/card-signature.js';
 import { edgeCached } from '../_lib/edge-cache.js';
 
 const RENDERER = 'https://api.flockcorp.com/api/og/invite';
 // Preview bots allow a few seconds for the image; the render plus the trip to
 // the backend takes well under one.
 const RENDER_TIMEOUT_MS = 4000;
-const MIN_SECRET = 16;
 
 async function staticBanner(context) {
   const banner = await context.env.ASSETS.fetch(new URL('/og-image.png', context.request.url));
@@ -68,8 +67,10 @@ export async function onRequest(context) {
   const w = params.get('w') || '';
   const g = params.get('g') || '';
   const s = params.get('s') || '';
-  const secret = typeof env.OG_CARD_SECRET === 'string' ? env.OG_CARD_SECRET.trim() : '';
-  if (secret.length < MIN_SECRET || !sameSignature(s, await cardSignature(secret, n, w, g))) {
+  // Unset or under 32 characters (card-signature.js), every card is the
+  // banner and nothing goes upstream.
+  const secret = cardSecret(env);
+  if (!secret || !sameSignature(s, await cardSignature(secret, n, w, g))) {
     return staticBanner(context);
   }
   const query = new URLSearchParams({ n, w, g, s }).toString();

@@ -6,6 +6,28 @@ const encoder = new TextEncoder();
 let cachedSecret = null;
 let cachedKey = null;
 
+// Under this many characters (after trimming) the secret counts as unset,
+// as it does for the signer and the backend route: every preview publishes
+// n, w, g and the signature, so a short secret could be worked out offline
+// from one shared link.
+export const MIN_SECRET = 32;
+
+let shortSecretLogged = false;
+
+// The trimmed OG_CARD_SECRET from the Function's env, or '' when it is unset
+// or too short. The line it logs, once per isolate, names the length and
+// never the value.
+export function cardSecret(env) {
+  const secret = env && typeof env.OG_CARD_SECRET === 'string' ? env.OG_CARD_SECRET.trim() : '';
+  if (secret.length >= MIN_SECRET) return secret;
+  if (secret && !shortSecretLogged) {
+    shortSecretLogged = true;
+    console.error('invite-og: OG_CARD_SECRET is ' + secret.length + ' characters; under ' + MIN_SECRET
+      + ' it counts as unset, so every card is the static banner.');
+  }
+  return '';
+}
+
 function hmacKey(secret) {
   if (secret !== cachedSecret) {
     cachedSecret = secret;
