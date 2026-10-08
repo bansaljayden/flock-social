@@ -232,15 +232,18 @@ describe('CSP covers the hosts the code actually talks to', () => {
 
   it('scans the files that build map URLs, and the two that exist today are among them', () => {
     const { skipped } = mapSourceTexts();
-    // The map view and the landing demo exist; only the new style directory
-    // and the static-map builder may be absent.
-    expect(skipped.filter((p) => !['src/components/map/flockStyle', 'src/lib/staticMapUrl.js'].includes(p))).toEqual([]);
+    // Every map file exists now, the style directory and the static-map
+    // builder included, so nothing may be skipped.
+    expect(skipped).toEqual([]);
   });
 
   it('covers every map host the map files name, in the header and in the meta copy', () => {
     const hosts = new Set();
     for (const src of mapSourceTexts().texts) {
-      for (const m of src.match(/https:\/\/[a-z0-9.-]+\.(?:com|net|org|eu)/g) || []) {
+      // A credit link (href="...") is a page the person may open, not a host
+      // the map fetches from, so it needs no CSP entry.
+      const fetched = src.replace(/href="https:\/\/[^"]*"/g, '');
+      for (const m of fetched.match(/https:\/\/[a-z0-9.-]+\.(?:com|net|org|eu)/g) || []) {
         if (/maptiler|cartocdn/.test(m)) hosts.add(m);
       }
     }

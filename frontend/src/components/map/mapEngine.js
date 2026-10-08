@@ -39,7 +39,7 @@
  *   Streets instead, which answers 403 too, and its error handler then tries
  *   again. The map's own failure panel is the right answer to a dead key.
  * - Rewrite labels. It switches label languages to the browser's unless the
- *   language is STYLE or STYLE_LOCK. Labels stay as the style has them.
+ *   language is STYLE. Labels stay as the style has them.
  * - Send telemetry. The privacy policy names MapTiler as the tile host; it
  *   does not describe a metrics beacon carrying the key and session id.
  * - Print its version banner to the console on every map.
@@ -137,7 +137,7 @@ export async function loadMapEngine({ key } = {}) {
   sdk.config.session = true;
   sdk.config.caching = true;
   sdk.config.telemetry = false;
-  sdk.config.primaryLanguage = sdk.Language.STYLE_LOCK;
+  sdk.config.primaryLanguage = sdk.Language.STYLE;
   return {
     kind: 'sdk',
     lib: sdk,
