@@ -1321,7 +1321,18 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     if (keyRefusedRef.current && MAPTILER_KEY) {
       fetch(`https://api.maptiler.com/tiles/v4/tiles.json?key=${encodeURIComponent(MAPTILER_KEY)}`, { cache: 'no-store' })
         .then((r) => {
-          if (r.ok && mapInstanceRef.current === map) { keyRefusedRef.current = false; setKeyRefused(false); }
+          if (!r.ok || mapInstanceRef.current !== map) return;
+          // The key works again, but the failed sources stay failed through a
+          // diff, so the style is reloaded whole. The panel comes down only
+          // once that reload settles with no new refusal (the error handler
+          // sets the ref again if there is one).
+          keyRefusedRef.current = false;
+          if (typeof map.reloadStyle !== 'function') { setKeyRefused(false); return; }
+          map.once('styledata', () => rehydrateAfterStyleSwap(map));
+          map.once('idle', () => {
+            if (!keyRefusedRef.current && mapInstanceRef.current === map) setKeyRefused(false);
+          });
+          map.reloadStyle(map.getStyle());
         })
         .catch(() => {});
     }
