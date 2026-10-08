@@ -150,6 +150,16 @@ async function readOnce({ fetchImpl, now, key }) {
   };
 }
 
+// A held reading whose day or month has since reset counts what is no longer
+// counted, so it is read again rather than kept to the end of its hold.
+function pastReset(value, now) {
+  if (!value || value.status !== 'read') return false;
+  return [value.daily, value.monthly].some((w) => {
+    const ms = w && w.resetsAt ? Date.parse(w.resetsAt) : NaN;
+    return Number.isFinite(ms) && now.getTime() >= ms;
+  });
+}
+
 /**
  * Today's and this month's email usage against Resend's caps.
  *
@@ -164,7 +174,7 @@ async function readUsage({ fetchImpl = null, now = new Date(), force = false } =
   if (!key) return { ...unset(), cached: false };
   const age = held ? now.getTime() - held.at : Infinity;
   const ttl = held && held.value.status === 'read' ? READ_TTL_MS : FAIL_TTL_MS;
-  if (held && age < ttl && (!force || age < MIN_FORCE_MS)) {
+  if (held && age < ttl && (!force || age < MIN_FORCE_MS) && !pastReset(held.value, now)) {
     return { ...held.value, cached: true };
   }
   const value = await readOnce({ fetchImpl, now, key });

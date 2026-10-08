@@ -13,6 +13,8 @@
 //      not the answer, not a log line, not a failure's words.
 //   5. The 10-minute hold, the shorter hold on a failure, and a forced
 //      refresh that still waits a minute.
+//   6. A held reading is read again once its day or month resets, even
+//      inside the hold.
 //
 // Every fetch here is a fake passed in; nothing leaves the process.
 
@@ -201,6 +203,32 @@ test('held for 10 minutes, a failure for 5, and a forced refresh still waits a m
   assert.strictEqual(ru.READ_TTL_MS, 10 * 60000);
   assert.strictEqual(ru.FAIL_TTL_MS, 5 * 60000);
   assert.strictEqual(ru.MIN_FORCE_MS, 60000);
+});
+
+test('a held reading is read again once its day resets, even inside the hold and the forced-refresh minute', async () => {
+  // Read at 23:59:30 with today full; Resend's day resets at 23:59:59.999.
+  const before = Date.UTC(2026, 9, 8, 23, 59, 30);
+  const full = fakeFetch(() => okJson(usage({ dailyUsed: 100 })));
+  const first = await ru.readUsage({ fetchImpl: full, now: new Date(before) });
+  assert.strictEqual(first.daily.used, 100);
+  // Still inside the day: held.
+  assert.strictEqual((await ru.readUsage({ fetchImpl: full, now: new Date(before + 20000) })).cached, true);
+  // Ninety seconds later the day has reset: read again, not the full day kept.
+  const fresh = fakeFetch(() => okJson(usage({ dailyUsed: 0, daily: { resets_at: '2026-10-09T23:59:59.999Z' } })));
+  const after = await ru.readUsage({ fetchImpl: fresh, now: new Date(before + 90000) });
+  assert.strictEqual(after.cached, false);
+  assert.strictEqual(after.daily.used, 0);
+  assert.strictEqual(fresh.calls.length, 1);
+  // A forced refresh within the minute of a read past its reset is not held either.
+  ru.__test.resetCache();
+  await ru.readUsage({ fetchImpl: full, now: new Date(before) });
+  const forced = await ru.readUsage({ fetchImpl: fresh, now: new Date(Date.UTC(2026, 9, 9, 0, 0, 0)), force: true });
+  assert.strictEqual(forced.cached, false);
+  // A failure is not held past a reset it never read, so it keeps its own hold.
+  ru.__test.resetCache();
+  const bad = fakeFetch(() => new Response('', { status: 503 }));
+  await capturingLogs(() => ru.readUsage({ fetchImpl: bad, now: new Date(before) }));
+  assert.strictEqual((await ru.readUsage({ fetchImpl: bad, now: new Date(before + 90000) })).cached, true);
 });
 
 test('the meter reads RESEND_API_KEY from the environment only, and its source carries no key', () => {
