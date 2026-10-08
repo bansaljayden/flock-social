@@ -1,5 +1,12 @@
 .vercel
 
+# Cloudflare Pages local runs (`wrangler pages dev` from this directory):
+# .wrangler/ is wrangler's own state and cache, and .dev.vars (or
+# .dev.vars.<environment>) holds the local values of the Functions' secrets,
+# RELAY_SIGNING_SECRET and OG_CARD_SECRET.
+.wrangler/
+.dev.vars*
+
 # Playwright
 node_modules/
 /test-results/
