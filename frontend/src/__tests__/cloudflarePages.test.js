@@ -152,6 +152,14 @@ describe('cloudflare/ is vercel.json, value for value', () => {
     expect(pkg.scripts['build:cloudflare']).toBe('node scripts/build-cloudflare.js');
     expect(pkg.scripts.build).toBe('node scripts/build.js');
   });
+
+  test('a local wrangler run from frontend/ leaves nothing to commit', () => {
+    // `wrangler pages dev` writes its state to .wrangler/ and reads the
+    // Functions' secrets from .dev.vars, both inside frontend/ of a repo
+    // whose contents are published.
+    const ignored = read('.gitignore').split(/\r?\n/).map((line) => line.trim());
+    expect(ignored).toEqual(expect.arrayContaining(['.wrangler/', '.dev.vars*']));
+  });
 });
 
 describe('the _headers file the build writes', () => {
