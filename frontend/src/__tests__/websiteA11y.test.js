@@ -289,4 +289,17 @@ describe('source scans across the whole of src/website/', () => {
     // ...and the click handler carries the real gate the attribute used to.
     expect(src).toMatch(/if \(locating\) return;/);
   });
+
+  test('LiveDemo draws the Flock light style, with CARTO only when there is no key', () => {
+    // The landing demo is the product's own map. Pinned as source for the same
+    // reason as above: the component cannot mount under jest.
+    const src = readSource('LiveDemo.js');
+    expect(src).toMatch(/import \{ buildFlockStyle \} from '\.\.\/components\/map\/flockStyle';/);
+    expect(src).toMatch(/const MAP_STYLE = buildFlockStyle\(\{ dark: false, key: MAPTILER_KEY \}\)\s*\|\|\s*'https:\/\/basemaps\.cartocdn\.com\/gl\/positron-gl-style\/style\.json';/);
+    expect(src).toMatch(/style: MAP_STYLE,/);
+    // The retired v2 style (Planet v3 data, no POIs) must not come back, and
+    // the demo stays on plain maplibre-gl rather than the session-billed SDK.
+    expect(src).not.toMatch(/basic-v2/);
+    expect(src).not.toMatch(/@maptiler\/sdk/);
+  });
 });
