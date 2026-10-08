@@ -244,16 +244,26 @@ const RATES = {
     perCallOverFree: null,
   },
 
-  // Resend. Free tier is 3,000 emails a month and 100 a day. The Monday venue
-  // digest is one email per venue per week, so the daily cap is the binding one
-  // and it is not close to binding.
+  // Resend. The account is on the free plan: 100 emails a day and 3,000 a
+  // month. EVERY email counts against both, not just the Monday venue digest:
+  // each signup verification, password reset and notice is one. At either cap
+  // Resend sends nothing more until that window resets, so the daily 100 is
+  // the one a busy launch day hits first, and at it new accounts cannot
+  // verify until the reset. The money hub reads live usage from Resend's
+  // /usage API (services/resendUsage.js) and warns at 80% of either cap.
+  //
+  // The next plan up, as resend.com/pricing listed it on 2026-10-08: Pro at
+  // $20 a month for 50,000 emails with no daily limit, then $0.90 per 1,000
+  // past that (a 100,000 tier is $35 a month).
   resend: {
-    checked: '2026-10-03',
+    checked: '2026-10-08',
     source: 'https://resend.com/pricing',
     freePerMonth: 3000,
     freePerDay: 100,
+    nextTierName: 'Pro',
     nextTierUsd: 20.00,
     nextTierIncluded: 50000,
+    nextTierOverPer1kUsd: 0.90,
   },
 
   // MapTiler, the map on Discover, the venue dashboard and the landing demo.
@@ -981,8 +991,8 @@ const DEPENDENCIES = [
     pricing: { type: 'free', rateGroup: 'resend' },
     configuredEnv: ['RESEND_API_KEY'],
     observedLineId: 'resend',
-    usageNote: 'Only the digest is counted. Transactional mail is not in that number.',
-    costsNothingBecause: 'The free tier is 3,000 a month and 100 a day, and the digest is one email per venue per week.',
+    usageNote: 'Only the digest is counted here. Every email, transactional mail included, is read live from Resend on the money hub, against the daily and monthly caps.',
+    costsNothingBecause: 'The free plan allows 100 emails a day and 3,000 a month, and every email counts, verification and password reset included. At either cap mail stops until that window resets.',
   },
   {
     // TWO HALVES, ONE OF WHICH THIS PROCESS CANNOT SEE.
@@ -1566,7 +1576,7 @@ function buildObserved(counts = {}) {
       window: 'month to date',
       durable: true,
       freeTier: true,
-      note: 'Free tier is 3,000 a month and 100 a day. Counted from venue_digest_sends, so transactional mail (verification, password reset) is not in this number.',
+      note: 'Free plan: 100 emails a day and 3,000 a month, every email counted. This count is from venue_digest_sends, so transactional mail (verification, password reset) is not in it; the money hub reads the whole count live from Resend.',
     });
   }
 
@@ -1897,7 +1907,7 @@ function freeTierTextFor(groupName) {
     case 'ticketmaster':
       return `${n(g.freePerDay)} calls a day`;
     case 'resend':
-      return `${n(g.freePerMonth)} emails a month and ${n(g.freePerDay)} a day. The next tier is $${g.nextTierUsd.toFixed(2)} a month for ${n(g.nextTierIncluded)}`;
+      return `${n(g.freePerDay)} emails a day and ${n(g.freePerMonth)} a month, every email counted; at either cap mail stops until it resets. The next plan up is ${g.nextTierName}, $${g.nextTierUsd.toFixed(2)} a month for ${n(g.nextTierIncluded)} with no daily limit, then $${g.nextTierOverPer1kUsd.toFixed(2)} per 1,000 (resend.com/pricing, read ${g.checked}). The money hub reads live usage from Resend`;
     case 'posthog':
       return `${n(g.freeEventsPerMonth)} events a month, then $${g.perEventOverFree} each`;
     case 'sentry':

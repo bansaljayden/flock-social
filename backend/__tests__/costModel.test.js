@@ -1267,3 +1267,18 @@ test('the advisor ceiling is a 31-day month', () => {
   assert.match(src, /priceTokens\(cap, shareHigh, later\) \* CEILING_DAYS_PER_MONTH/, 'the post-promotion ceiling is a ceiling too');
   assert.ok(v.ceilingMonthlyUsdHigh === null || v.ceilingMonthlyUsdHigh > 0);
 });
+
+test('Resend: the free plan is 100 a day and 3,000 a month, the next plan up is stated with its date, and the hub reads live usage', () => {
+  const r = cm.RATES.resend;
+  assert.strictEqual(r.freePerDay, 100);
+  assert.strictEqual(r.freePerMonth, 3000);
+  // resend.com/pricing, read 2026-10-08: Pro $20 a month for 50,000, no daily
+  // limit, $0.90 per 1,000 past that.
+  assert.deepStrictEqual([r.nextTierName, r.nextTierUsd, r.nextTierIncluded, r.nextTierOverPer1kUsd], ['Pro', 20, 50000, 0.9]);
+  assert.match(r.checked, /^\d{4}-\d{2}-\d{2}$/);
+  const dep = ALL_DEPS.find((d) => d.id === 'resend');
+  assert.strictEqual(dep.freeTier, `100 emails a day and 3,000 a month, every email counted; at either cap mail stops until it resets. The next plan up is Pro, $20.00 a month for 50,000 with no daily limit, then $0.90 per 1,000 (resend.com/pricing, read ${r.checked}). The money hub reads live usage from Resend`);
+  assert.match(dep.costsNothingBecause, /100 emails a day and 3,000 a month, and every email counts/);
+  assert.match(dep.usageNote, /read live from Resend on the money hub/);
+  assert.doesNotMatch(`${dep.freeTier} ${dep.costsNothingBecause} ${dep.usageNote}`, /—/, 'no em dashes');
+});
