@@ -70,6 +70,7 @@ const costModel = require('./costModel');
 const billing = require('./proBilling');
 const besttime = require('./besttimeAccount');
 const maptilerUsage = require('./maptilerUsage');
+const resendUsage = require('./resendUsage');
 const { legacyRoostPrices } = require('./venueBilling');
 // The error-reporting step quotes the alert threshold, so it reads the numbers
 // the alert uses rather than a copy of them.
@@ -3727,6 +3728,59 @@ function judgeMaptilerUsage(usage) {
   };
 }
 
+// THE RESEND READING, JUDGED. The meter (services/resendUsage.js) says how
+// many emails today and this month have used of Resend's caps; this adds what
+// the owner acts on. At 80% of a cap the window is near it, and at 100% Resend
+// sends nothing more (signup verifications and password resets included)
+// until that window resets. The reset is said as a New York clock time, the
+// hub's own zone, rounded up to the minute: Resend's daily window ends at
+// 23:59:59.999 UTC, so mail comes back at 8:00 PM in summer, not 7:59.
+const RESEND_NEAR_SHARE = 0.8;
+const RESEND_WINDOWS = ['daily', 'monthly'];
+
+function resendResetWords(iso, now = new Date()) {
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return null;
+  const at = new Date(Math.ceil(ms / 60000) * 60000);
+  // Newer ICU puts a narrow no-break space before PM; a plain one reads the same
+  // and matches the rest of the hub's words.
+  const time = new Intl.DateTimeFormat('en-US', { timeZone: HUB_TZ, hour: 'numeric', minute: '2-digit' }).format(at).replace(/\s/g, ' ');
+  const day = ymdIn(HUB_TZ, at);
+  const today = ymdIn(HUB_TZ, now);
+  const tomorrow = ymdIn(HUB_TZ, new Date(zonedMidnightMs(today, HUB_TZ) + 36 * 3600000));
+  let when;
+  if (day === today) when = 'today';
+  else if (day === tomorrow) when = 'tomorrow';
+  else {
+    const opts = { timeZone: HUB_TZ, month: 'short', day: 'numeric' };
+    if (day.slice(0, 4) !== today.slice(0, 4)) opts.year = 'numeric';
+    when = `on ${new Intl.DateTimeFormat('en-US', opts).format(at)}`;
+  }
+  return `${time} ${when}, New York time`;
+}
+
+function judgeResendUsage(usage, now = new Date()) {
+  if (!usage || usage.status !== 'read') {
+    return { ...(usage || { status: 'failed', reason: 'The Resend meter did not answer.' }), alerts: [] };
+  }
+  const alerts = [];
+  const out = { ...usage };
+  for (const window of RESEND_WINDOWS) {
+    const w = usage[window];
+    if (!w) continue;
+    const resetsWords = w.resetsAt ? resendResetWords(w.resetsAt, now) : null;
+    out[window] = { ...w, resetsWords };
+    if (!Number.isFinite(w.limit) || w.limit <= 0 || !Number.isFinite(w.used)) continue;
+    let level = null;
+    if (w.used >= w.limit) level = 'at';
+    else if (w.used >= w.limit * RESEND_NEAR_SHARE) level = 'near';
+    if (level) {
+      alerts.push({ window, level, used: w.used, limit: w.limit, pct: Math.floor((w.used / w.limit) * 100), resetsAt: w.resetsAt, resetsWords });
+    }
+  }
+  return { ...out, alerts };
+}
+
 const RC_V2_HOWTO = 'In RevenueCat, open Project settings, then API keys, and make a secret key for API v2 with read access to charts and metrics and to project configuration. Set it on the server as REVENUECAT_V2_SECRET_API_KEY, and leave REVENUECAT_SECRET_API_KEY as it is.';
 
 // expensesRead is { ok, rows }: whether the list was read, and how many bills
@@ -4018,7 +4072,7 @@ async function buildMoneyHub({
     { force, logMessage: false }
   );
 
-  const [expensesR, reconciled, premiumR, venuesR, photoR, health, besttimeRead, modelAccuracy, modelVersion, people, modelCoverage, maptilerRead] = await Promise.all([
+  const [expensesR, reconciled, premiumR, venuesR, photoR, health, besttimeRead, modelAccuracy, modelVersion, people, modelCoverage, maptilerRead, resendRead] = await Promise.all([
     safe(() => readExpenses(db), 'expenses'),
     costModel.readReconciled(db),
     safe(async () => {
@@ -4071,8 +4125,15 @@ async function buildMoneyHub({
       console.error('[money] maptiler usage read failed:', (err && err.name) || 'unknown error');
       return { status: 'failed', reason: 'The MapTiler meter failed before it could answer.' };
     }),
+    // Held for 10 minutes inside the meter itself, and never throws by design,
+    // like the MapTiler one: the catch turns a bug into a failed read.
+    resendUsage.readUsage({ force, now }).catch((err) => {
+      console.error('[money] resend usage read failed:', (err && err.name) || 'unknown error');
+      return { status: 'failed', reason: 'The Resend meter failed before it could answer.' };
+    }),
   ]);
   const maptiler = judgeMaptilerUsage(maptilerRead);
+  const resend = judgeResendUsage(resendRead, now);
 
   const premiumIds = premiumR.ok ? premiumR.value.ids.slice(0, RC_SUBSCRIBER_CAP) : [];
   // More Pro accounts than RevenueCat is asked about means the App Store tally
@@ -4172,6 +4233,10 @@ async function buildMoneyHub({
       // the allowances and spending limit they are judged against. Counts
       // only; the token never leaves the meter.
       maptilerUsage: maptiler,
+      // Today's and this month's emails against Resend's caps (100 a day and
+      // 3,000 a month on the free plan), with an alert per window at 80% and
+      // at the cap. Counts only; the key never leaves the meter.
+      resendUsage: resend,
     },
     expenses: {
       status: expensesR.ok ? 'ok' : 'error',
@@ -4236,6 +4301,7 @@ module.exports = {
   SERVED_BAND_ACCURACY_SQL,
   buildOwnerActions,
   judgeMaptilerUsage,
+  judgeResendUsage,
   importExpenses,
   expenseFromRow,
   expenseRowFromInput,
@@ -4254,7 +4320,7 @@ module.exports = {
   EXPENSE_IMPORT_INSERT_SQL,
   HUB_TZ,
   __test: {
-    resetCache: () => { externalCache.clear(); maptilerUsage.__test.resetCache(); },
+    resetCache: () => { externalCache.clear(); maptilerUsage.__test.resetCache(); resendUsage.__test.resetCache(); },
     summarizeSubscriptions,
     summarizeBalance,
     summarizeInvoices,
