@@ -11,10 +11,13 @@
  * - every Function answer carries vercel.json's security headers, and an
  *   s-maxage answer reaches the browser the way Vercel sent it;
  * - the demo relay signs CF-Connecting-IP and nothing a caller can write;
- * - the share-card proxy sends only signed cards upstream and keeps only real
- *   ones;
+ * - the share-card proxy sends only signed cards upstream (a secret of 32
+ *   characters or more, the same signature the preview page signs with),
+ *   keeps only real ones, and lets no caller choose what is drawn;
  * - byte ranges on the background video;
- * - the edge cache keeps what Vercel's CDN kept, and nothing else.
+ * - the edge cache keeps what Vercel's CDN kept, and nothing else; a HEAD
+ *   miss fills it, and misses that arrive together share one answer;
+ * - startup warms the time zone formatters a preview uses.
  * Nothing here leaves the process: fetch is a stand-in for the backend.
  * The configuration files and the build script are in cloudflarePages.test.js.
  */
