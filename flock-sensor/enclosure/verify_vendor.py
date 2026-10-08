@@ -104,10 +104,11 @@ def main():
 
     sl = c.sleeve()
     others = {
-        'body (printed)': sl, 'glass panel': c.glass_panel(), 'sensor pill': c.sensor_pill(),
+        'body (printed)': sl, 'sensor pill': c.sensor_pill(), 'wordmark': c.logo_inlay(),
         'back sheet': c.back_sheet(), 'screen': c.screen_body(), 'battery': c.battery_body(),
         'battery plugs': c.battery_plugs(), 'sound meter': c.meter_body(), 'converter': c.converter_body(),
-        'charging port': c.charge_jack(), 'mount nut': c.mount_nut(), 'light': c.led_body(),
+        'charging port': c.charge_jack(), 'USB port': c.usb_jack(), 'Ethernet port': c.lan_jack(),
+        'mount nut': c.mount_nut(), 'light': c.led_body(),
     }
     # What a vendor part is meant to touch: the board it sits on.
     meant = {('Active Cooler', 'Pi 5 (Raspberry Pi)'), ('4G HAT (Waveshare)', 'Pi 5 (Raspberry Pi)'),
@@ -150,7 +151,7 @@ def main():
         if cone_shape is None:
             print(f'  {name}: no field-of-view solid in its file')
             continue
-        for target in ('body (printed)', 'glass panel', 'sensor pill'):
+        for target in ('body (printed)', 'sensor pill'):
             vol, box = overlap(cone_shape, others[target])
             if vol > 0.01:
                 problems += 1

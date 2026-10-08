@@ -34,6 +34,8 @@ PRINTED = [
     ('strip_fit_test', 'flux-2-strip_fit_test'),
     ('sleeve', 'flux-3-sleeve'),
     ('pi_spacer', 'flux-4-pi_spacer'),
+    ('sensor_pill', 'flux-5-sensor_pill'),
+    ('logo_inlay', 'flux-6-logo_inlay'),
 ]
 
 # (sheet, cut sketch, engraving sketch). Every laser-cut sheet.
@@ -43,7 +45,7 @@ PANELS = [
 ]
 
 TITLES = {
-    'front': 'glass panel and sensor pill (the pill nests in the window offcut), seen from the front',
+    'front': 'sensor pill, if cut from navy acrylic rather than printed, seen from the front',
     'back': 'back sheet, seen from behind',
 }
 
@@ -145,16 +147,21 @@ def main():
 
     print(f'box {cad.BOX_W:.1f} x {cad.BOX_H:.1f} x {cad.BOX_D:.1f} mm')
     sleeve = cad.sleeve()
-    front, back = cad.glass_panel(), cad.back_sheet()
+    front, back = cad.sensor_pill(), cad.back_sheet()
     made = {
         'sleeve': sleeve,
         'screen_fit_test': cad.screen_fit_test(),
         'strip_fit_test': cad.strip_fit_test(sleeve),
         'pi_spacer': cad.pi_spacer_part(),
+        # Both print face down, the face that shows on the bed.
+        'sensor_pill': cad.Rot(90, 0, 0) * front,
+        'logo_inlay': cad.Rot(90, 0, 0) * cad.logo_inlay(),
     }
-    for name, part in list(made.items()) + [('front sheet', front), ('back sheet', back)]:
-        if len(part.solids()) != 1 or not part.is_valid:
-            sys.exit(f'{name} is not one valid solid ({len(part.solids())} solids)')
+    # The wordmark is one solid per letter; everything else must be one piece.
+    pieces = {'logo_inlay': len(cad.wordmark)}
+    for name, part in list(made.items()) + [('sensor pill', front), ('back sheet', back)]:
+        if len(part.solids()) != pieces.get(name, 1) or not part.is_valid:
+            sys.exit(f'{name} is not {pieces.get(name, 1)} valid solid(s) ({len(part.solids())} solids)')
 
     found = cad.clash_report(sleeve, front, back)
     if found:
@@ -184,8 +191,7 @@ def main():
 
     # Each made part on its own first: once a part is inside the assembly it
     # belongs to it, and OpenCascade will not write it out alone.
-    for name, part in (('sleeve', sleeve), ('glass-panel', front), ('sensor-pill', cad.sensor_pill()),
-                       ('back-sheet', back)):
+    for name, part in (('sleeve', sleeve), ('sensor-pill', front), ('back-sheet', back)):
         export_step(part, HERE / 'step' / f'flux-{name}.step', timestamp=STEP_STAMP)
     whole = cad.assembly(sleeve, front, back)
     export_step(whole, HERE / 'step' / 'flux-assembly.step', timestamp=STEP_STAMP)
@@ -199,8 +205,7 @@ def main():
     size = f'{cad.BOX_W:g} &times; {cad.BOX_H:g} &times; {cad.BOX_D:g} mm'
     page = re.sub(r'<p class="dims">[^<]*</p>', f'<p class="dims">{size}, one box</p>', viewer.read_text(encoding='utf-8'))
     page = re.sub(r'const BOX = \{[^}]*\};', f'const BOX = {{ w: {cad.BOX_W:g}, h: {cad.BOX_H:g}, d: {cad.BOX_D:g} }};', page)
-    viewer.write_text(page, encoding='utf-8', newline='
-')
+    viewer.write_text(page, encoding='utf-8', newline='\n')
 
     if not args.no_preview:
         r = subprocess.run(['node', str(HERE / 'viewer' / 'render.cjs')], cwd=HERE)
