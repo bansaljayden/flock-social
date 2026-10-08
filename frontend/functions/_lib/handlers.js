@@ -10,6 +10,17 @@ import appSiteAssociationHandler from '../../api/apple-app-site-association.js';
 import { runNodeHandler } from './node-adapter.js';
 import { edgeCached } from './edge-cache.js';
 
+// The first Intl.DateTimeFormat for a named time zone loads ICU's zone and
+// locale data: 11 to 13 ms of CPU in a fresh Node process, where every later
+// one takes about 0.1 ms. The Free plan allows 10 ms of CPU per request, and
+// passThroughOnException does not catch a request that runs over it, so a
+// cold preview could answer a bot with Cloudflare's error page: the cached
+// failure invite-preview.js's rule 1 exists to prevent. So the handler's own
+// whenLabel formats one time here, in the top level, which runs when the
+// isolate starts and counts against the startup limit rather than a
+// request's CPU, and every preview finds its formatters warm.
+invitePreviewHandler.whenLabel(new Date(0).toISOString());
+
 function mergedQuery(first, searchParams) {
   const query = {};
   const add = (key, value) => {
