@@ -555,7 +555,11 @@ function paintCrowdBuildings(map, venues, filterCategory, tinted) {
   }
 }
 
-const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, activeVenue, setActiveVenue, getCategoryColor, pickingVenueForCreate, setPickingVenueForCreate, setSelectedVenueForCreate, setCurrentScreen, openVenueDetail, flockMemberLocations, calcDistance, colorsDark, colorsLight, resolveVenuePhoto, NO_LOCATION_VIEW, ownerPlaceId = null, initialCenter = null, followUser = true, locationAllowed = true, mapVisible = true }) => {
+// How long a map with no location waits for the connection's city before it
+// opens at the default view instead.
+const IP_VIEW_WAIT_MS = 1500;
+
+const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, activeVenue, setActiveVenue, getCategoryColor, pickingVenueForCreate, setPickingVenueForCreate, setSelectedVenueForCreate, setCurrentScreen, openVenueDetail, flockMemberLocations, calcDistance, colorsDark, colorsLight, resolveVenuePhoto, NO_LOCATION_VIEW, ownerPlaceId = null, initialCenter = null, followUser = true, locationAllowed = true, mapVisible = true, ipStartView = false, onIpStartView = null }) => {
   const mapRef = useRef(null);
   const mapRootRef = useRef(null);   // outermost node — see the attribution note in init
   const mapInstanceRef = useRef(null);
@@ -673,7 +677,11 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
   // does not pretend to know where you are. Philadelphia because that is where
   // the crowd corpus actually has coverage, so the pins carry live scores
   // instead of the "Usually busy" hedge.
-  const UNKNOWN_LOCATION_VIEW = NO_LOCATION_VIEW;
+  //
+  // UNKNOWN_LOCATION_VIEW itself is declared in the init effect below, where
+  // the map is built and the only place it is read: a caller that opts in
+  // (ipStartView) can have the connection's city stand in for Philadelphia,
+  // under every one of the rules above.
 
   // SVG fallback pin (no photo). Inverted on the dark basemap: a navy pin body
   // on dark tiles was a hole in the map.
@@ -973,6 +981,29 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         ? (initialCenter ? { lat: initialCenter.lat, lng: initialCenter.lng } : null)
         : (known || await getUserLocation());
       if (cancelled) return;
+      // WITH NO LOCATION, THE CITY THE CONNECTION IS IN, when the caller asks
+      // for it (ipStartView). One request to MapTiler's IP geolocation, held
+      // in memory for the launch, never stored and never sent anywhere from
+      // here; it is not GPS and raises no prompt. Like UNKNOWN_LOCATION_VIEW
+      // it is a place to look, not a claim about the person: no blue dot, no
+      // accuracy ring, no distance. A slow or failed answer leaves the default
+      // view. The caller is told where the map opened (onIpStartView),
+      // because a map opened on one city over venues loaded around another
+      // is the "second city" the note at the top of this file warns about.
+      let ipView = null;
+      if (!located && ipStartView && engine.locateByIp) {
+        ipView = await Promise.race([
+          engine.locateByIp(),
+          new Promise((resolve) => { setTimeout(() => resolve(null), IP_VIEW_WAIT_MS); }),
+        ]);
+        if (cancelled) return;
+      }
+      // Where the map opens when nothing knows where the user is (see the
+      // note above buildPinSvg): the connection's city, one zoom closer, when
+      // there is an answer, and the shared fallback city otherwise.
+      const UNKNOWN_LOCATION_VIEW = ipView
+        ? { lat: ipView.lat, lng: ipView.lng, zoom: NO_LOCATION_VIEW.zoom + 1 }
+        : NO_LOCATION_VIEW;
       const userLoc = located || UNKNOWN_LOCATION_VIEW;
       // Same expression as the mapType useState above, and it has to stay the
       // same one: a stored 'hybrid' from a build that HAD a MapTiler key must
@@ -1021,6 +1052,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         if (!cancelled) setMapFailed(true);
         return;
       }
+      if (ipView && typeof onIpStartView === 'function') onIpStartView(ipView);
       // Without a listener, MapLibre surfaces style/tile load errors (bad key,
       // network) rather than failing quietly. Swallow them so a broken basemap
       // leaves Discover usable.

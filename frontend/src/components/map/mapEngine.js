@@ -90,17 +90,44 @@ function flockMapClass(sdk) {
   };
 }
 
+/* WHERE THE CONNECTION SAYS THE DEVICE IS, for a map that has no location.
+   MapTiler's IP geolocation: one request, city level. The answer is kept in
+   this module's memory for the rest of the launch, so a remount does not ask
+   again, and it is never written to storage or sent anywhere else. MapTiler
+   already sees the IP through every tile it serves. A failure is not kept, so
+   one bad network moment does not decide the whole launch. */
+let ipViewPromise = null;
+
+function locateByIp(sdk, key) {
+  if (!ipViewPromise) {
+    ipViewPromise = Promise.resolve()
+      .then(() => sdk.geolocation.info({ apiKey: key }))
+      .then((r) => (
+        r && Number.isFinite(r.latitude) && Number.isFinite(r.longitude)
+          ? { lat: r.latitude, lng: r.longitude }
+          : null
+      ))
+      .catch(() => null)
+      .then((view) => {
+        if (!view) ipViewPromise = null;
+        return view;
+      });
+  }
+  return ipViewPromise;
+}
+
 /**
  * Resolves the engine the view builds its map with:
  *   kind        'sdk' or 'maplibre'
  *   lib         Marker, Popup, LngLatBounds and AttributionControl live here
  *   Map         the class to construct
  *   options     constructor options this engine adds to the view's own
+ *   locateByIp  () => Promise<{ lat, lng } | null>, or null on the keyless path
  */
 export async function loadMapEngine({ key } = {}) {
   if (!key) {
     const lib = (await import('maplibre-gl')).default;
-    return { kind: 'maplibre', lib, Map: lib.Map, options: {} };
+    return { kind: 'maplibre', lib, Map: lib.Map, options: {}, locateByIp: null };
   }
   const sdk = await import('@maptiler/sdk');
   // All of this is read when a Map is constructed, so it is set first.
@@ -116,5 +143,6 @@ export async function loadMapEngine({ key } = {}) {
     lib: sdk,
     Map: flockMapClass(sdk),
     options: SDK_MAP_OPTIONS,
+    locateByIp: () => locateByIp(sdk, key),
   };
 }
