@@ -11,6 +11,8 @@
 // - no top-level 404.html (with one, Pages stops answering unknown paths with
 //   index.html, which is the SPA fallback vercel.json's last rewrite did);
 // - no source maps on a Pages build (they would publish the app's source).
+//   scripts/build.js already turns them off when CF_PAGES is set, so this is
+//   the backstop for an explicit GENERATE_SOURCEMAP=true.
 //
 // The three Pages files are kept out of public/ on purpose: CRA copies
 // public/ into every build, and Vercel would serve them as plain files.
@@ -125,7 +127,7 @@ function finishOutput(out) {
   }
   const maps = filesUnder(out).filter((file) => file.endsWith('.map'));
   if (process.env.CF_PAGES && maps.length) {
-    throw new Error(maps.length + ' source maps in the output; set GENERATE_SOURCEMAP=false or check scripts/build.js');
+    throw new Error(maps.length + ' source maps in the output; leave GENERATE_SOURCEMAP unset (or false) on a Pages build');
   }
 }
 
