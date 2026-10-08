@@ -65,7 +65,7 @@ try:
 except ImportError:  # pragma: no cover
     fcntl = None
 
-VERSION = '1.16.2'
+VERSION = '1.17.0'
 
 # ---------------------------------------------------------------------------
 # Config
@@ -103,6 +103,10 @@ DEFAULTS = {
     # Which doorway counter. auto: the VL53L8CX if one answers on I2C, else
     # the GPIO pin below. tof or beam forces one; off counts no doorway.
     'DOOR_SENSOR': 'auto',
+    # Which sound sensor. auto: the PCB Artists decibel meter if one answers on
+    # I2C at 0x48, else the MAX4466 microphone through the MCP3008. meter or mic
+    # forces one; off reports no loudness.
+    'NOISE_SENSOR': 'auto',
     'TOF_I2C_BUS': '1',
     'TOF_HZ': '15',
     # Which way people cross the counter's grid as mounted, and whether its
@@ -307,6 +311,11 @@ if DOOR_SENSOR not in ('auto', 'tof', 'beam', 'off'):
     print(f'Config DOOR_SENSOR={DOOR_SENSOR!r} is not auto, tof, beam or off; using auto',
           file=sys.stderr)
     DOOR_SENSOR = 'auto'
+NOISE_SENSOR = (CONFIG.get('NOISE_SENSOR') or 'auto').strip().lower()
+if NOISE_SENSOR not in ('auto', 'meter', 'mic', 'off'):
+    print(f'Config NOISE_SENSOR={NOISE_SENSOR!r} is not auto, meter, mic or off; using auto',
+          file=sys.stderr)
+    NOISE_SENSOR = 'auto'
 TOF_I2C_BUS = _cfg_number('TOF_I2C_BUS', int, 0, 20, 1)
 TOF_I2C_ADDR = 0x29   # ST's 0x52, as the 7-bit address Linux wants
 # 15 Hz is the VL53L8CX's ceiling at 8x8.
@@ -368,6 +377,10 @@ NOISE_REF_COUNTS = _cfg_number('NOISE_REF_COUNTS', float, 1e-6, 1024.0, 1.0)
 NOISE_DB_OFFSET = _cfg_number('NOISE_DB_OFFSET', float, -100.0, 200.0, 50.0)
 NOISE_SCALE = _cfg_number('NOISE_SCALE', float, 0.1, 10.0, 1.0)
 NOISE_SAMPLE_GAP_US = _cfg_number('NOISE_SAMPLE_GAP_US', float, 0.0, 5000.0, 1000.0)
+# True once the loudness comes from a sound meter that measures decibels
+# itself. Then the level the sensor publishes is A-weighted dB SPL, needs no
+# calibration, and the panel prints it as dB. Set by main() and the tools.
+NOISE_IS_SPL = False
 
 
 def _set_outside_defaults(key):
@@ -2365,28 +2378,39 @@ def noise_loop():
                                   'the converter is not running, so the noise level is '
                                   'being withheld. Run main.py --selftest.')
                 else:
-                    db = compute_noise_db(remove_dc(samples))
-                    clipped = burst_clipped(samples)
-                    with _lock:
-                        _state['noise_window'].append(db)
-                        _state['noise_history'].append(db)
-                        _state['noise_db'] = trimmed_mean(list(_state['noise_window']))
-                        _state['noise_at'] = time.monotonic()
-                        if clipped:
-                            _state['noise_clipped_at'] = _state['noise_at']
-                        history = list(_state['noise_history'])
-                        people = (int(_state['thermal']) if _state['thermal_at'] is not None
-                                  and time.monotonic() - _state['thermal_at'] <= THERMAL_STALE_AFTER
-                                  else None)
-                        average = _state['noise_db']
-                    insight = noise_insight(history, people, display_decibels(average))
-                    with _lock:
-                        _state['noise_insight'] = insight
-                    if insight['deaf']:
-                        log_throttled('noise_deaf', logging.WARNING, insight['deaf'])
+                    publish_noise_level(compute_noise_db(remove_dc(samples)),
+                                        clipped=burst_clipped(samples))
         except Exception as e:
             log_throttled('noise_read', logging.WARNING, f'Noise read error: {e}')
         _stop.wait(max(0.05, NOISE_BURST_EVERY - (time.monotonic() - started)))
+
+
+def publish_noise_level(db, clipped=False):
+    """One loudness reading into the minute window, the panel and the insight.
+
+    Shared by the microphone loop and the sound meter loop, so the published
+    figure means the same thing whichever sensor made it.
+    """
+    with _lock:
+        _state['noise_window'].append(db)
+        _state['noise_history'].append(db)
+        _state['noise_db'] = trimmed_mean(list(_state['noise_window']))
+        _state['noise_at'] = time.monotonic()
+        if clipped:
+            _state['noise_clipped_at'] = _state['noise_at']
+        history = list(_state['noise_history'])
+        people = (int(_state['thermal']) if _state['thermal_at'] is not None
+                  and time.monotonic() - _state['thermal_at'] <= THERMAL_STALE_AFTER
+                  else None)
+        average = _state['noise_db']
+    # A meter's readings are decibels already; the level scale's stretch is
+    # for the microphone and must not be divided out of them.
+    insight = noise_insight(history, people, display_decibels(average),
+                            scale=1.0 if NOISE_IS_SPL else None)
+    with _lock:
+        _state['noise_insight'] = insight
+    if insight['deaf']:
+        log_throttled('noise_deaf', logging.WARNING, insight['deaf'])
 
 
 # ---------------------------------------------------------------------------
@@ -3961,6 +3985,144 @@ def tof_available():
         bus.close()
 
 
+class I2CBus8(I2CBus):
+    """A device with 8-bit register addresses, on the same plumbing as I2CBus."""
+
+    def write(self, reg, payload):
+        buf = self._buffer(bytes([reg & 0xFF]) + bytes(payload))
+        self._transfer([_I2cMsg(self.address, 0, len(buf), buf)])
+
+    def read(self, reg, n):
+        head = self._buffer(bytes([reg & 0xFF]))
+        body = (ctypes.c_uint8 * n)()
+        self._transfer([_I2cMsg(self.address, 0, 1, head),
+                        _I2cMsg(self.address, _I2C_M_RD, n, body)])
+        return bytes(body)
+
+
+# The PCB Artists I2C decibel meter. It carries its own MEMS microphone and its
+# own processor, which turns sound into an A-weighted, time-averaged level in
+# dB SPL on the module; the Pi only ever reads that number. So the loudness is
+# real decibels with no calibration, and no audio ever reaches the Pi, which
+# is a stronger version of the privacy promise than the analog path made.
+# Register map from PCB Artists' documentation (VERSION 0x00, dBA 0x0A).
+SOUND_METER_ADDR = 0x48
+SOUND_METER_REG_VERSION = 0x00
+SOUND_METER_REG_DBA = 0x0A
+# Above this a reading is a fault, not a room: the module's range ends at 120.
+SOUND_METER_MAX_DB = 130.0
+
+
+class SoundMeter:
+    def __init__(self, bus):
+        self.bus = bus
+
+    def version(self):
+        return self.bus.read(SOUND_METER_REG_VERSION, 1)[0]
+
+    def read_dba(self):
+        """The module's current A-weighted level in dB, or None if it has none.
+
+        It reads 0 for the first averaging period after power-up, which is not
+        a silent room; nothing is published until a real number arrives.
+        """
+        return sound_meter_value(self.bus.read(SOUND_METER_REG_DBA, 1)[0])
+
+
+def sound_meter_value(raw):
+    """The register byte as a level in dB, or None when it is not one."""
+    if raw <= 0 or raw > SOUND_METER_MAX_DB:
+        return None
+    return float(raw)
+
+
+def sound_meter_available():
+    """Whether a decibel meter answers on the configured bus."""
+    try:
+        bus = I2CBus8(TOF_I2C_BUS, SOUND_METER_ADDR)
+    except OSError:
+        return False
+    try:
+        SoundMeter(bus).version()
+        return True
+    except Exception:
+        return False
+    finally:
+        bus.close()
+
+
+def noise_plan(setting, meter_found):
+    """Which sound sensor to run: 'meter', 'mic' or 'off'. Pure, so tested."""
+    if setting == 'off':
+        return 'off'
+    if setting == 'meter' or (setting == 'auto' and meter_found):
+        return 'meter'
+    return 'mic'
+
+
+def meter_loop():
+    """Publish the decibel meter's level twice a second, forever.
+
+    Retries with backoff the same way the doorway counter does, so a module
+    whose cable is reseated comes back without a restart.
+    """
+    backoff = 5.0
+    while not _stop.is_set():
+        bus = None
+        try:
+            bus = I2CBus8(TOF_I2C_BUS, SOUND_METER_ADDR)
+            meter = SoundMeter(bus)
+            meter.version()
+            backoff = 5.0
+            while not _stop.is_set():
+                started = time.monotonic()
+                db = meter.read_dba()
+                if db is not None:
+                    publish_noise_level(db)
+                _stop.wait(max(0.05, NOISE_BURST_EVERY - (time.monotonic() - started)))
+        except Exception as e:
+            log_throttled('meter_loop', logging.ERROR,
+                          f'Sound meter stopped ({e}); retrying in {backoff:.0f}s')
+        finally:
+            if bus is not None:
+                bus.close()
+        _stop.wait(backoff)
+        backoff = min(backoff * 2, 120.0)
+
+
+def listen_meter(seconds=None, write=False):
+    """--listen on a unit with a decibel meter: its live reading, nothing to set."""
+    print(f'flock-sensor {VERSION} sound level, from the decibel meter')
+    if write:
+        print('  This unit measures decibels on the meter itself, so there is')
+        print('  nothing to calibrate and nothing was written.')
+        return 0
+    print('  A-weighted dB SPL, about one-second average. Ctrl+C to stop.')
+    print('')
+    try:
+        bus = I2CBus8(TOF_I2C_BUS, SOUND_METER_ADDR)
+    except OSError as e:
+        print(f'  Cannot open /dev/i2c-{TOF_I2C_BUS}: {e}')
+        return 1
+    meter = SoundMeter(bus)
+    deadline = None if seconds is None else time.monotonic() + seconds
+    try:
+        while deadline is None or time.monotonic() < deadline:
+            db = meter.read_dba()
+            if db is None:
+                print('  (warming up)')
+            else:
+                word = noise_band(db)[0]
+                filled = max(0, min(32, int(db / 120.0 * 32)))
+                print(f'  {db:5.0f} dB  {word:<8} [' + '#' * filled + '.' * (32 - filled) + ']')
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        print('')
+    finally:
+        bus.close()
+    return 0
+
+
 def tof_loop():
     """Count people through the doorway from the VL53L8CX, forever.
 
@@ -4471,6 +4633,8 @@ def display_decibels(level):
     printing "dB" beside an unanchored index would be a claim nothing supports.
     Inverts compute_noise_db exactly, then asks spl_from_counts.
     """
+    if NOISE_IS_SPL:
+        return level if level > 0 else None
     if NOISE_SPL_ANCHOR_COUNTS <= 0 or NOISE_SPL_ANCHOR_DB <= 0 or level <= 0:
         return None
     rms = NOISE_REF_COUNTS * 10 ** ((level - NOISE_DB_OFFSET) / (20.0 * NOISE_SCALE))
@@ -4490,6 +4654,8 @@ def noise_reading(level):
     spl = display_decibels(level)
     if spl is None:
         return f'level {int(level)}', 'relative level, not yet calibrated', level
+    if NOISE_IS_SPL:
+        return f'{int(round(spl))} dB', 'measured sound level', spl
     return f'{int(round(spl))} dB', 'estimated sound level', spl
 
 
@@ -5678,6 +5844,10 @@ def anchor(meter_db, seconds=None, write=False):
         print(f'{meter_db} dB is outside what a phone meter reads in a room. '
               f'Pass the number the meter showed, between 30 and 120.')
         return 1
+    if NOISE_SENSOR in ('auto', 'meter') and sound_meter_available():
+        print('This unit has a decibel meter, which measures real dB itself.')
+        print('There is nothing to anchor, and nothing was written.')
+        return 0
     if not init_noise():
         print('MCP3008 not detected. Check SPI is enabled and the wiring.')
         return 1
@@ -5851,6 +6021,8 @@ def listen(seconds=None, write=False):
     to a sound level meter, so the number is honest about loud against quiet and
     means nothing in absolute terms. See README.md, Calibration.
     """
+    if NOISE_SENSOR in ('auto', 'meter') and sound_meter_available():
+        return listen_meter(seconds, write)
     if not init_noise():
         print('MCP3008 not detected. Check SPI is enabled and the wiring.')
         return 1
@@ -6212,10 +6384,27 @@ def selftest():
                       f'{took:.0f} ms a frame')
                 print(f'                     named: {named}')
         _thermal_camera.close()
+    # The decibel meter, when one is fitted, replaces the microphone outright.
+    if NOISE_SENSOR in ('auto', 'meter') and sound_meter_available():
+        try:
+            mbus = I2CBus8(TOF_I2C_BUS, SOUND_METER_ADDR)
+            try:
+                meter = SoundMeter(mbus)
+                ver, db = meter.version(), meter.read_dba()
+            finally:
+                mbus.close()
+            now = f'{db:.0f} dB now' if db is not None else 'warming up'
+            print(f'    sound meter    : ok  (I2C 0x{SOUND_METER_ADDR:02X}, version '
+                  f'0x{ver:02X}, {now})')
+        except Exception as e:
+            print(f'    sound meter    : FOUND BUT NOT READING: {e}')
+    elif NOISE_SENSOR == 'meter':
+        print('    sound meter    : NOT DETECTED on I2C (reports 0). Check its four wires')
+        print('                     to SDA, SCL, 3V3 and GND.')
     # Opening the SPI bus proves a bus, not a converter. This line used to
     # print ok on the strength of that alone, and did so for an entire evening
     # on a unit whose ADC was returning 1023 on every channel.
-    if not init_noise():
+    elif not init_noise():
         print('    noise mic      : NOT DETECTED (reports 0)')
     else:
         mic = sample_adc(NOISE_CHANNEL)
@@ -6341,9 +6530,18 @@ def main():
     with _lock:
         ir_ok = door == 'tof' or _state['door_source'] == 'beam'
     thermal_ok = init_thermal()
-    noise_ok = init_noise()
+    global NOISE_IS_SPL
+    sound = noise_plan(NOISE_SENSOR, NOISE_SENSOR in ('auto', 'meter')
+                       and sound_meter_available())
+    if sound == 'meter':
+        NOISE_IS_SPL = True
+        noise_ok = True
+    elif sound == 'mic':
+        noise_ok = init_noise()
+    else:
+        noise_ok = False
     logger.info(f'Init summary: door={door if ir_ok else "none"} '
-                f'thermal={thermal_ok} noise={noise_ok}')
+                f'thermal={thermal_ok} sound={sound if noise_ok else "none"}')
     if not (ir_ok or thermal_ok or noise_ok):
         logger.error('No sensor initialized. The device will report zeros but stay '
                      'online so it can be diagnosed remotely.')
@@ -6353,7 +6551,9 @@ def main():
     # boot is picked up later rather than written off for the life of the
     # process. thermal_ok above now only decides what the log line says.
     threading.Thread(target=thermal_loop, daemon=True, name='thermal').start()
-    if noise_ok:
+    if sound == 'meter':
+        threading.Thread(target=meter_loop, daemon=True, name='meter').start()
+    elif noise_ok:
         threading.Thread(target=noise_loop, daemon=True, name='noise').start()
 
     push_thread = threading.Thread(target=push_loop, daemon=True, name='push')
