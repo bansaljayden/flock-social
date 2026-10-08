@@ -97,9 +97,10 @@
   // How each part looks, and how far it moves when the box is pulled apart
   // (in the model's millimetres: +y is toward the back).
   const LOOK = {
-    'Sleeve (printed)':          { color: 0x2a2a2f, rough: 0.78, apart: [0, 0, 0] },
-    'Front sheet (acrylic)':     { color: 0x0b0b0d, rough: 0.06, coat: 1, apart: [0, -70, 0] },
-    'Front engraving':           { color: 0xd4d3d8, rough: 0.9, apart: [0, -70, 0] },
+    'Sleeve (printed)':          { color: 0xdedad1, rough: 0.85, apart: [0, 0, 0] },
+    'Glass panel (acrylic)':     { color: 0x0b0b0d, rough: 0.05, coat: 1, apart: [0, -70, 0] },
+    'Sensor window (acrylic)':   { color: 0x0b0b0d, rough: 0.05, coat: 1, apart: [0, -50, 0] },
+    'Panel engraving':           { color: 0xb9b8bf, rough: 0.9, apart: [0, -70, 0] },
     'Back sheet (acrylic)':      { color: 0x0b0b0d, rough: 0.06, coat: 1, apart: [0, 90, 0] },
     'Back engraving':            { color: 0xd4d3d8, rough: 0.9, apart: [0, 90, 0] },
     '7 inch touchscreen':        { color: 0x141b26, rough: 0.05, coat: 1, apart: [0, -25, 0] },
@@ -128,9 +129,10 @@
     { text: '3. Plug the touch cable and video ribbon into the screen, then drop it in glass first. Four M3 screws through its ears.',
       show: ['Sleeve (printed)', 'Brass M3 inserts (8)', 'PureThermal 3 + Lepton 3.5', 'VL53L8CX door counter', 'LINK light', '7 inch touchscreen'],
       lift: { '7 inch touchscreen': [0, 45, 0] }, view: [0.7, 1.1, 0.75] },
-    { text: '4. VHB tape on the sleeve’s front rim and across the strip. Line up the front sheet and press for thirty seconds.',
-      show: ['Sleeve (printed)', '7 inch touchscreen', 'Front sheet (acrylic)', 'Front engraving'],
-      lift: { 'Front sheet (acrylic)': [0, -45, 0], 'Front engraving': [0, -45, 0] }, view: [0.75, -1.1, 0.5] },
+    { text: '4. VHB tape on the ledge round the screen and in the pill’s pocket. Drop the glass panel and the sensor pill into their pockets and press for thirty seconds.',
+      show: ['Sleeve (printed)', '7 inch touchscreen', 'Glass panel (acrylic)', 'Panel engraving', 'Sensor window (acrylic)',
+             'PureThermal 3 + Lepton 3.5', 'VL53L8CX door counter', 'LINK light'],
+      lift: { 'Glass panel (acrylic)': [0, -45, 0], 'Panel engraving': [0, -45, 0], 'Sensor window (acrylic)': [0, -35, 0] }, view: [0.75, -1.1, 0.5] },
     { text: '5. On the back sheet: the Pi on four spacers, the Active Cooler, the 17 mm standoffs and the 4G board. The charging port through its hole.',
       show: ['Back sheet (acrylic)', 'Back engraving', 'Raspberry Pi 5', 'Pi 5 ports', 'Active Cooler', 'SIM7600G-H 4G HAT', 'CHARGE port'],
       lift: { 'SIM7600G-H 4G HAT': [0, -28, 0], 'Active Cooler': [0, -12, 0] }, view: [-0.6, -1.1, 0.6] },
@@ -153,7 +155,7 @@
   renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
   renderer.outputEncoding = THREE.sRGBEncoding;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.1;
+  renderer.toneMappingExposure = 0.92;
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 

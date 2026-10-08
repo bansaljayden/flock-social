@@ -3615,8 +3615,11 @@ class EnclosureFiles(unittest.TestCase):
 
     def test_every_sheet_is_cut_to_the_size_the_drawing_says(self):
         # Both sheets cover the whole face of the sleeve, edge to edge.
+        # The back covers the whole box; the front is the glass panel, inset
+        # by the body's frame at the sides and top and sitting on the strip.
         w, h = self.box_size()
-        expected = {'front': (w, h), 'back': (w, h)}
+        frame, strip = self.scad_number('frame'), self.scad_number('strip_h')
+        expected = {'front': (w - 2 * frame, h - frame - (strip - 1.0)), 'back': (w, h)}
         for part, (ew, eh) in expected.items():
             m = re.search(r'width="([\d.]+)mm" height="([\d.]+)mm"', self.svg(part))
             self.assertIsNotNone(m, part)
@@ -3647,11 +3650,11 @@ class EnclosureFiles(unittest.TestCase):
         # The STEP file is what opens in Fusion 360 or Onshape; every part in
         # it carries its name, so the tree there reads like the parts list.
         step = (self.ENC / 'step' / 'flux-assembly.step').read_text(encoding='utf-8', errors='replace')
-        for name in ('Sleeve (printed)', 'Front sheet (acrylic)', 'Back sheet (acrylic)',
+        for name in ('Sleeve (printed)', 'Glass panel (acrylic)', 'Sensor window (acrylic)', 'Back sheet (acrylic)',
                      'Raspberry Pi 5', 'PureThermal 3 + Lepton 3.5', 'VL53L8CX door counter',
                      'Decibel meter', 'Anker A1336 battery', '7 inch touchscreen'):
             self.assertIn(name, step, name)
-        for part in ('sleeve', 'front-sheet', 'back-sheet'):
+        for part in ('sleeve', 'glass-panel', 'sensor-pill', 'back-sheet'):
             self.assertTrue((self.ENC / 'step' / f'flux-{part}.step').exists(), part)
 
     def test_the_stls_came_from_the_export_script(self):

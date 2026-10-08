@@ -43,7 +43,7 @@ PANELS = [
 ]
 
 TITLES = {
-    'front': 'front sheet, seen from the front',
+    'front': 'glass panel and sensor pill (the pill nests in the window offcut), seen from the front',
     'back': 'back sheet, seen from behind',
 }
 
@@ -145,7 +145,7 @@ def main():
 
     print(f'box {cad.BOX_W:.1f} x {cad.BOX_H:.1f} x {cad.BOX_D:.1f} mm')
     sleeve = cad.sleeve()
-    front, back = cad.front_sheet(), cad.back_sheet()
+    front, back = cad.glass_panel(), cad.back_sheet()
     made = {
         'sleeve': sleeve,
         'screen_fit_test': cad.screen_fit_test(),
@@ -177,13 +177,15 @@ def main():
         dxf.add_layer('CUT', color=ColorIndex.RED)
         dxf.add_layer('ENGRAVE', color=ColorIndex.BLACK)
         dxf.add_shape(cut, layer='CUT')
-        dxf.add_shape(engrave, layer='ENGRAVE')
+        if engrave is not None:
+            dxf.add_shape(engrave, layer='ENGRAVE')
         dxf.write(HERE / 'dxf' / f'flux-{sheet}.dxf')
         print(f'svg/flux-{sheet}.svg  dxf/flux-{sheet}.dxf')
 
     # Each made part on its own first: once a part is inside the assembly it
     # belongs to it, and OpenCascade will not write it out alone.
-    for name, part in (('sleeve', sleeve), ('front-sheet', front), ('back-sheet', back)):
+    for name, part in (('sleeve', sleeve), ('glass-panel', front), ('sensor-pill', cad.sensor_pill()),
+                       ('back-sheet', back)):
         export_step(part, HERE / 'step' / f'flux-{name}.step', timestamp=STEP_STAMP)
     whole = cad.assembly(sleeve, front, back)
     export_step(whole, HERE / 'step' / 'flux-assembly.step', timestamp=STEP_STAMP)
