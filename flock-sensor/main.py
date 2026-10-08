@@ -65,7 +65,7 @@ try:
 except ImportError:  # pragma: no cover
     fcntl = None
 
-VERSION = '1.17.0'
+VERSION = '1.18.0'
 
 # ---------------------------------------------------------------------------
 # Config
@@ -100,6 +100,10 @@ DEFAULTS = {
     # drawing the picture means holding a real thermal frame in memory, and the
     # privacy policy's promise about venue sensors rests on that not happening.
     'THERMAL_VIEW': '1',
+    # 1 when the camera is mounted upside down. The one-box enclosure stands
+    # the PureThermal on its USB edge; whether that is the picture's top or
+    # bottom is a property of the board, and the live view settles it.
+    'THERMAL_UPSIDE_DOWN': '0',
     # Which doorway counter. auto: the VL53L8CX if one answers on I2C, else
     # the GPIO pin below. tof or beam forces one; off counts no doorway.
     'DOOR_SENSOR': 'auto',
@@ -738,6 +742,7 @@ def init_ir():
 # policy's "160 by 120 grid" and "19,200 temperature readings" to them, so
 # swapping the sensor turns that test red on the same commit.
 THERMAL_COLS, THERMAL_ROWS = 160, 120
+THERMAL_UPSIDE_DOWN = bool(_cfg_number('THERMAL_UPSIDE_DOWN', int, 0, 1, 0))
 THERMAL_PIXELS = THERMAL_COLS * THERMAL_ROWS
 
 # Radiometric Y16 is centikelvin.
@@ -1018,7 +1023,7 @@ class ThermalCamera:
                 fcntl.ioctl(self.fd, _VIDIOC_QBUF, buf)
         if newest is None:
             return None
-        return raw_y16_to_celsius(newest)
+        return upright(raw_y16_to_celsius(newest))
 
     def close(self):
         try:
@@ -1052,6 +1057,15 @@ def raw_y16_to_celsius(raw):
     if sys.byteorder == 'big':
         values.byteswap()
     return [v * _CENTIKELVIN - _KELVIN_ZERO_C for v in values]
+
+
+def upright(frame, upside_down=None):
+    """The frame the right way up. Turning a row-major picture half a turn is
+    reversing it, so this costs one slice and keeps the 160 x 120 shape that
+    everything downstream, the people counter first, is built for. A quarter
+    turn would not: the picture would come out 120 wide."""
+    flip = THERMAL_UPSIDE_DOWN if upside_down is None else upside_down
+    return frame[::-1] if flip else frame
 
 
 def _set_thermal_camera(camera):

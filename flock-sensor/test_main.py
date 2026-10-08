@@ -4248,3 +4248,22 @@ class SoundMeterModule(unittest.TestCase):
     def test_the_meter_and_the_counter_answer_at_different_addresses(self):
         # They share one I2C bus and four wires.
         self.assertNotEqual(main.SOUND_METER_ADDR, main.TOF_I2C_ADDR)
+
+
+class ThermalUpsideDown(unittest.TestCase):
+    """A camera mounted upside down, turned back over without changing the grid."""
+
+    def test_half_a_turn_is_the_picture_reversed(self):
+        rows, cols = 3, 4
+        frame = [r * 10 + c for r in range(rows) for c in range(cols)]
+        turned = main.upright(frame, upside_down=True)
+        # The bottom-right corner comes to the top left, and the grid keeps its shape.
+        self.assertEqual(turned[0], frame[-1])
+        self.assertEqual(turned[-1], frame[0])
+        self.assertEqual(len(turned), len(frame))
+        self.assertEqual(main.upright(turned, upside_down=True), frame)
+
+    def test_off_by_default(self):
+        self.assertEqual(main.DEFAULTS['THERMAL_UPSIDE_DOWN'], '0')
+        frame = [1.0, 2.0, 3.0]
+        self.assertIs(main.upright(frame, upside_down=False), frame)
