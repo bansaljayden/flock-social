@@ -611,8 +611,9 @@ job, not a settings one: shorter leads, off the breadboard, away from the modem.
 
 **How far apart the reads are matters more than the screw.** On 2026-09-28 the
 same unit read a quiet room at 41 when the converter was read back to back and
-about 15 when the reads were 2ms apart. `--listen --write` times the reads before it
-measures anything, and writes the gap it chose as `NOISE_SAMPLE_GAP_US`.
+about 15 when the reads were 2ms apart. On another night, back-to-back reads
+shrank a steady podcast from 72 to 39. `--listen --write` reads 1ms apart, where
+the readings stop moving, and writes that as `NOISE_SAMPLE_GAP_US`.
 
 **What none of this fixes.** The level has a fixed slope, so the reference
 shifts the scale and cannot stretch it. Quiet through Loud spans 35 dB of
