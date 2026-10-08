@@ -74,6 +74,7 @@ import { starSvgString } from '../ui/Icons';
 import { lsGet, lsSet } from '../../lib/storage';
 import { queueSync } from '../../services/userSettings';
 import { geolocationAvailable, getCurrentPosition, watchPosition, clearWatch } from '../../services/geolocation';
+import { crowdLabelFor } from '../../lib/crowd';
 import { loadMapEngine } from './mapEngine';
 
 // HTML-escape a user-derived string before it is interpolated into any raw
@@ -433,6 +434,127 @@ function setPinHidden(entry, hidden, behind = 0) {
   }
 }
 
+/* BUILDINGS TINTED BY CROWD.
+
+   From street zoom, the building a scored venue stands in takes the colour of
+   its crowd band, so "where are people right now" reads off the city itself.
+   The Flock style draws its 3D buildings from MapTiler's Buildings tileset,
+   whose features carry a unique id from zoom 14, and paints each one from a
+   feature-state band (green, amber, red) with the plain building colour when
+   no band is set. This side only decides which building gets which band.
+
+   A venue is a point and a building is a footprint, and nothing in either
+   dataset joins them, so the join is made on screen: project the venue, ask
+   the renderer which extruded building is under that pixel, and keep only a
+   footprint that actually contains the venue's coordinate. A tilted view puts
+   a neighbour's wall under the pixel; the containment test refuses it, so a
+   venue that cannot be placed in a building tints nothing rather than the
+   wrong one.
+
+   Only the Flock style has this layer on this source. On any other basemap
+   (the keyless CARTO styles, satellite) there is nothing to tint and nothing
+   is asked. It is all client side: no building id or footprint is stored or
+   sent anywhere, and feature state lives only as long as the style does.
+
+   The tint never carries meaning on its own. Red and green are the pair most
+   colour-blind people cannot tell apart; the pin and its label carry the
+   number. */
+const CROWD_BUILDINGS = Object.freeze({
+  layer: 'flock-3d-buildings',
+  source: 'maptiler_buildings',
+  sourceLayer: 'building',
+  stateKey: 'crowdBand',
+  // The tileset's ids start at 14; the pins carry labels from 15, which is
+  // also where a single building is big enough on screen to read as one.
+  minZoom: 15,
+});
+// One pass after the map settles, not one per frame of a gesture.
+const CROWD_BUILDINGS_DEBOUNCE_MS = 120;
+
+/* The band a venue's building takes, read off the crowd ladder's words so it
+   can only change where the word does, the same cuts as App.js crowdBandFor:
+   Quiet and Not Busy green, Steady and Busy amber, Packed red. No number, or a
+   number the viewer cannot see (crowdLocked), is no band. */
+export const crowdBuildingBand = (venue) => {
+  if (!venue || venue.crowdLocked || !Number.isFinite(venue.crowd)) return null;
+  const word = crowdLabelFor(venue.crowd);
+  if (!word) return null;
+  if (word === 'Packed') return 'red';
+  if (word === 'Steady' || word === 'Busy') return 'amber';
+  return 'green';
+};
+
+// Even-odd ray cast over one ring of [lng, lat] pairs.
+function ringContains(ring, x, y) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i];
+    const [xj, yj] = ring[j];
+    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+function polygonContains(rings, x, y) {
+  if (!rings || !rings.length || !ringContains(rings[0], x, y)) return false;
+  for (let h = 1; h < rings.length; h++) if (ringContains(rings[h], x, y)) return false;
+  return true;
+}
+
+function footprintContains(geometry, [x, y]) {
+  if (!geometry || !geometry.coordinates) return false;
+  if (geometry.type === 'Polygon') return polygonContains(geometry.coordinates, x, y);
+  if (geometry.type === 'MultiPolygon') return geometry.coordinates.some((p) => polygonContains(p, x, y));
+  return false;
+}
+
+/* One tint pass. `tinted` (building id -> band) is what this map has set, so
+   a building whose venue left the view, lost its score or was filtered out is
+   cleared. Whether a building already wears its band is read from the map
+   itself, not from `tinted`: a style swap may rebuild the source (state gone)
+   or diff it and keep it (state kept), and only the map knows which. Writing
+   only what differs matters beyond tidiness, because every write repaints,
+   a repaint ends in 'idle', and 'idle' schedules this pass. */
+function paintCrowdBuildings(map, venues, filterCategory, tinted) {
+  const { layer, source, sourceLayer, stateKey, minZoom } = CROWD_BUILDINGS;
+  if (!map.getLayer(layer) || !map.getSource(source)) {
+    // A style without the layer has no state to clear: setStyle took it.
+    tinted.clear();
+    return;
+  }
+  if (map.getZoom() < minZoom) return;
+  const next = new Map(); // building id -> { band, score }
+  for (const v of venues || []) {
+    const band = crowdBuildingBand(v);
+    if (!band || !venueMatchesCategory(v, filterCategory)) continue;
+    const loc = v.location;
+    if (!loc?.latitude || !loc?.longitude) continue;
+    let hits;
+    try {
+      const p = map.project([loc.longitude, loc.latitude]);
+      hits = map.queryRenderedFeatures([p.x, p.y], { layers: [layer] });
+    } catch { continue; }
+    const home = (hits || []).find((f) => f && f.id != null && footprintContains(f.geometry, [loc.longitude, loc.latitude]));
+    if (!home) continue;
+    // Two scored venues in one building: the busier one decides its colour.
+    const held = next.get(home.id);
+    if (!held || v.crowd > held.score) next.set(home.id, { band, score: v.crowd });
+  }
+  for (const id of [...tinted.keys()]) {
+    if (next.has(id)) continue;
+    try { map.removeFeatureState({ source, sourceLayer, id }, stateKey); } catch { /* source went with a style swap */ }
+    tinted.delete(id);
+  }
+  for (const [id, { band }] of next) {
+    const target = { source, sourceLayer, id };
+    try {
+      const now = map.getFeatureState(target);
+      if (!now || now[stateKey] !== band) map.setFeatureState(target, { [stateKey]: band });
+      tinted.set(id, band);
+    } catch { /* the next pass tries again */ }
+  }
+}
+
 const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, activeVenue, setActiveVenue, getCategoryColor, pickingVenueForCreate, setPickingVenueForCreate, setSelectedVenueForCreate, setCurrentScreen, openVenueDetail, flockMemberLocations, calcDistance, colorsDark, colorsLight, resolveVenuePhoto, NO_LOCATION_VIEW, ownerPlaceId = null, initialCenter = null, followUser = true, locationAllowed = true, mapVisible = true }) => {
   const mapRef = useRef(null);
   const mapRootRef = useRef(null);   // outermost node — see the attribution note in init
@@ -453,6 +575,8 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
   const prevActiveRef = useRef(null);
   const watchIdRef = useRef(null);
   const mapLibreRef = useRef(null); // Marker, Popup, LngLatBounds from the map engine, once it has loaded
+  const crowdTintRef = useRef(new Map()); // building id -> crowd band this map has set (see CROWD_BUILDINGS)
+  const crowdPassRef = useRef(null);      // schedules one tint pass; set once the map exists
   const venuesRef = useRef([]);     // latest venues for non-React consumers (toggleMapType, etc.)
   const fittedKeyRef = useRef(null); // result set the viewport was last framed to
   const [mapReady, setMapReady] = useState(false);
@@ -787,6 +911,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     // cleanup below can stop them: none of them may touch a removed map.
     let failTimer = 0;
     let overlapTimer = 0;
+    let crowdTimer = 0;
     let permStatus = null;
     let onPermChange = null;
     const init = async () => {
@@ -1066,6 +1191,23 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       map.on('move', scheduleOverlapPass);
       map.on('moveend', overlapPass);
 
+      // Crowd-tinted buildings (CROWD_BUILDINGS), once the map has settled
+      // AND drawn: 'idle' comes after the move has ended and the tiles under
+      // it have loaded, so the buildings a pass asks about are on screen.
+      // 'moveend' is too early for a zoom into street level, where the
+      // building tiles arrive after the camera stops. The venue list, the
+      // filter and a style swap schedule a pass too.
+      const crowdPass = () => {
+        crowdTimer = 0;
+        paintCrowdBuildings(map, venuesRef.current, filterCategoryRef.current, crowdTintRef.current);
+      };
+      const scheduleCrowdPass = () => {
+        if (crowdTimer) clearTimeout(crowdTimer);
+        crowdTimer = window.setTimeout(crowdPass, CROWD_BUILDINGS_DEBOUNCE_MS);
+      };
+      crowdPassRef.current = scheduleCrowdPass;
+      map.on('idle', scheduleCrowdPass);
+
       // Click on empty map — clear active venue
       map.on('click', (e) => {
         if (e.originalEvent?.target?.closest?.('.mlb-venue-marker')) return;
@@ -1101,6 +1243,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       if (resizeObs) resizeObs.disconnect();
       clearTimeout(failTimer);
       clearTimeout(overlapTimer);
+      clearTimeout(crowdTimer);
       if (permStatus && onPermChange) permStatus.removeEventListener('change', onPermChange);
       const map = mapInstanceRef.current;
       if (!map) return;
@@ -1114,6 +1257,8 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         userElRef.current = null;
       }
       overlapPassRef.current = null;
+      crowdPassRef.current = null;
+      crowdTintRef.current = new Map();
       mapInstanceRef.current = null;
       mapLoadedRef.current = false;
       try { map.remove(); } catch { /* already gone */ }
@@ -1146,6 +1291,10 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         .map(v => ({ type: 'Feature', geometry: { type: 'Point', coordinates: [v.location.longitude, v.location.latitude] }, properties: { weight: v.crowd / 100 } }));
       heatSrc.setData({ type: 'FeatureCollection', features });
     }
+    /* Feature state belongs to the style's sources, so a swap that rebuilt
+       the buildings source took the tints with it. Paint again; the pass
+       after the new tiles land ('idle') finds the buildings. */
+    if (crowdPassRef.current) crowdPassRef.current();
   }, [userLocation]);
 
   // ---------- map type toggle (vector dark <-> satellite) ----------
@@ -1335,6 +1484,8 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     // Settle which pins are visible where two share a spot. The map's own
     // move handler re-runs this as the view changes.
     if (overlapPassRef.current) overlapPassRef.current();
+    // And which buildings wear a crowd band, for the new list.
+    if (crowdPassRef.current) crowdPassRef.current();
 
     /* FRAME THE RESULTS. The map opened centred on the user at a fixed zoom,
        so a search could return 20 venues and show none of them: the chip said
@@ -1421,6 +1572,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     filterCategoryRef.current = filterCategory;
     applyCategoryFilter(mapInstanceRef.current, markersRef.current, filterCategory, setFilterHidesAll);
     if (overlapPassRef.current) overlapPassRef.current();
+    if (crowdPassRef.current) crowdPassRef.current();
   }, [filterCategory]);
 
   // ---------- external imperative API ----------
