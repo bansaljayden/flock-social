@@ -223,7 +223,7 @@ mount_boss = 20.0
 # The nut sits 1 mm above the base's outside so that short screw takes all
 # of it; 4 mm up, where it first was, the screw caught well under half.
 mount_floor = 1.0
-arm_screw = 7.3
+arm_screw = 7.3                # MEASURE: the screw past the knurled wheel; the nut's depth assumes it
 arm_wheel = (22.0, 4.6)        # diameter, thickness
 arm_ball = 8.5                 # radius; its centre 15.7 under the wheel
 arm_head = (23.0, 23.3)        # the ball head's body: diameter, length
