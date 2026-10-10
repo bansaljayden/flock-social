@@ -320,6 +320,18 @@ The band gate requires, on the model-served live readings of the window
 Every verdict also records the constant-answer reference, so no within-one-band
 figure is read without what it costs to fake.
 
+**What the incumbent scores before the window opens** (measured 2026-10-08,
+MODEL-METRICS.md, "The served number over the month since it shipped"). The
+arithmetic the gate compares against, curve + 0.85 x offset + nowcast, on every
+model-served live reading from 2026-09-09 to 2026-10-08 (119,939 readings, 30
+dates): band exact 54.9%, within one band 78.4%, within 10 55.2%, MAE 18.00. A
+candidate has to beat that, not v2.6.0's own model-mode numbers in the tables
+above. Two parts of it move little: at two and three hours a reading adds almost
+nothing over curve plus offset (40.7% and 38.6% within 15), and Miami, read at
+two fixed hours a day, never has an hour-old reading. The live features are
+meant to close exactly those gaps, so the city and reading-age slices of the
+gate report are where a real gain should show.
+
 ### The commands, in order
 
 Pre-work in code before the export: all done. On 2026-09-26: the live and
