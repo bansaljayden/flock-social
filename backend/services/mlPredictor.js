@@ -3864,11 +3864,14 @@ function applyScoreQuantileMap(score) {
 // .test.js pins that value for value against numbers recorded from the code
 // before this block was written.
 //
-// Measured, every figure below, by scripts/ml/train/bandEval.js replaying this
+// Fitted, every weight below, by scripts/ml/train/bandEval.js replaying this
 // file over the live readings of the local 2026-09-08 export (Lehigh and
 // Miami, 7,920 model-served readings over 2026-09-01..08): each weight fitted
 // on 2026-09-01..05 and scored on 2026-09-06..08, the 4,183 readings the
-// retrain plan's prequential window already uses.
+// retrain plan's prequential window already uses. The confidence figures the
+// card publishes (SERVE_MEASURED, further down) were re-measured with the same
+// weights on every model-served live reading from 2026-09-09 to 10-08
+// (119,939), so they describe the month since the weights were set.
 //
 // CROWD_SERVE_MODE=curve_offset. The venue's own weekly curve at the hour (the
 // value blendBaselineRows serves) plus CURVE_OFFSET_WEIGHT times its trailing
