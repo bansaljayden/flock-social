@@ -1,3 +1,4 @@
+import { localeDate } from '../../lib/localeFormat';
 /**
  * groupRows: the flat message array, turned into runs.
  *
@@ -56,8 +57,8 @@ export function dayLabelOf(iso, now = new Date()) {
   const diffDays = Math.round((today - that) / 86400000);
   if (diffDays <= 0) return 'Today';
   if (diffDays === 1) return 'Yesterday';
-  if (diffDays < 7) return d.toLocaleDateString([], { weekday: 'long' });
-  return d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+  if (diffDays < 7) return localeDate(d, [], { weekday: 'long' });
+  return localeDate(d, [], { weekday: 'short', month: 'short', day: 'numeric' });
 }
 
 /** A plan event, a join, an unsend trace. Belongs to the room, not to a person. */

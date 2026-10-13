@@ -14,6 +14,7 @@
  */
 const fs = require('fs');
 const path = require('path');
+const { localeTime, localeDate, localeDateTime } = require('../lib/localeFormat');
 const { liftReaders } = require('../services/flockReaders');
 
 const app = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8').replace(/\r\n/g, '\n');
@@ -56,7 +57,8 @@ const HELPERS = [
   'onMeteredConnection',
 ];
 // eslint-disable-next-line no-new-func
-const H = new Function('navigator', `${HELPERS.map(moduleConst).join('\n')}\nreturn { ${HELPERS.join(', ')} };`);
+// The lifted source formats dates through lib/localeFormat, which the module imports.
+const H = (nav) => new Function('navigator', 'localeTime', 'localeDate', 'localeDateTime', `${HELPERS.map(moduleConst).join('\n')}\nreturn { ${HELPERS.join(', ')} };`)(nav, localeTime, localeDate, localeDateTime);
 
 const ME = 1;
 const AT = '2026-09-25T20:00:00Z';

@@ -214,6 +214,7 @@ import { hapticSuccess } from '../services/haptics';
    a Map here outlived the session that wrote it: lib/flockDrafts.js says
    how that put one account's sentence in the next account's box. */
 import { readFlockDraft, keepFlockDraft, flockDraftGeneration } from '../lib/flockDrafts';
+import { localeTime } from '../lib/localeFormat';
 
 /* STABLE IDENTITY, LATEST CLOSURE: components/chat/useStableFn.js, with the
    whole explanation of what it is for and what it does NOT cover.
@@ -467,7 +468,7 @@ const BUDGET_RESET_ARM_MS = 6000;
 function reconfirmDeadlineLabel(iso) {
   const at = iso ? new Date(iso) : null;
   if (!at || !Number.isFinite(at.getTime())) return null;
-  return at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  return localeTime(at, [], { hour: 'numeric', minute: '2-digit' });
 }
 
 /* One pill per emoji, not one per person.

@@ -185,6 +185,7 @@ import NewDmModal from './components/NewDmModal';
 import VerifyEmailSheet from './components/VerifyEmailSheet';
 import EmailConfirmLine from './components/EmailConfirmLine';
 import { useStableFn } from './components/chat/useStableFn';
+import { localeDate, localeDateTime, localeTime } from './lib/localeFormat';
 
 /* Where each feed was scrolled to, kept across the unmount that every
    navigation causes. Module scope, not state: restoring is a layout write
@@ -2395,7 +2396,7 @@ const mapDmRow = (m, myId) => ({
   sender: String(m.sender_id) === String(myId) ? 'You' : (m.sender_name || 'Unknown'),
   senderId: m.sender_id,
   text: m.message_text,
-  time: new Date(m.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+  time: localeTime(new Date(m.created_at), [], { hour: 'numeric', minute: '2-digit' }),
   // Raw instant beside the formatted time: the day separators need a date,
   // and a formatted "9:41 PM" cannot say which night it belongs to.
   sentAt: m.created_at || null,
@@ -2430,7 +2431,7 @@ const mapFlockRow = (m, myId) => ({
   sender: String(m.sender_id) === String(myId) ? 'You' : (m.sender_name || 'Unknown'),
   senderId: m.sender_id,
   senderImage: m.sender_image || null,
-  time: new Date(m.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+  time: localeTime(new Date(m.created_at), [], { hour: 'numeric', minute: '2-digit' }),
   sentAt: m.created_at || null,
   text: m.message_text,
   message_type: m.message_type || 'text',
@@ -2735,10 +2736,10 @@ const conversationStamp = (value) => {
   if (Number.isNaN(then.getTime())) return '';
   const now = new Date();
   const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  if (then >= midnight) return then.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  if (then >= midnight) return localeTime(then, [], { hour: 'numeric', minute: '2-digit' });
   const yesterday = new Date(midnight.getTime() - 24 * 60 * 60 * 1000);
   if (then >= yesterday) return 'Yesterday';
-  return then.toLocaleDateString([], { month: 'short', day: 'numeric' });
+  return localeDate(then, [], { month: 'short', day: 'numeric' });
 };
 
 // A guest's identity arrives in two forms and the roster used to keep only the
@@ -2932,9 +2933,9 @@ const formatEventTime = (iso) => {
   // 9:00 PM" everywhere, identical to tonight's Wednesday. Six days keeps
   // this week bare and dates everything past it.
   if (d.getTime() - Date.now() > 6 * 24 * 3600 * 1000) {
-    return d.toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    return localeDateTime(d, [], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
   }
-  return d.toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+  return localeDateTime(d, [], { weekday: 'short', hour: 'numeric', minute: '2-digit' });
 };
 
 /* Momentum. The server scores a brand-new flock at 50/100 (it hands out a
@@ -3945,7 +3946,7 @@ const NfcCheckinView = ({ placeId, sig, onViewVenue, onOpenApp }) => {
             <span style={{ fontSize: 'var(--t-display)', color: '#10b981', lineHeight: 1 }}>{'\u2713'}</span>
           </div>
           <h1 style={{ fontSize: 'var(--t-display)', fontWeight: '600', margin: '0 0 8px', color: '#f1ede0', letterSpacing: '-0.4px' }}>You're checked in{venueName ? ` at ${venueName}` : ''}</h1>
-          <p style={{ fontSize: 'var(--t-label)', color: 'rgba(241,237,224,0.6)', margin: '0 0 28px' }}>{new Date(checkedInAt).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}</p>
+          <p style={{ fontSize: 'var(--t-label)', color: 'rgba(241,237,224,0.6)', margin: '0 0 28px' }}>{localeDateTime(new Date(checkedInAt), [], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}</p>
           <button className="hit44" onClick={() => onViewVenue(placeId)} style={btn}>View venue in Flock</button>
         </>
       )}
@@ -6882,8 +6883,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     return () => clearTimeout(t);
   }, [myPulse]);
 
-  // Animations
-  const [activeTabAnimation, setActiveTabAnimation] = useState(null);
+  // Animations. The tab icon's bounce is a class put on the DOM node by the
+  // tap and taken off by its own animationend (BottomNav), not state: as state
+  // it cost two renders of this whole component per tap, the second one 400ms
+  // later only to take the class away.
   // scrollY removed — parallax now uses direct DOM manipulation via headerRef
   const headerRef = useRef(null);
   /* WHERE EACH FEED WAS LEFT. Module-scoped in TAB_SCROLL (top of file) so it
@@ -7500,7 +7503,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         y += 112;
       }
       const dateLabel = flock.eventTime
-        ? new Date(flock.eventTime).toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' })
+        ? localeDate(new Date(flock.eventTime), [], { weekday: 'long', month: 'short', day: 'numeric' })
         : '';
       const metaBits = [];
       if (flock.venue && flock.venue !== 'TBD') metaBits.push(flock.venue);
@@ -8224,7 +8227,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     if (!f?.eventTime) return null;
     const d = new Date(f.eventTime);
     if (Number.isNaN(d.getTime())) return null;
-    return `at ${d.toLocaleTimeString([], { hour: 'numeric' })}`;
+    return `at ${localeTime(d, [], { hour: 'numeric' })}`;
   })();
 
   const [pendingImage, setPendingImage] = useState(null);
@@ -9841,7 +9844,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         title: f.name,
         venue: f.venue && f.venue !== 'TBD' ? f.venue : 'Venue TBD',
         date: formatDateStr(when),
-        time: when.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+        time: localeTime(when, [], { hour: 'numeric', minute: '2-digit' }),
         color: colors.navy,
         members: f.memberCount || (f.members || []).length || 1,
       };
@@ -10466,7 +10469,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // Honest pitch: Pro is 150 messages a day, not unlimited.
         const resetsAt = err?.data?.resetsAt || null;
         setAiResetsAt(resetsAt);
-        const back = resetsAt ? `after ${new Date(resetsAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : 'tomorrow';
+        const back = resetsAt ? `after ${localeTime(new Date(resetsAt), [], { hour: 'numeric', minute: '2-digit' })}` : 'tomorrow';
         // A REACT_APP_PURCHASES=off build (the App Store one) sells nothing,
         // so it states the limit and when it lifts, and opens no sheet.
         const limitText = (process.env.REACT_APP_PURCHASES !== 'off')
@@ -11801,7 +11804,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             // ("Message saved, but live delivery is delayed"). An absent
             // status draws nothing, which is the honest reading of a send the
             // server could not fully account for.
-            updated[at] = { ...updated[at], id: msg.id, pending: false, failed: false, status: msg.status || null, time: new Date(msg.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }), sentAt: msg.created_at || updated[at].sentAt || null };
+            updated[at] = { ...updated[at], id: msg.id, pending: false, failed: false, status: msg.status || null, time: localeTime(new Date(msg.created_at), [], { hour: 'numeric', minute: '2-digit' }), sentAt: msg.created_at || updated[at].sentAt || null };
           }
           const next = [...prev];
           next[fi] = { ...prev[fi], messages: orderByServerId(updated) };
@@ -14232,7 +14235,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     if (currentScreen === 'venueDashboard' || currentScreen === 'adminRevenue') return null;
     if (showVenueOnboarding || showModeSelection) return null;
 
-    const handleTabClick = (tabId) => {
+    const handleTabClick = (tabId, event) => {
       /* CONVENTION #9. Tapping the tab you are already on takes you back to the
          top of it. Everything below already pops to the tab root (screen,
          profile sub-screen, open venue), so the scroll is the missing half.
@@ -14244,8 +14247,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           try { el.scrollTo({ top: 0, behavior: 'smooth' }); } catch { el.scrollTop = 0; }
         }
       }
-      setActiveTabAnimation(tabId);
-      setTimeout(() => setActiveTabAnimation(null), 400);
+      const face = event && event.currentTarget && event.currentTarget.querySelector('[data-tab-face]');
+      if (face) {
+        face.classList.remove('tab-bounce');
+        void face.offsetWidth; // restart the animation on a second tap
+        face.classList.add('tab-bounce');
+      }
       setCurrentTab(tabId);
       setCurrentScreen('main');
       setProfileScreen('main');
@@ -14308,7 +14315,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           { id: 'chat', label: 'Messages' },
           { id: 'profile', label: 'You' },
         ].map(t => (
-          <button className="hit44 main-nav-tab" key={t.id} onClick={() => handleTabClick(t.id)}
+          <button className="hit44 main-nav-tab" key={t.id} onClick={(e) => handleTabClick(t.id, e)}
             aria-current={currentTab === t.id ? 'page' : undefined}
             aria-label={t.id === 'chat' ? messagesTabLabel : undefined}
             style={{
@@ -14322,7 +14329,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             {t.id === 'chat' && messagesTabUnread > 0 && (
               <div aria-hidden="true" style={{ position: 'absolute', top: '2px', right: '8px', minWidth: '16px', height: '16px', borderRadius: '8px', padding: '0 4px', background: 'linear-gradient(135deg, #EF4444, #DC2626)', color: 'white', fontSize: '10px', fontWeight: '600', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{messagesTabUnread > 99 ? '99+' : messagesTabUnread}</div>
             )}
-            <div className={activeTabAnimation === t.id ? 'tab-bounce' : ''} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+            <div data-tab-face onAnimationEnd={(e) => e.currentTarget.classList.remove('tab-bounce')} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
               {/* The icon strokes currentColor, so this is where its colour
                   comes from, and it has to be here: `colors` is the live
                   palette only inside FlockAppInner. */}
@@ -15944,7 +15951,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       sender: 'You',
       senderId: authUser?.id,
       text: payload.text,
-      time: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+      time: localeTime(new Date(), [], { hour: 'numeric', minute: '2-digit' }),
       sentAt: new Date().toISOString(),
       message_type: payload.message_type,
       venue_data: payload.venue_data || null,
@@ -16225,7 +16232,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         sender: isYou ? 'You' : (msg.sender_name || 'Unknown'),
         senderId: msg.sender_id,
         text: msg.message_text,
-        time: new Date(msg.created_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+        time: localeTime(new Date(msg.created_at), [], { hour: 'numeric', minute: '2-digit' }),
         sentAt: msg.created_at || null,
         message_type: msg.message_type || 'text',
         venue_data: msg.venue_data,
@@ -20981,7 +20988,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               {/* The alarm's own time. A push tapped at 9am used to read as a
                   live 9am alarm; the hour it actually fired changes what the
                   reader should do. */}
-              {(() => { const t = new Date(safetyAlert.at).getTime(); return Number.isFinite(t) ? ` As of ${new Date(t).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}.` : ''; })()}
+              {(() => { const t = new Date(safetyAlert.at).getTime(); return Number.isFinite(t) ? ` As of ${localeTime(new Date(t), [], { hour: 'numeric', minute: '2-digit' })}.` : ''; })()}
             </p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               <a className="hit44" href="tel:911" style={{ minHeight: '48px', borderRadius: '10px', backgroundColor: '#b91c1c', color: '#ffffff', fontWeight: '700', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', textDecoration: 'none' }}>
@@ -21147,8 +21154,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           from { transform: scaleX(0); }
           to { transform: scaleX(1); }
         }
+        /* A pushed screen is legible from its first frame. It used to start at
+           opacity 0 and take 0.3s to fade in, and that fade only began once
+           the screen had rendered, so on the phone a tap read as a pause and
+           then a slow reveal. It now slides 16px in 0.18s, already opaque. */
         @keyframes screenSlideIn {
-          from { opacity: 0; transform: translateX(30px); }
+          from { opacity: 0.92; transform: translateX(16px); }
           to { opacity: 1; transform: translateX(0); }
         }
         @keyframes screenSlideOut {
@@ -21191,7 +21202,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
            last keyframe is the element's own style, so dropping it changes
            nothing that shows. */
         .screen-enter {
-          animation: screenSlideIn 0.3s ease-out;
+          animation: screenSlideIn 0.18s cubic-bezier(0.2, 0, 0, 1);
         }
         .tab-bounce {
           animation: tabBounce 0.3s ease-out;

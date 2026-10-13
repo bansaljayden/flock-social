@@ -28,6 +28,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { localeTime, localeDate, localeDateTime } = require('../lib/localeFormat');
 const { liftReaders } = require('../services/flockReaders');
 
 const APP = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8').replace(/\r\n/g, '\n');
@@ -97,12 +98,14 @@ const HELPERS = [
 const H = (() => {
   const chunk = HELPERS.map(declaration).join('\n');
   // eslint-disable-next-line no-new-func
-  return new Function(`${chunk}\nreturn { ${HELPERS.join(', ')} };`)();
+  // The lifted source formats dates through lib/localeFormat, which the module imports.
+  return new Function('localeTime', 'localeDate', 'localeDateTime', `${chunk}\nreturn { ${HELPERS.join(', ')} };`)(localeTime, localeDate, localeDateTime);
 })();
 
 function run(src, scope) {
   // eslint-disable-next-line no-new-func
-  return new Function(...Object.keys(scope), src)(...Object.values(scope));
+  const full = { localeTime, localeDate, localeDateTime, ...scope };
+  return new Function(...Object.keys(full), src)(...Object.values(full));
 }
 
 const ME = { id: 3, name: 'Sam' };
