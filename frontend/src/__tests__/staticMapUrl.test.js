@@ -78,7 +78,7 @@ describe('the URL', () => {
     const url = venueStaticMapUrl({ ...AT, size: 'strip' });
     const u = parse(url);
     expect(u.origin).toBe('https://api.maptiler.com');
-    expect(u.pathname).toBe('/maps/streets-v4/static/-75.37461,40.61123,16/375x140@2x.webp');
+    expect(u.pathname).toBe(`/maps/${STATIC_MAP_IDS.light}/static/-75.37461,40.61123,16/375x140@2x.webp`);
     expect(u.searchParams.get('key')).toBe(KEY);
   });
 
@@ -96,7 +96,8 @@ describe('the URL', () => {
     const dark = parse(venueStaticMapUrl({ ...AT, dark: true }));
     expect(light.pathname.startsWith(`/maps/${STATIC_MAP_IDS.light}/`)).toBe(true);
     expect(dark.pathname.startsWith(`/maps/${STATIC_MAP_IDS.dark}/`)).toBe(true);
-    expect(STATIC_MAP_IDS).toEqual({ light: 'streets-v4', dark: 'streets-v4-dark' });
+    // The hosted Flock Paper and Flock Night maps, not MapTiler's stock streets.
+    expect(STATIC_MAP_IDS).toEqual({ light: '01a136f3-981e-7077-9ac7-c4ea68d3573e', dark: '01a136f4-31e4-7498-a863-d26e75c9bb74' });
     expect(light.searchParams.get('markers')).toBe(`icon:${STATIC_PIN_URLS.light}|anchor:bottom|scale:2|-75.37461,40.61123`);
     expect(dark.searchParams.get('markers')).toBe(`icon:${STATIC_PIN_URLS.dark}|anchor:bottom|scale:2|-75.37461,40.61123`);
     expect(STATIC_PIN_URLS.light).toBe('https://www.flockcorp.com/map/pin-light.svg');
