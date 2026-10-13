@@ -4,13 +4,17 @@ import './ResearchPage.css';
 import SiteFooter from './SiteFooter';
 import SiteNav, { useSiteMenu } from './SiteNav';
 
-// The paper itself, the full write-up of both studies summarised below, and a
-// picture of its first page. They live in public/papers/, not
-// public/research/: a folder named like the page makes a static server answer
-// /research with the folder instead of the app.
+// The paper in two lengths, side by side: the paper itself, and the full
+// technical version with every table, figure and equation the paper leaves
+// out. Same abstract, numbers and conclusions in both. They live in
+// public/papers/, not public/research/: a folder named like the page makes a
+// static server answer /research with the folder instead of the app. The
+// paper keeps the URL the single paper always had, so old links still land.
 const PAPER_URL = '/papers/flock-research-paper.pdf';
 const PAPER_THUMB = '/papers/flock-research-paper-p1.png';
-const PAPER_PAGES = 39;
+const PAPER_PAGES = 32;
+const FULL_PAPER_URL = '/papers/flock-research-paper-full.pdf';
+const FULL_PAPER_PAGES = 49;
 
 // Why the research exists and what it found, in plain words, then the paper.
 // Built on the landing page's own stylesheet (.lp: Fraunces display, Hanken
@@ -19,19 +23,18 @@ const PAPER_PAGES = 39;
 // who go looking, so nothing in the scrolling pages or the footer points here.
 //
 // Every number below is one the paper reports, on the data it names. The crowd
-// figures are the served number and the weekly curve on 4,183 held-out live
-// readings, the paper's first, three-day test (servedAccuracy.json first_test;
-// the About page now quotes the month-long test, and this chart moves to it
-// with the paper that reports it). The counter's figures are owl-4.9 and the heat rule on
-// the real test sets (paper Section 13).
+// figures are the served number and the stored weekly curve on all 119,939
+// model-served live readings of 2026-09-09..10-08, the month after the serving
+// weights were set (MODEL-METRICS.md, the month section). The
+// counter's figures are owl-4.9 and the heat rule on the real test sets.
 const DESCRIPTION = 'Why Flock studies how busy places get, what the research found, and the full paper.';
 
 // Share of readings or frames, in percent. `us` is Flock's number, `them` the
 // thing it is measured against on the same data.
 const FORECAST = [
-  { label: 'Within one crowd level', us: 78.8, them: 65.9 },
-  { label: 'Exact crowd level', us: 56.0, them: 31.5 },
-  { label: 'Within 10 points', us: 53.8, them: 32.3 },
+  { label: 'Within one crowd level', us: 78.4, them: 64.8 },
+  { label: 'Exact crowd level', us: 54.9, them: 30.2 },
+  { label: 'Within 10 points', us: 55.2, them: 30.9 },
 ];
 const COUNTER = [
   { label: "Flux's own camera", note: 'Indoor rooms, 2,000 frames', us: 89.7, them: 77.1 },
@@ -131,9 +134,12 @@ export default function ResearchPage() {
               </a>
               <div>
                 <p className="rs-paper-kicker">Paper &middot; October 2026 &middot; {PAPER_PAGES} pages</p>
-                <p className="rs-paper-title">Flock: Forecasting How Busy a Venue Will Be, and Counting Who Is There</p>
+                <p className="rs-paper-title">Flock: Forecasting How Busy a Venue Will Be, and Counting How Many People Are There</p>
                 <p className="rs-paper-by">Jayden Bansal, Flock Social LLC</p>
-                <a className="lp-btn lp-btn-cream" href={PAPER_URL} target="_blank" rel="noopener noreferrer">Read the paper (PDF)</a>
+                <div className="rs-paper-actions">
+                  <a className="lp-btn lp-btn-cream" href={PAPER_URL} target="_blank" rel="noopener noreferrer">Read the paper (PDF)</a>
+                  <a className="lp-btn lp-btn-ghost" href={FULL_PAPER_URL} target="_blank" rel="noopener noreferrer">Full technical version (PDF, {FULL_PAPER_PAGES} pages)</a>
+                </div>
               </div>
             </div>
           </div>
@@ -168,7 +174,7 @@ export default function ResearchPage() {
               usLabel="Flock"
               themLabel="Chart"
               rows={FORECAST}
-              note="Share of the same 4,183 held-out live readings, at venues in the Lehigh Valley and Miami. Higher is better."
+              note="Share of the same 119,939 live readings, every one the forecast was served for at 1,754 venues in Philadelphia, the Lehigh Valley and Miami from 9 September to 8 October 2026. None of them was used to set the forecast. Higher is better."
             />
             <Chart
               title="Owl against the heat rule it replaced"
@@ -186,7 +192,7 @@ export default function ResearchPage() {
               <h2>Where it falls short</h2>
               <p>
                 Flock's crowd numbers are scores from 0 to 100 for each venue, not
-                headcounts, and the live test covers three days. The counter has
+                headcounts, and the live test covers one month. The counter has
                 been tested on research footage, not yet inside a working venue.
               </p>
             </div>
@@ -209,9 +215,14 @@ export default function ResearchPage() {
             <p className="lp-lead">
               The paper covers both studies in detail, including what did not work.
             </p>
-            <a className="lp-btn lp-btn-cream" href={PAPER_URL} target="_blank" rel="noopener noreferrer">
-              Read the paper (PDF, {PAPER_PAGES} pages)
-            </a>
+            <div className="rs-paper-actions">
+              <a className="lp-btn lp-btn-cream" href={PAPER_URL} target="_blank" rel="noopener noreferrer">
+                Read the paper (PDF, {PAPER_PAGES} pages)
+              </a>
+              <a className="lp-btn lp-btn-ghost" href={FULL_PAPER_URL} target="_blank" rel="noopener noreferrer">
+                Full technical version (PDF, {FULL_PAPER_PAGES} pages)
+              </a>
+            </div>
           </div>
         </section>
       </main>
