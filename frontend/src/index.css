@@ -464,6 +464,17 @@ textarea.roost-composer:focus {
   border-color: transparent !important;
 }
 
+/* The chat composer's field, for the same reason. It sits inside a rounded
+   pill that IS the box, and the app-wide rule drew a square four pixel ring
+   and a drop shadow inside that pill every time the field had focus, which
+   on the phone is every moment someone is typing. The keyboard-only
+   :focus-visible outline above is untouched. */
+textarea.chat-composer-field:focus {
+  box-shadow: none !important;
+  border-color: transparent !important;
+  transition: none !important;
+}
+
 /* Respect the OS "reduce motion" setting (a11y requirement both impeccable and
    the Web Interface Guidelines mandate). Kills the infinite orb/shimmer/pulse
    loops and collapses transitions to crossfades. */
