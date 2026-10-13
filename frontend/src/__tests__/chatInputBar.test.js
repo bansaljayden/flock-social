@@ -447,9 +447,9 @@ describe('the buttons are wired to their props', () => {
 /* ── 9. the keyboard dock: the state it opens into, and what it leaves ──── */
 
 // `hooks/useKeyboardComposer.js`. Two facts about a chat screen make this
-// section necessary. The chat opens with the keyboard ALREADY UP (settled
-// decision 4 in CHAT-REBUILD-PLAN.md, and ChatInputBar's autoFocus produces
-// it), so the first paint is the case that matters most and it is the one case
+// section necessary. A keyboard can be ALREADY UP when a chat mounts (the
+// screens no longer focus on entry, but ChatInputBar's autoFocus still exists
+// and a field elsewhere can hand the keyboard over), and that is the one case
 // no event covers: the rise is over before anything is listening. And the hook
 // holds two viewport listeners, two bridge handles, a focusout listener and a
 // 250ms timer, all of which have to be gone when the screen is.

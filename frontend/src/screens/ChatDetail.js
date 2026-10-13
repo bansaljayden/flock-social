@@ -3645,21 +3645,15 @@ export default function ChatDetail({
              and the field announces itself as the bare word "Message". */
           threadName={flock.name}
           ownColor="var(--chat-accent)"
-          /* THE FIELD IS FOCUSED ON ENTRY, which is the half of decision 4
-             that nothing else can do: the dock can only move a keyboard that
-             something has asked for. A flock chat is a room you came here to
-             say something in, and every reference app in the plan opens with
-             the caret already in the box.
-
-             It is unconditional here, and that is a decision about this
-             surface rather than an oversight. This screen has no state in
-             which the composer is drawn but must not be used: the flock is one
-             you are a member of, the field is never disabled, and the search
-             box, which is the one other field on the screen, is opened from
-             the plus long after this mount. The DM thread is the surface where
-             that is not true, and it answers it by drawing no composer at all
-             for a blocked pair rather than by withholding this. */
-          autoFocus
+          /* NO FOCUS ON ENTRY. Opening a chat used to put the caret in the
+             box, and on the phone the keyboard then rose before the thread had
+             drawn, so the first thing a person saw was keys over an empty
+             screen. Worse, the rise began while the dock's listeners were
+             still binding, and on device the bar could stay under the keys, so
+             what was typed could not be seen. The thread opens on its messages
+             now and the keyboard comes up on a tap in the box, by which time
+             the dock is listening for it. Decision 4 in the rebuild plan is
+             reversed by this. */
           /* The two nodes the dock moves. The bar is what rides the keyboard;
              the field is what it watches, because a focusout is the earliest
              honest signal that the keyboard is on its way down and waiting for

@@ -1635,14 +1635,10 @@ export default function DmDetail({
           variant="dm"
           threadName={selectedDm.name}
           ownColor="var(--chat-accent)"
-          /* THE CARET IS IN THE FIELD ON ENTRY. The dock can only move a
-             keyboard that something has asked for, and this is the ask. It
-             sits inside the blocked gate above, so the one surface where
-             taking focus would be wrong is the one surface that never reaches
-             this line. A thread with no connection yet does reach it, and
-             should: decision 5 keeps that field live because the first message
-             is what carries the friend request. */
-          autoFocus
+          /* NO FOCUS ON ENTRY, for the reason written on the flock chat's
+             composer: the keyboard rising before the thread drew covered the
+             screen, and on device it could leave the bar under the keys. The
+             keyboard comes up on a tap in the box. */
           /* The two nodes the dock moves: the bar rides the keyboard, and the
              field is what it watches, because a focusout is the earliest
              honest signal that the keyboard is going down. */
