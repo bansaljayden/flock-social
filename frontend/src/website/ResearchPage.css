@@ -56,6 +56,9 @@
   text-wrap: balance;
 }
 .rs-paper-by { font-size: 15px; color: var(--cream-2); margin: 0 0 18px !important; }
+/* The paper and its full technical version, side by side; they stack when the
+   row is too narrow for both. */
+.rs-paper-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
 
 /* Body sections */
 .rs h2 { margin: 0 0 20px; }
