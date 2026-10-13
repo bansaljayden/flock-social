@@ -124,7 +124,7 @@ test('the floor is sized for the hourly cadence, not the old nightly one', async
   assert.match(sent[0].subject, /failing partway/);
 });
 
-test('a collector that stopped firing alarms while its row count still looks fine', async () => {
+test('a collector whose rows stopped landing alarms while its row count still looks fine', async () => {
   // The failure the row floor cannot see. The cron quit twelve hours ago, so
   // the window still holds half a day of good rows, well over the floor. What
   // gives it away is that they all landed in the far half of the window.
@@ -135,9 +135,14 @@ test('a collector that stopped firing alarms while its row count still looks fin
   freshHours = 6;
   await hb.runCollectionHeartbeat();
   assert.strictEqual(sent.length, 1, '1,800 rows over 6 of 26 hours is a stopped cron');
-  assert.match(sent[0].subject, /stopped firing/);
+  assert.match(sent[0].subject, /stopped landing rows/);
   assert.match(sent[0].text, /only across 6 distinct hours/,
     'the email distinguishes a stopped cron from a throttled one');
+  // 2026-10-12: every run fired and BestTime had no live data. The email
+  // must not blame the schedule alone; it names the vendor-side cause and
+  // the log line that tells the two apart.
+  assert.match(sent[0].text, /BestTime is returning no live readings/);
+  assert.match(sent[0].text, /wrote 0 rows/);
 });
 
 test('a stopped pipeline mails once per day, even across restarts', async () => {
