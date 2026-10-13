@@ -134,6 +134,19 @@ holdout keeps about 29,000 of them out of training and leaves about 60,000 for
 it, above the 50,000 proven-live floor (`FLOCK_MIN_REALTIME_ROWS`). If the
 export lands short of that, hold out 10 days rather than lower the floor.
 
+**If the live feed is out when the export runs.** It went out at about 16:00
+EDT on 2026-10-12, on the provider's side: every hourly run fired on schedule,
+got "no live data" for nearly every venue, stored nothing and ended on the
+collector's zero-row refusal, and the provider's own venue search timed out
+for areas we never collect. A gap leaves no rows at all, never zero-filled
+ones. `resolve_time_holdout` anchors the 14 days on the last date that has a
+live reading, not on the export date, so an export taken during or after a
+gap holds out the last 14 live days (2026-09-29..10-12 if the feed is still
+out) without any flag. Do not wait for the feed to come back. Compare
+the artifact meta's `time_holdout.last_live_date` with the export date, and when
+they are more than a day apart, write the gap into the verdict so nobody
+reads the window as ending on the export date.
+
 **Re-weight the weekly anchors for that corpus.** The v2.3.1 blend gives every
 weekly row weight 0.05. With v2.6.0's 369,076 realtime rows that left live rows
 82% of the loss; with 60,000 live rows against ~1.7M servable weekly rows it
