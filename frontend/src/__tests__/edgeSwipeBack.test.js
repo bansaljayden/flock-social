@@ -375,7 +375,7 @@ describe('every drill-in screen is wired, and the arrow and the swipe share one 
 
   test('the push has no fill mode, so the root keeps no transform after it', () => {
     const app = read('App.js');
-    expect(app).toMatch(/\.screen-enter \{\s*animation: screenSlideIn 0\.3s ease-out;\s*\}/);
+    expect(app).toMatch(/\.screen-enter \{\s*animation: screenSlideIn 0\.18s cubic-bezier\(0\.2, 0, 0, 1\);\s*\}/);
   });
 
   test('the plan\'s slide to complete keeps its own touches', () => {

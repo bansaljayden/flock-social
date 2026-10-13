@@ -35,6 +35,7 @@
  *   cd frontend && CI=true npx react-scripts test --watchAll=false
  */
 
+const { localeTime, localeDate, localeDateTime } = require('../lib/localeFormat');
 const fs = require('fs');
 const path = require('path');
 
@@ -138,7 +139,8 @@ const HELPER_NAMES = [
 const helpers = (() => {
   const chunk = HELPER_NAMES.map((n) => extractDeclaration(appSource, n)).join('\n');
   // eslint-disable-next-line no-new-func
-  return new Function(`${chunk}\nreturn { ${HELPER_NAMES.join(', ')} };`)();
+  // The lifted declarations format dates through lib/localeFormat, which App.js imports.
+  return new Function('localeTime', 'localeDate', 'localeDateTime', `${chunk}\nreturn { ${HELPER_NAMES.join(', ')} };`)(localeTime, localeDate, localeDateTime);
 })();
 
 const {

@@ -69,7 +69,7 @@ describe('App.js fetches the plan-hour scores into their own cache', () => {
   test('ChatDetail receives the flock-scoped scores and an honest hour label', () => {
     expect(APP).toContain('const eventCrowd = eventCrowdScores[selectedFlockId] || null;');
     expect(APP).toMatch(/eventCrowdLabel/);
-    expect(APP).toContain("`at ${d.toLocaleTimeString([], { hour: 'numeric' })}`");
+    expect(APP).toContain("`at ${localeTime(d, [], { hour: 'numeric' })}`");
   });
 });
 

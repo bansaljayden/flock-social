@@ -47,6 +47,7 @@ import React, { useEffect, useState } from 'react';
 import { CardShell } from './SystemRow';
 import Icons from '../../ui/Icons';
 import './cards.css';
+import { localeDate, localeTime } from '../../../lib/localeFormat';
 
 // The deadline is read once, as a number, and then answered twice: what the
 // footer says, and whether the rows still take a vote. Those used to be two
@@ -62,11 +63,11 @@ const formatDeadline = (at, nowMs) => {
   if (at === null) return null;
   if (at <= nowMs) return 'Voting closed';
   const d = new Date(at);
-  const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  const time = localeTime(d, [], { hour: 'numeric', minute: '2-digit' });
   const sameDay = d.toDateString() === new Date(nowMs).toDateString();
   return sameDay
     ? `Closes ${time}`
-    : `Closes ${d.toLocaleDateString([], { weekday: 'short' })} ${time}`;
+    : `Closes ${localeDate(d, [], { weekday: 'short' })} ${time}`;
 };
 
 const countOf = (o) => (Number.isFinite(Number(o?.voteCount)) ? Number(o.voteCount) : 0);

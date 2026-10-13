@@ -65,6 +65,7 @@ import StaticVenueMap, { paletteIsDark } from '../components/map/StaticVenueMap'
 import useEdgeSwipeBack from '../hooks/useEdgeSwipeBack';
 import useSheetDrag from '../hooks/useSheetDrag';
 import { hapticTap } from '../services/haptics';
+import { localeDate, localeDateTime } from '../lib/localeFormat';
 
 // The time editor's day chips are relative words (Tonight, Tomorrow, This
 // Weekend, Next Week). A plan that sits on none of those days, a Saturday
@@ -90,7 +91,7 @@ const resolveEditTime = (resolveEventTime, day, hour) => {
 const dayChipLabel = (day) => {
   const m = DATE_KEY_RE.exec(String(day || ''));
   if (!m) return day;
-  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+  return localeDate(new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])), [], { weekday: 'short', month: 'short', day: 'numeric' });
 };
 // The chip that lands on the plan's own day at this hour, else the day itself.
 const dayChipFor = (resolveEventTime, dayChoices, when, hourLabel) => {
@@ -868,7 +869,7 @@ export default function FlockDetail({
               <span style={{ color: 'var(--text-secondary)', fontSize: 'var(--t-label)', fontWeight: '500', flexShrink: 0 }}>When</span>
               <span style={{ flex: 1, textAlign: 'right', color: colors.navy, fontSize: 'var(--t-label)', fontWeight: '600', minWidth: 0 }}>
                 {flock.eventTime
-                  ? new Date(flock.eventTime).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+                  ? localeDateTime(new Date(flock.eventTime), [], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
                   : (flock.time && flock.time !== 'TBD' ? flock.time : 'Not set yet')}
               </span>
               {isCreator && !isCompleted && (
@@ -959,7 +960,7 @@ export default function FlockDetail({
                 ))}
               </div>
               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 16px', fontWeight: '500' }}>
-                {resolveEditTime(resolveEventTime, timeEditDay, timeEditHour).toLocaleString([], { weekday: 'long', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                {localeDateTime(resolveEditTime(resolveEventTime, timeEditDay, timeEditHour), [], { weekday: 'long', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
               </p>
 
               <div style={{ display: 'flex', gap: '8px' }}>

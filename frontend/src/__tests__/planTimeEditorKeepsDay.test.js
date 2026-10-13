@@ -3,6 +3,7 @@
 // a host who changed a Saturday plan from 9 PM to 10 PM moved it to today
 // for everybody. When no chip lands on the plan's own day, the day itself
 // is the chip and resolves to that date at the chosen hour.
+const { localeTime, localeDate, localeDateTime } = require('../lib/localeFormat');
 const fs = require('fs');
 const path = require('path');
 
@@ -26,7 +27,8 @@ test('the helpers behave', () => {
   const endOfChip = src.indexOf('};', end) + 2;
   const block = src.slice(start, endOfChip);
   // eslint-disable-next-line no-new-func
-  const api = new Function(`${block}; return { isDateKey, dateKeyOf, resolveEditTime, dayChipLabel, dayChipFor, hourOfChoice };`)();
+  // The lifted source formats dates through lib/localeFormat, which the module imports.
+  const api = new Function('localeTime', 'localeDate', 'localeDateTime', `${block}; return { isDateKey, dateKeyOf, resolveEditTime, dayChipLabel, dayChipFor, hourOfChoice };`)(localeTime, localeDate, localeDateTime);
   expect(api.isDateKey('2026-09-12')).toBe(true);
   expect(api.isDateKey('Tonight')).toBe(false);
   const d = api.resolveEditTime(() => { throw new Error('not called'); }, '2026-09-12', '10 PM');

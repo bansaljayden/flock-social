@@ -8,7 +8,7 @@ const app = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8');
 const css = fs.readFileSync(path.join(__dirname, '..', 'index.css'), 'utf8');
 
 test('the tab buttons carry the class the narrow-window rule targets', () => {
-  expect(app).toContain('<button className="hit44 main-nav-tab" key={t.id} onClick={() => handleTabClick(t.id)}');
+  expect(app).toContain('<button className="hit44 main-nav-tab" key={t.id} onClick={(e) => handleTabClick(t.id, e)}');
 });
 
 test('below 360 px the side padding drops to 8 px, and only there', () => {

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { startsInEdgeBand } from '../../hooks/useEdgeSwipeBack';
 import './chat.css';
+import { localeTime } from '../../lib/localeFormat';
 
 /**
  * MessageRow: one message. Text, or a photo, or a card the parent supplies.
@@ -141,7 +142,7 @@ export function timeOf(message) {
   if (!message.sentAt) return null;
   const d = new Date(message.sentAt);
   if (Number.isNaN(d.getTime())) return null;
-  return d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  return localeTime(d, [], { hour: 'numeric', minute: '2-digit' });
 }
 
 /** Known aspect ratio, or null. Never guessed from the bytes after they land. */

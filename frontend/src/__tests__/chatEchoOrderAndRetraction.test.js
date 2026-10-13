@@ -132,6 +132,7 @@ jest.mock('socket.io-client', () => {
 const socketIoClient = require('socket.io-client');
 const socketApi = require('../services/socket');
 const api = require('../services/api');
+const { localeTime, localeDate, localeDateTime } = require('../lib/localeFormat');
 const { liftReaders } = require('../services/flockReaders');
 
 const read = (...p) => fs.readFileSync(path.join(__dirname, '..', ...p), 'utf8').replace(/\r\n/g, '\n');
@@ -218,7 +219,8 @@ const HELPERS = [
 const H = (() => {
   const chunk = HELPERS.map((n) => extractDeclaration(appSource, n)).join('\n');
   // eslint-disable-next-line no-new-func
-  return new Function(`${chunk}\nreturn { ${HELPERS.join(', ')} };`)();
+  // The lifted declarations format dates through lib/localeFormat, which App.js imports.
+  return new Function('localeTime', 'localeDate', 'localeDateTime', `${chunk}\nreturn { ${HELPERS.join(', ')} };`)(localeTime, localeDate, localeDateTime);
 })();
 
 /** A body slice between two markers, failing loudly when either moved. */
@@ -268,7 +270,8 @@ function liftListener(source, opener) {
 /** Run lifted source against named stand-ins for what it closes over. */
 function runLifted(src, scope) {
   // eslint-disable-next-line no-new-func
-  return new Function(...Object.keys(scope), src)(...Object.values(scope));
+  const full = { localeTime, localeDate, localeDateTime, ...scope };
+  return new Function(...Object.keys(full), src)(...Object.values(full));
 }
 
 /** A setter that behaves like useState's: a function is applied to the state. */
