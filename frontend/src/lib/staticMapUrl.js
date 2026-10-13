@@ -38,13 +38,16 @@
 
 const MAP_HOST = 'https://api.maptiler.com';
 
-// TODO(owner ids): these are MapTiler's stock light and dark streets maps, so
-// previews work today. Once the Flock light and dark styles are hosted in Map
-// Designer, these two constants take those map ids, so a preview looks like the
-// live map it stands in for. Nothing else has to change.
+// The hosted copies of Flock Paper and Flock Night, so a preview looks like
+// the live map it stands in for. They were uploaded from
+// tools/map-style/export-hosted.mjs at FLOCK_STYLE_VERSION 1; the repo's
+// flockStyle is the source of truth, and a change to it is only seen in
+// previews once the export is uploaded over these two maps again. Both were
+// checked to render through the Static Maps API at zoom 16 before they were
+// written here.
 export const STATIC_MAP_IDS = Object.freeze({
-  light: 'streets-v4',
-  dark: 'streets-v4-dark',
+  light: '01a136f3-981e-7077-9ac7-c4ea68d3573e',
+  dark: '01a136f4-31e4-7498-a863-d26e75c9bb74',
 });
 
 // The pin is Flock's own art (frontend/public/map), fetched by MapTiler from
