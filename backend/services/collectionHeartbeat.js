@@ -90,10 +90,18 @@ async function runCollectionHeartbeat() {
 
     // Three shapes, and the email says which, because the first thing anyone
     // does with this alert is guess at the cause. STOPPED is nothing at all.
-    // STALLED is the tell that the cron quit: plenty of rows still inside the
-    // window, but they all landed in a handful of hours near its far edge.
-    // DEGRADED is the collector still firing every hour and yielding little,
-    // which is a throttle wall or an expiring key, not a dead job.
+    // STALLED is rows that quit landing: plenty still inside the window, but
+    // all in a handful of hours near its far edge. DEGRADED is the collector
+    // still yielding every hour, just little: a throttle wall or an expiring
+    // key.
+    //
+    // STALLED HAS TWO CAUSES AND THE ROWS CANNOT TELL THEM APART (2026-10-13).
+    // This subject used to say the run "stopped firing". On 2026-10-12 and 13
+    // every hourly run fired on schedule, BestTime answered each live call
+    // with "no live data", and each run ended on collectRealtime's own
+    // "REFUSED: ... wrote 0 rows" guard. The email sent the reader to the cron
+    // schedule and the last deploy, which were both fine. It names both
+    // causes now and the log line that separates them.
     const state = fresh === 0 ? 'stopped' : (rowsLow ? 'degraded' : 'stalled');
 
     // The claim is taken before the send and released if nothing reached
@@ -105,25 +113,27 @@ async function runCollectionHeartbeat() {
       key: 'collection_heartbeat',
       subject: {
         stopped: 'Flock data collection has stopped',
-        stalled: 'Flock data collection has stopped firing',
+        stalled: 'Flock data collection has stopped landing rows',
         degraded: 'Flock data collection is failing partway',
       }[state],
       text: [
         {
           stopped: `No live crowd observations have landed in ml_training_data in the last ${WINDOW_HOURS} hours.`,
-          stalled: `${fresh} live crowd observations landed in ml_training_data in the last ${WINDOW_HOURS} hours, but only across ${hours} distinct hours out of ${WINDOW_HOURS}. The hourly run has stopped firing and what is in the window is the tail of the last good hours.`,
+          stalled: `${fresh} live crowd observations landed in ml_training_data in the last ${WINDOW_HOURS} hours, but only across ${hours} distinct hours out of ${WINDOW_HOURS}. What is in the window is the tail of the last good hours. Either the hourly run stopped firing, or it fires and BestTime is returning no live readings.`,
           degraded: `Only ${fresh} live crowd observations landed in ml_training_data in the last ${WINDOW_HOURS} hours, against roughly 3,000 expected. The hourly run is starting and dying partway.`,
         }[state],
         '',
-        'The BestTime pull (Railway service BESTTIME, cron 7 * * * *, hourly) has likely failed.',
+        'The BestTime pull (Railway service BESTTIME, cron 7 * * * *, hourly) is not writing.',
         'Check, in order: the Railway service logs, the BestTime subscription state,',
         'and whether the last deploy changed scripts/ml/collectRealtime.js.',
+        'A log ending "REFUSED: the run completed without aborting and wrote 0 rows" means',
+        'the run fired and BestTime had no live data for any venue: their side, not the job.',
         '',
         'This alert repeats at most once a day while collection stays broken.',
       ].join('\n'),
       push: {
         title: 'Data collection is down',
-        body: `${fresh} live crowd rows over ${hours} of the last ${WINDOW_HOURS} hours. The hourly BestTime pull has likely failed.`,
+        body: `${fresh} live crowd rows over ${hours} of the last ${WINDOW_HOURS} hours. The hourly BestTime pull is not writing.`,
       },
       tag: '[HEARTBEAT]',
     });
