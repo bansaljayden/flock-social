@@ -192,7 +192,8 @@ chg_body = (12.0, 30.0)        # across, and how far it reaches in with its bend
 usb_cut = (26.5, 12.3)         # USB: Adafruit #4055 snap-in USB-A extension, its cutout
 usb_body = (18.6, 13.0, 36.0)  # its body behind the panel: across, up, deep
 lan_cut = (16.5, 14.0)         # ETHERNET: panel-mount RJ45 extension, the jack's face
-lan_ear_dx = 30.0              # its two screw ears, centre to centre
+lan_ear_dx = 27.0              # its two screw ears, centre to centre: 27 on the common
+                               # Cat6 screw-ear extensions' own drawings (27.5 on Adafruit #909)
 lan_body = (20.0, 18.0, 32.0)  # MEASURE when in hand: across, up, deep
 
 # The power board between the battery and the Pi: 52Pi's "RPi5 PD Power"
@@ -807,7 +808,10 @@ PI_HDMI = (PI_X0 + 25.8, PI_FRONT - 1.7, PI_ZBOT - 10.0)
 PI_LAN = (PI_X0 + 88.0, PI_FRONT - 7.0, PI_ZBOT + 10.2)
 HAT_MAIN = (PI_X0 + 24.6, PI_FRONT - hat_gap - hat_pcb - 1.0, PI_ZBOT + 3.6)
 BATT_PORTS = ((BATT_X0 + 18, BATT_Y1 - 26, BATT_Z1 + 8), (BATT_X0 + 34, BATT_Y1 - 26, BATT_Z1 + 8))
-ANTENNA = (IN_X1 - 0.4, 24.0, 52.0, 8.0, 30.0)   # x, y0, y1, z0, z1: stuck inside the right wall
+# The 4G antenna: a stick-on LTE strip, 95 x 14 on its own drawing, standing
+# on end inside the right wall behind the sound meter, its u.FL lead off the
+# bottom end. x, y0, y1, z0, z1.
+ANTENNA = (IN_X1 - 0.1, 40.8, 54.8, 11.0, 106.0)
 
 CABLES = {
     # name: (diameter, kind, points)
@@ -861,7 +865,7 @@ CABLES = {
     'Cable: LINK light': (1.6, 'light', [
         _pin(18), (_pin(18)[0], 26, 58), (LED_POS[0], 20, LED_POS[1] + 8), (LED_POS[0], FRONT_Y + 6, LED_POS[1])]),
     'Cable: 4G antenna lead': (1.4, 'antenna', [
-        HAT_MAIN, (HAT_MAIN[0], 36, 14), (140, 30, 14), (ANTENNA[0] - 2, 34, 14)]),
+        HAT_MAIN, (HAT_MAIN[0], 36, 14), (140, 30, 14), (ANTENNA[0] - 2.5, (ANTENNA[1] + ANTENNA[2]) / 2, ANTENNA[3] + 4)]),
 }
 
 
@@ -888,7 +892,7 @@ def cable_part(name):
 
 def antenna_body():
     x, y0, y1, z0, z1 = ANTENNA
-    return span(x - 0.3, x, y0, y1, z0, z1)
+    return span(x - 1.2, x, y0, y1, z0, z1)
 
 
 def hard_parts(sl, back):
@@ -897,7 +901,7 @@ def hard_parts(sl, back):
             'Pi': pi_board() + pi_ports(), 'cooler': cooler_body(), '4G board': hat_body(),
             'camera': camera_body(), 'counter': counter_body(), 'sound meter': meter_body(),
             'PD board': pd_board(), 'charging port': charge_jack(), 'USB port': usb_jack(),
-            'Ethernet port': lan_jack(), 'mount nut': mount_nut()}
+            'Ethernet port': lan_jack(), 'mount nut': mount_nut(), 'antenna': antenna_body()}
 
 
 def screw_report(hard):
@@ -1066,14 +1070,14 @@ INSIDE = {
     'camera': camera_body, 'camera plug': camera_plug, 'counter': counter_body,
     'counter leads': counter_leads, 'sound meter': meter_body, 'PD board': pd_board,
     'charging port': charge_jack, 'USB port': usb_jack, 'Ethernet port': lan_jack,
-    'light': led_body, 'mount nut': mount_nut,
+    'light': led_body, 'mount nut': mount_nut, 'antenna': antenna_body,
     'touch plug': touch_plug, 'touch cable': touch_cable, 'video ribbon': video_ribbon,
 }
 # What each part is meant to touch: what it is fixed to or plugged into.
 ALLOWED = {
     frozenset(p) for p in [
         ('sleeve', 'camera'), ('sleeve', 'counter'), ('sleeve', 'sound meter'), ('sleeve', 'light'),
-        ('sleeve', 'mount nut'), ('sleeve', 'touch plug'), ('sleeve', 'video ribbon'),
+        ('sleeve', 'mount nut'), ('sleeve', 'touch plug'), ('sleeve', 'video ribbon'), ('sleeve', 'antenna'),
         ('back sheet', 'PD board'),
         ('back sheet', 'charging port'), ('sleeve', 'charging port'),
         ('back sheet', 'USB port'), ('back sheet', 'Ethernet port'),
@@ -1153,7 +1157,7 @@ def assembly(sleeve_part, front, back):
         labelled(led_body(), 'LINK light', Color(0.5, 0.95, 0.5)),
         labelled(mount_nut(), '1/4-20 mount nut', Color(0.7, 0.7, 0.72)),
         labelled(brass_inserts(), 'Brass M3 inserts (8)', Color(0.85, 0.66, 0.25)),
-        labelled(antenna_body(), '4G antenna (flexible)', Color(0.6, 0.62, 0.66)),
+        labelled(antenna_body(), '4G antenna strip', Color(0.6, 0.62, 0.66)),
         labelled(stand_in_box_frame(), 'Stand (printed, cream)', CREAM),
         labelled(stand_screw(), 'Stand screw (1/4-20 x 5/8)', Color(0.66, 0.67, 0.7)),
         labelled(camera_arm(), 'CAMVATE wall arm (24007)', Color(0.07, 0.07, 0.08)),

@@ -51,7 +51,7 @@ people coming in.
 | **Raspberry Pi Active Cooler** | Keeps the Pi cool while Owl runs nonstop | On the Pi, under the 4G board | The Pi's FAN socket |
 | **microSD card** | Holds Raspberry Pi OS and the Flux software | The Pi's card slot | |
 | **Waveshare SIM7600G-H 4G HAT** | Gets Flux online where there is no Wi-Fi | On the Pi's 40 pins, 18 mm up on standoffs over the cooler | Its USB port to a Pi USB port |
-| **4G antenna** (flexible, stick-on) | The modem's signal | Stuck inside the right wall, low: plastic and acrylic let radio through. The kit's 14.5 cm blade antenna would stick out of a box this size, so it stays in its bag | The HAT's MAIN connector |
+| **4G antenna** (stick-on strip, 95 x 14 mm) | The modem's signal | Stuck inside the right wall on end, behind the sound meter: plastic and acrylic let radio through. The kit's 14.5 cm blade antenna would stick out of a box this size, so it stays in its bag | The HAT's MAIN connector |
 | **SIM card** (standard size) | The data plan | The HAT's SIM holder, underneath it: put it in before stacking | |
 | **7 inch 1024 x 600 HDMI touchscreen** | Shows the live count, the loudness and the heat view; tap a card to open it | The front | Video ribbon to the Pi; touch USB to the Pi |
 | **Anker Prime 20K 200W power bank (A1336)** | Runs Flux with no wall plug | Standing on its end, left | USB-C to the PD Power board; charges through the back |
