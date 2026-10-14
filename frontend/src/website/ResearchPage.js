@@ -12,9 +12,9 @@ import SiteNav, { useSiteMenu } from './SiteNav';
 // paper keeps the URL the single paper always had, so old links still land.
 const PAPER_URL = '/papers/flock-research-paper.pdf';
 const PAPER_THUMB = '/papers/flock-research-paper-p1.png';
-const PAPER_PAGES = 32;
+const PAPER_PAGES = 36;
 const FULL_PAPER_URL = '/papers/flock-research-paper-full.pdf';
-const FULL_PAPER_PAGES = 49;
+const FULL_PAPER_PAGES = 55;
 
 // Why the research exists and what it found, in plain words, then the paper.
 // Built on the landing page's own stylesheet (.lp: Fraunces display, Hanken
@@ -26,7 +26,8 @@ const FULL_PAPER_PAGES = 49;
 // figures are the served number and the stored weekly curve on all 119,939
 // model-served live readings of 2026-09-09..10-08, the month after the serving
 // weights were set (MODEL-METRICS.md, the month section). The
-// counter's figures are owl-4.9 and the heat rule on the real test sets.
+// counter's figures are owl-4.9 and the heat rule as deployed on the six real
+// benchmark sets, which also guided Owl's development (paper Table 6).
 const DESCRIPTION = 'Why Flock studies how busy places get, what the research found, and the full paper.';
 
 // Share of readings or frames, in percent. `us` is Flock's number, `them` the
@@ -181,7 +182,7 @@ export default function ResearchPage() {
               usLabel="Owl"
               themLabel="Rule"
               rows={COUNTER}
-              note="Frames counted exactly, on real test sets no model trained on. On the hardest set, crowded classrooms filmed with Flux's camera, Owl is exact on 39.3% of frames and within one person on 73.9%."
+              note="Frames counted exactly, on six real benchmark sets no model trained on; the same sets guided Owl's development, so a sealed test comes next. On the hardest set, crowded classrooms filmed with Flux's camera, Owl is exact on 39.3% of frames and within one person on 73.9%."
             />
           </div>
         </section>
@@ -192,8 +193,10 @@ export default function ResearchPage() {
               <h2>Where it falls short</h2>
               <p>
                 Flock's crowd numbers are scores from 0 to 100 for each venue, not
-                headcounts, and the live test covers one month. The counter has
-                been tested on research footage, not yet inside a working venue.
+                headcounts, and the live test covers one month. Most of the gain
+                over the chart comes from the venue's latest reading. The counter
+                has been tested on research footage that also guided its design,
+                and not yet inside a working venue.
               </p>
             </div>
             <div>
