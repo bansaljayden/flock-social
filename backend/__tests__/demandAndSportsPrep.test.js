@@ -163,6 +163,12 @@ test('the exporter bridges database to file and touches no external API', () => 
   const EXP = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ml', 'train', 'exportSportsEvents.js'), 'utf8');
   assert.match(EXP, /FROM ml_sports_events/);
   assert.ok(!/thesportsdb|https:/i.test(EXP), 'the exporter reads the table the collector filled, never the API');
+  // It runs against production in the retrain, under the training export's
+  // read-only rule; the server enforces it, as it does for export_training_data.js.
+  assert.match(EXP, /options: '-c default_transaction_read_only=on'/,
+    'the schedule export must open a server-enforced read-only connection');
+  assert.ok(!/\b(INSERT|UPDATE|DELETE|TRUNCATE|ALTER|CREATE|DROP)\b/.test(EXP.replace(/^\s*\/\/.*$/gm, '')),
+    'the schedule export sends nothing but its SELECT');
 });
 
 test('migration 057 is a pure CREATE, replay-safe by construction', () => {
