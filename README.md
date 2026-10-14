@@ -165,7 +165,7 @@ serves, which is the harder of the two readings and the one worth publishing.
 The binding input today is evidence density: about 26 live readings per venue
 across 168 weekly slots, so the model reads a kind of venue on a Tuesday at 9pm
 better than it reads one particular venue departing from its own pattern. That
-is a data question with a running answer. The mid-October retrain is the first
+is a data question with a running answer. The pre-registered retrain, set for early November, is the first
 on live rows that all carry verified provenance with measured event and weather
 features, and an autumn month in the climate table.
 
