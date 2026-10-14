@@ -14,6 +14,9 @@ const PAPER_URL = '/papers/flock-research-paper.pdf';
 const PAPER_THUMB = '/papers/flock-research-paper-p1.png';
 const PAPER_PAGES = 37;
 const FULL_PAPER_URL = '/papers/flock-research-paper-full.pdf';
+// Two pages on the questions, the method, the findings and the limits, for a
+// reader who wants the whole project before choosing a paper.
+const SUMMARY_URL = '/papers/flock-research-summary.pdf';
 const FULL_PAPER_PAGES = 55;
 
 // Why the research exists and what it found, in plain words, then the paper.
@@ -140,6 +143,7 @@ export default function ResearchPage() {
                 <div className="rs-paper-actions">
                   <a className="lp-btn lp-btn-cream" href={PAPER_URL} target="_blank" rel="noopener noreferrer">Read the paper (PDF)</a>
                   <a className="lp-btn lp-btn-ghost" href={FULL_PAPER_URL} target="_blank" rel="noopener noreferrer">Full technical version (PDF, {FULL_PAPER_PAGES} pages)</a>
+                  <a className="lp-btn lp-btn-ghost" href={SUMMARY_URL} target="_blank" rel="noopener noreferrer">Two-page summary (PDF)</a>
                 </div>
               </div>
             </div>
@@ -193,7 +197,9 @@ export default function ResearchPage() {
               <h2>What it covers so far</h2>
               <p>
                 Flock's crowd numbers are scores from 0 to 100 for each venue, not
-                headcounts, and the live test covers one month. The counter has
+                headcounts, and the live test covers one month. Its findings were
+                checked against 5.3 million public counts of real people from 315
+                sites in seven countries. The counter has
                 been tested on six research datasets and a sealed held-out set,
                 and not yet inside a working venue.
               </p>
@@ -223,6 +229,9 @@ export default function ResearchPage() {
               </a>
               <a className="lp-btn lp-btn-ghost" href={FULL_PAPER_URL} target="_blank" rel="noopener noreferrer">
                 Full technical version (PDF, {FULL_PAPER_PAGES} pages)
+              </a>
+              <a className="lp-btn lp-btn-ghost" href={SUMMARY_URL} target="_blank" rel="noopener noreferrer">
+                Two-page summary (PDF)
               </a>
             </div>
           </div>
