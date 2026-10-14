@@ -1080,6 +1080,36 @@ sent; the push is still three numbers.
   moving while the camera sees two or more people means it is hearing only its
   own electronics. The screen says so in red and the log records it.
 
+## Study mode
+
+For a venue study, where people count the room by hand at fixed times and the
+counter is scored against them. The 30-second reading is not enough for that:
+it is a median of the last fifteen counts, stamped when it was sent. A hand
+count taken at 21:15:00 needs every count around that second, each with its
+own time.
+
+Set `STUDY_LOG=1` in `/etc/flock-sensor/flock_sensor.env` and restart the
+service. The device then keeps two CSV files per UTC day in
+`/var/lib/flock-sensor/study/`, beside the buffer:
+
+| File | One row per | Columns |
+|---|---|---|
+| `counts-<day>.csv` | counted frame (every 2 s on a unit without a screen, every frame with one) | `wall_utc`, `mono_s`, `clock_ok`, `frame_count` (this frame), `published_count` (the median that is sent), `counter` (`model` or `rule`), `infer_ms`, `model` (first 12 hex of each loaded model file's sha256) |
+| `uptime-<day>.csv` | start, camera reopen, and a heartbeat with every reading | `wall_utc`, `mono_s`, `clock_ok`, `event`, `uptime_s`, `thermal_fresh`, `published_count`, `door_in`, `door_out` (the doorway's running totals), `occupancy`, `last_push_age_s`, `detail` |
+
+- **Counts and times only.** Every value must be a number or a short plain
+  token, so a frame, a list of points or a box is refused before anything is
+  written. `test_main.py`'s `StudyMode` pins the columns and fails the build if
+  the thermal loop ever hands the log the frame or its points.
+- **The clock.** `wall_utc` is filled only once NTP has set the clock;
+  before that the row goes to `counts-unsynced.csv` with its monotonic time.
+  Check that `timedatectl` says `System clock synchronized: yes` before a
+  counting night.
+- **Space.** About 3 MB a day on a unit without a screen. The log pauses, and
+  says so in the log, if less than 200 MB is free on the card.
+- **Off by default,** and nothing is created until it is turned on. Copy the
+  files off with `scp` and delete them from the unit when the study ends.
+
 ## Known gaps
 
 Things that are still open, so nobody has to rediscover them.

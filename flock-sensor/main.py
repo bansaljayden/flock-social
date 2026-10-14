@@ -36,8 +36,10 @@ Run `python3 main.py --selftest` to check an installation without waiting.
 
 import argparse
 import array
+import csv
 import ctypes
 import errno
+import hashlib
 import json
 import logging
 import math
@@ -45,6 +47,7 @@ import mmap
 import os
 import random
 import select
+import shutil
 import signal
 import struct
 import sys
@@ -65,7 +68,7 @@ try:
 except ImportError:  # pragma: no cover
     fcntl = None
 
-VERSION = '1.18.0'
+VERSION = '1.19.0'
 
 # ---------------------------------------------------------------------------
 # Config
@@ -229,6 +232,12 @@ DEFAULTS = {
     'NOISE_SPL_ANCHOR_COUNTS': '0.0',
     'NOISE_SPL_ANCHOR_DB': '0.0',
     'NOISE_DB_OFFSET': '50.0',
+    # Study mode, for scoring the counter against people counting the room by
+    # hand. 1 writes every count the camera produces, with the time it was
+    # taken, to CSV files beside the buffer, plus a heartbeat row with each
+    # reading. Counts and times only: no frame, no point, no box. Off unless a
+    # study turns it on. README.md, Study mode.
+    'STUDY_LOG': '0',
     # Allow a plaintext http:// endpoint. Off by default: the API key travels
     # in a header over the venue's wifi, and http would broadcast it.
     'ALLOW_INSECURE_URL': 'false',
@@ -506,6 +515,186 @@ def clock_is_sane():
 def iso_utc(epoch_seconds):
     return time.strftime('%Y-%m-%dT%H:%M:%S', time.gmtime(epoch_seconds)) + \
         f'.{int((epoch_seconds % 1) * 1000):03d}Z'
+
+
+# ---------------------------------------------------------------------------
+# Study mode
+#
+# A venue study scores the counter against people counting the room by hand at
+# fixed times, then sets the counts beside the provider's hourly score. The
+# backend gets one reading every 30 seconds, already a median of the last
+# fifteen counts, and stamped by when it was sent. Scoring a hand count taken
+# at 21:15:00 needs every count around that second, each with its own time.
+#
+# So with STUDY_LOG=1 the device keeps two CSV files per UTC day in a study
+# folder beside the buffer (/var/lib/flock-sensor/study on an installed unit):
+#
+#   counts-<day>.csv  one row per counted frame: wall-clock time, monotonic
+#                     time, whether the clock was synced, the frame's own count,
+#                     the published (median) count, which counter, how long the
+#                     count took, and which model files were loaded
+#   uptime-<day>.csv  a start row, a row when the camera is reopened, and one
+#                     heartbeat with every reading: whether the camera was
+#                     fresh, the doorway's running totals, the occupancy
+#                     estimate, and how long since a reading was delivered
+#
+# Nothing else can enter these files. Every value must be a number or a short
+# token from a fixed alphabet (_clean below), so a frame, a list of points or
+# any other structure is refused before a byte is written. Off by default; a
+# unit that never sets it never creates the folder.
+# ---------------------------------------------------------------------------
+
+STUDY_COUNT_FIELDS = ('wall_utc', 'mono_s', 'clock_ok', 'frame_count', 'published_count',
+                      'counter', 'infer_ms', 'model')
+STUDY_UPTIME_FIELDS = ('wall_utc', 'mono_s', 'clock_ok', 'event', 'uptime_s',
+                       'thermal_fresh', 'published_count', 'door_in', 'door_out',
+                       'occupancy', 'last_push_age_s', 'detail')
+# Stop writing before the log can fill the card the buffer also lives on.
+STUDY_MIN_FREE_BYTES = 200 * 1024 * 1024
+STUDY_SPACE_CHECK_SECONDS = 60.0
+_STUDY_TOKEN_CHARS = set('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.+:-')
+_STUDY_TOKEN_MAX = 40
+
+
+def study_enabled(setting):
+    """STUDY_LOG as a yes or no. Anything unrecognised is no."""
+    return str(setting or '').strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def _clean(value):
+    """A value the study log may hold: a number, empty, or a short plain token.
+
+    The guard that keeps the log to counts. A list, a dict, bytes or a long
+    string raises, so nothing shaped like a frame can be written by mistake.
+    """
+    if value is None:
+        return ''
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        if math.isnan(value) or math.isinf(value):
+            return ''
+        return round(value, 3)
+    if isinstance(value, str) and len(value) <= _STUDY_TOKEN_MAX \
+            and set(value) <= _STUDY_TOKEN_CHARS:
+        return value
+    raise ValueError(f'the study log holds numbers and short tokens, not {type(value).__name__}')
+
+
+def model_tag(paths):
+    """Which model files are counting: the first 12 hex of each one's sha256.
+
+    The sealed test and the venue study both need to say exactly which model
+    produced a count, and a file name does not: people.onnx is replaced in
+    place on every model update.
+    """
+    parts = []
+    for p in paths:
+        try:
+            parts.append(hashlib.sha256(Path(p).read_bytes()).hexdigest()[:12])
+        except OSError:
+            continue
+    return '+'.join(parts) or 'rule'
+
+
+class StudyLog:
+    """Append-only CSV logs of counts and uptime, for a venue study."""
+
+    def __init__(self, directory, wall=None, mono=None, min_free=None):
+        self.directory = Path(directory)
+        self.wall = wall or time.time
+        self.mono = mono or time.monotonic
+        self.min_free = STUDY_MIN_FREE_BYTES if min_free is None else min_free
+        self.started = self.mono()
+        self.lock = threading.Lock()
+        self.files = {}           # kind -> (path, handle, writer)
+        self.space_checked = None
+        self.space_ok = True
+
+    def _has_space(self, now_mono):
+        if self.space_checked is not None and \
+                now_mono - self.space_checked < STUDY_SPACE_CHECK_SECONDS:
+            return self.space_ok
+        self.space_checked = now_mono
+        try:
+            self.space_ok = shutil.disk_usage(str(self.directory)).free >= self.min_free
+        except OSError:
+            self.space_ok = False
+        if not self.space_ok:
+            log_throttled('study_space', logging.ERROR,
+                          f'Study log paused: less than {self.min_free // (1024 * 1024)} MB '
+                          f'free under {self.directory}. Copy the study files off and delete them.')
+        return self.space_ok
+
+    def _writer(self, kind, fields, day):
+        path = self.directory / f'{kind}-{day}.csv'
+        held = self.files.get(kind)
+        if held and held[0] == path:
+            return held[2]
+        if held:
+            held[1].close()
+        fresh = not path.exists()
+        handle = open(path, 'a', encoding='utf-8', newline='')
+        writer = csv.writer(handle, lineterminator='\n')
+        if fresh:
+            writer.writerow(fields)
+        self.files[kind] = (path, handle, writer)
+        return writer
+
+    def _write(self, kind, fields, values):
+        """One row. Never raises: a study log must not stop the sensor counting."""
+        try:
+            row = [_clean(v) for v in values]
+        except ValueError as e:
+            log_throttled('study_refused', logging.ERROR, f'Study log refused a row: {e}')
+            return False
+        try:
+            with self.lock:
+                now_mono = self.mono()
+                now = self.wall()
+                clock_ok = now >= CLOCK_SANE_EPOCH
+                self.directory.mkdir(parents=True, exist_ok=True)
+                if not self._has_space(now_mono):
+                    return False
+                day = time.strftime('%Y-%m-%d', time.gmtime(now)) if clock_ok else 'unsynced'
+                writer = self._writer(kind, fields, day)
+                writer.writerow([iso_utc(now) if clock_ok else '', round(now_mono, 3),
+                                 int(clock_ok)] + row)
+                self.files[kind][1].flush()
+            return True
+        except Exception as e:
+            log_throttled('study_write', logging.WARNING, f'Study log write failed: {e}')
+            return False
+
+    def frame(self, frame_count, published_count, counter, infer_ms, model):
+        """One counted frame."""
+        return self._write('counts', STUDY_COUNT_FIELDS,
+                           [frame_count, published_count, counter, infer_ms, model])
+
+    def event(self, event, thermal_fresh=None, published_count=None, door_in=None,
+              door_out=None, occupancy=None, last_push_age_s=None, detail=''):
+        """A start, a camera reopen, or a heartbeat with each reading."""
+        return self._write('uptime', STUDY_UPTIME_FIELDS,
+                           [event, self.mono() - self.started, thermal_fresh,
+                            published_count, door_in, door_out, occupancy,
+                            last_push_age_s, detail])
+
+    def close(self):
+        with self.lock:
+            for _, handle, _ in self.files.values():
+                try:
+                    handle.close()
+                except Exception:
+                    pass
+            self.files = {}
+
+
+STUDY_DIR = BUFFER_PATH.parent / 'study'
+# Set in main() when STUDY_LOG is on, and nowhere else, so importing this
+# module (the tests, record.py, --selftest) never opens a study log.
+_study = None
 
 
 # ---------------------------------------------------------------------------
@@ -1759,6 +1948,10 @@ def thermal_loop():
     scene = SceneBackground()
     backoff = 0.0
     people_model = load_people_model()
+    tag = 'rule'
+    if _study is not None and people_model is not None:
+        tag = model_tag([PEOPLE_MODEL_PATH]
+                        + ([PEOPLE_FINE_MODEL_PATH] if people_model.fine else []))
     while not _stop.is_set():
         if _thermal_camera is None:
             # Either the camera was absent at boot, which used to mean this
@@ -1819,6 +2012,7 @@ def thermal_loop():
                 failures = 0
                 backoff = 0.0
                 points, things, counter, crowd_count = None, None, 'rule', None
+                counting_began = time.monotonic()
                 if people_model is not None:
                     try:
                         points, things, crowd_count = people_model.read_crowd(frame)
@@ -1829,6 +2023,7 @@ def thermal_loop():
                         log_throttled('people_model', logging.WARNING,
                                       f'People counter model failed, using the rule: {e}')
                 n = crowd_count if points is not None else count_people(frame, scene)
+                infer_ms = (time.monotonic() - counting_began) * 1000.0
                 if n is None:
                     # Still learning the room. Not a reading and not a
                     # failure, so the freshness clock is left alone.
@@ -1838,9 +2033,11 @@ def thermal_loop():
                     _stop.wait(THERMAL_EVERY)
                     continue
                 _thermal_window.append(n)
+                frame_count = n
                 n = _median(list(_thermal_window))
+                published = max(0, min(MAX_THERMAL, int(n)))
                 with _lock:
-                    _state['thermal'] = max(0, min(MAX_THERMAL, int(n)))
+                    _state['thermal'] = published
                     _state['thermal_at'] = time.monotonic()
                     # Inside the lock with the count it belongs to, so the
                     # display cannot pair one frame with another frame's
@@ -1851,6 +2048,9 @@ def thermal_loop():
                         _state['thermal_frame_at'] = time.monotonic()
                         _state['thermal_points'] = points
                         _state['thermal_things'] = things
+                if _study is not None:
+                    _study.frame(int(frame_count), published, counter, infer_ms,
+                                 tag if counter == 'model' else 'rule')
         except Exception as e:
             failures += 1
             log_throttled('thermal_read', logging.WARNING, f'Thermal read error: {e}')
@@ -1862,6 +2062,8 @@ def thermal_loop():
             except Exception:
                 pass
             _set_thermal_camera(None)
+            if _study is not None:
+                _study.event('camera_reopen', detail=f'failures_{failures}')
             # A camera that went away and came back may be pointing at a
             # different scene, or the same one hours later. Relearn it.
             scene = SceneBackground()
@@ -2812,6 +3014,16 @@ def snapshot():
                                  crossings=ir, seen=seen)
     with _lock:
         _state['occupancy'] = estimate
+        pushed_at = _state['pushed_at']
+    if _study is not None:
+        _study.event('heartbeat',
+                     thermal_fresh=seen is not None,
+                     published_count=payload['thermal_headcount'],
+                     door_in=door_in if directional else None,
+                     door_out=door_out if directional else None,
+                     occupancy=estimate['occupancy'] if estimate else None,
+                     last_push_age_s=(time.monotonic() - pushed_at
+                                      if pushed_at is not None else None))
     if estimate is not None:
         payload['occupancy'] = estimate['occupancy']
         payload['occupancy_low'] = estimate['low']
@@ -6530,6 +6742,12 @@ def main():
         logger.info(f'Recovered {len(_pending)} buffered reading(s) from disk')
 
     _install_signal_handlers()
+
+    global _study
+    if study_enabled(CONFIG.get('STUDY_LOG')):
+        _study = StudyLog(STUDY_DIR)
+        _study.event('start', detail=f'v{VERSION}')
+        logger.info(f'Study mode: counts and uptime logged to {STUDY_DIR} (STUDY_LOG=1)')
 
     tof_found = DOOR_SENSOR in ('auto', 'tof') and tof_available()
     door = door_plan(DOOR_SENSOR, tof_found)
