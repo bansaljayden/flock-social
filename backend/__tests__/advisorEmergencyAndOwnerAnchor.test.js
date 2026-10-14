@@ -93,7 +93,14 @@ test('the four feedback FEATURES get the guards the published score already had'
   assert.match(predictor, /SELECT DISTINCT ON \(vf\.user_id\)/);
   assert.match(predictor, /AND vf\.created_at > NOW\(\) - INTERVAL '28 days'/);
   // And training computes it the same way, or the feature means two different
-  // things in the two places it is produced.
-  assert.match(exportJs, /SELECT DISTINCT ON \(f2\.venue_place_id, f2\.user_id\) f2\.\*/);
-  assert.match(exportJs, /WHERE f2\.created_at > NOW\(\) - INTERVAL '28 days'/);
+  // things in the two places it is produced: per row, one report per reporter,
+  // verified and not against an owner-set card before the dedupe.
+  assert.match(exportJs, /SELECT DISTINCT ON \(f2\.user_id\) f2\.crowd_level, f2\.predicted_score/);
+  // Cut at each row's own hour (PRE-RETRAIN-AUDIT finding 13), never at the
+  // day of the export: a row reads the reports of the 28 days before ITS
+  // moment, as serving reads the 28 days before the moment it scores.
+  assert.match(exportJs, /AND f2\.created_at < rm\.hour_start/);
+  assert.match(exportJs, /AND f2\.created_at > rm\.hour_start - INTERVAL '28 days'/);
+  const query = exportJs.slice(exportJs.indexOf('function cityQuery('), exportJs.indexOf('function escapeCsv('));
+  assert.ok(!/NOW\(\)/.test(query), 'the training aggregate may not be anchored on the day the export runs');
 });
