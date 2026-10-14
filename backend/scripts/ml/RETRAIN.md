@@ -345,6 +345,24 @@ two fixed hours a day, never has an hour-old reading. The live features are
 meant to close exactly those gaps, so the city and reading-age slices of the
 gate report are where a real gain should show.
 
+**2026-10-14: the incumbent's nowcast weights changed, the gate did not.** On
+the curve_offset base the nowcast now carries a reading one hour old at weight
+1 and nothing older (it was 1.0 / 0.85 / 0.25 / 0 for 1 / 2 / 3 / 4-12 hours;
+it is 1.0 / 0 / 0 / 0). On the same 119,939 readings the two-hour rows (14,778)
+scored worse at 0.85 than curve plus offset alone, MAE 28.56 against 25.83
+(+2.73, date-block CI95 1.41 to 3.63) and within one band 63.4% against 67.9%
+(−4.54, −6.12 to −2.41); at three hours (7,794) 0.25 was a wash. The 0.85 and
+0.25 were fitted on 09-01..05, when 81% of consecutive-hour live readings were
+identical; over 09-26..10-08 about 45-48% were. With the new weights the
+arithmetic the gate compares against scores, on that window: band exact 54.7%,
+within one band 78.9%, within 10 54.9%, band MAE 0.756, MAE 17.68 (MODEL-METRICS.md,
+the 2026-10-14 note). Those weights were chosen on that window, so the figures
+are not out-of-sample for them; the pre-registered October holdout scores them
+next. The band gate compares a candidate against production **as served at gate
+time**: `--incumbent-serve=curve_offset+nowcast` reads `NOWCAST_WEIGHTS` from
+`services/mlPredictor.js`, so it now scores the incumbent with these weights.
+No threshold or rule above changed.
+
 ### The commands, in order
 
 Pre-work in code before the export: all done. On 2026-09-26: the live and

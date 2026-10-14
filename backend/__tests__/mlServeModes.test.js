@@ -259,6 +259,29 @@ test('the nowcast blends toward the reading by its lag weight; a zero weight or 
   assert.equal(I.nowcastBaseKey(false, false, I.NOWCAST_MODEL_FITTED_ON), 'model');
 });
 
+// 2026-10-14: on the curve_offset base a reading two or three hours old no
+// longer moves the number (mlPredictor.js, the block above NOWCAST_WEIGHTS).
+// The number is curve + offset, and the card publishes the figure measured on
+// curve + offset.
+test('on the curve_offset base, a reading 2, 3 or 4+ hours old leaves the number at curve + offset, and the card says so', () => {
+  assert.deepEqual({ ...I.NOWCAST_WEIGHTS.curve_offset }, { 1: 1, 2: 0, 3: 0, 4: 0 });
+  const base = I.curveOffsetScore(40, { offset: -20 });
+  for (const bucket of [2, 3, 4]) {
+    const pick = { value: 90, lagHours: bucket, bucket, date: '2026-09-06', hour: 19 - bucket, observedAt: null };
+    assert.equal(I.applyNowcast(base, pick, 'curve_offset'), null, `lag ${bucket} moved the curve_offset number`);
+    assert.equal(I.SERVE_MEASURED.nowcast.curve_offset[bucket], null, `lag ${bucket} still carries a figure`);
+  }
+  // A one-hour reading is still the number.
+  assert.equal(I.applyNowcast(base, { value: 90, lagHours: 1, bucket: 1, date: '2026-09-06', hour: 18, observedAt: null }, 'curve_offset').score, 90);
+  // With no nowcast applied, the confidence is the curve + offset figure.
+  const accuracy = { status: 'measured', percent: 33.3, metric: 'within_15', population: 'realtime_served', rows: 1 };
+  const c = I.servedConfidence({ accuracy, qmapApplied: false, hasWeather: true, curveOffset: true, nowcast: null, ladder: () => 70 });
+  assert.equal(c.confidenceMeasurement.metric, 'within_15_curve_offset');
+  assert.equal(c.confidenceMeasurement.measuredPercent, 42.7);
+  assert.equal(c.confidenceMeasurement.populationRows, 119939);
+  assert.equal(c.confidence, 43);
+});
+
 test('every switched arithmetic that can move a number has a measured confidence figure', () => {
   assert.ok(I.SERVE_MEASURED.curveOffset.within15 > 0 && I.SERVE_MEASURED.curveOffset.rows > 0);
   for (const [base, table] of Object.entries(I.NOWCAST_WEIGHTS)) {
@@ -387,9 +410,10 @@ test('a null deviation is no longer a zero that pulls the strict offset toward t
 // A flat curve of 20 and two live readings at one venue: 0 at 17:00 and 100 at
 // 19:00. The card for 19:00 is served during 19:00, after that hour's sweep,
 // so the stored median includes the 19:00 reading. With both switches on the
-// replay serves 3 (no offset from a single earlier reading, then the 17:00
-// reading blended in at the two-hour weight); reading the stored median would
-// serve 7, a number moved by the reading it is scored against.
+// replay serves 20 (no offset from a single earlier reading, and the 17:00
+// reading is two hours old, a bucket the curve_offset table weights at zero
+// since 2026-10-14); reading the stored median would serve a number moved by
+// the reading it is scored against.
 // `live` swaps in other readings on the same flat curve, as [date, hour, y];
 // `hourly` asks predictHourlyForecast for [startHour, count] instead.
 async function serveFlatCurveCase(env, { live = [['2026-09-06', 17, 0], ['2026-09-06', 19, 100]], hourly = null } = {}) {
@@ -451,9 +475,16 @@ test('with both switches on, the hour\'s own reading never reaches the number th
   const on = await serveFlatCurveCase({ CROWD_SERVE_MODE: 'curve_offset', CROWD_NOWCAST_ENABLED: 'true' });
   assert.equal(on.predictionMethod, 'ml');
   assert.equal(on.recentDeviation, null, 'one earlier reading is below the floor, so no offset');
-  assert.equal(on.nowcast.lagHours, 2);
-  assert.equal(on.score, Math.round(20 + I.NOWCAST_WEIGHTS.curve_offset[2] * (0 - 20)));
-  assert.equal(on.score, 3);
+  // The 17:00 reading is two hours old, which the curve_offset table weights
+  // at zero: no nowcast, the curve alone, and nothing of the 19:00 reading.
+  assert.equal(I.NOWCAST_WEIGHTS.curve_offset[2], 0);
+  assert.equal(on.nowcast, null);
+  assert.equal(on.score, 20);
+  // An 18:00 reading is one hour old and is carried at full weight, still
+  // with nothing of the 19:00 reading in it.
+  const oneHour = await serveFlatCurveCase({ CROWD_SERVE_MODE: 'curve_offset', CROWD_NOWCAST_ENABLED: 'true' }, { live: [['2026-09-06', 18, 55], ['2026-09-06', 19, 100]] });
+  assert.equal(oneHour.nowcast.lagHours, 1);
+  assert.equal(oneHour.score, 55);
   // curve_offset alone: the curve, with no offset from the 19:00 reading.
   const co = await serveFlatCurveCase({ CROWD_SERVE_MODE: 'curve_offset' });
   assert.equal(co.score, 20);
@@ -820,13 +851,21 @@ test('migration 093 adds the offset readings column additively, in ASCII, and de
 // now_qmapoff when SERVE_MEASURED moved to the month-long measurement: with
 // every confidence field left out, all six configurations hash to what they
 // did before that change, so the confidence figures are the only difference.
+// Re-recorded 2026-10-14 for the same four when the curve_offset nowcast
+// weights at two and three hours went to zero. Against the code before that
+// change, response by response: co, now and now_qmapoff differ only in the
+// confidence population string, which now says the curve_offset weights were
+// chosen on the measured window; conow differs beyond it on exactly the 47
+// responses whose nowcast was a two- or three-hour reading on the
+// curve_offset base, which now carry no nowcast and serve curve + offset, and
+// in nothing else. off and off_qmapoff did not move.
 const PRE_FAMILY = {
   off: ['2c1c088f1d0937e4b3a71818dddce32051465a48b94f930140259c029f5aa9e1', 'c0fb5514e3b331fa2080c4aacf86fd9345558366dfc3a8269a3cb93cb38a719d'],
   off_qmapoff: ['fec289f0febb8c101c3ef9101bd2dd0d8fb3cc922856fdeab8b6b425394ce4c7', 'c0fb5514e3b331fa2080c4aacf86fd9345558366dfc3a8269a3cb93cb38a719d'],
-  co: ['4b1e2cb46823da79094118e82c4c7e3dcf7fe9d334241008cb364d7b8975b904', '8042bcfe0ce42e931a3adb64e366418e9f64be2f6af5cfc1b854f05493093ba2'],
-  conow: ['9583e0da4441a4c3de01d598c6db822125b520cac3c467cc7f57d8353cc18faa', '8042bcfe0ce42e931a3adb64e366418e9f64be2f6af5cfc1b854f05493093ba2'],
-  now: ['31dcf2310b8b52bbc605a04357a3ab7e65c4c1b3afa353f3d218d787ce0813c4', '8042bcfe0ce42e931a3adb64e366418e9f64be2f6af5cfc1b854f05493093ba2'],
-  now_qmapoff: ['5f597d855af8c01f661727511a9931707e2303ec7eb95dc186defdafed7b0420', '8042bcfe0ce42e931a3adb64e366418e9f64be2f6af5cfc1b854f05493093ba2'],
+  co: ['e5cb803c15b0aeea081981984019a424d105cbb34765c3dfed5e67f494a8c945', '8042bcfe0ce42e931a3adb64e366418e9f64be2f6af5cfc1b854f05493093ba2'],
+  conow: ['a5ec0eae71f5186cb819e6bd5d237793c50d7a58f9b63bd815f203a1e493cd0c', '8042bcfe0ce42e931a3adb64e366418e9f64be2f6af5cfc1b854f05493093ba2'],
+  now: ['1af4516bfcab6a88b02e7ca459c3daad52d1fff3ef3fb955acb90ab841508950', '8042bcfe0ce42e931a3adb64e366418e9f64be2f6af5cfc1b854f05493093ba2'],
+  now_qmapoff: ['f46471132de3c93d3df71688b93684899b3d83ec2d6f716f24887b99d0348535', '8042bcfe0ce42e931a3adb64e366418e9f64be2f6af5cfc1b854f05493093ba2'],
 };
 const PRE_FAMILY_ENV = {
   off: {},

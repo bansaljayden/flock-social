@@ -1,18 +1,30 @@
 {
-  "configuration": "CROWD_SERVE_MODE=curve_offset + CROWD_NOWCAST_ENABLED=true",
-  "population": "live readings 2026-09-09..10-08 (Philadelphia, Lehigh and Miami, read-only production export of 2026-10-08), held out; weights fitted on 2026-09-01..05",
+  "configuration": "CROWD_SERVE_MODE=curve_offset + CROWD_NOWCAST_ENABLED=true, nowcast weights on the curve_offset base 1.0 / 0 / 0 / 0 for readings 1 / 2 / 3 / 4-12 hours old (since 2026-10-14)",
+  "population": "live readings 2026-09-09..10-08 (Philadelphia, Lehigh and Miami, read-only production export of 2026-10-08); the model never trained on them, but the nowcast weights were chosen on this same window, so these figures are not out-of-sample for those weights (the pre-registered October holdout scores them next)",
   "scored_dates": [
     "2026-09-09",
     "2026-10-08"
   ],
   "scored_date_count": 30,
   "rows": 119939,
-  "within_one_band": 78.4,
-  "within_10": 55.2,
-  "within_15": 62.2,
-  "band_exact": 54.9,
-  "mae": 18.00,
-  "bias": -1.24,
+  "within_one_band": 78.9,
+  "within_10": 54.9,
+  "within_15": 62.0,
+  "band_exact": 54.7,
+  "mae": 17.68,
+  "bias": -1.16,
+  "band_mae": 0.756,
+  "previous_weights": {
+    "what": "the same readings under the nowcast weights fitted on 2026-09-01..05 (1.0 / 0.85 / 0.25 / 0), served until 2026-10-14",
+    "rows": 119939,
+    "within_one_band": 78.4,
+    "within_10": 55.2,
+    "within_15": 62.2,
+    "band_exact": 54.9,
+    "mae": 18.00,
+    "bias": -1.24,
+    "band_mae": 0.772
+  },
   "before": {
     "configuration": "v2.6.0-starling as served before the two switches (model mode, quantile map on)",
     "rows": 119939,
@@ -30,12 +42,12 @@
     "mae": 9.99
   },
   "first_test": {
-    "what": "the three held-out days the switches were shipped on",
+    "what": "the three held-out days the switches were shipped on, under the weights fitted on 2026-09-01..05 (1.0 / 0.85 / 0.25 / 0); not re-scored with the 2026-10-14 weights",
     "population": "live readings 2026-09-06..08 (Lehigh and Miami, local 2026-09-08 export)",
     "rows": 4183,
     "within_one_band": 78.8,
     "band_exact": 56.0,
     "mae": 17.06
   },
-  "reproduce": "from backend/scripts/ml/train/: after a read-only export (export_training_data.js), CROWD_SERVE_MODE=curve_offset CROWD_NOWCAST_ENABLED=true node bandEval.js --from=2026-09-09 --rows-out=rows.csv (the live_time_holdout section; the one-hour-earlier figures are the rows-out file filtered to ml = 1 and served_nowcast_lag_hours = 1). scored_dates is the window's first and last date."
+  "reproduce": "from backend/scripts/ml/train/: after a read-only export (export_training_data.js), CROWD_SERVE_MODE=curve_offset CROWD_NOWCAST_ENABLED=true node bandEval.js --from=2026-09-09 --rows-out=rows.csv (the live_time_holdout section; the one-hour-earlier figures are the rows-out file filtered to ml = 1 and served_nowcast_lag_hours = 1). scored_dates is the window's first and last date. The headline figures are the served[curve_offset+nowcast] line of that command run on the 2026-10-14 code; they equal, on the 119,939 rows with ml = 1 of a rows-out file made before the change, served_nowcast_reading where served_nowcast_lag_hours = 1, else served_curve_offset. previous_weights is served_curve_offset_nowcast on that earlier file."
 }
