@@ -31,6 +31,39 @@ days no longer overlap. If the feed stays silent, the window stays 09-29..10-12,
 and ten of its dates overlap that test; the paper says so. Do not set
 `FLOCK_TIME_HOLDOUT_FROM` by hand; the registered rule picks the window.
 
+**The November runbook** (`RETRAIN-NOVEMBER-RUNBOOK.md`, kept with the paper in
+the research folder's `studies/`, outside this repo) is the command block below
+with the checks around it: the go/no-go counts read off the export, the
+expected output of each step, how to read the verdict and lay out the paper's
+table, the ship switch and rollback. What a readiness audit of every step on
+2026-10-14 found, beyond the command block (no threshold or rule changed):
+
+- Run where `models/incumbent/` holds all four files. Without
+  `best_model.pkl` and `features_holdout.pkl` `quick_eval.py` records the
+  incumbent as absent and fails the point gate; only an incumbent that is
+  present but cannot be lined up defers to the band gate.
+- `prepare_features.py` will stop on five constant columns. A dry run on the
+  2026-10-08 export, cut at the window the feed outage leaves (training through
+  09-28), named `cold_outdoor`, `special_suppress`, `weather_other`,
+  `weather_snow` and `weather_thunderstorm`; more training dates can only
+  shorten the list. Decide each before the export. `cold_outdoor` cannot be
+  excused (`mlPipelineContracts.test.js`: it once hid a unit bug), so it is
+  dropped or that pin is revisited. The same dry run built 104 features from
+  72,949 live training rows (floor 50,000) with live rows at 80% of the loss,
+  and `train_model.py`'s pre-fit contracts pass on it.
+- `run_training.sh` does not carry this run's switches, and its band gate
+  scores the incumbent under the shell's own `CROWD_*` variables.
+- An hourly run that refuses on zero rows also skips the game-schedule
+  refresh, so during an outage `ml_sports_events` stays as of the last run that
+  completed.
+- The gate compares against rule (b) (`mlRetrainReadiness.test.js`). The
+  configuration the paper tested is not a serving setting any more; the
+  runbook recomputes it from `--rows-out` (it reproduces the 10-08 run's
+  `served[curve_offset+nowcast]` on all 119,939 rows).
+- A candidate that passes changes nothing users see until `CROWD_SERVE_MODE`
+  is set to `model` on the main service: `curve_offset` never runs a model.
+  Setting it back to `curve_offset` is the rollback.
+
 Everything in this section was measured on the local export of 2026-09-08
 (`train/*.csv.partial`, interrupted after the `nyc` city block, so it holds
 Lehigh's 7,276 live readings of 09-01..09-08 and Miami's 730 of 09-05..09-08,
@@ -446,7 +479,9 @@ node -e "const g=require('./scripts/ml/models/model_metadata.json').ship_gate;
                      JSON.stringify(g.band_gate && g.band_gate.candidate))"
 ```
 
-`run_training.sh` runs steps 2 to 7 in the same order. Run step 7 with
+`run_training.sh` runs the same scripts in the same order, without this run's
+switches, the schedule export or `--incumbent-serve`; use the block above for
+the November run. Run step 7 with
 `CROWD_QMAP_ENABLED` set exactly as the main service has it, because the band
 gate compares the candidate against the incumbent AS SERVED, and the map
 changes what the incumbent serves.
@@ -909,7 +944,7 @@ true statements about a corpus collected inside one ten-week window
 | `is_holiday` | 0 | 100% | EXPECTED-SPARSE. `config.js HOLIDAYS` is a US federal calendar and the window contains no entry (Memorial Day 2026-05-25 is 7 days past the last row). Fills in on the first run crossing a federal date |
 | `season_spring` | 1 | 100% | EXPECTED-SPARSE. Every row is month 3-5, so this is 1 everywhere |
 | `season_summer` / `season_fall` / `season_winter` | 0 | 100% | EXPECTED-SPARSE. Same cause. Fills in when collection spans a second quarter. Note the asymmetry: in July `mlPredictor` emits `season_summer=1`, a corner with zero training support — audit finding 5 pointing the other way |
-| `avg_user_crowd`, `log_user_feedback_count`, `has_user_feedback`, `avg_prediction_error` | 0 | 100% | EXPECTED-SPARSE. The exporter joins `venue_feedback WHERE verified = true` and no presence-verified row exists yet. **Fix audit finding 13 before they fill in** — that join is per-venue over all time with no cutoff, so the day they stop being constant is the day a lookahead leak arms |
+| `avg_user_crowd`, `log_user_feedback_count`, `has_user_feedback`, `avg_prediction_error` | 0 | 100% | EXPECTED-SPARSE. The exporter joins `venue_feedback WHERE verified = true` and no presence-verified row exists yet. **Fix audit finding 13 before they fill in** — that join is per-venue over all time with no cutoff, so the day they stop being constant is the day a lookahead leak arms (fixed 2026-10-14: each row's aggregate now ends at its own hour) |
 | `etype_family` | 0 | 100% | EXPECTED-SPARSE. A level of a one-hot whose other four are alive. `collectEvents.mapEventType` and `mlPredictor.mapTmEventType` both emit `family` (checked, they agree); the 206,925 enriched rows contain none. Same shape as `weather_snow`, alive on 1,605 rows |
 
 Also checked and clean, so nobody re-derives it: `eventService.js`'s
@@ -1155,7 +1190,7 @@ same day:
 | 10 | per-hour diagnostic on misaligned rows; unweighted LOCO refit | **FIXED.** `hour` and `venue_category` travel in the pickle; the refit passes `sample_weight` |
 | 11 | metadata rewritten from scratch | **FIXED.** Merge plus a named eviction list; `run_training.sh`'s summary reads `training_loco_cv`; `evaluate_model.py`'s plotting imports are guarded |
 | 12 | weekly rows carry one weather snapshot | **FIXED.** NULL weather on weekly rows; 0% of weekly rows in the local export carry a temperature |
-| 13 | `venue_feedback` join is a lookahead | **OPEN, dormant.** The aggregate is 28 days back from NOW(), not from each row's date (`export_training_data.js`, the `fb` subquery); 0 verified feedback rows exist, so all four features are constant. The plan drops them |
+| 13 | `venue_feedback` join is a lookahead | **FIXED 2026-10-14, while dormant.** The aggregate was 28 days back from NOW(), not from each row's date. `export_training_data.js` now aggregates per row: verified reports created strictly before the start of the row's own venue-local hour and within 28 days of it (weekly and undated rows: the hour they were collected), one per reporter after the verified and owner-card filters, as `getUserFeedback` reads them at serve time. 0 verified feedback rows existed, so no exported value changed; `mlFeedbackLabels.test.js` (PART 5) proves on a real database that reports at or after a row's hour cannot move its features |
 | 14 | third baseline writer; `source` not reset | **OPEN, dormant.** `storeGoogleBaselines` is unreachable from every request path; `buildBaselines`' upsert still does not reset `source` |
 | 15 | event features alive in training, dead in production | **CHANGED.** `TICKETMASTER_API_KEY` is set in production, so serving computes them; live readings record `events_observed` (99.9% of the local live rows, 1,467 with an event). The spring corpus's defaulted negatives remain (54% of rows sit in cities with zero events, `export_v28.log`) |
 | 16 | city imbalance | **OPEN.** Beijing holds 2,057 rows; the plan drops it |

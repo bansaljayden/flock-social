@@ -953,11 +953,12 @@ EXPECTED_SPARSE_FEATURES: Dict[str, str] = {
     'avg_user_crowd': (
         "export_training_data.js joins venue_feedback WHERE verified = true, and "
         'no presence-verified feedback row exists yet (~0 users). FILLS IN with '
-        'real usage. READ AUDIT FINDING 13 BEFORE IT DOES: that join aggregates '
-        'per venue over ALL TIME with no cutoff and no (dow, hour) key, and '
-        'avg_prediction_error is a label proxy minus a model output — so the day '
-        'these four columns stop being constant is the day a lookahead leak '
-        'arms. Key the aggregate and add the observed_date cutoff first.'),
+        'real usage. AUDIT FINDING 13 is closed (2026-10-14): the join used to '
+        'aggregate per venue up to the day of the export, so a row saw reports '
+        'from after its own hour, and avg_prediction_error is a label proxy minus '
+        'a model output. Each row now reads only the verified reports of the 28 '
+        'days before its own hour, as serving reads the 28 days before the moment '
+        'it scores.'),
     'log_user_feedback_count': 'see avg_user_crowd — no verified feedback rows exist.',
     'has_user_feedback': 'see avg_user_crowd — no verified feedback rows exist.',
     'avg_prediction_error': 'see avg_user_crowd — no verified feedback rows exist.',
