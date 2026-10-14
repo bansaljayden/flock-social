@@ -9,6 +9,12 @@
 //
 // Writes scripts/ml/train/sports_events.csv. Reads the database, writes a
 // file, touches no external API.
+//
+// READ-ONLY, ENFORCED BY THE SERVER. The retrain runbook runs this against
+// production right after export_training_data.js, under the same rule: the
+// connection opens with default_transaction_read_only=on, so a write from this
+// process fails with 25006 instead of reaching the table. It only ever ran a
+// SELECT; this makes the rule the runbook states a property of the connection.
 // ---------------------------------------------------------------------------
 
 require('dotenv').config({ path: require('path').join(__dirname, '..', '..', '..', '.env') });
@@ -29,6 +35,8 @@ if (!process.env.DATABASE_URL && process.env.PGHOST) {
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
+  // Server-enforced read-only, as export_training_data.js opens its pool.
+  options: '-c default_transaction_read_only=on',
 });
 
 async function main() {
