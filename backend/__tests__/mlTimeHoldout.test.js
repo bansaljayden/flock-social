@@ -29,14 +29,21 @@ const PY_PANDAS = (() => {
   return null;
 })();
 
-test('test_time_holdout.py passes: the cutoff, the split, the served-baseline blend and the anchor weight',
+test('test_time_holdout.py passes: the cutoff, the split, the served-baseline blend, the anchor weight and the feed scenarios',
   { skip: PY_PANDAS ? false : 'python with pandas not available' }, () => {
     const r = spawnSync(PY_PANDAS, ['test_time_holdout.py'], { cwd: TRAIN_DIR, encoding: 'utf8' });
     assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
     const summary = r.stdout.match(/(\d+)\/(\d+) passed/);
     assert.ok(summary, r.stdout);
     assert.equal(summary[1], summary[2]);
-    assert.ok(Number(summary[2]) >= 11, `only ${summary[2]} checks ran`);
+    // 11 checks until 2026-10-14, then five feed scenarios for the November run
+    // (the feed dead through the export, back by 10-20, back for four days,
+    // forecast rows after the last live reading, a holdout city read later).
+    assert.ok(Number(summary[2]) >= 16, `only ${summary[2]} checks ran`);
+    for (const name of ['test_feed_dead_through_the_export_holds_out_09_29_to_10_12',
+      'test_feed_back_by_10_20_and_running_to_10_31_holds_out_10_18_to_10_31']) {
+      assert.match(r.stdout, new RegExp(`PASS  ${name}`), `${name} did not run`);
+    }
   });
 
 test('the pipeline runs the band gate last and the exporter is not skipped', () => {
