@@ -961,6 +961,10 @@ router.get('/:placeId',
       // off the 6 AM entry instead of the score on screen. It starts at the
       // current hour and runs forward, and the hourly strip is its first 12
       // entries so the chart and the recommendation can never disagree.
+      // The verified owner's own capacity, when they gave one, started beside
+      // the two predictions because nothing between here and the capacity
+      // line reads it. It never rejects (ownerReports.getOwnerCapacity).
+      const ownerCapacityRead = ownerReports.getOwnerCapacity(placeId);
       const [scored, fullDay] = await Promise.all([
         mlPredictor.predictBusyness(venue, weather, clientTime, { userId: req.user.id }),
         mlPredictor.predictHourlyForecast(venue, weather, localHour, 24, clientTime, { userId: req.user.id }),
@@ -1058,7 +1062,10 @@ router.get('/:placeId',
         hourly.length
       );
       const best = bestTimeAt(finalScore);
-      const capacity = estimateCapacity(venue, finalScore);
+      // The owner's figure for how many people fit wins over the ladder's
+      // guess from place types and review counts, and says so (source
+      // 'owner'). The override in services/ownerReports.js keeps it.
+      const capacity = estimateCapacity(venue, finalScore, await ownerCapacityRead);
       const waitEstimateTyped = estimateWait(finalScore, venue.types, venue.price_level);
 
       const dataSources = [...crowdResult.dataSourcesUsed];
