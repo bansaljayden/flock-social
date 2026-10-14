@@ -46,6 +46,19 @@ test('test_time_holdout.py passes: the cutoff, the split, the served-baseline bl
     }
   });
 
+// The final refit (prepare_features.py, above resolve_final_refit): only a run
+// that passed may be refitted with its holdouts folded in, and
+// final_refit_gate.py carries the verdict across only for the gated recipe.
+test('test_final_refit.py passes: a refit needs a passed gate and the gated recipe',
+  { skip: PY_PANDAS ? false : 'python with pandas not available' }, () => {
+    const r = spawnSync(PY_PANDAS, ['test_final_refit.py'], { cwd: TRAIN_DIR, encoding: 'utf8' });
+    assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
+    const summary = r.stdout.match(/(\d+)\/(\d+) passed/);
+    assert.ok(summary, r.stdout);
+    assert.equal(summary[1], summary[2]);
+    assert.ok(Number(summary[2]) >= 8, `only ${summary[2]} checks ran`);
+  });
+
 test('the pipeline runs the band gate last and the exporter is not skipped', () => {
   const sh = fs.readFileSync(path.join(TRAIN_DIR, 'run_training.sh'), 'utf8').replace(/\r\n/g, '\n');
   const order = ['node export_training_data.js', 'python prepare_features.py', 'python train_model.py',
