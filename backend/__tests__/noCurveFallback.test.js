@@ -18,7 +18,7 @@
 //     another artifact version;
 //   * the answer: the table's value rounded and clamped, its tag, a null model
 //     version, its sources, baselineScore, and the figure it publishes
-//     (within-15 41.3 on 4,248 rows) with its population;
+//     (within-15 37.1 on 133,071 readings) with its population;
 //   * the row: guessCategory over the first three Google types, the ones the
 //     table was measured on, never the whole list, and only when those types
 //     name one of its categories (an airport, a hotel or no types at all is
@@ -325,7 +325,7 @@ test('switched on, a venue with 200+ reviews and no row at all gets the table\'s
     assert.deepStrictEqual(r, {
       score: value,
       label: crowdEngine.getLabel(value),
-      confidence: 41,
+      confidence: 37,
       factors: {},
       dataSourcesUsed: ['google_places', 'category_curve'],
       predictionMethod: METHOD,
@@ -335,8 +335,8 @@ test('switched on, a venue with 200+ reviews and no row at all gets the table\'s
         means: 'measured_accuracy',
         metric: 'within_15_rule_engine_category_table',
         population: p._internals.NO_CURVE_FALLBACK_POPULATION,
-        populationRows: 4248,
-        measuredPercent: 41.3,
+        populationRows: 133071,
+        measuredPercent: 37.1,
         weatherPenalty: 0,
       },
       eventsObserved: false,
@@ -1260,17 +1260,19 @@ test('the coverage block calls the fallback on only while the table can be serve
   });
 });
 
-test('the published figure is pinned: within-15 41.3 on 4,248 rows, with what it was measured on', async () => {
+test('the published figure is pinned: within-15 37.1 on 133,071 readings, with what it was measured on', async () => {
   await withPredictor({ env: { [SWITCH]: ON } }, async (p) => {
     const I = p._internals;
-    assert.deepStrictEqual({ ...I.NO_CURVE_FALLBACK_MEASURED }, { within15: 41.3, rows: 4248 });
+    assert.deepStrictEqual({ ...I.NO_CURVE_FALLBACK_MEASURED }, { within15: 37.1, rows: 133071 });
     assert.ok(Object.isFrozen(I.NO_CURVE_FALLBACK_MEASURED));
-    assert.match(I.NO_CURVE_FALLBACK_POPULATION, /2026-09-06\.\.08/);
+    assert.match(I.NO_CURVE_FALLBACK_POPULATION, /2026-09-01\.\.10-12/);
+    assert.match(I.NO_CURVE_FALLBACK_POPULATION, /Philadelphia/);
     assert.match(I.NO_CURVE_FALLBACK_POPULATION, /Lehigh and Miami/);
     assert.match(I.NO_CURVE_FALLBACK_POPULATION, /own curve withheld/);
     assert.match(I.NO_CURVE_FALLBACK_POPULATION, /200\+ Google reviews/);
-    // The category gate is part of the policy the figure describes (re-read
-    // with it on the same rows: 41.29, published as 41.3).
+    // The figure is the table's own, on the readings of venues the gate
+    // serves (2026-10-14; the gated policy's 41.3 on three September days
+    // was published until then).
     assert.match(I.NO_CURVE_FALLBACK_POPULATION, /first three Google types name one of its categories/);
     assert.notEqual(I.NO_CURVE_FALLBACK_POPULATION, I.SERVE_MEASURED_POPULATION);
     assert.equal(I.NO_CURVE_FALLBACK_MIN_REVIEWS, 200);
@@ -1284,7 +1286,7 @@ test('the published figure is pinned: within-15 41.3 on 4,248 rows, with what it
       const r = await p.predictBusyness(venue(), weather, TS);
       const m = r.confidenceMeasurement;
       assert.equal(r.confidence, Math.round(m.measuredPercent) - m.weatherPenalty);
-      assert.equal(r.confidence, 41);
+      assert.equal(r.confidence, 37);
       assert.equal(m.weatherPenalty, 0);
     }
   });
