@@ -344,6 +344,61 @@ def resolve_time_holdout(frames: List[pd.DataFrame], env=os.environ) -> Dict:
     return {'policy': 'last_days', 'days': days, 'from_date': start, 'last_live_date': last_live}
 
 
+# ---------------------------------------------------------------------------
+# THE FINAL REFIT (2026-10-14).
+#
+# A gated run never sees its holdouts: three whole cities (Miami among them,
+# one of the three markets production serves) and the newest live days. Once
+# that run has PASSED, the artifact worth serving is the same recipe fitted on
+# everything, holdouts included. Nothing can gate that artifact, because it has
+# nothing left to be scored on, so it may only exist as the refit of a run
+# that already passed:
+#
+#   FLOCK_FINAL_REFIT=<path to the gated run's model_metadata.json>
+#
+# The file must carry ship_gate.overall_pass === true and must not itself be a
+# refit. The city holdout is folded into training and the time holdout is off.
+# final_refit_gate.py then checks the refit used the gated recipe (features,
+# parameters, policies) and carries the gated verdict across BY REFERENCE, with
+# both hashes. quick_eval.py must never run on a refit: its holdout cities are
+# now training rows, so any score it printed would be in-sample.
+# ---------------------------------------------------------------------------
+FINAL_REFIT_ENV = 'FLOCK_FINAL_REFIT'
+
+
+def resolve_final_refit(env=os.environ):
+    """None for an ordinary run; else the record of the gated run this refit copies."""
+    raw = str(env.get(FINAL_REFIT_ENV, '')).strip()
+    if not raw:
+        return None
+    for other in (TIME_HOLDOUT_FROM_ENV, TIME_HOLDOUT_DAYS_ENV):
+        if str(env.get(other, '')).strip():
+            raise CorpusContractError(f'{FINAL_REFIT_ENV} turns every holdout off; do not also set {other}.')
+    path = Path(raw)
+    if not path.is_file():
+        raise CorpusContractError(f'{FINAL_REFIT_ENV}={raw!r}: no such file (the gated run\'s model_metadata.json).')
+    blob = path.read_bytes()
+    try:
+        gated = json.loads(blob.decode('utf-8'))
+    except ValueError as err:
+        raise CorpusContractError(f'{FINAL_REFIT_ENV}: {path} is not JSON: {err}')
+    gate = gated.get('ship_gate')
+    if not isinstance(gate, dict) or gate.get('overall_pass') is not True:
+        raise CorpusContractError(
+            f'{FINAL_REFIT_ENV}: {path} did not pass its ship gate (overall_pass is not true). '
+            'Only a run that passed may be refitted on everything.')
+    if gated.get('final_refit'):
+        raise CorpusContractError(f'{FINAL_REFIT_ENV}: {path} is itself a refit; refit the gated run.')
+    import hashlib
+    return {
+        'gated_metadata_path': str(path.resolve()),
+        'gated_metadata_sha256': hashlib.sha256(blob).hexdigest(),
+        'gated_model_version': gated.get('model_version'),
+        'gated_time_holdout': gated.get('time_holdout'),
+        'gated_training_rows': gated.get('training_rows'),
+    }
+
+
 def split_time_holdout(df: pd.DataFrame, from_date) -> Tuple[pd.DataFrame, Dict]:
     """Remove every realtime row observed on or after `from_date` (any provenance)."""
     record = {'realtime_rows_held_out': 0, 'live_rows_held_out': 0, 'held_out_by_city': {}}
@@ -3083,7 +3138,24 @@ def main():
     # The time holdout, cut BEFORE anything is fitted (see the block above
     # resolve_time_holdout). Only the training frame loses rows; the city
     # holdout was never trained on.
-    time_holdout = resolve_time_holdout([train_df, holdout_df])
+    final_refit = resolve_final_refit()
+    if final_refit:
+        # Everything trains: the holdout cities join the training frame and no
+        # live day is held back (the block above resolve_final_refit).
+        if holdout_df is None or len(holdout_df) == 0:
+            raise CorpusContractError(f'{FINAL_REFIT_ENV}: the export has no holdout cities to fold in.')
+        final_refit['holdout_city_rows_folded_in'] = int(len(holdout_df))
+        final_refit['holdout_cities_folded_in'] = sorted(holdout_df['city'].astype(str).unique().tolist())
+        train_df = pd.concat([train_df, holdout_df], ignore_index=True)
+        logger.warning('FINAL REFIT of %s: %d holdout-city rows %s folded into training, time holdout off. '
+                       'Do not run quick_eval.py on this artifact; run final_refit_gate.py.',
+                       final_refit['gated_metadata_path'], final_refit['holdout_city_rows_folded_in'],
+                       final_refit['holdout_cities_folded_in'])
+        live = _live_dates(train_df)
+        time_holdout = {'policy': 'final_refit', 'days': 0, 'from_date': None,
+                        'last_live_date': str(live.max()) if len(live) else None}
+    else:
+        time_holdout = resolve_time_holdout([train_df, holdout_df])
     train_df, time_split = split_time_holdout(train_df, time_holdout['from_date'])
     time_holdout.update(time_split)
     logger.info('Time holdout (%s): live readings from %s on are held out of training for the '
@@ -3584,7 +3656,7 @@ def main():
             logger.warning('Existing model_metadata.json unreadable (%s) — starting fresh.', err)
             metadata = {}
     STALE_AFTER_REPREP = ['ship_gate', 'evaluation', 'validation_baseline_delta',
-                          'training_metrics', 'incumbent_comparison']
+                          'training_metrics', 'incumbent_comparison', 'final_refit']
     evicted = [k for k in STALE_AFTER_REPREP if k in metadata]
     for k in evicted:
         metadata.pop(k)
@@ -3601,6 +3673,7 @@ def main():
         # later retrain's gate reads the second when this artifact becomes the
         # incumbent, to prove the incumbent has not seen that retrain's window.
         'time_holdout': time_holdout,
+        **({'final_refit': final_refit} if final_refit else {}),
         'sample_weight_policy': weekly_weight_policy,
         'feature_names': feature_cols,
         'feature_count': len(feature_cols),
