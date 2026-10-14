@@ -33,6 +33,7 @@ const {
 // The owner's live 0-100 reading, so Birdie and the venue card cannot quote
 // two different numbers for one room.
 const ownerReports = require('../services/ownerReports');
+const gameNights = require('../services/gameNights');
 const venueLabel = require('../utils/venueLabel');
 const mlPredictor = require('../services/mlPredictor');
 const { getPremiumState, paywallEnabled, EntitlementUnavailableError } = require('../services/entitlements');
@@ -839,6 +840,25 @@ const NO_READING_THIS_HOUR = 'There is no crowd reading for this venue right now
 // attribution and the confidence block, because anything left in this object
 // is text the model can say back. The venue's name and open state stay: those
 // are Google's facts, not a reading.
+// The card's game-night fact in the tool result's shape, or null.
+function gameNightResult(gameNight) {
+  if (!gameNight || !Array.isArray(gameNight.teams)) return null;
+  const teams = gameNight.teams
+    .filter((t) => typeof t === 'string')
+    .map((t) => promptSafe(t, 24))
+    .filter(Boolean);
+  if (!teams.length) return null;
+  const h = gameNight.homeGame;
+  const near = h && Number.isFinite(Number(h.distanceKm)) && Number(h.distanceKm) <= gameNights.HOME_NEAR_KM;
+  const homeTeam = near ? promptSafe(h.team, 24) : '';
+  return {
+    teams,
+    home_game: near && homeTeam
+      ? { team: homeTeam, venue_name: promptSafe(h.venueName, MAX_VENUE_NAME_CHARS) || null, distance_km: Number(h.distanceKm) }
+      : null,
+  };
+}
+
 function lockForecastResult(result, { salesOff = false } = {}) {
   delete result.best_time;
   delete result.peak_hours;
@@ -1242,6 +1262,9 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
       const weather = (Number.isFinite(lat) && Number.isFinite(lon))
         ? await getWeather(lat, lon, { userId })
         : null;
+      // Tonight's game, the fact the card shows (services/gameNights.js).
+      // Null on any failure, no game, or a venue outside the market.
+      const gameNight = await gameNights.gameNightFor(lat, lon, new Date(nowMs));
 
       // Charged to the steering account for the same reason as the weather
       // above. Without an id the predictor's own per-account legs never apply
@@ -1428,6 +1451,16 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
         confidence_measurement: confidenceMeasurementFor(crowdResult, crowdResult.confidence, 0),
         is_open: venue.isOpen,
         weather: weather ? { temp: weather.temp, conditions: weather.conditions } : null,
+        // TONIGHT'S GAME, AS A SCHEDULE FACT: the card's game-night line,
+        // in the tool result's words. Sent only when there is one, so every
+        // other result keeps exactly its keys, and kept on a locked result,
+        // as the card keeps it, because it is a fact about the street rather
+        // than a reading. The home game is named only as close as the card
+        // names one (HOME_NEAR_KM), and the arena name comes from the schedule
+        // feed, so it enters the prompt through promptSafe like a venue name.
+        // The rules tell Birdie never to call the venue busier for it: the
+        // 2026-08-30 sports ablation found no crowd effect to stand behind.
+        ...(gameNightResult(gameNight) ? { game_night: gameNightResult(gameNight) } : {}),
         // Scored on UTC because nothing knew the time at the venue (WHOSE
         // CLOCK, above): the hours below are UTC hours, and the note says so.
         // A locked result carries neither, and lockForecastResult removes both.
@@ -2037,6 +2070,7 @@ Hard rules:
 - Never invent venue data, crowd numbers, or forecasts. Tools only. If a tool has no data, say you don't have a read on that spot.
 - Never name a venue a tool did not return, and never state a crowd number a tool did not give you. Having takes does not mean making things up. A confident wrong number is the worst thing you can send.
 - Never quote the \`confidence\` number from get_crowd_prediction, and never put a certainty on a single crowd read. Read \`confidence_measurement\` instead: when its \`status\` is "unmeasured", that number says how much we know about the venue, not how often we are right, and it runs HIGHER than a real measured accuracy. Talk about the crowd level, not about certainty.${servedAccuracyRule()}
+- When get_crowd_prediction returns \`game_night\`, it is tonight's schedule: those teams play tonight, and \`home_game\`, when present, is a home game at the named arena about that many kilometers from the venue. You may mention it in passing as a fact. Never say or imply that the game makes the venue busier, quieter or harder to get into, and never change or explain a crowd number with it: no crowd effect from games has been measured.
 - When get_crowd_prediction returns \`crowd_source\` = "owner_report", the number is the venue's own live report, not Flock's estimate. Say so plainly using the exact words in \`crowd_attribution\` (e.g. "the cafe says it's at 80% right now"). Presenting their claim as our measurement is the one thing this field exists to prevent.
 - When get_crowd_prediction returns \`crowd_source\` = "user_reports", the number was adjusted by verified visitor reports filed for this time of week over the last four weeks. Those reports can be days or weeks old, so never say or imply that people at the venue right now adjusted it, and never call it the crowd model's number alone. When \`crowd_source\` = "category_pattern", the number is what is typical for a venue like this one, not a reading of this venue, and never the crowd model's number. When \`crowd_method\` is also present, it names what the number started from.
 - When get_crowd_prediction returns \`crowd_method\`, it says what made the number. "venue_pattern_live" means the venue's usual pattern and its recent live readings, "venue_pattern" means the venue's usual pattern, "model_live" means the crowd model plus the venue's recent live readings, "model_alone" means the crowd model without any live readings, and "live_reading_1h" (or "live_reading_2h" and so on) means the number is the venue's own live reading from that many hours ago, carried forward. If you say where the number comes from, say that. Unless it starts with "model_", never call it the crowd model's number. A value ending in "_adjusted" (for example "live_reading_1h_adjusted") means that same source, then adjusted by verified visitor reports filed for this time of week over the last four weeks. Those reports can be days or weeks old, so never say or imply that people at the venue right now adjusted it. Say it was adjusted by visitor reports from this time of week, and never present it as the live reading itself or as an unadjusted number.
