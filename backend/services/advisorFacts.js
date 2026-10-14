@@ -42,6 +42,7 @@ const mlPredictor = require('./mlPredictor');
 const crowdEngine = require('./crowdEngine');
 const weatherService = require('./weatherService');
 const venueCorpus = require('./venueCorpus');
+const gameNights = require('./gameNights');
 const { moderateText } = require('../utils/moderation');
 const { INTAKE_COLUMNS } = require('../validators/venueIntake');
 
@@ -953,6 +954,42 @@ function ownerStreetContext(ctx, now) {
   return out;
 }
 
+// The team names joined the way the card's chip joins them.
+function teamList(teams) {
+  if (teams.length === 1) return teams[0];
+  return `${teams.slice(0, -1).join(', ')} and ${teams[teams.length - 1]}`;
+}
+
+// Tonight's game night as facts: one, or none. Dated with the market's
+// calendar day (America/New_York, the day gameNights reads), so the tonight
+// outlook keeps it and a weekend outlook keeps it only on a weekend.
+async function gameNightFacts(lat, lng, now) {
+  let game = null;
+  try {
+    game = await gameNights.gameNightFor(lat, lng, now);
+  } catch { game = null; }
+  if (!game || !Array.isArray(game.teams) || game.teams.length === 0) return [];
+  const teams = game.teams.map((t) => externalText(t, { max: 24 })).filter(Boolean);
+  if (!teams.length) return [];
+  const date = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(now);
+  // A home game is named only as close as the card names one.
+  const near = game.homeGame && Number.isFinite(Number(game.homeGame.distanceKm))
+    && Number(game.homeGame.distanceKm) <= gameNights.HOME_NEAR_KM ? game.homeGame : null;
+  const homeTeam = near ? externalText(near.team, { max: 24 }) : null;
+  const arena = near ? externalText(near.venueName) : null;
+  const home = near && homeTeam ? { team: homeTeam, venueName: arena || null, distanceKm: Number(near.distanceKm) } : null;
+  return [makeFact({
+    id: `game_night_${date}`,
+    value: { date, teams, homeGame: home },
+    source: 'events',
+    asOf: now.toISOString(),
+    note: 'A game on the schedule, nothing more. We measured no crowd effect from games at the venues we track, so we never say a game will fill or empty your room.',
+    label: home
+      ? `Tonight: ${home.team} home game${home.venueName ? ` at ${home.venueName}` : ''}, about ${home.distanceKm} km from you.`
+      : `Tonight: ${teamList(teams)} play.`,
+  })];
+}
+
 // ─── Card 2: Around you this week ────────────────────────────────────────────
 //
 // Ticketmaster listings within ~1km over the next 7 days plus the weekend
@@ -1122,6 +1159,17 @@ async function buildAroundYou(ctx, { now = new Date(), userId } = {}) {
       }));
     }
   }
+
+  // TONIGHT'S GAME, AS A SCHEDULE FACT (services/gameNights.js, the card's own
+  // line). Only today: the schedule is read for the market's calendar day.
+  // The sports ablation of 2026-08-30 found no crowd effect the model could
+  // stand behind, so this says who plays and, for a home game near the venue,
+  // where, and never that the game fills or empties the room. The arena name
+  // comes from the schedule feed and is treated like a listing title
+  // (externalText). No game, a venue outside the Philadelphia and Lehigh
+  // Valley market, or a failed read: no fact, and no refusal either, because
+  // a quiet schedule is the ordinary case and says nothing about the street.
+  out.push(...(await gameNightFacts(lat, lng, now)));
 
   out.push(...street);
 
