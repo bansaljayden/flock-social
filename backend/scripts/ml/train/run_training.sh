@@ -3,6 +3,14 @@
 # Flock AI Crowd Forecasting — Full Training Pipeline
 # Run from: backend/scripts/ml/train/
 # =================================================================
+#
+# NOT THE PRE-REGISTERED NOVEMBER 2026 RUN. This script runs the pipeline with
+# every switch at its default. That run uses the command block in ../RETRAIN.md
+# ("The commands, in order"), which sets its policies, exports the game
+# schedule and gates against production as served (--incumbent-serve). Run
+# from here, the band gate would score the incumbent under this shell's own
+# CROWD_* variables instead, which on a machine with none set is v2.6.0 in
+# model mode with the quantile map, not what production serves.
 
 set -e
 
