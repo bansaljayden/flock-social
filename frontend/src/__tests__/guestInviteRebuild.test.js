@@ -1041,7 +1041,7 @@ describe('invite-preview: the card the link draws in a group chat', () => {
     // and fixed. The regex here read {8,20} while newLinkToken mints
     // LINK_TOKEN_LENGTH = 24, so EVERY invite link created since that widening
     // failed the shape test, took the generic-tags branch, and previewed in
-    // iMessage as "Flock | Plans that actually happen" with no host, no plan
+    // iMessage as "Flock | Plans that happen" with no host, no plan
     // and no time. Only the legacy 12-character tokens still previewed.
     expect(preview.TOKEN_RE.test(NEW_TOKEN)).toBe(true);
     expect(preview.readToken({ query: { token: NEW_TOKEN } })).toBe(NEW_TOKEN);
@@ -1080,7 +1080,7 @@ describe('invite-preview: the card the link draws in a group chat', () => {
     expect(copy.title).toBe('Maya invited you to Friday Night Out');
     expect(copy.description).toMatch(/Good Dog Bar/);
     expect(copy.description).toMatch(/3 going/);
-    expect(copy.title).not.toMatch(/Plans that actually happen/);
+    expect(copy.title).not.toMatch(/Plans that happen/);
   });
 
   test('a cancelled plan is not previewed as an invitation', () => {

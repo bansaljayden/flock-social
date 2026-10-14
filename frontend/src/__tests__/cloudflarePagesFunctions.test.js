@@ -317,7 +317,7 @@ describe('who gets what', () => {
     const generic = async (route) => {
       const { res } = await run(SITE + route, { headers: { 'User-Agent': UA.twitterbot } });
       expect([route, res.status]).toEqual([route, 200]);
-      expect(await res.text()).toContain('<title>Flock | Plans that actually happen</title>');
+      expect(await res.text()).toContain('<title>Flock | Plans that happen</title>');
       expect(res.headers.get('Cache-Control')).toBe('private, no-store, max-age=0');
     };
     await generic('/i/RevokedToken123');
