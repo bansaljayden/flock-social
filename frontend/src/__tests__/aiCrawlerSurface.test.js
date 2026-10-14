@@ -385,14 +385,20 @@ describe('llms.txt stays true to the shipped model', () => {
       FRONTEND, '..', 'backend', 'services', 'servedAccuracy.json'
     )));
     const flat = llms.replace(/\s+/g, ' ');
+    // The public copy quotes the month's out-of-sample test, which measured the
+    // nowcast weights served until 2026-10-14 (previous_weights). The weights
+    // served since were chosen on that same window, so their figures on it are
+    // not quoted as a test result; the October holdout scores them first.
+    const tested = served.previous_weights;
     expect(served.rows).toBe(119939);
+    expect(tested.rows).toBe(119939);
     expect(flat).toContain('119,939 real live readings');
     // Exact level beside within-one, for the reason given on the /about pin.
-    expect(flat).toContain(`${served.band_exact.toFixed(1)}% of Flock's crowd numbers named the exact crowd level of the live reading, ${served.within_one_band}% landed within one level`);
-    expect(flat).toContain(`${served.within_10}% within 10 points`);
+    expect(flat).toContain(`${tested.band_exact.toFixed(1)}% of Flock's crowd numbers named the exact crowd level of the live reading, ${tested.within_one_band}% landed within one level`);
+    expect(flat).toContain(`${tested.within_10}% within 10 points`);
     expect(flat).toContain(`scored ${served.before.band_exact.toFixed(1)}%, ${served.before.within_one_band}% and ${served.before.within_10}%`);
-    expect(flat).toContain(`average miss was ${served.mae.toFixed(1)} points, down from ${served.before.mae.toFixed(1)}`);
-    expect(Math.abs(served.bias)).toBeLessThan(2);
+    expect(flat).toContain(`average miss was ${tested.mae.toFixed(1)} points, down from ${served.before.mae.toFixed(1)}`);
+    expect(Math.abs(tested.bias)).toBeLessThan(2);
     expect(flat).toContain(`${served.reading_one_hour_earlier.band_exact.toFixed(1)}% of numbers named the exact crowd level and ${served.reading_one_hour_earlier.within_one_band}% landed within one`);
     // The hour-before figures are on a subset, and say how big it is; the
     // pre-upgrade figures are on the whole set, as /about now says too.
