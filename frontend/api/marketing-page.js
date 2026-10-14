@@ -111,7 +111,7 @@ const CONTACT_EMAIL = 'social@flockcorp.com';
 const PAGE_META = {
   home: {
     path: '/',
-    title: 'Flock | Plans that happen',
+    title: 'Flock | Plans that actually happen',
     description: 'Flock turns “we should hang out” into a real night out. Vote on where to go, see how busy it is before you leave, split the bill, and go.',
   },
   about: {
@@ -1019,7 +1019,7 @@ async function handler(req, res) {
     console.error('marketing-page: fallback document:', (err && err.name) || 'Error');
     try {
       send(res, '<!doctype html>\n<html lang="en"><head><meta charset="utf-8">'
-        + '<title>Flock | Plans that happen</title>'
+        + '<title>Flock | Plans that actually happen</title>'
         + '<meta name="description" content="Flock is a free group planning app. Vote on where to go, see how busy it is before you leave, and split the bill after.">'
         + '</head><body><main><h1>Flock</h1>'
         + '<p>Flock is a free group planning app. Start a flock, invite your people, vote on where to go, match budgets privately, and split the bill after.</p>'

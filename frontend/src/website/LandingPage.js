@@ -337,7 +337,7 @@ export default function LandingPage() {
   }, [menuOpen]);
 
   useEffect(() => {
-    document.title = 'Flock | Plans that happen';
+    document.title = 'Flock | Plans that actually happen';
     const d = document.querySelector('meta[name="description"]');
     if (d) d.setAttribute('content', 'Flock turns “we should hang out” into a real night out. Vote on where to go, see how busy it is before you leave, split the bill, and go.');
   }, []);
