@@ -206,6 +206,37 @@ async function getLiveOwnerReports(placeIds) {
   }
 }
 
+// THE OWNER'S OWN CAPACITY for the card (venue intake, migration 030's
+// "how many people fit"), or null. The card's capacity was always
+// crowdEngine.estimateCapacity's ladder of place types and review counts,
+// while the one person who knows how many people the room holds had already
+// told us. Read under the live reading's trust rules, for the live reading's
+// reasons: only a VERIFIED profile for this place id, and not an owner who has
+// been banned, since a revoked claim must stop speaking for the room on every
+// surface the moment it is revoked. Bounded like the validator (1 to 20,000)
+// in crowdEngine.ownerCapacityMax. NEVER throws: a failed read is the ladder's
+// answer, which is what every card carried before this.
+const OWNER_CAPACITY_SQL = `
+  SELECT vp.capacity
+    FROM venue_profiles vp
+    JOIN users ou ON ou.id = vp.user_id AND ou.is_banned IS NOT TRUE
+   WHERE vp.google_place_id = $1
+     AND vp.verified = true
+     AND vp.capacity IS NOT NULL
+   ORDER BY vp.updated_at DESC NULLS LAST
+   LIMIT 1`;
+
+async function getOwnerCapacity(placeId) {
+  if (typeof placeId !== 'string' || !placeId) return null;
+  try {
+    const { rows } = await pool.query(OWNER_CAPACITY_SQL, [placeId]);
+    return rows.length ? crowdEngine.ownerCapacityMax(rows[0].capacity) : null;
+  } catch (err) {
+    console.error('[OwnerReports] owner capacity read failed, using the estimate:', err.message);
+    return null;
+  }
+}
+
 // Belt-and-braces liveness over a row the SQL already filtered — the same
 // two-layer rule crowdEngine.usableCalibrationReports keeps, and for the same
 // reason: it makes this safe to call with a row from ANY source (a test, a
@@ -511,7 +542,8 @@ function applyOwnerReport(result, ownerRow, options = {}) {
   }
   if (result.capacity && Number.isFinite(Number(result.capacity.max))) {
     const max = Number(result.capacity.max);
-    out.capacity = { current: Math.round((max * live.percent) / 100), max };
+    // Spread first so an owner-given capacity keeps saying so (source).
+    out.capacity = { ...result.capacity, current: Math.round((max * live.percent) / 100), max };
   }
   // The best-time answer follows the number too. Its words about now ("Now is
   // good", "Packed now, and it stays that way") are chosen from the score they
@@ -527,6 +559,8 @@ function applyOwnerReport(result, ownerRow, options = {}) {
 
 module.exports = {
   getLiveOwnerReports,
+  getOwnerCapacity,
+  OWNER_CAPACITY_SQL,
   liveOwnerReport,
   applyOwnerReport,
   ownerDivergesFromReports,

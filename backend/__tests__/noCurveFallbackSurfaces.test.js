@@ -938,21 +938,23 @@ async function sendsTheStatementsItSentBefore() {
   // Measured on the code before the change, three runs, identical each time.
   // A cold strip reads each unprimed hour's slot (24 for the card, 61 for the
   // dashboard's day and six evenings); a full curve is one whole-curve read
-  // and the headline's one slot.
+  // and the headline's one slot. Each card total is one more since
+  // 2026-10-14: the card reads the verified owner's own capacity
+  // (ownerReports.getOwnerCapacity), one statement, switch or no switch.
   const same = (presence, slot, curve, total) => ({ presence, slot, curve, total });
   assert.deepStrictEqual(counts, {
-    'card cold': same(0, 24, 1, 30),
+    'card cold': same(0, 24, 1, 31),
     'demo cold': same(0, 24, 1, 27),
     'birdie cold': same(0, 24, 1, 28),
     'intelligence cold': same(0, 61, 1, 65),
     'strip cold': same(0, 8, 1, 12),
-    'card curved': same(0, 1, 1, 8),
+    'card curved': same(0, 1, 1, 9),
     'demo curved': same(0, 1, 1, 5),
     'birdie curved': same(0, 1, 1, 6),
     'intelligence curved': same(0, 1, 1, 6),
     'strip curved': same(0, 1, 1, 6),
     area: same(0, 2, 1, 7),
-    'card cold again': same(0, 23, 1, 27),
-    'card curved again': same(0, 0, 0, 4),
+    'card cold again': same(0, 23, 1, 28),
+    'card curved again': same(0, 0, 0, 5),
   });
 }

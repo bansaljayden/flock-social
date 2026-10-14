@@ -1053,7 +1053,27 @@ function generateHourlyForecast(venue, weather, startHour, count, baseTimestamp)
 // Capacity estimate
 // ---------------------------------------------------------------------------
 
-function estimateCapacity(venue, score) {
+// The owner's own "how many people fit" (venue intake), when it is a number
+// the intake validator would accept: a whole number from 1 to 20,000
+// (validators/venueIntake.js BOUNDS.capacity). Anything else is null.
+const OWNER_CAPACITY_MAX = 20000;
+function ownerCapacityMax(value) {
+  if (value === null || value === undefined || value === '' || typeof value === 'boolean') return null;
+  const n = Number(value);
+  return Number.isInteger(n) && n >= 1 && n <= OWNER_CAPACITY_MAX ? n : null;
+}
+
+// `ownerCapacity` (optional) is a verified owner's own figure
+// (ownerReports.getOwnerCapacity). It wins over the ladder below, which is a
+// guess from place types and review counts, and the answer says so
+// (source 'owner'); without it the answer is the ladder's, shaped exactly as
+// it always was.
+function estimateCapacity(venue, score, ownerCapacity) {
+  const owned = ownerCapacityMax(ownerCapacity);
+  if (owned !== null) {
+    const s = Math.max(0, Math.min(100, Number(score) || 0));
+    return { current: Math.round(owned * s / 100), max: owned, source: 'owner' };
+  }
   const types = venue.types || [];
   const reviews = venue.user_ratings_total || 0;
   let max;
@@ -2220,6 +2240,7 @@ module.exports = {
   calculateCrowdScore,
   generateHourlyForecast,
   estimateCapacity,
+  ownerCapacityMax,
   estimateWait,
   findBestTime,
   // Round 13: same decision as findBestTime, but it also hands back WHICH
