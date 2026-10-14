@@ -198,8 +198,9 @@ export default function ResearchPage() {
               <p>
                 Flock's crowd numbers are scores from 0 to 100 for each venue, not
                 headcounts, and the live test covers one month. Its findings were
-                checked against 5.3 million public counts of real people from 315
-                sites in seven countries. The counter has
+                checked against 5.7 million public counts of real people from 573
+                sites in nine countries, including people counted inside rooms
+                and libraries. The counter has
                 been tested on six research datasets and a sealed held-out set,
                 and not yet inside a working venue.
               </p>
