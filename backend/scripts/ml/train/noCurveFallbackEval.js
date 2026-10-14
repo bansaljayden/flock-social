@@ -79,8 +79,8 @@ function parseArgs(argv) {
 // Metrics
 // ---------------------------------------------------------------------------
 
-const STATS = ['n', 'ae', 'se', 'exact', 'w1b', 'w10', 'bd'];
-const zero = () => ({ n: 0, ae: 0, se: 0, exact: 0, w1b: 0, w10: 0, bd: 0 });
+const STATS = ['n', 'ae', 'se', 'exact', 'w1b', 'w10', 'w15', 'bd'];
+const zero = () => ({ n: 0, ae: 0, se: 0, exact: 0, w1b: 0, w10: 0, w15: 0, bd: 0 });
 
 function addRow(acc, y, p, cuts) {
   const a = bandEval.bandOf(y, cuts);
@@ -92,6 +92,7 @@ function addRow(acc, y, p, cuts) {
   acc.exact += a === b ? 1 : 0;
   acc.w1b += Math.abs(a - b) <= 1 ? 1 : 0;
   acc.w10 += Math.abs(e) <= 10 ? 1 : 0;
+  acc.w15 += Math.abs(e) <= 15 ? 1 : 0;
   acc.bd += Math.abs(a - b);
 }
 
@@ -100,6 +101,8 @@ const METRICS = [
   ['band_exact', (t) => (t.exact / t.n) * 100],
   ['within_one_band', (t) => (t.w1b / t.n) * 100],
   ['within_10', (t) => (t.w10 / t.n) * 100],
+  // The figure the card publishes as a table number's confidence.
+  ['within_15', (t) => (t.w15 / t.n) * 100],
   ['band_mae', (t) => t.bd / t.n],
   ['bias', (t) => t.se / t.n],
 ];
@@ -196,6 +199,7 @@ function verdict(cmp) {
   return { mae_beats_rule_engine: maeWins, exact_beats_rule_engine: exactWins, clears: maeWins && exactWins };
 }
 
+const f15 = (t) => (t.w15 / t.n) * 100;
 const reviewTier = (n) => (n < 500 ? '200-499' : n < 2000 ? '500-1999' : '2000+');
 const hourGroup = (h) => (h <= 5 ? '00-05' : h <= 10 ? '06-10' : h <= 14 ? '11-14' : h <= 16 ? '15-16' : h <= 20 ? '17-20' : '21-23');
 
@@ -221,6 +225,7 @@ async function main(argv = process.argv.slice(2)) {
   for (const r of corpus.live) latest.set(`${r.venueId}|${r.date}|${r.hour}`, r);
   const cities = new Set(args.cities);
   const scored = [];
+  const policyRows = [];
   let skipped = 0;
   let gateRefused = 0;
   const seenVenues = new Map();
@@ -241,8 +246,12 @@ async function main(argv = process.argv.slice(2)) {
     };
     const table = I.noCurveFallbackValue(venue, ts);
     if (!seenVenues.has(r.venueId)) seenVenues.set(r.venueId, { city: r.city, served: table !== null });
-    if (table === null) { gateRefused++; continue; }
     const rule = crowdEngine.calculateCrowdScore(venue, r.weather, ts).score;
+    // The gated policy over every reading: the table where the gate serves
+    // it, the rule engine everywhere else. mlPredictor's published figure for
+    // a table number (NO_CURVE_FALLBACK_MEASURED) is this policy's within-15.
+    policyRows.push({ city: r.city, date: r.date, y: r.y, policy: table === null ? rule : table, rule });
+    if (table === null) { gateRefused++; continue; }
     scored.push({
       venueId: r.venueId,
       city: r.city,
@@ -273,6 +282,16 @@ async function main(argv = process.argv.slice(2)) {
   for (const city of args.cities) {
     const vs = [...seenVenues.values()].filter((v) => v.city === city);
     report.gate_coverage[city] = { venues_with_live_rows: vs.length, venues_the_gate_serves: vs.filter((v) => v.served).length };
+  }
+  report.gated_policy = {};
+  for (const city of [...args.cities, 'pooled']) {
+    const rows = policyRows.filter((r) => city === 'pooled' || r.city === city);
+    if (!rows.length) continue;
+    const P = zero();
+    const R = zero();
+    for (const r of rows) { addRow(P, r.y, r.policy, cuts); addRow(R, r.y, r.rule, cuts); }
+    report.gated_policy[city] = Object.fromEntries([['rows', P.n], ...METRICS.map(([name, f]) => [name, { policy: r2(f(P)), rule_engine: r2(f(R)) }])]);
+    console.log(`[NoCurve] gated policy, ${city}: ${P.n.toLocaleString()} readings, within-15 ${r2(f15(P))} against ${r2(f15(R))} for the rule engine alone`);
   }
 
   const windows = (city) => (city === 'lehigh' || city === 'miami'
