@@ -3871,7 +3871,10 @@ function applyScoreQuantileMap(score) {
 // retrain plan's prequential window already uses. The confidence figures the
 // card publishes (SERVE_MEASURED, further down) were re-measured with the same
 // weights on every model-served live reading from 2026-09-09 to 10-08
-// (119,939), so they describe the month since the weights were set.
+// (119,939), so they describe the month since the weights were set. One
+// exception since 2026-10-14: the curve_offset nowcast weights at two and
+// three hours were set to zero on that month's evidence (the block above
+// NOWCAST_WEIGHTS).
 //
 // CROWD_SERVE_MODE=curve_offset. The venue's own weekly curve at the hour (the
 // value blendBaselineRows serves) plus CURVE_OFFSET_WEIGHT times its trailing
@@ -3951,9 +3954,31 @@ const NOWCAST_READINGS_KEPT = 3;
 // any other artifact the nowcast stands aside in model mode (the number is the
 // model's, unblended) and still serves in curve_offset mode, whose arithmetic
 // no artifact enters. Same refusal the quantile map makes (QMAP_FITTED_ON).
+//
+// THE curve_offset TABLE IS NO LONGER THE FITTED ONE AT TWO AND THREE HOURS
+// (changed 2026-10-14). The fit chose 0.85 and 0.25 on 2026-09-01..05, when
+// 81% of a venue's consecutive-hour live readings were identical, so an old
+// reading still predicted the next one as a level. Over 09-26..10-08 about
+// 45-48% were, and the old reading stopped helping. On all 119,939
+// model-served live readings of 2026-09-09..10-08 (the 2026-10-08 export,
+// replayed with bandEval), the 14,778 whose newest earlier reading was two
+// hours old scored worse at 0.85 than with curve + offset alone: mean
+// absolute error 28.56 against 25.83 (+2.73, date-block 95% interval 1.41 to
+// 3.63), within one level 63.4% against 67.9% (-4.54, -6.12 to -2.41). At
+// three hours (7,794 rows) 0.25 was a wash: exact level 30.5% against 31.0%,
+// mean absolute error 25.86 against 26.16. So a reading one hour old is
+// served as it is, and anything older leaves the number at curve +
+// CURVE_OFFSET_WEIGHT times the trailing offset. Over the whole window that
+// configuration scored within one level 78.95% against 78.37% for the old
+// table, mean absolute error 17.68 against 18.00, band MAE 0.756 against
+// 0.772, exact level 54.67% against 54.90%, within 10 points 54.93% against
+// 55.23%. These weights were chosen on that window, so its figures are not
+// out-of-sample for them; the pre-registered October holdout scores them
+// next. The two model tables keep their fitted values: model mode is not
+// what production serves.
 const NOWCAST_MODEL_FITTED_ON = '2.6.0-starling';
 const NOWCAST_WEIGHTS = Object.freeze({
-  curve_offset: Object.freeze({ 1: 1.0, 2: 0.85, 3: 0.25, 4: 0.0 }),
+  curve_offset: Object.freeze({ 1: 1.0, 2: 0.0, 3: 0.0, 4: 0.0 }),
   model_qmap: Object.freeze({ 1: 1.0, 2: 1.0, 3: 0.55, 4: 0.15 }),
   model: Object.freeze({ 1: 1.0, 2: 0.9, 3: 0.3, 4: 0.0 }),
 });
@@ -3974,13 +3999,21 @@ const NOWCAST_WEIGHTS = Object.freeze({
 // 10-08 (119,939, weights unchanged). The three-day figures had a reading two
 // hours old at 62.8% within 15; over the month it is 40.7%, level with curve
 // and offset alone on the same rows, so the card no longer claims more for it.
-const SERVE_MEASURED_POPULATION = 'live readings 2026-09-09..10-08 (Philadelphia, Lehigh and Miami, read-only production export of 2026-10-08); weights fitted on 2026-09-01..05';
+//
+// 2026-10-14: the curve_offset table now carries zero at two and three hours
+// (the block above NOWCAST_WEIGHTS says why), so those buckets never move a
+// number and carry no figure, the same as four hours and older. A number
+// whose reading is two or three hours old is curve + offset, and its card
+// publishes the curveOffset figure, measured on exactly that arithmetic. The
+// one-hour figure is unchanged: that weight did not move. The population
+// string says the curve_offset weights were chosen on this window.
+const SERVE_MEASURED_POPULATION = 'live readings 2026-09-09..10-08 (Philadelphia, Lehigh and Miami, read-only production export of 2026-10-08); model-mode weights fitted on 2026-09-01..05, curve_offset weights chosen on this window';
 const SERVE_MEASURED = Object.freeze({
   curveOffset: Object.freeze({ within15: 42.7, rows: 119939 }),
   // Per base and lag bucket, on the scored readings the nowcast moved. A
   // bucket whose weight is zero never moves a number, so it carries no figure.
   nowcast: Object.freeze({
-    curve_offset: Object.freeze({ 1: { within15: 83.0, rows: 57900 }, 2: { within15: 40.7, rows: 14778 }, 3: { within15: 38.6, rows: 7794 }, 4: null }),
+    curve_offset: Object.freeze({ 1: { within15: 83.0, rows: 57900 }, 2: null, 3: null, 4: null }),
     model_qmap: Object.freeze({ 1: { within15: 83.0, rows: 57900 }, 2: { within15: 42.2, rows: 14778 }, 3: { within15: 35.8, rows: 7794 }, 4: { within15: 39.5, rows: 12285 } }),
     model: Object.freeze({ 1: { within15: 83.0, rows: 57900 }, 2: { within15: 40.4, rows: 14778 }, 3: { within15: 36.1, rows: 7794 }, 4: null }),
   }),
@@ -3988,8 +4021,11 @@ const SERVE_MEASURED = Object.freeze({
 
 // THE HEADLINE FOR THE CONFIGURATION AS A WHOLE, as opposed to SERVE_MEASURED's
 // per-number within-15. servedAccuracy.json holds what bandEval measured for
-// curve_offset + nowcast on the same held-out readings (within one band,
-// within 10, MAE, bias, and the same readings as served before the switches).
+// curve_offset + nowcast on the same readings (within one band, within 10,
+// MAE, bias, the same readings as served before the switches, and under the
+// nowcast weights served until 2026-10-14). The model never trained on those
+// readings, but the current curve_offset weights were chosen on them, and the
+// file's population string says so.
 // It describes the numbers only while both switches are on, so this returns
 // null otherwise and nothing that quotes it (Birdie's prompt) says it.
 const SERVED_ACCURACY = Object.freeze(require('./servedAccuracy.json'));

@@ -1132,14 +1132,17 @@ test('one strip: an answer the agreement replaces takes back every count it adde
     assert.equal(agreed.predictionMethod, 'ml');
     assert.equal(agreed.score, strip[0].score);
     // Four venue-hours, three bars and the headline, every one the curve's
-    // number with a reading 1, 2, 3 and 1 hours old in it.
+    // number with a reading 1, 2, 3 and 1 hours old in it. Since 2026-10-14
+    // the curve_offset table weights a reading 2 or 3 hours old at zero, so
+    // only the two hour-old readings moved a number and are counted; the
+    // replaced headline must still take its own lag-1 count back.
     const c = p.predictionCoverage();
     assert.equal(c.total, 4);
     assert.equal(c.ml, 4);
     assert.equal(c.categoryCurve, 0);
     assert.deepEqual(c.byMethod, { ml: 4 });
     assert.equal(c.curveOffsetAnswers, 4, 'a replaced answer left its curve_offset count behind');
-    assert.deepEqual(c.nowcastAnswersByLag, { 1: 2, 2: 1, 3: 1, 4: 0 }, 'a replaced answer left its nowcast count behind');
+    assert.deepEqual(c.nowcastAnswersByLag, { 1: 2, 2: 0, 3: 0, 4: 0 }, 'a replaced answer left its nowcast count behind');
   });
 });
 

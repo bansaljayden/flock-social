@@ -411,15 +411,19 @@ test('with curve_offset and the nowcast on, Birdie can quote the measured accura
   const served = require('../services/servedAccuracy.json');
   const prompt = withServeEnv('curve_offset', 'true', adult);
   assert.match(prompt, /If someone asks how accurate Flock's crowd levels are, answer from these measured figures and nothing else\./);
-  // WHAT IT WAS MEASURED ON is part of the figure. The readings are held-out
+  // WHAT IT WAS MEASURED ON is part of the figure. The readings are
   // live readings from venues in the Lehigh Valley and Miami that have live
   // readings, and the line used to tell Birdie to call the result "Flock's
   // numbers overall". The file is what names the population, so the words are
   // checked against it.
   assert.match(served.population, /Lehigh/);
   assert.match(served.population, /Miami/);
-  assert.ok(prompt.includes(`Tested against ${served.rows.toLocaleString('en-US')} real live readings it had not seen (September 9 to October 8, 2026), all from venues in Philadelphia, the Lehigh Valley and Miami that have live readings`),
+  assert.ok(prompt.includes(`Tested against ${served.rows.toLocaleString('en-US')} real live readings (September 9 to October 8, 2026), all from venues in Philadelphia, the Lehigh Valley and Miami that have live readings`),
     'the line no longer says which readings the figures were measured on');
+  // The serve weights were chosen on these readings (servedAccuracy.json,
+  // population), so Birdie must not call them unseen.
+  assert.match(served.population, /chosen on this same window/);
+  assert.ok(!/had not seen/.test(prompt), 'Birdie still calls readings the weights were chosen on unseen');
   assert.ok(!/numbers overall/.test(prompt), 'Birdie is still told the figure describes every number Flock makes');
   assert.match(prompt, /not every venue or city Flock covers/);
   // WITHIN ONE LEVEL NEVER TRAVELS ALONE (scripts/ml/MODEL-METRICS.md: a
