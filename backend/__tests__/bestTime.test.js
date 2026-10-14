@@ -569,3 +569,81 @@ test('the best-time line never names an hour the peak window covers', () => {
     assert.notEqual(rec.hourLabel, evening[i].hour);
   }
 });
+
+// ---------------------------------------------------------------------------
+// NOW AGAINST LATER, ON THE SERVED SCALE (2026-10-14, HOUR-RANKING-EVAL.md
+// section 10). With the strip served as curve + offset, its later hours are
+// their curve plus one shift, and "now" is the number the card shows (the
+// reading an hour old when there is one). The decision compares the two on the
+// same scale; which later hour is quietest is still the curve's answer.
+// ---------------------------------------------------------------------------
+
+const { orderingAxis, servedCurveShift } = require('../services/crowdEngine');
+
+// A strip as predictHourlyForecast serves it under CROWD_SERVE_MODE=curve_offset:
+// each later hour is round(curve + shift), tagged venue_pattern_live, and the
+// current hour carries the reading an hour old (live_reading_1h).
+function servedStrip(startHour, curves, shift, nowReading) {
+  return curves.map((curve, i) => ({
+    hour: label(startHour + i),
+    score: i === 0 && nowReading != null ? nowReading : Math.max(0, Math.min(100, curve + shift)),
+    baselineScore: curve,
+    label: getLabel(curve + shift),
+    predictionMethod: 'ml',
+    numberSource: i === 0 && nowReading != null ? 'live_reading_1h' : 'venue_pattern_live',
+  }));
+}
+
+const withoutTags = (strip) => strip.map(({ numberSource, ...e }) => e);
+
+test('the shift is read off an hour the curve + offset arithmetic made, and only such an hour', () => {
+  assert.equal(servedCurveShift(servedStrip(20, [60, 55, 50], -12, 30)), -12);
+  // Rounded the way curveOffsetScore rounds the curve before it adds the offset.
+  assert.equal(servedCurveShift([{ score: 41, baselineScore: 52.6, numberSource: 'venue_pattern' }]), -12);
+  // A carried reading, a model number and a clamped hour say nothing about it.
+  assert.equal(servedCurveShift([{ score: 30, baselineScore: 60, numberSource: 'live_reading_1h' }]), null);
+  assert.equal(servedCurveShift(dualForecast(20, [[70, 60], [50, 55]])), null);
+  assert.equal(servedCurveShift([{ score: 100, baselineScore: 95, numberSource: 'venue_pattern_live' }]), null);
+  assert.equal(servedCurveShift([{ score: 0, baselineScore: 5, numberSource: 'venue_pattern_live' }]), null);
+  assert.equal(servedCurveShift(null), null);
+  // Never on the model axis: a rule-engine hour takes the whole night there.
+  const mixed = servedStrip(20, [60, 55, 50], -12, null);
+  mixed[1] = { ...mixed[1], baselineScore: null };
+  assert.equal(orderingAxis(mixed).servedShift, null);
+});
+
+test('a quiet room right now is not sent to a later hour its curve calls quieter', () => {
+  // The curve says 8 PM is 70 and 10 PM is 45, so curve against curve names
+  // 10 PM. The venue read 30 an hour ago and runs 10 under its curve: 10 PM
+  // is expected at 35, which is not quieter than now by the floor.
+  const strip = servedStrip(20, [70, 60, 45], -10, 30);
+  const rec = recommendBestTime(strip, OPEN_ALL_EVENING, null, null, true,
+    { currentHour: 20, currentScore: 30 });
+  assert.equal(rec.orderingBasis, 'baseline');
+  assert.equal(rec.hourLabel, null);
+  assert.equal(rec.text, 'Now is good');
+  // The same strip without the served tags is ranked as it always was.
+  assert.equal(recommendBestTime(withoutTags(strip), OPEN_ALL_EVENING, null, null, true,
+    { currentHour: 20, currentScore: 30 }).hourLabel, '10 PM');
+});
+
+test('a room busier than its curve right now is told when it eases, named off the curve', () => {
+  // The curve is flat around 50 at 8 and 9 PM and 40 at 11 PM: curve against
+  // curve, 10 points is inside the floor and nothing is named. The room read
+  // 80 an hour ago; 11 PM on the served scale is 40 + 5 = 45, well clear.
+  const strip = servedStrip(20, [50, 52, 48, 40], 5, 80);
+  const rec = recommendBestTime(strip, OPEN_ALL_EVENING, null, null, true,
+    { currentHour: 20, currentScore: 80 });
+  assert.equal(rec.hourLabel, '11 PM', 'the quietest later hour is still the curve one');
+  assert.equal(recommendBestTime(withoutTags(strip), OPEN_ALL_EVENING, null, null, true,
+    { currentHour: 20, currentScore: 80 }).hourLabel, null);
+});
+
+test('the floor applies on the served scale, strictly', () => {
+  // now 60; 10 PM's curve 52 with shift -2 is 50 on the served scale: exactly
+  // the floor below now, so nothing is named; 49 clears it.
+  const at = (curve) => recommendBestTime(servedStrip(20, [62, 61, curve], -2, 60), OPEN_ALL_EVENING, null, null, true,
+    { currentHour: 20, currentScore: 60 }).hourLabel;
+  assert.equal(at(52), null);
+  assert.equal(at(51), '10 PM');
+});

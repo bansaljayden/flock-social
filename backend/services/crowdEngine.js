@@ -1474,6 +1474,39 @@ const NO_QUIET_HOUR = 'No quiet hour stands out';
 // measured. Rule-engine hours have no baseline, so a set containing one falls
 // back to model scores entirely, which is the old behaviour and is still what
 // the hedge above protects.
+//
+// THE SHIFT, AND WHAT "NOW" IS WORTH AGAINST LATER HOURS (2026-10-14).
+// Production serves an hour with no fresh reading as round(curve + 0.85 x the
+// venue's trailing offset): one shift for every hour of the strip, so ranking
+// later hours on that number orders them exactly as the curve does (on the
+// month of live readings, 2026-09-09..10-08, 67.83% against 67.86% of
+// within-night pairs; the difference is the clamp at 0 and 100). Where the
+// two differ is "go later instead of now": the card's number for now is the
+// venue's reading an hour old when there is one, and that is a far better
+// account of now than the curve's point. Comparing it with later hours on the
+// same scale (their curve plus the shift) put the named hour really quieter
+// 75.4% of the time against 69.5% for curve against curve, +5.9 points
+// (venue-block CI95 [5.5, 6.3]), speaking about as often (41.2% of decisions
+// against 41.6%) and naming an hour 18.5 points quieter instead of 12.8
+// (scripts/ml/HOUR-RANKING-EVAL.md section 10). `servedShift` is that shift,
+// read off any hour the curve + offset arithmetic made (numberSource
+// venue_pattern or venue_pattern_live) and clear of the clamp, or null when
+// no hour was made that way (the model serving, a rule-engine strip, a strip
+// with every switch off), and then "now" is the curve's point as before.
+const CURVE_OFFSET_SOURCES = new Set(['venue_pattern', 'venue_pattern_live']);
+function servedCurveShift(entries) {
+  if (!Array.isArray(entries)) return null;
+  for (const e of entries) {
+    if (!e || !CURVE_OFFSET_SOURCES.has(e.numberSource)) continue;
+    const score = Number(e.score);
+    const base = Number(e.baselineScore);
+    if (!Number.isFinite(score) || !Number.isFinite(base) || !(base > 0)) continue;
+    if (score <= 0 || score >= 100) continue;
+    return score - Math.max(0, Math.min(100, Math.round(base)));
+  }
+  return null;
+}
+
 function orderingAxis(entries) {
   const usable = Array.isArray(entries) && entries.length
     && entries.every(e => Number.isFinite(Number(e && e.baselineScore))
@@ -1483,6 +1516,7 @@ function orderingAxis(entries) {
     valueOf: usable
       ? (e) => Number(e.baselineScore)
       : (e) => Number(e && e.score),
+    servedShift: usable ? servedCurveShift(entries) : null,
   };
 }
 
@@ -1640,6 +1674,8 @@ function recommendBestTime(hourlyForecast, venue, peakStartIdx, peakEndIdx, isOp
       index: i,
       score: hourlyForecast[i].score,
       baselineScore: hourlyForecast[i].baselineScore,
+      // Which arithmetic made the hour, so orderingAxis can read the shift.
+      numberSource: hourlyForecast[i].numberSource,
       label: hourlyForecast[i].hour,
       dayOffset: sameNightOffset(nowHour, h, calendarOffset),
       inPeak: peakStartIdx != null && i >= peakStartIdx && i <= peakEndIdx,
@@ -1658,7 +1694,16 @@ function recommendBestTime(hourlyForecast, venue, peakStartIdx, peakEndIdx, isOp
   // always compared against; on the baseline axis it is this hour's point on
   // the curve, because a user report moves the LEVEL and cannot move Google's
   // shape.
-  const nowRank = axis.basis === 'baseline' ? rank(nowEntry) : currentScore;
+  //
+  // When the strip's later hours are curve + offset, "now" is the number the
+  // card shows, moved onto the curve's scale by that shift (servedCurveShift
+  // above: measured better than the curve's own point at deciding whether a
+  // later hour is quieter). Only the comparison with now changes; the later
+  // hours keep their curve order, which the shift cannot change.
+  const nowRank = axis.basis !== 'baseline' ? currentScore
+    : (axis.servedShift !== null && Number.isFinite(Number(currentScore))
+      ? Number(currentScore) - axis.servedShift
+      : rank(nowEntry));
 
   const quietest = (list) => list.reduce((a, b) => (rank(b) < rank(a) ? b : a), list[0]);
   const openToday = ahead.filter(e => e.dayOffset === 0);
@@ -2213,6 +2258,7 @@ module.exports = {
   // GET /intelligence) still picks its peak hour off model scores. See section
   // 9.6 of scripts/ml/HOUR-RANKING-EVAL.md.
   orderingAxis,
+  servedCurveShift,
   // The two sentences the best-time line prints when it refuses to name an
   // hour, exported so a test pins the strings this file actually ships.
   NO_WINDOW_LEFT,
