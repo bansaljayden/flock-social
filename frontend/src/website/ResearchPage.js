@@ -12,12 +12,12 @@ import SiteNav, { useSiteMenu } from './SiteNav';
 // paper keeps the URL the single paper always had, so old links still land.
 const PAPER_URL = '/papers/flock-research-paper.pdf';
 const PAPER_THUMB = '/papers/flock-research-paper-p1.png';
-const PAPER_PAGES = 37;
+const PAPER_PAGES = 39;
 const FULL_PAPER_URL = '/papers/flock-research-paper-full.pdf';
 // Two pages on the questions, the method, the findings and the limits, for a
 // reader who wants the whole project before choosing a paper.
 const SUMMARY_URL = '/papers/flock-research-summary.pdf';
-const FULL_PAPER_PAGES = 55;
+const FULL_PAPER_PAGES = 59;
 
 // Why the research exists and what it found, in plain words, then the paper.
 // Built on the landing page's own stylesheet (.lp: Fraunces display, Hanken
