@@ -1039,15 +1039,20 @@ describe('copy rules (DESIGN-STANDARD)', () => {
       'utf8'
     ));
     const copy = readJs('AboutPage.js').replace(/\s+/g, ' ');
+    // The public copy quotes the month's out-of-sample test, which measured the
+    // nowcast weights served until 2026-10-14 (previous_weights). The weights
+    // served since were chosen on that same window, so their figures on it are
+    // not quoted as a test result; the October holdout scores them first.
+    const tested = served.previous_weights;
 
     expect(served.rows).toBe(119939);
     expect(copy).toMatch(/Tested against 119,939 real live readings it had not seen, from September 9 to October 8, 2026, at venues in Philadelphia, the Lehigh Valley and Miami/);
     expect(served.population).toMatch(/Lehigh and Miami/);
     // The exact level sits beside within-one because within-one alone flatters
     // a lazy answer: a constant "Not Busy" scores high on it (MODEL-METRICS.md).
-    expect(copy).toContain(`${served.band_exact.toFixed(1)}% of Flock's crowd numbers named the exact crowd level of the reading, ${served.within_one_band}% landed within one level, and ${served.within_10}% within 10 points`);
-    expect(copy).toContain(`with an average miss of ${Math.round(served.mae)} points and no lean high or low`);
-    expect(Math.abs(served.bias)).toBeLessThan(2);
+    expect(copy).toContain(`${tested.band_exact.toFixed(1)}% of Flock's crowd numbers named the exact crowd level of the reading, ${tested.within_one_band}% landed within one level, and ${tested.within_10}% within 10 points`);
+    expect(copy).toContain(`with an average miss of ${Math.round(tested.mae)} points and no lean high or low`);
+    expect(Math.abs(tested.bias)).toBeLessThan(2);
     expect(copy).toContain(`${served.reading_one_hour_earlier.band_exact.toFixed(1)}% named the exact level and ${served.reading_one_hour_earlier.within_one_band}% landed within one`);
     expect(copy).toContain(`scored ${served.before.band_exact.toFixed(1)}% on the exact level and ${served.before.within_one_band}% within one`);
   });
@@ -1076,9 +1081,10 @@ describe('copy rules (DESIGN-STANDARD)', () => {
     ));
     const copy = readJs('AboutPage.js').replace(/\s+/g, ' ');
     const count = (n) => n.toLocaleString('en-US');
+    const tested = served.previous_weights;
     expect(served.before.rows).toBe(served.rows);
-    // Beside the full set's figures, naming that set.
-    expect(copy).toContain(`and ${served.within_10}% within 10 points, with an average miss of ${Math.round(served.mae)} points and no lean high or low. `
+    // Beside the full set's figures (the month's test, as on the pin above), naming that set.
+    expect(copy).toContain(`and ${tested.within_10}% within 10 points, with an average miss of ${Math.round(tested.mae)} points and no lean high or low. `
       + `Before the September upgrade, those same ${count(served.before.rows)} readings scored ${served.before.band_exact.toFixed(1)}% on the exact level and ${served.before.within_one_band}% within one.`);
     // The subset says how many readings it is, and comes after.
     const subset = `On the ${count(served.reading_one_hour_earlier.rows)} of them where the venue had a live reading from the hour before, ${served.reading_one_hour_earlier.band_exact.toFixed(1)}% named the exact level`;
