@@ -14,7 +14,7 @@ const PAPER_URL = '/papers/flock-research-paper.pdf';
 const PAPER_THUMB = '/papers/flock-research-paper-p1.png';
 const PAPER_PAGES = 37;
 const FULL_PAPER_URL = '/papers/flock-research-paper-full.pdf';
-const FULL_PAPER_PAGES = 54;
+const FULL_PAPER_PAGES = 55;
 
 // Why the research exists and what it found, in plain words, then the paper.
 // Built on the landing page's own stylesheet (.lp: Fraunces display, Hanken
@@ -202,7 +202,7 @@ export default function ResearchPage() {
             <div>
               <h2>What's next</h2>
               <p>
-                A retrain of the crowd model is scored in October against a test
+                A retrain of the crowd model is scored in early November against a test
                 written down before its data existed, and it ships only if it beats
                 today's numbers on days it never saw. After that, the plan is to put
                 a Flux sensor in a venue Flock already reads and compare its counts

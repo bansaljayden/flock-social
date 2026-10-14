@@ -19,6 +19,18 @@ scores the product). See "The mid-October retrain" directly below.
 
 ## The mid-October 2026 retrain: the plan (written 2026-09-25)
 
+**2026-10-14: the run moves to early November, after Halloween.** Nothing in
+the plan, the gates or the decision rule changes; only the date does. Waiting
+collects more live readings, and the busiest weeks of the autumn, before the
+export. The 14-day time holdout is still anchored on the last date with live
+readings (`resolve_time_holdout`, unchanged since 817c9760). If the provider's
+live feed, silent since about 16:00 EDT on 10-12, returns and runs to the
+end of October, the window falls entirely after 10-08, the last date of the
+30-day test the research paper reports, so the paper's figures and the held-out
+days no longer overlap. If the feed stays silent, the window stays 09-29..10-12,
+and ten of its dates overlap that test; the paper says so. Do not set
+`FLOCK_TIME_HOLDOUT_FROM` by hand; the registered rule picks the window.
+
 Everything in this section was measured on the local export of 2026-09-08
 (`train/*.csv.partial`, interrupted after the `nyc` city block, so it holds
 Lehigh's 7,276 live readings of 09-01..09-08 and Miami's 730 of 09-05..09-08,
