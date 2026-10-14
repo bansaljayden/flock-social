@@ -102,7 +102,7 @@
 
 const CANONICAL_HOST = 'https://www.flockcorp.com';
 const OG_IMAGE = CANONICAL_HOST + '/og-image.png';
-const OG_IMAGE_ALT = 'Flock. Nurturing friendship, one night at a time.';
+const OG_IMAGE_ALT = 'Flock. Nurturing friendship, one flock at a time.';
 const CONTACT_EMAIL = 'social@flockcorp.com';
 
 // Title and description per route mirror what each React page writes via its
@@ -111,7 +111,7 @@ const CONTACT_EMAIL = 'social@flockcorp.com';
 const PAGE_META = {
   home: {
     path: '/',
-    title: 'Flock | Plans that actually happen',
+    title: 'Flock | Nurturing friendship, one flock at a time',
     description: 'Flock turns “we should hang out” into a real night out. Vote on where to go, see how busy it is before you leave, split the bill, and go.',
   },
   about: {
@@ -140,7 +140,7 @@ const PAGE_META = {
 // drift test told you to; see the regeneration note in the header.
 const PAGE_BLOCKS = {
   home: [
-    ["h1", "Nurturing friendship, one night at a time."],
+    ["h1", "Nurturing friendship, one flock at a time."],
     ["p", "Start a flock, invite your people, and vote on where to go. Everyone ends up on the same plan without the 200-message thread."],
     ["p", "Free, and it runs in your browser right now, so there’s nothing to download. Flock took 1st place at PA DECA States."],
     ["h2", "Six people say yes. Then the chat goes quiet."],
@@ -1019,7 +1019,7 @@ async function handler(req, res) {
     console.error('marketing-page: fallback document:', (err && err.name) || 'Error');
     try {
       send(res, '<!doctype html>\n<html lang="en"><head><meta charset="utf-8">'
-        + '<title>Flock | Plans that actually happen</title>'
+        + '<title>Flock | Nurturing friendship, one flock at a time</title>'
         + '<meta name="description" content="Flock is a free group planning app. Vote on where to go, see how busy it is before you leave, and split the bill after.">'
         + '</head><body><main><h1>Flock</h1>'
         + '<p>Flock is a free group planning app. Start a flock, invite your people, vote on where to go, match budgets privately, and split the bill after.</p>'

@@ -41,7 +41,7 @@ const OUT = argOut
 
 /* The card's copy. Both lines are duplicated in the page and in the meta tags,
    and the test named in the header is what keeps the three in agreement. */
-const HEADLINE = 'Nurturing friendship, one night at a time.';
+const HEADLINE = 'Nurturing friendship, one flock at a time.';
 const SUBHEAD = 'Vote on where to go, see how busy it is, split the bill. Free.';
 const URL_PILL = 'flockcorp.com';
 
@@ -95,7 +95,7 @@ const html = `<!doctype html>
     font-family: 'Fraunces', Georgia, serif;
     font-weight: 600;
     /* 76px when the headline was "Get the flock out the door." The tagline
-       changed on 2026-09-08 to "Nurturing friendship, one night at a time.",
+       changed on 2026-09-08 to "Nurturing friendship, one night at a time." (now "one flock", same length),
        which is half again as many characters and measured 1263px against the
        1056px the card allows. The guard below refused it, correctly. 62px
        still measured 1073px and was refused too; 60px fits with room. If the

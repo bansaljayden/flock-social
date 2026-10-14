@@ -338,7 +338,7 @@ describe('the handler', () => {
       const res = fakeRes();
       await api({ query, url: '/api/marketing-page' }, res);
       expect(res.statusCode).toBe(200);
-      expect(res.body).toContain('Nurturing friendship, one night at a time.');
+      expect(res.body).toContain('Nurturing friendship, one flock at a time.');
     }
   });
 

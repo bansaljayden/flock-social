@@ -2595,7 +2595,7 @@ export async function unpinFlockMessage(flockId, messageId) {
 // exactly; anything else is rejected here rather than spending a round trip.
 const FLOCK_STATUSES = ['planning', 'confirmed', 'completed', 'cancelled'];
 
-// "Nurturing friendship, one night at a time" is the promise on the landing
+// "Nurturing friendship, one flock at a time" is the promise on the landing
 // page, and this is the event that tests it. A flock that never leaves
 // 'planning' is a night that never happened, which is the exact failure the
 // product claims to prevent. `status`

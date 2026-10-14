@@ -251,7 +251,7 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
     <>
       <img className="auth-mark" src="/logo192.png" alt="" aria-hidden="true" />
       <h1 className="auth-h1">{hasSignedInHere ? 'Welcome back' : 'Plan the night'}</h1>
-      <p className="auth-sub">Nurturing friendship, one night at a time.</p>
+      <p className="auth-sub">Nurturing friendship, one flock at a time.</p>
     </>
   );
 
