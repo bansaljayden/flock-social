@@ -622,3 +622,165 @@ test('prepare_features.py cannot accept user_report labels without weighting the
     }
   }
 });
+
+// ===========================================================================
+// PART 5 — THE FEATURE AGGREGATE READS ONLY WHAT EXISTED BEFORE THE ROW'S HOUR.
+//
+// PRE-RETRAIN-AUDIT finding 13. The four feedback features of a training row
+// (avg_user_crowd, user_feedback_count -> log/has, avg_prediction_error) came
+// from one aggregate per venue over the 28 days before the EXPORT ran, joined
+// to every row of the venue whatever its date. A September reading carried
+// October's reports, and avg_prediction_error is a report minus the score that
+// was shown: a label proxy. Serving reads the 28 days before the moment it
+// scores, so the training row may read only the 28 days before its own hour.
+//
+// In the style of train/test_live_features.py: reports at or after a row's
+// hour are added and changed, and none of that row's values may move, while a
+// later row of the same venue does see them (so the check is not vacuous).
+// Dormant in production when fixed (no verified report existed), which is why
+// it has to be proved here rather than on the corpus.
+// ===========================================================================
+
+const PLACE_CUTOFF = 'ChIJfeedbackCutoffLehigh';
+const PLACE_BADZONE = 'ChIJfeedbackCutoffBadZone';
+
+// The rows under test, venue-local America/New_York (EDT, UTC-4).
+//   R1  live reading 2026-10-05 20:00 local = 2026-10-06T00:00Z, a Monday
+//   R2  live reading 2026-10-20 12:00 local = 2026-10-20T16:00Z, a Tuesday
+//   W   weekly snapshot (no date), collected 2026-09-15T16:20Z
+const R1_HOUR_START = '2026-10-06T00:00:00Z';
+
+async function cutoffFeatures(venueId) {
+  const { rows } = await roPool.query(exporter.cityQuery('lehigh', {}));
+  const mine = rows.filter((r) => Number(r.venue_id) === venueId);
+  const pick = (pred) => {
+    const r = mine.find(pred);
+    assert.ok(r, 'the row under test was not exported');
+    return {
+      avg: Number(r.avg_user_crowd),
+      count: Number(r.user_feedback_count),
+      err: Number(r.avg_prediction_error),
+    };
+  };
+  return {
+    r1: pick((r) => r.collection_mode === 'realtime' && Number(r.hour) === 20),
+    r2: pick((r) => r.collection_mode === 'realtime' && Number(r.hour) === 12),
+    w: pick((r) => r.collection_mode === 'weekly'),
+  };
+}
+
+test('a training row reads only the verified reports of the 28 days before its own hour', async () => {
+  const { rows: [venue] } = await pool.query(
+    `INSERT INTO ml_venues (google_place_id, name, city, latitude, longitude, venue_category,
+                            google_types, timezone, price_level, rating, review_count)
+     VALUES ($1, 'Cutoff Bar', 'lehigh', 40.6, -75.47, 'bar', ARRAY['bar'], 'America/New_York', 2, 4.4, 120)
+     RETURNING id`, [PLACE_CUTOFF]);
+  const vid = venue.id;
+  const users = [];
+  for (let i = 0; i < 8; i += 1) {
+    const { rows } = await pool.query(
+      `INSERT INTO users (email, password, name) VALUES ($1, 'x', $2) RETURNING id`,
+      [`cutoff${i}@example.test`, `Cutoff ${i}`]);
+    users.push(rows[0].id);
+  }
+  const reading = (date, dow, hour, collectedAt) => pool.query(
+    `INSERT INTO ml_training_data
+       (venue_id, collection_mode, hour_axis, day_of_week, hour, venue_category, busyness_pct,
+        month, season, label_source, observed_date, collected_at)
+     VALUES ($1, 'realtime', 'venue_local', $2, $3, 'bar', 55, 10, 'fall', 'live', $4, $5)`,
+    [vid, dow, hour, date, collectedAt]);
+  await reading('2026-10-05', 1, 20, '2026-10-06T00:07:00Z');
+  await reading('2026-10-20', 2, 12, '2026-10-20T16:07:00Z');
+  await pool.query(
+    `INSERT INTO ml_training_data
+       (venue_id, collection_mode, hour_axis, day_of_week, hour, venue_category, busyness_pct,
+        month, season, collected_at)
+     VALUES ($1, 'weekly', 'venue_local', 1, 20, 'bar', 50, 9, 'fall', '2026-09-15T16:20:00Z')`, [vid]);
+  // Bucket keys from created_at on the venue's clock, as routes/feedback.js writes them.
+  const report = async ({ user, level, at, predicted = 50, verified = true, served = null }) => {
+    await pool.query(
+      `INSERT INTO venue_feedback (user_id, venue_place_id, venue_name, crowd_level, predicted_score,
+                                   day_of_week, hour, verified, created_at, served_prediction_id)
+       VALUES ($1, $2, 'Cutoff Bar', $3, $4,
+               EXTRACT(DOW FROM ($5::timestamptz AT TIME ZONE 'America/New_York'))::smallint,
+               EXTRACT(HOUR FROM ($5::timestamptz AT TIME ZONE 'America/New_York'))::smallint,
+               $6, $5::timestamptz, $7)`,
+      [user, PLACE_CUTOFF, level, predicted, at, verified, served]);
+  };
+
+  // Before R1's hour. Expected for R1: users 0, 1 and 6.
+  await report({ user: users[0], level: 3, predicted: 50, at: '2026-10-05T12:00:00Z' }); // +30
+  await report({ user: users[1], level: 1, predicted: 30, at: '2026-09-20T00:00:00Z' }); // -10
+  await report({ user: users[2], level: 2, predicted: 50, at: '2026-09-01T00:00:00Z' }); // 35 days before R1
+  await report({ user: users[3], level: 1, predicted: 50, at: '2026-10-04T00:00:00Z', verified: false });
+  // User 6's newest report before the hour is unverified; the verified one
+  // before it is the one that counts, as getUserFeedback counts it.
+  await report({ user: users[6], level: 2, predicted: 50, at: '2026-10-03T00:00:00Z' }); // 0
+  await report({ user: users[6], level: 3, predicted: 50, at: '2026-10-05T18:00:00Z', verified: false });
+  // A report against an owner-set card is not model error, before or after.
+  const { rows: [owned] } = await pool.query(
+    `INSERT INTO served_predictions (user_id, venue_place_id, score, prediction_method)
+     VALUES ($1, $2, 70, 'owner_report') RETURNING id`, [users[7], PLACE_CUTOFF]);
+  await report({ user: users[7], level: 3, predicted: 70, at: '2026-10-05T13:00:00Z', served: owned.id });
+
+  const before = await cutoffFeatures(vid);
+  assert.deepEqual(before.r1, { avg: 2.0, count: 3, err: 6.67 },
+    'R1 reads users 0, 1 and 6: verified, inside 28 days, before its hour, one each');
+  // The weekly snapshot's moment is the hour it was collected: only user 2's
+  // report (09-01) is inside the 28 days before 2026-09-15 16:00Z.
+  assert.deepEqual(before.w, { avg: 2.0, count: 1, err: 0 });
+
+  // At and after R1's hour: the hour's first instant, inside the hour, the
+  // next day from a reporter R1 already counts, and a changed late report.
+  await report({ user: users[2], level: 3, predicted: 20, at: R1_HOUR_START });
+  await report({ user: users[4], level: 3, predicted: 20, at: '2026-10-06T00:30:00Z' });
+  await report({ user: users[0], level: 1, predicted: 90, at: '2026-10-07T00:00:00Z' });
+  await report({ user: users[5], level: 1, predicted: 95, at: '2026-10-19T00:00:00Z' });
+  await pool.query(
+    `UPDATE venue_feedback SET crowd_level = 1, predicted_score = 99
+      WHERE venue_place_id = $1 AND user_id = $2`, [PLACE_CUTOFF, users[5]]);
+
+  const after = await cutoffFeatures(vid);
+  assert.deepEqual(after.r1, before.r1, 'a report at or after R1\'s hour moved R1\'s features');
+  assert.deepEqual(after.w, before.w, 'a later report moved the weekly snapshot\'s features');
+  // Not vacuous: R2 (2026-10-20 16:00Z) reads the 28 days before ITS hour,
+  // where those reports exist: users 0 (its 10-07 report replaces 10-05),
+  // 2 (10-06), 4 (10-06) and 5 (10-19); user 1's 09-20 report has aged out
+  // and user 6's 10-03 is the only verified one in reach.
+  assert.equal(after.r2.count, 5, JSON.stringify(after.r2));
+  assert.notDeepEqual(after.r2, before.r2);
+
+  // The cutoff is built in the query, so it holds for a row whose venue zone
+  // Postgres does not know: that row falls back to its collection hour and the
+  // export still runs.
+  const { rows: [bad] } = await pool.query(
+    `INSERT INTO ml_venues (google_place_id, name, city, latitude, longitude, venue_category,
+                            google_types, timezone, price_level, rating, review_count)
+     VALUES ($1, 'Bad Zone Bar', 'lehigh', 40.61, -75.48, 'bar', ARRAY['bar'], 'Gotham/Nowhere', 2, 4.0, 10)
+     RETURNING id`, [PLACE_BADZONE]);
+  await pool.query(
+    `INSERT INTO ml_training_data
+       (venue_id, collection_mode, hour_axis, day_of_week, hour, venue_category, busyness_pct,
+        month, season, label_source, observed_date, collected_at)
+     VALUES ($1, 'realtime', 'venue_local', 1, 20, 'bar', 40, 10, 'fall', 'live', '2026-10-05', '2026-10-06T00:07:00Z')`,
+    [bad.id]);
+  const { rows } = await roPool.query(exporter.cityQuery('lehigh', {}));
+  assert.ok(rows.some((r) => Number(r.venue_id) === bad.id), 'a malformed zone dropped the row or aborted the export');
+
+  // Nothing here may leak into another suite's counts.
+  await pool.query('DELETE FROM venue_feedback WHERE venue_place_id = ANY($1)', [[PLACE_CUTOFF, PLACE_BADZONE]]);
+  await pool.query('DELETE FROM served_predictions WHERE venue_place_id = $1', [PLACE_CUTOFF]);
+  await pool.query('DELETE FROM ml_venues WHERE google_place_id = ANY($1)', [[PLACE_CUTOFF, PLACE_BADZONE]]);
+});
+
+test('the query that does it reads its moment per row and never the export\'s clock', () => {
+  const { text } = exporter.cityQuery('lehigh', {});
+  assert.match(text, /LEFT JOIN LATERAL \(/);
+  assert.match(text, /AND f2\.created_at < rm\.hour_start/);
+  assert.match(text, /AND f2\.created_at > rm\.hour_start - INTERVAL '28 days'/);
+  assert.ok(!/NOW\(\)/.test(text), 'the feature aggregate is anchored on the day the export runs again');
+  // A database without observed_date still exports, on the collection hour.
+  const legacy = exporter.cityQuery('lehigh', { observed_date: false }).text;
+  assert.match(legacy, /SELECT date_trunc\('hour', t\.collected_at\) AS hour_start/);
+  assert.ok(!/t\.observed_date/.test(legacy), 'the legacy query names a column that database lacks');
+});

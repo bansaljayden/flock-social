@@ -345,6 +345,18 @@ function cityQuery(city, optional = {}, { includeHarvested = false } = {}) {
   // the collected_at fallback.
   const has = (column, expr, alias = column) =>
     (optional[column] === false ? `NULL AS ${alias}` : expr);
+  // THE MOMENT A ROW DESCRIBES, for the feedback cutoff further down: the
+  // start of its venue-local hour when it carries a date (every live reading),
+  // else the hour it was collected (weekly snapshots, and realtime rows written
+  // before observed_date existed). The venue's zone is used only when Postgres
+  // knows the name, so a malformed ml_venues.timezone falls back to the
+  // collection hour instead of aborting a read-only export run against
+  // production (the same guard migration 021 puts on that column).
+  const rowHourStart = optional.observed_date === false
+    ? "date_trunc('hour', t.collected_at)"
+    : `CASE WHEN t.observed_date IS NOT NULL AND tz.name IS NOT NULL
+                 THEN (t.observed_date + make_interval(hours => t.hour::int)) AT TIME ZONE tz.name
+                 ELSE date_trunc('hour', t.collected_at) END`;
   return {
     text: `
       SELECT
@@ -410,39 +422,55 @@ function cityQuery(city, optional = {}, { includeHarvested = false } = {}) {
         ON b.google_place_id = v.google_place_id
        AND b.day_of_week = t.day_of_week
        AND b.hour = t.hour
-      -- ONE ROW PER REPORTER PER VENUE, AND ONLY RECENT ONES, in parity with
+      -- Postgres's own list of zone names: only a name in it reaches AT TIME
+      -- ZONE (rowHourStart above). Unique by name, so no row is multiplied.
+      LEFT JOIN pg_timezone_names tz ON tz.name = v.timezone
+      CROSS JOIN LATERAL (SELECT ${rowHourStart} AS hour_start) rm
+      -- ONE ROW PER REPORTER PER VENUE, ONLY RECENT ONES, AND ONLY WHAT EXISTED
+      -- BEFORE THE ROW'S OWN HOUR, in parity with
       -- services/mlPredictor.getUserFeedback. Without the dedupe a single
       -- verified account can be 100% of a venue's feature values (one row per
       -- person per venue per two hours is allowed, forever), and without the
       -- window nothing ages out, so one report steers that venue's anchor for
       -- good. The published score has carried all of these guards for rounds;
       -- the features had none of them on either side.
-      LEFT JOIN (
-        SELECT venue_place_id,
-          AVG(crowd_level)::numeric(4,1) AS avg_user_crowd,
+      --
+      -- THE CUTOFF IS THE ROW'S HOUR, NOT TODAY (PRE-RETRAIN-AUDIT finding 13,
+      -- closed 2026-10-14). Serving reads the reports of the 28 days before
+      -- the moment it scores, so a training row may read only the reports of
+      -- the 28 days before ITS moment: created strictly before the start of
+      -- its hour. This used to be one aggregate per venue over the 28 days
+      -- before the export ran, joined to every row of the venue whatever its
+      -- date, so a September reading carried October's reports, and
+      -- avg_prediction_error (a report minus the score shown) is a label proxy.
+      -- No verified report existed when it was fixed, so no exported value
+      -- changed; the leak would have armed with the first one.
+      --
+      -- verified and the owner-card exclusion are applied BEFORE the per-user
+      -- dedupe, as getUserFeedback applies them, so a reporter's newest
+      -- QUALIFYING report is the one that counts. Unverified rows let Sybil
+      -- accounts poison training features (REVIEW-ROUND5), and a report left
+      -- against a card whose score came from the venue's own live slider is not
+      -- model error.
+      LEFT JOIN LATERAL (
+        SELECT AVG(fq.crowd_level)::numeric(4,1) AS avg_user_crowd,
           COUNT(*)::int AS user_feedback_count,
-          AVG((CASE crowd_level WHEN 1 THEN 20 WHEN 2 THEN 50 ELSE 80 END) - predicted_score)::numeric(5,2) AS avg_prediction_error
+          AVG((CASE fq.crowd_level WHEN 1 THEN 20 WHEN 2 THEN 50 ELSE 80 END) - fq.predicted_score)::numeric(5,2) AS avg_prediction_error
         FROM (
-          SELECT DISTINCT ON (f2.venue_place_id, f2.user_id) f2.*
+          SELECT DISTINCT ON (f2.user_id) f2.crowd_level, f2.predicted_score
             FROM venue_feedback f2
-           WHERE f2.created_at > NOW() - INTERVAL '28 days'
-           ORDER BY f2.venue_place_id, f2.user_id, f2.created_at DESC
-        ) vf
-        WHERE vf.verified = true -- only presence-verified reports: unverified rows let Sybil accounts poison training features (REVIEW-ROUND5)
-          -- AND NOT AGAINST AN OWNER-SET CARD, the exclusion services/mlPredictor.js
-          -- applies to the same aggregate and this did not. A report left against a
-          -- card whose score came from the venue's own live slider is not model
-          -- error, and five features come out of this join, so training would fit
-          -- them on a population serving deliberately excludes. All of them are
-          -- constant today, so the cost is zero right now and it arms on the same
-          -- day the missing observed_date cutoff does.
-          AND NOT EXISTS (
-            SELECT 1 FROM served_predictions sp
-             WHERE sp.id = vf.served_prediction_id
-               AND sp.prediction_method = 'owner_report'
-          )
-        GROUP BY vf.venue_place_id
-      ) fb ON fb.venue_place_id = v.google_place_id
+           WHERE f2.venue_place_id = v.google_place_id
+             AND f2.verified = true
+             AND f2.created_at < rm.hour_start
+             AND f2.created_at > rm.hour_start - INTERVAL '28 days'
+             AND NOT EXISTS (
+               SELECT 1 FROM served_predictions sp
+                WHERE sp.id = f2.served_prediction_id
+                  AND sp.prediction_method = 'owner_report'
+             )
+           ORDER BY f2.user_id, f2.created_at DESC
+        ) fq
+      ) fb ON true
       WHERE t.busyness_pct IS NOT NULL AND v.city = $1
         -- Unreachable while preflight() stands, and deliberately kept: if the
         -- refusal above is ever softened, a legacy-axis weekly row must still
