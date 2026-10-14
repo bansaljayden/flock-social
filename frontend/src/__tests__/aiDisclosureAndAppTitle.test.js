@@ -26,7 +26,7 @@
  *    other suite's equality to carry it.
  *
  * 2. THE APP HAD NO TITLE OF ITS OWN.
- *    public/index.html ships "Flock | Plans that happen", and every
+ *    public/index.html ships "Flock | Plans that actually happen", and every
  *    marketing and legal page overwrites it in a mount effect. App.js wrote
  *    document.title exactly zero times, so /app, every screen in it, and any
  *    bookmark made from it read as the landing page's ad copy. Asserted by
@@ -179,7 +179,7 @@ describe('the logged-in app has a title of its own', () => {
     expect(writes.length).toBeGreaterThan(0);
     expect(writes).toContain("document.title = 'Flock'");
     for (const write of writes) {
-      expect(write).not.toMatch(/Plans that happen/i);
+      expect(write).not.toMatch(/Plans that actually happen/i);
     }
   });
 

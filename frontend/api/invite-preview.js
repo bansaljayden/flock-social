@@ -8,7 +8,7 @@ const crypto = require('crypto');
 // WHY THIS EXISTS
 // One index.html is served for every route (CRA has no server rendering), so
 // an invite shared into iMessage or a group chat previews with the marketing
-// tags: "Flock | Plans that happen". The link that spreads the product
+// tags: "Flock | Plans that actually happen". The link that spreads the product
 // says nothing about who sent it or what it is. This function answers the
 // preview bots instead, with the host's first name and the plan.
 //
@@ -203,7 +203,7 @@ const DISPLAY_TZ = 'America/New_York';
 
 // Verbatim from public/index.html, so a fallback preview is indistinguishable
 // from what the site serves today.
-const DEFAULT_TITLE = 'Flock | Plans that happen';
+const DEFAULT_TITLE = 'Flock | Plans that actually happen';
 const DEFAULT_DESCRIPTION =
   'Vote on where to go, see how busy it is before you leave, and split the bill after. Free.';
 
