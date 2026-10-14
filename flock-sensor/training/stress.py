@@ -13,6 +13,7 @@ would do. Needs numpy, scipy and onnxruntime on the development machine.
 """
 
 import sys
+import zlib
 from pathlib import Path
 
 import numpy as np
@@ -354,7 +355,9 @@ def main(argv):
         model.fine = sensor.PeopleModel(argv[2], sensor.THERMAL_MODEL_THRESHOLD)
     rows = []
     for name, truth, build in CASES:
-        rng = np.random.default_rng(abs(hash(name)) % (1 << 31))
+        # crc32, not hash(): a str hash changes with every process unless
+        # PYTHONHASHSEED is set, so hash() gave each run different frames.
+        rng = np.random.default_rng(zlib.crc32(name.encode()))
         ok = near = rule_ok = 0
         for _ in range(n):
             t = finish(build(rng), rng)

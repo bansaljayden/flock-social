@@ -31,9 +31,12 @@ counted.
 use: PUT Thermo Presence (MIT; a ceiling camera, real temperatures, a point
 per person) and OpenThermalPose2 (MIT; side view, 8-bit). They label people
 only, so only the people map is graded on them. Their test splits are never
-trained on; the model is chosen on their validation splits and graded on the
-test splits, which is the only honest measure of how it does on footage it has
-not seen. The frames stay on the development machine and never enter this
+trained on. The validation splits choose each run's checkpoint, but versions,
+data shares and decoding settings were compared on the test splits, so those
+splits are development benchmarks rather than untouched tests. A sealed set of
+frames from a dataset no version has seen is kept aside and graded once, which
+is the measure of how the model does on footage it has not seen. The frames
+stay on the development machine and never enter this
 repository. Why both: owl-2, trained on generated frames alone, counted
 perfectly on drawings and badly on real footage, reading the texture of a real
 room as people.
