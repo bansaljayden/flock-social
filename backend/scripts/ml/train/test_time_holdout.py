@@ -16,6 +16,19 @@ which live readings the band gate may score and which rows the model trains on:
 __tests__/mlSmoothingParity.test.js runs the second property against the real
 JavaScript over a random grid; this file pins both on hand-built frames.
 
+THE FEED SCENARIOS (added 2026-10-14). The provider's live feed went silent at
+about 16:00 EDT on 2026-10-12 and the pre-registered retrain moved to early
+November. The registered rule anchors the 14 days on the last date with a live
+reading in either export file, not on the export date, so which window the run
+holds out depends only on when the feed comes back. The scenario tests below
+build the two export files the way the November export will hold them (the
+Pennsylvania venues in training_data.csv, Miami in holdout_data.csv, weekly rows
+with no date) and pin the window for each case: the feed dead through the
+export, the feed back by 10-20 and running to 10-31, a feed back for only four
+days, vendor-forecast rows after the last live reading, and a holdout city whose
+readings run later than the training cities'. None of them changes the rule;
+they record what it does.
+
 Run: python test_time_holdout.py     (no pytest needed)
 """
 import sys
@@ -111,6 +124,127 @@ def test_no_cutoff_keeps_everything_and_still_reports_the_horizon():
     assert len(kept) == len(df)
     assert rec['realtime_rows_held_out'] == 0
     assert rec['training_live_through'] == '2026-09-20'
+
+
+# ── The feed scenarios for the November run (see the module docstring) ───────
+
+def days(first, last):
+    return [d.strftime('%Y-%m-%d') for d in pd.date_range(first, last, freq='D')]
+
+
+# The research paper's 30-day test, 2026-09-09..10-08 (MODEL-METRICS.md, "The
+# served number over the month since it shipped"). A window that shares dates
+# with it scores production on readings whose accuracy is already published.
+PAPER_TEST_DATES = frozenset(days('2026-09-09', '2026-10-08'))
+# bandEval.js BAND_GATE.minDates: the sample criterion counts dates that hold readings.
+BAND_GATE_MIN_DATES = 5
+
+
+def export_frames(pa_live_dates, miami_live_dates, pa_forecast_dates=()):
+    """training_data.csv and holdout_data.csv as the November export holds them.
+
+    Two readings a day per venue (the hourly sweep's rows reduced to two), and
+    each venue's weekly rows, which carry no observed_date and so never anchor
+    the window. Forecast-labelled realtime rows can be added to the training
+    file to check that only a LIVE reading anchors it.
+    """
+    def frame(city_venues, live_dates, forecast_dates):
+        rows = []
+        for city, venue in city_venues:
+            for date in live_dates:
+                for hour in (12, 20):
+                    rows.append({'venue_id': venue, 'city': city, 'is_realtime': 1,
+                                 'label_source': 'live', 'observed_date': date, 'day_of_week': 0,
+                                 'hour': hour, 'busyness_pct': 50, 'baseline_busyness': 40})
+            for date in forecast_dates:
+                rows.append({'venue_id': venue, 'city': city, 'is_realtime': 1,
+                             'label_source': 'forecast', 'observed_date': date, 'day_of_week': 0,
+                             'hour': 21, 'busyness_pct': 30, 'baseline_busyness': 40})
+            for hour in range(24):
+                rows.append({'venue_id': venue, 'city': city, 'is_realtime': 0, 'label_source': None,
+                             'observed_date': None, 'day_of_week': 0, 'hour': hour,
+                             'busyness_pct': 40, 'baseline_busyness': 40})
+        return pd.DataFrame(rows)
+
+    train = frame((('philly', 1), ('lehigh', 2)), pa_live_dates, pa_forecast_dates)
+    holdout = frame((('miami', 3),), miami_live_dates, ())
+    return train, holdout
+
+
+def held_out_live_dates(frames, from_date):
+    """The dates of the live readings the band gate scores: every one on or after
+    the cutoff, in both files (bandEval.js reads both)."""
+    out = set()
+    for f in frames:
+        live = (f['is_realtime'] == 1) & (f['label_source'] == 'live') & f['observed_date'].notna()
+        out |= set(d for d in f.loc[live, 'observed_date'] if d >= from_date)
+    return sorted(out)
+
+
+def test_feed_dead_through_the_export_holds_out_09_29_to_10_12():
+    # Live readings stop on 2026-10-12 and nothing arrives before the export.
+    train, holdout = export_frames(days('2026-09-01', '2026-10-12'), days('2026-09-05', '2026-10-12'))
+    th = resolve_time_holdout([train, holdout], env={})
+    assert th['policy'] == 'last_days', th
+    assert th['last_live_date'] == '2026-10-12', th
+    assert th['from_date'] == '2026-09-29', th
+    held = held_out_live_dates([train, holdout], th['from_date'])
+    assert held == days('2026-09-29', '2026-10-12') and len(held) == 14, held
+    # Ten of the fourteen fall inside the paper's 30-day test (09-29..10-08).
+    assert sorted(set(held) & PAPER_TEST_DATES) == days('2026-09-29', '2026-10-08')
+    kept, rec = split_time_holdout(train, th['from_date'])
+    assert rec['training_live_through'] == '2026-09-28', rec
+    assert rec['live_rows_held_out'] == 14 * 2 * 2, rec   # 14 dates x 2 venues x 2 readings
+
+
+def test_feed_back_by_10_20_and_running_to_10_31_holds_out_10_18_to_10_31():
+    live = days('2026-09-01', '2026-10-12') + days('2026-10-20', '2026-10-31')
+    train, holdout = export_frames(live, live)
+    th = resolve_time_holdout([train, holdout], env={})
+    assert (th['last_live_date'], th['from_date']) == ('2026-10-31', '2026-10-18'), th
+    held = held_out_live_dates([train, holdout], th['from_date'])
+    # 10-18 and 10-19 sit in the gap: the window spans 14 days and holds 12 dates.
+    assert held == days('2026-10-20', '2026-10-31'), held
+    assert not set(held) & PAPER_TEST_DATES, 'the window falls entirely after 10-08'
+    kept, rec = split_time_holdout(train, th['from_date'])
+    assert rec['training_live_through'] == '2026-10-12', 'training ends where the feed died'
+    assert not ((kept['is_realtime'] == 1) & (kept['observed_date'] >= '2026-10-18')).any()
+
+
+def test_a_feed_back_for_only_four_days_leaves_too_few_dates_and_the_rule_does_not_stretch():
+    # Back on 10-29, export taken on 11-02 with readings through 11-01.
+    live = days('2026-09-01', '2026-10-12') + days('2026-10-29', '2026-11-01')
+    train, holdout = export_frames(live, live)
+    th = resolve_time_holdout([train, holdout], env={})
+    assert (th['last_live_date'], th['from_date']) == ('2026-11-01', '2026-10-19'), th
+    held = held_out_live_dates([train, holdout], th['from_date'])
+    assert len(held) == 4 < BAND_GATE_MIN_DATES, held
+    # One more day of readings, and the sample criterion's date count is met.
+    live5 = live + ['2026-11-02']
+    t5, h5 = export_frames(live5, live5)
+    th5 = resolve_time_holdout([t5, h5], env={})
+    assert th5['from_date'] == '2026-10-20'
+    assert len(held_out_live_dates([t5, h5], th5['from_date'])) == BAND_GATE_MIN_DATES
+
+
+def test_forecast_rows_after_the_feed_died_neither_anchor_the_window_nor_stay_in_training():
+    train, holdout = export_frames(days('2026-09-01', '2026-10-12'), days('2026-09-05', '2026-10-12'),
+                                   pa_forecast_dates=days('2026-10-13', '2026-10-20'))
+    th = resolve_time_holdout([train, holdout], env={})
+    assert (th['last_live_date'], th['from_date']) == ('2026-10-12', '2026-09-29'), th
+    kept, rec = split_time_holdout(train, th['from_date'])
+    assert rec['realtime_rows_held_out'] - rec['live_rows_held_out'] == 8 * 2, rec
+    assert not ((kept['is_realtime'] == 1) & (kept['observed_date'] >= '2026-09-29')).any(), \
+        'a vendor-forecast row inside the window must leave training as well'
+
+
+def test_the_newest_live_date_in_either_file_anchors_the_window():
+    # Miami (holdout_data.csv) read two days after Pennsylvania stopped.
+    train, holdout = export_frames(days('2026-09-01', '2026-10-12'), days('2026-09-05', '2026-10-14'))
+    th = resolve_time_holdout([train, holdout], env={})
+    assert (th['last_live_date'], th['from_date']) == ('2026-10-14', '2026-10-01'), th
+    kept, rec = split_time_holdout(train, th['from_date'])
+    assert rec['training_live_through'] == '2026-09-30', rec
 
 
 def blend_js(cur, prev, nxt):
