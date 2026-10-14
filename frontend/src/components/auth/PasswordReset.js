@@ -200,7 +200,7 @@ export const ResetPasswordScreen = ({ onSignIn, onRequestNew }) => {
   // window.location.href. Scrubbing to "/" also means a refresh lands on
   // sign-in rather than on a screen holding a token it no longer has.
   /* NAME THE PAGE. Every marketing and legal route sets its own title and
-     this one did not, so it inherited "Flock | Plans that actually happen" —
+     this one did not, so it inherited "Flock | Plans that happen" —
      on the page people arrive at from a password-reset email, which is the
      worst place to be vague about where they have landed. */
   useEffect(() => { document.title = 'Reset your password | Flock'; }, []);
