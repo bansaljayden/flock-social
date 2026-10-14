@@ -4266,7 +4266,18 @@ function servedConfidence({ accuracy, qmapApplied, hasWeather, curveOffset, nowc
 //
 // Under 200 reviews the table loses within one band to the rule engine by 6.1
 // points, so 200 reviews is the gate and the rule engine still answers below
-// it. Philadelphia has not been checked, which is why this ships off.
+// it.
+//
+// PHILADELPHIA, CHECKED 2026-10-14, and the switch turned on in production the
+// same day (scripts/ml/train/noCurveFallbackEval.js; MODEL-METRICS.md, "The
+// no-curve fallback, checked on Philadelphia"). On every live reading of
+// 2026-09-01..10-12 whose venue this gate serves (75,715 readings, 557 venues,
+// 42 dates), each venue's curve withheld, table minus rule engine with
+// date-block 95% intervals: MAE 26.78 against 29.84 (-3.06 [-3.42, -2.73]),
+// exact level 28.7% against 21.1% (+7.6 [6.9, 8.6]), within one level 62.5%
+// against 60.1% (+2.4 [0.9, 4.0]). Lehigh and Miami on 09-09..10-08, the dates
+// after the first study, which no choice here was made on: MAE -3.27 and
+// -7.17, exact level +9.4 and +5.8, every interval clear of zero.
 //
 // WHAT IT TAKES, every one of these, or the rule engine answers exactly as it
 // always has:
@@ -4307,14 +4318,17 @@ const NO_CURVE_FALLBACK_METHOD = crowdEngine.NO_CURVE_FALLBACK_METHOD;
 const NO_CURVE_FALLBACK_MIN_REVIEWS = 200;
 const NO_CURVE_FALLBACK_FITTED_ON = '2.6.0-starling';
 
-// WHAT THE CONFIDENCE FIGURE IS for a number the table made: within-15 of the
-// gated policy (this table at 200 or more reviews for a place whose types name
-// one of its categories, the rule engine for the rest) on the scored window the
-// switches above were measured on, each venue scored with its own curve
-// withheld. Published with its own population string, the way SERVE_MEASURED
-// is, so it can never be read as the model's figure or the switches'.
-const NO_CURVE_FALLBACK_POPULATION = 'live readings 2026-09-06..08 (Lehigh and Miami, local 2026-09-08 export), each venue scored with its own curve withheld; this table for venues with 200+ Google reviews whose first three Google types name one of its categories, the rule engine for the rest';
-const NO_CURVE_FALLBACK_MEASURED = Object.freeze({ within15: 41.3, rows: 4248 });
+// WHAT THE CONFIDENCE FIGURE IS for a number the table made: the table's own
+// within-15 on the live readings it serves, each venue scored with its own
+// curve withheld, over 2026-09-01..10-12 in the three collected cities.
+// Published with its own population string, the way SERVE_MEASURED is, so it
+// can never be read as the model's figure or the switches'. Until 2026-10-14
+// it was the gated policy's 41.3% on 4,248 readings from three days of Lehigh
+// and Miami; over the month the table's own numbers are within 15 points
+// 37.1% of the time (the policy's 35.6%), so the card stopped claiming the
+// three-day figure.
+const NO_CURVE_FALLBACK_POPULATION = 'live readings 2026-09-01..10-12 (Philadelphia to 10-12, Lehigh and Miami to 10-08; read-only production exports of 2026-10-08 and 2026-10-14), each venue scored with its own curve withheld; this table on the readings of venues with 200+ Google reviews whose first three Google types name one of its categories';
+const NO_CURVE_FALLBACK_MEASURED = Object.freeze({ within15: 37.1, rows: 133071 });
 
 // THE FIRST THREE GOOGLE TYPES, because those are the types the table was
 // measured on. The study read each venue's category with guessCategory over
@@ -4342,7 +4356,7 @@ const NO_CURVE_FALLBACK_TYPES_READ = 3;
 //
 // Re-read on the study's own rows with this gate: the published policy's
 // within-15 on the 4,248 score-window rows is 41.29 against 41.34 without it,
-// so the published 41.3 stands. The gate sends about 2 in 100 of the 200+
+// so the 41.3 published until 2026-10-14 stood. The gate sends about 2 in 100 of the 200+
 // review rows back to the rule engine: bars whose first three types are kinds
 // of bar guessCategory does not name (bar_and_grill, gastropub, sports_bar),
 // wineries, tea houses, a chocolate shop, a sporting goods store.

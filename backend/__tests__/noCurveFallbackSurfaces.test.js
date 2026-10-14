@@ -294,17 +294,17 @@ test('the card says the number is typical for this kind of place, measured as su
   assert.strictEqual(c.numberSource, 'category_typical');
   assert.strictEqual(c.modelVersion, null, 'no model ran');
   assert.strictEqual(c.baselineData, null);
-  assert.strictEqual(c.confidence, 41);
+  assert.strictEqual(c.confidence, 37);
   assert.deepStrictEqual(c.confidenceMeasurement, {
     status: 'measured',
     means: 'measured_accuracy',
     metric: 'within_15_rule_engine_category_table',
     population: mlPredictor._internals.NO_CURVE_FALLBACK_POPULATION,
-    populationRows: 4248,
-    measuredPercent: 41.3,
+    populationRows: 133071,
+    measuredPercent: 37.1,
     weatherPenalty: 0,
     userReportBoost: 0,
-    publishedPercent: 41,
+    publishedPercent: 37,
   });
   assert.deepStrictEqual(c.dataSourcesUsed, ['google_places', 'category_curve']);
   // Every bar is the table's, named as such, and says no live reading reached
@@ -393,7 +393,7 @@ test('the public demo names it typical for its category, hedges it, and names ev
   assert.strictEqual(d.confidence_basis, 'category_pattern');
   assert.strictEqual(d.number_source, 'category_typical');
   assert.match(d.label, HEDGED);
-  assert.strictEqual(d.confidence, 41);
+  assert.strictEqual(d.confidence, 37);
   assert.strictEqual(d.confidence_measurement.status, 'measured');
   assert.strictEqual(d.confidence_measurement.metric, 'within_15_rule_engine_category_table');
   for (const h of d.hourly) {
@@ -518,9 +518,9 @@ test('the measurement block forwards the figure as measured, and the label never
   assert.strictEqual(r.predictionMethod, METHOD);
   const block = confidenceMeasurementFor(r, r.confidence, 0);
   assert.strictEqual(block.status, 'measured');
-  assert.strictEqual(block.measuredPercent, 41.3);
-  assert.strictEqual(block.populationRows, 4248);
-  assert.strictEqual(block.publishedPercent, 41);
+  assert.strictEqual(block.measuredPercent, 37.1);
+  assert.strictEqual(block.populationRows, 133071);
+  assert.strictEqual(block.publishedPercent, 37);
   const support = crowdEngine.describePredictionSupport(r.predictionMethod, 0);
   assert.doesNotMatch(crowdEngine.publishedLabel(r.score, support), NOT_THIS);
   assert.match(crowdEngine.publishedLabel(r.score, support), HEDGED);
