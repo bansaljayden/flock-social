@@ -4298,3 +4298,149 @@ class ThermalUpsideDown(unittest.TestCase):
         self.assertEqual(main.DEFAULTS['THERMAL_UPSIDE_DOWN'], '0')
         frame = [1.0, 2.0, 3.0]
         self.assertIs(main.upright(frame, upside_down=False), frame)
+
+
+class StudyMode(unittest.TestCase):
+    """STUDY_LOG=1: every count with its own time, for scoring against hand counts.
+
+    A venue study compares the counter with people counting the room at fixed
+    seconds. The 30-second reading is a median stamped when it was sent, so the
+    study needs each count with the moment it was taken. These tests pin that
+    the log holds counts and times and can hold nothing else.
+    """
+
+    T0 = 1791500400.0   # 2026-10-08 23:00:00 UTC, a synced clock
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp(prefix='flock-study-'))
+        self.now = [self.T0]
+        self.mono = [100.0]
+
+    def log(self, **kw):
+        return main.StudyLog(self.dir, wall=lambda: self.now[0],
+                             mono=lambda: self.mono[0], **kw)
+
+    def rows(self, name):
+        import csv as _csv
+        with open(self.dir / name, newline='', encoding='utf-8') as f:
+            return list(_csv.reader(f))
+
+    def test_it_is_off_unless_a_study_turns_it_on(self):
+        self.assertEqual(main.DEFAULTS['STUDY_LOG'], '0')
+        self.assertIsNone(main._study)
+        for off in ('0', '', 'off', 'no', 'maybe', None):
+            self.assertFalse(main.study_enabled(off), off)
+        for on in ('1', 'true', 'YES', ' on '):
+            self.assertTrue(main.study_enabled(on), on)
+
+    def test_a_counted_frame_is_one_row_of_numbers_with_its_own_time(self):
+        log = self.log()
+        self.assertTrue(log.frame(4, 3, 'model', 15.234567, 'a1b2c3d4e5f6'))
+        log.close()
+        header, row = self.rows('counts-2026-10-08.csv')
+        self.assertEqual(tuple(header), main.STUDY_COUNT_FIELDS)
+        self.assertEqual(row, ['2026-10-08T23:00:00.000Z', '100.0', '1', '4', '3',
+                               'model', '15.235', 'a1b2c3d4e5f6'])
+
+    def test_the_columns_are_counts_and_times_and_nothing_about_where_anyone_is(self):
+        # If this needs changing, the owner agreement and the study protocol's
+        # data section change with it.
+        self.assertEqual(set(main.STUDY_COUNT_FIELDS), {
+            'wall_utc', 'mono_s', 'clock_ok', 'frame_count', 'published_count',
+            'counter', 'infer_ms', 'model'})
+        self.assertEqual(set(main.STUDY_UPTIME_FIELDS), {
+            'wall_utc', 'mono_s', 'clock_ok', 'event', 'uptime_s', 'thermal_fresh',
+            'published_count', 'door_in', 'door_out', 'occupancy', 'last_push_age_s',
+            'detail'})
+
+    def test_a_frame_or_anything_shaped_like_one_is_refused_before_a_byte_is_written(self):
+        log = self.log()
+        frame = [21.0] * (main.THERMAL_ROWS * main.THERMAL_COLS)
+        for bad in (frame, [(42.0, 42.0)], {'label': 'person'}, b'\x00' * 64,
+                    'x' * 41, 'a,b', 'two words'):
+            self.assertFalse(log.frame(bad, 1, 'model', 1.0, 'tag'), repr(bad)[:40])
+            self.assertFalse(log.event('heartbeat', detail=bad), repr(bad)[:40])
+        log.close()
+        self.assertEqual(list(self.dir.iterdir()), [])
+
+    def test_a_reading_before_ntp_keeps_its_monotonic_time_in_its_own_file(self):
+        self.now[0] = 1000.0     # a Pi with no real-time clock boots in 1970
+        log = self.log()
+        log.frame(2, 2, 'rule', 3.0, 'rule')
+        log.close()
+        header, row = self.rows('counts-unsynced.csv')
+        self.assertEqual(row[:3], ['', '100.0', '0'])
+
+    def test_each_utc_day_gets_its_own_file_with_its_own_header(self):
+        log = self.log()
+        self.now[0] = self.T0 + 3599.0          # 23:59:59
+        log.frame(1, 1, 'model', 1.0, 'tag')
+        self.now[0] = self.T0 + 3601.0          # 00:00:01 the next day
+        self.mono[0] += 2.0
+        log.frame(2, 1, 'model', 1.0, 'tag')
+        log.close()
+        self.assertEqual(len(self.rows('counts-2026-10-08.csv')), 2)
+        self.assertEqual(len(self.rows('counts-2026-10-09.csv')), 2)
+
+    def test_a_restart_appends_to_the_days_file_without_a_second_header(self):
+        first = self.log()
+        first.frame(1, 1, 'model', 1.0, 'tag')
+        first.close()
+        second = self.log()
+        second.frame(2, 2, 'model', 1.0, 'tag')
+        second.close()
+        rows = self.rows('counts-2026-10-08.csv')
+        self.assertEqual([r[0] for r in rows].count('wall_utc'), 1)
+        self.assertEqual(len(rows), 3)
+
+    def test_a_card_running_out_of_space_pauses_the_log_instead_of_filling_it(self):
+        log = self.log(min_free=1 << 62)
+        self.assertFalse(log.frame(1, 1, 'model', 1.0, 'tag'))
+        log.close()
+        self.assertFalse(any(self.dir.glob('*.csv')))
+
+    def test_a_log_that_cannot_be_written_never_stops_the_sensor(self):
+        blocked = self.dir / 'not-a-folder'
+        blocked.write_text('a file where the folder should be')
+        log = main.StudyLog(blocked)
+        self.assertFalse(log.frame(1, 1, 'model', 1.0, 'tag'))
+        self.assertFalse(log.event('start'))
+
+    def test_the_heartbeat_rides_on_each_reading_and_the_payload_does_not_change(self):
+        log = self.log()
+        with mock.patch.object(main, '_study', log):
+            payload = main.snapshot()
+        log.close()
+        self.assertEqual(
+            set(payload) - {'recorded_at', '_mono', 'device_id'},
+            {'ir_beam_count', 'thermal_headcount', 'noise_db'} | (
+                set(payload) & {'occupancy', 'occupancy_low', 'occupancy_high', 'dwell_minutes'}))
+        header, row = self.rows('uptime-2026-10-08.csv')
+        self.assertEqual(tuple(header), main.STUDY_UPTIME_FIELDS)
+        record = dict(zip(header, row))
+        self.assertEqual(record['event'], 'heartbeat')
+        self.assertEqual(record['published_count'], str(payload['thermal_headcount']))
+
+    def test_the_model_is_named_by_its_contents_not_its_file_name(self):
+        a, b = self.dir / 'people.onnx', self.dir / 'people-fine.onnx'
+        a.write_bytes(b'owl main')
+        b.write_bytes(b'owl crowd')
+        tag = main.model_tag([a, b])
+        self.assertEqual(tag, hashlib.sha256(b'owl main').hexdigest()[:12] + '+'
+                         + hashlib.sha256(b'owl crowd').hexdigest()[:12])
+        self.assertEqual(main.model_tag([self.dir / 'missing.onnx']), 'rule')
+
+    def test_the_sensor_hands_the_log_counts_never_the_frame_or_its_points(self):
+        source = Path(__file__).resolve().parent.joinpath('main.py').read_text(encoding='utf-8')
+        calls = []
+        for m in re.finditer(r'_study\.(?:frame|event)\(', source):
+            depth, i = 1, m.end()
+            while depth:
+                depth += {'(': 1, ')': -1}.get(source[i], 0)
+                i += 1
+            calls.append(source[m.end():i - 1])
+        self.assertGreaterEqual(len(calls), 3)
+        for args in calls:
+            for word in re.findall(r'[A-Za-z_]+', args):
+                self.assertNotIn(word, {'frame', 'points', 'things', 'thermal_frame', 'cells'},
+                                 f'the study log was handed {word}')
