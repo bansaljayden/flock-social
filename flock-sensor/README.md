@@ -437,6 +437,36 @@ On a unit with the analog microphone instead of the meter, SPI0 CE0 (pins 19,
 21, 23, 24) is free under this HAT as well; with a GPIO crossing sensor,
 GPIO 17 (pin 11) is.
 
+### Cellular: the 4G board and a Hologram SIM
+
+The Pi treats the 4G board as one more network. Wi-Fi and Ethernet stay first
+choice, and cellular takes over by itself whenever both are gone, because
+Hologram bills by the megabyte. Nothing in `main.py` changes.
+
+It can be tried on the desk before the box exists: the board works beside the
+Pi on its USB cable alone, with the kit's own antenna. The stick-on strip is
+only for the closed box.
+
+1. **Activate the SIM** at dashboard.hologram.io (Activate SIM, then the
+   number printed on the card). An unactivated SIM looks exactly like no
+   signal.
+2. **Power off.** Put the SIM in the holder under the 4G board, its cut corner
+   where the holder's outline shows it.
+3. **Antenna on MAIN.** The kit's blade antenna for now. AUX is a second
+   antenna for better reception and can stay empty. GNSS is location, which
+   Flux never uses.
+4. **USB cable** from the board's micro-USB marked USB to any Pi USB port.
+5. **Power on and run** `sudo bash cellular.sh` from this folder. It installs
+   ModemManager, presses the board's power key if the board is on the 40 pins
+   and asleep, adds a connection named `hologram` with the APN `hologram`, and
+   proves it by loading a page over the cellular link alone.
+
+`sudo bash cellular.sh --status` shows the signal, the SIM's state, and the
+bytes sent and received since the link came up. Read those after a day on
+cellular before leaving a unit on it: the readings go out every
+`PUSH_INTERVAL_SECONDS` (30), and what that costs on Hologram is a number to
+measure, not to guess.
+
 ---
 
 ## Provisioning a device
