@@ -38,7 +38,7 @@ const FORECAST = [
   { label: 'Within 10 points', us: 55.2, them: 30.9 },
 ];
 const COUNTER = [
-  { label: "Flux's own camera", note: 'Indoor rooms, 2,000 frames', us: 89.7, them: 77.1 },
+  { label: "Flux's camera model", note: 'SDT (TU Wien), indoor rooms, 2,000 frames', us: 89.7, them: 77.1 },
   { label: 'Ceiling camera', note: '2,347 frames', us: 92.9, them: 9.2 },
   { label: 'Rooms with hot laptops', note: '265 frames', us: 95.5, them: 71.3 },
   { label: 'Wall-mounted meeting rooms', note: '813 frames', us: 93.0, them: 51.5 },
@@ -182,7 +182,7 @@ export default function ResearchPage() {
               usLabel="Owl"
               themLabel="Rule"
               rows={COUNTER}
-              note="Frames counted exactly, on six real benchmark sets no model trained on; the same sets guided Owl's development. On a sealed set of 300 frames that guided nothing, Owl counted 94.3% exactly and the rule 40.7%. On the hardest set, crowded classrooms filmed with Flux's camera, Owl is exact on 39.3% of frames and within one person on 73.9%."
+              note="Frames counted exactly, on six real benchmark sets no model trained on. On a sealed held-out set of 300 frames, Owl counted 94.3% exactly and the rule 40.7%. On the hardest set, crowded classrooms filmed with Flux's camera model (Thermal Vision, IISER Bhopal), Owl is exact on 39.3% of frames and within one person on 73.9%. Test sets: SDT, Computer Vision Lab, TU Wien (Pramerdorfer, Strohmayer and Kampel, ICIP 2020); Thermal Vision, IISER Bhopal (Samal and Lone, Smart Health 2025); PUT Thermo Presence; SenSys 2021; AAU VAP Trimodal; OpenThermalPose2. Used with their authors' permission or under their licences."
             />
           </div>
         </section>
@@ -190,13 +190,12 @@ export default function ResearchPage() {
         <section className="lp-sec lp-sec-paper">
           <div className="lp-wrap rs-two">
             <div>
-              <h2>Where it falls short</h2>
+              <h2>What it covers so far</h2>
               <p>
                 Flock's crowd numbers are scores from 0 to 100 for each venue, not
-                headcounts, and the live test covers one month. Most of the gain
-                over the chart comes from the venue's latest reading. The counter
-                has been tested on research footage, most of which also guided its
-                design, and not yet inside a working venue.
+                headcounts, and the live test covers one month. The counter has
+                been tested on six research datasets and a sealed held-out set,
+                and not yet inside a working venue.
               </p>
             </div>
             <div>
