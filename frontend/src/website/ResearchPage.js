@@ -12,9 +12,9 @@ import SiteNav, { useSiteMenu } from './SiteNav';
 // paper keeps the URL the single paper always had, so old links still land.
 const PAPER_URL = '/papers/flock-research-paper.pdf';
 const PAPER_THUMB = '/papers/flock-research-paper-p1.png';
-const PAPER_PAGES = 36;
+const PAPER_PAGES = 37;
 const FULL_PAPER_URL = '/papers/flock-research-paper-full.pdf';
-const FULL_PAPER_PAGES = 55;
+const FULL_PAPER_PAGES = 54;
 
 // Why the research exists and what it found, in plain words, then the paper.
 // Built on the landing page's own stylesheet (.lp: Fraunces display, Hanken
@@ -182,7 +182,7 @@ export default function ResearchPage() {
               usLabel="Owl"
               themLabel="Rule"
               rows={COUNTER}
-              note="Frames counted exactly, on six real benchmark sets no model trained on; the same sets guided Owl's development, so a sealed test comes next. On the hardest set, crowded classrooms filmed with Flux's camera, Owl is exact on 39.3% of frames and within one person on 73.9%."
+              note="Frames counted exactly, on six real benchmark sets no model trained on; the same sets guided Owl's development. On a sealed set of 300 frames that guided nothing, Owl counted 94.3% exactly and the rule 40.7%. On the hardest set, crowded classrooms filmed with Flux's camera, Owl is exact on 39.3% of frames and within one person on 73.9%."
             />
           </div>
         </section>
@@ -195,8 +195,8 @@ export default function ResearchPage() {
                 Flock's crowd numbers are scores from 0 to 100 for each venue, not
                 headcounts, and the live test covers one month. Most of the gain
                 over the chart comes from the venue's latest reading. The counter
-                has been tested on research footage that also guided its design,
-                and not yet inside a working venue.
+                has been tested on research footage, most of which also guided its
+                design, and not yet inside a working venue.
               </p>
             </div>
             <div>
