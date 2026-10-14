@@ -30,7 +30,7 @@ product invariant (see below, including what it does not cover).
 |---|---|
 | Planning | Flocks, invites, RSVP, venue voting, group chat with venue cards, plans calendar |
 | Money | Anonymous budget matching (aggregate ceiling only), bill splitting with Venmo and Cash App deep links, Zelle by instructions (it has no shared URL scheme to open) |
-| Crowd intelligence | Each venue's own weekly curve, moved by its newest live readings (`CROWD_SERVE_MODE=curve_offset` with the nowcast on; see below). Flock's own trained model (XGBoost v2.6.0, run in-process as ONNX) is ship-gated and serves again only when a retrain beats that. A rule engine covers venues with no baseline yet, and the response says which one answered |
+| Crowd intelligence | Each venue's own weekly curve, moved by its newest live readings (see below). Flock's own trained model (XGBoost v2.6.0, run in-process as ONNX) is ship-gated and serves again only when a retrain beats that. A rule engine covers venues with no baseline yet, and the response says which one answered |
 | Birdie | AI assistant for venue ideas ("somewhere quiet and cheap nearby") |
 | Venue sensor | Flux: a Raspberry Pi with a thermal camera, a doorway counter and a microphone. Counts people on the device with Owl, Flock's own trained vision model (see below), and sends counts only |
 | Safety | Live location inside a flock (off by default, never background), two-tap SOS to trusted contacts, report + block, account deletion in-app (with re-authentication) |
@@ -57,54 +57,118 @@ are all real.
 
 ## The crowd model
 
-**What the app serves today is each venue's own weekly curve plus its trailing
-live offset, with the newest live reading blended in (`CROWD_SERVE_MODE=curve_offset`,
-`CROWD_NOWCAST_ENABLED=true`).** Tested against 4,183 live readings it had not seen
-(2026-09-06 to 08), 56.0% of its numbers named the exact crowd level, 78.8%
-landed within one level and 53.8% within 10 points, and the average miss was
-17.1 points (`backend/services/servedAccuracy.json`). The trained model below
-is not in that serving path; the table is the model's own evaluation, kept for
-the next retrain.
+Every venue card in Flock answers one question: how busy will it be when you
+get there? The answer is a number from 0 to 100 and one of five words: Quiet,
+Not Busy, Steady, Busy, Packed. Getting that word right is the whole job.
 
-**The trained model beats the busy-times chart on every measure the card is
-scored on.**
+Map apps usually answer with a popular-times chart, the venue's typical level
+for that weekday and hour. Flock starts from the same weekly pattern and
+corrects it with the venue's own live readings. A collector reads the venues it
+tracks in Philadelphia and the Lehigh Valley every hour, and those readings
+build the corpus every future model learns from.
 
-The card gives you one of five words: Quiet, Not Busy, Steady, Busy, Packed.
-Getting that word right is the whole job. Here is Flock against the usual
-approach, which is to show the venue's typical pattern for that hour, the same
-kind of thing a popular-times graph gives you. Both were scored on 67,249 live
-crowd readings, the kind of reading the card is judged against, in three cities
-the model never trained on (Miami, Tokyo, Barcelona):
+**Over a month of live readings, Flock named the exact crowd level 54.9% of the
+time. The popular-times chart, scored on the same readings, managed 30.2%.** The
+test ran from 9 September to 8 October 2026 and covered 119,939 live readings at
+1,754 venues. Both were measured against a commercial provider's live busyness
+estimates, and the weights served during the test were fitted on earlier days,
+so none of these readings informed them.
 
-| | the typical-times chart | **Flock** |
+| 119,939 live readings, 9 Sep to 8 Oct 2026 | popular-times chart | **Flock** |
 |---|---|---|
-| Gets the word exactly right | 22.9% | **25.5%** |
-| Right, or one word off | 57.7% | **62.0%** |
-| Average miss, out of 100 (MAE) | 31.48 | **29.42** |
+| Names the exact crowd level | 30.2% | **54.9%** |
+| Right, or one level off | 64.8% | **78.4%** |
+| Within 10 points | 30.9% | **55.2%** |
+| Average miss, out of 100 (MAE) | 26.40 | **18.00** |
+| Average miss, in crowd levels | 1.155 | **0.772** |
+
+That is a 31.8% smaller average miss, and the lead held on every day of the
+week, Friday and Saturday included.
+
+**The freshest reading is where the gain comes from.** On the 48.3% of readings
+where the venue had also been read in the hour before, the served number named
+the exact level 77.0% of the time and landed within one level 88.6% of the time.
+Since 13 October production has used that finding as its rule: when the venue
+was read in the past hour, the card shows that reading as it stands, and
+otherwise it shows the curve plus the venue's offset, how far its recent live
+readings have run above or below it.
+
+The pre-registered retrain, set for early November, will test whether a trained
+model can beat that number, under a decision rule fixed before its data existed.
+
+### How the served number is built
+
+Production runs `CROWD_SERVE_MODE=curve_offset` with `CROWD_NOWCAST_ENABLED=true`.
+The base is the venue's own weekly curve plus 0.85 times its trailing offset: the
+median gap between its newest live readings and that curve, counted only from
+readings taken before the hour being scored. The nowcast then serves a reading
+from the hour before at full weight (`NOWCAST_WEIGHTS` in
+`backend/services/mlPredictor.js`). During the month above it also carried a
+reading two hours old at 0.85 and one three hours old at 0.25. On the month's
+14,778 two-hour readings that weight cost 2.73 points of MAE against the curve
+plus offset alone, and the three-hour weight was a wash, so both went to zero on
+13 October. On the same month the new rule scores about the same as the old one
+(54.7% exact, MAE 17.68), but it was chosen on those readings, so they are no
+test of it; the pre-registered retrain scores it next.
+
+The labels are relative: the provider scales each venue's busyness from 0 to 100
+within that venue, and the readings do not count people. The exact level leads
+the table because within one level is easy to reach on these labels. Real
+venue-hours bunch up at Quiet and Packed, so a constant answer of Not Busy lands
+within one level 75.2% of the time while naming the exact level only 14.8% of
+the time.
+
+The arithmetic went live on 26 September, after a first test of three days
+(4,183 readings, 6 to 8 September); the month above holds 29 times as many
+readings. The measurements are recorded in `backend/scripts/ml/MODEL-METRICS.md`
+and `backend/services/servedAccuracy.json`, and they reproduce with
+`backend/scripts/ml/train/bandEval.js`.
+
+A venue with no weekly curve yet is answered by the rule engine in
+`crowdEngine.js` and tagged `predictionMethod: 'rule_engine'`, so every response
+names the engine behind it and no rule-engine answer is ever presented as a
+model output.
+
+### The trained model
+
+**Flock's own trained model beats the popular-times chart on every measure the
+card is scored on.** It served the card until 26 September. Here it is against
+the chart on 67,249 realtime crowd readings from the spring, the kind of reading
+the card is judged against, in three cities the model never trained on (Miami,
+Tokyo, Barcelona):
+
+| 67,249 readings in three held-out cities | popular-times chart | **Flock's model** |
+|---|---|---|
+| Names the exact crowd level | 22.9% | **25.5%** |
+| Right, or one level off | 57.7% | **62.0%** |
 | Within 10 points | 19.2% | **20.7%** |
+| Average miss, out of 100 (MAE) | 31.48 | **29.42** |
 | Better than always guessing the average (R²) | no, −0.075 | **yes, +0.040** |
 
-Flock wins every row.
+The model wins every row.
 
 **How that compares.** The average miss drops from 31.48 to 29.42, a **6.5%
 reduction in MAE**, and it is earned from the venue's attributes, the calendar,
 the weather and nearby events alone. The closest published system, a 2023 ACM
-SIGSPATIAL graph model ([BysGNN](https://arxiv.org/abs/2306.15927)), starts from
-a baseline it describes as "similar to Google Maps' popular times graph" and
-halves its error by feeding each venue's own recent visit history back in.
-Flock's gain is measured with no such input in the feature set. The hourly
+SIGSPATIAL graph model ([BysGNN](https://arxiv.org/abs/2306.15927)), forecasts
+hourly visits from the previous 24 hours of visits at every venue in a city.
+Against a historical-average baseline its authors liken to Google Maps' popular
+times graph, its MAE is 40% to 54% lower across five cities, and against last
+week's value at the same hour it is 14% to 19% lower. Flock's model reaches its
+6.5% with no recent reading of the venue in its feature set. The hourly
 collector now asks for that reading for the venues it can poll in Philadelphia
 and the Lehigh Valley, served venues first, and stores it when the vendor has
 one, which makes it the next input the model gets.
 
-**It is above zero at the granularity where the field is below it.** R², the
-coefficient of determination, is positive when a model's predictions carry more
-information than the mean of the data and negative when they carry less. The
-typical-times chart scores **−0.075** on these venues. Flock scores **+0.040**,
-a gain of **R² +0.115** over the baseline it replaces. The closest peer-reviewed
-occupancy study ([Bollenbach et al. 2024](https://doi.org/10.1007/s40558-024-00291-2))
-reports R² between **−0.08 and −1.26** once it predicts single entrances instead
-of a whole site. One venue at one hour is the hardest granularity this problem
+**It is above zero at a granularity where the field often falls below it.** R²,
+the coefficient of determination, is positive when a model's predictions carry
+more information than the mean of the data and negative when they carry less.
+The popular-times chart scores **−0.075** on these venues. Flock's model scores
+**+0.040**, a gain of **R² +0.115** over the baseline it replaces. The closest
+peer-reviewed occupancy study
+([Bollenbach et al. 2024](https://doi.org/10.1007/s40558-024-00291-2)) reports R²
+near zero and often below it, down to **−1.26**, for single beach sections a day
+or more ahead. One venue at one hour is the hardest granularity this problem
 has, and Flock's model is above zero at it.
 
 **Nothing ships without clearing the gate.** The ship gate is four criteria
@@ -116,58 +180,58 @@ MAE −2.06), no MAE regression against that baseline, a within-10 hit rate at o
 above the previous shipped model's, measured on the same rows in the same run
 (20.7% against 19.3%), and no MAE regression against that model (29.42 against
 30.77). Candidate and incumbent are scored on identical rows with identical
-features, so the floor rises whenever the incumbent improves.
+features, so the floor rises whenever the incumbent improves. Since late
+September a second gate stands behind the first: the candidate and the number
+production serves are replayed through the serving code on a 14-day window of
+live readings held out of the candidate's training. The candidate loads only if
+it beats the served number on within one level, gives up no more than a point to
+it on within 10 or MAE, beats the popular-times chart, and keeps every city with
+300 or more readings within 2 points.
 
 **How it works.** In model mode (`CROWD_SERVE_MODE=model`),
 `backend/services/mlPredictor.js` serves an XGBoost model (800 gradient-boosted
 trees at depth 8, exported to ONNX and run in-process by `onnxruntime-node`,
-**v2.6.0 "Starling"**). Production runs `curve_offset` today and keeps this model
-as the one a retrain has to beat. The corpus is Flock's own:
-**3.9 million rows across 34 cities**, collected by Flock's pipeline. After
-holding out three whole cities and keeping the rows with a usable baseline, that
-is **1.93 million training rows across 30 cities**. The model reads **106
-features**: time patterns, weather, nearby events, holiday calendars, venue
-category and popularity, and the typical level for that kind of venue and for
-its neighbors at that hour. It predicts a *delta*, how far
-a venue will sit from its own typical value for that hour, and in model mode the
-served score is the baseline plus that delta, clamped and clipped to 0 to 100. Training runs
-on CPU with pinned threads and is **bit-reproducible**: given the same data and
-seed, two runs produce identical predictions, so the artifact can be regenerated
-by anyone holding the corpus.
+**v2.6.0 "Starling"**). Production runs `curve_offset` today, and a retrain has
+to beat the served number above before model mode serves again. The corpus is
+Flock's own: **3.9 million rows across 34 cities**, collected by Flock's
+pipeline. After holding out three whole cities and keeping the rows with a
+usable baseline, that is **1.93 million training rows across 30 cities**. The
+model reads **106 features**: time patterns, weather, nearby events, holiday
+calendars, venue category and popularity, and the typical level for that kind
+of venue and for its neighbors at that hour. It predicts a *delta*, how far a
+venue will sit from its own typical value for that hour, and in model mode the
+served score is the baseline plus that delta, clamped and clipped to 0 to 100.
+Training runs on CPU with pinned threads and is **bit-reproducible**: given the
+same data and seed, two runs produce identical predictions, so the artifact can
+be regenerated by anyone holding the corpus.
 
 **It transfers to cities it has never seen.** The train/holdout split is by
 whole city, cross-validation is leave-one-city-out across the 30 training
-cities, and no row-level split exists anywhere. On the blended training
-population (weekly and live rows together) leave-one-city-out R² is **0.653**
-and R² on the three held-out cities is **0.772**. Holdout scoring above
-cross-validation is the signature of a model that generalises, and breadth of
-collection is what bought it. Performance on the served population is the table
-above.
+cities, and no row-level split exists anywhere. The model beats the
+popular-times chart in each held-out city, by 2.26 points of MAE in Miami, 2.21
+in Barcelona and 1.72 in Tokyo. Those three cities have been the holdout since
+March and every version from v2.2 on was gated on them, so they serve as a
+validation set; the pre-registered retrain adds a time holdout.
 
-**The corpus grows every hour.** A collector runs on an hourly cron across the
-served geography, Philadelphia and the Lehigh Valley, served venues first, and
-adds a few thousand provenance-verified live readings a day: each hourly run asks
-the vendor about the active venues open at that hour, served venues first within a
-fifty-minute budget, and stores the live readings it gets back. Every row it writes
-records whether its label is a live reading or the vendor's forecast, with the
-vendor's forecast for the same moment kept beside it, and each run reads back
-what it wrote and refuses to exit clean if any row it committed is unlabelled.
+**How collection works.** A collector runs on an hourly cron across the served
+geography, Philadelphia and the Lehigh Valley. Each run asks the vendor about
+the active venues open at that hour, served venues first within a fifty-minute
+budget, and stores the live readings it gets back: a few thousand
+provenance-verified readings a day over the month of the test. Every row it
+writes records whether its label is a live reading or the vendor's forecast,
+with the vendor's forecast for the same moment kept beside it, and each run
+reads back what it wrote and refuses to exit clean if any row it committed is
+unlabelled.
 
-A venue the model has no baseline for is answered by the rule engine in
-`crowdEngine.js` and tagged `predictionMethod: 'rule_engine'`, so every response
-names the engine behind it and no rule-engine answer is ever presented as a
-model output.
-
-**Where the next gain comes from.** The model's test figures above are scored on
-three cities held out of training entirely (the 0.653 is cross-validation across
-the training cities), rather than on the cities the product
-serves, which is the harder of the two readings and the one worth publishing.
-The binding input today is evidence density: about 26 live readings per venue
-across 168 weekly slots, so the model reads a kind of venue on a Tuesday at 9pm
-better than it reads one particular venue departing from its own pattern. That
-is a data question with a running answer. The pre-registered retrain, set for early November, is the first
-on live rows that all carry verified provenance with measured event and weather
-features, and an autumn month in the climate table.
+**Where the next gain comes from.** The binding input is evidence density: the
+spring corpus holds about 25 realtime readings per venue across 168 weekly
+slots, so the model reads a kind of venue on a Tuesday at 9pm better than it
+reads one particular venue departing from its own pattern. The month-long test
+points the same way: a venue's latest reading is worth more than any correction
+to its curve, so how often a venue is read matters more than how long its
+history is. The pre-registered retrain is the first on live rows that all carry
+verified provenance with measured event and weather features, and an autumn
+month in the climate table.
 
 > **The trained model is not distributed with this source.** `crowd_model.onnx`
 > and `model_metadata.json` are Flock's own artifacts, built from Flock's own
