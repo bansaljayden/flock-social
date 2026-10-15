@@ -1,6 +1,8 @@
+/* Preflight only. The components and utilities layers generated classes
+   from words in the source that happen to look like utilities (static,
+   table, fixed, container) and nothing carries one; sr-only, the one class
+   in use, is defined in full further down this file. */
 @tailwind base;
-@tailwind components;
-@tailwind utilities;
 
 /* ═══════════════════════════════════════════════════════════════════
    FRAUNCES (display) + HANKEN GROTESK (body) — self-hosted so they
@@ -823,10 +825,12 @@ button:active, [role="button"]:active {
   filter: brightness(1.04);
 }
 
-/* shadcn HSL tokens - visually inert (zero component usages) but LOAD-BEARING:
-   tailwind.config.js maps colors to hsl(var(--border)) etc., and removing these
-   definitions sends the prod CSS optimizer into infinite recursion (verified
-   2026-07-18: build fails with "Maximum call stack size exceeded"). KEEP. */
+/* shadcn HSL tokens - visually inert (zero component usages). They were
+   LOAD-BEARING while tailwind.config.js ran addVariablesForColors, which wrote
+   self-referencing tokens (--border: hsl(var(--border))) onto :root: removing
+   these definitions then sent the prod CSS optimizer into infinite recursion
+   (verified 2026-07-18: "Maximum call stack size exceeded"). That plugin is
+   gone, so the cycle is too; verify the build before removing them anyway. */
 :root {
   --background: 0 0% 100%;
   --foreground: 222.2 84% 4.9%;
