@@ -4,20 +4,20 @@ import './ResearchPage.css';
 import SiteFooter from './SiteFooter';
 import SiteNav, { useSiteMenu } from './SiteNav';
 
-// The paper in two lengths, side by side: the paper itself, and the full
-// technical version with every table, figure and equation the paper leaves
-// out. Same abstract, numbers and conclusions in both. They live in
-// public/papers/, not public/research/: a folder named like the page makes a
-// static server answer /research with the folder instead of the app. The
-// paper keeps the URL the single paper always had, so old links still land.
+// Two documents with different jobs: the full paper, every table, figure and
+// equation, and a three-page summary for a reader who wants the questions,
+// the findings, the equations and every model input before the paper. A
+// mid-length cut of the paper was dropped: it repeated the full paper's
+// abstract and findings without being short. They live in public/papers/,
+// not public/research/: a folder named like the page makes a static server
+// answer /research with the folder instead of the app. The paper keeps the
+// URL the single paper always had, and the full paper's old URL redirects to
+// it (vercel.json, cloudflare/_redirects), so old links still land.
 const PAPER_URL = '/papers/flock-research-paper.pdf';
 const PAPER_THUMB = '/papers/flock-research-paper-p1.png';
-const PAPER_PAGES = 40;
-const FULL_PAPER_URL = '/papers/flock-research-paper-full.pdf';
-// Two pages on the questions, the method, the findings and the limits, for a
-// reader who wants the whole project before choosing a paper.
+const PAPER_PAGES = 60;
 const SUMMARY_URL = '/papers/flock-research-summary.pdf';
-const FULL_PAPER_PAGES = 60;
+const SUMMARY_PAGES = 3;
 
 // Why the research exists and what it found, in plain words, then the paper.
 // Built on the landing page's own stylesheet (.lp: Fraunces display, Hanken
@@ -142,8 +142,7 @@ export default function ResearchPage() {
                 <p className="rs-paper-by">Jayden Bansal, Flock Social LLC</p>
                 <div className="rs-paper-actions">
                   <a className="lp-btn lp-btn-cream" href={PAPER_URL} target="_blank" rel="noopener noreferrer">Read the paper (PDF)</a>
-                  <a className="lp-btn lp-btn-ghost" href={FULL_PAPER_URL} target="_blank" rel="noopener noreferrer">Full technical version (PDF, {FULL_PAPER_PAGES} pages)</a>
-                  <a className="lp-btn lp-btn-ghost" href={SUMMARY_URL} target="_blank" rel="noopener noreferrer">Two-page summary (PDF)</a>
+                  <a className="lp-btn lp-btn-ghost" href={SUMMARY_URL} target="_blank" rel="noopener noreferrer">{SUMMARY_PAGES}-page summary (PDF)</a>
                 </div>
               </div>
             </div>
@@ -228,11 +227,8 @@ export default function ResearchPage() {
               <a className="lp-btn lp-btn-cream" href={PAPER_URL} target="_blank" rel="noopener noreferrer">
                 Read the paper (PDF, {PAPER_PAGES} pages)
               </a>
-              <a className="lp-btn lp-btn-ghost" href={FULL_PAPER_URL} target="_blank" rel="noopener noreferrer">
-                Full technical version (PDF, {FULL_PAPER_PAGES} pages)
-              </a>
               <a className="lp-btn lp-btn-ghost" href={SUMMARY_URL} target="_blank" rel="noopener noreferrer">
-                Two-page summary (PDF)
+                {SUMMARY_PAGES}-page summary (PDF)
               </a>
             </div>
           </div>

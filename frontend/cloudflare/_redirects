@@ -1,7 +1,7 @@
 # Cloudflare Pages redirects for flockcorp.com.
 # Port of the unconditional entries in frontend/vercel.json.
 #
-# Only one vercel.json rule fits here. _redirects matches the path only: it
+# Only the unconditional vercel.json redirects fit here. _redirects matches the path only: it
 # cannot look at the User-Agent or the query string, so the crawler redirect
 # on "/" and every conditional rewrite live in functions/_middleware.js.
 #
@@ -14,3 +14,4 @@
 #
 # vercel.json "permanent": true is a 308, so this is a 308, not a 301.
 /research/flock-research-paper.pdf /papers/flock-research-paper.pdf 308
+/papers/flock-research-paper-full.pdf /papers/flock-research-paper.pdf 308
