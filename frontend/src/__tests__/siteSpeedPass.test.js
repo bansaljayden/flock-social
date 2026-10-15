@@ -131,11 +131,11 @@ describe('every section-mark candidate is the width it claims', () => {
   });
 });
 
-describe('the research paper thumbnail is served near the size it paints', () => {
+describe('the research summary thumbnail is served near the size it paints', () => {
   const page = read('src/website/ResearchPage.js');
 
   test('its WebP candidates exist at the widths they claim, with sizes', () => {
-    const m = /srcSet="([^"]*research-paper-p1[^"]*)"\s*sizes="[^"]+"/.exec(page);
+    const m = /srcSet="([^"]*research-summary-p1[^"]*)"\s*sizes="[^"]+"/.exec(page);
     expect(m).not.toBeNull();
     for (const entry of m[1].split(',').map((x) => x.trim())) {
       const [url, desc] = entry.split(/\s+/);

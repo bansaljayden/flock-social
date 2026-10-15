@@ -4,20 +4,21 @@ import './ResearchPage.css';
 import SiteFooter from './SiteFooter';
 import SiteNav, { useSiteMenu } from './SiteNav';
 
-// Two documents with different jobs: the full paper, every table, figure and
-// equation, and a three-page summary for a reader who wants the questions,
-// the findings, the equations and every model input before the paper. A
-// mid-length cut of the paper was dropped: it repeated the full paper's
-// abstract and findings without being short. They live in public/papers/,
-// not public/research/: a folder named like the page makes a static server
-// answer /research with the folder instead of the app. The paper keeps the
-// URL the single paper always had, and the full paper's old URL redirects to
-// it (vercel.json, cloudflare/_redirects), so old links still land.
-const PAPER_URL = '/papers/flock-research-paper.pdf';
-const PAPER_THUMB = '/papers/flock-research-paper-p1.png';
-const PAPER_PAGES = 60;
+// Two documents, read in order: a three-page summary first (the questions,
+// the findings, the equations and every model input), and the full paper for
+// a reader who wants every table and figure. The summary is the primary
+// button and the thumbnail; its first page links to the paper. A mid-length
+// cut of the paper was dropped: it repeated the full paper's abstract and
+// findings without being short. They live in public/papers/, not
+// public/research/: a folder named like the page makes a static server answer
+// /research with the folder instead of the app. The paper keeps the URL the
+// single paper always had, and the full paper's old URL redirects to it
+// (vercel.json, cloudflare/_redirects), so old links still land.
 const SUMMARY_URL = '/papers/flock-research-summary.pdf';
+const SUMMARY_THUMB = '/papers/flock-research-summary-p1.png';
 const SUMMARY_PAGES = 3;
+const PAPER_URL = '/papers/flock-research-paper.pdf';
+const PAPER_PAGES = 60;
 
 // Why the research exists and what it found, in plain words, then the paper.
 // Built on the landing page's own stylesheet (.lp: Fraunces display, Hanken
@@ -122,27 +123,27 @@ export default function ResearchPage() {
             </p>
 
             <div className="rs-paper">
-              <a className="rs-thumb" href={PAPER_URL} target="_blank" rel="noopener noreferrer" aria-hidden="true" tabIndex={-1}>
-                {/* The slot paints 96 to 150 CSS px, so the 520px PNG (89 KB)
-                    was 3.5x its width at 1x. WebP candidates at 300w (16 KB)
-                    and 520w; `sizes` mirrors .rs-thumb img in ResearchPage.css.
-                    The PNG stays as the fallback for browsers without WebP. */}
+              <a className="rs-thumb" href={SUMMARY_URL} target="_blank" rel="noopener noreferrer" aria-hidden="true" tabIndex={-1}>
+                {/* The slot paints 96 to 150 CSS px, so a 520px PNG would be
+                    3.5x its width at 1x. WebP candidates at 300w and 520w;
+                    `sizes` mirrors .rs-thumb img in ResearchPage.css. The PNG
+                    stays as the fallback for browsers without WebP. */}
                 <picture>
                   <source
                     type="image/webp"
-                    srcSet="/papers/flock-research-paper-p1-300.webp 300w, /papers/flock-research-paper-p1-520.webp 520w"
+                    srcSet="/papers/flock-research-summary-p1-300.webp 300w, /papers/flock-research-summary-p1-520.webp 520w"
                     sizes="(max-width: 420px) 112px, (max-width: 600px) 96px, 150px"
                   />
-                  <img src={PAPER_THUMB} width="520" height="673" alt="" />
+                  <img src={SUMMARY_THUMB} width="520" height="673" alt="" />
                 </picture>
               </a>
               <div>
-                <p className="rs-paper-kicker">Paper &middot; October 2026 &middot; {PAPER_PAGES} pages</p>
-                <p className="rs-paper-title">Flock: Forecasting How Busy a Venue Will Be, and Counting How Many People Are There</p>
+                <p className="rs-paper-kicker">Research summary &middot; October 2026 &middot; {SUMMARY_PAGES} pages</p>
+                <p className="rs-paper-title">Forecasting How Busy a Venue Will Be, and Counting How Many People Are There</p>
                 <p className="rs-paper-by">Jayden Bansal, Flock Social LLC</p>
                 <div className="rs-paper-actions">
-                  <a className="lp-btn lp-btn-cream" href={PAPER_URL} target="_blank" rel="noopener noreferrer">Read the paper (PDF)</a>
-                  <a className="lp-btn lp-btn-ghost" href={SUMMARY_URL} target="_blank" rel="noopener noreferrer">{SUMMARY_PAGES}-page summary (PDF)</a>
+                  <a className="lp-btn lp-btn-cream" href={SUMMARY_URL} target="_blank" rel="noopener noreferrer">Read the summary (PDF)</a>
+                  <a className="lp-btn lp-btn-ghost" href={PAPER_URL} target="_blank" rel="noopener noreferrer">Full paper (PDF, {PAPER_PAGES} pages)</a>
                 </div>
               </div>
             </div>
@@ -221,14 +222,15 @@ export default function ResearchPage() {
           <div className="lp-wrap">
             <h2>Read the whole thing.</h2>
             <p className="lp-lead">
-              The paper covers both studies in detail, including what did not work.
+              Start with the {SUMMARY_PAGES}-page summary. The full paper covers both
+              studies in detail, including what did not work.
             </p>
             <div className="rs-paper-actions">
-              <a className="lp-btn lp-btn-cream" href={PAPER_URL} target="_blank" rel="noopener noreferrer">
-                Read the paper (PDF, {PAPER_PAGES} pages)
+              <a className="lp-btn lp-btn-cream" href={SUMMARY_URL} target="_blank" rel="noopener noreferrer">
+                Read the summary (PDF, {SUMMARY_PAGES} pages)
               </a>
-              <a className="lp-btn lp-btn-ghost" href={SUMMARY_URL} target="_blank" rel="noopener noreferrer">
-                {SUMMARY_PAGES}-page summary (PDF)
+              <a className="lp-btn lp-btn-ghost" href={PAPER_URL} target="_blank" rel="noopener noreferrer">
+                Full paper (PDF, {PAPER_PAGES} pages)
               </a>
             </div>
           </div>
