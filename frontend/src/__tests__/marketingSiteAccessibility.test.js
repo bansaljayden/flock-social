@@ -1061,12 +1061,14 @@ describe('copy rules (DESIGN-STANDARD)', () => {
   // readings the paper reports. Its lead put that forecast behind "every venue
   // card", but a venue with no weekly pattern is scored by the rule engine,
   // which the study does not chart as Flock's number, and the note names the
-  // readings, the venues, the cities and the dates.
+  // readings, the venues, the cities and the dates, and the horizon they were
+  // scored at (one hour ahead), so the headline is never read as holding hours
+  // before a visit.
   test('/research limits the charted forecast to the venues and readings it was measured on', () => {
     const page = readJs('ResearchPage.js').replace(/\s+/g, ' ');
     expect(page).not.toMatch(/every venue card/);
     expect(page).toContain("behind the number on a venue card wherever Flock knows that venue's weekly pattern. A venue without one gets an estimate from what is typical for its kind.");
-    expect(page).toContain('note="Share of the same 119,939 live readings, every one the forecast was served for at 1,754 venues in Philadelphia, the Lehigh Valley and Miami from 9 September to 8 October 2026. None of them was used to set the forecast. Higher is better."');
+    expect(page).toContain('note="Share of the same 119,939 live readings, one hour ahead, every one the forecast was served for at 1,754 venues in Philadelphia, the Lehigh Valley and Miami from 9 September to 8 October 2026. None of them was used to set the forecast. Higher is better."');
     expect(page).toContain("{ label: 'Exact crowd level', us: 54.9, them: 30.2 }");
   });
 
