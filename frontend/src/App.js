@@ -8597,12 +8597,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // fetched and that nothing has arrived in shows nothing, which is honest
   // rather than a guess. Surviving a RELOAD needs a server cursor, because
   // nothing in the database records what you have seen. See the handoff.
-  // The watermark is read only inside the setter's updater now; the badge
-  // itself is server truth, so the destructured value has no readers.
-  // eslint-disable-next-line no-unused-vars
-  const [flockSeen, setFlockSeen] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('flock_chat_seen') || '{}'); } catch { return {}; }
-  });
+  // The watermark is the PUT's dedupe and a local copy of the caught-up mark;
+  // the badge itself is server truth, so nothing renders from it. It is a ref
+  // for that reason: as state it handed React a new object for every message
+  // from someone else while a chat was open, a whole-app render that drew
+  // nothing. Read from localStorage once, on the first render.
+  const flockSeenRef = useRef(null);
+  if (flockSeenRef.current === null) {
+    try { flockSeenRef.current = JSON.parse(localStorage.getItem('flock_chat_seen') || '{}'); } catch { flockSeenRef.current = {}; }
+  }
   // Conversations the server has refused to carry because the two accounts are
   // not connected, userId -> true. See NOT_CONNECTED_HINT: the New Message
   // sheet searches every account by name, so the ordinary way to
@@ -10619,7 +10622,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // messages while you are in there rather than only on the way out: a message
   // that arrives while you are looking at it must not put a dot on the row you
   // are about to walk back to. Writing through to localStorage in the same
-  // place keeps the stored copy and the state copy from ever disagreeing.
+  // place keeps the stored copy and the ref from ever disagreeing.
   //
   // The server cursor (migration 056) rides the same signal, which answers
   // the handoff in the flockSeen comment: the mark now survives a reload.
@@ -10647,12 +10650,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     if (currentScreen !== 'chatDetail' || !selectedFlockId || !docVisible) return;
     const newest = newestFromOthers(selectedFlock?.messages);
     if (newest === null) return;
-    setFlockSeen((prev) => {
-      if ((prev[selectedFlockId] || 0) >= newest) return prev;
-      const next = { ...prev, [selectedFlockId]: newest };
+    const seen = flockSeenRef.current || {};
+    if ((seen[selectedFlockId] || 0) < newest) {
+      const next = { ...seen, [selectedFlockId]: newest };
+      flockSeenRef.current = next;
       try { localStorage.setItem('flock_chat_seen', JSON.stringify(next)); } catch {}
-      return next;
-    });
+    }
     const key = `${selectedFlockId}:${newest}`;
     if (readPutRef.current !== key) {
       readPutRef.current = key;
