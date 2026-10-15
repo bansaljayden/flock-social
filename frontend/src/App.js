@@ -10798,6 +10798,32 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     return () => document.removeEventListener('visibilitychange', onVis);
   }, []);
 
+  // THE CLOCK THE SCREENS ARE DRAWN AGAINST. About thirty things on screen
+  // are read off the clock while the app renders and have no timer of their
+  // own: "Today" and "Yesterday", a plan turning into "How was it?" an
+  // hour after it, an event leaving Live Events as it starts, "set 3 min
+  // ago", the calendar's today, a check-in window opening. Each moved only
+  // when something else re-rendered the app, and two of those somethings,
+  // a typing start in the last chat opened and a toast going away, no
+  // longer render the whole app. This renders it once a minute, ON the
+  // minute, while someone is looking: anything that turns over on a minute
+  // (every plan time, every event start, midnight) turns over on time, and
+  // nothing else waits longer than a minute. Hidden, it does not run, and
+  // coming back renders anyway (docVisible above).
+  const [, setClockMinute] = useState(0);
+  useEffect(() => {
+    if (!docVisible) return undefined;
+    let timer = null;
+    const arm = () => {
+      timer = setTimeout(() => {
+        setClockMinute(Math.floor(Date.now() / 60000));
+        arm();
+      }, 60000 - (Date.now() % 60000) + 50);
+    };
+    arm();
+    return () => clearTimeout(timer);
+  }, [docVisible]);
+
   const readPutRef = useRef('');
   useEffect(() => {
     if (currentScreen !== 'chatDetail' || !selectedFlockId || !docVisible) return;
