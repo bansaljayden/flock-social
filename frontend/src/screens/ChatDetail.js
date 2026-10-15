@@ -2269,8 +2269,13 @@ export default function ChatDetail({
       /* The viewer: kept out of those counts, and the bill card's viewerId,
          own share and Undo test, and the poll card's host test. */
       authUser,
-      /* The nudge's "not mid-sentence" gate. */
-      isTyping,
+      /* The nudge row, by its key or its absence. It is the one row that
+         reads isTyping (the "not mid-sentence" gate) or votesLoaded, so a
+         typing start or stop rebuilds the rows only when it moves the
+         nudge. On a plan with a vote, a venue or a final status the gate is
+         shut either way, and keying on isTyping itself regrouped the whole
+         thread there to draw the same rows. */
+      nudgeForCard ? nudgeForCard.key : null,
       /* The only other thing that takes the nudge away. */
       nudgeDismissed,
       /* See the note above it. */

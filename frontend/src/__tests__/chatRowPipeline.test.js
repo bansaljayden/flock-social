@@ -345,7 +345,6 @@ const FLIPS = {
   'the viewer, who is left out of those counts and owns a share of the bill': () => ({
     authUser: { id: ME, name: 'Jay' },
   }),
-  'somebody typing, which is what takes the nudge away': () => ({ isTyping: true }),
   'which flock this is, because every write a card carries goes against it': () => ({ selectedFlockId: 2 }),
   'the nearby pins, which are the place-id fallback behind the vote lock': () => ({ allVenues: [{ name: 'Kome', place_id: 'p1' }] }),
 };
@@ -361,6 +360,41 @@ describe('and it is rebuilt the moment one of them does', () => {
       expect(handed()).not.toBe(first);
     });
   }
+});
+
+/* TYPING IS AN INPUT ONLY THROUGH THE NUDGE. The nudge is the one row that
+   reads isTyping (it never interrupts somebody mid-sentence), so the cache
+   is keyed on the nudge row itself: a typing flip that moves it rebuilds,
+   and one on a plan whose nudge is shut anyway (a place is on the table)
+   hands the stream the same array. */
+describe('somebody typing rebuilds the rows only when it moves the nudge', () => {
+  const nudgeRow = (rows) => rows.find((r) => r && r.nudge);
+  test('with the nudge up, a typing start takes it away and the rows are rebuilt', () => {
+    global.__handedRows.length = 0;
+    const p = chatProps({ flock: { ...fullFlock(), votes: [] }, votesLoaded: true });
+    const { rerender } = render(React.createElement(ChatDetail, p));
+    const first = handed();
+    expect(nudgeRow(first)).toBeTruthy();
+    rerender(React.createElement(ChatDetail, { ...p, isTyping: true, typingUser: 'Ava' }));
+    expect(handed()).not.toBe(first);
+    expect(nudgeRow(handed())).toBeUndefined();
+    // And the stop puts it back.
+    const typing = handed();
+    rerender(React.createElement(ChatDetail, { ...p, isTyping: false, typingUser: '' }));
+    expect(handed()).not.toBe(typing);
+    expect(nudgeRow(handed())).toBeTruthy();
+  });
+  test('with a place on the table the nudge is shut, and typing leaves the rows alone', () => {
+    global.__handedRows.length = 0;
+    const p = chatProps({ flock: fullFlock(), votesLoaded: true });
+    const { rerender } = render(React.createElement(ChatDetail, p));
+    const first = handed();
+    expect(nudgeRow(first)).toBeUndefined();
+    rerender(React.createElement(ChatDetail, { ...p, isTyping: true, typingUser: 'Ava' }));
+    expect(handed()).toBe(first);
+    rerender(React.createElement(ChatDetail, { ...p, isTyping: false, typingUser: '' }));
+    expect(handed()).toBe(first);
+  });
 });
 
 describe('a card that reads the screen rather than its row is still current', () => {
