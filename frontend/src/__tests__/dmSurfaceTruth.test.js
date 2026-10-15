@@ -81,7 +81,10 @@ test('a photo arrives live as its thumbnail, and the sender keeps the photo it d
 test('the typing indicator is reset when the open thread changes', () => {
   const i = app.indexOf('// DM typing indicators');
   const eff = app.slice(i, i + 900);
-  expect(eff).toMatch(/setDmIsTyping\(false\);\s*setDmTypingUser\(''\);/);
+  // The name lives in dmTypingRef and is drawn from it; the reset clears
+  // both halves at once on every thread change.
+  expect(eff).toMatch(/setDmTyping\(false, ''\);/);
+  expect(app).toMatch(/const dmIsTyping = dmTypingRef\.current\.on;\s*const dmTypingUser = dmTypingRef\.current\.name;/);
 });
 
 test('one venue is one row in every DM tally', () => {

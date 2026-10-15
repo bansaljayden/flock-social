@@ -2644,6 +2644,9 @@ const CATCHUP_MIN_GAP_MS = 12000;
 // way off; this is for the stop that never arrives. Twice the refresh, so one
 // lost frame does not blink the name out mid-sentence.
 const TYPING_REFRESH_MS = 3000;
+// The flock chat's typing label from the names the listener holds:
+// "Sam", "Sam and Alex", "Sam and 2 others", or '' when nobody is typing.
+const typingLabel = (names) => (names.length === 1 ? names[0] : names.length === 2 ? `${names[0]} and ${names[1]}` : names.length > 2 ? `${names[0]} and ${names.length - 1} others` : '');
 const TYPING_EXPIRE_MS = 6000;
 
 // One-line summary of a message for the places that can only show one line: the
@@ -8174,8 +8177,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const aiChatEndRef = useRef(null);
   // Always-fresh snapshot for Birdie context (sendAiMessage useCallback would otherwise capture stale values)
   const birdieContextRef = useRef({});
-  const [isTyping, setIsTyping] = useState(false);
-  const [typingUser, setTypingUser] = useState('');
   const [chatSearch, setChatSearch] = useState('');
   const [showChatSearch, setShowChatSearch] = useState(false);
   const chatSearchRef = useRef(null);
@@ -8624,8 +8625,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // reveals which side did the blocking.
   const [dmBlocked, setDmBlocked] = useState({});
   const [dmRequestSending, setDmRequestSending] = useState(false);
-  const [dmIsTyping, setDmIsTyping] = useState(false);
-  const [dmTypingUser, setDmTypingUser] = useState('');
   const dmTypingTimeoutRef = useRef(null);
   // THE LATCH THE DM COMPOSER NEVER HAD. handleDmInputChange called
   // dmStartTyping on every keystroke, so typing at a normal five characters a
@@ -12035,6 +12034,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
   // Listen for typing indicators via WebSocket (scoped to current flock, multi-user)
   const typingUsersRef = useRef({}); // { [userId]: name }
+  // What the chat shows is DRAWN from that ref (below the listener), and a
+  // change asks for a draw only while the chat is the screen on show. As
+  // state, every start and stop from the last plan opened re-rendered the
+  // whole app wherever the user was, and nothing off the chat screen draws a
+  // typing name. The listeners never pause, so opening the chat draws the
+  // names as they are. repaintTyping serves the DM twin too.
+  const [, repaintTyping] = useState(0);
+  const typingDrawnRef = useRef('false|');
   useEffect(() => {
     // EACH NAME EXPIRES UNLESS IT IS REFRESHED (TYPING_EXPIRE_MS). A name used
     // to leave only on a stop, and a stop can be lost: the typist's phone
@@ -12043,8 +12050,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     const expiry = {};
     const show = () => {
       const names = Object.values(typingUsersRef.current);
-      setIsTyping(names.length > 0);
-      setTypingUser(names.length === 1 ? names[0] : names.length === 2 ? `${names[0]} and ${names[1]}` : names.length > 2 ? `${names[0]} and ${names.length - 1} others` : '');
+      const pair = `${names.length > 0}|${typingLabel(names)}`;
+      if (catchUpTargetRef.current?.screen === 'chatDetail' && pair !== typingDrawnRef.current) repaintTyping((n) => n + 1);
     };
     const forget = (userId) => {
       clearTimeout(expiry[userId]);
@@ -12068,10 +12075,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     });
     // Clear typing state when switching flocks
     typingUsersRef.current = {};
-    setIsTyping(false);
-    setTypingUser('');
+    show();
     return () => { unsubTyping(); unsubStop(); Object.values(expiry).forEach(clearTimeout); };
   }, [selectedFlockId]);
+  const typingNames = Object.values(typingUsersRef.current);
+  const isTyping = typingNames.length > 0;
+  const typingUser = typingLabel(typingNames);
+  typingDrawnRef.current = `${isTyping}|${typingUser}`;
 
   // THE OTHER HALF OF THE EXPIRY: while this person keeps typing, they keep
   // saying so. handleChatInputChange emits once per burst and holds the latch
@@ -16640,14 +16650,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     if (was && was !== openThread) leaveOpenThread();
   }, [openThread, leaveOpenThread]);
 
+  // The DM name lives in a ref and is drawn from it, like the flock twin's: a
+  // change asks for a draw only while the thread is the screen on show.
+  const dmTypingRef = useRef({ on: false, name: '' });
+  const dmTypingDrawnRef = useRef('false|');
   // DM typing indicators
   useEffect(() => {
+    const setDmTyping = (on, name) => {
+      dmTypingRef.current = { on, name };
+      if (catchUpTargetRef.current?.screen === 'dmDetail' && `${on}|${name}` !== dmTypingDrawnRef.current) repaintTyping((n) => n + 1);
+    };
     // Reset on every thread change. Both listeners below are keyed on the open
     // conversation, so a "stopped typing" from the thread you just left was
     // discarded and the indicator stuck: the next thread's header read
     // "Alex is typing..." over Sam's conversation, and stayed that way.
-    setDmIsTyping(false);
-    setDmTypingUser('');
+    setDmTyping(false, '');
     // The OUTGOING latch resets here too. It is per-conversation state living
     // in a ref that is not, so leaving a thread mid-burst carried a true flag
     // into the next one and the first thing typed there told nobody.
@@ -16658,13 +16675,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     const clear = () => {
       clearTimeout(expiry);
       expiry = null;
-      setDmIsTyping(false);
-      setDmTypingUser('');
+      setDmTyping(false, '');
     };
     const unsubTyping = onDmUserTyping((data) => {
       if (data.userId === selectedDmId) {
-        setDmTypingUser(data.name);
-        setDmIsTyping(true);
+        setDmTyping(true, data.name);
         clearTimeout(expiry);
         expiry = setTimeout(clear, TYPING_EXPIRE_MS);
       }
@@ -16674,6 +16689,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     });
     return () => { unsubTyping(); unsubStop(); clearTimeout(expiry); };
   }, [selectedDmId]);
+  const dmIsTyping = dmTypingRef.current.on;
+  const dmTypingUser = dmTypingRef.current.name;
+  dmTypingDrawnRef.current = `${dmIsTyping}|${dmTypingUser}`;
 
   // The typist's refresh, the DM twin of the flock one: while the latch says
   // a burst is on, say so again, so the other side's expiry never ends a name
