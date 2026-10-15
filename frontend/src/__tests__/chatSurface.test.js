@@ -168,8 +168,10 @@ describe('flock chat unread', () => {
     // reload), the socket handler increments it live, opening the chat
     // zeroes it, and the same caught-up signal that writes flockSeen now
     // PUTs the server cursor, monotonic server-side so a stale mark can
-    // never move it backwards. flockSeen stays as the PUT watermark.
-    expect(appSource).toMatch(/const \[flockSeen, setFlockSeen\] = useState/);
+    // never move it backwards. flockSeen stays as the PUT watermark, in a
+    // ref: nothing renders from it, so writing it must not cost a render.
+    expect(appSource).toMatch(/const flockSeenRef = useRef\(null\);/);
+    expect(appSource).not.toMatch(/setFlockSeen/);
     expect(appSource).toMatch(/flock_chat_seen/);
     expect(appSource).toMatch(/unread: Number\(f\.unread_count\) \|\| 0/);
     expect(appSource).toMatch(/const hasUnread = \(f\.unread \|\| 0\) > 0;/);
