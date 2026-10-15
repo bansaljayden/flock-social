@@ -2280,6 +2280,12 @@ export default function ChatDetail({
       nudgeDismissed,
       /* See the note above it. */
       positionClock,
+      /* The calendar day. groupRows reads the clock for the "Today" and
+         "Yesterday" labels when it groups, so a chat left open past
+         midnight kept yesterday's labels until some other input moved; a
+         typing start used to be one. Named here, the first render of the
+         new day regroups and the labels move with the date. */
+      new Date().toDateString(),
       /* Every write a card carries goes against this id: the vote, the ghost
          commit, the settle, the undo, and the way back from the venue page.
          It moves only when `flock` does, and it is named anyway because a

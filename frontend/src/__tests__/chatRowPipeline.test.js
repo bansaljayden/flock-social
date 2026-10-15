@@ -397,6 +397,26 @@ describe('somebody typing rebuilds the rows only when it moves the nudge', () =>
   });
 });
 
+/* THE DAY IS AN INPUT. The day labels are read off the clock when the rows
+   are grouped, so a chat left open past midnight has to regroup on the
+   first render of the new day, whatever else did or did not move. */
+describe('a new day regroups the rows', () => {
+  afterEach(() => { jest.useRealTimers(); });
+  test('the same props a minute either side of midnight hand the stream a new array', () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date(2026, 9, 15, 23, 59, 0));
+    global.__handedRows.length = 0;
+    const p = chatProps({ flock: fullFlock(), votesLoaded: true });
+    const { rerender } = render(React.createElement(ChatDetail, p));
+    const first = handed();
+    rerender(React.createElement(ChatDetail, { ...p }));
+    expect(handed()).toBe(first);
+    jest.setSystemTime(new Date(2026, 9, 16, 0, 1, 0));
+    rerender(React.createElement(ChatDetail, { ...p }));
+    expect(handed()).not.toBe(first);
+  });
+});
+
 describe('a card that reads the screen rather than its row is still current', () => {
   test('an optimistic vote lands on the venue card that raised it', () => {
     /* THE SECOND HALF of what a remembered array could have frozen, and the
