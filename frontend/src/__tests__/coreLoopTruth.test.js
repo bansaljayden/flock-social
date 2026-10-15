@@ -108,11 +108,9 @@ test('the invite link is claimed and routed', () => {
 });
 
 test('a chat venue card shows your vote and can take it back', () => {
-  expect(app).toMatch(/const VenueCard = React\.memo\(\(\{ venue, onViewDetails, onVote, voted = false,/);
-  expect(app).toMatch(/\{voted \? 'Voted' : 'Vote for This'\}/);
-  expect(app).toMatch(/aria-pressed=\{voted\}/);
-  // The flock chat draws shared venues with the chat module's VenueCardRow now,
-  // so the same two facts are carried by different names: the screen works out
+  // The flock chat draws shared venues with the chat module's VenueCardRow
+  // (App.js's old VenueCard, which nothing rendered, is gone), so the two facts
+  // are carried by these names: the screen works out
   // whether the vote on this venue is yours, and hands that to the card as the
   // state of its one action.
   expect(chat).toMatch(/const existingVote = \(flock\.votes \|\| \[\]\)\.find\(v => v\.venue === vc\.name\);/);

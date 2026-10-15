@@ -170,8 +170,6 @@ describe('crowd readings are readable text, not saturated swatch hues', () => {
   });
 
   test('the text sites take the ink and keep the hue for the swatch', () => {
-    // VenueCard chat chip: percentage in ink over the hue-tinted pill.
-    expect(APP).toContain('color: crowdInk, padding: ');
     // Search rows, the no-photo variant on the card background. Their own
     // file since 2026-09-13, so this reads the file that draws them.
     expect(SEARCH).toMatch(/color: crowdInk, backgroundColor: `\$\{crowdColor\}12`/);
