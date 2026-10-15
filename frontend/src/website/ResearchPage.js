@@ -179,7 +179,7 @@ export default function ResearchPage() {
               usLabel="Flock"
               themLabel="Chart"
               rows={FORECAST}
-              note="Share of the same 119,939 live readings, every one the forecast was served for at 1,754 venues in Philadelphia, the Lehigh Valley and Miami from 9 September to 8 October 2026. None of them was used to set the forecast. Higher is better."
+              note="Share of the same 119,939 live readings, one hour ahead, every one the forecast was served for at 1,754 venues in Philadelphia, the Lehigh Valley and Miami from 9 September to 8 October 2026. None of them was used to set the forecast. Higher is better."
             />
             <Chart
               title="Owl against the heat rule it replaced"
