@@ -5002,6 +5002,134 @@ function rememberMode(mode) {
   queueSync({ userMode: mode || null });
 }
 
+/* THE TOAST, AND THE ONLY STATE IT HAS. It lived in FlockAppInner, where its
+   one other reader was the live region's aria-live, so every toast cost a
+   render of the whole app to show it and another to take it down 4 or 7
+   seconds later. Here, showing and dismissing one renders this region
+   alone, and the DOM is the same node in the same place: FlockAppInner
+   mounts this exactly where its returned tree used to hold the wrapper.
+
+   FlockAppInner keeps showToast, same signature, same stable identity. It
+   reaches the region through apiRef, which the region fills in a layout
+   effect: a child's layout effects run before any effect of the component
+   that mounts it, so no effect of the app can ask for a toast before the
+   region is listening. One asked for even earlier (a sibling's layout
+   effect on the very first commit) waits in earlyRef and goes up when the
+   region does, in the same commit. colors travels as a prop because the
+   module-scope colors is colorsLight, and the toast's red and navy follow
+   the theme. */
+const ToastRegion = React.memo(function ToastRegion({ colors, apiRef, earlyRef }) {
+  const [toast, setToast] = useState(null);
+  const toastTimerRef = useRef(null);
+  const closeToast = useCallback(() => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = null;
+    setToast(null);
+  }, []);
+  const showToast = useCallback((message, type = 'success') => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    setToast({ message, type });
+    // DESIGN-STANDARD sec N rule 2: info dismisses on its own at 4 seconds,
+    // warnings hold for 7, and an error stays until the user closes it.
+    // Every type used to share one 2-second timer, which is below even the
+    // info floor and, on an error, is exactly the bug the rule names: real
+    // failure text was gone before it could be read.
+    if (type === 'error') { toastTimerRef.current = null; return; }
+    toastTimerRef.current = setTimeout(() => setToast(null), type === 'warning' ? 7000 : 4000);
+  }, []);
+  React.useLayoutEffect(() => {
+    apiRef.current = showToast;
+    const early = earlyRef.current;
+    if (early) {
+      earlyRef.current = null;
+      showToast(early.message, early.type);
+    }
+  }, [apiRef, earlyRef, showToast]);
+
+  // DESIGN-STANDARD sec N. One slot, so nothing stacks; the rest answers that
+  // section's measured failures. role: a screen reader was never told a
+  // toast happened. zIndex 400: at 60 the toast painted UNDERNEATH
+  // PaywallSheet and ModerationSheet (200) and the verify-email sheet (300),
+  // so one raised while a sheet was open was simply never seen (sec A13).
+  // Type is carried by an icon as well as the tint (rule 5), the close
+  // button is a real exit (rule 4; pointerEvents 'none' made the old one
+  // unreachable), and long error text wraps instead of running off a narrow
+  // phone (H19, the old whiteSpace 'nowrap').
+  // No role here any more, and that is the fix rather than an omission. A live
+  // region has to already exist in the accessibility tree for a screen reader
+  // to notice text arriving inside it. This node carried role="status" itself,
+  // and `toast &&` means it is created and destroyed with its own message, so
+  // every announcement was a fresh element insertion rather than a change
+  // inside a known region. VoiceOver, which is the screen reader this app
+  // actually ships to, routinely says nothing at all in that case. Worse, the
+  // component is re-created on every App render (`const Toast = () =>` inside
+  // the body), so React remounted the node constantly and no amount of
+  // attribute work here could have made it stable.
+  //
+  // The region is now the wrapper at the Toast() call site below, which
+  // ToastRegion keeps mounted for the life of the session, so it is one DOM
+  // node from the first render to the last. Toasts mutate into it. Do not put
+  // role or aria-live back on this element: two nested regions announce twice.
+  const Toast = () => toast && (
+    <div
+      style={{
+        position: 'fixed',
+        top: '50px',
+        left: '50%',
+        transform: 'translateX(-50%)',
+        zIndex: 400,
+        display: 'flex',
+        alignItems: 'flex-start',
+        gap: '10px',
+        // `left: 50%` makes the available width for a shrink-to-fit fixed box
+        // exactly half the viewport, so without this the toast could never be
+        // wider than 195px on a 390px phone and a six-word message wrapped to
+        // three cramped lines. max-content sizes it to the sentence, and
+        // maxWidth still holds the ceiling.
+        width: 'max-content',
+        maxWidth: 'min(420px, calc(100vw - 32px))',
+        boxSizing: 'border-box',
+        padding: '12px 12px 12px 16px',
+        borderRadius: '12px',
+        backgroundColor: toast.type === 'error' ? colors.red : colors.navyBg,
+        color: 'white',
+        fontSize: 'var(--t-label)',
+        fontWeight: '600',
+        // The success toast is navyBg and it lands at top: 50px, which on the
+        // venue dashboard is inside a header painted the same navy. With only
+        // an 8%-black shadow the panel had no edge at all: the header title
+        // ran out one side of it and back in the other, reading as a paint
+        // bug rather than a message. The hairline gives it an edge on any
+        // background, dark included, and the shadow gives it lift.
+        border: '1px solid rgba(255,255,255,0.16)',
+        boxShadow: '0 6px 20px rgba(0,0,0,0.28)',
+        willChange: 'transform, opacity',
+      }}
+    >
+      <span aria-hidden style={{ display: 'inline-flex', flexShrink: 0, marginTop: '2px' }}>
+        {toast.type === 'error' ? Icons.alertCircle('white', 15) : Icons.check('white', 15)}
+      </span>
+      <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{toast.message}</span>
+      <button
+        className="hit44"
+        aria-label="Dismiss"
+        onClick={closeToast}
+        style={{ background: 'none', border: 'none', padding: '2px', margin: 0, display: 'inline-flex', flexShrink: 0, cursor: 'pointer' }}
+      >
+        {Icons.x('white', 14)}
+      </button>
+    </div>
+  );
+
+  return (
+    <div role="status" aria-live={toast && toast.type === 'error' ? 'assertive' : 'polite'}>
+      {/* Called rather than mounted, so the toast is one node while it is
+          up instead of a fresh one on every render (see AIBubble). */}
+      {Toast()}
+    </div>
+  );
+});
+
 const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // Theme — shadows the outer static colors/styles with reactive versions
   const { toggleTheme, isDark, themeMode, isNightModeActive, setAutoMode } = useTheme();
@@ -5454,24 +5582,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // Search result cache: key -> { data, timestamp }
   const searchCacheRef = useRef({});
 
-  // Toast (hoisted above venue search for use in error handlers)
-  const [toast, setToast] = useState(null);
-  const toastTimerRef = useRef(null);
-  const closeToast = useCallback(() => {
-    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-    toastTimerRef.current = null;
-    setToast(null);
-  }, []);
+  // Toast (hoisted above venue search for use in error handlers). The toast
+  // and its timer live in ToastRegion, so showing or dismissing one renders
+  // that region and not the whole app. This is the same showToast: same
+  // signature, same stable identity (a dependency of many effects), handed
+  // to the region once it is up.
+  const toastApiRef = useRef(null);
+  const toastEarlyRef = useRef(null);
   const showToast = useCallback((message, type = 'success') => {
-    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-    setToast({ message, type });
-    // DESIGN-STANDARD sec N rule 2: info dismisses on its own at 4 seconds,
-    // warnings hold for 7, and an error stays until the user closes it.
-    // Every type used to share one 2-second timer, which is below even the
-    // info floor and, on an error, is exactly the bug the rule names: real
-    // failure text was gone before it could be read.
-    if (type === 'error') { toastTimerRef.current = null; return; }
-    toastTimerRef.current = setTimeout(() => setToast(null), type === 'warning' ? 7000 : 4000);
+    if (toastApiRef.current) toastApiRef.current(message, type);
+    else toastEarlyRef.current = { message, type };
   }, []);
 
   // ── Unverified email ────────────────────────────────────────────────────
@@ -12586,6 +12706,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     return unsub;
   }, []);
 
+  // The budget-set toast is DECIDED in the setBudgetStatus updater below, on
+  // the newest state, and SHOWN by the layout effect after the listener as
+  // that update commits. An updater can run while the app renders, and the
+  // toast is ToastRegion's state; setting another component's state from
+  // inside a render is what React refuses. Same frame, same toast.
+  const budgetSetToastRef = useRef(false);
   // Money layer socket listeners
   useEffect(() => {
     const unsubBudget = onBudgetUpdated((data) => {
@@ -12602,7 +12728,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       if (data.flockId === selectedFlockId) {
         setBudgetStatus(prev => {
           if (prev && !prev.ceiling && data.ceiling) {
-            showToast('Budget set. Showing spots that work for everyone');
+            budgetSetToastRef.current = true;
           }
           if (!prev) return prev;
           // An answer that crossed the settle on its way here carries a null
@@ -12706,6 +12832,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     });
     return () => { unsubBudget(); unsubLocked(); unsubReminder(); unsubBillCreated(); unsubSettled(); unsubUnsettled(); unsubTally(); unsubFullySettled(); unsubBillReminder(); unsubGhost(); };
   }, [selectedFlockId, showToast, loadMoneyState]);
+  React.useLayoutEffect(() => {
+    if (!budgetSetToastRef.current) return;
+    budgetSetToastRef.current = false;
+    showToast('Budget set. Showing spots that work for everyone');
+  });
 
   // Listen for real-time venue votes
   useEffect(() => {
@@ -15232,81 +15363,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           <p style={{ margin: '2px 0 0', fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', fontWeight: '500' }}>Tap to chat</p>
         </div>
       )}
-    </div>
-  );
-
-  // DESIGN-STANDARD sec N. One slot, so nothing stacks; the rest answers that
-  // section's measured failures. role: a screen reader was never told a
-  // toast happened. zIndex 400: at 60 the toast painted UNDERNEATH
-  // PaywallSheet and ModerationSheet (200) and the verify-email sheet (300),
-  // so one raised while a sheet was open was simply never seen (sec A13).
-  // Type is carried by an icon as well as the tint (rule 5), the close
-  // button is a real exit (rule 4; pointerEvents 'none' made the old one
-  // unreachable), and long error text wraps instead of running off a narrow
-  // phone (H19, the old whiteSpace 'nowrap').
-  // No role here any more, and that is the fix rather than an omission. A live
-  // region has to already exist in the accessibility tree for a screen reader
-  // to notice text arriving inside it. This node carried role="status" itself,
-  // and `toast &&` means it is created and destroyed with its own message, so
-  // every announcement was a fresh element insertion rather than a change
-  // inside a known region. VoiceOver, which is the screen reader this app
-  // actually ships to, routinely says nothing at all in that case. Worse, the
-  // component is re-created on every App render (`const Toast = () =>` inside
-  // the body), so React remounted the node constantly and no amount of
-  // attribute work here could have made it stable.
-  //
-  // The region is now the wrapper at the Toast() call site, which lives in
-  // App's own returned tree and therefore keeps one DOM node for the life of
-  // the session. Toasts mutate into it. Do not put role or aria-live back on
-  // this element: two nested regions announce twice.
-  const Toast = () => toast && (
-    <div
-      style={{
-        position: 'fixed',
-        top: '50px',
-        left: '50%',
-        transform: 'translateX(-50%)',
-        zIndex: 400,
-        display: 'flex',
-        alignItems: 'flex-start',
-        gap: '10px',
-        // `left: 50%` makes the available width for a shrink-to-fit fixed box
-        // exactly half the viewport, so without this the toast could never be
-        // wider than 195px on a 390px phone and a six-word message wrapped to
-        // three cramped lines. max-content sizes it to the sentence, and
-        // maxWidth still holds the ceiling.
-        width: 'max-content',
-        maxWidth: 'min(420px, calc(100vw - 32px))',
-        boxSizing: 'border-box',
-        padding: '12px 12px 12px 16px',
-        borderRadius: '12px',
-        backgroundColor: toast.type === 'error' ? colors.red : colors.navyBg,
-        color: 'white',
-        fontSize: 'var(--t-label)',
-        fontWeight: '600',
-        // The success toast is navyBg and it lands at top: 50px, which on the
-        // venue dashboard is inside a header painted the same navy. With only
-        // an 8%-black shadow the panel had no edge at all: the header title
-        // ran out one side of it and back in the other, reading as a paint
-        // bug rather than a message. The hairline gives it an edge on any
-        // background, dark included, and the shadow gives it lift.
-        border: '1px solid rgba(255,255,255,0.16)',
-        boxShadow: '0 6px 20px rgba(0,0,0,0.28)',
-        willChange: 'transform, opacity',
-      }}
-    >
-      <span aria-hidden style={{ display: 'inline-flex', flexShrink: 0, marginTop: '2px' }}>
-        {toast.type === 'error' ? Icons.alertCircle('white', 15) : Icons.check('white', 15)}
-      </span>
-      <span style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{toast.message}</span>
-      <button
-        className="hit44"
-        aria-label="Dismiss"
-        onClick={closeToast}
-        style={{ background: 'none', border: 'none', padding: '2px', margin: 0, display: 'inline-flex', flexShrink: 0, cursor: 'pointer' }}
-      >
-        {Icons.x('white', 14)}
-      </button>
     </div>
   );
 
@@ -20742,12 +20798,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           element. aria-live is set per toast type because an error holds until
           the user dismisses it and should interrupt, while a success is
           incidental and should wait for a pause. The wrapper itself never
-          paints and never takes space; the toast inside it is position:fixed. */}
-      <div role="status" aria-live={toast && toast.type === 'error' ? 'assertive' : 'polite'}>
-        {/* Called rather than mounted, so the toast is one node while it is
-            up instead of a fresh one on every app render (see AIBubble). */}
-        {Toast()}
-      </div>
+          paints and never takes space; the toast inside it is position:fixed.
+          ToastRegion is that wrapper and the toast in it, and owns the
+          toast's state, so a toast renders the region alone. */}
+      <ToastRegion colors={colors} apiRef={toastApiRef} earlyRef={toastEarlyRef} />
       <VerifyEmailSheet {...verifyEmailSheetProps} />
 
       {/* Camera Viewfinder */}
