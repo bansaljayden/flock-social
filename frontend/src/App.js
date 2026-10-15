@@ -1,5 +1,8 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { useTheme } from './context/ThemeContext';
+// An ES import, not a require() down by the providers: a require marked every
+// export of the package used, so GoogleLogin and one-tap shipped with it.
+import { GoogleOAuthProvider } from '@react-oauth/google';
 import useKeyboardInset from './hooks/useKeyboardInset';
 import useSheetDrag from './hooks/useSheetDrag';
 // The revenue simulator math (lib/finance.js) moved to screens/RevenueScreen.js
@@ -4173,10 +4176,6 @@ const makeStyles = (c, isDark, fullBleed = isFullBleedNow()) => ({
     fontWeight: '500',
   },
 });
-
-// Static fallback for outside-component usage
-// eslint-disable-next-line no-unused-vars
-const styles = makeStyles(colorsLight, false);
 
 // ─── ISOLATED MODAL COMPONENTS ────────────────────────────────────────────
 // These manage their own local state so typing doesn't re-render the parent.
@@ -9457,7 +9456,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
 
   // Modals
   const [showSOS, setShowSOS] = useState(false);
-  const [showCheckin, setShowCheckin] = useState(false);
 
   // Admin Mode (for Revenue Simulator access)
   const [showAdminPrompt, setShowAdminPrompt] = useState(false);
@@ -15440,24 +15438,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     />
   );
 
-  // Check-in Modal
-  const CheckinModal = () => showCheckin && (
-    <div className="modal-backdrop" style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)', WebkitBackdropFilter: 'blur(8px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
-            <DialogBehavior onClose={() => setShowCheckin(false)} label="Check in" />
-      <div className="modal-content" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '20px', width: '100%', maxWidth: '280px' }}>
-        <div style={{ textAlign: 'center', marginBottom: '16px' }}>
-          <div style={{ width: '64px', height: '64px', borderRadius: '32px', backgroundColor: 'var(--icon-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 8px' }}>{Icons.check(colors.steel, 32)}</div>
-          <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0 }}>Check-in</h2>
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          <button className="hit44 glass-btn glass-primary" onClick={(e) => { confirmClick(e); setShowCheckin(false); }} style={{ ...styles.gradientButton, backgroundColor: colors.steel, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', position: 'relative', overflow: 'hidden' }}>{Icons.check('white', 16)} I'm Safe</button>
-          <button className="hit44 glass-btn glass-danger" onClick={() => { setShowCheckin(false); setShowSOS(true); }} style={{ ...styles.gradientButton, backgroundColor: colors.red, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>{Icons.shield('white', 16)} Need Help</button>
-          <button className="hit44 glass-btn glass-secondary" onClick={() => setShowCheckin(false)} style={{ background: 'none', border: 'none', color: 'var(--text-tertiary)', padding: '8px', cursor: 'pointer' }}>Dismiss</button>
-        </div>
-      </div>
-    </div>
-  );
-
   // Profile Pic Modal
   const ProfilePicModal = () => showPicModal && (
     <div style={{ position: 'absolute', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
@@ -17099,10 +17079,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setCurrentScreen('main');
     setCurrentTab('home');
   };
-
-  // Easter egg - tap counter (state used via callback in setEasterEggTaps)
-  // eslint-disable-next-line no-unused-vars
-  const [easterEggTaps, setEasterEggTaps] = useState(0);
 
   // WELCOME SCREEN - Mode Selection
   const WelcomeScreen = () => {
@@ -18806,7 +18782,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // ── Intake field renderers ─────────────────────────────────────────────────
   //
   // PLAIN FUNCTIONS THAT RETURN JSX, called directly, exactly like the `steps`
-  // array below and like VenueNameStep before it. NOT components: a component
+  // array below. NOT components: a component
   // defined inside App() is a new type on every render, so React unmounts and
   // remounts it, and an input that remounts loses focus after the first
   // keystroke. That is the bug this shape avoids, and it is why these are
@@ -18898,88 +18874,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         onChange={(e) => onChange(e.target.value)}
         style={{ padding: '12px 14px', borderRadius: '12px', fontSize: '16px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', ...t.field }}
       />
-    );
-  };
-
-  // eslint-disable-next-line no-unused-vars
-  const VenueNameStep = () => {
-    const [query, setQuery] = useState(venueOnboardingData.businessName);
-    const [suggestions, setSuggestions] = useState([]);
-    const [showSuggestions, setShowSuggestions] = useState(false);
-    const debounceRef = React.useRef(null);
-
-    const handleChange = (val) => {
-      setQuery(val);
-      setVenueOnboardingData(d => ({ ...d, businessName: val }));
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-      if (val.length < 2) { setSuggestions([]); setShowSuggestions(false); return; }
-      debounceRef.current = setTimeout(async () => {
-        try {
-          const data = await searchVenues(val);
-          setSuggestions((data.venues || data.results || []).slice(0, 5));
-          setShowSuggestions(true);
-        } catch (e) { console.error('[VenueSearch] Error:', e); }
-      }, 300);
-    };
-
-    const pickVenue = (v) => {
-      const cat = (v.types || [])[0]?.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()) || '';
-      const categoryMap = { 'Bar': 'Bar / Nightclub', 'Night Club': 'Bar / Nightclub', 'Restaurant': 'Restaurant', 'Cafe': 'Cafe / Coffee', 'Brewery': 'Brewery / Winery', 'Winery': 'Brewery / Winery', 'Lodging': 'Lounge' };
-      const matchedCat = Object.entries(categoryMap).find(([k]) => cat.toLowerCase().includes(k.toLowerCase()));
-      setVenueOnboardingData(d => ({
-        ...d,
-        businessName: v.name,
-        location: v.formatted_address || v.vicinity || d.location,
-        category: matchedCat ? matchedCat[1] : d.category,
-        googlePlaceId: v.place_id,
-      }));
-      setQuery(v.name);
-      setShowSuggestions(false);
-      setSuggestions([]);
-      // Fetch phone + hours from Google Places
-      if (v.place_id) {
-        getVenueDetails(v.place_id).then(data => {
-          const venue = data.venue || data;
-          if (venue.formatted_phone_number) {
-            setVenueInfo(prev => ({ ...prev, name: v.name, address: v.formatted_address || v.vicinity || prev.address, phone: venue.formatted_phone_number }));
-          }
-          if (venue.opening_hours?.weekdayDescriptions) {
-            const parsed = parseGoogleHours(venue.opening_hours.weekdayDescriptions);
-            if (parsed.length > 0) setOperatingHours(parsed);
-          }
-        }).catch(() => {});
-      }
-    };
-
-    return (
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '24px' }}>
-        <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: '#f0ead8', margin: '0 0 6px' }}>What's your venue called?</h2>
-        <p style={{ fontSize: 'var(--t-label)', color: 'rgba(148,163,184,0.6)', margin: '0 0 24px' }}>Search for your venue or type the name.</p>
-        <div style={{ position: 'relative' }}>
-          <input aria-label="Venue name" maxLength={255} value={query} onChange={(e) => handleChange(e.target.value)}
-            onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
-            placeholder="e.g. The Blue Heron Bar"
-            autoComplete="off" data-lpignore="true" data-form-type="other"
-            style={{ width: '100%', padding: '14px 16px', borderRadius: '12px', border: '1.5px solid rgba(148,163,184,0.15)', fontSize: '16px', fontWeight: '500', outline: 'none', boxSizing: 'border-box', backgroundColor: 'rgba(255,255,255,0.06)', color: 'white' }} autoFocus />
-          {showSuggestions && suggestions.length > 0 && (
-            /* The 95% face carries this on its own. A blur used to sit under
-               it, reading a flat navy onboarding background and returning the
-               same flat navy, for the cost of a compositing layer that
-               re-rasterised on every keystroke in the field above it. */
-            <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, marginTop: '4px', borderRadius: '12px', overflow: 'hidden', border: '1px solid rgba(148,163,184,0.15)', backgroundColor: 'rgba(15,23,42,0.95)', zIndex: 10 }}>
-              {suggestions.map((v, i) => (
-                <button className="hit44" key={v.place_id || i} onClick={() => pickVenue(v)} style={{
-                  width: '100%', padding: '12px 16px', border: 'none', borderBottom: i < suggestions.length - 1 ? '1px solid rgba(148,163,184,0.08)' : 'none',
-                  background: 'transparent', cursor: 'pointer', textAlign: 'left', display: 'flex', flexDirection: 'column', gap: '2px',
-                }}>
-                  <span style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: '#f0ead8' }}>{v.name}</span>
-                  <span style={{ fontSize: 'var(--t-meta)', color: 'rgba(148,163,184,0.5)' }}>{v.formatted_address || v.vicinity || ''}</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
     );
   };
 
@@ -21166,7 +21060,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           <AttendanceModal {...attendanceModalProps} />
         </React.Suspense>
       )}
-      {CheckinModal()}
       {ProfilePicModal()}
       {CropModal()}
       {aiAssistantModal}
@@ -22265,8 +22158,7 @@ const FlockApp = () => {
   );
 };
 
-// Wrap with Google OAuth provider
-const { GoogleOAuthProvider } = require('@react-oauth/google');
+// Wrap with Google OAuth provider (GoogleOAuthProvider is imported at the top)
 const GOOGLE_CLIENT_ID = process.env.REACT_APP_GOOGLE_CLIENT_ID || '';
 
 /* REDUCE MOTION MEANS REDUCE MOTION, INCLUDING THE MOTION CSS CANNOT SEE.
