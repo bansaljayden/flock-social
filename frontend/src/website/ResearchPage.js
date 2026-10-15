@@ -18,7 +18,7 @@ const SUMMARY_URL = '/papers/flock-research-summary.pdf';
 const SUMMARY_THUMB = '/papers/flock-research-summary-p1.png';
 const SUMMARY_PAGES = 3;
 const PAPER_URL = '/papers/flock-research-paper.pdf';
-const PAPER_PAGES = 60;
+const PAPER_PAGES = 29;
 
 // Why the research exists and what it found, in plain words, then the paper.
 // Built on the landing page's own stylesheet (.lp: Fraunces display, Hanken
@@ -186,7 +186,7 @@ export default function ResearchPage() {
               usLabel="Owl"
               themLabel="Rule"
               rows={COUNTER}
-              note="Frames counted exactly, on six real benchmark sets no model trained on. On a sealed held-out set of 300 frames, Owl counted 94.3% exactly and the rule 40.7%; on two sealed sets from low-resolution ceiling sensors unlike any it trained on, the rule did better. On the hardest set, crowded classrooms filmed with Flux's camera model (Thermal Vision, IISER Bhopal), Owl is exact on 39.3% of frames and within one person on 73.9%. Test sets: SDT, Computer Vision Lab, TU Wien (Pramerdorfer, Strohmayer and Kampel, ICIP 2020); Thermal Vision, IISER Bhopal (Samal and Lone, Smart Health 2025); PUT Thermo Presence; SenSys 2021; AAU VAP Trimodal; OpenThermalPose2. Used with their authors' permission or under their licences."
+              note="Frames counted exactly, on six real benchmark sets no model trained on. On a sealed held-out set of 300 frames, Owl counted 94.3% exactly and the rule 40.7%. In a sealed lab room of three to five people (BU-TIV), Owl was exact on 34.6% of frames and the rule on 3.6%; on two low-resolution ceiling sensors unlike any it trained on, and in an atrium of lone, distant people, the rule did better. On the hardest set, crowded classrooms filmed with Flux's camera model (Thermal Vision, IISER Bhopal), Owl is exact on 39.3% of frames and within one person on 73.9%. Test sets: SDT, Computer Vision Lab, TU Wien (Pramerdorfer, Strohmayer and Kampel, ICIP 2020); Thermal Vision, IISER Bhopal (Samal and Lone, Smart Health 2025); PUT Thermo Presence; SenSys 2021; AAU VAP Trimodal; OpenThermalPose2; sealed sets from BU-TIV (Wu, Fuller, Theriault and Betke, CVPRW 2014). Used with their authors' permission or under their licences."
             />
           </div>
         </section>
