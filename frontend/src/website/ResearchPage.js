@@ -186,7 +186,7 @@ export default function ResearchPage() {
               usLabel="Owl"
               themLabel="Rule"
               rows={COUNTER}
-              note="Frames counted exactly, on six real benchmark sets no model trained on. On a sealed held-out set of 300 frames, Owl counted 94.3% exactly and the rule 40.7%. On the hardest set, crowded classrooms filmed with Flux's camera model (Thermal Vision, IISER Bhopal), Owl is exact on 39.3% of frames and within one person on 73.9%. Test sets: SDT, Computer Vision Lab, TU Wien (Pramerdorfer, Strohmayer and Kampel, ICIP 2020); Thermal Vision, IISER Bhopal (Samal and Lone, Smart Health 2025); PUT Thermo Presence; SenSys 2021; AAU VAP Trimodal; OpenThermalPose2. Used with their authors' permission or under their licences."
+              note="Frames counted exactly, on six real benchmark sets no model trained on. On a sealed held-out set of 300 frames, Owl counted 94.3% exactly and the rule 40.7%; on two sealed sets from low-resolution ceiling sensors unlike any it trained on, the rule did better. On the hardest set, crowded classrooms filmed with Flux's camera model (Thermal Vision, IISER Bhopal), Owl is exact on 39.3% of frames and within one person on 73.9%. Test sets: SDT, Computer Vision Lab, TU Wien (Pramerdorfer, Strohmayer and Kampel, ICIP 2020); Thermal Vision, IISER Bhopal (Samal and Lone, Smart Health 2025); PUT Thermo Presence; SenSys 2021; AAU VAP Trimodal; OpenThermalPose2. Used with their authors' permission or under their licences."
             />
           </div>
         </section>
