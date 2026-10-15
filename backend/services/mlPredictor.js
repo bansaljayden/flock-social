@@ -506,9 +506,18 @@ const DEVIATION_WEIGHT = 0.5;
 // means anything, and it is where the measured depth table starts gaining.
 const DEVIATION_MIN_READINGS = 2;
 
-// If the builder has not run in a week, the offset describes a level the venue
-// may have left. Refusing is free: the prediction falls back to exactly what it
+// If the builder has not run in a week, the stored single offset (`data`, the
+// number served with both switches off) describes a level the venue may have
+// left. Refusing it is free: the prediction falls back to exactly what it
 // published before this feature existed.
+//
+// The limit applies to that offset only, not to the strict one. The row's
+// updated_at moves only when a collector run writes at least one live row, so
+// on a silent feed this limit dropped every venue's strict offset seven days
+// after the last productive run, three weeks before the readings themselves
+// expire: each reading already ages out on its own clock inside the 28-day
+// window of trailingOffsetBefore. Replayed on 28 outage onsets, that drop cost
+// 3.75 points of exact level [3.40, 4.18] on days 7 to 13 of a silence.
 const DEVIATION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 // A GUARD ADDED HERE, not part of what the research measured, and SIZED AGAINST
@@ -575,8 +584,9 @@ function switchedArithmeticOn() {
 // The cached row: `data` is the offset exactly as getRecentDeviation has
 // always returned it. Present only when the entry was read with a switch on:
 // `readings`, the parsed recent-readings list or null; `offsetReadings`, the
-// parsed offset readings or null; and `fresh`, whether the row passes the
-// offset's age limit (DEVIATION_MAX_AGE_MS), which the strict offset keeps.
+// parsed offset readings or null; and `fresh`, whether the row was read. The
+// strict offset's readings carry their own 28-day window, so the row's age is
+// not a second gate on them (see DEVIATION_MAX_AGE_MS).
 //
 // HOW STALE A READING CAN BE HERE. The builder runs once an hour, after the
 // sweep that starts at :07 and after the baseline refresh behind it, so a
@@ -626,8 +636,9 @@ async function recentDeviationEntry(placeId) {
     if (withReadings) {
       entry.readings = parseRecentReadings(row ? row.recent_readings : null);
       entry.offsetReadings = parseOffsetReadings(row ? row.offset_readings : null);
-      entry.fresh = Boolean(row && row.updated_at
-        && Date.now() - new Date(row.updated_at).getTime() < DEVIATION_MAX_AGE_MS);
+      // `fresh` means the row was read. Its readings carry their own 28-day
+      // window (trailingOffsetBefore), so the row's age is not a second gate.
+      entry.fresh = Boolean(row);
     }
     boundedSet(deviationCache, placeId, entry);
     return entry;
