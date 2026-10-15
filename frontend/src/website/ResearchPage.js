@@ -207,9 +207,9 @@ export default function ResearchPage() {
             <div>
               <h2>What's next</h2>
               <p>
-                A retrain of the crowd model is scored in early November against a test
-                written down before its data existed, and it ships only if it beats
-                today's numbers on days it never saw. After that, the plan is to put
+                A retrain of the crowd model is scored in early November against
+                thresholds and held-out days written down before their data existed,
+                and it ships only if it beats today's numbers on days it never saw. After that, the plan is to put
                 a Flux sensor in a venue Flock already reads and compare its counts
                 with the forecast hour by hour.
               </p>
