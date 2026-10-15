@@ -432,7 +432,10 @@ describe('App.js routes every screen through a boundary', () => {
     // is rebound, so the boundary has to be handed something that reads the
     // name when it renders.
     expect(count(APP_CODE, /<ExploreScreen\b/g)).toBe(1);
-    expect(APP_CODE).toMatch(/^const ExploreScreenView = \(props\) => <ExploreScreen \{\.\.\.props\} \/>;$/m);
+    // Memoised on a comparator that always renders while the layer is on
+    // screen; the inner function still reads the binding when it renders.
+    expect(APP_CODE).toMatch(/^const ExploreScreenView = React\.memo\(\(props\) => <ExploreScreen \{\.\.\.props\} \/>, exploreLayerUnchanged\);$/m);
+    expect(APP_CODE).toMatch(/if \(prev\.isExploreVisible \|\| next\.isExploreVisible\) return false;/);
     expect(count(APP_CODE, /<ExploreScreenView\b/g)).toBe(1);
     expect(APP_CODE).toMatch(
       /<ErrorBoundary label="screen:explore" resetKey=\{screenKey\} fallback=\{exploreCrashFallback\}>\s*\n\s*<React\.Suspense fallback=\{null\}>\s*\n\s*<ExploreScreenView \{\.\.\.exploreScreenProps\} \/>/

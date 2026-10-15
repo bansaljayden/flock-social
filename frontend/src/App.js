@@ -353,8 +353,32 @@ const rearmExploreScreen = () => {
    button has run the re-arm, so the fresh lazy is the one that mounts. And
    its own type is a const, so a shell re-render that re-armed nothing
    reconciles the same lazy in place and the permanent mount keeps its map
-   and its camera exactly as it did before the wrapper existed. */
-const ExploreScreenView = (props) => <ExploreScreen {...props} />;
+   and its camera exactly as it did before the wrapper existed.
+
+   WHILE THE LAYER IS PARKED IT RENDERS ONLY WHEN ITS DATA CHANGES. It is
+   hidden with visibility:hidden and pointer-events:none, so nothing in it
+   can be seen, focused or tapped, and it still rendered on every render of
+   the app (typing, receipts, toasts): about 110 fibers each time, half of
+   what React reconciled on a chat render. Four props are new on every app
+   render and only change what the hidden copy would draw or a handler
+   nobody can fire there: the two called helpers, the venue card builder
+   (null without an activeVenue) and the DM starter. Every other prop is
+   still compared, so the map and every effect inside get every data change
+   exactly as before. Showing or hiding the layer always renders, and so
+   does an open venue card, which reads ~40 values that are not props here.
+   A mount never asks the comparator, so the boundary's Try again still
+   reads the re-armed binding. A new prop that is built fresh on every
+   render goes in the ignore list only if it, too, draws nothing while the
+   layer is hidden. */
+const EXPLORE_HIDDEN_IGNORES = new Set(['BottomNav', 'SafetyButton', 'renderConsumerVenueCard', 'startNewDmWithUser']);
+const exploreLayerUnchanged = (prev, next) => {
+  if (prev.isExploreVisible || next.isExploreVisible) return false;
+  if (prev.activeVenue || next.activeVenue) return false;
+  const keys = Object.keys(next);
+  if (keys.length !== Object.keys(prev).length) return false;
+  return keys.every((k) => EXPLORE_HIDDEN_IGNORES.has(k) || Object.is(prev[k], next[k]));
+};
+const ExploreScreenView = React.memo((props) => <ExploreScreen {...props} />, exploreLayerUnchanged);
 
 /* THE WRAP-UP SHEET, and the first lazy thing in this file that is not a
    screen. It is 6.7 KB of JSX that only a host closing out a plan they created
