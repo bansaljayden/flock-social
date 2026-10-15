@@ -125,11 +125,14 @@ describe('cloudflare/ is vercel.json, value for value', () => {
     expect(byPath.has('/.well-known/apple-app-site-association')).toBe(true);
   });
 
-  test('_redirects holds the one unconditional vercel.json redirect, as a 308, and no catch-all', () => {
+  test('_redirects holds the unconditional vercel.json redirects, as 308s, and no catch-all', () => {
     const lines = read('cloudflare/_redirects').split(/\r?\n/).filter((l) => l.trim() && !l.trim().startsWith('#'));
     const unconditional = vercel.redirects.filter((r) => !r.has && !r.missing);
     expect(lines).toEqual(unconditional.map((r) => [r.source, r.destination, r.permanent ? '308' : '307'].join(' ')));
-    expect(lines).toEqual(['/research/flock-research-paper.pdf /papers/flock-research-paper.pdf 308']);
+    expect(lines).toEqual([
+      '/research/flock-research-paper.pdf /papers/flock-research-paper.pdf 308',
+      '/papers/flock-research-paper-full.pdf /papers/flock-research-paper.pdf 308',
+    ]);
   });
 
   test('_routes.json sends Functions exactly the paths the middleware and functions/api handle', () => {

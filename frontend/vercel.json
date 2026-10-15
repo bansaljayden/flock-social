@@ -278,6 +278,11 @@
       "source": "/research/flock-research-paper.pdf",
       "destination": "/papers/flock-research-paper.pdf",
       "permanent": true
+    },
+    {
+      "source": "/papers/flock-research-paper-full.pdf",
+      "destination": "/papers/flock-research-paper.pdf",
+      "permanent": true
     }
   ],
   "rewrites": [
