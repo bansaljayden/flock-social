@@ -1,7 +1,3 @@
-const {
-  default: flattenColorPalette,
-} = require("tailwindcss/lib/util/flattenColorPalette");
-
 /** @type {import('tailwindcss').Config} */
 module.exports = {
   content: ["./src/**/*.{js,jsx,ts,tsx}"],
@@ -65,17 +61,8 @@ module.exports = {
       },
     },
   },
-  plugins: [require("tailwindcss-animate"), addVariablesForColors],
+  // addVariablesForColors used to sit here and put all 266 palette colours
+  // on :root (var(--sky-500) and so on). Nothing reads one, and they shipped
+  // in main.css, the one stylesheet in front of first paint.
+  plugins: [require("tailwindcss-animate")],
 };
-
-// This plugin adds each Tailwind color as a global CSS variable, e.g. var(--sky-500).
-function addVariablesForColors({ addBase, theme }) {
-  let allColors = flattenColorPalette(theme("colors"));
-  let newVars = Object.fromEntries(
-    Object.entries(allColors).map(([key, val]) => [`--${key}`, val])
-  );
-
-  addBase({
-    ":root": newVars,
-  });
-}
