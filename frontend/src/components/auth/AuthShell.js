@@ -264,6 +264,90 @@ export const AuthLabelRow = ({ children }) => (
    colour and caret on `input:not([type=...])` nine times over, which scores a
    (0,9,1) specificity that no single class can outrank. Inline styles were the
    old workaround; a documented flag keeps the styling in one readable place. */
+/* THE NOTES ON AUTH_CSS BELOW. They were CSS comments inside the template, and
+   a template literal ships exactly as written, so they reached every phone as
+   text. Each is headed by the rule it sits in or in front of.
+
+   .auth-bg: Extends 64px past the hero so the sheet's rounded top corners sit
+   ON the photograph rather than on a seam.
+
+   .auth-plate, .auth-video: Dimmed enough that the skyline reads as a night,
+   not a light show. The type's safety comes from the scrim below, not from
+   crushing the picture.
+
+   .auth-scrim: The type plate. The sky stays open at the top; the gradient
+   climbs through the band so that by the time it reaches the headline and its
+   line it is carrying most of the pixel. That is what makes hero copy safe over
+   MOVING footage: the brightest pixel the clip can produce (measured with
+   ffmpeg signalstats across every frame: the clip does hit a pure-white pixel
+   in both bands) still composites to a background that leaves the headline at
+   7.1:1 and its line at 6.5:1. Typical frames measure 16.8:1 and 10.7:1. No
+   opacity was raised to get there, and nothing depends on which frame happens
+   to be on screen.
+
+   .auth-col: The analytics bar publishes its footprint as --cb-height while it
+   is open and removes it when answered. Padding by it keeps "Create an account"
+   / "Sign in" above the bar rather than under it. --kb-pad is the keyboard's
+   own footprint, quantized so the QuickType bar cannot move it (see
+   useKeyboardPad). Both are zero most of the time.
+
+   .auth-sub: 13.5em holds the line to its own sentence, so it breaks after the
+   full stop instead of orphaning two words onto line two.
+
+   .auth-field: Field boundary at 3.2:1 against the sheet (1.4.11 non-text
+   minimum is 3:1). The old 0.16 alpha composited to 1.8:1, which left the
+   extent of the field to be guessed from the placeholder alone.
+
+   .auth-field: 16px: anything smaller makes iOS zoom the page on focus.
+
+   .auth-root button:focus-visible, .auth-root a:focus-visible: Keyboard focus
+   ring for the controls on the sheet. index.css ships a global :focus-visible,
+   but its blue composites to ~2.6:1 on this navy sheet (#0b1220), under the 3:1
+   WCAG 1.4.11 minimum for a non-text indicator. Steel is 6.3:1 here, so
+   keyboard users get a ring that actually reads against the surface. Outline
+   follows each control's own radius in modern browsers, so no radius is set
+   here.
+
+   .auth-field[type="date"]: An empty date field prints mm/dd/yyyy in the value
+   colour, which reads as already answered. Required + empty is :invalid, so it
+   can be dimmed to the placeholder colour like every other empty field.
+
+   .auth-provider: The two providers are one control group: identical geometry,
+   identical type, only the mark changes. Both use their owner's approved light
+   button (Google: #fff / #1f1f1f; Apple: white style, which is the one Apple
+   asks for on a dark background), which is also what guideline 4.8 means by
+   equal prominence.
+
+   .auth-check: The read-back panel on the sign-in screen's date-of-birth field.
+   Not an error and not styled as one: at this point nothing has gone wrong and
+   nothing has been sent. It is the field's own value, in words, with the
+   consequence of sending it written out.
+
+   The two buttons carry IDENTICAL weight on purpose. Making "change the date"
+   the filled one would read as the screen telling a child to type a different
+   birthday, and making the confirm the filled one would push a teenager through
+   their own typo. Neither button is the recommended one, because the screen has
+   no business having an opinion about which is true.
+
+   .auth-label-row: baseline alignment so the 13px label and the 13px link sit
+   on one line, and the link keeps its 44px finger target through .hit44 without
+   pushing the field down (the pseudo-element does not affect layout).
+
+   .auth-apple-step: The Apple step (AppleYearStep.js, on the sign-in and
+   sign-up screens): the year field and a Continue button in the place the Apple
+   button was, after Apple's sheet has already been done once. It sits among the
+   provider buttons, so it gets the same gap they have from each other, and a
+   line that says what is being asked.
+
+   .auth-legal a: nowrap so "Privacy Policy" and "Community Guidelines" never
+   split across two lines: a half-underlined document name reads like two links.
+
+   .auth-venue span: Quieter than the signup link on purpose: same 10.6:1 colour
+   as the label around it, with the underline doing the work of saying "link".
+   Venue owners are a fraction of the traffic and they know they are one.
+
+   @keyframes authRise: Single-run entrance, ~200ms, no stagger and no scroll
+   trigger. index.css's reduced-motion block collapses it to nothing. */
 const AUTH_CSS = `
 .auth-root {
   position: relative;
@@ -275,8 +359,6 @@ const AUTH_CSS = `
   font-family: var(--font-body);
   -webkit-font-smoothing: antialiased;
 }
-/* Extends 64px past the hero so the sheet's rounded top corners sit ON the
-   photograph rather than on a seam. */
 .auth-bg {
   position: absolute; left: 0; right: 0; top: 0; bottom: -64px;
   overflow: hidden; pointer-events: none; background: #080d18; z-index: 0;
@@ -284,21 +366,10 @@ const AUTH_CSS = `
 .auth-plate, .auth-video {
   position: absolute; inset: 0; width: 100%; height: 100%;
   object-fit: cover;
-  /* Dimmed enough that the skyline reads as a night, not a light show. The
-     type's safety comes from the scrim below, not from crushing the picture. */
   filter: brightness(0.55) saturate(1.08) contrast(1.06);
 }
 .auth-video { opacity: 0; transition: opacity 900ms ease-out; }
 .auth-video.is-live { opacity: 1; }
-/* The type plate. The sky stays open at the top; the gradient climbs through
-   the band so that by the time it reaches the headline and its line it is
-   carrying most of the pixel. That is what makes hero copy safe over MOVING
-   footage: the brightest pixel the clip can produce (measured with ffmpeg
-   signalstats across every frame: the clip does hit a pure-white pixel in
-   both bands) still composites to a background that leaves the headline at
-   7.1:1 and its line at 6.5:1. Typical frames measure 16.8:1 and 10.7:1.
-   No opacity was raised to get there, and nothing depends on which frame
-   happens to be on screen. */
 .auth-scrim {
   position: absolute; inset: 0;
   background: linear-gradient(180deg,
@@ -314,11 +385,6 @@ const AUTH_CSS = `
   width: 100%; max-width: 440px; margin: 0 auto;
   min-height: 100%;
   display: flex; flex-direction: column;
-  /* The analytics bar publishes its footprint as --cb-height while it is
-     open and removes it when answered. Padding by it keeps "Create an
-     account" / "Sign in" above the bar rather than under it. --kb-pad is the
-     keyboard's own footprint, quantized so the QuickType bar cannot move it
-     (see useKeyboardPad). Both are zero most of the time. */
   padding-bottom: calc(var(--cb-height, 0px) + var(--kb-pad, 0px));
 }
 .auth-hero {
@@ -339,8 +405,6 @@ const AUTH_CSS = `
   font-size: 34px; font-weight: 600; line-height: 1.05; letter-spacing: -0.005em;
   color: ${AUTH.cream}; margin: 0; text-wrap: balance;
 }
-/* 13.5em holds the line to its own sentence, so it breaks after the full
-   stop instead of orphaning two words onto line two. */
 .auth-sub {
   margin: 10px 0 0; max-width: 13.5em;
   font-size: 15px; line-height: 1.5; color: ${AUTH.cream2}; text-wrap: pretty;
@@ -362,14 +426,10 @@ const AUTH_CSS = `
   width: 100%; box-sizing: border-box;
   height: 50px; padding: 0 14px;
   border-radius: 12px;
-  /* Field boundary at 3.2:1 against the sheet (1.4.11 non-text minimum is
-     3:1). The old 0.16 alpha composited to 1.8:1, which left the extent of
-     the field to be guessed from the placeholder alone. */
   border: 1px solid rgba(244,239,227,0.34);
   background-color: #181f2c !important;
   color: ${AUTH.cream} !important;
   caret-color: ${AUTH.steel} !important;
-  /* 16px: anything smaller makes iOS zoom the page on focus. */
   font-size: 16px; font-weight: 500; font-family: inherit;
   outline: none;
   transition: border-color 0.18s ease, box-shadow 0.18s ease;
@@ -379,20 +439,11 @@ const AUTH_CSS = `
   border-color: ${AUTH.steel};
   box-shadow: 0 0 0 3px rgba(109,154,195,0.22);
 }
-/* Keyboard focus ring for the controls on the sheet. index.css ships a global
-   :focus-visible, but its blue composites to ~2.6:1 on this navy sheet
-   (#0b1220), under the 3:1 WCAG 1.4.11 minimum for a non-text indicator. Steel
-   is 6.3:1 here, so keyboard users get a ring that actually reads against the
-   surface. Outline follows each control's own radius in modern browsers, so no
-   radius is set here. */
 .auth-root button:focus-visible,
 .auth-root a:focus-visible {
   outline: 2px solid ${AUTH.steel};
   outline-offset: 2px;
 }
-/* An empty date field prints mm/dd/yyyy in the value colour, which reads as
-   already answered. Required + empty is :invalid, so it can be dimmed to the
-   placeholder colour like every other empty field. */
 .auth-field[type="date"] { color-scheme: dark; }
 .auth-field[type="date"]:invalid { color: #9a978a !important; }
 .auth-hint { margin: 7px 2px 0; font-size: 12.5px; line-height: 1.45; color: ${AUTH.cream2}; }
@@ -424,11 +475,6 @@ const AUTH_CSS = `
 .auth-primary:active:not(:disabled) { transform: scale(0.985); }
 .auth-primary:disabled { opacity: 0.6; cursor: progress; box-shadow: none; }
 
-/* The two providers are one control group: identical geometry, identical
-   type, only the mark changes. Both use their owner's approved light button
-   (Google: #fff / #1f1f1f; Apple: white style, which is the one Apple asks
-   for on a dark background), which is also what guideline 4.8 means by equal
-   prominence. */
 .auth-provider {
   width: 100%; height: 48px;
   display: flex; align-items: center; justify-content: center; gap: 10px;
@@ -462,16 +508,6 @@ const AUTH_CSS = `
   color: ${AUTH.green}; font-size: 13.5px; font-weight: 500; line-height: 1.45;
 }
 
-/* The read-back panel on the sign-in screen's date-of-birth field. Not an
-   error and not styled as one: at this point nothing has gone wrong and
-   nothing has been sent. It is the field's own value, in words, with the
-   consequence of sending it written out.
-
-   The two buttons carry IDENTICAL weight on purpose. Making "change the date"
-   the filled one would read as the screen telling a child to type a different
-   birthday, and making the confirm the filled one would push a teenager
-   through their own typo. Neither button is the recommended one, because the
-   screen has no business having an opinion about which is true. */
 .auth-check {
   border-radius: 12px; padding: 13px 14px; margin-bottom: 18px;
   background: rgba(244,239,227,0.06);
@@ -495,9 +531,6 @@ const AUTH_CSS = `
 .auth-check-actions button:hover { background: rgba(244,239,227,0.10); }
 .auth-check-actions button:active { transform: scale(0.985); }
 
-/* baseline alignment so the 13px label and the 13px link sit on one line, and
-   the link keeps its 44px finger target through .hit44 without pushing the
-   field down (the pseudo-element does not affect layout). */
 .auth-label-row {
   display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
 }
@@ -511,11 +544,6 @@ const AUTH_CSS = `
 }
 .auth-link:hover { text-decoration-color: ${AUTH.cream}; }
 
-/* The Apple step (AppleYearStep.js, on the sign-in and sign-up screens): the
-   year field and a Continue button in the place the Apple button was, after
-   Apple's sheet has already been done once. It sits among the provider
-   buttons, so it gets the same gap they have from each other, and a line
-   that says what is being asked. */
 .auth-apple-step { margin-top: 18px; }
 .auth-step-line {
   margin: 0 0 12px 2px;
@@ -526,8 +554,6 @@ const AUTH_CSS = `
   margin: 14px 0 0; font-size: 12.5px; line-height: 1.6;
   color: ${AUTH.cream2}; text-align: center;
 }
-/* nowrap so "Privacy Policy" and "Community Guidelines" never split across
-   two lines: a half-underlined document name reads like two links. */
 .auth-legal a {
   color: ${AUTH.cream}; font-weight: 600; white-space: nowrap;
   text-decoration: underline; text-underline-offset: 2px;
@@ -557,9 +583,6 @@ const AUTH_CSS = `
   background: none; border: none;
   color: ${AUTH.cream2}; font-size: 13.5px; font-family: inherit; cursor: pointer;
 }
-/* Quieter than the signup link on purpose: same 10.6:1 colour as the label
-   around it, with the underline doing the work of saying "link". Venue owners
-   are a fraction of the traffic and they know they are one. */
 .auth-venue span {
   font-weight: 600;
   text-decoration: underline; text-underline-offset: 3px;
@@ -567,8 +590,6 @@ const AUTH_CSS = `
 }
 .auth-venue:hover span { text-decoration-color: ${AUTH.cream2}; }
 
-/* Single-run entrance, ~200ms, no stagger and no scroll trigger. index.css's
-   reduced-motion block collapses it to nothing. */
 @keyframes authRise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
 .auth-hero, .auth-sheet { animation: authRise 0.45s cubic-bezier(0.16, 1, 0.3, 1) both; }
 .auth-sheet { animation-delay: 0.06s; }
