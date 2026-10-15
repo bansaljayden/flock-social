@@ -148,13 +148,12 @@ const highlightMatches = (text, query) => (
     ))
 );
 
-/* FIVE PROPS BELOW ARE NO LONGER READ, and they are still in this list on
+/* FOUR PROPS BELOW ARE NO LONGER READ, and they are still in this list on
    purpose. `__tests__/extractionEquivalence.test.js` pins the parameter list
    against the object App.js spreads in, in BOTH directions, so dropping a name
    here without dropping it there is a red test rather than a tidy diff. They
    are marked "unused" where they sit, and each marker says what took over:
 
-     VenueCard      the module's VenueCardRow draws a shared venue now
      colorsLight    bubble fill, and there are no bubbles
      isDark         the same bubble fill's dark variant
      profilePic     the 32px own-avatar beside every own message
@@ -172,7 +171,6 @@ export default function DmDetail({
   DM_PAGE_SIZE,
   DialogBehavior,
   SearchInputLocal,
-  VenueCard, // unused: VenueCardRow from components/chat draws venue messages
   colorsLight, // unused: the text bubble it tinted is gone
   messagePreview,
   oldestServerId,

@@ -56,7 +56,6 @@ import { createSosFollowUp } from './services/sosFollowUp';
 // click handler that is already async, and the file it lives in carries the
 // Capacitor filesystem and share plumbing. An `await import()` at the call
 // site keeps all of it off the boot path.
-import { crowdLabelFor } from './lib/crowd';
 import { onVenuePhotoError } from './lib/venuePhoto';
 import { lsGet, lsSet, lsRemove } from './lib/storage';
 import { AVATAR_EDGE, AVATAR_REFIT_MARKER_KEY, encodeAvatar, dataUrlToBlob, needsAvatarRefit, refitAvatar } from './lib/avatarImage';
@@ -3536,98 +3535,6 @@ function attemptPaymentHandoff(method, options = {}) {
     cleanup();
   };
 }
-
-// Memoized VenueCard — unified design for both DMs and Flocks
-// `voted`: this card is the person's current vote. The button reads Voted
-// and a tap takes the vote back; without it the card never showed a vote
-// and could not undo one, while the vote panel did both.
-const VenueCard = React.memo(({ venue, onViewDetails, onVote, voted = false, colors: c, Icons: I, getCategoryColor: gcc }) => {
-  const rating = venue.stars || venue.rating || null;
-  const price = venue.price || (venue.price_level ? '$'.repeat(venue.price_level) : null);
-  const address = venue.addr || venue.formatted_address || '';
-  // Real crowd data only. This used to be
-  //   Math.round(20 + (name.charCodeAt(0) * 37) % 60)
-  // which is a number invented from the venue's first letter and rendered to
-  // the user as a measurement. It is also why surfaces disagreed about the
-  // same venue. No score yet means no crowd row, exactly as Birdie's cards do.
-  const crowd = typeof venue.crowd === 'number' ? venue.crowd : null;
-  const crowdColor = crowdColorFor(crowd);
-  // `c`, the palette the caller hands in. The bare `colors` here is the
-  // module-scope light palette, whose redText is #b91c1c at every hour.
-  const crowdInk = crowdInkFor(crowd, c);
-  return (
-    <div style={{
-      backgroundColor: 'var(--bg-card-solid)',
-      borderRadius: '16px',
-      overflow: 'hidden',
-      boxShadow: '0 4px 20px rgba(0,0,0,0.12)',
-      border: '1px solid var(--border-subtle)',
-      width: '100%',
-      maxWidth: '280px',
-      animation: 'cardSlideIn 0.4s ease-out'
-    }}>
-      {/* A venue with no photo used to leave a blank block. The placeholder is
-          Birdie in cream, deliberately low contrast so it recedes next to the
-          real photographs beside it. Only on the LARGE slots: at the 44px
-          thumbnail size in list rows a photograph is mud, and those keep their
-          letter. */}
-      <img
-        src={venue.photo_url ? resolveVenuePhoto(venue.photo_url) : '/marks/venue-placeholder.jpg'}
-        alt={venue.photo_url ? venue.name : ''}
-        loading="lazy"
-        style={{ width: '100%', height: '160px', objectFit: 'cover', display: 'block' }}
-        onError={(e) => { e.target.src = '/marks/venue-placeholder.jpg'; }}
-      />
-
-      <div style={{ padding: '14px' }}>
-        <h4 style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: c.navy, margin: '0 0 4px' }}>{venue.name}</h4>
-
-        {address && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '10px' }}>
-            {I.mapPin(c.textSecondary, 12)}
-            <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{address}</span>
-          </div>
-        )}
-
-        <div style={{ display: 'flex', gap: '12px', marginBottom: '12px' }}>
-          {price && <span style={{ fontSize: 'var(--t-meta)', color: c.navy, fontWeight: '500' }}>{price}</span>}
-          {rating && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
-              {I.starFilled('#fbbf24', 12)}
-              <span style={{ fontSize: 'var(--t-meta)', color: c.navy, fontWeight: '500' }}>{rating}</span>
-            </div>
-          )}
-        </div>
-
-        {crowd != null && (
-          <div style={{ backgroundColor: 'var(--bg-tertiary)', borderRadius: '12px', padding: '10px 12px', marginBottom: '12px', border: '1px solid var(--border-default)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
-              <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', fontWeight: '500' }}>{crowdLabelFor(crowd)}{crowdLabelFor(crowd) ? ' for this spot' : ''}</span>
-              <div style={{ backgroundColor: `${crowdColor}20`, color: crowdInk, padding: '2px 8px', borderRadius: '10px', fontSize: 'var(--t-meta)', fontWeight: '500' }}>{crowd}%</div>
-            </div>
-            <div style={{ width: '100%', height: '6px', backgroundColor: 'var(--pill-bg)', borderRadius: '3px', overflow: 'hidden' }}>
-              <div style={{ height: '100%', width: `${crowd}%`, backgroundColor: crowdColor, borderRadius: '3px', transition: 'width 0.5s ease-out' }} />
-            </div>
-          </div>
-        )}
-
-        <div style={{ display: 'flex', gap: '8px' }}>
-          {(venue.place_id || venue.id) && (
-            /* stopPropagation on both buttons: a venue card posted into a chat
-               is wrapped in a tap target that opens the reaction and report
-               row, so a tap on View Details or Vote must not also toggle it. */
-            <button className="hit44 glass-btn glass-secondary" onClick={(e) => { e.stopPropagation(); onViewDetails(); }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `2px solid ${c.navy}`, backgroundColor: 'var(--bg-card-solid)', color: c.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', transition: 'opacity 0.2s ease' }}>
-              {I.eye(c.navy, 14)} View Details
-            </button>
-          )}
-          <button className="hit44 glass-btn glass-navy" aria-pressed={voted} onClick={(e) => { e.stopPropagation(); const btn = e.currentTarget; if (!btn.classList.contains('btn-confirmed')) { btn.classList.add('btn-confirmed'); setTimeout(() => btn.classList.remove('btn-confirmed'), 1100); } onVote(); }} style={{ flex: 1, padding: '10px', borderRadius: '10px', background: voted ? 'var(--bg-card-solid)' : `linear-gradient(135deg, ${c.navy}, ${c.navyMid})`, color: voted ? c.navy : 'white', border: voted ? `2px solid ${c.navy}` : 'none', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px', boxShadow: '0 2px 8px rgba(13,40,71,0.10)', transition: 'opacity 0.2s ease', position: 'relative', overflow: 'hidden' }}>
-              {voted ? I.check(c.navy, 14) : I.vote('white', 14)} {voted ? 'Voted' : 'Vote for This'}
-            </button>
-        </div>
-      </div>
-    </div>
-  );
-});
 
 // =============================================================================
 // THE DISCOVER MAP moved to components/map/MapLibreMapView.js on 2026-09-13,
@@ -19284,7 +19191,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         ListSkeleton,
         MOMENTUM_STAGES,
         SearchInputLocal,
-        VenueCard,
         colorsLight,
         crowdColorFor,
         memberCountLabel,
@@ -19462,7 +19368,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         DM_PAGE_SIZE,
         DialogBehavior,
         SearchInputLocal,
-        VenueCard,
         colorsLight,
         messagePreview,
         oldestServerId,

@@ -137,8 +137,8 @@
  * fixed 58px typing slot is gone. The always-present Send button at 45%
  * opacity is gone.
  *
- * NINE PROPS ARE NOW UNREAD and stay in the parameter list on purpose:
- * chatNavOpen, VenueCard, getRelativeTime, profilePic, isDark, colorsLight,
+ * EIGHT PROPS ARE NOW UNREAD and stay in the parameter list on purpose:
+ * chatNavOpen, getRelativeTime, profilePic, isDark, colorsLight,
  * MOMENTUM_STAGES, momentumStageKey and memberCountLabel. The last three
  * joined on the chrome pass: the meter they drew retired to the plan screen,
  * and the member count gave up its half of the header subtitle to the time
@@ -658,7 +658,6 @@ export default function ChatDetail({
   ListSkeleton,
   MOMENTUM_STAGES,
   SearchInputLocal,
-  VenueCard, // unused: VenueCardRow from components/chat draws venue messages
   colorsLight, // unused: the text bubble it tinted is gone
   crowdColorFor,
   memberCountLabel,
