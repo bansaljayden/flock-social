@@ -20970,49 +20970,107 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       {aiAssistantModal}
       {adminPromptModal}
       <NewDmModal {...newDmModalProps} />
+      {/* THE NOTES ON THE STYLESHEET BELOW. They were CSS comments inside the
+          template, and a template literal ships exactly as written, so every phone
+          downloaded these paragraphs as text. Here they cost nothing. Each is headed
+          by the rule it explains, in the stylesheet's order.
+
+          the template itself: NO BACKTICKS IN THIS BLOCK, EVER. It is the
+          children of a style element written as a template literal, so a
+          backtick ends the string: the first draft of the .glass note below
+          quoted the class name in backticks and turned everything from the
+          top of this stylesheet into a tagged template call. The app
+          compiled, every unit test passed, and the signed-in shell died on
+          its first render with the whole stylesheet as the error message.
+          Name a class in plain text.
+
+          CrowdBar (no keyframe here, on purpose): CrowdBar component now
+          drives its own height via useState + CSS transition — no global
+          keyframe needed.
+
+          @keyframes modalBlurIn: THE SCRIM FADES. THE BLUR DOES NOT ANIMATE.
+          This used to run backdrop-filter from 0px to 8px alongside the
+          colour, which is about eighteen full-viewport blurs at a growing
+          radius for every modal that opens, none of which the compositor can
+          hand off. The end state is unchanged: the static rule on
+          .modal-backdrop below holds the 8px, so what an open modal looks
+          like is the same and only the ramp is gone. Keep any new property
+          added here to one the compositor owns outright, which is opacity,
+          transform and a plain colour.
+
+          @keyframes screenSlideIn: A pushed screen is legible from its first
+          frame. It used to start at opacity 0 and take 0.3s to fade in, and
+          that fade only began once the screen had rendered, so on the phone a
+          tap read as a pause and then a slow reveal. It now slides 16px in
+          0.18s, already opaque.
+
+          .screen-enter: The push into a drill-in screen, the same direction
+          as the edge swipe that pops it (hooks/useEdgeSwipeBack.js). NO fill
+          mode, and that is load bearing: "forwards" held translateX(0) on the
+          root after the slide, and any transform makes the root the
+          containing block for its position:fixed children, so the chat photo
+          viewer would have covered the screen root instead of the whole
+          phone. The last keyframe is the element's own style, so dropping it
+          changes nothing that shows.
+
+          .modal-backdrop: Static, so the frosting is rasterised once on open
+          instead of once per frame of the fade. See the keyframes above.
+
+          @keyframes spin: 'spin' was referenced by every ring spinner in this
+          file (map loading, venue list loading, the create button, the logo
+          uploader) and DEFINED nowhere — grep the repo before deleting this
+          "duplicate" of iconSpin. Without it those rings sat frozen, which is
+          exactly the broken look a spinner exists to prevent. index.css's
+          global prefers-reduced-motion rule already collapses it to one
+          instant iteration. (iconSpin, the copy it looked like, was never
+          used and is gone.)
+
+          scroll-behavior (no blanket rule, on purpose): NO BLANKET SMOOTH
+          SCROLL. This was * { scroll-behavior: smooth }, and it turned every
+          programmatic scroll in the app into an animation: opening a chat
+          glided through its whole history to the newest message, the
+          correction that keeps your place when older messages load above it
+          slid instead of holding still, the keyboard lift lagged behind the
+          keyboard, a tab's restored scroll position rode into place, and
+          ChatDetail's jump-to-message, whose own comment says "No smooth
+          scroll", animated anyway (app audit 2026-10-03). A scroll that
+          should glide asks for it: the new-messages pill and the tab's
+          back-to-top pass behavior: 'smooth' themselves.
+
+          gradient text (none, on purpose): The animated background-clip:text
+          gradient that lived here is a banned pattern (DESIGN-STANDARD.md) and
+          nothing in the app referenced it. Removed with its keyframes.
+
+          @keyframes barRise: Hourly chart bars grow up from the baseline,
+          staggered left to right
+
+          .skeleton: Highlight is a translucent white sweep, not a theme token
+          — the dark theme's skeleton-bg and border-default are near-identical
+          navies, which made skeletons invisible on device.
+
+          .skeleton: THE SWEEP IS A TRANSFORM, NOT A BACKGROUND POSITION.
+          Animating background-position is a main-thread repaint of every
+          skeleton on every frame, and the place this is used most is the chat
+          loading state -- eight of these repainting during the exact window
+          the keyboard is animating and the history is arriving. A translated
+          overlay is composited instead, so the sweep costs nothing on the
+          main thread. The hidden overflow keeps it inside the rounded box;
+          isolation stops it painting over siblings.
+
+          .glass (no bare rule, on purpose): A bare .glass frosted-panel rule
+          stood here with zero call sites: nothing in src/ has ever carried
+          the class on its own, and every frosted surface in the app is either
+          .glass-btn or an inline style. Deleted rather than left as a trap,
+          because the one thing it was guaranteed to do if somebody reached
+          for it was add a full-panel backdrop-filter.
+
+          [style*="overflow"]: Momentum scrolling on the older iOS WebViews.
+          Not smooth scrolling: see the note on the blanket rule above.
+      */}
       <style>{`
-        /* CrowdBar component now drives its own height via useState + CSS
-           transition — no global keyframe needed. */
         @keyframes pulse {
           0%, 100% { opacity: 0.4; transform: translate(-50%, -50%) scale(1); }
           50% { opacity: 0.8; transform: translate(-50%, -50%) scale(1.2); }
-        }
-        @keyframes heatPulseOuter {
-          0%, 100% { opacity: 0.3; transform: translate(-50%, -50%) scale(1); }
-          50% { opacity: 0.6; transform: translate(-50%, -50%) scale(1.15); }
-        }
-        @keyframes heatPulseMiddle {
-          0%, 100% { opacity: 0.4; transform: translate(-50%, -50%) scale(1); }
-          50% { opacity: 0.7; transform: translate(-50%, -50%) scale(1.12); }
-        }
-        @keyframes heatPulseInner {
-          0%, 100% { opacity: 0.5; transform: translate(-50%, -50%) scale(1); }
-          50% { opacity: 0.85; transform: translate(-50%, -50%) scale(1.08); }
-        }
-        @keyframes heatPulseCore {
-          0%, 100% { opacity: 0.6; transform: translate(-50%, -50%) scale(1); }
-          50% { opacity: 1; transform: translate(-50%, -50%) scale(1.05); }
-        }
-        @keyframes heatGlow {
-          0%, 100% { opacity: 0.8; filter: blur(0px); }
-          50% { opacity: 1; filter: blur(2px); }
-        }
-        @keyframes trendingBounce {
-          0%, 100% { transform: translateY(0) rotate(0deg); }
-          25% { transform: translateY(-2px) rotate(-5deg); }
-          75% { transform: translateY(-2px) rotate(5deg); }
-        }
-        @keyframes pinRingPulse {
-          0% { opacity: 0.6; transform: translateX(-50%) scale(1); }
-          100% { opacity: 0; transform: translateX(-50%) scale(1.8); }
-        }
-@keyframes tooltipFadeIn {
-          from { opacity: 0; transform: translateX(-50%) translateY(4px); }
-          to { opacity: 1; transform: translateX(-50%) translateY(0); }
-        }
-        @keyframes userLocationPulse {
-          0% { opacity: 0.8; transform: translate(-50%, -50%) scale(1); }
-          100% { opacity: 0; transform: translate(-50%, -50%) scale(2.5); }
         }
         @keyframes bounce {
           0%, 100% { transform: translateY(0); }
@@ -21022,10 +21080,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           from { opacity: 0; transform: translateY(10px); }
           to { opacity: 1; transform: translateY(0); }
         }
-        @keyframes slideUp {
-          from { opacity: 0; transform: translateY(20px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
         @keyframes glow {
           0%, 100% { box-shadow: 0 0 5px rgba(13,40,71,0.10); }
           50% { box-shadow: 0 0 20px rgba(13,40,71,0.5); }
@@ -21033,15 +21087,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         @keyframes tabBounce {
           0% { transform: scale(0.92); }
           60% { transform: scale(1.04); }
-          100% { transform: scale(1); }
-        }
-        @keyframes cardSlideIn {
-          from { opacity: 0; transform: translateY(20px) scale(0.95); }
-          to { opacity: 1; transform: translateY(0) scale(1); }
-        }
-        @keyframes buttonPress {
-          0% { transform: scale(1); }
-          50% { transform: scale(0.95); }
           100% { transform: scale(1); }
         }
         @keyframes ripple {
@@ -21054,27 +21099,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           75% { transform: scale(0.9); }
           100% { transform: scale(1); }
         }
-        @keyframes typingDot {
-          0%, 60%, 100% { transform: translateY(0); }
-          30% { transform: translateY(-6px); }
-        }
-        @keyframes toastSlideIn {
-          from { transform: translateY(-100%) scale(0.9); opacity: 0; }
-          to { transform: translateY(0) scale(1); opacity: 1; }
-        }
-        @keyframes toastSlideOut {
-          from { transform: translateY(0) scale(1); opacity: 1; }
-          to { transform: translateY(-100%) scale(0.9); opacity: 0; }
-        }
-        /* THE SCRIM FADES. THE BLUR DOES NOT ANIMATE.
-           This used to run backdrop-filter from 0px to 8px alongside the
-           colour, which is about eighteen full-viewport blurs at a growing
-           radius for every modal that opens, none of which the compositor can
-           hand off. The end state is unchanged: the static rule on
-           .modal-backdrop below holds the 8px, so what an open modal looks like
-           is the same and only the ramp is gone. Keep any new property added
-           here to one the compositor owns outright, which is opacity,
-           transform and a plain colour. */
         @keyframes modalBlurIn {
           from { background-color: rgba(0,0,0,0); }
           to { background-color: rgba(0,0,0,0.5); }
@@ -21083,85 +21107,27 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           from { transform: translateY(50px) scale(0.95); opacity: 0; }
           to { transform: translateY(0) scale(1); opacity: 1; }
         }
-        @keyframes progressFill {
-          from { transform: scaleX(0); }
-          to { transform: scaleX(1); }
-        }
-        /* A pushed screen is legible from its first frame. It used to start at
-           opacity 0 and take 0.3s to fade in, and that fade only began once
-           the screen had rendered, so on the phone a tap read as a pause and
-           then a slow reveal. It now slides 16px in 0.18s, already opaque. */
         @keyframes screenSlideIn {
           from { opacity: 0.92; transform: translateX(16px); }
           to { opacity: 1; transform: translateX(0); }
-        }
-        @keyframes screenSlideOut {
-          from { opacity: 1; transform: translateX(0); }
-          to { opacity: 0; transform: translateX(-30px); }
-        }
-        @keyframes pullRefresh {
-          0% { transform: rotate(0deg); }
-          100% { transform: rotate(360deg); }
-        }
-        @keyframes swipeHint {
-          0%, 100% { transform: translateX(0); }
-          50% { transform: translateX(-10px); }
-        }
-        @keyframes levelUp {
-          0% { transform: scale(1); }
-          25% { transform: scale(1.2); }
-          50% { transform: scale(1); }
-          75% { transform: scale(1.1); }
-          100% { transform: scale(1); }
         }
         @keyframes shimmer {
           0% { background-position: -200% 0; }
           100% { background-position: 200% 0; }
         }
-        .card-animate {
-          animation: cardSlideIn 0.3s ease-out forwards;
-        }
-        .card-animate-1 { animation-delay: 0.05s; opacity: 0; }
-        .card-animate-2 { animation-delay: 0.1s; opacity: 0; }
-        .card-animate-3 { animation-delay: 0.15s; opacity: 0; }
-        .card-animate-4 { animation-delay: 0.2s; opacity: 0; }
-        .card-animate-5 { animation-delay: 0.25s; opacity: 0; }
-        /* The push into a drill-in screen, the same direction as the edge
-           swipe that pops it (hooks/useEdgeSwipeBack.js). NO fill mode, and
-           that is load bearing: "forwards" held translateX(0) on the root
-           after the slide, and any transform makes the root the containing
-           block for its position:fixed children, so the chat photo viewer
-           would have covered the screen root instead of the whole phone. The
-           last keyframe is the element's own style, so dropping it changes
-           nothing that shows. */
         .screen-enter {
           animation: screenSlideIn 0.18s cubic-bezier(0.2, 0, 0, 1);
         }
         .tab-bounce {
           animation: tabBounce 0.3s ease-out;
         }
-        .reaction-pop {
-          animation: reactionPop 0.3s ease-out;
-        }
-        .toast-animate {
-          animation: toastSlideIn 0.3s ease-out;
-        }
         .modal-backdrop {
-          /* Static, so the frosting is rasterised once on open instead of
-             once per frame of the fade. See the keyframes above. */
           backdrop-filter: blur(8px);
           -webkit-backdrop-filter: blur(8px);
           animation: modalBlurIn 0.3s ease-out forwards;
         }
         .modal-content {
           animation: modalSlideIn 0.25s ease-out;
-        }
-        .btn-press:active {
-          animation: buttonPress 0.2s ease-out;
-        }
-        .progress-animate {
-          animation: progressFill 1s ease-out forwards;
-          transform-origin: left;
         }
         *, *::before, *::after {
           box-sizing: border-box;
@@ -21186,150 +21152,22 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         button:hover {
           opacity: 0.85;
         }
-        /* Premium loading shimmer */
-        @keyframes loadingShimmer {
-          0% { background-position: -200% 0; }
-          100% { background-position: 200% 0; }
-        }
-        .loading-shimmer {
-          background: linear-gradient(90deg, var(--skeleton-bg) 25%, var(--border-default) 50%, var(--skeleton-bg) 75%);
-          background-size: 200% 100%;
-          animation: loadingShimmer 1.5s ease-in-out infinite;
-        }
-        /* Smooth hover lift effect */
-        .hover-lift {
-          transition: transform 0.2s ease, box-shadow 0.2s ease;
-        }
-        .hover-lift:hover {
-          transform: translateY(-2px);
-          box-shadow: 0 8px 20px rgba(0,0,0,0.1);
-        }
-        /* Card entrance stagger */
-        @keyframes cardEntrance {
-          from { opacity: 0; transform: translateY(20px) scale(0.96); }
-          to { opacity: 1; transform: translateY(0) scale(1); }
-        }
-        .card-entrance {
-          animation: cardEntrance 0.35s ease-out forwards;
-        }
-        /* Button press ripple */
-        @keyframes buttonRipple {
-          0% { transform: scale(0); opacity: 0.6; }
-          100% { transform: scale(2.5); opacity: 0; }
-        }
-        /* Glow pulse for active states */
-        @keyframes glowPulse {
-          0%, 100% { box-shadow: 0 0 5px rgba(13,40,71,0.10); }
-          50% { box-shadow: 0 0 20px rgba(13,40,71,0.4); }
-        }
-        /* Smooth icon rotation */
-        @keyframes iconSpin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-        /* 'spin' was referenced by every ring spinner in this file (map
-           loading, venue list loading, the create button, the logo uploader)
-           and DEFINED nowhere — grep the repo before deleting this "duplicate"
-           of iconSpin. Without it those rings sat frozen, which is exactly the
-           broken look a spinner exists to prevent. index.css's global
-           prefers-reduced-motion rule already collapses it to one instant
-           iteration. */
         @keyframes spin {
           from { transform: rotate(0deg); }
           to { transform: rotate(360deg); }
         }
-        .icon-spin {
-          animation: iconSpin 1s linear infinite;
-        }
-        /* Success checkmark animation */
-        @keyframes successCheck {
-          0% { transform: scale(0) rotate(-45deg); opacity: 0; }
-          50% { transform: scale(1.2) rotate(0deg); opacity: 1; }
-          100% { transform: scale(1) rotate(0deg); opacity: 1; }
-        }
-        .success-check {
-          animation: successCheck 0.4s ease-out forwards;
-        }
-        /* Slide in from bottom */
-        @keyframes slideInBottom {
-          from { opacity: 0; transform: translateY(20px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-        .slide-in-bottom {
-          animation: slideInBottom 0.3s ease-out forwards;
-        }
-        /* Scale in */
-        @keyframes scaleBounceIn {
-          0% { transform: scale(0.9); opacity: 0; }
-          100% { transform: scale(1); opacity: 1; }
-        }
-        .scale-bounce-in {
-          animation: scaleBounceIn 0.25s ease-out forwards;
-        }
-        /* Enhanced focus states */
         input:focus, textarea:focus, select:focus {
           border-color: var(--focus-ring) !important;
           box-shadow: 0 0 0 4px rgba(13,40,71,0.1), 0 2px 8px rgba(13,40,71,0.1) !important;
           transition: all 0.2s ease;
         }
-        /* NO BLANKET SMOOTH SCROLL. This was * { scroll-behavior: smooth },
-           and it turned every programmatic scroll in the app into an
-           animation: opening a chat glided through its whole history to the
-           newest message, the correction that keeps your place when older
-           messages load above it slid instead of holding still, the keyboard
-           lift lagged behind the keyboard, a tab's restored scroll position
-           rode into place, and ChatDetail's jump-to-message, whose own comment
-           says "No smooth scroll", animated anyway (app audit 2026-10-03). A
-           scroll that should glide asks for it: the new-messages pill and the
-           tab's back-to-top pass behavior: 'smooth' themselves. */
-        /* Link hover underline animation */
-        .link-hover {
-          position: relative;
-        }
-        .link-hover::after {
-          content: '';
-          position: absolute;
-          bottom: -2px;
-          left: 0;
-          width: 0;
-          height: 2px;
-          background: #1e293b;
-          transition: width 0.3s ease;
-        }
-        .link-hover:hover::after {
-          width: 100%;
-        }
-        /* The animated background-clip:text gradient that lived here is a
-           banned pattern (DESIGN-STANDARD.md) and nothing in the
-           app referenced it. Removed with its keyframes. */
-        /* Notification badge bounce */
-        @keyframes badgeBounce {
-          0%, 100% { transform: scale(1); }
-          50% { transform: scale(1.15); }
-        }
-        .badge-bounce {
-          animation: badgeBounce 0.6s ease-in-out;
-        }
-        /* Skeleton loading for cards */
-        /* Hourly chart bars grow up from the baseline, staggered left to right */
         @keyframes barRise {
           from { transform: scaleY(0); }
           to { transform: scaleY(1); }
         }
         .skeleton {
-          /* Highlight is a translucent white sweep, not a theme token — the
-             dark theme's skeleton-bg and border-default are near-identical
-             navies, which made skeletons invisible on device. */
           background: var(--skeleton-bg);
           border-radius: 8px;
-          /* THE SWEEP IS A TRANSFORM, NOT A BACKGROUND POSITION.
-             Animating background-position is a main-thread repaint of every
-             skeleton on every frame, and the place this is used most is the
-             chat loading state -- eight of these repainting during the exact
-             window the keyboard is animating and the history is arriving.
-             A translated overlay is composited instead, so the sweep costs
-             nothing on the main thread. The hidden overflow keeps it inside
-             the rounded box; isolation stops it painting over siblings. */
           position: relative;
           overflow: hidden;
           isolation: isolate;
@@ -21349,31 +21187,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         @media (prefers-reduced-motion: reduce) {
           .skeleton::after { animation: none; opacity: 0.5; transform: none; }
         }
-        /* A bare .glass frosted-panel rule stood here with zero call sites:
-           nothing in src/ has ever carried the class on its own, and every
-           frosted surface in the app is either .glass-btn or an inline style.
-           Deleted rather than left as a trap, because the one thing it was
-           guaranteed to do if somebody reached for it was add a
-           full-panel backdrop-filter.
-
-           NO BACKTICKS IN THIS BLOCK, EVER. It is the children of a style
-           element written as a template literal, so a backtick ends the
-           string: the first draft of the note above quoted the class name in
-           backticks and turned everything from the top of this stylesheet into
-           a tagged template call. The app compiled, every unit test passed, and
-           the signed-in shell died on its first render with the whole
-           stylesheet as the error message. Name a class in plain text. */
-        /* Interactive card hover */
-        .interactive-card {
-          transition: box-shadow 0.2s ease, transform 0.2s ease;
-        }
-        .interactive-card:hover {
-          transform: translateY(-1px);
-          box-shadow: 0 6px 16px rgba(0,0,0,0.08);
-        }
-        .interactive-card:active {
-          transform: translateY(0);
-        }
         ::-webkit-scrollbar {
           width: 5px;
           height: 5px;
@@ -21389,47 +21202,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         ::-webkit-scrollbar-thumb:hover {
           background: rgba(13,40,71,0.10);
         }
-        /* Momentum scrolling on the older iOS WebViews. Not smooth scrolling:
-           see the note on the blanket rule above. */
         [style*="overflow"] {
           -webkit-overflow-scrolling: touch;
-        }
-        /* Loading indicator */
-        @keyframes loadingPulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.5; }
-        }
-        .loading-pulse {
-          animation: loadingPulse 1.5s ease-in-out infinite;
-        }
-        /* Highlight flash for new items */
-        @keyframes highlightFlash {
-          0% { background-color: rgba(45,90,135,0.20); }
-          100% { background-color: transparent; }
-        }
-        .highlight-flash {
-          animation: highlightFlash 1s ease-out;
-        }
-        /* Subtle press feedback */
-        .press-scale:active {
-          opacity: 0.8;
-        }
-        /* Gradient border effect */
-        .gradient-border {
-          position: relative;
-          background: white;
-        }
-        .gradient-border::before {
-          content: '';
-          position: absolute;
-          inset: 0;
-          border-radius: inherit;
-          padding: 2px;
-          background: linear-gradient(135deg, #1e293b, #2d5a87);
-          -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-          mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-          -webkit-mask-composite: xor;
-          mask-composite: exclude;
         }
       `}</style>
     </div>
