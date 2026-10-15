@@ -2671,6 +2671,8 @@ const TYPING_REFRESH_MS = 3000;
 // The flock chat's typing label from the names the listener holds:
 // "Sam", "Sam and Alex", "Sam and 2 others", or '' when nobody is typing.
 const typingLabel = (names) => (names.length === 1 ? names[0] : names.length === 2 ? `${names[0]} and ${names[1]}` : names.length > 2 ? `${names[0]} and ${names.length - 1} others` : '');
+// What the Plans calendar is handed for plans while Plans is not the tab.
+const NO_FLOCK_EVENTS = [];
 const TYPING_EXPIRE_MS = 6000;
 
 // One-line summary of a message for the places that can only show one line: the
@@ -8245,15 +8247,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // Component-scope consts, not block locals beside the props object: the
   // extraction-equivalence contract resolves every chatDetailProps name
   // against FlockAppInner's own scope, which is also what guarantees these
-  // are recomputed per render and never reassigned.
+  // are never reassigned. The label is a pure function of the plan list and
+  // the open plan (localeTime is the default locale through a cached
+  // formatter), so it is remembered on those two rather than rebuilt on
+  // every render of the app.
   const eventCrowd = eventCrowdScores[selectedFlockId] || null;
-  const eventCrowdLabel = (() => {
+  const eventCrowdLabel = useMemo(() => {
     const f = flocks.find(x => x.id === selectedFlockId);
     if (!f?.eventTime) return null;
     const d = new Date(f.eventTime);
     if (Number.isNaN(d.getTime())) return null;
     return `at ${localeTime(d, [], { hour: 'numeric' })}`;
-  })();
+  }, [flocks, selectedFlockId]);
 
   const [pendingImage, setPendingImage] = useState(null);
   const [showImagePreview, setShowImagePreview] = useState(false);
@@ -9858,7 +9863,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // Flocks with a real time ARE plans, so they belong on the Plans calendar
   // without anyone having to press "add to calendar" first. These are derived,
   // not stored: they carry a string id and no delete control.
-  const flockCalendarEvents = useMemo(() => flocks
+  // Built only while Plans is the tab. The one reader is getEventsForDate,
+  // which only the Plans screen calls, and keyed on the whole plan list it
+  // re-ran on every message, receipt, pin and reaction wherever the user
+  // was. The render that switches to Plans is the one that builds it.
+  const calendarSourceFlocks = onCalendarTab ? flocks : null;
+  const flockCalendarEvents = useMemo(() => (calendarSourceFlocks ? calendarSourceFlocks
     .filter(f => f.eventTime && f.status !== 'cancelled')
     .map(f => {
       const when = new Date(f.eventTime);
@@ -9875,7 +9885,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         members: f.memberCount || (f.members || []).length || 1,
       };
     })
-    .filter(Boolean), [flocks, colors.navy]);
+    .filter(Boolean) : NO_FLOCK_EVENTS), [calendarSourceFlocks, colors.navy]);
 
   const getEventsForDate = useCallback(
     (dateStr) => [...calendarEvents, ...flockCalendarEvents].filter(e => e.date === dateStr),
