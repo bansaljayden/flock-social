@@ -404,6 +404,9 @@ describe('llms.txt stays true to the shipped model', () => {
     // pre-upgrade figures are on the whole set, as /about now says too.
     expect(flat).toContain(`which ${served.reading_one_hour_earlier.rows.toLocaleString('en-US')} of those 119,939 readings did`);
     expect(flat).toContain('119,939 real live readings at venues in Philadelphia, the Lehigh Valley and Miami');
+    // The horizon and the target are stated with the figures.
+    expect(flat).toContain('How the crowd numbers in the app perform one hour ahead');
+    expect(flat).toContain("relative 0 to 100 scores, not headcounts");
   });
 
   // A venue with no pattern is answered by the rule engine, and one with a

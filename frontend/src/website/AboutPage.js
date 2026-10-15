@@ -119,13 +119,15 @@ export default function AboutPage() {
           for a venue, the number you see moves with its newest ones, so a slow
           Friday or a sudden rush shows up the same night. Tested against 119,939
           real live readings it had not seen, from September 9 to October 8, 2026,
-          at venues in Philadelphia, the Lehigh Valley and Miami, 54.9% of Flock's
-          crowd numbers named the exact crowd level of the reading, 78.4% landed
+          at venues in Philadelphia, the Lehigh Valley and Miami, and scored one
+          hour ahead: 54.9% of Flock's crowd numbers named the exact crowd level of the reading, 78.4% landed
           within one level, and 55.2% within 10 points, with an average miss of 18
           points and no lean high or low. Before the September upgrade, those same
           119,939 readings scored 30.8% on the exact level and 58.3% within one. On
           the 57,900 of them where the venue had a live reading from the hour
-          before, 77.0% named the exact level and 88.6% landed within one.
+          before, 77.0% named the exact level and 88.6% landed within one. The
+          readings are a busyness provider's relative 0 to 100 scores for each venue,
+          not headcounts.
         </p>
         <p>
           Flock also trains its own machine-learning crowd model. The current

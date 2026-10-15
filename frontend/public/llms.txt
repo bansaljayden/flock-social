@@ -55,9 +55,10 @@ Updated: October 6, 2026.
 
 ## Key facts about the crowd model
 
-How the crowd numbers in the app perform, measured on 119,939 real live readings
-at venues in Philadelphia, the Lehigh Valley and Miami, held out from September 9
-to October 8, 2026:
+How the crowd numbers in the app perform one hour ahead, measured on 119,939 real
+live readings at venues in Philadelphia, the Lehigh Valley and Miami, held out
+from September 9 to October 8, 2026 (the readings are a busyness provider's
+relative 0 to 100 scores, not headcounts):
 
 - Flock collects live busyness readings every hour. A venue's number is its own
   usual pattern for that hour, moved by its newest live readings where Flock has

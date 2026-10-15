@@ -1052,6 +1052,9 @@ describe('copy rules (DESIGN-STANDARD)', () => {
     // a lazy answer: a constant "Not Busy" scores high on it (MODEL-METRICS.md).
     expect(copy).toContain(`${tested.band_exact.toFixed(1)}% of Flock's crowd numbers named the exact crowd level of the reading, ${tested.within_one_band}% landed within one level, and ${tested.within_10}% within 10 points`);
     expect(copy).toContain(`with an average miss of ${Math.round(tested.mae)} points and no lean high or low`);
+    // The figures hold one hour ahead, on the provider's relative scores, and the copy says both.
+    expect(copy).toContain('and scored one hour ahead: ');
+    expect(copy).toContain("The readings are a busyness provider's relative 0 to 100 scores for each venue, not headcounts.");
     expect(Math.abs(tested.bias)).toBeLessThan(2);
     expect(copy).toContain(`${served.reading_one_hour_earlier.band_exact.toFixed(1)}% named the exact level and ${served.reading_one_hour_earlier.within_one_band}% landed within one`);
     expect(copy).toContain(`scored ${served.before.band_exact.toFixed(1)}% on the exact level and ${served.before.within_one_band}% within one`);
