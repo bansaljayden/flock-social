@@ -59,6 +59,12 @@ def _eight_bit(g, rng):
     return lo + (g ** rng.uniform(0.8, 1.25)) * span
 
 
+# owl-4.9's seven real sources. Any other key a cache carries (owl-5's
+# real_cache6.pkl adds one per new set) is drawn by the generic branch at the
+# end of real_frame, and only when the cache's '_mix' names it.
+OLD_SOURCES = ('tp', 'otp', 'aau', 'ss', 'sdt', 'sdts', 'iiser')
+
+
 def real_frame(real, rng, groups_x3=False):
     """One real training frame at Lepton size, with its people.
 
@@ -80,6 +86,35 @@ def real_frame(real, rng, groups_x3=False):
            a Lepton 3.5, in a classroom of up to ten people and a lab of up
            to five, 8-bit, where each person's head is (from a face box;
            nothing learns what a face looks like)
+    owl-5's cache (real_cache6.pkl) keeps all of that and adds the training
+    parts of the sets below, each split by whole recording, so a recording
+    held out for testing never trains. Each frame is stored at 160x120 in
+    pseudo-Celsius (5th percentile at 20 C, 99.5th at 34 C) with a box per
+    person and a head point estimated from the box, and the cache's own
+    '_mix' sets how often each source is drawn:
+      butiv  BU-TIV Atrium and Lab (Wu et al., CVPR Workshops 2014): in the
+             cache only with the author's written permission to train;
+             without it the whole set stays held out
+      soccer AAU thermal soccer (Gade and Moeslund, CC BY-SA 4.0): an indoor
+             arena, the middle and right cameras
+      skku   InfoLab SKKU MLX90640 (MIT): 32x24, people lying, sitting and
+             standing
+      dogs   Thermal Dogs and People (CC BY 4.0)
+      klir   Klir HTPA 32x32 (GPL-3.0): an overhead array at 2.3 m
+      rf_*   fifteen Roboflow Universe sets (CC BY 4.0, public domain or
+             MIT): rf_ciis, rf_drone, rf_football, rf_iiserocc, rf_mlx,
+             rf_mlxopt, rf_mondragon, rf_outcomex, rf_pnu, rf_thd,
+             rf_thermla, rf_toinonen, rf_yoloped, a cafe (rf_cafe) and a
+             restaurant (rf_restaurant), the first 70% of each take
+      wlri   WLRI-HRC (CC BY 4.0, training confirmed by the corresponding
+             author, 2026-10-15): a factory floor beside two hot robot arms
+      ltd    LTD, the Aalborg harbour front (Nikolov et al., CC BY 4.0):
+             pedestrians outdoors, the authors' training and validation
+             folders
+      litiv  LITIV 2014 (Bilodeau, Torabi, St-Charles and Riahi; training
+             on video 2 granted by the authors, 2026-10-15): one to five
+             people walking in a room
+    A set whose licence allows evaluation only never enters a cache.
     Only people are labelled in them, so only the people map is graded.
     """
     from scipy.ndimage import zoom
@@ -91,6 +126,10 @@ def real_frame(real, rng, groups_x3=False):
     # behind the row in front, which is where every earlier model undercounted.
     sources = [('tp', 0.14), ('otp', 0.18), ('aau', 0.27), ('ss', 0.04), ('sdt', 0.27), ('sdts', 0.1),
                ('iiser', 0.2)]
+    if '_mix' in real:
+        # owl-5: real_cache6.pkl carries its own mix, every source's share of
+        # the real draws, old and new (flux-training/owl5/mix_weights.py).
+        sources = list(real['_mix'].items())
     sources = [(k, w) for k, w in sources if f'{k}_img' in real]
     weights = np.array([w for _, w in sources])
     src = sources[int(rng.choice(len(sources), p=weights / weights.sum()))][0]
@@ -135,6 +174,14 @@ def real_frame(real, rng, groups_x3=False):
         objects = [{'cls': 'person', 'x': hx, 'y': hy, 'box': box}
                    for box, (hx, hy) in real['iiser_people'][i]]
         boxes = False
+    elif src not in OLD_SOURCES and f'{src}_img' in real:
+        # owl-5's new sets, already in pseudo-Celsius at 160x120. Their head
+        # points are estimated from boxes, so their peaks are spread like
+        # SDT's.
+        i = int(rng.integers(len(real[f'{src}_img'])))
+        t = real[f'{src}_img'][i].astype(np.float32) + rng.normal(0, 1.0)
+        objects = [{'cls': 'person', 'x': hx, 'y': hy, 'box': box, 'approx': True}
+                   for box, (hx, hy) in real[f'{src}_people'][i]]
     else:
         i = int(rng.integers(len(real['ss_img'])))
         t = zoom(_eight_bit(real['ss_img'][i].astype(np.float32) / 255.0, rng), (5, 5), order=1)
