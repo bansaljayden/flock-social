@@ -63,9 +63,10 @@ relative 0 to 100 scores, not headcounts):
 - Flock collects live busyness readings every hour. A venue's number is its own
   usual pattern for that hour, moved by its newest live readings where Flock has
   them.
-- 54.9% of Flock's crowd numbers named the exact crowd level of the live
-  reading, 78.4% landed within one level, and 55.2% within 10 points. Before
-  the September 2026 upgrade the same readings scored 30.8%, 58.3% and 26.9%.
+- One hour ahead, 54.9% of Flock's crowd numbers named the exact crowd level
+  of the live reading, 78.4% landed within one level, and 55.2% within 10
+  points. Before the September 2026 upgrade the same readings scored 30.8%,
+  58.3% and 26.9%.
 - The average miss was 18.0 points, down from 30.9, with no systematic lean
   high or low.
 - Where the venue had a live reading from the hour before, which 57,900 of those
