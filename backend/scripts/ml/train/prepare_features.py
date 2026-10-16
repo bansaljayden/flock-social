@@ -1026,6 +1026,16 @@ EXPECTED_SPARSE_FEATURES: Dict[str, str] = {
         'agree — and the 206,925 event-enriched rows simply contain none. Same '
         'shape as weather_snow, which is alive on 1,605 rows. FILLS IN with a '
         'family-segment event within 2km of a corpus venue.'),
+    # ── Live-only slots the live window has not reached (decided 2026-10-15, before the November export). ──
+    'weather_snow': (
+        'no live reading in the training window (Pennsylvania, 2026-09-01 to the time-holdout cutoff) '
+        'carries a snow code (OpenWeatherMap 6xx), and weekly rows carry no weather. The one-hot works: '
+        'its other levels vary. FILLS IN with the first snow reading inside a training window.'),
+    'weather_thunderstorm': "see weather_snow: no 2xx code among the training window's live readings. FILLS IN with the first.",
+    'weather_other': 'see weather_snow: no code outside the named groups (7xx mist, fog, haze) among them. FILLS IN with the first.',
+    'special_suppress': (
+        'holidays.json has no suppress-effect US special night inside the training window (its US nights '
+        'there are boosts). FILLS IN on Thanksgiving Day, 2026-11-26.'),
 }
 
 
@@ -3478,6 +3488,14 @@ def main():
     # side of the parity gate. A warning that mixes those two is a warning nobody
     # can act on. Now each constant column must be named and justified in
     # EXPECTED_SPARSE_FEATURES or the run stops.
+    # cold_outdoor (decided 2026-10-15, before the November export). It may not be
+    # excused as sparse (mlPipelineContracts.test.js: it once hid a Celsius threshold
+    # on a Fahrenheit column), so a training window with no live reading under 41 F
+    # drops it and a window with one keeps it. The rule reads only whether the column
+    # varies, never a score, so it is fixed before the data exist.
+    if 'cold_outdoor' in feature_cols and train_df['cold_outdoor'].nunique(dropna=False) <= 1:
+        drop_features(['cold_outdoor'], 'constant in a training window with no live reading under 41 F')
+        feature_cols = [c for c in feature_cols if c != 'cold_outdoor']
     constant_cols = [c for c in feature_cols if train_df[c].nunique(dropna=False) <= 1]
     dead_slot_record = enforce_dead_slot_contract(constant_cols, feature_cols)
 
