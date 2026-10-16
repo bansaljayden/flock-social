@@ -390,3 +390,22 @@ test('cold_outdoor uses the same Fahrenheit threshold in training and in serving
   assert.match(PREPARE, /units=imperial/,
     'the reason the threshold is 41 has to stay next to the threshold');
 });
+
+test('the November retrain dead slots were decided before its export', () => {
+  // Runbook step 4: the rehearsal on the 10-08 export stopped on five constant
+  // live-only slots, and each choice gives a different model, so the choice is
+  // committed before the data exist. Four are named as sparse; cold_outdoor may
+  // not be (the test above), so it is dropped only when constant in the training
+  // frame, and a window with a live reading under 41 F keeps it.
+  const block = PREPARE.match(/EXPECTED_SPARSE_FEATURES: Dict\[str, str\] = \{([\s\S]*?)^\}/m);
+  assert.ok(block, 'EXPECTED_SPARSE_FEATURES is not a dict literal any more');
+  const names = [...block[1].matchAll(/^\s{4}'([^']+)':/gm)].map((x) => x[1]);
+  for (const n of ['weather_snow', 'weather_thunderstorm', 'weather_other', 'special_suppress']) {
+    assert.ok(names.includes(n), `${n} is no longer named in EXPECTED_SPARSE_FEATURES`);
+  }
+  assert.match(PREPARE,
+    /if 'cold_outdoor' in feature_cols and train_df\['cold_outdoor'\]\.nunique\(dropna=False\) <= 1:\s*\n\s*drop_features\(\['cold_outdoor'\]/,
+    'cold_outdoor must be dropped only when it is constant in the training frame');
+  assert.ok(PREPARE.indexOf("drop_features(['cold_outdoor']") < PREPARE.indexOf('dead_slot_record = enforce_dead_slot_contract('),
+    'the cold_outdoor rule has to run before the dead-slot contract, or a constant cold_outdoor stops the run');
+});
