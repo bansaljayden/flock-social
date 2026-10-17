@@ -796,7 +796,7 @@ describe('the parked events panel is hidden, not merely un-clickable', () => {
     expect(style).toContain("visibility: showEventsView ? undefined : 'hidden'");
   });
 
-  it('it can still be left with a key while it is open', () => {
+  it('can still be left with a key while the panel is open', () => {
     // Conditional on purpose: the wrapper is mounted for the whole session,
     // so an unconditional marker would grab focus at app start.
     expect(code).toContain('{showEventsView && <DialogBehavior modal={false}');
@@ -984,7 +984,7 @@ describe('reduce motion reaches the animations CSS cannot see', () => {
     expect(code).not.toMatch(/import \{[^}]*\bmotion\b[^}]*\} from 'framer-motion'/);
   });
 
-  it('it wraps the app rather than one screen', () => {
+  it('MotionConfig wraps the whole app rather than one screen', () => {
     // A provider below the root reaches only what is under it, and motion
     // components are added in this file all the time.
     const providers = code.slice(code.indexOf('const FlockAppWithProviders'));
@@ -992,7 +992,7 @@ describe('reduce motion reaches the animations CSS cannot see', () => {
     expect(block).toMatch(/<MotionConfig reducedMotion="user">[\s\S]*<FlockApp \/>[\s\S]*<\/MotionConfig>/);
   });
 
-  it('it is "user", not "always" or "never"', () => {
+  it('MotionConfig is set to "user", not "always" or "never"', () => {
     // "always" would strip motion from people who never asked, and "never"
     // is the bug. There must be exactly one declaration and it follows the OS.
     const all = code.match(/reducedMotion="\w+"/g) || [];
