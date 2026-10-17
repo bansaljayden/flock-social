@@ -53,6 +53,8 @@ names kinds of things and cannot tell one person from another.
 | `train.py` | the PC | Trains it, compares it with the rule on held-out frames, exports `people.onnx` |
 | `record.py` | the Pi | Records real frames into `~/flux-training/<room>/`, with consent |
 | `frames.py` | both | The recording file format: one session per file, one frame per line |
+| `score_sealed.py` | the PC | Grades the sealed real-room recordings once, after the model is frozen |
+| `test_score_sealed.py` | the PC | Its checks, on generated frames and made-up counts |
 
 ## Training
 
@@ -91,3 +93,25 @@ they happen. Every frame is a thermal image of whoever is in view, so:
   place. Copy them off the Pi and delete them there.
 - Keep a note of which sessions trained which model, so anyone who asks can
   have their sessions deleted and the model retrained without them.
+
+## Grading a sealed test
+
+Recordings made for the sealed test are counted in the room by two people at a
+beep every 30 seconds, then encrypted, and nobody looks at them until the model
+is frozen. They are graded once:
+
+```bash
+python score_sealed.py --unsealed <dir> --sums <dir> --freeze FREEZE.txt \
+    --models ../models --out <report dir>
+```
+
+Before it reads a frame or a count it refuses if any file differs from its
+SHA256SUMS listing, if the model files or the scorer itself differ from
+FREEZE.txt, or if a report is already there (a rerun needs `--rerun-reason`,
+and keeps both reports). Each count is tied to its beep, the phone and Pi
+clocks are lined up from a palm held over the lens at the start and end, and
+the frame nearest one second after each beep is counted exactly as the sensor
+counts it, by the model and by the rule. It writes `items.csv`, `report.md`,
+`report.json` and `GRADED.lock`: numbers and codes only, never a temperature or
+an image. `python -m unittest test_score_sealed` runs its checks on generated
+frames.
