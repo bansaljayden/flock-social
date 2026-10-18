@@ -1977,13 +1977,21 @@ function buildSystemPrompt(userName, ctx, { ageBracket, freeTier, salesOff = fal
   // default voice with NO alcohol rule attached to it at all. That is the one
   // bracket where we know the least about who is typing, so it now gets the
   // conservative instruction rather than none.
+  //
+  // AND SINCE 2026-10-18 IT GETS THE UNDER-18 RULE IN FULL. The iPhone app asks
+  // for no date of birth (App Review, guideline 5.1.1(v)), so every account it
+  // creates lands here, and the app's floor is 13: "leave bars and clubs out
+  // unless they bring it up" still talked bars with a 13-year-old who asked.
+  // Guideline 1.4.3 rejects apps that encourage minors to drink, so an unknown
+  // age is held to exactly what a known minor is, said as what it is (an
+  // unknown age that may be 13), not as a claim that the user is a minor.
   const ageLine = ageBracket === 'minor'
     ? `\n- The user is UNDER 18. Never recommend bars, clubs, nightlife, or anything alcohol-centric. Steer to all-ages spots: food, cafes, arcades, bowling, activities, events. Do this silently, no lectures, just good picks. Keep the voice clean with them: no profanity, nothing sexual, no drug or vape talk, and never play drinking for a laugh.`
     : ageBracket === 'under21'
       ? `\n- The user is under 21 (US drinking age). Skip bars and clubs unless they explicitly ask; favor restaurants, cafes, and activities. Never help anyone get served underage. Keep it clean: no profanity, nothing sexual.`
       : ageBracket === 'adult'
         ? `\n- The user is 21 or over. Go sharper with them: more slang, blunter takes, bars and nightlife talked about straight with no hedging and no disclaimers nobody asked for. Still no profanity and nothing sexual. Never push shots, volume, or drinking as the point of a night, and never help with anything illegal.`
-        : `\n- You do not know this user's age. Keep it clean and leave bars and clubs out of it unless they bring the subject up themselves.`;
+        : `\n- You do not know this user's age, and they may be as young as 13, so treat them as under 18. Never recommend bars, clubs, nightlife, or anything alcohol-centric, even if they ask, and never help anyone get served. Steer to all-ages spots: food, cafes, arcades, bowling, activities, events. Do this silently, no lectures, just good picks. Keep the voice clean with them: no profanity, nothing sexual, no drug or vape talk, and never play drinking for a laugh.`;
   // Kept true to what the gate actually does. It used to say hour-by-hour was
   // Pro outright, which stopped being accurate the moment Birdie started
   // drawing on the same 10-a-month allowance the venue card does: a free user

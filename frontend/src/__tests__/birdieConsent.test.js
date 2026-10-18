@@ -119,7 +119,7 @@ describe('the panel before the account has said yes', () => {
     // 'your time zone' since every turn carries it, so Birdie knows the date
     // and reads "Friday at 8" on this person's clock (backend routes/ai.js,
     // WHOSE CLOCK BIRDIE PLANS ON).
-    for (const kind of ['your messages to Birdie', 'your first name', 'your age range', 'your time zone', 'what you have open in Flock', 'rounded to about a kilometer', "your friends' names"]) {
+    for (const kind of ['your messages to Birdie', 'your first name', 'your age range if your account has one', 'your time zone', 'what you have open in Flock', 'rounded to about a kilometer', "your friends' names"]) {
       expect(text).toContain(kind);
     }
     expect(text).toMatch(/Your email, your exact location and your chats with friends are not sent/);
@@ -370,7 +370,7 @@ describe('Settings: the answer can be taken back', () => {
     // leaves it out when the device reports no zone, whatever the yes: the
     // zone it reads is only ever the one the turn sent (userZone), which is
     // the condition the privacy policy states too.
-    expect(settings).toContain("it sends Google your messages to Birdie, your first name, your age range, and what you have open in Flock. It also sends your time zone with the date and time it is there, but only when your device reports its time zone. A yes to an earlier version of Birdie's question, which did not name them, keeps them out until you turn this off and on again.");
+    expect(settings).toContain("it sends Google your messages to Birdie, your first name, your age range if your account has one, and what you have open in Flock. It also sends your time zone with the date and time it is there, but only when your device reports its time zone. A yes to an earlier version of Birdie's question, which did not name them, keeps them out until you turn this off and on again.");
   });
 
   test('off and on again is a yes to the question that names the zone', () => {

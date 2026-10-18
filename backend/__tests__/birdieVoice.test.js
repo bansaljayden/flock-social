@@ -194,8 +194,31 @@ test('an unknown age is treated as a reason for caution, not as an adult', () =>
   const prompt = buildSystemPrompt('Jay', {}, { ageBracket: null });
   assert.match(prompt, /You do not know this user's age/,
     'the unknown-age bracket emits no instruction again');
-  assert.match(prompt, /leave bars and clubs out of it/,
-    'the unknown-age bracket no longer withholds nightlife');
+  // Since 2026-10-18 the iPhone app asks for no date of birth, so every account
+  // it creates is an unknown age, and the floor is 13. An unknown age is held to
+  // the under-18 rule in full (App Store Guideline 1.4.3), asked or not.
+  assert.match(prompt, /they may be as young as 13, so treat them as under 18/,
+    'the unknown-age bracket no longer says why it is held to the minor rule');
+  assert.match(prompt, /Never recommend bars, clubs, nightlife, or anything alcohol-centric, even if they ask/,
+    'the unknown-age bracket no longer withholds nightlife when asked');
+  assert.match(prompt, /never help anyone get served/,
+    'the unknown-age bracket lost the underage-service rule');
+  assert.ok(!/The user is UNDER 18/.test(prompt),
+    'an unknown age is not stated as a known minor');
+});
+
+test('the unknown-age bracket carries every restriction the minor bracket does', () => {
+  const minor = buildSystemPrompt('Jay', {}, { ageBracket: 'minor' });
+  const unknown = buildSystemPrompt('Jay', {}, { ageBracket: null });
+  for (const rule of [
+    'Never recommend bars, clubs, nightlife, or anything alcohol-centric',
+    'Steer to all-ages spots: food, cafes, arcades, bowling, activities, events.',
+    'no profanity, nothing sexual, no drug or vape talk',
+    'never play drinking for a laugh',
+  ]) {
+    assert.ok(minor.includes(rule), `the minor bracket lost: ${rule}`);
+    assert.ok(unknown.includes(rule), `the unknown-age bracket lacks: ${rule}`);
+  }
 });
 
 test('edge is scoped to adults; every other bracket is told to stay clean', () => {

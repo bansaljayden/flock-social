@@ -478,7 +478,8 @@ export default function PrivacyPolicy() {
               <p>
                 When you chat with Birdie, what goes to Google to produce the reply is
                 your first name, your age bracket (under 18, under 21, or adult, never
-                your birthday), your messages in that conversation, and, only if you
+                your birthday) if your account has a date of birth, your messages in that
+                conversation, and, only if you
                 have allowed location, your approximate position
                 rounded to about a kilometer. Your time zone and the date and time it
                 is there go too, but only if you said yes to the version of Birdie's
