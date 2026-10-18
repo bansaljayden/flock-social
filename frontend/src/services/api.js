@@ -2061,6 +2061,19 @@ export async function askAdvisorQuestion(question) {
   return data;
 }
 
+// The owner's answer to Roost's question before a typed question goes to
+// Google's Gemini (App Store Guideline 5.1.2(i); backend migration 127).
+// Recorded beside Birdie's answer under /api/ai, because the advisor route
+// has no write path. POST /api/venue/advisor/question refuses with
+// ROOST_CONSENT_REQUIRED until it is given; GET /questions reports it as
+// `aiConsent`.
+export async function grantRoostConsent() {
+  return request('/api/ai/roost-consent', { method: 'POST' });
+}
+export async function withdrawRoostConsent() {
+  return request('/api/ai/roost-consent', { method: 'DELETE' });
+}
+
 // Shareable guest invite link for a flock (guests RSVP + vote, no account).
 //
 // `quiet` asks without counting. invite_link_created counts a member reaching

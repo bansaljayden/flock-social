@@ -206,12 +206,24 @@ const GROUNDED_BLOCK = () => ({
   refusals: [],
 });
 
-function resetAll({ freeText = true, phrasing = true } = {}) {
+// The owner's yes to typed questions going to Gemini (migration 127). Every
+// test below the consent block starts from a yes, because what they pin is
+// what happens AFTER the question; the consent tests set it themselves.
+let roostConsent = '2026-10-18T12:00:00.000Z';
+function installConsent() {
+  handlers.push([/^SELECT roost_ai_consent_at FROM users WHERE id = \$1$/, () => ({
+    rows: [{ roost_ai_consent_at: roostConsent }], rowCount: 1,
+  })]);
+}
+
+function resetAll({ freeText = true, phrasing = true, consent = true } = {}) {
   handlers = [];
   queryLog = [];
   modelCalls = [];
   replies = [];
   ledger = new Map();
+  roostConsent = consent ? '2026-10-18T12:00:00.000Z' : null;
+  installConsent();
   installLedger();
   allowGlobal();
   advisorPhrasing.__resetAdvisorSpend();
@@ -780,6 +792,70 @@ test('GET /questions tells the client whether the field exists, so it never rend
   res = await fetch(`${base}/api/venue/advisor/questions`);
   body = await res.json();
   assert.strictEqual(body.freeText, true);
+});
+
+// ── 6b. The owner's yes before a typed question (Guideline 5.1.2(i)) ─────────
+//
+// A typed question goes to Google's Gemini with the venue's name, numbers and
+// the details the owner filled in. The app asks first (VenueAdvisorChat.js),
+// the answer is users.roost_ai_consent_at (migration 127), and the route holds
+// the line for every client.
+
+test('without the owner\'s yes, a typed question is refused before anything is read, charged or sent', async () => {
+  resetAll({ consent: false });
+  installProfile();
+  replies = ['{"mode":"advice","intentId":null}'];
+  const r = await ask('how do I fill a slow tuesday?');
+  assert.strictEqual(r.status, 403);
+  assert.strictEqual(r.body.code, 'ROOST_CONSENT_REQUIRED');
+  assert.match(r.body.error, /Google's Gemini/);
+  assert.strictEqual(modelCalls.length, 0, 'nothing reached the model');
+  assert.strictEqual(ledger.size, 0, 'no question was charged to the venue');
+  assert.ok(!queryLog.some((q) => /FROM venue_profiles/.test(q.sql)), 'the venue was not even looked up');
+  assert.ok(!queryLog.some((q) => /INSERT INTO advisor_spend/.test(q.sql)), 'the global wall was not touched');
+});
+
+test('with the yes on record, the same route answers', async () => {
+  resetAll({ consent: true });
+  installProfile();
+  const r = await ask('thanks!');
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(r.body.mode, 'small_talk');
+});
+
+test('the yes is not needed when the field is off: nothing would leave anyway', async () => {
+  resetAll({ freeText: false, consent: false });
+  installProfile();
+  const r = await ask('how do I fill a slow tuesday?');
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(r.body.mode, 'refusal');
+  assert.strictEqual(modelCalls.length, 0);
+});
+
+test('GET /questions says whether the owner has said yes, so the app knows to ask', async () => {
+  resetAll({ consent: false });
+  installProfile();
+  let body = await (await fetch(`${base}/api/venue/advisor/questions`)).json();
+  assert.strictEqual(body.freeText, true);
+  assert.strictEqual(body.aiConsent, false);
+
+  resetAll({ consent: true });
+  installProfile();
+  body = await (await fetch(`${base}/api/venue/advisor/questions`)).json();
+  assert.strictEqual(body.aiConsent, true);
+});
+
+test('the chips need no yes: they send computed numbers and a question id, no typed words', async () => {
+  resetAll({ consent: false });
+  installProfile();
+  process.env.ADVISOR_PHRASING_ENABLED = 'false';
+  const res = await fetch(`${base}/api/venue/advisor/ask`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ intentId: 'peak_hours' }),
+  });
+  assert.strictEqual(res.status, 200);
+  assert.ok(!queryLog.some((q) => /roost_ai_consent_at/.test(q.sql)), 'the chip path never reads the answer');
 });
 
 // ── 7. The chips are untouched ──────────────────────────────────────────────

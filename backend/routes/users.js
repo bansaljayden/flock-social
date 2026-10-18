@@ -2850,7 +2850,7 @@ router.get('/export', async (req, res) => {
               reliability_score, total_plans_joined, total_plans_attended,
               created_at, updated_at, password,
               phone_discoverable, phone_discoverable_at, grace_forfeited, friend_code,
-              birdie_ai_consent_at, birdie_ai_consent_copy, analytics_opt_out
+              birdie_ai_consent_at, birdie_ai_consent_copy, roost_ai_consent_at, analytics_opt_out
          FROM users WHERE id = $1`,
       [userId]
     );
@@ -3141,6 +3141,10 @@ router.get('/export', async (req, res) => {
         // 122): 2 for the first that names the time zone, null for an earlier
         // one or none on record. Part of the same consent record.
         birdie_ai_consent_copy: account.birdie_ai_consent_copy ?? null,
+        // When the venue owner allowed Roost to send typed questions to
+        // Google's Gemini, or null (migration 127). A consent record, like
+        // Birdie's above.
+        roost_ai_consent_at: account.roost_ai_consent_at ?? null,
         // Whether the account switched off "Share usage analytics" (migration
         // 111). A choice the user made, so it is theirs to see.
         analytics_opt_out: account.analytics_opt_out ?? false,

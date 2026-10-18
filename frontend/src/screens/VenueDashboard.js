@@ -61,6 +61,8 @@ import {
   deleteVenuePromotion,
   getAdvisorQuestions,
   getVenueAdvisorCards,
+  grantRoostConsent,
+  withdrawRoostConsent,
   replyToReview,
   updateVenueEvent,
   updateVenueProfile,
@@ -1400,7 +1402,7 @@ export default function VenueDashboard({
           {/* Roost chat: suggested questions, plus a field the owner can type into.
               Grounded answers come from the same fact engine as the cards above;
               advice is labeled as advice; anything else is refused. */}
-          <VenueAdvisorChat fetchQuestions={getAdvisorQuestions} ask={askAdvisor} askQuestion={askAdvisorQuestion} colors={colors} />
+          <VenueAdvisorChat fetchQuestions={getAdvisorQuestions} ask={askAdvisor} askQuestion={askAdvisorQuestion} grantConsent={grantRoostConsent} withdrawConsent={withdrawRoostConsent} colors={colors} />
 
           {/* Week ahead — projected peak per evening */}
           {intelReady && venueIntel.week?.length > 0 && (

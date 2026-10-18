@@ -262,6 +262,7 @@ export default function PrivacyPolicy() {
                 <li><strong>Year of birth (website sign-up only):</strong> collected when you create an account on our website, so we can confirm you're 13 or older. We ask for the year only. The check runs on our server, which works out your age from that year in the one way that can only ever count you as younger, so nobody under the minimum gets through on a rounding. The Flock iPhone app does not ask for your year or date of birth; it relies on the App Store's 13+ age rating. Accounts created before 15 September 2026 gave a full date of birth, and an account with no date on file is asked for the full date the next time it signs in on our website; either is used for the same age check and for nothing else.</li>
                 <li><strong>Your acceptance of the terms:</strong> we store the moment you agreed to the Terms of Service, so both of us know what you agreed to and when.</li>
                 <li><strong>Your answer to Birdie's question:</strong> before Birdie sends anything to Google, the app asks whether it may. We store the moment you said yes and which version of the question you answered, because Birdie sends only what that version named. Turning off "Let Birdie use Google's Gemini" in your settings erases both.</li>
+                <li><strong>Your answer to Roost's question (venue owners):</strong> before Roost sends a question you type to Google, the app asks whether it may. We store the moment you said yes. Turn off, under Roost's question box, erases it.</li>
                 <li><strong>Interests:</strong> the tags you pick on your profile, such as live music or trivia. They are kept on your device and synced to your account so a second device agrees with the first.</li>
                 <li><strong>Trusted contacts:</strong> if you add emergency contacts, we store the name, phone, email, and relationship you give us. Your trusted contacts get SOS alerts by <strong>email only</strong>. If you stand an alert down, an all-clear email goes to exactly the contacts your alert reached, including through any update to it, and it carries no location. We store the phone number because the form asks for it and you may want it on file, but nothing in Flock texts or calls it.</li>
                 <li><strong>Messages and content:</strong> flock chat messages, direct messages, emoji reactions, images you upload, venue reviews you write.</li>
@@ -532,7 +533,8 @@ export default function PrivacyPolicy() {
                 inside the same request. It is capped at 280 characters and stripped of
                 control characters first. It is used to route your question and, where the
                 answer is general trade advice rather than a reading of your own numbers, to
-                write that advice.
+                write that advice. The app asks first, and nothing you type is sent until you
+                say yes.
               </p>
               <p>
                 What Roost does not send: nothing about any Flock user. No consumer's name,

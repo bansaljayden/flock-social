@@ -1,0 +1,30 @@
+-- 127: when a venue owner agreed to Roost sending typed questions to Google's Gemini.
+--
+-- ASCII only, like 065, 091-096 and 100: the embedded server the boot-safety
+-- suite runs is WIN1252.
+--
+-- WHY. A question an owner types into Roost goes to a third-party model with
+-- their venue's name, its numbers and the venue details they filled in,
+-- including their own notes. App Store Guideline 5.1.2(i) asks for explicit
+-- permission before personal data is shared with a third-party AI, and Roost
+-- asked nothing before the first typed question. Birdie's answer (migration
+-- 100) is not reused: it is a yes to a different question about different
+-- data, and a yes to one must not stand in for the other.
+--
+-- WHO WRITES IT. POST /api/venue/advisor/consent sets it to NOW() when the owner
+-- taps Allow on the card before their first typed question; DELETE sets it back
+-- to NULL. Nothing else writes it.
+--
+-- WHO READS IT. POST /api/venue/advisor/question refuses with 403
+-- ROOST_CONSENT_REQUIRED while it is NULL, before any meter is charged or any
+-- byte reaches Gemini. Every client is held to it: the tapped questions (chips)
+-- send the venue's computed numbers only and are not gated. GET
+-- /api/venue/advisor/questions returns it so the app knows whether to ask. The
+-- data export carries it.
+--
+-- ADDITIVE. A nullable column with no default is a catalog change: no rewrite,
+-- no scan, and every existing row reads NULL, which is the truth for all of
+-- them, since nobody has been asked yet. A replay is a no-op.
+-- @requires column users.roost_ai_consent_at
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS roost_ai_consent_at TIMESTAMPTZ;

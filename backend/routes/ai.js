@@ -2205,6 +2205,45 @@ router.delete('/consent', async (req, res) => {
   }
 });
 
+// ROOST'S QUESTION (migration 127). A question a venue owner types into Roost
+// goes to Gemini with the venue's name, its numbers and the venue details the
+// owner filled in, notes included, so Roost asks before the first typed
+// question (frontend components/VenueAdvisorChat.js), and POST
+// /api/venue/advisor/question refuses with ROOST_CONSENT_REQUIRED until this
+// is set. Its own column: a yes to Birdie's question is a yes to different
+// data, and must not stand in for this one. It lives here, beside Birdie's
+// answer, because routes/advisor.js has no write path by design
+// (advisorCards.test.js pins that), and recording a person's answer is not
+// something the advisor does. GET /api/venue/advisor/questions reports it.
+router.post('/roost-consent', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'UPDATE users SET roost_ai_consent_at = COALESCE(roost_ai_consent_at, NOW()) WHERE id = $1 RETURNING roost_ai_consent_at',
+      [req.user.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Account not found' });
+    res.json(consentBody(result.rows[0].roost_ai_consent_at));
+  } catch (err) {
+    console.error('Roost consent grant error:', err);
+    res.status(500).json({ error: 'That did not save. Try again.' });
+  }
+});
+
+// Withdraw. Typed questions stop at the next one, and the card asks again.
+router.delete('/roost-consent', async (req, res) => {
+  try {
+    const result = await pool.query(
+      'UPDATE users SET roost_ai_consent_at = NULL WHERE id = $1 RETURNING id',
+      [req.user.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Account not found' });
+    res.json(consentBody(null));
+  } catch (err) {
+    console.error('Roost consent withdraw error:', err);
+    res.status(500).json({ error: 'That did not save. Try again.' });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // POST /api/ai/chat — Main chat endpoint (Gemini with function calling)
 // ---------------------------------------------------------------------------

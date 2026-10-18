@@ -518,7 +518,7 @@ const hasKeyboardPointer = () => {
   }
 };
 
-const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
+const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, grantConsent, withdrawConsent, colors }) => {
   const navy = colors?.navy || 'var(--text-primary)';
   const navyBg = colors?.navyBg || navy;
   // 'loading' | 'ready' | 'locked' | 'error'
@@ -527,6 +527,17 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
   const [lead, setLead] = useState([]);
   const [groups, setGroups] = useState([]);
   const [freeText, setFreeText] = useState(false);
+  // ASKED BEFORE THE FIRST TYPED QUESTION (App Store Guideline 5.1.2(i)). A
+  // typed question goes to Google's Gemini with the venue's name, numbers and
+  // the details the owner filled in, so the composer is replaced by a question
+  // naming all of that until the owner says yes, and the server refuses typed
+  // questions without the yes on its own (ROOST_CONSENT_REQUIRED). The chips
+  // send no typed words and stay usable either way. `aiConsent` is the
+  // server's record, read on /questions; an absent value is read as no.
+  const [aiConsent, setAiConsent] = useState(false);
+  const [consentDeclined, setConsentDeclined] = useState(false);
+  const [consentBusy, setConsentBusy] = useState(false);
+  const [consentError, setConsentError] = useState('');
   // The server's one sentence for a venue it will not answer yet (unverified
   // or unlinked), in place of a menu of chips that all refused.
   const [offReason, setOffReason] = useState('');
@@ -593,6 +604,9 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
     setLead([]);
     setGroups([]);
     setFreeText(false);
+    setAiConsent(false);
+    setConsentDeclined(false);
+    setConsentError('');
     setLockedReason(null);
     setShowMore(false);
     setShowChips(false);
@@ -676,6 +690,7 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
       setLead(Array.isArray(data?.lead) && data.lead.length ? data.lead : flat.slice(0, 4));
       setGroups(Array.isArray(data?.lead) ? grouped : []);
       setFreeText(!!data?.freeText && typeof askQuestion === 'function');
+      setAiConsent(data?.aiConsent === true);
       setOffReason(typeof data?.reason === 'string' ? data.reason : '');
       setState('ready');
     } catch (err) {
@@ -794,6 +809,17 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
       setThread((t) => t.map((turn) => (turn.key === key ? { ...turn, status: 'done', answer } : turn)));
     } catch (err) {
       if (!alive.current || !stillMine()) return;
+      // The server has no yes on record for typed questions (this card's state
+      // was stale, or the yes was withdrawn on another device). Nothing was
+      // sent to Google. The turn comes back out of the thread, the words go
+      // back in the box, and the question is shown in the composer's place.
+      if (Number(err?.status) === 403 && err?.data?.code === 'ROOST_CONSENT_REQUIRED') {
+        setThread((t) => t.filter((turn) => turn.key !== key));
+        if (typed) setDraft(question);
+        setAiConsent(false);
+        setConsentDeclined(false);
+        return;
+      }
       // The server's own sentence for a refusal (too short, too many this
       // hour, plan, not connected yet) used to be thrown away for "That did
       // not go through. Try again", with a Try again that could not work
@@ -847,6 +873,48 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
 
   // One value for the send control's look and its behaviour.
   const canAsk = !busy && freeText && draft.trim().length > 0;
+
+  // The question in the composer's place: drawn while typed questions are on
+  // and the owner has not said yes, unless they chose Not now. Without a way
+  // to record the answer (a caller that passes no grantConsent) there is no
+  // card, and the server's own refusal answers in the thread instead.
+  const canRecordConsent = typeof grantConsent === 'function';
+  const askingConsent = freeText && !aiConsent && canRecordConsent;
+
+  const allowTypedQuestions = useCallback(async () => {
+    if (consentBusy || typeof grantConsent !== 'function') return;
+    setConsentBusy(true);
+    setConsentError('');
+    try {
+      const res = await grantConsent();
+      if (!alive.current) return;
+      if (res && res.consented === false) throw new Error('not recorded');
+      setAiConsent(true);
+      setConsentDeclined(false);
+    } catch (err) {
+      if (!alive.current) return;
+      setConsentError('That did not save. Try again.');
+    } finally {
+      if (alive.current) setConsentBusy(false);
+    }
+  }, [consentBusy, grantConsent]);
+
+  const stopTypedQuestions = useCallback(async () => {
+    if (consentBusy || typeof withdrawConsent !== 'function') return;
+    setConsentBusy(true);
+    setConsentError('');
+    try {
+      await withdrawConsent();
+      if (!alive.current) return;
+      setAiConsent(false);
+      setConsentDeclined(false);
+    } catch (err) {
+      if (!alive.current) return;
+      setConsentError('That did not save. Try again.');
+    } finally {
+      if (alive.current) setConsentBusy(false);
+    }
+  }, [consentBusy, withdrawConsent]);
 
   const retry = useCallback((turn) => {
     // The same guard askIntent and submitQuestion have. Without it a tap on
@@ -1038,7 +1106,63 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
           the server declines free text the box stays and goes quiet, with the
           server's reason under it, because an owner who can see a disabled
           field knows the feature exists and knows why it is not answering,
-          and an owner shown nothing at all knows neither. */}
+          and an owner shown nothing at all knows neither.
+
+          Until the owner says yes to typed questions going to Google's Gemini
+          (askingConsent above), the question takes the composer's place. Not
+          now leaves the chips working and puts a single line here that brings
+          the question back. */}
+      {askingConsent && !consentDeclined && (
+        <div
+          role="group"
+          aria-labelledby="roost-consent-title"
+          data-roost="consent"
+          style={{ marginTop: '12px', padding: '12px', borderRadius: '14px', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-hover)' }}
+        >
+          <p id="roost-consent-title" style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: navy, margin: 0 }}>
+            Before {name} answers typed questions
+          </p>
+          <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '6px 0 0', lineHeight: 1.5 }}>
+            {name} writes its answers with Google's Gemini. To answer a question you type, {name} sends Google your question, your venue's name and numbers, and the venue details you filled in, including your notes.
+          </p>
+          <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '6px 0 0', lineHeight: 1.5 }}>
+            Your name and your email are not sent. Answers are generated and can be wrong. The suggested questions work either way.
+          </p>
+          {consentError && (
+            <p role="alert" style={{ fontSize: 'var(--t-meta)', color: 'var(--accent-red-text)', fontWeight: '600', margin: '8px 0 0' }}>{consentError}</p>
+          )}
+          <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
+            <button
+              type="button"
+              className="hit44"
+              onClick={() => { setConsentDeclined(true); setConsentError(''); }}
+              disabled={consentBusy}
+              style={{ flex: 1, padding: '10px', borderRadius: '10px', border: '1px solid var(--border-default)', background: 'var(--bg-card-solid)', color: 'var(--text-primary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: consentBusy ? 'default' : 'pointer' }}
+            >
+              Not now
+            </button>
+            <button
+              type="button"
+              className="hit44"
+              onClick={allowTypedQuestions}
+              disabled={consentBusy}
+              style={{ flex: 1, padding: '10px', borderRadius: '10px', border: 'none', background: navyBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: consentBusy ? 'wait' : 'pointer', opacity: consentBusy ? 0.6 : 1 }}
+            >
+              {consentBusy ? 'Saving…' : 'Allow'}
+            </button>
+          </div>
+          <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '8px 0 0', lineHeight: 1.45 }}>
+            You can turn this off later, under the question box.
+          </p>
+        </div>
+      )}
+      {askingConsent && consentDeclined && (
+        <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '12px 0 0', lineHeight: 1.5 }}>
+          Typed questions are off until you say yes.{' '}
+          <button type="button" onClick={() => setConsentDeclined(false)} style={QUIET_LINK_STYLE}>Ask a typed question</button>
+        </p>
+      )}
+      {!askingConsent && (
       <form onSubmit={submitQuestion} style={{ marginTop: '12px' }}>
         <div
           style={{
@@ -1147,7 +1271,16 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, colors }) => {
             {FREE_TEXT_OFF_NOTE}
           </p>
         )}
+        {/* The way back out of the yes, where the card said it would be. */}
+        {freeText && aiConsent && typeof withdrawConsent === 'function' && (
+          <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '5px 0 0', lineHeight: 1.5 }}>
+            Typed questions go to Google's Gemini.{' '}
+            <button type="button" onClick={stopTypedQuestions} disabled={consentBusy} style={QUIET_LINK_STYLE}>Turn off</button>
+            {consentError && <span role="alert" style={{ color: 'var(--accent-red-text)', fontWeight: '600' }}>{` ${consentError}`}</span>}
+          </p>
+        )}
       </form>
+      )}
     </div>
   );
 };

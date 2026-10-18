@@ -660,6 +660,24 @@ async function availableIntents(ctx) {
 // sentences and a phone that shows five shows a wall.
 const LEAD_CHIP_COUNT = 4;
 
+// TYPED QUESTIONS NEED THE OWNER'S OK FIRST (App Store Guideline 5.1.2(i)).
+// A typed question goes to Google's Gemini with the venue's name, its numbers
+// and the details the owner filled in, notes included, which is personal data
+// sent to a third-party AI. The app asks before the first one, and the answer
+// is users.roost_ai_consent_at (migration 127), recorded by POST
+// /api/ai/roost-consent: this file has no write path. /question refuses
+// without it, before any meter is charged or any byte leaves, for every
+// client; /questions reports it so the app knows to ask. The chips are not
+// gated: they send the venue's computed numbers and a question id, no words
+// anybody typed (privacy policy, "Roost, the advisor for venue owners").
+const ROOST_CONSENT_REQUIRED = 'ROOST_CONSENT_REQUIRED';
+const ROOST_CONSENT_MESSAGE = `${FEATURE_NAME} needs your OK before it sends a typed question to Google's Gemini.`;
+
+async function roostConsentAt(userId) {
+  const r = await pool.query('SELECT roost_ai_consent_at FROM users WHERE id = $1', [userId]);
+  return r.rows[0] ? r.rows[0].roost_ai_consent_at || null : null;
+}
+
 // The chips, plus the free-text field's own availability. Pro-gated like the
 // rest of the surface so the question list cannot advertise a feature the
 // caller's plan does not serve. `name` is the product name, served so a rename
@@ -698,9 +716,13 @@ router.get('/questions', authenticate, requirePro, async (req, res) => {
         .map(chip),
     })).filter((g) => g.questions.length > 0);
 
+    const freeText = advisorFreeText.freeTextAvailable();
     return res.json({
       name: advisorPhrasing.ADVISOR_NAME,
-      freeText: advisorFreeText.freeTextAvailable(),
+      freeText,
+      // Whether the owner has said yes to typed questions going to Gemini
+      // (ROOST_CONSENT_REQUIRED above). Read only when the field exists.
+      aiConsent: freeText ? Boolean(await roostConsentAt(req.user.id)) : false,
       lead: lead.map(chip),
       groups,
     });
@@ -798,6 +820,14 @@ router.post('/question', authenticate, requirePro, async (req, res) => {
     // rather than half working.
     if (!advisorFreeText.freeTextAvailable()) {
       return res.json({ mode: 'refusal', text: FREETEXT_OFF, sources: [], question: clean.text });
+    }
+
+    // NO RECORDED YES, NOTHING LEAVES. Read before the venue lookup, the
+    // meters and both model calls, so a refused question costs the owner none
+    // of their daily questions and sends Google nothing. `code` is what the
+    // app answers by showing the question (ROOST_CONSENT_REQUIRED above).
+    if (!(await roostConsentAt(req.user.id))) {
+      return res.status(403).json({ error: ROOST_CONSENT_MESSAGE, code: ROOST_CONSENT_REQUIRED });
     }
 
     const buildFactBlock = factEngine();
