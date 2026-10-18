@@ -403,7 +403,18 @@ workflows:
           # syntax error the parser reports far from its cause.
           PROFILE_DIR_OLD="$HOME/Library/MobileDevice/Provisioning Profiles"
           PROFILE_DIR_NEW="$HOME/Library/Developer/Xcode/UserData/Provisioning Profiles"
-          DECODED=/tmp/flock-provisioning-profile.plist
+          # A FILE OF THIS RUN'S OWN, NOT ONE FIXED PATH (2026-10-18). Every
+          # profile is decoded here and read back a moment later, and with one
+          # shared name two runs on one machine overwrite each other's decode
+          # in between: a good profile reads as stale, a stale one as good.
+          # A Codemagic machine runs one build at a time, so only the test
+          # suite that runs this body ever saw it, failing a different case
+          # each time. `mktemp -d` is the same call on macOS and in Git Bash,
+          # and a private directory keeps the rest as it was: nothing exists
+          # at the decoded path until the first `security cms -D` writes it.
+          DECODED_DIR=$(mktemp -d /tmp/flock-provisioning-profile.XXXXXX)
+          trap 'rm -rf "$DECODED_DIR"' EXIT
+          DECODED="$DECODED_DIR/profile.plist"
           # See the note in the plist step above: named so this body can be run
           # off a Mac by frontend/src/__tests__/codemagicShellSteps.test.js.
           PLIST_BUDDY="${PLIST_BUDDY:-/usr/libexec/PlistBuddy}"

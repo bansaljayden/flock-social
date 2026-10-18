@@ -42,7 +42,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawnSync } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 
 const REPO = path.resolve(__dirname, '..', '..', '..');
 const FIXTURES = path.join(__dirname, 'fixtures', 'codemagic');
@@ -175,14 +175,14 @@ function sandbox() {
 }
 
 /**
- * Runs one of the step bodies against a freshly built sandbox.
+ * Builds a fresh sandbox and the environment one of the step bodies runs in.
  *
  * The environment is BUILT, not inherited: every REACT_APP_* and
  * GOOGLE_SERVICE_INFO_PLIST that happens to be set on the machine running the
  * suite would otherwise decide the answer, and a developer with a real
  * frontend/.env would get different results from CI.
  */
-function run(step, opts = {}) {
+function prepare(step, opts = {}) {
   const box = sandbox();
   const scriptPath = path.join(box.root, 'step.sh');
   fs.writeFileSync(scriptPath, step.body, 'utf8');
@@ -221,7 +221,11 @@ function run(step, opts = {}) {
     BUNDLE_ID,
     ...(opts.env || {}),
   };
+  return { box, scriptPath, env };
+}
 
+function run(step, opts = {}) {
+  const { box, scriptPath, env } = prepare(step, opts);
   const r = spawnSync(SH, [fwd(scriptPath)], { cwd: box.cwd, env, encoding: 'utf8' });
   if (r.error) throw r.error;
   return {
@@ -229,6 +233,22 @@ function run(step, opts = {}) {
     out: `${r.stdout || ''}${r.stderr || ''}`,
     plist: () => fs.readFileSync(path.join(box.work, 'GoogleService-Info.plist'), 'utf8'),
   };
+}
+
+// The same run, started without waiting for it, so several can be in flight
+// at once the way two checkouts running this suite on one machine are.
+function runAsync(step, opts = {}) {
+  const { box, scriptPath, env } = prepare(step, opts);
+  return new Promise((resolve, reject) => {
+    const child = spawn(SH, [fwd(scriptPath)], { cwd: box.cwd, env });
+    let out = '';
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', (d) => { out += d; });
+    child.stderr.on('data', (d) => { out += d; });
+    child.on('error', reject);
+    child.on('close', (code) => resolve({ code, out }));
+  });
 }
 
 // The step bodies really were extracted, and they really are the ones with the
@@ -578,6 +598,34 @@ describe(s('the provisioning profile step, run'), () => {
       expect({ buddyErr, code: r.code }).toEqual({ buddyErr, code: 1 });
       expect(r.out).toContain(`  STALE, missing: ${DOMAINS}`);
     }
+  });
+
+  // THE FLAKE, PINNED (2026-10-18). The step decoded every profile to one fixed
+  // path, /tmp/flock-provisioning-profile.plist, and read it back with
+  // PlistBuddy a moment later. Two runs on one machine (this suite inside a
+  // pre-push hook while a second checkout ran it too) overwrote each other's
+  // decoded profile between those two moments, so a good profile was read as
+  // stale or a stale one as good, and a different case in this block failed
+  // each time. A Codemagic machine runs one build, which is why only this
+  // suite ever saw it. mktemp -d gives every run a directory of its own.
+  shellTest('runs on one machine at the same time never read each other\'s profile', async () => {
+    const runs = Array.from({ length: 8 }, (_, i) => (i % 2 === 0
+      ? { profile: GOOD, want: 0 }
+      : { profile: STALE, want: 1 }));
+    const results = await Promise.all(runs.map(({ profile }) => runAsync(PROFILE_STEP, {
+      files: { 'App.entitlements': fixture('entitlements-complete.plist') },
+      profiles: { 'aaaa.mobileprovision': profile },
+    })));
+    results.forEach((r, i) => {
+      expect({ run: i, code: r.code }).toEqual({ run: i, code: runs[i].want });
+    });
+  }, 120000);
+
+  test('the decoded profile goes to a file of its own, not a shared path', () => {
+    expect(PROFILE_STEP.body).toMatch(/^DECODED_DIR=\$\(mktemp -d [^)]*XXXXXX\)$/m);
+    expect(PROFILE_STEP.body).toMatch(/^trap 'rm -rf "\$DECODED_DIR"' EXIT$/m);
+    expect(PROFILE_STEP.body).toMatch(/^DECODED="\$DECODED_DIR\/profile\.plist"$/m);
+    expect(PROFILE_STEP.body).not.toMatch(/^DECODED=\/tmp\//m);
   });
 });
 
