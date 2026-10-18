@@ -22,11 +22,12 @@
  *
  * THIS RUN COSTS MONEY. The backend child keeps the real external API keys
  * on purpose, which is what makes the screens real, and `discover` and `crowd`
- * both perform live Google Places searches. A capture is therefore not free and
- * not idempotent: running it in a loop while iterating spends quota on a key
- * whose photo cache has already been the subject of one cost incident. Use
- * --only to drive the one screen you are working on, and expect discover and
- * crowd to be the two that fail first when the API pushes back.
+ * both perform live Google Places searches (Birdie a Gemini call). A capture is
+ * therefore not free and not idempotent: running it in a loop while iterating
+ * spends quota. Use --only to drive the one screen you are working on, and
+ * expect discover and crowd to be the two that fail first when the API pushes
+ * back. Venue photos cost nothing: the browser never asks the photo proxy, it
+ * is answered with drawings (shot-art.mjs).
  *
  * PRODUCTION SAFETY (read before touching):
  *   - The database is an embedded Postgres in a temp dir, created fresh every
@@ -64,6 +65,7 @@ import net from 'node:net';
 import http from 'node:http';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
+import { installVenueArt, setVenueArtTheme, refreshVisibleVenueArt } from './shot-art.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FRONTEND_DIR = path.resolve(__dirname, '..');
@@ -286,12 +288,15 @@ export { backendEnv }; // exported for eyeballing in a REPL, nothing imports it
 // 3. Seed. The reviewer seed script gives auth-safe accounts; everything else
 //    here writes the rows that make screens look inhabited. All content is
 //    invented and neutral: no real people, no real venue names in seeded rows.
-//    (The venue MAP intentionally shows live Google Places results, which is
-//    exactly what the shipping app shows.)
+//    (The venue MAP and search intentionally show live Google Places results,
+//    which is what the shipping app shows, but every venue picture is a drawing
+//    from shot-art.mjs: no Places photo is ever captured.)
 // ---------------------------------------------------------------------------
 const DEMO = {
   password: 'Screenshot1',
-  camera: { email: 'maya@shots.flock.local', name: 'Judge' },
+  // The Nest greets the camera account by its first name, in the first App
+  // Store screenshot, so that set gets an ordinary one.
+  camera: { email: 'maya@shots.flock.local', name: SET === 'appstore' ? 'Maya Chen' : 'Judge' },
   friends: [
     { email: 'jordan@shots.flock.local', name: 'Jordan Avery' },
     { email: 'sam@shots.flock.local', name: 'Sam Rivera' },
@@ -300,12 +305,14 @@ const DEMO = {
   ],
   owner: { email: 'owner@shots.flock.local', name: 'Copper Finch Owner' },
   flockName: 'Friday Night Crew',
-  // Invented venue used in chat cards, votes, and the owner dashboard.
+  // Invented venue used in chat cards, votes, and the owner dashboard. A burger
+  // and wings place rather than a bar: it is in the chat screenshot of the App
+  // Store set, which has to suit a 4+ audience (Guideline 2.3.8).
   venue: {
     name: 'The Copper Finch',
     placeId: 'shots_copper_finch_0001',
     addr: '214 Main St',
-    category: 'Bar & grill',
+    category: 'Burgers & wings',
   },
   rivalVenueName: 'Juniper Bowl',
   // The plan the `made` scenario creates through the real form.
@@ -394,7 +401,7 @@ async function seed(dbUrl) {
     name: DEMO.venue.name,
     addr: DEMO.venue.addr,
     category: DEMO.venue.category,
-    type: 'bar',
+    type: 'restaurant',
     stars: 4.6,
     rating: 4.6,
     price: '$$',
@@ -403,11 +410,9 @@ async function seed(dbUrl) {
     // Without this the card falls through to /marks/venue-placeholder.jpg, the
     // sparrow, and every screenshot of the vote flow shipped showing a bird
     // where a venue photo belongs. The Copper Finch is invented, so it has no
-    // Google Places photo to fetch; this is a local demo still. A relative path
-    // is correct here because resolveVenuePhoto only prefixes the API origin
-    // for paths beginning "/api/".
+    // Google Places photo to fetch.
     //
-    // THE IMAGE IS GENERATED, AND IT HAS TO BE. The first version of this line
+    // THE IMAGE IS DRAWN, AND IT HAS TO BE. The first version of this line
     // pointed at a Places photo of a real Allentown bar, captured out of the
     // running app and cropped into the repo. That is wrong three times over and
     // none of them are about whether the business is recognisable: the photo is
@@ -418,8 +423,15 @@ async function seed(dbUrl) {
     // inside every Capacitor binary, and pushed to the repository, i.e.
     // redistributed and cached for ever. These screenshots also feed the
     // marketing site, so the photo would have been baked into those too.
-    // Replace this file only with art Flock owns outright.
-    photo_url: '/marks/venue-demo-bar.jpg',
+    //
+    // Its replacement, public/marks/venue-demo-bar.jpg, was a bar interior with
+    // the bottle shelves in view, which the App Store set cannot show either.
+    // So the card now points at the photo proxy with a ref of its own, and the
+    // rig answers that request, like every other venue photo, with a drawing
+    // from shot-art.mjs (the burger). resolveVenuePhoto prefixes the API origin
+    // for paths beginning "/api/", which is what routes it there. Outside the
+    // rig the proxy finds no such ref and the card shows the sparrow.
+    photo_url: '/api/venues/photo?ref=shots-copper-finch&maxwidth=400',
   };
   const msgs = [
     [jordan, 'ok who is actually free friday', 'text', null, 55],
@@ -499,13 +511,13 @@ async function seed(dbUrl) {
   // ---- Venue owner side ----------------------------------------------------
   await q(
     `INSERT INTO venue_profiles (user_id, business_name, category, location, description, google_place_id, verified, tier, operating_hours)
-     VALUES ($1,$2,'Bar & grill','214 Main St','Wings, burgers, and a long bar. Busiest after 9.',$3,TRUE,'free','[]')
+     VALUES ($1,$2,'Burgers & wings','214 Main St','Wings, burgers and tables for big groups. Busiest after 7.',$3,TRUE,'free','[]')
      ON CONFLICT (user_id) DO UPDATE SET google_place_id = EXCLUDED.google_place_id, verified = TRUE`,
     [owner, DEMO.venue.name, DEMO.venue.placeId]
   );
   await q(
     `INSERT INTO venue_promotions (venue_user_id, google_place_id, title, description, time_slot, days, active)
-     VALUES ($1,$2,'Half-price wings','Every order of wings is half price at the bar.','9 PM to close','Thu, Fri, Sat',TRUE)`,
+     VALUES ($1,$2,'Half-price wings','Every order of wings is half price.','9 PM to close','Thu, Fri, Sat',TRUE)`,
     [owner, DEMO.venue.placeId]
   );
   const reviews = [
@@ -540,11 +552,11 @@ async function seed(dbUrl) {
 
   // ML corpus entry + 168-hour baseline for the demo venue, so the crowd
   // pipeline treats it as a known venue with an evening-peaked week. Values
-  // are a plausible bar curve; the numbers rendered are whatever the real
-  // predictor computes from these rows.
+  // are a plausible curve for a busy evening restaurant; the numbers rendered
+  // are whatever the real predictor computes from these rows.
   await q(
     `INSERT INTO ml_venues (google_place_id, name, address, city, latitude, longitude, venue_category, timezone, rating, review_count)
-     VALUES ($1,$2,$3,'Bethlehem',40.6259,-75.3705,'bar','America/New_York',4.6,182)
+     VALUES ($1,$2,$3,'Bethlehem',40.6259,-75.3705,'restaurant','America/New_York',4.6,182)
      ON CONFLICT (google_place_id) DO NOTHING`,
     [DEMO.venue.placeId, DEMO.venue.name, DEMO.venue.addr]
   );
@@ -976,6 +988,8 @@ const GUEST_SCREENS = new Set(['guestlink']);
 /* Open Discover and wait for the pins and their photos. Shared by the three
    Discover captures. */
 async function openDiscoverPins(page) {
+    // A map of every kind of place: every picture in the pool.
+    setVenueArtTheme(page.context(), null);
     await tab(page, 'Discover').click();
     await page.getByText('Finding venues near you...').waitFor({ state: 'detached', timeout: 45000 }).catch(() => {});
     await page.locator('.mlb-venue-marker').first().waitFor({ timeout: 45000 });
@@ -1090,6 +1104,12 @@ async function auditMap(page, zoom, { label, animate = false } = {}) {
   if (failures.length) throw new Error(`${label}: ${failures.join('; ')}`);
 }
 
+/* What the crowd and Birdie screens ask for. Both are App Store shots, which
+   must suit a 4+ audience whatever the app's rating (Guideline 2.3.8), so
+   neither asks about bars or drinks. */
+const CROWD_SEARCH = 'pizza';
+const BIRDIE_ASK = 'Dinner for six tonight in Philadelphia, somewhere with big tables?';
+
 const DRIVERS = {
   async nest(page) {
     await tab(page, 'Nest').click();
@@ -1102,7 +1122,8 @@ const DRIVERS = {
     await page.getByText('Start a flock').first().click();
     const name = page.locator('#flock-name-input');
     await name.waitFor({ timeout: 10000 });
-    await name.fill('Friday Night Out');
+    // No weekday in the name: the shot taps "Tonight", whatever day it is.
+    await name.fill('Night Out');
     // Pick a night + time when the quick chips exist, so the form reads
     // half-filled the way a real user leaves it.
     for (const label of ['Tonight', '9 PM']) {
@@ -1141,15 +1162,18 @@ const DRIVERS = {
     await settle(page, { quiet: 2500 });
   },
   async crowd(page) {
+    // Pictures that fit a list of pizza places.
+    setVenueArtTheme(page.context(), ['pizza', 'storefront', 'dining-room']);
     await tab(page, 'Discover').click();
     await page.getByText('Finding venues near you...').waitFor({ state: 'detached', timeout: 45000 }).catch(() => {});
     const search = page.locator('#search-input');
     await search.waitFor({ timeout: 15000 });
     // Typing fires the debounced venue search, which then fires the crowd
     // batch for the first 20 results. The percentages live in the full-screen
-    // results overlay behind "See All Results".
+    // results overlay behind "See All Results". The search is for pizza, not
+    // bars: this is an App Store shot, and those must suit a 4+ audience.
     const batch = page.waitForResponse((r) => r.url().includes('/api/crowd/batch'), { timeout: 60000 }).catch(() => null);
-    await search.fill('bars');
+    await search.fill(CROWD_SEARCH);
     await batch;
     await page.getByText(/See All Results/).first().click();
     /* The crowd pill, by its accessible name rather than by a percent sign.
@@ -1161,8 +1185,13 @@ const DRIVERS = {
     await page.getByLabel(/out of 100/).first().waitFor({ timeout: 30000 });
     await page.evaluate(() => document.activeElement && document.activeElement.blur());
     await settle(page, { quiet: 1500 });
+    // Neighbouring rows get different pictures, in the order they are shown.
+    await refreshVisibleVenueArt(page);
+    await settle(page, { quiet: 800 });
   },
   async birdie(page) {
+    // Pictures that fit an answer about dinner for six.
+    setVenueArtTheme(page.context(), ['dining-room', 'pizza', 'noodles', 'tacos', 'sushi', 'salad', 'storefront']);
     await tab(page, 'Nest').click();
     const fab = page.locator('[aria-label="Open Birdie assistant"]');
     await fab.waitFor({ timeout: 15000 });
@@ -1178,7 +1207,7 @@ const DRIVERS = {
     }
     const input = page.locator('input[aria-label="Ask me anything"]');
     await input.waitFor({ timeout: 10000 });
-    await input.fill("Where's poppin in Philadelphia rn?");
+    await input.fill(BIRDIE_ASK);
     // A Birdie turn is a real Gemini tool loop (up to ~45s server-side). Done
     // = the HTTP turn returns AND the animated typing bubble (svg animate#b1)
     // leaves the DOM.
@@ -1186,11 +1215,13 @@ const DRIVERS = {
     await input.press('Enter');
     await reply;
     await page.locator('#b1').waitFor({ state: 'detached', timeout: 30000 }).catch(() => {});
-    // Give venue-card images from the reply a beat to load.
+    // Give venue-card images from the reply a beat to load, then hand the
+    // cards their pictures in the order they are shown.
     await settle(page, { quiet: 2000 });
+    await refreshVisibleVenueArt(page);
     // The thread auto-scrolls to the newest card; the shot should show the
     // question and the top of Birdie's answer, like the current site asset.
-    await page.getByText("Where's poppin in Philadelphia rn?").first()
+    await page.getByText(BIRDIE_ASK).first()
       .evaluate((el) => el.scrollIntoView({ block: 'start' }));
     await page.evaluate(() => document.activeElement && document.activeElement.blur());
     await page.waitForTimeout(600);
@@ -1382,6 +1413,9 @@ async function newAppContext(browser, { size, mode, token, userMode }) {
     timezoneId: 'America/New_York',
     colorScheme: mode,
   });
+  // Every venue picture on every screen is a drawing from shot-art.mjs, never
+  // a Places photo (see that file for why).
+  await installVenueArt(context, requireFrontend('sharp'));
   await context.addInitScript(([theme, jwt, uMode]) => {
     localStorage.setItem('flock-theme-mode', 'manual');
     localStorage.setItem('flock-theme', theme);
