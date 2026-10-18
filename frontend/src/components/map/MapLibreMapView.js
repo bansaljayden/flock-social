@@ -1147,6 +1147,11 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
           getZoom: () => map.getZoom(),
           zoomTo: (z, duration) => map.zoomTo(z, { duration, essential: true }),
           project: (lng, lat) => { const p = map.project([lng, lat]); return { x: p.x, y: p.y }; },
+          // For the place-tap check (poiTap.js): put the camera on a street in
+          // a city with no Flock venues, and list the tappable glyphs drawn there.
+          jumpTo: (lng, lat, zoom) => map.jumpTo({ center: [lng, lat], zoom }),
+          renderedPois: (layers) => map.queryRenderedFeatures({ layers: layers.filter((id) => map.getLayer(id)) })
+            .map((f) => ({ layer: f.layer.id, name: f.properties.name, cls: f.properties.class, sub: f.properties.subclass, coords: f.geometry.coordinates })),
           container: () => mapRef.current,
           markers: () => markersRef.current.map(({ venue, el }) => ({
             id: venue.place_id || venue.id,
