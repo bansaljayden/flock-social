@@ -1002,9 +1002,14 @@ describe('the privacy manifest ships, and declares what the linked code does', (
       ])
     );
     // The same grid as the App Privacy answers in App Store Connect. Every
-    // type is linked (every API call is authenticated by user id), and the
-    // only purposes are app functionality and first-party analytics. Changing
-    // a row here means changing that answer too.
+    // type but crash reports is linked (every API call is authenticated by
+    // user id), and the only purposes are app functionality and first-party
+    // analytics. Changing a row here means changing that answer too.
+    //
+    // No date of birth (it was OtherDataTypes): the iPhone app asks for none
+    // since App Review's 5.1.1(v) rejection of 2026-10-18. Crash data is the
+    // report a person sends from the crash screen; the route that keeps it
+    // takes no auth and stores no account, so it is not linked.
     const AF = ['AppFunctionality'];
     expect(collected).toEqual({
       Name: { linked: true, purposes: AF },
@@ -1018,8 +1023,16 @@ describe('the privacy manifest ships, and declares what the linked code does', (
       UserID: { linked: true, purposes: ['Analytics', 'AppFunctionality'] },
       DeviceID: { linked: true, purposes: AF },
       ProductInteraction: { linked: true, purposes: ['Analytics'] },
-      OtherDataTypes: { linked: true, purposes: AF },
+      CrashData: { linked: false, purposes: AF },
     });
+
+    // The crash row's code: the app posts the report the person chose to send,
+    // and the server keeps it with no account attached.
+    expect(read('frontend', 'src', 'services', 'crashReport.js')).toMatch(/\/api\/client-crash/);
+    const crashRoute = read('backend', 'routes', 'clientCrash.js');
+    expect(crashRoute).not.toMatch(/\bauthenticate\b/);
+    expect(crashRoute).not.toMatch(/req\.user\b/);
+    expect(crashRoute).toMatch(/RETENTION_DAYS = 90/);
 
     // The rows the shell itself can prove: a location read, a camera and a
     // photo picker, an address book read, a push token, and the analytics

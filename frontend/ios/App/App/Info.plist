@@ -42,11 +42,14 @@
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
 	<!-- When-in-use only, and that is the whole story: the app reads location
-	     through the web navigator.geolocation API for nearby venues, in-flock
-	     live share, and the SOS alert. No always-authorization API is reachable
-	     any more (the unused @capacitor/geolocation plugin was removed, which is
-	     what forced the ITMS-90683 always-usage string that used to sit here),
-	     and no location background mode is declared. -->
+	     for nearby venues, in-flock live share and the SOS alert, through the
+	     @capacitor/geolocation plugin in this shell (frontend/src/services/
+	     geolocation.js; the web API is the fallback in a browser). Nothing asks
+	     for always authorization, and no location background mode is declared.
+	     The plugin is still linked (frontend/package.json, and the generated
+	     capacitor.config.json lists GeolocationPlugin), and it references the
+	     always API, which is why the always-usage string below has to stay for
+	     as long as it links. -->
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Flock uses your location to show nearby venues and crowd levels, share live location with your group while a flock is active, and send your location to trusted contacts when you tap SOS.</string>
 	<!-- App Store Connect warned on build 28 (ITMS-90683) that the geolocation
@@ -117,8 +120,10 @@
 	     contacts" control inside Add friends, after a screen that has already
 	     said in words what will be sent and what will be kept. Anything that
 	     fires this earlier is spending the one prompt this app gets on a moment
-	     when the user has no reason to say yes. (The notification prompt is the
-	     cautionary example: it is spent at cold start.)
+	     when the user has no reason to say yes. (The notification prompt was
+	     the cautionary example: it used to be spent at cold start, and now it
+	     is asked only from a tap, services/firebase.js, pinned by
+	     pushPermissionMoment.test.js.)
 
 	     iOS 18 LIMITED ACCESS is a success, not a fallback. The plugin reports
 	     `limited` when the person chose which contacts to share, getContacts

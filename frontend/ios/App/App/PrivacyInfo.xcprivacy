@@ -10,9 +10,12 @@
 	<key>NSPrivacyTrackingDomains</key>
 	<array/>
 	<!-- The same selections as the App Privacy answers in App Store Connect:
-	     every type is linked to the account, none is used for tracking, and the
-	     only purposes are app functionality and first-party analytics. A change
-	     here is a change to those answers, and the other way round. -->
+	     every type is linked to the account except crash reports, none is used
+	     for tracking, and the only purposes are app functionality and
+	     first-party analytics. A change here is a change to those answers, and
+	     the other way round.
+	     No date of birth: the iPhone app asks for none (App Review, 2026-10-18,
+	     guideline 5.1.1(v)); only the website's sign-up asks for a year. -->
 	<key>NSPrivacyCollectedDataTypes</key>
 	<array>
 		<!-- Display name, shown to friends. -->
@@ -162,12 +165,16 @@
 				<string>NSPrivacyCollectedDataTypePurposeAnalytics</string>
 			</array>
 		</dict>
-		<!-- Date of birth, for the age floor. Never displayed. -->
+		<!-- A crash report the person chooses to send from the crash screen
+		     ("Send this to Flock"): the boundary, the error name, a scrubbed
+		     message, the build. backend/routes/clientCrash.js takes no auth and
+		     stores no account, IP or user agent, so it is NOT linked, and it is
+		     kept 90 days. -->
 		<dict>
 			<key>NSPrivacyCollectedDataType</key>
-			<string>NSPrivacyCollectedDataTypeOtherDataTypes</string>
+			<string>NSPrivacyCollectedDataTypeCrashData</string>
 			<key>NSPrivacyCollectedDataTypeLinked</key>
-			<true/>
+			<false/>
 			<key>NSPrivacyCollectedDataTypeTracking</key>
 			<false/>
 			<key>NSPrivacyCollectedDataTypePurposes</key>
