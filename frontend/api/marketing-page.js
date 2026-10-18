@@ -250,7 +250,7 @@ const PAGE_BLOCKS = {
   ],
   privacy: [
     ["h1", "Privacy Policy"],
-    ["p", "Effective October 7, 2026"],
+    ["p", "Effective October 18, 2026"],
     ["h2", "The short version"],
     ["li", "We collect what Flock needs to work: your account, your plans, your messages."],
     ["li", "Location is used only while you're using the app. Never in the background."],
@@ -574,7 +574,7 @@ const PAGE_BLOCKS = {
   ],
   terms: [
     ["h1", "Terms of Service & EULA"],
-    ["p", "Effective October 6, 2026"],
+    ["p", "Effective October 18, 2026"],
     ["h2", "The short version"],
     ["li", "You have to be 13 or older, and under 18 you need a parent's say-so."],
     ["li", "Be decent to people. We have zero tolerance for abuse and for objectionable content, and there are report and block buttons everywhere content appears."],

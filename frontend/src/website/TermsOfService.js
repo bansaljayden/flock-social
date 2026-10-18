@@ -8,7 +8,7 @@ import SiteFooter from './SiteFooter';
 // day, and 7 and 9.5 corrected later the same day: a venue's own reading
 // replaces the estimate rather than adjusting it, and the dashboard is built
 // from Flock's crowd numbers, not "our model".
-const EFFECTIVE_DATE = 'October 6, 2026';
+const EFFECTIVE_DATE = 'October 18, 2026';
 const SUPPORT_EMAIL = 'social@flockcorp.com';
 
 // THE COUNTERPARTY IS FLOCK SOCIAL LLC, a Pennsylvania limited liability

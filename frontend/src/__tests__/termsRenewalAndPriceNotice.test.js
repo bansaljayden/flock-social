@@ -76,10 +76,12 @@ describe('the price-change line is a condition, not a sender', () => {
     // venue's own curve; the model is trained on every venue). Later that
     // day 7 stopped saying a venue's own reading adjusts the estimate (it
     // replaces it) and 9.5 stopped crediting the dashboard to "our model",
-    // under the same date. A later change to the words moves it again.
-    expect(TERMS).toContain("const EFFECTIVE_DATE = 'October 6, 2026';");
+    // under the same date. October 18: section 1 says sign-up on the
+    // website asks for a year of birth and the iPhone app asks for none
+    // (App Review, 5.1.1(v)). A later change to the words moves it again.
+    expect(TERMS).toContain("const EFFECTIVE_DATE = 'October 18, 2026';");
     const terms = MIRROR.slice(MIRROR.indexOf('  terms: ['));
-    expect(terms).toContain('["p", "Effective October 6, 2026"],');
+    expect(terms).toContain('["p", "Effective October 18, 2026"],');
   });
 });
 
