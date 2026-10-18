@@ -39,6 +39,9 @@ const {
 const {
   willCostUpstreamCall, fetchPlaceDetails,
 } = require('../services/placeDetailsCache');
+// A glyph tapped on the Discover map, turned into a place id with one free
+// IDs-only Text Search. The cost note and the match rule live in that file.
+const { lookupPoiPlace, normalizePoiName } = require('../services/poiPlaceResolver');
 // The photo cache and the photo money, both durable, both in Postgres. Read the
 // header of that file before changing any number here: it carries the annual
 // dollar budget every photo limit is derived from, and the quoted Google terms
@@ -989,6 +992,61 @@ function priceLevelToNum(priceLevel) {
   };
   return map[priceLevel] ?? null;
 }
+
+// GET /api/venues/resolve-poi?name=Joe%27s%20Pizza&lat=37.3229&lng=-122.0322
+//
+// A place tapped on the Discover map (a restaurant, cafe, bar, club, cinema or
+// museum the basemap draws from street zoom, in any city) answered with its
+// Google place id, so the app can open it like any venue it found by search.
+// One lookup per place, cached, charged to the caller's Places allowance only
+// when Google is actually asked (services/poiPlaceResolver.js).
+const MAP_PLACES_OFF = 'Opening places from the map is turned off right now. Search still works.';
+const MAP_PLACE_NOT_FOUND = 'Google has no listing for that spot, so it cannot open here. Try searching for it by name.';
+const MAP_PLACE_SICK = 'That place did not open. Try tapping it again in a moment.';
+router.get('/resolve-poi',
+  [
+    query('name').isString().withMessage('That place has no name to look up.'),
+    query('lat').isFloat({ min: -90, max: 90 }).withMessage('That spot is not on the map.'),
+    query('lng').isFloat({ min: -180, max: 180 }).withMessage('That spot is not on the map.'),
+  ],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
+      // `?name=a&name=b` arrives as an array, and so can either coordinate. Only
+      // scalars reach the lookup, and nothing malformed costs a unit.
+      if (typeof req.query.lat !== 'string' || typeof req.query.lng !== 'string') {
+        return res.status(400).json({ error: 'That spot is not on the map.' });
+      }
+      const name = normalizePoiName(req.query.name);
+      if (!name) return res.status(400).json({ error: 'That place has no name to look up.' });
+      const lat = Number(req.query.lat);
+      const lng = Number(req.query.lng);
+      if (!API_KEY) {
+        console.error('Map place lookup unavailable: GOOGLE_PLACES_API_KEY is unset');
+        return res.status(500).json({ error: MAP_PLACES_OFF });
+      }
+
+      const out = await lookupPoiPlace({
+        name, lat, lng, apiKey: API_KEY,
+        charge: () => allowPlacesSearch(req.user.id),
+      });
+      if (out.refused) {
+        return placesRefusal(res, req.user.id, {
+          hour: (w) => `Flock looks up to ${PER_USER_HOURLY} places an hour, and this hour is used up. You can open places from the map again ${w}.`,
+          day: (w) => `Flock has reached its venue lookup limit for the day. Places on the map open again ${w}.`,
+          signedOut: 'Sign in again to open places from the map.',
+        });
+      }
+      if (out.status === 200) return res.json({ place_id: out.placeId });
+      if (out.status === 404) return res.status(404).json({ error: MAP_PLACE_NOT_FOUND });
+      return res.status(out.status).json({ error: MAP_PLACE_SICK });
+    } catch (err) {
+      console.error('Map place lookup error:', err);
+      res.status(500).json({ error: MAP_PLACE_SICK });
+    }
+  }
+);
 
 // GET /api/venues/search?query=restaurants+wildwood&location=lat,lng
 router.get('/search',

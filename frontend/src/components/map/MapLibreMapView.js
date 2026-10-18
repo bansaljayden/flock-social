@@ -78,6 +78,8 @@ import { crowdLabelFor } from '../../lib/crowd';
 import { loadMapEngine } from './mapEngine';
 import { scrubUrlTokens } from '../../lib/scrubUrlTokens';
 import { buildFlockStyle, satelliteStyleUrl } from './flockStyle';
+import { poiUnderTap, POI_TAP_MIN_ZOOM, TAPPABLE_POI_LAYER_IDS } from './poiTap';
+import { resolveMapPlace } from '../../services/api';
 
 // HTML-escape a user-derived string before it is interpolated into any raw
 // HTML sink (e.g. MapLibre Popup.setHTML, which assigns innerHTML). This must
@@ -635,6 +637,16 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
   const FITS_SATELLITE = 132 + 44 + 8;
   const FITS_ZOOM = 184 + 81 + 8;
   const mapLoadedRef = useRef(false);
+  /* A PLACE THE BASEMAP DRAWS OPENS WHEN TAPPED (poiTap.js). From street zoom
+     the map shows restaurants, cafes, bars, clubs, cinemas and museums in any
+     city, and a tap on one is looked up (GET /api/venues/resolve-poi) and opened
+     in the venue sheet. The click handler is registered once, inside init, so it
+     reaches the current opener through this ref. The notice is the one line the
+     map says while a lookup runs, or why it did not open. */
+  const [poiNotice, setPoiNotice] = useState(null);
+  const poiBusyRef = useRef(false);
+  const poiNoticeTimerRef = useRef(0);
+  const openPoiRef = useRef(null);
   // The category filter hid every pin on the map. Rendered as a sentence,
   // because an empty map reads as broken.
   const [filterHidesAll, setFilterHidesAll] = useState(false);
@@ -1256,10 +1268,28 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       crowdPassRef.current = scheduleCrowdPass;
       map.on('idle', scheduleCrowdPass);
 
-      // Click on empty map — clear active venue
+      // A tap on a place the basemap draws (street zoom and closer) opens it;
+      // a tap on empty map clears the active venue. Pins are HTML markers above
+      // the canvas and handle their own taps.
       map.on('click', (e) => {
         if (e.originalEvent?.target?.closest?.('.mlb-venue-marker')) return;
+        let poi = null;
+        try { poi = poiUnderTap(map, e.point); } catch { poi = null; }
+        if (poi && openPoiRef.current) {
+          openPoiRef.current(poi);
+          return;
+        }
         setActiveVenue(null);
+      });
+      // A pointer over one of those places says it can be tapped (mouse only;
+      // a touch screen has no hover). Same zoom rule as the tap.
+      const poiCursorOn = () => { if (map.getZoom() >= POI_TAP_MIN_ZOOM) map.getCanvas().style.cursor = 'pointer'; };
+      const poiCursorOff = () => { map.getCanvas().style.cursor = ''; };
+      TAPPABLE_POI_LAYER_IDS.forEach((id) => {
+        try {
+          map.on('mouseenter', id, poiCursorOn);
+          map.on('mouseleave', id, poiCursorOff);
+        } catch { /* a style without the layer: nothing to point at */ }
       });
 
       // Re-pan when geolocation permission flips to granted
@@ -1853,9 +1883,40 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     run(ml);
   }, [mapVisible, mapReady, flockMemberLocations, userLocation, calcDistance]);
 
+  // The opener the map's click handler calls through openPoiRef. One lookup at
+  // a time: a second tap while one is running is ignored rather than queued, so
+  // a double tap is one lookup and one sheet.
+  openPoiRef.current = (poi) => {
+    if (poiBusyRef.current) return;
+    poiBusyRef.current = true;
+    clearTimeout(poiNoticeTimerRef.current);
+    setPoiNotice(`Opening ${poi.name}`);
+    resolveMapPlace(poi)
+      .then((data) => {
+        const placeId = data && data.place_id;
+        if (!placeId) throw new Error("That place didn't open. Try tapping it again.");
+        setPoiNotice(null);
+        setActiveVenue(null);
+        openVenueDetail(placeId, { name: poi.name, formatted_address: '', place_id: placeId, rating: null, photo_url: null, lat: poi.lat, lng: poi.lng });
+      })
+      .catch((err) => {
+        // The server's own sentence when it has one ("Google has no listing
+        // for that spot..."), which says what to do instead.
+        setPoiNotice((err && err.message) || "That place didn't open. Try tapping it again.");
+        poiNoticeTimerRef.current = window.setTimeout(() => setPoiNotice(null), 4000);
+      })
+      .finally(() => { poiBusyRef.current = false; });
+  };
+  useEffect(() => () => clearTimeout(poiNoticeTimerRef.current), []);
+
   // ---------- render ----------
   return (
     <div ref={mapRootRef} style={{ position: 'absolute', inset: 0 }}>
+      {poiNotice && (
+        // Centred low on the map and kept 64px clear of each side, so it never
+        // sits over the my-location button or the map credit at the right edge.
+        <p role="status" aria-live="polite" style={{ position: 'absolute', bottom: '24px', left: '50%', transform: 'translateX(-50%)', zIndex: 20, margin: 0, padding: '8px 12px', borderRadius: '10px', width: 'max-content', maxWidth: 'calc(100% - 128px)', boxSizing: 'border-box', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-default)', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', textAlign: 'center' }}>{poiNotice}</p>
+      )}
       {mapReady && filterHidesAll && filterCategory && filterCategory !== 'All' && (
         <p role="status" style={{ position: 'absolute', top: '10px', left: '50%', transform: 'translateX(-50%)', zIndex: 20, margin: 0, padding: '8px 12px', borderRadius: '10px', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-default)', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', whiteSpace: 'nowrap' }}>No {filterCategory.toLowerCase()} spots on this map. Pick another filter or move the map.</p>
       )}
