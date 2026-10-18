@@ -32,8 +32,11 @@ import { GoogleG } from './AuthShell';
  * account that opened the dialog, the dialog must never go on to delete or
  * export anything, so onOtherAccount runs instead, and the caller ends the
  * session on this device. An Apple ID or Google account with no Flock account
- * behind it is refused by the server before any token is issued (needsDob),
- * and says so here.
+ * behind it is refused by the server before any token is issued, and says so
+ * here: the calls carry reconfirm: true and the server answers noAccount
+ * rather than creating one. An older server answered needsDob instead, which
+ * stopped being a refusal once the iPhone app stopped sending a date of birth,
+ * so both are read.
  *
  * WHERE IT CANNOT RUN. Sign in with Apple exists only inside the iOS app, and a
  * native build without the iOS Google client id has no Google sheet. There,
@@ -97,7 +100,7 @@ export default function OAuthReconfirm({ provider, expectedUserId, onConfirmed, 
   };
 
   const onFailure = (message, err) => {
-    if (err?.data?.needsDob) {
+    if (err?.data?.noAccount || err?.data?.needsDob) {
       setError(`That ${name} account is not the one this Flock account uses. Try again with the one you sign in with.`);
       return;
     }

@@ -54,3 +54,38 @@ const BOOTED_NATIVE = detectNativeShell();
 export function isNativeShell() {
   return BOOTED_NATIVE || detectNativeShell();
 }
+
+// IS THIS THE IPHONE APP? It asks nobody for a date of birth.
+//
+// App Review rejected version 1.0 on 2026-10-18 under guideline 5.1.1(v):
+// "Update the app to not require users to provide ... Date of Birth". The
+// iPhone app relies on the App Store's 13+ age rating instead, and the website
+// keeps its neutral age screen. The server makes the same split from the Origin
+// the WebView sends (backend/utils/clientShell.js), and that Origin is this
+// page's own: iOS serves the app from capacitor://localhost (ionic:// on the
+// older scheme), so the protocol is the fact both halves read. The Capacitor
+// platform answer is accepted too, for the same shell and for tests, which
+// cannot give jsdom a capacitor: protocol. Android serves from
+// https://localhost, so it is not the iPhone app here or on the server.
+//
+// asksForAge() is the question the sign-up screens ask: false inside the
+// iPhone app, true everywhere else. It decides only whether a year field is
+// drawn and sent. The age rule itself is the server's.
+const IOS_APP_PROTOCOLS = ['capacitor:', 'ionic:'];
+
+export function isIOSAppShell(win = typeof window === 'undefined' ? undefined : window) {
+  if (!win) return false;
+  try {
+    if (win.location && IOS_APP_PROTOCOLS.includes(win.location.protocol)) return true;
+    const cap = win.Capacitor;
+    if (!cap || typeof cap.getPlatform !== 'function') return false;
+    if (typeof cap.isNativePlatform === 'function' && cap.isNativePlatform() !== true) return false;
+    return cap.getPlatform() === 'ios';
+  } catch {
+    return false;
+  }
+}
+
+export function asksForAge(win) {
+  return !isIOSAppShell(win);
+}

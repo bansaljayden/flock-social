@@ -308,11 +308,17 @@ describe('the venue portal\'s sign-up half, in the iOS app', () => {
     expect(api.googleLogin.mock.calls[1]).toEqual(['google-id-token-1', '1980-12-31', { dobGranularity: 'year' }]);
   });
 
-  it('a half-typed year is not sent to Google as no year at all', async () => {
+  it('has no year field of its own to half-type into: the iPhone app asks for no date of birth', async () => {
+    // App Review, 2026-10-18, guideline 5.1.1(v). The sign-up half in the app
+    // draws no year field (lib/nativeShell.js asksForAge), and the server
+    // creates the account without one, so it never answers the app with the
+    // step above either (backend/__tests__/iosAppNoDateOfBirth.test.js).
     const utils = openSignupHalf();
-    fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: '19' } });
+    expect(utils.queryByLabelText('Year of birth')).toBeNull();
+    sheetGives();
+    api.googleLogin.mockResolvedValueOnce({ user: { id: 97 } });
     fireEvent.click(googleButton(utils));
-    await waitFor(() => expect(utils.getByRole('alert').textContent).toBe('Write the year in full, like 2004.'));
-    expect(mockSocialLogin.login).not.toHaveBeenCalled();
+    await waitFor(() => expect(utils.onLoginSuccess).toHaveBeenCalledWith({ id: 97 }));
+    expect(api.googleLogin).toHaveBeenCalledWith('google-id-token-1', undefined);
   });
 });

@@ -194,22 +194,19 @@ describe('the first Google tap for a new account, with the year empty', () => {
     expect(continueButton(utils)).toBeNull();
   });
 
-  it('a half-typed year is not sent to Google as no year at all', async () => {
+  // The form has no year field in the iPhone app (App Review, 2026-10-18,
+  // guideline 5.1.1(v); lib/nativeShell.js asksForAge), so there is nothing to
+  // half-type and nothing typed first to send. The first post carries no year,
+  // and the server creates the account without one; it never answers the app
+  // with the step above (backend/__tests__/iosAppNoDateOfBirth.test.js).
+  it('the form has no year field, and the first post carries no year', async () => {
     const utils = openSignup();
-    fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: '20' } });
-    fireEvent.click(googleButton(utils));
-    await waitFor(() => expect(utils.getByRole('alert').textContent).toBe('Write the year in full, like 2004.'));
-    expect(mockSocialLogin.login).not.toHaveBeenCalled();
-  });
-
-  it('a year typed in the form first goes with the first post, so a new account needs no step', async () => {
-    const utils = openSignup();
-    fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: '2000' } });
+    expect(utils.queryByLabelText('Year of birth')).toBeNull();
     sheetGives();
     api.googleLogin.mockResolvedValueOnce({ user: { id: 63 } });
     fireEvent.click(googleButton(utils));
     await waitFor(() => expect(utils.onSignupSuccess).toHaveBeenCalledWith({ id: 63 }));
-    expect(api.googleLogin).toHaveBeenCalledWith('google-id-token-1', '2000-12-31', { dobGranularity: 'year' });
+    expect(api.googleLogin).toHaveBeenCalledWith('google-id-token-1', undefined);
   });
 });
 

@@ -329,16 +329,20 @@ describe('when the held credentials cannot be used', () => {
   });
 });
 
-describe('a year typed on the signup screen before the sheet', () => {
-  it('is sent on the first post, so a new account needs no step at all', async () => {
+// The iPhone app asks for no date of birth (App Review, 2026-10-18, guideline
+// 5.1.1(v); lib/nativeShell.js asksForAge): the sign-up screen there has no
+// year field, so nothing can be typed before the sheet, and the server creates
+// the account without a date (backend/__tests__/iosAppNoDateOfBirth.test.js).
+describe('the signup screen in the iPhone app has no year to type before the sheet', () => {
+  it('draws no year field, and the first post carries no year', async () => {
     const utils = render(React.createElement(SignupScreen, { onSignupSuccess: jest.fn(), onSwitchToLogin: jest.fn() }));
-    fireEvent.change(utils.getByLabelText(/year of birth/i), { target: { value: '2000' } });
+    expect(utils.queryByLabelText(/year of birth/i)).toBeNull();
     mockAppleAuthorize.mockResolvedValueOnce({ response: { ...SHEET } });
     api.appleLogin.mockResolvedValueOnce({ user: { id: 44 } });
     fireEvent.click(appleButton(utils));
     await waitFor(() => expect(api.appleLogin).toHaveBeenCalledTimes(1));
-    expect(api.appleLogin.mock.calls[0][3]).toBe('2000-12-31');
-    expect(api.appleLogin.mock.calls[0][4]).toEqual({ dobGranularity: 'year' });
+    expect(api.appleLogin.mock.calls[0][3]).toBeUndefined();
+    expect(api.appleLogin.mock.calls[0][4]).toBeUndefined();
     expect(mockAppleAuthorize).toHaveBeenCalledTimes(1);
   });
 });
@@ -419,16 +423,14 @@ describe('the signup screen on iOS puts the providers first', () => {
     expect(utils.getByText('or sign up with')).toBeTruthy();
   });
 
-  // This pinned "Add the year you were born below first" until Google got
-  // the same in-place step as Apple: an empty year now opens Google's sheet
-  // (googleYearStepOnSignup.test.js pins that flow). A half-typed year is
-  // still not sent as no year at all.
-  it('Google with a half-typed year says so beside the providers and opens nothing', async () => {
+  // This pinned "Add the year you were born below first", then a half-typed
+  // year beside the providers. The iPhone app now asks for no year at all, so
+  // the form has no year field and Google is never stopped for one.
+  it('the form under the providers has no year field', () => {
     const utils = openSignup();
-    fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: '20' } });
-    fireEvent.click(utils.getByRole('button', { name: /continue with google/i }));
-    await waitFor(() => expect(utils.getByRole('alert').textContent).toBe('Write the year in full, like 2004.'));
-    expect(api.googleLogin).not.toHaveBeenCalled();
+    expect(utils.queryByLabelText('Year of birth')).toBeNull();
+    expect(utils.getByLabelText('Name')).toBeTruthy();
+    expect(utils.getByLabelText('Password')).toBeTruthy();
   });
 });
 
@@ -462,7 +464,8 @@ describe('a new Apple account on the signup screen finishes on one sheet', () =>
     await waitFor(() => expect(utils.onSignupSuccess).toHaveBeenCalledWith({ id: 51 }));
     expect(mockAppleAuthorize).toHaveBeenCalledTimes(1);
     const [first, second] = api.appleLogin.mock.calls;
-    expect(first[3]).toBe('');
+    // The first post carries no year: the app has no field to read one from.
+    expect(first[3]).toBeUndefined();
     expect(second[0]).toBe(first[0]);
     expect(second[1]).toEqual({ givenName: 'Sam', familyName: 'Lee' });
     expect(second[2]).toBe(first[2]);
@@ -524,12 +527,14 @@ describe('a new Apple account on the signup screen finishes on one sheet', () =>
     expect(utils.queryByText('One more step to finish your account: the year you were born.')).toBeNull();
   });
 
-  it('a half-typed year is not sent to Apple as no year at all', async () => {
+  it('there is no half-typed year to send: the form has no year field in the app', async () => {
     const utils = openSignup();
-    fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: '20' } });
+    expect(utils.queryByLabelText('Year of birth')).toBeNull();
+    mockAppleAuthorize.mockResolvedValueOnce({ response: { ...SHEET } });
+    api.appleLogin.mockResolvedValueOnce({ user: { id: 54 } });
     fireEvent.click(appleButton(utils));
-    await waitFor(() => expect(utils.getByRole('alert').textContent).toBe('Write the year in full, like 2004.'));
-    expect(mockAppleAuthorize).not.toHaveBeenCalled();
+    await waitFor(() => expect(utils.onSignupSuccess).toHaveBeenCalledWith({ id: 54 }));
+    expect(utils.queryByRole('alert')).toBeNull();
   });
 
   it('an account that exists with no birth date on file is sent to sign in, not left at a dead end', async () => {

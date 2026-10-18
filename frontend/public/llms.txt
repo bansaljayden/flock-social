@@ -91,7 +91,9 @@ as of the August 18, 2026 training run (version 2.6.0 "Starling"):
 ## Who it is for
 
 Flock is aimed at people roughly 15 to 22 who plan things in group chats. The
-enforced minimum age is 13, checked from a stored year of birth.
+minimum age is 13. The website checks it on the server from a year of birth;
+the iPhone app asks for no date of birth and relies on the App Store's 13+ age
+rating.
 
 ## Pricing
 

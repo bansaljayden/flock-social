@@ -360,20 +360,23 @@ DOORS.forEach((door) => {
       expect(api.googleLoginWithToken).not.toHaveBeenCalled();
     });
 
-    it('Apple carries an under-13 year to the server too', async () => {
+    // Sign in with Apple exists only in the iPhone app, and the app asks for no
+    // date of birth (App Review, 2026-10-18, guideline 5.1.1(v);
+    // lib/nativeShell.js asksForAge). So there is no year for Apple to carry:
+    // this door draws no year field there, and Apple posts without one. A
+    // refusal from the server is still shown exactly as written.
+    it('Apple, in the iPhone app, carries no year at all, and a refusal is shown as written', async () => {
       asNativeIos();
-      const year = yearForAge(12);
-      const dob = dobOf(year);
       mockAppleAuthorize.mockResolvedValueOnce({ response: { identityToken: 'apple-token' } });
       api.appleLogin.mockRejectedValueOnce(refusal());
 
       const utils = door.open();
-      setYear(utils, year);
+      expect(utils.queryByLabelText('Year of birth')).toBeNull();
       fireEvent.click(utils.getByRole('button', { name: /continue with apple/i }));
 
       await waitFor(() => expect(api.appleLogin).toHaveBeenCalledTimes(1));
-      expect(api.appleLogin.mock.calls[0][3]).toBe(dob);
-      expect(api.appleLogin.mock.calls[0][4]).toEqual({ dobGranularity: 'year' });
+      expect(api.appleLogin.mock.calls[0][3]).toBeUndefined();
+      expect(api.appleLogin.mock.calls[0][4]).toBeUndefined();
       await waitFor(() => expect(utils.getByRole('alert').textContent).toBe(UNDERAGE_MSG));
     });
   });
@@ -405,15 +408,12 @@ DOORS.forEach((door) => {
       expect(api.googleLoginWithToken).not.toHaveBeenCalled();
     });
 
-    it('Apple says the same thing and never opens the sheet', async () => {
+    it('Apple, in the iPhone app, has no year to mistype: the door draws no year field there', () => {
       asNativeIos();
       const utils = door.open();
-      setYear(utils, yearAhead());
-      fireEvent.click(utils.getByRole('button', { name: /continue with apple/i }));
-
-      await waitFor(() => expect(utils.getByRole('alert').textContent).toBe(NOT_RIGHT));
-      expect(mockAppleAuthorize).not.toHaveBeenCalled();
-      expect(api.appleLogin).not.toHaveBeenCalled();
+      expect(utils.queryByLabelText('Year of birth')).toBeNull();
+      expect(utils.container.querySelector(`[${door.fieldId}]`)).toBeNull();
+      expect(visibleText(utils.container)).not.toMatch(/year you were born|year of birth/i);
     });
 
     it('an empty year opens the Apple sheet, and the year asked after it teaches nothing either', async () => {
@@ -439,7 +439,11 @@ DOORS.forEach((door) => {
       const utils = door.open();
       fireEvent.click(utils.getByRole('button', { name: /continue with apple/i }));
       await waitFor(() => expect(utils.getByRole('button', { name: /^continue$/i })).toBeTruthy());
-      expect(api.appleLogin.mock.calls[0][3]).toBe('');
+      // The first post carries no year: the app has no field to read one from.
+      // The server never answers the app with this ask any more (it creates
+      // the account without a date); what is pinned is that the step, if it
+      // ever opened, would stay neutral.
+      expect(api.appleLogin.mock.calls[0][3]).toBeUndefined();
       expect(visibleText(utils.container)).not.toMatch(/\b13\b/);
       expect(visibleText(utils.container)).not.toMatch(/or older/i);
 

@@ -9,6 +9,7 @@ import AuthShell, {
 import BirthYearField, { birthYearToDob } from './BirthYearField';
 import { ForgotPasswordScreen } from './PasswordReset';
 import Icons from '../ui/Icons';
+import { asksForAge } from '../../lib/nativeShell';
 
 /* ═══════════════════════════════════════════════════════════════════
    VENUE PORTAL — the operator's front door.
@@ -96,6 +97,13 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
   const [dobGranularity, setDobGranularity] = useState(null);
   const askYearOnly = isSignup || dobGranularity === 'year';
   const dob = askYearOnly ? birthYearToDob(birthYear) : backfillDob;
+  // THE IPHONE APP ASKS FOR NO DATE OF BIRTH, on either half (App Review,
+  // guideline 5.1.1(v); lib/nativeShell.js). The sign-up half draws no year
+  // field there and sends nothing, and the server creates the account without
+  // one. The server never answers the app needsDob, so the backfill field
+  // cannot open there either. Everything above about the two asks is the
+  // website's.
+  const askAge = asksForAge();
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -269,8 +277,8 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
     // The sign-in half had no checks whatsoever, so an empty form met a button
     // that refused to submit and said nothing.
     if (isSignup && !name.trim()) return fail('venue-name', 'Add your name.');
-    if (isSignup && !birthYear) return fail(yearFieldId, 'Add the year you were born.');
-    if (isSignup && !dob) return fail(yearFieldId, 'Write the year in full, like 2004.');
+    if (isSignup && askAge && !birthYear) return fail(yearFieldId, 'Add the year you were born.');
+    if (isSignup && askAge && !dob) return fail(yearFieldId, 'Write the year in full, like 2004.');
     if (dobNeedsCheck) return fail('venue-dob-check', 'Check the date of birth below before you continue.');
     if (!email.trim()) return fail('venue-email', 'Add your email address.');
     if (!password) return fail('venue-password', isSignup ? 'Choose a password.' : 'Add your password.');
@@ -280,7 +288,7 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
         return fail('venue-password', 'Your password is missing a requirement listed below it.');
       }
       // Shape only. What the date says about age is the server's call.
-      if (!dobLooksReal(dob)) {
+      if (askAge && !dobLooksReal(dob)) {
         return fail(yearFieldId, 'That year does not look right. Check it and try again.');
       }
     }
@@ -290,7 +298,7 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
       // signup's declared order is (name, email, password, dateOfBirth) — the
       // old call passed (email, password, name), mapping every field wrong.
       if (isSignup) {
-        const data = await signup(name, email, password, dob);
+        const data = await signup(name, email, password, askAge ? dob : undefined);
         if (data?.emailVerificationRequired) {
           // Absent means an older backend that does not report the field, and
           // that is treated as sent. Only an explicit false is a failed send.
@@ -437,8 +445,9 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
 
         {/* Not while a provider's step is open: the step draws its own year
             field where that provider's button was, and one year field on
-            screen is the rule the consumer screens keep. */}
-        {(isSignup || needsDob) && !stepOpen && (
+            screen is the rule the consumer screens keep. Not on the iPhone
+            app's sign-up half at all (askAge above). */}
+        {((isSignup && askAge) || needsDob) && !stepOpen && (
           askYearOnly ? (
             /* One field, shared with SignupScreen and LoginScreen, so the three
                cannot drift apart again. They already did once: signup was moved
@@ -610,8 +619,10 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
             has none, once the server has asked for a date of birth, so the
             line shows there from the moment needsDob is set. A first tap is
             always answered needsDob before a row is written, and an existing
-            account signs in without seeing it. */}
-        {(isSignup || needsDob) && (
+            account signs in without seeing it. That holds on the website. The
+            iPhone app is never answered needsDob, so there a first provider tap
+            creates the account at once and the line shows from the start. */}
+        {(isSignup || needsDob || !askAge) && (
           <p className="auth-legal">
             Creating an account means you agree to the{' '}
             <a href={TERMS_URL} target="_blank" rel="noopener noreferrer">Terms</a>,{' '}
@@ -656,6 +667,11 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
             }
             setError('');
             google.setError('');
+            // The iPhone app has no year field to read or to wait for.
+            if (!askAge) {
+              startGoogle();
+              return;
+            }
             if (isSignup) {
               // The server needs a year to create an account on this path.
               // In the iOS app an empty one goes through, the way it does for
@@ -754,8 +770,8 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
             setError(m);
           }
         }}
-        dob={dob}
-        dobGranularity={askYearOnly ? 'year' : undefined}
+        dob={askAge ? dob : undefined}
+        dobGranularity={askAge && askYearOnly ? 'year' : undefined}
         /* Under the Google step's Continue the stylesheet's provider-to-
            provider gap does not apply, so the gap is given here. */
         style={google.step === 'resume' ? { marginTop: '10px' } : undefined}

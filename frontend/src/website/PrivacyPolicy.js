@@ -259,7 +259,7 @@ export default function PrivacyPolicy() {
                 <li><strong>Account info:</strong> email, password (stored as a one-way hash, we never see your password), display name, optional avatar, optional short bio. We send a link to your email at sign-up to confirm it's really yours. Your friend code is made at random the first time you ask for it and stored with your account, so nobody can work it out from your account number.</li>
                 <li><strong>Phone number (optional):</strong> sign-up never asks for one. You can add a phone number later from your profile. It is not used to find you unless you turn on "Let friends find me by my phone number" in Settings, which is off until you turn it on. Adding a number requires confirming your password or a recent sign-in, and turning discovery off erases the code we match against.</li>
                 <li><strong>Contacts you choose to match (optional):</strong> if you use "Add friends" from your phone contacts, only phone numbers are sent, never names or anything else on a contact card. We turn each one into a one-way keyed code and compare it with the codes of people who chose to be findable by phone. We run the lookup and don't store those numbers, and a number belonging to someone who is not on Flock leaves nothing behind.</li>
-                <li><strong>Year of birth:</strong> collected at sign-up so we can confirm you're 13 or older. We ask for the year only. The check runs on our server, which works out your age from that year in the one way that can only ever count you as younger, so nobody under the minimum gets through on a rounding. Accounts created before 15 September 2026 gave a full date of birth, and an older account that never gave one is asked for the full date the next time it signs in; either is used for the same age check and for nothing else.</li>
+                <li><strong>Year of birth (website sign-up only):</strong> collected when you create an account on our website, so we can confirm you're 13 or older. We ask for the year only. The check runs on our server, which works out your age from that year in the one way that can only ever count you as younger, so nobody under the minimum gets through on a rounding. The Flock iPhone app does not ask for your year or date of birth; it relies on the App Store's 13+ age rating. Accounts created before 15 September 2026 gave a full date of birth, and an account with no date on file is asked for the full date the next time it signs in on our website; either is used for the same age check and for nothing else.</li>
                 <li><strong>Your acceptance of the terms:</strong> we store the moment you agreed to the Terms of Service, so both of us know what you agreed to and when.</li>
                 <li><strong>Your answer to Birdie's question:</strong> before Birdie sends anything to Google, the app asks whether it may. We store the moment you said yes and which version of the question you answered, because Birdie sends only what that version named. Turning off "Let Birdie use Google's Gemini" in your settings erases both.</li>
                 <li><strong>Interests:</strong> the tags you pick on your profile, such as live music or trivia. They are kept on your device and synced to your account so a second device agrees with the first.</li>
@@ -898,7 +898,7 @@ export default function PrivacyPolicy() {
               </p>
               <p><strong>What is erased</strong></p>
               <ul>
-                <li>Your account row and everything hanging off it: email, password hash, phone, year of birth (or the full date of birth on an older account), display name, avatar, bio, interests, payment handles, and your settings.</li>
+                <li>Your account row and everything hanging off it: email, password hash, phone, year of birth if you gave one (or the full date of birth on an older account), display name, avatar, bio, interests, payment handles, and your settings.</li>
                 <li>Every message you sent in a flock chat, and your direct messages. A direct message belongs to both people, so deleting your account removes your direct message threads from the other person's app as well, along with anything pinned or voted on inside them.</li>
                 <li>Every flock you created, including its chat, RSVPs and votes, for everybody who was in it, except the one kind of plan listed under <em>What survives</em> below. Flocks you only joined survive; your membership in them does not.</li>
                 <li>Your crowd reports, your check-ins, your calendar entries, your availability status, your budget submissions, your bill split shares, your trusted contacts, your SOS alert records, your emoji reactions, your friendships, your blocks, your push tokens, your email verification records, and the record of the predictions we served you.</li>
@@ -991,7 +991,7 @@ export default function PrivacyPolicy() {
               <ul>
                 <li><strong>Identifiers:</strong> email, display name, optional phone, account number, sign-in identifiers from Apple or Google, IP address, push tokens. Collected to run the service and keep it safe. Shared with our hosting, email, push, analytics and sign-in providers.</li>
                 <li><strong>Customer records:</strong> password hash, payment handles such as a Venmo username. Collected to run sign-in and bill splitting. Not shared, except the hosting that stores them.</li>
-                <li><strong>Protected classifications:</strong> year of birth, or a full date of birth on accounts created before 15 September 2026, which yields age. Collected only to enforce the minimum age. An age bracket, never the year or the date, is sent to Google for Birdie.</li>
+                <li><strong>Protected classifications:</strong> year of birth, given at sign-up on our website (the iPhone app does not ask), or a full date of birth on accounts created before 15 September 2026, which yields age. Collected only to enforce the minimum age. An age bracket, never the year or the date, is sent to Google for Birdie.</li>
                 <li><strong>Commercial information:</strong> venues you voted on, checked into, reviewed or reported on, bill splits, and subscription receipts if you ever buy one. Collected to run the product.</li>
                 <li><strong>Internet activity:</strong> screens opened in the app and the short list of hand-written events, and page views and events on our website if you agreed to them, as described under <a href="#analytics">Analytics, error reports, and email</a>. Shared with PostHog. The app's analytics can be switched off under You &rarr; Share usage analytics.</li>
                 <li><strong>Geolocation:</strong> precise location while you are using the app, for the map, venue search, weather, events and SOS. Relayed, not stored, except for the coordinates in an SOS record. A rounded position goes to Google for Birdie.</li>
@@ -1024,9 +1024,11 @@ export default function PrivacyPolicy() {
             <section id="children">
               <h2>{num('children')} Children</h2>
               <p>
-                Flock is for people <strong>13 and older</strong>. Sign-up asks for a year of
-                birth and our server works the age out from it rather than trusting the app,
-                so an under-13 account is refused rather than merely discouraged. We do not
+                Flock is for people <strong>13 and older</strong>. Sign-up on our website asks
+                for a year of birth and our server works the age out from it rather than
+                trusting the page, so an under-13 account is refused rather than merely
+                discouraged. The iPhone app does not ask for a date of birth; it relies on the
+                App Store's 13+ age rating and on our Terms. We do not
                 knowingly collect personal information from children under 13. If you believe a
                 child under 13 has created an account, write to {mail} and we will delete it.
               </p>

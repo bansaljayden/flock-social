@@ -10,6 +10,7 @@ import BirthYearField, { birthYearToDob } from './BirthYearField';
 import {
   ForgotPasswordScreen, ResetPasswordScreen, isPasswordResetRoute,
 } from './PasswordReset';
+import { asksForAge } from '../../lib/nativeShell';
 
 // The same three pages SignupScreen links, for the consent line below.
 const TERMS_URL = 'https://www.flockcorp.com/terms';
@@ -79,6 +80,11 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
   const [dobGranularity, setDobGranularity] = useState(null);
   const [birthYear, setBirthYear] = useState('');
   const askYearOnly = dobGranularity === 'year';
+  // The iPhone app asks nobody for a date of birth (lib/nativeShell.js), so
+  // the server never answers it needsDob and none of the date fields on this
+  // screen can open there. What that changes here is the consent line: see it
+  // above the provider buttons.
+  const askAge = asksForAge();
   // What actually gets sent, whichever field is on screen.
   const dobToSend = askYearOnly ? birthYearToDob(birthYear) : dob;
 
@@ -255,6 +261,17 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
     </>
   );
 
+  // Guideline 1.2 / EULA consent, worded exactly as SignupScreen words it.
+  // Drawn in one of two places, never both: see where it is used below.
+  const consent = (
+    <p className="auth-legal">
+      Creating an account means you agree to the{' '}
+      <a href={TERMS_URL} target="_blank" rel="noopener noreferrer">Terms</a>,{' '}
+      <a href={PRIVACY_URL} target="_blank" rel="noopener noreferrer">Privacy Policy</a>, and{' '}
+      <a href={GUIDELINES_URL} target="_blank" rel="noopener noreferrer">Community Guidelines</a>.
+    </p>
+  );
+
   if (view === 'reset') {
     return (
       <ResetPasswordScreen
@@ -422,6 +439,15 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
 
       <AuthRule label="or continue with" />
 
+      {/* In the iPhone app a first tap on either provider button creates the
+          account straight away, because the app asks for no date of birth and
+          so is never answered needsDob first. The agreement therefore has to
+          be on screen before those buttons are, from the start, rather than
+          after a needsDob as on the website (see the consent line below).
+          The line's own top margin is for sitting under a button; here it
+          sits over two, so the gap goes below it, as on the sign-up screen. */}
+      {!askAge && <div style={{ marginBottom: '16px' }}>{consent}</div>}
+
       {/* Hidden only when a native build carries no iOS Google client id, i.e.
           when the button could not work by any route. On web it always shows.
           While a new Google account's year is being asked, the Google step
@@ -543,15 +569,9 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
           server has asked for a date of birth, which is the one state from
           which the next tap creates the account: a first tap on either button
           is always answered needsDob before any row is written, and an
-          account that already exists signs in without seeing it. */}
-      {needsDob && (
-        <p className="auth-legal">
-          Creating an account means you agree to the{' '}
-          <a href={TERMS_URL} target="_blank" rel="noopener noreferrer">Terms</a>,{' '}
-          <a href={PRIVACY_URL} target="_blank" rel="noopener noreferrer">Privacy Policy</a>, and{' '}
-          <a href={GUIDELINES_URL} target="_blank" rel="noopener noreferrer">Community Guidelines</a>.
-        </p>
-      )}
+          account that already exists signs in without seeing it. That holds
+          on the website; the iPhone app shows the line above the buttons. */}
+      {askAge && needsDob && consent}
 
       {/* The server will not say which addresses belong to Google or Apple
           accounts, because answering that turns login into an account

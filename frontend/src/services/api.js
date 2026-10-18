@@ -1862,10 +1862,16 @@ export async function login(email, password, dateOfBirth, opts) {
 // sheet: the dialog ends the session for that case, and PostHog would have
 // merged this device into the other person's history a moment before.
 //
+// It also goes to the server as `reconfirm: true`, which refuses to CREATE an
+// account for an Apple ID or Google account that has none (403 noAccount).
+// That refusal used to come for free from the missing date of birth, and the
+// iPhone app no longer sends or is asked for one.
+const reconfirmField = (opts) => (opts?.reconfirm ? { reconfirm: true } : {});
+
 // Custom-button flow: useGoogleLogin yields an OAuth access token, verified
 // server-side (tokeninfo aud check + userinfo). Same backend route.
 export async function googleLoginWithToken(accessToken, dateOfBirth, opts) {
-  const body = { access_token: accessToken };
+  const body = { access_token: accessToken, ...reconfirmField(opts) };
   if (dateOfBirth) body.date_of_birth = dateOfBirth;
   // See login() for dobGranularity.
   if (dateOfBirth && opts?.dobGranularity === 'year') body.dob_granularity = 'year';
@@ -1887,7 +1893,7 @@ export async function googleLoginWithToken(accessToken, dateOfBirth, opts) {
 }
 
 export async function googleLogin(credential, dateOfBirth, opts) {
-  const body = { credential };
+  const body = { credential, ...reconfirmField(opts) };
   // Pass DOB on consumer sign-up so the backend age gate (>= 13) fires for new
   // OAuth accounts too, matching email signup. Existing-user logins omit it.
   if (dateOfBirth) body.date_of_birth = dateOfBirth;
@@ -1916,7 +1922,7 @@ export async function googleLogin(credential, dateOfBirth, opts) {
 // JWT (backend/routes/auth.js POST /apple). fullName only arrives on the very
 // FIRST authorization for an Apple ID, so pass it through when present.
 export async function appleLogin(identityToken, fullName, authorizationCode, dateOfBirth, opts) {
-  const body = { identityToken };
+  const body = { identityToken, ...reconfirmField(opts) };
   if (fullName) body.fullName = fullName;
   if (authorizationCode) body.authorizationCode = authorizationCode;
   if (dateOfBirth) body.date_of_birth = dateOfBirth; // required server-side for NEW accounts (age gate)

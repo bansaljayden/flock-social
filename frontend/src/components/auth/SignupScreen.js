@@ -6,6 +6,7 @@ import AppleYearStep, { AppleStepContinue, useAppleYearStep } from './AppleYearS
 import AuthShell, { AUTH, AuthError, AuthRule, GoogleG, PasswordEye } from './AuthShell';
 import BirthYearField, { birthYearToDob } from './BirthYearField';
 import Icons from '../ui/Icons';
+import { asksForAge } from '../../lib/nativeShell';
 
 // Same live pages the in-app Settings screen and the paywall sheet link to.
 const TERMS_URL = 'https://www.flockcorp.com/terms';
@@ -21,6 +22,13 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
   // BirthYearField. Creating an account may ask only for the year; see that
   // file for why the conservative end of it is the one that gets sent.
   const dob = birthYearToDob(birthYear);
+  // THE IPHONE APP ASKS FOR NO YEAR AT ALL. App Review refused version 1.0 under
+  // guideline 5.1.1(v) for requiring a date of birth, so inside the app the
+  // year field is not drawn, nothing is sent, and the server creates the
+  // account without one (backend/utils/clientShell.js); the App Store's 13+
+  // rating stands in its place. The website keeps the year field exactly as it
+  // was. lib/nativeShell.js says how the app is recognised.
+  const askAge = asksForAge();
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -201,6 +209,10 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
   // refusal names no age either, and it remembers the attempt, so going back
   // and typing an older year gets the same sentence. Nothing changes for
   // anyone 13 or older: same four fields, same account.
+  //
+  // In the iPhone app there is no field at all (askAge above): App Review
+  // refused a required date of birth there, and the App Store's 13+ rating
+  // does that job. Everything in this paragraph is about the website.
 
   // Live password checklist. Mirrors backend/routes/auth.js EXACTLY (8 chars,
   // 1 uppercase, 1 number) so nobody submits a password the server will bounce
@@ -248,9 +260,11 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
     if (!name.trim()) return ['signup-name', 'Add the name your friends know you by.'];
     if (!email.trim()) return ['signup-email', 'Add your email address.'];
     if (!EMAIL_SHAPE.test(email.trim())) return ['signup-email', 'That email address does not look right. Check it and try again.'];
-    if (!birthYear) return ['signup-dob', 'Add the year you were born.'];
-    if (!dob) return ['signup-dob', 'Write the year in full, like 2004.'];
-    if (!dobLooksReal(dob)) return ['signup-dob', 'That year does not look right. Check it and try again.'];
+    if (askAge) {
+      if (!birthYear) return ['signup-dob', 'Add the year you were born.'];
+      if (!dob) return ['signup-dob', 'Write the year in full, like 2004.'];
+      if (!dobLooksReal(dob)) return ['signup-dob', 'That year does not look right. Check it and try again.'];
+    }
     if (!password) return ['signup-password', 'Choose a password.'];
     if (!pwChecks.every((c) => c.ok)) return ['signup-password', 'Your password is missing a requirement listed below it.'];
     return null;
@@ -279,7 +293,7 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
     setLoading(true);
 
     try {
-      const data = await signup(name, email, password, dob);
+      const data = await signup(name, email, password, askAge ? dob : undefined);
       if (data?.emailVerificationRequired) {
         // Absent is treated as sent, because that is what an older backend
         // that does not report the field means. Only an explicit false is a
@@ -312,7 +326,7 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
       <p className="auth-sub">
         {providersFirst
           ? (isGoogleSignInAvailable() ? 'Use Apple or Google, or sign up with your email.' : 'Use Apple, or sign up with your email.')
-          : 'Four fields, then one link in your inbox.'}
+          : (askAge ? 'Four fields, then one link in your inbox.' : 'Three fields, then one link in your inbox.')}
       </p>
     </>
   );
@@ -451,13 +465,15 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
         </div>
 
         {/* BirthYearField draws its own auth-field-row, so it is not wrapped
-            in a second one. */}
-        <BirthYearField
-          id="signup-dob"
-          hintId="signup-dob-hint"
-          value={birthYear}
-          onChange={setBirthYear}
-        />
+            in a second one. Not in the iPhone app (askAge above). */}
+        {askAge && (
+          <BirthYearField
+            id="signup-dob"
+            hintId="signup-dob-hint"
+            value={birthYear}
+            onChange={setBirthYear}
+          />
+        )}
 
         <div className="auth-field-row" style={{ marginBottom: '24px' }}>
           <label className="auth-label" htmlFor="signup-password">Password</label>
@@ -547,6 +563,11 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
           onClick={() => {
             clearErrors();
             google.setError('');
+            // The iPhone app has no year field to read or to wait for.
+            if (!askAge) {
+              startGoogle();
+              return;
+            }
             if (!dob) {
               if (!providersFirst) {
                 showProviderError('Add the year you were born above first, then continue with Google.');
@@ -635,8 +656,8 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
           // among them, into the step if it is open.
           showAppleError(m);
         }}
-        dob={dob}
-        dobGranularity="year"
+        dob={askAge ? dob : undefined}
+        dobGranularity={askAge ? 'year' : undefined}
         beforeAuthorize={() => {
           clearErrors();
           apple.setError('');

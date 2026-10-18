@@ -95,9 +95,11 @@ export default function TermsOfService() {
       <section>
         <h2>1. Eligibility and age</h2>
         <p>
-          You must be at least 13 years old to use Flock. Sign-up asks for your year of
-          birth, our server works out your age from it, and an account for anyone under 13
-          is refused. If you are under 18, you may use Flock only with the agreement of a
+          You must be at least 13 years old to use Flock. Sign-up on our website asks for
+          your year of birth, our server works out your age from it, and an account for
+          anyone under 13 is refused. The iPhone app does not ask for your date of birth
+          and relies on the App Store's 13+ age rating; the age rule is the same there.
+          If you are under 18, you may use Flock only with the agreement of a
           parent or legal guardian, and by using it you tell us you have that agreement.
           Where you live, the age at which you can agree to an online service on your own
           may be higher than 13; if you are below it, the same rule applies.

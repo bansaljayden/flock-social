@@ -170,9 +170,10 @@ describe('the venue sign-in half, a brand-new Apple ID', () => {
     expect(continueButton(utils)).toBeNull();
     expect(utils.queryByText('One more step to finish your account: the year you were born.')).toBeNull();
     expect(appleButton(utils)).not.toBeNull();
-    // The sign-up half's own year field, and only that one.
-    expect(yearFields(utils).length).toBe(1);
-    expect(utils.getByLabelText('Year of birth').id).toBe('venue-dob');
+    // The sign-up half draws no year field in the iPhone app, which asks for no
+    // date of birth (App Review, 2026-10-18, guideline 5.1.1(v)).
+    expect(yearFields(utils).length).toBe(0);
+    expect(utils.queryByLabelText('Year of birth')).toBeNull();
   });
 
   it('a password sign-in answered with the backfill ask closes the step for the date field', async () => {
@@ -201,8 +202,9 @@ describe('the venue sign-up half', () => {
     await firstTap(utils);
 
     expect(mockAppleAuthorize).toHaveBeenCalledTimes(1);
-    // Sent with no year, which is what earns the creation 403.
-    expect(api.appleLogin.mock.calls[0][3]).toBe('');
+    // Sent with no year. The server creates the account from the app without
+    // one now, so this 403 is the mocked ask, kept to pin the step's own shape.
+    expect(api.appleLogin.mock.calls[0][3]).toBeUndefined();
     const field = utils.getByLabelText('Year of birth');
     expect(field.id).toBe('venue-apple-year');
     expect(document.activeElement).toBe(field);
@@ -229,23 +231,27 @@ describe('the venue sign-up half', () => {
     expect(second[4]).toEqual({ dobGranularity: 'year' });
   });
 
-  it('a half-typed year is not sent to Apple as no year at all', async () => {
+  it('has no year field to half-type into in the iPhone app, so Apple opens straight away', async () => {
     const utils = openSignupHalf();
-    fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: '19' } });
+    expect(utils.queryByLabelText('Year of birth')).toBeNull();
+    mockAppleAuthorize.mockResolvedValueOnce({ response: { ...SHEET } });
+    api.appleLogin.mockResolvedValueOnce({ user: { id: 86 } });
     fireEvent.click(appleButton(utils));
-    await waitFor(() => expect(utils.getByRole('alert').textContent).toBe('Write the year in full, like 2004.'));
-    expect(mockAppleAuthorize).not.toHaveBeenCalled();
+    await waitFor(() => expect(utils.onLoginSuccess).toHaveBeenCalledWith({ id: 86 }));
+    expect(api.appleLogin.mock.calls[0][3]).toBeUndefined();
   });
 
-  it('Create account with the step open and no year points at the step\'s field and sends nothing', async () => {
+  it('Create account goes through without a year in the iPhone app, even with a step open', async () => {
+    // The app asks for no date of birth, so the email form never waits on one;
+    // the server creates the account without it.
     const utils = openSignupHalf();
     await firstTap(utils);
     fireEvent.change(utils.getByLabelText('Your name'), { target: { value: 'Robin' } });
     fireEvent.change(utils.getByLabelText('Email'), { target: { value: 'owner@example.com' } });
     fireEvent.change(utils.getByLabelText('Password'), { target: { value: 'Password1' } });
+    api.signup.mockResolvedValueOnce({ user: { id: 87 } });
     fireEvent.submit(utils.container.querySelector('form'));
-    await waitFor(() => expect(utils.getByRole('alert').textContent).toBe('Add the year you were born.'));
-    expect(api.signup).not.toHaveBeenCalled();
+    await waitFor(() => expect(api.signup).toHaveBeenCalledWith('Robin', 'owner@example.com', 'Password1', undefined));
   });
 });
 
@@ -277,9 +283,9 @@ describe('a Continue still waiting when the owner switches halves', () => {
     expect(utils.container.querySelector('.auth-apple-step')).toBeNull();
     expect(utils.queryByRole('alert')).toBeNull();
     expect(utils.container.textContent).not.toContain('Your year is still filled in');
-    // The sign-up half's own year field, empty, and the Apple button.
-    expect(yearFields(utils).length).toBe(1);
-    expect(utils.getByLabelText('Year of birth').id).toBe('venue-dob');
+    // The sign-up half draws no year field in the iPhone app, which asks for no
+    // date of birth (App Review, 2026-10-18, guideline 5.1.1(v)).
+    expect(yearFields(utils).length).toBe(0);
     expect(appleButton(utils)).not.toBeNull();
   });
 
@@ -291,7 +297,7 @@ describe('a Continue still waiting when the owner switches halves', () => {
       settle.reject(Object.assign(new Error("You're offline. This will work again once you're back on signal."), { isNetworkError: true, isOffline: true }));
     });
 
-    fireEvent.change(utils.getByLabelText('Year of birth'), { target: { value: '1990' } });
+    // No year to type first: the sign-up half has no year field in the app.
     mockAppleAuthorize.mockResolvedValueOnce({ response: { ...SHEET, identityToken: 'apple-id-token-v2', authorizationCode: 'apple-code-v2' } });
     api.appleLogin.mockResolvedValueOnce({ user: { id: 85 } });
     fireEvent.click(appleButton(utils));

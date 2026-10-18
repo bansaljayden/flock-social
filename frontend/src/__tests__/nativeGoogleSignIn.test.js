@@ -214,7 +214,9 @@ describe('the native token reaches the endpoint that already exists', () => {
     // The other half of the contract, read from the file that decides it: an
     // ID token is `credential`, and it goes to the route the web flow uses.
     const fn = API_SRC.slice(API_SRC.indexOf('export async function googleLogin(credential'));
-    expect(fn).toMatch(/const body = \{ credential \}/);
+    // reconfirmField adds `reconfirm: true` only for the delete and export
+    // dialogs' "confirm it's you" sheet; a sign-in posts `credential` alone.
+    expect(fn).toMatch(/const body = \{ credential, \.\.\.reconfirmField\(opts\) \}/);
     expect(fn.slice(0, fn.indexOf('export async function apple'))).toContain("'/api/auth/google'");
   });
 

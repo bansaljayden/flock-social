@@ -277,20 +277,20 @@ describe('the name Apple sends once', () => {
     expect(api.appleLogin.mock.calls[1][3]).toBe('2000-12-31');
   });
 
-  it('opens the sheet from the signup screen once a year is in', async () => {
+  it('opens the sheet from the signup screen straight away, with no year to wait for', async () => {
+    // The iPhone app asks for no date of birth (App Review, 2026-10-18,
+    // guideline 5.1.1(v)), so the sign-up screen there has no year field and the
+    // first post carries none. The server creates the account without one; see
+    // backend/__tests__/iosAppNoDateOfBirth.test.js.
     asNativeIos();
     const utils = render(React.createElement(SignupScreen, { onSignupSuccess: jest.fn(), onSwitchToLogin: jest.fn() }));
-    fireEvent.change(utils.getByLabelText(/year of birth/i), { target: { value: '2000' } });
+    expect(utils.queryByLabelText(/year of birth/i)).toBeNull();
     mockAppleAuthorize.mockResolvedValueOnce({ response: { identityToken: 'apple-token-4', user: 'apple-user-C' } });
     api.appleLogin.mockResolvedValueOnce({ user: { id: 9 } });
     tapApple(utils);
     await waitFor(() => expect(mockAppleAuthorize).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(api.appleLogin).toHaveBeenCalledTimes(1));
-    // December 31, not January 1. The field takes a year and the screen picks
-    // the conservative end of it, so a year that spans two ages always reads as
-    // the younger one and the server's floor can only turn somebody away rather
-    // than let a child through. January here would be the bug.
-    expect(api.appleLogin.mock.calls[0][3]).toBe('2000-12-31');
+    expect(api.appleLogin.mock.calls[0][3]).toBeUndefined();
   });
 });
 
