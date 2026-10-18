@@ -1599,6 +1599,13 @@ function oauthNonceClaimMatches(tokenNonce, suppliedNonce) {
 //      §312.10's retention limits) is a human/moderation step, not a login
 //      handler's.
 const { ageFromDob, yearEndDob, MIN_AGE } = require('../utils/age');
+// THE IPHONE APP ASKS NOBODY FOR A DATE OF BIRTH (App Review, 2026-10-18,
+// guideline 5.1.1(v)). A request from it may create an account, or sign in to
+// one, with no date at all; a date it does send is still judged exactly as the
+// website's is, and an account we know to be under 13 stays frozen on every
+// path. utils/clientShell.js says how the app is recognised and why that is
+// enough. The website keeps the neutral age screen described in this block.
+const { isIOSAppRequest } = require('../utils/clientShell');
 const UNDERAGE_MSG = "We can't create a Flock account for you.";
 
 // ---------------------------------------------------------------------------
@@ -1943,6 +1950,13 @@ function suppliedDob(raw) {
   return ageFromDob(trimmed) === null ? null : trimmed.slice(0, 10);
 }
 
+// Nothing sent for a date of birth: the key missing, JSON null, or an empty or
+// all-blank string. Only the iPhone app's paths ask this (isIOSAppRequest); the
+// website's paths go on treating every one of these as "no usable date".
+function dobAbsent(raw) {
+  return raw === undefined || raw === null || (typeof raw === 'string' && raw.trim() === '');
+}
+
 async function enforceDobOnLogin(user, req, res) {
   // ACTUAL-KNOWLEDGE FREEZE. If the row's stored date of birth computes to
   // under 13, we KNOW this account belongs to a child (16 CFR 312.2), and a
@@ -1958,6 +1972,20 @@ async function enforceDobOnLogin(user, req, res) {
     return false;
   }
   if (user.date_of_birth) return true;
+  // THE IPHONE APP DOES NOT ASK, SO THIS PATH DOES NOT ASK IT EITHER. An
+  // account with no date on file signs in from the app without one; the 403
+  // below would put a date field on the app's screen, which is exactly what App
+  // Review refused. A full date the app sends anyway (an older build that still
+  // asked) is judged below the same as the website's, under-13 freeze included.
+  // A date derived from a typed year is neither written nor asked about: the
+  // paragraph under this one is why it is never written, and asking for the full
+  // date instead would be the same refused question.
+  if (isIOSAppRequest(req)) {
+    const offered = req.body && req.body.dob_granularity !== 'year'
+      ? suppliedDob(req.body.date_of_birth)
+      : null;
+    if (!offered) return true;
+  }
   // A DERIVED DATE IS NOT KNOWLEDGE, AND IT MUST NOT BE WRITTEN HERE.
   //
   // Account creation asks for a birth YEAR and the screens send December 31
@@ -2266,7 +2294,14 @@ const signupValidation = [
   // refuse a long string (nothing that wide matches the grammar), so the ceiling
   // was a content rule standing in for a size rule — and this is the one field on
   // this chain that reaches a DATE column as a parameter. See MAX_DOB_LENGTH.
-  body('date_of_birth').exists().withMessage('Add your date of birth to create an account.')
+  //
+  // Required from the website and NOT from the iPhone app, which asks for no
+  // date of birth (utils/clientShell.js). A date the app does send is held to
+  // the same shape rules as the website's, so `.if` only skips the chain when
+  // the app sent nothing at all.
+  body('date_of_birth')
+    .if((value, { req }) => !isIOSAppRequest(req) || !dobAbsent(value))
+    .exists().withMessage('Add your date of birth to create an account.')
     .isLength({ max: MAX_DOB_LENGTH }).withMessage('Invalid date of birth')
     .isISO8601().withMessage('Invalid date of birth'),
 ];
@@ -2360,10 +2395,16 @@ router.post('/signup', signupValidation, async (req, res) => {
     // while refusing 2013-12-31. The derived date is also what is stored below.
     const judgedDob = yearEndDob(date_of_birth);
     const age = judgedDob ? ageFromDob(judgedDob) : null;
-    if (age === null) {
+    // The iPhone app asks for no date (isIOSAppRequest), so a request from it
+    // with none has no age to judge: the two checks below are skipped and the
+    // row stores no date. A date it does send is judged like any other, and the
+    // retry lockout after them applies to the app as well. `age !== null` is
+    // load-bearing in the under-13 test: in JavaScript `null < 13` is true.
+    const appSentNoDate = isIOSAppRequest(req) && dobAbsent(date_of_birth);
+    if (age === null && !appSentNoDate) {
       return res.status(400).json({ error: 'Add your date of birth to create an account.', needsDob: true });
     }
-    if (age < MIN_AGE) {
+    if (age !== null && age < MIN_AGE) {
       recordUnderageAttempt(email, req.ip);
       return res.status(403).json({ error: UNDERAGE_MSG });
     }
@@ -3567,9 +3608,20 @@ router.post('/google', [
         // Every gate that can refuse this request runs BEFORE the eviction, so
         // a request that ends in an error never displaces anybody.
         //
-        // DOB is REQUIRED for account creation on every path; a Google
-        // sign-in without one means "sign up first" (needsDob tells the
-        // client to route the user to the signup screen's DOB field).
+        // THE DELETE AND EXPORT DIALOGS NEVER CREATE AN ACCOUNT. Their "confirm
+        // it's you" sheet (frontend OAuthReconfirm.js) sends reconfirm: true, and
+        // a Google account with no Flock account behind it is refused here,
+        // before anything is written. It used to be refused only because it
+        // carried no date of birth, which stopped being a refusal the day the
+        // iPhone app stopped asking for one.
+        if (req.body && req.body.reconfirm === true) {
+          return res.status(403).json({ error: 'No Flock account uses this Google account.', noAccount: true });
+        }
+        //
+        // DOB is REQUIRED for account creation from the website; a Google
+        // sign-in there without one means "sign up first" (needsDob tells the
+        // client to route the user to the signup screen's DOB field). The
+        // iPhone app asks for none, see appSentNoDate below.
         //
         // Judged, and stored, as 31 December of the year that arrived, the
         // same as password signup (utils/age.js yearEndDob): creation asks
@@ -3577,7 +3629,11 @@ router.post('/google', [
         // person an older answer.
         const googleDob = yearEndDob(suppliedDob(req.body.date_of_birth));
         const dobAge = googleDob ? ageFromDob(googleDob) : null;
-        if (dobAge === null) {
+        // The iPhone app asks for no date (isIOSAppRequest), so from it a new
+        // account with no usable date is created with none rather than asked
+        // for a year. A date it does send is judged below like the website's.
+        const appSentNoDate = googleDob === null && isIOSAppRequest(req);
+        if (dobAge === null && !appSentNoDate) {
           // CREATION, not backfill, and the client has to be able to tell.
           // enforceDobOnLogin returns a 403 with the same needsDob flag when it
           // is backfilling an EXISTING row, and those two cases need different
@@ -3596,7 +3652,8 @@ router.post('/google', [
         // Same under-13 refusal + retry lockout as password signup: an age
         // screen that only guards one of the three account-creation doors is
         // not the neutral screen the COPPA FAQ describes, it is a suggestion.
-        if (dobAge < MIN_AGE) {
+        // (`dobAge !== null` because `null < 13` is true in JavaScript.)
+        if (dobAge !== null && dobAge < MIN_AGE) {
           // PROVED when Google vouched for the address (R5-H1). `email` here
           // came out of a token this handler verified Google's signature on, so
           // an attacker cannot put a stranger's address in it — but only
@@ -3991,13 +4048,23 @@ router.post('/apple', [
         'Apple'
       );
 
-      // DOB required for creation, same as email + Google paths. Apple never
-      // supplies it, so the client must send it (signup screen's DOB field).
-      // Judged, and stored, as 31 December of the year that arrived, the same
-      // as the other two doors (utils/age.js yearEndDob).
+      // The delete and export dialogs never create an account: see the same
+      // refusal on the Google route.
+      if (req.body && req.body.reconfirm === true) {
+        return res.status(403).json({ error: 'No Flock account uses this Apple ID.', noAccount: true });
+      }
+      // A date of birth Apple never supplies. Judged, when one is sent, and
+      // stored as 31 December of the year that arrived, the same as the other
+      // two doors (utils/age.js yearEndDob). Required from anything that is not
+      // the iPhone app, which asks for none (appSentNoDate below).
       const appleDob = yearEndDob(suppliedDob(req.body.date_of_birth));
       const appleDobAge = appleDob ? ageFromDob(appleDob) : null;
-      if (appleDobAge === null) {
+      // Sign in with Apple exists only in the iPhone app, and the app asks for
+      // no date (isIOSAppRequest), so from it a new account with no usable date
+      // is created with none rather than asked for a year. A date it does send
+      // is judged below exactly as before.
+      const appSentNoDate = appleDob === null && isIOSAppRequest(req);
+      if (appleDobAge === null && !appSentNoDate) {
         // CREATION, not backfill, and the client has to be able to tell.
         // enforceDobOnLogin returns a 403 with the same needsDob flag when it
         // is backfilling an EXISTING row, and those two cases need different
@@ -4016,7 +4083,8 @@ router.post('/apple', [
       // Same under-13 refusal + retry lockout as the other two creation
       // paths. Apple may omit the email; recordUnderageAttempt then keys on
       // the IP alone, which still covers the immediate-retry case.
-      if (appleDobAge < MIN_AGE) {
+      // (`appleDobAge !== null` because `null < 13` is true in JavaScript.)
+      if (appleDobAge !== null && appleDobAge < MIN_AGE) {
         // PROVED only when Apple actually gave us an address AND vouched for
         // it (R5-H1), the same rule as the Google twin. When Apple omits the
         // address there is nothing to key on but the IP, which still covers the
