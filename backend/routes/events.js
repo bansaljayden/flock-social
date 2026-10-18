@@ -8,6 +8,8 @@ const { scalarOnly } = require('../validators/shape');
 // what the hand-rolled version in this file used to do.
 const { createUserBudget } = require('../utils/probeBudget');
 const { waitPhrase, refusalBody, msUntilUtcMidnight } = require('../utils/retryAfter');
+const pool = require('../config/database');
+const { eventIsOver21, viewerKnownOver21 } = require('../utils/over21');
 
 const router = express.Router();
 
@@ -443,6 +445,28 @@ function mapEvent(e) {
   };
 }
 
+// DRINK EVENTS GO ONLY TO PEOPLE WE KNOW ARE 21 (utils/over21.js, App Store
+// Guideline 1.4.3). Every answer below is cached for everyone in a cell, so
+// this runs on the way out, per viewer, and never on what is cached. A list
+// loses its drink events and a drink event's own page answers as not found,
+// for every account we do not know is 21, which includes every account made
+// in the iPhone app. The birthday is read only when an answer holds a drink
+// event at all, so most requests cost no extra query.
+async function forViewer(req, out) {
+  const body = out && out.body;
+  if (!body || out.status !== 200) return out;
+  if (Array.isArray(body.events)) {
+    if (!body.events.some(eventIsOver21)) return out;
+    if (await viewerKnownOver21(pool, req.user.id)) return out;
+    const events = body.events.filter((e) => !eventIsOver21(e));
+    return { status: 200, body: { ...body, events, total: events.length } };
+  }
+  if (body.event && eventIsOver21(body.event) && !(await viewerKnownOver21(pool, req.user.id))) {
+    return { status: 404, body: { error: 'Event not found' } };
+  }
+  return out;
+}
+
 // All routes require auth
 router.use(authenticate);
 
@@ -494,7 +518,10 @@ router.get('/search',
       const coarseLoc = `${lat.toFixed(1)},${lng.toFixed(1)}`;
       const cacheKey = `events:${coarseLoc}|${searchQuery}|${radiusMiles}|${categoryFilter}`;
       const cached = getCached(cacheKey);
-      if (cached) return res.json(cached);
+      if (cached) {
+        const shown = await forViewer(req, { status: 200, body: cached });
+        return res.status(shown.status).json(shown.body);
+      }
 
       let flight = inflight.get(cacheKey);
       if (!flight) {
@@ -512,7 +539,7 @@ router.get('/search',
         inflight.set(cacheKey, flight);
         flight.then(() => inflight.delete(cacheKey));
       }
-      const out = await flight;
+      const out = await forViewer(req, await flight);
       return res.status(out.status).json(out.body);
     } catch (err) {
       console.error('[Events] Search error:', err);
@@ -672,7 +699,10 @@ router.get('/featured',
       )].sort().join(',').slice(0, 100);
       const cacheKey = `featured:${coarseLoc}|${normalizedInterests}`;
       const cached = getCached(cacheKey);
-      if (cached) return res.json(cached);
+      if (cached) {
+        const shown = await forViewer(req, { status: 200, body: cached });
+        return res.status(shown.status).json(shown.body);
+      }
 
       let flight = inflight.get(cacheKey);
       if (!flight) {
@@ -688,7 +718,7 @@ router.get('/featured',
         inflight.set(cacheKey, flight);
         flight.then(() => inflight.delete(cacheKey));
       }
-      const out = await flight;
+      const out = await forViewer(req, await flight);
       return res.status(out.status).json(out.body);
     } catch (err) {
       console.error('[Events] Featured error:', err);
@@ -846,7 +876,10 @@ router.get('/details',
       const eventId = req.query.id;
       const cacheKey = `event_detail:${eventId}`;
       const cached = getCached(cacheKey);
-      if (cached) return res.json(cached);
+      if (cached) {
+        const shown = await forViewer(req, { status: 200, body: cached });
+        return res.status(shown.status).json(shown.body);
+      }
 
       let flight = inflight.get(cacheKey);
       if (!flight) {
@@ -859,7 +892,7 @@ router.get('/details',
         inflight.set(cacheKey, flight);
         flight.then(() => inflight.delete(cacheKey));
       }
-      const out = await flight;
+      const out = await forViewer(req, await flight);
       return res.status(out.status).json(out.body);
     } catch (err) {
       console.error('[Events] Details error:', err);

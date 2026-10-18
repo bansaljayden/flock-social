@@ -86,6 +86,7 @@ import { readVenueBillingReturn, settleVenueCheckout } from './lib/venueBillingR
 // Whether this is the native app, the one answer every surface that sells
 // asks. Here it keeps Roost's price off every screen inside the app.
 import { isNativeShell } from './lib/nativeShell';
+import { DRINK_DEAL_LINE, DRINK_DEAL_LINE_PROMO } from './lib/drinkDeals';
 // AnimatePresence is NOT imported here any more. Its last mount in this file
 // was the presence wrapper around the venue card on Discover, and that went to
 // screens/ExploreScreen.js on 2026-09-13, which imports it for itself.
@@ -4409,7 +4410,11 @@ export const promoEditDescription = (editing) => {
 export const PromoModal = React.memo(function PromoModal({ editing, onSave, onCancel, colors }) {
   const [form, setForm] = React.useState(() => editing
     ? { title: editing.title || '', desc: promoEditDescription(editing), time: editing.time_slot || editing.time || 'Happy Hour', days: editing.days || 'Daily' }
-    : { title: '', desc: '', time: 'Happy Hour', days: 'Daily' });
+    // A NEW deal starts in All Day, not Happy Hour. The server shows a deal in
+    // the Happy Hour slot only to people it knows are 21 (lib/drinkDeals.js),
+    // so a default of Happy Hour would quietly hide every food deal an owner
+    // did not think to move.
+    : { title: '', desc: '', time: 'All Day', days: 'Daily' });
   const [saving, save] = useSaveInFlight(onSave);
 
   const input = { width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: 'var(--t-label)', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' };
@@ -4454,6 +4459,7 @@ export const PromoModal = React.memo(function PromoModal({ editing, onSave, onCa
               <option value="Fri-Sun">Fri-Sun</option>
             </select></div>
         </div>
+        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '14px 0 0', lineHeight: 1.45 }}>{DRINK_DEAL_LINE_PROMO}</p>
         <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
           <button className="hit44 glass-btn glass-secondary" onClick={onCancel} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
           {/* Only the title is required, as it is on the server. A deal from the
@@ -4490,6 +4496,7 @@ export const EventModal = React.memo(function EventModal({ editing, onSave, onCa
           <div><label style={label}>Capacity</label>
             <input aria-label="Capacity" type="number" value={form.capacity} onChange={(e) => setForm(f => ({ ...f, capacity: e.target.value }))} placeholder="e.g., 60" style={input} /></div>
         </div>
+        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '14px 0 0', lineHeight: 1.45 }}>{DRINK_DEAL_LINE}</p>
         <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
           <button className="hit44 glass-btn glass-secondary" onClick={onCancel} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
           <button className="hit44 glass-btn glass-navy" onClick={() => save(form)} disabled={saving || !form.title} aria-busy={saving || undefined} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: !saving && form.title ? colors.navyBg : 'var(--toggle-off)', color: 'white', fontWeight: '600', cursor: !saving && form.title ? 'pointer' : 'not-allowed' }}>{saving ? 'Saving…' : editing ? 'Save Changes' : 'Create'}</button>
@@ -9245,7 +9252,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     queueSync({ userInterests });
   }, [userInterests]);
   const [newInterest, setNewInterest] = useState('');
-  const suggestedInterests = ['Sports', 'Food', 'Dancing', 'Karaoke', 'Comedy', 'Art', 'Wine', 'Beer', 'Trivia', 'Pool', 'Darts', 'Gaming'];
+  // No Wine and no Beer among the suggestions, for the reason Cocktails left
+  // the defaults above: these chips are offered to every account, and most
+  // accounts have no known age. Anyone can still type their own.
+  const suggestedInterests = ['Sports', 'Food', 'Dancing', 'Karaoke', 'Comedy', 'Art', 'Trivia', 'Pool', 'Darts', 'Gaming'];
 
   // ONE READ FOR THE EVENTS SCREEN, INSTEAD OF FOUR COPIES OF IT.
   //
@@ -17780,7 +17790,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setShowHoursModal(false);
   }, []);
   const [dealDescription, setDealDescription] = useState('');
-  const [dealTimeSlot, setDealTimeSlot] = useState('Happy Hour');
+  // All Day, not Happy Hour: a deal in the Happy Hour slot reaches only people
+  // the server knows are 21 (lib/drinkDeals.js).
+  const [dealTimeSlot, setDealTimeSlot] = useState('All Day');
   const [realIncomingFlocks, setRealIncomingFlocks] = useState([]);
   // A failed list read is NOT an empty list. Every one of these lists renders a
   // confident empty state from an empty array — "No promotions yet. Create your

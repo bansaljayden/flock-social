@@ -51,6 +51,7 @@ import VenueBillingControl, { VenueBillingStatus, roostPlanPriceLabel } from '..
 // button and no plans sheet: Roost is sold on the website only. Native is
 // lib/nativeShell.js's answer, the one VenueBillingControl's buttons ask.
 import { isNativeShell } from '../lib/nativeShell';
+import { DRINK_DEAL_LINE_PROMO } from '../lib/drinkDeals';
 import {
   BASE_URL,
   askAdvisor,
@@ -1713,6 +1714,7 @@ export default function VenueDashboard({
                 </button>
               ))}
             </div>
+            <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px', lineHeight: 1.45 }}>{DRINK_DEAL_LINE_PROMO}</p>
             {/* A DOUBLE TAP USED TO POST THE DEAL TWICE. The route is a plain
                 INSERT with no uniqueness behind it, the text was only cleared
                 once the promise resolved, and the button's own disabled rule

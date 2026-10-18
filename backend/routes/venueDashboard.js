@@ -23,6 +23,7 @@ const { scalarOnly, freeText } = require('../validators/shape');
 // routes/feedback.js and sockets/handlers.js all validate against this, and so
 // does routes/venueProfile.js as of the 2026-08-14 audit.
 const { isPlaceIdShaped } = require('../utils/places');
+const { promotionIsOver21, viewerKnownOver21 } = require('../utils/over21');
 
 const router = express.Router();
 router.use(authenticate);
@@ -1686,15 +1687,25 @@ router.get('/public-promotions/:placeId', placeIdParam, async (req, res) => {
        LIMIT 100`,
       [req.params.placeId]
     );
+    // A DRINK DEAL REACHES ONLY AN ACCOUNT WE KNOW IS 21 (utils/over21.js,
+    // App Store Guideline 1.4.3). Left out of the response for everyone else,
+    // an account with no date of birth included, which is every account made
+    // in the iPhone app. The birthday is read only when a drink deal is in the
+    // set, so a venue with none costs no extra query.
+    let served = rows;
+    if (rows.some(promotionIsOver21) && !(await viewerKnownOver21(pool, req.user.id))) {
+      served = rows.filter((r) => !promotionIsOver21(r));
+    }
     // Count the view — see the two rules above claimPromotionViews. Bounded by
     // the LIMIT above, so the ANY($1) set never grows without limit either.
+    // Only what was served counts: a deal left out above was not seen.
     //
     // A failure here must NOT cost the reader their promotions: the analytic is
     // worth less than the content it is counting, and the old code let an
     // UPDATE error fall into the outer catch and answer 500 with a perfectly
     // good result set already in hand.
-    if (rows.length > 0) {
-      const countable = claimPromotionViews(req.user.id, rows.map((r) => r.id));
+    if (served.length > 0) {
+      const countable = claimPromotionViews(req.user.id, served.map((r) => r.id));
       if (countable.length > 0) {
         try {
           await pool.query(
@@ -1710,7 +1721,7 @@ router.get('/public-promotions/:placeId', placeIdParam, async (req, res) => {
         }
       }
     }
-    res.json({ promotions: rows });
+    res.json({ promotions: served });
   } catch (err) {
     console.error('Get public promotions error:', err);
     res.status(500).json({ error: 'Failed to get promotions' });

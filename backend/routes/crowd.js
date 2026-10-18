@@ -15,6 +15,7 @@ const { upstreamSignal } = require('../utils/upstream');
 // separate from routes/venueSearch.js, so it needs its own recording.
 const { recordPlacesResult } = require('../utils/placesHealth');
 const { isPlaceIdShaped } = require('../utils/places');
+const { mentionsOver21 } = require('../utils/over21');
 // ONE raw Place Details response per venue, shared with routes/venueSearch.js.
 // The crowd card and the detail card are opened together by App.js
 // openVenueDetail and used to buy the same Enterprise payload twice — see the
@@ -1240,10 +1241,16 @@ router.get('/:placeId',
         // The rest of the alert is real: the name and the distance come
         // straight off the Ticketmaster event, and the >5,000 threshold that
         // fires it stays a model-side judgement about whether to warn at all.
+        //
+        // Except a drink event's name (utils/over21.js, App Store Guideline
+        // 1.4.3), which is null on every card rather than read against the
+        // viewer's age: this result is cached for everyone who opens the venue
+        // this hour, and no screen prints the field. That an event is on and
+        // how far away still ride, because neither says what it is.
         eventAlert: crowdResult.eventAlert
           ? {
             hasEvent: crowdResult.eventAlert.hasEvent,
-            eventName: crowdResult.eventAlert.eventName,
+            eventName: mentionsOver21(crowdResult.eventAlert.eventName) ? null : crowdResult.eventAlert.eventName,
             distance: crowdResult.eventAlert.distance,
           }
           : null,
