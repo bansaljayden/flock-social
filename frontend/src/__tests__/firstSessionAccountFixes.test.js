@@ -305,7 +305,9 @@ const CONSENT_BLOCK = (() => {
   if (!m) throw new Error('SignupScreen no longer carries the auth-legal paragraph');
   return m[0];
 })();
-const CONSENT_TEXT = 'Creating an account means you agree to the Terms, Privacy Policy, and Community Guidelines.';
+// Guideline 5.1.1(ii): the line names the product analytics the Privacy Policy
+// describes, so agreeing to it is agreeing to that collection in so many words.
+const CONSENT_TEXT = 'Creating an account means you agree to the Terms, Privacy Policy, and Community Guidelines, including the product analytics they describe.';
 
 const consentOn = (container) => container.querySelector('.auth-legal');
 

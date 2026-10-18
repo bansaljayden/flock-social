@@ -627,7 +627,7 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
             Creating an account means you agree to the{' '}
             <a href={TERMS_URL} target="_blank" rel="noopener noreferrer">Terms</a>,{' '}
             <a href={PRIVACY_URL} target="_blank" rel="noopener noreferrer">Privacy Policy</a>, and{' '}
-            <a href={GUIDELINES_URL} target="_blank" rel="noopener noreferrer">Community Guidelines</a>.
+            <a href={GUIDELINES_URL} target="_blank" rel="noopener noreferrer">Community Guidelines</a>, including the product analytics they describe.
           </p>
         )}
       </form>
