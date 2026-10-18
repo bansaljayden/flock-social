@@ -205,6 +205,14 @@
   gap: 10px;
 }
 
+.es-911-note {
+  margin: -2px 0 2px;
+  font-size: var(--t-meta);
+  line-height: 1.4;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
 .es-standdown-line {
   margin: 0;
   font-size: var(--t-label);

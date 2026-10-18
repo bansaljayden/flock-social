@@ -187,6 +187,16 @@ describe('the four actions keep their original wiring', () => {
     expect(screen.getByRole('link', { name: /call 911/i })).toHaveAttribute('href', 'tel:911');
   });
 
+  it('right under Call 911, one plain line says Flock does not contact emergency services', () => {
+    renderSheet();
+    const call = screen.getByRole('link', { name: /call 911/i });
+    const note = screen.getByText('Flock does not contact emergency services for you.');
+    // Directly after the call, before any alert button, so it is read with it.
+    expect(call.nextElementSibling).toBe(note);
+    expect(note.tagName).toBe('P');
+    expect(note.textContent).not.toMatch(/—/);
+  });
+
   it('Alert Contacts is two-step: first tap arms, second tap fires the handler', () => {
     const onArmedChange = jest.fn();
     const onAlertContacts = jest.fn();

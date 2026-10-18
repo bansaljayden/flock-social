@@ -257,6 +257,11 @@ const EmergencySheet = ({
             {Icons.phone('currentColor', 20)}
             <span>Call 911</span>
           </a>
+          {/* Said in so many words, right under the call: the alert buttons
+              below reach trusted contacts and plan members, never 911, and a
+              person in an emergency must not be left believing otherwise. The
+              Terms say the same (Flock is not an emergency service). */}
+          <p className="es-911-note">Flock does not contact emergency services for you.</p>
 
           {/* With no trusted contacts there is nobody to alert, so the two
               buttons that message them are visibly dead (never a full-
