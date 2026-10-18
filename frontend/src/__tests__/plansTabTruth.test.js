@@ -34,7 +34,9 @@ test('a failed plans read is said with a retry, not shown as an empty day', () =
 });
 
 test('events without location do not promise a search that does nothing', () => {
-  expect(exploreScreen).toMatch(/Turn location on for Flock to see what is on near you\./);
+  // Worded for a Continue button since the pre-permission pass (Guideline
+  // 5.1.1(iv)); still no promise of a search.
+  expect(exploreScreen).toMatch(/Flock uses your location to show what is on near you\./);
   // Checked in BOTH files: the sentence moved, and the promise must not come
   // back in either the screen that draws the drawer or the file it left.
   expect(exploreScreen).not.toMatch(/or search for an event by name/);

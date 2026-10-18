@@ -98,7 +98,10 @@ test('every ask for location on a first run carries the control', () => {
   // wait, the failure) that sits between the heading and the control.
   const events = exploreScreen.slice(exploreScreen.indexOf('Events need your location'), exploreScreen.indexOf('Events need your location') + 2400);
   expect(events).toMatch(/if \(!locationEnabled\) toggleLocation\(true\); else requestUserLocation\(true\);/);
-  expect(events).toMatch(/Turn on location/);
+  // The control reads Continue, the word Apple asks of a message shown before
+  // a system permission prompt (Guideline 5.1.1(iv)), not Turn on.
+  expect(events).toMatch(/: 'Continue'\}<\/button>/);
+  expect(events).not.toMatch(/Turn on location/);
   expect(exploreScreen).toMatch(/Finding where you are\. Venues near you show up once that lands\./);
 });
 

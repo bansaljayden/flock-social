@@ -1311,7 +1311,11 @@ describe('a host alone on a new plan is asked about notifications', () => {
     mount({ ...unasked, flock: { memberCount: 1 } });
     expect(screen.getByText('Know when they answer')).toBeInTheDocument();
     expect(screen.getByText("Flock can tell you when someone says they're in.")).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Turn on' })).toBeInTheDocument();
+    // Continue, and no way to close the row: a message shown right before the
+    // system prompt goes on to it (App Store Guideline 5.1.1(iv)).
+    expect(screen.getByRole('button', { name: 'Continue' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Turn on' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Not now' })).toBeNull();
   });
 
   test('a member alone on a plan is still not asked: nothing is sent to them there', () => {
@@ -1347,13 +1351,13 @@ describe('a host alone on a new plan is asked about notifications', () => {
     }
   });
 
-  test('Turn on is the tap that asks the OS, and the row remembers it was answered', async () => {
+  test('Continue is the tap that asks the OS, and the row remembers it was answered', async () => {
     firebase.requestNotificationPermission.mockReset();
     firebase.requestNotificationPermission.mockResolvedValue('fcm-token');
     const { p } = mount({ ...unasked, flock: { memberCount: 1 } });
     // Nothing asks the OS until the tap.
     expect(firebase.requestNotificationPermission).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: 'Turn on' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
     expect(p.dismissNotifAsk).toHaveBeenCalledTimes(1);
     expect(firebase.requestNotificationPermission).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(p.setNotifStatus).toHaveBeenCalledWith('granted'));

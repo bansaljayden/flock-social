@@ -3185,8 +3185,16 @@ export default function ChatDetail({
           onChangePlace={pinModel && pinModel.kind === 'venue' && isCreator && !planClosed ? changePinnedPlace : undefined}
         />
 
-        {/* THE NOTIFICATION ASK, and the only one in the app besides the Enable
+        {/* THE NOTIFICATION ASK, and the only one in the app besides the Set up
             button in Settings.
+
+            ONE BUTTON, CONTINUE, AND NO WAY TO CLOSE IT HERE (App Store
+            Guideline 5.1.1(iv)). A message an app shows right before a
+            system permission prompt may not carry an exit, and its button
+            reads Continue: the person always goes on to the system prompt,
+            which is where they say yes or no. It had a Turn on and an X; a
+            no is now given to iOS itself, after which this row is gone for
+            good because the OS has answered.
 
             It is here because this is the first screen in Flock where a
             notification has an obvious referent. The plan exists, other people
@@ -3194,12 +3202,13 @@ export default function ChatDetail({
             yes or picking a bar. That sentence is on screen while the ask is
             made, which is exactly what the prompt fired at cold start did not
             have. iOS gives one prompt per install and a denial is permanent,
-            so the OS is only reached from the button below: a "not now" here
-            costs nothing and can be asked again, a "no" at the OS cannot.
+            so the OS is only reached from the button below, never from an
+            effect, and only on a plan where the reason is on screen.
 
             Conditions, in order: there is something to notify about, the OS
-            has not already answered, and this row has not been dismissed
-            before.
+            has not already answered, and this row has not been tapped before
+            (the tap records it, so a person who went on to the prompt is not
+            shown the row again on this device).
 
             "Something to notify about" is somebody else on this plan, OR this
             reader being its creator. A flock of one used to be skipped as
@@ -3251,9 +3260,8 @@ export default function ChatDetail({
               }}
               style={{ padding: '8px 14px', borderRadius: '12px', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', flexShrink: 0, position: 'relative', overflow: 'hidden' }}
             >
-              Turn on
+              Continue
             </button>
-            <button aria-label="Not now" className="hit44" onClick={dismissNotifAsk} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px', flexShrink: 0 }}>{Icons.x(colors.textSecondary, 14)}</button>
           </div>
         )}
 

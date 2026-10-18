@@ -128,7 +128,15 @@ describe('the four states of the Contacts tab', () => {
     expect(screen).toContain(
       'Flock sends only phone numbers, checks them against people who chose to be findable, and keeps nothing. Names and everything else stay on your phone.'
     );
-    expect(screen).toContain('Check my contacts');
+    // Its one button reads Continue and the card has no exit of its own: the
+    // only way forward is the system prompt, and leaving is the screen's
+    // ordinary back navigation (App Store Guideline 5.1.1(iv)).
+    expect(screen).not.toContain('Check my contacts');
+    const card = screen.slice(screen.indexOf('Find friends from your contacts'));
+    const cardEnd = card.indexOf('STATE 3');
+    const cardSrc = card.slice(0, cardEnd);
+    expect(cardSrc).toMatch(/>\s*Continue\s*<\/button>/);
+    expect((cardSrc.match(/<button/g) || []).length).toBe(1);
   });
 
   test('the denied state points at Settings and does not ask again', () => {

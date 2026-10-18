@@ -47,7 +47,7 @@
  * survive a trip elsewhere exactly as they did before.
  *
  * Nothing about the contacts flow changed. The system permission prompt still
- * fires only from the "Check my contacts" tap and never from an effect,
+ * fires only from the contacts card's Continue tap and never from an effect,
  * because iOS asks once per install and a denial stands until the person walks
  * into Settings. The four states of that tab, and the `contactsSupported`
  * fallback that redirects the tab when the plugin is absent, are the same lines
@@ -600,7 +600,7 @@ export default function AddFriends({
                     <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 14px', lineHeight: '1.5' }}>Flock sends only phone numbers, checks them against people who chose to be findable, and keeps nothing. Names and everything else stay on your phone.</p>
                     <button className="hit44 glass-btn glass-navy" onClick={(e) => { confirmClick(e); handleSyncContacts(); }} disabled={contactsLoading}
                       style={{ width: '100%', padding: '14px', borderRadius: '14px', border: 'none', background: colors.navyBg, color: 'white', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>
-                      Check my contacts
+                      Continue
                     </button>
                   </div>
                 )}

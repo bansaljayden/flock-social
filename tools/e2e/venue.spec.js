@@ -320,7 +320,7 @@ test('with Location services off, Discover says so and nothing asks the device a
   // The screen the setting governs says what the setting did, and offers the
   // way back rather than sending the person to Settings to find the row again.
   await expect(page.getByText(/location services are off/i)).toBeVisible({ timeout: 25_000 });
-  await expect(page.getByRole('button', { name: /^turn on$/i })).toBeVisible();
+  await expect(page.getByRole('button', { name: /^continue$/i })).toBeVisible();
 
   // THE WHOLE POINT OF THE SWITCH. With it off, neither Discover nor the map
   // may ask the device where you are. On a phone each of these calls raises an
@@ -332,7 +332,7 @@ test('with Location services off, Discover says so and nothing asks the device a
   await context.close();
 });
 
-test('tapping Turn on when the device refuses still leaves a sentence on the screen', async ({ browser }) => {
+test('tapping Continue when the device refuses still leaves a sentence on the screen', async ({ browser }) => {
   test.setTimeout(150_000);
   const errors = [];
   const me = await newSignedInPhone(browser, 'Wren Recover', errors);
@@ -343,7 +343,7 @@ test('tapping Turn on when the device refuses still leaves a sentence on the scr
   await page.getByRole('button', { name: 'Discover', exact: true }).click();
   await expect(page.getByText(/location services are off/i)).toBeVisible({ timeout: 25_000 });
 
-  await page.getByRole('button', { name: /^turn on$/i }).click();
+  await page.getByRole('button', { name: /^continue$/i }).click();
 
   // The device permission is denied, so switching the setting back on cannot
   // give the app a location. The banner that WAS explaining the empty map

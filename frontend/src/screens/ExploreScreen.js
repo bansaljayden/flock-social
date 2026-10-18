@@ -288,8 +288,12 @@ export default function ExploreScreen({
       {!locationLoading && !locationEnabled && (
         <div style={{ position: 'relative', zIndex: 25, backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', padding: '12px 14px', display: 'flex', alignItems: 'center', gap: '10px' }}>
           <span style={{ flexShrink: 0, display: 'flex' }}>{Icons.mapPin('var(--text-tertiary)', 16)}</span>
-          <p role="status" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, flex: 1, minWidth: 0, lineHeight: 1.5 }}>Location services are off, so venues are not sorted by distance and the map does not show where you are. Search still works.</p>
-          <button className="hit44" onClick={() => { toggleLocation(true); setMapVenuesLoaded(false); }} style={{ flexShrink: 0, padding: '7px 12px', borderRadius: '10px', border: '1px solid var(--border-mid)', background: 'transparent', color: 'var(--text-primary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Turn on</button>
+          <p role="status" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, flex: 1, minWidth: 0, lineHeight: 1.5 }}>Location services are off, so venues are not sorted by distance and the map does not show where you are. Search still works. Continue to use your location.</p>
+          {/* Continue, never Turn on or Allow, and nothing that closes this
+              row: the tap can lead straight to the system location prompt,
+              and a message shown before that prompt goes on to it
+              (Guideline 5.1.1(iv)). */}
+          <button className="hit44" onClick={() => { toggleLocation(true); setMapVenuesLoaded(false); }} style={{ flexShrink: 0, padding: '7px 12px', borderRadius: '10px', border: '1px solid var(--border-mid)', background: 'transparent', color: 'var(--text-primary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Continue</button>
         </div>
       )}
 
@@ -666,11 +670,12 @@ export default function ExploreScreen({
                       ? (/Settings/.test(locationError)
                         ? 'Location is off for Flock on this phone. Turn it on in Settings, then come back.'
                         : 'Could not get your location just now. Try again.')
-                      : 'Turn location on for Flock to see what is on near you.'}
+                      : 'Flock uses your location to show what is on near you.'}
                 </p>
                 {/* The sentence used to be the whole screen: a request with no
-                    control. Same "Turn on" as the Discover banner. */}
-                <button className="hit44" disabled={locationLoading} onClick={() => { if (!locationEnabled) toggleLocation(true); else requestUserLocation(true); }} style={{ marginTop: '14px', minHeight: '44px', padding: '10px 16px', borderRadius: '10px', border: '1px solid var(--border-mid)', background: 'transparent', color: 'var(--text-primary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: locationLoading ? 'default' : 'pointer', opacity: locationLoading ? 0.6 : 1 }}>{locationLoading ? 'Finding where you are' : locationError ? 'Try again' : 'Turn on location'}</button>
+                    control. Same Continue as the Discover banner, and for
+                    the same reason (Guideline 5.1.1(iv)). */}
+                <button className="hit44" disabled={locationLoading} onClick={() => { if (!locationEnabled) toggleLocation(true); else requestUserLocation(true); }} style={{ marginTop: '14px', minHeight: '44px', padding: '10px 16px', borderRadius: '10px', border: '1px solid var(--border-mid)', background: 'transparent', color: 'var(--text-primary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: locationLoading ? 'default' : 'pointer', opacity: locationLoading ? 0.6 : 1 }}>{locationLoading ? 'Finding where you are' : locationError ? 'Try again' : 'Continue'}</button>
               </div>
             )}
             {!featuredEventsLoading && !featuredEventsError && featuredEvents && featuredEvents.length === 0 && (

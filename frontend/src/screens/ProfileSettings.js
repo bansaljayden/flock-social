@@ -951,7 +951,7 @@ export default function ProfileSettings({
                       // "enabled" without a registered token was a lie.
                       if (token) { setNotifStatus('granted'); showToast('Notifications are on.'); }
                       else { setNotifStatus(getNotificationStatus()); showToast("Notifications aren't on. Check your device settings.", 'error'); }
-                    }).catch(() => showToast("Notifications aren't on. Check your device settings.", 'error'))} style={{ padding: '6px 12px', borderRadius: '8px', border: `1px solid ${colors.navy}`, backgroundColor: 'var(--icon-bg)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Enable</button>
+                    }).catch(() => showToast("Notifications aren't on. Check your device settings.", 'error'))} style={{ padding: '6px 12px', borderRadius: '8px', border: `1px solid ${colors.navy}`, backgroundColor: 'var(--icon-bg)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Set up</button>
                 )}
               </div>
               {notifStatus === 'unsupported' && (

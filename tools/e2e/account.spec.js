@@ -426,13 +426,13 @@ test('turning Location services off stops the app asking, and Discover says so',
   await page.getByRole('button', { name: 'Discover', exact: true }).click();
   // Discover explains itself rather than opening a generic map with no pin.
   await expect(page.getByText(/location services are off/i)).toBeVisible({ timeout: 15_000 });
-  await expect(page.getByRole('button', { name: 'Turn on' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Continue' })).toBeVisible();
   // And the switch is real: nothing on this screen asks the device where it is.
   await page.waitForTimeout(2000);
   expect(await page.evaluate(() => window.__geoCalls)).toBe(0);
 
   // The offer works from here, without sending anyone back to Settings.
-  await page.getByRole('button', { name: 'Turn on' }).click();
+  await page.getByRole('button', { name: 'Continue' }).click();
   await expect(page.getByText(/location services are off/i)).toHaveCount(0, { timeout: 15_000 });
   expect(await page.evaluate(() => window.__geoCalls)).toBeGreaterThan(0);
 
