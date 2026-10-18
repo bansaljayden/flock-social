@@ -73,11 +73,13 @@ function mentionsOver21(...texts) {
   return texts.some((t) => typeof t === 'string' && t !== '' && OVER_21_RE.test(fold(t)));
 }
 
-// Every field a person sees on the promotion. The time slot is a menu value,
-// and "Happy Hour" is on that menu: a deal in that slot is shown as
-// "Happy Hour · Daily", so it counts like any other mention of happy hour.
+// Every field a person sees on the promotion. The time slot and the days are
+// either a menu value or the owner's own words (the editor's Custom choice),
+// and the card prints both as "time slot · days". "Happy Hour" is on the menu,
+// and an owner can type it into either box, so any of the four fields saying
+// it counts like any other mention of happy hour.
 function promotionIsOver21(p) {
-  return !!p && mentionsOver21(p.title, p.description, p.time_slot);
+  return !!p && mentionsOver21(p.title, p.description, p.time_slot, p.days);
 }
 
 // A Ticketmaster event as routes/events.js maps it. Its name, its headliner and

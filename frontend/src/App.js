@@ -87,6 +87,7 @@ import { readVenueBillingReturn, settleVenueCheckout } from './lib/venueBillingR
 // asks. Here it keeps Roost's price off every screen inside the app.
 import { isNativeShell } from './lib/nativeShell';
 import { DRINK_DEAL_LINE, DRINK_DEAL_LINE_PROMO } from './lib/drinkDeals';
+import { PROMO_CUSTOM, PROMO_CUSTOM_MAX, splitPromoChoice, joinPromoChoice } from './lib/promoChoice';
 // AnimatePresence is NOT imported here any more. Its last mount in this file
 // was the presence wrapper around the venue card on Discover, and that went to
 // screens/ExploreScreen.js on 2026-09-13, which imports it for itself.
@@ -2742,8 +2743,9 @@ const stampFix = (lat, lng) => ({ lat, lng, at: Date.now() });
 // for a new one. A minute: past that, the person may well be somewhere else.
 const SHARE_FIX_FRESH_MS = 60 * 1000;
 
-// The values the promotion editor's two selects offer (see the select for why
-// a value outside them is still shown).
+// The values the promotion editor's two selects offer. Each select also has a
+// Custom choice for the owner's own words (lib/promoChoice.js), and a stored
+// value these lists do not name opens as Custom with its words in the box.
 const PROMO_TIME_SLOTS = ['Happy Hour', 'Late Night', 'Weekend', 'Weekend Brunch', 'All Day'];
 const PROMO_DAYS = ['Daily', 'Weekdays', 'Weekends', 'Mon-Fri', 'Fri-Sun'];
 
@@ -4408,14 +4410,36 @@ export const promoEditDescription = (editing) => {
 };
 
 export const PromoModal = React.memo(function PromoModal({ editing, onSave, onCancel, colors }) {
-  const [form, setForm] = React.useState(() => editing
-    ? { title: editing.title || '', desc: promoEditDescription(editing), time: editing.time_slot || editing.time || 'Happy Hour', days: editing.days || 'Daily' }
+  const [form, setForm] = React.useState(() => {
     // A NEW deal starts in All Day, not Happy Hour. The server shows a deal in
     // the Happy Hour slot only to people it knows are 21 (lib/drinkDeals.js),
     // so a default of Happy Hour would quietly hide every food deal an owner
-    // did not think to move.
-    : { title: '', desc: '', time: 'All Day', days: 'Daily' });
+    // did not think to move. A stored deal with no slot opens on All Day for
+    // the same reason: opening it on Happy Hour and pressing Save made it a
+    // drink deal nobody asked for.
+    //
+    // A stored value the lists do not name (a quick deal's custom time, a slot
+    // written before the list changed) opens as Custom with its words in the
+    // box, so the owner can read it and change it instead of seeing whatever
+    // the select happens to list first.
+    const time = splitPromoChoice(editing ? (editing.time_slot || editing.time) : '', PROMO_TIME_SLOTS, 'All Day');
+    const days = splitPromoChoice(editing ? editing.days : '', PROMO_DAYS, 'Daily');
+    return {
+      title: editing ? (editing.title || '') : '',
+      desc: editing ? promoEditDescription(editing) : '',
+      time: time.choice,
+      timeCustom: time.custom,
+      days: days.choice,
+      daysCustom: days.custom,
+    };
+  });
   const [saving, save] = useSaveInFlight(onSave);
+  // Custom chosen with nothing typed is not a time or a day, so it does not
+  // save. The server would take the empty string as "leave it alone" on an
+  // edit and store nothing on a new deal, neither of which is what was asked.
+  const timeValue = joinPromoChoice(form.time, form.timeCustom);
+  const daysValue = joinPromoChoice(form.days, form.daysCustom);
+  const canSave = !saving && !!form.title.trim() && !!timeValue && !!daysValue;
 
   const input = { width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: 'var(--t-label)', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' };
   const label = { fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' };
@@ -4439,33 +4463,44 @@ export const PromoModal = React.memo(function PromoModal({ editing, onSave, onCa
                 not here: a quick deal opened in Edit showing Happy Hour, the
                 select's first option, and choosing Happy Hour then changed
                 nothing because the select already claimed it (venue audit
-                2026-10-03). A stored value this list does not name is shown as
-                itself rather than as whatever comes first. */}
+                2026-10-03). Anything else a deal can carry, a quick deal's
+                custom time included, opens under Custom with its words in the
+                box below, never as whatever comes first. */}
             <select id="promo-time-slot" value={form.time} onChange={(e) => setForm(f => ({ ...f, time: e.target.value }))} style={input}>
               <option value="Happy Hour">Happy Hour (4-7pm)</option>
               <option value="Late Night">Late Night (10pm-close)</option>
               <option value="Weekend">Weekend</option>
               <option value="Weekend Brunch">Weekend Brunch (10am-2pm)</option>
               <option value="All Day">All Day</option>
-              {form.time && !PROMO_TIME_SLOTS.includes(form.time) && <option value={form.time}>{form.time}</option>}
-            </select></div>
+              <option value={PROMO_CUSTOM}>Custom</option>
+            </select>
+            {form.time === PROMO_CUSTOM && (
+              <input aria-label="Custom time slot" type="text" maxLength={PROMO_CUSTOM_MAX} value={form.timeCustom} onChange={(e) => setForm(f => ({ ...f, timeCustom: e.target.value }))} placeholder="e.g., 5 to 7pm" style={{ ...input, marginTop: '8px' }} />
+            )}</div>
           <div><label style={label} htmlFor="promo-days-active">Days Active</label>
             <select id="promo-days-active" value={form.days} onChange={(e) => setForm(f => ({ ...f, days: e.target.value }))} style={input}>
-              {form.days && !PROMO_DAYS.includes(form.days) && <option value={form.days}>{form.days}</option>}
               <option value="Daily">Daily</option>
               <option value="Weekdays">Weekdays</option>
               <option value="Weekends">Weekends</option>
               <option value="Mon-Fri">Mon-Fri</option>
               <option value="Fri-Sun">Fri-Sun</option>
-            </select></div>
+              <option value={PROMO_CUSTOM}>Custom</option>
+            </select>
+            {form.days === PROMO_CUSTOM && (
+              <input aria-label="Custom days" type="text" maxLength={PROMO_CUSTOM_MAX} value={form.daysCustom} onChange={(e) => setForm(f => ({ ...f, daysCustom: e.target.value }))} placeholder="e.g., Tuesday to Thursday" style={{ ...input, marginTop: '8px' }} />
+            )}</div>
         </div>
         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '14px 0 0', lineHeight: 1.45 }}>{DRINK_DEAL_LINE_PROMO}</p>
         <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
           <button className="hit44 glass-btn glass-secondary" onClick={onCancel} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
-          {/* Only the title is required, as it is on the server. A deal from the
-              Post a Deal card has no description, and requiring one here left
-              the owner unable to save any edit to it without inventing one. */}
-          <button className="hit44 glass-btn glass-navy" onClick={() => save(form)} disabled={saving || !form.title.trim()} aria-busy={saving || undefined} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: !saving && form.title.trim() ? colors.navyBg : 'var(--toggle-off)', color: 'white', fontWeight: '600', cursor: !saving && form.title.trim() ? 'pointer' : 'not-allowed' }}>{saving ? 'Saving…' : editing ? 'Save Changes' : 'Create'}</button>
+          {/* Only the title is required among the typed fields, as it is on the
+              server. A deal from the Post a Deal card has no description, and
+              requiring one here left the owner unable to save any edit to it
+              without inventing one. A Custom time or days box has to hold
+              something, because Custom with nothing typed is not a schedule.
+              What is handed up is the resolved schedule: the chosen value, or
+              the typed words in its place. */}
+          <button className="hit44 glass-btn glass-navy" onClick={() => save({ ...form, time: timeValue, days: daysValue })} disabled={!canSave} aria-busy={saving || undefined} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: canSave ? colors.navyBg : 'var(--toggle-off)', color: 'white', fontWeight: '600', cursor: canSave ? 'pointer' : 'not-allowed' }}>{saving ? 'Saving…' : editing ? 'Save Changes' : 'Create'}</button>
         </div>
       </div>
     </div>
@@ -17793,6 +17828,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // All Day, not Happy Hour: a deal in the Happy Hour slot reaches only people
   // the server knows are 21 (lib/drinkDeals.js).
   const [dealTimeSlot, setDealTimeSlot] = useState('All Day');
+  // The quick deal's own words for when it runs, used while its Custom chip is
+  // picked (dealTimeSlot === PROMO_CUSTOM). Kept when another chip is picked,
+  // so going back to Custom does not lose what was typed.
+  const [dealCustomTime, setDealCustomTime] = useState('');
   const [realIncomingFlocks, setRealIncomingFlocks] = useState([]);
   // A failed list read is NOT an empty list. Every one of these lists renders a
   // confident empty state from an empty array — "No promotions yet. Create your
@@ -19518,6 +19557,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         authUser,
         calcDistance,
         colors,
+        dealCustomTime,
         dealDescription,
         dealTimeSlot,
         editingEvent,
@@ -19554,6 +19594,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         savingVenueIntake,
         setActiveVenue,
         setCurrentScreen,
+        setDealCustomTime,
         setDealDescription,
         setDealTimeSlot,
         setEditingEvent,

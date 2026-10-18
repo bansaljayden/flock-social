@@ -43,7 +43,9 @@ describe('what the Post a Deal card sends', () => {
 
   test('the card posts through that body, not an inline copy of the old one', () => {
     const card = DASH.slice(DASH.indexOf('Post a Deal</h3>'), DASH.indexOf('Post Deal\n'));
-    expect(card).toMatch(/createVenuePromotion\(quickDealBody\(text, dealTimeSlot\)\)/);
+    // The slot is the chip, or the owner's words when the Custom chip is picked.
+    expect(card).toMatch(/const slot = quickDealTimeSlot\(dealTimeSlot, dealCustomTime\);/);
+    expect(card).toMatch(/createVenuePromotion\(quickDealBody\(text, slot\)\)/);
     expect(card).not.toMatch(/description: text/);
   });
 

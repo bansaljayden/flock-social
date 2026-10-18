@@ -243,9 +243,11 @@ router.put('/promotions/:id', [
     // alone", like every other field here, but an empty string now clears it.
     // It used to be bound as `description || null`, so an owner who emptied
     // the box and pressed Save was told it saved and got the old text back.
-    // The description is the one optional field a deal has (the title is
-    // required, and the time slot and days are always a choice from a list),
-    // and the deals the Post a Deal card posted before it stopped carry their
+    // The description is the one optional field a deal has that the form can
+    // leave empty (the title is required, and the time slot and days are a
+    // choice from a list or, with the editor's Custom choice, the owner's own
+    // words, which the form will not save empty), and the deals the Post a
+    // Deal card posted before it stopped carry their
     // title again as the description: the edit form opens those with the box
     // empty, and saving has to be able to take the copy away, or the first
     // retitle turns a hidden duplicate into a stale second line.

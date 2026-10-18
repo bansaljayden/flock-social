@@ -70,7 +70,9 @@ test('the Post a Deal card says it, and its slot starts in All Day', () => {
 });
 
 test('the server reads the Happy Hour slot the way the promotion forms say it does', () => {
-  expect(OVER21).toMatch(/mentionsOver21\(p\.title, p\.description, p\.time_slot\)/);
+  // The days too: the editor's Custom choice lets an owner type "happy hour"
+  // into either box, and the card prints both.
+  expect(OVER21).toMatch(/mentionsOver21\(p\.title, p\.description, p\.time_slot, p\.days\)/);
   expect(OVER21).toMatch(/'happy hour'/);
 });
 
