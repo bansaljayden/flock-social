@@ -111,6 +111,18 @@ plus offset alone, and the three-hour weight was a wash, so both went to zero on
 (54.7% exact, MAE 17.68), but it was chosen on those readings, so they are no
 test of it; the pre-registered retrain scores it next.
 
+When the live feed goes quiet, the nowcast has no reading from the hour before
+to serve, and the card shows the curve plus the offset. The offset keeps working
+through the silence: it is the median gap between the curve and the venue's
+newest 20 readings from the 28 days before the hour shown
+(`trailingOffsetBefore`), so each reading ages
+out on its own clock and the offset rests on fewer, older readings as the
+silence goes on. Once fewer than two remain, 28 days after the venue's last
+reading at the latest, the card shows the weekly curve alone. An earlier version
+also dropped every offset seven days after the last collector run that wrote a
+live reading; replayed over 28 earlier outages, that cost 3.75 points of exact
+level on days 7 to 13 of a silence, so it was removed.
+
 The labels are relative: the provider scales each venue's busyness from 0 to 100
 within that venue, and the readings do not count people. The exact level leads
 the table because within one level is easy to reach on these labels. Real
