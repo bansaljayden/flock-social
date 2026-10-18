@@ -201,7 +201,7 @@ export default function ResearchPage() {
                 tested on 6.4 million public hourly counts from 28 sources in
                 15 countries, including people counted inside rooms and
                 libraries. The counter has
-                been tested on six research datasets and in eleven sealed tests on
+                been tested on six research datasets and in twelve sealed tests on
                 public footage, including a café and a restaurant, and not yet
                 inside a working venue.
               </p>
