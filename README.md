@@ -36,7 +36,7 @@ product invariant (see below, including what it does not cover).
 | Safety | Live location inside a flock (off by default, never background), two-tap SOS to trusted contacts, report + block, account deletion in-app (with re-authentication) |
 | Venues | Venue dashboard on two plans. Free: profile, deals, events, reviews with owner reply, the incoming-flocks demand feed and the live busyness report. Roost: the venue's own forecast, the strip against nearby venues, the weekly summary, and Roost's cards and answers. The plan gate is server-side and switched off, and no venue has been charged |
 | Social | Friends (codes + search), DMs, post-hangout feedback |
-| Accounts | Email + Google + Sign in with Apple (iOS only), DOB age gate at 13, email verification, disposable-domain blocking |
+| Accounts | Email + Google + Sign in with Apple (iOS only), email verification, disposable-domain blocking. The website's sign-up asks a date of birth and the server refuses anyone under 13; the iPhone app asks for none and relies on the App Store's 13+ rating |
 
 **Built and switched off:** billing. Roost, the venue plan, is sold through
 Stripe checkout on flockcorp.com, and Flock Pro, the optional consumer
