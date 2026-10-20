@@ -205,6 +205,12 @@ test('the owner\'s own words in the time slot or the days are read like the menu
   // Drinks with a price on them, typed into the days, count like the same
   // words in the title.
   assert.strictEqual(over21.promotionIsOver21({ title: 'Wings', time_slot: 'All Day', days: '2-for-1 drinks Tuesday' }), true);
+  // A soft drink typed into the time slot or the days excuses nothing. Those
+  // boxes hold a schedule, and the rule errs toward hiding.
+  assert.strictEqual(over21.promotionIsOver21({ title: '$5 drinks', time_slot: 'All Day', days: 'Daily, sodas too' }), true);
+  assert.strictEqual(over21.promotionIsOver21({ title: '2-for-1 drinks', time_slot: 'Coffee hour, 2 to 4', days: 'Daily' }), true);
+  // The deal naming its own drinks still excuses them.
+  assert.strictEqual(over21.promotionIsOver21({ title: '$5 drinks', description: 'Sodas, lemonade and iced tea', time_slot: 'All Day', days: 'Daily' }), false);
   // A food deal on a custom schedule stays a food deal.
   assert.strictEqual(over21.promotionIsOver21({ title: 'Half-price wings', time_slot: '5 to 7pm', days: 'Tuesday to Thursday' }), false);
 });

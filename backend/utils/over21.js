@@ -22,9 +22,9 @@
 //     "drink special(s)" and "drink deal(s)" are unambiguous. A PRICE on drinks
 //     is how a bar writes a drink deal, though ("2-for-1 drinks", "$5 drinks",
 //     "half-price drinks", "BOGO drinks"), so drinks next to a deal word count
-//     unless the same promotion names a soft drink (DEAL_DRINKS_RE and
-//     SOFT_DRINK_RE below): a cafe's "2-for-1 drinks: lattes and teas" still
-//     reaches everyone.
+//     unless the deal names a soft drink (DEAL_DRINKS_RE and SOFT_DRINK_RE
+//     below; for a promotion, only its title or description can name one):
+//     a cafe's "2-for-1 drinks: lattes and teas" still reaches everyone.
 //   * "brew", because "cold brew" is coffee. "brewery" and "brewpub" are not.
 //   * "spirit" alone (Spirit Halloween, school spirit). "spirits" stays.
 //   * "cider", "stout", "porter", "sake": all common words or soft drinks first.
@@ -80,8 +80,9 @@ const DEAL_DRINKS_RE = new RegExp(
     String.raw`|(?<![a-z0-9])drinks?(?:[\s,:-]+[a-z0-9'&]+){0,3}?[\s,:-]+${DEAL}(?![a-z0-9])`,
   'i'
 );
-// A soft drink named anywhere in the same promotion makes its "drinks" coffee,
-// tea and the like, and the deal reaches everyone.
+// A soft drink the deal names makes its "drinks" coffee, tea and the like, and
+// the deal reaches everyone. Which fields may name one is promotionIsOver21's
+// question, below.
 const SOFT_DRINK_RE = new RegExp(
   String.raw`(?<![a-z0-9])(?:coffees?|lattes?|espressos?|cappuccinos?|mochas?|teas?|chai|matcha|smoothies?|juices?|lemonades?|sodas?|soft[\s-]*drinks?|milkshakes?|shakes|boba|hot[\s-]*chocolates?|cocoa|mocktails?|frapp(?:e|uccino)s?|cold[\s-]*brews?|kombucha|slushies?|slushes?)(?![a-z0-9])`,
   'i'
@@ -91,22 +92,40 @@ const SOFT_DRINK_RE = new RegExp(
 // "Ginés" is a name, and unfolded its "é" would end a word and leave "gin".
 const fold = (t) => t.normalize('NFKD').replace(/[̀-ͯ]/g, '');
 
+// The three questions the rule asks, over texts already folded. A list word is
+// looked for in each text on its own. Priced drinks and a soft drink are looked
+// for in all the texts read together, so a title's "2-for-1" and a
+// description's "drinks" still meet, and a description's "lattes" still
+// answers a title's "2-for-1 drinks".
+const foldTexts = (texts) => texts.filter((t) => typeof t === 'string' && t !== '').map(fold);
+const hasListWord = (folded) => folded.some((t) => OVER_21_RE.test(t));
+const hasPricedDrinks = (folded) => DEAL_DRINKS_RE.test(folded.join(' \n '));
+const namesSoftDrink = (folded) => SOFT_DRINK_RE.test(folded.join(' \n '));
+
 function mentionsOver21(...texts) {
-  const folded = texts.filter((t) => typeof t === 'string' && t !== '').map(fold);
-  if (folded.some((t) => OVER_21_RE.test(t))) return true;
-  // Read together, so a title's "2-for-1 drinks" is excused by a description
-  // that says the drinks are lattes.
-  const all = folded.join(' \n ');
-  return DEAL_DRINKS_RE.test(all) && !SOFT_DRINK_RE.test(all);
+  const folded = foldTexts(texts);
+  return hasListWord(folded) || (hasPricedDrinks(folded) && !namesSoftDrink(folded));
 }
 
 // Every field a person sees on the promotion. The time slot and the days are
 // either a menu value or the owner's own words (the editor's Custom choice),
 // and the card prints both as "time slot · days". "Happy Hour" is on the menu,
-// and an owner can type it into either box, so any of the four fields saying
-// it counts like any other mention of happy hour.
+// and an owner can type it into either box, so a list word, or drinks with a
+// price on them, in any of the four fields counts.
+//
+// ONLY THE DEAL ITSELF CAN SAY ITS DRINKS ARE SOFT. The title and the
+// description are where an owner says what the deal is ("2-for-1 drinks",
+// "any iced latte or cold brew"), so a soft drink named there excuses the
+// price on the drinks. The time slot and the days hold a schedule. A soft
+// drink typed into one of them is odd at best and a way around the rule at
+// worst ("$5 drinks" with the days "Daily, sodas too"), and the rule errs
+// toward hiding, so those two boxes can make a deal a drink deal and can
+// never excuse one.
 function promotionIsOver21(p) {
-  return !!p && mentionsOver21(p.title, p.description, p.time_slot, p.days);
+  if (!p) return false;
+  const shown = foldTexts([p.title, p.description, p.time_slot, p.days]);
+  if (hasListWord(shown)) return true;
+  return hasPricedDrinks(shown) && !namesSoftDrink(foldTexts([p.title, p.description]));
 }
 
 // A Ticketmaster event as routes/events.js maps it. Its name, its headliner and
