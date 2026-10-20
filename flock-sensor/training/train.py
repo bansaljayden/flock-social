@@ -119,6 +119,10 @@ def real_frame(real, rng, groups_x3=False):
              authors' training locations granted 2026-10-19, with
              citation): an MLX90640 32x24 on the ceilings of offices,
              homes and labs, its test clips held out
+      ota    OpenThermalAction (ISSAI; frames MIT, pose labels tagged
+             AGPL-3.0): two people on a balcony, its office test split
+             held out. Only in candidate A's cache: Klir, soccer and ota
+             are the copyleft sets candidate B is built without
     A set whose licence allows evaluation only never enters a cache.
     Only people are labelled in them, so only the people map is graded.
     """
