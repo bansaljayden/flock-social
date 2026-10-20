@@ -162,11 +162,10 @@ export default function ResearchPage() {
               up.
             </p>
             <p>
-              So we asked two questions. Can a system that watches a venue over
-              time beat that venue's own chart, one hour on one night? And can a
-              small sensor count the people in a room by itself, with only the
-              count ever leaving it, so that a busyness score can be checked
-              against real people?
+              So we asked two questions. Can AI tell how crowded a venue will
+              be before you go? And can a credit-card-sized computer model be
+              designed to count the number of people inside a venue using a
+              thermal camera without identifying individuals?
             </p>
           </div>
         </section>
