@@ -159,7 +159,7 @@ test('a phrase matches with spaces, hyphens or nothing between its words', () =>
 test('whole words only, and the words left off the list stay off', () => {
   for (const t of [
     'NFL Draft watch party', // "draft" alone is the draft, not a drink
-    '2-for-1 drinks until 8pm', 'Holiday drinks are back', 'Kids drink free', // drinks are coffee too
+    'Holiday drinks are back', 'Kids drink free', // drinks are coffee too
     'Cold brew Monday', 'Spirit week', 'Apple cider donuts',
     'Kale salad', 'Engine room trivia', 'Rumble arcade night', 'Ipanema bossa nova',
     'Ginés Live', // an accented letter is a letter: no "gin" here
@@ -168,6 +168,24 @@ test('whole words only, and the words left off the list stay off', () => {
     assert.strictEqual(over21.mentionsOver21(t), false, t);
   }
   assert.strictEqual(over21.mentionsOver21(null, undefined, 42, {}), false);
+});
+
+test('drinks with a price on them are a drink deal, unless the same promotion names a soft drink', () => {
+  // How a bar writes one. The first is the example in the owner's own deal form.
+  for (const t of [
+    '2-for-1 drinks until 8pm', 'Two for one drinks', '$5 drinks all night', 'Drinks $4.50 till 9',
+    'Half-price drinks on the patio', 'BOGO drinks', 'Buy one, get one drinks', '20% off drinks', 'Cheap drinks Thursday',
+  ]) {
+    assert.ok(over21.mentionsOver21(t), t);
+  }
+  // A cafe's deal names what the drinks are.
+  for (const t of ['2-for-1 drinks: lattes and teas', '$3 drinks, smoothies and juice', 'Half-price drinks for kids: lemonade and soda']) {
+    assert.strictEqual(over21.mentionsOver21(t), false, t);
+  }
+  assert.strictEqual(over21.promotionIsOver21({ title: '2-for-1 drinks', description: 'Any iced latte or cold brew' }), false);
+  // A drink on the list still wins over a soft drink beside it.
+  assert.strictEqual(over21.promotionIsOver21({ title: '2-for-1 drinks', description: 'Wells and drafts only' }), true);
+  assert.strictEqual(over21.promotionIsOver21({ title: '2-for-1 drinks', description: 'Margaritas and sodas' }), true);
 });
 
 test('a promotion is read by its title, its description and its time slot', () => {
