@@ -88,10 +88,10 @@ def real_frame(real, rng, groups_x3=False):
            nothing learns what a face looks like)
     owl-5's cache (real_cache6.pkl) keeps all of that and adds the training
     parts of the sets below, each split by whole recording, so a recording
-    held out for testing never trains. Each frame is stored at 160x120 in
-    pseudo-Celsius (5th percentile at 20 C, 99.5th at 34 C) with a box per
-    person and a head point estimated from the box, and the cache's own
-    '_mix' sets how often each source is drawn:
+    held out for testing never trains. Each frame is stored at 160x120, in
+    pseudo-Celsius (5th percentile at 20 C, 99.5th at 34 C) or, for mld, in
+    real degrees C, with a box per person and a head point estimated from
+    the box, and the cache's own '_mix' sets how often each source is drawn:
       butiv  BU-TIV Atrium and Lab (Wu et al., CVPR Workshops 2014): in the
              cache only with the author's written permission to train;
              without it the whole set stays held out
@@ -114,6 +114,11 @@ def real_frame(real, rng, groups_x3=False):
       litiv  LITIV 2014 (Bilodeau, Torabi, St-Charles and Riahi; training
              on video 2 granted by the authors, 2026-10-15): one to five
              people walking in a room
+      mld    MlDetection (Vandersteegen, Reusen, Van Beeck and Goedeme,
+             IVCNZ 2022; KU Leuven EAVISE with Melexis, training on the
+             authors' training locations granted 2026-10-19, with
+             citation): an MLX90640 32x24 on the ceilings of offices,
+             homes and labs, its test clips held out
     A set whose licence allows evaluation only never enters a cache.
     Only people are labelled in them, so only the people map is graded.
     """
@@ -175,9 +180,10 @@ def real_frame(real, rng, groups_x3=False):
                    for box, (hx, hy) in real['iiser_people'][i]]
         boxes = False
     elif src not in OLD_SOURCES and f'{src}_img' in real:
-        # owl-5's new sets, already in pseudo-Celsius at 160x120. Their head
-        # points are estimated from boxes, so their peaks are spread like
-        # SDT's.
+        # owl-5's new sets, already at 160x120 in pseudo-Celsius, or in real
+        # degrees C for mld (the cache's owl5 radiometric_keys); both take a
+        # random offset, as SDT does. Their head points are estimated from
+        # boxes, so their peaks are spread like SDT's.
         i = int(rng.integers(len(real[f'{src}_img'])))
         t = real[f'{src}_img'][i].astype(np.float32) + rng.normal(0, 1.0)
         objects = [{'cls': 'person', 'x': hx, 'y': hy, 'box': box, 'approx': True}
