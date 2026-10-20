@@ -907,6 +907,10 @@ const SCREENS = [
      that the screen now offers a path. It is the paid B2B surface and it had
      no visual coverage at all. */
   { id: 'venue-analytics', title: 'Venue dashboard (analytics tab)', appstore: false, replaces: {} },
+  /* THE EVENTS TAB, where the incoming-flocks feed lives ("Flocks With You in
+     Their Vote"): the one screen that shows a venue the demand Flock sends it. */
+  { id: 'venue-events', title: 'Venue dashboard (events tab, incoming flocks)', appstore: false, replaces: {} },
+  { id: 'venue-promos', title: 'Venue dashboard (promotions tab)', appstore: false, replaces: {} },
   /* THE SECOND PERSON. Three surfaces from the change that made the share
      link the product: the step that replaces the create form once a plan
      exists, the night-of "still in?" question in the chat and on the roster,
@@ -976,7 +980,7 @@ const tab = (page, name) => mainNav(page).getByRole('button', { name });
 /* The screens that need the OWNER token and the ?venue=true deep link rather
    than an ordinary session. Both filters below read this, so a screen added to
    one is never missing from the other. */
-const OWNER_SCREENS = new Set(['venue-dash', 'venue-analytics']);
+const OWNER_SCREENS = new Set(['venue-dash', 'venue-analytics', 'venue-events', 'venue-promos']);
 
 /* The screens driven from a context with NO session: no token, nothing an
    app visitor carries. The guest page is for exactly that person, and the
@@ -1244,6 +1248,24 @@ const DRIVERS = {
     await declineAnalyticsAsk(page);
     const analyticsTab = page.getByRole('button', { name: 'Analytics' }).first();
     if (await analyticsTab.count()) await analyticsTab.click();
+    await settle(page);
+  },
+  async 'venue-events'(page) {
+    // Same owner context as venue-dash. The seeded demo flock is pointed at
+    // the demo venue, so the feed has a real row to draw.
+    await page.getByText('Welcome,').first().waitFor({ timeout: 20000 });
+    await declineAnalyticsAsk(page);
+    const eventsTab = page.getByRole('button', { name: 'Events' }).first();
+    if (await eventsTab.count()) await eventsTab.click();
+    await page.getByText('Flocks With You in Their Vote').first().waitFor({ timeout: 15000 }).catch(() => {});
+    await settle(page);
+  },
+  async 'venue-promos'(page) {
+    // Same owner context as venue-dash; the seeded venue carries one promotion.
+    await page.getByText('Welcome,').first().waitFor({ timeout: 20000 });
+    await declineAnalyticsAsk(page);
+    const promosTab = page.getByRole('button', { name: 'Promotions' }).first();
+    if (await promosTab.count()) await promosTab.click();
     await settle(page);
   },
   async 'venue-dash'(page) {

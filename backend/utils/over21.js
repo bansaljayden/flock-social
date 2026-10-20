@@ -19,7 +19,12 @@
 //   * "draft" alone, because of every "NFL Draft" watch party. "drafts" and
 //     "on draft" are how a bar writes it.
 //   * "drink" and "drinks" alone, because a cafe's "holiday drinks" are coffee.
-//     "drink special(s)" and "drink deal(s)" are unambiguous.
+//     "drink special(s)" and "drink deal(s)" are unambiguous. A PRICE on drinks
+//     is how a bar writes a drink deal, though ("2-for-1 drinks", "$5 drinks",
+//     "half-price drinks", "BOGO drinks"), so drinks next to a deal word count
+//     unless the same promotion names a soft drink (DEAL_DRINKS_RE and
+//     SOFT_DRINK_RE below): a cafe's "2-for-1 drinks: lattes and teas" still
+//     reaches everyone.
 //   * "brew", because "cold brew" is coffee. "brewery" and "brewpub" are not.
 //   * "spirit" alone (Spirit Halloween, school spirit). "spirits" stays.
 //   * "cider", "stout", "porter", "sake": all common words or soft drinks first.
@@ -65,12 +70,34 @@ const OVER_21_RE = new RegExp(
   'i'
 );
 
+// Drinks with a price on them: a deal word within a few words before "drink(s)",
+// or a price within a few words after it. Deal words: "2-for-1" and its
+// spellings, BOGO, buy one get one, half price or half off, a dollar price, a
+// percentage off, "discounted" and "cheap".
+const DEAL = String.raw`(?:(?:\d+|one|two)[\s-]*for[\s-]*(?:\d+|one|two)|bogo|buy[\s-]+one[\s,-]*get[\s-]+one|half[\s-]*(?:price|off)|\$\s*\d+(?:\.\d{1,2})?|\d+\s*%\s*off|discounted|cheap)`;
+const DEAL_DRINKS_RE = new RegExp(
+  String.raw`(?<![a-z0-9])${DEAL}(?![a-z0-9])(?:[\s,:-]+[a-z0-9'&]+){0,3}?[\s,:-]+drinks?(?![a-z0-9])` +
+    String.raw`|(?<![a-z0-9])drinks?(?:[\s,:-]+[a-z0-9'&]+){0,3}?[\s,:-]+${DEAL}(?![a-z0-9])`,
+  'i'
+);
+// A soft drink named anywhere in the same promotion makes its "drinks" coffee,
+// tea and the like, and the deal reaches everyone.
+const SOFT_DRINK_RE = new RegExp(
+  String.raw`(?<![a-z0-9])(?:coffees?|lattes?|espressos?|cappuccinos?|mochas?|teas?|chai|matcha|smoothies?|juices?|lemonades?|sodas?|soft[\s-]*drinks?|milkshakes?|shakes|boba|hot[\s-]*chocolates?|cocoa|mocktails?|frapp(?:e|uccino)s?|cold[\s-]*brews?|kombucha|slushies?|slushes?)(?![a-z0-9])`,
+  'i'
+);
+
 // Accents folded first, so an accented letter is a letter to the edges above:
 // "Ginés" is a name, and unfolded its "é" would end a word and leave "gin".
 const fold = (t) => t.normalize('NFKD').replace(/[̀-ͯ]/g, '');
 
 function mentionsOver21(...texts) {
-  return texts.some((t) => typeof t === 'string' && t !== '' && OVER_21_RE.test(fold(t)));
+  const folded = texts.filter((t) => typeof t === 'string' && t !== '').map(fold);
+  if (folded.some((t) => OVER_21_RE.test(t))) return true;
+  // Read together, so a title's "2-for-1 drinks" is excused by a description
+  // that says the drinks are lattes.
+  const all = folded.join(' \n ');
+  return DEAL_DRINKS_RE.test(all) && !SOFT_DRINK_RE.test(all);
 }
 
 // Every field a person sees on the promotion. The time slot and the days are
@@ -117,6 +144,8 @@ module.exports = {
   DRINK_WORDS,
   SMOKE_WORDS,
   OVER_21_WORDS,
+  DEAL_DRINKS_RE,
+  SOFT_DRINK_RE,
   mentionsOver21,
   promotionIsOver21,
   eventIsOver21,
