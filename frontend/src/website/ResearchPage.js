@@ -3,6 +3,7 @@ import './LandingPage.css';
 import './ResearchPage.css';
 import SiteFooter from './SiteFooter';
 import SiteNav, { useSiteMenu } from './SiteNav';
+import { THERMAL_SETS, ROBOFLOW_SETS, COUNT_SOURCES, SOFTWARE } from './researchThanks';
 
 // Two documents, read in order: a three-page summary first (the questions,
 // the findings, the equations and every model input), and the full paper for
@@ -185,7 +186,7 @@ export default function ResearchPage() {
               usLabel="Owl"
               themLabel="Rule"
               rows={COUNTER}
-              note="Frames counted exactly, on six real benchmark sets no model trained on. On a sealed held-out set of 300 frames, Owl counted 94.3% exactly and the rule 40.7%. On sealed lab-room frames of three or more people (BU-TIV), Owl was exact on 34.6% and the rule on 3.6%; on unseen frames from 15 more public sets Owl led 40.4% to 33.0% (12 sets, 2,976 frames) and 69.7% to 52.2% (three sets, 1,132 frames); beside two hot robot arms on a factory floor (WLRI-HRC) it led 22.7% to 3.0%; and on an outdoor harbour front (LTD) it led 16.7% to 3.8%. On low-resolution sensor arrays, on pooled frames of three or more people, in an atrium of lone, distant people and in a room of people walking past a head-height camera (LITIV), the rule did better, and dense or distant crowds, in an industrial hall, a café and a harbour, defeat both. On the hardest benchmark set, crowded classrooms filmed with Flux's camera model (Thermal Vision, IISER Bhopal), Owl is exact on 39.3% of frames and within one person on 73.9%. Test sets: SDT, Computer Vision Lab, TU Wien (Pramerdorfer, Strohmayer and Kampel, ICIP 2020); Thermal Vision, IISER Bhopal (Samal and Lone, Smart Health 2025); PUT Thermo Presence; SenSys 2021; AAU VAP Trimodal; OpenThermalPose2; sealed sets from BU-TIV (Wu, Fuller, Theriault and Betke, CVPRW 2014), UPPET (Cormier, Specker and Beyerer, CVPRW 2025), WLRI-HRC (Süme, Ponomarjova, Wendt and Rupitsch, JSSS 2025), LTD (Nikolov et al., NeurIPS Datasets and Benchmarks 2021) and LITIV (Bilodeau, Torabi, St-Charles and Riahi, Infrared Physics & Technology 2014). Used with their authors' permission or under their licences."
+              note="Frames counted exactly, on six benchmark sets that no model trained on. The sealed tests, including the sets where the rule did better, are in the paper."
             />
           </div>
         </section>
@@ -214,6 +215,53 @@ export default function ResearchPage() {
                 a Flux sensor in a venue Flock already reads and compare its counts
                 with the forecast hour by hour.
               </p>
+            </div>
+          </div>
+        </section>
+
+        {/* The credits. Generated from the research database (researchThanks.js
+            says which rows and why), so a set the paper never scored is never
+            thanked as if it had been, and every count source carries the
+            attribution line its licence asks for, word for word. */}
+        <section className="lp-sec lp-sec-sand rs-thanks" aria-labelledby="rs-h-thanks">
+          <div className="lp-wrap">
+            <h2 id="rs-h-thanks">Thank you</h2>
+            <p className="rs-thanks-lead">
+              Both studies were tested on data that other people collected and
+              chose to share. These are the labs, cities and libraries behind
+              it, each with the credit its licence asks for.
+            </p>
+            <div className="rs-thanks-cols">
+              <div>
+                <h3>Thermal images, for Owl</h3>
+                <ul className="rs-thanks-list">
+                  {THERMAL_SETS.map((s) => (
+                    <li key={s.name}>
+                      <b>{s.name}</b>, {s.who} <span className="rs-terms">({s.terms})</span>
+                    </li>
+                  ))}
+                </ul>
+                <h3>From Roboflow Universe</h3>
+                <ul className="rs-thanks-list">
+                  {ROBOFLOW_SETS.map((s) => (
+                    <li key={s.name}><b>{s.name}</b>, {s.who}</li>
+                  ))}
+                </ul>
+                <h3>Software</h3>
+                <ul className="rs-thanks-list">
+                  {SOFTWARE.map((s) => (
+                    <li key={s.name}><b>{s.name}</b>, {s.who}</li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <h3>Public counts, for the forecast</h3>
+                <ul className="rs-thanks-list">
+                  {COUNT_SOURCES.map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                </ul>
+              </div>
             </div>
           </div>
         </section>

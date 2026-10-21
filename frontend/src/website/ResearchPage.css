@@ -119,6 +119,46 @@
   max-width: 68ch;
 }
 
+/* Thank you: a credits page set as type, two columns where there is room. The
+   count sources are the longer list, so they get a column to themselves and
+   the thermal sets, Roboflow and the software share the other. No rules
+   between rows; the bold set name starts each one. */
+.rs-thanks h2 { margin-bottom: 12px; }
+.rs-thanks-lead {
+  max-width: 62ch;
+  font-size: clamp(16px, 1.5vw, 18px);
+  line-height: 1.6;
+  color: var(--ink-2);
+  margin: 0 0 clamp(28px, 4vw, 40px) !important;
+}
+.rs-thanks-cols {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: clamp(28px, 5vw, 64px);
+  align-items: start;
+}
+.rs-thanks h3 {
+  font-size: 17px;
+  margin: 0 0 12px;
+  color: var(--ink);
+}
+.rs-thanks h3:not(:first-child) { margin-top: 28px; }
+.rs-thanks-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 9px;
+}
+.rs-thanks-list li {
+  font-size: 14.5px;
+  line-height: 1.5;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+.rs-thanks-list b { color: var(--ink); font-weight: 650; }
+.rs-terms { color: var(--ink-3); }
+
 /* Closing band */
 .rs-end .lp-lead { margin-bottom: 26px; }
 
@@ -135,6 +175,9 @@
 .rs-footer > * { max-width: 1080px; width: 100%; margin: 0 auto; }
 .rs-footer a { text-decoration: underline; text-underline-offset: 2px; }
 
+@media (max-width: 760px) {
+  .rs-thanks-cols { grid-template-columns: minmax(0, 1fr); }
+}
 @media (max-width: 600px) {
   .rs-two { grid-template-columns: minmax(0, 1fr); }
   .rs-paper { grid-template-columns: 96px minmax(0, 1fr); align-items: start; }
