@@ -2,7 +2,9 @@
  * Press every visible button on every screen and say what happened.
  *
  * Runs against the stack capture-screenshots.mjs leaves up with --keep-alive
- * (backend on :5210 with seeded demo data, the built frontend on :3410). For
+ * (backend on :5210 with seeded demo data, the built frontend on :3410, or the
+ * ports in SHOTS_API_PORT / SHOTS_WEB_PORT). Roots: auth, site (the public
+ * pages, signed out), guest (a share link, signed out), the five tabs, venue. For
  * each root screen it enumerates the visible, enabled buttons, presses each
  * one from a fresh copy of that screen, and records what the press did: the
  * text that appeared or changed, whether a new screen or dialog opened, every
@@ -18,20 +20,21 @@
  * Output: DIR/report.json, DIR/report.md and DIR/shots/<root>/<n>-<slug>.png.
  *
  * A button with "no visible effect" is a lead, not a verdict, and the
- * screenshot beside the row is how to tell. Five classes come back inert on
+ * screenshot beside the row is how to tell. Four classes come back inert on
  * every run and were each checked against the code and the screenshot:
  *
  *   - A chip that is already selected. ChoiceChip and the calendar day cell
  *     both carry aria-pressed, and pressing the selected one keeps it
  *     selected rather than clearing it, because the field is required and
  *     "no day" is not a state a plan can be in.
- *   - The tab you are already on.
- *   - A button whose whole job is to focus an input (Search, Search chats).
- *     Focus is not part of the fingerprint below.
+ *   - The tab you are already on (Add friends' Search tab among them).
  *   - My Location, which recentres the map. Map camera is not in the
  *     fingerprint either.
  *   - Continue with Google, which needs Google's script; it is not loaded
  *     against a local stack.
+ *
+ * A press that only reveals a field or puts the caret in one used to be a
+ * fifth class. Fields and focus are in the fingerprint now, so it counts.
  *
  * Anything else that reports no visible effect is worth opening.
  *
@@ -178,7 +181,15 @@ async function fingerprint(page) {
     const pressed = Array.from(document.querySelectorAll('[aria-pressed], [aria-current], [aria-expanded], [aria-checked]'))
       .map((b) => `${b.getAttribute('aria-label') || b.innerText || ''}=${b.getAttribute('aria-pressed') ?? b.getAttribute('aria-current') ?? b.getAttribute('aria-expanded') ?? b.getAttribute('aria-checked')}`.replace(/\s+/g, ' ').slice(0, 60));
     const dialog = !!document.querySelector('[role="dialog"], dialog[open], .sheet-open, [aria-modal="true"]');
-    return { text, buttons, pressed, dialog, url: location.href };
+    // Fields too: a toggle that reveals a search box adds no text and no
+    // button, and was reported as doing nothing.
+    const fields = Array.from(document.querySelectorAll('input:not([type="hidden"]), textarea, select')).filter(vis)
+      .map((f) => f.getAttribute('aria-label') || f.getAttribute('placeholder') || f.name || f.type);
+    // And a press that puts the caret in a field (on a phone, the keyboard
+    // comes up). A button taking focus itself is not counted.
+    const a = document.activeElement;
+    if (a && /^(INPUT|TEXTAREA)$/.test(a.tagName)) fields.push(`focus:${a.getAttribute('aria-label') || a.getAttribute('placeholder') || a.name || ''}`);
+    return { text, buttons, fields, pressed, dialog, url: location.href };
   });
 }
 
@@ -268,6 +279,7 @@ async function sweepScreen(page, sink, { root, reopen, depth, cap, shotDir }) {
       sink.push({ kind: 'not-found', text: after.url.replace(WEB_ORIGIN, '') });
     }
     const changed = before.text !== after.text || before.buttons.join('|') !== after.buttons.join('|')
+      || before.fields.join('|') !== after.fields.join('|')
       || before.pressed.join('|') !== after.pressed.join('|') || before.dialog !== after.dialog || before.url !== after.url;
     const navigated = before.url !== after.url || (await mainNav(page).count()) === 0 || after.buttons.length === 0
       || (before.buttons.length > 3 && after.buttons.filter((x) => before.buttons.includes(x)).length < before.buttons.length / 2);
