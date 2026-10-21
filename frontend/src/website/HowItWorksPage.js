@@ -22,7 +22,6 @@ import SiteNav, { useSiteMenu } from './SiteNav';
 
 const VIDEO_ID = 'Kdt9FI9CQZo';
 const VIDEO_TITLE = 'Flock: four kinds of AI so the plan actually happens';
-const CHANNEL_URL = 'https://www.youtube.com/@flock-social2026';
 const CONTACT_EMAIL = 'social@flockcorp.com';
 
 // The video's own chapter list, from its YouTube description.
@@ -95,13 +94,6 @@ function PitchVideo() {
           />
         )}
       </div>
-      <figcaption className="hw-video-cap">
-        <span>
-          Our entry to a 2026 high school entrepreneurship and AI video pitch
-          competition, narrated by Asad Ali. 1 minute 59.
-        </span>{' '}
-        <a href={CHANNEL_URL} target="_blank" rel="noopener noreferrer">More on our YouTube channel</a>
-      </figcaption>
       <div className="hw-chapters" role="group" aria-label="Start the video at a chapter">
         {CHAPTERS.map((c) => (
           <button type="button" key={c.t} onClick={() => setStart(c.t)}>

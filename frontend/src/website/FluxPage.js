@@ -64,8 +64,8 @@ const SENSORS = [
     what: 'A VL53L8CX, which measures distance in an 8 by 8 grid. It looks down at a doorway from under the case to count people walking in and out. It’s wired up and reading, but it hasn’t been tested on people walking through a real doorway yet.',
   },
   {
-    name: 'Microphone',
-    what: 'A microphone gives a rough noise level for the room, louder or quieter, not decibels. The case is designed around a separate decibel meter, which hasn’t been fitted yet.',
+    name: 'Sound meter',
+    what: 'A small decibel meter, already bought and built into the case design, measures how loud the room is. Until it’s plugged in, the working unit uses a microphone that gives a rough louder-or-quieter level.',
   },
   {
     name: 'Screen',

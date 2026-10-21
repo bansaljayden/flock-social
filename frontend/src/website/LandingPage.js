@@ -74,7 +74,12 @@ const Mark = ({ size = 32, lazy = false }) => (
    top of the page. No IntersectionObserver (old Safari, any prerender) means
    render now. A first Tab press mounts everything, so the keyboard order never
    steps over an unmounted control. */
-function WhenNear({ margin = '700px', className, hold, id, children }) {
+/* `settle` keeps it unmounted through the page's first seconds even when it
+   starts inside the margin: until the visitor scrolls, or the browser has had
+   an idle moment well after load. On a slow phone the map engine's start-up
+   was the longest freeze of the first load (about 0.3 s, measured at 4x CPU,
+   2026-10-21), landing while the hero film and the app script also started. */
+function WhenNear({ margin = '700px', settle = false, className, hold, id, children }) {
   const ref = useRef(null);
   const [near, setNear] = useState(typeof IntersectionObserver !== 'function');
 
@@ -83,19 +88,44 @@ function WhenNear({ margin = '700px', className, hold, id, children }) {
     const el = ref.current;
     if (!el) return undefined;
 
+    let inRange = false;
+    let calm = !settle;
+    const go = () => { if (inRange && calm) setNear(true); };
     const io = new IntersectionObserver((entries) => {
-      if (entries.some((e) => e.isIntersecting)) setNear(true);
+      inRange = entries.some((e) => e.isIntersecting);
+      go();
     }, { rootMargin: margin });
     io.observe(el);
 
     const onKey = (e) => { if (e.key === 'Tab') setNear(true); };
     window.addEventListener('keydown', onKey);
 
+    let timer = 0;
+    let idle = 0;
+    const settled = () => { calm = true; go(); };
+    const afterLoad = () => {
+      timer = window.setTimeout(() => {
+        idle = typeof window.requestIdleCallback === 'function'
+          ? window.requestIdleCallback(settled, { timeout: 3000 })
+          : window.setTimeout(settled, 500);
+      }, 2000);
+    };
+    if (settle) {
+      window.addEventListener('scroll', settled, { passive: true, once: true });
+      if (document.readyState === 'complete') afterLoad();
+      else window.addEventListener('load', afterLoad, { once: true });
+    }
+
     return () => {
       io.disconnect();
       window.removeEventListener('keydown', onKey);
+      window.removeEventListener('scroll', settled);
+      window.removeEventListener('load', afterLoad);
+      window.clearTimeout(timer);
+      if (idle && typeof window.cancelIdleCallback === 'function') window.cancelIdleCallback(idle);
+      window.clearTimeout(idle);
     };
-  }, [near, margin]);
+  }, [near, margin, settle]);
 
   return (
     <div ref={ref} id={id} className={className} style={hold}>
@@ -507,7 +537,7 @@ export default function LandingPage() {
           {/* 800px of lead: the demo is loading and drawing before it reaches
               the screen. The holder is the demo's own height, so nothing shifts
               when it mounts. It is #try, the menu's "Try it live". */}
-          <WhenNear id="try" className="lpd-hold" margin="800px">
+          <WhenNear id="try" className="lpd-hold" margin="300px" settle>
             <Suspense fallback={null}><LiveDemo /></Suspense>
           </WhenNear>
         </div>
@@ -781,25 +811,35 @@ export default function LandingPage() {
               contacts your location alone (POST /api/safety/share-location). */}
           <div className="lp-safety-exhibits">
             <AnnotatedShot id="sos" {...ANNOTATIONS.sos} />
-            {/* Excerpt of the real SOS email the backend sends, not a mock UI.
-                Every line is copied from the template in routes/safety.js, and
-                landingPageClaims.test.js checks each one against it. */}
+            {/* The real SOS email as one of the contacts opens it: a mail
+                app's header, then the body the backend sends, laid out and
+                coloured as the template in routes/safety.js lays it out (the
+                pink alert box, the red map button, Arial). Every line is the
+                template's, and landingPageClaims.test.js checks each one. The
+                coordinates are a spot in Old City, where the Friday plan is. */}
             <div className="lp-sos-mail">
-              <div className="lp-sos-meta">
-                <span>From</span><span>Flock</span>
-                <span>To</span><span>Your trusted contacts</span>
-                <span>Subject</span><span>🚨 Emergency Alert from the maintainer</span>
+              <div className="lp-mail-head">
+                <p className="lp-mail-subject">🚨 Emergency Alert from the maintainer</p>
+                <div className="lp-mail-from">
+                  <img className="lp-mail-avatar" src="/marks/logo-64.png?v=2" width="36" height="36" alt="" loading="lazy" />
+                  <div className="lp-mail-who">
+                    <p className="lp-mail-sender"><span className="lp-mail-label">From</span> <span className="lp-mail-name">Flock</span> <span className="lp-mail-addr">alerts@flockcorp.com</span></p>
+                    <p className="lp-mail-to"><span>to me</span><span>Sep 26, 11:42 PM</span></p>
+                  </div>
+                </div>
               </div>
-              <div className="lp-sos-body">
-                <p className="lp-sos-headline">the maintainer needs help</p>
-                <p className="lp-sos-intro">the maintainer has triggered an emergency alert on the Flock app and may need your assistance.</p>
-                <p className="lp-sos-link">View Location on Map</p>
-                <p className="lp-sos-fine">Accurate to about 15 m.</p>
-                <p className="lp-sos-fine">You are one of 2 people the maintainer asked us to alert.</p>
-              </div>
-              <div className="lp-sos-foot">
-                <p className="lp-sos-fine">Alert sent at 9/26/2026, 11:42:04 PM EDT</p>
-                <p className="lp-sos-small">This is an automated safety alert from the Flock app. If this is an emergency, call your local emergency number. Replying to this message does not reach the maintainer.</p>
+              <div className="lp-mail-body">
+                <div className="lp-mail-alert">
+                  <p className="lp-mail-h1">Emergency Alert</p>
+                  <p className="lp-mail-needs"><strong>the maintainer</strong> needs help</p>
+                </div>
+                <p className="lp-mail-p">the maintainer has triggered an emergency alert on the <strong>Flock</strong> app and may need your assistance.</p>
+                <p className="lp-mail-cta"><span className="lp-mail-button">View Location on Map</span></p>
+                <p className="lp-mail-gray">Coordinates: 39.949614, -75.144012</p>
+                <p className="lp-mail-gray">Accurate to about 15 m.</p>
+                <p className="lp-mail-gray">You are one of 2 people the maintainer asked us to alert.</p>
+                <p className="lp-mail-time-line">Alert sent at 9/26/2026, 11:42:04 PM EDT</p>
+                <p className="lp-mail-small">This is an automated safety alert from the Flock app. If this is an emergency, call your local emergency number. Replying to this message does not reach the maintainer.</p>
               </div>
               <p className="lp-sos-cap">The actual email, word for word.</p>
             </div>

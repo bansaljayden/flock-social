@@ -27,7 +27,7 @@ const DESCRIPTION = 'Who makes Flock, what it holds to, where it stands, and how
 
 const PEOPLE = [
   { name: 'Jayden Bansal', role: 'Founder', line: 'An 11th grader in Pennsylvania, and the person who started Flock.' },
-  { name: 'Asad Ali', role: 'COO', line: 'The voice of the two-minute pitch video.' },
+  { name: 'Asad Ali', role: 'COO' },
 ];
 
 // Commitments the product already keeps, each one enforced in code, which is
@@ -122,7 +122,7 @@ export default function AboutPage() {
                 <div key={p.name} className="ab-person">
                   <h3>{p.name}</h3>
                   <p className="ab-role">{p.role}</p>
-                  <p>{p.line}</p>
+                  {p.line && <p>{p.line}</p>}
                   <p className="ab-coming">A longer bio is coming soon.</p>
                 </div>
               ))}

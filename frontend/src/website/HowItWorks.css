@@ -58,14 +58,6 @@
 .hw-poster:hover .hw-play { background: var(--cream-hi); }
 .hw-poster:focus-visible { outline: 3px solid var(--steel); outline-offset: 3px; }
 
-.hw-video-cap {
-  margin-top: 14px;
-  font-size: 14px;
-  line-height: 1.5;
-  color: var(--ink-3);
-  max-width: 70ch;
-}
-.hw-video-cap a { color: var(--steel); text-underline-offset: 2px; white-space: nowrap; }
 /* The iPhone app's stand-in for the player: a plain link, at a tap target's size. */
 .hw-watch { display: inline-flex; align-items: center; min-height: 44px; font-size: 17px; font-weight: 600; color: var(--steel); text-underline-offset: 3px; }
 

@@ -211,7 +211,6 @@ const PAGE_BLOCKS = {
     ["p", "A longer bio is coming soon."],
     ["h3", "Asad Ali"],
     ["p", "COO"],
-    ["p", "The voice of the two-minute pitch video."],
     ["p", "A longer bio is coming soon."],
     ["h2", "What Flock holds to"],
     ["h3", "Your budget stays yours."],

@@ -294,8 +294,11 @@ describe('the page only sells things that exist', () => {
     const end = JS.indexOf('className="lp-sos-cap"', start);
     expect(start).toBeGreaterThan(-1);
     expect(end).toBeGreaterThan(start);
+    // Bold inside a line is the template's own (<strong>${safeName}</strong>),
+    // so it joins its line rather than splitting it.
     const card = JS.slice(start, end)
       .replace(/\{\s*\/\*[\s\S]*?\*\/\s*\}/g, '')
+      .replace(/<\/?strong>/g, '')
       .replace(/<[^>]+>/g, '\n')
       .split('\n')
       .map((s) => s.trim())
@@ -335,6 +338,14 @@ describe('the page only sells things that exist', () => {
     expect(card).toContain('You are one of 2 people the maintainer asked us to alert.');
     expect(safety).toContain('This is an automated safety alert from the Flock app. If this is an emergency, call your local emergency number. Replying to this message does not reach ${safeName}.');
     expect(card).toContain('This is an automated safety alert from the Flock app. If this is an emergency, call your local emergency number. Replying to this message does not reach the maintainer.');
+
+    // Since the same evening the card is laid out as the email is: the pink
+    // box's heading and the coordinates line under the map button are the
+    // template's too.
+    expect(safety).toMatch(/<h1 style="[^"]*">Emergency Alert<\/h1>/);
+    expect(card).toContain('Emergency Alert');
+    expect(safety).toContain('Coordinates: ${coords.lat.toFixed(6)}, ${coords.lng.toFixed(6)}');
+    expect(card).toContainEqual(expect.stringMatching(/^Coordinates: -?\d{1,3}\.\d{6}, -?\d{1,3}\.\d{6}$/));
   });
 
   test('nothing on the page claims a team that does not exist', () => {

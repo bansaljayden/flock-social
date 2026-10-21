@@ -244,7 +244,10 @@ describe('what the two pages say', () => {
     // too. Its training data is the six public sets in models/NOTICE.md.
     // "Runs on the sensor", the figure line C-112 ruled out, stays out.
     expect(flux).toContain('It runs on the Raspberry Pi inside Flux, so each frame is counted on the box that took it.');
-    expect(flux).toContain('The case is designed around a separate decibel meter, which hasn’t been fitted yet.');
+    // The meter is bought and designed in, and not yet plugged in (checked on
+    // the Pi 2026-10-21: nothing answers at its address, the log says sound=mic).
+    expect(flux).toContain('A small decibel meter, already bought and built into the case design, measures how loud the room is.');
+    expect(flux).toContain('Until it’s plugged in, the working unit uses a microphone that gives a rough louder-or-quieter level.');
     for (const text of [flux, ai]) {
       expect(text).not.toMatch(/\b106\b/);
       expect(text).not.toMatch(/runs on the sensor/i);
