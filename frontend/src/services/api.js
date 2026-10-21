@@ -3205,6 +3205,16 @@ export async function searchVenues(query, location) {
   return data;
 }
 
+// A place tapped on the Discover map (a glyph the basemap draws from street
+// zoom) turned into a Google place id, so it opens like a search result.
+// retry: false for the same reason as searchVenues: an uncached lookup spends a
+// unit of the caller's Places allowance, so a flaky tap fails once and the
+// person taps again if they want to.
+export async function resolveMapPlace({ name, lat, lng }) {
+  const qs = `name=${encodeURIComponent(name)}&lat=${encodeURIComponent(String(lat))}&lng=${encodeURIComponent(String(lng))}`;
+  return request(`/api/venues/resolve-poi?${qs}`, { retry: false });
+}
+
 export async function getVenueDetails(placeId) {
   // retry: false, same reason as searchVenues: /api/venues/details is a paid
   // Google Places Details call, so an automatic retry buys a duplicate bill,

@@ -188,13 +188,31 @@ test('drinks with a price on them are a drink deal, unless the same promotion na
   assert.strictEqual(over21.promotionIsOver21({ title: '2-for-1 drinks', description: 'Margaritas and sodas' }), true);
 });
 
-test('a promotion is read by its title, its description and its time slot', () => {
+test('a promotion is read by its title, its description, its time slot and its days', () => {
   assert.strictEqual(over21.promotionIsOver21({ title: 'Half-price wings', description: null, time_slot: 'All Day', days: 'Daily' }), false);
   assert.strictEqual(over21.promotionIsOver21({ title: '$5 drafts' }), true);
   assert.strictEqual(over21.promotionIsOver21({ title: 'Wings', description: 'Two-for-one pints with any basket' }), true);
   // Shown as "Happy Hour · Daily" on the venue card, so it counts.
   assert.strictEqual(over21.promotionIsOver21({ title: 'Wings', time_slot: 'Happy Hour' }), true);
   assert.strictEqual(over21.promotionIsOver21(null), false);
+});
+
+test('the owner\'s own words in the time slot or the days are read like the menu values', () => {
+  // The editor's Custom choice saves whatever the owner types into either box.
+  assert.strictEqual(over21.promotionIsOver21({ title: 'Wings', time_slot: '5 to 7, happy hour', days: 'Daily' }), true);
+  assert.strictEqual(over21.promotionIsOver21({ title: 'Wings', time_slot: 'All Day', days: 'Happy hour, Tuesday to Thursday' }), true);
+  assert.strictEqual(over21.promotionIsOver21({ title: 'Wings', time_slot: 'All Day', days: 'Weekday #happyhour' }), true);
+  // Drinks with a price on them, typed into the days, count like the same
+  // words in the title.
+  assert.strictEqual(over21.promotionIsOver21({ title: 'Wings', time_slot: 'All Day', days: '2-for-1 drinks Tuesday' }), true);
+  // A soft drink typed into the time slot or the days excuses nothing. Those
+  // boxes hold a schedule, and the rule errs toward hiding.
+  assert.strictEqual(over21.promotionIsOver21({ title: '$5 drinks', time_slot: 'All Day', days: 'Daily, sodas too' }), true);
+  assert.strictEqual(over21.promotionIsOver21({ title: '2-for-1 drinks', time_slot: 'Coffee hour, 2 to 4', days: 'Daily' }), true);
+  // The deal naming its own drinks still excuses them.
+  assert.strictEqual(over21.promotionIsOver21({ title: '$5 drinks', description: 'Sodas, lemonade and iced tea', time_slot: 'All Day', days: 'Daily' }), false);
+  // A food deal on a custom schedule stays a food deal.
+  assert.strictEqual(over21.promotionIsOver21({ title: 'Half-price wings', time_slot: '5 to 7pm', days: 'Tuesday to Thursday' }), false);
 });
 
 test('an event is read by its name, headliners and genres, never by its logistics notes', () => {

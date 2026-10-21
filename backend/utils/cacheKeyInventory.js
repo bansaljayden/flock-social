@@ -1089,6 +1089,28 @@ const INVENTORY = [
     why: 'Written only after Google answered NOT_FOUND, or INVALID_ARGUMENT with a message naming the place id and no API key reason (utils/placesHealth.js isPlaceNotFoundAnswer), to a call the caller was already charged a unit for. The two cards and Birdie all charge allowPlacesSearch, so one account can hold at most PER_USER_HOURLY x 6 = 180 entries across all three. A 429, a 5xx, a timeout, a dead API key\'s INVALID_ARGUMENT and every other failure are never written, so a healthy id is never answered from here. Expiring, bounded, cleared on restart.',
   },
 
+  // ── services/poiPlaceResolver.js ──────────────────────────────────────────
+  {
+    file: 'services/poiPlaceResolver.js', name: 'poiCache', kind: 'cache',
+    key: '`poi:${normalizedName.toLowerCase()}|${lat.toFixed(4)},${lng.toFixed(4)}`',
+    callerControls: 'all of it: the name (NFKC-folded, whitespace-collapsed, 1-120 chars) and the point (validated to the globe) of a glyph tapped on the Discover map; a client can send any name at any point',
+    protects: 'the Places daily quota and the caller\'s hourly allowance; the call itself is Text Search Essentials (IDs Only), which Google lists at unlimited free usage, so no money sits behind a miss',
+    denominator: 'cache entries: found ids 24h, "nothing there" 1h, failures never',
+    bound: 'POI_CACHE_MAX 5000, low-water 4500, expire-then-oldest-first with delete-before-set',
+    verdict: 'SAFE',
+    why: 'The caller picks the whole key, so this cache is an optimisation, not the control. The control is the charge: every write follows exactly one allowPlacesSearch unit, taken before Google is asked, so one account can mint at most PER_USER_HOURLY (30) entries an hour, 720 a day against a 5000 ceiling; the whole app cannot write more than GLOBAL_DAILY (3000) a day, under the ceiling as well. One caller cannot evict the shared working set, and the worst a caller can buy with its units is its own free IDs-only lookups.',
+  },
+  {
+    file: 'services/poiPlaceResolver.js', name: 'inflight', kind: 'inflight',
+    key: 'the same poi key',
+    callerControls: 'same as poiCache',
+    protects: 'the same lookup, for taps that arrive together (a double tap, two people on one glyph)',
+    denominator: 'in-flight promises',
+    bound: 'none, deleted on settle',
+    verdict: 'SAFE',
+    why: 'Self-draining: askGoogle never rejects, so the cleanup .then() cannot leak, and only the leader charges, so followers ride free, the "charge what you spend" reading the other Places flights use.',
+  },
+
   // ── services/pushHelper.js ────────────────────────────────────────────────
   {
     file: 'services/pushHelper.js', name: 'lastPushSent', kind: 'counter',

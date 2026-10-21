@@ -52,6 +52,7 @@ import VenueBillingControl, { VenueBillingStatus, roostPlanPriceLabel } from '..
 // lib/nativeShell.js's answer, the one VenueBillingControl's buttons ask.
 import { isNativeShell } from '../lib/nativeShell';
 import { DRINK_DEAL_LINE_PROMO } from '../lib/drinkDeals';
+import { PROMO_CUSTOM, PROMO_CUSTOM_MAX, joinPromoChoice } from '../lib/promoChoice';
 import {
   BASE_URL,
   askAdvisor,
@@ -280,6 +281,11 @@ export const mergeSavedProfile = (prev, saved) => (saved ? { ...(prev || {}), ..
 export const QUICK_DEAL_MAX = 80;
 export const quickDealBody = (text, timeSlot) => ({ title: text, timeSlot, days: 'Daily' });
 
+// The time a quick deal posts with: the chip's own value, or the owner's words
+// when the Custom chip is picked. Empty means Custom with nothing typed yet,
+// which the Post Deal button treats like an empty deal box.
+export const quickDealTimeSlot = (chip, customTime) => joinPromoChoice(chip, customTime);
+
 export default function VenueDashboard({
   // Module-level helpers and components that live in App.js and are shared
   // with screens that are not this one, so they stay there and come in here.
@@ -305,6 +311,7 @@ export default function VenueDashboard({
   authUser,
   calcDistance,
   colors,
+  dealCustomTime,
   dealDescription,
   dealTimeSlot,
   editingEvent,
@@ -341,6 +348,7 @@ export default function VenueDashboard({
   savingVenueIntake,
   setActiveVenue,
   setCurrentScreen,
+  setDealCustomTime,
   setDealDescription,
   setDealTimeSlot,
   setEditingEvent,
@@ -1699,7 +1707,7 @@ export default function VenueDashboard({
               maxLength={QUICK_DEAL_MAX}
               initialValue={dealDescription}
               onCommit={setDealDescription}
-              placeholder="e.g., 2-for-1 drinks until 8pm"
+              placeholder="e.g., Half-price appetizers until 8pm"
               style={{ width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: 'var(--t-meta)', marginBottom: '8px', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}
             />
             {/* The limit, shown once it is close, so a box that stops taking
@@ -1707,13 +1715,30 @@ export default function VenueDashboard({
             {dealDescription.length >= QUICK_DEAL_MAX - 20 && (
               <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '-4px 0 8px', textAlign: 'right' }}>{dealDescription.length}/{QUICK_DEAL_MAX}</p>
             )}
-            <div style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
+            {/* Wraps: five chips do not fit one line at 320px. Custom is its own
+                button after the list, not a list entry, because every entry in
+                the list is a value the promotion editor offers by name, and
+                Custom is a box for the owner's own words (lib/promoChoice.js). */}
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px' }}>
               {['Happy Hour', 'Late Night', 'Weekend', 'All Day'].map(slot => (
                 <button key={slot} aria-pressed={dealTimeSlot === slot} className="hit44 glass-btn glass-secondary" onClick={() => setDealTimeSlot(slot)} style={{ padding: '6px 10px', borderRadius: '16px', border: `1px solid ${dealTimeSlot === slot ? colors.navy : colors.creamDark}`, backgroundColor: dealTimeSlot === slot ? colors.navyBg : 'var(--bg-card-solid)', color: dealTimeSlot === slot ? 'white' : colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer' }}>
                   {slot}
                 </button>
               ))}
+              <button aria-pressed={dealTimeSlot === PROMO_CUSTOM} className="hit44 glass-btn glass-secondary" onClick={() => setDealTimeSlot(PROMO_CUSTOM)} style={{ padding: '6px 10px', borderRadius: '16px', border: `1px solid ${dealTimeSlot === PROMO_CUSTOM ? colors.navy : colors.creamDark}`, backgroundColor: dealTimeSlot === PROMO_CUSTOM ? colors.navyBg : 'var(--bg-card-solid)', color: dealTimeSlot === PROMO_CUSTOM ? 'white' : colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer' }}>
+                Custom
+              </button>
             </div>
+            {dealTimeSlot === PROMO_CUSTOM && (
+              <SearchInputLocal aria-label="When the deal runs"
+                type="text"
+                maxLength={PROMO_CUSTOM_MAX}
+                initialValue={dealCustomTime}
+                onCommit={setDealCustomTime}
+                placeholder="e.g., 5 to 7pm, Tuesday to Thursday"
+                style={{ width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: 'var(--t-meta)', marginBottom: '8px', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' }}
+              />
+            )}
             <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 8px', lineHeight: 1.45 }}>{DRINK_DEAL_LINE_PROMO}</p>
             {/* A DOUBLE TAP USED TO POST THE DEAL TWICE. The route is a plain
                 INSERT with no uniqueness behind it, the text was only cleared
@@ -1727,10 +1752,11 @@ export default function VenueDashboard({
                 once the value it reads is honest about what is in flight. */}
             <button className="hit44" onClick={async () => {
               const text = dealDescription.trim();
-              if (!text) return;
+              const slot = quickDealTimeSlot(dealTimeSlot, dealCustomTime);
+              if (!text || !slot) return;
               setDealDescription('');
               try {
-                const created = await createVenuePromotion(quickDealBody(text, dealTimeSlot));
+                const created = await createVenuePromotion(quickDealBody(text, slot));
                 setPromotions(prev => [created, ...prev]);
                 showToast(venueIsVerified ? 'Deal posted. It is on your venue card now.' : 'Saved. It goes on your card once your venue is verified.', 'success');
                 setVenueTab('promotions');
@@ -1739,7 +1765,7 @@ export default function VenueDashboard({
                 setDealDescription(text);
                 showToast(e?.message || "That deal didn't post. Try again.", 'error');
               }
-            }} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }} disabled={!dealDescription.trim()}>
+            }} style={{ width: '100%', padding: '10px', borderRadius: '8px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }} disabled={!dealDescription.trim() || !quickDealTimeSlot(dealTimeSlot, dealCustomTime)}>
               Post Deal
             </button>
           </div>

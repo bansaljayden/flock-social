@@ -1048,7 +1048,9 @@ describe('the tier gate cannot be broken by rewording a feature', () => {
   // invert. What is pinned now is that none creeps back.
   test('no Post-a-Deal control reads a plan flag', () => {
     expect(appSource).not.toMatch(/can\.postDeals/);
-    expect(appSource).toMatch(/disabled=\{!dealDescription\.trim\(\)\}/);
+    // The button waits for the deal's words and, when the Custom chip is
+    // picked, for when it runs. Nothing about the plan.
+    expect(appSource).toMatch(/disabled=\{!dealDescription\.trim\(\) \|\| !quickDealTimeSlot\(dealTimeSlot, dealCustomTime\)\}/);
   });
 
   test('no locked overlay sits over Post-a-Deal', () => {
