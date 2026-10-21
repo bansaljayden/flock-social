@@ -22,11 +22,12 @@
 //      OWNER's dashboard, so it misses every card opened from a flock, a search
 //      result or a chat share, and it delivers to two surfaces that hold none
 //      of this state. A grep here refuses the shortcut.
-//   3. story and venue_event stay narrow, on reasons that are true TODAY:
-//      nothing serves venue events publicly (no /public-events twin exists) and
-//      the launch client renders no stories at all. Both are pinned to the
-//      evidence rather than to a comment, so the day either changes this file
-//      goes red instead of the claim going quietly stale.
+//   3. story stays narrow, on a reason that is true TODAY: the launch client
+//      renders no stories at all. It is pinned to the evidence rather than to a
+//      comment, so the day that changes this file goes red instead of the claim
+//      going quietly stale. venue_event stayed narrow on the same terms until
+//      2026-10-20, when GET /public-events shipped and the pin below went red
+//      as designed; it now reaches the venue card's viewers like the other two.
 //   4. A RESTORE reaches exactly the audience the REMOVAL did. An audience that
 //      is wider on the way down than on the way back up is content that
 //      vanishes for people and never returns.
@@ -261,7 +262,7 @@ test('every type restores to exactly the audience it was removed from', async ()
     ['guest_rsvp', 'guest_rsvps', { flock_id: 8, notify_a: null, notify_b: null, place_id: null }],
     ['dm', 'direct_messages', { flock_id: null, notify_a: 3, notify_b: 4, place_id: null }],
     ['story', 'stories', { flock_id: null, notify_a: 21, notify_b: null, place_id: null }],
-    ['venue_event', 'venue_events', { flock_id: null, notify_a: 21, notify_b: null, place_id: null }],
+    ['venue_event', 'venue_events', { flock_id: null, notify_a: 21, notify_b: null, place_id: PLACE }],
     ['venue_review', 'venue_reviews', { flock_id: null, notify_a: 21, notify_b: null, place_id: PLACE }],
     ['venue_promotion', 'venue_promotions', { flock_id: null, notify_a: 21, notify_b: null, place_id: PLACE }],
   ];
@@ -296,21 +297,33 @@ test('story reaches its author and never a venue room', async () => {
   assert.deepStrictEqual(rooms(), ['user:21']);
 });
 
-test('venue_event reaches the owner and never a venue room, because nothing serves events publicly', async () => {
-  handlers = script('venue_event', 'venue_events', { flock_id: null, notify_a: 21, notify_b: null, place_id: null });
-  await call('PUT', '/api/admin/reports/7', { action: 'hide' });
-  assert.deepStrictEqual(rooms(), ['user:21']);
+test('a hidden venue event reaches the owner AND everyone holding that venue card', async () => {
+  // GET /public-events fills `venueDetailEvents` in frontend/src/App.js, keyed
+  // on the open card like the review and promotion lists, so the same gap
+  // would have opened: an event taken down stays on every open card.
+  handlers = script('venue_event', 'venue_events', { flock_id: null, notify_a: 21, notify_b: null, place_id: PLACE });
+  const res = await call('PUT', '/api/admin/reports/7', { action: 'hide' });
+  assert.strictEqual(res.status, 200, res.text);
+  assert.deepStrictEqual(rooms(), ['user:21', `venue_content:${PLACE}`]);
+  const update = ran(/UPDATE venue_events SET is_hidden/)[0];
+  assert.match(update.sql, /RETURNING .*google_place_id AS place_id/);
 });
 
-test('the venue_event decision is tied to the absence of a public events route', () => {
-  // The claim in the TAKEDOWN_TARGETS comment, checked instead of trusted. The
-  // day a /public-events route lands, this goes red and the map entry is the
-  // fix — which is the drift this repo has shipped three times (003, 016, 017).
-  assert.match(VENUE_DASH_SRC, /router\.get\('\/public-reviews\/:placeId'/);
-  assert.match(VENUE_DASH_SRC, /router\.get\('\/public-promotions\/:placeId'/);
+test('every public venue route serves a content type whose takedown reaches its viewers', () => {
+  // The claim in the TAKEDOWN_TARGETS comment, checked instead of trusted. A
+  // new public venue route means a new set of viewers, and the map entry for
+  // what it serves has to address them, or a takedown leaves the content on
+  // every open card: the drift this repo has shipped three times (003, 016,
+  // 017). This test read "no public events route" until 2026-10-20 and went red
+  // the day one landed, which is what it was for.
   const publicRoutes = [...VENUE_DASH_SRC.matchAll(/router\.get\('\/(public-[a-z-]+)/g)].map((m) => m[1]);
-  assert.deepStrictEqual(publicRoutes.sort(), ['public-promotions', 'public-reviews'],
+  assert.deepStrictEqual(publicRoutes.sort(), ['public-events', 'public-promotions', 'public-reviews'],
     'a new public venue route means a new set of viewers; give its content type a place_id in TAKEDOWN_TARGETS');
+  const served = { 'public-events': 'venue_event', 'public-promotions': 'venue_promotion', 'public-reviews': 'venue_review' };
+  for (const route of publicRoutes) {
+    const entry = new RegExp(`^\\s*${served[route]}: \\{ table: '[a-z_]+', audience: '[^']*google_place_id AS place_id'`, 'm');
+    assert.match(ADMIN_SRC, entry, `${served[route]} (served by /${route}) must take its room from the row's place id`);
+  }
 });
 
 test('the story decision is tied to the absence of a story reader in the client', () => {
@@ -524,13 +537,14 @@ test('every entry returns the same three aliases, so the caller never branches',
   }
 });
 
-test('exactly the two publicly served venue types select a real place id', () => {
+test('exactly the three publicly served venue types select a real place id', () => {
+  // Three since 2026-10-20, when GET /public-events made venue_event the third.
   const targets = takedownTargets();
   const withPlace = [...targets]
     .filter(([, { audience }]) => /google_place_id AS place_id/.test(audience))
     .map(([type]) => type)
     .sort();
-  assert.deepStrictEqual(withPlace, ['venue_promotion', 'venue_review'],
+  assert.deepStrictEqual(withPlace, ['venue_event', 'venue_promotion', 'venue_review'],
     'widening a type means there is a public route serving it; narrowing one means there is not');
   // And the others must say NULL explicitly rather than omitting the column,
   // which would be a 42703 inside the takedown transaction.

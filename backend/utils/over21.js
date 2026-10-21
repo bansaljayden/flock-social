@@ -137,6 +137,19 @@ function eventIsOver21(e) {
   return mentionsOver21(e.name, e.attraction_name, e.genre, e.subgenre, ...acts);
 }
 
+// A venue's own event (venue_events) as GET /public-events serves it: the title
+// the owner typed and the two free-text boxes beside it, all three of which the
+// card prints. The same rule as a deal: a list word, or drinks with a price on
+// them, in any of the three makes it an event for people we know are 21. Only
+// the title can say the drinks are soft, for the reason promotionIsOver21 gives
+// about the boxes that hold a schedule.
+function venueEventIsOver21(e) {
+  if (!e) return false;
+  const shown = foldTexts([e.title, e.event_date, e.event_time]);
+  if (hasListWord(shown)) return true;
+  return hasPricedDrinks(shown) && !namesSoftDrink(foldTexts([e.title]));
+}
+
 // 21 or older by the stored date of birth. No date, or one that is not a real
 // calendar date, is not a known age, and that answer is no.
 function knownOver21(dob, now = new Date()) {
@@ -168,6 +181,7 @@ module.exports = {
   mentionsOver21,
   promotionIsOver21,
   eventIsOver21,
+  venueEventIsOver21,
   knownOver21,
   viewerKnownOver21,
 };

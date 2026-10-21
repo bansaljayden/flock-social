@@ -7,10 +7,11 @@
 // promotion or a Ticketmaster event about alcohol is served only to an account
 // whose stored date of birth makes it 21 today. This file pins the word list
 // word for word, the matcher's edges, the age rule, and every serving path:
-// /public-promotions, the three event endpoints (whose answers are cached for
-// everyone in a cell, so the filter has to run per viewer on the way out), the
-// crowd card's event name, and the paths that carry neither (Birdie, venue
-// events). The owner's own list is pinned to stay whole.
+// /public-promotions, /public-events (a venue's own events on its card), the
+// three Ticketmaster event endpoints (whose answers are cached for everyone in
+// a cell, so the filter has to run per viewer on the way out), the crowd card's
+// event name, and the path that carries neither (Birdie). The owner's own
+// lists are pinned to stay whole.
 const test = require('node:test');
 const assert = require('node:assert');
 const http = require('node:http');
@@ -334,6 +335,67 @@ test('the owner\'s own list still carries every deal it wrote', async () => {
 });
 
 // ===========================================================================
+// 3b. /public-events (a venue's own events, on its card)
+// ===========================================================================
+//
+// The rows below are what the SELECT hands back, so they have already passed
+// the verified, banned, hidden, deleted, date and reported tests the SQL runs
+// (venuePublicEventsRealDb.test.js runs that SQL on a real Postgres). What is
+// left to the route, and pinned here, is the 21 rule on the way out.
+
+const dayAhead = (n) => new Date(Date.now() + n * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+const QUIZ = { id: 21, title: 'Quiz night', event_date: dayAhead(3), event_time: '8 PM' };
+const WINE = { id: 22, title: 'Wine tasting', event_date: dayAhead(5), event_time: '7 PM' };
+// Nothing in the title, and the time box says it.
+const AFTER = { id: 23, title: 'Open mic', event_date: dayAhead(6), event_time: 'happy hour first' };
+const scriptEvents = (rows, ...extra) => {
+  handlers = [[/^SELECT e\.id, e\.title, e\.event_date, e\.event_time FROM venue_events e/, () => ({ rows })], ...extra];
+};
+const eventIds = (res) => res.body.events.map((e) => e.id);
+
+test('a venue event about drinks reaches only an account we know is 21', async () => {
+  scriptEvents([QUIZ, WINE, AFTER], dobByUser);
+  const unknown = await get('/api/venue-dashboard/public-events/PLACE_A', UNKNOWN);
+  assert.strictEqual(unknown.status, 200, unknown.text);
+  assert.deepStrictEqual(eventIds(unknown), [21]);
+  const adult = await get('/api/venue-dashboard/public-events/PLACE_A', ADULT);
+  assert.deepStrictEqual(eventIds(adult), [21, 22, 23]);
+});
+
+test('an event under 21 cannot see is left out for an account under 21 too', async () => {
+  scriptEvents([QUIZ, WINE], viewerDob(AGE_20));
+  const res = await get('/api/venue-dashboard/public-events/PLACE_A');
+  assert.deepStrictEqual(eventIds(res), [21]);
+});
+
+test('a birthday that cannot be read hides the drink events and still answers', async () => {
+  scriptEvents([QUIZ, WINE], [DOB_SQL, () => { throw new Error('connection reset'); }]);
+  const res = await get('/api/venue-dashboard/public-events/PLACE_A');
+  assert.strictEqual(res.status, 200, res.text);
+  assert.deepStrictEqual(eventIds(res), [21]);
+});
+
+test('a venue with no drink event costs no birthday read', async () => {
+  scriptEvents([QUIZ]);
+  const res = await get('/api/venue-dashboard/public-events/PLACE_A');
+  assert.deepStrictEqual(eventIds(res), [21]);
+  assert.strictEqual(ran(DOB_SQL).length, 0);
+});
+
+test('every box a venue event card prints is read, and only the title can say the drinks are soft', () => {
+  const ev = (title, event_time = null, event_date = '2026-11-20') => ({ title, event_date, event_time });
+  assert.strictEqual(over21.venueEventIsOver21(ev('Trivia night', '8 PM')), false);
+  assert.strictEqual(over21.venueEventIsOver21(ev('Craft beer flight night')), true);
+  assert.strictEqual(over21.venueEventIsOver21(ev('Open mic', 'happy hour 5-7')), true);
+  assert.strictEqual(over21.venueEventIsOver21(ev('Open mic', '9 PM', '21+ only, Nov 20')), true);
+  assert.strictEqual(over21.venueEventIsOver21(ev('$5 drinks all night')), true);
+  assert.strictEqual(over21.venueEventIsOver21(ev('$3 drinks: lemonade and iced tea')), false);
+  // A soft drink typed into the time box does not excuse the priced drinks.
+  assert.strictEqual(over21.venueEventIsOver21(ev('$5 drinks', 'sodas too')), true);
+  assert.strictEqual(over21.venueEventIsOver21(null), false);
+});
+
+// ===========================================================================
 // 4. The event endpoints
 // ===========================================================================
 
@@ -439,13 +501,32 @@ test('Birdie is handed no promotion and no event, so it has none to repeat', () 
   assert.doesNotMatch(src, /venue_promotions|venue_events|eventAlert|nearestName|app\.ticketmaster\.com|\/api\/events/);
 });
 
-test('venue events reach nobody but their owner, admins and moderators', () => {
+test('venue events reach their owner, admins, moderators, and the venue card through ONE gated read', () => {
+  // Until 2026-10-20 this pinned "nobody but the owner, admins and moderators".
+  // GET /public-events is the one change to that: a single read, gated the way
+  // the promotions read is, with the 21 rule on its way out.
   const readers = fs.readdirSync(path.join(__dirname, '..', 'routes'))
     .filter((f) => f.endsWith('.js') && /venue_events/.test(read(`routes/${f}`)))
     .sort();
   assert.deepStrictEqual(readers, ['admin.js', 'moderation.js', 'venueDashboard.js']);
-  // In the dashboard, every read of the table is scoped to the caller's own rows.
-  const reads = read('routes/venueDashboard.js').match(/FROM venue_events[^`']*/g) || [];
-  assert.ok(reads.length > 0);
-  for (const r of reads) assert.match(r, /venue_user_id = \$/, r);
+  const src = read('routes/venueDashboard.js').replace(/\r\n/g, '\n');
+  // In the dashboard, every read of the table is scoped to the caller's own
+  // rows, except that one.
+  const reads = src.match(/FROM venue_events[^`']*/g) || [];
+  assert.ok(reads.length > 1);
+  const unscoped = reads.filter((r) => !/venue_user_id = \$/.test(r));
+  assert.strictEqual(unscoped.length, 1, unscoped.join('\n---\n'));
+  const at = src.indexOf("router.get('/public-events/:placeId'");
+  assert.ok(at > 0, 'the public read lives in GET /public-events');
+  const route = src.slice(at, src.indexOf('\n});', at));
+  assert.ok(route.includes(unscoped[0].trim()), 'the one unscoped read is the public route');
+  for (const gate of [
+    /AND vp\.verified = true/,
+    /JOIN users ou ON ou\.id = vp\.user_id AND ou\.is_banned IS NOT TRUE/,
+    /COALESCE\(e\.is_hidden, false\) = false/,
+    /e\.owner_deleted_at IS NULL/,
+    /e\.event_date >= \$2/,
+    /cr\.content_type = 'venue_event' AND cr\.content_id = e\.id AND cr\.reporter_id = \$3/,
+    /served\.some\(venueEventIsOver21\) && !\(await viewerKnownOver21\(pool, req\.user\.id\)\)/,
+  ]) assert.match(route, gate);
 });

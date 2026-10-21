@@ -23,7 +23,10 @@ const { scalarOnly, freeText } = require('../validators/shape');
 // routes/feedback.js and sockets/handlers.js all validate against this, and so
 // does routes/venueProfile.js as of the 2026-08-14 audit.
 const { isPlaceIdShaped } = require('../utils/places');
-const { promotionIsOver21, viewerKnownOver21 } = require('../utils/over21');
+const { promotionIsOver21, venueEventIsOver21, viewerKnownOver21 } = require('../utils/over21');
+// When a venue event is on and whether it has passed: only a real calendar date
+// can be shown to anyone (utils/venueEventDate.js says why).
+const { eventDay, isUpcoming, firstUpcomingDay, soonestFirst, eventDayProblem } = require('../utils/venueEventDate');
 
 const router = express.Router();
 router.use(authenticate);
@@ -374,6 +377,30 @@ router.delete('/promotions/:id', param('id').isInt({ min: 1, max: INT4_MAX }), a
 });
 
 // ─── EVENTS ──────────────────────────────────────────────────────────────────
+//
+// Owner-typed events, shown to people on the venue's page in Flock by
+// GET /public-events/:placeId below once the venue is verified and the event
+// has a calendar date that has not gone by.
+
+// Can people see this event? One answer, worked out by the same rules
+// GET /public-events applies and in the same order, so the dashboard never says
+// "shown" about an event the public read leaves out:
+//   hidden       a moderator took it down
+//   needs_date   no calendar date (typed as free text by the older editor)
+//   past         its date has gone by
+//   other_place  written for the listing this venue was linked to before
+//   unverified   the venue is not verified yet, and nothing it posts is shown
+//   shown        on the venue's page in Flock now
+function eventPublicStatus(e, venue, now = new Date()) {
+  if (!e) return null;
+  if (e.is_hidden === true) return 'hidden';
+  const day = eventDay(e.event_date);
+  if (!day) return 'needs_date';
+  if (!isUpcoming(day, now)) return 'past';
+  if (!venue || e.google_place_id !== venue.google_place_id) return 'other_place';
+  if (venue.verified !== true) return 'unverified';
+  return 'shown';
+}
 
 // GET /api/venue-dashboard/events
 router.get('/events', async (req, res) => {
@@ -400,8 +427,11 @@ router.get('/events', async (req, res) => {
     );
     // Stated explicitly rather than leaving the dashboard to infer it from a raw
     // is_hidden column a future SELECT list could quietly drop — same contract,
-    // same field name, as the promotions list.
-    const events = rows.map((e) => ({ ...e, hidden_by_moderation: e.is_hidden === true }));
+    // same field name, as the promotions list. `public_status` answers the
+    // other question an owner has about an event they typed in, whether people
+    // can see it (eventPublicStatus above).
+    const now = new Date();
+    const events = rows.map((e) => ({ ...e, hidden_by_moderation: e.is_hidden === true, public_status: eventPublicStatus(e, venue, now) }));
     res.json({ events });
   } catch (err) {
     console.error('Get events error:', err);
@@ -411,7 +441,7 @@ router.get('/events', async (req, res) => {
 
 // POST /api/venue-dashboard/events
 // Event titles are the same story as promotion titles: owner-typed, read back
-// on the dashboard and (via venue_events) intended for the venue card, screened
+// on the dashboard and shown on the venue card (GET /public-events), screened
 // by rejectIfProfane and by nothing else. An array skipped even that.
 //
 // Round 22: the OTHER two strings on an event were screened by nothing at all.
@@ -443,6 +473,10 @@ router.post('/events', [
     for (const field of ['title', 'eventDate', 'eventTime']) {
       if (req.body[field] && rejectIfProfane(res, req.body[field])) return;
     }
+    // A date from the picker has to be a real day within the next year. Free
+    // text from an older app is not judged (utils/venueEventDate.js).
+    const dateProblem = eventDayProblem(req.body.eventDate);
+    if (dateProblem) return res.status(400).json({ error: dateProblem });
 
     const venue = await getVenueCtx(req.user.id);
     if (!venue) return res.status(404).json({ error: 'No venue profile found' });
@@ -458,7 +492,9 @@ router.post('/events', [
        VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
       [req.user.id, venue.google_place_id, title, eventDate || null, eventTime || null, capacity == null ? null : capacity]
     );
-    res.status(201).json(rows[0]);
+    // The same answer GET /events gives, so the owner's list can say at once
+    // whether people can see what was just saved.
+    res.status(201).json({ ...rows[0], public_status: eventPublicStatus(rows[0], venue) });
   } catch (err) {
     console.error('Create event error:', err);
     res.status(500).json({ error: 'Failed to create event' });
@@ -483,6 +519,10 @@ router.put('/events/:id', [
     for (const field of ['title', 'eventDate', 'eventTime']) {
       if (req.body[field] && rejectIfProfane(res, req.body[field])) return;
     }
+    // Same date rule as the POST: a picker date must be a real day within the
+    // next year, and free text from an older app is not judged.
+    const dateProblem = eventDayProblem(req.body.eventDate);
+    if (dateProblem) return res.status(400).json({ error: dateProblem });
 
     // Round 22: an edit to a taken-down event is REFUSED, and refused by name —
     // the rule the promotions PUT has followed since round 18, arriving here now
@@ -543,7 +583,15 @@ router.put('/events/:id', [
       });
     }
     const { target_hidden: _targetHidden, ...event } = row;
-    res.json(event);
+    // The same answer GET /events gives (see the POST above). A failed read of
+    // the venue costs the status line, never the edit that already saved.
+    let venue = null;
+    try {
+      venue = await getVenueCtx(req.user.id);
+    } catch (venueErr) {
+      console.error('Event status read failed:', venueErr.message);
+    }
+    res.json({ ...event, public_status: venue ? eventPublicStatus(event, venue) : null });
   } catch (err) {
     console.error('Update event error:', err);
     res.status(500).json({ error: 'Failed to update event' });
@@ -554,8 +602,9 @@ router.put('/events/:id', [
 //
 // Round 23: same evidence guard, same retirement, same silence as the
 // promotions DELETE above — the full reasoning lives there. The only
-// difference is that venue_events has no `active` column and no public route,
-// so retirement touches nothing but owner_deleted_at.
+// difference is that venue_events has no `active` column, so retirement
+// touches nothing but owner_deleted_at, which GET /public-events reads: a
+// retired event leaves the venue card the moment it is deleted.
 router.delete('/events/:id', param('id').isInt({ min: 1, max: INT4_MAX }), async (req, res) => {
   try {
     // Same unenforced validator as the promotions DELETE: read it so a
@@ -1727,6 +1776,66 @@ router.get('/public-promotions/:placeId', placeIdParam, async (req, res) => {
   } catch (err) {
     console.error('Get public promotions error:', err);
     res.status(500).json({ error: 'Failed to get promotions' });
+  }
+});
+
+// GET /api/venue-dashboard/public-events/:placeId — a venue's upcoming events,
+// read by the "Happening here" section of the venue card. Signed-in users only,
+// like every route in this file (router.use(authenticate) at the top).
+//
+// WHAT IS SERVED. The rules below are the ones eventPublicStatus states to the
+// owner, and the two have to change together:
+//   * written by the holder of a VERIFIED claim on this same place, joined on
+//     the author's own profile the way the promotions read is, so an
+//     unverified claimant cannot speak as the business and an earlier owner's
+//     event does not ride the next owner's badge;
+//   * by an author who is not banned;
+//   * not taken down by a moderator and not deleted by the owner;
+//   * on a real calendar date that has not gone by (utils/venueEventDate.js).
+//     An event typed as free text by the old editor ("Friday") is never shown,
+//     because nobody can say which Friday it meant or whether it has passed;
+//   * not reported by THIS viewer. Somebody who reports an event stops seeing
+//     it at once and on every read after, while the report waits for a
+//     moderator. Everyone else stops when a moderator takes it down
+//     (is_hidden above, and the venue_content room in routes/admin.js);
+//   * not about drinks, unless we know the viewer is 21 (utils/over21.js).
+// Soonest first: by day, then by a start time that can be read, then in the
+// order they were written. Fifty is far past what one card shows.
+router.get('/public-events/:placeId', placeIdParam, async (req, res) => {
+  try {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
+
+    const { rows } = await pool.query(
+      `SELECT e.id, e.title, e.event_date, e.event_time FROM venue_events e
+       JOIN venue_profiles vp ON vp.user_id = e.venue_user_id
+         AND vp.google_place_id = e.google_place_id
+         AND vp.verified = true
+       JOIN users ou ON ou.id = vp.user_id AND ou.is_banned IS NOT TRUE
+       WHERE e.google_place_id = $1
+         AND COALESCE(e.is_hidden, false) = false
+         AND e.owner_deleted_at IS NULL
+         AND e.event_date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+         AND e.event_date >= $2
+         AND NOT EXISTS (
+           SELECT 1 FROM content_reports cr
+           WHERE cr.content_type = 'venue_event' AND cr.content_id = e.id AND cr.reporter_id = $3
+         )
+       ORDER BY e.event_date ASC, e.created_at ASC, e.id ASC
+       LIMIT 50`,
+      [req.params.placeId, firstUpcomingDay(), req.user.id]
+    );
+    // The pattern above lets '2026-02-30' through; eventDay does not.
+    let served = soonestFirst(rows.filter((e) => eventDay(e.event_date) !== null));
+    // Same rule and the same economy as the promotions read: the birthday is
+    // read only when a drink event is in the set.
+    if (served.some(venueEventIsOver21) && !(await viewerKnownOver21(pool, req.user.id))) {
+      served = served.filter((e) => !venueEventIsOver21(e));
+    }
+    res.json({ events: served });
+  } catch (err) {
+    console.error('Get public events error:', err);
+    res.status(500).json({ error: 'Failed to get events' });
   }
 });
 

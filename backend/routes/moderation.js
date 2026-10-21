@@ -50,9 +50,11 @@ const INT4_MAX = 2147483647;
 // migration text so the two can never drift apart again. If you add a type
 // here, add a migration in the same commit.
 //
-// venue_event added round 20, ahead of the surface that will serve it. Nothing
-// renders a venue event publicly today, so this is the one entry here that is
-// not yet reachable from a real screen, and that is the point. venue_events is
+// venue_event added round 20, ahead of the surface that would serve it, and that
+// was the point. The surface arrived on 2026-10-20: GET
+// /api/venue-dashboard/public-events fills the venue card's "Happening here"
+// list, which puts a Report control on every event, and a report lands here
+// with the takedown path already in place. venue_events is
 // owner-typed UGC that sits next to venue_promotions in the same dashboard,
 // screened by the same rejectIfProfane on write, and it was the ONLY venue
 // table with no is_hidden column and no report type. Migration 005 built

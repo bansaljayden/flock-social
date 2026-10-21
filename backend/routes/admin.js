@@ -1101,7 +1101,8 @@ router.get('/reports/:id/content', async (req, res) => {
 //   dm              both participants.
 //   venue_review    the author AND everyone holding that venue's card.  WIDENED
 //   venue_promotion the venue owner AND everyone holding that card.     WIDENED
-//   venue_event     the venue owner only.        (still narrow — see below)
+//   venue_event     the venue owner AND everyone holding that card.     WIDENED
+//                   (2026-10-20, with GET /public-events; see below)
 //   story           the author only.             (still narrow — see below)
 //
 // WHAT CHANGED. Round 20's decisive reason was "nothing on the client listens,
@@ -1143,14 +1144,15 @@ router.get('/reports/:id/content', async (req, res) => {
 // card that holds the content, which is exactly the lifetime of the state being
 // retracted. See emitToVenueContentViewers there for the room's own rules.
 //
+// venue_event WAS NARROW until 2026-10-20, for the reason this paragraph used
+// to give: no route served a venue event to anybody, so the owner was the whole
+// audience. routes/venueDashboard.js now has GET /public-events, read into the
+// venue card's "Happening here" list (`venueDetailEvents` in App.js, loaded by
+// the same effect that joins `venue_content:{placeId}`), so it was widened in
+// the commit that shipped that route, as this paragraph asked.
+//
 // WHAT STAYS NARROW, on current facts rather than round 20's:
 //
-//   venue_event — there is no public route that serves a venue event to
-//     anybody. routes/venueDashboard.js has /public-reviews and
-//     /public-promotions and no events twin, so the owner IS the whole
-//     audience. This is the one type round 20's "fan-out with no receiver"
-//     sentence still describes. Widen it in the same commit that ships a public
-//     events route, and not before.
 //   story — the audience is a per-viewer SQL predicate (utils/relationships.js:
 //     friends, flock mates, minus blocks), so widening means one fan-out query
 //     per takedown. That COST is not the reason and round 20 overstated it:
@@ -1186,16 +1188,13 @@ const TAKEDOWN_TARGETS = {
   // later owner wrote over it is somebody else's words, and reads as gone.
   venue_reply: { table: 'venue_reviews', audience: 'NULL::int AS flock_id, venue_reply_user_id AS notify_a, NULL::int AS notify_b, google_place_id AS place_id', column: 'venue_reply_hidden', sameAuthor: 'venue_reply_user_id' },
   venue_promotion: { table: 'venue_promotions', audience: 'NULL::int AS flock_id, venue_user_id AS notify_a, NULL::int AS notify_b, google_place_id AS place_id' },
-  // venue_event: is_hidden added by migration 019. Nothing serves venue events
-  // publicly yet, so no report can be filed against one from a real screen
-  // today — but routes/moderation.js accepts the type, which means one CAN
-  // arrive, and a report the queue cannot action is the failure this map exists
-  // to prevent (round 13's guest_rsvp hole, which sat open for two rounds).
-  //
-  // venue_events HAS a google_place_id column, so the NULL here is a decision
-  // and not a schema limit: with no public route serving events, the room would
-  // be addressed at nobody. Change this line and the events route together.
-  venue_event: { table: 'venue_events', audience: 'NULL::int AS flock_id, venue_user_id AS notify_a, NULL::int AS notify_b, NULL::text AS place_id' },
+  // venue_event: is_hidden added by migration 019. Served on the venue card by
+  // GET /public-events since 2026-10-20, and reported from there, so it is the
+  // third public venue type: the owner is told, and so is everyone holding the
+  // card, through the same room as the two above. Before that route existed the
+  // place id here was NULL on purpose, because the room would have been
+  // addressed at nobody; the line and the route changed together.
+  venue_event: { table: 'venue_events', audience: 'NULL::int AS flock_id, venue_user_id AS notify_a, NULL::int AS notify_b, google_place_id AS place_id' },
   // A guest RSVP has no account behind it, so there is nobody personal to tell;
   // the flock members watching the roster are the whole audience.
   //
@@ -1815,10 +1814,9 @@ router.put('/reports/:id', async (req, res) => {
     // their content is gone when it is still live.
     //
     // How far this reaches depends entirely on the TAKEDOWN_TARGETS entry, and
-    // for two of the seven types (story, venue_event) it reaches the author and
-    // nobody else. The table up there lists which is which and why those two
-    // stay narrow; do not read the paragraph above as a promise that every
-    // viewer is told.
+    // for story it reaches the author and nobody else. The table up there lists
+    // which is which and why that one stays narrow; do not read the paragraph
+    // above as a promise that every viewer is told.
     //
     // Deliberate deviation worth naming: the un-hide emits 'content_restored',
     // not 'content_removed' with an inverted flag. A client that has already

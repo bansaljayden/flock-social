@@ -165,6 +165,12 @@ const SUITE_SLOTS = {
                                  // Far from 69-72 and 81, which suites written
                                  // the same day in other branches took or are
                                  // likeliest to take.
+  venuePublicEventsRealDb: 93,   // new in 2026-10-20; a venue's events on its
+                                 // card (GET /public-events): verified owners,
+                                 // dates, the 21 rule, reports and takedowns,
+                                 // through the real routes. Near the top on
+                                 // purpose: 94 is the last slot whose range
+                                 // ends below 65536.
 };
 
 // Two suites sharing a slot would silently reintroduce exactly the collision the

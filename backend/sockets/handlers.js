@@ -1431,11 +1431,11 @@ async function markDmOpened(io, receiverId, senderId, upToId, opts = {}) {
 // content it can retract. Merging them would make a future change to who may
 // subscribe to crowd levels silently change who hears about a takedown.
 //
-// Same privacy profile as the crowd room, so the same gate: reviews and
-// promotions here are already served to any signed-in account by
-// /public-reviews and /public-promotions, and the PAYLOAD carries no words, no
-// author and no reason — a content type and an id, so the worst a subscriber
-// learns is that a row they could already read is gone.
+// Same privacy profile as the crowd room, so the same gate: reviews,
+// promotions and events here are already served to any signed-in account by
+// /public-reviews, /public-promotions and /public-events, and the PAYLOAD
+// carries no words, no author and no reason — a content type and an id, so the
+// worst a subscriber learns is that a row they could already read is gone.
 const VENUE_CONTENT_ROOM = (placeId) => `venue_content:${placeId}`;
 
 // Returns whether it emitted, so a caller (and a test) can tell "delivered to
