@@ -743,7 +743,7 @@ html:has(.lp) body { overflow-x: clip; }
   line-height: 1.45;
   color: var(--cream-3);
   margin: 16px auto 0;
-  max-width: min(284px, 78vw);
+  max-width: min(340px, 86vw);
   text-align: left;
 }
 
@@ -774,7 +774,7 @@ html:has(.lp) body { overflow-x: clip; }
   align-items: center;
 }
 @media (min-width: 940px) {
-  .lp-hero-in { grid-template-columns: minmax(0, 1fr) minmax(0, 300px); }
+  .lp-hero-in { grid-template-columns: minmax(0, 1fr) minmax(0, 360px); }
 }
 /* em, not ch: ch changes width when the headline font swaps in. */
 .lp-hero-copy h1 { margin-bottom: 22px; max-width: 12.5em; }
@@ -825,11 +825,17 @@ html:has(.lp) body { overflow-x: clip; }
   background: var(--paper);
 }
 .lp-shot-hero {
-  /* A touch smaller than the body screenshots: it is a plate in the margin of
-     the headline, not the subject of the fold, and every 10px of width here
-     costs 22px of hero height. */
-  width: min(284px, 78vw);
-  border-color: rgba(244, 239, 227, 0.16);
+  /* The real thing at a real size (2026-10-21, after the maintainer's look at the
+     preview: "too small"). 340px on a phone, which is 86% of a 390px screen,
+     and 360px beside the copy on a wide one, where the crop below makes it
+     607px tall, more than the copy block it sits by. The 780px capture is 2x
+     at that width, so it stays sharp. */
+  width: min(340px, 86vw);
+  border-color: rgba(244, 239, 227, 0.2);
+}
+@media (min-width: 940px) {
+  .lp-shot-hero { width: 360px; }
+  .lp-plate-cap { max-width: 360px; }
 }
 /* The copy block runs ~270px and a whole 390x844 phone runs ~615px, which left
    a 340px hole under the buttons. Centring the copy against the plate only
@@ -839,17 +845,13 @@ html:has(.lp) body { overflow-x: clip; }
    inside a 900px viewport instead of running 220px past it. (Declared after
    .lp-shot so its `height: auto` doesn't win on equal specificity.)
    The crop is an aspect ratio, not a height, so it lands in the same place on
-   the capture at every width. Measured on the 2026-10-21 capture, in its own
-   390px units: the third flock card ends at 648 and the second at 533. */
+   the capture at every width: just under the third flock card, which ends at
+   648 in the 2026-10-21 capture's own 390px units. */
 .lp-shot-hero {
   height: auto;
   aspect-ratio: 390 / 658;
   object-fit: cover;
   object-position: top center;
-}
-@media (min-width: 940px) {
-  /* cuts clean under the second flock card, not through one */
-  .lp-shot-hero { aspect-ratio: 390 / 539; }
 }
 /* .lp-media-pair deleted: unused. */
 
