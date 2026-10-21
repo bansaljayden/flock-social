@@ -166,8 +166,8 @@ const hideBasemapTwins = (map, venueList, dark) => {
   }
 };
 
-// AI crowd heatmap paint — matches the old Google HeatmapLayer gradient/radius/opacity.
-// MapLibre heatmap-intensity: 2 ≈ Google maxIntensity: 0.5 (1/0.5 = 2× per-point contribution).
+// AI crowd heatmap paint. It began as a copy of the old Google HeatmapLayer's
+// gradient, radius and opacity, and was redrawn on 2026-10-21 (see below).
 const VENUE_HEAT_PAINT = {
   'heatmap-weight': ['coalesce', ['get', 'weight'], 0.5],
   /* Radius and intensity follow zoom so the heat reads as one continuous
@@ -176,7 +176,15 @@ const VENUE_HEAT_PAINT = {
      venue localizes to its block. The WEIGHTS stay the real crowd scores
      (score/100, set where the features are built) — coverage comes from
      radius, never from inflating what a venue actually says. */
-  'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 8, 5, 12, 4, 15, 3.2, 18, 2.6],
+  /* MapLibre's kernel is a Gaussian that puts 1/sqrt(2*pi), about 0.4, of a
+     point's weight at its centre, so at 2.8 a lone venue's centre reads a
+     little over its own score. It was 5 at city zoom and 3.2 at street zoom,
+     which took a venue scoring 25 most of the way up the ramp; with the old
+     ramp's opaque green below the middle, every pin sat in the same wide green
+     ring and the map read as green rather than as where it is busy
+     (2026-10-21, "the heat map looks very odd"). Slightly more at city zoom,
+     where neighbours a few pixels apart should add up. */
+  'heatmap-intensity': ['interpolate', ['linear'], ['zoom'], 8, 3.2, 12, 2.9, 14, 2.8, 18, 2.8],
   /* The radius is in SCREEN pixels, and a pixel covers half as much ground
      with every zoom level. A radius that shrank in pixels as the zoom grew
      (120px at 8, 40px at 18) therefore shrank on the ground by a factor of
@@ -187,24 +195,29 @@ const VENUE_HEAT_PAINT = {
      a block on the ground, and the opacity hands over to the pins past zoom
      15, where each pin already carries its own crowd number and a
      full-strength blob under a single pin said nothing the pin did not. */
-  'heatmap-radius': ['interpolate', ['exponential', 1.75], ['zoom'], 10, 24, 13, 55, 16, 170],
-  'heatmap-opacity': ['interpolate', ['linear'], ['zoom'], 13.5, 0.85, 15.5, 0.45, 17, 0],
+  /* Close to the first field (24 / 55 / 170). The kernel's middle is under
+     the venue's own 44px photo pin, so a tighter one (tried: 18 / 40 / 120)
+     hid nearly all of a busy venue's colour beneath its picture. What keeps
+     the glow small is the ramp below, which starts late: a busy venue's
+     colour clears its pin by about one pin, a quiet one's never shows. */
+  'heatmap-radius': ['interpolate', ['exponential', 1.75], ['zoom'], 10, 22, 13, 52, 16, 160],
+  'heatmap-opacity': ['interpolate', ['linear'], ['zoom'], 13.5, 0.95, 15.5, 0.6, 17, 0],
   'heatmap-color': [
     'interpolate', ['linear'], ['heatmap-density'],
     0,    'rgba(0, 0, 0, 0)',
-    /* A quiet venue used to vanish below the 0.1 stop; low scores now stay
-       visibly cool instead of invisible. */
-    0.03, 'rgba(34, 197, 94, 0.4)',
-    0.1,  'rgba(34, 197, 94, 0.6)',
-    0.2,  'rgba(34, 197, 94, 0.7)',
-    0.3,  'rgba(160, 220, 40, 0.75)',
-    0.4,  'rgba(250, 204, 21, 0.8)',
-    0.5,  'rgba(251, 191, 36, 0.82)',
-    0.6,  'rgba(245, 158, 11, 0.85)',
-    0.7,  'rgba(249, 115, 22, 0.88)',
-    0.8,  'rgba(239, 68, 68, 0.9)',
-    0.9,  'rgba(220, 38, 38, 0.94)',
-    1,    'rgba(185, 28, 28, 0.97)',
+    /* A quiet venue used to vanish below the 0.1 stop, and still does not:
+       a low score keeps a faint warm wash. What it lost (2026-10-21) is the
+       opaque green halo that ringed every pin, quiet or packed, and made the
+       map read as green. One warm family from there, each step more opaque
+       than the one before: amber, orange, then red for packed. */
+    0.05, 'rgba(251, 191, 36, 0.03)',
+    0.2,  'rgba(251, 191, 36, 0.1)',
+    0.3,  'rgba(251, 191, 36, 0.3)',
+    0.45, 'rgba(249, 146, 22, 0.52)',
+    0.6,  'rgba(249, 115, 22, 0.68)',
+    0.75, 'rgba(239, 68, 68, 0.8)',
+    0.9,  'rgba(220, 38, 38, 0.88)',
+    1,    'rgba(185, 28, 28, 0.92)',
   ],
 };
 
