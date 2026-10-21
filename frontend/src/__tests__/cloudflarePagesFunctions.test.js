@@ -14,7 +14,7 @@
  * - the share-card proxy sends only signed cards upstream (a secret of 32
  *   characters or more, the same signature the preview page signs with),
  *   keeps only real ones, and lets no caller choose what is drawn;
- * - byte ranges on the background video;
+ * - the retired city footage stays gone: no file, route, range handler or rule;
  * - the edge cache keeps what Vercel's CDN kept, and nothing else; a HEAD
  *   miss fills it, and misses that arrive together share one answer;
  * - startup warms the time zone formatters a preview uses.
@@ -40,7 +40,6 @@ const invitePreviewFunction = require('../../functions/api/invite-preview.js');
 const demoRelayFunction = require('../../functions/api/demo-relay.js');
 const appSiteAssociationFunction = require('../../functions/api/apple-app-site-association.js');
 const inviteOgFunction = require('../../functions/api/invite-og.js');
-const { withByteRanges } = require('../../functions/_lib/range.js');
 const { edgeCached } = require('../../functions/_lib/edge-cache.js');
 const { runNodeHandler } = require('../../functions/_lib/node-adapter.js');
 const { cardSignature, sameSignature, MIN_SECRET } = require('../../functions/_lib/card-signature.js');
@@ -58,7 +57,6 @@ const ROOT_LINK = vercel.headers.find((r) => r.source === '/').headers.find((h) 
 const SECURITY = JSON.parse(read('cloudflare/security-headers.json')).headers;
 const AGENTS = JSON.parse(read('cloudflare/user-agents.json'));
 const BANNER = fs.readFileSync(path.join(ROOT, 'public', 'og-image.png'));
-const VIDEO = fs.readFileSync(path.join(ROOT, 'public', 'bg-city.mp4'));
 
 const SITE = 'https://www.flockcorp.com';
 // What Vercel sends a browser for any answer that carried s-maxage.
@@ -764,84 +762,33 @@ describe('the share-card proxy draws only signed cards', () => {
   });
 });
 
-describe('byte ranges on the background video', () => {
-  const BODY = Buffer.from(Array.from({ length: 1000 }, (_, i) => i % 251));
-  const VIDEO_CACHE = 'public, max-age=86400, stale-while-revalidate=604800';
-  const file = (extra = {}) => new Response(BODY, {
-    headers: { 'Content-Type': 'video/mp4', 'Cache-Control': VIDEO_CACHE, ETag: '"v1"', ...extra },
-  });
-  const ask = (range, method = 'GET') => new Request(SITE + '/bg-city.mp4', { method, headers: range ? { Range: range } : {} });
-
-  test('a single range is a 206 cut from the file, keeping the file\'s own headers', async () => {
-    const res = await withByteRanges(ask('bytes=0-1'), file({ 'Content-Encoding': 'identity' }));
-    expect(res.status).toBe(206);
-    expect(res.headers.get('Content-Range')).toBe('bytes 0-1/1000');
-    expect(res.headers.get('Content-Length')).toBe('2');
-    expect(res.headers.get('Accept-Ranges')).toBe('bytes');
-    expect(res.headers.get('Cache-Control')).toBe(VIDEO_CACHE);
-    expect(res.headers.get('ETag')).toBe('"v1"');
-    expect(res.headers.get('Content-Encoding')).toBeNull();
-    expect((await bytes(res)).equals(BODY.subarray(0, 2))).toBe(true);
-  });
-
-  test('open-ended, suffix and overlong ranges', async () => {
-    const cases = [
-      ['bytes=990-', 'bytes 990-999/1000', BODY.subarray(990)],
-      ['bytes=-100', 'bytes 900-999/1000', BODY.subarray(900)],
-      ['bytes=-5000', 'bytes 0-999/1000', BODY],
-      ['bytes=500-99999', 'bytes 500-999/1000', BODY.subarray(500)],
-      [' bytes=7-7 ', 'bytes 7-7/1000', BODY.subarray(7, 8)],
-    ];
-    for (const [range, contentRange, expected] of cases) {
-      const res = await withByteRanges(ask(range), file());
-      expect([range, res.status, res.headers.get('Content-Range')]).toEqual([range, 206, contentRange]);
-      expect([range, (await bytes(res)).equals(expected)]).toEqual([range, true]);
+describe('the stock city footage is gone', () => {
+  // Drone footage of Lower Manhattan played behind the sign-in screen and the
+  // mode picker until 2026-10-21: a stock-media tell, for a product made in
+  // Pennsylvania. With it went the byte-range Function it needed (Pages
+  // answers a Range request with 200, and Safari plays no video from that),
+  // its route and its cache rules. None of it may come back unnoticed.
+  test('no file, no route, no range handler, no cache rule, no source that asks for it', () => {
+    for (const f of ['bg-city.mp4', 'bg-city-poster.jpg']) {
+      expect(`${f} ${fs.existsSync(path.join(ROOT, 'public', f))}`).toBe(`${f} false`);
     }
-  });
-
-  test('a range that starts past the end is a 416 that names the size', async () => {
-    for (const range of ['bytes=1000-', 'bytes=5000-6000', 'bytes=-0', 'bytes=5-2']) {
-      const res = await withByteRanges(ask(range), file());
-      expect([range, res.status, res.headers.get('Content-Range')]).toEqual([range, 416, 'bytes */1000']);
-      expect(await res.text()).toBe('');
+    expect(fs.existsSync(path.join(ROOT, 'functions', '_lib', 'range.js'))).toBe(false);
+    const included = JSON.parse(read('cloudflare/_routes.json')).include;
+    expect(included.filter((p) => /bg-city|\.mp4$/.test(p))).toEqual([]);
+    for (const file of ['cloudflare/_headers', 'vercel.json', 'functions/_middleware.js']) {
+      expect(`${file}: ${/bg-city|\.mp4\b|withByteRanges/.test(read(file))}`).toBe(`${file}: false`);
     }
-  });
-
-  test('no range, HEAD, or a range it does not handle: the whole file', async () => {
-    let res = await withByteRanges(ask(), file());
-    expect([res.status, res.headers.get('Accept-Ranges')]).toEqual([200, 'bytes']);
-    expect((await bytes(res)).equals(BODY)).toBe(true);
-    res = await withByteRanges(ask('bytes=0-1', 'HEAD'), file());
-    expect([res.status, res.headers.get('Accept-Ranges')]).toEqual([200, 'bytes']);
-    for (const range of ['bytes=0-1,5-6', 'items=0-1', 'bytes=-', 'bytes=a-b']) {
-      res = await withByteRanges(ask(range), file());
-      expect([range, res.status]).toEqual([range, 200]);
-      expect((await bytes(res)).equals(BODY)).toBe(true);
-    }
-  });
-
-  test('an answer Pages already made partial, conditional or missing passes straight through', async () => {
-    for (const status of [206, 304, 404]) {
-      for (const range of ['bytes=0-1', undefined]) {
-        const answer = new Response(status === 304 ? null : 'x', { status });
-        expect([status, range, (await withByteRanges(ask(range), answer)) === answer]).toEqual([status, range, true]);
-      }
-    }
-  });
-
-  test('/bg-city.mp4 through the middleware: Safari\'s first probe gets bytes 0-1 of the real file', async () => {
-    const { context, res } = await run(SITE + '/bg-city.mp4', {
-      headers: { Range: 'bytes=0-1', 'User-Agent': UA.safari },
-      next: async () => new Response(VIDEO, { headers: { 'Content-Type': 'video/mp4', 'Cache-Control': VIDEO_CACHE } }),
+    // Comments that record why it went may name it; nothing may request it.
+    const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+      if (e.isDirectory()) return e.name === '__tests__' ? [] : walk(path.join(dir, e.name));
+      return /\.(js|css)$/.test(e.name) ? [path.join(dir, e.name)] : [];
     });
-    expect(context.next).toHaveBeenCalledTimes(1);
-    expect(res.status).toBe(206);
-    expect(res.headers.get('Content-Range')).toBe('bytes 0-1/' + VIDEO.length);
-    expect(res.headers.get('Cache-Control')).toBe(VIDEO_CACHE);
-    expect((await bytes(res)).equals(VIDEO.subarray(0, 2))).toBe(true);
+    const askers = walk(path.join(ROOT, 'src'))
+      .filter((f) => /["'(/]\/bg-city/.test(fs.readFileSync(f, 'utf8')))
+      .map((f) => path.relative(ROOT, f));
+    expect(askers).toEqual([]);
   });
 });
-
 describe('the edge cache keeps what Vercel\'s CDN kept, and nothing else', () => {
   const KEY = SITE + '/__edge-cache/test';
   const answer = (status, cacheControl, extra = {}) => () => new Response('body ' + status, {

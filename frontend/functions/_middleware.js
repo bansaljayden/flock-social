@@ -13,7 +13,6 @@
 import SECURITY from '../cloudflare/security-headers.json';
 import USER_AGENTS from '../cloudflare/user-agents.json';
 import { marketingPage, invitePreview, demoRelay } from './_lib/handlers.js';
-import { withByteRanges } from './_lib/range.js';
 
 const PREVIEW_BOT_UA = new RegExp('(?:' + USER_AGENTS.previewBots + ')');
 const AI_CRAWLER_UA = new RegExp('(?:' + USER_AGENTS.aiCrawlers + ')');
@@ -110,9 +109,6 @@ export async function onRequest(context) {
   // allowlists it in demoPath().
   const relay = RELAY.exec(path);
   if (relay) return finish(await demoRelay(request, relay[1] || '', url.searchParams), url);
-
-  // The background video: byte ranges for Safari (see _lib/range.js).
-  if (path === '/bg-city.mp4') return withByteRanges(request, await context.next());
 
   // /api/* reaches its file in functions/api/ (or the SPA, for a name with
   // no file, as on Vercel); every other listed path reaches the static asset

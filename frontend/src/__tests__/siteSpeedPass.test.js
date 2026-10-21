@@ -106,17 +106,14 @@ describe('the app routes open the Google sign-in connection early', () => {
     expect(home.headers.find((x) => x.key === 'Link').value).not.toContain('accounts.google.com');
   });
 
-  // The sign-in poster (components/auth/AuthShell.js POSTER) is NOT
-  // preloaded. Tried 2026-10-07 as `rel=preload; as=image;
-  // fetchpriority=high` on /app, /app/* and /signup. On a phone-class link
-  // (1.6 Mbps, 150 ms RTT, 4x CPU) the 22 KB poster took bandwidth from
-  // main.js, which arrived ~125 ms later (981 vs 855 ms, medians of six A/B
-  // runs), and the first render moved with it, for every visitor, signed-in
-  // ones included, who never see the poster. Signed-out visitors got the
-  // photo ~0.5 s sooner. The form matters more than the backdrop.
-  test('no route preloads the sign-in poster', () => {
+  // The sign-in screen's city footage and its poster are gone (2026-10-21):
+  // stock drone footage of Lower Manhattan, flagged as a stock-media tell.
+  // (On 2026-10-07 the poster's preload had already been tried and dropped:
+  // on a phone-class link it took bandwidth from main.js for every visitor.)
+  // Nothing may preload either again.
+  test('no route preloads the retired city footage or its poster', () => {
     const links = vercel.headers.flatMap((h) => h.headers.filter((x) => x.key === 'Link').map((x) => `${h.source} ${x.value}`));
-    expect(links.filter((v) => v.includes('bg-city-poster'))).toEqual([]);
+    expect(links.filter((v) => /bg-city/.test(v))).toEqual([]);
   });
 });
 

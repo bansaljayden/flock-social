@@ -140,7 +140,7 @@ describe('cloudflare/ is vercel.json, value for value', () => {
     expect(routes.exclude).toEqual([]);
     expect(new Set(routes.include)).toEqual(new Set([
       '/', '/landing', '/about', '/support', '/privacy', '/terms',
-      '/i/*', '/relay/public/*', '/api/*', '/bg-city.mp4',
+      '/i/*', '/relay/public/*', '/api/*',
     ]));
     // Every function file is under a routed path, and every api/ handler a
     // function wraps has one at its own /api/<name> URL, as on Vercel.
