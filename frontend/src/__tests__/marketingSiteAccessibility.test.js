@@ -184,6 +184,9 @@ describe('contrast, computed from the shipped tokens', () => {
     expectRatio(lp['--cream-3'], heroLightest, 4.5, '.lp-plate-cap on the hero gradient');
     expectRatio(lp['--steel'], lp['--paper'], 4.5, '.lp-kicker / .lp-step-n on cream');
     expectRatio(lp['--steel-lift'], lp['--navy'], 4.5, '.lp-kicker on navy');
+    // The SOS email is a document on the light stone band since 2026-10-21.
+    expectRatio(lp['--alarm-ink'], lp['--plate'], 4.5, 'the SOS email link on its document');
+    expectRatio(lp['--ink-3'], lp['--plate'], 4.5, 'the SOS email fine print');
   });
 
   test('the waitlist placeholder is body text and clears 4.5:1 (was 4.30)', () => {

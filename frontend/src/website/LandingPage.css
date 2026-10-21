@@ -129,6 +129,7 @@
   --ink-hover: #22394f;  /* the navy button, hovered */
   --bad: #f0a3a3;        /* form failure text on the CTA gradient. 7.96 to 1 */
   --alarm: #e88f8f;      /* the SOS email's one link */
+  --alarm-ink: #b42318;  /* the same link on the paper-white document: 6.4 to 1 */
   --hero-lift: #1b2a44;  /* lightest stop of the hero radial */
   --cta-lift: #142238;   /* lightest stop of the CTA band */
   --cta-deep: #0d1a2e;   /* its darkest */
@@ -711,10 +712,10 @@ html:has(.lp) body { overflow-x: clip; }
 .lp-sec-paper { background: var(--paper); }
 /* No two sections that sit next to each other share a background, so a new
    topic always starts on a new colour (2026-10-03). Navy keeps the chapters it
-   means, "the night": the hero, the crowd demo, safety and the CTA. Where two
-   cream sections fall between navy ones, the second is set on --paper-2. The
-   money section stays on --paper because its mark is a flat image painted on
-   --paper. Every ink and the steel accent clear 4.5:1 on --paper-2 (lowest is
+   means, "the night": the hero and the CTA, and every other beat of the Friday
+   plan (2026-10-21). Where two paper sections would meet, the second is set on
+   --paper-2, the light stone: the Friday intro, safety (where the painted
+   watcher birds need a light ground) and pricing. Every ink and the steel accent clear 4.5:1 on --paper-2 (lowest is
    --ink-3 at 4.62). The hairlines that used to divide cream from cream are
    gone. landingPageClaims.test.js checks neighbouring sections on this page
    and on /research. */
@@ -877,12 +878,11 @@ html:has(.lp) body { overflow-x: clip; }
 .lp-msg-me { margin-left: auto; background: var(--steel); color: var(--cream); }
 .lp-msg-dead { color: var(--ink-3); font-style: italic; }
 
-/* ---- Safety: statement, document, then the guarantees ----
-   Two tiers rather than two columns. The heading and its lead sit beside the
-   real SOS email, and the four rules run across the full width underneath in a
-   2x2 ruled block. It is the only section on the page built this way, which is
-   the point: it is the last feature section and the most serious one, and it
-   was previously the third identical panel in a row. */
+/* ---- Safety: the painting, what happens, then the two real things ----
+   On the light stone band (2026-10-21), where the watcher-bird painting reads:
+   the heading and a plain account of what SOS does on the left, the real
+   sheet and the real email beside it, the four guarantees across the full
+   width underneath. The only section on the page built this way. */
 .lp-safety {
   display: grid;
   gap: clamp(28px, 4vw, 44px) clamp(32px, 5vw, 64px);
@@ -890,17 +890,21 @@ html:has(.lp) body { overflow-x: clip; }
 }
 .lp-safety h2 { margin-bottom: 16px; }
 .lp-safety .lp-lead { margin-bottom: 0; }
+.lp-safety-art { width: min(220px, 60%); margin-bottom: 18px; }
+.lp-safety-facts { display: grid; gap: 18px 32px; margin-top: clamp(22px, 3vw, 30px); }
+.lp-safety-facts h3 { margin-bottom: 4px; }
+.lp-safety-facts p { font-size: 15.5px; line-height: 1.6; color: var(--ink-2); max-width: 46ch; }
+.lp-safety-exhibits { display: grid; gap: 24px; align-items: start; }
+.lp-safety-plate { margin: 0; }
+@media (min-width: 640px) {
+  .lp-safety-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .lp-safety-exhibits { grid-template-columns: 200px minmax(0, 1fr); }
+}
 @media (min-width: 900px) {
-  /* 1.2 to 1, not 1 to 1, and the reason is not variety for its own sake. The
-     first version of this section used a plain 1fr|1fr, which is Money's grid
-     exactly — so the two sections still opened with the identical composition
-     and only diverged below the fold of the panel. It was also wrong on its own
-     terms: the email is a short document whose longest line is "Emergency Alert
-     from Jordan", and at half the page it sat in a box 40% wider than anything
-     in it, while the heading next to it wrapped. Giving the statement the extra
-     fifth reads as statement-led with the exhibit inset beside it, which is what
-     the section is. */
-  .lp-safety { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); }
+  .lp-safety-art { width: 260px; }
+  .lp-safety { grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); }
+  .lp-safety-exhibits { grid-template-columns: 220px minmax(0, 1fr); }
+  .lp-safety-plate { width: 220px; }
   .lp-safety-rules {
     grid-column: 1 / -1;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1069,52 +1073,54 @@ html:has(.lp) body { overflow-x: clip; }
 
 /* ============ safety: the real SOS email, shown as a document ============ */
 
+/* A printed document on the stone band: ink on paper-white, the email's own
+   lines and nothing added. The link keeps the email's red, darkened for paper. */
 .lp-sos-mail {
-  border: 1px solid var(--rule-cream);
-  background: rgba(244, 239, 227, 0.045);
+  border: 1px solid var(--rule);
+  background: var(--plate);
   padding: clamp(22px, 3vw, 28px);
 }
 .lp-sos-meta {
   display: grid;
   /* minmax(0, 1fr) on the value column: a bare 1fr floors the track at its
-     content's min-content width, and "Emergency Alert from Jordan" is the
+     content's min-content width, and "Emergency Alert from Maya" is the
      longest string in the section. */
   grid-template-columns: auto minmax(0, 1fr);
   gap: 6px 14px;
   padding-bottom: 16px;
-  border-bottom: 1px solid var(--rule-cream);
+  border-bottom: 1px solid var(--rule);
   font-size: 13px;
 }
 .lp-sos-meta span:nth-child(odd) {
-  color: var(--cream-3);
+  color: var(--ink-3);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   font-size: 11px;
   padding-top: 1px;
 }
-.lp-sos-meta span:nth-child(even) { color: var(--cream-2); }
+.lp-sos-meta span:nth-child(even) { color: var(--ink-2); }
 .lp-sos-body { padding: 18px 0 4px; }
 .lp-sos-headline {
   font-size: 19px;
   font-weight: 700;
-  color: var(--cream);
+  color: var(--ink);
   margin: 0 0 10px;
 }
 .lp-sos-link {
   font-size: 14.5px;
   font-weight: 600;
-  color: var(--alarm);
+  color: var(--alarm-ink);
   text-decoration: underline;
   text-underline-offset: 3px;
   margin: 0 0 10px;
 }
-.lp-sos-fine { font-size: 13px; color: var(--cream-3); margin: 0; }
+.lp-sos-fine { font-size: 13px; color: var(--ink-3); margin: 0; }
 .lp-sos-cap {
   margin: 16px 0 0;
   padding-top: 14px;
-  border-top: 1px solid var(--rule-cream);
+  border-top: 1px solid var(--rule);
   font-size: 12.5px;
-  color: var(--cream-3);
+  color: var(--ink-3);
 }
 
 /* ============ cta band ============ */

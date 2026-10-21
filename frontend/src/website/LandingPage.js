@@ -651,19 +651,81 @@ export default function LandingPage() {
       </section>
 
       {/* ---------------- safety ----------------
-          The statement beside the real email, and the four rules across the
-          full width underneath: the rules are the section's promise, so they
-          get the width rather than being a sidebar to it. */}
-      <section className="lp-sec lp-sec-navy lp-on-navy" id="safety" aria-labelledby="lp-h-safety">
+          What SOS does, in the order a person needs it, beside the two real
+          things: the sheet the app shows and the email it sends. Every line
+          below is checked against the code that does it:
+            two taps, armed then sent                 EmergencySheet.js (4 s arm)
+            email to the trusted contacts             routes/safety.js POST /alert
+            in-app alert to a confirmed plan's people  SOS_FLOCK_WINDOW_HOURS = 12
+            an update when a fix comes in later       updateKind 'location' | 'moved'
+            "Tell them I'm OK", the all clear          POST /alert/cancel, safety_alert_cancelled
+            Flock does not call 911                   the sheet's own line
+          On the light stone band, where the watcher-bird painting reads. The
+          email is set as a document, exactly the lines the backend sends
+          (landingPageClaims.test.js checks each one), with no decoration. */}
+      <section className="lp-sec lp-sec-sand" id="safety" aria-labelledby="lp-h-safety">
         <div className="lp-wrap lp-safety">
-          <div>
+          <div className="lp-safety-copy">
+            <img
+              className="lp-art lp-safety-art"
+              src="/art/safety-360.webp"
+              srcSet="/art/safety-360.webp 360w, /art/safety-720.webp 720w"
+              sizes="(min-width: 900px) 260px, 220px"
+              width="360" height="289"
+              loading="lazy" decoding="async"
+              alt=""
+            />
             <h2 id="lp-h-safety">If something goes wrong, two taps tell your people where you are.</h2>
             <p className="lp-lead">
               Share your live location with the group while the plan is on, if you
-              want to. SOS sends where you are to the trusted contacts you picked.
+              want to. SOS is separate, and here is what it does.
             </p>
+            <div className="lp-safety-facts">
+              <div>
+                <h3>Who hears</h3>
+                <p>
+                  The trusted contacts you picked get an email. Anyone on a confirmed
+                  plan with you, starting within twelve hours either side, gets an
+                  alert in the app.
+                </p>
+              </div>
+              <div>
+                <h3>What they get</h3>
+                <p>
+                  Your name, a map link to where you are when your phone has a fix,
+                  how accurate that fix is, and the time. If the fix comes in a
+                  moment later, an update follows with it.
+                </p>
+              </div>
+              <div>
+                <h3>When you’re OK</h3>
+                <p>
+                  Tap “Tell them I’m OK” and everyone the alert reached gets the all
+                  clear, by email and in the app.
+                </p>
+              </div>
+              <div>
+                <h3>What it won’t do</h3>
+                <p>
+                  Flock does not call emergency services for you, so the sheet puts
+                  Call 911 first.
+                </p>
+              </div>
+            </div>
           </div>
-          <div className="lp-row-media">
+          <div className="lp-safety-exhibits">
+            <figure className="lp-plate lp-safety-plate">
+              <img
+                className="lp-shot"
+                src="/screenshots/sos-dark@2x.webp"
+                srcSet="/screenshots/sos-dark-480w.webp 480w, /screenshots/sos-dark@2x.webp 780w"
+                sizes="(min-width: 900px) 220px, 200px"
+                width="390" height="844"
+                loading="lazy" decoding="async"
+                alt="The SOS sheet: Call 911 first, then Alert Contacts for two trusted contacts, Share Location, and Cancel."
+              />
+              <figcaption className="lp-fig-cap">The sheet, one tap in. The second sends.</figcaption>
+            </figure>
             {/* Excerpt of the real SOS email the backend sends, not a mock UI.
                 Every line is copied from the template in routes/safety.js, and
                 landingPageClaims.test.js checks each one against it. */}

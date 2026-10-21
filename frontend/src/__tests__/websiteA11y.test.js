@@ -173,12 +173,13 @@ describe('LandingPage: images', () => {
   });
 
   test('the plates load lazily, declare their size, and carry a caption', () => {
-    // All four sit below the fold, so none may compete with the hero for the
+    // Every one sits below the fold, so none may compete with the hero for the
     // first paint, and a plate with no box would shift the text as it loads.
     const Page = load('LandingPage');
     const { container, unmount } = render(React.createElement(Page));
+    // Three beats, the venue dashboard, and since 2026-10-21 the SOS sheet.
     const plates = container.querySelectorAll('figure.lp-plate');
-    expect(plates).toHaveLength(4);
+    expect(plates).toHaveLength(5);
     for (const fig of plates) {
       const img = fig.querySelector('img');
       expect(img.getAttribute('loading')).toBe('lazy');
