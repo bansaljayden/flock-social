@@ -39,6 +39,16 @@ PRINTED = [
     ('stand', 'flux-7-stand'),
 ]
 
+# Print plates: each a .3mf any slicer opens with its parts already the right
+# way up and laid out, named, in the order to print them. (file, colour, parts)
+PLATES = [
+    ('Flux-print-1-fit-tests', 'navy', ['screen_fit_test', 'strip_fit_test']),
+    ('Flux-print-2-body', 'navy', ['sleeve']),
+    ('Flux-print-3-cream-parts', 'cream', ['sensor_pill', 'stand']),
+    ('Flux-print-4-spacers', 'any colour', ['pi_spacer'] * 4),
+    ('Flux-print-5-cream-wordmark-optional', 'cream', ['logo_inlay']),
+]
+
 # (sheet, cut sketch, engraving sketch). Every laser-cut sheet.
 PANELS = [
     ('front', 'front_cut_sketch', 'front_engrave_sketch'),
@@ -133,6 +143,50 @@ def laser_svg(cut, engrave, title):
     return '\n'.join(parts) + '\n'
 
 
+def write_plate(made, names, path, gap=10.0):
+    """Lay parts out on one bed, side by side, each on the bed, the group
+    centred, and write them as one .3mf with every part named."""
+    import zipfile
+    from build123d import Pos
+    placed, x = [], 0.0
+    for i, name in enumerate(names):
+        part = made[name]
+        bb = part.bounding_box()
+        placed.append((f'{name}-{i + 1}' if names.count(name) > 1 else name,
+                       Pos(x - bb.min.X, -(bb.min.Y + bb.max.Y) / 2, -bb.min.Z) * part))
+        x += bb.max.X - bb.min.X + gap
+    width = x - gap
+    # Written by hand rather than through build123d's Mesher, whose check
+    # refuses the body's mesh outright; every slicer opens this plain form.
+    objects, items = [], []
+    for n, (label, part) in enumerate(placed, start=1):
+        verts, tris = (Pos(-width / 2, 0, 0) * part).tessellate(0.01, 0.1)
+        vx = ''.join(f'<vertex x="{v.X:.4f}" y="{v.Y:.4f}" z="{v.Z:.4f}"/>' for v in verts)
+        tx = ''.join(f'<triangle v1="{a}" v2="{b}" v3="{c}"/>' for a, b, c in tris)
+        objects.append(f'<object id="{n}" name="{label}" type="model"><mesh>'
+                       f'<vertices>{vx}</vertices><triangles>{tx}</triangles></mesh></object>')
+        items.append(f'<item objectid="{n}"/>')
+    model = ('<?xml version="1.0" encoding="UTF-8"?>'
+             '<model unit="millimeter" xml:lang="en-US" '
+             'xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">'
+             f'<resources>{"".join(objects)}</resources><build>{"".join(items)}</build></model>')
+    types = ('<?xml version="1.0" encoding="UTF-8"?>'
+             '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+             '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+             '<Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/>'
+             '</Types>')
+    rels = ('<?xml version="1.0" encoding="UTF-8"?>'
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Target="/3D/3dmodel.model" Id="rel0" '
+            'Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>')
+    with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as z:
+        for name, text in (('[Content_Types].xml', types), ('_rels/.rels', rels),
+                           ('3D/3dmodel.model', model)):
+            info = zipfile.ZipInfo(name, date_time=(2026, 10, 7, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_DEFLATED
+            z.writestr(info, text)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument('--no-preview', action='store_true', help='skip the pictures')
@@ -150,7 +204,9 @@ def main():
     sleeve = cad.sleeve()
     front, back = cad.sensor_pill(), cad.back_sheet()
     made = {
-        'sleeve': sleeve,
+        # Face down, the way it prints: the front on the bed, so the slicer
+        # opens it ready to go and the front takes the bed's finish.
+        'sleeve': cad.Rot(90, 0, 0) * sleeve,
         'screen_fit_test': cad.screen_fit_test(),
         'strip_fit_test': cad.strip_fit_test(sleeve),
         'pi_spacer': cad.pi_spacer_part(),
@@ -191,6 +247,11 @@ def main():
         path = HERE / 'stl' / f'{out}.stl'
         export_stl(made[name], path, tolerance=0.01, angular_tolerance=0.1, ascii_format=True)
         print(f'stl/{out}.stl  {canonical_stl(path)} triangles')
+
+    (HERE / '3mf').mkdir(exist_ok=True)
+    for out, colour, names in PLATES:
+        write_plate(made, names, HERE / '3mf' / f'{out}.3mf')
+        print(f'3mf/{out}.3mf  ({colour})')
 
     for sheet, cut_name, engrave_name in PANELS:
         cut, engrave = getattr(cad, cut_name)(), getattr(cad, engrave_name)()

@@ -1478,6 +1478,12 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     // Blue dot — outer el is owned by MapLibre; pulse animations target the inner div.
     if (!userMarkerRef.current) {
       const el = document.createElement('div');
+      // Named before MapLibre sees it. Marker.addTo calls an unnamed element
+      // "Map marker" and makes it a button, and this dot does nothing when
+      // pressed, so VoiceOver announced a dead button. It is a picture of
+      // where you are.
+      el.setAttribute('role', 'img');
+      el.setAttribute('aria-label', 'Your location');
       el.style.width = '20px';
       el.style.height = '20px';
       const inner = document.createElement('div');
