@@ -146,7 +146,14 @@ test('isModerationHidden reads both spellings the server actually sends', () => 
 function listBody(anchor) {
   const start = appCode.indexOf(anchor);
   assert.notStrictEqual(start, -1, `list anchor not found in App.js: ${anchor}`);
-  return appCode.slice(start, start + 4000);
+  // To the start of the next tab rather than a fixed 4000 characters. The
+  // events card grew a who-sees line and a status line per event (2026-10-20),
+  // which pushed its takedown notice past the old window; the next tab's own
+  // `{venueTab === '...'` is a boundary neither list can grow past, and it
+  // keeps each body to its own tab.
+  const end = appCode.indexOf("{venueTab === '", start);
+  assert.ok(end > start, `no tab follows the list at ${anchor}`);
+  return appCode.slice(start, end);
 }
 const promoListBody = listBody('Your Promotions ({promotions.length})');
 const eventListBody = listBody('Your Events ({venueEventsList.length})');
@@ -279,8 +286,10 @@ test('a newly created event is prepended, matching the order the server returns'
   // top with nothing having changed. Promotions have always prepended.
   const at = appCode.indexOf('const created = await createVenueEvent(');
   assert.notStrictEqual(at, -1, 'the event create branch was not found in App.js');
+  // `toRow(created)` since 2026-10-20: one mapping for the created and the
+  // edited row, which also carries the server's public_status.
   assert.match(
-    appCode.slice(at, at + 700), /setVenueEventsList\(prev => \[\{ id: created\.id/,
+    appCode.slice(at, at + 700), /setVenueEventsList\(prev => \[(?:\{ id: created\.id|toRow\(created\))/,
     'a new event is appended, so it sorts differently before and after a reload'
   );
 });

@@ -241,7 +241,9 @@ test('App.js joins the venue content room for exactly the life of the card state
   const effect = region.slice(region.indexOf('getPublicReviews('));
   assert.match(effect, /joinVenueContentRoom\(venueDetailPlaceId\)/,
     'nothing joins the room, so the server emits into an empty room');
-  assert.match(effect, /return \(\) => leaveVenueContentRoom\(venueDetailPlaceId\)/,
+  // The cleanup may do more than leave (since 2026-10-20 it also drops an
+  // events read the card has moved past), but leaving is always part of it.
+  assert.match(effect, /return \(\) => (?:leaveVenueContentRoom\(venueDetailPlaceId\)|\{[^}]*leaveVenueContentRoom\(venueDetailPlaceId\);[^}]*\})/,
     'the room outlives the card, so a closed card keeps a subscription it can no longer use');
   assert.ok(effect.indexOf('getPublicPromotions(') < effect.indexOf('joinVenueContentRoom('),
     'the join must sit with the reads it protects');
@@ -764,7 +766,13 @@ test('a refused promotion or event save keeps the form open instead of faking su
   for (const modal of ['PromoModal', 'EventModal']) {
     const start = dashboard.indexOf(`<${modal}`);
     assert.ok(start > 0, `${modal} not found`);
-    const block = dashboard.slice(start, start + 1600);
+    // Bounded on the element's own closing `/>` rather than a byte count, for
+    // the reason the delete test above gives: the event form gained two props
+    // and a comment (2026-10-20), which pushed the toast past a fixed 1600 for
+    // a reason that had nothing to do with whether a refusal is reported.
+    const end = dashboard.indexOf('/>', dashboard.indexOf('onSave=', start));
+    assert.ok(end > start, `${modal} has no closing tag after its onSave`);
+    const block = dashboard.slice(start, end);
     assert.ok(/showToast\(e\?\.message \|\|/.test(block), `${modal} save swallows the refusal`);
     assert.ok(/catch \(e\) \{[\s\S]*?return;/.test(block),
       `${modal} closes on failure, so a rejected save looks identical to a successful one`);
