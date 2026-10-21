@@ -42,6 +42,18 @@
       ]
     },
     {
+      "source": "/sensor/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=86400, stale-while-revalidate=604800" }
+      ]
+    },
+    {
+      "source": "/ai-figures/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=86400, stale-while-revalidate=604800" }
+      ]
+    },
+    {
       "source": "/(og-image.png|favicon.ico|logo192.png|logo512.png|apple-touch-icon.png|appstore-icon-1024.png|flock-logo.png|birdie-avatar.png|birdie-avatar-light.png|bg-city.mp4|bg-city-poster.jpg)",
       "headers": [
         { "key": "Cache-Control", "value": "public, max-age=86400, stale-while-revalidate=604800" }
@@ -112,6 +124,20 @@
       "source": "/how-it-works",
       "headers": [
         { "key": "Link", "value": "<https://www.flockcorp.com/how-it-works>; rel=\"canonical\"" },
+        { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }
+      ]
+    },
+    {
+      "source": "/flux",
+      "headers": [
+        { "key": "Link", "value": "<https://www.flockcorp.com/flux>; rel=\"canonical\"" },
+        { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }
+      ]
+    },
+    {
+      "source": "/ai",
+      "headers": [
+        { "key": "Link", "value": "<https://www.flockcorp.com/ai>; rel=\"canonical\"" },
         { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }
       ]
     },

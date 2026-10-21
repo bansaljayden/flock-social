@@ -13,8 +13,9 @@ venue is being charged today.
 www.flockcorp.com is a client-rendered React application. Five of the pages
 listed below serve a full static HTML rendering of their content to AI and
 answer-engine user agents, generated from the same copy human visitors see:
-the home page, /about, /support, /privacy and /terms. /how-it-works, /research,
-/guidelines and /delete-account are not among them and need JavaScript to read.
+the home page, /about, /support, /privacy and /terms. /how-it-works, /ai, /flux,
+/research, /guidelines and /delete-account are not among them and need
+JavaScript to read.
 This file is the summary and the index.
 
 Updated: October 21, 2026.
@@ -27,6 +28,16 @@ Updated: October 21, 2026.
 - [How it works](https://www.flockcorp.com/how-it-works): Each step of a plan,
   the four AIs inside Flock, and the two-minute pitch video, which is also on
   YouTube at https://www.youtube.com/@flock-social2026.
+- [How the AI works](https://www.flockcorp.com/ai): The four models in Flock,
+  each with the figures from the pitch video: Starling, the crowd forecast;
+  Owl, the people counter written for the Flux sensor; Roost's advisor, which
+  may not write a digit; and Birdie, the in-app assistant built on Google's
+  Gemini.
+- [Flux](https://www.flockcorp.com/flux): The people counter Flock is building
+  for venues, a prototype whose case has not been printed yet. What it
+  measures, how Owl counts from heat, and the case part by part, in a labelled
+  render and a 3D model that assembles on one slider. Only numbers leave the
+  box: no images, video or identities.
 - Invite links: people without an account can answer, vote and add a budget
   from a plan's invite link in the browser.
 - Voting: everyone in the group suggests places and the group votes, so no single
@@ -132,6 +143,10 @@ nearby groups. Neither exists.
   milestones so far, where things stand, and how to reach the people behind it.
 - [How it works](https://www.flockcorp.com/how-it-works): A plan step by step,
   the four AIs, the venue tools, and the pitch video.
+- [How the AI works](https://www.flockcorp.com/ai): The four models, what each
+  reads and how it was checked.
+- [Flux](https://www.flockcorp.com/flux): The people counter for venues, a
+  prototype, and its case in 3D.
 - [Research](https://www.flockcorp.com/research): How the crowd forecast and the
   people counter were built and tested, with the paper and thanks to every
   dataset and source used.

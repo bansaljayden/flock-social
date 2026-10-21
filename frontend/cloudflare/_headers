@@ -51,6 +51,12 @@ https://:version.:project.pages.dev/*
 /screenshots/*
   Cache-Control: public, max-age=86400, stale-while-revalidate=604800
 
+/sensor/*
+  Cache-Control: public, max-age=86400, stale-while-revalidate=604800
+
+/ai-figures/*
+  Cache-Control: public, max-age=86400, stale-while-revalidate=604800
+
 # vercel.json matches these eleven with one regex; _headers has no
 # alternation, so each file is its own rule.
 /og-image.png
@@ -127,6 +133,14 @@ https://:version.:project.pages.dev/*
 
 /how-it-works
   Link: <https://www.flockcorp.com/how-it-works>; rel="canonical"
+  Cache-Control: public, max-age=0, must-revalidate
+
+/flux
+  Link: <https://www.flockcorp.com/flux>; rel="canonical"
+  Cache-Control: public, max-age=0, must-revalidate
+
+/ai
+  Link: <https://www.flockcorp.com/ai>; rel="canonical"
   Cache-Control: public, max-age=0, must-revalidate
 
 /support

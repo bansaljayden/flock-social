@@ -299,6 +299,11 @@ export default function HowItWorksPage() {
                 </div>
               ))}
             </dl>
+            <p className="hw-ai-more">
+              Each one, with the figures from the video, is on{' '}
+              <a href="/ai">How the AI works</a>. Owl’s sensor has a page of its
+              own: <a href="/flux">Flux</a>.
+            </p>
           </div>
         </section>
 

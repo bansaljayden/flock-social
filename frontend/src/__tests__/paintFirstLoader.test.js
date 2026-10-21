@@ -91,7 +91,7 @@ test('the loader is plain ES5 that any browser parses', () => {
 });
 
 // Until main.js has run, the snapshot is plain HTML: a control that needs
-// JavaScript does nothing. So every way into the app on the four prerendered
+// JavaScript does nothing. So every way into the app on the six prerendered
 // pages must be an <a> with a real href, which the browser follows on its own.
 // The markup here is the server render of each page, the same tree the build
 // snapshots.
@@ -107,6 +107,8 @@ describe('before the app has loaded, every way into it is a plain link', () => {
     '/how-it-works': () => require('../website/HowItWorksPage').default, // eslint-disable-line global-require
     '/about': () => require('../website/AboutPage').default, // eslint-disable-line global-require
     '/research': () => require('../website/ResearchPage').default, // eslint-disable-line global-require
+    '/flux': () => require('../website/FluxPage').default, // eslint-disable-line global-require
+    '/ai': () => require('../website/AiPage').default, // eslint-disable-line global-require
   };
   const ENTRY = /^(open flock|start a plan|create your account|sign in)$/i;
 

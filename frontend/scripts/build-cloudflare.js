@@ -14,7 +14,8 @@
 //   scripts/build.js already turns them off when CF_PAGES is set, so this is
 //   the backstop for an explicit GENERATE_SOURCEMAP=true.
 //
-// - build/landing.html, how-it-works.html, about.html and research.html: the
+// - build/landing.html, how-it-works.html, about.html, research.html,
+//   flux.html and ai.html: the
 //   marketing routes as real HTML, snapshotted from the build itself (see
 //   prerender below). index.html stays the empty shell every app route needs.
 //
@@ -117,6 +118,8 @@ function filesUnder(dir, found = []) {
 const ROUTE_CHUNKS = [
   { route: '/', chunk: 'landing' },
   { route: '/how-it-works', chunk: 'howitworks' },
+  { route: '/flux', chunk: 'flux' },
+  { route: '/ai', chunk: 'aipage' },
 ];
 
 // Preload hints for those routes, appended to _headers. On a first visit the
@@ -124,9 +127,9 @@ const ROUTE_CHUNKS = [
 // and run, and the display face only after that chunk has rendered; sent with
 // the HTML, all three download alongside main.js. (Cloudflare can also send
 // them early as 103 Early Hints, a zone setting that is off for flockcorp.com
-// as of 2026-10-21; the Link header works without it.) Pages joins a header named by two
-// matching rules with a comma, so this adds to the canonical Link the source
-// _headers already sets on "/" instead of replacing it. Anything not found
+// as of 2026-10-21; the Link header works without it.) The hints are folded
+// into the route's own block by joinHeaderBlocks below, beside the canonical
+// Link the source _headers sets there. Anything not found
 // (a chunk renamed, a fixture without a manifest) is skipped, never fatal:
 // a missing hint costs speed, a failed build costs the deploy.
 //
@@ -155,6 +158,39 @@ function routePreloads(out, prerendered = []) {
   return blocks.length ? '\n' + blocks.join('\n\n') + '\n' : '';
 }
 
+// Pages joins a header that two DIFFERENT patterns both name ("/*" and
+// "/flux"), but a second block for the SAME path replaces the first one
+// whole. Appended as blocks of their own, the hints above cost /how-it-works,
+// /flux and /ai their canonical Link on the website-flux preview
+// (2026-10-21), and canonicals are served only as that header (see the note
+// in public/index.html). So each extra block is folded into the source's
+// block for its path, its Link joined onto that block's Link with ", ", and
+// only a path the source does not have is appended.
+function joinHeaderBlocks(base, extra) {
+  if (!extra.trim()) return base;
+  const lines = base.replace(/\r\n/g, '\n').replace(/\n+$/, '').split('\n');
+  const added = [];
+  for (const block of extra.split(/\n\s*\n/).map((b) => b.trim()).filter(Boolean)) {
+    const [route, ...rest] = block.split('\n');
+    const at = lines.indexOf(route);
+    if (at === -1) { added.push(block); continue; }
+    let end = at + 1;
+    while (end < lines.length && /^\s+\S/.test(lines[end])) end += 1;
+    for (const line of rest.map((l) => l.trim())) {
+      const name = line.slice(0, line.indexOf(':'));
+      const value = line.slice(line.indexOf(':') + 1).trim();
+      const own = lines.slice(at + 1, end).findIndex((l) => l.trim().startsWith(name + ':'));
+      if (own === -1) {
+        lines.splice(end, 0, '  ' + name + ': ' + value);
+        end += 1;
+      } else {
+        lines[at + 1 + own] += ', ' + value;
+      }
+    }
+  }
+  return lines.join('\n') + '\n' + (added.length ? '\n' + added.join('\n\n') + '\n' : '');
+}
+
 // THE MARKETING ROUTES AS REAL HTML. A Create React App page is an empty
 // <div id="root"> until about 85 KB of JavaScript has run, so the hero waited
 // on main.js, then the page's chunk, then a render (the audit's lab runs put
@@ -180,6 +216,8 @@ const PRERENDER = [
   { route: '/how-it-works', file: 'how-it-works.html' },
   { route: '/about', file: 'about.html' },
   { route: '/research', file: 'research.html' },
+  { route: '/flux', file: 'flux.html' },
+  { route: '/ai', file: 'ai.html' },
 ];
 
 // The snapshot, made servable.
@@ -250,6 +288,7 @@ const TYPES = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json',
   '.png': 'image/png', '.webp': 'image/webp', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
   '.woff2': 'font/woff2', '.txt': 'text/plain', '.pdf': 'application/pdf', '.mp4': 'video/mp4',
+  '.avif': 'image/avif',
 };
 
 // The build over HTTP, with the fallback Pages has: a path that is not a file
@@ -346,7 +385,7 @@ async function prerender(out) {
 function finishOutput(out, { prerendered = [] } = {}) {
   if (!fs.existsSync(path.join(out, 'index.html'))) throw new Error(path.join(out, 'index.html') + ' is missing');
 
-  const headers = headersFile() + routePreloads(out, prerendered);
+  const headers = joinHeaderBlocks(headersFile(), routePreloads(out, prerendered));
   checkHeaders(headers);
   fs.writeFileSync(path.join(out, '_headers'), headers);
   fs.copyFileSync(path.join(CONFIG, '_redirects'), path.join(out, '_redirects'));
@@ -367,7 +406,7 @@ function finishOutput(out, { prerendered = [] } = {}) {
 }
 
 module.exports = {
-  outputDir, checkHeaders, headersFile, checkRoutes, appSiteAssociation, finishOutput, routePreloads,
+  outputDir, checkHeaders, headersFile, checkRoutes, appSiteAssociation, finishOutput, routePreloads, joinHeaderBlocks,
   servableSnapshot, paintFirst, prerender, ROUTE_CHUNKS, PRERENDER, MAX_HEADER_RULES, MAX_HEADER_LINE,
 };
 

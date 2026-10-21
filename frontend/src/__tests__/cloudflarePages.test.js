@@ -301,21 +301,30 @@ describe('finishing an output directory', () => {
     withEnv({ APPLE_TEAM_ID: fakeTeamId(), CF_PAGES: '1' }, () => build.finishOutput(out));
     const text = fs.readFileSync(path.join(out, '_headers'), 'utf8');
     const source = build.headersFile();
-    expect(text.startsWith(source)).toBe(true);
     const font = '</static/media/Literata-Display-600.5a5a5a5a.woff2>; rel=preload; as=font; type="font/woff2"; crossorigin';
-    expect(headerBlocks(text.slice(source.length))).toEqual([
-      { path: '/', headers: { Link: `</static/css/landing.0f0f0f0f.chunk.css>; rel=preload; as=style, </static/js/landing.12ab34cd.chunk.js>; rel=preload; as=script, ${font}` } },
-      { path: '/how-it-works', headers: { Link: `</static/js/howitworks.9e8d7c6b.chunk.js>; rel=preload; as=script, ${font}` } },
-    ]);
-    // Pages joins two "/" Link headers with a comma, so the canonical the
-    // source file sets on "/" survives beside the preloads.
-    expect(headerBlocks(source).find((b) => b.path === '/').headers.Link).toContain('rel="canonical"');
+    // A second block for the same path replaces the first on Pages (seen on
+    // the website-flux preview: /how-it-works lost its canonical), so the
+    // hints join each route's own Link and every path stays one block.
+    const blocks = headerBlocks(text);
+    expect(blocks.length).toBe(new Set(blocks.map((b) => b.path)).size);
+    const own = (p) => headerBlocks(source).find((b) => b.path === p).headers.Link;
+    expect(own('/')).toContain('rel="canonical"');
+    expect(own('/how-it-works')).toContain('rel="canonical"');
+    expect(text).toBe(source
+      .replace(`\n/\n  Link: ${own('/')}\n`, `\n/\n  Link: ${own('/')}, </static/css/landing.0f0f0f0f.chunk.css>; rel=preload; as=style, </static/js/landing.12ab34cd.chunk.js>; rel=preload; as=script, ${font}\n`)
+      .replace(`\n/how-it-works\n  Link: ${own('/how-it-works')}\n`, `\n/how-it-works\n  Link: ${own('/how-it-works')}, </static/js/howitworks.9e8d7c6b.chunk.js>; rel=preload; as=script, ${font}\n`));
+  });
+
+  test('a hint for a path the source file does not name is added as a block of its own', () => {
+    expect(build.joinHeaderBlocks('/a\n  Link: <x>\n', '\n/b\n  Link: <y>\n')).toBe('/a\n  Link: <x>\n\n/b\n  Link: <y>\n');
+    expect(build.joinHeaderBlocks('/a\n  Cache-Control: no-store\n', '\n/a\n  Link: <y>\n')).toBe('/a\n  Cache-Control: no-store\n  Link: <y>\n');
+    expect(build.joinHeaderBlocks('/a\n  Link: <x>\n', '')).toBe('/a\n  Link: <x>\n');
   });
 
   test('a prerendered snapshot hands its scripts to the loader, inlines its CSS, and marks #root', () => {
     // The four marketing routes are written as real HTML; index.html stays
     // the shell, so "/" is landing.html and nothing claims index.html.
-    expect(build.PRERENDER.map((p) => p.file)).toEqual(['landing.html', 'how-it-works.html', 'about.html', 'research.html']);
+    expect(build.PRERENDER.map((p) => p.file)).toEqual(['landing.html', 'how-it-works.html', 'about.html', 'research.html', 'flux.html', 'ai.html']);
     expect(build.PRERENDER.find((p) => p.route === '/').file).toBe('landing.html');
 
     const snapshot = '<!DOCTYPE html><html><head>'
@@ -394,10 +403,10 @@ describe('finishing an output directory', () => {
     withEnv({ APPLE_TEAM_ID: fakeTeamId(), CF_PAGES: '1' }, () => build.finishOutput(out, { prerendered: ['/how-it-works'] }));
     const text = fs.readFileSync(path.join(out, '_headers'), 'utf8');
     const font = '</static/media/Literata-Display-600.5a5a5a5a.woff2>; rel=preload; as=font; type="font/woff2"; crossorigin';
-    expect(headerBlocks(text.slice(build.headersFile().length))).toEqual([
-      { path: '/', headers: { Link: `</static/css/landing.0f0f0f0f.chunk.css>; rel=preload; as=style, </static/js/landing.12ab34cd.chunk.js>; rel=preload; as=script, ${font}` } },
-      { path: '/how-it-works', headers: { Link: font } },
-    ]);
+    const link = (p) => headerBlocks(text).find((b) => b.path === p).headers.Link;
+    const own = (p) => headerBlocks(build.headersFile()).find((b) => b.path === p).headers.Link;
+    expect(link('/')).toBe(`${own('/')}, </static/css/landing.0f0f0f0f.chunk.css>; rel=preload; as=style, </static/js/landing.12ab34cd.chunk.js>; rel=preload; as=script, ${font}`);
+    expect(link('/how-it-works')).toBe(`${own('/how-it-works')}, ${font}`);
   });
 
   test('refuses an output with a top-level 404.html, which turns off the SPA fallback', () => {

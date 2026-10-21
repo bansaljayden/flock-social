@@ -66,7 +66,7 @@ export default function SiteFooter({
 
   if (variant === 'landing') {
     /* The landing footer, used by the landing page and the other pages built
-       on its stylesheet (/how-it-works, /about, /research). Two plain lines and one row of links
+       on its stylesheet (/how-it-works, /ai, /flux, /about, /research). Two plain lines and one row of links
        rather than the three-column Product / Company grid every generated
        site ends on. Every link is absolute, so it works from any page. The
        legal links come from the same LEGAL_LINKS the legal pages render, so
@@ -83,6 +83,8 @@ export default function SiteFooter({
           </div>
           <ul className="lp-footer-links">
             <li><a href="/how-it-works">How it works</a></li>
+            <li><a href="/ai">How the AI works</a></li>
+            <li><a href="/flux">Flux</a></li>
             <li><a href="/research">Research</a></li>
             <li><a href="/about">About</a></li>
             <li><a href="/support">Support</a></li>

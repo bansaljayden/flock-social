@@ -1,0 +1,68 @@
+/* /ai, on the landing page's stylesheet (.lp tokens, Literata display,
+   Hanken body); the bar and the menu come from SiteNav.js. This file sets the
+   pitch figures as plates and the text beside them. Same rules as the rest of
+   the site: no gradients, no floating shadows, nothing moves on scroll, and
+   no colour outside the .lp tokens. */
+
+.ai { background: var(--paper); color: var(--ink-2); min-height: 100vh; }
+.ai main:focus { outline: none; }
+#ai-main { scroll-margin-top: 76px; }
+
+.ai-hero { padding-top: clamp(44px, 6vw, 80px); }
+.ai-hero h1 { max-width: 12em; }
+.ai-lead { margin: 18px 0 clamp(28px, 4vw, 40px); max-width: 52ch; }
+
+.ai-text { max-width: 62ch; margin-top: clamp(16px, 2.4vw, 24px); }
+.ai-text p { font-size: clamp(16px, 1.5vw, 18px); line-height: 1.65; color: var(--ink-2); }
+.ai-text p + p { margin-top: 1em; }
+.ai-text a { color: var(--steel); text-underline-offset: 2px; }
+.lp-on-navy .ai-text p { color: var(--cream-2); }
+.lp-on-navy .ai-text a { color: var(--steel-lift); }
+.lp-on-navy .lp-fig-cap { color: var(--cream-3); }
+
+/* The figures are drawn on the pitch deck's own paper. On paper they get a
+   hairline edge; on navy they read as cards laid on the band. */
+.ai-figure { margin: 0; max-width: 1080px; }
+.ai-plate { border-radius: 16px; overflow: hidden; border: 1px solid var(--rule); }
+.lp-on-navy .ai-plate { border-color: transparent; }
+.ai-plate img { width: 100%; height: auto; }
+.ai-hero .ai-figure { max-width: 1080px; }
+.ai-wide { margin-top: clamp(28px, 4vw, 44px); }
+.ai-wide + .ai-wide { margin-top: 20px; }
+
+.ai-pair {
+  display: grid;
+  gap: 24px clamp(24px, 3vw, 40px);
+  align-items: start;
+  margin-top: 24px;
+  max-width: 1080px;
+}
+@media (min-width: 760px) { .ai-pair { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* Text beside the estimate chart. */
+.ai-split { display: grid; gap: 28px clamp(40px, 6vw, 80px); align-items: center; }
+@media (min-width: 960px) {
+  .ai-split { grid-template-columns: minmax(0, 1fr) minmax(0, 600px); }
+}
+
+.ai-birdie { max-width: 62ch; margin-top: clamp(36px, 5vw, 56px); }
+.ai-birdie h3 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: clamp(21px, 1rem + 1vw, 26px);
+  letter-spacing: -0.005em;
+  margin: 0 0 8px;
+}
+.ai-birdie p { font-size: clamp(16px, 1.5vw, 18px); line-height: 1.65; color: var(--ink-2); }
+
+.ai-more-lead { margin: 16px 0 26px; }
+.ai-textlink {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 6px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--cream);
+  text-underline-offset: 3px;
+}
