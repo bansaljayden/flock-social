@@ -4,7 +4,7 @@ import SiteFooter from './SiteFooter';
 import AnnotatedShot from './AnnotatedShot';
 import { ANNOTATIONS } from './landingAnnotations';
 import displayFontUrl from '../fonts/Literata-Display-600.woff2';
-import { NAV_LINKS } from './SiteNav';
+import { NAV_LINKS, MENU_LINKS } from './SiteNav';
 
 /* The live demo is code-split, and this is load-bearing rather than tidiness.
    LiveDemo pulls in maplibre-gl, which webpack emits as a 1.06 MB chunk. As a
@@ -357,11 +357,12 @@ export default function LandingPage() {
         className={`lp-menu${menuOpen ? ' is-open' : ''}`}
       >
         <nav className="lp-menu-in" aria-label="Site menu">
-          {NAV_LINKS.map((l) => (
+          {MENU_LINKS.map((l) => (
             <a
               key={l.href}
               className="lp-menu-link"
               href={l.href}
+              aria-current={l.href === '/' ? 'page' : undefined}
               onClick={() => setMenuOpen(false)}
             >
               {l.label}

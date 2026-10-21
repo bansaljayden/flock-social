@@ -1734,7 +1734,8 @@ html:has(.lp) body { overflow-x: clip; }
   .lp-menu.is-open .lp-menu-link:nth-child(6) { animation-delay: 0.28s; }
   .lp-menu.is-open .lp-menu-link:nth-child(7) { animation-delay: 0.32s; }
   .lp-menu.is-open .lp-menu-link:nth-child(8) { animation-delay: 0.36s; }
-  .lp-menu.is-open .lp-menu-cta { animation-delay: 0.4s; }
+  .lp-menu.is-open .lp-menu-link:nth-child(9) { animation-delay: 0.4s; }
+  .lp-menu.is-open .lp-menu-cta { animation-delay: 0.44s; }
 
   /* Hover and press land with the pointer and leave eased. A tint that fades
      IN trails the cursor and makes the page feel slower than it is; the fade

@@ -21,6 +21,10 @@ export const NAV_LINKS = [
   { href: '/about', label: 'About' },
 ];
 
+/* The menu panel opens on Home, then every section. The bar leaves Home out
+   because the logo beside it already goes there. */
+export const MENU_LINKS = [{ href: '/', label: 'Home' }, ...NAV_LINKS];
+
 /* Open/close state and the behaviour the landing page's menu has: while open,
    page scroll is locked on the ROOT element (a lock on <body> breaks the
    sticky bar; LandingPage.js has the full story), Escape closes, Tab cycles
@@ -92,7 +96,9 @@ export function useSiteMenu() {
 export default function SiteNav({ menu, current }) {
   const { menuOpen, setMenuOpen, menuRef, menuBtnRef } = menu;
   const close = () => setMenuOpen(false);
-  const links = NAV_LINKS.map((l) => ({ ...l, href: l.href.startsWith('#') ? `/${l.href}` : l.href }));
+  const offPage = (l) => ({ ...l, href: l.href.startsWith('#') ? `/${l.href}` : l.href });
+  const links = NAV_LINKS.map(offPage);
+  const menuLinks = MENU_LINKS.map(offPage);
 
   return (
     <>
@@ -136,7 +142,7 @@ export default function SiteNav({ menu, current }) {
 
       <div id="lp-menu" ref={menuRef} className={`lp-menu${menuOpen ? ' is-open' : ''}`}>
         <nav className="lp-menu-in" aria-label="Site menu">
-          {links.map((l) => (
+          {menuLinks.map((l) => (
             <a
               key={l.href}
               className="lp-menu-link"
