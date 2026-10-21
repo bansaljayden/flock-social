@@ -1438,6 +1438,16 @@ html:has(.lp) body { overflow-x: clip; }
 .lp-beat-note { font-size: 14.5px !important; color: var(--ink-3) !important; margin-top: 6px; }
 /* A short beat beside a tall phone gets one painted bird under its text. */
 .lp-beat-art { width: 160px; margin-top: 18px; }
+/* A beat with no screen of its own carries a painting in the plate's place
+   (2026-10-21: a text-only band read thin): under the text on a phone, under
+   the text column on a tablet, in the plate column, centred, from 960px. */
+.lp-beat-side { width: 200px; margin-top: 18px; }
+@media (min-width: 760px) {
+  .lp-beat-side { margin-left: calc(9.5rem + 28px); }
+}
+@media (min-width: 960px) {
+  .lp-beat-side { width: 220px; margin: 0; }
+}
 
 /* A plate: a capture of the web app printed flat on the page, with its
    caption under it. No shadow and no device frame (the "printed plates" rule in

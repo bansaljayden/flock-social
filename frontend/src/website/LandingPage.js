@@ -529,6 +529,18 @@ export default function LandingPage() {
                 </p>
               </div>
             </div>
+            {/* No screen for this beat, so the plate column carries the
+                invitation: a wren holding the folded note while two sparrows
+                lean in. */}
+            <img
+              className="lp-art lp-beat-side"
+              src="/art/step-start-240.webp"
+              srcSet="/art/step-start-240.webp 240w, /art/step-start-480.webp 480w"
+              sizes="(min-width: 960px) 220px, 200px"
+              width="240" height="121"
+              loading="lazy" decoding="async"
+              alt=""
+            />
           </div>
         </div>
       </section>
