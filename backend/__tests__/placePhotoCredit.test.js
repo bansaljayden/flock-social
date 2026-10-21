@@ -76,12 +76,12 @@ test('links that are not https on a Google host are dropped, not repaired', () =
 });
 
 test('a display name is plain text: controls and bidi overrides go, length is capped', () => {
-  assert.strictEqual(cleanName('  Ana‮ Ruiz\u0007  '), 'Ana Ruiz');
-  assert.strictEqual(cleanName('​⁦'), null);
+  assert.strictEqual(cleanName('  Ana\u202E Ruiz\u0007  '), 'Ana Ruiz');
+  assert.strictEqual(cleanName('\u200B\u2066'), null);
   assert.strictEqual(cleanName(17), null);
   const long = cleanName('x'.repeat(500));
   assert.strictEqual(long.length, MAX_NAME_CHARS);
-  assert.ok(long.endsWith('…'));
+  assert.ok(long.endsWith('\u2026'));
 });
 
 test('nothing usable is null, and a profile link never stands without a name', () => {
@@ -97,7 +97,7 @@ test('nothing usable is null, and a profile link never stands without a name', (
 
 test('the first author with a usable name is the one credited', () => {
   const credit = photoCredit({
-    authorAttributions: [{ displayName: '‮' }, { displayName: 'Sam Okafor', uri: 'https://maps.google.com/maps/contrib/7' }],
+    authorAttributions: [{ displayName: '\u202E' }, { displayName: 'Sam Okafor', uri: 'https://maps.google.com/maps/contrib/7' }],
   });
   assert.strictEqual(credit.name, 'Sam Okafor');
   assert.strictEqual(credit.uri, 'https://maps.google.com/maps/contrib/7');

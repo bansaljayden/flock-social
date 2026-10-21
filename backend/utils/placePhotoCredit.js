@@ -32,13 +32,13 @@ const MAX_URL_CHARS = 2048;
 
 // C0 and C1 controls, zero-width and bidi overrides and isolates. A name that
 // carries any of them can reverse or hide the text drawn after it.
-const INVISIBLE_RE = /[\u0000-\u001F\u007F-\u009F​-‏‪-‮⁠-⁤⁦-⁩﻿]/g;
+const INVISIBLE_RE = /[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/g;
 
 function cleanName(value) {
   if (typeof value !== 'string') return null;
   const s = value.replace(INVISIBLE_RE, '').replace(/\s+/g, ' ').trim();
   if (!s) return null;
-  return s.length > MAX_NAME_CHARS ? `${s.slice(0, MAX_NAME_CHARS - 1).trimEnd()}…` : s;
+  return s.length > MAX_NAME_CHARS ? `${s.slice(0, MAX_NAME_CHARS - 1).trimEnd()}\u2026` : s;
 }
 
 function isGoogleHost(host) {
