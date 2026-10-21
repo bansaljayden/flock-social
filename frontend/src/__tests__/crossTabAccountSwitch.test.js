@@ -218,7 +218,9 @@ test('every page reloads on the switch, not only the app, and nothing signs the 
   const at = lines.indexOf(LISTENER_LINE);
   // At column 0, so module scope: it runs whichever branch below renders.
   expect(at).toBeGreaterThan(-1);
-  const renderBranch = lines.findIndex((l) => l.startsWith('if (page) {'));
+  // A prerendered marketing page and every other page are both rendered from
+  // here: `if (page && prerendered) {`, then `} else if (page) {`.
+  const renderBranch = lines.findIndex((l) => /^if \(page( && prerendered)?\) \{/.test(l));
   expect(renderBranch).toBeGreaterThan(at);
   // Both pages are rendered by that branch, outside the app.
   expect(index).toMatch(/id: 'pro',[\s\S]{0,200}import\('\.\/website\/ProPage'\)/);

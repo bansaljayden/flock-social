@@ -877,12 +877,20 @@ html:has(.lp) body { overflow-x: clip; }
 }
 .lp-msg-me { margin-left: auto; background: var(--steel); color: var(--cream); }
 .lp-msg-dead { color: var(--ink-3); font-style: italic; }
+/* On the navy band (2026-10-21) the dead chat is a dark one, the way a phone
+   in dark mode draws it: a navy-soft card, the others' bubbles a cream wash,
+   yours steel. The read receipt loses its bubble and sits on the card, as a
+   receipt does, which also keeps its cream-3 at 5.1:1 (4.2 on the wash). */
+.lp-on-navy .lp-chat { background: var(--navy-soft); border-color: var(--rule-cream); }
+.lp-on-navy .lp-msg { background: var(--field-fill); color: var(--cream-2); }
+.lp-on-navy .lp-msg-me { background: var(--steel); color: var(--cream); }
+.lp-on-navy .lp-msg-dead { background: none; color: var(--cream-3); padding: 2px 4px 0; }
 
 /* ---- Safety: the painting, what happens, then the two real things ----
    On the light stone band (2026-10-21), where the watcher-bird painting reads:
    the heading and a plain account of what SOS does on the left, the real
-   sheet and the real email beside it, the four guarantees across the full
-   width underneath. The only section on the page built this way. */
+   sheet and the real email beside it, the two standing guarantees across the
+   full width underneath. The only section on the page built this way. */
 .lp-safety {
   display: grid;
   gap: clamp(28px, 4vw, 44px) clamp(32px, 5vw, 64px);
@@ -895,10 +903,12 @@ html:has(.lp) body { overflow-x: clip; }
 .lp-safety-facts h3 { margin-bottom: 4px; }
 .lp-safety-facts p { font-size: 15.5px; line-height: 1.6; color: var(--ink-2); max-width: 46ch; }
 .lp-safety-exhibits { display: grid; gap: 24px; align-items: start; }
-.lp-safety-plate { margin: 0; }
 @media (min-width: 640px) {
   .lp-safety-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .lp-safety-exhibits { grid-template-columns: 200px minmax(0, 1fr); }
+  /* In its 200px column the sheet keeps the column's width, not the phone
+     plate's 260 (.lp-plate, later in the file, would otherwise win). */
+  .lp-safety .lp-safety-plate { width: 200px; margin: 0; }
 }
 @media (min-width: 900px) {
   .lp-safety-art { width: 260px; }
@@ -1432,7 +1442,13 @@ html:has(.lp) body { overflow-x: clip; }
 /* A plate: a capture of the web app printed flat on the page, with its
    caption under it. No shadow and no device frame (the "printed plates" rule in
    landingPageClaims.test.js); the screen's own rounded corners are the edge. */
-.lp-plate { margin: 18px 0 0; width: min(200px, 56vw); }
+/* On a phone every plate is centred and as wide as the hero's presence allows
+   beside a caption (2026-10-21: the venue dashboard sat small at the left
+   edge of an empty band); from a tablet up it is 200px in its column. */
+.lp-plate { margin: 22px auto 0; width: min(260px, 70vw); }
+@media (min-width: 760px) {
+  .lp-plate { margin: 18px 0 0; width: 200px; }
+}
 .lp-plate .lp-shot { display: block; width: 100%; height: auto; border-radius: 20px; }
 .lp-fig-cap { margin-top: 10px; font-size: 13.5px; line-height: 1.45; color: var(--ink-3); }
 .lp-friday-more { margin-top: clamp(28px, 4vw, 40px); font-size: 16px; color: var(--ink-2); }
@@ -1452,29 +1468,32 @@ html:has(.lp) body { overflow-x: clip; }
 /* The hero note's one link, to the waitlist at the foot of the page. */
 .lp-hero-note a { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
 
-/* Venues: the pitch, its fine print and the two ways in, with the owner's
-   dashboard as a plate beside them on a wide screen and under them on a
-   phone. Its own proportion, unlike any other section. */
+/* Venues: one paragraph and one way in, on navy (2026-10-21), with the
+   owner's dashboard as a plate beside it on a wide screen and centred under it
+   on a phone. Its own proportion, unlike any other section, and centred
+   against the plate, so the short copy does not float at the top of a tall
+   phone. The rest of the venue offer, and the sign-in for owners who already
+   have an account, is the venue column under Pricing. */
 .lp-venues-in { display: grid; gap: 32px clamp(40px, 7vw, 96px); align-items: start; }
 @media (min-width: 900px) {
-  .lp-venues-in { grid-template-columns: minmax(0, 36rem) 240px; justify-content: space-between; }
+  .lp-venues-in { grid-template-columns: minmax(0, 36rem) 240px; justify-content: space-between; align-items: center; }
   .lp-venues-plate { width: 240px; margin: 0; }
 }
 .lp-venues h2 { margin-bottom: 16px; }
-.lp-venues-fine { margin-top: 16px; font-size: 15.5px; color: var(--ink-2); max-width: 34rem; }
 .lp-venues-actions { margin-top: 24px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; }
-.lp-venue-signin { font-size: 14.5px; color: var(--ink-2); }
+.lp-venue-signin { margin-top: 14px; font-size: 14.5px; color: var(--ink-2); }
 .lp-venue-signin a { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
 
 .lp-pricing-lead { margin-top: 16px; }
 
 /* ============ the birds ============
    Painted with Higgsfield in the hand of the old section marks: warm sparrows
-   and navy fairy-wrens on transparent ground. They sit only on the paper and
-   stone sections, where the wrens' navy reads (on a navy band they vanish),
-   one per section that has room, never the same one twice on a page. They are
-   decoration, so alt="" and lazy; every one has its own box size, so nothing
-   shifts when it lands. */
+   and navy fairy-wrens on transparent ground. A picture with a wren in it sits
+   only on the paper and stone sections, where the wrens' navy reads (on a navy
+   band they vanish); a navy band gets a beige sparrow alone. One per section
+   that has room, never the same one twice on a page. They are decoration, so
+   alt="" and lazy; every one has its own box size, so nothing shifts when it
+   lands. */
 .lp-art { height: auto; }
 .lp-live-top { display: grid; gap: 24px clamp(32px, 5vw, 72px); align-items: end; }
 @media (min-width: 960px) {
@@ -1483,10 +1502,13 @@ html:has(.lp) body { overflow-x: clip; }
 .lp-live-art { width: min(420px, 100%); }
 .lp-friday-open { display: grid; gap: 28px clamp(32px, 6vw, 96px); align-items: center; margin-top: clamp(28px, 4vw, 40px); }
 .lp-friday-open .lp-friday-chat { margin: 0; }
+/* The sparrow leaves the chat it gave up on: painted taking off to the left,
+   so it is mirrored to fly away from the chat, out to the right. */
+.lp-friday-art { width: 180px; justify-self: end; transform: scaleX(-1); }
 @media (min-width: 900px) {
-  .lp-friday-open { grid-template-columns: minmax(0, 30rem) minmax(0, 520px); justify-content: space-between; }
+  .lp-friday-open { grid-template-columns: minmax(0, 30rem) 240px; justify-content: space-between; }
+  .lp-friday-art { width: 240px; justify-self: center; }
 }
-.lp-friday-art { width: min(520px, 100%); }
 .lp-pricing-head { display: grid; gap: 20px 48px; align-items: end; }
 @media (min-width: 760px) {
   .lp-pricing-head { grid-template-columns: minmax(0, 44rem) 160px; justify-content: space-between; }

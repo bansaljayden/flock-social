@@ -33,10 +33,10 @@ const PEOPLE = [
 // Commitments the product already keeps, each one enforced in code, which is
 // why they can be stated here as fact rather than as aspiration.
 const HOLDS = [
-  { what: 'Your budget stays yours.', how: 'The group sees one rounded-down figure, and nobody else ever sees what you typed.' },
+  { what: 'Your budget stays yours.', how: 'The group sees one rounded-down number. Nobody else sees what you typed.' },
   { what: 'No ads and no feed.', how: 'There is nothing to scroll and nobody to follow.' },
   { what: 'Safety without tracking.', how: 'Live location is off until you share it, and two-tap SOS reaches the trusted contacts you picked.' },
-  { what: 'The sensor sends a number.', how: 'Flux sends how many people are in the room, and that number is all that leaves it.' },
+  { what: 'The sensor sends a number.', how: 'Flux sends how many people are in the room. Nothing else leaves it.' },
   { what: 'Only what ships.', how: 'If the site describes a feature, the app does it today.' },
 ];
 
@@ -69,9 +69,8 @@ export default function AboutPage() {
           <div className="lp-wrap">
             <h1 id="ab-h1">About Flock</h1>
             <p className="lp-lead ab-lead">
-              Flock is an app for making plans with friends. It is made by the maintainer
-              Bansal and Asad Ali, and run as Flock Social LLC, a Pennsylvania
-              company.
+              Flock is an app for making plans with friends. Jayden Bansal and
+              Asad Ali make it, as Flock Social LLC, a Pennsylvania company.
             </p>
           </div>
         </section>
@@ -85,8 +84,7 @@ export default function AboutPage() {
                 Friday nights.
               </p>
               <p className="ab-coming">
-                The full story, from the first version to now, is being written and
-                will be here soon.
+                The full story, from the first version to now, is coming soon.
               </p>
             </div>
             <img
@@ -184,16 +182,15 @@ export default function AboutPage() {
             <h2 id="ab-h-now">Where things stand</h2>
             <p>
               The web app is live at flockcorp.com, and the iPhone app is in App
-              Store review. Venues can make a free account, and
-              Roost, the paid plan for venues, is not charging anyone yet. There is
-              a paid plan for people as well, Flock Pro, with more Birdie, more
-              crowd forecasts and crowd alerts, and it is not on sale to the public
-              today.
+              Store review. Venues can make a free account;
+              Roost, the paid plan for venues, isn’t charging anyone yet. There’s
+              a paid plan for people too, Flock Pro, with more Birdie, more crowd
+              forecasts and crowd alerts, and it is not on sale to the public today.
             </p>
             <p>
-              The Flux sensor has been tested on research footage and not yet in a
-              venue. A retrain of the crowd model is scored in early November, and
-              it ships only if it beats today’s numbers on days it never saw.
+              Flux has only been tested on research footage so far, not in a
+              venue. A retrained crowd model gets scored in early November, and it
+              ships only if it beats today’s numbers on days it never saw.
             </p>
           </div>
         </section>
@@ -203,9 +200,8 @@ export default function AboutPage() {
             <div>
               <h2 id="ab-h-contact">Get in touch</h2>
               <p className="lp-lead ab-contact-lead">
-                Write to <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a>,
-                including if you run a venue and want in early. The pitch and
-                anything new go up on{' '}
+                Email <a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a> about
+                anything, venues included. The pitch and anything new go up on{' '}
                 <a href={YOUTUBE_URL} target="_blank" rel="noopener noreferrer">our YouTube channel</a>.
               </p>
               <p className="ab-fine">
