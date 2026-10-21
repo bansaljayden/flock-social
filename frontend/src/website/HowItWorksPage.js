@@ -176,7 +176,7 @@ const STEPS = [
       src: '/screenshots/sos-dark@2x.webp',
       srcSet: '/screenshots/sos-dark-480w.webp 480w, /screenshots/sos-dark@2x.webp 780w',
       alt: 'The SOS sheet: call 911, alert two trusted contacts by email, or share your location.',
-      caption: 'Flock can’t call 911 for you.',
+      // No caption (the maintainer, 2026-10-21: "delete this"); the alt says what it shows.
     },
   },
   {
@@ -216,7 +216,7 @@ function Shot({ shot }) {
         loading="lazy" decoding="async"
         alt={shot.alt}
       />
-      <figcaption className="lp-fig-cap">{shot.caption}</figcaption>
+      {shot.caption ? <figcaption className="lp-fig-cap">{shot.caption}</figcaption> : null}
     </figure>
   );
 }
@@ -341,9 +341,9 @@ export default function HowItWorksPage() {
                 sizes="(min-width: 860px) 240px, (min-width: 760px) 200px, min(260px, 70vw)"
                 width="390" height="844"
                 loading="lazy" decoding="async"
-                alt="A venue card in Flock with three upcoming events under Happening here."
+                alt="A verified venue’s card in Flock with three upcoming events under Happening here."
               />
-              <figcaption className="lp-fig-cap">A verified venue’s card.</figcaption>
+              {/* No caption (the maintainer, 2026-10-21); the alt names it. */}
             </figure>
           </div>
         </section>
