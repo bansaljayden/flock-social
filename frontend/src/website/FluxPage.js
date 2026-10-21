@@ -138,9 +138,9 @@ export default function FluxPage() {
 
         <section className="lp-sec lp-sec-navy lp-on-navy" aria-labelledby="fx-h-owl">
           <div className="lp-wrap">
-            <h2 id="fx-h-owl">Owl does the counting</h2>
             <div className="fx-owl">
               <div className="fx-measure">
+                <h2 id="fx-h-owl">Owl does the counting</h2>
                 <p>
                   Owl is a small neural network we trained to count people from
                   heat. It runs on the Raspberry Pi inside Flux, so each frame is
@@ -158,6 +158,18 @@ export default function FluxPage() {
                   results are on the <a href="/research">research page</a>.
                 </p>
               </div>
+              {/* A painted barn owl on a tree whose twigs fork in layers with a
+                  berry at each fork: the network, drawn as a tree. Decoration,
+                  so it makes no claim; the figure below is Owl's real path. */}
+              <img
+                className="lp-art fx-owl-art"
+                src="/art/owl-tree-260.webp"
+                srcSet="/art/owl-tree-260.webp 260w, /art/owl-tree-520.webp 520w"
+                sizes="(min-width: 960px) 260px, 190px"
+                width="260" height="531"
+                loading="lazy" decoding="async"
+                alt=""
+              />
             </div>
             <figure className="fx-figure fx-wide">
               <div className="fx-plate fx-plate-paper">

@@ -80,7 +80,22 @@
 
 /* ---------- Owl, on navy ---------- */
 
-.fx-owl { margin-top: clamp(20px, 3vw, 28px); }
+/* The words and the painted owl side by side from 960px; below that the owl
+   sits under the words, smaller. */
+.fx-owl {
+  display: grid;
+  gap: 28px clamp(40px, 6vw, 88px);
+  align-items: center;
+}
+.fx-owl h2 { margin-bottom: clamp(20px, 3vw, 28px); }
+.fx-owl-art { display: block; width: 190px; justify-self: center; }
+/* The words keep their measure and the owl is centred in what is left, out
+   to the width of the figure below, so the gap does not just move between
+   them. */
+@media (min-width: 960px) {
+  .fx-owl { grid-template-columns: minmax(0, 60ch) minmax(260px, 1fr); max-width: 1080px; }
+  .fx-owl-art { width: 260px; }
+}
 .lp-on-navy .fx-measure p { color: var(--cream-2); }
 .lp-on-navy .fx-measure a { color: var(--steel-lift); text-underline-offset: 3px; }
 .lp-on-navy .fx-figure .lp-fig-cap { color: var(--cream-3); }
