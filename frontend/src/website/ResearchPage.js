@@ -115,12 +115,12 @@ export default function ResearchPage() {
                 measure as Flock's number, so the lead does not put the
                 forecast behind every card. */}
             <p className="lp-lead rs-hero-lead">
-              The first study is the forecast of how busy a place will be,
+              The first study is the crowd forecast, the one
               behind the number on a venue card wherever Flock knows that
               venue's weekly pattern. A venue without one gets an estimate from
-              what is typical for its kind. The second study, a sensor that
-              counts the people actually there, has so far been tested on
-              research footage.
+              what is typical for its kind. The second, a sensor that counts the
+              people actually there, has only been tested on research footage so
+              far.
             </p>
 
             <div className="rs-paper">
@@ -156,12 +156,11 @@ export default function ResearchPage() {
             <div className="rs-measure">
             <h2>Why we did this research</h2>
             <p>
-              Flock's venue card answers one question for a group deciding where
-              to go: how busy will this place be when we get there? Map apps
-              answer it with a popular-times chart, each venue's typical level for
-              that weekday and hour. That chart cannot know tonight is different:
-              the rain, the game two blocks away, the night a place suddenly fills
-              up.
+              A group deciding where to go wants to know one thing: how busy will
+              this place be when we get there? Map apps answer with a
+              popular-times chart, each venue's usual level for that weekday and
+              hour. That chart can't know tonight is different, like when it
+              rains or there's a game two blocks away.
             </p>
             <p>
               So we asked two questions. Can AI tell how crowded a venue will

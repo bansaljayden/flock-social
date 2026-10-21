@@ -1055,8 +1055,9 @@ describe('the budget settles the way the pages say it does', () => {
 
     const home = flat(withoutComments(landing));
     // The home page's line since 2026-10-21, under the budget beat, beside
-    // "rounded down to a band" in the paragraph above it.
-    const bullet = 'That number appears when everyone going has answered or the plan’s creator locks it, and either way only once at least three members have shared an amount';
+    // "rounded down" in the paragraph above it. MEMBERS, not people: a
+    // guest's amount counts in the figure but not toward the three.
+    const bullet = 'It appears when everyone going has answered or the creator locks it, and only once at least three members have shared an amount';
     expect(home).toContain(bullet);
     expect(mirror).toContain(bullet);
     expect(home).not.toMatch(/No number until everyone has answered/);

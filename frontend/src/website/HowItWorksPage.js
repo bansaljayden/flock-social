@@ -125,13 +125,13 @@ const STEPS = [
     art: { name: 'step-start', src: '/art/step-start-240.webp', srcSet: '/art/step-start-240.webp 240w, /art/step-start-480.webp 480w', width: 240, height: 121 },
     title: 'Start a flock',
     body: [
-      'Pick a day and a time and invite people from your friends list. Anyone without the app gets a link and can join in from the browser, budget included, without making an account.',
+      'Pick a day and time and invite your friends. Anyone without the app gets a link and joins from the browser, budget included, no account needed.',
     ],
     shot: {
       src: '/screenshots/create-dark@2x.webp',
       srcSet: '/screenshots/create-dark-480w.webp 480w, /screenshots/create-dark@2x.webp 780w',
       alt: 'Starting a flock: which day, what time, and three friends invited.',
-      caption: 'Invites go out as soon as the flock exists.',
+      caption: 'Invites go out right away.',
     },
   },
   {
@@ -139,14 +139,14 @@ const STEPS = [
     art: { name: 'spot-hop', src: '/art/spot-hop-240.webp', srcSet: '/art/spot-hop-240.webp 240w, /art/spot-hop-480.webp 480w', width: 240, height: 230 },
     title: 'Pick the place together',
     body: [
-      'Anyone in the flock can add places. Each one arrives as a card with how busy it usually gets at that hour, plus anything the venue has posted, a deal or an upcoming event. The group votes, so nobody gets stuck being the decider.',
-      'Stuck for ideas? Ask Birdie, the assistant inside the app, for spots near you that fit the group. Birdie is AI, built on Google’s Gemini, and it asks before it does anything for you.',
+      'Anyone in the flock can add places. Each card shows how busy the place usually gets at that hour, plus any deal or event a verified venue has posted. Then everyone votes, so nobody gets stuck deciding.',
+      'Out of ideas? Ask Birdie for spots near you that fit the group. Birdie is AI, built on Google’s Gemini, and it asks before it does anything for you.',
     ],
     shot: {
       src: '/screenshots/vote-dark@2x.webp',
       srcSet: '/screenshots/vote-dark-480w.webp 480w, /screenshots/vote-dark@2x.webp 780w',
       alt: 'Vote for a Venue: five votes cast, The Copper Finch ahead with three, Juniper Bowl and Marigold Diner with one each.',
-      caption: 'Five votes in. The Copper Finch is ahead.',
+      caption: 'The Copper Finch is ahead.',
     },
   },
   {
@@ -154,13 +154,13 @@ const STEPS = [
     art: { name: 'step-budget', src: '/art/step-budget-240.webp', srcSet: '/art/step-budget-240.webp 240w, /art/step-budget-480.webp 480w', width: 240, height: 134 },
     title: 'Budgets stay private',
     body: [
-      'Everyone types what they can spend, and only they ever see it. When everyone going has answered, with at least three members’ amounts in, or the plan’s creator locks it, the group gets one figure: a ceiling rounded down, so it is never anyone’s exact number. The places Flock suggests for the plan stay under it.',
+      'Everyone types what they can spend, and only they see it. Once at least three members have put in an amount, and everyone going has answered or the creator locks it, the group gets one number. It’s rounded down, so it’s never anyone’s exact budget, and the places Flock suggests stay under it.',
     ],
     shot: {
       src: '/screenshots/budget-dark@2x.webp',
       srcSet: '/screenshots/budget-dark-480w.webp 480w, /screenshots/budget-dark@2x.webp 780w',
       alt: 'The budget sheet: preset amounts, a custom $35, and a note that no one else sees the answer.',
-      caption: 'What you type here is never shown to the group.',
+      caption: 'The group never sees this.',
     },
   },
   {
@@ -168,14 +168,14 @@ const STEPS = [
     art: { name: 'spot-flap', src: '/art/spot-flap-240.webp', srcSet: '/art/spot-flap-240.webp 240w, /art/spot-flap-480.webp 480w', width: 240, height: 308 },
     title: 'On the night',
     body: [
-      'The chat asks “Still in?” and counts who has said yes before a deadline, so you know who is actually coming. Check how busy the place is before anyone leaves.',
-      'Sharing your live location with the group is there if you want it, and only while the plan is on. If something goes wrong, SOS sends where you are to the people you picked, with two taps.',
+      'Before a deadline, the chat asks “Still in?” and counts the yeses, so you know who’s actually coming. Check how busy the place is before you leave.',
+      'You can share your live location with the group while the plan is on, if you want. If something goes wrong, two taps on SOS send where you are to the people you picked.',
     ],
     shot: {
       src: '/screenshots/sos-dark@2x.webp',
       srcSet: '/screenshots/sos-dark-480w.webp 480w, /screenshots/sos-dark@2x.webp 780w',
       alt: 'The SOS sheet: call 911, alert two trusted contacts by email, or share your location.',
-      caption: 'Call 911 comes first, because Flock does not call emergency services for you.',
+      caption: 'Flock can’t call 911 for you.',
     },
   },
   {
@@ -183,13 +183,13 @@ const STEPS = [
     art: { name: 'step-go', src: '/art/step-go-240.webp', srcSet: '/art/step-go-240.webp 240w, /art/step-go-480.webp 480w', width: 240, height: 121 },
     title: 'Settle up',
     body: [
-      'Whoever paid enters the total and Flock splits it. Everyone gets a Venmo or Cash App link, or Zelle instructions, for their share, and the night stays on everyone’s calendar in Flock.',
+      'Whoever paid enters the total, and Flock splits it. Everyone gets a Venmo or Cash App link for their share, or Zelle instructions.',
     ],
     shot: {
       src: '/screenshots/bill-split-dark@2x.webp',
       srcSet: '/screenshots/bill-split-dark-480w.webp 480w, /screenshots/bill-split-dark@2x.webp 780w',
       alt: 'Split the Bill: $142.60 with an 18% tip, paid by Jordan Avery, $28.52 each for five people.',
-      caption: 'Jordan paid. Everyone else settles their $28.52 from here.',
+      caption: '$28.52 each, paid back here.',
     },
   },
 ];
@@ -197,8 +197,8 @@ const STEPS = [
 const AIS = [
   { name: 'Starling', what: 'Forecasts how busy a place will be. It is 800 decision trees, tested on cities it never saw.' },
   { name: 'Birdie', what: 'Built on Google’s Gemini. Helps a group pick a place, and asks permission first.' },
-  { name: 'Owl', what: 'A small neural network on the Flux heat sensor. It counts heads, and only the count leaves the device. It has been tested on research footage so far and has yet to run in a venue.' },
-  { name: 'Roost’s advisor', what: 'Answers a venue owner’s questions. It is not allowed to write a single digit, so every number it shows comes from measured data.' },
+  { name: 'Owl', what: 'A small neural network on the Flux heat sensor. It counts heads, and only the count leaves the device. So far it has been tested on research footage, not in a venue.' },
+  { name: 'Roost’s advisor', what: 'Answers a venue owner’s questions. It isn’t allowed to write a single digit, so every number it shows comes from measured data.' },
 ];
 
 // A plate, printed flat beside its step: the landing page's .lp-plate.
@@ -210,7 +210,7 @@ function Shot({ shot }) {
         className="lp-shot"
         src={shot.src}
         srcSet={shot.srcSet}
-        sizes="(min-width: 860px) 240px, 200px"
+        sizes="(min-width: 860px) 240px, (min-width: 760px) 200px, min(260px, 70vw)"
         width="390" height="844"
         loading="lazy" decoding="async"
         alt={shot.alt}
@@ -241,7 +241,7 @@ export default function HowItWorksPage() {
           <div className="lp-wrap">
             <h1 id="hw-h1">How Flock works</h1>
             <p className="lp-lead hw-lead">
-              Somebody has an idea for Friday. Here is every step from the first
+              Somebody has an idea for Friday. Here’s every step, from the first
               invite to splitting the bill.
             </p>
             <PitchVideo />
@@ -289,7 +289,7 @@ export default function HowItWorksPage() {
           <div className="lp-wrap">
             <h2 id="hw-h-ai">The four AIs inside</h2>
             <p className="lp-lead hw-ai-lead">
-              The video names them. Here is what each one does, in a sentence or two.
+              The video names them. Here’s what each one does.
             </p>
             <dl className="hw-ai">
               {AIS.map((a) => (
@@ -317,15 +317,14 @@ export default function HowItWorksPage() {
               <h2 id="hw-h-venues">If you run a venue</h2>
               <p>
                 A free venue account shows which flocks have you in their vote
-                this week. You can put a deal on your venue’s card, where groups
-                see it while they choose, and reply to reviews. Once your venue
-                is verified, its events show on the card under “Happening here”.
+                this week, and you can reply to reviews. Once your venue is
+                verified, your deals go on its card, and your events show under
+                “Happening here”.
               </p>
               <p>
-                Roost, the paid plan for venues, adds your own hour-by-hour
-                forecast and the advisor above. No venue is being charged yet. To
-                get in early, write to{' '}
-                <a href={`mailto:${CONTACT_EMAIL}?subject=Flock%20for%20venues`}>{CONTACT_EMAIL}</a>.
+                Roost, the paid plan, adds your own hour-by-hour forecast and the
+                advisor above. No venue is being charged yet. Want in early? Write
+                to <a href={`mailto:${CONTACT_EMAIL}?subject=Flock%20for%20venues`}>{CONTACT_EMAIL}</a>.
               </p>
             </div>
             <figure className="lp-plate hw-venues-plate">
@@ -333,12 +332,12 @@ export default function HowItWorksPage() {
                 className="lp-shot"
                 src="/screenshots/venue-card-events-dark@2x.webp"
                 srcSet="/screenshots/venue-card-events-dark-480w.webp 480w, /screenshots/venue-card-events-dark@2x.webp 780w"
-                sizes="(min-width: 860px) 240px, 200px"
+                sizes="(min-width: 860px) 240px, (min-width: 760px) 200px, min(260px, 70vw)"
                 width="390" height="844"
                 loading="lazy" decoding="async"
                 alt="A venue card in Flock with three upcoming events under Happening here."
               />
-              <figcaption className="lp-fig-cap">A verified venue’s card, as people in Flock see it.</figcaption>
+              <figcaption className="lp-fig-cap">A verified venue’s card.</figcaption>
             </figure>
           </div>
         </section>

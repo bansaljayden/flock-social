@@ -389,16 +389,15 @@ export default function LandingPage() {
           <div className="lp-hero-copy">
             <h1 id="lp-h-hero">Nurturing friendship, <span className="lp-keep">one flock at a time.</span></h1>
             <p className="lp-lead">
-              Flock is how a group decides where to go out. Make the plan here
-              instead of the group chat: everyone gets a vote, and nobody has to
-              say their budget out loud.
+              Flock is how a group decides where to go out. Everybody votes on the
+              place, and nobody has to say their budget out loud.
             </p>
             <div className="lp-hero-cta">
               <a className="lp-btn lp-btn-cream lp-btn-lg" href="/signup">Start a plan</a>
             </div>
             <p className="lp-hero-note">
-              It’s free and runs in your browser right now. The iPhone app is in
-              App Store review; <a href="#get">get an email when it’s out</a>.
+              Free, and it works in your browser today. The iPhone app is still in
+              App Store review (<a href="#get">get an email when it’s out</a>).
               Flock took 1st place at PA DECA States.
             </p>
           </div>
@@ -418,8 +417,7 @@ export default function LandingPage() {
               />
             </picture>
             <figcaption className="lp-plate-cap">
-              The Nest, top of the screen: who is in tonight, and which plans still
-              need votes.
+              Who’s in tonight, and which plans need votes.
             </figcaption>
           </figure>
         </div>
@@ -439,10 +437,9 @@ export default function LandingPage() {
                 Flock has them, and an estimate from places like it everywhere
                 else. The quieter pick is the venue card's own suggestion. */}
             <p className="lp-lead">
-              Search a place below. Flock starts from how busy it usually is at
-              this hour and moves the number with the latest live readings where
-              it has them. If your first pick is packed, it points you to a
-              quieter one nearby.
+              Search any place below. Flock starts from how busy it usually gets at
+              this hour and adjusts with live readings when it has them. Packed?
+              It suggests a quieter spot nearby.
             </p>
             {/* crowdEngine.js needs MIN_CALIBRATION_REPORTERS (3) distinct
                 verified reporters in the same weekly day-and-hour bucket before
@@ -476,17 +473,18 @@ export default function LandingPage() {
           The Copper Finch, Jordan's bill. Each plate is a real screen of the
           web app (scripts/capture-screenshots.mjs, seeded demo data, venue
           pictures drawn rather than photographed), so the story and the
-          pictures are the same night. */}
-      <section className="lp-sec lp-sec-sand" id="how" aria-labelledby="lp-h-how">
+          pictures are the same night. The dead chat that opens it sits on
+          navy (the maintainer, 2026-10-21), so its bird is a beige sparrow: the
+          navy wrens vanish on a navy band. */}
+      <section className="lp-sec lp-sec-navy lp-on-navy" id="how" aria-labelledby="lp-h-how">
         <div className="lp-wrap">
           <h2 id="lp-h-how" className="lp-friday-title">Everyone said yes. Then the chat went quiet.</h2>
           <p className="lp-lead lp-friday-lead">
-            Here is the same Friday in Flock, start to finish. It takes five
-            steps, and nobody has to carry it.
+            Here’s that same Friday in Flock: five steps, and nobody has to carry it.
           </p>
 
-          {/* The dead chat beside a branch of birds arriving: the same
-              Friday before and after, with no words added. */}
+          {/* The dead chat beside a sparrow taking off: everyone flew, and
+              nobody went. No words added. */}
           <div className="lp-friday-open">
           <figure className="lp-chat lp-friday-chat">
             <div className="lp-msg">we should all hang out this weekend</div>
@@ -498,10 +496,10 @@ export default function LandingPage() {
           </figure>
           <img
             className="lp-art lp-friday-art"
-            src="/art/hero-gathering-600.webp"
-            srcSet="/art/hero-gathering-600.webp 600w, /art/hero-gathering-1200.webp 1200w"
-            sizes="(min-width: 900px) 520px, min(420px, 90vw)"
-            width="600" height="359"
+            src="/art/spot-flap-240.webp"
+            srcSet="/art/spot-flap-240.webp 240w, /art/spot-flap-480.webp 480w"
+            sizes="(min-width: 900px) 240px, 180px"
+            width="240" height="308"
             loading="lazy" decoding="async"
             alt=""
           />
@@ -526,9 +524,8 @@ export default function LandingPage() {
               <div className="lp-beat-text">
                 <h3 id="lp-h-beat-1">Maya starts a flock.</h3>
                 <p>
-                  Friday Night Crew, 8 o’clock. Four friends get the invite; anyone
-                  without the app can join in from a link, budget and all, with no
-                  account.
+                  Friday Night Crew, 8 o’clock, four friends invited. Anyone without
+                  the app joins from a link (budget too), no account needed.
                 </p>
               </div>
             </div>
@@ -543,11 +540,10 @@ export default function LandingPage() {
               <div className="lp-beat-text">
                 <h3 id="lp-h-beat-2">Three places go to a vote.</h3>
                 <p>
-                  Each card shows how busy the place usually gets and anything the
-                  venue has posted, like a live acoustic set at The Copper Finch on
-                  Friday at 8:30. Sam asks Birdie for somewhere cheaper, the way
-                  you’d ask a friend who knows the city, and shares its pick to the
-                  chat.
+                  Each card shows how busy the place usually gets, plus anything the
+                  venue posted. The Copper Finch has a live acoustic set Friday at
+                  8:30. Sam asks Birdie for somewhere cheaper, the way you’d ask a
+                  friend who knows the city, and drops its pick in the chat.
                 </p>
                 {/* FTC AI disclosure, in the page's own voice where Birdie is
                     marketed. MIRRORED in api/marketing-page.js PAGE_BLOCKS.home;
@@ -563,12 +559,12 @@ export default function LandingPage() {
                 className="lp-shot"
                 src="/screenshots/chat-dark@2x.webp"
                 srcSet="/screenshots/chat-dark-480w.webp 480w, /screenshots/chat-dark@2x.webp 780w"
-                sizes="(min-width: 960px) 220px, 200px"
+                sizes="(min-width: 960px) 220px, (min-width: 760px) 200px, min(260px, 70vw)"
                 width="390" height="844"
                 loading="lazy" decoding="async"
                 alt="The Friday Night Crew chat: a vote on three places with The Copper Finch ahead, and four of five budgets in."
               />
-              <figcaption className="lp-fig-cap">Thursday night in the chat. Everyone has voted, and one budget is still out.</figcaption>
+              <figcaption className="lp-fig-cap">One budget is still out.</figcaption>
             </figure>
           </div>
         </div>
@@ -587,14 +583,12 @@ export default function LandingPage() {
                     vote and Discover then drop places priced over it
                     (getMaxPriceLevel in ChatDetail.js and ExploreScreen.js). */}
                 <p>
-                  Each person types what they can spend, privately. The group gets
-                  back one number, rounded down to a band; the places Flock suggests
-                  for the plan stay under it.
+                  Everyone types what they can spend. The group only ever sees one
+                  number, rounded down, and the places Flock suggests stay under it.
                 </p>
                 <p className="lp-beat-note">
-                  That number appears when everyone going has answered or the plan’s
-                  creator locks it, and either way only once at least three members
-                  have shared an amount.
+                  It appears when everyone going has answered or the creator locks
+                  it, and only once at least three members have shared an amount.
                 </p>
                 <img
                   className="lp-art lp-beat-art"
@@ -612,12 +606,12 @@ export default function LandingPage() {
                 className="lp-shot"
                 src="/screenshots/budget-dark@2x.webp"
                 srcSet="/screenshots/budget-dark-480w.webp 480w, /screenshots/budget-dark@2x.webp 780w"
-                sizes="(min-width: 960px) 220px, 200px"
+                sizes="(min-width: 960px) 220px, (min-width: 760px) 200px, min(260px, 70vw)"
                 width="390" height="844"
                 loading="lazy" decoding="async"
                 alt="The budget sheet: preset amounts, a custom $35, and a note that no one else sees the answer."
               />
-              <figcaption className="lp-fig-cap">Maya’s answer. Nobody else in the flock sees the $35.</figcaption>
+              <figcaption className="lp-fig-cap">Nobody else sees Maya’s $35.</figcaption>
             </figure>
           </div>
         </div>
@@ -630,9 +624,8 @@ export default function LandingPage() {
               <div className="lp-beat-text">
                 <h3 id="lp-h-beat-4">“Still in?”</h3>
                 <p>
-                  The chat asks who is still in before a deadline. All five say yes,
-                  and a last look at the crowd before anyone leaves shows The Copper
-                  Finch filling up.
+                  Before the deadline, the chat asks who’s still in. All five say
+                  yes, and one last crowd check shows The Copper Finch filling up.
                 </p>
               </div>
             </div>
@@ -647,9 +640,8 @@ export default function LandingPage() {
               <div className="lp-beat-text">
                 <h3 id="lp-h-beat-5">Jordan paid, so Flock splits it.</h3>
                 <p>
-                  $142.60 with the tip comes to $28.52 each. Everyone gets a Venmo or
-                  Cash App link for their share (or Zelle instructions), and the night
-                  stays on everyone’s calendar in Flock.
+                  $142.60 with the tip is $28.52 each. Everyone gets a Venmo or Cash
+                  App link for their share, or Zelle instructions.
                 </p>
                 <img
                   className="lp-art lp-beat-art"
@@ -667,17 +659,17 @@ export default function LandingPage() {
                 className="lp-shot"
                 src="/screenshots/bill-split-dark@2x.webp"
                 srcSet="/screenshots/bill-split-dark-480w.webp 480w, /screenshots/bill-split-dark@2x.webp 780w"
-                sizes="(min-width: 960px) 220px, 200px"
+                sizes="(min-width: 960px) 220px, (min-width: 760px) 200px, min(260px, 70vw)"
                 width="390" height="844"
                 loading="lazy" decoding="async"
                 alt="Split the Bill: $142.60 with an 18% tip, paid by Jordan Avery, $28.52 each for five people."
               />
-              <figcaption className="lp-fig-cap">Sam and Priya have paid Jordan back. Maya and Leo still owe.</figcaption>
+              <figcaption className="lp-fig-cap">Two paid back, two still owe.</figcaption>
             </figure>
           </div>
           <p className="lp-friday-more">
-            <a href="/how-it-works">See every step on How it works</a>, or watch the
-            two-minute pitch there.
+            Every step, and the two-minute pitch video, is on{' '}
+            <a href="/how-it-works">How it works</a>.
           </p>
         </div>
       </section>
@@ -709,38 +701,35 @@ export default function LandingPage() {
             />
             <h2 id="lp-h-safety">If something goes wrong, two taps tell your people where you are.</h2>
             <p className="lp-lead">
-              Share your live location with the group while the plan is on, if you
-              want to. SOS is separate, and here is what it does.
+              Sharing your live location with the flock is optional, and off until
+              you turn it on. SOS is separate. Here’s exactly what it does.
             </p>
             <div className="lp-safety-facts">
               <div>
                 <h3>Who hears</h3>
                 <p>
-                  The trusted contacts you picked get an email. Anyone on a confirmed
-                  plan with you, starting within twelve hours either side, gets an
-                  alert in the app.
+                  Your trusted contacts, by email. Anyone on a confirmed plan with
+                  you that starts within twelve hours either side gets an alert in
+                  the app.
                 </p>
               </div>
               <div>
                 <h3>What they get</h3>
                 <p>
-                  Your name, a map link to where you are when your phone has a fix,
-                  how accurate that fix is, and the time. If the fix comes in a
-                  moment later, an update follows with it.
+                  Your name, the time, a map link if your phone has a fix, and how
+                  accurate that fix is. A fix that comes in late follows as an update.
                 </p>
               </div>
               <div>
                 <h3>When you’re OK</h3>
                 <p>
-                  Tap “Tell them I’m OK” and everyone the alert reached gets the all
-                  clear, by email and in the app.
+                  Tap “Tell them I’m OK” and everyone it reached gets the all clear.
                 </p>
               </div>
               <div>
                 <h3>What it won’t do</h3>
                 <p>
-                  Flock does not call emergency services for you, so the sheet puts
-                  Call 911 first.
+                  Call 911 for you. That’s why it’s the first button on the sheet.
                 </p>
               </div>
             </div>
@@ -751,12 +740,12 @@ export default function LandingPage() {
                 className="lp-shot"
                 src="/screenshots/sos-dark@2x.webp"
                 srcSet="/screenshots/sos-dark-480w.webp 480w, /screenshots/sos-dark@2x.webp 780w"
-                sizes="(min-width: 900px) 220px, 200px"
+                sizes="(min-width: 640px) 200px, min(260px, 70vw)"
                 width="390" height="844"
                 loading="lazy" decoding="async"
                 alt="The SOS sheet: Call 911 first, then Alert Contacts for two trusted contacts, Share Location, and Cancel."
               />
-              <figcaption className="lp-fig-cap">The sheet, one tap in. The second sends.</figcaption>
+              <figcaption className="lp-fig-cap">The second tap sends it.</figcaption>
             </figure>
             {/* Excerpt of the real SOS email the backend sends, not a mock UI.
                 Every line is copied from the template in routes/safety.js, and
@@ -773,13 +762,11 @@ export default function LandingPage() {
                 <p className="lp-sos-fine">Accurate to about 15 m.</p>
                 <p className="lp-sos-fine">Alert sent at 9/26/2026, 11:42:04 PM EDT</p>
               </div>
-              <p className="lp-sos-cap">The actual email. Two taps to send, so a pocket can't fire it.</p>
+              <p className="lp-sos-cap">The actual email, word for word.</p>
             </div>
           </div>
 
           <ul className="lp-list lp-safety-rules">
-            <li>Two-tap SOS to your trusted contacts</li>
-            <li>Live location inside the flock, off by default</li>
             <li>No background tracking, ever</li>
             <li>Report and block on any message or profile</li>
           </ul>
@@ -794,28 +781,24 @@ export default function LandingPage() {
           only), and replies over public reviews. Roost, the venue plan, carries
           GET /intelligence and the advisor (requirePro); nothing is charged
           while VENUE_BILLING_ENABLED is off. There is no promoted placement and
-          no slow-night push: do not add either until a route does it. */}
-      <section className="lp-sec lp-sec-paper lp-venues" id="venues" aria-labelledby="lp-h-venues">
+          no slow-night push: do not add either until a route does it.
+          Deals, like events, are served only for a verified venue
+          (GET /public-promotions joins vp.verified = true).
+          On navy since 2026-10-21 (the maintainer), one paragraph and one button; the
+          rest of the venue offer is the venue column under Pricing. */}
+      <section className="lp-sec lp-sec-navy lp-on-navy lp-venues" id="venues" aria-labelledby="lp-h-venues">
         <div className="lp-wrap lp-venues-in">
           <div className="lp-venues-copy">
             <h2 id="lp-h-venues">Run a bar or a restaurant?</h2>
             <p className="lp-lead">
               A free venue account shows which flocks have you in their vote this
-              week. Put a deal on your venue’s card, where groups see it while they
-              choose, and reply to reviews from people who went.
-            </p>
-            <p className="lp-venues-fine">
-              Once your venue is verified, its events show on the card too. Roost,
-              the paid plan for venues, adds your own hour-by-hour forecast and an
-              advisor that answers from your numbers. No venue is being charged yet.
+              week. Once you’re verified, you can put a deal on your venue’s card
+              while they decide.
             </p>
             <div className="lp-venues-actions">
-              <a className="lp-btn lp-btn-navy" href={`mailto:${CONTACT_EMAIL}?subject=Flock%20for%20venues`}>
+              <a className="lp-btn lp-btn-cream" href={`mailto:${CONTACT_EMAIL}?subject=Flock%20for%20venues`}>
                 Get in touch
-              </a>{' '}
-              <span className="lp-venue-signin">
-                Already have a venue account? <a href="/app?venue=true">Sign in</a>
-              </span>
+              </a>
             </div>
           </div>
           <figure className="lp-plate lp-venues-plate">
@@ -823,12 +806,12 @@ export default function LandingPage() {
               className="lp-shot"
               src="/screenshots/owner-dashboard-dark@2x.webp"
               srcSet="/screenshots/owner-dashboard-dark-480w.webp 480w, /screenshots/owner-dashboard-dark@2x.webp 780w"
-              sizes="(min-width: 900px) 240px, 200px"
+              sizes="(min-width: 900px) 240px, (min-width: 760px) 200px, min(260px, 70vw)"
               width="390" height="844"
               loading="lazy" decoding="async"
               alt="The Copper Finch’s venue dashboard: the flocks with it in their vote, and the events showing on its verified card."
             />
-            <figcaption className="lp-fig-cap">The dashboard a venue owner signs into.</figcaption>
+            <figcaption className="lp-fig-cap">What a venue owner sees.</figcaption>
           </figure>
         </div>
       </section>
@@ -844,8 +827,8 @@ export default function LandingPage() {
           <h2 id="lp-h-pricing">Free for your friend group.</h2>
           <p className="lp-lead lp-pricing-lead">
             {proOffer
-              ? 'Planning with your friends is free, with no ads. Flock Pro is optional, for whoever plans the most. Venues are the side Flock is built to charge, and none of them is being charged yet.'
-              : 'You and your friends don’t pay, and there are no ads either. Venues are the side Flock is built to charge, and none of them is being charged yet.'}
+              ? 'Planning with your friends is free, with no ads. Flock Pro is optional, for whoever plans the most. Venues are where Flock will make its money, and none is being charged yet.'
+              : 'You and your friends don’t pay, and there are no ads. Venues are where Flock will make its money, and none is being charged yet.'}
           </p>
           </div>
           <img
@@ -863,7 +846,6 @@ export default function LandingPage() {
             <div className="lp-plan">
               <h3>Free</h3>
               <div className="lp-plan-price">$0<small>no card needed</small></div>
-              <p className="lp-plan-note">Plan the night and split the bill without paying us anything.</p>
               <ul className="lp-list">
                 <li>Unlimited flocks and friends</li>
                 <li>Venue voting and group chat</li>
@@ -887,15 +869,19 @@ export default function LandingPage() {
             <div className="lp-plan">
               <h3>For venues</h3>
               <div className="lp-plan-price">Free account<small>Roost, the paid plan, is not on sale yet</small></div>
-              <p className="lp-plan-note">See the flocks with you in their vote, and write your own card.</p>
+              <p className="lp-plan-note">Roost adds your own hour-by-hour forecast.</p>
               <ul className="lp-list">
-                <li>Flocks with you in their vote this week</li>
-                <li>Deals on your venue’s card, and events once it is verified</li>
-                <li>Replies to reviews from people who went</li>
+                <li>See the flocks with you in their vote this week</li>
+                <li>Put deals on your card once your venue is verified</li>
+                <li>List your events there too, once verified</li>
+                <li>Reply to reviews from people who went</li>
               </ul>
               <a className="lp-btn lp-btn-navy" href={`mailto:${CONTACT_EMAIL}?subject=Flock%20for%20venues`}>
                 Email us
               </a>
+              <p className="lp-venue-signin">
+                Already have a venue account? <a href="/app?venue=true">Sign in</a>
+              </p>
             </div>
           </div>
         </div>
@@ -907,7 +893,7 @@ export default function LandingPage() {
           <div>
             <h2 id="lp-h-get">Give the next plan a fighting chance.</h2>
             <p className="lp-lead" style={{ marginTop: 16 }}>
-              Open Flock in your browser, or leave your email and you’ll hear the
+              Use Flock in your browser today, or leave your email to hear the
               moment the iPhone app is out.
             </p>
             <div className="lp-cta-row">
