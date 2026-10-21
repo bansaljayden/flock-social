@@ -176,8 +176,22 @@
     'On the wall': { view: [1.0, -0.2, 0.06], arm: true },
     'From below': { view: [0.45, -0.75, -0.55], fov: 22, arm: true },
     // Every part pulled apart and named, for the build sheet and the website.
-    Exploded: { view: [0.95, -0.75, 0.5], explode: 1.35, zoom: 1.55, cables: false,
-                hide: ['Back engraving', 'Brass M3 inserts (8)'] },
+    Exploded: { view: [1.0, -0.42, 0.42], fov: 26, zoom: 0.9, cables: false,
+                hide: ['Brass M3 inserts (8)'], apart: {
+      // Front to back in the order they go together, millimetres along +y:
+      // the pill and wordmark out of the front, the screen out of the back
+      // (it drops in from behind), then the battery, the 4G board, the
+      // cooler, the Pi and power board, and the back sheet with its ports.
+      'Sensor pill (cream)': [0, -70, 0], 'Flux wordmark (cream)': [0, -55, -6],
+      'PureThermal 3 + Lepton 3.5': [0, 0, 0], 'VL53L8CX door counter': [0, 0, 0], 'LINK light': [0, 0, 0],
+      '7 inch touchscreen': [0, 70, 0], 'Anker A1336 battery': [0, 125, 0],
+      'Decibel meter': [45, 0, 0], '4G antenna strip': [28, 0, 0],
+      'SIM7600G-H 4G HAT': [0, 165, 0], 'Active Cooler': [0, 190, 0],
+      'Raspberry Pi 5': [0, 215, 0], 'Pi 5 ports': [0, 215, 0], 'RPi5 PD Power board (52Pi)': [0, 215, 0],
+      'Back sheet (navy)': [0, 260, 0], 'Back engraving': [0, 260, 0],
+      'CHARGE port': [0, 260, 0], 'USB port': [0, 260, 0], 'Ethernet port': [0, 260, 0],
+      '1/4-20 mount nut': [0, 0, -25],
+    } },
   };
 
   // The names written on the exploded picture: what someone holding the parts
@@ -304,8 +318,9 @@
         && (!STAND.includes(name) || mode === 'stand') && (!ARM.includes(name) || mode === 'arm');
       const off0 = step && cable && step.cables === 'back' && BACK_CABLES.test(name) ? step.lift['Back sheet (navy)'] : null;
       p.obj.visible = shown;
-      const ex = view && view.explode !== undefined ? view.explode : explode;
-      const off = step ? (off0 || step.lift[name] || [0, 0, 0]) : (LOOK[name] ? LOOK[name].apart : [0, 0, 0]).map(v => v * ex);
+      const off = step ? (off0 || step.lift[name] || [0, 0, 0])
+        : view && view.apart ? (view.apart[name] || [0, 0, 0])
+        : (LOOK[name] ? LOOK[name].apart : [0, 0, 0]).map(v => v * explode);
       p.obj.position.copy(p.base).add(m2t(off));
     }
     renderList();
@@ -470,28 +485,37 @@
       const c = new THREE.Box3().setFromObject(p.obj).getCenter(new THREE.Vector3()).project(camera);
       items.push({ text, x: (c.x + 1) / 2 * W, y: (1 - c.y) / 2 * H });
     }
-    const gap = fs * 2.1, top = H * 0.08, bottom = H * 0.92;
-    for (const side of ['left', 'right']) {
-      const col = items.filter(it => (it.x < W / 2) === (side === 'left')).sort((a, b) => a.y - b.y);
-      // Each label at its part's height, pushed down past the one above, then
-      // the whole column pulled back up if it ran off the bottom.
-      let y = top;
-      col.forEach(it => { it.ly = Math.max(it.y, y); y = it.ly + gap; });
-      const over = col.length ? col[col.length - 1].ly - bottom : 0;
-      if (over > 0) col.forEach(it => { it.ly -= over; });
-      const tx = side === 'left' ? W * 0.16 : W * 0.84;
-      col.forEach(it => {
-        const tw = g.measureText(it.text).width;
-        const lx = side === 'left' ? tx + fs * 0.6 : tx - fs * 0.6;
-        g.strokeStyle = 'rgba(15, 23, 42, 0.45)'; g.lineWidth = Math.max(1.5, W / 1600);
-        g.beginPath(); g.moveTo(lx, it.ly); g.lineTo(it.x, it.y); g.stroke();
-        g.fillStyle = '#0f172a'; g.strokeStyle = '#f6f5f3'; g.lineWidth = fs * 0.12;
-        g.beginPath(); g.arc(it.x, it.y, fs * 0.22, 0, Math.PI * 2); g.fill(); g.stroke();
-        g.fillStyle = '#0f172a';
-        g.textAlign = side === 'left' ? 'right' : 'left';
-        g.fillText(it.text, tx, it.ly);
-        void tw;
+    // The parts run across the picture, so the names go in a band above and a
+    // band below: each above or below by where its part sits, as near over
+    // its part as the names beside it allow, on one of two lines.
+    const midY = items.reduce((a, it) => a + it.y, 0) / Math.max(1, items.length);
+    const pad = fs * 1.2, line = fs * 1.7;
+    const bands = { top: H * 0.07, bottom: H * 0.93 - line };
+    for (const band of ['top', 'bottom']) {
+      const row = items.filter(it => (it.y < midY) === (band === 'top')).sort((a, b) => a.x - b.x);
+      const ends = [-1e9, -1e9];
+      row.forEach(it => {
+        it.w = g.measureText(it.text).width;
+        let x0 = it.x - it.w / 2;
+        // The line whose last name ends furthest left takes this one.
+        const t = ends[0] <= ends[1] ? 0 : 1;
+        x0 = Math.max(x0, ends[t] + pad, fs);
+        x0 = Math.min(x0, W - fs - it.w);
+        ends[t] = x0 + it.w;
+        it.lx = x0;
+        it.ly = band === 'top' ? bands.top + t * line : bands.bottom - t * line;
+        it.band = band;
       });
+    }
+    for (const it of items) {
+      const cx = it.lx + it.w / 2;
+      const ey = it.band === 'top' ? it.ly + fs * 0.75 : it.ly - fs * 0.75;
+      g.strokeStyle = 'rgba(15, 23, 42, 0.42)'; g.lineWidth = Math.max(1.5, W / 1600);
+      g.beginPath(); g.moveTo(cx, ey); g.lineTo(it.x, it.y); g.stroke();
+      g.fillStyle = '#0f172a'; g.strokeStyle = '#f6f5f3'; g.lineWidth = fs * 0.12;
+      g.beginPath(); g.arc(it.x, it.y, fs * 0.22, 0, Math.PI * 2); g.fill(); g.stroke();
+      g.fillStyle = '#0f172a'; g.textAlign = 'left';
+      g.fillText(it.text, it.lx, it.ly);
     }
     return out.toDataURL('image/png');
   };
