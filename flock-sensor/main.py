@@ -68,7 +68,12 @@ try:
 except ImportError:  # pragma: no cover
     fcntl = None
 
-VERSION = '1.23.0'
+VERSION = '1.23.1'
+
+# The Pi 5's GPIO library (rpi-lgpio, under RPi.GPIO) makes a small file in
+# the working directory before it will drive a pin, and the service runs in
+# /opt/flock-sensor, which it cannot write. /tmp it can.
+os.environ.setdefault('LG_WD', '/tmp')
 
 # ---------------------------------------------------------------------------
 # Config
