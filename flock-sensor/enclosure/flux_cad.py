@@ -59,27 +59,32 @@ def flat_font(path):
 # MEASURED, from datasheets, drawings and labels.
 # ===========================================================================
 
-# The screen: Lebula/ROADOM 7 inch 1024x600 HDMI, landscape, 162 x 119
-# measured against its own lit area (154.21 x 85.92 by spec, in the board's
-# plane). Four mounting ears at its corners.
-screen_outer_w = 162.0
-screen_outer_h = 119.0
-screen_hole_dx = 149.0
-screen_hole_dy = 113.0
-screen_active_w = 154.2        # the lit area is NOT centred: 3.8 at each side,
-screen_active_h = 85.9         # 14.4 above the picture and 17.4 below it
-screen_border_l = 3.8
-screen_border_b = 17.4
+# The screen: ROADOM 7 inch 1024x600 HDMI (board Z3-7), landscape. Its
+# listing gives 6.5 x 4.8 in, 0.5 in deep; the 7 inch 1024x600 panel on it is
+# the common 164.9 wide one with a 154.21 x 85.92 lit area. The board is 107
+# tall with an ear 7.8 above and below; the holes are scaled off the maker's
+# photo of its back (the HDMI socket's 15 mm shell as the ruler), within a
+# couple of millimetres of the near-identical board Waveshare publishes
+# (7inch HDMI LCD (C): 164.9 x 124.27, holes 156.9 x 114.96). An earlier
+# 162 x 119 with holes 149 x 113, read against the lit area alone, was wrong.
+screen_outer_w = 164.9
+screen_outer_h = 122.7
+screen_hole_dx = 157.6         # CHECK with a ruler, hole centre to hole centre, before the body
+screen_hole_dy = 115.5
+screen_active_w = 154.2        # the lit area: centred side to side on the panel,
+screen_active_h = 85.9         # and a little lower than centre top to bottom
+screen_border_l = 5.35
+screen_border_b = 19.9
 # On its back along its LEFT edge as you face it: the "5V+Touch" micro-USB,
 # opening sideways out of that edge, and the flat HDMI ribbon socket at the
 # bottom. Read off the maker's photograph of the back.
-screen_touch_z = 38.0          # MEASURE: board bottom to the touch port's centre
+screen_touch_z = 47.3          # board bottom (the ears) to the "5V+Touch" port: 39.5 up the PCB, off the maker's photo
 screen_touch_in = 2.0          # MEASURE: its mouth, in from the edge
 screen_fpc_x = 12.0            # MEASURE: the ribbon socket, in from the left edge
-screen_fpc_z0 = 8.0            # MEASURE: and up from the bottom
-screen_fpc_z1 = 23.0
-glass_below = 10.0             # MEASURE: board bottom to the glass's lower edge
-glass_above = 10.0             # MEASURE: glass's upper edge to the board top
+screen_fpc_z0 = 16.0           # and up from the bottom: beside the HDMI socket, 25.8 up
+screen_fpc_z1 = 34.0
+glass_below = 11.3             # board bottom to the glass's lower edge: the ear, and half of 107 less 100
+glass_above = 11.3             # glass's upper edge to the board top
 
 # The battery: Anker Prime 20K 200W, A1336: 126.9 x 54.6 x 49.6 (Anker). It
 # stands on its dock-contact end; its three ports face up.
@@ -158,9 +163,9 @@ dbm_stack = 22.0               # board, connector, plug, and the wires' bend
 # STILL TO MEASURE
 # ===========================================================================
 
-screen_thick = 12.0            # MEASURE: front of the glass to the back of its speakers
-screen_glass_depth = 5.5       # MEASURE: front of the glass to the front of the ears
-plate = 3.0                    # MEASURE: the acrylic sheet
+screen_thick = 14.5           # front of the glass to the back of its HDMI socket: 12.7 listed, plus the socket
+screen_glass_depth = 6.4       # front of the glass to the front of the ears (the PCB): the panel stack
+plate = 3.175                  # the acrylic: Craftiff 1/8 in cast
 
 # ===========================================================================
 # DESIGN CHOICES
@@ -205,7 +210,7 @@ usb_body = (18.6, 13.0, 36.0)  # its body behind the panel: across, up, deep
 lan_cut = (16.5, 14.0)         # ETHERNET: panel-mount RJ45 extension, the jack's face
 lan_ear_dx = 27.0              # its two screw ears, centre to centre: 27 on the common
                                # Cat6 screw-ear extensions' own drawings (27.5 on Adafruit #909)
-lan_body = (20.0, 18.0, 32.0)  # MEASURE when in hand: across, up, deep
+lan_body = (21.0, 21.0, 32.0)  # iGreely's drawing: 21 across, square; deep, a similar jack's 28 and room
 
 # The power board between the battery and the Pi: 52Pi's "RPi5 PD Power"
 # (EP-0225). A Pi 5 wants 5 V at 5 A and a power bank's own 5 V stops at 3 A,
@@ -217,8 +222,8 @@ lan_body = (20.0, 18.0, 32.0)  # MEASURE when in hand: across, up, deep
 pd_pcb = (85.0, 56.0, 1.6)
 pd_pillar = 18.0
 pd_parts_h = 4.0               # most of its parts; the capacitor and the jacks stand taller
-pd_out_u = 12.6                # MEASURE: its OUTPUT USB-C, on the bottom edge, from the left
-pd_in_v = 24.4                 # MEASURE: its INPUT USB-C, on the right edge, up from the bottom
+pd_out_u = 10.8                # its OUTPUT USB-C, on the bottom edge, from the left: 52Pi's scaled photo
+pd_in_v = 21.0                 # its INPUT USB-C, on the right edge, up from the bottom: the same
 
 mount_nut_af = 11.4            # a 1/4"-20 hex nut, across its flats, with clearance
 mount_nut_th = 5.8
@@ -235,8 +240,8 @@ mount_boss = 20.0
 # The nut sits 1 mm above the base's outside so that short screw takes all
 # of it; 4 mm up, where it first was, the screw caught well under half.
 mount_floor = 1.0
-arm_screw = 7.3                # MEASURE: the screw past the knurled wheel; the nut's depth assumes it
-arm_wheel = (22.0, 4.6)        # diameter, thickness
+arm_screw = 6.3                # past the knurled wheel, scaled off CAMVATE's photo. Any length from 4 mm holds: past the nut there is nothing for 57 mm
+arm_wheel = (24.5, 4.6)        # diameter, thickness
 arm_ball = 8.5                 # radius; its centre 15.7 under the wheel
 arm_head = (23.0, 23.3)        # the ball head's body: diameter, length
 arm_post = (13.3, 65.0)        # diameter, length
