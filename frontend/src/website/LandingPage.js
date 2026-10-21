@@ -2,6 +2,7 @@ import React, { Suspense, useEffect, useRef, useState } from 'react';
 import './LandingPage.css';
 import SiteFooter from './SiteFooter';
 import AnnotatedShot from './AnnotatedShot';
+import HeroReel from './HeroReel';
 import { ANNOTATIONS } from './landingAnnotations';
 import displayFontUrl from '../fonts/Literata-Display-600.woff2';
 import { NAV_LINKS, MENU_LINKS } from './SiteNav';
@@ -38,18 +39,29 @@ if (typeof document !== 'undefined' && !document.querySelector('link[data-lp-fon
 // inbox (set up 2026-08-12). Outbound stays on Resend.
 const CONTACT_EMAIL = 'social@flockcorp.com';
 
-/* The hero capture. Real screens of the shipping web app, captured by
-   scripts/capture-screenshots.mjs against seeded demo data. The AVIF is the
-   capture cut to the part the plate shows (390:658 from the top), 25 KB
-   against the WebP's 57; the preload in vercel.json, cloudflare/_headers and
-   functions/_middleware.js names HERO_SHOT.avif, and siteSpeedPass.test.js
-   checks they agree. */
-const HERO_SHOT = {
-  avif: '/screenshots/nest-dark-hero.avif',
-  webp: '/screenshots/nest-dark@2x.webp',
-  png: '/screenshots/nest-dark@2x.png',
-  alt: 'The Flock home screen: tonight’s status, your flocks, and a plan that still needs votes.',
-};
+/* The hero reel's screens, in the order they pass. Real screens of the
+   shipping web app, captured by scripts/capture-screenshots.mjs against seeded
+   demo data. The first is the home screen, which HeroReel draws from the files
+   the / preload names (vercel.json, cloudflare/_headers and
+   functions/_middleware.js; siteSpeedPass.test.js checks they agree). */
+const shot = (name, alt) => ({
+  name,
+  src: `/screenshots/${name}-dark@2x.webp`,
+  srcSet: `/screenshots/${name}-dark-480w.webp 480w, /screenshots/${name}-dark@2x.webp 780w`,
+  width: 390,
+  height: 844,
+  alt,
+});
+const REEL = [
+  { name: 'nest' },
+  shot('create', 'Starting a flock: a name, a time, and the friends to invite.'),
+  shot('chat', 'The Friday Night Crew chat, with a vote on three places.'),
+  shot('budget', 'The budget sheet, where each person types what they can spend.'),
+  shot('venue-card-events', 'A venue card with its events under Happening here.'),
+  shot('bill-split', 'Split the Bill: the total, who paid, and who still owes.'),
+  shot('sos', 'The SOS sheet: call 911, alert your contacts, or share your location.'),
+  shot('owner-dashboard', 'A venue owner’s dashboard: flocks with the venue in their vote.'),
+];
 
 /* The Flock mark: the actual logo, served from a 64px derivative. The nav mark
    renders at 32 CSS px and the footer one at 24, so 64 covers both at 2x;
@@ -462,25 +474,11 @@ export default function LandingPage() {
             </div>
           </div>
 
-          <figure className="lp-phone-wrap">
-            {/* Literal paths, not HERO_SHOT's, so siteSpeedPass.test.js can see
-                the file the Link preload names is the one this requests. */}
-            <picture>
-              <source type="image/avif" srcSet="/screenshots/nest-dark-hero.avif" />
-              <source type="image/webp" srcSet="/screenshots/nest-dark@2x.webp" />
-              <img
-                className="lp-shot lp-shot-hero"
-                src="/screenshots/nest-dark@2x.png"
-                width="390" height="844"
-                fetchPriority="high"
-                alt={HERO_SHOT.alt}
-              />
-            </picture>
-            <figcaption className="lp-plate-cap">
-              Who’s in tonight, and which plans need votes.
-            </figcaption>
-          </figure>
         </div>
+        {/* The screens, full width under the words (his ask, 2026-10-21):
+            a strip that drifts, stops under the pointer and lifts the screen
+            it is on. HeroReel.js has the reasoning; the shots are REEL. */}
+        <HeroReel shots={REEL} />
       </section>
 
       {/* ---------------- crowd levels, live ----------------

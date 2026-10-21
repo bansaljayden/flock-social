@@ -60,7 +60,8 @@ describe('the hero screenshot preload lives on / only', () => {
   test('the preloaded file is the one the hero <picture> actually requests', () => {
     // The AVIF source comes first, so every browser that takes the preload
     // (type-gated to AVIF) also picks that source; the rest fall to WebP.
-    const page = read('src/website/LandingPage.js');
+    // The home screen leads the hero reel since 2026-10-21 (HeroReel.js).
+    const page = read('src/website/HeroReel.js');
     const avif = page.indexOf('<source type="image/avif" srcSet="/screenshots/nest-dark-hero.avif" />');
     expect(avif).toBeGreaterThan(-1);
     expect(page.indexOf('<source type="image/webp" srcSet="/screenshots/nest-dark@2x.webp" />')).toBeGreaterThan(avif);
@@ -69,14 +70,17 @@ describe('the hero screenshot preload lives on / only', () => {
     }
   });
 
-  test('the AVIF is the capture cut to the plate: 780 wide, 390:658', () => {
+  test('the AVIF is the whole capture, 780 by 1688, as the reel draws it', () => {
+    // It was cut to the old hero plate (390:658) until 2026-10-21; the reel
+    // shows every screen whole, the home screen included.
     // ISO-BMFF image spatial extents ("ispe"): version/flags, then width and
     // height as 32-bit big-endian integers.
     const buf = fs.readFileSync(path.join(FRONTEND, 'public', 'screenshots', 'nest-dark-hero.avif'));
     expect(buf.toString('ascii', 4, 12)).toBe('ftypavif');
     const at = buf.indexOf('ispe');
     expect(at).toBeGreaterThan(-1);
-    expect([buf.readUInt32BE(at + 8), buf.readUInt32BE(at + 12)]).toEqual([780, Math.round(780 * 658 / 390)]);
+    expect([buf.readUInt32BE(at + 8), buf.readUInt32BE(at + 12)]).toEqual([780, 1688]);
+    expect(buf.length).toBeLessThan(40000);
   });
 
   test('no other route carries it, and the shared index.html has no preload link of its own', () => {

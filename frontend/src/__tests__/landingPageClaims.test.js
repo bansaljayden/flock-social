@@ -370,13 +370,15 @@ describe('structural fingerprint', () => {
       expect(all.length).toBeGreaterThan(0);
       return all[all.length - 1][1].replace(/\s+/g, ' ').trim();
     };
-    const hero = grid('lp-hero-in');
+    // The hero left this list on 2026-10-21: its words now sit alone in the
+    // top-left corner with the screens running full width under them.
+    expect(CSS).toMatch(/\.lp-hero-in \{ display: block; \}/);
     const safety = grid('lp-safety');
     const venues = grid('lp-venues-in');
     // The beats went from centred stacks to rows on 2026-10-21 (his third
     // look): words beside the picture from 960px, centred over it on a phone.
     const beats = grid('lp-beat-row');
-    expect(new Set([hero, safety, venues, beats]).size).toBe(4);
+    expect(new Set([safety, venues, beats]).size).toBe(3);
     expect(CSS).toMatch(/\.lp-beat \{[^}]*text-align: center;/);
     expect(visible).not.toMatch(/lp-beat-main|has-plate/);
   });
