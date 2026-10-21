@@ -43,28 +43,28 @@
       "type": "image/png",
       "sizes": "780x1688",
       "form_factor": "narrow",
-      "label": "Your flocks and who still owes a vote"
+      "label": "Your flocks, and which plans still need votes"
     },
     {
-      "src": "screenshots/create-light@2x.png",
-      "type": "image/png",
+      "src": "screenshots/create-dark@2x.webp",
+      "type": "image/webp",
       "sizes": "780x1688",
       "form_factor": "narrow",
-      "label": "Starting a flock: name it, pick a night, invite people"
+      "label": "Starting a flock: pick a night and invite people"
     },
     {
-      "src": "screenshots/crowd-dark@2x.png",
-      "type": "image/png",
+      "src": "screenshots/chat-dark@2x.webp",
+      "type": "image/webp",
       "sizes": "780x1688",
       "form_factor": "narrow",
-      "label": "How busy each place is before you leave"
+      "label": "The group votes on where to go, in the chat"
     },
     {
-      "src": "screenshots/birdie-dark@2x.png",
-      "type": "image/png",
+      "src": "screenshots/bill-split-dark@2x.webp",
+      "type": "image/webp",
       "sizes": "780x1688",
       "form_factor": "narrow",
-      "label": "Asking Birdie where to go tonight"
+      "label": "Splitting the bill after the night"
     }
   ]
 }
