@@ -102,7 +102,7 @@
 
 const CANONICAL_HOST = 'https://www.flockcorp.com';
 const OG_IMAGE = CANONICAL_HOST + '/og-image.png';
-const OG_IMAGE_ALT = 'Flock. Six friends said yes. Flock gets them to the same place.';
+const OG_IMAGE_ALT = 'Flock is how a group decides where to go out.';
 const CONTACT_EMAIL = 'social@flockcorp.com';
 
 // Title and description per route mirror what each React page writes via its
@@ -111,7 +111,7 @@ const CONTACT_EMAIL = 'social@flockcorp.com';
 const PAGE_META = {
   home: {
     path: '/',
-    title: 'Flock | Plan the night out with your friends',
+    title: 'Flock | How a group decides where to go out',
     description: 'Make the plan in Flock instead of the group chat. Your friends vote on where to go, and everyone’s budget stays private.',
   },
   about: {
@@ -140,14 +140,14 @@ const PAGE_META = {
 // drift test told you to; see the regeneration note in the header.
 const PAGE_BLOCKS = {
   home: [
-    ["h1", "Six friends said yes. Flock gets them to the same place."],
-    ["p", "Make the plan in Flock instead of the group chat. Your friends vote on where to go, and nobody has to say their budget out loud."],
+    ["h1", "Flock is how a group decides where to go out."],
+    ["p", "Make the plan here instead of the group chat. Everyone gets a vote, and nobody has to say their budget out loud."],
     ["p", "It’s free and runs in your browser right now. The iPhone app is in App Store review; get an email when it’s out. Flock took 1st place at PA DECA States."],
     ["h2", "See how busy it is before anyone leaves."],
     ["p", "Search a place below. Flock starts from how busy it usually is at this hour and moves the number with the latest live readings where it has them. If your first pick is packed, it points you to a quieter one nearby."],
     ["p", "Three reports from people at a venue move its score for that night and hour."],
-    ["h2", "Here is a Friday plan, start to finish."],
-    ["p", "Most plans stop where this chat did. The same Friday in Flock takes five steps, and nobody has to carry it."],
+    ["h2", "Everyone said yes. Then the chat went quiet."],
+    ["p", "Here is the same Friday in Flock, start to finish. It takes five steps, and nobody has to carry it."],
     ["p", "Thursday, 4:10 PM"],
     ["h3", "Maya starts a flock."],
     ["p", "Friday Night Crew, 8 o’clock. Four friends get the invite; anyone without the app can join in from a link, budget and all, with no account."],
@@ -1029,7 +1029,7 @@ async function handler(req, res) {
     console.error('marketing-page: fallback document:', (err && err.name) || 'Error');
     try {
       send(res, '<!doctype html>\n<html lang="en"><head><meta charset="utf-8">'
-        + '<title>Flock | Plan the night out with your friends</title>'
+        + '<title>Flock | How a group decides where to go out</title>'
         + '<meta name="description" content="Flock is a free app for making plans with friends. The group votes on where to go, and budgets stay private.">'
         + '</head><body><main><h1>Flock</h1>'
         + '<p>Flock is a free group planning app. Start a flock, invite your people, vote on where to go, match budgets privately, and split the bill after.</p>'

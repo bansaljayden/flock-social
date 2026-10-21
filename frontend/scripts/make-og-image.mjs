@@ -41,7 +41,7 @@ const OUT = argOut
 
 /* The card's copy. Both lines are duplicated in the page and in the meta tags,
    and the test named in the header is what keeps the three in agreement. */
-const HEADLINE = 'Six friends said yes. Flock gets them to the same place.';
+const HEADLINE = 'Flock is how a group decides where to go out.';
 /* The address as plain text. It used to be a navy pill styled as a button,
    which nobody can press inside an image (2026-10-21). */
 const SITE = 'flockcorp.com';

@@ -8,7 +8,7 @@ const crypto = require('crypto');
 // WHY THIS EXISTS
 // One index.html is served for every route (CRA has no server rendering), so
 // an invite shared into iMessage or a group chat previews with the marketing
-// tags: "Flock | Plan the night out with your friends". The link that spreads the product
+// tags: "Flock | How a group decides where to go out". The link that spreads the product
 // says nothing about who sent it or what it is. This function answers the
 // preview bots instead, with the host's first name and the plan.
 //
@@ -133,7 +133,7 @@ const CANONICAL_HOST = 'https://www.flockcorp.com';
 // apex -> www redirect when fetching an image. Same file and same dimensions as
 // the default tags in public/index.html; keep them in sync.
 const OG_IMAGE = CANONICAL_HOST + '/og-image.png';
-const OG_IMAGE_ALT = 'Flock. Six friends said yes. Flock gets them to the same place.';
+const OG_IMAGE_ALT = 'Flock is how a group decides where to go out.';
 
 // The per-flock card URL carries a signature when OG_CARD_SECRET is set. The
 // Cloudflare Pages project and the API service hold that secret; Vercel never
@@ -204,7 +204,7 @@ const DISPLAY_TZ = 'America/New_York';
 // Verbatim from public/index.html, so a fallback preview is indistinguishable
 // from what the site serves today. The apostrophe is escaped for the reason
 // DOT is, below.
-const DEFAULT_TITLE = 'Flock | Plan the night out with your friends';
+const DEFAULT_TITLE = 'Flock | How a group decides where to go out';
 const DEFAULT_DESCRIPTION =
   'Make the plan in Flock instead of the group chat. Your friends vote on where to go, and everyone'
   + String.fromCharCode(0x2019) + 's budget stays private.';

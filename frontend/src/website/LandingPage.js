@@ -263,7 +263,7 @@ export default function LandingPage() {
   }, [menuOpen]);
 
   useEffect(() => {
-    document.title = 'Flock | Plan the night out with your friends';
+    document.title = 'Flock | How a group decides where to go out';
     const d = document.querySelector('meta[name="description"]');
     if (d) d.setAttribute('content', 'Make the plan in Flock instead of the group chat. Your friends vote on where to go, and everyone’s budget stays private.');
   }, []);
@@ -384,10 +384,10 @@ export default function LandingPage() {
       <section className="lp-hero lp-on-navy" aria-labelledby="lp-h-hero">
         <div className="lp-wrap lp-hero-in">
           <div className="lp-hero-copy">
-            <h1 id="lp-h-hero">Six friends said yes. <span className="lp-keep">Flock gets them</span> <span className="lp-keep">to the same place.</span></h1>
+            <h1 id="lp-h-hero">Flock is how a group <span className="lp-keep">decides where to go out.</span></h1>
             <p className="lp-lead">
-              Make the plan in Flock instead of the group chat. Your friends vote
-              on where to go, and nobody has to say their budget out loud.
+              Make the plan here instead of the group chat. Everyone gets a vote,
+              and nobody has to say their budget out loud.
             </p>
             <div className="lp-hero-cta">
               <a className="lp-btn lp-btn-cream lp-btn-lg" href="/signup">Start a plan</a>
@@ -463,10 +463,10 @@ export default function LandingPage() {
           pictures are the same night. */}
       <section className="lp-sec lp-sec-sand" id="how" aria-labelledby="lp-h-how">
         <div className="lp-wrap">
-          <h2 id="lp-h-how" className="lp-friday-title">Here is a Friday plan, start to finish.</h2>
+          <h2 id="lp-h-how" className="lp-friday-title">Everyone said yes. Then the chat went quiet.</h2>
           <p className="lp-lead lp-friday-lead">
-            Most plans stop where this chat did. The same Friday in Flock takes
-            five steps, and nobody has to carry it.
+            Here is the same Friday in Flock, start to finish. It takes five
+            steps, and nobody has to carry it.
           </p>
 
           <figure className="lp-chat lp-friday-chat">
@@ -475,7 +475,7 @@ export default function LandingPage() {
             <div className="lp-msg">same, where tho</div>
             <div className="lp-msg lp-msg-me">idk what do you guys want</div>
             <div className="lp-msg">I'm good with anything</div>
-            <div className="lp-msg lp-msg-dead">Seen by 6 · nobody went</div>
+            <div className="lp-msg lp-msg-dead">Seen by 5 · nobody went</div>
           </figure>
 
           <div className="lp-friday">
