@@ -309,8 +309,13 @@ describe('LandingPage structure and keyboard operation', () => {
 
   test('the anchored sections are named regions, not anonymous divs', () => {
     const { container } = render(React.createElement(LandingPage));
-    // Every destination the in-page menu offers.
-    for (const id of ['how', 'birdie', 'money', 'safety', 'pricing', 'crowds']) {
+    // #birdie and #money were sections until 2026-10-21 and are beats of the
+    // Friday plan now. Old links to them still land, inside #how.
+    for (const id of ['birdie', 'money']) {
+      expect(container.querySelector(`section#how #${id}`)).not.toBeNull();
+    }
+    // Every section an in-page link offers.
+    for (const id of ['how', 'crowds', 'safety', 'venues', 'pricing', 'get']) {
       const section = container.querySelector(`section#${id}`);
       expect(section).not.toBeNull();
       const labelledBy = section.getAttribute('aria-labelledby');
@@ -412,11 +417,16 @@ describe('LandingPage structure and keyboard operation', () => {
         );
       }
     }
-    // Guard against the whole assertion going vacuous if the badge ever loses
-    // its aria-label: the App Store badge is the case this was written for.
-    const badge = container.querySelector('.lp-appstore');
-    expect(badge.getAttribute('aria-label')).toBeTruthy();
-    expect(norm(badge.getAttribute('aria-label'))).toContain(norm(badge.textContent));
+    // This was written for the homemade App Store badge, which left the page
+    // on 2026-10-21 (no badge until Apple approves the app, and then only
+    // Apple's own artwork). Today the one aria-labelled control is the menu
+    // button, which is icon-only and exempt, so the loop above has nothing to
+    // compare until a labelled control with visible text comes back; the
+    // official badge will be one, and its guard belongs here again.
+    expect(controls.length).toBeGreaterThan(0);
+    for (const el of controls) {
+      if (!norm(el.textContent)) expect(el.querySelector('[aria-hidden="true"]')).not.toBeNull();
+    }
   });
 
   test('browser-driven scrolls clear the sticky bar, not just anchor jumps', () => {
@@ -598,7 +608,7 @@ describe('LandingPage motion', () => {
   test('every transform-based effect has a reduced-motion answer', () => {
     const reduced = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce)'));
     expect(reduced).toContain('.lp-btn:active { transform: none; }');
-    expect(reduced).toContain('.lp-appstore:hover { transform: none; }');
+    // (.lp-appstore:hover had one too, until the homemade badge left the page.)
     // The demo's own block, further down the file.
     expect(css).toMatch(/prefers-reduced-motion: reduce[\s\S]*\.lpd-live-dot \{ animation: none; \}/);
     expect(css).toMatch(/prefers-reduced-motion: reduce[\s\S]*\.lpd-pin:hover \.lpd-pin-photo \{ transform: none; \}/);
@@ -898,7 +908,10 @@ describe('About and Support', () => {
     // element leaves getAttribute('style') === null. Real browsers accept
     // var() in every property. What IS asserted against the render below is the
     // part jsdom can see: which elements carry the override at all.
-    for (const name of ['AboutPage', 'SupportPage']) {
+    // /about moved to the landing page's system on 2026-10-21 and no longer
+    // draws on --pp-ink-3 at all; Support still does.
+    expect(readJs('AboutPage.js')).not.toMatch(/pp-ink-3|className="pp-/);
+    for (const name of ['SupportPage']) {
       const src = readJs(`${name}.js`);
       expect(src).toMatch(/const READABLE = \{ color: 'var\(--pp-ink-2\)' \};/);
       // The three places --pp-ink-3 reaches on these two pages.
@@ -1012,52 +1025,21 @@ describe('copy rules (DESIGN-STANDARD)', () => {
     expect(hits).toEqual([]);
   });
 
-  test('the crowd-model numbers on /about match the committed model metadata', () => {
-    const meta = JSON.parse(fs.readFileSync(
-      path.join(__dirname, '..', '..', '..', 'backend', 'scripts', 'ml', 'models', 'model_metadata.json'),
-      'utf8'
-    ));
-    // Collapsed, because these sentences wrap across source lines.
-    const copy = readJs('AboutPage.js').replace(/\s+/g, ' ');
-
-    expect(meta.feature_count).toBe(106);
-    expect(copy).toMatch(/106 signals/);
-
-    // "1.9 million ... across 30 cities and held out another 395,000"
-    expect(Math.round(meta.training_rows / 100000) / 10).toBeCloseTo(1.9, 5);
-    expect(meta.training_cities.length).toBe(30);
-    expect(Math.round(meta.holdout_rows / 1000)).toBe(395);
-    expect(copy).toMatch(/1\.9 million/);
-    expect(copy).toMatch(/30 cities/);
-    expect(copy).toMatch(/395,000/);
-
-  });
-
-  test('the served-number figures on /about match servedAccuracy.json', () => {
-    const served = JSON.parse(fs.readFileSync(
-      path.join(__dirname, '..', '..', '..', 'backend', 'services', 'servedAccuracy.json'),
-      'utf8'
-    ));
-    const copy = readJs('AboutPage.js').replace(/\s+/g, ' ');
-    // The public copy quotes the month's out-of-sample test, which measured the
-    // nowcast weights served until 2026-10-14 (previous_weights). The weights
-    // served since were chosen on that same window, so their figures on it are
-    // not quoted as a test result; the October holdout scores them first.
-    const tested = served.previous_weights;
-
-    expect(served.rows).toBe(119939);
-    expect(copy).toMatch(/Tested against 119,939 real live readings it had not seen, from September 9 to October 8, 2026, at venues in Philadelphia, the Lehigh Valley and Miami/);
-    expect(served.population).toMatch(/Lehigh and Miami/);
-    // The exact level sits beside within-one because within-one alone flatters
-    // a lazy answer: a constant "Not Busy" scores high on it (MODEL-METRICS.md).
-    expect(copy).toContain(`${tested.band_exact.toFixed(1)}% of Flock's crowd numbers named the exact crowd level of the reading, ${tested.within_one_band}% landed within one level, and ${tested.within_10}% within 10 points`);
-    expect(copy).toContain(`with an average miss of ${Math.round(tested.mae)} points and no lean high or low`);
-    // The figures hold one hour ahead, on the provider's relative scores, and the copy says both.
-    expect(copy).toContain('and scored one hour ahead: ');
-    expect(copy).toContain("The readings are a busyness provider's relative 0 to 100 scores for each venue, not headcounts.");
-    expect(Math.abs(tested.bias)).toBeLessThan(2);
-    expect(copy).toContain(`${served.reading_one_hour_earlier.band_exact.toFixed(1)}% named the exact level and ${served.reading_one_hour_earlier.within_one_band}% landed within one`);
-    expect(copy).toContain(`scored ${served.before.band_exact.toFixed(1)}% on the exact level and ${served.before.within_one_band}% within one`);
+  // /about quoted the crowd model's corpus and served-accuracy figures until
+  // 2026-10-21, pinned here to model_metadata.json and servedAccuracy.json.
+  // The page is about the company now. The figures live on /research (pinned
+  // below) and in llms.txt (pinned by aiCrawlerSurface.test.js), and /about
+  // may quote none of them, so nothing on it can drift from those files.
+  test('/about quotes no model figure, so none can drift there', () => {
+    // What renders, not the source, so a style value like '50%' is not copy.
+    // eslint-disable-next-line global-require
+    const AboutPage = require('../website/AboutPage').default;
+    const { container, unmount } = render(React.createElement(AboutPage));
+    const copy = container.textContent.replace(/\s+/g, ' ');
+    unmount();
+    expect(copy).not.toMatch(/\d+(\.\d+)?%/);
+    expect(copy).not.toMatch(/\b(106 signals|1\.9 million|1,934,988|395,000|395,464|119,939)\b/);
+    expect(copy).not.toMatch(/within one level|held out|average miss/i);
   });
 
   // The Research page charts the served figures as "Flock", on the month of
@@ -1073,28 +1055,5 @@ describe('copy rules (DESIGN-STANDARD)', () => {
     expect(page).toContain("behind the number on a venue card wherever Flock knows that venue's weekly pattern. A venue without one gets an estimate from what is typical for its kind.");
     expect(page).toContain('note="Share of the same 119,939 live readings, one hour ahead, every one the forecast was served for at 1,754 venues in Philadelphia, the Lehigh Valley and Miami from 9 September to 8 October 2026. None of them was used to set the forecast. Higher is better."');
     expect(page).toContain("{ label: 'Exact crowd level', us: 54.9, them: 30.2 }");
-  });
-
-  // WHICH READINGS EACH FIGURE WAS MEASURED ON. The pre-upgrade figures were
-  // scored on the whole set and nobody scored the hour-before subset under
-  // the old arithmetic, but the page put "the same readings scored 32.2%" right
-  // after the subset's 86.1%, which read as that subset going from 32.2 to 86.1.
-  test('/about puts the pre-upgrade figures on the readings they were measured on', () => {
-    const served = JSON.parse(fs.readFileSync(
-      path.join(__dirname, '..', '..', '..', 'backend', 'services', 'servedAccuracy.json'),
-      'utf8'
-    ));
-    const copy = readJs('AboutPage.js').replace(/\s+/g, ' ');
-    const count = (n) => n.toLocaleString('en-US');
-    const tested = served.previous_weights;
-    expect(served.before.rows).toBe(served.rows);
-    // Beside the full set's figures (the month's test, as on the pin above), naming that set.
-    expect(copy).toContain(`and ${tested.within_10}% within 10 points, with an average miss of ${Math.round(tested.mae)} points and no lean high or low. `
-      + `Before the September upgrade, those same ${count(served.before.rows)} readings scored ${served.before.band_exact.toFixed(1)}% on the exact level and ${served.before.within_one_band}% within one.`);
-    // The subset says how many readings it is, and comes after.
-    const subset = `On the ${count(served.reading_one_hour_earlier.rows)} of them where the venue had a live reading from the hour before, ${served.reading_one_hour_earlier.band_exact.toFixed(1)}% named the exact level`;
-    expect(copy).toContain(subset);
-    expect(copy.indexOf(subset)).toBeGreaterThan(copy.indexOf('Before the September upgrade'));
-    expect(copy).not.toMatch(/the same readings scored/);
   });
 });

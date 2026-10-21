@@ -99,6 +99,10 @@ const EXCLUDE = {
     // there is nothing here to exclude. The measured figures remain on /about.
   ],
   pp: ['.pp-skip', '.pp-back', 'nav', 'footer'],
+  // Pages built on the landing page's system with SiteNav (/about since
+  // 2026-10-21): the skip link, the bar, the menu panel, the photo plates and
+  // the footer.
+  lpPage: ['.lp-skip', 'header.lp-nav', '#lp-menu', 'figure', 'footer'],
 };
 
 function extractBlocks(markup, excludeSelectors) {
@@ -120,7 +124,7 @@ function extractBlocks(markup, excludeSelectors) {
 
 const rendered = {
   home: extractBlocks(renderToStaticMarkup(React.createElement(LandingPage)), EXCLUDE.home),
-  about: extractBlocks(renderToStaticMarkup(React.createElement(AboutPage)), EXCLUDE.pp),
+  about: extractBlocks(renderToStaticMarkup(React.createElement(AboutPage)), EXCLUDE.lpPage),
   support: extractBlocks(renderToStaticMarkup(React.createElement(SupportPage)), EXCLUDE.pp),
   privacy: extractBlocks(renderToStaticMarkup(React.createElement(PrivacyPolicy)), EXCLUDE.pp),
   terms: extractBlocks(renderToStaticMarkup(React.createElement(TermsOfService)), EXCLUDE.pp),
@@ -326,7 +330,7 @@ describe('the handler', () => {
     expect(res.headers.vary).toBe('User-Agent');
     expect(res.headers['content-type']).toMatch(/text\/html/);
     expect(res.headers.link).toBe('<https://www.flockcorp.com/about>; rel="canonical"');
-    expect(res.body).toContain('<h1>What Flock is</h1>');
+    expect(res.body).toContain('<h1>About Flock</h1>');
   });
 
   test('an ambiguous or unknown page key falls back to the home document', async () => {
@@ -338,7 +342,7 @@ describe('the handler', () => {
       const res = fakeRes();
       await api({ query, url: '/api/marketing-page' }, res);
       expect(res.statusCode).toBe(200);
-      expect(res.body).toContain('Nurturing friendship, one flock at a time.');
+      expect(res.body).toContain('Six friends said yes. Flock gets them to the same place.');
     }
   });
 

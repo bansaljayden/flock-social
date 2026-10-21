@@ -1054,7 +1054,9 @@ describe('the budget settles the way the pages say it does', () => {
     expect(l).not.toMatch(/until every member has answered|three people have submitted/);
 
     const home = flat(withoutComments(landing));
-    const bullet = 'No number until everyone going has answered or the plan\'s creator locks it, with at least three members\' amounts in, and then it is a rounded band, not anyone\'s figure';
+    // The home page's line since 2026-10-21, under the budget beat, beside
+    // "rounded down to a band" in the paragraph above it.
+    const bullet = 'That number appears when everyone going has answered or the plan’s creator locks it, and either way only once at least three members have shared an amount';
     expect(home).toContain(bullet);
     expect(mirror).toContain(bullet);
     expect(home).not.toMatch(/No number until everyone has answered/);

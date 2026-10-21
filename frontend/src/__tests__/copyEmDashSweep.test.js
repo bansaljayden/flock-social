@@ -310,12 +310,12 @@ const ANCHORS = [
   ['src/screens/AddFriends.js', 'Matches the number you typed'],
   ['src/screens/VenueDashboard.js', 'Set your live crowd number, on any plan'],
   ['src/components/PaywallSheet.js', 'Get more out of every night out'],
-  ['src/website/LandingPage.js', 'Coming soon to the App Store. Join the waitlist.'],
+  ['src/website/LandingPage.js', 'Here is a Friday plan, start to finish.'],
   // One per root outside src/, for the same reason: these three files are the
   // ones the sweep was widened to reach, and a walk that stopped reaching them
   // reports them clean.
   ['api/invite-preview.js', 'Flock is a free app for sorting out where a group is going.'],
-  ['api/marketing-page.js', 'Vote on where to go, see how busy it is before you leave, split the bill, and go.'],
+  ['api/marketing-page.js', 'Make the plan in Flock instead of the group chat.'],
   ['public/firebase-messaging-sw.js', 'Flock'],
 ];
 

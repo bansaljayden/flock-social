@@ -8,7 +8,7 @@ const crypto = require('crypto');
 // WHY THIS EXISTS
 // One index.html is served for every route (CRA has no server rendering), so
 // an invite shared into iMessage or a group chat previews with the marketing
-// tags: "Flock | Nurturing friendship, one flock at a time". The link that spreads the product
+// tags: "Flock | Plan the night out with your friends". The link that spreads the product
 // says nothing about who sent it or what it is. This function answers the
 // preview bots instead, with the host's first name and the plan.
 //
@@ -133,7 +133,7 @@ const CANONICAL_HOST = 'https://www.flockcorp.com';
 // apex -> www redirect when fetching an image. Same file and same dimensions as
 // the default tags in public/index.html; keep them in sync.
 const OG_IMAGE = CANONICAL_HOST + '/og-image.png';
-const OG_IMAGE_ALT = 'Flock. Nurturing friendship, one flock at a time.';
+const OG_IMAGE_ALT = 'Flock. Six friends said yes. Flock gets them to the same place.';
 
 // The per-flock card URL carries a signature when OG_CARD_SECRET is set. The
 // Cloudflare Pages project and the API service hold that secret; Vercel never
@@ -202,10 +202,12 @@ const UPSTREAM_TIMEOUT_MS = 2500;
 const DISPLAY_TZ = 'America/New_York';
 
 // Verbatim from public/index.html, so a fallback preview is indistinguishable
-// from what the site serves today.
-const DEFAULT_TITLE = 'Flock | Nurturing friendship, one flock at a time';
+// from what the site serves today. The apostrophe is escaped for the reason
+// DOT is, below.
+const DEFAULT_TITLE = 'Flock | Plan the night out with your friends';
 const DEFAULT_DESCRIPTION =
-  'Vote on where to go, see how busy it is before you leave, and split the bill after. Free.';
+  'Make the plan in Flock instead of the group chat. Your friends vote on where to go, and everyone'
+  + String.fromCharCode(0x2019) + 's budget stays private.';
 
 // Escaped rather than literal so this file stays pure ASCII and cannot pick up
 // mojibake from a tool that guesses the encoding wrong. Same convention as

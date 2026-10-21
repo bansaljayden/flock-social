@@ -41,15 +41,15 @@ const OUT = argOut
 
 /* The card's copy. Both lines are duplicated in the page and in the meta tags,
    and the test named in the header is what keeps the three in agreement. */
-const HEADLINE = 'Nurturing friendship, one flock at a time.';
-const SUBHEAD = 'Vote on where to go, see how busy it is, split the bill. Free.';
-const URL_PILL = 'flockcorp.com';
+const HEADLINE = 'Six friends said yes. Flock gets them to the same place.';
+/* The address as plain text. It used to be a navy pill styled as a button,
+   which nobody can press inside an image (2026-10-21). */
+const SITE = 'flockcorp.com';
 
 /* Brand tokens, read off src/website/LandingPage.css rather than sampled from
    the old PNG, so the card and the page it links to cannot drift apart. */
 const PAPER = '#f1ede0';   // --paper
 const INK = '#16283d';     // --ink
-const NAVY = '#0f172a';    // --navy
 const SLATE = '#2d5a87';   // the subhead blue used across the marketing pages
 
 const logoDataUri = `data:image/png;base64,${fs
@@ -101,11 +101,12 @@ const html = `<!doctype html>
        still measured 1073px and was refused too; 60px fits with room. If the
        tagline changes again, expect to move this, and let the guard tell you
        the number rather than guessing at it. */
-    font-size: 60px;
-    line-height: 1.05;
-    letter-spacing: -1.8px;
+    font-size: 64px;
+    line-height: 1.08;
+    letter-spacing: -1.2px;
     color: ${INK};
-    white-space: nowrap;
+    max-width: 1056px;
+    text-wrap: balance;
   }
 
   p {
@@ -116,23 +117,11 @@ const html = `<!doctype html>
     letter-spacing: -0.2px;
   }
 
-  .pill {
-    display: inline-block;
-    margin-top: 34px;
-    padding: 15px 30px;
-    border-radius: 12px;
-    background: ${NAVY};
-    color: ${PAPER};
-    font-size: 25px;
-    font-weight: 700;
-    letter-spacing: -0.2px;
-  }
 </style></head>
 <body>
   <div class="logo"><img src="${logoDataUri}" alt=""></div>
-  <h1>${HEADLINE}</h1>
-  <p>${SUBHEAD}</p>
-  <div><span class="pill">${URL_PILL}</span></div>
+  <h1>${HEADLINE.replace('yes. ', 'yes.<br>')}</h1>
+  <p>${SITE}</p>
 </body></html>`;
 
 const { chromium } = await import('playwright');
@@ -150,7 +139,7 @@ try {
      deliberate, so check rather than trust. */
   const loaded = await page.evaluate(() => ({
     fraunces: document.fonts.check('600 76px Fraunces'),
-    hanken: document.fonts.check('700 25px "Hanken Grotesk"'),
+    hanken: document.fonts.check('500 27px "Hanken Grotesk"'),
   }));
   if (!loaded.fraunces || !loaded.hanken) {
     throw new Error(
@@ -171,7 +160,9 @@ try {
       // block, which is full-bleed and would always "fit".
       textWidth: Math.ceil(range.getBoundingClientRect().width),
       available: Math.floor(h1.getBoundingClientRect().width),
-      lines: range.getClientRects().length,
+      // Distinct line tops, not rect count: the <br> splits the text into two
+      // nodes, and each contributes its own rects.
+      lines: new Set(Array.from(range.getClientRects()).filter((r) => r.width > 1).map((r) => Math.round(r.top))).size,
       bodyScrollH: document.body.scrollHeight,
       bodyScrollW: document.body.scrollWidth,
     };
@@ -179,8 +170,8 @@ try {
   // nowrap means an over-long line runs OFF the card rather than wrapping, so
   // the check is the text against the space it has, plus a line count, and
   // either one failing stops the write.
-  if (fits.lines !== 1) {
-    throw new Error(`the headline must be ONE line, measured ${fits.lines}. Reduce font-size.`);
+  if (fits.lines > 2) {
+    throw new Error(`the headline must fit on TWO lines, measured ${fits.lines}. Reduce font-size.`);
   }
   if (fits.textWidth > fits.available) {
     throw new Error(

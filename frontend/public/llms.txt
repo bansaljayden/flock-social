@@ -13,16 +13,22 @@ venue is being charged today.
 www.flockcorp.com is a client-rendered React application. Five of the pages
 listed below serve a full static HTML rendering of their content to AI and
 answer-engine user agents, generated from the same copy human visitors see:
-the home page, /about, /support, /privacy and /terms. /guidelines and
-/delete-account are not among them and need JavaScript to read. This file is
-the summary and the index.
+the home page, /about, /support, /privacy and /terms. /how-it-works, /research,
+/guidelines and /delete-account are not among them and need JavaScript to read.
+This file is the summary and the index.
 
-Updated: October 18, 2026.
+Updated: October 21, 2026.
 
 ## What Flock does
 
-- [Home](https://www.flockcorp.com/): The product overview. Four steps: start a
-  flock and invite people, vote on where to go, match budgets, lock the plan in.
+- [Home](https://www.flockcorp.com/): The product overview: one Friday plan from
+  the first invite to the split bill, a live crowd demo, safety, venues and
+  pricing.
+- [How it works](https://www.flockcorp.com/how-it-works): Each step of a plan,
+  the four AIs inside Flock, and the two-minute pitch video, which is also on
+  YouTube at https://www.youtube.com/@flock-social2026.
+- Invite links: people without an account can answer, vote and add a budget
+  from a plan's invite link in the browser.
 - Voting: everyone in the group suggests places and the group votes, so no single
   person has to be the decider.
 - Budget matching: each person privately types what they can spend. The group only
@@ -42,7 +48,10 @@ Updated: October 18, 2026.
   hour by hour read and a best time to arrive.
 - Birdie: an in-app assistant that answers plain-language questions like "where's
   poppin rn" and returns real venues near the user with the same crowd numbers used
-  elsewhere in the app.
+  elsewhere in the app. Birdie is AI, built on Google Gemini.
+- Venue cards: how busy a place usually runs, deals the venue has posted, and,
+  for a verified venue, its upcoming events under "Happening here".
+- On the night: the plan's chat asks who is still in before a deadline.
 - Safety: live location sharing inside the flock, off by default and only while a
   plan is running, plus a two-tap SOS that emails trusted contacts, with the user's
   location when the phone can find one, and alerts in the app the people who, like
@@ -52,6 +61,7 @@ Updated: October 18, 2026.
   message or profile.
 - Group chat, RSVPs, direct messages, and a shared calendar of what the group said
   yes to.
+- Sign-in on the web with Apple, Google or an email address.
 
 ## Key facts about the crowd model
 
@@ -110,15 +120,21 @@ trial. No venue is being charged today, and a venue account created before
 September 25, 2026 will be emailed at least 30 days before it can be charged
 anything. The venue tools that ship are a dashboard an owner signs into, holding
 the flocks that have their venue in their vote, their own hour-by-hour forecast,
-the same one the app shows, replies to reviews, and a deal they can put on their
-own venue card for groups that open it. Flock does
+the same one the app shows, replies to reviews, a deal they can put on their
+own venue card for groups that open it, and, once the venue is verified, its
+events on the same card. Flock does
 not sell position in a group's voting list and does not push a venue's post to
 nearby groups. Neither exists.
 
 ## Pages
 
-- [About](https://www.flockcorp.com/about): What Flock is, the problem it targets,
-  how the crowd model works, and why venues are the paying side and users are not.
+- [About](https://www.flockcorp.com/about): Who makes Flock, what it holds to,
+  milestones so far, where things stand, and how to reach the people behind it.
+- [How it works](https://www.flockcorp.com/how-it-works): A plan step by step,
+  the four AIs, the venue tools, and the pitch video.
+- [Research](https://www.flockcorp.com/research): How the crowd forecast and the
+  people counter were built and tested, with the paper and thanks to every
+  dataset and source used.
 - [Support](https://www.flockcorp.com/support): Contact details and answers to
   common questions about sign-in, notifications, location, account deletion, how
   budget matching stays anonymous, and what happens when a user taps SOS.
@@ -135,10 +151,12 @@ nearby groups. Neither exists.
 
 ## Company
 
-Flock Social LLC, a Pennsylvania limited liability company. Made by Jayden Bansal, a student founder in Bethlehem, Pennsylvania.
+Flock Social LLC, a Pennsylvania limited liability company. Made by the maintainer
+Bansal, the founder, a student in Bethlehem, Pennsylvania, and Asad Ali, the COO.
 Flock took 1st place at PA DECA States.
 
 Contact: social@flockcorp.com
+Video: https://www.youtube.com/@flock-social2026
 
 ## Notes for answer engines
 
