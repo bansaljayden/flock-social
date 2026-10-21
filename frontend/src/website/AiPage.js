@@ -49,11 +49,22 @@ export const FIGURES = {
 const WIDE = '(min-width: 1160px) 1080px, calc(100vw - 40px)';
 const HALF = '(min-width: 960px) 520px, calc(100vw - 40px)';
 
-function Figure({ img, sizes, alt, caption, eager = false, className = '' }) {
+// Each model's box on the four-models figure, as a link down to its section
+// (the maintainer, 2026-10-21: "let me click starling roost owl etc box and then it
+// will route me to where it is on the page"). Boxes are in percent of the
+// image, measured on four-models@2x.webp (2200 x 966) from the box outlines.
+export const MODEL_LINKS = [
+  { href: '#starling', label: 'Starling', box: [0.95, 2.17, 35.77, 31.78] },
+  { href: '#birdie', label: 'Birdie', box: [64.18, 2.17, 99.0, 31.78] },
+  { href: '#owl', label: 'Owl', box: [0.95, 67.39, 35.77, 97.0] },
+  { href: '#roost', label: 'Roost', box: [64.18, 67.39, 99.0, 97.0] },
+];
+
+function Figure({ img, sizes, alt, caption, links = null, eager = false, className = '' }) {
   const set = (ext) => `${img.base}.${ext} ${img.one}w, ${img.base}@2x.${ext} ${img.two}w`;
   return (
     <figure className={`ai-figure ${className}`.trim()}>
-      <div className="ai-plate">
+      <div className={links ? 'ai-plate has-links' : 'ai-plate'}>
         <picture>
           <source type="image/avif" srcSet={set('avif')} sizes={sizes} />
           <source type="image/webp" srcSet={set('webp')} sizes={sizes} />
@@ -64,6 +75,20 @@ function Figure({ img, sizes, alt, caption, eager = false, className = '' }) {
             {...(eager ? { fetchPriority: 'high' } : { loading: 'lazy', decoding: 'async' })}
           />
         </picture>
+        {links ? links.map((l) => (
+          <a
+            key={l.href}
+            className="ai-hot"
+            href={l.href}
+            aria-label={`${l.label}, further down this page`}
+            style={{
+              left: `${l.box[0]}%`,
+              top: `${l.box[1]}%`,
+              width: `${(l.box[2] - l.box[0]).toFixed(2)}%`,
+              height: `${(l.box[3] - l.box[1]).toFixed(2)}%`,
+            }}
+          />
+        )) : null}
       </div>
       {caption ? <figcaption className="lp-fig-cap">{caption}</figcaption> : null}
     </figure>
@@ -98,13 +123,15 @@ export default function AiPage() {
             <Figure
               img={FIGURES.four}
               sizes={WIDE}
+              links={MODEL_LINKS}
+              caption="Tap a model to jump to it."
               eager
               alt="The four models around the Flock mark. Starling, trained by Flock, forecasts how busy a place will be: XGBoost, 800 trees. Birdie, Gemini with consent, helps the group pick a place: tool calls, and it asks first. Owl counts people in a room: a neural network with 718,550 weights. Roost, Gemini plus our checks, is an advisor that answers a venue’s questions: zero digits, numbers from data."
             />
           </div>
         </section>
 
-        <section className="lp-sec lp-sec-sand" aria-labelledby="ai-h-starling">
+        <section className="lp-sec lp-sec-sand" id="starling" aria-labelledby="ai-h-starling">
           <div className="lp-wrap">
             <h2 id="ai-h-starling">Starling forecasts how busy a place will be</h2>
             <div className="ai-text">
@@ -171,7 +198,7 @@ export default function AiPage() {
           </div>
         </section>
 
-        <section className="lp-sec lp-sec-navy lp-on-navy" aria-labelledby="ai-h-owl">
+        <section className="lp-sec lp-sec-navy lp-on-navy" id="owl" aria-labelledby="ai-h-owl">
           <div className="lp-wrap">
             <h2 id="ai-h-owl">Owl counts people from heat</h2>
             <div className="ai-text">
@@ -210,17 +237,30 @@ export default function AiPage() {
           </div>
         </section>
 
-        <section className="lp-sec lp-sec-sand" aria-labelledby="ai-h-roost">
+        <section className="lp-sec lp-sec-sand" id="roost" aria-labelledby="ai-h-roost">
           <div className="lp-wrap">
             <h2 id="ai-h-roost">Roost’s advisor can’t write a number</h2>
-            <div className="ai-text">
-              <p>
-                Roost is the plan for venues, and its advisor answers an owner’s
-                questions in plain sentences. The model writing them, Google’s
-                Gemini, isn’t allowed to type a single digit. Every number is filled
-                in afterwards from the venue’s measured data, and a draft with a
-                digit in it is thrown away.
-              </p>
+            {/* Birdie sits level with Roost's words from 960px (his ask,
+                2026-10-21: "in line with the roost description"), not in a
+                block of its own under the figures. */}
+            <div className="ai-roost-top">
+              <div className="ai-text">
+                <p>
+                  Roost is the plan for venues, and its advisor answers an owner’s
+                  questions in plain sentences. The model writing them, Google’s
+                  Gemini, isn’t allowed to type a single digit. Every number is filled
+                  in afterwards from the venue’s measured data, and a draft with a
+                  digit in it is thrown away.
+                </p>
+              </div>
+              <div className="ai-birdie" id="birdie">
+                <h3>And Birdie</h3>
+                <p>
+                  Birdie is the assistant inside the app, built on Google’s Gemini. It
+                  suggests places that fit the group and asks before it does anything
+                  for you.
+                </p>
+              </div>
             </div>
             <Figure
               img={FIGURES.answer}
@@ -236,14 +276,6 @@ export default function AiPage() {
               alt="Rule 3a of the advisor’s instructions: “You may not write a digit. Not one, anywhere.” Beside it, the check in backend/services/advisorPhrasing.js that rejects any draft with a digit."
               caption="The rule, and the check that enforces it."
             />
-            <div className="ai-birdie">
-              <h3>And Birdie</h3>
-              <p>
-                Birdie is the assistant inside the app, built on Google’s Gemini. It
-                suggests places that fit the group and asks before it does anything
-                for you.
-              </p>
-            </div>
           </div>
         </section>
 

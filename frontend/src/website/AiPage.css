@@ -27,6 +27,19 @@
 .lp-on-navy .ai-plate { border-color: transparent; }
 .ai-plate img { width: 100%; height: auto; }
 .ai-hero .ai-figure { max-width: 1080px; }
+/* The four-models figure: each model's box is a link down to its section,
+   laid exactly over the box drawn in the picture (MODEL_LINKS in AiPage.js).
+   Nothing shows until a pointer or the keyboard reaches one, then the box
+   gets the site's focus ring. */
+.ai-plate.has-links { position: relative; }
+.ai-hot { position: absolute; display: block; border-radius: 12px; }
+.ai-hot:hover,
+.ai-hot:focus-visible {
+  outline: 2px solid var(--steel);
+  outline-offset: 2px;
+  background: rgba(22, 40, 61, 0.05);
+}
+.ai-hero .lp-fig-cap { margin-top: 10px; }
 .ai-wide { margin-top: clamp(28px, 4vw, 44px); }
 .ai-wide + .ai-wide { margin-top: 20px; }
 
@@ -45,7 +58,20 @@
   .ai-split { grid-template-columns: minmax(0, 1fr) minmax(0, 600px); }
 }
 
-.ai-birdie { max-width: 62ch; margin-top: clamp(36px, 5vw, 56px); }
+/* Roost's words and Birdie's, side by side from 960px; Birdie under Roost on
+   a phone. */
+.ai-roost-top {
+  display: grid;
+  gap: 24px clamp(40px, 6vw, 80px);
+  align-items: start;
+  max-width: 1080px;
+  margin-top: clamp(16px, 2.4vw, 24px);
+}
+.ai-roost-top .ai-text { margin-top: 0; }
+@media (min-width: 960px) {
+  .ai-roost-top { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); }
+}
+.ai-birdie { max-width: 62ch; scroll-margin-top: 96px; }
 .ai-birdie h3 {
   font-family: var(--font-display);
   font-weight: 600;
