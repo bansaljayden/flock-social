@@ -36,7 +36,7 @@ const MARKETING = {
 
 // vercel.json:74-80, the "/" rule, which Vercel also put on the redirect.
 const ROOT_HEADERS = {
-  Link: '<https://www.flockcorp.com/>; rel="canonical", </screenshots/nest-dark-reel.avif>; rel=preload; as=image; type="image/avif"; fetchpriority=high',
+  Link: '<https://www.flockcorp.com/>; rel="canonical", </screenshots/home-reel.avif>; rel=preload; as=image; type="image/avif"; fetchpriority=high',
   'Cache-Control': 'public, max-age=0, must-revalidate',
 };
 

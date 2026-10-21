@@ -21,7 +21,7 @@ to 240 CSS px. The hero keeps a PNG fallback.
 ## src/website/LandingPage.js
 
 - Hero reel (HeroReel.js, since 2026-10-21): the home screen leads it as
-  `nest-dark-reel.avif`, preloaded on `/` from vercel.json, cloudflare/_headers
+  `home-reel.avif`, preloaded on `/` from vercel.json, cloudflare/_headers
   and functions/_middleware.js, with `nest-dark@2x.webp` and `nest-dark@2x.png`
   as fallbacks. The AVIF is the whole `nest-dark@2x.png`, 780 x 1688, saved by
   Pillow at quality 60 (28.5 KB). The other reel screens are the `-480w`

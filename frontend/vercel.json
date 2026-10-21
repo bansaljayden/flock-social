@@ -88,7 +88,7 @@
     {
       "source": "/",
       "headers": [
-        { "key": "Link", "value": "<https://www.flockcorp.com/>; rel=\"canonical\", </screenshots/nest-dark-reel.avif>; rel=preload; as=image; type=\"image/avif\"; fetchpriority=high" },
+        { "key": "Link", "value": "<https://www.flockcorp.com/>; rel=\"canonical\", </screenshots/home-reel.avif>; rel=preload; as=image; type=\"image/avif\"; fetchpriority=high" },
         { "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }
       ]
     },

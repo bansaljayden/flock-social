@@ -54,7 +54,7 @@ describe('the hero screenshot preload lives on / only', () => {
   test('the / Link header keeps the canonical and adds an AVIF-gated, high-priority preload', () => {
     expect(link).toBeTruthy();
     expect(link.value).toContain('<https://www.flockcorp.com/>; rel="canonical"');
-    expect(link.value).toContain('</screenshots/nest-dark-reel.avif>; rel=preload; as=image; type="image/avif"; fetchpriority=high');
+    expect(link.value).toContain('</screenshots/home-reel.avif>; rel=preload; as=image; type="image/avif"; fetchpriority=high');
   });
 
   test('the preloaded file is the one the hero <picture> actually requests', () => {
@@ -62,10 +62,10 @@ describe('the hero screenshot preload lives on / only', () => {
     // (type-gated to AVIF) also picks that source; the rest fall to WebP.
     // The home screen leads the hero reel since 2026-10-21 (HeroReel.js).
     const page = read('src/website/HeroReel.js');
-    const avif = page.indexOf('<source type="image/avif" srcSet="/screenshots/nest-dark-reel.avif" />');
+    const avif = page.indexOf('<source type="image/avif" srcSet="/screenshots/home-reel.avif" />');
     expect(avif).toBeGreaterThan(-1);
     expect(page.indexOf('<source type="image/webp" srcSet="/screenshots/nest-dark@2x.webp" />')).toBeGreaterThan(avif);
-    for (const f of ['nest-dark-reel.avif', 'nest-dark@2x.webp']) {
+    for (const f of ['home-reel.avif', 'nest-dark@2x.webp']) {
       expect(fs.existsSync(path.join(FRONTEND, 'public', 'screenshots', f))).toBe(true);
     }
   });
@@ -75,7 +75,7 @@ describe('the hero screenshot preload lives on / only', () => {
     // shows every screen whole, the home screen included.
     // ISO-BMFF image spatial extents ("ispe"): version/flags, then width and
     // height as 32-bit big-endian integers.
-    const buf = fs.readFileSync(path.join(FRONTEND, 'public', 'screenshots', 'nest-dark-reel.avif'));
+    const buf = fs.readFileSync(path.join(FRONTEND, 'public', 'screenshots', 'home-reel.avif'));
     expect(buf.toString('ascii', 4, 12)).toBe('ftypavif');
     const at = buf.indexOf('ispe');
     expect(at).toBeGreaterThan(-1);
