@@ -373,9 +373,10 @@ describe('structural fingerprint', () => {
     const hero = grid('lp-hero-in');
     const safety = grid('lp-safety');
     const venues = grid('lp-venues-in');
-    expect(new Set([hero, safety, venues]).size).toBe(3);
-    // The beats are not side by side at all since 2026-10-21: each is its
-    // words centred over a capture with its parts named, or a painting.
+    // The beats went from centred stacks to rows on 2026-10-21 (his third
+    // look): words beside the picture from 960px, centred over it on a phone.
+    const beats = grid('lp-beat-row');
+    expect(new Set([hero, safety, venues, beats]).size).toBe(4);
     expect(CSS).toMatch(/\.lp-beat \{[^}]*text-align: center;/);
     expect(visible).not.toMatch(/lp-beat-main|has-plate/);
   });

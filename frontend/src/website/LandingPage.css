@@ -1430,10 +1430,11 @@ html:has(.lp) body { overflow-x: clip; }
 /* One Friday plan, read top to bottom. The dead group chat comes first, then
    the same Friday in five beats, each in a band of its own, paper and navy in
    turn (the maintainer, 2026-10-21), so each step reads as its own. A beat is its
-   time, headline and one short line, centred, and under it either the capture
-   of that moment with its parts named (.lp-anno, AnnotatedShot.js) or, where
-   the beat has no screen, a painted scene. Not a numbered grid: the times are
-   the order. */
+   time, headline and one short line beside the capture of that moment with
+   its parts named (.lp-anno, AnnotatedShot.js) or, where the beat has no
+   screen, a painted scene. On a phone the words are centred over the picture;
+   from 960px they sit to its side (.lp-beat-row below), alternating. Not a
+   numbered grid: the times are the order. */
 .lp-friday-title { max-width: 18em; }
 .lp-friday-lead { margin-top: 16px; }
 .lp-friday-chat { margin: clamp(28px, 4vw, 40px) 0 0; max-width: 30rem; }
@@ -1449,14 +1450,42 @@ html:has(.lp) body { overflow-x: clip; }
 .lp-beat h3 { margin-bottom: 2px; }
 .lp-beat p { font-size: 16.5px; line-height: 1.6; color: var(--ink-2); max-width: 52ch; }
 .lp-beat-note { font-size: 14.5px !important; color: var(--ink-3) !important; margin-top: 4px; }
-/* The painted scenes of the two beats with no screen, varied so the two do
-   not read as one template: the invitation sits over its words, centred; the
-   flock flies off under its words, out to the right. */
+/* The painted scenes of the two beats with no screen. On a phone the
+   invitation sits over its words, centred, and the flock flies off under its
+   words, out to the right; from 960px each sits beside its words. */
 .lp-beat-scene { display: block; height: auto; }
 .lp-beat-scene.is-invite { width: min(400px, 84vw); margin: 0 auto clamp(18px, 3vw, 26px); }
 .lp-beat-scene.is-flight { width: min(520px, 90vw); margin: clamp(22px, 3.5vw, 34px) 0 0 auto; }
 @media (min-width: 960px) {
   .lp-beat-scene.is-flight { margin-right: 6%; }
+}
+/* From 960px a beat is a row: the words on one side, the capture or the
+   painting on the other, level at their middles and centred as a pair (his
+   third look, 2026-10-21: "text to the side not on top"). .is-flip puts the
+   words on the right while they stay first in the markup, so a phone still
+   reads words, then picture. The captures in a row are one-sided
+   (landingAnnotations.js), so no note lands between the words and the phone,
+   and they grow only as far as the row leaves room for the words. */
+@media (min-width: 960px) {
+  .lp-beat-row {
+    display: grid;
+    grid-template-columns: auto auto;
+    justify-content: center;
+    align-items: center;
+    column-gap: clamp(40px, 5vw, 72px);
+  }
+  .lp-beat-row.is-flip > .lp-beat { order: 2; }
+  .lp-beat-row > .lp-beat { justify-items: start; max-width: 25rem; margin: 0; text-align: left; }
+  .lp-beat-row > .lp-beat h3 { font-size: clamp(24px, 1rem + 0.9vw, 30px); }
+  .lp-beat-row > .lp-plate.lp-anno { --anno-scale: 1; width: calc(var(--anno-w) * var(--anno-scale) * 1px); margin: 0; }
+  .lp-beat-row > .lp-beat-scene.is-invite { width: 380px; margin: 0; }
+  .lp-beat-row > .lp-beat-scene.is-flight { width: 500px; margin: 0; }
+}
+@media (min-width: 1100px) {
+  .lp-beat-row > .lp-plate.lp-anno { --anno-scale: 1.15; }
+}
+@media (min-width: 1280px) {
+  .lp-beat-row > .lp-plate.lp-anno { --anno-scale: 1.3; }
 }
 
 /* A plate: a capture of the web app printed flat on the page, with its

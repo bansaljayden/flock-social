@@ -522,20 +522,22 @@ export default function LandingPage() {
       {/* ---------------- the five beats ----------------
           Each beat is its own full-width band, paper and navy in turn, so each
           step of the night reads as its own (the maintainer, 2026-10-21: "cream, then
-          dark blue, then cream"). Since his second look the same day ("a lot
-          of open space ... put the screenshot in the middle and draw arrows to
-          explain"), a beat is its time, headline and line, centred, with the
-          capture under it and its parts named (AnnotatedShot), or, where the
-          beat has no screen, a painted scene: above the words for the
-          invitation, flying off under them for "Still in?". Flat grounds, no
-          gradients and no shadows. Every capture on the site is the dark
-          theme, the hero's own. #birdie and #money stay on the beats they
-          always named, for old links. The notes, and the measured box of
-          each thing they name, are in landingAnnotations.js. */}
+          dark blue, then cream"). Each beat is its time, headline and line
+          beside the capture of that moment with its parts named
+          (AnnotatedShot), or, where the beat has no screen, a painted scene.
+          From 960px the words sit to the SIDE, the sides alternating down the
+          page, and every note is on the phone's far side from the words
+          (his third look: "text to the side not on top ... both text boxes on
+          the other side"); on a phone the words come first, centred, over the
+          picture. Flat grounds, no gradients and no shadows. Every capture on
+          the site is the dark theme, the hero's own. #birdie and #money stay
+          on the beats they always named, for old links. The notes, and the
+          measured box of each thing they name, are in landingAnnotations.js. */}
       <section className="lp-sec lp-sec-paper lp-beat-band" aria-labelledby="lp-h-beat-1">
-        <div className="lp-wrap">
+        <div className="lp-wrap lp-beat-row">
           {/* The invitation: a wren holding the folded note while a sparrow
-              and a robin lean in. */}
+              and a robin lean in. Over its words on a phone, left of them
+              from 960px. */}
           <img
             className="lp-art lp-beat-scene is-invite"
             src="/art/step-start-480.webp"
@@ -556,7 +558,7 @@ export default function LandingPage() {
         </div>
       </section>
       <section className="lp-sec lp-sec-navy lp-on-navy lp-beat-band" id="birdie" aria-labelledby="lp-h-beat-2">
-        <div className="lp-wrap">
+        <div className="lp-wrap lp-beat-row">
           <div className="lp-beat">
             <p className="lp-beat-when">Thursday, 6:30 PM</p>
             <h3 id="lp-h-beat-2">Three places go to a vote.</h3>
@@ -576,7 +578,7 @@ export default function LandingPage() {
         </div>
       </section>
       <section className="lp-sec lp-sec-paper lp-beat-band" id="money" aria-labelledby="lp-h-beat-3">
-        <div className="lp-wrap">
+        <div className="lp-wrap lp-beat-row is-flip">
           <div className="lp-beat">
             <p className="lp-beat-when">Friday, noon</p>
             <h3 id="lp-h-beat-3">The budgets come in privately.</h3>
@@ -599,7 +601,7 @@ export default function LandingPage() {
         </div>
       </section>
       <section className="lp-sec lp-sec-navy lp-on-navy lp-beat-band" aria-labelledby="lp-h-beat-4">
-        <div className="lp-wrap">
+        <div className="lp-wrap lp-beat-row">
           <div className="lp-beat">
             <p className="lp-beat-when">Friday, 7:15 PM</p>
             <h3 id="lp-h-beat-4">“Still in?”</h3>
@@ -609,7 +611,8 @@ export default function LandingPage() {
             </p>
           </div>
           {/* All five said yes, so the flock heads out together, flying off
-              to the right under the words. Three beige sparrows, two robins
+              to the right: under the words on a phone, beside them from
+              960px. Three beige sparrows, two robins
               and two wrens: on navy the wrens hold by their white breasts and
               the pale edges of their wings, the robins by their orange ones. */}
           <img
@@ -625,12 +628,14 @@ export default function LandingPage() {
       </section>
       <section className="lp-sec lp-sec-paper lp-beat-band" aria-labelledby="lp-h-beat-5">
         <div className="lp-wrap">
-          <div className="lp-beat">
-            <p className="lp-beat-when">Saturday morning</p>
-            <h3 id="lp-h-beat-5">Asad paid, so Flock splits it.</h3>
-            <p>$142.60 with the tip comes to $28.52 each.</p>
+          <div className="lp-beat-row is-flip">
+            <div className="lp-beat">
+              <p className="lp-beat-when">Saturday morning</p>
+              <h3 id="lp-h-beat-5">Asad paid, so Flock splits it.</h3>
+              <p>$142.60 with the tip comes to $28.52 each.</p>
+            </div>
+            <AnnotatedShot id="bill" {...ANNOTATIONS.bill} />
           </div>
-          <AnnotatedShot id="bill" {...ANNOTATIONS.bill} />
           <p className="lp-friday-more">
             Every step, and the two-minute pitch video, is on{' '}
             <a href="/how-it-works">How it works</a>.
