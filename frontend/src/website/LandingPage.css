@@ -1186,6 +1186,21 @@ html:has(.lp) body { overflow-x: clip; }
    .lp-grid / .lp-card deleted with the "In the app" section they belonged to. */
 
 .lp-hero-in { position: relative; z-index: 1; }
+/* The city film behind the hero (2026-10-21, his ask). It lies at low
+   opacity over the flat navy, so the navy is the veil: no overlay and no
+   gradient, and the cream type keeps its contrast. It fades in once it is
+   really playing (LandingPage.js attaches it after load), on opacity only. */
+.lp-hero-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.9s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.lp-hero-video.is-on { opacity: 0.32; }
 
 /* ============ safety: the real SOS email, shown as a document ============ */
 

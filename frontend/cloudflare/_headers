@@ -86,6 +86,12 @@ https://:version.:project.pages.dev/*
 /birdie-avatar-light.png
   Cache-Control: public, max-age=86400, stale-while-revalidate=604800
 
+/bg-city.mp4
+  Cache-Control: public, max-age=86400, stale-while-revalidate=604800
+
+/bg-city-poster.jpg
+  Cache-Control: public, max-age=86400, stale-while-revalidate=604800
+
 /firebase-messaging-sw.js
   Cache-Control: public, max-age=0, must-revalidate
 

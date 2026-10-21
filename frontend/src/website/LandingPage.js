@@ -169,6 +169,9 @@ function ProOfferCard({ offer }) {
 // that failed gets one plain line; a repeat signup says so instead of
 // welcoming them again. A dropped connection never shows the browser's own
 // "Failed to fetch".
+// The hero's background film (public/bg-city.mp4, 388 KB): a city at night.
+export const HERO_VIDEO = '/bg-city.mp4';
+
 const WAITLIST_JOINED = 'You’re on the list. You’ll get an email when it opens up.';
 const WAITLIST_ALREADY = 'You’re already on the list. You’ll get an email when it opens up.';
 const WAITLIST_FAILED = 'Could not sign you up. Try again in a moment.';
@@ -209,6 +212,50 @@ export default function LandingPage() {
   const menuRef = useRef(null);
   const menuBtnRef = useRef(null);
   const wasMenuOpen = useRef(false);
+  const heroVideoRef = useRef(null);
+
+  // The city behind the hero (the maintainer, 2026-10-21: "make the background of
+  // this the animated video of the city"). The markup carries no source, so
+  // nothing about it competes with the first paint: the file is attached only
+  // once the page has loaded and the browser is idle, and not at all with
+  // "reduce motion" on or a data saver. It fades in when it is actually
+  // playing; until then, and without it, the hero is the flat navy it was.
+  useEffect(() => {
+    const video = heroVideoRef.current;
+    if (!video) return undefined;
+    const reduce = typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const conn = navigator.connection;
+    const saver = Boolean(conn && (conn.saveData || /(^|-)2g$/.test(conn.effectiveType || '')));
+    if (reduce || saver) return undefined;
+    let cancelled = false;
+    let idleId = null;
+    const showWhenPlaying = () => video.classList.add('is-on');
+    const start = () => {
+      if (cancelled) return;
+      video.muted = true;
+      video.addEventListener('playing', showWhenPlaying, { once: true });
+      video.src = HERO_VIDEO;
+      const played = video.play();
+      if (played && typeof played.catch === 'function') played.catch(() => {});
+    };
+    const whenIdle = () => {
+      idleId = typeof window.requestIdleCallback === 'function'
+        ? window.requestIdleCallback(start, { timeout: 2500 })
+        : window.setTimeout(start, 400);
+    };
+    if (document.readyState === 'complete') whenIdle();
+    else window.addEventListener('load', whenIdle, { once: true });
+    return () => {
+      cancelled = true;
+      window.removeEventListener('load', whenIdle);
+      video.removeEventListener('playing', showWhenPlaying);
+      if (idleId !== null) {
+        if (typeof window.cancelIdleCallback === 'function') window.cancelIdleCallback(idleId);
+        window.clearTimeout(idleId);
+      }
+    };
+  }, []);
 
   // While the panel is open: page scroll is locked on the ROOT element (a lock
   // on <body> makes <body> the scroll container and the sticky bar sticks to
@@ -390,6 +437,19 @@ export default function LandingPage() {
           the field guide's own device and the honest way to say the screen is
           real. */}
       <section className="lp-hero lp-on-navy" aria-labelledby="lp-h-hero">
+        {/* Decoration: muted, looping, out of the tab order and hidden from
+            screen readers. Its source is attached after load (the effect
+            above); functions/_lib/range.js answers Safari's byte ranges. */}
+        <video
+          ref={heroVideoRef}
+          className="lp-hero-video"
+          muted
+          loop
+          playsInline
+          preload="none"
+          aria-hidden="true"
+          tabIndex={-1}
+        />
         <div className="lp-wrap lp-hero-in">
           <div className="lp-hero-copy">
             <h1 id="lp-h-hero">Nurturing friendship, <span className="lp-keep">one flock at a time.</span></h1>

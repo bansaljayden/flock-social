@@ -10,7 +10,8 @@
     "/terms",
     "/i/*",
     "/relay/public/*",
-    "/api/*"
+    "/api/*",
+    "/bg-city.mp4"
   ],
   "exclude": []
 }
