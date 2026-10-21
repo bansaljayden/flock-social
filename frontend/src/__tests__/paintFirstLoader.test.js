@@ -89,3 +89,38 @@ test('the loader is plain ES5 that any browser parses', () => {
   // It runs before everything else on the page, outside webpack and Babel.
   expect(SOURCE).not.toMatch(/=>|\bconst\b|\blet\b|`|\?\.|\?\?/);
 });
+
+// Until main.js has run, the snapshot is plain HTML: a control that needs
+// JavaScript does nothing. So every way into the app on the four prerendered
+// pages must be an <a> with a real href, which the browser follows on its own.
+// The markup here is the server render of each page, the same tree the build
+// snapshots.
+jest.mock('../website/LiveDemo', () => ({ __esModule: true, default: () => null }));
+
+describe('before the app has loaded, every way into it is a plain link', () => {
+  // eslint-disable-next-line global-require
+  const React = require('react');
+  // eslint-disable-next-line global-require
+  const { renderToStaticMarkup } = require('react-dom/server');
+  const PAGES = {
+    '/': () => require('../website/LandingPage').default, // eslint-disable-line global-require
+    '/how-it-works': () => require('../website/HowItWorksPage').default, // eslint-disable-line global-require
+    '/about': () => require('../website/AboutPage').default, // eslint-disable-line global-require
+    '/research': () => require('../website/ResearchPage').default, // eslint-disable-line global-require
+  };
+  const ENTRY = /^(open flock|start a plan|create your account|sign in)$/i;
+
+  test.each(Object.keys(PAGES))('%s', (route) => {
+    jest.useRealTimers();
+    const host = document.createElement('div');
+    host.innerHTML = renderToStaticMarkup(React.createElement(PAGES[route]()));
+    const named = Array.from(host.querySelectorAll('a, button'))
+      .filter((el) => ENTRY.test(el.textContent.trim()));
+    // Every page has at least the header's "Open Flock".
+    expect(named.length).toBeGreaterThan(0);
+    for (const el of named) {
+      const href = el.getAttribute('href') || '';
+      expect(`${el.tagName} ${el.textContent.trim()} -> ${href}`).toMatch(/^A .+ -> \/(app|signup)\b/);
+    }
+  });
+});
