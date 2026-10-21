@@ -68,7 +68,7 @@ try:
 except ImportError:  # pragma: no cover
     fcntl = None
 
-VERSION = '1.22.0'
+VERSION = '1.23.0'
 
 # ---------------------------------------------------------------------------
 # Config
@@ -335,6 +335,15 @@ TOF_I2C_ADDR = 0x29   # ST's 0x52, as the 7-bit address Linux wants
 TOF_HZ = _cfg_number('TOF_HZ', int, 1, 15, 15)
 # Failed transfers in a row the counter rides through before it restarts.
 TOF_GLITCH_LIMIT = 5
+# The counter's SPI/I2C pin, on a Pi GPIO instead of tied to ground. The
+# carrier pulls that pin high, which puts the sensor in SPI mode, where it
+# answers nothing on I2C; a jumper to ground that loses contact for a moment
+# made the counter vanish from the bus, once for four hours. Driven from a
+# GPIO it is held low firmly, and a short pulse high resets the sensor's I2C
+# interface, which is how a counter that stops answering is brought back.
+# GPIO 25 is pin 22, beside the light's pins 18 and 20. 0 when the pin is
+# still tied to ground.
+TOF_SELECT_GPIO = _cfg_number('TOF_SELECT_GPIO', int, 0, 27, 25)
 TOF_AXIS = 'col' if (CONFIG.get('TOF_AXIS') or '').strip().lower() == 'col' else 'row'
 TOF_FLIP_DIRECTION = bool(_cfg_number('TOF_FLIP_DIRECTION', int, 0, 1, 0))
 IR_ACTIVE_LOW = bool(_cfg_number('IR_ACTIVE_LOW', int, 0, 1, 1))
@@ -4258,7 +4267,9 @@ def tof_available():
     except OSError:
         return False
     try:
-        return Vl53l8cx(bus, tables={}).is_alive()[0]
+        # With its select pin on a GPIO, the sensor sits in SPI mode until
+        # that pin is driven low, so drive it before asking.
+        return tof_answers(bus, TofSelect(TOF_SELECT_GPIO))
     except Exception:
         return False
     finally:
@@ -4403,6 +4414,48 @@ def listen_meter(seconds=None, write=False):
     return 0
 
 
+class TofSelect:
+    """The counter's SPI/I2C pin on a GPIO: held low, pulsed to reset."""
+
+    def __init__(self, pin):
+        self.pin = pin
+        self.gpio = None
+        if pin:
+            try:
+                import RPi.GPIO as GPIO
+                GPIO.setwarnings(False)
+                GPIO.setmode(GPIO.BCM)
+                GPIO.setup(pin, GPIO.OUT, initial=GPIO.LOW)
+                self.gpio = GPIO
+            except Exception as e:
+                logger.warning(f'Doorway counter: cannot drive its select pin on GPIO {pin}: {e}')
+
+    def reset(self):
+        """A pulse high resets the sensor's I2C interface; then I2C again."""
+        if self.gpio is None:
+            return False
+        self.gpio.output(self.pin, self.gpio.HIGH)
+        time.sleep(0.01)
+        self.gpio.output(self.pin, self.gpio.LOW)
+        time.sleep(0.05)
+        return True
+
+
+def tof_answers(bus, select, tries=3):
+    """Whether the counter answers its id, resetting its interface between
+    tries. Fast either way: a sensor that is not there fails in milliseconds,
+    where loading 86 KB of firmware into it took four minutes to fail."""
+    for _ in range(tries):
+        try:
+            if Vl53l8cx(bus, tables={}).is_alive()[0]:
+                return True
+        except OSError:
+            pass
+        if not select.reset():
+            time.sleep(0.2)
+    return False
+
+
 def tof_loop():
     """Count people through the doorway from the VL53L8CX, forever.
 
@@ -4414,6 +4467,7 @@ def tof_loop():
     backoff = 5.0
     with _lock:
         _state['tof_fitted'] = True
+    select = TofSelect(TOF_SELECT_GPIO)
     while not _stop.is_set():
         dev = bus = None
         tracker = CrossingTracker(axis=TOF_AXIS)
@@ -4421,6 +4475,17 @@ def tof_loop():
         streak = [0] * 64
         try:
             bus = I2CBus(TOF_I2C_BUS, TOF_I2C_ADDR)
+            if not tof_answers(bus, select):
+                # Not there at all: a wire, not the sensor. Look again soon
+                # and cheaply rather than backing off to two minutes.
+                bus.close()
+                bus = None
+                log_throttled('tof_silent', logging.ERROR,
+                              'Doorway counter is not answering on I2C. Its SPI/I2C pin '
+                              'must be held low (GPIO 25, pin 22, or ground) and VIN, GND, '
+                              'SDA and SCL must be on; looking again every 5 s')
+                _stop.wait(5.0)
+                continue
             dev = Vl53l8cx(bus)
             started = time.monotonic()
             dev.start(TOF_HZ)
@@ -4494,6 +4559,8 @@ def tof_loop():
                           f'Doorway counter stopped ({e}); retrying in {backoff:.0f}s')
             with _lock:
                 _state['tof_restarts'] += 1
+            # Whatever stopped it, start from a clean interface.
+            select.reset()
         finally:
             with _lock:
                 _state['door_source'] = None
@@ -4524,6 +4591,9 @@ def tof_test(seconds=None):
         print(f'  Cannot open /dev/i2c-{TOF_I2C_BUS}: {e}')
         print('  Turn I2C on with `sudo raspi-config nonint do_i2c 0`, then reboot.')
         return 1
+    if TOF_SELECT_GPIO:
+        print(f'  select pin on GPIO {TOF_SELECT_GPIO} (TOF_SELECT_GPIO), held low for I2C')
+        tof_answers(bus, TofSelect(TOF_SELECT_GPIO), tries=2)
     try:
         tables = load_vl53_tables()
     except (OSError, Vl53l8cxError) as e:

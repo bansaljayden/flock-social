@@ -4525,3 +4525,43 @@ class DoorCounterNoPhantoms(unittest.TestCase):
         text, tone = main.tof_status_line('tof', 0, 0, 120, coverage=9)
         self.assertIn('9 of 64', text)
         self.assertEqual(tone, main.BRAND_AMBER)
+
+
+class DoorCounterSelectPin(unittest.TestCase):
+    """A counter that stops answering is probed cheaply and reset, not loaded."""
+
+    def test_answers_retries_with_a_reset_between(self):
+        calls = []
+
+        class Sel:
+            def reset(self):
+                calls.append('reset')
+                return True
+
+        answers = iter([OSError(121, 'nack'), (True, 0xF0, 0x0C)])
+
+        def alive(self):
+            r = next(answers)
+            if isinstance(r, Exception):
+                raise r
+            return r
+
+        with mock.patch.object(main.Vl53l8cx, 'is_alive', alive):
+            self.assertTrue(main.tof_answers(object(), Sel(), tries=3))
+        self.assertEqual(calls, ['reset'])
+
+    def test_silent_counter_is_reported_fast(self):
+        class Sel:
+            def reset(self):
+                return True
+
+        def alive(self):
+            raise OSError(121, 'nack')
+
+        with mock.patch.object(main.Vl53l8cx, 'is_alive', alive):
+            t0 = time.monotonic()
+            self.assertFalse(main.tof_answers(object(), Sel(), tries=3))
+            self.assertLess(time.monotonic() - t0, 1.0)
+
+    def test_no_gpio_means_no_reset(self):
+        self.assertFalse(main.TofSelect(0).reset())
