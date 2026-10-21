@@ -1,6 +1,7 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "ignoreCommand": "node scripts/vercel-ignore-build.js",
+  "git": { "deploymentEnabled": false },
   "functions": {
     "api/demo-relay.js": { "maxDuration": 30 }
   },
