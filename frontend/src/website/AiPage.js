@@ -23,8 +23,8 @@ import SiteNav, { useSiteMenu } from './SiteNav';
 //     venue's usual week                                          C-055
 //   a venue can set its live number; groups see "the bar says";
 //     it lasts 90 minutes                                         C-131
-//   Owl: written to run on the Pi; generated frames and five
-//     public datasets; not yet in a venue                         C-112, C-113
+//   Owl: runs on the Pi; generated frames and six public
+//     datasets; not yet in a venue        models/NOTICE.md, C-112 (out of date)
 //   Roost's advisor may not type a digit; numbers are filled in
 //     from measured facts                                         C-080, C-105
 // No accuracy figure is quoted: /research has them with their limits.
@@ -176,13 +176,13 @@ export default function AiPage() {
             <h2 id="ai-h-owl">Owl counts people from heat</h2>
             <div className="ai-text">
               <p>
-                Owl is a small neural network, 718,550 weights, written to run on
+                Owl is a small neural network, 718,550 weights, that runs on
                 the Raspberry Pi inside <a href="/flux">Flux</a>, the sensor we’re
                 building. It reads a thermal frame and marks each person as a peak of
                 warmth. The count leaves the sensor. The frame stays behind.
               </p>
               <p>
-                It was trained on generated frames and five public thermal datasets,
+                It was trained on generated frames and six public thermal datasets,
                 then tested on footage it never saw. It hasn’t run in a venue yet.
               </p>
             </div>

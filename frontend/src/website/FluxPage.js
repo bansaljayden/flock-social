@@ -13,10 +13,10 @@ import FluxViewer from './flux/FluxViewer';
 // What the page may say comes from the sensor work's own list (2026-10-21)
 // and the claims ledger (competitions/_shared/claims.md):
 //   Pi 5, Lepton 3.5, a doorway distance sensor, a microphone    C-111
-//   the doorway sensor has never been wired or read               C-111, C-117
-//   noise is a relative level, never decibels                     C-118
-//   Owl: written to run on the Pi, not yet run there or in a venue C-112
-//   Owl's training data: generated frames and five public sets     C-113
+//   the doorway sensor is wired and reading; not tested on real walkers
+//   noise is a relative level from the mic; the dB meter isn't fitted C-118
+//   Owl runs on the Pi; not yet run in a venue                  C-112 (out of date)
+//   Owl's training data: generated frames and six public sets      models/NOTICE.md
 //   counts every 30 s over Wi-Fi or Ethernet; no images, video or
 //   identities leave the box; the case is a design, not printed    sensor work
 // No accuracy figure appears here (they are on /research, with their
@@ -61,11 +61,11 @@ const SENSORS = [
   },
   {
     name: 'Door counter',
-    what: 'A VL53L8CX, which measures distance in an 8 by 8 grid. Pointed down at a doorway, it is meant to count people walking in and out, a few squares each. It hasn’t been wired up yet.',
+    what: 'A VL53L8CX, which measures distance in an 8 by 8 grid. It looks down at a doorway from under the case to count people walking in and out. It’s wired up and reading, but it hasn’t been tested on people walking through a real doorway yet.',
   },
   {
     name: 'Microphone',
-    what: 'A relative noise level for the room. The case also has room for a separate sound meter.',
+    what: 'A microphone gives a rough noise level for the room, louder or quieter, not decibels. The case is designed around a separate decibel meter, which hasn’t been fitted yet.',
   },
   {
     name: 'Screen',
@@ -143,8 +143,8 @@ export default function FluxPage() {
               <div className="fx-measure">
                 <p>
                   Owl is a small neural network we trained to count people from
-                  heat. It’s written to run on the Raspberry Pi inside Flux, so
-                  each frame can be counted on the box that took it.
+                  heat. It runs on the Raspberry Pi inside Flux, so each frame is
+                  counted on the box that took it.
                 </p>
                 <p>
                   It reads one thermal frame at a time and marks each person as a
@@ -152,7 +152,7 @@ export default function FluxPage() {
                   the box.
                 </p>
                 <p>
-                  We trained it on generated thermal frames and five public thermal
+                  We trained it on generated thermal frames and six public thermal
                   datasets, never on anything a Flux unit recorded, then tested it
                   on footage it had never seen. It hasn’t run in a venue yet. The
                   results are on the <a href="/research">research page</a>.
@@ -206,7 +206,7 @@ export default function FluxPage() {
                 <Pic
                   img={IMAGES.exploded}
                   sizes="(min-width: 1160px) 1080px, calc(100vw - 40px)"
-                  alt="Every part of the Flux case pulled apart and named, front to back: the cream sensor pill and Flux wordmark; the printed navy body with the thermal camera, door counter and status light in its chin; the sound meter and 4G antenna to one side; the 7 inch touchscreen; the battery; the 4G board, Active Cooler, Raspberry Pi 5 and power board; and the navy acrylic back sheet with its CHARGE, USB and Ethernet ports."
+                  alt="Every part of the Flux case pulled apart and named, front to back: the cream sensor pill, with the thermal camera and status light behind it, and the Flux wordmark; the printed navy body with the door counter in its chin; the sound meter and 4G antenna to one side; the 7 inch touchscreen; the battery; the 4G board, Active Cooler, Raspberry Pi 5 and power board; and the navy acrylic back sheet with its CHARGE, USB and Ethernet ports."
                 />
               </a>
               <figcaption className="lp-fig-cap">

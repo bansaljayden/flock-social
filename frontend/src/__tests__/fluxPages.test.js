@@ -205,7 +205,10 @@ describe('what the two pages say', () => {
   test('Flux is a prototype, and says what is not done', () => {
     expect(flux).toContain('It’s a prototype.');
     expect(flux).toContain('hasn’t been printed yet');
-    expect(flux).toContain('It hasn’t been wired up yet.');
+    // The sensor session's check of 2026-10-21 against the Pi's live log: the
+    // doorway sensor is wired and reading, but has never counted real people.
+    expect(flux).toContain('It’s wired up and reading, but it hasn’t been tested on people walking through a real doorway yet.');
+    expect(flux).not.toContain('It hasn’t been wired up yet.');
     expect(flux).toContain('It hasn’t run in a venue yet.');
     expect(ai).toContain('It hasn’t run in a venue yet.');
     expect(flux).toContain('A mockup of the planned build');
@@ -215,7 +218,11 @@ describe('what the two pages say', () => {
   test('no accuracy figure, no decibels, no battery life, no working cellular link', () => {
     for (const [name, text] of [['flux', flux], ['ai', ai]]) {
       expect(`${name}: ${(text.match(/\d+(\.\d+)?\s?%/) || [''])[0]}`).toBe(`${name}: `);
-      expect(text).not.toMatch(/decibel|\bdB\b/i);
+      // The microphone gives a relative level and the decibel meter the case
+      // is designed around isn't fitted. The page may say exactly that, but
+      // never print a reading in decibels or say the box measures them.
+      expect(text).not.toMatch(/\d\s?(dB|decibels?)\b/i);
+      expect(text).not.toMatch(/\b(measures|reads|reports|shows|gives) (the |a )?(noise |sound )?(level )?(in )?decibels\b/i);
       expect(text).not.toMatch(/battery life|on (a|one) charge|hours? of battery/i);
       expect(text).not.toMatch(/\b(cellular|LTE|mobile data)\b/i);
       expect(text).not.toMatch(/4G (works|connects|sends|link)/i);
@@ -231,10 +238,20 @@ describe('what the two pages say', () => {
     }
   });
 
-  test('the "106 inputs" and "runs on the sensor" lines stay out of the copy too', () => {
+  test('the "106 inputs" line stays out, and Owl on the Pi keeps its limits', () => {
+    // Owl runs on the Pi inside Flux as of the sensor log of 2026-10-21 (10:21
+    // EDT), so both pages say so; it has not run in a venue, and both say that
+    // too. Its training data is the six public sets in models/NOTICE.md.
+    // "Runs on the sensor", the figure line C-112 ruled out, stays out.
+    expect(flux).toContain('It runs on the Raspberry Pi inside Flux, so each frame is counted on the box that took it.');
+    expect(flux).toContain('The case is designed around a separate decibel meter, which hasn’t been fitted yet.');
     for (const text of [flux, ai]) {
       expect(text).not.toMatch(/\b106\b/);
-      expect(text).not.toMatch(/runs on the (sensor|Pi|Raspberry)/i);
+      expect(text).not.toMatch(/runs on the sensor/i);
+      expect(text).toMatch(/runs on\s+the Raspberry Pi inside/);
+      expect(text).toContain('It hasn’t run in a venue yet.');
+      expect(text).toContain('six public thermal datasets');
+      expect(text).not.toMatch(/five public/);
     }
   });
 
