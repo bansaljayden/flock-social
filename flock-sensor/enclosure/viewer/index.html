@@ -184,12 +184,12 @@
       // cooler, the Pi and power board, and the back sheet with its ports.
       'Sensor pill (cream)': [0, -70, 0], 'Flux wordmark (cream)': [0, -55, -6],
       'PureThermal 3 + Lepton 3.5': [0, 0, 0], 'VL53L8CX door counter': [0, 0, 0], 'LINK light': [0, 0, 0],
-      '7 inch touchscreen': [0, 70, 0], 'Anker A1336 battery': [0, 125, 0],
+      '7 inch touchscreen': [0, 100, 0], 'Anker A1336 battery': [0, 165, 0],
       'Decibel meter': [45, 0, 0], '4G antenna strip': [28, 0, 0],
-      'SIM7600G-H 4G HAT': [0, 165, 0], 'Active Cooler': [0, 190, 0],
-      'Raspberry Pi 5': [0, 215, 0], 'Pi 5 ports': [0, 215, 0], 'RPi5 PD Power board (52Pi)': [0, 215, 0],
-      'Back sheet (navy)': [0, 260, 0], 'Back engraving': [0, 260, 0],
-      'CHARGE port': [0, 260, 0], 'USB port': [0, 260, 0], 'Ethernet port': [0, 260, 0],
+      'SIM7600G-H 4G HAT': [0, 205, 0], 'Active Cooler': [0, 230, 0],
+      'Raspberry Pi 5': [0, 255, 0], 'Pi 5 ports': [0, 255, 0], 'RPi5 PD Power board (52Pi)': [0, 255, 0],
+      'Back sheet (navy)': [0, 300, 0], 'Back engraving': [0, 300, 0],
+      'CHARGE port': [0, 300, 0], 'USB port': [0, 300, 0], 'Ethernet port': [0, 300, 0],
       '1/4-20 mount nut': [0, 0, -25],
     } },
   };
@@ -305,6 +305,14 @@
     s.left = -e; s.right = e; s.top = e; s.bottom = -e; s.near = 0.01; s.far = 3; s.updateProjectionMatrix();
   }
 
+  function toParent(obj, v) {
+    if (!obj.parent || !model) return v;
+    // The model's own pose (on the stand, on the wall) is not part of the offset.
+    const inv = new THREE.Matrix4().copy(model.matrixWorld).invert().multiply(obj.parent.matrixWorld);
+    const m = new THREE.Matrix3().setFromMatrix4(inv).invert();
+    return v.clone().applyMatrix3(m);
+  }
+
   function place() {
     const step = stepIndex >= 0 ? STEPS[stepIndex] : null;
     const hide = (!step && VIEWS[current] && VIEWS[current].hide) || [];
@@ -321,7 +329,9 @@
       const off = step ? (off0 || step.lift[name] || [0, 0, 0])
         : view && view.apart ? (view.apart[name] || [0, 0, 0])
         : (LOOK[name] ? LOOK[name].apart : [0, 0, 0]).map(v => v * explode);
-      p.obj.position.copy(p.base).add(m2t(off));
+      // Offsets are in the box's frame; a part's position is in its parent's,
+      // which the file may have turned (Z up to Y up), so bring them across.
+      p.obj.position.copy(p.base).add(toParent(p.obj, m2t(off)));
     }
     renderList();
   }
