@@ -23,7 +23,7 @@ function Screen({ shot, first, copy }) {
   if (first) {
     return (
       <picture>
-        <source type="image/avif" srcSet="/screenshots/nest-dark-hero.avif" />
+        <source type="image/avif" srcSet="/screenshots/nest-dark-reel.avif" />
         <source type="image/webp" srcSet="/screenshots/nest-dark@2x.webp" />
         <img
           className="lp-shot-hero"
