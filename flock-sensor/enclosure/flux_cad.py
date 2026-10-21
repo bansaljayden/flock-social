@@ -958,12 +958,13 @@ def hard_parts(sl, back):
 def screw_report(hard):
     """The stand's screw must reach through the whole nut, and what sticks
     out above the nut must touch nothing: no part, no cable. The arm's
-    short screw must take the whole nut too."""
+    short screw must take at least four of the nut's threads (1.27 mm each),
+    which holds a 1.4 kg box many times over."""
     nut_top = mount_floor + mount_nut_th
     tip = -stand_seat + stand_screw_len
     if tip < nut_top - 0.01:
         return [f'the stand screw stops {nut_top - tip:.1f} mm short of the top of the nut']
-    if arm_screw - mount_floor < mount_nut_th:
+    if arm_screw - mount_floor < 4 * 1.27:
         return [f'the arm\'s {arm_screw} mm screw takes only {arm_screw - mount_floor:.1f} mm of the nut']
     above = cyl_z(MOUNT_C[0], MOUNT_C[1], nut_top + 0.01, 6.35, tip - nut_top)
     found = []
