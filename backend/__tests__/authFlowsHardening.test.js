@@ -475,7 +475,7 @@ test('signup reveals existence on purpose, and only with the pinned sentence', a
   });
   assert.strictEqual(res.status, 400);
   const body = await res.json();
-  assert.strictEqual(body.error, 'Email already registered');
+  assert.strictEqual(body.error, 'This email already has a Flock account. Sign in instead, and reset the password there if you need to.');
   assert.ok(!/google|apple|oauth/i.test(JSON.stringify(body)), 'never the provider');
 });
 

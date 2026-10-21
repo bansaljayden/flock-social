@@ -1463,7 +1463,7 @@ test('login never reveals that an address is an OAuth account', async () => {
   assert.strictEqual(known.status, unknown.status);
   assert.deepStrictEqual(await known.json(), await unknown.json());
   assert.strictEqual((await (await post('/api/auth/login', { email: 'oauth@gmail.com', password: 'Password1' })).json()).error,
-    'Invalid email or password');
+    'That email and password do not match. Check them and try again, or reset your password.');
 });
 
 test('login on an OAuth account still costs a bcrypt compare, so the clock says nothing', async () => {

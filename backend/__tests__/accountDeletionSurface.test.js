@@ -281,6 +281,9 @@ const EXPORT_OMISSIONS = {
   password: 'a bcrypt hash. Not the password, and useless to the person it belongs to',
   oauth_id: "the provider's subject id, a credential, never leaves the server",
   apple_refresh_token: 'a live credential; it is revoked at deletion, never exported',
+  apple_refresh_client_id: 'which of our two Sign in with Apple clients issued that credential, ' +
+    'kept only so deletion can revoke it as the right one; an internal detail of a value that ' +
+    'is itself never exported',
   token_version: 'a session-revocation counter, an internal mechanism',
   phone_hash: 'a keyed HMAC of the number under a server secret. The number itself is ' +
     'exported as `phone`, so this adds nothing the user gave us',

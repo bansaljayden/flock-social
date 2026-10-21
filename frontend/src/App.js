@@ -6530,13 +6530,30 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // in Messages, by the person sending it, and Flock never learns who.
   const handleInviteFriend = useCallback(async () => {
     const text = `Add me on Flock, my code is ${myFriendCode}. https://apps.apple.com/app/id6781442127`;
-    try {
-      if (navigator.share) await navigator.share({ text });
-      else window.location.href = `sms:&body=${encodeURIComponent(text)}`;
-    } catch {
-      // Closing the share sheet rejects. That is a decision, not a failure.
+    // The share sheet wherever there is one: the app, iPhone Safari, Chrome on
+    // Android. Closing it rejects with an AbortError, which is a decision, not
+    // a failure, so nothing is said. Any other refusal falls through.
+    if (typeof navigator.share === 'function') {
+      try {
+        await navigator.share({ text });
+        return;
+      } catch (e) {
+        if (e?.name === 'AbortError') return;
+      }
     }
-  }, [myFriendCode]);
+    // NO SHARE SHEET MEANS A COMPUTER. This used to hand the invite to an sms:
+    // link, which a desktop browser has no app for, so the button did nothing
+    // at all there (found by the button sweep, 2026-10-20). The clipboard is
+    // the same rung the plan invite in ChatDetail.js and CreateScreen.js falls
+    // to, and a copy that fails still hands over the code, which is the part
+    // a friend needs.
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast('Invite copied. Paste it into a text.');
+    } catch {
+      showToast(`Couldn't copy it. Your code is ${myFriendCode}.`, 'error');
+    }
+  }, [myFriendCode, showToast]);
 
   const startQrScanner = useCallback(async () => {
     const session = qrSessionRef.current + 1;

@@ -187,9 +187,12 @@ export default function CalendarScreen({
           {dayNames.map((d, i) => <div key={i} style={{ textAlign: 'center', fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-tertiary)' }}>{d}</div>)}
         </div>
 
-        {/* Calendar grid */}
+        {/* Calendar grid. Day cells are 42 tall on a 2px gap: a 44pt row
+            pitch, so each cell's .hit44 overlay ends where the next row's
+            begins. At 40 the overlays overlapped and the row below won a tap
+            on the bottom edge of a day. */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '2px', padding: '0 8px 8px', backgroundColor: 'var(--bg-card-solid)', flexShrink: 0 }}>
-          {[...Array(firstDay)].map((_, i) => <div key={`e-${i}`} style={{ height: '40px' }} />)}
+          {[...Array(firstDay)].map((_, i) => <div key={`e-${i}`} style={{ height: '42px' }} />)}
           {[...Array(daysInMonth)].map((_, i) => {
             const day = i + 1;
             const dateStr = `${calendarMonth.getFullYear()}-${String(calendarMonth.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
@@ -198,7 +201,7 @@ export default function CalendarScreen({
             const isTodayDate = isToday(dateStr);
             const isBusy = events.length >= 2;
             return (
-              <button className="hit44" key={day} aria-pressed={isSelected} aria-label={`${day}${events.length > 0 ? ', has plans' : ''}${isTodayDate ? ', today' : ''}`} onClick={() => setSelectedDate(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), day))} style={{ height: '40px', borderRadius: '10px', border: isTodayDate && !isSelected ? `2px solid ${colors.steel}` : 'none', backgroundColor: isSelected ? colors.navyBg : isBusy ? 'var(--icon-bg)' : 'transparent', color: isSelected ? 'white' : isTodayDate ? colors.steel : 'inherit', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
+              <button className="hit44" key={day} aria-pressed={isSelected} aria-label={`${day}${events.length > 0 ? ', has plans' : ''}${isTodayDate ? ', today' : ''}`} onClick={() => setSelectedDate(new Date(calendarMonth.getFullYear(), calendarMonth.getMonth(), day))} style={{ height: '42px', borderRadius: '10px', border: isTodayDate && !isSelected ? `2px solid ${colors.steel}` : 'none', backgroundColor: isSelected ? colors.navyBg : isBusy ? 'var(--icon-bg)' : 'transparent', color: isSelected ? 'white' : isTodayDate ? colors.steel : 'inherit', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
                 <span style={{ fontSize: 'var(--t-meta)', fontWeight: isTodayDate || isSelected ? '500' : '500' }}>{day}</span>
                 {events.length > 0 && (
                   <div style={{ display: 'flex', gap: '2px', marginTop: '2px' }}>

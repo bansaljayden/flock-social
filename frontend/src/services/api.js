@@ -1917,14 +1917,26 @@ export async function googleLogin(credential, dateOfBirth, opts) {
   return data;
 }
 
-// Sign in with Apple (native iOS only). The plugin hands us Apple's signed
-// identityToken; the backend verifies it against Apple's JWKS and issues our
-// JWT (backend/routes/auth.js POST /apple). fullName only arrives on the very
-// FIRST authorization for an Apple ID, so pass it through when present.
+// A single-use nonce for Sign in with Apple on the website (backend POST
+// /api/auth/apple/nonce, ten minutes, spent by the sign-in that uses it). The
+// website's button hands it to Apple's popup and sends it back beside the
+// identity token as opts.nonce below; the server refuses a website token that
+// arrives without one. The iPhone app's native sheet does not use it.
+export async function getAppleNonce() {
+  return request('/api/auth/apple/nonce', { method: 'POST', body: '{}' });
+}
+
+// Sign in with Apple: the iPhone app's native sheet, or Apple's JS popup on
+// flockcorp.com (components/auth/AppleSignInButton.js). Either hands us Apple's
+// signed identityToken; the backend verifies it against Apple's JWKS and issues
+// our JWT (backend/routes/auth.js POST /apple). fullName only arrives on the
+// very FIRST authorization for an Apple ID, so pass it through when present.
+// opts.nonce is the website's nonce (getAppleNonce above).
 export async function appleLogin(identityToken, fullName, authorizationCode, dateOfBirth, opts) {
   const body = { identityToken, ...reconfirmField(opts) };
   if (fullName) body.fullName = fullName;
   if (authorizationCode) body.authorizationCode = authorizationCode;
+  if (opts?.nonce) body.nonce = opts.nonce;
   if (dateOfBirth) body.date_of_birth = dateOfBirth; // required server-side for NEW accounts (age gate)
   // See login() for dobGranularity.
   if (dateOfBirth && opts?.dobGranularity === 'year') body.dob_granularity = 'year';

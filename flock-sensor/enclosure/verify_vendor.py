@@ -89,9 +89,11 @@ def main():
     # Pololu: origin at its corner, sensor side +Z, holes at (10.16, 2.54) and
     # (10.16, 20.32). Laid on its side with the holes' line above the sensor.
     tof = load('tof')
-    # Its X goes up the box, its Y right to left, its sensor side to the front:
-    # a quarter turn about X, then a quarter turn back about Y.
-    placed['VL53L8CX carrier (Pololu)'] = Pos(c.TOF_C[0] + 11.43, c.TOF_FACE + 1.02, c.TOF_C[1] - 6.35) * \
+    # In the counter's own frame (its sensor's face at the origin, looking
+    # along -Y), its X goes up, its Y right to left, its sensor side to the
+    # front: a quarter turn about X, then a quarter turn back about Y. Then
+    # the frame is tilted down into the chin.
+    placed['VL53L8CX carrier (Pololu)'] = c.TOF_LOC * Pos(11.43, c.tof_sensor_h + 1.02, -6.35) * \
         Rot(0, -90, 0) * Rot(90, 0, 0) * tof
 
     # The counter's own view: a cone from the sensor's face, 65 degrees across
@@ -99,7 +101,7 @@ def main():
     # past the front of the box.
     from build123d import Align
     half = math.radians(c.tof_half)
-    tof_fov = Pos(c.TOF_C[0], c.TOF_FACE - c.tof_sensor_h, c.TOF_C[1]) * Rot(90, 0, 0) * \
+    tof_fov = c.TOF_LOC * Rot(90, 0, 0) * \
         Cone(2.0, 40 * math.tan(half) + 2.0, 40, align=(Align.CENTER, Align.CENTER, Align.MIN))
 
     sl = c.sleeve()

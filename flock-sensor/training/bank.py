@@ -28,11 +28,11 @@ import synth  # noqa: E402
 
 
 def _draw(args):
-    seed, n = args
+    seed, n, contact = args
     rng = np.random.default_rng(seed)
     out = []
     for _ in range(n):
-        t, objects = synth.scene_full(rng)
+        t, objects = synth.scene_full(rng, contact=contact)
         out.append((t.astype(np.float16), objects))
     return out
 
@@ -43,11 +43,14 @@ def main(argv=None):
     ap.add_argument('--frames', type=int, default=200000)
     ap.add_argument('--workers', type=int, default=12)
     ap.add_argument('--seed', type=int, default=2026)
+    ap.add_argument('--contact-heat', action='store_true',
+                    help="draw the bank with synth's contact heat (train.py --contact-heat); off, the same "
+                         'frames as before')
     args = ap.parse_args(argv)
     out = Path(args.out).expanduser()
     out.mkdir(parents=True, exist_ok=True)
     chunk = 500
-    jobs = [(args.seed * 100003 + i, min(chunk, args.frames - i * chunk))
+    jobs = [(args.seed * 100003 + i, min(chunk, args.frames - i * chunk), args.contact_heat)
             for i in range((args.frames + chunk - 1) // chunk)]
     frames = np.lib.format.open_memmap(out / 'frames.f16', mode='w+', dtype=np.float16,
                                        shape=(args.frames, synth.ROWS, synth.COLS))

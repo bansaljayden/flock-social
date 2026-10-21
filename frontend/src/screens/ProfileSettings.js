@@ -311,6 +311,8 @@ export default function ProfileSettings({
     // tab itself there is nothing to swipe.
     const backToYou = () => setProfileScreen('main');
     const edgeBack = useEdgeSwipeBack(backToYou);
+    // The Interests field, so Add with nothing typed can send the tap there.
+    const interestInputRef = React.useRef(null);
     if (profileScreen !== 'main') {
       return (
         <div key={`profile-${profileScreen}-container`} ref={edgeBack} className="screen-enter" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
@@ -701,8 +703,18 @@ export default function ProfileSettings({
                     ))}
                   </div>
                   <div style={{ display: 'flex', gap: '8px' }}>
-                    <SearchInputLocal aria-label="Add an interest" type="text" initialValue={newInterest} onCommit={setNewInterest} placeholder="Add an interest..." style={{ ...styles.input, flex: 1 }} autoComplete="off" />
-                    <button className="hit44 glass-btn glass-navy" onClick={(e) => { if (newInterest.trim() && !userInterests.includes(newInterest.trim())) { confirmClick(e); setUserInterests([...userInterests, newInterest.trim()]); setNewInterest(''); }}} style={{ padding: '0 16px', borderRadius: '8px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer', position: 'relative', overflow: 'hidden' }}>Add</button>
+                    <SearchInputLocal inputRef={interestInputRef} aria-label="Add an interest" type="text" initialValue={newInterest} onCommit={setNewInterest} placeholder="Add an interest..." style={{ ...styles.input, flex: 1 }} autoComplete="off" />
+                    {/* Add never does nothing. With the field empty the tap goes
+                        to the field, which opens the keyboard, and the button is
+                        drawn quieter until there is something to add; one that
+                        is already on the list says so. It used to swallow both
+                        silently (the 2026-10-20 button sweep). */}
+                    <button className="hit44 glass-btn glass-navy" onClick={(e) => {
+                      const draft = newInterest.trim();
+                      if (!draft) { interestInputRef.current?.focus(); return; }
+                      if (userInterests.includes(draft)) { showToast(`${draft} is already on your list`, 'info'); return; }
+                      confirmClick(e); setUserInterests([...userInterests, draft]); setNewInterest('');
+                    }} style={{ padding: '0 16px', borderRadius: '8px', border: 'none', background: colors.navyMidBg, color: 'white', fontWeight: '600', fontSize: 'var(--t-body)', cursor: 'pointer', position: 'relative', overflow: 'hidden', opacity: newInterest.trim() ? 1 : 0.55 }}>Add</button>
                   </div>
                 </div>
                 <div style={styles.card}>

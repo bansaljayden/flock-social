@@ -3430,7 +3430,10 @@ async function deleteAccount(req, res) {
       // tell a PROVEN address from an unverified squat (HIGH 1 re-audit). They
       // trail the columns the test harness matches this SELECT on, so the
       // `apple_refresh_token, is_banned, banned_at` substring stays intact.
-      `SELECT id, email, phone, password, oauth_provider, oauth_id, apple_refresh_token, is_banned, banned_at, email_verified, verified_email
+      // apple_refresh_client_id (migration 128) trails them for the same
+      // reason: the Apple revocation below has to be sent as the client that
+      // issued the token, the iPhone app or the website.
+      `SELECT id, email, phone, password, oauth_provider, oauth_id, apple_refresh_token, is_banned, banned_at, email_verified, verified_email, apple_refresh_client_id
          FROM users WHERE id = $1`,
       [req.user.id]
     );
@@ -3495,7 +3498,12 @@ async function deleteAccount(req, res) {
     let appleNotRevoked = false;
     if (u.rows[0].oauth_provider === 'apple' && u.rows[0].apple_refresh_token && appleAuthConfigured()) {
       let revoked = false;
-      try { revoked = await revokeAppleToken(u.rows[0].apple_refresh_token); } catch (_) { revoked = false; }
+      // Sent as the client that issued the token (NULL is the app); Apple
+      // refuses a token revoked as any other client, and the 503 below would
+      // then hold the deletion for ever.
+      try {
+        revoked = await revokeAppleToken(u.rows[0].apple_refresh_token, u.rows[0].apple_refresh_client_id || null);
+      } catch (_) { revoked = false; }
       if (!revoked) {
         return res.status(503).json({ error: "We couldn't disconnect your Apple sign-in just now. Try again in a minute." });
       }
@@ -3763,7 +3771,7 @@ async function deleteAccount(req, res) {
       // Deliberately the same statement text as the fetch above so it stays one
       // query to keep in step, and so the existing harnesses keep matching it.
       const locked = await client.query(
-        `SELECT id, email, phone, password, oauth_provider, oauth_id, apple_refresh_token, is_banned, banned_at, email_verified, verified_email
+        `SELECT id, email, phone, password, oauth_provider, oauth_id, apple_refresh_token, is_banned, banned_at, email_verified, verified_email, apple_refresh_client_id
            FROM users WHERE id = $1 FOR UPDATE`,
         [req.user.id]
       );

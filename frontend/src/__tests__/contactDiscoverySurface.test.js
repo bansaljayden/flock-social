@@ -193,7 +193,10 @@ describe('the half that needs no permission', () => {
     expect(calls.length).toBeGreaterThan(0);
     calls.forEach((c) => expect(c).toBe('handleInviteFriend()'));
     expect(app).toMatch(/navigator\.share/);
-    expect(app).toMatch(/sms:&body=/);
+    // Without a share sheet the invite goes to the clipboard, not an sms:
+    // link, which a desktop browser has nothing to open with
+    // (inviteFriendWithoutShareSheet.test.js runs the handler).
+    expect(app).not.toMatch(/sms:&body=/);
   });
 });
 

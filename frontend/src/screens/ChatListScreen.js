@@ -207,14 +207,18 @@ export default function ChatListScreen({
               <h1 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-display)', fontWeight: '600', color: 'white', margin: 0, letterSpacing: '-0.005em' }}>Messages</h1>
               <p style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.5)', margin: '2px 0 0', fontWeight: '500' }}>{totalConversations} conversation{totalConversations !== 1 ? 's' : ''}</p>
             </div>
-            <div style={{ display: 'flex', gap: '6px' }}>
-              <button aria-label="Reorder your flocks" className="hit44" onClick={() => setEditingFlockList(!editingFlockList)} style={{ width: '36px', height: '36px', borderRadius: '12px', border: editingFlockList ? '2px solid white' : 'none', backgroundColor: editingFlockList ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.12)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.2s' }}>
+            {/* An 8px gap puts the three 36px buttons on a 44pt pitch, so each
+                one's .hit44 overlay stops where its neighbour's starts. At 6px
+                they overlapped and the button to the right won the edge. The
+                two toggles say which state they are in. */}
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button aria-label="Reorder your flocks" aria-pressed={editingFlockList} className="hit44" onClick={() => setEditingFlockList(!editingFlockList)} style={{ width: '36px', height: '36px', borderRadius: '12px', border: editingFlockList ? '2px solid white' : 'none', backgroundColor: editingFlockList ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.12)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.2s' }}>
                 {Icons.gripVertical('white', 16)}
               </button>
               <button aria-label="New message" className="hit44" onClick={() => setShowNewDmModal(true)} style={{ width: '36px', height: '36px', borderRadius: '12px', border: 'none', backgroundColor: 'var(--icon-bg)', color: colors.navy, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.2s', boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}>
                 {Icons.plus(colors.navy, 16)}
               </button>
-              <button aria-label="Search chats" className="hit44" onClick={() => { setShowChatSearch(!showChatSearch); if (!showChatSearch) setTimeout(() => chatListSearchRef.current?.focus(), 50); }} style={{ width: '36px', height: '36px', borderRadius: '12px', border: 'none', backgroundColor: showChatSearch ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.12)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.2s' }}>
+              <button aria-label="Search chats" aria-expanded={showChatSearch} className="hit44" onClick={() => { setShowChatSearch(!showChatSearch); if (!showChatSearch) setTimeout(() => chatListSearchRef.current?.focus(), 50); }} style={{ width: '36px', height: '36px', borderRadius: '12px', border: 'none', backgroundColor: showChatSearch ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.12)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'opacity 0.2s' }}>
                 {Icons.search('white', 16)}
               </button>
             </div>

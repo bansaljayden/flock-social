@@ -198,6 +198,18 @@
   padding: 4px 0;
   margin-bottom: clamp(24px, 5vw, 40px);
   transition: color 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+  position: relative;
+}
+/* 32.8px drawn is still under the 44 a phone wants. A transparent band 6px
+   above and below takes the target to 44.8 without moving the masthead; the
+   margin under the link is wider than the band, so it covers nothing. */
+.pp-back::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -6px;
+  bottom: -6px;
 }
 .pp-back:hover { color: var(--pp-accent); }
 
@@ -379,6 +391,20 @@
        viewport — that is what made the tail of the list unreachable. */
     min-width: 0;
     overflow-wrap: anywhere;
+    position: relative;
+  }
+  /* A chip draws 38 tall (the text inherits .pp's 1.7 line height) and the
+     rows sit 6px apart. A transparent band 5px past the padding box, 4px past
+     the border, takes each chip past 44 for a finger. Two rows' bands meet in
+     the gap and the lower one wins the 2px they share, which still leaves the
+     upper chip 44; neither band reaches the next chip. */
+  .pp-toc a::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: -5px;
+    bottom: -5px;
   }
 }
 

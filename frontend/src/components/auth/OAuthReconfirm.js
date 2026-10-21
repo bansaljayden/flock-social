@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { GoogleOAuthProvider } from '@react-oauth/google';
-import AppleSignInButton from './AppleSignInButton';
-import useGoogleAuth, { isGoogleSignInAvailable, isNativeIos } from './useGoogleAuth';
+import AppleSignInButton, { isAppleSignInAvailable } from './AppleSignInButton';
+import useGoogleAuth, { isGoogleSignInAvailable } from './useGoogleAuth';
 import { GoogleG } from './AuthShell';
 
 /**
@@ -38,10 +38,11 @@ import { GoogleG } from './AuthShell';
  * stopped being a refusal once the iPhone app stopped sending a date of birth,
  * so both are read.
  *
- * WHERE IT CANNOT RUN. Sign in with Apple exists only inside the iOS app, and a
- * native build without the iOS Google client id has no Google sheet. There,
+ * WHERE IT CANNOT RUN. Sign in with Apple runs in the iOS app and on
+ * flockcorp.com (AppleSignInButton.js), and a native build without the iOS
+ * Google client id has no Google sheet. Anywhere else, a preview deploy say,
  * canReconfirmHere() is false and the caller keeps its old sentence, which is
- * still true for that device.
+ * still true for that page.
  *
  * THE GOOGLE PROVIDER. useGoogleAuth calls useGoogleLogin unconditionally, and
  * that needs a GoogleOAuthProvider above it. The app mounts one only over the
@@ -60,7 +61,7 @@ const GOOGLE_CLIENT_ID = process.env.REACT_APP_GOOGLE_CLIENT_ID || '';
 export const PROVIDER_NAMES = { apple: 'Apple', google: 'Google' };
 
 export const canReconfirmHere = (provider) => {
-  if (provider === 'apple') return Boolean(isNativeIos());
+  if (provider === 'apple') return isAppleSignInAvailable();
   if (provider === 'google') return Boolean(isGoogleSignInAvailable());
   return false;
 };

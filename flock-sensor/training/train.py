@@ -206,10 +206,11 @@ def real_frame(real, rng, groups_x3=False):
 
 class Frames(IterableDataset):
     def __init__(self, seed, real_path=None, real_share=0.0, bank_path=None, bank_share=0.0,
-                 stride=4):
+                 stride=4, contact_heat=False):
         self.seed, self.real_path, self.real_share = seed, real_path, real_share
         self.stride = stride
         self.bank_path, self.bank_share = bank_path, bank_share
+        self.contact_heat = contact_heat
 
     def __iter__(self):
         info = torch.utils.data.get_worker_info()
@@ -238,7 +239,8 @@ class Frames(IterableDataset):
                 if rng.random() < 0.5:
                     t, objects = flip(t, objects)
             else:
-                t, objects = synth.scene_full(rng)
+                # Passed per call, not set on synth: held_out draws from the same module with the default.
+                t, objects = synth.scene_full(rng, contact=self.contact_heat)
                 if rng.random() < 0.5:
                     t, objects = flip(t, objects)
             # AAU and SenSys mark bodies, not heads; their head points are
@@ -403,6 +405,10 @@ def main(argv=None):
                     help="a folder from bank.py; its frames stand in for some freshly drawn ones")
     ap.add_argument('--bank-share', type=float, default=0.7,
                     help='of the generated frames, the share read from the bank')
+    ap.add_argument('--contact-heat', action='store_true',
+                    help='freshly drawn training frames get contact heat (synth.contact_heat): seats, cushions and '
+                         'table edges left warm by a body, shaped and cooling like real ones. Off: the owl-4.9 '
+                         'generator. Frames read from a --bank are as bank.py drew them (bank.py --contact-heat)')
     ap.add_argument('--init', default=None,
                     help='a best.pt to start the shared layers from, such as owl-1')
     ap.add_argument('--name', default='owl-2',
@@ -431,7 +437,8 @@ def main(argv=None):
     opt = torch.optim.AdamW(net.parameters(), lr=args.lr, weight_decay=1e-4)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, args.lr, total_steps=args.steps, pct_start=0.05)
     loader = DataLoader(Frames(args.seed, args.real, args.real_share if args.real else 0.0,
-                               args.bank, args.bank_share if args.bank else 0.0, args.stride),
+                               args.bank, args.bank_share if args.bank else 0.0, args.stride,
+                               contact_heat=args.contact_heat),
                         batch_size=args.batch, num_workers=args.workers,
                         persistent_workers=True, prefetch_factor=4)
     val = held_out(1500)

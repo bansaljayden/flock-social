@@ -84,9 +84,12 @@ const bcrypt = requireBackend('bcryptjs');
 // ---------------------------------------------------------------------------
 // Fixed ports. The API port is baked into the CRA build (REACT_APP_API_URL is
 // inlined at build time), so it must be stable for --skip-build to be usable.
+// SHOTS_API_PORT / SHOTS_WEB_PORT (with SHOTS_SCRATCH below) run a second rig
+// beside one that already holds the defaults; sweep-buttons.mjs reads the same
+// two variables.
 // ---------------------------------------------------------------------------
-const API_PORT = 5210;
-const WEB_PORT = 3410;
+const API_PORT = Number(process.env.SHOTS_API_PORT) || 5210;
+const WEB_PORT = Number(process.env.SHOTS_WEB_PORT) || 3410;
 const WEB_ORIGIN = `http://127.0.0.1:${WEB_PORT}`;
 const API_ORIGIN = `http://127.0.0.1:${API_PORT}`;
 
@@ -109,7 +112,9 @@ const OUT_OVERRIDE = opt('out');
 const OUT_DIR = OUT_OVERRIDE ? path.resolve(OUT_OVERRIDE) : path.join(FRONTEND_DIR, 'public', 'screenshots');
 
 // Scratch space OUTSIDE the repo: the CRA build output and the pg data dir.
-const SCRATCH = path.join(os.tmpdir(), 'flock-screenshot-run');
+// A second rig needs its own (SHOTS_SCRATCH), or it rebuilds over the first
+// one's build and stamp.
+const SCRATCH = process.env.SHOTS_SCRATCH ? path.resolve(process.env.SHOTS_SCRATCH) : path.join(os.tmpdir(), 'flock-screenshot-run');
 const BUILD_DIR = path.join(SCRATCH, 'build');
 const BUILD_STAMP = path.join(SCRATCH, 'build.stamp.json');
 

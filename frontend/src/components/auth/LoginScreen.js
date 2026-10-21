@@ -87,6 +87,16 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
   const askAge = asksForAge();
   // What actually gets sent, whichever field is on screen.
   const dobToSend = askYearOnly ? birthYearToDob(birthYear) : dob;
+  // APPLE, GOOGLE, EMAIL, wherever Apple is one of the ways in: the iPhone
+  // app and flockcorp.com. The sign-up screen and the venue portal keep the
+  // same order from the same test, so whichever way somebody signed up with
+  // sits in the same place on every screen (recognition rather than
+  // recall), and the quickest way in, one sheet and an address Apple has
+  // already proved, comes first. Where Apple is not offered (a preview
+  // deploy, a laptop) the form stays on top, as it always was.
+  const providersFirst = isAppleSignInAvailable();
+  // Where the date read-back sits, seen from the provider buttons.
+  const dobCheckWhere = providersFirst ? 'below' : 'above';
 
   // THE APPLE STEP. A new Apple account comes back 403 asking for a year, and
   // the credentials from that sheet can be sent again with it (the reason is
@@ -296,8 +306,8 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
     );
   }
 
-  return (
-    <AuthShell hero={hero}>
+  const form = (
+    <>
       {/* noValidate, for the reason written out at length on the signup form.
           iOS draws no validation bubble, so `required` on the fields below
           turned Sign in into a button that refused the submit and displayed
@@ -436,23 +446,16 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
           {loading ? 'Signing in…' : 'Sign in'}
         </button>
       </form>
+    </>
+  );
 
-      <AuthRule label="or continue with" />
-
-      {/* In the iPhone app a first tap on either provider button creates the
-          account straight away, because the app asks for no date of birth and
-          so is never answered needsDob first. The agreement therefore has to
-          be on screen before those buttons are, from the start, rather than
-          after a needsDob as on the website (see the consent line below).
-          The line's own top margin is for sitting under a button; here it
-          sits over two, so the gap goes below it, as on the sign-up screen. */}
-      {!askAge && <div style={{ marginBottom: '16px' }}>{consent}</div>}
-
+  const googleBlock = isGoogleSignInAvailable() && (
+    <>
       {/* Hidden only when a native build carries no iOS Google client id, i.e.
           when the button could not work by any route. On web it always shows.
           While a new Google account's year is being asked, the Google step
           and its Continue take the button's place (THE GOOGLE STEP above). */}
-      {isGoogleSignInAvailable() && google.step && (
+      {google.step && (
         <AppleYearStep
           idPrefix="login"
           provider="google"
@@ -461,7 +464,7 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
           onChange={(v) => { setBirthYear(v); google.setError(''); }}
         />
       )}
-      {isGoogleSignInAvailable() && (google.step === 'resume' ? (
+      {google.step === 'resume' ? (
         <AppleStepContinue busy={google.busy} busyLabel="Signing in…" onClick={() => google.continueWith(birthYear)} />
       ) : (
         <button
@@ -469,7 +472,7 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
           className="auth-provider"
           onClick={() => {
             if (dobNeedsCheck) {
-              setError('Check the date of birth above before you continue.');
+              setError(`Check the date of birth ${dobCheckWhere} before you continue.`);
               document.getElementById('login-dob-check')?.focus();
               return;
             }
@@ -484,10 +487,15 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
         >
           <GoogleG /> Continue with Google
         </button>
-      ))}
+      )}
+    </>
+  );
 
-      {/* Apple guideline 4.8: Google login is offered above, so the native
-          iOS app must offer Sign in with Apple too. Renders null on web.
+  const appleBlock = (
+    <>
+      {/* Apple guideline 4.8: Google login is offered, so the native iOS app
+          must offer Sign in with Apple too. On the web it draws only on
+          flockcorp.com, through Apple's popup (AppleSignInButton.js).
 
           `dob` and the needsDob branch are not decoration. Apple never sends a
           date of birth, so the server refuses to CREATE an account without one
@@ -518,15 +526,16 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
         dob={needsDob && dobToSend ? dobToSend : undefined}
         dobGranularity={askYearOnly ? 'year' : undefined}
         /* Under the Google step's Continue the stylesheet's provider-to-
-           provider gap does not apply, so the gap is given here. */
-        style={google.step === 'resume' ? { marginTop: '10px' } : undefined}
+           provider gap does not apply, so the gap is given here. Apple
+           sits under Google only where the form comes first. */
+        style={!providersFirst && google.step === 'resume' ? { marginTop: '10px' } : undefined}
         /* Returning false stops the native sheet before it opens. Apple's flow
            is the one path that cannot be re-entered from a confirmation panel,
            because the sheet needs this button's own tap, so the guard has to
            sit in front of it rather than around it. */
         beforeAuthorize={() => {
           if (!dobNeedsCheck) return true;
-          setError('Check the date of birth above before you continue.');
+          setError(`Check the date of birth ${dobCheckWhere} before you continue.`);
           document.getElementById('login-dob-check')?.focus();
           return false;
         }}
@@ -561,6 +570,44 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
         }}
       />
       )}
+    </>
+  );
+
+  return (
+    <AuthShell hero={hero}>
+      {/* THE ORDER (providersFirst above): Apple, Google, then the email
+          form wherever Apple is offered; the form on top and the providers
+          under it where it is not. */}
+      {!providersFirst && (
+        <>
+          {form}
+          <AuthRule label="or continue with" />
+        </>
+      )}
+
+      {/* In the iPhone app a first tap on either provider button creates the
+          account straight away, because the app asks for no date of birth and
+          so is never answered needsDob first. The agreement therefore has to
+          be on screen before those buttons are, from the start, rather than
+          after a needsDob as on the website (see the consent line below).
+          The line's own top margin is for sitting under a button; here it
+          sits over two, so the gap goes below it, as on the sign-up screen. */}
+      {!askAge && <div style={{ marginBottom: '16px' }}>{consent}</div>}
+
+      {providersFirst ? (
+        <>
+          {appleBlock}
+          {/* Wrapped for its gap: under the Apple button the stylesheet's
+              .auth-provider + .auth-provider rule would give one, but under
+              the Apple step's Continue nothing would. */}
+          {googleBlock && <div style={{ marginTop: '10px' }}>{googleBlock}</div>}
+        </>
+      ) : (
+        <>
+          {googleBlock}
+          {appleBlock}
+        </>
+      )}
 
       {/* Guideline 1.2 / EULA consent, worded exactly as SignupScreen words
           it. The Google and Apple buttons above CREATE an account for anyone
@@ -573,18 +620,42 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
           on the website; the iPhone app shows the line above the buttons. */}
       {askAge && needsDob && consent}
 
+      {/* Under the providers, the email form; while a provider's year step
+          is open it steps aside, as on the sign-up screen: one year field on
+          screen and one thing to tap (fewer choices at the moment of
+          deciding). Leaving drops the held sign-in, and a later provider
+          tap opens a new sheet. */}
+      {providersFirst && (stepOpen ? (
+        <button
+          type="button"
+          className="auth-textbtn"
+          onClick={() => { leaveSteps(); setError(''); }}
+          style={{ display: 'block', margin: '16px auto 0' }}
+        >
+          Sign in with email instead
+        </button>
+      ) : (
+        <>
+          <AuthRule label="or sign in with email" />
+          {form}
+        </>
+      ))}
+
       {/* The server will not say which addresses belong to Google or Apple
           accounts, because answering that turns login into an account
           enumeration oracle. So the hint lives here instead, standing, for
           everyone: a returning OAuth user who types their email and password
-          gets a password failure they cannot otherwise explain. The Apple
-          button exists only in the iPhone app, so the website names the
-          place an Apple account can sign in instead of a button it lacks. */}
-      <p className="auth-hint" style={{ textAlign: 'center', marginTop: '12px' }}>
-        {isAppleSignInAvailable()
-          ? 'Signed up with Google or Apple? Use that button.'
-          : 'Signed up with Google? Use that button. Signed up with Apple? Use the iPhone app.'}
-      </p>
+          gets a password failure they cannot otherwise explain. It names
+          only the buttons this screen has. Apple is one of them in the
+          iPhone app and on flockcorp.com, and an Apple ID made on either
+          signs in on the other as the same account. */}
+      {(!providersFirst || !stepOpen) && (
+        <p className="auth-hint" style={{ textAlign: 'center', marginTop: '12px' }}>
+          {isAppleSignInAvailable()
+            ? 'Signed up with Google or Apple? Use that button.'
+            : 'Signed up with Google? Use that button.'}
+        </p>
+      )}
 
       <p className="auth-foot">
         New here?
