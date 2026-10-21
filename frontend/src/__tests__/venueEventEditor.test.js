@@ -173,8 +173,18 @@ describe('the dashboard around the form', () => {
     expect(DASH).not.toContain("[event.date, event.time].filter(Boolean).join(' at ')");
   });
 
-  test('the header is the venue\'s name alone', () => {
+  test('the header is the venue\'s name alone, and the scripts wait on its test id, not its words', () => {
     expect(DASH).not.toContain('Welcome, {venueData.name}');
     expect(DASH).toContain("{venueData.name || 'Your venue'}</h1>");
+    expect(DASH).toContain('<h1 data-testid="venue-dashboard-title"');
+    // The screenshot rig and the film recorder used to wait for "Welcome,",
+    // which this header no longer says, so every owner capture timed out.
+    const scripts = path.join(SRC, '..', 'scripts');
+    for (const name of fs.readdirSync(scripts).filter((f) => /\.(mjs|js)$/.test(f))) {
+      const text = fs.readFileSync(path.join(scripts, name), 'utf8');
+      expect(`${name}: ${/getByText\('Welcome,'\)/.test(text)}`).toBe(`${name}: false`);
+    }
+    const rig = fs.readFileSync(path.join(scripts, 'capture-screenshots.mjs'), 'utf8');
+    expect((rig.match(/getByTestId\('venue-dashboard-title'\)/g) || []).length).toBeGreaterThanOrEqual(4);
   });
 });

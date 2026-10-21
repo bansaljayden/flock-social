@@ -1241,7 +1241,7 @@ const DRIVERS = {
   async 'venue-analytics'(page) {
     // Same owner context as venue-dash. Analytics is the tab the dashboard
     // opens on, so the click is belt and braces for a future default change.
-    await page.getByText('Welcome,').first().waitFor({ timeout: 20000 });
+    await page.getByTestId('venue-dashboard-title').waitFor({ timeout: 20000 });
     // The owner context never passes through waitAppReady (no tab bar to wait
     // for), so the consent bar has to be declined here as well, or it sits at
     // the bottom of every owner capture.
@@ -1253,7 +1253,7 @@ const DRIVERS = {
   async 'venue-events'(page) {
     // Same owner context as venue-dash. The seeded demo flock is pointed at
     // the demo venue, so the feed has a real row to draw.
-    await page.getByText('Welcome,').first().waitFor({ timeout: 20000 });
+    await page.getByTestId('venue-dashboard-title').waitFor({ timeout: 20000 });
     await declineAnalyticsAsk(page);
     const eventsTab = page.getByRole('button', { name: 'Events' }).first();
     if (await eventsTab.count()) await eventsTab.click();
@@ -1262,7 +1262,7 @@ const DRIVERS = {
   },
   async 'venue-promos'(page) {
     // Same owner context as venue-dash; the seeded venue carries one promotion.
-    await page.getByText('Welcome,').first().waitFor({ timeout: 20000 });
+    await page.getByTestId('venue-dashboard-title').waitFor({ timeout: 20000 });
     await declineAnalyticsAsk(page);
     const promosTab = page.getByRole('button', { name: 'Promotions' }).first();
     if (await promosTab.count()) await promosTab.click();
@@ -1270,7 +1270,7 @@ const DRIVERS = {
   },
   async 'venue-dash'(page) {
     // Separate context: owner token + venue mode + ?venue=true deep link.
-    await page.getByText('Welcome,').first().waitFor({ timeout: 20000 });
+    await page.getByTestId('venue-dashboard-title').waitFor({ timeout: 20000 });
     await declineAnalyticsAsk(page);
     const reviewsTab = page.getByRole('button', { name: 'Reviews' }).first();
     if (await reviewsTab.count()) await reviewsTab.click();
@@ -1498,8 +1498,8 @@ async function captureAll(dbUrl, seeded) {
         /* OWNER_SCREENS, not a hardcoded 'venue-dash'. This excluded that one id
            by name, so adding venue-analytics silently put it in the CONSUMER
            context: logged in as an ordinary user, no ?venue=true, and a
-           twenty-second wait for a "Welcome," that a regular account never
-           sees. One list, used by both filters, so a third owner screen cannot
+           twenty-second wait for an owner's dashboard header that a regular
+           account never sees. One list, used by both filters, so a third owner screen cannot
            repeat it. GUEST_SCREENS is the same rule for the session-less
            context below. */
         const consumerScreens = screens.filter((s) => !OWNER_SCREENS.has(s.id) && !GUEST_SCREENS.has(s.id) && wantsSize(s, size));

@@ -141,7 +141,7 @@ async function openApp(page, { venue = false, chooser = false } = {}) {
     return;
   }
   if (venue) {
-    await page.getByText('Welcome,').first().waitFor({ timeout: 40_000 });
+    await page.getByTestId('venue-dashboard-title').waitFor({ timeout: 40_000 });
   } else {
     await page.getByRole('navigation', { name: 'Main' }).waitFor({ timeout: 40_000 });
   }
@@ -446,7 +446,7 @@ const BEATS = {
       await hold(page, 2600);
       await still(page, 'venue-1-chooser');
       await tap(page, page.getByRole('button', { name: /Venue Dashboard/i }).first(), { after: 1200 });
-      await page.getByText('Welcome,').first().waitFor({ timeout: 40_000 });
+      await page.getByTestId('venue-dashboard-title').waitFor({ timeout: 40_000 });
       const no = page.locator('.cb-wrap .cb-btn', { hasText: 'No thanks' });
       if (await no.count()) await no.first().click();
       await hold(page, 3400);

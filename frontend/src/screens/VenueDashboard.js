@@ -1067,8 +1067,10 @@ export default function VenueDashboard({
             <div style={{ flex: 1 }}>
               {/* The venue's name and nothing before it. "Welcome," sat in
                   front of it on every visit, and it is the owner's own
-                  dashboard, so the name is the whole header. */}
-              <h1 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'white', margin: 0 }}>{venueData.name || 'Your venue'}</h1>
+                  dashboard, so the name is the whole header. The test id is
+                  what the screenshot rig and the film recorder wait on
+                  (frontend/scripts), so neither depends on header wording. */}
+              <h1 data-testid="venue-dashboard-title" style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'white', margin: 0 }}>{venueData.name || 'Your venue'}</h1>
               <p style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.7)', margin: 0 }}>{venueProfile?.category || venueOnboardingData.category || 'Venue Dashboard'}{(venueProfile?.location || venueOnboardingData.location) ? ` · ${venueProfile?.location || venueOnboardingData.location}` : ''}</p>
             </div>
           </div>
