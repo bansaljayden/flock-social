@@ -534,8 +534,8 @@ export default function LandingPage() {
           each thing they name, are in landingAnnotations.js. */}
       <section className="lp-sec lp-sec-paper lp-beat-band" aria-labelledby="lp-h-beat-1">
         <div className="lp-wrap">
-          {/* The invitation: a wren holding the folded note while two
-              sparrows lean in. */}
+          {/* The invitation: a wren holding the folded note while a sparrow
+              and a robin lean in. */}
           <img
             className="lp-art lp-beat-scene is-invite"
             src="/art/step-start-480.webp"
@@ -609,9 +609,9 @@ export default function LandingPage() {
             </p>
           </div>
           {/* All five said yes, so the flock heads out together, flying off
-              to the right under the words. Five beige sparrows and two wrens:
-              on navy the wrens hold by their white breasts and the pale edges
-              of their wings. */}
+              to the right under the words. Three beige sparrows, two robins
+              and two wrens: on navy the wrens hold by their white breasts and
+              the pale edges of their wings, the robins by their orange ones. */}
           <img
             className="lp-art lp-beat-scene is-flight"
             src="/art/step-go-480.webp"

@@ -116,8 +116,9 @@ function PitchVideo() {
 // 2026-10-21). Each `shot` is a real capture of the web app against seeded
 // demo data (scripts/capture-screenshots.mjs, 2026-10-21), the same Friday
 // Night Crew flock the home page follows, in the dark theme every capture on
-// the site uses. The navy bands' vignettes are sparrows: the beige birds read
-// on navy, the navy wrens would vanish into it. Paths are written out in full
+// the site uses. The navy bands' vignettes are the robin and a sparrow: their
+// pale and orange breasts read on navy, where the navy wrens would vanish.
+// Paths are written out in full
 // so publicScreenshotsShipped.test.js can see what ships.
 const STEPS = [
   {
