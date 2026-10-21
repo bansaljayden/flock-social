@@ -126,9 +126,12 @@
   background: var(--fx-ground);
   border: 1px solid var(--rule);
 }
-/* The exploded render's own shape from here up, so the first frame of the
-   model and the render under it line up. */
-@media (min-width: 600px) { .fx-stage { aspect-ratio: 3 / 2; } }
+/* From 600px the stage is wider than the 3:2 renders, which left empty bands
+   above and below the model and pushed the heading off the screen with it
+   (2026-10-21, his ask). The renders fill it and are cropped top and bottom,
+   and fluxScene.js crops the 3D view the same way, so the first frame of the
+   model and the still under it still line up. */
+@media (min-width: 600px) { .fx-stage { aspect-ratio: 2 / 1; } }
 .fx-still {
   position: absolute;
   inset: 0;
@@ -138,6 +141,7 @@
 }
 .fx-still.is-on { opacity: 1; }
 .fx-still img { width: 100%; height: 100%; object-fit: contain; }
+@media (min-width: 600px) { .fx-still img { object-fit: cover; } }
 .fx-canvas {
   position: absolute;
   inset: 0;

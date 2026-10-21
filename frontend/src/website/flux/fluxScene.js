@@ -20,6 +20,8 @@ import { BOX, LOOK, cableLook, isCable, labelFor, markAt, partAt, poseAt, viewAt
 
 // The site's --steel-lift, the colour a part takes on while its step plays.
 const MARK = new Color(0x6d9ac3).convertSRGBToLinear();
+// The shape of the frame the stills were rendered in; a wider stage crops it.
+const FRAME_ASPECT = 1.5;
 
 // The loader rewrites node names (spaces to underscores, some punctuation
 // dropped) and keeps the original in userData.name; match on either.
@@ -139,15 +141,47 @@ export function createFluxScene(canvas, { onPick, onTurn } = {}) {
     radius = box.getBoundingSphere(new Sphere()).radius;
 
     const view = viewAt(position);
-    camera.fov = view.fov;
-    camera.updateProjectionMatrix();
+    const half = MathUtils.degToRad(view.fov) / 2;
     const fit = Math.max(Math.hypot(BOX.w, BOX.h, BOX.d) * scale * 0.62, radius * 0.92);
-    const distance = fit / Math.sin(MathUtils.degToRad(camera.fov) / 2) * (camera.aspect < 1 ? 1.35 : 1) * view.zoom;
+    const distance = fit / Math.sin(half) * (camera.aspect < 1 ? 1.35 : 1) * view.zoom;
     const dir = turned
       ? camera.position.clone().sub(controls.target).normalize()
       : m2t(view.dir).normalize();
     goalTarget.copy(center);
     goalPosition.copy(center).addScaledVector(dir, distance);
+
+    // The framing is worked out for the 3:2 frame the stills were rendered in.
+    // A stage wider than that (FluxPage.css, 2026-10-21: the empty bands above
+    // and below had to go) keeps the 3:2 frame's distance and side-to-side
+    // view and narrows only the vertical one, the same picture cropped top and
+    // bottom, but never closer than the model's own height allows: as the
+    // parts come together the box stands taller, so each step crops only as
+    // far as leaves it a margin, measured on every part's box from where the
+    // camera is going.
+    const crop = camera.aspect > FRAME_ASPECT ? FRAME_ASPECT / camera.aspect : 1;
+    const forward = new Vector3().subVectors(center, goalPosition).normalize();
+    const side = new Vector3().crossVectors(forward, camera.up).normalize();
+    const upward = new Vector3().crossVectors(side, forward);
+    const partBox = new Box3();
+    const corner = new Vector3();
+    let tall = 0;
+    for (const p of Object.values(parts)) {
+      if (!p.obj.visible) continue;
+      partBox.setFromObject(p.obj);
+      if (partBox.isEmpty()) continue;
+      for (let i = 0; i < 8; i += 1) {
+        corner.set(
+          i & 1 ? partBox.max.x : partBox.min.x,
+          i & 2 ? partBox.max.y : partBox.min.y,
+          i & 4 ? partBox.max.z : partBox.min.z,
+        ).sub(goalPosition);
+        const depth = corner.dot(forward);
+        if (depth > 0) tall = Math.max(tall, Math.atan(Math.abs(corner.dot(upward)) / depth));
+      }
+    }
+    const cropped = Math.atan(Math.tan(half) * crop);
+    camera.fov = MathUtils.radToDeg(2 * Math.min(half, Math.max(cropped, tall * 1.08)));
+    camera.updateProjectionMatrix();
 
     // The light and its shadow follow what is on show.
     key.position.copy(center).add(m2t([60, -140, 220]).multiplyScalar(4));
