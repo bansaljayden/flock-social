@@ -22,7 +22,7 @@ import FluxViewer from './flux/FluxViewer';
 // No accuracy figure appears here (they are on /research, with their
 // limits), nothing says the 4G board works, and nothing gives a battery life.
 
-const DESCRIPTION = 'Flux is the people counter Flock is building for venues: what it measures, how its Owl model counts from heat, and the case, part by part.';
+const DESCRIPTION = 'Flux is the people counter Flock is building for venues. See what is inside it, how its Owl model counts people from heat, where it mounts and every part of the case.';
 
 // Every picture on the page, at the two widths each file was written at
 // (scripts/flux_assets.py; the mockup and the figures from /ai by hand).
@@ -233,7 +233,7 @@ export default function FluxPage() {
           <div className="lp-wrap">
             <h2 id="fx-h-build">Put it together</h2>
             <p className="lp-lead fx-sub">
-              One bar runs from every part apart to the finished box.
+              Slide the bar and the parts come together into the finished box.
             </p>
             <FluxViewer />
           </div>
@@ -243,8 +243,8 @@ export default function FluxPage() {
           <div className="lp-wrap">
             <h2 id="fx-h-inside">With the back off</h2>
             <p className="lp-lead fx-sub">
-              The back of the screen, the battery on its end, and the Raspberry Pi
-              with its cooler, cabled to the ports.
+              The battery stands on its end behind the screen, and the Raspberry
+              Pi and its cooler are cabled to the ports.
             </p>
             <div className="fx-inside">
               <figure className="fx-figure">
@@ -264,7 +264,7 @@ export default function FluxPage() {
                   <Pic
                     img={IMAGES.inside}
                     sizes="(min-width: 960px) 360px, calc(100vw - 40px)"
-                    alt="The same view in the CAD: the Flux body from behind with the back sheet off, showing the screen, battery, Raspberry Pi and cables."
+                    alt="The same view in the CAD: the Flux body from behind with the back sheet off, with the screen, battery, Raspberry Pi and cables in view."
                   />
                 </div>
                 <figcaption className="lp-fig-cap">The same view in the CAD.</figcaption>

@@ -220,7 +220,7 @@ function allowDemo(req) {
   return true;
 }
 
-const DEMO_BUSY_MSG = 'The live demo is taking a breather. The full thing is in the app.';
+const DEMO_BUSY_MSG = 'The live demo cannot answer right now. The full thing is in the app.';
 
 // EVERY UPSTREAM THIS FILE REACHES IS SPENT WITH NOBODY BEHIND IT.
 //

@@ -156,7 +156,7 @@ function ProOfferCard({ offer }) {
       <ul className="lp-list">
         <li>Everything in Free</li>
         <li>150 Birdie messages a day instead of 10</li>
-        <li>Crowd levels and forecasts for every venue, not just 30 a month</li>
+        <li>Crowd levels and forecasts for every venue (Free covers 30 a month)</li>
         <li>A heads-up push before your spot gets packed</li>
       </ul>
       <a className="lp-btn lp-btn-navy" href="/pro">Get Flock Pro</a>
@@ -548,7 +548,7 @@ export default function LandingPage() {
         <div className="lp-wrap">
           <h2 id="lp-h-how" className="lp-friday-title">Everyone said yes. Then the chat went quiet.</h2>
           <p className="lp-lead lp-friday-lead">
-            Here’s that same Friday in Flock: five steps, and nobody has to carry it.
+            The same Friday in Flock takes five steps, and nobody has to carry it.
           </p>
 
           {/* The dead plan as it goes today: a group chat on an iPad (the maintainer,
@@ -761,7 +761,7 @@ export default function LandingPage() {
             <h2 id="lp-h-safety">If something goes wrong, two taps tell your people where you are.</h2>
             <p className="lp-lead">
               Sharing your live location with the flock is optional, and off until
-              you turn it on. SOS is separate. Here’s exactly what it does.
+              you turn it on. SOS is a separate button.
             </p>
           </div>
           <div className="lp-safety-body">

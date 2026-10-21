@@ -1485,7 +1485,7 @@ export default function GuestInvite() {
       // up on it.
       stalled: {
         title: 'That took too long',
-        lead: 'The request went out and nothing came back in time. In a crowded room that is usually the network rather than the link.',
+        lead: 'The request went out and nothing came back in time. In a crowded room, the network is usually what failed.',
         help: 'Try it again. It normally lands on the second go.',
         retry: true,
       },

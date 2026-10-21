@@ -106,7 +106,9 @@ describe('ProPage never hardcodes a price', () => {
     const { container } = render(<ProPage />);
     await waitFor(() => expect(container.textContent).toContain('$3.99 USD a month'));
     expect(container.textContent).toContain('$29.99 USD a year, $2.50 a month. 37% less than 12 months of monthly.');
-    expect(container.textContent).toContain('Best value');
+    // No "Best value" badge (2026-10-21, AI-writing pass): the saving is
+    // already stated as a number on the same line, which is the honest form.
+    expect(container.textContent).not.toMatch(/best value/i);
     expect(container.textContent).not.toMatch(/most popular/i);
     expect(getProStatus).not.toHaveBeenCalled();
     const link = screen.getByRole('link', { name: 'Sign in to continue' });

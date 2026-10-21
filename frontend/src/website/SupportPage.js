@@ -40,18 +40,18 @@ const FAQ = [
   },
   {
     q: 'Why am I not getting Flock notifications?',
-    a: 'Open Settings → Notifications → Flock and confirm Allow Notifications is on. On iOS, '
+    a: 'Open Settings, then Notifications, then Flock, and confirm Allow Notifications is on. On iOS, '
       + "also check that Focus modes aren't silencing them. Inside the app, go to You (the last tab) and "
       + 'check that Push Notifications shows as enabled.',
   },
   {
     q: "Why isn't the map showing my location?",
-    a: 'Settings → Privacy & Security → Location Services → Flock should be set to "While '
+    a: 'In Settings, go to Privacy & Security, then Location Services, then Flock, and set it to "While '
       + 'Using the App." If it\'s set to Never, the Discover map won\'t be able to center on you.',
   },
   {
     q: 'How do I delete my account?',
-    a: "Open Flock and go to You → Delete account, then type DELETE to confirm. You'll "
+    a: "Open Flock, go to the You tab, tap Delete account, then type DELETE to confirm. You'll "
       + 'also enter your password (or sign in again if you use Apple or Google) so nobody else '
       + 'can delete your account from a borrowed phone. This immediately and permanently '
       + 'removes your account, messages, flocks you created, friend connections, and personal '
@@ -66,7 +66,7 @@ const FAQ = [
   },
   {
     q: 'What happens when I tap SOS?',
-    a: 'Your trusted contacts (You → Safety → Trusted Contacts) get an email with the time '
+    a: 'Your trusted contacts (the You tab, then Safety, then Trusted Contacts) get an email with the time '
       + 'and, when your phone can find it, your location. People who, like you, have accepted '
       + 'a confirmed plan that starts within twelve hours of the alert also get an alert in the '
       + 'app, with the same location when there is one, unless they are banned or one of you '
@@ -152,20 +152,20 @@ export default function SupportPage() {
 
         <h3>Why am I not getting Flock notifications?</h3>
         <p>
-          Open Settings → Notifications → Flock and confirm Allow Notifications is on. On iOS,
+          Open Settings, then Notifications, then Flock, and confirm Allow Notifications is on. On iOS,
           also check that Focus modes aren't silencing them. Inside the app, go to You (the last tab) and
           check that Push Notifications shows as enabled.
         </p>
 
         <h3>Why isn't the map showing my location?</h3>
         <p>
-          Settings → Privacy & Security → Location Services → Flock should be set to "While
+          In Settings, go to Privacy & Security, then Location Services, then Flock, and set it to "While
           Using the App." If it's set to Never, the Discover map won't be able to center on you.
         </p>
 
         <h3>How do I delete my account?</h3>
         <p>
-          Open Flock and go to You → Delete account, then type DELETE to confirm. You'll
+          Open Flock, go to the You tab, tap Delete account, then type DELETE to confirm. You'll
           also enter your password (or sign in again if you use Apple or Google) so nobody else
           can delete your account from a borrowed phone. This immediately and permanently
           removes your account, messages, flocks you created, friend connections, and personal
@@ -182,7 +182,7 @@ export default function SupportPage() {
 
         <h3>What happens when I tap SOS?</h3>
         <p>
-          Your trusted contacts (You → Safety → Trusted Contacts) get an email with the time
+          Your trusted contacts (the You tab, then Safety, then Trusted Contacts) get an email with the time
           and, when your phone can find it, your location. People who, like you, have accepted
           a confirmed plan that starts within twelve hours of the alert also get an alert in the
           app, with the same location when there is one, unless they are banned or one of you

@@ -1507,7 +1507,7 @@ html:has(.lp) body { overflow-x: clip; }
 }
 .lp-sec-navy .lpd-locate { color: var(--cream-2); border-color: var(--rule-cream); }
 .lp-sec-navy .lpd-locate:hover { color: var(--cream); border-color: var(--cream); }
-/* Scoped to the control row so the "Get the full picture" button inside the
+/* Scoped to the control row so the hour-by-hour forecast button inside the
    white card keeps its navy fill. */
 .lp-sec-navy .lpd-controls .lp-btn-navy { background: var(--cream); color: var(--navy); }
 .lp-sec-navy .lpd-controls .lp-btn-navy:hover { background: var(--cream-hi); }

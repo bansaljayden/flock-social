@@ -67,7 +67,7 @@ const SITE_URL = 'https://www.flockcorp.com';
    served as an X-Robots-Tag header from frontend/vercel.json, which works for
    the crawlers that never run JavaScript as well as the ones that do. */
 const TITLE = 'Flock';
-const DESCRIPTION = 'Flock is a free app where a group votes on where to go out, checks how busy it is, and splits the bill after.';
+const DESCRIPTION = 'Flock is a free app for deciding, as a group, where to go out. Everyone votes, and nobody says their budget out loud.';
 
 /* ── WHICH TAG WAS TAPPED ───────────────────────────────────────────────────
    ?s= is the only thing that tells the table stand apart from the cards, and
@@ -203,9 +203,9 @@ export default function TapPage() {
         <h1>Flock is how a group decides where to go out.</h1>
 
         <p className="tap-lead">
-          Everyone votes on the place, budgets stay private, and the bill
-          splits after. It is free, and it runs in this browser, so there is
-          nothing to download.
+          Everyone votes on the place, and nobody has to say their budget out
+          loud. When the night is over, Flock splits the bill. It is free and
+          runs in this browser, so there is nothing to download.
         </p>
 
         <div className="tap-actions">

@@ -100,20 +100,6 @@
   .pro-plan input { color-scheme: dark; }
 }
 
-/* The yearly plan's label. A word, not a claim: never "Most popular". */
-.pro .pro-tag {
-  display: inline-block;
-  margin-left: 8px;
-  padding: 0 8px;
-  border: 1px solid var(--pp-accent);
-  border-radius: 999px;
-  color: var(--pp-accent);
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1.6;
-  vertical-align: 1px;
-}
-
 /* Cancel, or take a cancel back: the line and its buttons, stacked with room. */
 .pro .pro-renewal {
   display: flex;

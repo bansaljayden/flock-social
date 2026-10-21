@@ -187,7 +187,7 @@ function demoError(message, { retry = true } = {}) {
 function httpError(status, data) {
   const fromServer = typeof data?.error === 'string' && data.error.trim() ? data.error.trim() : null;
   if (status === 429 || status === 503) {
-    return demoError(fromServer || 'The live demo is taking a breather. The full thing is in the app.', { retry: false });
+    return demoError(fromServer || 'The live demo cannot answer right now. The full thing is in the app.', { retry: false });
   }
   if (status === 404) return demoError("That spot is not in Google's index anymore. Pick another one.", { retry: false });
   if (status === 400) return demoError('That search did not come through. Try a different one.', { retry: false });
@@ -775,7 +775,7 @@ export default function LiveDemo() {
   // Visibility is tracked separately, and only to decide whether the minute
   // loop is worth spending: the demo has a per-visitor hourly budget, and
   // burning it on a section 3000px up the page is how a real visitor ends up
-  // reading the "taking a breather" message.
+  // reading the demo-busy message.
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage || typeof IntersectionObserver === 'undefined') {
@@ -863,7 +863,7 @@ export default function LiveDemo() {
   // (hour, weather); nothing is invented between real updates. Off-screen and
   // background tabs are skipped: the demo has a per-visitor hourly budget and
   // spending it on a section nobody is looking at is how a real visitor gets
-  // the "taking a breather" message.
+  // the demo-busy message.
   useEffect(() => {
     const refresh = setInterval(() => {
       if (document.visibilityState !== 'visible' || !inViewRef.current) return;
@@ -940,7 +940,7 @@ export default function LiveDemo() {
         // This used to set the error state's message without setting the error
         // state, so a denied prompt printed nothing anywhere on the page.
         setNotice(err && err.code === 1
-          ? 'No location, no problem. Search a city or a kind of place instead.'
+          ? 'You kept your location private. Search a city or a kind of place instead.'
           : 'Could not get your location. Search a city or a kind of place instead.');
       },
       { timeout: 10_000, maximumAge: 300_000 }
@@ -1368,7 +1368,7 @@ export default function LiveDemo() {
                   {comparable > 1 && `${note ? ' ' : ''}${mapState === 'ready' ? 'Tap another pin to compare.' : 'Pick another spot to compare.'}`}
                 </p>
               )}
-              <a className="lp-btn lp-btn-navy lpd-cta" href="#get">Get the full picture in Flock</a>
+              <a className="lp-btn lp-btn-navy lpd-cta" href="#get">See the hour-by-hour forecast in Flock</a>
             </>
           )}
 

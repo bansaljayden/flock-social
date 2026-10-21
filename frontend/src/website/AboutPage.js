@@ -35,14 +35,14 @@ const PEOPLE = [
 const HOLDS = [
   { what: 'Your budget stays yours.', how: 'The group sees one rounded-down number. Nobody else sees what you typed.' },
   { what: 'No ads and no feed.', how: 'There is nothing to scroll and nobody to follow.' },
-  { what: 'Safety without tracking.', how: 'Live location is off until you share it, and two-tap SOS reaches the trusted contacts you picked.' },
+  { what: 'Location stays off until you share it.', how: 'Nothing tracks you in the background, and two-tap SOS reaches the trusted contacts you picked.' },
   { what: 'The sensor sends a number.', how: 'Flux sends how many people are in the room. Nothing else leaves it.' },
   { what: 'Only what ships.', how: 'If the site describes a feature, the app does it today.' },
 ];
 
 const MILESTONES = [
   { when: 'September 2026', what: 'Flock Social LLC formed in Pennsylvania.' },
-  { when: 'Recognition', what: '1st place at PA DECA States.' },
+  { when: 'Award', what: '1st place at PA DECA States.' },
   { when: 'October 2026', what: 'Research paper on forecasting crowds and counting people, published on this site.' },
   { when: 'October 2026', what: 'Two-minute pitch video entered in a high school entrepreneurship and AI video competition.' },
   { when: 'October 2026', what: 'iPhone app submitted to the App Store, now in review.' },
@@ -84,7 +84,7 @@ export default function AboutPage() {
                 Friday nights.
               </p>
               <p className="ab-coming">
-                The full story, from the first version to now, is coming soon.
+                The full story is coming soon.
               </p>
             </div>
             <img

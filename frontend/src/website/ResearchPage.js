@@ -156,8 +156,8 @@ export default function ResearchPage() {
             <div className="rs-measure">
             <h2>Why we did this research</h2>
             <p>
-              A group deciding where to go wants to know one thing: how busy will
-              this place be when we get there? Map apps answer with a
+              A group deciding where to go mostly wants to know how busy the
+              place will be when they get there. Map apps answer with a
               popular-times chart, each venue's usual level for that weekday and
               hour. That chart can't know tonight is different, like when it
               rains or there's a game two blocks away.

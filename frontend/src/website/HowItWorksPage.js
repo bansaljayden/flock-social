@@ -17,7 +17,8 @@ import SiteNav, { useSiteMenu } from './SiteNav';
 //   "Still in?" before a deadline on the night                ChatDetail.js reconfirm strip, migration 072
 //   events on a venue card only for a verified venue          routes/venueDashboard.js GET /public-events
 //   Roost's forecast and advisor sit behind the venue plan    routes/advisor.js, GET /intelligence (requirePro)
-// and the four AIs are described in the words of the video's own description.
+// The four AI lines began as the video's own description and were rewritten
+// in plain sentences on 2026-10-21 (the maintainer's ask), with the same facts.
 
 const VIDEO_ID = 'Kdt9FI9CQZo';
 const VIDEO_TITLE = 'Flock: four kinds of AI so the plan actually happens';
@@ -196,10 +197,10 @@ const STEPS = [
 ];
 
 const AIS = [
-  { name: 'Starling', what: 'Forecasts how busy a place will be. It is 800 decision trees, tested on cities it never saw.' },
-  { name: 'Birdie', what: 'Built on Google’s Gemini. Helps a group pick a place, and asks permission first.' },
-  { name: 'Owl', what: 'A small neural network on the Flux heat sensor. It counts heads, and only the count leaves the device. So far it has been tested on research footage, not in a venue.' },
-  { name: 'Roost’s advisor', what: 'Answers a venue owner’s questions. It isn’t allowed to write a single digit, so every number it shows comes from measured data.' },
+  { name: 'Starling', what: 'The crowd forecast. It’s 800 small decision trees, and we tested it on three cities it never trained on.' },
+  { name: 'Birdie', what: 'Built on Google’s Gemini. Ask it where to go and it suggests places that fit the group. It checks with you before it does anything.' },
+  { name: 'Owl', what: 'A small neural network that counts people from body heat, on the Raspberry Pi inside Flux. Only the count leaves the box. So far it’s been tested on research footage, not in a real venue.' },
+  { name: 'Roost’s advisor', what: 'Answers a venue owner’s questions in plain sentences. The model can’t type a single digit, so every number in an answer is filled in from the venue’s measured data.' },
 ];
 
 // A plate, printed flat beside its step: the landing page's .lp-plate.
@@ -242,8 +243,8 @@ export default function HowItWorksPage() {
           <div className="lp-wrap">
             <h1 id="hw-h1">How Flock works</h1>
             <p className="lp-lead hw-lead">
-              Somebody has an idea for Friday. Here’s every step, from the first
-              invite to splitting the bill.
+              Somebody has an idea for Friday. In Flock that idea goes through
+              five steps, and the last one is splitting the bill.
             </p>
             <PitchVideo />
           </div>
@@ -252,7 +253,7 @@ export default function HowItWorksPage() {
         <section className="lp-sec lp-sec-sand hw-steps-intro" aria-labelledby="hw-h-steps">
           <div className="lp-wrap">
             <h2 id="hw-h-steps" className="hw-steps-title">Every step of a plan</h2>
-            <p className="lp-lead">Five of them, from the first invite to settling up.</p>
+            <p className="lp-lead">Every screen below is the web app, with the same five friends as the home page.</p>
           </div>
         </section>
 
@@ -290,7 +291,7 @@ export default function HowItWorksPage() {
           <div className="lp-wrap">
             <h2 id="hw-h-ai">The four AIs inside</h2>
             <p className="lp-lead hw-ai-lead">
-              The video names them. Here’s what each one does.
+              The video names all four.
             </p>
             <dl className="hw-ai">
               {AIS.map((a) => (

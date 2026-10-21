@@ -48,7 +48,7 @@ const BIRDIE_FREE_DAILY = 10;
 const BIRDIE_PRO_DAILY = 150;
 const FORECASTS_FREE_MONTHLY = 30;
 
-const DESCRIPTION = 'Flock Pro lifts the Birdie limit and the monthly limit on crowd levels and forecasts. What it costs, what changes, and how to cancel.';
+const DESCRIPTION = 'Flock Pro lifts the Birdie limit and the monthly limit on crowd levels and forecasts. See what it costs and how to cancel.';
 
 const READABLE = { color: 'var(--pp-ink-2)' };
 
@@ -269,7 +269,6 @@ export default function ProPage() {
             {offerPlans.map((p) => (
               <li key={p.id}>
                 <strong>{p.id === 'yearly' ? 'Yearly' : 'Monthly'}</strong>
-                {p.id === 'yearly' && <span className="pro-tag">Best value</span>}
                 {', '}
                 {priceText(p)}{offerTax} a {periodWord(p)}
                 {p.id === 'yearly' && perMonthLabel(p) ? `, ${perMonthLabel(p)} a month` : ''}
@@ -339,7 +338,6 @@ export default function ProPage() {
                 />
                 <span>
                   <strong>{p.id === 'yearly' ? 'Yearly' : 'Monthly'}</strong>
-                  {p.id === 'yearly' && <span className="pro-tag">Best value</span>}
                   {', '}
                   {priceText(p)} a {periodWord(p)}
                   {p.id === 'yearly' && perMonthLabel(p) ? `, ${perMonthLabel(p)} a month` : ''}

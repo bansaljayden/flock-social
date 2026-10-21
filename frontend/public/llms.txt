@@ -2,8 +2,8 @@
 
 > Flock is a free group planning app for friends. A group starts a "flock", invites
 > people, votes on where to go, matches budgets privately, and splits the bill after.
-> It is built for the part of a night out that usually dies in the group chat:
-> deciding.
+> It is built for the part of a night out that usually dies in the group chat,
+> which is deciding where to go.
 
 Flock runs in a web browser at https://www.flockcorp.com. An iPhone app is not
 on the App Store yet and cannot be downloaded. You and your
@@ -34,10 +34,10 @@ Updated: October 21, 2026.
   may not write a digit; and Birdie, the in-app assistant built on Google's
   Gemini.
 - [Flux](https://www.flockcorp.com/flux): The people counter Flock is building
-  for venues, a prototype whose case has not been printed yet. What it
-  measures, how Owl counts from heat, and the case part by part, in a labelled
-  render and a 3D model that assembles on one slider. Only numbers leave the
-  box: no images, video or identities.
+  for venues, a prototype whose case has not been printed yet. The page covers
+  what is inside it, how Owl counts people from heat, where it mounts, and the
+  case part by part, in a labelled render and a 3D model that assembles on one
+  slider. Only numbers leave the box: no images, video or identities.
 - Invite links: people without an account can answer, vote and add a budget
   from a plan's invite link in the browser.
 - Voting: everyone in the group suggests places and the group votes, so no single
