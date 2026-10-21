@@ -1,0 +1,172 @@
+/* /how-it-works, on the landing page's stylesheet (.lp tokens, Fraunces
+   display, Hanken body); the bar and the menu come from SiteNav.js. This file
+   adds the video plate, the chapter list, the steps and the four AIs. Same
+   rules as the rest of the site: type carries it, no icon cards, no
+   gradients, nothing moves on scroll, and no colour outside the .lp tokens. */
+
+.hw { background: var(--paper); color: var(--ink-2); min-height: 100vh; }
+.hw main:focus { outline: none; }
+#hw-main { scroll-margin-top: 76px; }
+
+/* ---------- hero and video ---------- */
+
+.hw-hero { padding-top: clamp(44px, 6vw, 80px); }
+/* em, not ch, for the same reason as /research: ch changes on the font swap. */
+.hw-hero h1 { max-width: 12em; }
+.hw-lead { margin: 18px 0 clamp(28px, 4vw, 40px); max-width: 46ch; }
+
+.hw-video { margin: 0; max-width: 860px; }
+/* The plate: a 16:9 window with the page's printed-plate edge, navy behind
+   the poster so nothing flashes white while the image decodes. */
+.hw-frame {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  border-radius: 18px;
+  overflow: hidden;
+  background: var(--navy);
+  border: 1px solid var(--rule);
+}
+.hw-frame iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+.hw-poster {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  display: block;
+}
+.hw-poster img { width: 100%; height: 100%; object-fit: cover; }
+/* One round control, set low and left in the title card's empty navy corner
+   rather than over its text. Colour answers the pointer; nothing scales. */
+.hw-play {
+  position: absolute;
+  left: clamp(14px, 3vw, 28px);
+  bottom: clamp(14px, 3vw, 28px);
+  width: clamp(56px, 8vw, 72px);
+  height: clamp(56px, 8vw, 72px);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--cream);
+  color: var(--navy);
+  transition: background-color 0.16s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.hw-play svg { margin-left: 3px; }
+.hw-poster:hover .hw-play { background: var(--cream-hi); }
+.hw-poster:focus-visible { outline: 3px solid var(--steel); outline-offset: 3px; }
+
+.hw-video-cap {
+  margin-top: 14px;
+  font-family: var(--font-display);
+  font-variation-settings: 'opsz' 9;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink-3);
+  max-width: 70ch;
+}
+.hw-video-cap a { color: var(--steel); text-underline-offset: 2px; white-space: nowrap; }
+
+/* The video's own chapters, as buttons that start the player there. */
+.hw-chapters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 18px;
+}
+.hw-chapters button {
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink-2);
+  background: transparent;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  min-height: 40px;
+  padding: 8px 12px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.16s cubic-bezier(0.22, 1, 0.36, 1), color 0.16s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.hw-chapters button:hover { border-color: var(--ink-3); color: var(--ink); }
+.hw-time { font-weight: 700; color: var(--steel); font-variant-numeric: tabular-nums; margin-right: 4px; }
+
+/* ---------- the steps ---------- */
+
+.hw-steps-title { margin-bottom: clamp(28px, 4vw, 44px); }
+.hw-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: clamp(44px, 7vw, 88px);
+}
+/* A step is the text at a reading measure with its plate in the margin, on
+   the same side every time, the way a manual sets its figures. Plates that
+   swap sides from row to row are the stock zig-zag of a generated page. */
+.hw-step { display: grid; gap: 20px; align-items: start; }
+.hw-step-text { max-width: 56ch; }
+.hw-step h3 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: clamp(24px, 1.1rem + 1.4vw, 34px);
+  letter-spacing: -0.005em;
+  margin: 0 0 14px;
+}
+.hw-step p { font-size: clamp(16px, 1.5vw, 18px); line-height: 1.65; color: var(--ink-2); }
+.hw-step p + p { margin-top: 1em; }
+.hw-shot { margin: 0; }
+@media (min-width: 860px) {
+  .hw-step.has-shot { grid-template-columns: minmax(0, 1fr) 240px; gap: clamp(40px, 6vw, 88px); }
+  .hw-step .lp-plate { width: 240px; margin: 0; }
+}
+
+/* ---------- the four AIs ---------- */
+
+.hw-ai-lead { margin: 14px 0 clamp(28px, 4vw, 44px); }
+.hw-ai {
+  display: grid;
+  gap: clamp(26px, 4vw, 40px) clamp(32px, 6vw, 72px);
+  margin: 0;
+}
+@media (min-width: 760px) { .hw-ai { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.hw-ai dt {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: clamp(24px, 1.1rem + 1.2vw, 32px);
+  line-height: 1.1;
+  color: var(--cream);
+  margin-bottom: 8px;
+}
+.hw-ai dd { margin: 0; font-size: 16.5px; line-height: 1.6; color: var(--cream-2); max-width: 46ch; }
+
+/* ---------- venues ---------- */
+
+.hw-venues { display: grid; gap: 28px clamp(40px, 6vw, 88px); align-items: start; }
+@media (min-width: 860px) {
+  .hw-venues { grid-template-columns: minmax(0, 1fr) 240px; }
+  .hw-venues-plate { width: 240px; margin: 0; }
+}
+.hw-venues p { max-width: 62ch; font-size: clamp(16px, 1.5vw, 18px); line-height: 1.65; color: var(--ink-2); }
+.hw-venues h2 { margin-bottom: 18px; }
+.hw-venues p + p { margin-top: 1em; }
+.hw-venues a { color: var(--steel); text-underline-offset: 2px; overflow-wrap: anywhere; }
+
+/* ---------- closing band ---------- */
+
+.hw-try-lead { margin: 16px 0 26px; }
+.hw-textlink {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 6px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--cream);
+  text-underline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hw-play, .hw-chapters button { transition: none; }
+}

@@ -125,6 +125,10 @@ https://:version.:project.pages.dev/*
   Link: <https://www.flockcorp.com/research>; rel="canonical"
   Cache-Control: public, max-age=0, must-revalidate
 
+/how-it-works
+  Link: <https://www.flockcorp.com/how-it-works>; rel="canonical"
+  Cache-Control: public, max-age=0, must-revalidate
+
 /support
   Link: <https://www.flockcorp.com/support>; rel="canonical"
   Cache-Control: public, max-age=0, must-revalidate

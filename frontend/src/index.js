@@ -940,6 +940,18 @@ const PAGES = [
     load: () => import('./website/ResearchPage'),
     Loading: PaperLoading,
   },
+  // One plan from the first invite to the bill, the venue side, the four AIs
+  // and the pitch video. Linked from the site menu and the footer. The chunk
+  // is named for the Pages preload, like the landing page's. It describes
+  // Roost, the paid venue plan, so a REACT_APP_PURCHASES=off build (the App
+  // Store one) leaves it out the same way it leaves out /pro and the landing
+  // page; nothing inside the app links to it.
+  ...(process.env.REACT_APP_PURCHASES === 'off' ? [] : [{
+    id: 'how-it-works',
+    test: (p) => p === '/how-it-works' && !isNativeShell,
+    load: () => import(/* webpackChunkName: "howitworks" */ './website/HowItWorksPage'),
+    Loading: PaperLoading,
+  }]),
   // Flock Pro on the web. WEB ONLY: inside the native shell this route does
   // not match, so the WebView falls through to the app like any other path.
   // Apple does not allow the app to point at a web price outside the US, and
@@ -993,9 +1005,13 @@ const PAGES = [
 // The marketing page sells Flock Pro, and the native shell never shows it
 // (isMarketingRoot below), so a REACT_APP_PURCHASES=off build, which is only
 // ever the App Store one, does not carry it (lib/purchasesBuild.js).
+// The chunk is NAMED (landing.<hash>.chunk.js/.css) so the Pages build can find
+// it in asset-manifest.json and send it as a preload with the HTML
+// (scripts/build-cloudflare.js routePreloads): without a hint the browser only
+// learns it exists after main.js has downloaded and run.
 const LANDING_PAGE = process.env.REACT_APP_PURCHASES === 'off' ? null : {
   id: 'landing',
-  load: () => import('./website/LandingPage'),
+  load: () => import(/* webpackChunkName: "landing" */ './website/LandingPage'),
   Loading: LandingLoading,
 };
 

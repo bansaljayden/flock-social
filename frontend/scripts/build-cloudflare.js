@@ -108,12 +108,51 @@ function filesUnder(dir, found = []) {
   return found;
 }
 
+// The marketing routes whose page chunk is named in src/index.js, so its
+// hashed file can be found in asset-manifest.json after every build.
+const ROUTE_CHUNKS = [
+  { route: '/', chunk: 'landing' },
+  { route: '/how-it-works', chunk: 'howitworks' },
+];
+
+// Preload hints for those routes, appended to _headers. On a first visit the
+// browser otherwise discovers the page chunk only after main.js has downloaded
+// and run, and the display face only after that chunk has rendered; sent with
+// the HTML, all three download alongside main.js. (Cloudflare can also send
+// them early as 103 Early Hints, a zone setting that is off for flockcorp.com
+// as of 2026-10-21; the Link header works without it.) Pages joins a header named by two
+// matching rules with a comma, so this adds to the canonical Link the source
+// _headers already sets on "/" instead of replacing it. Anything not found
+// (a chunk renamed, a fixture without a manifest) is skipped, never fatal:
+// a missing hint costs speed, a failed build costs the deploy.
+function routePreloads(out) {
+  const manifestPath = path.join(out, 'asset-manifest.json');
+  if (!fs.existsSync(manifestPath)) return '';
+  const { files = {} } = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  const urls = Object.values(files).filter((u) => typeof u === 'string');
+  const find = (re) => urls.find((u) => re.test(u));
+  const font = find(/\/static\/media\/Fraunces-var\.[0-9a-f]+\.woff2$/);
+  const blocks = [];
+  for (const { route, chunk } of ROUTE_CHUNKS) {
+    const js = find(new RegExp('/static/js/' + chunk + '\\.[0-9a-f]+\\.chunk\\.js$'));
+    const css = find(new RegExp('/static/css/' + chunk + '\\.[0-9a-f]+\\.chunk\\.css$'));
+    const links = [];
+    if (css) links.push('<' + css + '>; rel=preload; as=style');
+    if (js) links.push('<' + js + '>; rel=preload; as=script');
+    if (font && links.length) links.push('<' + font + '>; rel=preload; as=font; type="font/woff2"; crossorigin');
+    if (links.length) blocks.push(route + '\n  Link: ' + links.join(', '));
+  }
+  return blocks.length ? '\n' + blocks.join('\n\n') + '\n' : '';
+}
+
 // Everything after react-scripts: the Pages files go into `out`, then the
 // output is refused if Pages would serve it differently from Vercel.
 function finishOutput(out) {
   if (!fs.existsSync(path.join(out, 'index.html'))) throw new Error(path.join(out, 'index.html') + ' is missing');
 
-  fs.writeFileSync(path.join(out, '_headers'), headersFile());
+  const headers = headersFile() + routePreloads(out);
+  checkHeaders(headers);
+  fs.writeFileSync(path.join(out, '_headers'), headers);
   fs.copyFileSync(path.join(CONFIG, '_redirects'), path.join(out, '_redirects'));
 
   checkRoutes(JSON.parse(fs.readFileSync(path.join(CONFIG, '_routes.json'), 'utf8')));
@@ -132,8 +171,8 @@ function finishOutput(out) {
 }
 
 module.exports = {
-  outputDir, checkHeaders, headersFile, checkRoutes, appSiteAssociation, finishOutput,
-  MAX_HEADER_RULES, MAX_HEADER_LINE,
+  outputDir, checkHeaders, headersFile, checkRoutes, appSiteAssociation, finishOutput, routePreloads,
+  ROUTE_CHUNKS, MAX_HEADER_RULES, MAX_HEADER_LINE,
 };
 
 if (require.main === module) {

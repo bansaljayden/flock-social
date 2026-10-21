@@ -286,6 +286,32 @@ describe('finishing an output directory', () => {
     expect(aasa).toBe(withEnv({ APPLE_TEAM_ID: team }, () => build.appSiteAssociation()));
   });
 
+  test('sends the landing and How it works chunks, and the display face, as preloads on their routes', () => {
+    // routePreloads reads the hashed names out of asset-manifest.json, the
+    // only place they are known after a build. With no manifest there is
+    // nothing to add, which is the case above: _headers is exactly the source.
+    const files = {
+      'main.js': '/static/js/main.1a2b3c4d.js',
+      'landing.css': '/static/css/landing.0f0f0f0f.chunk.css',
+      'landing.js': '/static/js/landing.12ab34cd.chunk.js',
+      'howitworks.js': '/static/js/howitworks.9e8d7c6b.chunk.js',
+      'static/media/Fraunces-var.woff2': '/static/media/Fraunces-var.5a5a5a5a.woff2',
+    };
+    fs.writeFileSync(path.join(out, 'asset-manifest.json'), JSON.stringify({ files }));
+    withEnv({ APPLE_TEAM_ID: fakeTeamId(), CF_PAGES: '1' }, () => build.finishOutput(out));
+    const text = fs.readFileSync(path.join(out, '_headers'), 'utf8');
+    const source = build.headersFile();
+    expect(text.startsWith(source)).toBe(true);
+    const font = '</static/media/Fraunces-var.5a5a5a5a.woff2>; rel=preload; as=font; type="font/woff2"; crossorigin';
+    expect(headerBlocks(text.slice(source.length))).toEqual([
+      { path: '/', headers: { Link: `</static/css/landing.0f0f0f0f.chunk.css>; rel=preload; as=style, </static/js/landing.12ab34cd.chunk.js>; rel=preload; as=script, ${font}` } },
+      { path: '/how-it-works', headers: { Link: `</static/js/howitworks.9e8d7c6b.chunk.js>; rel=preload; as=script, ${font}` } },
+    ]);
+    // Pages joins two "/" Link headers with a comma, so the canonical the
+    // source file sets on "/" survives beside the preloads.
+    expect(headerBlocks(source).find((b) => b.path === '/').headers.Link).toContain('rel="canonical"');
+  });
+
   test('refuses an output with a top-level 404.html, which turns off the SPA fallback', () => {
     fs.writeFileSync(path.join(out, '404.html'), 'not found');
     expect(() => withEnv({ APPLE_TEAM_ID: fakeTeamId() }, () => build.finishOutput(out))).toThrow(/404\.html/);
