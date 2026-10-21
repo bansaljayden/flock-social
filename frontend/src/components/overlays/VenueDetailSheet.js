@@ -323,6 +323,9 @@ const VenueDetailSheet = ({
                       venue with no events looks exactly as it did. The
                       background is the photo the top of this card is showing. */}
                   <VenueEventsSection
+                    // Keyed by place, so "Show all" and a failed photo belong
+                    // to one venue and start over when the sheet moves on.
+                    key={venueDetailModal.place_id || 'venue'}
                     events={venueDetailEvents}
                     photoUrl={(venueDetailModal.photos && venueDetailModal.photos[0]) || venueDetailModal.photo_url || null}
                     colors={colors}

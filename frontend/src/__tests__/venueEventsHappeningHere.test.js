@@ -256,6 +256,15 @@ describe('on the venue card', () => {
     render(React.createElement(VenueDetailSheet, props({ venueDetailEvents: [] })));
     expect(screen.queryByText(/Happening here/)).toBeNull();
   });
+
+  test('moving to another venue starts its list over, folded', () => {
+    const p = props({ venueDetailEvents: EVENTS });
+    const { rerender } = render(React.createElement(VenueDetailSheet, p));
+    fireEvent.click(screen.getByRole('button', { name: 'Show all 5 events' }));
+    expect(screen.getAllByRole('listitem')).toHaveLength(5);
+    rerender(React.createElement(VenueDetailSheet, { ...p, venueDetailModal: { ...p.venueDetailModal, place_id: 'ChIJnextVenue0002', name: 'Juniper Bowl' } }));
+    expect(screen.getAllByRole('listitem')).toHaveLength(3);
+  });
 });
 
 describe('App.js loads, retracts and hands over the list', () => {
