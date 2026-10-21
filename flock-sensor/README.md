@@ -377,7 +377,8 @@ which.
 
 Everything is one unit the width of its screen (`enclosure/README.md`, with a
 picture for every assembly step; `FLUX-GUIDE.md` names every part). The
-thermal camera and the doorway counter look out of a strip under the screen,
+thermal camera looks out of a strip under the screen, the doorway counter
+looks down out of a chin at the bottom front corner,
 the sound meter listens through the right side, and every sensor wire stays a
 few centimetres long. An earlier design put the sensors in a separate head on
 the wall with a 3 m cable to the base, which the counter's and the meter's

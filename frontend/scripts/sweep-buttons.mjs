@@ -89,7 +89,11 @@ const DEMO = {
 // Never pressed. The sweep runs on throwaway data, but these either end the
 // session, remove something the rest of the sweep needs, reach outside the
 // app, or are the one-way doors a real user would want to be sure about.
-const SKIP = /sign out|log out|logout|delete|remove|leave (this )?flock|leave plan|cancel (this )?(plan|flock|invite)|report|block|unfriend|sos|emergency|call 911|911|pay now|pay with|venmo|cash app|zelle|upgrade|subscribe|unsubscribe|deactivate|withdraw|revoke|clear all|reset|open in maps|directions|share|copy link|camera|photo|take a picture|upload/i;
+const BASE_SKIP = /sign out|log out|logout|delete|remove|leave (this )?flock|leave plan|cancel (this )?(plan|flock|invite)|report|block|unfriend|sos|emergency|call 911|911|pay now|pay with|venmo|cash app|zelle|upgrade|subscribe|unsubscribe|deactivate|withdraw|revoke|clear all|reset|open in maps|directions|share|copy link|camera|photo|take a picture|upload/i;
+/* --skip=REGEX leaves more out for one run, e.g. --skip="^Allow$" keeps
+   Birdie's consent off, so none of its suggestion chips can reach Gemini. */
+const EXTRA_SKIP = opt('skip', '') ? new RegExp(opt('skip', ''), 'i') : null;
+const SKIP = { test: (name) => BASE_SKIP.test(name) || (EXTRA_SKIP ? EXTRA_SKIP.test(name) : false) };
 
 const log = (...a) => console.log('[sweep]', ...a);
 const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'button';
