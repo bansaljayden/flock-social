@@ -286,6 +286,129 @@ describe('finishing an output directory', () => {
     expect(aasa).toBe(withEnv({ APPLE_TEAM_ID: team }, () => build.appSiteAssociation()));
   });
 
+  test('sends the landing and How it works chunks, and the display face, as preloads on their routes', () => {
+    // routePreloads reads the hashed names out of asset-manifest.json, the
+    // only place they are known after a build. With no manifest there is
+    // nothing to add, which is the case above: _headers is exactly the source.
+    const files = {
+      'main.js': '/static/js/main.1a2b3c4d.js',
+      'landing.css': '/static/css/landing.0f0f0f0f.chunk.css',
+      'landing.js': '/static/js/landing.12ab34cd.chunk.js',
+      'howitworks.js': '/static/js/howitworks.9e8d7c6b.chunk.js',
+      'static/media/Literata-Display-600.woff2': '/static/media/Literata-Display-600.5a5a5a5a.woff2',
+    };
+    fs.writeFileSync(path.join(out, 'asset-manifest.json'), JSON.stringify({ files }));
+    withEnv({ APPLE_TEAM_ID: fakeTeamId(), CF_PAGES: '1' }, () => build.finishOutput(out));
+    const text = fs.readFileSync(path.join(out, '_headers'), 'utf8');
+    const source = build.headersFile();
+    const font = '</static/media/Literata-Display-600.5a5a5a5a.woff2>; rel=preload; as=font; type="font/woff2"; crossorigin';
+    // A second block for the same path replaces the first on Pages (seen on
+    // the website-flux preview: /how-it-works lost its canonical), so the
+    // hints join each route's own Link and every path stays one block.
+    const blocks = headerBlocks(text);
+    expect(blocks.length).toBe(new Set(blocks.map((b) => b.path)).size);
+    const own = (p) => headerBlocks(source).find((b) => b.path === p).headers.Link;
+    expect(own('/')).toContain('rel="canonical"');
+    expect(own('/how-it-works')).toContain('rel="canonical"');
+    expect(text).toBe(source
+      .replace(`\n/\n  Link: ${own('/')}\n`, `\n/\n  Link: ${own('/')}, </static/css/landing.0f0f0f0f.chunk.css>; rel=preload; as=style, </static/js/landing.12ab34cd.chunk.js>; rel=preload; as=script, ${font}\n`)
+      .replace(`\n/how-it-works\n  Link: ${own('/how-it-works')}\n`, `\n/how-it-works\n  Link: ${own('/how-it-works')}, </static/js/howitworks.9e8d7c6b.chunk.js>; rel=preload; as=script, ${font}\n`));
+  });
+
+  test('a hint for a path the source file does not name is added as a block of its own', () => {
+    expect(build.joinHeaderBlocks('/a\n  Link: <x>\n', '\n/b\n  Link: <y>\n')).toBe('/a\n  Link: <x>\n\n/b\n  Link: <y>\n');
+    expect(build.joinHeaderBlocks('/a\n  Cache-Control: no-store\n', '\n/a\n  Link: <y>\n')).toBe('/a\n  Cache-Control: no-store\n  Link: <y>\n');
+    expect(build.joinHeaderBlocks('/a\n  Link: <x>\n', '')).toBe('/a\n  Link: <x>\n');
+  });
+
+  test('a prerendered snapshot hands its scripts to the loader, inlines its CSS, and marks #root', () => {
+    // The four marketing routes are written as real HTML; index.html stays
+    // the shell, so "/" is landing.html and nothing claims index.html.
+    expect(build.PRERENDER.map((p) => p.file)).toEqual(['landing.html', 'how-it-works.html', 'about.html', 'research.html', 'flux.html', 'ai.html']);
+    expect(build.PRERENDER.find((p) => p.route === '/').file).toBe('landing.html');
+
+    const snapshot = '<!DOCTYPE html><html><head>'
+      + '<script defer="defer" src="/static/js/main.1a2b.js"></script>'
+      + '<link href="/static/css/main.3c4d.css" rel="stylesheet">'
+      + '<script charset="utf-8" data-webpack="flock:chunk-landing" src="/static/js/landing.5e6f.chunk.js"></script>'
+      + '<link rel="stylesheet" type="text/css" href="/static/css/7788.9a0b.chunk.css">'
+      + '<link rel="stylesheet" href="/static/css/9999.dead.chunk.css">'
+      + '</head><body><div id="root"><main><h1>Flock is how a group decides where to go out.</h1></main></div></body></html>';
+    const font = '/static/media/Literata-Display-600.9f9f.woff2';
+    const sheets = {
+      '/static/css/main.3c4d.css': 'body{margin:0}@font-face{src:url(/static/media/x.woff2)}',
+      '/static/css/7788.9a0b.chunk.css': '.lp{color:$1}',
+    };
+    const loader = '/static/js/paint-first.0a0b0c0d.js';
+    const opts = { scripts: ['/static/js/landing.5e6f.chunk.js', '/static/js/4242.1b1b.chunk.js'], font, css: (h) => sheets[h] || null, loader };
+    const out = build.servableSnapshot(snapshot, opts);
+
+    // main.js gives way to the loader, which names it and the page's chunks:
+    // the one webpack left as a tag and the one the load fetched, once each.
+    // Nothing in the head fetches a script at parse time any more.
+    expect(out).toContain('<script defer="defer" src="/static/js/paint-first.0a0b0c0d.js" data-main="/static/js/main.1a2b.js" data-chunks="/static/js/landing.5e6f.chunk.js /static/js/4242.1b1b.chunk.js"></script>');
+    expect(out).not.toContain('<script defer="defer" src="/static/js/main.1a2b.js">');
+    expect(out).not.toMatch(/data-webpack/);
+    expect(out).not.toMatch(/rel="preload" as="script"/);
+
+    // Each stylesheet the build has is written in where its link was, under
+    // its own path as data-href (the mark webpack's CSS loader checks before
+    // fetching a chunk's sheet), "$1" and all; one it cannot read keeps its link.
+    expect(out).toContain('<style data-href="/static/css/main.3c4d.css">body{margin:0}@font-face{src:url(/static/media/x.woff2)}</style>');
+    expect(out).toContain('<style data-href="/static/css/7788.9a0b.chunk.css">.lp{color:$1}</style>');
+    expect(out).toContain('<link rel="stylesheet" href="/static/css/9999.dead.chunk.css">');
+    expect(out.indexOf('main.3c4d.css')).toBeLessThan(out.indexOf('7788.9a0b'));
+
+    // The display face is preloaded, with crossorigin or it is fetched twice,
+    // and a page that already asked for it is not given a second hint.
+    expect(out).toContain(`<link rel="preload" as="font" type="font/woff2" href="${font}" crossorigin="anonymous">`);
+    expect(build.servableSnapshot(snapshot.replace('</head>', `<link rel="preload" as="font" href="${font}"></head>`), opts).split(font)).toHaveLength(2);
+    expect(out).toContain('<div id="root" data-prerendered=""><main><h1>');
+
+    // A stylesheet that could close the <style> early stays a link.
+    const closer = build.servableSnapshot(snapshot, { ...opts, css: () => 'a{}</style><script>x</script>' });
+    expect(closer).not.toContain('</style><script>x');
+    expect(closer).toContain('<link href="/static/css/main.3c4d.css" rel="stylesheet">');
+
+    // A snapshot that never rendered, or that the loader could not boot, is
+    // refused rather than published.
+    expect(() => build.servableSnapshot(snapshot, { ...opts, loader: undefined })).toThrow(/loader/);
+    expect(() => build.servableSnapshot(snapshot.replace('main.1a2b.js', 'app.1a2b.js'), opts)).toThrow(/main\.js/);
+    expect(() => build.servableSnapshot('<html><head><script defer="defer" src="/static/js/main.1a2b.js"></script></head><body><div id="root"></div></body></html>', opts)).toThrow(/no h1/);
+    expect(() => build.servableSnapshot('<html><head><script defer="defer" src="/static/js/main.1a2b.js"></script></head><body><main><h1>x</h1></main></body></html>', opts)).toThrow(/root/);
+  });
+
+  test('the loader ships under a name that changes with its bytes', () => {
+    // /static/ is cached for a year as immutable, so the name must move
+    // whenever cloudflare/paint-first.js does.
+    const a = build.paintFirst();
+    const hash = crypto.createHash('sha256').update(read('cloudflare/paint-first.js')).digest('hex').slice(0, 8);
+    expect(a.url).toBe(`/static/js/paint-first.${hash}.js`);
+    expect(a.file.split(path.sep).join('/')).toBe(`static/js/paint-first.${hash}.js`);
+    expect(a.source).toBe(read('cloudflare/paint-first.js'));
+    expect(read('cloudflare/_headers')).toMatch(/^\/static\/\*\n {2}Cache-Control: public, max-age=31536000, immutable$/m);
+  });
+
+  test('a prerendered route is sent the display face alone, not its chunks', () => {
+    // Its CSS is in the HTML and its scripts wait for the first paint, so a
+    // chunk hint would be a second download or exactly the early fetch the
+    // snapshot avoids. A route served from index.html keeps all three.
+    const files = {
+      'landing.css': '/static/css/landing.0f0f0f0f.chunk.css',
+      'landing.js': '/static/js/landing.12ab34cd.chunk.js',
+      'howitworks.js': '/static/js/howitworks.9e8d7c6b.chunk.js',
+      'static/media/Literata-Display-600.woff2': '/static/media/Literata-Display-600.5a5a5a5a.woff2',
+    };
+    fs.writeFileSync(path.join(out, 'asset-manifest.json'), JSON.stringify({ files }));
+    withEnv({ APPLE_TEAM_ID: fakeTeamId(), CF_PAGES: '1' }, () => build.finishOutput(out, { prerendered: ['/how-it-works'] }));
+    const text = fs.readFileSync(path.join(out, '_headers'), 'utf8');
+    const font = '</static/media/Literata-Display-600.5a5a5a5a.woff2>; rel=preload; as=font; type="font/woff2"; crossorigin';
+    const link = (p) => headerBlocks(text).find((b) => b.path === p).headers.Link;
+    const own = (p) => headerBlocks(build.headersFile()).find((b) => b.path === p).headers.Link;
+    expect(link('/')).toBe(`${own('/')}, </static/css/landing.0f0f0f0f.chunk.css>; rel=preload; as=style, </static/js/landing.12ab34cd.chunk.js>; rel=preload; as=script, ${font}`);
+    expect(link('/how-it-works')).toBe(`${own('/how-it-works')}, ${font}`);
+  });
+
   test('refuses an output with a top-level 404.html, which turns off the SPA fallback', () => {
     fs.writeFileSync(path.join(out, '404.html'), 'not found');
     expect(() => withEnv({ APPLE_TEAM_ID: fakeTeamId() }, () => build.finishOutput(out))).toThrow(/404\.html/);

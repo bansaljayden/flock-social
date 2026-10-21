@@ -940,6 +940,33 @@ const PAGES = [
     load: () => import('./website/ResearchPage'),
     Loading: PaperLoading,
   },
+  // One plan from the first invite to the bill, the venue side, the four AIs
+  // and the pitch video. Linked from the site menu and the footer. The chunk
+  // is named for the Pages preload, like the landing page's. It describes
+  // Roost, the paid venue plan, so a REACT_APP_PURCHASES=off build (the App
+  // Store one) leaves it out the same way it leaves out /pro and the landing
+  // page; nothing inside the app links to it.
+  ...(process.env.REACT_APP_PURCHASES === 'off' ? [] : [{
+    id: 'how-it-works',
+    test: (p) => p === '/how-it-works' && !isNativeShell,
+    load: () => import(/* webpackChunkName: "howitworks" */ './website/HowItWorksPage'),
+    Loading: PaperLoading,
+  }]),
+  // Flux, the people counter, with its case on one slider (the 3D model is a
+  // chunk of its own that the page loads on approach), and the four AI
+  // models with the pitch figures. Web only, like How it works: /ai
+  // describes Roost, and nothing inside the app links to either.
+  ...(process.env.REACT_APP_PURCHASES === 'off' ? [] : [{
+    id: 'flux',
+    test: (p) => p === '/flux' && !isNativeShell,
+    load: () => import(/* webpackChunkName: "flux" */ './website/FluxPage'),
+    Loading: PaperLoading,
+  }, {
+    id: 'ai',
+    test: (p) => p === '/ai' && !isNativeShell,
+    load: () => import(/* webpackChunkName: "aipage" */ './website/AiPage'),
+    Loading: PaperLoading,
+  }]),
   // Flock Pro on the web. WEB ONLY: inside the native shell this route does
   // not match, so the WebView falls through to the app like any other path.
   // Apple does not allow the app to point at a web price outside the US, and
@@ -993,9 +1020,13 @@ const PAGES = [
 // The marketing page sells Flock Pro, and the native shell never shows it
 // (isMarketingRoot below), so a REACT_APP_PURCHASES=off build, which is only
 // ever the App Store one, does not carry it (lib/purchasesBuild.js).
+// The chunk is NAMED (landing.<hash>.chunk.js/.css) so the Pages build can find
+// it in asset-manifest.json and send it as a preload with the HTML
+// (scripts/build-cloudflare.js routePreloads): without a hint the browser only
+// learns it exists after main.js has downloaded and run.
 const LANDING_PAGE = process.env.REACT_APP_PURCHASES === 'off' ? null : {
   id: 'landing',
-  load: () => import('./website/LandingPage'),
+  load: () => import(/* webpackChunkName: "landing" */ './website/LandingPage'),
   Loading: LandingLoading,
 };
 
@@ -1056,10 +1087,20 @@ if (appMounted) {
   if (hasAnalyticsConsent()) afterLoad(startAnalytics);
 }
 
-const root = ReactDOM.createRoot(document.getElementById('root'));
+const rootEl = document.getElementById('root');
+const root = ReactDOM.createRoot(rootEl);
 
-if (page) {
-  const Page = React.lazy(page.load);
+// PRERENDERED ROUTES. The Pages build writes the marketing routes as real HTML
+// (scripts/build-cloudflare.js prerender) and marks #root data-prerendered.
+// The page is already on screen, so the first render waits for the page's
+// chunk and then renders it directly: React's first commit replaces the HTML
+// with the same DOM. Rendering a React.lazy page at once would put its
+// Loading screen over the finished page while the chunk resolved. Everywhere
+// else (the iOS build, a dev server, any route not snapshotted) nothing is
+// marked and the lazy path below runs exactly as before.
+const prerendered = !!page && !!rootEl && rootEl.hasAttribute('data-prerendered');
+
+function renderPage(Page) {
   const { Loading } = page;
   root.render(
     <React.StrictMode>
@@ -1086,6 +1127,14 @@ if (page) {
       <ConsentBanner onAnswer={startAnalytics} />
     </React.StrictMode>
   );
+}
+
+if (page && prerendered) {
+  // A chunk that will not load falls back to the lazy path, whose error
+  // boundary shows the page's own failure state.
+  page.load().then((m) => renderPage(m.default), () => renderPage(React.lazy(page.load)));
+} else if (page) {
+  renderPage(React.lazy(page.load));
 } else if (path === '/reset-password') {
   // The signed-IN reset case. Signed out, the app boots and LoginScreen
   // routes into its reset view; signed IN, App.js rendered the app and the

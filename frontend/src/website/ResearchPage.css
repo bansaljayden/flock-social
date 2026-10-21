@@ -1,5 +1,5 @@
-/* /research, on the landing page's stylesheet (.lp tokens, Fraunces display,
-   Hanken body, navy chapters on cream stock); the bar and the menu come from
+/* /research, on the landing page's stylesheet (.lp tokens, Literata display,
+   Hanken body, navy chapters on off-white stock); the bar and the menu come from
    SiteNav.js. This file only adds what the landing page has no part for: the
    paper card, the stats grid and two plain bar charts drawn in HTML so they
    stay sharp on a phone. Design rules (DESIGN-STANDARD): ruled layouts, type carries it, no
@@ -38,8 +38,6 @@
   box-shadow: 0 1px 0 var(--rule-cream);
 }
 .rs-paper-kicker {
-  font-family: var(--font-display);
-  font-variation-settings: 'opsz' 9;
   font-size: 14px;
   font-weight: 600;
   color: var(--cream-3);
@@ -47,7 +45,6 @@
 }
 .rs-paper-title {
   font-family: var(--font-display);
-  font-variation-settings: 'opsz' 36;
   font-weight: 600;
   font-size: clamp(20px, 2.4vw, 26px);
   line-height: 1.2;
@@ -96,8 +93,6 @@
 .rs-row-label small {
   display: block;
   margin-top: 2px;
-  font-family: var(--font-display);
-  font-variation-settings: 'opsz' 9;
   font-weight: 400;
   font-size: 13px;
   color: var(--ink-3);
@@ -111,13 +106,51 @@
 .rs-bar.us .rs-val { color: var(--ink); font-weight: 700; }
 .rs-note {
   margin-top: 14px;
-  font-family: var(--font-display);
-  font-variation-settings: 'opsz' 9;
   font-size: 14px;
   line-height: 1.5;
   color: var(--ink-3);
   max-width: 68ch;
 }
+
+/* Thank you: a credits page set as type, two columns where there is room. The
+   count sources are the longer list, so they get a column to themselves and
+   the thermal sets, Roboflow and the software share the other. No rules
+   between rows; the bold set name starts each one. */
+.rs-thanks h2 { margin-bottom: 12px; }
+.rs-thanks-lead {
+  max-width: 62ch;
+  font-size: clamp(16px, 1.5vw, 18px);
+  line-height: 1.6;
+  color: var(--ink-2);
+  margin: 0 0 clamp(28px, 4vw, 40px) !important;
+}
+.rs-thanks-cols {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: clamp(28px, 5vw, 64px);
+  align-items: start;
+}
+.rs-thanks h3 {
+  font-size: 17px;
+  margin: 0 0 12px;
+  color: var(--ink);
+}
+.rs-thanks h3:not(:first-child) { margin-top: 28px; }
+.rs-thanks-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 9px;
+}
+.rs-thanks-list li {
+  font-size: 14.5px;
+  line-height: 1.5;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+.rs-thanks-list b { color: var(--ink); font-weight: 650; }
+.rs-terms { color: var(--ink-3); }
 
 /* Closing band */
 .rs-end .lp-lead { margin-bottom: 26px; }
@@ -135,6 +168,9 @@
 .rs-footer > * { max-width: 1080px; width: 100%; margin: 0 auto; }
 .rs-footer a { text-decoration: underline; text-underline-offset: 2px; }
 
+@media (max-width: 760px) {
+  .rs-thanks-cols { grid-template-columns: minmax(0, 1fr); }
+}
 @media (max-width: 600px) {
   .rs-two { grid-template-columns: minmax(0, 1fr); }
   .rs-paper { grid-template-columns: 96px minmax(0, 1fr); align-items: start; }
@@ -147,3 +183,12 @@
   .rs-paper { grid-template-columns: minmax(0, 1fr); }
   .rs-thumb img { width: 112px; }
 }
+
+/* The birds (see LandingPage.css): Flux's sensor beside the two questions,
+   a wren over the thanks. */
+.rs-why { display: grid; gap: 24px 64px; align-items: center; }
+@media (min-width: 900px) {
+  .rs-why { grid-template-columns: minmax(0, 1fr) 280px; }
+}
+.rs-why-art { width: min(280px, 100%); }
+.rs-thanks-art { width: 150px; margin-bottom: 16px; }

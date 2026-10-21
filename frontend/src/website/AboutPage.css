@@ -1,0 +1,88 @@
+/* /about, on the landing page's stylesheet (.lp tokens, Literata display,
+   Hanken body); the bar and the menu come from SiteNav.js. This file adds the
+   people, the commitments, the milestones and the placeholder notes. No icon
+   cards, no gradients, nothing on scroll, no colour outside the .lp tokens. */
+
+.ab { background: var(--paper); color: var(--ink-2); min-height: 100vh; }
+.ab main:focus { outline: none; }
+#ab-main { scroll-margin-top: 76px; }
+
+.ab-hero { padding-top: clamp(48px, 7vw, 88px); }
+.ab-hero h1 { max-width: 12em; }
+.ab-lead { margin-top: 18px; max-width: 46ch; }
+
+.ab h2 { margin-bottom: 18px; }
+.ab-story p, .ab-now p { max-width: 60ch; font-size: clamp(16px, 1.5vw, 18px); line-height: 1.65; color: var(--ink-2); }
+.ab-story p + p, .ab-now p + p { margin-top: 1em; }
+
+/* A placeholder that says what is coming, in the serif's caption cut, so it
+   reads as an editor's note on the page rather than an empty slot. */
+.ab-coming {
+  font-size: 15px !important;
+  color: var(--ink-3) !important;
+}
+
+/* The people: two open columns, each a photo plate, the name, the role and a
+   line. The photo spot keeps a portrait's proportions now, so the page does
+   not reflow when the real photos replace the bird. */
+.ab-people {
+  list-style: none;
+  margin: clamp(24px, 4vw, 36px) 0 0;
+  padding: 0;
+  display: grid;
+  gap: clamp(36px, 5vw, 64px);
+  max-width: 820px;
+}
+@media (min-width: 640px) { .ab-people { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.ab-person p { font-size: 16px; line-height: 1.6; color: var(--ink-2); }
+.ab-person p + p { margin-top: 8px; }
+.ab-person h3 { margin-bottom: 2px; }
+.ab-role {
+  font-weight: 600;
+  color: var(--steel) !important;
+  margin-bottom: 6px;
+}
+
+/* What Flock holds to: four statements set as type on the navy. */
+.ab-holds { display: grid; gap: clamp(24px, 4vw, 36px) clamp(32px, 6vw, 72px); margin: clamp(20px, 3vw, 28px) 0 0; }
+@media (min-width: 760px) { .ab-holds { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.ab-holds h3 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: clamp(22px, 1rem + 1.2vw, 30px);
+  line-height: 1.15;
+  color: var(--cream);
+  margin-bottom: 6px;
+}
+.ab-holds p { margin: 0; font-size: 16.5px; line-height: 1.6; color: var(--cream-2); max-width: 44ch; }
+
+/* Milestones: a dated log, the date in a margin column of its own. */
+.ab-milestones { list-style: none; margin: clamp(16px, 3vw, 24px) 0 20px; padding: 0; display: grid; gap: 16px; max-width: 46rem; }
+.ab-milestones li { display: grid; gap: 2px; font-size: 16.5px; line-height: 1.5; color: var(--ink-2); }
+@media (min-width: 640px) { .ab-milestones li { grid-template-columns: minmax(0, 10rem) minmax(0, 1fr); column-gap: 24px; } }
+.ab-when {
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--steel);
+  padding-top: 2px;
+}
+
+/* Contact, on the closing band. */
+.ab-contact-lead { margin: 16px 0 22px; }
+.ab-contact-lead a, .ab-fine a { color: var(--cream); text-underline-offset: 3px; overflow-wrap: anywhere; }
+.ab-fine { font-size: 14px; line-height: 1.6; color: var(--cream-3); max-width: 64ch; }
+.ab-fine + .ab-fine { margin-top: 12px; }
+
+/* The birds (see LandingPage.css): the story's wren beside its two lines, the
+   two empty perches over the founders, a hop over the milestones, a wren on a
+   cafe sign over where things stand. Paper and stone sections only. */
+.ab-story { display: grid; gap: 24px 64px; align-items: center; }
+@media (min-width: 860px) {
+  .ab-story { grid-template-columns: minmax(0, 40rem) 200px; justify-content: space-between; }
+}
+.ab-story-art { width: 200px; }
+.ab-perch { margin: clamp(20px, 3vw, 32px) 0 clamp(28px, 4vw, 44px); }
+.ab-perch-art { width: min(560px, 100%); }
+.ab-perch figcaption { margin-top: 10px; font-size: 14px; color: var(--ink-3); }
+.ab-milestones-art { width: 180px; margin-bottom: 18px; }
+.ab-now-art { width: min(300px, 70%); margin-bottom: 18px; }

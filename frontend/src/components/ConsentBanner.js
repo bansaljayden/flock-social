@@ -213,8 +213,10 @@ const CSS = `
   border-radius: 14px;
   background: #fbf9f3;
   color: #33475e;
-  border: 1px solid rgba(22, 40, 61, 0.16);
-  box-shadow: 0 8px 28px rgba(22, 40, 61, 0.18);
+  /* Flat, with a firmer edge instead of a soft drop shadow: a card floating
+     on a blur is the stock look the marketing pages dropped on 2026-10-03,
+     and this bar sits on top of all of them. */
+  border: 1px solid rgba(22, 40, 61, 0.28);
   font-family: 'Hanken Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   font-size: 14px;
   line-height: 1.5;

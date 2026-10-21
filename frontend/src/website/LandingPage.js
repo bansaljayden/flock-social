@@ -1,71 +1,59 @@
 import React, { Suspense, useEffect, useRef, useState } from 'react';
 import './LandingPage.css';
-import BirdieBird, { WARM_BIRD } from '../components/ui/BirdieBird';
 import SiteFooter from './SiteFooter';
-import frauncesUrl from '../fonts/Fraunces-var.woff2';
+import AnnotatedShot from './AnnotatedShot';
+import { ANNOTATIONS } from './landingAnnotations';
+import displayFontUrl from '../fonts/Literata-Display-600.woff2';
 import { NAV_LINKS } from './SiteNav';
 
 /* The live demo is code-split, and this is load-bearing rather than tidiness.
    LiveDemo pulls in maplibre-gl, which webpack emits as a 1.06 MB chunk. As a
    static import it landed in this page's chunk GROUP, and React.lazy does not
-   resolve until every chunk in the group has arrived — so the marketing page
-   rendered nothing at all until a map engine nobody has scrolled to yet had
-   finished downloading. Measured before the split: first contentful paint of
-   the hero waited on 1.3 MB of JavaScript; the map then opened six requests to
-   api.maptiler.com at 411 ms, while the reader was still on the headline.
-   Split out and mounted on approach, the hero's critical path is ~280 KB and
-   the map does not touch the network until you are within a screen of it. */
+   resolve until every chunk in the group has arrived, so the marketing page
+   rendered nothing at all until a map engine nobody had scrolled to yet had
+   finished downloading. Split out and mounted on approach, the hero's critical
+   path stays small and the map does not touch the network until you are within
+   a screen of it. */
 const LiveDemo = React.lazy(() => import('./LiveDemo'));
 
 const API = process.env.REACT_APP_API_URL || 'https://api.flockcorp.com';
 
-/* Fraunces sets the h1, which is this page's largest contentful element. Left
-   to itself the browser does not discover the face until layout runs, i.e.
-   after the chunk has downloaded, parsed and rendered: measured at 378 ms
-   against a 48 ms first paint. Asking for it the moment this module evaluates
-   moves the request ahead of React's first commit. `crossorigin` is not
-   optional — fonts are fetched in CORS mode even same-origin, and a preload
-   without it is a second, wasted download rather than a hit. */
+/* Literata Display sets the h1, this page's largest contentful element. The
+   Pages build already sends it as a preload with the HTML (build-cloudflare.js
+   routePreloads); this covers every other host and a local build. `crossorigin`
+   is not optional: fonts are fetched in CORS mode even same-origin, and a
+   preload without it is a second, wasted download rather than a hit. */
 if (typeof document !== 'undefined' && !document.querySelector('link[data-lp-font]')) {
   const l = document.createElement('link');
   l.rel = 'preload';
   l.as = 'font';
   l.type = 'font/woff2';
-  l.href = frauncesUrl;
+  l.href = displayFontUrl;
   l.crossOrigin = 'anonymous';
   l.setAttribute('data-lp-font', '');
   document.head.appendChild(l);
 }
 
-// Flock's real App Store record (Apple ID 6781442127). The URL is already
-// correct: it starts resolving the moment the app is approved. Flip
-// APP_STORE_LIVE to true then, and the badge replaces the "in review" note.
-// Don't flip it early: linking users at a 404 is worse than saying "soon".
-const APP_STORE_URL = 'https://apps.apple.com/app/id6781442127';
-const APP_STORE_LIVE = false;
 // Inbound mail: Cloudflare Email Routing forwards this to the maintainer's
 // inbox (set up 2026-08-12). Outbound stays on Resend.
 const CONTACT_EMAIL = 'social@flockcorp.com';
 
-/* Every destination in the page menu lives in SiteNav.js, the one list this
-   menu and the other pages' menus both read. */
+/* The hero capture. Real screens of the shipping web app, captured by
+   scripts/capture-screenshots.mjs against seeded demo data. The AVIF is the
+   capture cut to the part the plate shows (390:658 from the top), 23 KB
+   against the WebP's 57; the preload in vercel.json, cloudflare/_headers and
+   functions/_middleware.js names HERO_SHOT.avif, and siteSpeedPass.test.js
+   checks they agree. */
+const HERO_SHOT = {
+  avif: '/screenshots/nest-dark-hero.avif',
+  webp: '/screenshots/nest-dark@2x.webp',
+  png: '/screenshots/nest-dark@2x.png',
+  alt: 'The Flock home screen: tonight’s status, your flocks, and a plan that still needs votes.',
+};
 
-
-/* The Flock mark: the actual logo (same artwork as the app icon), not a
-   hand-drawn stand-in.
-
-   It is served from a 64px derivative rather than from /logo192.png, which is
-   what this used to point at. The nav mark renders at 32 CSS px and the footer
-   one at 24, so 192 was never needed for either: 64 covers both at 2x. What it
-   cost was 32.5 KB on the wire, fetched in the viewport with default priority,
-   i.e. inside the window the hero's own image and font are competing for. The
-   downscale is 3.5 KB, and that 29 KB is 11% of everything a first visit to
-   this page downloads.
-
-   /logo192.png stays exactly where it is: index.html declares it as the 192px
-   <link rel="icon"> and manifest.json lists it at 192x192, and both of those
-   are real 192px consumers. The favicon fetch is a separate, low-priority
-   request that no longer blocks anything the reader is looking at. */
+/* The Flock mark: the actual logo, served from a 64px derivative. The nav mark
+   renders at 32 CSS px and the footer one at 24, so 64 covers both at 2x;
+   /logo192.png stays for index.html's icon link and the manifest. */
 const Mark = ({ size = 32, lazy = false }) => (
   <img
     src="/marks/logo-64.png?v=2"
@@ -77,61 +65,25 @@ const Mark = ({ size = 32, lazy = false }) => (
   />
 );
 
-/* The App Store badge is always on the page. Before Apple approves the app it
-   points at the waitlist and says so, rather than sending people to a 404;
-   after approval (APP_STORE_LIVE = true) it becomes the real download link. */
-/* WCAG 2.5.3 (Label in Name): the accessible name has to CONTAIN the visible
-   one, in order, or speech input cannot address the control. This badge reads
-   "Coming soon to the App Store" / "Download on the App Store" on screen, and
-   the labels were "Flock is coming to the App Store. Join the waitlist." and
-   "Download Flock on the App Store". Neither contained its own visible string:
-   one drops "soon", the other inserts "Flock" mid-phrase. So "click download
-   on the App Store" matched nothing at all. The visible text leads now, and
-   the extra context follows it. */
-const AppStoreBadge = () => {
-  const live = APP_STORE_LIVE;
-  return (
-    <a
-      className={`lp-appstore ${live ? '' : 'is-soon'}`}
-      href={live ? APP_STORE_URL : '#get'}
-      {...(live ? { target: '_blank', rel: 'noreferrer' } : {})}
-      aria-label={live
-        ? 'Download on the App Store'
-        : 'Coming soon to the App Store. Join the waitlist.'}
-    >
-      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-        <path d="M17.05 12.54c-.02-2.2 1.8-3.26 1.88-3.31-1.02-1.5-2.62-1.7-3.19-1.72-1.36-.14-2.65.8-3.34.8-.69 0-1.75-.78-2.87-.76-1.48.02-2.84.86-3.6 2.18-1.53 2.66-.39 6.6 1.1 8.76.73 1.06 1.6 2.24 2.74 2.2 1.1-.05 1.52-.71 2.85-.71 1.33 0 1.7.71 2.87.69 1.18-.02 1.93-1.07 2.65-2.13.84-1.22 1.18-2.4 1.2-2.46-.03-.01-2.28-.88-2.3-3.48zM14.9 5.6c.6-.74 1.01-1.76.9-2.78-.87.04-1.93.58-2.56 1.31-.56.65-1.05 1.69-.92 2.68.97.08 1.97-.49 2.58-1.21z" />
-      </svg>
-      {/* The explicit space matters: the <span> is display:grid, so these are
-          two rows on screen and read as "Coming soon to the App Store", but
-          without it textContent concatenates to "...to theApp Store". That is
-          what an accessible-name comparison and any text-extraction tool sees. */}
-      <span>
-        <small>{live ? 'Download on the' : 'Coming soon to the'}</small>{' '}
-        App Store
-      </span>
-    </a>
-  );
-};
+/* No App Store badge until Apple approves the app. The homemade "Coming soon
+   to the App Store" badge used a standalone Apple logo and a modifier Apple
+   does not provide (its marketing guidelines allow only "Download on the" and
+   "Pre-order on the", and only Apple's own artwork, for an app that is
+   available). Until approval the page says it in words. On approval, add
+   Apple's official badge file, unmodified, linking to
+   https://apps.apple.com/app/id6781442127. */
 
 /* No scroll-reveal animation on this page, deliberately. Sections sliding in
-   from the bottom as you scroll is the most recognizable AI-built-site tell
-   (DESIGN-STANDARD.md A10), and the content is better off just being there. */
+   as you scroll is the most recognizable AI-built-site tell (DESIGN-STANDARD.md
+   A10), and the content is better off just being there. */
 
 /* Holds a below-the-fold thing's space and only mounts it once you are within
    a screen of it. This is NOT a reveal: nothing fades, nothing moves, and the
    box is the same size before and after, so the page does not shift. It exists
-   because two things here are expensive at load and useless at the top of the
-   page — the live demo's map engine, and the two photographed birds, whose
-   four cutout PNGs (89.9 KB) were being fetched at t=87 ms, inside the window
-   the hero needs.
-
-   The reservation matters as much as the gating: mounting something into an
-   unreserved box IS a layout shift, which is the thing lazy-loading is usually
-   trying to avoid. Every caller below passes the real box.
-
-   No IntersectionObserver (old Safari, and any prerender) means render now. A
-   visitor on a browser without it gets the old behaviour, not a blank page. */
+   because the live demo's map engine is expensive at load and useless at the
+   top of the page. No IntersectionObserver (old Safari, any prerender) means
+   render now. A first Tab press mounts everything, so the keyboard order never
+   steps over an unmounted control. */
 function WhenNear({ margin = '700px', className, hold, id, children }) {
   const ref = useRef(null);
   const [near, setNear] = useState(typeof IntersectionObserver !== 'function');
@@ -146,15 +98,6 @@ function WhenNear({ margin = '700px', className, hold, id, children }) {
     }, { rootMargin: margin });
     io.observe(el);
 
-    /* Tab is the other way in, and without this the gating quietly costs a
-       keyboard user the demo. Tabbing jumps focus between focusable elements,
-       and an unmounted subtree has none, so measured on the gated build the
-       forward tab order ran hero badge -> pricing button and stepped straight
-       over the live demo's search field and buttons. The browser only scrolls
-       once focus lands, by which point it has already gone past. A first Tab
-       press is a reliable signal that this visitor navigates by keyboard, so
-       they get the whole page from that moment. Nobody using a mouse or a
-       thumb ever pays for it. */
     const onKey = (e) => { if (e.key === 'Tab') setNear(true); };
     window.addEventListener('keydown', onKey);
 
@@ -171,15 +114,15 @@ function WhenNear({ margin = '700px', className, hold, id, children }) {
   );
 }
 
-/* THE FLOCK PRO CARD EXISTS ONLY WHILE PRO IS ON SALE. It asks the public
+/* THE FLOCK PRO LINE EXISTS ONLY WHILE PRO IS ON SALE. It asks the public
    /api/pro-offer endpoint, which answers available only when web checkout is
    switched on and every part of it is configured, and carries the prices
-   Stripe will charge. Until then the card does not render and the page reads
-   exactly as it did, so the homepage never advertises something nobody can
-   buy and never prints a price the checkout would not charge. A failed request
-   is the same as "not on sale". The limits in the list are the ones the
-   backend enforces with the paywall on: services/birdieUsage.js (10 a day
-   free, 150 with Pro) and services/forecastUsage.js (30 a month free). */
+   Stripe will charge. Until then nothing renders, so the homepage never
+   advertises something nobody can buy and never prints a price the checkout
+   would not charge. A failed request is the same as "not on sale". The limits
+   are the ones the backend enforces with the paywall on:
+   services/birdieUsage.js (10 a day free, 150 with Pro) and
+   services/forecastUsage.js (30 a month free). */
 function useProOffer() {
   const [offer, setOffer] = useState(null);
   useEffect(() => {
@@ -221,18 +164,11 @@ function ProOfferCard({ offer }) {
   );
 }
 
-// What the waitlist form says when the request comes back. The form used to
-// print whatever the Error carried, so a dropped connection read as the
-// browser's own "Load failed" (Safari) or "Failed to fetch" (Chrome), and a
-// 500 read as the backend's literal "Server error", which is a placeholder in
-// the route pattern's catch block and not a sentence for a person. While the
-// app is in review this form is where the App Store badge points, so it is the
-// one way in for every iPhone visitor.
-//
-// 400 and 429 carry sentences the route wrote for the visitor ("Valid email is
-// required", "Too many signups from this connection..."), so those are shown.
-// Everything else that failed gets one plain line. A repeat signup is a 201
-// with alreadyOnList set, and it says so instead of welcoming them again.
+// What the waitlist form says when the request comes back. 400 and 429 carry
+// sentences the route wrote for the visitor, so those are shown; anything else
+// that failed gets one plain line; a repeat signup says so instead of
+// welcoming them again. A dropped connection never shows the browser's own
+// "Failed to fetch".
 const WAITLIST_JOINED = 'You’re on the list. You’ll get an email when it opens up.';
 const WAITLIST_ALREADY = 'You’re already on the list. You’ll get an email when it opens up.';
 const WAITLIST_FAILED = 'Could not sign you up. Try again in a moment.';
@@ -249,15 +185,23 @@ export function waitlistReply(status, data) {
   return { msg: WAITLIST_FAILED, bad: true };
 }
 
+/* One Friday plan, the way it actually runs in the app. It replaced a
+   numbered 01-04 grid and three feature spreads that each restated the
+   product; the order is the order a group meets the features in. Every claim
+   is checked against the code that does it:
+     guests answer, vote and add a budget from a link   routes/guest.js, migration 071
+     one rounded-down ceiling, published once           routes/budget.js bandCeiling + settledCeiling
+     "Still in?" with a deadline                        ChatDetail.js, migration 072
+     events show only on a verified venue's card        GET /public-events (venueDashboard.js)
+     Venmo and Cash App links, Zelle instructions       the bill split sheet
+   The plates beside the beats are real captures in <figure>s, which the
+   crawler copy excludes (aiCrawlerSurface.test.js); the dead chat above them
+   is the only mock, and it is a mock of a group chat, not of Flock. */
+
 export default function LandingPage() {
   const proOffer = useProOffer();
   const [email, setEmail] = useState('');
   const [msg, setMsg] = useState('');
-  // Both outcomes used to land in one role="status" paragraph, so a failure
-  // was announced politely (queued behind whatever was being read) and looked
-  // identical to a success: same 14px, same --cream-2, no marker on the field.
-  // Kind splits them into a polite region and an assertive one, and drives
-  // aria-invalid on the input.
   const [msgBad, setMsgBad] = useState(false);
   const [busy, setBusy] = useState(false);
   const emailRef = useRef(null);
@@ -266,29 +210,16 @@ export default function LandingPage() {
   const menuBtnRef = useRef(null);
   const wasMenuOpen = useRef(false);
 
-  // While the panel is open: page scroll is locked, Escape closes, and Tab
-  // cycles inside the panel (the corner block is part of that cycle, since it
-  // is the close button).
+  // While the panel is open: page scroll is locked on the ROOT element (a lock
+  // on <body> makes <body> the scroll container and the sticky bar sticks to
+  // the document instead of the screen), Escape closes, and Tab cycles inside
+  // the panel and the menu button.
   useEffect(() => {
     if (!menuOpen) return undefined;
     const panel = menuRef.current;
     const btn = menuBtnRef.current;
     if (!panel) return undefined;
 
-    // Locking scroll removes the scrollbar, which would otherwise shove the
-    // corner block sideways at the moment you click it. Hold its width.
-    //
-    // The lock goes on the ROOT element, not on <body>. A body overflow is
-    // only handed to the viewport when the root's own overflow is visible,
-    // and the root carries overflow-x: clip (the horizontal clipping at the
-    // bottom of LandingPage.css). With the lock on <body>, <body> itself
-    // became the scroll container, the sticky bar started sticking to the
-    // top of the DOCUMENT instead of the top of the screen, and anyone who
-    // opened the menu after scrolling got a full-screen panel with the X
-    // scrolled thousands of pixels out of view and no way out but Escape;
-    // the page also jumped several hundred pixels on open. The root's
-    // overflow always reaches the viewport, so the bar keeps sticking and
-    // the corner X stays where the finger expects it.
     const root = document.documentElement;
     const bar = window.innerWidth - root.clientWidth;
     const prevOverflow = root.style.overflow;
@@ -328,7 +259,7 @@ export default function LandingPage() {
     };
   }, [menuOpen]);
 
-  // Closing hands focus back to the block that opened it.
+  // Closing hands focus back to the button that opened it.
   useEffect(() => {
     if (wasMenuOpen.current && !menuOpen && menuBtnRef.current) {
       menuBtnRef.current.focus();
@@ -339,7 +270,7 @@ export default function LandingPage() {
   useEffect(() => {
     document.title = 'Flock | Nurturing friendship, one flock at a time';
     const d = document.querySelector('meta[name="description"]');
-    if (d) d.setAttribute('content', 'Flock turns “we should hang out” into a real night out. Vote on where to go, see how busy it is before you leave, split the bill, and go.');
+    if (d) d.setAttribute('content', 'Flock is how a group decides where to go out. Your friends vote on the place, and everyone’s budget stays private.');
   }, []);
 
   const join = async (e) => {
@@ -364,17 +295,12 @@ export default function LandingPage() {
           body: JSON.stringify({ email: value }),
         });
       } catch {
-        // fetch rejects only when no response arrived at all: offline, a
-        // dropped connection, DNS. Its message is the browser's, not ours.
+        // fetch rejects only when no response arrived at all.
         setMsg(WAITLIST_OFFLINE);
         setMsgBad(true);
         return;
       }
-      // A gateway error page is HTML, and a body that will not parse is
-      // treated as saying nothing rather than as a failure of its own.
       const data = await res.json().catch(() => ({}));
-      // Same register fix as the lead above: the confirmation says what the
-      // reader gets, not who is sending it.
       const reply = waitlistReply(res.status, data);
       setMsg(reply.msg);
       setMsgBad(reply.bad);
@@ -387,44 +313,25 @@ export default function LandingPage() {
     }
   };
 
-  /* While the panel is open the rest of the document is inert. The visual
-     modal was already right — scroll locked, Escape closes, Tab cycles inside
-     the panel — but none of that reaches a screen reader's virtual cursor,
-     which walks the DOM and does not care where the browser thinks focus is.
-     Measured with the panel open in NVDA: down-arrow read straight past the
-     six menu links into the hero headline, the whole hero, and the
-     footer, none of which was on screen. aria-modal is not the tool here (the
-     close control is the corner block, which lives OUTSIDE the panel, and
-     aria-modal would hide it); marking the page behind it inert is.
-
-     `inert: true` and not `inert: ''` — React 19 treats an empty string on a
-     boolean attribute as FALSE and warns, so the spread is conditional and the
-     value is a real boolean. */
+  /* While the panel is open the rest of the document is inert, so a screen
+     reader's virtual cursor cannot walk into the page behind it. Not
+     aria-modal: the close control is the menu button in the header, outside
+     the panel. `inert: true`, a real boolean (React 19 treats '' as false). */
   const pageInert = menuOpen ? { inert: true } : {};
 
   return (
     <div className="lp">
-      {/* First focusable thing in the document. The page is ~7 screens of
-          content behind a sticky bar, and without this the only way past the
-          header on a keyboard was to Tab through it every time. */}
       <a className="lp-skip" href="#lp-main">Skip to the main content</a>
 
       {/* ---------------- nav ---------------- */}
       <header className={`lp-nav${menuOpen ? ' is-menu-open' : ''}`}>
         <div className="lp-wrap lp-nav-in">
           <a className="lp-brand" href="/"><Mark /> Flock</a>
-          {/* Wide screens also carry the section links in the bar itself, the
-              way a company site does, and the menu button stays beside them at
-              every width. (Before: a steel block pinned to the corner; before
-              that, an inline row that vanished under 860px with nothing in its
-              place, which left phones with no menu at all.) */}
           <nav className="lp-nav-links" aria-label="Sections">
             {NAV_LINKS.map((l) => (
               <a key={l.href} href={l.href}>{l.label}</a>
             ))}
           </nav>
-          {/* Open Flock is the direct door: reaching the app must not require
-              a menu (2026-08-27). */}
           <a className="lp-btn lp-btn-cream lp-nav-open" href="/app">Open Flock</a>
           <button
             type="button"
@@ -449,10 +356,6 @@ export default function LandingPage() {
         ref={menuRef}
         className={`lp-menu${menuOpen ? ' is-open' : ''}`}
       >
-        {/* Deliberately not aria-modal: the close control is the corner block
-            in the header, which sits outside this element, and aria-modal
-            would hide it from screen readers. Escape and the focus trap give
-            the modal behaviour instead. */}
         <nav className="lp-menu-in" aria-label="Site menu">
           {NAV_LINKS.map((l) => (
             <a
@@ -474,553 +377,439 @@ export default function LandingPage() {
         </nav>
       </div>
 
-      {/* The page had NO main landmark: <header>, a pile of unnamed <section>s
-          and <footer>. An unnamed <section> is exposed as a generic container,
-          not a region, so "jump to main content" had nothing to jump to and
-          the landmark rotor listed two entries for an entire marketing site. */}
       <main id="lp-main" tabIndex={-1} {...pageInert}>
 
       {/* ---------------- hero ----------------
-          The headline spans the full measure and the rest of the fold hangs
-          under it: two sentences at 72px need ~900px to sit on two lines, and
-          in a half-width column they broke into four ragged ones. The phone is
-          a plate in the right margin with a caption, which is the field guide's
-          own device and the honest way to say the screenshot is real. */}
+          The tagline, then what Flock is for in plain words, one action, then
+          the honest status of the iPhone app. Flat navy: the soft glow at the top of a
+          dark hero is the stock generated-site hero, and nothing in a printed
+          field guide glows. The phone is a plate in the margin with a caption,
+          the field guide's own device and the honest way to say the screen is
+          real. */}
       <section className="lp-hero lp-on-navy" aria-labelledby="lp-h-hero">
         <div className="lp-wrap lp-hero-in">
-          {/* "they happen." is held together: text-wrap balance, pretty and
-              auto all break this sentence 4+1 at phone widths and leave
-              "happen." alone on line four. */}
-          <h1 id="lp-h-hero">Nurturing friendship, <span className="lp-keep">one flock at a time.</span></h1>
-
           <div className="lp-hero-copy">
+            <h1 id="lp-h-hero">Nurturing friendship, <span className="lp-keep">one flock at a time.</span></h1>
             <p className="lp-lead">
-              Start a flock, invite your people, and vote on where to go. Everyone
-              ends up on the same plan without the 200-message thread.
+              Flock is how a group decides where to go out. Everybody votes on the
+              place, and nobody has to say their budget out loud.
             </p>
             <div className="lp-hero-cta">
-              <a className="lp-btn lp-btn-cream lp-btn-lg" href="/signup">Create your account</a>
-              <a className="lp-btn lp-btn-ghost lp-btn-lg" href="#how">See how it works</a>
+              <a className="lp-btn lp-btn-cream lp-btn-lg" href="/signup">Start a plan</a>
             </div>
-            {/* The badge sits AFTER the note, not between the buttons and it.
-                Pre-approval it is the one thing on the fold you cannot actually
-                do, and stacked directly under the two real actions it made a
-                phone read as three competing boxes with the Apple logo — the
-                most eye-catching of the three — on the only one that goes
-                nowhere. Actions, then the reason to believe them, then the
-                channel that isn't open yet. */}
             <p className="lp-hero-note">
-              Free, and it runs in your browser right now, so there’s nothing to
-              download. Flock took 1st place at PA DECA States.
+              Free, and it works in your browser today. The iPhone app is still in
+              App Store review (<a href="#get">get an email when it’s out</a>).
+              Flock took 1st place at PA DECA States.
             </p>
-            <AppStoreBadge />
           </div>
 
           <figure className="lp-phone-wrap">
-            {/* Real capture of the shipping app, not a mockup. */}
-            {/* WebP first, PNG fallback. Format choice cannot ride on srcSet:
-                srcset entries carry only density and width descriptors, so
-                there is nowhere to say "this one is WebP" and a browser that
-                cannot decode it would still pick it and show a broken image.
-                <source type> is the only mechanism that gates on format, and a
-                browser that does not support the type skips the source and
-                falls through to the <img> untouched. The <img> below is
-                verbatim what shipped before this wrapper existed: same src,
-                same intrinsic width/height, same priority hint, same alt. It
-                is still the element the CSS styles and the only element that
-                renders.
-
-                Every KB figure in these five comments is bytes ON THE WIRE,
-                measured off the built page at 1.6 Mbps rather than read off
-                the filesystem, so it includes response headers. This one:
-                224.7 KB of PNG against 29.1 KB of WebP, same 390x844 pixels.
-                See the `picture` rule in LandingPage.css for what the wrapper
-                does and, more usefully, what it does not do. */}
+            {/* Literal paths, not HERO_SHOT's, so siteSpeedPass.test.js can see
+                the file the Link preload names is the one this requests. */}
             <picture>
+              <source type="image/avif" srcSet="/screenshots/nest-dark-hero.avif" />
               <source type="image/webp" srcSet="/screenshots/nest-dark@2x.webp" />
               <img
                 className="lp-shot lp-shot-hero"
                 src="/screenshots/nest-dark@2x.png"
                 width="390" height="844"
                 fetchPriority="high"
-                alt="The Flock home screen: tonight's status, your flocks, and a plan that needs votes."
+                alt={HERO_SHOT.alt}
               />
             </picture>
             <figcaption className="lp-plate-cap">
-              The Nest, top of screen. Who is in tonight, and which plans still
-              need votes.
+              Who’s in tonight, and which plans need votes.
             </figcaption>
           </figure>
         </div>
       </section>
 
-      {/* ---------------- the turn ----------------
-          No kicker here: "The problem" above a headline that states the problem
-          is a label narrating its own sentence. */}
-      <section className="lp-sec lp-sec-paper" aria-labelledby="lp-h-turn">
-        <div className="lp-wrap lp-turn-grid">
-          <div>
-            <h2 className="lp-turn" id="lp-h-turn">Six people say yes. Then the chat goes quiet.</h2>
-            <p className="lp-lead" style={{ marginTop: 18 }}>
-              The plan doesn’t fall apart because people don’t want to go. It falls
-              apart because deciding is annoying, and one person always ends up
-              carrying it.
+      {/* ---------------- crowd levels, live ----------------
+          The one thing on the page a generator cannot fake, so it comes second,
+          straight after the hero. #crowds stays on the section and #try on the
+          demo, so the footer link and the menu link each land somewhere. */}
+      <section className="lp-sec lp-sec-paper lp-live" id="crowds" aria-labelledby="lp-h-crowds">
+        <div className="lp-wrap">
+          <div className="lp-live-top">
+          <div className="lp-live-head">
+            <h2 id="lp-h-crowds">See how busy it is before anyone leaves.</h2>
+            {/* What crowdEngine and the forecast actually do: a venue's usual
+                pattern for the hour, moved by its newest live readings where
+                Flock has them, and an estimate from places like it everywhere
+                else. The quieter pick is the venue card's own suggestion. */}
+            <p className="lp-lead">
+              Search any place below. Flock starts from how busy it usually gets at
+              this hour and adjusts with live readings when it has them. Packed?
+              It suggests a quieter spot nearby.
+            </p>
+            {/* crowdEngine.js needs MIN_CALIBRATION_REPORTERS (3) distinct
+                verified reporters in the same weekly day-and-hour bucket before
+                reports move anything; below that the model's answer stands.
+                Check-ins do not feed the number at all. */}
+            <p className="lp-live-note">
+              Three reports from people at a venue move its score for that night and hour.
+            </p>
+            {/* The two pages behind this number, as one line: /ai for the
+                models (it says plainly what the card serves today), /flux for
+                the counter being built. Teasers only; the 3D lives on /flux. */}
+            <p className="lp-live-note lp-live-more">
+              We’re building <a href="/flux">Flux</a>, a box that counts the people
+              in a venue and sends Flock only numbers. The four models in Flock are
+              on <a href="/ai">How the AI works</a>.
             </p>
           </div>
-
-          <div className="lp-chat">
-            <div className="lp-msg">we should all hang out this weekend</div>
-            <div className="lp-msg lp-msg-me">yesss I'm down</div>
-            <div className="lp-msg">same, where tho</div>
-            <div className="lp-msg lp-msg-me">idk what do you guys want</div>
-            <div className="lp-msg">I'm good with anything</div>
-            <div className="lp-msg lp-msg-dead">Seen by 6 · nobody went</div>
+          <img
+            className="lp-art lp-live-art"
+            src="/art/crowd-busy-480.webp"
+            srcSet="/art/crowd-busy-480.webp 480w, /art/crowd-busy-960.webp 960w"
+            sizes="(min-width: 960px) 420px, min(360px, 90vw)"
+            width="480" height="154"
+            loading="lazy" decoding="async"
+            alt=""
+          />
           </div>
-        </div>
-      </section>
-
-      {/* ---------------- how it works ---------------- */}
-      <section className="lp-sec lp-sec-sand" id="how" aria-labelledby="lp-h-how">
-        <div className="lp-wrap">
-          <div>
-            {/* Two birds already on the wire and a third flying in: the plans
-                mark. It used to sit on the navy Safety section, where it was
-                the wrong subject and needed a CSS invert to be visible at all.
-                This is the section it actually describes. */}
-            {/* The -400 assets alone. They are 864-1024px wide against slots
-                that never render past 520 CSS px, so they already carry 2x
-                density everywhere. The old "2x" srcSet entries were the 2-8MB
-                master files, and every retina phone downloaded all three of
-                them (~15MB) for images this size. Do not re-add them. */}
-            {/* fetchPriority low on all three section marks. They are
-                decorative (alt=""), they are below the fold, and `loading=lazy`
-                alone does not stop them competing: the browser's lazy threshold
-                is generous, so mark-steps (124.7 KB) was already being fetched
-                at 396 ms, inside the hero's window. Lazy decides WHEN, priority
-                decides what it is allowed to slow down. */}
-            {/* WebP first (see the hero for why this is <picture> and not
-                srcSet). This mark's PNG is a palette image with a tRNS chunk,
-                so it is transparent, and mark-steps-400.webp is VP8X with an
-                ALPH chunk, which is the only WebP shape that keeps alpha under
-                lossy compression. Verified rather than assumed: a plain "VP8 "
-                WebP has no alpha channel at all and would have painted a solid
-                box over the cream. 121.7 KB of PNG, 76.5 KB of WebP. */}
-            <figure className="lp-flock lp-flock-steps">
-              <picture>
-                {/* Width candidates, website only (the app's EmptyMark keeps the
-                    -400 files as they are). The 432w is 29 KB against the 76 KB
-                    864w, and any screen that paints the slot at 1x density takes
-                    it. `sizes` mirrors .lp-flock-steps img in LandingPage.css. */}
-                <source
-                  type="image/webp"
-                  srcSet="/marks/mark-steps-432.webp 432w, /marks/mark-steps-400.webp 864w"
-                  sizes="(min-width: 1106px) 420px, (min-width: 632px) 38vw, 240px"
-                />
-                <img src="/marks/mark-steps-400.png" alt="" width="864" height="290" loading="lazy" decoding="async" fetchPriority="low" />
-              </picture>
-            </figure>
-            {/* The "How it works" kicker was cut. An eyebrow is an ordinal
-                device, and this section already has the strongest ordinal
-                device on the page directly underneath it: a band numbered 01 to
-                04. A label saying "How it works" above four numbered steps is
-                narrating what the numbers already say. Two eyebrows survive on
-                the page (Crowd levels, Safety) and they are the two whose
-                headline never states the subject as a noun. */}
-            <h2 id="lp-h-how">Four steps, then you’re out the door.</h2>
-          </div>
-          <div className="lp-steps">
-            {[
-              { n: '01', t: 'Start a flock', d: 'Name the night, pick a date, invite your people. They RSVP in one tap.' },
-              { n: '02', t: 'Vote on where', d: 'Everyone throws in places. The group votes. No one has to be the decider.' },
-              { n: '03', t: 'Match budgets', d: "Everyone types in what they can spend. The group only ever sees the ceiling, never anyone’s number." },
-              { n: '04', t: 'Lock it in', d: "The plan locks, everyone gets the details, and you’re going out." },
-            ].map((s) => (
-              <div className="lp-step" key={s.n}>
-                <div className="lp-step-n">{s.n}</div>
-                <h3>{s.t}</h3>
-                <p>{s.d}</p>
-              </div>
-            ))}
-          </div>
-          {/* The two features the cut "In the app" grid actually added, as one
-              line under the thing they belong to. */}
-          <p className="lp-steps-after">
-            The chat, the venue cards and the votes all live in the flock, and
-            everything you say yes to lands on one calendar.
-          </p>
-        </div>
-      </section>
-
-      {/* ---------------- crowds, and the proof ----------------
-          These used to be two sections in a row: a claim about crowd levels
-          illustrated with a screenshot, then the same claim again with a real
-          working map under it. The screenshot version was strictly the weaker
-          one and it came first, so the page argued before it proved. One
-          section now, and it is navy: the demo is showing you tonight, and
-          tonight is what navy means on this page. It also breaks what was
-          otherwise a run of seven cream sections down the middle.
-
-          Both old anchors survive — #crowds on the section, #try on the demo —
-          so the footer link and the menu link each land somewhere sensible. */}
-      <section className="lp-sec lp-sec-navy lp-on-navy" id="crowds" aria-labelledby="lp-h-crowds">
-        <div className="lp-wrap">
-          <div className="lp-demo-head">
-            <div>
-              {/* Transparent PNG, and the WebP is VP8X + ALPH, so the cutout
-                  survives. This one has to keep its alpha more than the others
-                  do: it sits on the navy section, where an opaque cream or
-                  white ground would be unmissable. 300.6 KB PNG, 129.7 KB WebP. */}
-              <figure className="lp-flock lp-flock-crowd">
-                <picture>
-                  {/* 520w is 46 KB; the 1024w is mark-crowd.webp, the same
-                      1024x498 cutout as the -400 at 119 KB rather than 129. Both
-                      keep the alpha channel (VP8X + ALPH). `sizes` mirrors
-                      .lp-flock-crowd img. */}
-                  <source
-                    type="image/webp"
-                    srcSet="/marks/mark-crowd-520.webp 520w, /marks/mark-crowd.webp 1024w"
-                    sizes="(min-width: 1131px) 520px, (min-width: 609px) 46vw, 280px"
-                  />
-                  <img src="/marks/mark-crowd-400.png" alt="" width="1024" height="498" loading="lazy" decoding="async" fetchPriority="low" />
-                </picture>
-              </figure>
-              <p className="lp-kicker">Crowd levels</p>
-              <h2 id="lp-h-crowds">Know how busy it is before you leave.</h2>
-              <p className="lp-lead">
-                Flock pulls live busyness readings every hour and weighs them
-                against how each place usually runs, then shows you how packed it
-                is tonight. You stop driving across town to stand in a line.
-              </p>
-            </div>
-            <ul className="lp-list">
-              <li>An hour-by-hour read on tonight</li>
-              <li>The best time to show up</li>
-              <li>Every spot near you, scored the same way</li>
-              <li>A quieter pick nearby when your first choice is slammed</li>
-              {/* This read "Crowd reports from people at the venue fold in
-                  live", which describes a real-time override the product does
-                  not have. backend/services/crowdEngine.js needs
-                  MIN_CALIBRATION_REPORTERS (3) distinct VERIFIED reporters in
-                  the same weekly day-and-hour bucket, inside
-                  CALIBRATION_MAX_AGE_MS (28 days), one vote per account, with
-                  MAX_SINGLE_REPORT_LEVERAGE capping what any one of them moves.
-                  Below the floor the model's own answer stands and the reports
-                  change nothing at all. The floor is the interesting part and
-                  it is the part the line now says. */}
-              <li>Three reports from people at a venue move its score for that night and hour</li>
-            </ul>
-          </div>
-
           {/* 800px of lead: the demo is loading and drawing before it reaches
-              the screen, so arriving here still feels like it was always
-              there. The holder is the demo's own height, so nothing shifts
-              when it mounts. The holder is #try, the menu's "Try it live",
-              so the link lands on the demo itself. */}
+              the screen. The holder is the demo's own height, so nothing shifts
+              when it mounts. It is #try, the menu's "Try it live". */}
           <WhenNear id="try" className="lpd-hold" margin="800px">
             <Suspense fallback={null}><LiveDemo /></Suspense>
           </WhenNear>
         </div>
       </section>
 
-      {/* ---------------- birdie ----------------
-          Was .lp-row, i.e. media-left / text-right at half and half — which is
-          the identical composition to the Money section two screens down. The
-          two of them read as the same panel with different nouns in it. This is
-          .lp-birdie now: the phone sits as a 300px plate in the right margin,
-          the way the hero treats the same asset, and the text runs at a reading
-          measure rather than filling half a page. Text first in the DOM, so a
-          phone gets the heading before the screenshot instead of after it. */}
-      <section className="lp-sec lp-sec-sand" id="birdie" aria-labelledby="lp-h-birdie">
-        <div className="lp-wrap lp-birdie">
-          <div>
-            {/* The character himself, not a linocut plate of him. This is the
-                one section where the mascot IS the subject, so he stands in
-                the text column and follows the reader's cursor. Sized by
-                aspect ratio so he can never push the column wide on a phone.
-                (The idle mp4 is unused here: its ground is white and this
-                section is cream, so the cutout PNG is the honest asset.) */}
-            <WhenNear
-              hold={{
-                width: 'clamp(112px, 13vw, 168px)',
-                aspectRatio: '316 / 400',
-                margin: '0 0 16px',
-              }}
-            >
-              <BirdieBird size={150} style={{ width: '100%', height: '100%' }} />
-            </WhenNear>
-            <h2 id="lp-h-birdie">“Idk, you pick.” Birdie picks.</h2>
-            {/* Was "The argument is always the same one: where." — which is the
-                FOURTH time this page says deciding where is hard, after the
-                hero lead, the whole chat-goes-quiet section, and step 02. The
-                h2 above already carries that setup in two words. This lead now
-                advances the argument instead of restating it, and it hands off
-                from the crowd section directly above rather than resetting. */}
-            {/* Three claims checked against backend/routes/ai.js and the AI
-                chat in App.js, because two of them were not true:
+      {/* ---------------- one Friday plan ----------------
+          The Friday is the one in the captures: the Friday Night Crew flock,
+          The Copper Finch, Jordan's bill. Each plate is a real screen of the
+          web app (scripts/capture-screenshots.mjs, seeded demo data, venue
+          pictures drawn rather than photographed), so the story and the
+          pictures are the same night. The dead chat that opens it sits on
+          navy (the maintainer, 2026-10-21), so its bird is a beige sparrow: the
+          navy wrens vanish on a navy band. */}
+      <section className="lp-sec lp-sec-navy lp-on-navy" id="how" aria-labelledby="lp-h-how">
+        <div className="lp-wrap">
+          <h2 id="lp-h-how" className="lp-friday-title">Everyone said yes. Then the chat went quiet.</h2>
+          <p className="lp-lead lp-friday-lead">
+            Here’s that same Friday in Flock: five steps, and nobody has to carry it.
+          </p>
 
-                "Every pick is scored by the crowd model before it reaches you"
-                described a pipeline that does not exist. search_venues returns
-                Google Places results with no score; the crowd number arrives
-                only when Birdie calls get_crowd_prediction, which it does when
-                it is relevant, not on every result.
+          {/* The dead chat beside a sparrow taking off: everyone flew, and
+              nobody went. No words added. */}
+          <div className="lp-friday-open">
+          <figure className="lp-chat lp-friday-chat">
+            <div className="lp-msg">we should all hang out this weekend</div>
+            <div className="lp-msg lp-msg-me">yesss I'm down</div>
+            <div className="lp-msg">same, where tho</div>
+            <div className="lp-msg lp-msg-me">idk what do you guys want</div>
+            <div className="lp-msg">I'm good with anything</div>
+            <div className="lp-msg lp-msg-dead">Seen by 5 · nobody went</div>
+          </figure>
+          <img
+            className="lp-art lp-friday-art"
+            src="/art/spot-flap-240.webp"
+            srcSet="/art/spot-flap-240.webp 240w, /art/spot-flap-480.webp 480w"
+            sizes="(min-width: 900px) 290px, 180px"
+            width="240" height="308"
+            loading="lazy" decoding="async"
+            alt=""
+          />
+          </div>
 
-                "or start the plan" claimed a third button. A Birdie venue card
-                ships exactly two: Details, and Share to a flock or a DM.
+        </div>
+      </section>
 
-                What IS true and is the better line anyway: the crowd numbers
-                Birdie quotes are the app's own, and its hard rules forbid it
-                from inventing one. */}
-            <p className="lp-lead">
-              Ask Birdie the way you’d ask a friend who knows the city. It comes
-              back with real places near you.
+      {/* ---------------- the five beats ----------------
+          Each beat is its own full-width band, paper and navy in turn, so each
+          step of the night reads as its own (the maintainer, 2026-10-21: "cream, then
+          dark blue, then cream"). Since his second look the same day ("a lot
+          of open space ... put the screenshot in the middle and draw arrows to
+          explain"), a beat is its time, headline and line, centred, with the
+          capture under it and its parts named (AnnotatedShot), or, where the
+          beat has no screen, a painted scene: above the words for the
+          invitation, flying off under them for "Still in?". Flat grounds, no
+          gradients and no shadows. Every capture on the site is the dark
+          theme, the hero's own. #birdie and #money stay on the beats they
+          always named, for old links. The notes, and the measured box of
+          each thing they name, are in landingAnnotations.js. */}
+      <section className="lp-sec lp-sec-paper lp-beat-band" aria-labelledby="lp-h-beat-1">
+        <div className="lp-wrap">
+          {/* The invitation: a wren holding the folded note while two
+              sparrows lean in. */}
+          <img
+            className="lp-art lp-beat-scene is-invite"
+            src="/art/step-start-480.webp"
+            srcSet="/art/step-start-480.webp 480w, /art/step-start-960.webp 960w"
+            sizes="min(400px, 84vw)"
+            width="480" height="243"
+            loading="lazy" decoding="async"
+            alt=""
+          />
+          <div className="lp-beat">
+            <p className="lp-beat-when">Thursday, 4:10 PM</p>
+            <h3 id="lp-h-beat-1">Maya starts a flock.</h3>
+            <p>
+              Friday Night Crew, 8 o’clock, four friends invited. Anyone without
+              the app joins from a link (budget too), no account needed.
             </p>
-            {/* FTC AI disclosure. The line above sells Birdie as a friend who
-                knows the city, which is the framing the FTC treats as
-                deceptive when the thing is software and the page never says
-                so. The privacy policy already names Google Gemini; this is
-                the same fact where the product is actually marketed, in the
-                page's own voice rather than a footnote. It also carries the
-                model attribution for the crowd numbers, so the claim sits
-                next to the thing that produces it.
-                Second .lp-lead in a row and `.lp :where(p)` zeroes every
-                paragraph margin, so the gap is set here: LandingPage.css is
-                owned elsewhere this pass and one inline value beats an
-                unreviewed rule.
-                MIRRORED in frontend/api/marketing-page.js PAGE_BLOCKS.home,
-                immediately after the paragraph above. aiCrawlerSurface.test.js
-                requires the two to match block for block. */}
-            <p className="lp-lead" style={{ marginTop: 14 }}>
+          </div>
+        </div>
+      </section>
+      <section className="lp-sec lp-sec-navy lp-on-navy lp-beat-band" id="birdie" aria-labelledby="lp-h-beat-2">
+        <div className="lp-wrap">
+          <div className="lp-beat">
+            <p className="lp-beat-when">Thursday, 6:30 PM</p>
+            <h3 id="lp-h-beat-2">Three places go to a vote.</h3>
+            <p>
+              Sam asks Birdie for somewhere cheaper, the way you’d ask a friend
+              who knows the city, and drops its pick in the chat.
+            </p>
+            {/* FTC AI disclosure, in the page's own voice where Birdie is
+                marketed. MIRRORED in api/marketing-page.js PAGE_BLOCKS.home;
+                aiCrawlerSurface.test.js requires the two to match. */}
+            <p className="lp-beat-note">
               Birdie is AI. It runs on Google Gemini, and the crowd numbers it
               quotes are the app’s own.
             </p>
-            <ul className="lp-list">
-              {/* No trailing periods, which is what every other list on this
-                  page does. This one was the exception. */}
-              <li>Ask in plain words. “Where’s poppin rn” works</li>
-              <li>The same crowd numbers as the map above</li>
-              <li>Tap a card for the details, or send it straight to your flock</li>
-            </ul>
           </div>
-
-          <div className="lp-row-media">
-            {/* Real capture of the shipping app, not a mockup. WebP first, PNG
-                fallback, and the <img> is byte-for-byte the one that shipped
-                before, loading="lazy" included. 298.2 KB PNG, 53.7 KB WebP. */}
-            <picture>
-              <source type="image/webp" srcSet="/screenshots/birdie-dark@2x.webp" />
-              <img
-                className="lp-shot"
-                src="/screenshots/birdie-dark@2x.png"
-                width="390" height="844"
-                loading="lazy"
-                alt="Birdie answering 'Where's poppin in Philadelphia rn?' with a recommendation and venue cards."
-              />
-            </picture>
-          </div>
+          <AnnotatedShot id="vote" {...ANNOTATIONS.vote} />
         </div>
       </section>
-
-      {/* ---------------- money ----------------
-          The old headline was "Money kills more plans than distance", the third
-          plans-die construction on one page after the hero and Birdie. The
-          section's best line was buried in the lead; it is the headline now. */}
-      <section className="lp-sec lp-sec-paper" id="money" aria-labelledby="lp-h-money">
-        <div className="lp-wrap lp-row lp-row-flip">
-          <div>
-            {/* The one mark whose WebP is a plain "VP8 " chunk with no ALPH,
-                i.e. no alpha channel. That is correct here and only here:
-                mark-money-400.png is a palette PNG with NO tRNS chunk, so the
-                PNG is opaque too and the two are equivalent. Do not copy this
-                pattern to the other two marks, whose PNGs are transparent. If
-                this asset is ever regenerated as a cutout, the WebP has to be
-                re-encoded as VP8X+ALPH or it will paint a box on the cream.
-                424.6 KB PNG, 57.3 KB WebP, the biggest single win on the page. */}
-            <figure className="lp-flock lp-flock-money">
-              <picture>
-                {/* The slot never paints past 230 CSS px, so the 1024px file was
-                    four times the width even at 2x. 240w is 5 KB and 480w 16 KB,
-                    both opaque "VP8 " like the -400 (see above for why that is
-                    right for this mark only). `sizes` mirrors .lp-flock-money img. */}
-                <source
-                  type="image/webp"
-                  srcSet="/marks/mark-money-240.webp 240w, /marks/mark-money-480.webp 480w, /marks/mark-money-400.webp 1024w"
-                  sizes="(min-width: 1150px) 230px, (min-width: 750px) 20vw, 150px"
-                />
-                <img src="/marks/mark-money-400.png" alt="" width="1024" height="1024" loading="lazy" decoding="async" fetchPriority="low" />
-              </picture>
-            </figure>
-            <h2 id="lp-h-money">Nobody wants to say “that’s too expensive” out loud.</h2>
-            <p className="lp-lead">
-              In Flock nobody has to. Everyone types a number privately, and the
-              group only ever sees a ceiling that works for all of them.
+      <section className="lp-sec lp-sec-paper lp-beat-band" id="money" aria-labelledby="lp-h-beat-3">
+        <div className="lp-wrap">
+          <div className="lp-beat">
+            <p className="lp-beat-when">Friday, noon</p>
+            <h3 id="lp-h-beat-3">The budgets come in privately.</h3>
+            {/* budget.js publishes nothing until the budget settles (everyone
+                going has answered with at least three members' amounts in, or
+                the creator locks it once three have), and then a figure
+                rounded down to a band so it is nobody's own number (bandCeiling). The
+                vote and Discover then drop places priced over it
+                (getMaxPriceLevel in ChatDetail.js and ExploreScreen.js). */}
+            <p>
+              Everyone types what they can spend. The group only ever sees one
+              number, rounded down, and the places Flock suggests stay under it.
             </p>
-            {/* "Nobody ever sees an individual amount" was cut: the lead
-                directly above already says exactly that, so the section opened
-                by restating itself. What replaced it is the part of the rule
-                nobody would invent, and it is the one that actually proves the
-                privacy claim: budget.js publishes NO figure until the budget
-                settles, which is everyone going (accepted members and guests
-                who said they are in) answering with at least three members'
-                amounts shared, or the plan's creator locking it once three
-                members have shared, and what it publishes then is a band
-                rather than the minimum itself. The line here used to say the
-                ceiling was hidden until three people had answered, which is the
-                rule the route replaced: a ceiling IS a minimum, so one that
-                appeared at three and moved at four would name whoever has the
-                least money. It then said "until everyone has answered", which
-                the creator's lock makes untrue. settledCeiling gates on
-                budget_locked and bandCeiling rounds what survives. */}
-            <ul className="lp-list">
-              <li>No number until everyone going has answered or the plan's creator locks it, with at least three members' amounts in, and then it is a rounded band, not anyone's figure</li>
-              <li>Venue picks stay under the group’s ceiling</li>
-              <li>Split the bill with Venmo and Cash App links, or Zelle instructions</li>
-            </ul>
+            <p className="lp-beat-note">
+              It appears when everyone going has answered or the creator locks
+              it, and only once at least three members have shared an amount.
+            </p>
           </div>
-
-          <div className="lp-row-media">
-            <div className="lp-split">
-              <div className="lp-split-total"><span>Friday Night Out</span><b>$116.82</b></div>
-              <div className="lp-split-row"><span>Maya</span><b>$23.36</b></div>
-              <div className="lp-split-row"><span>Sam</span><b>$23.36</b></div>
-              <div className="lp-split-row"><span>Riley</span><b>$23.36</b></div>
-              <div className="lp-split-row"><span>Jordan</span><b>$23.37</b></div>
-              <div className="lp-split-row"><span>Alex</span><b>$23.37</b></div>
-              <div className="lp-split-note">The ceiling came back at $25 a head. Nobody ever saw anyone else’s number.</div>
-            </div>
-          </div>
+          <AnnotatedShot id="budget" {...ANNOTATIONS.budget} />
         </div>
       </section>
-
-      {/* The "In the app" section was cut here. It was a six-card grid, and
-          four of the six cards (venue voting, live crowd levels, budget
-          matching, Birdie) were a fourth restatement of sections this page had
-          already given a full spread each. The other two, group chat and the
-          plans calendar, are now a single line at the end of the steps rather
-          than a section of their own. A page that says the same six things four
-          times is not thorough, it is unsure. */}
+      <section className="lp-sec lp-sec-navy lp-on-navy lp-beat-band" aria-labelledby="lp-h-beat-4">
+        <div className="lp-wrap">
+          <div className="lp-beat">
+            <p className="lp-beat-when">Friday, 7:15 PM</p>
+            <h3 id="lp-h-beat-4">“Still in?”</h3>
+            <p>
+              Before the deadline, the chat asks who’s still in. All five say
+              yes, and one last crowd check shows The Copper Finch filling up.
+            </p>
+          </div>
+          {/* All five said yes, so the flock heads out together, flying off
+              to the right under the words. Five beige sparrows and two wrens:
+              on navy the wrens hold by their white breasts and the pale edges
+              of their wings. */}
+          <img
+            className="lp-art lp-beat-scene is-flight"
+            src="/art/step-go-480.webp"
+            srcSet="/art/step-go-480.webp 480w, /art/step-go-960.webp 960w"
+            sizes="min(520px, 90vw)"
+            width="480" height="243"
+            loading="lazy" decoding="async"
+            alt=""
+          />
+        </div>
+      </section>
+      <section className="lp-sec lp-sec-paper lp-beat-band" aria-labelledby="lp-h-beat-5">
+        <div className="lp-wrap">
+          <div className="lp-beat">
+            <p className="lp-beat-when">Saturday morning</p>
+            <h3 id="lp-h-beat-5">Jordan paid, so Flock splits it.</h3>
+            <p>$142.60 with the tip comes to $28.52 each.</p>
+          </div>
+          <AnnotatedShot id="bill" {...ANNOTATIONS.bill} />
+          <p className="lp-friday-more">
+            Every step, and the two-minute pitch video, is on{' '}
+            <a href="/how-it-works">How it works</a>.
+          </p>
+        </div>
+      </section>
 
       {/* ---------------- safety ----------------
-          The third .lp-row in a row was this one, and three identical panels is
-          where a page stops reading as composed. It is two tiers now instead of
-          two columns: the statement sits beside the real email, and the four
-          rules run across the full width underneath as a 2x2 ruled block. The
-          rules are the section's actual promise, so they get the width rather
-          than being a sidebar to it, and the shape belongs to this section
-          alone. */}
-      <section className="lp-sec lp-sec-navy lp-on-navy" id="safety" aria-labelledby="lp-h-safety">
+          What SOS does, in the order a person needs it, beside the two real
+          things: the sheet the app shows and the email it sends. Every line
+          below is checked against the code that does it:
+            two taps, armed then sent                 EmergencySheet.js (4 s arm)
+            email to the trusted contacts             routes/safety.js POST /alert
+            in-app alert to a confirmed plan's people  SOS_FLOCK_WINDOW_HOURS = 12
+            an update when a fix comes in later       updateKind 'location' | 'moved'
+            "Tell them I'm OK", the all clear          POST /alert/cancel, safety_alert_cancelled
+            Flock does not call 911                   the sheet's own line
+          On the light stone band, where the watcher-bird painting reads. The
+          email is set as a document, exactly the lines the backend sends
+          (landingPageClaims.test.js checks each one), with no decoration. */}
+      <section className="lp-sec lp-sec-sand" id="safety" aria-labelledby="lp-h-safety">
         <div className="lp-wrap lp-safety">
-          <div>
-            {/* No plate here on purpose. The marks are navy ink with no dark
-                variant, and the SOS email beside this column is already the
-                section's visual. */}
-            <p className="lp-kicker">Safety</p>
-            <h2 id="lp-h-safety">Getting home matters as much as getting out.</h2>
+          <div className="lp-safety-head">
+            <img
+              className="lp-art lp-safety-art"
+              src="/art/safety-360.webp"
+              srcSet="/art/safety-360.webp 360w, /art/safety-720.webp 720w"
+              sizes="(min-width: 900px) 260px, 220px"
+              width="360" height="289"
+              loading="lazy" decoding="async"
+              alt=""
+            />
+            <h2 id="lp-h-safety">If something goes wrong, two taps tell your people where you are.</h2>
             <p className="lp-lead">
-              Share your live location with your group while the night is on, and
-              only while it’s on. If something goes wrong, one button tells the
-              people you picked where you are.
+              Sharing your live location with the flock is optional, and off until
+              you turn it on. SOS is separate. Here’s exactly what it does.
             </p>
           </div>
-          <div className="lp-row-media">
-            {/* Excerpt of the real SOS email the backend sends — not a mock UI.
+          <div className="lp-safety-body">
+            <div className="lp-safety-facts">
+              <div>
+                <h3>Who hears</h3>
+                <p>
+                  Your trusted contacts, by email. Anyone on a confirmed plan with
+                  you that starts within twelve hours either side gets an alert in
+                  the app.
+                </p>
+              </div>
+              <div>
+                <h3>What they get</h3>
+                <p>
+                  Your name, the time, a map link if your phone has a fix, and how
+                  accurate that fix is. A fix that comes in late follows as an update.
+                </p>
+              </div>
+              <div>
+                <h3>When you’re OK</h3>
+                <p>
+                  Tap “Tell them I’m OK” and everyone it reached gets the all clear.
+                </p>
+              </div>
+              <div>
+                <h3>What it won’t do</h3>
+                <p>
+                  Call 911 for you. That’s why it’s the first button on the sheet.
+                </p>
+              </div>
+            </div>
+            <ul className="lp-list lp-safety-rules">
+              <li>No background tracking, ever</li>
+              <li>Report and block on any message or profile</li>
+            </ul>
+          </div>
+          {/* The sheet with its three buttons named, and beside it the email
+              the second button sends. Share Location emails the same
+              contacts your location alone (POST /api/safety/share-location). */}
+          <div className="lp-safety-exhibits">
+            <AnnotatedShot id="sos" {...ANNOTATIONS.sos} />
+            {/* Excerpt of the real SOS email the backend sends, not a mock UI.
                 Every line is copied from the template in routes/safety.js, and
-                landingPageClaims.test.js checks each one against it. The last
-                line used to read "exact coordinates included", which the email
-                stopped claiming when it began printing the phone's own accuracy
-                radius, and the sender and subject had drifted from the real
-                ones too. */}
+                landingPageClaims.test.js checks each one against it. */}
             <div className="lp-sos-mail">
               <div className="lp-sos-meta">
                 <span>From</span><span>Flock</span>
                 <span>To</span><span>Your trusted contacts</span>
-                <span>Subject</span><span>🚨 Emergency Alert from Jordan</span>
+                <span>Subject</span><span>🚨 Emergency Alert from Maya</span>
               </div>
               <div className="lp-sos-body">
-                <p className="lp-sos-headline">Jordan needs help</p>
+                <p className="lp-sos-headline">Maya needs help</p>
+                <p className="lp-sos-intro">Maya has triggered an emergency alert on the Flock app and may need your assistance.</p>
                 <p className="lp-sos-link">View Location on Map</p>
                 <p className="lp-sos-fine">Accurate to about 15 m.</p>
-                <p className="lp-sos-fine">Alert sent at 9/26/2026, 11:42:04 PM EDT</p>
+                <p className="lp-sos-fine">You are one of 2 people Maya asked us to alert.</p>
               </div>
-              <p className="lp-sos-cap">The actual email. Two taps to send, so a pocket can't fire it.</p>
+              <div className="lp-sos-foot">
+                <p className="lp-sos-fine">Alert sent at 9/26/2026, 11:42:04 PM EDT</p>
+                <p className="lp-sos-small">This is an automated safety alert from the Flock app. If this is an emergency, call your local emergency number. Replying to this message does not reach Maya.</p>
+              </div>
+              <p className="lp-sos-cap">The actual email, word for word.</p>
             </div>
           </div>
-
-          <ul className="lp-list lp-safety-rules">
-            <li>Two-tap SOS to your trusted contacts</li>
-            <li>Live location inside the flock, off by default</li>
-            <li>No background tracking, ever</li>
-            <li>Report and block on any message or profile</li>
-          </ul>
         </div>
       </section>
 
-      {/* ---------------- pricing ---------------- */}
-      <section className="lp-sec lp-sec-paper" id="pricing" aria-labelledby="lp-h-pricing">
-        <div className="lp-wrap">
-          <div>
-            {/* The only place on the page where both birds appear together,
-                and the one section whose subject is a group rather than a
-                feature. They each watch the cursor on their own, so they
-                never move in lockstep the way a two-up graphic would. */}
-            <WhenNear className="lp-pair">
-              <BirdieBird bird={WARM_BIRD} size={112} style={{ width: 'clamp(84px, 9vw, 112px)', height: 'auto', aspectRatio: '332 / 333' }} />
-              <BirdieBird size={128} style={{ width: 'clamp(92px, 10vw, 128px)', height: 'auto', aspectRatio: '316 / 400' }} />
-            </WhenNear>
-            {/* The "Pricing" kicker was cut for the same reason as "How it
-                works": the section below it is two plan cards, one of which
-                reads "$0", so nothing here was in any doubt about being the
-                pricing. */}
-            <h2 id="lp-h-pricing">Free for your friend group.</h2>
-            {/* This line survived the first sweep of the venue card below it and
-                should not have — it is the SAME promoted-placement pitch, one
-                paragraph higher and in the present tense. "Venues pay to show
-                up in front of groups that are picking a place right now" is two
-                untrue things at once: nothing in the repo can put a venue in
-                front of a group that is voting, and no venue has ever been
-                charged anything. There is no `stripe` dependency in
-                backend/package.json, VENUE_BILLING_ENABLED is unset on Railway,
-                and the only writer of venue_profiles.tier is an admin comp
-                route. The founder dashboard already had to be corrected to say
-                this out loud; the homepage was still saying the opposite.
-
-                The replacement is the honest version of the same reassurance,
-                which is a better sentence anyway: the reader's question is "so
-                what's the catch", and "nobody is paying yet" answers it more
-                convincingly than a revenue model would. Caught by screenshot,
-                not by grep — the phrasing dodged every pattern written for the
-                card below. */}
-            {/* Two honest versions of one sentence. Until Flock Pro is on sale
-                nobody pays anything, and saying so answers "so what's the
-                catch". Once it is, "you don't pay" would be false for anyone
-                who wants Pro, so the line says what is free and what is not. */}
-            <p className="lp-lead" style={{ marginTop: 16 }}>
-              {proOffer
-                ? 'Planning with your friends is free. Flock Pro is optional, for whoever plans the most. Venues are the side Flock is built to charge, and none of them is being charged yet.'
-                : 'You and your friends don’t pay. Venues are the side Flock is built to charge, and none of them is being charged yet.'}
+      {/* ---------------- venues ----------------
+          EVERY LINE WAS CHECKED AGAINST THE BACKEND. A free venue account:
+          GET /incoming-flocks (flocks with the venue in their vote, seven days
+          ahead), POST /promotions + GET /public-promotions/:placeId (deals on the
+          card), events through GET /public-events/:placeId (verified venues
+          only), and replies over public reviews. Roost, the venue plan, carries
+          GET /intelligence and the advisor (requirePro); nothing is charged
+          while VENUE_BILLING_ENABLED is off. There is no promoted placement and
+          no slow-night push: do not add either until a route does it.
+          Deals, like events, are served only for a verified venue
+          (GET /public-promotions joins vp.verified = true).
+          On navy since 2026-10-21 (the maintainer), one paragraph and one button; the
+          rest of the venue offer is the venue column under Pricing. */}
+      <section className="lp-sec lp-sec-navy lp-on-navy lp-venues" id="venues" aria-labelledby="lp-h-venues">
+        <div className="lp-wrap lp-venues-in">
+          <div className="lp-venues-copy">
+            <h2 id="lp-h-venues">Run a bar or a restaurant?</h2>
+            <p className="lp-lead">
+              A free venue account shows which flocks have you in their vote this
+              week. Once you’re verified, you can put a deal on your venue’s card
+              while they decide.
             </p>
+            <div className="lp-venues-actions">
+              <a className="lp-btn lp-btn-cream" href={`mailto:${CONTACT_EMAIL}?subject=Flock%20for%20venues`}>
+                Get in touch
+              </a>
+            </div>
+          </div>
+          {/* The dashboard with two of its parts named: Create Event, and
+              the Flocks With You in Their Vote panel. Events show on the card
+              only for a verified venue, and the note says so. */}
+          <AnnotatedShot id="venue" {...ANNOTATIONS.venue} />
+        </div>
+      </section>
+
+      {/* ---------------- pricing ----------------
+          A rate sheet, not a SaaS table: free for the people planning, Pro only
+          while it is really on sale (useProOffer), and the venue plan named
+          for what it is. */}
+      <section className="lp-sec lp-sec-sand" id="pricing" aria-labelledby="lp-h-pricing">
+        <div className="lp-wrap">
+          <div className="lp-pricing-head">
+          <div>
+          <h2 id="lp-h-pricing">Free for your friend group.</h2>
+          <p className="lp-lead lp-pricing-lead">
+            {proOffer
+              ? 'Planning with your friends is free, with no ads. Flock Pro is optional, for whoever plans the most. Venues are where Flock will make its money, and none is being charged yet.'
+              : 'You and your friends don’t pay, and there are no ads. Venues are where Flock will make its money, and none is being charged yet.'}
+          </p>
+          </div>
+          <img
+            className="lp-art lp-pricing-art"
+            src="/art/spot-seed-240.webp"
+            srcSet="/art/spot-seed-240.webp 240w, /art/spot-seed-480.webp 480w"
+            sizes="160px"
+            width="240" height="232"
+            loading="lazy" decoding="async"
+            alt=""
+          />
           </div>
 
           <div className={proOffer ? 'lp-plans lp-plans-3' : 'lp-plans'}>
             <div className="lp-plan">
               <h3>Free</h3>
               <div className="lp-plan-price">$0<small>no card needed</small></div>
-              <p className="lp-plan-note">Plan the night and split the bill without paying us anything.</p>
               <ul className="lp-list">
                 <li>Unlimited flocks and friends</li>
                 <li>Venue voting and group chat</li>
                 {/* With Pro on sale the free tier is 30 venues a month
                     (services/forecastUsage.js); before that it is every venue.
-
-                    "Before that" is the global switch, PAYWALL_ENABLED, and
-                    this page speaks to the public, for whom it is the only
-                    switch. The review list (PAYWALL_PREVIEW_USER_IDS) meters a
-                    few named accounts, App Review's demo account among them,
-                    while the switch is off, so for those accounts "Live crowd
-                    levels" overstates what free gets. That is deliberate:
-                    /api/pro-offer is asked without an account and answers for
-                    the public, the preview accounts meet the real limits
-                    inside the app, and nobody else is metered until the
-                    switch flips, which is when this line changes. */}
+                    "Before that" is the global switch, PAYWALL_ENABLED, and this
+                    page speaks to the public, for whom it is the only switch.
+                    The review list (PAYWALL_PREVIEW_USER_IDS) meters a few named
+                    accounts, App Review's demo account among them, while the
+                    switch is off; /api/pro-offer is asked without an account and answers for
+                    the public, so this line changes only when the switch flips. */}
                 <li>{proOffer ? 'Crowd levels for 30 venues a month' : 'Live crowd levels'}</li>
                 <li>Budget matching and bill splitting</li>
                 <li>SOS and trusted contacts</li>
@@ -1032,66 +821,16 @@ export default function LandingPage() {
 
             <div className="lp-plan">
               <h3>For venues</h3>
-              <div className="lp-plan-price">Let’s talk<small>bars, clubs, restaurants</small></div>
-              {/* EVERY LINE IN THIS CARD WAS RE-CHECKED AGAINST THE BACKEND on
-                  2026-08-14, because the card ends in a sales mailto and a
-                  venue reading it is being asked to start a conversation on the
-                  strength of it. Three claims were selling things that do not
-                  exist, and the project notes list all three under "Not
-                  built":
-
-                  "Reach groups at the exact moment they're picking a place" and
-                  "Show up in venue voting near you" are both promoted placement
-                  in vote lists. There is no promoted placement. Vote rows come
-                  from Google Places in plain distance order; nothing in the
-                  repo can move a venue up one.
-
-                  "Put an offer up on a slow night" is the slow-night push
-                  offer. There is no code that pushes anything to a group
-                  because a venue is quiet.
-
-                  "Post deals and events to nearby groups" was half true and the
-                  false half was the important one. Promotions really do reach
-                  users — POST /api/venue-dashboard/promotions writes them and
-                  GET /public-promotions/:placeId is read by the venue detail
-                  screen in App.js. Events did not, when this was written: there
-                  was no public-events route. There is one now (2026-10-20,
-                  GET /public-events/:placeId, the card's "Happening here"), but
-                  the iPhone build under review then (49) does not draw it, so
-                  events stay off this card until a build that does is in the
-                  App Store. And neither one is delivered "to nearby groups" —
-                  both sit on the venue's own card, waiting to be opened.
-
-                  What is below ships today, with the route behind each one:
-                    GET /incoming-flocks   flocks with this venue in their vote
-                    POST /promotions + GET /public-promotions/:placeId
-                    POST /reviews/:id/reply, over public reviews on the card
-                    GET /intelligence      the owner's own forecast + demand curve
-
-                  This is the fifth time this page has had to delete a claim
-                  nothing implemented. Before adding a line here, find the route
-                  that answers it and the screen that renders it.
-
-                  "Who picked you tonight" and "the flocks that chose you" were
-                  the sixth. GET /incoming-flocks lists a plan going to the
-                  venue, or one still deciding with it as the pick or in a
-                  present member's vote, and it looks seven days ahead, not one
-                  night. It knows nothing about who chose whom. "In their vote"
-                  is what the route knows, and it is the name the dashboard
-                  uses. */}
-              <p className="lp-plan-note">
-                A dashboard for your door: which flocks have you in their vote,
-                how the week ahead looks, and a card inside the app that you
-                write.
-              </p>
+              <div className="lp-plan-price">Free account<small>Roost, the paid plan, is not on sale yet</small></div>
+              <p className="lp-plan-note">Roost adds your own hour-by-hour forecast.</p>
               <ul className="lp-list">
-                <li>See which flocks have you in their vote this week</li>
-                <li>Put a deal on your venue’s card, where groups open it</li>
+                <li>See the flocks with you in their vote this week</li>
+                <li>Put deals on your card once your venue is verified</li>
+                <li>List your events there too, once verified</li>
                 <li>Reply to reviews from people who went</li>
-                <li>Your own hour-by-hour forecast, the same one the app shows</li>
               </ul>
               <a className="lp-btn lp-btn-navy" href={`mailto:${CONTACT_EMAIL}?subject=Flock%20for%20venues`}>
-                Get in touch
+                Email us
               </a>
               <p className="lp-venue-signin">
                 Already have a venue account? <a href="/app?venue=true">Sign in</a>
@@ -1106,28 +845,14 @@ export default function LandingPage() {
         <div className="lp-wrap lp-cta-in">
           <div>
             <h2 id="lp-h-get">Give the next plan a fighting chance.</h2>
-            {/* "we'll tell you" became "you'll hear". Flock is one student, and
-                /about says so in the first paragraph; a corporate we on the
-                homepage and a solo founder on the about page is a register
-                mismatch a reader can catch in two clicks. The rewrite is not a
-                swap to "I" either — the waitlist mail is sent by a cron and a
-                template, so nobody is telling anyone anything. Saying what
-                happens to the reader is both truer and the better sentence. */}
             <p className="lp-lead" style={{ marginTop: 16 }}>
-              Open Flock in your browser, or leave your email and you’ll hear the
+              Use Flock in your browser today, or leave your email to hear the
               moment the iPhone app is out.
             </p>
             <div className="lp-cta-row">
               <a className="lp-btn lp-btn-cream lp-btn-lg" href="/signup">Create your account</a>
-              <a className="lp-btn lp-btn-ghost lp-btn-lg" href="/app">Sign in</a>
             </div>
             <form className="lp-form" onSubmit={join}>
-              {/* A real <label>, not an aria-label. Same accessible name, but
-                  it also makes the field's own text a click target and it is
-                  the one form of naming that voice control ("click email
-                  address") and machine translation both handle. Visually
-                  hidden because the field is a single-purpose one in a CTA
-                  band, where a printed label would be noise. */}
               <label className="lp-sr" htmlFor="lp-waitlist-email">Email address</label>
               <input
                 id="lp-waitlist-email"
@@ -1141,10 +866,8 @@ export default function LandingPage() {
                 aria-invalid={msgBad ? 'true' : undefined}
                 aria-describedby="lp-form-problem"
               />
-              {/* aria-disabled, not disabled. `disabled` on the button you just
-                  pressed hands focus to <body>, so a keyboard user loses their
-                  place on every submit. `join` already returns early while
-                  busy, so the double submit is guarded in the handler. */}
+              {/* aria-disabled, not disabled: `disabled` on the button you just
+                  pressed hands focus to <body>. `join` returns early while busy. */}
               <button
                 type="submit"
                 className="lp-btn lp-btn-cream lp-btn-lg"
@@ -1153,18 +876,9 @@ export default function LandingPage() {
                 {busy ? 'Adding you…' : 'Join the waitlist'}
               </button>
             </form>
-            {/* Both stay mounted with empty text: a live region has to exist
-                before its content changes or the first announcement is missed.
-                Same pattern as the guest invite page.
-
-                The wrapper is not decoration. Both children collapse to zero
-                height while empty, which is what keeps the pair one line tall
-                once one of them fills — but at rest that meant BOTH were zero,
-                so the first failed submit inserted a line and pushed the whole
-                CTA band down under the reader's hands. The wrapper holds one
-                line of space open from the start. It is a plain div, carries no
-                role, and sits outside both live regions, so nothing about the
-                announcements changes. */}
+            {/* Both live regions stay mounted with empty text, and the wrapper
+                holds one line open, so the first message neither goes
+                unannounced nor pushes the band down under the reader's hands. */}
             <div className="lp-form-status">
               <p className="lp-form-msg" role="status">{msgBad ? '' : msg}</p>
               <p className="lp-form-msg lp-form-msg-bad" id="lp-form-problem" role="alert">
@@ -1176,16 +890,11 @@ export default function LandingPage() {
       </section>
       </main>
 
-      {/* ---------------- footer ---------------- */}
-      {/* The shared SiteFooter, landing variant: same grid, blurb and base
-          line as the hand-rolled footer it replaced, with the Company column
-          now built from the same LEGAL_LINKS array the legal pages render
-          (plus the one real mailbox, which this footer previously lacked).
-          The brand cell is passed in because Mark is this file's local
-          component; pageInert is spread through so the whole footer still
-          goes inert behind the open menu. The class stays lp-footer: the
+      {/* ---------------- footer ----------------
+          The shared SiteFooter, landing variant. The class stays lp-footer: the
           crawler-surface extraction excludes `footer.lp-footer` by that exact
-          selector, and the a11y contrast pins name its tokens. */}
+          selector. pageInert is spread through so the footer goes inert behind
+          the open menu. */}
       <SiteFooter
         variant="landing"
         className="lp-footer"

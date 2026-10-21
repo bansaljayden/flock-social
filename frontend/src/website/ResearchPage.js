@@ -3,6 +3,7 @@ import './LandingPage.css';
 import './ResearchPage.css';
 import SiteFooter from './SiteFooter';
 import SiteNav, { useSiteMenu } from './SiteNav';
+import { THERMAL_SETS, ROBOFLOW_SETS, COUNT_SOURCES, SOFTWARE } from './researchThanks';
 
 // Two documents, read in order: a three-page summary first (the questions,
 // the findings, the equations and every model input), and the full paper for
@@ -114,12 +115,12 @@ export default function ResearchPage() {
                 measure as Flock's number, so the lead does not put the
                 forecast behind every card. */}
             <p className="lp-lead rs-hero-lead">
-              The first study is the forecast of how busy a place will be,
+              The first study is the crowd forecast, the one
               behind the number on a venue card wherever Flock knows that
               venue's weekly pattern. A venue without one gets an estimate from
-              what is typical for its kind. The second study, a sensor that
-              counts the people actually there, has so far been tested on
-              research footage.
+              what is typical for its kind. The second, a sensor that counts the
+              people actually there, has only been tested on research footage so
+              far.
             </p>
 
             <div className="rs-paper">
@@ -151,15 +152,15 @@ export default function ResearchPage() {
         </section>
 
         <section className="lp-sec lp-sec-paper">
-          <div className="lp-wrap rs-measure">
+          <div className="lp-wrap rs-why">
+            <div className="rs-measure">
             <h2>Why we did this research</h2>
             <p>
-              Flock's venue card answers one question for a group deciding where
-              to go: how busy will this place be when we get there? Map apps
-              answer it with a popular-times chart, each venue's typical level for
-              that weekday and hour. That chart cannot know tonight is different:
-              the rain, the game two blocks away, the night a place suddenly fills
-              up.
+              A group deciding where to go wants to know one thing: how busy will
+              this place be when we get there? Map apps answer with a
+              popular-times chart, each venue's usual level for that weekday and
+              hour. That chart can't know tonight is different, like when it
+              rains or there's a game two blocks away.
             </p>
             <p>
               So we asked two questions. Can AI tell how crowded a venue will
@@ -167,6 +168,16 @@ export default function ResearchPage() {
               designed to count the number of people inside a venue using a
               thermal camera without identifying individuals?
             </p>
+            </div>
+            <img
+              className="lp-art rs-why-art"
+              src="/art/sensor-320.webp"
+              srcSet="/art/sensor-320.webp 320w, /art/sensor-640.webp 640w"
+              sizes="(min-width: 900px) 280px, min(240px, 70vw)"
+              width="320" height="337"
+              loading="lazy" decoding="async"
+              alt=""
+            />
           </div>
         </section>
 
@@ -185,7 +196,7 @@ export default function ResearchPage() {
               usLabel="Owl"
               themLabel="Rule"
               rows={COUNTER}
-              note="Frames counted exactly, on six real benchmark sets no model trained on. On a sealed held-out set of 300 frames, Owl counted 94.3% exactly and the rule 40.7%. On sealed lab-room frames of three or more people (BU-TIV), Owl was exact on 34.6% and the rule on 3.6%; on unseen frames from 15 more public sets Owl led 40.4% to 33.0% (12 sets, 2,976 frames) and 69.7% to 52.2% (three sets, 1,132 frames); beside two hot robot arms on a factory floor (WLRI-HRC) it led 22.7% to 3.0%; and on an outdoor harbour front (LTD) it led 16.7% to 3.8%. On low-resolution sensor arrays, on pooled frames of three or more people, in an atrium of lone, distant people and in a room of people walking past a head-height camera (LITIV), the rule did better, and dense or distant crowds, in an industrial hall, a café and a harbour, defeat both. On the hardest benchmark set, crowded classrooms filmed with Flux's camera model (Thermal Vision, IISER Bhopal), Owl is exact on 39.3% of frames and within one person on 73.9%. Test sets: SDT, Computer Vision Lab, TU Wien (Pramerdorfer, Strohmayer and Kampel, ICIP 2020); Thermal Vision, IISER Bhopal (Samal and Lone, Smart Health 2025); PUT Thermo Presence; SenSys 2021; AAU VAP Trimodal; OpenThermalPose2; sealed sets from BU-TIV (Wu, Fuller, Theriault and Betke, CVPRW 2014), UPPET (Cormier, Specker and Beyerer, CVPRW 2025), WLRI-HRC (Süme, Ponomarjova, Wendt and Rupitsch, JSSS 2025), LTD (Nikolov et al., NeurIPS Datasets and Benchmarks 2021) and LITIV (Bilodeau, Torabi, St-Charles and Riahi, Infrared Physics & Technology 2014). Used with their authors' permission or under their licences."
+              note="Frames counted exactly, on six benchmark sets that no model trained on. The sealed tests, including the sets where the rule did better, are in the paper."
             />
           </div>
         </section>
@@ -200,7 +211,7 @@ export default function ResearchPage() {
                 tested on 6.5 million public hourly counts from 31 sources in
                 15 countries, including people counted inside rooms and
                 libraries. The counter has
-                been tested on six research datasets and in fourteen sealed tests on
+                been tested on six research datasets and in fifteen sealed tests on
                 public footage, including a café and a restaurant, and not yet
                 inside a working venue.
               </p>
@@ -214,6 +225,62 @@ export default function ResearchPage() {
                 a Flux sensor in a venue Flock already reads and compare its counts
                 with the forecast hour by hour.
               </p>
+            </div>
+          </div>
+        </section>
+
+        {/* The credits. Generated from the research database (researchThanks.js
+            says which rows and why), so a set the paper never scored is never
+            thanked as if it had been, and every count source carries the
+            attribution line its licence asks for, word for word. */}
+        <section className="lp-sec lp-sec-sand rs-thanks" aria-labelledby="rs-h-thanks">
+          <div className="lp-wrap">
+            <img
+              className="lp-art rs-thanks-art"
+              src="/art/spot-wren-step-240.webp"
+              srcSet="/art/spot-wren-step-240.webp 240w, /art/spot-wren-step-480.webp 480w"
+              sizes="150px"
+              width="240" height="248"
+              loading="lazy" decoding="async"
+              alt=""
+            />
+            <h2 id="rs-h-thanks">Thank you</h2>
+            <p className="rs-thanks-lead">
+              Both studies were tested on data that other people collected and
+              chose to share. These are the labs, cities and libraries behind
+              it, each with the credit its licence asks for.
+            </p>
+            <div className="rs-thanks-cols">
+              <div>
+                <h3>Thermal images, for Owl</h3>
+                <ul className="rs-thanks-list">
+                  {THERMAL_SETS.map((s) => (
+                    <li key={s.name}>
+                      <b>{s.name}</b>, {s.who} <span className="rs-terms">({s.terms})</span>
+                    </li>
+                  ))}
+                </ul>
+                <h3>From Roboflow Universe</h3>
+                <ul className="rs-thanks-list">
+                  {ROBOFLOW_SETS.map((s) => (
+                    <li key={s.name}><b>{s.name}</b>, {s.who}</li>
+                  ))}
+                </ul>
+                <h3>Software</h3>
+                <ul className="rs-thanks-list">
+                  {SOFTWARE.map((s) => (
+                    <li key={s.name}><b>{s.name}</b>, {s.who}</li>
+                  ))}
+                </ul>
+              </div>
+              <div>
+                <h3>Public counts, for the forecast</h3>
+                <ul className="rs-thanks-list">
+                  {COUNT_SOURCES.map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                </ul>
+              </div>
             </div>
           </div>
         </section>

@@ -1,5 +1,5 @@
 /* Hallmark · macrostructure: Workbench · genre: editorial
- * theme: Flock house system (cream paper · navy ink · one steel accent)
+ * theme: Flock house system (off-white paper · navy ink · one steel accent)
  * nav: N9 edge-aligned + corner block · footer: Ft3 index (kept — see the note
  *      on .lp-footer for why the two column headings survive an Ft3 flag)
  * exhibits: real app captures, a live crowd demo, the real SOS email
@@ -19,95 +19,69 @@
  */
 
 /* Flock — flockcorp.com
-   The physical object: a printed field guide. Cream paper, navy ink, one steel
-   accent, birds as the motif. The page alternates navy (the night you're going
-   out into) and cream (the planning you do in daylight) — the product's own
-   duality, not decoration.
-   Type: Fraunces (display, h1/h2 ONLY — no tnum, never for live numbers) over
-   Hanken Grotesk (body). Both variable, self-hosted via src/index.css. */
+   The physical object: a printed field guide. Off-white paper, navy ink, one
+   steel accent, birds as the motif. The page alternates navy (the night you're
+   going out into) and paper (the planning you do in daylight), the product's
+   own duality, not decoration. The navy is Flock's launch navy, the colour of
+   the app's splash and theme, not a framework's slate.
+   Type: Literata Display (h1/h2 and a few large figures; no tnum, never for
+   live numbers) over Hanken Grotesk (body), both self-hosted. */
 
-/* ============ the fallback the headlines actually wait in ============
+/* ============ the display face, and the fallback it is waited for in ============
 
-   Fraunces is loaded with font-display: swap, so there is no invisible text —
-   but there IS a swap, and until this block existed the face the headlines
-   waited in was metrically nothing like the one that arrived. Measured with
-   canvas measureText at 100px over the hero string:
+   Literata at its display optical size (opsz 72) and weight 600, cut to Latin
+   and nothing else: 19.5 KB as WOFF2 (src/fonts/Literata-Display-600.woff2,
+   SIL Open Font License, OFL-Literata.txt beside it). It replaced Fraunces on
+   the website on 2026-10-21, with the cream ground: Fraunces sits on every
+   list of the templated "tasteful" faces, and cream plus a display serif is
+   the look generated sites converged on in 2026. The app keeps Fraunces
+   (src/index.css); only these pages change.
 
-     Fraunces 600            2696.2px advance
-     Times New Roman 400     2757.8px   (+2.3%)
-     Georgia 600             3492.2px  (+29.5%)   <- what Windows was using
-     Fraunces Fallback       2696.3px   (+0.0%)   <- this block, in the page
+   One static cut, so there is no optical-size axis to tune. Headings use it;
+   every caption, label and time that used the serif's small "text cut" is set
+   in Hanken Grotesk now, which holds at 13 to 15px where a display cut does
+   not. `font-weight: 400 700` on the face tells the browser this one file
+   covers the whole range, so nothing is ever synthesised from it.
 
-   Every heading on the page uses a unitless line-height, so the line BOX never
-   depends on font metrics — the reflow came entirely from advance width
-   changing the line COUNT. Summed over the page's headings and leads at 320px
-   that was 86px of movement, worst single element 29px (an h2 dropping from
-   three lines to two the moment the real face landed).
-
-   So: one fallback face, metrics matched to Fraunces, declared against the
-   serif the fallback chain will actually resolve to on every platform Flock
-   ships to (Times New Roman exists on iOS, macOS, Windows and Android;
-   Liberation and DejaVu cover Linux). size-adjust does the width work.
-   ascent/descent are overridden too so the baseline does not hop inside the
-   line box on swap — 0.98/0.26 em are Fraunces's own, divided by the
-   size-adjust because size-adjust scales the overrides as well.
-
-   Georgia is deliberately NOT in the local() list: it is 29.5% wider, so
-   matching it under the same size-adjust would be worse than not trying. It
-   stays further down the CSS stack as a last resort instead.
-
-   `font-weight: 100 900` matters and is why the first pass of this block was
-   wrong. It tells the browser one local face covers the whole weight range, so
-   Times is used at its REGULAR width for the page's 600 headings with no
-   synthetic bold. So size-adjust must be solved against Times 400 (2757.8),
-   not against what `600 Times` measures in a canvas (2916.1). Solved: 2696.2 /
-   2757.8 = 97.77%. The overrides are Fraunces's own 0.98 / 0.26 em divided by
-   that same figure, because size-adjust scales the overrides too. Verified in
-   the browser afterwards: the fallback measures 2696.3 against Fraunces's
-   2696.2 on the hero string.
-
-   Measured reflow on swap, per group, at 320/390/768/1280:
-
-     h1          0 / 0 / 0 / 0      the LCP element, and the only heading in
-                                    the fold. Stable at every width.
-     menu links  0 / 0 / 0 / 0
-     kickers     0 / 0 / 0 / 0
-     plate caps  20 / 0 / 0 / 0
-     h2         57 / 90 / 37 / 47
-
-   The h2 residual is a real limit, not an oversight. `opsz` means Fraunces is
-   a different WIDTH at every size: h1 pins opsz 144, captions pin opsz 9, and
-   h2 runs opsz auto across 27-46px. One size-adjust constant cannot match
-   three optical cuts, and a sweep from 90% to 124% confirms it — the value
-   that minimises total height delta on today's copy is ~112%, which would
-   render the fallback 15% wider than the real face and is pure overfitting to
-   these exact sentences at these exact widths. Matching the advance width is
-   the value that stays right when the copy changes. Every h2 is below the
-   fold, so its reflow cannot score CLS anyway (measured: 0.000 at all four
-   widths), and with the font preloaded the fallback is usually never painted
-   at all. */
+   The fallback is matched to it the way the Fraunces one was: advance widths
+   summed with fontTools over the hero and section headlines, Literata 600
+   43.557 em against Times New Roman 400 36.602 em, so size-adjust 119.00%;
+   ascent and descent are Literata's own 1.177 / 0.308 em divided by that same
+   figure, because size-adjust scales the overrides too. Times New Roman is
+   what the chain resolves to on iOS, macOS, Windows and Android; Liberation
+   and DejaVu cover Linux. With the face preloaded from the HTML the fallback
+   is rarely painted at all. */
 @font-face {
-  font-family: 'Fraunces Fallback';
+  font-family: 'Literata Display';
+  src: url('../fonts/Literata-Display-600.woff2') format('woff2');
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Literata Display Fallback';
   src: local('Times New Roman'), local('Liberation Serif'), local('DejaVu Serif'), local('Tinos');
-  size-adjust: 97.77%;
-  ascent-override: 100.24%;
-  descent-override: 26.59%;
+  size-adjust: 119%;
+  ascent-override: 98.9%;
+  descent-override: 25.88%;
   line-gap-override: 0%;
   font-weight: 100 900;
 }
 
 .lp {
-  /* Scoped to the landing page: the app's own --font-display (src/index.css)
-     is unchanged. The metric-matched face is inserted directly after Fraunces
-     so it is what the h1 and h2 render in for the few hundred ms before the
-     real one arrives. */
-  --font-display: 'Fraunces', 'Fraunces Fallback', 'Iowan Old Style', Georgia, 'Times New Roman', serif;
+  /* Scoped to the website: the app's own --font-display (src/index.css) is
+     unchanged. The metric-matched face comes directly after Literata so it is
+     what the h1 and h2 render in for the moment before the real one arrives. */
+  --font-display: 'Literata Display', 'Literata Display Fallback', 'Iowan Old Style', Georgia, 'Times New Roman', serif;
 
-  --navy: #0f172a;
-  --navy-deep: #0a1120;
-  --navy-soft: #172236;
-  --paper: #f1ede0;
-  --paper-2: #e8e1d0;
+  --navy: #0b1a2e;
+  --navy-deep: #07121f;
+  --navy-soft: #13243a;
+  /* Off-white with a little warmth, in place of the cream (#f1ede0) that sat a
+     few points from the generated-site default (2026-10-21). --paper-2 is the
+     alternate band, a light stone. */
+  --paper: #f9f8f4;
+  --paper-2: #efede6;
   --ink: #16283d;
   --ink-2: #33475e;
   /* Was #6b7a8c: 3.75:1 on --paper, 3.37:1 on --paper-2. Both under 4.5:1 and
@@ -143,10 +117,9 @@
      bans pure #ffffff surfaces in its own words. It also just reads wrong on a
      page whose whole conceit is printed cream stock: a pure-white card is a
      different piece of paper. This is that stock lifted to a paper-white, same
-     hue family as the page. Measured against it: ink-3 5.77 to 1 (it was 6.03
-     on white, so the 4.5 floor still has a full point of headroom), ink-2 8.44,
-     ink 13.94. */
-  --plate: #fbfaf6;
+     hue family as the page and a shade lighter than it, so a plate still reads
+     as a card laid on the page. ink-3 measures about 6 to 1 against it. */
+  --plate: #fdfcf9;
 
   /* Hover and state colours that were inline hexes scattered down the file.
      Nine opaque literals lived outside this block; a page with a locked palette
@@ -156,6 +129,7 @@
   --ink-hover: #22394f;  /* the navy button, hovered */
   --bad: #f0a3a3;        /* form failure text on the CTA gradient. 7.96 to 1 */
   --alarm: #e88f8f;      /* the SOS email's one link */
+  --alarm-ink: #b42318;  /* the same link on the paper-white document: 6.4 to 1 */
   --hero-lift: #1b2a44;  /* lightest stop of the hero radial */
   --cta-lift: #142238;   /* lightest stop of the CTA band */
   --cta-deep: #0d1a2e;   /* its darkest */
@@ -283,8 +257,7 @@
    <picture> that DOES want to be a layout box is not silently flattened. Add
    the container here when you add one. */
 .lp-phone-wrap picture,
-.lp-row-media picture,
-.lp-flock picture { display: contents; }
+.lp-row-media picture { display: contents; }
 
 .lp-wrap {
   width: 100%;
@@ -314,23 +287,11 @@
   overflow-wrap: anywhere;
   min-width: 0;
 }
-/* Fraunces carries the headlines. -0.03em tracking was tuned for Satoshi's
-   loose grotesque fitting; on a bracketed serif it jams the serifs together, so
-   headlines run near-neutral. Weight 600, not 700: the serif brackets add their
-   own mass.
-
-   OPTICAL SIZE IS THE SYSTEM. The bundled Fraunces subset kept `opsz` (9-144)
-   and dropped SOFT and WONK — verified in the browser: setting 'WONK' 1 or
-   'SOFT' 100 changes nothing, setting 'opsz' 9 vs 144 changes the same string
-   from 1014px to 817px. So opsz is the one axis available, and it is enough to
-   give one family three real voices instead of one face at three sizes:
-
-     opsz 144  h1        the display cut. Thin hairlines, high contrast.
-     opsz auto h2        tracks the size, lands mid-range. The reading cut.
-     opsz 9    captions  the text cut. Sturdy, slabby, holds at 14px.
-
-   Before this the serif only ever appeared as "the headline font", which is
-   the definition of a display face sitting on a page rather than working. */
+/* Literata's display cut carries the headlines. -0.03em tracking was tuned
+   for Satoshi's loose grotesque fitting; on a bracketed serif it jams the
+   serifs together, so headlines run near-neutral. Weight 600, not 700: the
+   serif brackets add their own mass. Captions and labels are Hanken (see the
+   face's note at the top of this file). */
 .lp h1, .lp h2 {
   font-family: var(--font-display);
   font-weight: 600;
@@ -339,10 +300,13 @@
 /* Fluid ramps solved for their endpoints rather than eyeballed with vw, so the
    h1:h2 ratio holds across the range instead of collapsing to 1.1 on desktop.
    Was 64/54 = 1.19 at every width, which is why every heading on the page read
-   as equally important. Now 34/27.6 at 320px and 72/45.5 at 1280px. */
+   as equally important. Now 34/27.6 at 320px and 56/45.5 at 1280px: Literata
+   sets wider than Fraunces did, and the hero line has to hold to two lines in
+   the column beside the phone. Balanced, so the lines come out close in
+   length on a phone too. */
 .lp h1 {
-  font-size: clamp(34px, 1.33rem + 3.96vw, 72px);
-  font-variation-settings: 'opsz' 144;
+  font-size: clamp(34px, 1.667rem + 2.292vw, 56px);
+  text-wrap: balance;
 }
 .lp h2 { font-size: clamp(27px, 1.35rem + 1.87vw, 46px); }
 .lp h3 { font-size: clamp(18px, 2vw, 21px); font-weight: 700; letter-spacing: -0.015em; }
@@ -369,7 +333,7 @@
    (`*, *::before, *::after { font-family: var(--font-body) }`), and a rule that
    matches an element directly always beats what it would have inherited, no
    matter the specificity. Any inline element inside a heading on this page
-   silently drops out of Fraunces into Hanken without this line. */
+   silently drops out of the display face into Hanken without this line. */
 .lp-keep {
   white-space: nowrap;
   font-family: inherit;
@@ -601,8 +565,6 @@
      transition above already makes it snap. */
   .lp-btn { transition: background-color 0.18s linear, border-color 0.18s linear; }
   .lp-btn:active { transform: none; }
-  .lp-appstore { transition: none; }
-  .lp-appstore:hover { transform: none; }
 }
 
 /* ============ buttons ============ */
@@ -750,51 +712,48 @@ html:has(.lp) body { overflow-x: clip; }
 .lp-sec-paper { background: var(--paper); }
 /* No two sections that sit next to each other share a background, so a new
    topic always starts on a new colour (2026-10-03). Navy keeps the chapters it
-   means, "the night": the hero, the crowd demo, safety and the CTA. Where two
-   cream sections fall between navy ones, the second is set on --paper-2. The
-   money section stays on --paper because its mark is a flat image painted on
-   --paper. Every ink and the steel accent clear 4.5:1 on --paper-2 (lowest is
+   means, "the night": the hero and the CTA, and every other beat of the Friday
+   plan (2026-10-21). Where two paper sections would meet, the second is set on
+   --paper-2, the light stone: the Friday intro, safety (where the painted
+   watcher birds need a light ground) and pricing. Every ink and the steel accent clear 4.5:1 on --paper-2 (lowest is
    --ink-3 at 4.62). The hairlines that used to divide cream from cream are
    gone. landingPageClaims.test.js checks neighbouring sections on this page
    and on /research. */
 .lp-sec-sand { background: var(--paper-2); }
 
-/* The kicker is the field guide's plate label, so it is set in the serif's
-   text cut (opsz 9) rather than as another 14px sans eyebrow. It also appears
+/* The kicker is the field guide's plate label, set in the body face at a
+   label's weight. (The home page no longer uses it; /research does.) It also appears
    on four sections now instead of nine: it was above every single heading,
    including "The problem" over a headline that states the problem and "Money"
    over a headline containing the word money. A label that narrates the sentence
    beneath it is scaffolding. The four that remain are the four the menu links
    to, so the label confirms where the jump landed. */
 .lp-kicker {
-  font-family: var(--font-display);
-  font-variation-settings: 'opsz' 9;
-  font-size: 15px;
+  font-size: 14.5px;
   font-weight: 600;
   color: var(--steel);
   margin-bottom: 12px;
 }
 .lp-sec-navy .lp-kicker { color: var(--steel-lift); }
 
-/* Printed-plate caption: the same text cut, one step down, used under the hero
-   phone. A field guide captions its plates; this page had a photograph of a
-   phone floating with a drop shadow and no explanation. */
+/* Printed-plate caption, under the hero phone, in the body face. A field
+   guide captions its plates; this page had a photograph of a phone floating
+   with a drop shadow and no explanation. */
 .lp-plate-cap {
-  font-family: var(--font-display);
-  font-variation-settings: 'opsz' 9;
   font-size: 13.5px;
   line-height: 1.45;
   color: var(--cream-3);
   margin: 16px auto 0;
-  max-width: min(284px, 78vw);
+  max-width: min(340px, 86vw);
   text-align: left;
 }
 
 /* ============ hero ============ */
 
 .lp-hero {
-  background:
-    radial-gradient(120% 90% at 50% -10%, var(--hero-lift) 0%, var(--navy) 55%, var(--navy-deep) 100%);
+  /* Flat navy. A soft glow at the top of a dark hero is the stock generated
+     hero (2026-10-21), and nothing in a printed field guide glows. */
+  background: var(--navy);
   /* Bottom heavier than top, by about a third. Symmetric hero padding is what
      makes a hero look like a box that was placed on the page rather than the
      top of it: the extra air underneath hands the reader down into the section
@@ -812,13 +771,14 @@ html:has(.lp) body { overflow-x: clip; }
    only composition here that isn't text-left / image-right. */
 .lp-hero-in {
   display: grid;
-  gap: clamp(28px, 4vw, 40px) clamp(40px, 6vw, 64px);
-  align-items: start;
+  gap: clamp(32px, 5vw, 48px) clamp(40px, 6vw, 72px);
+  align-items: center;
 }
 @media (min-width: 940px) {
-  .lp-hero-in { grid-template-columns: minmax(0, 1fr) minmax(0, 300px); }
-  .lp-hero-in > h1 { grid-column: 1 / -1; }
+  .lp-hero-in { grid-template-columns: minmax(0, 1fr) minmax(0, 360px); }
 }
+/* em, not ch: ch changes width when the headline font swaps in. */
+.lp-hero-copy h1 { margin-bottom: 22px; max-width: 12.5em; }
 
 /* The rule under the chapter title. It is also what replaced .lp-hero-glow: a
    pair of rotated, blurred radial blobs behind the headline. Nothing in a
@@ -828,7 +788,7 @@ html:has(.lp) body { overflow-x: clip; }
 /* .lp-badge removed: the pill badge above the hero H1 is a named AI-site
    tell (DESIGN-STANDARD.md A4). The DECA proof line lives in .lp-hero-note now. */
 
-.lp-hero .lp-lead { margin-bottom: 30px; max-width: 46ch; }
+.lp-hero .lp-lead { margin-bottom: 30px; max-width: 44ch; }
 .lp-hero-cta { display: flex; flex-wrap: wrap; gap: 12px; }
 .lp-phone-wrap { margin: 0; }
 
@@ -847,7 +807,6 @@ html:has(.lp) body { overflow-x: clip; }
   max-width: 52ch;
   color: var(--ink-3);
 }
-.lp-hero-note + .lp-appstore { margin-top: 18px; }
 .lp-on-navy .lp-hero-note,
 .lp-sec-navy .lp-hero-note { color: var(--cream-3); }
 
@@ -867,69 +826,37 @@ html:has(.lp) body { overflow-x: clip; }
   background: var(--paper);
 }
 .lp-shot-hero {
-  /* A touch smaller than the body screenshots: it is a plate in the margin of
-     the headline, not the subject of the fold, and every 10px of width here
-     costs 22px of hero height. */
-  width: min(284px, 78vw);
-  border-color: rgba(244, 239, 227, 0.16);
+  /* The real thing at a real size (2026-10-21, after the maintainer's look at the
+     preview: "too small"). 340px on a phone, which is 86% of a 390px screen,
+     and 360px beside the copy on a wide one, where the crop below makes it
+     607px tall, more than the copy block it sits by. The 780px capture is 2x
+     at that width, so it stays sharp. */
+  width: min(340px, 86vw);
+  border-color: rgba(244, 239, 227, 0.2);
+}
+@media (min-width: 940px) {
+  .lp-shot-hero { width: 360px; }
+  .lp-plate-cap { max-width: 360px; }
 }
 /* The copy block runs ~270px and a whole 390x844 phone runs ~615px, which left
    a 340px hole under the buttons. Centring the copy against the plate only
    moved the hole: it pushed the lead 240px away from the headline it answers.
    So the plate is cropped instead. A field guide crops its plates to the
    specimen, the cut lands under the third flock card, and the fold now closes
-   inside a 900px viewport instead of running 220px past it. Mobile keeps the
-   whole phone: stacked, there is nothing to balance. (Declared after .lp-shot
-   so its `height: auto` doesn't win on equal specificity.) */
+   inside a 900px viewport instead of running 220px past it. (Declared after
+   .lp-shot so its `height: auto` doesn't win on equal specificity.)
+   The crop is an aspect ratio, not a height, so it lands in the same place on
+   the capture at every width: just under the third flock card, which ends at
+   648 in the 2026-10-21 capture's own 390px units. */
 .lp-shot-hero {
-  height: 470px;
+  height: auto;
+  aspect-ratio: 390 / 658;
   object-fit: cover;
   object-position: top center;
 }
-@media (min-width: 940px) {
-  /* cuts clean under the second flock card, not through one */
-  .lp-shot-hero { height: 410px; }
-}
 /* .lp-media-pair deleted: unused. */
 
-/* App Store badge */
-.lp-appstore {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 22px;
-  padding: 9px 18px 9px 15px;
-  border-radius: 12px;
-  background: var(--cream);
-  color: var(--navy);
-  text-decoration: none;
-  transition: border-color 0.18s cubic-bezier(0.22, 1, 0.36, 1);
-}
-/* No lift on hover. Apple's marketing guidelines say not to modify, angle or
-   animate the App Store badge, and a 1px rise is animating it. The border
-   still answers the pointer on the pre-launch version below. */
-.lp-appstore:hover { transform: none; }
-/* Pre-launch: present and clickable (goes to the waitlist), visibly not yet a
-   download. Becomes the solid cream download badge on approval. */
-.lp-appstore.is-soon {
-  background: transparent;
-  color: var(--cream);
-  border: 1px solid var(--edge-cream);
-}
-.lp-appstore.is-soon:hover { border-color: var(--cream); }
-.lp-appstore svg { width: 24px; height: 24px; }
-.lp-appstore span { display: grid; line-height: 1.15; font-weight: 700; font-size: 17px; letter-spacing: -0.02em; }
-.lp-appstore small { font-size: 10.5px; font-weight: 500; letter-spacing: 0.02em; }
-
 /* ============ the turn (problem → answer) ============ */
-
-.lp-turn { max-width: 22ch; }
-.lp-turn-grid {
-  display: grid;
-  gap: clamp(28px, 5vw, 56px);
-  align-items: start;
-}
-@media (min-width: 880px) { .lp-turn-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
 
 .lp-chat {
   border: 1px solid var(--rule);
@@ -950,117 +877,22 @@ html:has(.lp) body { overflow-x: clip; }
 }
 .lp-msg-me { margin-left: auto; background: var(--steel); color: var(--cream); }
 .lp-msg-dead { color: var(--ink-3); font-style: italic; }
+/* On the navy band (2026-10-21) the dead chat is a dark one, the way a phone
+   in dark mode draws it: a navy-soft card, the others' bubbles a cream wash,
+   yours steel. The read receipt loses its bubble and sits on the card, as a
+   receipt does, which also keeps its cream-3 at 5.1:1 (4.2 on the wash). */
+.lp-on-navy .lp-chat { background: var(--navy-soft); border-color: var(--rule-cream); }
+.lp-on-navy .lp-msg { background: var(--field-fill); color: var(--cream-2); }
+.lp-on-navy .lp-msg-me { background: var(--steel); color: var(--cream); }
+.lp-on-navy .lp-msg-dead { background: none; color: var(--cream-3); padding: 2px 4px 0; }
 
-/* ============ steps ============ */
-
-/* Open columns with air between them. The steps used to sit in one box cut
-   into panels by hairlines, the stock four-up grid of a template site
-   (2026-10-03: the dividers came off the whole page). */
-.lp-steps {
-  display: grid;
-  gap: clamp(24px, 4vw, 44px);
-  margin-top: clamp(32px, 5vw, 52px);
-}
-@media (min-width: 760px) { .lp-steps { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-@media (min-width: 1060px) { .lp-steps { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
-
-.lp-step { padding: 0; }
-.lp-step-n {
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--steel);
-  font-variant-numeric: tabular-nums;
-  margin-bottom: 12px;
-}
-.lp-step h3 { margin-bottom: 8px; }
-.lp-step p { font-size: 15px; color: var(--ink-2); }
-
-/* ============ feature rows ============ */
-
-/* .lp-row is now MONEY'S SHAPE AND ONLY MONEY'S. It used to carry Birdie,
-   Money and Safety, three sections in a row, each of them a 1fr|1fr grid whose
-   text column ran h2 → .lp-lead → ruled .lp-list and whose other column held one
-   media object. Birdie and Money were not merely similar, they were the same
-   composition: media left, text right, half and half. Reading down the page you
-   met that panel three times and the only thing that changed was the noun.
-   Alternating image/text rows is a real macrostructure (Hallmark calls it Split
-   Studio) and the page is allowed to use it — what it is not allowed to do is
-   use it with the same proportion and the same internal rhythm every time,
-   because that is the difference between a pairing and a template.
-
-   So: Money keeps the symmetric diptych, because the split card is a table of
-   numbers and needs parity with the column arguing for it. Birdie moved to
-   .lp-birdie (asymmetric, plate in the right margin, the hero's own
-   composition). Safety moved to .lp-safety (statement beside the document, then
-   its guarantees ruled across the full width underneath). Before adding a
-   fourth section here, check what shape its neighbours already are.
-
-   minmax(0, 1fr) rather than 1fr: a bare 1fr is minmax(auto, 1fr), and `auto`
-   floors the track at its content's min-content width, which for a native-width
-   image is the image. Nothing in .lp-row is image-bearing today. It costs
-   nothing to be right about it before something is. */
-.lp-row {
-  display: grid;
-  gap: clamp(32px, 5vw, 64px);
-  align-items: start;
-}
-@media (min-width: 900px) {
-  /* Half-and-half was the real bug here. At 1fr/1fr the split card, a ~420px
-     table, sat alone in a 560px column: top-aligned it left a hole under
-     itself, centered it floated, and both got reported (2026-08-27,
-     from a MacBook; the phone stacks and was always fine). Same cure as
-     .lp-birdie and the demo head: the card column is the card's own width,
-     the text column is the measure the words set in, space-between owns the
-     gutter, and center is correct once both blocks have deliberate sizes. */
-  .lp-row { grid-template-columns: minmax(0, 500px) minmax(0, 34rem); justify-content: space-between; align-items: center; }
-  .lp-row-flip .lp-row-media { order: -1; }
-}
-.lp-row h2 { margin-bottom: 16px; }
-.lp-row .lp-lead { margin-bottom: 22px; }
-
-/* ---- Birdie: a plate in the margin ----
-   The media here is a phone, which is a tall narrow object; giving it half the
-   page made it a slab and gave the text column a measure it did not want. It is
-   a 300px plate in the right margin now, which is what the hero does with the
-   same asset, and the text runs at a real reading measure beside it. The
-   breakpoint is the hero's 940 rather than .lp-row's 900, so the two plate
-   compositions collapse at the same width and the rhyme survives on a tablet. */
-.lp-birdie {
-  display: grid;
-  gap: clamp(28px, 4vw, 40px) clamp(32px, 5vw, 56px);
-  align-items: start;
-}
-@media (min-width: 940px) {
-  /* A FIXED MEASURE, not 1fr, and this was worth screenshotting to get right.
-     The first version of this section used minmax(0, 1fr) for the text and
-     capped the ruled list at 46ch inside it. Rendered at 1280 that gave a 740px
-     column holding 510px of list, so the rules stopped 190px short of a column
-     that itself stopped 190px short of the plate: two ragged right edges and a
-     hole between them that read as a bug rather than as a margin.
-
-     38rem is the measure the content already wanted — the h2 sets in one line
-     at 46px, the lead's own 56ch cap lands just inside it, and the ruled rows
-     now share their right edge with both. space-between then pushes the plate
-     to the page's right edge, so the whitespace is one deliberate gutter
-     between two blocks with straight edges rather than three different
-     leftovers. Centred rather than start-aligned because the phone is nearly
-     twice the height of the text beside it, and top-aligning left the text
-     stranded at the ceiling of an empty column. */
-  .lp-birdie {
-    grid-template-columns: minmax(0, 38rem) minmax(0, 300px);
-    justify-content: space-between;
-    align-items: center;
-  }
-}
-.lp-birdie h2 { margin-bottom: 16px; }
-.lp-birdie .lp-lead { margin-bottom: 0; }
-
-/* ---- Safety: statement, document, then the guarantees ----
-   Two tiers rather than two columns. The heading and its lead sit beside the
-   real SOS email, and the four rules run across the full width underneath in a
-   2x2 ruled block. It is the only section on the page built this way, which is
-   the point: it is the last feature section and the most serious one, and it
-   was previously the third identical panel in a row. */
+/* ---- Safety: the painting and what SOS does, then the two real things ----
+   On the light stone band (2026-10-21), where the watcher-bird painting reads.
+   From 960px: the heading and its lead on the left, what happens on the right
+   (four facts, then the two standing guarantees as one row under them); then,
+   across the width, the real sheet with its three buttons named, and the real
+   email it sends beside it, the two as a pair: one top, one bottom. The only
+   section on the page built this way. */
 .lp-safety {
   display: grid;
   gap: clamp(28px, 4vw, 44px) clamp(32px, 5vw, 64px);
@@ -1068,64 +900,62 @@ html:has(.lp) body { overflow-x: clip; }
 }
 .lp-safety h2 { margin-bottom: 16px; }
 .lp-safety .lp-lead { margin-bottom: 0; }
-@media (min-width: 900px) {
-  /* 1.2 to 1, not 1 to 1, and the reason is not variety for its own sake. The
-     first version of this section used a plain 1fr|1fr, which is Money's grid
-     exactly — so the two sections still opened with the identical composition
-     and only diverged below the fold of the panel. It was also wrong on its own
-     terms: the email is a short document whose longest line is "Emergency Alert
-     from Jordan", and at half the page it sat in a box 40% wider than anything
-     in it, while the heading next to it wrapped. Giving the statement the extra
-     fifth reads as statement-led with the exhibit inset beside it, which is what
-     the section is. */
-  .lp-safety { grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); }
-  .lp-safety-rules {
-    grid-column: 1 / -1;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    column-gap: clamp(32px, 5vw, 64px);
-    margin-top: clamp(18px, 2.5vw, 26px);
-  }
+.lp-safety-art { width: min(220px, 60%); margin-bottom: 18px; }
+.lp-safety-facts { display: grid; gap: 18px 32px; }
+.lp-safety-facts h3 { margin-bottom: 4px; }
+.lp-safety-facts p { font-size: 15.5px; line-height: 1.6; color: var(--ink-2); max-width: 46ch; }
+/* The two standing guarantees: one row under the facts, not two loose lines
+   at the foot of the band. */
+.lp-safety .lp-safety-rules {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 32px;
+  margin-top: clamp(20px, 3vw, 28px);
 }
-
+.lp-safety .lp-safety-rules li { font-weight: 600; color: var(--ink); }
+.lp-safety-exhibits { display: grid; gap: 28px; align-items: start; }
+.lp-safety .lp-safety-exhibits .lp-anno { margin: 0 auto; }
+.lp-safety-exhibits .lp-sos-mail { width: min(420px, 100%); margin: 0 auto; }
+@media (min-width: 640px) {
+  .lp-safety-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (min-width: 900px) {
+  .lp-safety-art { width: 260px; }
+}
+@media (min-width: 960px) {
+  .lp-safety { grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); }
+  .lp-safety-body { align-self: end; }
+  .lp-safety-exhibits {
+    grid-column: 1 / -1;
+    grid-template-columns: minmax(0, 526px) minmax(0, 330px);
+    justify-content: center;
+    align-items: stretch;
+    column-gap: clamp(28px, 4vw, 48px);
+  }
+  /* As tall as the sheet and its caption, its own caption level with the
+     sheet's. */
+  .lp-safety-exhibits .lp-sos-mail { width: auto; margin: 0; display: flex; flex-direction: column; }
+  .lp-safety-exhibits .lp-sos-cap { margin-top: auto; }
+}
+@media (min-width: 1100px) {
+  /* The sheet's stage is 1.3 times larger here (.lp-anno), and the email
+     grows with it, its type a step up, so the pair keeps its proportion. */
+  .lp-safety-exhibits { grid-template-columns: minmax(0, 684px) minmax(0, 350px); }
+  .lp-safety-exhibits .lp-sos-mail { padding: 32px; }
+  .lp-safety-exhibits .lp-sos-meta { font-size: 14px; }
+  .lp-safety-exhibits .lp-sos-headline { font-size: 22px; }
+  .lp-safety-exhibits .lp-sos-intro { font-size: 15.5px; }
+  .lp-safety-exhibits .lp-sos-link { font-size: 15.5px; }
+  .lp-safety-exhibits .lp-sos-fine { font-size: 14px; line-height: 1.6; }
+  .lp-safety-exhibits .lp-sos-small { font-size: 13px; }
+}
 .lp-list { display: grid; gap: 0; margin-top: 20px; }
-/* The venues card's sign-in line, under the mailto button. Inherits the
-   card's ink so it reads as a footnote, not a second button. */
-.lp-venue-signin { margin: 14px 0 0; font-size: 0.9em; opacity: 0.85; }
-.lp-venue-signin a { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
 .lp-list li { list-style: none; font-size: 15.5px; color: var(--ink-2); line-height: 1.5; }
 .lp-sec-navy .lp-list li { color: var(--cream-2); }
 /* Plain rows, no glyphs and no rules. A column of checkmarks is the single
    most template-looking thing a marketing page can do, and a hairline between
    every row was its cousin; spacing carries the list (2026-10-03). */
 .lp-list li { padding: 5px 0; }
-
-/* split / money vignette */
-.lp-split {
-  border: 1px solid var(--rule);
-  border-radius: 18px;
-  background: var(--plate);
-  /* Scaled up 2026-08-27: the read of the section was that the card sat
-     small in a lot of open space. Wider column (500px, .lp-row above), more
-     generous padding, and the rows sized to be read rather than to fit. */
-  padding: clamp(24px, 3.4vw, 34px);
-}
-.lp-split-total {
-  display: flex; justify-content: space-between; align-items: baseline;
-  padding-bottom: 14px; margin-bottom: 14px;
-  border-bottom: 1px solid var(--rule);
-}
-.lp-split-total b { font-size: 30px; color: var(--ink); letter-spacing: -0.02em; }
-.lp-split-row {
-  display: flex; justify-content: space-between; align-items: center;
-  padding: 11px 0; font-size: 16px;
-}
-.lp-split-row span { color: var(--ink-2); }
-.lp-split-row b { color: var(--ink); font-weight: 600; }
-.lp-split-note {
-  margin-top: 16px; padding-top: 16px;
-  border-top: 1px solid var(--rule);
-  font-size: 14px; color: var(--ink-3);
-}
 
 /* ============ pricing ============ */
 
@@ -1241,27 +1071,15 @@ html:has(.lp) body { overflow-x: clip; }
 /* ============ footer ============ */
 
 .lp-footer { background: var(--navy-deep); color: var(--cream-3); padding: clamp(48px, 6vw, 72px) 0 40px; }
-.lp-footer-grid {
-  display: grid; gap: 32px;
-  padding-bottom: 40px;
-}
-/* minmax(0, ...) on every track: the brand column carries the 24px mark, and
-   a bare fr track floors itself at its content's min-content width. */
-@media (min-width: 720px) {
-  .lp-footer-grid {
-    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1fr);
-  }
-}
-/* h3 (heading order), styled as the small column label it is. This rule is
-   after the .lp h3 type rule, so equal specificity resolves in its favour. */
-.lp-footer h3 { font-family: var(--font-body); font-size: 13px; font-weight: 700; color: var(--cream); margin: 0 0 14px; letter-spacing: 0; }
-.lp-footer ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.lp-footer-top { display: grid; gap: 12px; padding-bottom: 26px; }
+.lp-footer ul { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 10px 22px; }
+.lp-footer-links { padding-bottom: 28px; }
 .lp-footer a { color: var(--cream-3); text-decoration: none; font-size: 14.5px; }
 .lp-footer a:hover { color: var(--cream); }
 /* 46ch, not 34. Thirty-four characters is under the 45-75ch band that prose is
    readable in: the blurb is one sentence and 34ch broke it into four choppy
    lines in a column that had room for two. */
-.lp-footer-blurb { font-size: 14.5px; color: var(--cream-3); max-width: 46ch; margin-top: 12px; }
+.lp-footer-blurb { font-size: 14.5px; color: var(--cream-3); max-width: 60ch; }
 .lp-footer-base {
   padding-top: 24px;
   display: flex; flex-wrap: wrap; gap: 10px 20px; justify-content: space-between;
@@ -1278,7 +1096,7 @@ html:has(.lp) body { overflow-x: clip; }
    `fine` and used to get 19px rows in the footer. Measured at 320px before
    this: eleven footer links at 19px tall. Either condition is enough. */
 @media (pointer: coarse), (max-width: 820px) {
-  .lp-footer ul { gap: 0; }
+  .lp-footer ul { gap: 0 22px; }
   .lp-footer ul a { display: inline-block; padding: 13px 0; }
   .lpd-map .maplibregl-ctrl-group button { width: 44px; height: 44px; }
 }
@@ -1289,147 +1107,66 @@ html:has(.lp) body { overflow-x: clip; }
 
 .lp-hero-in { position: relative; z-index: 1; }
 
-/* Section plates: the bird marks. Solid navy specimens, gull marks and
-   hairlines on a transparent ground, at most one steel element each. One per
-   section, never a grid of them — an icon per card is the formula drop 20
-   §H/§I calls out.
-
-   PLATES LIVE ON PAPER, NEVER ON NAVY. The art is navy ink and there is no
-   dark variant of it. The old `filter: invert(1) brightness(1.9)` faked one:
-   it re-rasterizes the image every frame (banned inside the Capacitor
-   WKWebView for exactly that reason) and it flattened the steel accent, which
-   is the one element that means "you". A plate that needs to sit on navy gets
-   moved to a paper section instead. If one ever genuinely has to, use
-   `mask-image` + `background: currentColor` — compositor-safe, no filter — and
-   accept that a mask is monochrome, so only use it on a plate with no steel.
-
-   Every mark is centred on its ink, so the old hardcoded `-10px` nudge is
-   gone: measured ink boxes inside the 320px canvas are crowd 278x276, split
-   220x278, plans 276x95, each with dx/dy from centre of 0.0px. Two things do
-   still differ per mark, and both are handled by measurement rather than by a
-   magic number.
-
-   1. ASPECT RATIO. Width is set per mark so the three read at the same optical
-      size (equal geometric mean of the rendered ink), not the same box width.
-      Measured at 1280px: 88.6 / 88.0 / 88.7.
-   2. THE TRANSPARENT CANVAS. Each mark keeps its own clear margin, which for
-      the plans wire is 113 units top and bottom against 95 units of ink. Left
-      as-is that canvas, not the CSS, would set the spacing, and the kicker
-      would sit 76px below a wire that looks 14px away. So the canvas is
-      trimmed back per mark from its measured inset, expressed as a fraction of
-      the plate width so it scales with the clamp. What you then read as
-      spacing is ink-to-text: flush left with the column, 14px above the
-      kicker, on all three. */
-/* Section marks come from the app's own icon set now, so the site and the
-   product are drawn by the same hand. They're vectors, which means none of the
-   per-mark ink-inset math the raster plates needed applies: the artwork is the
-   box. Colour is inherited so the mark tracks whatever ground it sits on,
-   including a navy section, which the plates could never do. */
-.lp-mark {
-  display: block;
-  color: var(--navy);
-  margin: 0 0 18px;
-  line-height: 0;
-}
-.lp-mark svg {
-  width: clamp(52px, 5.4vw, 64px);
-  height: auto;
-}
-
-.lp-plate {
-  display: block;
-  width: var(--plate-w);
-  height: auto;
-  margin:
-    calc(var(--plate-w) * var(--ink-t) * -1)
-    0
-    calc(14px - var(--plate-w) * var(--ink-b))
-    calc(var(--plate-w) * var(--ink-l) * -1);
-}
-/* .lp-plate-crowd retired with the standalone crowd section. Its mark had
-   nowhere honest to go: the section it labelled is navy now, and plates are
-   navy ink with no dark variant (see the note above). Two plates on two cream
-   sections is a system; a third faked onto a dark ground with a filter is the
-   thing the note exists to prevent. /public/marks/crowd.png is untouched and
-   available if a cream crowd section ever comes back. */
-/* split: the lens is narrow, so its side inset is 50 units and the box runs
-   wider to land on the same optical size */
-.lp-plate-split {
-  --plate-w: clamp(85px, 8.9vw, 116px);
-  --ink-t: 0.0656; --ink-b: 0.0656; --ink-l: 0.1563;
-}
-/* plans: a wire, so the ink is a wide band only 95 units tall. The width floor
-   is set by legibility rather than by the ratio: the perched specimens need
-   ~30px of height to keep beak and tail, which a 148px box gives. */
-.lp-plate-plans {
-  --plate-w: clamp(148px, 13.7vw, 178px);
-  --ink-t: 0.3531; --ink-b: 0.3500; --ink-l: 0.0688;
-}
-
-/* One line closing the steps, carrying the two things the deleted "In the app"
-   grid actually added, set apart by space so it reads as a footnote to the four
-   steps rather than a fifth one. */
-.lp-steps-after {
-  margin-top: clamp(28px, 4vw, 40px);
-  font-size: 15.5px;
-  max-width: 62ch;
-  color: var(--ink-2);
-}
-
 /* ============ safety: the real SOS email, shown as a document ============ */
 
+/* A printed document on the stone band: ink on paper-white, the email's own
+   lines and nothing added. The link keeps the email's red, darkened for paper. */
 .lp-sos-mail {
-  border: 1px solid var(--rule-cream);
-  background: rgba(244, 239, 227, 0.045);
+  border: 1px solid var(--rule);
+  background: var(--plate);
   padding: clamp(22px, 3vw, 28px);
 }
 .lp-sos-meta {
   display: grid;
   /* minmax(0, 1fr) on the value column: a bare 1fr floors the track at its
-     content's min-content width, and "Emergency Alert from Jordan" is the
+     content's min-content width, and "Emergency Alert from Maya" is the
      longest string in the section. */
   grid-template-columns: auto minmax(0, 1fr);
   gap: 6px 14px;
   padding-bottom: 16px;
-  border-bottom: 1px solid var(--rule-cream);
+  border-bottom: 1px solid var(--rule);
   font-size: 13px;
 }
 .lp-sos-meta span:nth-child(odd) {
-  color: var(--cream-3);
+  color: var(--ink-3);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   font-size: 11px;
   padding-top: 1px;
 }
-.lp-sos-meta span:nth-child(even) { color: var(--cream-2); }
+.lp-sos-meta span:nth-child(even) { color: var(--ink-2); }
 .lp-sos-body { padding: 18px 0 4px; }
 .lp-sos-headline {
   font-size: 19px;
   font-weight: 700;
-  color: var(--cream);
+  color: var(--ink);
   margin: 0 0 10px;
 }
+.lp-sos-intro { font-size: 14px; line-height: 1.5; color: var(--ink-2); margin: 0 0 12px; }
 .lp-sos-link {
   font-size: 14.5px;
   font-weight: 600;
-  color: var(--alarm);
+  color: var(--alarm-ink);
   text-decoration: underline;
   text-underline-offset: 3px;
   margin: 0 0 10px;
 }
-.lp-sos-fine { font-size: 13px; color: var(--cream-3); margin: 0; }
+.lp-sos-fine { font-size: 13px; color: var(--ink-3); margin: 0; }
+/* The email's own rule and footer, under the body as the email sets them. */
+.lp-sos-foot { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--rule); }
+.lp-sos-small { font-size: 12px; line-height: 1.5; color: var(--ink-3); margin: 8px 0 0; }
 .lp-sos-cap {
   margin: 16px 0 0;
   padding-top: 14px;
-  border-top: 1px solid var(--rule-cream);
+  border-top: 1px solid var(--rule);
   font-size: 12.5px;
-  color: var(--cream-3);
+  color: var(--ink-3);
 }
 
 /* ============ cta band ============ */
 
 .lp-cta {
-  background: linear-gradient(135deg, var(--cta-lift) 0%, var(--navy) 55%, var(--cta-deep) 100%);
+  background: var(--navy);
   padding: clamp(72px, 10vw, 116px) 0;
 }
 .lp-cta-in { max-width: 720px; }
@@ -1450,31 +1187,6 @@ html:has(.lp) body { overflow-x: clip; }
 
 /* ============ live demo (#try) ============ */
 /* A working slice of Discover: real map, real pins, real model output. */
-
-/* The head sits above the demo rather than beside a screenshot: heading and
-   lead on the left, the three claims ruled on the right, and then the demo
-   full width underneath proving all of it. The demo is the widest element on
-   the page on purpose. It is the only thing here no competitor can screenshot
-   their way to, so it gets the most room. */
-.lp-demo-head {
-  display: grid;
-  gap: clamp(20px, 3vw, 48px);
-  align-items: start;
-}
-@media (min-width: 900px) {
-  /* The Birdie composition, on purpose: this ran 1.35fr/1fr for a while,
-     which handed the five claims a quarter of the page and let them float in
-     it, first bottom-aligned, then centered, and both read as misplacement
-     on a MacBook (reported twice, 2026-08-27: "the weirdest orientation I've
-     seen"). Fractions were the problem, not the alignment: the text column
-     gets the measure it actually sets in (38rem, same as .lp-birdie, and the
-     lead's 56ch cap lands inside it), the claims get a fixed 340px block,
-     space-between makes the whitespace one deliberate gutter, and centering
-     two blocks of known width is composition rather than drift. */
-  .lp-demo-head { grid-template-columns: minmax(0, 38rem) minmax(0, 340px); justify-content: space-between; align-items: center; }
-  .lp-demo-head .lp-list { margin-top: 0; }
-}
-.lp-demo-head h2 { margin-bottom: 16px; }
 
 /* The holder the demo mounts into. It carries the demo's top margin and its
    measured height, so the box is identical before and after the map arrives
@@ -1705,35 +1417,260 @@ html:has(.lp) body { overflow-x: clip; }
 .lp-sec-navy .lpd-controls .lp-btn-navy { background: var(--cream); color: var(--navy); }
 .lp-sec-navy .lpd-controls .lp-btn-navy:hover { background: var(--cream-hi); }
 
-/* The two birds on the pricing section. Bottom-aligned so they read as
-   perched on the same ground rather than floating at different heights, and
-   the warm one stands slightly back, which is what keeps it a pair instead of
-   a symmetrical logo. */
-.lp-pair {
-  display: flex;
-  align-items: flex-end;
-  gap: clamp(4px, 1.4vw, 18px);
-  margin: 0 0 20px;
-  /* The taller of the two birds, so the row holds its height while they are
-     still off-screen and the pricing cards under them do not jump when the
-     photos mount. Same clamp as the bird itself, over its own aspect ratio. */
-  min-height: calc(clamp(92px, 10vw, 128px) * 400 / 316);
-}
-.lp-pair > :first-child { margin-bottom: 6px; }
+/* ============ 2026-10-21: the live head, one Friday plan, venues ============ */
 
-/* Section marks are photographs of the birds now, not ink plates. They are
-   transparent PNGs, so unlike the old navy-ink plates they work on the navy
-   sections too, which is why Crowd levels can finally have one. Both real
-   mascots are scattered through the flocks at varied size and facing, so the
-   repeats read as a group rather than a stamped motif. */
-.lp-flock {
-  margin: 0 0 20px;
-  line-height: 0;
+/* The demo's heading, above the demo it introduces: one column at a reading
+   measure. The five ruled claims that used to float beside it are folded into
+   the lead. */
+.lp-live-head { max-width: 40rem; }
+.lp-live-head h2 { margin-bottom: 16px; }
+.lp-live-note { margin-top: 12px; font-size: 14.5px; color: var(--ink-3); }
+.lp-live-more a { color: var(--steel); font-weight: 600; text-underline-offset: 3px; }
+
+/* One Friday plan, read top to bottom. The dead group chat comes first, then
+   the same Friday in five beats, each in a band of its own, paper and navy in
+   turn (the maintainer, 2026-10-21), so each step reads as its own. A beat is its
+   time, headline and one short line, centred, and under it either the capture
+   of that moment with its parts named (.lp-anno, AnnotatedShot.js) or, where
+   the beat has no screen, a painted scene. Not a numbered grid: the times are
+   the order. */
+.lp-friday-title { max-width: 18em; }
+.lp-friday-lead { margin-top: 16px; }
+.lp-friday-chat { margin: clamp(28px, 4vw, 40px) 0 0; max-width: 30rem; }
+/* A band is one beat: tighter than a chapter section, so five of them read as
+   one sequence rather than five chapters. */
+.lp-sec.lp-beat-band { padding: clamp(44px, 6vw, 76px) 0; }
+.lp-beat { display: grid; justify-items: center; gap: 6px; max-width: 44rem; margin: 0 auto; text-align: center; }
+.lp-beat-when {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--steel);
 }
-.lp-flock img { height: auto; }
-.lp-flock-crowd img { width: min(100%, clamp(280px, 46vw, 520px)); }
-.lp-flock-steps img { width: min(100%, clamp(240px, 38vw, 420px)); }
-.lp-flock-money img { width: min(100%, clamp(150px, 20vw, 230px)); }
+.lp-beat h3 { margin-bottom: 2px; }
+.lp-beat p { font-size: 16.5px; line-height: 1.6; color: var(--ink-2); max-width: 52ch; }
+.lp-beat-note { font-size: 14.5px !important; color: var(--ink-3) !important; margin-top: 4px; }
+/* The painted scenes of the two beats with no screen, varied so the two do
+   not read as one template: the invitation sits over its words, centred; the
+   flock flies off under its words, out to the right. */
+.lp-beat-scene { display: block; height: auto; }
+.lp-beat-scene.is-invite { width: min(400px, 84vw); margin: 0 auto clamp(18px, 3vw, 26px); }
+.lp-beat-scene.is-flight { width: min(520px, 90vw); margin: clamp(22px, 3.5vw, 34px) 0 0 auto; }
+@media (min-width: 960px) {
+  .lp-beat-scene.is-flight { margin-right: 6%; }
+}
+
+/* A plate: a capture of the web app printed flat on the page, with its
+   caption under it. No shadow and no device frame (the "printed plates" rule in
+   landingPageClaims.test.js); the screen's own rounded corners are the edge.
+   On a phone every plate is centred, as wide as the screen allows beside a
+   caption; from a tablet up it is 200px in its column. */
+.lp-plate { margin: 22px auto 0; width: min(260px, 70vw); }
+@media (min-width: 760px) {
+  .lp-plate { margin: 18px 0 0; width: 200px; }
+}
+.lp-plate .lp-shot { display: block; width: 100%; height: auto; border-radius: 20px; }
+.lp-fig-cap { margin-top: 10px; font-size: 13.5px; line-height: 1.45; color: var(--ink-3); }
+.lp-friday-more { margin-top: clamp(28px, 4vw, 40px); font-size: 16px; color: var(--ink-2); text-align: center; }
+.lp-friday-more a { color: var(--steel); font-weight: 600; text-underline-offset: 3px; }
+
+/* ============ annotated captures (AnnotatedShot.js) ============
+   One grid of design units, scaled as a whole: notes 230 wide, a 56 gap for
+   the leaders, the phone 240 wide and 519.38 tall (390:844). The stage keeps
+   that ratio, so the notes, the phone and the SVG's lines, all placed in it by
+   percentage, stay on the same pixel of the capture at every width.
+   From 1100px the whole stage is drawn 1.3 times larger (--anno-scale), the
+   phone about 312px wide, so the screen itself reads.
+   Under 768px: the phone alone, centred, each number beside its element (never
+   on it) and the notes as a numbered list under it. Nothing animates. */
+.lp-anno { --anno-scale: 1; }
+@media (min-width: 1100px) {
+  .lp-anno { --anno-scale: 1.3; }
+}
+.lp-plate.lp-anno { width: auto; margin: clamp(26px, 4vw, 40px) 0 0; }
+.lp-anno-stage { position: relative; }
+.lp-anno-phone { position: relative; width: min(260px, 70vw); margin: 0 auto; }
+.lp-anno-phone .lp-shot { display: block; width: 100%; height: auto; border-radius: 20px; }
+.lp-anno-lines { display: none; }
+/* Placed beside its element in landingAnnotations.js, clear of its text. */
+.lp-anno-dot {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1.5px solid var(--navy-deep);
+  display: grid;
+  place-items: center;
+  background: var(--cream);
+  color: var(--navy);
+  font: 700 10.5px/1 var(--font-body);
+}
+.lp-anno-notes {
+  list-style: none;
+  margin: 20px auto 0;
+  padding: 0;
+  width: min(340px, 100%);
+  display: grid;
+  gap: 10px;
+}
+.lp-anno-note {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 10px;
+  align-items: center;
+  text-align: left;
+  font-size: 15px;
+  line-height: 1.4;
+  color: var(--ink-2);
+}
+.lp-anno-num {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--navy);
+  color: var(--cream);
+  font: 700 11.5px/1 var(--font-body);
+}
+.lp-on-navy .lp-anno-note { color: var(--cream-2); }
+.lp-on-navy .lp-anno-num { background: var(--cream); color: var(--navy); }
+.lp-anno .lp-fig-cap { text-align: center; margin-top: 14px; }
+@media (min-width: 768px) {
+  /* The figure is the stage's width, so the caption can sit centred under
+     the phone, wherever the phone is in the stage. */
+  .lp-plate.lp-anno { width: min(calc(var(--anno-w) * var(--anno-scale) * 1px), 100%); margin-left: auto; margin-right: auto; }
+  .lp-anno .lp-fig-cap {
+    margin-left: calc(var(--anno-x0) / var(--anno-w) * 100%);
+    width: calc(240 / var(--anno-w) * 100%);
+  }
+  .lp-anno-stage { aspect-ratio: var(--anno-w) / 519.38; }
+  .lp-anno-phone {
+    position: absolute;
+    top: 0;
+    margin: 0;
+    left: calc(var(--anno-x0) / var(--anno-w) * 100%);
+    width: calc(240 / var(--anno-w) * 100%);
+  }
+  .lp-anno-dot,
+  .lp-anno-num { display: none; }
+  .lp-anno-lines {
+    display: block;
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+    pointer-events: none;
+  }
+  .lp-anno-notes { position: absolute; inset: 0; margin: 0; width: auto; display: block; }
+  .lp-anno-note {
+    position: absolute;
+    display: block;
+    transform: translateY(-50%);
+    width: calc(230 / var(--anno-w) * 100%);
+    font-weight: 600;
+    color: var(--ink);
+  }
+  .lp-anno-note.is-left { left: 0; text-align: right; }
+  .lp-anno-note.is-right { left: calc(var(--anno-right) / var(--anno-w) * 100%); text-align: left; }
+  .lp-on-navy .lp-anno-note { color: var(--cream); }
+}
+/* The leaders: a hairline in the band's ink outside the phone; inside it,
+   cream over a thin navy casing, which reads on the dark capture and on its
+   light buttons alike. They end just outside what they name: a small cream
+   dot past a line of text, or a thin outline in the same two strokes around a
+   button, field or list. */
+.lp-anno-line,
+.lp-anno-line-in,
+.lp-anno-case,
+.lp-anno-outline,
+.lp-anno-outline-case {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+}
+.lp-anno-line { stroke: var(--ink-2); stroke-width: 1; }
+.lp-on-navy .lp-anno-line { stroke: var(--cream-2); }
+.lp-anno-case { stroke: var(--navy-deep); stroke-width: 3; }
+.lp-anno-line-in { stroke: var(--cream); stroke-width: 1; }
+.lp-anno-outline-case { stroke: var(--navy-deep); stroke-width: 3; }
+.lp-anno-outline { stroke: var(--cream); stroke-width: 1.25; }
+.lp-anno-end {
+  fill: var(--cream);
+  stroke: var(--navy-deep);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+/* A beat on a navy band takes the on-navy inks. The capture is the dark
+   theme on every band, so on navy it gets a light hairline in place of the
+   paper's ink one, or the phone's own navy would run into the band's. */
+.lp-on-navy .lp-beat-when { color: var(--steel-lift); }
+.lp-on-navy .lp-beat p { color: var(--cream-2); }
+.lp-on-navy .lp-beat-note { color: var(--cream-3) !important; }
+.lp-on-navy .lp-fig-cap { color: var(--cream-3); }
+.lp-on-navy .lp-plate .lp-shot { border-color: rgba(244, 239, 227, 0.24); }
+.lp-on-navy .lp-friday-more { color: var(--cream-2); }
+.lp-on-navy .lp-friday-more a { color: var(--steel-lift); }
+
+/* The hero note's one link, to the waitlist at the foot of the page. */
+.lp-hero-note a { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
+
+/* Venues: one paragraph and one way in, on navy (2026-10-21), beside the
+   owner's dashboard with two of its parts named, the notes to its right.
+   Side by side from 1200px, where the 1.3 stage leaves the copy a reading
+   width (the stage takes its 684px first, the copy the rest), the copy
+   centred against the phone itself: the caption is lifted out of the flow
+   there, so it does not pull the centre down. Stacked below that, and on a
+   phone the capture with numbered dots. The rest of the venue offer, and the
+   sign-in for owners who already have an account, is the venue column under
+   Pricing. */
+.lp-venues-in { display: grid; gap: 32px clamp(40px, 6vw, 80px); align-items: start; }
+@media (min-width: 1200px) {
+  .lp-venues-in { grid-template-columns: minmax(0, 1fr) minmax(0, 684px); align-items: center; column-gap: 48px; }
+  .lp-venues-in .lp-anno { position: relative; margin: 0; }
+  .lp-venues-in .lp-anno .lp-fig-cap { position: absolute; top: 100%; }
+}
+.lp-venues h2 { margin-bottom: 16px; }
+.lp-venues-actions { margin-top: 24px; display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px; }
+.lp-venue-signin { margin-top: 14px; font-size: 14.5px; color: var(--ink-2); }
+.lp-venue-signin a { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
+
+.lp-pricing-lead { margin-top: 16px; }
+
+/* ============ the birds ============
+   Painted with Higgsfield in the hand of the old section marks: warm sparrows
+   and navy fairy-wrens on transparent ground. A wren's navy body vanishes on a
+   navy band, so a navy band gets beige sparrows, or a picture where the wrens
+   are a minority that still read by their white breasts and pale wing edges
+   (step-go on "Still in?", checked on the band 2026-10-21). One per section
+   that has room, never the same one twice on a page. They are decoration, so
+   alt="" and lazy; every one has its own box size, so nothing shifts when it
+   lands. */
+.lp-art { height: auto; }
+.lp-live-top { display: grid; gap: 24px clamp(32px, 5vw, 72px); align-items: end; }
+@media (min-width: 960px) {
+  .lp-live-top { grid-template-columns: minmax(0, 40rem) minmax(0, 420px); justify-content: space-between; }
+}
+.lp-live-art { width: min(420px, 100%); }
+.lp-friday-open { display: grid; gap: 28px clamp(32px, 6vw, 96px); align-items: center; margin-top: clamp(28px, 4vw, 40px); }
+.lp-friday-open .lp-friday-chat { margin: 0; }
+/* The sparrow leaves the chat it gave up on: painted taking off to the left,
+   so it is mirrored to fly away from the chat, out to the right. */
+.lp-friday-art { width: 180px; justify-self: end; transform: scaleX(-1); }
+@media (min-width: 900px) {
+  /* One picture, the card and the bird leaving it, not two things at the
+     band's far edges (2026-10-21): the sparrow close to the card, a size up. */
+  .lp-friday-open { grid-template-columns: minmax(0, 32rem) 290px; justify-content: start; column-gap: clamp(28px, 4vw, 56px); }
+  .lp-friday-art { width: 290px; justify-self: start; }
+}
+.lp-pricing-head { display: grid; gap: 20px 48px; align-items: end; }
+@media (min-width: 760px) {
+  .lp-pricing-head { grid-template-columns: minmax(0, 44rem) 160px; justify-content: space-between; }
+}
+.lp-pricing-art { width: 160px; }
 
 /* ============ motion: arrival, menu, links ============ */
 
@@ -1769,16 +1706,16 @@ html:has(.lp) body { overflow-x: clip; }
 @media (prefers-reduced-motion: no-preference) {
   html:has(.lp) { scroll-behavior: smooth; }
 
-  .lp-hero-in > h1 {
+  .lp-hero-copy > h1 {
     animation: lp-rise 0.9s cubic-bezier(0.22, 1, 0.36, 1) both;
   }
   /* inline-block so it can move on its own; it is already nowrap, so the line
      still breaks before it exactly where it did. */
-  .lp-hero-in > h1 .lp-keep {
+  .lp-hero-copy > h1 .lp-keep {
     display: inline-block;
     animation: lp-rise 0.9s cubic-bezier(0.22, 1, 0.36, 1) 0.16s both;
   }
-  .lp-hero-copy {
+  .lp-hero-copy > :not(h1) {
     animation: lp-rise 0.9s cubic-bezier(0.22, 1, 0.36, 1) 0.42s both;
   }
   .lp-hero .lp-phone-wrap {

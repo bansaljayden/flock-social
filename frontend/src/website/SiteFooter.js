@@ -33,17 +33,19 @@ import React from 'react';
        sets are themselves under test; nothing here declares a colour.
 
    linkStyle threads an inline colour override onto every link the legal
-   variant renders. About and Support pass their READABLE token
+   variant renders. Support passes its READABLE token
    ({ color: 'var(--pp-ink-2)' }): marketingSiteAccessibility.test.js pins, by
-   source scan of those two files, that every footer anchor there carries
-   style={READABLE}, which is also why those pages pass their lead line as
-   children with the anchor written out in their own source. The pin wins;
+   source scan of that file, that every footer anchor there carries
+   style={READABLE}, which is also why it passes its lead line as children
+   with the anchor written out in its own source. (/about carried the same
+   override until it moved to the landing variant on 2026-10-21.) The pin wins;
    this component adapts to it.
 
    House copy rules apply (DESIGN-STANDARD A2): no em dashes anywhere in what this
    file renders. Separators are middle dots, like the pages it replaced. */
 
 const CONTACT_EMAIL = 'social@flockcorp.com';
+const YOUTUBE_URL = 'https://www.youtube.com/@flock-social2026';
 
 const LEGAL_LINKS = [
   { href: '/privacy', label: 'Privacy Policy' },
@@ -63,47 +65,36 @@ export default function SiteFooter({
   const year = new Date().getFullYear();
 
   if (variant === 'landing') {
-    /* The landing page's full footer: brand + blurb, the in-page product
-       links (those #anchors only exist on that page, which is why this
-       variant is landing-only), and the Company column built from the same
-       LEGAL_LINKS the legal pages render, so the two variants cannot drift
-       apart. `rest` carries the page's inert spread: the whole footer goes
-       inert behind the open menu, and marketingSiteAccessibility.test.js
-       asserts that toggle against a real render. */
+    /* The landing footer, used by the landing page and the other pages built
+       on its stylesheet (/how-it-works, /ai, /flux, /about, /research). Two plain lines and one row of links
+       rather than the three-column Product / Company grid every generated
+       site ends on. Every link is absolute, so it works from any page. The
+       legal links come from the same LEGAL_LINKS the legal pages render, so
+       the two variants cannot drift apart. `rest` carries the page's inert
+       spread: the whole footer goes inert behind the open menu. */
     return (
       <footer className={className} {...rest}>
         <div className="lp-wrap">
-          <div className="lp-footer-grid">
-            <div>
-              {brand}
-              <p className="lp-footer-blurb">
-                The app that turns “we should hang out” into an actual night out.
-              </p>
-            </div>
-            {/* h3, not h4: the last heading before the footer is the CTA's h2,
-                so h4 here skipped a level (axe: heading-order). */}
-            <div>
-              <h3>Product</h3>
-              <ul>
-                <li><a href="/signup">Create an account</a></li>
-                <li><a href="/app">Sign in</a></li>
-                <li><a href="#how">How it works</a></li>
-                <li><a href="#crowds">Crowd levels</a></li>
-                <li><a href="#safety">Safety</a></li>
-              </ul>
-            </div>
-            <div>
-              <h3>Company</h3>
-              <ul>
-                <li><a href="/about">About</a></li>
-                <li><a href="/support">Support</a></li>
-                {LEGAL_LINKS.map((l) => (
-                  <li key={l.href}><a href={l.href}>{l.label}</a></li>
-                ))}
-                <li><a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a></li>
-              </ul>
-            </div>
+          <div className="lp-footer-top">
+            {brand}
+            <p className="lp-footer-blurb">
+              Flock Social LLC, a Pennsylvania company. Made by Jayden Bansal and Asad Ali.
+            </p>
           </div>
+          <ul className="lp-footer-links">
+            <li><a href="/how-it-works">How it works</a></li>
+            <li><a href="/ai">How the AI works</a></li>
+            <li><a href="/flux">Flux</a></li>
+            <li><a href="/research">Research</a></li>
+            <li><a href="/about">About</a></li>
+            <li><a href="/support">Support</a></li>
+            <li><a href="/app">Sign in</a></li>
+            <li><a href={YOUTUBE_URL} target="_blank" rel="noopener noreferrer">YouTube</a></li>
+            {LEGAL_LINKS.map((l) => (
+              <li key={l.href}><a href={l.href}>{l.label}</a></li>
+            ))}
+            <li><a href={`mailto:${CONTACT_EMAIL}`}>{CONTACT_EMAIL}</a></li>
+          </ul>
           <div className="lp-footer-base">
             <span>&copy; {year} Flock Social LLC.</span>
             {/* The data credit doubles as BestTime's standing backlink offer
@@ -111,7 +102,6 @@ export default function SiteFooter({
                 row, the same register as the copyright beside it: crowd
                 forecasts really are built on their foot-traffic data. */}
             <span>Crowd data by <a href="https://besttime.app" target="_blank" rel="noopener noreferrer" style={{ color: 'inherit' }}>BestTime.app</a></span>
-            <span>Made by Jayden Bansal</span>
           </div>
         </div>
       </footer>

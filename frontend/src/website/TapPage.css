@@ -5,63 +5,59 @@
    stand, giving this about fifteen seconds. That is the whole brief, and it
    is why this file is small and why there is exactly one screen of content.
 
-   WHAT MOVES, AND WHAT IT COSTS. Two things: the city behind the type is the
-   real clip rather than one frame of it, and Birdie breathes. Neither is on
-   the path to first paint. The clip has no src until the browser goes idle
-   and never gets one at all under reduced-motion or Data Saver (TapPage.js
-   holds that logic and the reasoning); the breath is a 6s transform, which
-   the compositor owns, and the block at the bottom of this file removes it.
-   Nothing here animates a layout property and nothing overshoots.
+   WHAT MOVES, AND WHAT IT COSTS. One thing: Birdie breathes, a 6s transform
+   the compositor owns, which the block at the bottom of this file removes
+   under reduced motion. The stock city footage that used to play behind the
+   type is gone (2026-10-21); the ground is flat navy. Nothing here animates a
+   layout property and nothing overshoots.
 
    WHY THIS IS NOT LandingPage.css. The tokens below are copied VALUES, not
    invented ones: every hex is lifted verbatim from the `.lp` block in
-   LandingPage.css, which is the house palette (cream paper, navy ink, one
-   steel accent). Importing that file instead would pull 1651 lines of CSS for
+   LandingPage.css, which is the house palette (off-white paper, navy ink,
+   one steel accent). Importing that file instead would pull 1651 lines of CSS for
    a page that uses maybe forty of them, on the one route where the connection
    is worst. components/auth/AuthShell.js already does exactly this and says
    so in its own comment. If a token changes there, change it here too. */
 
-/* The face the h1 waits in, copied from LandingPage.css along with its
-   measurement. Fraunces loads with font-display: swap, so there IS a swap,
-   and until this block existed the fallback was ~29% wider than the face that
-   arrived, which reflowed the headline and pushed the buttons down under the
-   reader's thumb. local() only: this costs nothing on the wire.
-
-   Deliberately NO <link rel=preload> for Fraunces on this route. LandingPage
-   preloads it because that page's LCP element is a 72px headline and the
-   visitor is going to stay. Here the font is 67 KB competing with the JS chunk
-   and the logo on venue wifi, and with this fallback in place the page is
-   fully readable and dimensionally stable without it. The real face arrives
-   when it arrives. */
+/* The website's display face and the fallback it is waited for in, copied
+   from LandingPage.css along with its measurement (that file says how it was
+   cut and matched). font-display: swap, so there is a swap, and the matched
+   fallback keeps it from reflowing the headline and pushing the buttons down
+   under the reader's thumb. No preload on this route: the face is 19.5 KB and
+   the page reads fully without it on venue wifi. */
 @font-face {
-  font-family: 'Fraunces Fallback';
+  font-family: 'Literata Display';
+  src: url('../fonts/Literata-Display-600.woff2') format('woff2');
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Literata Display Fallback';
   src: local('Times New Roman'), local('Liberation Serif'), local('DejaVu Serif'), local('Tinos');
-  size-adjust: 97.77%;
-  ascent-override: 100.24%;
-  descent-override: 26.59%;
+  size-adjust: 119%;
+  ascent-override: 98.9%;
+  descent-override: 25.88%;
   line-gap-override: 0%;
   font-weight: 100 900;
 }
 
 .tap {
-  --navy: #0f172a;
+  --navy: #0b1a2e;
   --cream: #f4efe3;      /* 16.3:1 on --navy */
   --cream-2: #c8c3b2;    /* 10.6:1 on --navy, and what every secondary line uses */
   --steel-lift: #6d9ac3; /* focus rings on navy: 5.9:1 */
   --edge-cream: rgba(244, 239, 227, 0.30);
   --cream-hi: #fffaf0;
 
-  --font-display: 'Fraunces', 'Fraunces Fallback', 'Iowan Old Style', Georgia, 'Times New Roman', serif;
+  --font-display: 'Literata Display', 'Literata Display Fallback', 'Iowan Old Style', Georgia, 'Times New Roman', serif;
 
   font-family: 'Hanken Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   -webkit-font-smoothing: antialiased;
   line-height: 1.6;
   color: var(--cream);
 
-  /* The navy is painted by the ELEMENT, not by the photograph and not by the
-     clip. Both are decoration layered on top of this, so if neither arrives
-     (or neither arrives in time, which on venue wifi is the same thing) the
-     page still reads exactly as designed. */
+  /* Flat navy, the whole ground. */
   background: var(--navy);
 
   position: relative;
@@ -90,68 +86,10 @@
 
 .tap *, .tap *::before, .tap *::after { box-sizing: border-box; }
 
-/* ============ the backdrop ============ */
-
-/* Everything that dims the footage lives on this wrapper, not on the two
-   layers inside it. That is not tidiness: the video cross-fades OVER the
-   still, and if each carried its own 0.45 opacity the two would composite to
-   a brighter picture than either one for the length of the fade, and the
-   headline's contrast would dip in the middle of it. Dimming the group once
-   means the swap changes what is moving and nothing else. */
-.tap-bg {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  pointer-events: none;
-  opacity: 0.45;
-  /* The footage is a night city, so it is already dark, but "already dark" is
-     not a contrast measurement. The scrim below puts a near-navy layer between
-     it and every string on this page. Measured against the worst frame the
-     clip can produce (a pure white pixel, full screen) the headline still
-     holds 10.1:1 and the secondary lines 6.6:1, so no sentence here depends
-     on which frame happens to be on screen. */
-  filter: saturate(0.75);
-}
-
-/* A real <img>, not a CSS background, and that is the point: an <img> with
-   loading=lazy and fetchpriority=low can never sit in front of the text and
-   the buttons in the network queue. It is 22 KB, and until the clip arrives
-   it IS the design rather than a placeholder for it. */
-.tap-plate,
-.tap-video {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-/* Fades in over the still once it can actually play. Linear, over most of a
-   second: an eased fade on a 24fps night skyline reads as a flicker, and a
-   fast one reads as a second image landing rather than the same picture
-   starting to move. */
-.tap-video {
-  opacity: 0;
-  transition: opacity 700ms linear;
-}
-.tap-video.is-live { opacity: 1; }
-
-.tap::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(
-    to bottom,
-    rgba(15, 23, 42, 0.68),
-    rgba(10, 17, 32, 0.90)
-  );
-  pointer-events: none;
-}
-
 /* ============ the column ============ */
 
 .tap-in {
-  position: relative;   /* above the scrim */
+  position: relative;
   z-index: 1;
   width: 100%;
   max-width: 30rem;
@@ -390,13 +328,8 @@
 /* ============ reduced motion ============ */
 
 /* Asked for less movement, gets a page with none: the breath stops on its
-   first frame rather than mid-cycle, and the clip is removed from the box
-   entirely. The video is never FETCHED in this case either, which TapPage.js
-   decides before it assigns a src, so this rule is the belt to that braces
-   and covers the user who changes the setting with the page already open.
-   What is left is the still, the bird, and the type: the page as designed. */
+   first frame rather than mid-cycle. */
 @media (prefers-reduced-motion: reduce) {
   .tap-perch { animation: none; transform: none; }
-  .tap-video { display: none; }
   .tap-btn { transition: none; }
 }

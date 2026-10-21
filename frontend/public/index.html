@@ -75,7 +75,7 @@
          governs only what is parsed after it, and the icon/manifest links
          below are real subresource loads.
          ═══════════════════════════════════════════════════════════════════ -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self' capacitor://localhost ionic://localhost; base-uri 'none'; object-src 'none'; form-action 'self'; script-src 'self' capacitor://localhost ionic://localhost https://accounts.google.com https://appleid.cdn-apple.com https://www.gstatic.com https://us-assets.i.posthog.com; style-src 'self' capacitor://localhost ionic://localhost 'unsafe-inline'; img-src 'self' capacitor://localhost ionic://localhost data: blob: https://api.flockcorp.com https://flock-app-production.up.railway.app https://api.maptiler.com https://basemaps.cartocdn.com https://*.basemaps.cartocdn.com https://api.dicebear.com https://*.ticketm.net https://maps.ticketmaster.com https://mapsapi.tmol.io https://maps.googleapis.com https://www.gstatic.com; font-src 'self' capacitor://localhost ionic://localhost data:; media-src 'self' capacitor://localhost ionic://localhost; worker-src 'self' capacitor://localhost ionic://localhost blob:; child-src 'self' capacitor://localhost ionic://localhost blob:; frame-src 'self' capacitor://localhost ionic://localhost https://accounts.google.com; connect-src 'self' capacitor://localhost ionic://localhost https://api.flockcorp.com wss://api.flockcorp.com https://flock-app-production.up.railway.app wss://flock-app-production.up.railway.app https://api.maptiler.com https://basemaps.cartocdn.com https://*.basemaps.cartocdn.com https://us.i.posthog.com https://us-assets.i.posthog.com https://accounts.google.com https://*.googleapis.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io; manifest-src 'self' capacitor://localhost ionic://localhost" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' capacitor://localhost ionic://localhost; base-uri 'none'; object-src 'none'; form-action 'self'; script-src 'self' capacitor://localhost ionic://localhost https://accounts.google.com https://appleid.cdn-apple.com https://www.gstatic.com https://us-assets.i.posthog.com; style-src 'self' capacitor://localhost ionic://localhost 'unsafe-inline'; img-src 'self' capacitor://localhost ionic://localhost data: blob: https://api.flockcorp.com https://flock-app-production.up.railway.app https://api.maptiler.com https://basemaps.cartocdn.com https://*.basemaps.cartocdn.com https://api.dicebear.com https://*.ticketm.net https://maps.ticketmaster.com https://mapsapi.tmol.io https://maps.googleapis.com https://www.gstatic.com; font-src 'self' capacitor://localhost ionic://localhost data:; media-src 'self' capacitor://localhost ionic://localhost; worker-src 'self' capacitor://localhost ionic://localhost blob:; child-src 'self' capacitor://localhost ionic://localhost blob:; frame-src 'self' capacitor://localhost ionic://localhost https://accounts.google.com https://www.youtube-nocookie.com; connect-src 'self' capacitor://localhost ionic://localhost https://api.flockcorp.com wss://api.flockcorp.com https://flock-app-production.up.railway.app wss://flock-app-production.up.railway.app https://api.maptiler.com https://basemaps.cartocdn.com https://*.basemaps.cartocdn.com https://us.i.posthog.com https://us-assets.i.posthog.com https://accounts.google.com https://*.googleapis.com https://*.ingest.sentry.io https://*.ingest.us.sentry.io; manifest-src 'self' capacitor://localhost ionic://localhost" />
 
     <!-- viewport-fit=cover is REQUIRED and must not be removed: it is what makes
          the Capacitor WebView edge to edge, so the app paints into the rounded
@@ -91,7 +91,7 @@
          reveals a broken fixed element, fix the element. -->
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 
-    <!-- #0b1a2e is the launch navy. The same value is hardcoded three places on
+    <!-- The launch navy, #0b1a2e. The same value is hardcoded three places on
          purpose and they must move together: the iOS LaunchScreen.storyboard
          background, `ios.backgroundColor` in capacitor.config.ts, and this tag.
          It is deliberately NOT either app theme (cream #f1ede0 / slate #0f172a):
@@ -106,7 +106,7 @@
          and the venue phone links keep working. -->
     <meta name="format-detection" content="telephone=no" />
 
-    <meta name="description" content="Vote on where to go, see how busy it is before you leave, and split the bill after. Flock turns the group chat argument into an actual plan. Free." />
+    <meta name="description" content="Flock is how a group decides where to go out. Your friends vote on the place, and everyone’s budget stays private." />
 
     <!-- ═══════════════════════════════════════════════════════════════════
          SHARE PREVIEW (Open Graph + Twitter)
@@ -142,7 +142,7 @@
            copy and the landing page change together.
          ═══════════════════════════════════════════════════════════════════ -->
     <meta property="og:title" content="Flock | Nurturing friendship, one flock at a time" />
-    <meta property="og:description" content="Vote on where to go, see how busy it is before you leave, and split the bill after. Free." />
+    <meta property="og:description" content="Everyone gets a vote, and nobody has to say their budget out loud." />
     <meta property="og:image" content="https://www.flockcorp.com/og-image.png" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
@@ -153,7 +153,7 @@
     <meta property="og:locale" content="en_US" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="Flock | Nurturing friendship, one flock at a time" />
-    <meta name="twitter:description" content="Vote on where to go, see how busy it is before you leave, and split the bill after. Free." />
+    <meta name="twitter:description" content="Everyone gets a vote, and nobody has to say their budget out loud." />
     <meta name="twitter:image" content="https://www.flockcorp.com/og-image.png" />
     <meta name="twitter:image:alt" content="Flock. Nurturing friendship, one flock at a time." />
 
@@ -267,7 +267,7 @@
           "legalName": "Flock Social LLC",
           "url": "https://www.flockcorp.com/",
           "email": "social@flockcorp.com",
-          "description": "Flock makes a free group planning app that turns a group chat into an actual plan.",
+          "description": "Flock Social LLC makes Flock, a free app for making plans with friends.",
           "logo": {
             "@type": "ImageObject",
             "@id": "https://www.flockcorp.com/#logo",
@@ -287,7 +287,7 @@
           "@id": "https://www.flockcorp.com/#website",
           "url": "https://www.flockcorp.com/",
           "name": "Flock",
-          "description": "Vote on where to go, see how busy it is before you leave, and split the bill after.",
+          "description": "A free app for making plans with friends. The group votes on where to go, and budgets stay private.",
           "inLanguage": "en-US",
           "publisher": { "@id": "https://www.flockcorp.com/#organization" }
         },

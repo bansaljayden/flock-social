@@ -52,7 +52,9 @@ const INDEX_HTML = fs.readFileSync(path.join(FRONTEND, 'public', 'index.html'), 
 // The six routes that inherited the homepage description. LandingPage is not
 // here: it is another owner's file and already writes its own.
 const PAGES = [
-  { file: 'AboutPage.js', route: '/about', title: 'What Flock is, and why venues pay | Flock' },
+  // /about moved onto the landing page's system on 2026-10-21, so its way home is
+  // the wordmark in the top bar, like /research.
+  { file: 'AboutPage.js', route: '/about', title: 'About Flock | Flock', back: '.lp-brand' },
   { file: 'SupportPage.js', route: '/support', title: 'Support and common questions | Flock' },
   { file: 'PrivacyPolicy.js', route: '/privacy', title: 'Privacy Policy | Flock' },
   { file: 'TermsOfService.js', route: '/terms', title: 'Terms of Service and EULA | Flock' },
@@ -198,10 +200,11 @@ describe('the pages link to the canonical homepage', () => {
 
 // ───────────────────────────────────────────────────────────────────────────
 describe('the register matches the company that exists', () => {
-  test('no page claims a team, and /about still names the one person', () => {
-    // /about says "a student founder". Support and the guidelines said "we're a
-    // small team" and "our team reviews reports", and the second of those is a
-    // moderation commitment App Review reads.
+  test('no page claims an invented team, and /about names the two real people', () => {
+    // /about names the two people who make Flock, the founder and the COO, as the
+    // pitch video's own description does. Support and the guidelines once said
+    // "we're a small team" and "our team reviews reports", and the second of those
+    // is a moderation commitment App Review reads, so headcount words stay out.
     for (const { file } of PAGES) {
       const { container, unmount } = mount(file);
       const copy = collapse(container.textContent);
@@ -211,7 +214,9 @@ describe('the register matches the company that exists', () => {
     }
 
     const { container, unmount } = mount('AboutPage.js');
-    expect(collapse(container.textContent)).toContain('a student founder in Bethlehem, PA');
+    const about = collapse(container.textContent);
+    expect(about).toContain('Jayden Bansal');
+    expect(about).toContain('Asad Ali');
     unmount();
   });
 

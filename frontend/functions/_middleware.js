@@ -36,7 +36,7 @@ const MARKETING = {
 
 // vercel.json:74-80, the "/" rule, which Vercel also put on the redirect.
 const ROOT_HEADERS = {
-  Link: '<https://www.flockcorp.com/>; rel="canonical", </screenshots/nest-dark@2x.webp>; rel=preload; as=image; type="image/webp"; fetchpriority=high',
+  Link: '<https://www.flockcorp.com/>; rel="canonical", </screenshots/nest-dark-hero.avif>; rel=preload; as=image; type="image/avif"; fetchpriority=high',
   'Cache-Control': 'public, max-age=0, must-revalidate',
 };
 
@@ -77,6 +77,20 @@ export async function onRequest(context) {
   // vercel.json:265-276. "permanent": false is a 307 on Vercel.
   if (path === '/' && AI_CRAWLER_UA.test(ua)) {
     return finish(new Response(null, { status: 307, headers: { Location: '/landing' + url.search, ...ROOT_HEADERS } }), url);
+  }
+
+  // "/" for everyone else: the home page as real HTML. The Pages build writes
+  // it to build/landing.html (scripts/build-cloudflare.js prerender), because
+  // index.html has to stay the empty shell every app route is answered with,
+  // so "/" is answered with the /landing asset under "/"'s own headers. If the
+  // file is missing, Pages answers /landing with the shell, which is what "/"
+  // served before; and if this throws, passThroughOnException serves the
+  // shell too.
+  if (path === '/') {
+    const home = await context.env.ASSETS.fetch(new Request(new URL('/landing', url), request));
+    const res = new Response(home.body, home);
+    for (const [name, value] of Object.entries(ROOT_HEADERS)) res.headers.set(name, value);
+    return res;
   }
 
   // vercel.json:288-303, in that order: ?open wins over the bot check.

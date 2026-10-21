@@ -59,8 +59,9 @@ describe('the social card says what the page says', () => {
   test('every og:image:alt quotes that same headline', () => {
     const headline = bakedHeadline();
     // "Flock. " prefixes the alt text so a screen reader names the brand
-    // before reading the line off the card.
-    const expected = `Flock. ${headline}`;
+    // before reading the line off the card, unless the line already opens
+    // with the name, as "Flock is how a group decides where to go out." does.
+    const expected = headline.startsWith('Flock ') ? headline : `Flock. ${headline}`;
 
     expect(indexHtml).toContain(`<meta property="og:image:alt" content="${expected}" />`);
     expect(indexHtml).toContain(`<meta name="twitter:image:alt" content="${expected}" />`);

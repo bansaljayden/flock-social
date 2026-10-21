@@ -130,11 +130,12 @@ describe.each(PAGES)('%s: cross-page invariants', (name) => {
 
 // ───────────────────────────────────────────────────────────────────────────
 describe('LandingPage: images', () => {
-  test('every image has an alt attribute; decorative ones are empty AND low-priority', () => {
+  test('every image has an alt attribute; decorative ones are empty', () => {
     const Page = load('LandingPage');
     const { container, unmount } = render(React.createElement(Page));
     const imgs = container.querySelectorAll('img');
-    expect(imgs.length).toBeGreaterThanOrEqual(4);
+    // The two logo marks, the hero capture and the four plates.
+    expect(imgs.length).toBeGreaterThanOrEqual(7);
     for (const img of imgs) {
       // A missing alt is announced as the file name; an explicit alt="" is a
       // deliberate "skip me". Only the latter is acceptable.
@@ -145,11 +146,10 @@ describe('LandingPage: images', () => {
     unmount();
   });
 
-  test('the two app captures describe the screenshots that actually ship', () => {
-    // The hero capture is the DARK home screen (nest-dark) and the Birdie
-    // figure is the Philadelphia question (birdie-dark). If either asset is
-    // recaptured, its alt has to be rewritten with it, and this pins the pair:
-    // the src and the description move together or this goes red.
+  test('the app captures describe the screens that actually ship', () => {
+    // Each capture's alt says what is on that screen. If one is recaptured,
+    // its alt is rewritten with it: the src and the description move together
+    // or this goes red.
     const Page = load('LandingPage');
     const { container, unmount } = render(React.createElement(Page));
 
@@ -159,23 +159,33 @@ describe('LandingPage: images', () => {
     expect(hero.getAttribute('alt')).toMatch(/home screen/i);
     expect(hero.getAttribute('alt').length).toBeGreaterThan(20);
 
-    const shots = Array.from(container.querySelectorAll('img.lp-shot'));
-    const birdie = shots.find((s) => (s.getAttribute('src') || '').includes('birdie-dark'));
-    expect(birdie).toBeDefined();
-    expect(birdie.getAttribute('alt')).toMatch(/Birdie/);
-    expect(birdie.getAttribute('alt')).toMatch(/Philadelphia/);
+    const shot = (stem) => Array.from(container.querySelectorAll('img.lp-shot'))
+      .find((s) => (s.getAttribute('src') || '').includes(stem));
+    expect(shot('chat-dark').getAttribute('alt')).toMatch(/Friday Night Crew/);
+    expect(shot('budget-dark').getAttribute('alt')).toMatch(/\$35/);
+    expect(shot('bill-split-dark').getAttribute('alt')).toMatch(/\$142\.60/);
+    expect(shot('owner-dashboard-dark').getAttribute('alt')).toMatch(/dashboard/);
+    // One theme for every capture on the site, the hero's own (2026-10-21).
+    for (const img of container.querySelectorAll('img.lp-shot')) {
+      expect(img.getAttribute('src')).toMatch(/-dark(@2x|-480w)\./);
+    }
     unmount();
   });
 
-  test('the section marks are explicitly decorative', () => {
-    // The three bird marks are illustration: alt="" so a screen reader skips
-    // them instead of reading three file names between sections.
+  test('the plates load lazily, declare their size, and carry a caption', () => {
+    // Every one sits below the fold, so none may compete with the hero for the
+    // first paint, and a plate with no box would shift the text as it loads.
     const Page = load('LandingPage');
     const { container, unmount } = render(React.createElement(Page));
-    const marks = container.querySelectorAll('.lp-flock img');
-    expect(marks.length).toBeGreaterThanOrEqual(3);
-    for (const img of marks) {
-      expect(img.getAttribute('alt')).toBe('');
+    // Three beats, the venue dashboard, and since 2026-10-21 the SOS sheet.
+    const plates = container.querySelectorAll('figure.lp-plate');
+    expect(plates).toHaveLength(5);
+    for (const fig of plates) {
+      const img = fig.querySelector('img');
+      expect(img.getAttribute('loading')).toBe('lazy');
+      expect(img.getAttribute('width')).toBe('390');
+      expect(img.getAttribute('height')).toBe('844');
+      expect(fig.querySelector('figcaption').textContent.trim().length).toBeGreaterThan(10);
     }
     unmount();
   });

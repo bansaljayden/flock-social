@@ -114,21 +114,31 @@ describe('the page only sells things that exist', () => {
     expect(visible).not.toMatch(/(notify|alert|push) (nearby|local) (groups|users|flocks)/i);
   });
 
-  test('the page does not sell venue EVENTS until the App Store build shows them', () => {
-    // Until 2026-10-20 no user could see a venue event at all. GET
-    // /public-events/:placeId now fills the venue card's "Happening here" on
-    // the web, but the iPhone build in review then (49) does not draw it, and
-    // most people will meet Flock in the iPhone app. The pitch can name events
-    // once a build that shows them is in the App Store.
-    const venueCard = visible.slice(visible.indexOf('For venues'), visible.indexOf('lp-cta'));
+  test('venue events are sold only with the verified-venue rule the route enforces', () => {
+    // Until 2026-10-20 no user could see a venue event at all, and this test
+    // kept events off the page. GET /public-events/:placeId now fills the
+    // venue card's "Happening here" for anyone signed in to the web app, and
+    // only for a venue holding a VERIFIED claim. The iPhone build in review
+    // (49) does not draw it yet, but the page sells the web app, which is
+    // live, and says plainly that the iPhone app is still in review. So events
+    // may be named, and every sentence that names them carries the condition.
+    const route = fs.readFileSync(path.join(REPO, 'backend', 'routes', 'venueDashboard.js'), 'utf8');
+    expect(route).toMatch(/router\.get\('\/public-events\/:placeId'[\s\S]{0,1200}AND vp\.verified = true/);
+    const venueCard = visible.slice(visible.indexOf('id="venues"'), visible.indexOf('lp-cta'));
     expect(venueCard.length).toBeGreaterThan(200);
-    expect(venueCard).not.toMatch(/events?/i);
+    const sentences = venueCard.replace(/\s+/g, ' ').split(/(?<=[.!?])\s+|<[^>]*>|"/);
+    const naming = sentences.filter((s) => /\bevents?\b/i.test(s));
+    expect(naming.length).toBeGreaterThan(0);
+    for (const s of naming) expect(s).toMatch(/verified/i);
   });
 
   test('the surviving venue claims each name a route that exists', () => {
     const api = fs.readFileSync(path.join(__dirname, '..', 'services', 'api.js'), 'utf8');
     const app = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8');
-    const venueCard = visible.slice(visible.indexOf('For venues'), visible.indexOf('lp-cta'));
+    // The venues section and the venue plan under Pricing, which since
+    // 2026-10-21 sit one after the other ahead of the closing band. Collapsed,
+    // because the sentences wrap across source lines.
+    const venueCard = visible.slice(visible.indexOf('id="venues"'), visible.indexOf('lp-cta')).replace(/\s+/g, ' ');
 
     // "See which flocks have you in their vote this week". It said "the
     // flocks that chose you" and "who picked you tonight", and the route
@@ -168,7 +178,7 @@ describe('the page only sells things that exist', () => {
   test('the home page goes from the crowd list straight to the live demo', () => {
     // The accuracy line that sat between them was cut on 2026-10-03, and the
     // menu's "Try it live" now lands on the demo itself. The measured figures
-    // stay on /about, pinned there against servedAccuracy.json.
+    // live on /research and in llms.txt, each pinned to servedAccuracy.json.
     const copy = visible.replace(/\s+/g, ' ');
     expect(copy).not.toMatch(/real live readings they had not seen/);
     expect(copy).not.toMatch(/same model that ships inside Flock/);
@@ -180,7 +190,8 @@ describe('the page only sells things that exist', () => {
     // The public pages sold it as the flocks that "chose" or "picked" a venue,
     // and the dashboard gave it three names on one screen, two of which
     // promised arrivals. Every surface now calls it the flocks with you in
-    // their vote, and the old names may not come back.
+    // their vote, and the old names may not come back. (/about stopped
+    // describing the venue tools on 2026-10-21; /how-it-works describes them.)
     const read = (...p) => fs.readFileSync(path.join(REPO, ...p), 'utf8');
     const flat = (s) => s.replace(/\s+/g, ' ');
     // Comments are where the old names are quoted on purpose, as the record
@@ -193,6 +204,7 @@ describe('the page only sells things that exist', () => {
     const surfaces = [
       ['LandingPage.js', flat(visible)],
       ['AboutPage.js', flat(strip(read('frontend', 'src', 'website', 'AboutPage.js')))],
+      ['HowItWorksPage.js', flat(strip(read('frontend', 'src', 'website', 'HowItWorksPage.js')))],
       ['marketing-page.js', flat(strip(read('frontend', 'api', 'marketing-page.js')))],
       ['llms.txt', flat(read('frontend', 'public', 'llms.txt'))],
       ['VenueDashboard.js', dashboard],
@@ -222,9 +234,11 @@ describe('the page only sells things that exist', () => {
     expect(dashboard).toContain('Flocks With You in Their Vote</h3>');
     expect(dashboard).toContain('>No flock has you in its vote yet</p>');
     expect(dashboard).toContain("'See which flocks have you in their vote'");
-    expect(surfaces[1][1]).toContain('the flocks that have it in their vote');
-    expect(surfaces[3][1]).toContain('the flocks that have their venue in their vote');
-    expect(surfaces[5][1]).toContain('seeing which flocks have your venue in their vote');
+    const text = (name) => surfaces.find(([n]) => n === name)[1];
+    expect(text('LandingPage.js')).toContain('which flocks have you in their vote this week');
+    expect(text('HowItWorksPage.js')).toContain('which flocks have you in their vote');
+    expect(text('llms.txt')).toContain('the flocks that have their venue in their vote');
+    expect(text('roostNoticeEmail.js')).toContain('seeing which flocks have your venue in their vote');
   });
 
   test('the In Their Vote tile names the window the feed actually keeps', () => {
@@ -297,24 +311,35 @@ describe('the page only sells things that exist', () => {
 
     // Subject: the alert's subject with the name filled in.
     expect(safety).toContain("`🚨 ${updateKind ? 'Update: ' : ''}Emergency Alert from ${safeSubjectText(userName)}`");
-    expect(card).toContain('🚨 Emergency Alert from Jordan');
+    // Maya, the person whose Friday the page follows.
+    expect(card).toContain('🚨 Emergency Alert from Maya');
 
     // Body: the headline, the button for a precise fix, the accuracy line and
     // the timestamp line, in the words the template uses.
     expect(safety).toContain('<strong>${safeName}</strong> needs help');
-    expect(card).toContain('Jordan needs help');
+    expect(card).toContain('Maya needs help');
     expect(safety).toContain("'View Location on Map'");
     expect(card).toContain('View Location on Map');
     expect(safety).toContain('Accurate to ${accuracyPhrase(fixMetres)}.');
     expect(card).toContain('Accurate to about 15 m.');
     expect(safety).toContain('Alert sent at ${time}');
     expect(card).toContainEqual(expect.stringMatching(/^Alert sent at \d{1,2}\/\d{1,2}\/\d{4}, \d{1,2}:\d{2}:\d{2} [AP]M [A-Z]{2,4}$/));
+
+    // Since 2026-10-21 the card is as tall as the sheet beside it, and it is
+    // filled with two more of the email's own lines, not invented ones: the
+    // opening sentence, and the line that tells each contact how many others
+    // were asked. Maya's sheet says two contacts will be emailed.
+    expect(safety).toContain('${safeName} has triggered an emergency alert on the <strong>Flock</strong> app and may need your assistance.');
+    expect(card).toContain('Maya has triggered an emergency alert on the Flock app and may need your assistance.');
+    expect(safety).toContain('You are one of ${withEmail.length} people ${safeName} asked us to alert.');
+    expect(card).toContain('You are one of 2 people Maya asked us to alert.');
+    expect(safety).toContain('This is an automated safety alert from the Flock app. If this is an emergency, call your local emergency number. Replying to this message does not reach ${safeName}.');
+    expect(card).toContain('This is an automated safety alert from the Flock app. If this is an emergency, call your local emergency number. Replying to this message does not reach Maya.');
   });
 
   test('nothing on the page claims a team that does not exist', () => {
-    // Flock is one student and /about opens by saying so. A corporate "we"
-    // making a commitment is a register mismatch a reader catches in two
-    // clicks, and on the legal surfaces it is a claim an App Store reviewer
+    // Flock is two people, and /about names both. A corporate "we" making a
+    // commitment is a register mismatch a reader catches in two clicks, and on the legal surfaces it is a claim an App Store reviewer
     // will hold the product to. "us" as the thing you are not paying is the
     // company as an entity and is fine; a "we" that PROMISES an action is not.
     expect(visible).not.toMatch(/\bwe(’|')ll\b/i);
@@ -325,54 +350,61 @@ describe('the page only sells things that exist', () => {
 
 // ───────────────────────────────────────────────────────────────────────────
 describe('structural fingerprint', () => {
-  test('at most one section is still the 1fr|1fr text-beside-media row', () => {
-    // .lp-row was Birdie, Money and Safety. Money keeps it, because the split
-    // card is a table of numbers and wants parity with the column arguing for
-    // it. If this number climbs, the page is drifting back toward one panel
-    // repeated — pick a different composition for the new section instead of
-    // adding a fourth .lp-row.
-    const rows = (visible.match(/className="lp-wrap lp-row/g) || []).length;
-    expect(rows).toBe(1);
+  test('no section is the 1fr|1fr text-beside-media row', () => {
+    // .lp-row was Birdie, Money and Safety, one panel repeated three times.
+    // On 2026-10-21 Birdie and Money became beats of the Friday plan and the
+    // row class went with them. If a new section reaches for it again, pick a
+    // different composition instead.
+    expect(visible).not.toMatch(/className="lp-wrap lp-row/);
+    expect(CSS).not.toMatch(/\.lp-row \{/);
   });
 
-  test('the three feature sections do not share a grid definition', () => {
-    // Each of the three has its own template, and the templates differ in
-    // proportion, not just in which side the media lands on. Two sections with
-    // mirrored 1fr|1fr are the same section.
-    // Each section's template lives in its own min-width block, so match the
-    // class then take the first grid-template-columns after it.
+  test('the sections that set things side by side do not share a grid definition', () => {
+    // Each has its own template, and the templates differ in proportion, not
+    // just in which side the media lands on. Two sections with mirrored
+    // 1fr|1fr are the same section. Each template is the widest one the class
+    // gets, the last rule for it in the file, since the wide layouts live in
+    // min-width blocks that come after the phone default.
     const grid = (cls) => {
-      const m = new RegExp(`\\.${cls}\\s*\\{[\\s\\S]{0,400}?grid-template-columns:\\s*([^;]+);`)
-        .exec(CSS);
-      expect(m).not.toBeNull();
-      return m[1].replace(/\s+/g, ' ').trim();
+      const all = [...CSS.matchAll(new RegExp(`\\.${cls} \\{[^}]*?grid-template-columns:\\s*([^;]+);`, 'g'))];
+      expect(all.length).toBeGreaterThan(0);
+      return all[all.length - 1][1].replace(/\s+/g, ' ').trim();
     };
-    const birdie = grid('lp-birdie');
+    const hero = grid('lp-hero-in');
     const safety = grid('lp-safety');
-    const row = grid('lp-row');
-
-    expect(new Set([birdie, safety, row]).size).toBe(3);
-    // And Birdie's is genuinely asymmetric, not a 1fr|1fr in disguise.
-    expect(birdie).toMatch(/38rem/);
+    const venues = grid('lp-venues-in');
+    expect(new Set([hero, safety, venues]).size).toBe(3);
+    // The beats are not side by side at all since 2026-10-21: each is its
+    // words centred over a capture with its parts named, or a painting.
+    expect(CSS).toMatch(/\.lp-beat \{[^}]*text-align: center;/);
+    expect(visible).not.toMatch(/lp-beat-main|has-plate/);
   });
 
-  test('Safety puts its guarantees across the full width, not in a sidebar', () => {
-    expect(visible).toMatch(/className="lp-list lp-safety-rules"/);
-    expect(CSS).toMatch(/\.lp-safety-rules \{[\s\S]{0,400}?grid-column: 1 \/ -1;/);
+  test('Safety keeps its two standing guarantees in one row under its facts', () => {
+    // They sat as two loose lines at the foot of the band, a page width apart
+    // (2026-10-21). Now they follow the facts, inside the same column.
+    const body = visible.slice(visible.indexOf('className="lp-safety-body"'), visible.indexOf('className="lp-safety-exhibits"'));
+    expect(body.indexOf('className="lp-safety-facts"')).toBeGreaterThan(-1);
+    expect(body.indexOf('className="lp-list lp-safety-rules"')).toBeGreaterThan(body.indexOf('className="lp-safety-facts"'));
+    expect(CSS).toMatch(/\.lp-safety \.lp-safety-rules \{\s*display: flex;/);
   });
 
-  test('no hairline dividers: lists, steps, sections and the hero carry no rules', () => {
+  test('no hairline dividers: lists, beats, sections and the hero carry no rules', () => {
     // 2026-10-03: the page was cut into panels by 1px lines, between list rows,
     // between the four steps, above sections and under the hero headline, which
-    // is the look of a site built from a template. Space does that work now.
+    // is the look of a site built from a template. Space does that work now,
+    // and the Friday beats that replaced the steps are held to the same rule.
     expect(CSS).not.toMatch(/\.lp-list li \+ li \{[^}]*border/);
     expect(CSS).not.toMatch(/\.lp-sec-ruled\b/);
     expect(CSS).not.toMatch(/\.lp-hero-rule\b/);
     expect(visible).not.toMatch(/lp-hero-rule|lp-sec-ruled/);
-    const steps = CSS.match(/\.lp-steps \{[^}]*\}/)[0];
-    expect(steps).not.toMatch(/border|background/);
-    const after = CSS.match(/\.lp-steps-after \{[^}]*\}/)[0];
-    expect(after).not.toMatch(/border/);
+    // The beats are bands now (2026-10-21): the band's ground comes from the
+    // section classes, and nothing draws a rule between or around a beat.
+    for (const sel of ['\\.lp-beat', '\\.lp-sec\\.lp-beat-band']) {
+      const rules = CSS.match(new RegExp(`${sel} \\{[^}]*\\}`, 'g')) || [];
+      expect(rules.length).toBeGreaterThan(0);
+      for (const r of rules) expect(r).not.toMatch(/border|background/);
+    }
   });
 
   test('no two neighbouring sections share a background, here or on /research', () => {
@@ -420,16 +452,12 @@ describe('structural fingerprint', () => {
     expect(price).toMatch(/font-family: var\(--font-display\)/);
   });
 
-  test('eyebrows are capped at two', () => {
-    // An eyebrow is an ordinal device. This page had four, over headings that
-    // in two cases already stated the subject ("How it works" above a band
-    // numbered 01–04; "Pricing" above a card reading $0). When every section is
-    // chaptered, none of them is. The two that remain are the two whose
-    // heading names no subject.
-    const kickers = (visible.match(/className="lp-kicker"/g) || []).length;
-    expect(kickers).toBeLessThanOrEqual(2);
-    expect(visible).toMatch(/className="lp-kicker">Crowd levels</);
-    expect(visible).toMatch(/className="lp-kicker">Safety</);
+  test('no eyebrows', () => {
+    // An eyebrow is an ordinal device. This page had four, then two, over
+    // headings that already stated the subject. When every section is
+    // chaptered, none of them is. On 2026-10-21 the last two went: each
+    // heading on the page now says what its section is about in a sentence.
+    expect(visible).not.toMatch(/className="lp-kicker"/);
   });
 });
 
@@ -529,7 +557,7 @@ describe('token and motion discipline', () => {
     // in its own words ("No pure #000000 / pure #ffffff backgrounds"). It also
     // reads wrong — this page is printed cream stock, and a pure-white card on
     // it is a different piece of paper.
-    expect(CSS).toMatch(/--plate: #fbfaf6;/);
+    expect(CSS).toMatch(/--plate: #fdfcf9;/);
     expect(rules).not.toMatch(/background(-color)?:\s*(#fff\b|#ffffff\b|white\b)/i);
   });
 

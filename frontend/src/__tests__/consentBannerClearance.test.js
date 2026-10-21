@@ -120,8 +120,11 @@ describe('the page keeps clear of the bar while it is open', () => {
     const fs = require('fs');
     const path = require('path');
     const src = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
-    const start = src.indexOf('if (page) {');
-    const block = src.slice(start, src.indexOf('} else if', start));
+    // The page's tree is built in renderPage (a prerendered route renders it
+    // once its chunk is in; every other page route renders it at once).
+    const start = src.indexOf('function renderPage(Page) {');
+    expect(start).toBeGreaterThan(-1);
+    const block = src.slice(start, src.indexOf('\n}\n', start));
     expect(block.indexOf('<ConsentBanner')).toBeGreaterThan(block.indexOf('</ErrorBoundary>'));
   });
 });

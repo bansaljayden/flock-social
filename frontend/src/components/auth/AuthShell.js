@@ -4,21 +4,19 @@ import Icons from '../ui/Icons';
 /* ═══════════════════════════════════════════════════════════════════
    AUTH SHELL — the shared surface behind Login and Signup.
 
-   Composition: the screen is one photograph of a night city with a
-   ledger laid over the bottom of it. The top third is the picture (the
-   night you're going out into, the same duality the website runs on);
-   the sheet is opaque navy and carries every piece of text and every
-   control. That split is the accessibility fix as much as the design
-   one: text never sits on moving footage, so its background colour is
-   a known constant (#0b1220) and its contrast is a number we can hold
-   ourselves to instead of an average of whatever frame is playing.
+   Composition: flat navy with a ledger laid over the bottom of it. The
+   top third carries the mark and the headline; the sheet is opaque navy
+   and carries every piece of text and every control, so every string
+   sits on a known colour (#0b1220) and its contrast is a number we can
+   hold ourselves to. Until 2026-10-21 the top third was stock drone
+   footage of Lower Manhattan (bg-city.mp4); the audit named it a
+   stock-media tell, and the navy is the brand's own ground.
 
    Type follows the site: Fraunces carries exactly one line per screen
    (the h1), Hanken Grotesk carries everything else. One display moment,
    not a display font sprayed over UI labels.
 
-   Both screens share this file so the two never drift apart, and so
-   the 810KB backdrop is implemented once.
+   Both screens share this file so the two never drift apart.
    ═══════════════════════════════════════════════════════════════════ */
 
 // Text/surface constants. Same values as the website's tokens
@@ -34,106 +32,9 @@ export const AUTH = {
   green: '#34d399',      // 9.7:1 on the sheet
 };
 
-const POSTER = '/bg-city-poster.jpg';
-const VIDEO = '/bg-city.mp4';
-
-// Two reasons to never fetch the 810KB clip: the user asked the OS for less
-// motion, or the connection/OS asked us for less data.
-const wantsStill = () => {
-  try {
-    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return true;
-    const c = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
-    if (c && (c.saveData || /(^|-)2g$/.test(c.effectiveType || ''))) return true;
-  } catch (e) { /* no matchMedia / no NetworkInformation: fall through */ }
-  return false;
-};
-
-const whenIdle = (fn) => (typeof window.requestIdleCallback === 'function'
-  ? window.requestIdleCallback(fn, { timeout: 2500 })
-  : window.setTimeout(fn, 700));
-const cancelIdle = (id) => (typeof window.cancelIdleCallback === 'function'
-  ? window.cancelIdleCallback(id)
-  : window.clearTimeout(id));
-
-/* The backdrop. The 22KB poster is the only thing on the cold-boot path; the
-   video has NO src attribute at mount, so nothing is queued behind the app's
-   own JS. Once the browser is idle we attach the source and fade the motion
-   in over the still. If autoplay is refused (WKWebView does that when the
-   muted ATTRIBUTE hasn't landed on the element) we drop the src and the
-   poster simply stays — no grey iOS play glyph, no black rectangle. */
-const AuthBackdrop = () => {
-  const ref = useRef(null);
-  const [live, setLive] = useState(false);
-
-  useEffect(() => {
-    const v = ref.current;
-    if (!v || wantsStill()) return undefined;
-
-    let cancelled = false;
-    const idle = whenIdle(() => {
-      if (cancelled || !v) return;
-      v.muted = true;
-      v.setAttribute('muted', '');
-      v.setAttribute('playsinline', '');
-      v.setAttribute('webkit-playsinline', '');
-      const play = () => {
-        v.play().then(() => { if (!cancelled) setLive(true); })
-          .catch(() => { v.removeAttribute('src'); v.load(); });
-      };
-      v.addEventListener('canplay', play, { once: true });
-      v.src = VIDEO;
-      v.load();
-    });
-
-    return () => { cancelled = true; cancelIdle(idle); };
-  }, []);
-
-  /* PAUSE IT WHILE ANYONE IS TYPING. The clip carries a CSS filter, so WebKit
-     runs a filter pass over a hero-sized surface on every frame it plays, on
-     the main thread, competing with the keystroke the person is waiting on.
-     Nothing on this screen needs motion while a field has focus — the poster
-     underneath is the same frame geometry and the same filter, so the picture
-     does not visibly change. It resumes on blur. */
-  useEffect(() => {
-    const v = ref.current;
-    if (!v) return undefined;
-    const isField = (el) => !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA');
-    const onFocus = (e) => { if (isField(e.target)) { try { v.pause(); } catch { /* nothing to pause */ } } };
-    const onBlur = (e) => {
-      if (!isField(e.target)) return;
-      /* A tap from one field straight into another fires blur before the next
-         focus, so settle first rather than restarting the clip between them. */
-      window.setTimeout(() => {
-        if (isField(document.activeElement) || !v.src) return;
-        v.play().catch(() => {});
-      }, 120);
-    };
-    document.addEventListener('focusin', onFocus);
-    document.addEventListener('focusout', onBlur);
-    return () => {
-      document.removeEventListener('focusin', onFocus);
-      document.removeEventListener('focusout', onBlur);
-    };
-  }, []);
-
-  return (
-    <div className="auth-bg" aria-hidden="true">
-      <img className="auth-plate" src={POSTER} alt="" decoding="async" fetchPriority="high" />
-      <video
-        ref={ref}
-        className={`auth-video${live ? ' is-live' : ''}`}
-        preload="metadata"
-        poster={POSTER}
-        loop
-        muted
-        playsInline
-        tabIndex={-1}
-        disablePictureInPicture
-      />
-      <div className="auth-scrim" />
-    </div>
-  );
-};
+/* The backdrop: the launch navy, painted by CSS. It stays an element so the
+   screens' structure (and the hero's stacking above it) is unchanged. */
+const AuthBackdrop = () => <div className="auth-bg" aria-hidden="true" />;
 
 /* Eye toggle for password fields. 44x44 real box (Apple HIG / WCAG 2.5.5)
    plus .hit44 as the belt-and-braces from index.css; icons inherit
@@ -268,22 +169,10 @@ export const AuthLabelRow = ({ children }) => (
    a template literal ships exactly as written, so they reached every phone as
    text. Each is headed by the rule it sits in or in front of.
 
-   .auth-bg: Extends 64px past the hero so the sheet's rounded top corners sit
-   ON the photograph rather than on a seam.
-
-   .auth-plate, .auth-video: Dimmed enough that the skyline reads as a night,
-   not a light show. The type's safety comes from the scrim below, not from
-   crushing the picture.
-
-   .auth-scrim: The type plate. The sky stays open at the top; the gradient
-   climbs through the band so that by the time it reaches the headline and its
-   line it is carrying most of the pixel. That is what makes hero copy safe over
-   MOVING footage: the brightest pixel the clip can produce (measured with
-   ffmpeg signalstats across every frame: the clip does hit a pure-white pixel
-   in both bands) still composites to a background that leaves the headline at
-   7.1:1 and its line at 6.5:1. Typical frames measure 16.8:1 and 10.7:1. No
-   opacity was raised to get there, and nothing depends on which frame happens
-   to be on screen.
+   .auth-bg: Flat launch navy (#0b1a2e, the website's --navy). Extends 64px
+   past the hero so the sheet's rounded top corners sit ON the navy rather
+   than on a seam. The headline and its line sit on it directly: cream on this
+   navy is 15.9:1 and the second line 10.3:1.
 
    .auth-col: The analytics bar publishes its footprint as --cb-height while it
    is open and removes it when answered. Padding by it keeps "Create an account"
@@ -361,23 +250,7 @@ const AUTH_CSS = `
 }
 .auth-bg {
   position: absolute; left: 0; right: 0; top: 0; bottom: -64px;
-  overflow: hidden; pointer-events: none; background: #080d18; z-index: 0;
-}
-.auth-plate, .auth-video {
-  position: absolute; inset: 0; width: 100%; height: 100%;
-  object-fit: cover;
-  filter: brightness(0.55) saturate(1.08) contrast(1.06);
-}
-.auth-video { opacity: 0; transition: opacity 900ms ease-out; }
-.auth-video.is-live { opacity: 1; }
-.auth-scrim {
-  position: absolute; inset: 0;
-  background: linear-gradient(180deg,
-    rgba(8,13,26,0.12) 0%,
-    rgba(8,13,26,0.22) 30%,
-    rgba(8,13,26,0.55) 55%,
-    rgba(8,13,26,0.86) 78%,
-    rgba(11,18,32,0.95) 100%);
+  overflow: hidden; pointer-events: none; background: #0b1a2e; z-index: 0;
 }
 
 .auth-col {

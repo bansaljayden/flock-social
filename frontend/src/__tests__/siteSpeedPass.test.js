@@ -5,9 +5,11 @@
  *    Lighthouse's mobile run and a 1366px desktop), so / preloads it, from a
  *    per-route Link header in vercel.json and never from the shared
  *    index.html, which is also the response for /app, /admin and the shell.
- * 2. The section marks offer width candidates, and every candidate exists at
- *    the width its descriptor claims. A descriptor that lies makes the browser
- *    pick the wrong file, and nothing on screen would show it.
+ * 2. Every image set with width descriptors on the marketing pages offers
+ *    candidates that exist at the width each descriptor claims, plus a sizes
+ *    attribute. A descriptor that lies makes the browser pick the wrong file,
+ *    and nothing on screen would show it. (This was the three section marks
+ *    until they left the home page on 2026-10-21.)
  * 3. The demo's map is built after scrolling pauses, not mid-scroll.
  *
  * This is a FRONTEND test (jest via react-scripts).
@@ -49,15 +51,32 @@ describe('the hero screenshot preload lives on / only', () => {
   const home = vercel.headers.find((h) => h.source === '/' && !h.has);
   const link = home && home.headers.find((h) => h.key === 'Link');
 
-  test('the / Link header keeps the canonical and adds a WebP-gated, high-priority preload', () => {
+  test('the / Link header keeps the canonical and adds an AVIF-gated, high-priority preload', () => {
     expect(link).toBeTruthy();
     expect(link.value).toContain('<https://www.flockcorp.com/>; rel="canonical"');
-    expect(link.value).toContain('</screenshots/nest-dark@2x.webp>; rel=preload; as=image; type="image/webp"; fetchpriority=high');
+    expect(link.value).toContain('</screenshots/nest-dark-hero.avif>; rel=preload; as=image; type="image/avif"; fetchpriority=high');
   });
 
   test('the preloaded file is the one the hero <picture> actually requests', () => {
-    expect(read('src/website/LandingPage.js')).toContain('<source type="image/webp" srcSet="/screenshots/nest-dark@2x.webp" />');
-    expect(fs.existsSync(path.join(FRONTEND, 'public', 'screenshots', 'nest-dark@2x.webp'))).toBe(true);
+    // The AVIF source comes first, so every browser that takes the preload
+    // (type-gated to AVIF) also picks that source; the rest fall to WebP.
+    const page = read('src/website/LandingPage.js');
+    const avif = page.indexOf('<source type="image/avif" srcSet="/screenshots/nest-dark-hero.avif" />');
+    expect(avif).toBeGreaterThan(-1);
+    expect(page.indexOf('<source type="image/webp" srcSet="/screenshots/nest-dark@2x.webp" />')).toBeGreaterThan(avif);
+    for (const f of ['nest-dark-hero.avif', 'nest-dark@2x.webp']) {
+      expect(fs.existsSync(path.join(FRONTEND, 'public', 'screenshots', f))).toBe(true);
+    }
+  });
+
+  test('the AVIF is the capture cut to the plate: 780 wide, 390:658', () => {
+    // ISO-BMFF image spatial extents ("ispe"): version/flags, then width and
+    // height as 32-bit big-endian integers.
+    const buf = fs.readFileSync(path.join(FRONTEND, 'public', 'screenshots', 'nest-dark-hero.avif'));
+    expect(buf.toString('ascii', 4, 12)).toBe('ftypavif');
+    const at = buf.indexOf('ispe');
+    expect(at).toBeGreaterThan(-1);
+    expect([buf.readUInt32BE(at + 8), buf.readUInt32BE(at + 12)]).toEqual([780, Math.round(780 * 658 / 390)]);
   });
 
   test('no other route carries it, and the shared index.html has no preload link of its own', () => {
@@ -101,33 +120,28 @@ describe('the app routes open the Google sign-in connection early', () => {
   });
 });
 
-describe('every section-mark candidate is the width it claims', () => {
-  const lp = read('src/website/LandingPage.js');
-  const sets = [...lp.matchAll(/srcSet="([^"]*\/marks\/mark-[^"]*)"/g)].map((m) => m[1]);
+describe('every width-described image candidate is the width it claims', () => {
+  const PAGES = ['src/website/LandingPage.js', 'src/website/HowItWorksPage.js', 'src/website/AboutPage.js'];
+  const sets = PAGES.flatMap((rel) => [...read(rel).matchAll(/srcSet="([^"]* \d+w[^"]*)"(\s*sizes="[^"]+")?/g)]
+    .map((m) => ({ rel, set: m[1], sizes: Boolean(m[2]) })));
 
-  test('the three marks each offer more than one width', () => {
-    const withWidths = sets.filter((s) => / \d+w/.test(s));
-    expect(withWidths.length).toBe(3);
+  test('the pitch video poster is one of them, so the scan is reading real markup', () => {
+    expect(sets.filter((s) => /pitch-poster/.test(s.set))).toHaveLength(1);
   });
 
-  test('each candidate file exists, has the declared pixel width, and the cutouts keep alpha', () => {
-    for (const set of sets) {
+  test('each candidate file exists and has the declared pixel width', () => {
+    for (const { set } of sets) {
       for (const entry of set.split(',').map((x) => x.trim())) {
         const [url, desc] = entry.split(/\s+/);
         const file = path.join(FRONTEND, 'public', url);
-        expect(fs.existsSync(file)).toBe(true);
-        const info = webpInfo(fs.readFileSync(file));
-        expect(`${url} ${info.width}w`).toBe(`${url} ${desc}`);
-        // crowd and steps are transparent cutouts on cream and navy; money is
-        // opaque on purpose (see LandingPage.js).
-        if (/mark-(crowd|steps)/.test(url)) expect(`${url} alpha=${info.alpha}`).toBe(`${url} alpha=true`);
+        expect(`${url} exists=${fs.existsSync(file)}`).toBe(`${url} exists=true`);
+        expect(`${url} ${webpInfo(fs.readFileSync(file)).width}w`).toBe(`${url} ${desc}`);
       }
     }
   });
 
   test('each width set carries a sizes attribute, so the w descriptors are usable', () => {
-    const blocks = [...lp.matchAll(/srcSet="[^"]*\/marks\/mark-[^"]* \d+w[^"]*"\s*sizes="([^"]+)"/g)];
-    expect(blocks.length).toBe(3);
+    expect(sets.filter((s) => !s.sizes).map((s) => `${s.rel}: ${s.set}`)).toEqual([]);
   });
 });
 

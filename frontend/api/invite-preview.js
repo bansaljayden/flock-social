@@ -202,10 +202,12 @@ const UPSTREAM_TIMEOUT_MS = 2500;
 const DISPLAY_TZ = 'America/New_York';
 
 // Verbatim from public/index.html, so a fallback preview is indistinguishable
-// from what the site serves today.
+// from what the site serves today. The apostrophe is escaped for the reason
+// DOT is, below.
 const DEFAULT_TITLE = 'Flock | Nurturing friendship, one flock at a time';
 const DEFAULT_DESCRIPTION =
-  'Vote on where to go, see how busy it is before you leave, and split the bill after. Free.';
+  'Flock is how a group decides where to go out. Your friends vote on the place, and everyone'
+  + String.fromCharCode(0x2019) + 's budget stays private.';
 
 // Escaped rather than literal so this file stays pure ASCII and cannot pick up
 // mojibake from a tool that guesses the encoding wrong. Same convention as

@@ -130,18 +130,20 @@ describe('the contract every footer carries', () => {
 
 // ───────────────────────────────────────────────────────────────────────────
 describe('landmark and surface classes the other suites depend on', () => {
-  test('the landing footer keeps lp-footer and sits OUTSIDE main', () => {
+  // /about joined the landing system on 2026-10-21, so it carries the landing
+  // footer outside <main> as well.
+  test.each(['LandingPage', 'AboutPage'])('%s: the landing footer keeps lp-footer and sits OUTSIDE main', (name) => {
     // aiCrawlerSurface.test.js excludes the landing footer from the bot
     // surface by the exact selector `footer.lp-footer`, and outside <main> the
     // element is a real contentinfo landmark. Move or rename it and the bot
     // document silently starts quoting footer chrome.
-    const { container, footer, unmount } = mountFooter('LandingPage');
+    const { container, footer, unmount } = mountFooter(name);
     expect(footer.classList.contains('lp-footer')).toBe(true);
     expect(container.querySelector('main').contains(footer)).toBe(false);
     unmount();
   });
 
-  test.each(PAGES.filter((p) => p !== 'LandingPage'))(
+  test.each(PAGES.filter((p) => p !== 'LandingPage' && p !== 'AboutPage'))(
     '%s: the footer keeps pp-footer and stays inside main.pp',
     (name) => {
       // Inside, deliberately: .pp on <main> paints the whole page (tokens,
