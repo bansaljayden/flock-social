@@ -344,7 +344,7 @@ PD_IN = (PD_X0 + pd_pcb[0], PD_Y0 - 1.7, PD_Z0 + pd_in_v)  # opening right
 # As near the box's balance point as the base allows: the battery's weight
 # pulls it left, and the battery's own footprint is the one place a boss
 # cannot go. Clear of the camera's plug in front and the 4G board's behind.
-MOUNT_C = (88.0, LAY_Y0 + 7.9)
+MOUNT_C = (BOX_W / 2 - 2.0, LAY_Y0 + 7.9)
 
 CORNER_IN = wall + 4.5
 # The lower left one moves in past the battery, which stands in that corner.
@@ -861,7 +861,7 @@ BATT_PORTS = ((BATT_X0 + 18, BATT_Y1 - 26, BATT_Z1 + 8), (BATT_X0 + 34, BATT_Y1 
 # The 4G antenna: a stick-on LTE strip, 95 x 14 on its own drawing, standing
 # on end inside the right wall behind the sound meter, its u.FL lead off the
 # bottom end. x, y0, y1, z0, z1.
-ANTENNA = (IN_X1 - 0.1, 40.8, 54.8, 11.0, 106.0)
+ANTENNA = (IN_X1 - 0.1, DBM_C[0] + dbm_w / 2 + 2.1, DBM_C[0] + dbm_w / 2 + 16.1, 11.0, 106.0)
 
 CABLES = {
     # name: (diameter, kind, points)
