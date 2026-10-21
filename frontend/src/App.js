@@ -15246,7 +15246,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // Not on the You tab: that screen is a list of settings rows the button would
   // sit on top of and intercept taps for, and Safety already has its own row in
   // that list, so nothing is lost by leaving it out.
-  const SafetyButton = () => safetyOn && currentScreen === 'main' && currentTab !== 'profile' && !showSOS && (
+  // Not while Birdie's panel is open either: the panel is drawn over the
+  // button's corner and left a sliver of red disc showing past its edge, a
+  // few pixels of emergency control under a sheet (proportion pass,
+  // 2026-10-20). Closing Birdie brings it straight back.
+  const SafetyButton = () => safetyOn && currentScreen === 'main' && currentTab !== 'profile' && !showSOS && aiChatMode === 'bubble' && (
     <div
       className="fab-corner"
       role="button"
