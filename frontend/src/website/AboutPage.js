@@ -18,7 +18,8 @@ const YOUTUBE_URL = 'https://www.youtube.com/@flock-social2026';
 //   Jayden Bansal, founder, an 11th grader in Pennsylvania                the pitch video's own description
 //   Asad Ali, COO                                                         the pitch video's own description
 //   1st place at PA DECA States                                           the landing page, since August
-//   research paper, October 2026; Stevens pitch entry, October 2026        /research; the video, 18 Oct 2026
+//   research paper, October 2026; pitch video entry, October 2026         /research; the video, 18 Oct 2026
+// No school is named anywhere on the page (a Diamond Challenge rule).
 //   iPhone app in App Store review; no venue charged; Flock Pro not on public sale
 // The photos, the bios, the full story and the milestone details are
 // placeholders until the founders write them.
@@ -43,7 +44,7 @@ const MILESTONES = [
   { when: 'September 2026', what: 'Flock Social LLC formed in Pennsylvania.' },
   { when: 'Recognition', what: '1st place at PA DECA States.' },
   { when: 'October 2026', what: 'Research paper on forecasting crowds and counting people, published on this site.' },
-  { when: 'October 2026', what: 'Pitch video entered in the Stevens High School Entrepreneurship and AI Video Pitch.' },
+  { when: 'October 2026', what: 'Two-minute pitch video entered in a high school entrepreneurship and AI video competition.' },
   { when: 'October 2026', what: 'iPhone app submitted to the App Store, now in review.' },
 ];
 

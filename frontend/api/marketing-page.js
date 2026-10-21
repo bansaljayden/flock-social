@@ -222,7 +222,7 @@ const PAGE_BLOCKS = {
     ["li", "September 2026 Flock Social LLC formed in Pennsylvania."],
     ["li", "Recognition 1st place at PA DECA States."],
     ["li", "October 2026 Research paper on forecasting crowds and counting people, published on this site."],
-    ["li", "October 2026 Pitch video entered in the Stevens High School Entrepreneurship and AI Video Pitch."],
+    ["li", "October 2026 Two-minute pitch video entered in a high school entrepreneurship and AI video competition."],
     ["li", "October 2026 iPhone app submitted to the App Store, now in review."],
     ["p", "Photos and the story behind each one are coming soon."],
     ["h2", "Where things stand"],

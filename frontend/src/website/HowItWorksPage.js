@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { isNativeShell } from '../lib/nativeShell';
 import './LandingPage.css';
 import './HowItWorks.css';
 import SiteFooter from './SiteFooter';
@@ -45,9 +46,22 @@ const DESCRIPTION = 'How a plan comes together in Flock, from the first invite t
    video's own title card, served from this site, so nothing reaches YouTube
    until the visitor presses play; then the player comes from
    youtube-nocookie.com, which sets no cookie until playback. The chapter
-   buttons start the player at their time. */
+   buttons start the player at their time.
+   Inside the iPhone app's WebView the page origin is capacitor://localhost,
+   which sends YouTube no usable Referer, and the embed answers with error
+   153. The App Store build leaves this page out (src/index.js), but if it is
+   ever mounted there, the poster becomes a plain link to watch on YouTube. */
 function PitchVideo() {
   const [start, setStart] = useState(null);
+  if (isNativeShell()) {
+    return (
+      <figure className="hw-video">
+        <a className="hw-watch" href={`https://www.youtube.com/watch?v=${VIDEO_ID}`} target="_blank" rel="noopener noreferrer">
+          Watch on YouTube: {VIDEO_TITLE}
+        </a>
+      </figure>
+    );
+  }
   return (
     <figure className="hw-video">
       <div className="hw-frame">
@@ -82,8 +96,8 @@ function PitchVideo() {
       </div>
       <figcaption className="hw-video-cap">
         <span>
-          Our entry to the 2026 Stevens High School Entrepreneurship and AI Video
-          Pitch, narrated by Asad Ali. 1 minute 59.
+          Our entry to a 2026 high school entrepreneurship and AI video pitch
+          competition, narrated by Asad Ali. 1 minute 59.
         </span>{' '}
         <a href={CHANNEL_URL} target="_blank" rel="noopener noreferrer">More on our YouTube channel</a>
       </figcaption>
@@ -100,18 +114,19 @@ function PitchVideo() {
 
 // The plan, in order. Each `shot` is a real capture of the web app against
 // seeded demo data (scripts/capture-screenshots.mjs, 2026-10-21), the same
-// Friday Night Crew flock the home page follows. Paths are written out in full
+// Friday Night Crew flock the home page follows, in the app's light theme
+// (the home page uses the dark captures, so no screen repeats across the two). Paths are written out in full
 // so publicScreenshotsShipped.test.js can see what ships.
 const STEPS = [
   {
     id: 'start',
     title: 'Start a flock',
     body: [
-      'Name the night, pick a day and a time, and invite people from your friends list. Anyone without the app gets a link, and from it they can answer, vote and add a budget in the browser without making an account.',
+      'Pick a day and a time and invite people from your friends list. Anyone without the app gets a link and can join in from the browser, budget included, without making an account.',
     ],
     shot: {
-      src: '/screenshots/create-dark@2x.webp',
-      srcSet: '/screenshots/create-dark-480w.webp 480w, /screenshots/create-dark@2x.webp 780w',
+      src: '/screenshots/create-light@2x.webp',
+      srcSet: '/screenshots/create-light-480w.webp 480w, /screenshots/create-light@2x.webp 780w',
       alt: 'Starting a flock: which day, what time, and three friends invited.',
       caption: 'Invites go out as soon as the flock exists.',
     },
@@ -124,8 +139,8 @@ const STEPS = [
       'Stuck for ideas? Ask Birdie, the assistant inside the app, for spots near you that fit the group. Birdie is AI, built on Google’s Gemini, and it asks before it does anything for you.',
     ],
     shot: {
-      src: '/screenshots/vote-dark@2x.webp',
-      srcSet: '/screenshots/vote-dark-480w.webp 480w, /screenshots/vote-dark@2x.webp 780w',
+      src: '/screenshots/vote-light@2x.webp',
+      srcSet: '/screenshots/vote-light-480w.webp 480w, /screenshots/vote-light@2x.webp 780w',
       alt: 'Vote for a Venue: five votes cast, The Copper Finch ahead with three, Juniper Bowl and Marigold Diner with one each.',
       caption: 'Five votes in. The Copper Finch is ahead.',
     },
@@ -137,8 +152,8 @@ const STEPS = [
       'Everyone types what they can spend, and only they ever see it. When everyone going has answered, with at least three members’ amounts in, or the plan’s creator locks it, the group gets one figure: a ceiling rounded down, so it is never anyone’s exact number. The places Flock suggests for the plan stay under it.',
     ],
     shot: {
-      src: '/screenshots/budget-dark@2x.webp',
-      srcSet: '/screenshots/budget-dark-480w.webp 480w, /screenshots/budget-dark@2x.webp 780w',
+      src: '/screenshots/budget-light@2x.webp',
+      srcSet: '/screenshots/budget-light-480w.webp 480w, /screenshots/budget-light@2x.webp 780w',
       alt: 'The budget sheet: preset amounts, a custom $35, and a note that no one else sees the answer.',
       caption: 'What you type here is never shown to the group.',
     },
@@ -151,8 +166,8 @@ const STEPS = [
       'Sharing your live location with the group is there if you want it, and only while the plan is on. If something goes wrong, SOS sends where you are to the people you picked, with two taps.',
     ],
     shot: {
-      src: '/screenshots/sos-dark@2x.webp',
-      srcSet: '/screenshots/sos-dark-480w.webp 480w, /screenshots/sos-dark@2x.webp 780w',
+      src: '/screenshots/sos-light@2x.webp',
+      srcSet: '/screenshots/sos-light-480w.webp 480w, /screenshots/sos-light@2x.webp 780w',
       alt: 'The SOS sheet: call 911, alert two trusted contacts by email, or share your location.',
       caption: 'Call 911 comes first, because Flock does not call emergency services for you.',
     },
@@ -164,8 +179,8 @@ const STEPS = [
       'Whoever paid enters the total and Flock splits it. Everyone gets a Venmo or Cash App link, or Zelle instructions, for their share, and the night stays on everyone’s calendar in Flock.',
     ],
     shot: {
-      src: '/screenshots/bill-split-dark@2x.webp',
-      srcSet: '/screenshots/bill-split-dark-480w.webp 480w, /screenshots/bill-split-dark@2x.webp 780w',
+      src: '/screenshots/bill-split-light@2x.webp',
+      srcSet: '/screenshots/bill-split-light-480w.webp 480w, /screenshots/bill-split-light@2x.webp 780w',
       alt: 'Split the Bill: $142.60 with an 18% tip, paid by Jordan Avery, $28.52 each for five people.',
       caption: 'Jordan paid. Everyone else settles their $28.52 from here.',
     },
@@ -175,7 +190,7 @@ const STEPS = [
 const AIS = [
   { name: 'Starling', what: 'Forecasts how busy a place will be. It is 800 decision trees, tested on cities it never saw.' },
   { name: 'Birdie', what: 'Built on Google’s Gemini. Helps a group pick a place, and asks permission first.' },
-  { name: 'Owl', what: 'A small neural network on the Flux heat sensor. It counts heads, and only the count leaves the device. So far it has been tested on research footage, not yet in a venue.' },
+  { name: 'Owl', what: 'A small neural network on the Flux heat sensor. It counts heads, and only the count leaves the device. It has been tested on research footage so far and has yet to run in a venue.' },
   { name: 'Roost’s advisor', what: 'Answers a venue owner’s questions. It is not allowed to write a single digit, so every number it shows comes from measured data.' },
 ];
 
@@ -219,8 +234,8 @@ export default function HowItWorksPage() {
           <div className="lp-wrap">
             <h1 id="hw-h1">How Flock works</h1>
             <p className="lp-lead hw-lead">
-              Somebody has an idea for Friday. This is how it turns into an
-              actual night out, from the first invite to splitting the bill.
+              Somebody has an idea for Friday. Here is every step from the first
+              invite to splitting the bill.
             </p>
             <PitchVideo />
           </div>
@@ -228,7 +243,7 @@ export default function HowItWorksPage() {
 
         <section className="lp-sec lp-sec-sand" aria-labelledby="hw-h-steps">
           <div className="lp-wrap">
-            <h2 id="hw-h-steps" className="hw-steps-title">One plan, start to finish</h2>
+            <h2 id="hw-h-steps" className="hw-steps-title">Every step of a plan</h2>
             <ol className="hw-steps">
               {STEPS.map((s) => (
                 <li key={s.id} id={s.id} className={`hw-step${s.shot ? ' has-shot' : ''}`}>
@@ -280,8 +295,8 @@ export default function HowItWorksPage() {
             <figure className="lp-plate hw-venues-plate">
               <img
                 className="lp-shot"
-                src="/screenshots/venue-card-events-dark@2x.webp"
-                srcSet="/screenshots/venue-card-events-dark-480w.webp 480w, /screenshots/venue-card-events-dark@2x.webp 780w"
+                src="/screenshots/venue-card-events-light@2x.webp"
+                srcSet="/screenshots/venue-card-events-light-480w.webp 480w, /screenshots/venue-card-events-light@2x.webp 780w"
                 sizes="(min-width: 860px) 240px, 200px"
                 width="390" height="844"
                 loading="lazy" decoding="async"

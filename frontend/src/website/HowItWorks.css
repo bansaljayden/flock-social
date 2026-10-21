@@ -68,6 +68,8 @@
   max-width: 70ch;
 }
 .hw-video-cap a { color: var(--steel); text-underline-offset: 2px; white-space: nowrap; }
+/* The iPhone app's stand-in for the player: a plain link, at a tap target's size. */
+.hw-watch { display: inline-flex; align-items: center; min-height: 44px; font-size: 17px; font-weight: 600; color: var(--steel); text-underline-offset: 3px; }
 
 /* The video's own chapters, as buttons that start the player there. */
 .hw-chapters {
