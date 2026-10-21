@@ -7,39 +7,74 @@ import React from 'react';
    From 768px the notes sit beside the phone and a hairline leads from each to
    the thing it names. Everything is laid out on one fixed grid of design
    units: notes N wide, a gap G for the leaders, the phone P wide and as tall
-   as the capture's own 390:844. The stage keeps that aspect ratio as it
-   scales, the phone and the notes are placed in percentages of it, and the SVG
-   draws in the same units, so a leader lands on the same pixel of the capture
-   at every width. Each target is measured on the 780 x 1688 capture and given
-   as a percentage of it: `at: [x, y]`.
+   as the capture's own 390:844. The stage keeps that ratio as it scales (and
+   from 1100px is drawn 1.3 times larger, so the screen reads), the phone and
+   the notes are placed in percentages of it, and the SVG draws in the same
+   units, so a leader lands on the same pixel of the capture at every width.
 
-   Under 768px no line could cross the screen legibly, so the targets become
-   numbered dots on the phone and the notes a numbered list under it.
+   A marker never covers what it names (landingAnnotations.js has the measured
+   boxes): text gets a small dot just past its edge, a button, field or list a
+   thin outline around it. A leader runs level from its note; where a note had
+   to move off its target's line it bends once, in the gap beside the phone.
+   Inside the phone the line is cream over a thin navy casing, which reads on
+   the dark capture and on its light buttons. Nothing moves.
 
-   Inside the phone the leaders turn cream over a thin navy casing: the
-   captures are the dark theme, where an ink line would vanish, and a few
-   targets are light buttons, where a bare cream one would. The end is an open
-   ring, cream on navy, so the word or number it marks stays readable inside
-   it. Nothing here moves. */
-const N = 230;
-const G = 56;
-const P = 240;
-const H = (P * 844) / 390;
+   Under 768px no line could cross the screen legibly: each note's number sits
+   beside its element on the phone, and the notes are a numbered list under
+   it. */
+export const N = 230;
+export const G = 56;
+export const P = 240;
+export const H = (P * 844) / 390;
+const GAP = 3.6;
+const R = 3;
+const PAD_X = 2.9;
+const PAD_Y = 3.1;
+
+export function stageWidth(layout) {
+  return layout === 'center' ? N + G + P + G + N : N + G + P;
+}
+
+export function phoneLeft(layout) {
+  return layout === 'right' ? 0 : N + G;
+}
+
+// Every leader and marker of one capture, in design units.
+export function layoutNotes(layout, notes) {
+  const x0 = phoneLeft(layout);
+  const right = x0 + P + G;
+  const toX = (p) => x0 + (p / 100) * P;
+  const toY = (p) => (p / 100) * H;
+  return notes.map((note, i) => {
+    const [bx1, by1, bx2, by2] = note.box;
+    const ty = toY((by1 + by2) / 2);
+    const ly = note.y === undefined ? ty : toY(note.y);
+    const left = note.side === 'left';
+    let ex;
+    let outline = null;
+    let end = null;
+    if (note.kind === 'box') {
+      outline = { x: toX(bx1) - PAD_X, y: toY(by1) - PAD_Y, w: toX(bx2) - toX(bx1) + 2 * PAD_X, h: toY(by2) - toY(by1) + 2 * PAD_Y };
+      ex = left ? outline.x : outline.x + outline.w;
+    } else {
+      ex = left ? toX(bx1) - GAP - R : toX(bx2) + GAP + R;
+      end = { x: ex, y: ty, r: R };
+    }
+    const lx = left ? N + 8 : right - 8;
+    const bend = left ? N + G / 2 : x0 + P + G / 2;
+    const d = Math.abs(ly - ty) < 0.01
+      ? `M ${lx.toFixed(2)} ${ly.toFixed(2)} H ${ex.toFixed(2)}`
+      : `M ${lx.toFixed(2)} ${ly.toFixed(2)} H ${bend.toFixed(2)} V ${ty.toFixed(2)} H ${ex.toFixed(2)}`;
+    return { ...note, n: i + 1, d, ty, ly, ex, bend, outline, end, top: (ly / H) * 100 };
+  });
+}
 
 export default function AnnotatedShot({ id, layout = 'center', shot, notes, caption, className = '' }) {
-  const x0 = layout === 'right' ? 0 : N + G;
-  const W = layout === 'center' ? N + G + P + G + N : N + G + P;
+  const x0 = phoneLeft(layout);
+  const W = stageWidth(layout);
   const right = x0 + P + G;
   const clip = `lp-anno-clip-${id}`;
-  const rows = notes.map((n, i) => {
-    const tx = x0 + (n.at[0] / 100) * P;
-    const ty = (n.at[1] / 100) * H;
-    const ly = ((n.y === undefined ? n.at[1] : n.y) / 100) * H;
-    const d = n.side === 'left'
-      ? `M ${N + 8} ${ly} H ${x0 - 14} L ${tx} ${ty}`
-      : `M ${right - 8} ${ly} H ${x0 + P + 14} L ${tx} ${ty}`;
-    return { ...n, n: i + 1, d, tx, ty, top: (ly / H) * 100 };
-  });
+  const rows = layoutNotes(layout, notes);
   const style = { '--anno-w': W, '--anno-x0': x0, '--anno-right': right };
   return (
     <figure className={`lp-plate lp-anno lp-anno-${layout}${className ? ` ${className}` : ''}`} style={style}>
@@ -49,13 +84,13 @@ export default function AnnotatedShot({ id, layout = 'center', shot, notes, capt
             className="lp-shot"
             src={shot.src}
             srcSet={shot.srcSet}
-            sizes="(min-width: 768px) 240px, min(260px, 70vw)"
+            sizes="(min-width: 1100px) 312px, (min-width: 768px) 240px, min(260px, 70vw)"
             width="390" height="844"
             loading="lazy" decoding="async"
             alt={shot.alt}
           />
           {rows.map((r) => (
-            <span key={r.n} className="lp-anno-dot" style={{ left: `${r.at[0]}%`, top: `${r.at[1]}%` }} aria-hidden="true">{r.n}</span>
+            <span key={r.n} className="lp-anno-dot" style={{ left: `${r.dot[0]}%`, top: `${r.dot[1]}%` }} aria-hidden="true">{r.n}</span>
           ))}
         </div>
         <svg className="lp-anno-lines" viewBox={`0 0 ${W} ${H.toFixed(2)}`} aria-hidden="true" focusable="false">
@@ -69,12 +104,14 @@ export default function AnnotatedShot({ id, layout = 'center', shot, notes, capt
             {rows.map((r) => <path key={r.n} className="lp-anno-case" d={r.d} />)}
             {rows.map((r) => <path key={r.n} className="lp-anno-line-in" d={r.d} />)}
           </g>
-          {rows.map((r) => (
-            <g key={r.n} className="lp-anno-end">
-              <circle className="lp-anno-ring-case" cx={r.tx.toFixed(2)} cy={r.ty.toFixed(2)} r="6" />
-              <circle className="lp-anno-ring" cx={r.tx.toFixed(2)} cy={r.ty.toFixed(2)} r="6" />
+          {rows.map((r) => (r.outline ? (
+            <g key={r.n} className="lp-anno-mark">
+              <rect className="lp-anno-outline-case" x={r.outline.x.toFixed(2)} y={r.outline.y.toFixed(2)} width={r.outline.w.toFixed(2)} height={r.outline.h.toFixed(2)} rx="8" />
+              <rect className="lp-anno-outline" x={r.outline.x.toFixed(2)} y={r.outline.y.toFixed(2)} width={r.outline.w.toFixed(2)} height={r.outline.h.toFixed(2)} rx="8" />
             </g>
-          ))}
+          ) : (
+            <circle key={r.n} className="lp-anno-end" cx={r.end.x.toFixed(2)} cy={r.end.y.toFixed(2)} r={R} />
+          )))}
         </svg>
         <ol className="lp-anno-notes">
           {rows.map((r) => (

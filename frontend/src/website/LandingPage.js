@@ -2,6 +2,7 @@ import React, { Suspense, useEffect, useRef, useState } from 'react';
 import './LandingPage.css';
 import SiteFooter from './SiteFooter';
 import AnnotatedShot from './AnnotatedShot';
+import { ANNOTATIONS } from './landingAnnotations';
 import displayFontUrl from '../fonts/Literata-Display-600.woff2';
 import { NAV_LINKS } from './SiteNav';
 
@@ -499,7 +500,7 @@ export default function LandingPage() {
             className="lp-art lp-friday-art"
             src="/art/spot-flap-240.webp"
             srcSet="/art/spot-flap-240.webp 240w, /art/spot-flap-480.webp 480w"
-            sizes="(min-width: 900px) 240px, 180px"
+            sizes="(min-width: 900px) 290px, 180px"
             width="240" height="308"
             loading="lazy" decoding="async"
             alt=""
@@ -520,8 +521,8 @@ export default function LandingPage() {
           invitation, flying off under them for "Still in?". Flat grounds, no
           gradients and no shadows. Every capture on the site is the dark
           theme, the hero's own. #birdie and #money stay on the beats they
-          always named, for old links. Each callout's `at` is measured on the
-          780 x 1688 capture, in percent. */}
+          always named, for old links. The notes, and the measured box of
+          each thing they name, are in landingAnnotations.js. */}
       <section className="lp-sec lp-sec-paper lp-beat-band" aria-labelledby="lp-h-beat-1">
         <div className="lp-wrap">
           {/* The invitation: a wren holding the folded note while two
@@ -562,21 +563,7 @@ export default function LandingPage() {
               quotes are the app’s own.
             </p>
           </div>
-          <AnnotatedShot
-            id="vote"
-            shot={{
-              src: '/screenshots/chat-dark@2x.webp',
-              srcSet: '/screenshots/chat-dark-480w.webp 480w, /screenshots/chat-dark@2x.webp 780w',
-              alt: 'The Friday Night Crew chat: a vote on three places with The Copper Finch ahead, and four of five budgets in.',
-            }}
-            notes={[
-              { side: 'right', text: 'The Copper Finch, pinned', at: [48.5, 8.5] },
-              { side: 'left', text: '4 of 5 budgets in', at: [15, 12.7] },
-              { side: 'right', text: 'Votes, counted live', at: [87.7, 62] },
-              { side: 'left', text: '5 of 5 voted', at: [16.7, 78.7] },
-            ]}
-            caption="The Friday Night Crew chat."
-          />
+          <AnnotatedShot id="vote" {...ANNOTATIONS.vote} />
         </div>
       </section>
       <section className="lp-sec lp-sec-paper lp-beat-band" id="money" aria-labelledby="lp-h-beat-3">
@@ -599,21 +586,7 @@ export default function LandingPage() {
               it, and only once at least three members have shared an amount.
             </p>
           </div>
-          <AnnotatedShot
-            id="budget"
-            shot={{
-              src: '/screenshots/budget-dark@2x.webp',
-              srcSet: '/screenshots/budget-dark-480w.webp 480w, /screenshots/budget-dark@2x.webp 780w',
-              alt: 'The budget sheet: preset amounts, a custom $35, and a note that no one else sees the answer.',
-            }}
-            notes={[
-              { side: 'left', text: 'Pick a preset or type your own', at: [15.4, 54.9], y: 52 },
-              { side: 'left', text: 'Nobody else sees your $35', at: [12.8, 65.3], y: 67 },
-              { side: 'right', text: 'One rounded number for the group', at: [80, 71.4] },
-              { side: 'right', text: 'Skip if any budget works', at: [80, 94.9], y: 92 },
-            ]}
-            caption="Maya’s budget sheet."
-          />
+          <AnnotatedShot id="budget" {...ANNOTATIONS.budget} />
         </div>
       </section>
       <section className="lp-sec lp-sec-navy lp-on-navy lp-beat-band" aria-labelledby="lp-h-beat-4">
@@ -648,21 +621,7 @@ export default function LandingPage() {
             <h3 id="lp-h-beat-5">Jordan paid, so Flock splits it.</h3>
             <p>$142.60 with the tip comes to $28.52 each.</p>
           </div>
-          <AnnotatedShot
-            id="bill"
-            shot={{
-              src: '/screenshots/bill-split-dark@2x.webp',
-              srcSet: '/screenshots/bill-split-dark-480w.webp 480w, /screenshots/bill-split-dark@2x.webp 780w',
-              alt: 'Split the Bill: $142.60 with an 18% tip, paid by Jordan Avery, $28.52 each for five people.',
-            }}
-            notes={[
-              { side: 'left', text: 'Total: $142.60, paid by Jordan', at: [19.2, 56.2] },
-              { side: 'right', text: 'Tip included', at: [80, 56.2] },
-              { side: 'right', text: 'Who’s paid back, who still owes', at: [89.2, 72.3] },
-              { side: 'left', text: 'Pay by Venmo, Cash App or Zelle', at: [28, 88.7] },
-            ]}
-            caption="Split the Bill, after two paid back."
-          />
+          <AnnotatedShot id="bill" {...ANNOTATIONS.bill} />
           <p className="lp-friday-more">
             Every step, and the two-minute pitch video, is on{' '}
             <a href="/how-it-works">How it works</a>.
@@ -737,26 +696,10 @@ export default function LandingPage() {
             </ul>
           </div>
           {/* The sheet with its three buttons named, and beside it the email
-              the second button sends. Measured on sos-dark@2x: Call 911 at
-              70.5% of the height, Alert Contacts 81.3%, Share Location 88.6%;
-              Share Location emails the same contacts your location alone
-              (POST /api/safety/share-location). */}
+              the second button sends. Share Location emails the same
+              contacts your location alone (POST /api/safety/share-location). */}
           <div className="lp-safety-exhibits">
-            <AnnotatedShot
-              id="sos"
-              layout="left"
-              shot={{
-                src: '/screenshots/sos-dark@2x.webp',
-                srcSet: '/screenshots/sos-dark-480w.webp 480w, /screenshots/sos-dark@2x.webp 780w',
-                alt: 'The SOS sheet: Call 911 first, then Alert Contacts for two trusted contacts, Share Location, and Cancel.',
-              }}
-              notes={[
-                { side: 'left', text: 'Call 911 comes first', at: [22, 70.5], y: 66 },
-                { side: 'left', text: 'Alert Contacts emails your two contacts', at: [22, 81.3], y: 80 },
-                { side: 'left', text: 'Share Location emails just where you are', at: [22, 88.6], y: 94 },
-              ]}
-              caption="The second tap sends it."
-            />
+            <AnnotatedShot id="sos" {...ANNOTATIONS.sos} />
             {/* Excerpt of the real SOS email the backend sends, not a mock UI.
                 Every line is copied from the template in routes/safety.js, and
                 landingPageClaims.test.js checks each one against it. */}
@@ -811,25 +754,10 @@ export default function LandingPage() {
               </a>
             </div>
           </div>
-          {/* The dashboard with three of its parts named, measured on
-              owner-dashboard-dark@2x: the Promotions tab (17.5% down), Create
-              Event (26.2%), and the Flocks With You in Their Vote panel
-              (33.2%). Events show on the card only for a verified venue. */}
-          <AnnotatedShot
-            id="venue"
-            layout="right"
-            shot={{
-              src: '/screenshots/owner-dashboard-dark@2x.webp',
-              srcSet: '/screenshots/owner-dashboard-dark-480w.webp 480w, /screenshots/owner-dashboard-dark@2x.webp 780w',
-              alt: 'The Copper Finch’s venue dashboard: the flocks with it in their vote, and the events showing on its verified card.',
-            }}
-            notes={[
-              { side: 'right', text: 'Deals go under Promotions', at: [42.6, 17.5], y: 12 },
-              { side: 'right', text: 'Add events, shown once verified', at: [75, 26.2], y: 27 },
-              { side: 'right', text: 'Flocks with you in their vote', at: [51, 33.2], y: 42 },
-            ]}
-            caption="A venue owner’s dashboard."
-          />
+          {/* The dashboard with two of its parts named: Create Event, and
+              the Flocks With You in Their Vote panel. Events show on the card
+              only for a verified venue, and the note says so. */}
+          <AnnotatedShot id="venue" {...ANNOTATIONS.venue} />
         </div>
       </section>
 

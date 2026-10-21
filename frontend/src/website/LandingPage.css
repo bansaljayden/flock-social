@@ -937,6 +937,18 @@ html:has(.lp) body { overflow-x: clip; }
   .lp-safety-exhibits .lp-sos-mail { width: auto; margin: 0; display: flex; flex-direction: column; }
   .lp-safety-exhibits .lp-sos-cap { margin-top: auto; }
 }
+@media (min-width: 1100px) {
+  /* The sheet's stage is 1.3 times larger here (.lp-anno), and the email
+     grows with it, its type a step up, so the pair keeps its proportion. */
+  .lp-safety-exhibits { grid-template-columns: minmax(0, 684px) minmax(0, 350px); }
+  .lp-safety-exhibits .lp-sos-mail { padding: 32px; }
+  .lp-safety-exhibits .lp-sos-meta { font-size: 14px; }
+  .lp-safety-exhibits .lp-sos-headline { font-size: 22px; }
+  .lp-safety-exhibits .lp-sos-intro { font-size: 15.5px; }
+  .lp-safety-exhibits .lp-sos-link { font-size: 15.5px; }
+  .lp-safety-exhibits .lp-sos-fine { font-size: 14px; line-height: 1.6; }
+  .lp-safety-exhibits .lp-sos-small { font-size: 13px; }
+}
 .lp-list { display: grid; gap: 0; margin-top: 20px; }
 .lp-list li { list-style: none; font-size: 15.5px; color: var(--ink-2); line-height: 1.5; }
 .lp-sec-navy .lp-list li { color: var(--cream-2); }
@@ -1465,14 +1477,20 @@ html:has(.lp) body { overflow-x: clip; }
    the leaders, the phone 240 wide and 519.38 tall (390:844). The stage keeps
    that ratio, so the notes, the phone and the SVG's lines, all placed in it by
    percentage, stay on the same pixel of the capture at every width.
-   Under 768px: the phone alone, centred, its targets as numbered dots, the
-   notes as a numbered list under it. Nothing animates. */
+   From 1100px the whole stage is drawn 1.3 times larger (--anno-scale), the
+   phone about 312px wide, so the screen itself reads.
+   Under 768px: the phone alone, centred, each number beside its element (never
+   on it) and the notes as a numbered list under it. Nothing animates. */
+.lp-anno { --anno-scale: 1; }
+@media (min-width: 1100px) {
+  .lp-anno { --anno-scale: 1.3; }
+}
 .lp-plate.lp-anno { width: auto; margin: clamp(26px, 4vw, 40px) 0 0; }
 .lp-anno-stage { position: relative; }
 .lp-anno-phone { position: relative; width: min(260px, 70vw); margin: 0 auto; }
 .lp-anno-phone .lp-shot { display: block; width: 100%; height: auto; border-radius: 20px; }
 .lp-anno-lines { display: none; }
-/* Small, so the word or number under each one stays mostly in view. */
+/* Placed beside its element in landingAnnotations.js, clear of its text. */
 .lp-anno-dot {
   position: absolute;
   transform: translate(-50%, -50%);
@@ -1520,7 +1538,7 @@ html:has(.lp) body { overflow-x: clip; }
 @media (min-width: 768px) {
   /* The figure is the stage's width, so the caption can sit centred under
      the phone, wherever the phone is in the stage. */
-  .lp-plate.lp-anno { width: min(calc(var(--anno-w) * 1px), 100%); margin-left: auto; margin-right: auto; }
+  .lp-plate.lp-anno { width: min(calc(var(--anno-w) * var(--anno-scale) * 1px), 100%); margin-left: auto; margin-right: auto; }
   .lp-anno .lp-fig-cap {
     margin-left: calc(var(--anno-x0) / var(--anno-w) * 100%);
     width: calc(240 / var(--anno-w) * 100%);
@@ -1559,13 +1577,14 @@ html:has(.lp) body { overflow-x: clip; }
 }
 /* The leaders: a hairline in the band's ink outside the phone; inside it,
    cream over a thin navy casing, which reads on the dark capture and on its
-   light buttons alike. The end is an open ring in the same two strokes, so
-   what it marks shows through. */
+   light buttons alike. They end just outside what they name: a small cream
+   dot past a line of text, or a thin outline in the same two strokes around a
+   button, field or list. */
 .lp-anno-line,
 .lp-anno-line-in,
 .lp-anno-case,
-.lp-anno-ring,
-.lp-anno-ring-case {
+.lp-anno-outline,
+.lp-anno-outline-case {
   fill: none;
   stroke-linecap: round;
   stroke-linejoin: round;
@@ -1575,8 +1594,14 @@ html:has(.lp) body { overflow-x: clip; }
 .lp-on-navy .lp-anno-line { stroke: var(--cream-2); }
 .lp-anno-case { stroke: var(--navy-deep); stroke-width: 3; }
 .lp-anno-line-in { stroke: var(--cream); stroke-width: 1; }
-.lp-anno-ring-case { stroke: var(--navy-deep); stroke-width: 3.5; }
-.lp-anno-ring { stroke: var(--cream); stroke-width: 1.5; }
+.lp-anno-outline-case { stroke: var(--navy-deep); stroke-width: 3; }
+.lp-anno-outline { stroke: var(--cream); stroke-width: 1.25; }
+.lp-anno-end {
+  fill: var(--cream);
+  stroke: var(--navy-deep);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
 
 /* A beat on a navy band takes the on-navy inks. The capture is the dark
    theme on every band, so on navy it gets a light hairline in place of the
@@ -1593,15 +1618,17 @@ html:has(.lp) body { overflow-x: clip; }
 .lp-hero-note a { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
 
 /* Venues: one paragraph and one way in, on navy (2026-10-21), beside the
-   owner's dashboard with three of its parts named, the notes to its right.
-   Side by side from 1100px, the copy centred against the phone itself: the
-   caption is lifted out of the flow there, so it does not pull the centre
-   down. Stacked below that, and on a phone the capture with numbered dots.
-   The rest of the venue offer, and the sign-in for owners who already have an
-   account, is the venue column under Pricing. */
+   owner's dashboard with two of its parts named, the notes to its right.
+   Side by side from 1200px, where the 1.3 stage leaves the copy a reading
+   width (the stage takes its 684px first, the copy the rest), the copy
+   centred against the phone itself: the caption is lifted out of the flow
+   there, so it does not pull the centre down. Stacked below that, and on a
+   phone the capture with numbered dots. The rest of the venue offer, and the
+   sign-in for owners who already have an account, is the venue column under
+   Pricing. */
 .lp-venues-in { display: grid; gap: 32px clamp(40px, 6vw, 80px); align-items: start; }
-@media (min-width: 1100px) {
-  .lp-venues-in { grid-template-columns: minmax(0, 30rem) minmax(0, 526px); justify-content: space-between; align-items: center; }
+@media (min-width: 1200px) {
+  .lp-venues-in { grid-template-columns: minmax(0, 1fr) minmax(0, 684px); align-items: center; column-gap: 48px; }
   .lp-venues-in .lp-anno { position: relative; margin: 0; }
   .lp-venues-in .lp-anno .lp-fig-cap { position: absolute; top: 100%; }
 }
@@ -1633,8 +1660,10 @@ html:has(.lp) body { overflow-x: clip; }
    so it is mirrored to fly away from the chat, out to the right. */
 .lp-friday-art { width: 180px; justify-self: end; transform: scaleX(-1); }
 @media (min-width: 900px) {
-  .lp-friday-open { grid-template-columns: minmax(0, 30rem) 240px; justify-content: space-between; }
-  .lp-friday-art { width: 240px; justify-self: center; }
+  /* One picture, the card and the bird leaving it, not two things at the
+     band's far edges (2026-10-21): the sparrow close to the card, a size up. */
+  .lp-friday-open { grid-template-columns: minmax(0, 32rem) 290px; justify-content: start; column-gap: clamp(28px, 4vw, 56px); }
+  .lp-friday-art { width: 290px; justify-self: start; }
 }
 .lp-pricing-head { display: grid; gap: 20px 48px; align-items: end; }
 @media (min-width: 760px) {
