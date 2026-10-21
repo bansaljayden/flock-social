@@ -287,7 +287,7 @@ test('a signup that loses the race to an identical address is told the address i
     name: 'Sam', email: 'race@example.com', password: PASSWORD, ...DOB,
   });
   assert.strictEqual(res.status, 400, JSON.stringify(res.json()));
-  assert.strictEqual(res.json().error, 'Email already registered',
+  assert.strictEqual(res.json().error, 'This email already has a Flock account. Sign in instead, and reset the password there if you need to.',
     'the loser must hear exactly what the pre-check would have said');
 });
 

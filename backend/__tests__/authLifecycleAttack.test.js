@@ -1391,7 +1391,7 @@ test('E2 — an OAuth account cannot be taken over by a password signup, or by t
     email: 'owned@example.com', password: 'Password1', name: 'Impostor', date_of_birth: '2000-01-01',
   });
   assert.strictEqual(signup.status, 400);
-  assert.match((await signup.json()).error, /already registered/);
+  assert.match((await signup.json()).error, /already has a Flock account/);
 
   // (b) the SAME address through the OTHER provider
   const appleRes = await post('/api/auth/apple', {
@@ -2158,7 +2158,7 @@ test('H5 — nothing lets a stale token be exchanged for a fresh one', async () 
   });
   const r = await post('/api/auth/login', { email: oauthUser.email, password: 'anythingAtAll1' });
   assert.strictEqual(r.status, 401);
-  assert.strictEqual((await r.json()).error, 'Invalid email or password');
+  assert.strictEqual((await r.json()).error, 'That email and password do not match. Check them and try again, or reset your password.');
   assertQueriesUnderstood(1);
 });
 

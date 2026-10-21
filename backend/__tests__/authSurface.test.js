@@ -477,7 +477,7 @@ test('signup cannot open a shadow account on a Gmail address an OAuth user alrea
   });
 
   assert.strictEqual(res.status, 400);
-  assert.strictEqual((await res.json()).error, 'Email already registered');
+  assert.strictEqual((await res.json()).error, 'This email already has a Flock account. Sign in instead, and reset the password there if you need to.');
   assert.strictEqual(users.length, 1, 'the victim\'s mailbox must not end up with two accounts');
 });
 

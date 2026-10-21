@@ -1608,6 +1608,15 @@ const { ageFromDob, yearEndDob, MIN_AGE } = require('../utils/age');
 const { isIOSAppRequest } = require('../utils/clientShell');
 const UNDERAGE_MSG = "We can't create a Flock account for you.";
 
+// The two refusals a person meets most on the email doors, each worded with
+// what to do next rather than only what went wrong: "Email already registered"
+// and "Invalid email or password" named the problem and left the fix to be
+// guessed. Neither says more than it did: the sign-up refusal already told the
+// caller the address had an account, and the sign-in one still does not say
+// which of the two fields was wrong (the enumeration rule above /login).
+const EMAIL_TAKEN_MSG = 'This email already has a Flock account. Sign in instead, and reset the password there if you need to.';
+const LOGIN_MISMATCH_MSG = 'That email and password do not match. Check them and try again, or reset your password.';
+
 // ---------------------------------------------------------------------------
 // Under-13 retry lockout (the FAQ's "cookie", server-side)
 // ---------------------------------------------------------------------------
@@ -2417,7 +2426,7 @@ router.post('/signup', signupValidation, async (req, res) => {
     // already has one — see canonicalEmail above.
     const existing = await findUserByEmail(email);
     if (existing) {
-      return res.status(400).json({ error: 'Email already registered' });
+      return res.status(400).json({ error: EMAIL_TAKEN_MSG });
     }
 
     // Ban-evasion tombstone (migration 012). Checked before the bcrypt hash so
@@ -2484,7 +2493,7 @@ router.post('/signup', signupValidation, async (req, res) => {
     // canonical alphabet findUserByEmail compares in is now a unique index,
     // so the check-then-insert race cannot seat two accounts on one mailbox.
     if (err.code === '23505') {
-      return res.status(400).json({ error: 'Email already registered' });
+      return res.status(400).json({ error: EMAIL_TAKEN_MSG });
     }
     console.error('Signup error:', err);
     res.status(500).json({ error: 'Failed to create account' });
@@ -2910,7 +2919,7 @@ router.post('/login', loginValidation, async (req, res) => {
       loginSlot = null;
       const why = !user ? 'unknown email' : !user.password ? 'oauth account' : 'bad password';
       console.warn(`Failed login attempt (${why}) for ${maskAddress(email)} from ${req.ip} at ${new Date().toISOString()}`);
-      return res.status(401).json({ error: 'Invalid email or password' });
+      return res.status(401).json({ error: LOGIN_MISMATCH_MSG });
     }
 
     clearLoginFailures(throttleKey);
@@ -3792,6 +3801,14 @@ router.post('/apple/nonce', (req, res) => {
   res.json({ nonce: issueOauthNonce(), expiresInSeconds: OAUTH_NONCE_TTL_MS / 1000 });
 });
 
+// Sign in with Apple's two clients (services/appleAuth.js says why there are
+// two): the iPhone app, whose tokens carry its bundle id as their audience,
+// and the website, whose tokens carry its Services ID. An identity token is
+// accepted for either and never for anything else. Both default in code, so an
+// unset variable still checks an audience (the round 3 rule below).
+const APPLE_APP_AUDIENCE = process.env.APPLE_BUNDLE_ID || 'com.flockcorp.flock';
+const APPLE_WEB_CLIENT_ID = process.env.APPLE_WEB_CLIENT_ID || 'com.flockcorp.flock.web';
+
 router.post('/apple', [
   body('identityToken').notEmpty().withMessage('Apple identityToken is required')
     .isLength({ max: MAX_OAUTH_TOKEN }).withMessage("Apple sign-in didn't complete. Try again in a moment."),
@@ -3862,14 +3879,24 @@ router.post('/apple', [
           issuer: 'https://appleid.apple.com',
           // FAIL CLOSED (round 3): an undefined audience makes jsonwebtoken
           // skip the check entirely, so a valid Apple token minted for ANY
-          // app would authenticate here. Hardcoded fallback = our bundle id.
-          audience: process.env.APPLE_BUNDLE_ID || 'com.flockcorp.flock',
+          // app would authenticate here. Both entries have hardcoded
+          // fallbacks: the app's bundle id and the website's Services ID.
+          audience: [APPLE_APP_AUDIENCE, APPLE_WEB_CLIENT_ID],
         },
         (err, decoded) => {
           if (err) reject(err); else resolve(decoded);
         }
       );
     });
+
+    // Which client this sign-in came through, read off the verified audience.
+    // A website token's authorization code exchanges only as the website, and
+    // the refresh token it buys is stored with that client id so that account
+    // deletion revokes it as the website (routes/users.js). NULL is the app,
+    // which is what every token stored before the website had Apple was.
+    const tokenAudiences = Array.isArray(payload.aud) ? payload.aud : [payload.aud];
+    const fromAppleWeb = tokenAudiences.includes(APPLE_WEB_CLIENT_ID);
+    const appleRefreshClientId = fromAppleWeb ? APPLE_WEB_CLIENT_ID : null;
 
     const appleId = payload.sub;
     const email = payload.email || null;
@@ -3923,7 +3950,10 @@ router.post('/apple', [
     //     `nonce` claim must match it (raw or SHA-256, constant-time);
     //   * client sent none but the token carries a nonce — the token is bound
     //     to a value we cannot check, so we refuse rather than pretend;
-    //   * neither — allowed today, refused once APPLE_REQUIRE_NONCE is on.
+    //   * neither — allowed today from the app, refused once APPLE_REQUIRE_NONCE
+    //     is on, and refused from the website always: the website's button
+    //     asks POST /apple/nonce for one before every Apple popup, so a
+    //     website token that arrives without one did not come from it.
     const suppliedNonce = typeof req.body.nonce === 'string' ? req.body.nonce.trim() : '';
     {
       const tokenNonce = typeof payload.nonce === 'string' ? payload.nonce : '';
@@ -3939,6 +3969,9 @@ router.post('/apple', [
       } else if (tokenNonce) {
         console.warn(`[auth] Apple identity token carries a nonce the client did not send (${req.ip})`);
         return res.status(401).json({ error: 'Apple sign-in expired, please try again' });
+      } else if (fromAppleWeb) {
+        console.warn(`[auth] refused an Apple website sign-in that carries no nonce (${req.ip})`);
+        return res.status(400).json({ error: "Apple sign-in didn't complete. Try again in a moment." });
       } else if (process.env.APPLE_REQUIRE_NONCE === 'true') {
         return res.status(400).json({ error: "Apple sign-in didn't complete. Try again in a moment." });
       }
@@ -4059,10 +4092,13 @@ router.post('/apple', [
       // the iPhone app, which asks for none (appSentNoDate below).
       const appleDob = yearEndDob(suppliedDob(req.body.date_of_birth));
       const appleDobAge = appleDob ? ageFromDob(appleDob) : null;
-      // Sign in with Apple exists only in the iPhone app, and the app asks for
-      // no date (isIOSAppRequest), so from it a new account with no usable date
-      // is created with none rather than asked for a year. A date it does send
-      // is judged below exactly as before.
+      // The iPhone app asks for no date (isIOSAppRequest), so from it a new
+      // account with no usable date is created with none rather than asked for
+      // a year. The website keeps its year question for Apple exactly as it
+      // does for Google and for a password: a new account from flockcorp.com is
+      // asked for the year here, after Apple's popup, and the button sends the
+      // same credentials again with it. A date either one sends is judged below
+      // exactly as before.
       const appSentNoDate = appleDob === null && isIOSAppRequest(req);
       if (appleDobAge === null && !appSentNoDate) {
         // CREATION, not backfill, and the client has to be able to tell.
@@ -4134,7 +4170,7 @@ router.post('/apple', [
       if (authorizationCode) {
         const { exchangeAppleCode, isConfigured: appleConfigured } = require('../services/appleAuth');
         try {
-          const tokens = await exchangeAppleCode(authorizationCode);
+          const tokens = await exchangeAppleCode(authorizationCode, appleRefreshClientId || undefined);
           if (tokens?.refresh_token) {
             newAppleRefreshToken = tokens.refresh_token;
           } else if (appleConfigured()) {
@@ -4174,11 +4210,14 @@ router.post('/apple', [
       // but it also cannot be squatted or mailed, and the account has no way to
       // ever verify it — so it is recorded as verified for that placeholder and
       // never for a real address. verified_email holds what was proved.
+      // apple_refresh_client_id (migration 128) is the client the token above
+      // was bought as, so deletion can revoke it as that client.
       result = await pool.query(
-        `INSERT INTO users (email, name, oauth_provider, oauth_id, terms_accepted_at, date_of_birth, email_verified, verified_email, apple_refresh_token)
-         VALUES ($1, $2, 'apple', $3, NOW(), $4, TRUE, $5, $6)
+        `INSERT INTO users (email, name, oauth_provider, oauth_id, terms_accepted_at, date_of_birth, email_verified, verified_email, apple_refresh_token, apple_refresh_client_id)
+         VALUES ($1, $2, 'apple', $3, NOW(), $4, TRUE, $5, $6, $7)
          RETURNING *`,
-        [storedEmail, fallbackName, appleId, appleDob, storedEmail, newAppleRefreshToken]
+        [storedEmail, fallbackName, appleId, appleDob, storedEmail, newAppleRefreshToken,
+          newAppleRefreshToken ? appleRefreshClientId : null]
       );
       user = result.rows[0];
       createdNow = true;
@@ -4195,9 +4234,14 @@ router.post('/apple', [
     if (authorizationCode && !createdNow) {
       const { exchangeAppleCode, isConfigured: appleConfigured } = require('../services/appleAuth');
       try {
-        const tokens = await exchangeAppleCode(authorizationCode);
+        const tokens = await exchangeAppleCode(authorizationCode, appleRefreshClientId || undefined);
         if (tokens?.refresh_token) {
-          await pool.query('UPDATE users SET apple_refresh_token = $1 WHERE id = $2', [tokens.refresh_token, user.id]);
+          // The token and the client it belongs to move together: an account
+          // that signed in on the website and then on the iPhone now holds the
+          // app's token, and revoking it as the website would fail. The id
+          // stays at $2 so the statement reads the same as it always has.
+          await pool.query('UPDATE users SET apple_refresh_token = $1, apple_refresh_client_id = $3 WHERE id = $2',
+            [tokens.refresh_token, user.id, appleRefreshClientId]);
         } else if (appleConfigured()) {
           // Round 6: no refresh token means account deletion could never revoke
           // the Apple grant (5.1.1(v)). Fail the sign-in instead of creating an

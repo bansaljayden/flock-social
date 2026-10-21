@@ -1,0 +1,28 @@
+-- 128: which Sign in with Apple client issued the stored Apple refresh token.
+--
+-- ASCII only, like 065, 091-096 and 100: the embedded server the boot-safety
+-- suite runs is WIN1252.
+--
+-- WHY. Sign in with Apple now runs in two places: the iPhone app, under the
+-- bundle id com.flockcorp.flock, and flockcorp.com, under the Services ID
+-- com.flockcorp.flock.web that is grouped with it. Apple ties a refresh token
+-- to the client that obtained it, and its revocation endpoint refuses a token
+-- sent as any other client. Account deletion revokes the stored token (App
+-- Store Guideline 5.1.1(v)), so it has to know which client to revoke it as.
+--
+-- WHO WRITES IT. POST /api/auth/apple, in the same statement that writes
+-- users.apple_refresh_token: the website's Services ID when the token came
+-- from a website sign-in, NULL when it came from the app. A later sign-in that
+-- replaces the token replaces this with it, so the two never disagree.
+--
+-- WHO READS IT. DELETE /api/users/me passes it to revokeAppleToken
+-- (services/appleAuth.js), which treats NULL and any value it does not know as
+-- the app.
+--
+-- ADDITIVE. A nullable column with no default is a catalog change: no rewrite,
+-- no scan, and every existing row reads NULL, which is the truth for all of
+-- them: every token stored before this came from the iPhone app. A replay is
+-- a no-op.
+-- @requires column users.apple_refresh_client_id
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS apple_refresh_client_id VARCHAR(255);
