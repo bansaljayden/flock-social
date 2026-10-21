@@ -641,6 +641,18 @@ export default function LandingPage() {
                 </p>
               </div>
             </div>
+            {/* All five said yes, so the flock heads out together. Five beige
+                sparrows and two wrens: on navy the wrens hold by their white
+                breasts and the light edges of their wings. */}
+            <img
+              className="lp-art lp-beat-side"
+              src="/art/step-go-240.webp"
+              srcSet="/art/step-go-240.webp 240w, /art/step-go-480.webp 480w"
+              sizes="(min-width: 960px) 220px, 200px"
+              width="240" height="121"
+              loading="lazy" decoding="async"
+              alt=""
+            />
           </div>
         </div>
       </section>
@@ -655,15 +667,6 @@ export default function LandingPage() {
                   $142.60 with the tip is $28.52 each. Everyone gets a Venmo or Cash
                   App link for their share, or Zelle instructions.
                 </p>
-                <img
-                  className="lp-art lp-beat-art"
-                  src="/art/step-go-240.webp"
-                  srcSet="/art/step-go-240.webp 240w, /art/step-go-480.webp 480w"
-                  sizes="160px"
-                  width="240" height="121"
-                  loading="lazy" decoding="async"
-                  alt=""
-                />
               </div>
             </div>
             <figure className="lp-plate">
