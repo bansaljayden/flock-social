@@ -82,6 +82,9 @@
      alternate band, a light stone. */
   --paper: #f9f8f4;
   --paper-2: #efede6;
+  /* --paper at no opacity: where the hero's fade into the paper band starts
+     (.lp-hero::after), so the blend runs through paper, not grey. */
+  --paper-clear: rgba(249, 248, 244, 0);
   --ink: #16283d;
   --ink-2: #33475e;
   /* Was #6b7a8c: 3.75:1 on --paper, 3.37:1 on --paper-2. Both under 4.5:1 and
@@ -838,11 +841,16 @@ html:has(.lp) body { overflow-x: clip; }
 /* The phone: a graphite frame with a hairline edge, black glass inside it
    with the status row (the time, the island, the battery) over the capture.
    Every size is a share of the card's width, so the phone scales whole. */
-.lp-reel-device {
+.lp-reel-device { border-radius: calc(var(--reel-w) * 0.17); }
+/* The frame is its own 3D layer a pixel in front of the rim: Safari paints a
+   preserve-3d group's flat content under its 3D children, so with the frame
+   on the device itself a tilted phone showed only the rim's grey. */
+.lp-reel-front {
   padding: calc(var(--reel-w) * 0.035);
-  border-radius: calc(var(--reel-w) * 0.17);
+  border-radius: inherit;
   background: var(--phone-frame);
   border: 1px solid var(--edge-cream);
+  transform: translateZ(1px);
 }
 .lp-reel-glass {
   overflow: hidden;
@@ -913,7 +921,9 @@ html:has(.lp) body { overflow-x: clip; }
   position: absolute;
   backface-visibility: hidden;
 }
-.lp-flux-face.is-front { inset: 0; }
+/* A pixel forward, its own 3D layer, for the same Safari reason as the
+   phones' .lp-reel-front. */
+.lp-flux-face.is-front { inset: 0; transform: translateZ(1px); }
 .lp-reel-item .lp-flux-photo,
 .lp-reel-item .lp-flux-face { height: 100%; background: none; }
 .lp-reel-item .lp-flux-face.is-right,
@@ -995,14 +1005,15 @@ html:has(.lp) body { overflow-x: clip; }
   right: clamp(20px, 5vw, 40px);
   bottom: 10px;
   padding: 4px 10px;
-  border: 1px solid var(--edge-cream);
+  /* It sits in the hero's fade, on near-paper, so it takes the paper inks. */
+  border: 1px solid var(--rule);
   border-radius: 999px;
-  background: none;
-  color: var(--cream-2);
+  background: var(--paper);
+  color: var(--ink-2);
   font: 600 12.5px/1.4 var(--font-body);
   cursor: pointer;
 }
-.lp-reel-pause:hover { color: var(--cream); }
+.lp-reel-pause:hover { color: var(--ink); }
 .lp-reel-pause:focus-visible { outline: 2px solid var(--steel-lift); outline-offset: 2px; }
 @keyframes lp-reel { to { transform: translateX(-50%); } }
 @media (prefers-reduced-motion: no-preference) {
@@ -1380,17 +1391,36 @@ html:has(.lp) body { overflow-x: clip; }
    opacity over the flat navy, so the navy is the veil: no overlay and no
    gradient, and the cream type keeps its contrast. It fades in once it is
    really playing (LandingPage.js attaches it after load), on opacity only. */
+/* Raised a quarter (his ask, 2026-10-21: "move it a bit up so that I don't
+   just see the sky ... the city is behind the words"): the film is a quarter
+   taller than the hero and starts a quarter above it, so its sky goes off the
+   top and the lit skyline sits behind the headline instead of behind the
+   reel. */
 .lp-hero-video {
   position: absolute;
-  inset: 0;
+  top: -25%;
+  left: 0;
   width: 100%;
-  height: 100%;
+  height: 125%;
   object-fit: cover;
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.9s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .lp-hero-video.is-on { opacity: 0.32; }
+/* The hero's foot dissolves into the paper band that follows (his ask, the
+   same day: "fade it into the next section"), over the film and behind the
+   reel, so the city melts into the page instead of stopping at a line. */
+.lp-hero::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: clamp(150px, 20vw, 280px);
+  background: linear-gradient(to bottom, var(--paper-clear), var(--paper));
+  pointer-events: none;
+}
 
 /* ============ safety: the real SOS email, shown as a document ============ */
 

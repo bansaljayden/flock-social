@@ -119,13 +119,19 @@ function Device({ landscape, children }) {
       <span className="lp-reel-rim" aria-hidden="true">
         {RIM.map((k) => <i key={k} style={{ '--k': k }} />)}
       </span>
-      <div className="lp-reel-glass">
-        <div className="lp-reel-status" aria-hidden="true">
-          <span>7:15</span>
-          <i className="lp-reel-island" />
-          <i className="lp-reel-battery" />
+      {/* The front (frame and glass) is a 3D layer of its own, a pixel in
+          front of the rim: Safari otherwise painted the rim's slices over a
+          front that sat flat at depth zero, and a tilted phone showed only a
+          grey slab (found on the maintainer's iPad, 2026-10-21). */}
+      <div className="lp-reel-front">
+        <div className="lp-reel-glass">
+          <div className="lp-reel-status" aria-hidden="true">
+            <span>7:15</span>
+            <i className="lp-reel-island" />
+            <i className="lp-reel-battery" />
+          </div>
+          {children}
         </div>
-        {children}
       </div>
     </div>
   );
