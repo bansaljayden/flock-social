@@ -21,7 +21,7 @@ import SiteNav, { useSiteMenu } from './SiteNav';
 //   the readings are 0 to 100 estimates, not head counts          C-058
 //   on live readings the learned layer adds little over the
 //     venue's usual week                                          C-055
-//   a venue can set its live number; groups see "the bar says";
+//   a venue can set its live number; groups see it credited to the place (utils/venueLabel.js picks the noun);
 //     it lasts 90 minutes                                         C-131
 //   Owl: runs on the Pi; generated frames and six public
 //     datasets; not yet in a venue        models/NOTICE.md, C-112 (out of date)
@@ -159,7 +159,7 @@ export default function AiPage() {
               <p>
                 Flock marks the forecast as an estimate. When a venue knows better on
                 the night, its owner can set the live number from their dashboard.
-                Groups see it as “the bar says”, and it lasts 90 minutes.
+                Groups see it credited to the place, like “the cafe says”, and it lasts 90 minutes.
               </p>
             </div>
             <Figure
