@@ -163,19 +163,15 @@
   --tab-face: #8e8e93;
   --tab-field: #c7c7cc;
 
-  /* The hero reel's drawn devices (HeroReel.js): a graphite phone frame,
-     its black glass, and the Flux sensor as the CAD renders it from the
-     front (the printed navy face as lit, the touchscreen's glass, the dark
-     of the lens and of the door counter's slot). */
+  /* The hero reel's devices (HeroReel.js): a graphite phone frame and its
+     black glass; the Flux sensor's touchscreen glass under its screen
+     capture, and the faint reflection of the studio light across it. */
   --phone-frame: #24272d;
   --phone-glass: #050608;
-  --flux-body: #3b4666;
-  --flux-glass: #141b26;
-  --flux-lens: #1a1f2b;
-  /* The devices' sides, seen when one tilts: a lit graphite rim on the
-     phones, the Flux body's shaded flank. */
+  --flux-glass: #05070a;
+  --flux-sheen: rgba(244, 239, 227, 0.08);
+  /* The phones' sides, seen when one tilts: a lit graphite rim. */
   --phone-edge: #3a3f48;
-  --flux-edge: #262f48;
 
   font-family: 'Hanken Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   background: var(--paper);
@@ -895,113 +891,102 @@ html:has(.lp) body { overflow-x: clip; }
   height: auto;
   background: var(--navy-deep);
 }
-/* The Flux sensor from the front, to the CAD's proportions (fluxData.js BOX,
-   182.9 x 175.2 mm, and the /flux renders): the screen inset 8% at the sides
-   and 5.7% at the top, the cream pill centred under it with the heat
-   camera's lens to the left and its light to the right, the wordmark below,
-   and the door counter's slot cut into the chin. Sizes are shares of the
-   face's width (--fw), so it scales whole. */
+/* The Flux sensor: a box of four photographs (HeroReel.js), each the CAD's
+   own size (fluxData.js BOX: 182.9 wide, 175.2 tall, 74.4 deep, in mm). The
+   front is the card's face; the sides hinge back from its edges and the top
+   lies back from its top edge, so the depth runs away from the viewer and at
+   rest the front keeps the card's size. --fw is the face's width, --depth the
+   box's. The screen capture sits in the photo's glass (measured on the
+   photo: 6.5% in at the left, 6.8% at the right, 10.6% down from the top and
+   38.4% up from the bottom), a hair inside it so the glass's black edge shows
+   round the picture as it does round a lit panel, under a faint reflection
+   from the side the studio light comes from. */
 .lp-reel-device.is-flux {
   --fw: calc(var(--reel-w) * 1.9);
-  position: relative;
   height: calc(var(--fw) * 0.958);
-  padding: calc(var(--fw) * 0.057) calc(var(--fw) * 0.08) 0;
-  border-radius: calc(var(--fw) * 0.05);
-  background: var(--flux-body);
-  border: 1px solid var(--edge-cream);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+}
+.lp-flux-face {
+  position: absolute;
+  backface-visibility: hidden;
+}
+.lp-flux-face.is-front { inset: 0; }
+.lp-reel-item .lp-flux-photo,
+.lp-reel-item .lp-flux-face { height: 100%; background: none; }
+.lp-reel-item .lp-flux-face.is-right,
+.lp-reel-item .lp-flux-face.is-left { top: 0; width: var(--depth); }
+.lp-reel-item .lp-flux-face.is-right { left: 100%; transform-origin: left center; transform: rotateY(90deg); }
+.lp-reel-item .lp-flux-face.is-left { right: 100%; transform-origin: right center; transform: rotateY(-90deg); }
+.lp-reel-item .lp-flux-face.is-top {
+  bottom: 100%;
+  left: 0;
+  height: var(--depth);
+  transform-origin: center bottom;
+  transform: rotateX(90deg);
 }
 .lp-flux-screen {
+  position: absolute;
+  top: 11.7%;
+  right: 8.8%;
+  bottom: 39.5%;
+  left: 8.5%;
   overflow: hidden;
-  border: calc(var(--fw) * 0.006) solid var(--flux-glass);
-  border-radius: calc(var(--fw) * 0.012);
   background: var(--flux-glass);
 }
-.lp-flux-screen img { display: block; width: 100%; height: auto; }
-.lp-flux-pill {
+.lp-flux-screen::after {
+  content: "";
   position: absolute;
-  top: 70%;
-  left: 50%;
-  width: 31%;
-  height: calc(var(--fw) * 0.13);
-  border-radius: 999px;
-  background: var(--cream);
-  transform: translate(-50%, -50%);
+  inset: 0;
+  background: linear-gradient(118deg, var(--flux-sheen), transparent 42%);
 }
-.lp-flux-lens {
-  position: absolute;
-  top: 50%;
-  left: 13%;
-  width: calc(var(--fw) * 0.075);
-  height: calc(var(--fw) * 0.075);
-  border-radius: 50%;
-  background: var(--flux-lens);
-  box-sizing: border-box;
-  border: calc(var(--fw) * 0.008) solid var(--cream-2);
-  transform: translateY(-50%);
-}
-.lp-flux-led {
-  position: absolute;
-  top: 50%;
-  right: 16%;
-  width: calc(var(--fw) * 0.012);
-  height: calc(var(--fw) * 0.012);
-  border-radius: 50%;
-  background: var(--cream-2);
-  transform: translateY(-50%);
-}
-.lp-flux-mark {
-  position: absolute;
-  top: 84%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  color: var(--cream);
-  font-family: var(--font-display);
-  font-weight: 700;
-  font-size: calc(var(--fw) * 0.048);
-  line-height: 1;
-  letter-spacing: 0.01em;
-}
-.lp-flux-mark { display: inline-flex; align-items: center; gap: 0.3em; white-space: nowrap; }
-.lp-flux-mark img { display: block; width: 1.1em; height: 1.1em; border-radius: 50%; }
+.lp-reel-item .lp-flux-screen img { height: 100%; }
 /* Solid in 3D (his ask, 2026-10-21: "3D when I go over them / click on
    them"). The card holds the perspective; the device tilts by --rx/--ry
    under a mouse (HeroReel.js sets them from the pointer) or turns to its
-   side on a click or a tap, and its two side faces stand behind the front
-   as edges, so a tilted device shows its thickness: a phone about a tenth
-   of its width, the Flux box a quarter. Transforms only. */
+   side on a click or a tap, showing its thickness. A phone is about a tenth
+   of its width deep: its outline again in ten slices (.lp-reel-rim), each a
+   tenth of the depth further back, so the rim reads solid all the way round
+   at any angle. They are drawn only on the card you are over or have turned,
+   so the drifting strip carries none. The Flux box is its photographs at its
+   true depth, turning about its own middle, under a longer lens than the
+   phones: it is four tenths as deep as it is wide, and at 900px its top
+   stayed edge-on however far it tipped. It has no photograph of its
+   underside, so it only ever tips its top toward you. Transforms only. */
 .lp-reel-item { perspective: 900px; }
+.lp-reel-item.is-wide { perspective: 1600px; }
 .lp-reel-device {
   --depth: calc(var(--reel-w) * 0.1);
   position: relative;
   transform-style: preserve-3d;
   transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1);
 }
-.lp-reel-device::before,
-.lp-reel-device::after {
-  content: "";
+.lp-reel-rim {
+  display: none;
   position: absolute;
-  top: 7%;
-  bottom: 7%;
-  width: var(--depth);
-  background: var(--phone-edge);
+  inset: -1px;
+  border-radius: inherit;
+  transform-style: preserve-3d;
 }
-.lp-reel-device::before { right: 0; transform-origin: right center; transform: rotateY(-90deg); }
-.lp-reel-device::after { left: 0; transform-origin: left center; transform: rotateY(90deg); }
-.lp-reel-device.is-flux { --depth: calc(var(--fw) * 0.25); }
-.lp-reel-device.is-flux::before,
-.lp-reel-device.is-flux::after { top: 4%; bottom: 4%; background: var(--flux-edge); }
+.lp-reel-item:hover .lp-reel-rim,
+.lp-reel-item.is-turned .lp-reel-rim { display: block; }
+.lp-reel-rim i {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--phone-edge);
+  transform: translateZ(calc(var(--depth) * var(--k) * -0.1));
+}
+.lp-reel-device.is-flux {
+  --depth: calc(var(--fw) * 0.4068);
+  transform-origin: 50% 50% calc(var(--depth) * -0.5);
+}
 .lp-reel-item:hover .lp-reel-device { transform: rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg)); }
 .lp-reel-item.is-turned .lp-reel-device { transform: rotateX(8deg) rotateY(-32deg); }
-.lp-flux-slot {
-  position: absolute;
-  bottom: 0;
-  left: 50%;
-  width: 13%;
-  height: calc(var(--fw) * 0.03);
-  border-radius: calc(var(--fw) * 0.01) calc(var(--fw) * 0.01) 0 0;
-  background: var(--flux-lens);
-  transform: translateX(-50%);
-}
+.lp-reel-item:hover .lp-reel-device.is-flux { transform: rotateX(min(var(--rx, 0deg), 0deg)) rotateY(var(--ry, 0deg)); }
+.lp-reel-item.is-turned .lp-reel-device.is-flux { transform: rotateX(-20deg) rotateY(-35deg); }
 .lp-reel-item:hover { z-index: 2; transform: translateY(-6px) scale(1.12); }
 .lp-reel:hover .lp-reel-track,
 .lp-reel.is-paused .lp-reel-track { animation-play-state: paused; }
@@ -1033,8 +1018,12 @@ html:has(.lp) body { overflow-x: clip; }
   .lp-reel-item[aria-hidden="true"], .lp-reel-pause { display: none; }
   .lp-reel-item:hover { transform: none; }
   .lp-reel-device { transition: none; }
+  .lp-reel-item:hover .lp-reel-rim,
+  .lp-reel-item.is-turned .lp-reel-rim { display: none; }
   .lp-reel-item:hover .lp-reel-device,
-  .lp-reel-item.is-turned .lp-reel-device { transform: none; }
+  .lp-reel-item.is-turned .lp-reel-device,
+  .lp-reel-item:hover .lp-reel-device.is-flux,
+  .lp-reel-item.is-turned .lp-reel-device.is-flux { transform: none; }
 }
 
 /* .lp-chip / .lp-chip-quiet / .lp-chip-mid / .lp-chip-steel deleted: no markup

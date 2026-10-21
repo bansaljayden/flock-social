@@ -40,7 +40,7 @@ function Screen({ shot, first, copy }) {
       className="lp-reel-shot"
       src={shot.src}
       srcSet={shot.srcSet}
-      sizes={shot.landscape ? '(min-width: 1100px) 440px, 340px' : '(min-width: 1100px) 230px, 200px'}
+      sizes={shot.landscape ? '(min-width: 1100px) 362px, (min-width: 600px) 315px, 265px' : '(min-width: 1100px) 230px, 200px'}
       width={shot.width} height={shot.height}
       loading="lazy" decoding="async"
       alt={copy ? '' : shot.alt}
@@ -51,30 +51,74 @@ function Screen({ shot, first, copy }) {
 /* Each screen sits in a drawn device (his ask, 2026-10-21: "put the photos
    in phone like a mockup"): a phone's frame and black glass, with the
    status row and the island above the capture, since the web app's captures
-   carry no status bar of their own. The Flux screen sits in the sensor as the
-   CAD has it from the front ("make the flux screen actually what the cad
-   looks like"): the navy face, 182.9 by 175.2 mm, with the 7 inch screen near
-   the top, the cream pill holding the heat camera's lens and its light, the
-   Flux wordmark, and the door counter's slot in the chin (fluxData.js BOX,
-   and the /flux renders). Drawn in CSS, flat, no shadow. */
+   carry no status bar of their own. Behind the front, the phone's outline is
+   drawn again in ten slices through its depth (.lp-reel-rim), so a tilted
+   phone shows one solid rounded rim, corners, top and bottom included, where
+   two flat side faces left gaps.
+
+   The Flux screen sits in the sensor itself, a box of four photographs: the
+   front, both sides and the top, each cut to the CAD's own size (fluxData.js
+   BOX: 182.9 wide, 175.2 tall, 74.4 deep, in mm) and folded together in
+   LandingPage.css. Drawn in CSS, the face read as a cartoon beside the
+   phones' real screens. The photographs are generated from the CAD's
+   straight-on renders of the assembled box, so every edge, the lens, the
+   pill's light and the door counter's slot sit where the CAD has them, in
+   printed navy plastic with its layer lines; the right side is the left one
+   mirrored, its one light set where the CAD has it, and the Flock mark beside
+   the wordmark is the logo file itself, laid over the badge. The sensor's
+   screen is the capture above, set into the photo's glass, so the reel still
+   shows the one reelShots.js names. */
+const RIM = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+const FLUX_FACE_SIZES = '(min-width: 1100px) 437px, (min-width: 600px) 380px, 320px';
+const FLUX_DEPTH_SIZES = '(min-width: 1100px) 178px, (min-width: 600px) 155px, 130px';
+
 function Device({ landscape, children }) {
   if (landscape) {
     return (
       <div className="lp-reel-device is-flux">
-        <div className="lp-flux-screen">{children}</div>
-        <span className="lp-flux-pill" aria-hidden="true"><i className="lp-flux-lens" /><i className="lp-flux-led" /></span>
-        {/* The Flock mark beside the wordmark (his ask, 2026-10-21: "the
-            front of the flux should have the flock logo on it"). */}
-        <span className="lp-flux-mark" aria-hidden="true">
-          <img src="/marks/logo-64.png?v=2" width="64" height="64" alt="" loading="lazy" decoding="async" />
-          Flux
-        </span>
-        <i className="lp-flux-slot" aria-hidden="true" />
+        <div className="lp-flux-face is-front">
+          <img
+            className="lp-flux-photo"
+            src="/sensor/flux-real-front.webp"
+            srcSet="/sensor/flux-real-front.webp 440w, /sensor/flux-real-front@2x.webp 880w"
+            sizes={FLUX_FACE_SIZES}
+            width="440" height="421"
+            alt="" loading="lazy" decoding="async"
+          />
+          <div className="lp-flux-screen">{children}</div>
+        </div>
+        <img
+          className="lp-flux-face is-right"
+          src="/sensor/flux-real-right.webp"
+          srcSet="/sensor/flux-real-right.webp 179w, /sensor/flux-real-right@2x.webp 358w"
+          sizes={FLUX_DEPTH_SIZES}
+          width="179" height="421"
+          alt="" loading="lazy" decoding="async"
+        />
+        <img
+          className="lp-flux-face is-left"
+          src="/sensor/flux-real-left.webp"
+          srcSet="/sensor/flux-real-left.webp 179w, /sensor/flux-real-left@2x.webp 358w"
+          sizes={FLUX_DEPTH_SIZES}
+          width="179" height="421"
+          alt="" loading="lazy" decoding="async"
+        />
+        <img
+          className="lp-flux-face is-top"
+          src="/sensor/flux-real-top.webp"
+          srcSet="/sensor/flux-real-top.webp 440w, /sensor/flux-real-top@2x.webp 880w"
+          sizes={FLUX_FACE_SIZES}
+          width="440" height="179"
+          alt="" loading="lazy" decoding="async"
+        />
       </div>
     );
   }
   return (
     <div className="lp-reel-device">
+      <span className="lp-reel-rim" aria-hidden="true">
+        {RIM.map((k) => <i key={k} style={{ '--k': k }} />)}
+      </span>
       <div className="lp-reel-glass">
         <div className="lp-reel-status" aria-hidden="true">
           <span>7:15</span>
