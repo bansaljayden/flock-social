@@ -197,9 +197,12 @@ export default function AddFriends({
               <button className="hit44" key={tab.id} onClick={() => setAddFriendsTab(tab.id)} style={{
                 flex: 1, padding: '8px 4px', borderRadius: '16px', border: 'none', cursor: 'pointer', fontSize: 'var(--t-meta)', fontWeight: '600', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '3px', transition: 'opacity 0.2s ease',
                 backgroundColor: activeTab === tab.id ? 'white' : 'rgba(255,255,255,0.15)',
-                color: activeTab === tab.id ? colors.navy : 'rgba(255,255,255,0.8)',
+                // navyBg, not navy: the chip is white in both themes, and in
+                // dark mode colors.navy is cream, which left the active tab's
+                // label white on white (found 2026-10-21). navyBg is dark in both.
+                color: activeTab === tab.id ? colors.navyBg : 'rgba(255,255,255,0.8)',
               }}>
-                {tab.icon(activeTab === tab.id ? colors.navy : 'rgba(255,255,255,0.8)', 16)}
+                {tab.icon(activeTab === tab.id ? colors.navyBg : 'rgba(255,255,255,0.8)', 16)}
                 {tab.label}
               </button>
             ))}
@@ -421,7 +424,9 @@ export default function AddFriends({
                 <div style={{ display: 'inline-block', padding: '16px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', border: `3px solid ${colors.cream}` }}>
                   {myFriendCode ? (
                     <React.Suspense fallback={<div style={{ width: '180px', height: '180px' }} />}>
-                    <QRCodeSVG value={JSON.stringify({ type: 'flock_friend', code: myFriendCode })} size={180} level="H" bgColor="white" fgColor={colors.navy} />
+                    {/* Dark modules on white in both themes: colors.navy is cream in
+                        dark mode, and cream modules on white do not scan. */}
+                    <QRCodeSVG value={JSON.stringify({ type: 'flock_friend', code: myFriendCode })} size={180} level="H" bgColor="white" fgColor={colors.navyBg} />
                     </React.Suspense>
                   ) : myFriendCodeFailed ? (
                     // The code comes from the server now, so a failed read is
