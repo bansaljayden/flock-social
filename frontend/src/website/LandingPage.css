@@ -163,6 +163,12 @@
   --tab-face: #8e8e93;
   --tab-field: #c7c7cc;
 
+  /* The hero reel's drawn devices (HeroReel.js): a graphite phone frame,
+     its black glass, and the Flux sensor's navy body. */
+  --phone-frame: #24272d;
+  --phone-glass: #050608;
+  --flux-body: #2e3a57;
+
   font-family: 'Hanken Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   background: var(--paper);
   color: var(--ink-2);
@@ -825,15 +831,69 @@ html:has(.lp) body { overflow-x: clip; }
 }
 .lp-reel-item.is-wide { width: calc(var(--reel-w) * 1.9); }
 .lp-reel-item picture { display: contents; }
+/* The phone: a graphite frame with a hairline edge, black glass inside it
+   with the status row (the time, the island, the battery) over the capture.
+   Every size is a share of the card's width, so the phone scales whole. */
+.lp-reel-device {
+  padding: calc(var(--reel-w) * 0.035);
+  border-radius: calc(var(--reel-w) * 0.17);
+  background: var(--phone-frame);
+  border: 1px solid var(--edge-cream);
+}
+.lp-reel-glass {
+  overflow: hidden;
+  border-radius: calc(var(--reel-w) * 0.135);
+  background: var(--phone-glass);
+}
+.lp-reel-status {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: calc(var(--reel-w) * 0.12);
+  padding: 0 calc(var(--reel-w) * 0.09);
+  color: var(--cream);
+  font: 600 calc(var(--reel-w) * 0.055) / 1 var(--font-body);
+}
+.lp-reel-island {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 30%;
+  height: calc(var(--reel-w) * 0.068);
+  border-radius: 999px;
+  background: var(--phone-frame);
+  transform: translate(-50%, -50%);
+}
+.lp-reel-battery {
+  width: calc(var(--reel-w) * 0.085);
+  height: calc(var(--reel-w) * 0.042);
+  border: 1px solid var(--cream-2);
+  border-radius: 3px;
+  box-sizing: border-box;
+  padding: 1px;
+}
+.lp-reel-battery::after {
+  content: "";
+  display: block;
+  width: 70%;
+  height: 100%;
+  border-radius: 1px;
+  background: var(--cream-2);
+}
 .lp-reel-item img {
   display: block;
   width: 100%;
   height: auto;
-  border-radius: 22px;
-  border: 1px solid var(--edge-cream);
   background: var(--navy-deep);
 }
-.lp-reel-item.is-wide img { border-radius: 12px; }
+/* The Flux screen: the sensor's own navy bezel, no phone furniture. */
+.lp-reel-device.is-panel {
+  padding: calc(var(--reel-w) * 0.07);
+  border-radius: calc(var(--reel-w) * 0.08);
+  background: var(--flux-body);
+}
+.lp-reel-device.is-panel img { border-radius: calc(var(--reel-w) * 0.025); }
 .lp-reel-item:hover { z-index: 2; transform: translateY(-6px) scale(1.12); }
 .lp-reel:hover .lp-reel-track,
 .lp-reel.is-paused .lp-reel-track { animation-play-state: paused; }
@@ -853,7 +913,8 @@ html:has(.lp) body { overflow-x: clip; }
 .lp-reel-pause:focus-visible { outline: 2px solid var(--steel-lift); outline-offset: 2px; }
 @keyframes lp-reel { to { transform: translateX(-50%); } }
 @media (prefers-reduced-motion: no-preference) {
-  .lp-reel-track { animation: lp-reel 70s linear infinite; }
+  /* 52 s a loop, a touch quicker than the first 70 (his ask, 2026-10-21). */
+  .lp-reel-track { animation: lp-reel 52s linear infinite; }
 }
 /* "Reduce motion": nothing drifts and nothing lifts. The strip scrolls
    sideways by hand, the second copy and the button go. */

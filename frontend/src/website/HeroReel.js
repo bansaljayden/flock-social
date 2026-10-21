@@ -48,6 +48,29 @@ function Screen({ shot, first, copy }) {
   );
 }
 
+/* Each screen sits in a drawn device (his ask, 2026-10-21: "put the photos
+   in phone like a mockup"): a phone's frame and black glass, with the
+   status row and the island above the capture, since the web app's captures
+   carry no status bar of their own; the Flux screen sits in the sensor's
+   navy bezel instead. Drawn in CSS, flat, no shadow. */
+function Device({ landscape, children }) {
+  if (landscape) {
+    return <div className="lp-reel-device is-panel">{children}</div>;
+  }
+  return (
+    <div className="lp-reel-device">
+      <div className="lp-reel-glass">
+        <div className="lp-reel-status" aria-hidden="true">
+          <span>7:15</span>
+          <i className="lp-reel-island" />
+          <i className="lp-reel-battery" />
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
 export default function HeroReel({ shots }) {
   const [paused, setPaused] = useState(false);
   const strip = (copy) => shots.map((shot, i) => (
@@ -56,7 +79,9 @@ export default function HeroReel({ shots }) {
       className={`lp-reel-item${shot.landscape ? ' is-wide' : ''}`}
       aria-hidden={copy ? 'true' : undefined}
     >
-      <Screen shot={shot} first={i === 0} copy={copy} />
+      <Device landscape={shot.landscape}>
+        <Screen shot={shot} first={i === 0} copy={copy} />
+      </Device>
     </li>
   ));
   return (
