@@ -183,6 +183,9 @@ def main():
     for problem in cad.arm_report(sleeve, back):
         sys.exit(problem)
     print('wall check: tilted down on the arm, the box clears the arm and the wall')
+    for problem in cad.sight_report(sleeve, back):
+        sys.exit(problem)
+    print('view check: nothing stands in the doorway counter\'s view, on a table or on the wall')
 
     for name, out in PRINTED:
         path = HERE / 'stl' / f'{out}.stl'

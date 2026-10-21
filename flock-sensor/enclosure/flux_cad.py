@@ -135,6 +135,17 @@ tof_hole_off = 3.75            # the holes' line, off the board's centre line
 tof_sensor = (6.4, 3.0)
 tof_sensor_h = 1.75
 tof_half = 32.5                # half its 65 degree diagonal view
+# The counter counts by watching the floor: it learns how far away each of its
+# 64 zones is when the doorway is empty and sees a person as a patch nearer
+# than that. Looking straight out of the front, it saw the floor in 9 zones of
+# 64 and flickered in the rest. So it sits tilted inside the box and looks out
+# of a small angled chin at the bottom front corner: 50 degrees down from
+# straight ahead, which with the wall arm's 15 makes 65, the floor from about
+# 0.2 m to 2.4 m out from a box mounted 2.2 m up.
+tof_tilt = 50.0
+tof_chin_h = 9.0               # how far up the front the chin's facet reaches
+tof_chin_w = 30.0              # its width
+tof_chin_t = 5.2               # solid from the facet to the sensor's window face
 
 # PCB Artists I2C decibel meter PRO: 19.05 x 26.67; the microphone hears
 # through a hole in the board's bare back at (9.525, 11.09) from its corner.
@@ -276,9 +287,18 @@ PT3_X0 = EYE_X - pt3_w / 2
 PT3_Z0 = IN_Z0 + usbc_plug_room
 EYE = (EYE_X, PT3_Z0 + pt3_h - pt3_lepton_top)
 PT3_FACE = FRONT_Y + 0.5 + lepton_h        # the PT3 board's Lepton side
-TOF_C = (EYE[0] + 26.5, EYE[1])
-TOF_FACE = FRONT_Y + 0.3 + tof_sensor_h    # the counter board's sensor side
-LED_POS = (TOF_C[0] + 16.5, EYE[1])
+# The counter, in its own frame: the centre of its sensor's face at TOF_S,
+# looking along TOF_N. It sits right of the wordmark, so the chin stays clear
+# of the letters.
+_t = math.radians(tof_tilt)
+TOF_N = (0.0, -math.cos(_t), -math.sin(_t))
+CHIN_D = tof_chin_h * math.tan(_t)          # how far back under the base the facet reaches
+_off = tof_chin_t + 0.3
+TOF_S = (BOX_W / 2 + 28.0, CHIN_D / 2 - _off * TOF_N[1], tof_chin_h / 2 - _off * TOF_N[2])
+TOF_LOC = Pos(*TOF_S) * Rot(tof_tilt, 0, 0)
+TOF_C = (TOF_S[0], TOF_S[2])
+# The eye and the light, mirrored about the middle of the pill.
+LED_POS = (BOX_W - EYE[0], EYE[1])
 PILL_C = (BOX_W / 2, EYE[1])
 # The front's opening: the picture, and a thin border of the screen's own glass.
 OPENING = (SCREEN_X0 + screen_border_l - screen_border, SCREEN_Z0 + screen_border_b - screen_border,
@@ -415,15 +435,24 @@ def sleeve():
     body -= slab(pill_outline(pocket_gap), -1, plate)
     body -= slab(logo_sketch(), -1, logo_depth)
 
-    # The camera's four posts and the counter's two, M2 screws from behind.
-    # Each sinks half a millimetre into the backer so they print as one.
+    # The camera's four posts, M2 screws from behind. Each sinks half a
+    # millimetre into the backer so they print as one.
     for sx in (-1, 1):
         for sz in (-1, 1):
             x, z = EYE[0] + sx * pt3_hole_dx / 2, PT3_Z0 + pt3_h / 2 + sz * pt3_hole_dy / 2
             body += cyl_y(x, FRONT_Y - 0.5, z, 4.6, PT3_FACE - FRONT_Y + 0.5)
-    for s in (-1, 1):
-        x, z = TOF_C[0] + s * tof_hole_dx / 2, TOF_C[1] + tof_hole_off
-        body += cyl_y(x, FRONT_Y - 0.5, z, 4.0, TOF_FACE - FRONT_Y + 0.5)
+
+    # The counter's chin: the bottom front corner filled solid a little wider
+    # than the chin, then scooped back to a facet square to its view, its two
+    # ends rounded into the corner so it reads as a shaped window and never
+    # opens into the box.
+    body += outer & (TOF_LOC * span(-tof_chin_w / 2 - 2.0, tof_chin_w / 2 + 2.0, -_off - 80, -0.3, -80, 80))
+    scoop = Plane(origin=(0, 0, -80), x_dir=(1, 0, 0), z_dir=(0, 0, 1)) * \
+        Pos(0, -_off - 40) * RectangleRounded(tof_chin_w, 80, 5.0)
+    body -= TOF_LOC * extrude(scoop, amount=160)
+    # Its two posts, square to the board, M2 screws from behind.
+    for sx in (-1, 1):
+        body += TOF_LOC * cyl_y(sx * tof_hole_dx / 2, -0.8, tof_hole_off, 4.0, 0.8 + tof_sensor_h)
 
     # The screen's four posts, from the lip back to its ears, ribbed to the
     # top wall or down into the strip.
@@ -465,15 +494,14 @@ def sleeve():
         for sz in (-1, 1):
             x, z = EYE[0] + sx * pt3_hole_dx / 2, PT3_Z0 + pt3_h / 2 + sz * pt3_hole_dy / 2
             body -= cyl_y(x, FRONT_Y + 0.2, z, m2_pilot, 20)
-    for s in (-1, 1):
-        body -= cyl_y(TOF_C[0] + s * tof_hole_dx / 2, FRONT_Y + 0.2, TOF_C[1] + tof_hole_off, m2_pilot, 20)
+    for sx in (-1, 1):
+        body -= TOF_LOC * cyl_y(sx * tof_hole_dx / 2, -_off + 1.0, tof_hole_off, m2_pilot, 20)
 
     # The eye, the counter's window and the light, through the ledge behind
     # the pill, the same size as the pill's own holes so the eye looks
     # straight into the dark.
     body -= cyl_y(EYE[0], plate - 1, EYE[1], eye_dia(), backer + 2)
-    tw, th = tof_window()
-    body -= slab(Pos(*TOF_C) * RectangleRounded(tw, th, min(tw, th) / 2 - 0.01), plate - 1, FRONT_Y + 1)
+    body -= tof_view_cut()
     body -= cyl_y(LED_POS[0], plate - 1, LED_POS[1], 4.2, backer + 2)
 
     # The meter hears the room through the right wall.
@@ -512,11 +540,9 @@ def slot_x(x0, y, z, length, width, depth):
 # ===========================================================================
 
 def pill_cut_sketch():
-    """The sensor pill: the eye, the counter's window, the light."""
+    """The sensor pill: the eye and the light. The counter looks out of the chin."""
     sk = pill_outline()
     sk -= Pos(*EYE) * Circle(eye_dia() / 2)
-    tw, th = tof_window()
-    sk -= Pos(*TOF_C) * RectangleRounded(tw, th, min(tw, th) / 2 - 0.01)
     sk -= Pos(*LED_POS) * Circle(led_dia / 2)
     return sk
 
@@ -535,8 +561,19 @@ def eye_dia():
     return cone(lepton_lens, lepton_half, 0.5 + backer + plate) + 0.5
 
 
-def tof_window():
-    return (cone(tof_sensor[0], tof_half, 0.3 + backer + plate), cone(tof_sensor[1], tof_half, 0.3 + backer + plate))
+def tof_view_cut(length=None, half=None):
+    """The counter's view, from the sensor out. Short and at the diagonal's
+    angle, it is the window cut through the chin; long and at the true 22.5
+    degrees each way, it is what nothing outside the box may stand in."""
+    sk = Plane(origin=(0, -0.3, 0), x_dir=(1, 0, 0), z_dir=(0, -1, 0)) * \
+        RectangleRounded(tof_sensor[0] + 1.0, tof_sensor[1] + 1.0, 0.8)
+    return TOF_LOC * extrude(sk, amount=_off + 1.5 if length is None else length,
+                             taper=-(tof_half if half is None else half))
+
+
+def tof_sight():
+    """The counter's real view, 3 m of it."""
+    return tof_view_cut(3000, 22.5)
 
 
 def front_engrave_sketch():
@@ -623,9 +660,10 @@ def screen_fit_test():
 
 def strip_fit_test(whole):
     """The strip, cut out of the sleeve, laid on its front to print: the
-    pill's pocket, the camera's and the counter's posts, the light's hole."""
-    piece = whole & span(PILL_C[0] - pill[0] / 2 - 8, PILL_C[0] + pill[0] / 2 + 8, 0, PT3_FACE + 1,
-                         IN_Z0, strip_h - 3.3)
+    pill's pocket, the camera's posts, the light's hole, and the counter's
+    chin with its two posts."""
+    piece = whole & span(PILL_C[0] - pill[0] / 2 - 8, TOF_S[0] + tof_chin_w / 2 + 4,
+                         0, max(PT3_FACE + 1, CHIN_D + 6), 0, strip_h - 3.3)
     return Rot(90, 0, 0) * piece
 
 
@@ -670,15 +708,22 @@ def camera_plug():
 
 
 def counter_body():
-    return span(TOF_C[0] - tof_w / 2, TOF_C[0] + tof_w / 2, TOF_FACE, TOF_FACE + 1.6,
-                TOF_C[1] - tof_h / 2, TOF_C[1] + tof_h / 2) + \
-        span(TOF_C[0] - tof_sensor[0] / 2, TOF_C[0] + tof_sensor[0] / 2, TOF_FACE - tof_sensor_h, TOF_FACE,
-             TOF_C[1] - tof_sensor[1] / 2, TOF_C[1] + tof_sensor[1] / 2)
+    return TOF_LOC * (span(-tof_w / 2, tof_w / 2, tof_sensor_h, tof_sensor_h + 1.6, -tof_h / 2, tof_h / 2) +
+                      span(-tof_sensor[0] / 2, tof_sensor[0] / 2, 0, tof_sensor_h,
+                           -tof_sensor[1] / 2, tof_sensor[1] / 2))
+
+
+TOF_LEADS = tof_sensor_h + 1.6 + 6 + jumper_h - 4      # the leads' far end, behind the sensor
+
+
+def tof_point(lx, ly, lz):
+    """A point given in the counter's own frame, in the box's."""
+    v = (TOF_LOC * Pos(lx, ly, lz)).position
+    return (v.X, v.Y, v.Z)
 
 
 def counter_leads():
-    return span(TOF_C[0] - tof_w / 2, TOF_C[0] + tof_w / 2, TOF_FACE + 1.6, TOF_FACE + 1.6 + 6 + jumper_h - 4,
-                TOF_C[1] - tof_h / 2, TOF_C[1] + tof_h / 2)
+    return TOF_LOC * span(-tof_w / 2, tof_w / 2, tof_sensor_h + 1.6, TOF_LEADS, -tof_h / 2, tof_h / 2)
 
 
 def battery_body():
@@ -859,7 +904,8 @@ CABLES = {
         (PI_X0 - 2, 18.6, 46), (PI_X0 - 2, 26, 30), (PI_X0 - 2, 30, 13), (PI_X0 + 4, 50, 12),
         (PI_HDMI[0], 54, PI_HDMI[2]), PI_HDMI]),
     'Cable: Qwiic to door counter': (2.0, 'i2c', [
-        _pin(3), (_pin(3)[0], 30, 60), (TOF_C[0], 31, TOF_C[1] + tof_h / 2 + 4), (TOF_C[0], 30, TOF_C[1] + 2)]),
+        _pin(3), (_pin(3)[0], 34, 60), (TOF_C[0], 34, 44), tof_point(0, TOF_LEADS + 3, 0),
+        tof_point(0, TOF_LEADS - 2, 0)]),
     'Cable: Qwiic to sound meter': (2.0, 'i2c', [
         _pin(5), (_pin(5)[0] + 2, 30, 78), (140, 30, 84), (IN_X1 - dbm_stack - 1, DBM_C[0], DBM_C[1])]),
     'Cable: LINK light': (1.6, 'light', [
@@ -977,7 +1023,9 @@ def stand():
     # from underneath wide enough for a thumbscrew's head.
     x, y = MOUNT_C
     way = cyl_z(x, y, -60, 6.8, 60) + cyl_z(x, y, -80, 20.0, 80 - stand_seat)
-    return part - box_to_world() * way
+    # The counter looks down past the stand's front edge; the edge is scooped
+    # where its view would graze it.
+    return part - box_to_world() * (way + tof_view_cut(200, 22.5 + 3))
 
 
 def stand_screw():
@@ -1035,6 +1083,20 @@ def camera_arm_steel():
 
 def wall_part():
     return _arm_parts()['wall']
+
+
+def sight_report(sl, back):
+    """Nothing may stand in the counter's view: not the box, not the stand on
+    a table, not the arm or the wall."""
+    view = tof_sight()
+    parts = _arm_parts()
+    found = []
+    for name, part in (('box', sl), ('back sheet', back), ('stand', stand_in_box_frame()),
+                       ('arm', parts['black']), ('wall', parts['wall'])):
+        common = view & part
+        if common and sum(s_.volume for s_ in common.solids()) > 0.01:
+            found.append(f'the {name} is in the doorway counter\'s view')
+    return found
 
 
 def arm_report(sl, back):
@@ -1201,6 +1263,9 @@ def main():
     for problem in arm_report(sl, back):
         sys.exit(problem)
     print('wall check: tilted down on the arm, the box clears the arm and the wall')
+    for problem in sight_report(sl, back):
+        sys.exit(problem)
+    print('view check: nothing stands in the doorway counter\'s view, on a table or on the wall')
     if args.check:
         return
 
