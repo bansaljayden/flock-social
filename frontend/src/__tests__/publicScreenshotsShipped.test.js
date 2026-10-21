@@ -36,7 +36,7 @@ function shippedCaptures() {
   const names = new Set();
   for (const f of [...walk(path.join(FRONTEND, 'src')), path.join(PUBLIC, 'index.html')]) {
     const text = fs.readFileSync(f, 'utf8');
-    for (const m of text.matchAll(/\/screenshots\/([A-Za-z0-9@._-]+\.(?:png|webp))/g)) names.add(m[1]);
+    for (const m of text.matchAll(/\/screenshots\/([A-Za-z0-9@._-]+\.(?:png|webp|avif))/g)) names.add(m[1]);
   }
   const manifest = JSON.parse(fs.readFileSync(path.join(PUBLIC, 'manifest.json'), 'utf8').replace(/^﻿/, ''));
   for (const s of manifest.screenshots || []) {

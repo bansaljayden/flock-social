@@ -37,10 +37,13 @@ if (typeof document !== 'undefined' && !document.querySelector('link[data-lp-fon
 const CONTACT_EMAIL = 'social@flockcorp.com';
 
 /* The hero capture. Real screens of the shipping web app, captured by
-   scripts/capture-screenshots.mjs against seeded demo data. The preload in
-   vercel.json and cloudflare/_headers names HERO_SHOT.webp, and
-   siteSpeedPass.test.js checks the two agree. */
+   scripts/capture-screenshots.mjs against seeded demo data. The AVIF is the
+   capture cut to the part the plate shows (390:658 from the top), 23 KB
+   against the WebP's 57; the preload in vercel.json, cloudflare/_headers and
+   functions/_middleware.js names HERO_SHOT.avif, and siteSpeedPass.test.js
+   checks they agree. */
 const HERO_SHOT = {
+  avif: '/screenshots/nest-dark-hero.avif',
   webp: '/screenshots/nest-dark@2x.webp',
   png: '/screenshots/nest-dark@2x.png',
   alt: 'The Flock home screen: tonight’s status, your flocks, and a plan that still needs votes.',
@@ -404,6 +407,7 @@ export default function LandingPage() {
             {/* Literal paths, not HERO_SHOT's, so siteSpeedPass.test.js can see
                 the file the Link preload names is the one this requests. */}
             <picture>
+              <source type="image/avif" srcSet="/screenshots/nest-dark-hero.avif" />
               <source type="image/webp" srcSet="/screenshots/nest-dark@2x.webp" />
               <img
                 className="lp-shot lp-shot-hero"

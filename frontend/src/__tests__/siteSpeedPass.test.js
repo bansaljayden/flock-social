@@ -51,15 +51,32 @@ describe('the hero screenshot preload lives on / only', () => {
   const home = vercel.headers.find((h) => h.source === '/' && !h.has);
   const link = home && home.headers.find((h) => h.key === 'Link');
 
-  test('the / Link header keeps the canonical and adds a WebP-gated, high-priority preload', () => {
+  test('the / Link header keeps the canonical and adds an AVIF-gated, high-priority preload', () => {
     expect(link).toBeTruthy();
     expect(link.value).toContain('<https://www.flockcorp.com/>; rel="canonical"');
-    expect(link.value).toContain('</screenshots/nest-dark@2x.webp>; rel=preload; as=image; type="image/webp"; fetchpriority=high');
+    expect(link.value).toContain('</screenshots/nest-dark-hero.avif>; rel=preload; as=image; type="image/avif"; fetchpriority=high');
   });
 
   test('the preloaded file is the one the hero <picture> actually requests', () => {
-    expect(read('src/website/LandingPage.js')).toContain('<source type="image/webp" srcSet="/screenshots/nest-dark@2x.webp" />');
-    expect(fs.existsSync(path.join(FRONTEND, 'public', 'screenshots', 'nest-dark@2x.webp'))).toBe(true);
+    // The AVIF source comes first, so every browser that takes the preload
+    // (type-gated to AVIF) also picks that source; the rest fall to WebP.
+    const page = read('src/website/LandingPage.js');
+    const avif = page.indexOf('<source type="image/avif" srcSet="/screenshots/nest-dark-hero.avif" />');
+    expect(avif).toBeGreaterThan(-1);
+    expect(page.indexOf('<source type="image/webp" srcSet="/screenshots/nest-dark@2x.webp" />')).toBeGreaterThan(avif);
+    for (const f of ['nest-dark-hero.avif', 'nest-dark@2x.webp']) {
+      expect(fs.existsSync(path.join(FRONTEND, 'public', 'screenshots', f))).toBe(true);
+    }
+  });
+
+  test('the AVIF is the capture cut to the plate: 780 wide, 390:658', () => {
+    // ISO-BMFF image spatial extents ("ispe"): version/flags, then width and
+    // height as 32-bit big-endian integers.
+    const buf = fs.readFileSync(path.join(FRONTEND, 'public', 'screenshots', 'nest-dark-hero.avif'));
+    expect(buf.toString('ascii', 4, 12)).toBe('ftypavif');
+    const at = buf.indexOf('ispe');
+    expect(at).toBeGreaterThan(-1);
+    expect([buf.readUInt32BE(at + 8), buf.readUInt32BE(at + 12)]).toEqual([780, Math.round(780 * 658 / 390)]);
   });
 
   test('no other route carries it, and the shared index.html has no preload link of its own', () => {

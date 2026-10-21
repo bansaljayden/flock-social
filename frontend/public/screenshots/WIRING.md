@@ -14,8 +14,11 @@ to 240 CSS px. The hero keeps a PNG fallback.
 
 ## src/website/LandingPage.js
 
-- Hero: `nest-dark@2x.webp` (PNG fallback `nest-dark@2x.png`), preloaded on `/`
-  from vercel.json and cloudflare/_headers.
+- Hero: `nest-dark-hero.avif`, preloaded on `/` from vercel.json,
+  cloudflare/_headers and functions/_middleware.js, with `nest-dark@2x.webp`
+  and `nest-dark@2x.png` as fallbacks. The AVIF is `nest-dark@2x.png` cut to
+  the part the plate shows, 780 x 1316 from the top (390:658), saved by Pillow
+  at quality 60, speed 4. Recut it whenever the PNG is recaptured.
 - Friday plan plates: `chat-dark`, `budget-dark`, `bill-split-dark`.
 - Venues: `owner-dashboard-dark`.
 
