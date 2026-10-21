@@ -188,7 +188,7 @@ const STEPS = [
     shot: {
       src: '/screenshots/bill-split-dark@2x.webp',
       srcSet: '/screenshots/bill-split-dark-480w.webp 480w, /screenshots/bill-split-dark@2x.webp 780w',
-      alt: 'Split the Bill: $142.60 with an 18% tip, paid by Jordan Avery, $28.52 each for five people.',
+      alt: 'Split the Bill: $142.60 with an 18% tip, paid by Asad Ali, $28.52 each for five people.',
       caption: '$28.52 each, paid back here.',
     },
   },

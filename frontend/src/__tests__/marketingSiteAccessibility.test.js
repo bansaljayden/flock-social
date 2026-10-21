@@ -238,7 +238,7 @@ describe('contrast, computed from the shipped tokens', () => {
       expectRatio(t['--gi-ink-2'], t['--gi-panel'], 4.5, `${name}: .gi-venue text on the panel`);
       expectRatio(t['--gi-ink-3'], t['--gi-paper'], 4.5, `${name}: .gi-sub / .gi-meta`);
       expectRatio(t['--gi-ink-3'], t['--gi-panel'], 4.5, `${name}: .gi-venue-count`);
-      expectRatio(t['--gi-ink-3'], t['--gi-field'], 4.5, `${name}: the "Maya" placeholder`);
+      expectRatio(t['--gi-ink-3'], t['--gi-field'], 4.5, `${name}: the "Tommy" placeholder`);
       expectRatio(t['--gi-accent'], t['--gi-paper'], 4.5, `${name}: links and .gi-msg`);
       expectRatio(t['--gi-accent'], t['--gi-panel'], 4.5, `${name}: the "Your vote" tag`);
       expectRatio(t['--gi-bad'], t['--gi-paper'], 4.5, `${name}: the error text`);
@@ -726,7 +726,7 @@ describe('GuestInvite: the page an invited stranger lands on', () => {
     expect(label.className).toMatch(/gi-label/);
     expect(label.textContent.trim()).toBe('Your name');
     // The placeholder is an example, and it is not the name.
-    expect(input.getAttribute('placeholder')).toBe('Maya');
+    expect(input.getAttribute('placeholder')).toBe('Tommy');
   });
 
   test('answering with no name complains in an alert, marks the field, and focuses it', async () => {

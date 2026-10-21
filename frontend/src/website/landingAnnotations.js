@@ -37,7 +37,7 @@ export const ANNOTATIONS = {
       srcSet: '/screenshots/budget-dark-480w.webp 480w, /screenshots/budget-dark@2x.webp 780w',
       alt: 'The budget sheet: preset amounts, a custom $35, and a note that no one else sees the answer.',
     },
-    caption: 'Maya’s budget sheet.',
+    caption: 'the maintainer’s budget sheet.',
     notes: [
       {
         side: 'left', text: 'Pick a preset or type your own', kind: 'box', box: [5.13, 52.13, 26.15, 57.88], y: 52,
@@ -62,18 +62,18 @@ export const ANNOTATIONS = {
     shot: {
       src: '/screenshots/bill-split-dark@2x.webp',
       srcSet: '/screenshots/bill-split-dark-480w.webp 480w, /screenshots/bill-split-dark@2x.webp 780w',
-      alt: 'Split the Bill: $142.60 with an 18% tip, paid by Jordan Avery, $28.52 each for five people.',
+      alt: 'Split the Bill: $142.60 with an 18% tip, paid by Asad Ali, $28.52 each for five people.',
     },
     caption: 'Split the Bill, after two paid back.',
     notes: [
       {
-        side: 'left', text: 'Total: $142.60, paid by Jordan', kind: 'text', box: [8.72, 55.51, 37.95, 60.13],
-        dot: [35.5, 55.9], avoid: [[8.72, 55.51, 29.87, 56.93], [8.72, 58.4, 37.95, 60.13]],
+        side: 'left', text: 'Total: $142.60, paid by Asad', kind: 'text', box: [8.72, 55.51, 30.51, 60.13],
+        dot: [35.5, 55.9], avoid: [[8.72, 55.51, 29.87, 56.93], [8.72, 58.4, 30.51, 60.13]],
       },
       { side: 'right', text: 'Tip included', kind: 'text', box: [69.1, 55.63, 91.28, 56.93], dot: [64.1, 56.28] },
       {
         side: 'right', text: 'Who’s paid back, who still owes', kind: 'box', box: [5.13, 63.3, 94.87, 81.8],
-        dot: [50, 72.3], avoid: [[8.72, 71.98, 25.51, 73.16], [75.51, 71.68, 90.77, 73.28]],
+        dot: [50, 72.3], avoid: [[8.85, 71.98, 27.56, 73.16], [75.51, 71.68, 90.77, 73.28]],
       },
       {
         side: 'left', text: 'Pay by Venmo, Cash App or Zelle', kind: 'box', box: [5.13, 85.78, 94.87, 91.94],

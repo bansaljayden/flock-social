@@ -40,7 +40,7 @@ const CONTACT_EMAIL = 'social@flockcorp.com';
 
 /* The hero capture. Real screens of the shipping web app, captured by
    scripts/capture-screenshots.mjs against seeded demo data. The AVIF is the
-   capture cut to the part the plate shows (390:658 from the top), 23 KB
+   capture cut to the part the plate shows (390:658 from the top), 25 KB
    against the WebP's 57; the preload in vercel.json, cloudflare/_headers and
    functions/_middleware.js names HERO_SHOT.avif, and siteSpeedPass.test.js
    checks they agree. */
@@ -480,7 +480,7 @@ export default function LandingPage() {
 
       {/* ---------------- one Friday plan ----------------
           The Friday is the one in the captures: the Friday Night Crew flock,
-          The Copper Finch, Jordan's bill. Each plate is a real screen of the
+          The Copper Finch, Asad's bill. Each plate is a real screen of the
           web app (scripts/capture-screenshots.mjs, seeded demo data, venue
           pictures drawn rather than photographed), so the story and the
           pictures are the same night. The dead chat that opens it sits on
@@ -546,7 +546,7 @@ export default function LandingPage() {
           />
           <div className="lp-beat">
             <p className="lp-beat-when">Thursday, 4:10 PM</p>
-            <h3 id="lp-h-beat-1">Maya starts a flock.</h3>
+            <h3 id="lp-h-beat-1">the maintainer starts a flock.</h3>
             <p>
               Friday Night Crew, 8 o’clock, four friends invited. Anyone without
               the app joins from a link (budget too), no account needed.
@@ -560,7 +560,7 @@ export default function LandingPage() {
             <p className="lp-beat-when">Thursday, 6:30 PM</p>
             <h3 id="lp-h-beat-2">Three places go to a vote.</h3>
             <p>
-              Sam asks Birdie for somewhere cheaper, the way you’d ask a friend
+              Nick asks Birdie for somewhere cheaper, the way you’d ask a friend
               who knows the city, and drops its pick in the chat.
             </p>
             {/* FTC AI disclosure, in the page's own voice where Birdie is
@@ -626,7 +626,7 @@ export default function LandingPage() {
         <div className="lp-wrap">
           <div className="lp-beat">
             <p className="lp-beat-when">Saturday morning</p>
-            <h3 id="lp-h-beat-5">Jordan paid, so Flock splits it.</h3>
+            <h3 id="lp-h-beat-5">Asad paid, so Flock splits it.</h3>
             <p>$142.60 with the tip comes to $28.52 each.</p>
           </div>
           <AnnotatedShot id="bill" {...ANNOTATIONS.bill} />
@@ -715,18 +715,18 @@ export default function LandingPage() {
               <div className="lp-sos-meta">
                 <span>From</span><span>Flock</span>
                 <span>To</span><span>Your trusted contacts</span>
-                <span>Subject</span><span>🚨 Emergency Alert from Maya</span>
+                <span>Subject</span><span>🚨 Emergency Alert from the maintainer</span>
               </div>
               <div className="lp-sos-body">
-                <p className="lp-sos-headline">Maya needs help</p>
-                <p className="lp-sos-intro">Maya has triggered an emergency alert on the Flock app and may need your assistance.</p>
+                <p className="lp-sos-headline">the maintainer needs help</p>
+                <p className="lp-sos-intro">the maintainer has triggered an emergency alert on the Flock app and may need your assistance.</p>
                 <p className="lp-sos-link">View Location on Map</p>
                 <p className="lp-sos-fine">Accurate to about 15 m.</p>
-                <p className="lp-sos-fine">You are one of 2 people Maya asked us to alert.</p>
+                <p className="lp-sos-fine">You are one of 2 people the maintainer asked us to alert.</p>
               </div>
               <div className="lp-sos-foot">
                 <p className="lp-sos-fine">Alert sent at 9/26/2026, 11:42:04 PM EDT</p>
-                <p className="lp-sos-small">This is an automated safety alert from the Flock app. If this is an emergency, call your local emergency number. Replying to this message does not reach Maya.</p>
+                <p className="lp-sos-small">This is an automated safety alert from the Flock app. If this is an emergency, call your local emergency number. Replying to this message does not reach the maintainer.</p>
               </div>
               <p className="lp-sos-cap">The actual email, word for word.</p>
             </div>

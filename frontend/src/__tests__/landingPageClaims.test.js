@@ -311,13 +311,13 @@ describe('the page only sells things that exist', () => {
 
     // Subject: the alert's subject with the name filled in.
     expect(safety).toContain("`🚨 ${updateKind ? 'Update: ' : ''}Emergency Alert from ${safeSubjectText(userName)}`");
-    // Maya, the person whose Friday the page follows.
-    expect(card).toContain('🚨 Emergency Alert from Maya');
+    // the maintainer, the person whose Friday the page follows.
+    expect(card).toContain('🚨 Emergency Alert from the maintainer');
 
     // Body: the headline, the button for a precise fix, the accuracy line and
     // the timestamp line, in the words the template uses.
     expect(safety).toContain('<strong>${safeName}</strong> needs help');
-    expect(card).toContain('Maya needs help');
+    expect(card).toContain('the maintainer needs help');
     expect(safety).toContain("'View Location on Map'");
     expect(card).toContain('View Location on Map');
     expect(safety).toContain('Accurate to ${accuracyPhrase(fixMetres)}.');
@@ -328,13 +328,13 @@ describe('the page only sells things that exist', () => {
     // Since 2026-10-21 the card is as tall as the sheet beside it, and it is
     // filled with two more of the email's own lines, not invented ones: the
     // opening sentence, and the line that tells each contact how many others
-    // were asked. Maya's sheet says two contacts will be emailed.
+    // were asked. the maintainer's sheet says two contacts will be emailed.
     expect(safety).toContain('${safeName} has triggered an emergency alert on the <strong>Flock</strong> app and may need your assistance.');
-    expect(card).toContain('Maya has triggered an emergency alert on the Flock app and may need your assistance.');
+    expect(card).toContain('the maintainer has triggered an emergency alert on the Flock app and may need your assistance.');
     expect(safety).toContain('You are one of ${withEmail.length} people ${safeName} asked us to alert.');
-    expect(card).toContain('You are one of 2 people Maya asked us to alert.');
+    expect(card).toContain('You are one of 2 people the maintainer asked us to alert.');
     expect(safety).toContain('This is an automated safety alert from the Flock app. If this is an emergency, call your local emergency number. Replying to this message does not reach ${safeName}.');
-    expect(card).toContain('This is an automated safety alert from the Flock app. If this is an emergency, call your local emergency number. Replying to this message does not reach Maya.');
+    expect(card).toContain('This is an automated safety alert from the Flock app. If this is an emergency, call your local emergency number. Replying to this message does not reach the maintainer.');
   });
 
   test('nothing on the page claims a team that does not exist', () => {

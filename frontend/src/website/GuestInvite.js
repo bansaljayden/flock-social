@@ -1856,7 +1856,7 @@ export default function GuestInvite() {
                   type="text"
                   value={name}
                   onChange={(e) => { setName(e.target.value); if (nameProblem) setNameProblem(false); }}
-                  placeholder="Maya"
+                  placeholder="Tommy"
                   autoComplete="name"
                   enterKeyHint="go"
                   maxLength={60}

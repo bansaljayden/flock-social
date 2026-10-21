@@ -1119,7 +1119,7 @@ html:has(.lp) body { overflow-x: clip; }
 .lp-sos-meta {
   display: grid;
   /* minmax(0, 1fr) on the value column: a bare 1fr floors the track at its
-     content's min-content width, and "Emergency Alert from Maya" is the
+     content's min-content width, and "Emergency Alert from the maintainer" is the
      longest string in the section. */
   grid-template-columns: auto minmax(0, 1fr);
   gap: 6px 14px;

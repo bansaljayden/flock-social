@@ -1,8 +1,11 @@
 # Where the shipped captures are used
 
 Captured by `frontend/scripts/capture-screenshots.mjs` on 2026-10-21 against a
-seeded local stack: Maya Chen's phone, her friends Jordan, Sam, Priya and Leo,
-and the invented venues The Copper Finch, Juniper Bowl and Marigold Diner.
+seeded local stack: Jayden Bansal's phone, Asad Ali (who pays the bill),
+their friends Nick Ferraro, Kaitlyn Brennan and Tommy Walsh, and the
+invented venues The Copper Finch, Juniper Bowl and Marigold Diner. The Nest
+and SOS frames come from a default run; the rest from a run with
+`SHOTS_SCENE=bill`, which leaves the camera account's dinner share unpaid.
 Every venue picture is a drawing from `scripts/shot-art.mjs`. No Google Places
 photo appears in any frame, and none may: `public/` is served from
 flockcorp.com, copied into every Capacitor build and published.
