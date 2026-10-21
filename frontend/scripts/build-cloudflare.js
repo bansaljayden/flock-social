@@ -129,7 +129,12 @@ const ROUTE_CHUNKS = [
 // _headers already sets on "/" instead of replacing it. Anything not found
 // (a chunk renamed, a fixture without a manifest) is skipped, never fatal:
 // a missing hint costs speed, a failed build costs the deploy.
-function routePreloads(out) {
+//
+// A route that was prerendered gets the face alone: its stylesheets are in
+// the HTML and its scripts wait for the first paint (servableSnapshot), so a
+// hint for either would be a second download or the early one the snapshot
+// is built to avoid.
+function routePreloads(out, prerendered = []) {
   const manifestPath = path.join(out, 'asset-manifest.json');
   if (!fs.existsSync(manifestPath)) return '';
   const { files = {} } = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
@@ -138,12 +143,13 @@ function routePreloads(out) {
   const font = find(/\/static\/media\/Literata-Display-600\.[0-9a-f]+\.woff2$/);
   const blocks = [];
   for (const { route, chunk } of ROUTE_CHUNKS) {
-    const js = find(new RegExp('/static/js/' + chunk + '\\.[0-9a-f]+\\.chunk\\.js$'));
-    const css = find(new RegExp('/static/css/' + chunk + '\\.[0-9a-f]+\\.chunk\\.css$'));
+    const static_ = prerendered.includes(route);
+    const js = !static_ && find(new RegExp('/static/js/' + chunk + '\\.[0-9a-f]+\\.chunk\\.js$'));
+    const css = !static_ && find(new RegExp('/static/css/' + chunk + '\\.[0-9a-f]+\\.chunk\\.css$'));
     const links = [];
     if (css) links.push('<' + css + '>; rel=preload; as=style');
     if (js) links.push('<' + js + '>; rel=preload; as=script');
-    if (font && links.length) links.push('<' + font + '>; rel=preload; as=font; type="font/woff2"; crossorigin');
+    if (font && (links.length || static_)) links.push('<' + font + '>; rel=preload; as=font; type="font/woff2"; crossorigin');
     if (links.length) blocks.push(route + '\n  Link: ' + links.join(', '));
   }
   return blocks.length ? '\n' + blocks.join('\n\n') + '\n' : '';
@@ -176,30 +182,68 @@ const PRERENDER = [
   { route: '/research', file: 'research.html' },
 ];
 
-// The snapshot, made servable. The page's own JS chunks (the ones the
-// snapshot's load fetched besides main.js) are named as preloads, so they come
-// down beside main.js instead of after it has run; webpack removes its chunk
-// <script> tags once they load, and any still in the DOM (marked data-webpack)
-// are swapped for preloads too, since as plain head scripts they would block
-// the paint. The display face is preloaded unless the page already asked for
-// it. The chunk CSS <link>s stay, so the page paints styled. #root is marked
-// so the client knows the HTML is already there.
-function servableSnapshot(html, { scripts = [], font = null } = {}) {
+// The snapshot, made servable.
+//
+// Scripts: the HTML is already the page, so nothing has to run before the
+// first paint, and nothing should share the connection with what that paint
+// needs. main.js's tag gives way to cloudflare/paint-first.js (PAINT_FIRST),
+// which fetches main.js and the page's own chunks once the browser reports
+// the first contentful paint. The chunks are the ones the snapshot's load
+// fetched besides main.js, plus any webpack left in the DOM as data-webpack
+// tags; they are named on the loader's tag, not hinted in the head, where they
+// would be fetched at once. On Lighthouse's phone run of "/" (2026-10-21) a
+// page that fetched main.js beside the hero put LCP at 3.3 s; with the
+// scripts blocked outright it was 2.4 s, and the app's own tasks after the
+// paint are each under 20 ms.
+//
+// Stylesheets: each one the page links from /static/css/ is written into the
+// head as a <style> in the same place, so the first paint waits on the HTML
+// alone, not on two more requests. It keeps the file's path as data-href,
+// which is the mark webpack's CSS loader looks for before fetching a chunk's
+// stylesheet, so the app does not download it again. Their url()s are all
+// root-relative (/static/media/...), so they resolve the same from the page.
+//
+// The display face is preloaded unless the page already asked for it. #root is
+// marked so the client knows the HTML is already there.
+function servableSnapshot(html, { scripts = [], font = null, css = () => null, loader } = {}) {
+  if (!loader) throw new Error('servableSnapshot needs the paint-first loader\'s URL');
+  const chunks = [];
+  const name = (src) => { if (!chunks.includes(src)) chunks.push(src); };
   let out = html.replace(/<script\b[^>]*\bdata-webpack="[^"]*"[^>]*><\/script>/g, (tag) => {
     const src = /\bsrc="([^"]+)"/.exec(tag);
-    return src ? '<link rel="preload" as="script" href="' + src[1] + '">' : '';
+    if (src) name(src[1]);
+    return '';
   });
-  const hints = scripts
-    .filter((src) => !out.includes('href="' + src + '"'))
-    .map((src) => '<link rel="preload" as="script" href="' + src + '">');
+  scripts.forEach(name);
+
+  const entry = /<script defer="defer" src="(\/static\/js\/main\.[0-9a-f]+\.js)"><\/script>/.exec(out);
+  if (!entry) throw new Error('the snapshot has no main.js <script> to hand to the loader');
+  out = out.replace(entry[0], () => '<script defer="defer" src="' + loader + '" data-main="' + entry[1]
+    + '" data-chunks="' + chunks.join(' ') + '"></script>');
+
+  out = out.replace(/<link\b[^>]*>/g, (tag) => {
+    const href = /\bhref="(\/static\/css\/[^"]+\.css)"/.exec(tag);
+    if (!href || !/\brel="stylesheet"/.test(tag)) return tag;
+    const text = css(href[1]);
+    if (typeof text !== 'string' || /<\/style/i.test(text)) return tag;
+    return '<style data-href="' + href[1] + '">' + text + '</style>';
+  });
+
   if (font && !out.includes('href="' + font + '"')) {
-    hints.push('<link rel="preload" as="font" type="font/woff2" href="' + font + '" crossorigin="anonymous">');
+    out = out.replace('</head>', () => '<link rel="preload" as="font" type="font/woff2" href="' + font + '" crossorigin="anonymous"></head>');
   }
-  if (hints.length) out = out.replace('</head>', hints.join('') + '</head>');
   out = out.replace('<div id="root">', '<div id="root" data-prerendered="">');
   if (!out.includes('<div id="root" data-prerendered="">')) throw new Error('no <div id="root"> in the snapshot');
   if (!/<h1[\s>]/.test(out)) throw new Error('the snapshot has no h1');
   return out;
+}
+
+// cloudflare/paint-first.js under a name that changes with its bytes, since
+// /static/ is cached for a year as immutable.
+function paintFirst() {
+  const source = fs.readFileSync(path.join(CONFIG, 'paint-first.js'), 'utf8');
+  const hash = require('crypto').createHash('sha256').update(source).digest('hex').slice(0, 8);
+  return { source, file: path.join('static', 'js', 'paint-first.' + hash + '.js'), url: '/static/js/paint-first.' + hash + '.js' };
 }
 
 const TYPES = {
@@ -237,6 +281,11 @@ async function prerender(out) {
     const { files = {} } = JSON.parse(fs.readFileSync(path.join(out, 'asset-manifest.json'), 'utf8'));
     font = Object.values(files).find((u) => /\/static\/media\/Literata-Display-600\.[0-9a-f]+\.woff2$/.test(u)) || null;
   } catch (err) { /* no manifest: no font hint */ }
+  const loader = paintFirst();
+  const css = (href) => {
+    const file = path.join(out, href);
+    return file.startsWith(path.join(out, 'static', 'css')) && fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null;
+  };
   const snapshots = [];
   let browser;
   try {
@@ -272,7 +321,7 @@ async function prerender(out) {
             .filter((p) => /^\/static\/js\/.+\.js$/.test(p) && !/^\/static\/js\/main\./.test(p));
           return { html: document.documentElement.outerHTML, scripts };
         });
-        snapshots.push({ route, file, html: servableSnapshot('<!DOCTYPE html>' + snap.html, { scripts: snap.scripts, font }) });
+        snapshots.push({ route, file, html: servableSnapshot('<!DOCTYPE html>' + snap.html, { scripts: snap.scripts, font, css, loader: loader.url }) });
       } catch (err) {
         console.warn('build:cloudflare: no snapshot for ' + route + ' (' + err.message.split('\n')[0] + '); it stays client-rendered');
       } finally {
@@ -286,16 +335,18 @@ async function prerender(out) {
     server.close();
   }
   // Written only now, so no snapshot was taken from another one.
+  if (snapshots.length) fs.writeFileSync(path.join(out, loader.file), loader.source);
   for (const { file, html } of snapshots) fs.writeFileSync(path.join(out, file), html);
   return snapshots.map((s) => s.file);
 }
 
 // Everything after react-scripts: the Pages files go into `out`, then the
 // output is refused if Pages would serve it differently from Vercel.
-function finishOutput(out) {
+// `prerendered` is the routes prerender() wrote, for routePreloads.
+function finishOutput(out, { prerendered = [] } = {}) {
   if (!fs.existsSync(path.join(out, 'index.html'))) throw new Error(path.join(out, 'index.html') + ' is missing');
 
-  const headers = headersFile() + routePreloads(out);
+  const headers = headersFile() + routePreloads(out, prerendered);
   checkHeaders(headers);
   fs.writeFileSync(path.join(out, '_headers'), headers);
   fs.copyFileSync(path.join(CONFIG, '_redirects'), path.join(out, '_redirects'));
@@ -317,7 +368,7 @@ function finishOutput(out) {
 
 module.exports = {
   outputDir, checkHeaders, headersFile, checkRoutes, appSiteAssociation, finishOutput, routePreloads,
-  servableSnapshot, prerender, ROUTE_CHUNKS, PRERENDER, MAX_HEADER_RULES, MAX_HEADER_LINE,
+  servableSnapshot, paintFirst, prerender, ROUTE_CHUNKS, PRERENDER, MAX_HEADER_RULES, MAX_HEADER_LINE,
 };
 
 if (require.main === module) {
@@ -332,7 +383,7 @@ if (require.main === module) {
       const out = outputDir(process.env);
       const written = process.argv.includes('--no-prerender') ? [] : await prerender(out);
       if (written.length) console.log('build:cloudflare: prerendered ' + written.join(', '));
-      finishOutput(out);
+      finishOutput(out, { prerendered: PRERENDER.filter((p) => written.includes(p.file)).map((p) => p.route) });
       console.log('build:cloudflare: _headers, _redirects, _routes.json and the app-site-association file are in ' + out);
     } catch (err) {
       console.error('build:cloudflare: ' + err.message);
