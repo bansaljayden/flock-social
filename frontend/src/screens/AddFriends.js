@@ -170,7 +170,7 @@ export default function AddFriends({
     //
     // It goes where a search comes up empty: before anything is typed, and
     // after a search that found nobody. Same handler as the Contacts card
-    // (handleInviteFriend: the share sheet, or a text message where there is
+    // (handleInviteFriend: the share sheet, or the clipboard where there is
     // none), and disabled until the code it sends has loaded, as it is there.
     const inviteButton = (
       <button className="hit44 glass-btn glass-navy" onClick={(e) => { confirmClick(e); handleInviteFriend(); }} disabled={!myFriendCode}
