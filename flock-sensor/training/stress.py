@@ -331,6 +331,37 @@ def case_clipped_hot(rng):
     return c
 
 
+# -- contact heat (2026-10-21): seats left warm by a body, shaped and cooling ---
+# like real ones (synth.contact_heat). Scored and reported apart from the cases
+# in CASES, so CASES' mean stays the number already on record.
+
+def case_contact_seat_empty(rng):
+    c, amb, _ = room(rng)
+    s = synth.F_PX * synth.SS / rng.uniform(1.2, 4.0)
+    parts = (('seat', 'back'), ('seat',), ('cushion',))[int(rng.integers(3))]
+    synth.contact_heat(c, rng, amb, rng.uniform(.2, .8) * W, rng.uniform(.5, .85) * H, s, 99980,
+                       parts=parts, age=rng.uniform(0, 120))
+    return c
+
+
+def case_contact_seat_beside(rng):
+    c, amb, _ = room(rng)
+    d = rng.uniform(1.5, 3.5)
+    xf, yf = rng.uniform(.3, .7), rng.uniform(.22, .35)
+    s = synth.F_PX * synth.SS / d
+    side = rng.choice([-1, 1])
+    synth.contact_heat(c, rng, amb, xf * W + side * rng.uniform(.4, .7) * s, yf * H + rng.uniform(.6, .85) * s,
+                       s, 99981, parts=(('seat', 'back'), ('seat',))[int(rng.integers(2))], age=rng.uniform(0, 60))
+    person_at(c, rng, amb, d, xf, yf, pose='stand')
+    return c
+
+
+CONTACT_CASES = [
+    ('warm seat just left, shaped (nobody)', 0, case_contact_seat_empty),
+    ('person beside the seat they just left', 1, case_contact_seat_beside),
+]
+
+
 CASES += [
     ('wearing glasses', 1, case_glasses),
     ('wearing a mask', 1, case_mask),
@@ -353,25 +384,36 @@ def main(argv):
     if len(argv) > 2:
         # The crowd model, as the sensor loads it beside the main one.
         model.fine = sensor.PeopleModel(argv[2], sensor.THERMAL_MODEL_THRESHOLD)
-    rows = []
-    for name, truth, build in CASES:
-        # crc32, not hash(): a str hash changes with every process unless
-        # PYTHONHASHSEED is set, so hash() gave each run different frames.
-        rng = np.random.default_rng(zlib.crc32(name.encode()))
-        ok = near = rule_ok = 0
-        for _ in range(n):
-            t = finish(build(rng), rng)
-            frame = t.ravel().tolist()
-            said = model.read_crowd(frame)[2]   # counted exactly as the sensor counts
-            ok += said == truth
-            near += abs(said - truth) <= 1
-            rule_ok += sensor.count_thermal_clusters(frame) == truth
-        rows.append((ok / n, name, truth, rule_ok / n, near / n))
-    print(f'{"case":36s} {"truth":>5s} {"owl":>6s} {"+-1":>6s} {"rule":>6s}')
-    for score, name, truth, rule, near in rows:
-        flag = '  <- hole' if score < 0.8 else ''
-        print(f'{name:36s} {truth:5d} {score:6.0%} {near:6.0%} {rule:6.0%}{flag}')
+    def score(cases):
+        rows = []
+        for name, truth, build in cases:
+            # crc32, not hash(): a str hash changes with every process unless
+            # PYTHONHASHSEED is set, so hash() gave each run different frames.
+            rng = np.random.default_rng(zlib.crc32(name.encode()))
+            ok = near = rule_ok = 0
+            for _ in range(n):
+                t = finish(build(rng), rng)
+                frame = t.ravel().tolist()
+                said = model.read_crowd(frame)[2]   # counted exactly as the sensor counts
+                ok += said == truth
+                near += abs(said - truth) <= 1
+                rule_ok += sensor.count_thermal_clusters(frame) == truth
+            rows.append((ok / n, name, truth, rule_ok / n, near / n))
+        return rows
+
+    def show(rows):
+        print(f'{"case":36s} {"truth":>5s} {"owl":>6s} {"+-1":>6s} {"rule":>6s}')
+        for score_, name, truth, rule, near in rows:
+            flag = '  <- hole' if score_ < 0.8 else ''
+            print(f'{name:36s} {truth:5d} {score_:6.0%} {near:6.0%} {rule:6.0%}{flag}')
+
+    rows = score(CASES)
+    show(rows)
     print(f'\nmean {np.mean([r[0] for r in rows]):.0%}, worst {min(rows)[1]} ({min(rows)[0]:.0%})')
+    contact = score(CONTACT_CASES)
+    print(f'\ncontact heat, apart from the {len(CASES)} cases above:')
+    show(contact)
+    print(f'\ncontact heat mean {np.mean([r[0] for r in contact]):.0%}')
     return 0
 
 

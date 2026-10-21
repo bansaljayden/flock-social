@@ -206,12 +206,16 @@ def real_frame(real, rng, groups_x3=False):
 
 class Frames(IterableDataset):
     def __init__(self, seed, real_path=None, real_share=0.0, bank_path=None, bank_share=0.0,
-                 stride=4):
+                 stride=4, contact_heat=False):
         self.seed, self.real_path, self.real_share = seed, real_path, real_share
         self.stride = stride
         self.bank_path, self.bank_share = bank_path, bank_share
+        self.contact_heat = contact_heat
 
     def __iter__(self):
+        # Set here, in the worker, because a worker imports synth afresh: a flag set on the main process's module
+        # would not reach it. The main process keeps the default, so held-out frames stay owl-4.9's.
+        synth.CONTACT_HEAT = bool(self.contact_heat)
         info = torch.utils.data.get_worker_info()
         wid = info.id if info else 0
         rng = np.random.default_rng([self.seed, wid, int(time.time() * 1e6) % (1 << 31)])
@@ -403,6 +407,9 @@ def main(argv=None):
                     help="a folder from bank.py; its frames stand in for some freshly drawn ones")
     ap.add_argument('--bank-share', type=float, default=0.7,
                     help='of the generated frames, the share read from the bank')
+    ap.add_argument('--contact-heat', action='store_true',
+                    help='freshly drawn training frames get synth.CONTACT_HEAT: seats, cushions and table edges '
+                         'left warm by a body, shaped and cooling like real ones (off: the owl-4.9 generator)')
     ap.add_argument('--init', default=None,
                     help='a best.pt to start the shared layers from, such as owl-1')
     ap.add_argument('--name', default='owl-2',
@@ -431,7 +438,8 @@ def main(argv=None):
     opt = torch.optim.AdamW(net.parameters(), lr=args.lr, weight_decay=1e-4)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, args.lr, total_steps=args.steps, pct_start=0.05)
     loader = DataLoader(Frames(args.seed, args.real, args.real_share if args.real else 0.0,
-                               args.bank, args.bank_share if args.bank else 0.0, args.stride),
+                               args.bank, args.bank_share if args.bank else 0.0, args.stride,
+                               contact_heat=args.contact_heat),
                         batch_size=args.batch, num_workers=args.workers,
                         persistent_workers=True, prefetch_factor=4)
     val = held_out(1500)

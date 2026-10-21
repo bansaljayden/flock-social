@@ -52,6 +52,14 @@ _KIND_CLASS = {'mug': 'hot drink', 'plate': 'food', 'laptop': 'laptop',
 # Owner ids for objects start here, clear of any person id.
 OBJECT_ID0 = 10000
 W, H = COLS * SS, ROWS * SS
+# Contact heat (2026-10-21), off by default. Where somebody sat or leaned, fabric and wood keep their heat for
+# minutes. owl-4.9's warm seat is one flat rectangle at one temperature; a real one is shaped like the contact
+# (thighs and seat, a back against the backrest, forearms along a table edge), warmest where the contact was
+# firmest, and cools toward the room by Newton's law while the heat spreads sideways through the fabric. With this
+# False nothing new is drawn and every random draw is the one owl-4.9's generator made, so its frames are byte for
+# byte the same; train.py --contact-heat turns it on in the training workers only. Real thermal video showed the
+# need (a seat left warm read as a second person); that footage is a sealed test, so no number here is tuned to it.
+CONTACT_HEAT = False
 
 
 # ---------------------------------------------------------------------------
@@ -122,6 +130,22 @@ def rect(cx, cy, w, h, angle=0.0, corner=0.0):
     inside = np.minimum(np.maximum(u, v), 0)
     d = outside + inside - corner
     m = np.clip(0.5 - d, 0.0, 1.0)
+    return x0, y0, m
+
+
+def _union(*shapes):
+    """Several masks as one: (x0, y0, coverage) over their joint bounding box, the most of each pixel's coverage."""
+    shapes = [s for s in shapes if s is not None]
+    if not shapes:
+        return None
+    x0, y0 = min(s[0] for s in shapes), min(s[1] for s in shapes)
+    x1 = max(s[0] + s[2].shape[1] for s in shapes)
+    y1 = max(s[1] + s[2].shape[0] for s in shapes)
+    m = np.zeros((y1 - y0, x1 - x0), dtype=np.float32)
+    for sx, sy, sm in shapes:
+        h, w = sm.shape
+        view = m[sy - y0:sy - y0 + h, sx - x0:sx - x0 + w]
+        np.maximum(view, sm, out=view)
     return x0, y0, m
 
 
@@ -363,6 +387,60 @@ def hand_near_lens(c, rng, amb, oid=OCCLUDER):
                     cy - palm_h * 0.45, 0.011 * s), skin - rng.uniform(0.3, 2.5), owner=oid)
 
 
+def contact_heat(c, rng, amb, x, y, s, oid=-1, parts=('seat',), age=None):
+    """Heat a body left on furniture, painted at (x, y) for things s canvas px per metre away.
+
+    parts: any of 'seat' (two thighs and the seat behind them), 'back' (against a backrest, above the seat),
+    'cushion' (a pillow held against the body) and 'edge' (forearms along a table edge, no label). All parts share
+    one sitting: the surface got 60 to 90% of the way from the room to skin temperature, then cooled for `age`
+    seconds (0 to 6 minutes unless given) with a time constant of 1 to 4 minutes on fabric, 30 s to 2 minutes on a
+    hard edge. Older marks are fainter, wider and softer. Never warmer than skin, never colder than the room.
+    """
+    skin = rng.uniform(32.5, 34.5)
+    excess = max(0.0, skin - amb) * rng.uniform(0.6, 0.9)
+    hard = parts == ('edge',)
+    tau = rng.uniform(30.0, 120.0) if hard else rng.uniform(60.0, 240.0)
+    age = rng.uniform(0.0, 360.0) if age is None else float(age)
+    dt = excess * math.exp(-age / tau)
+    ang = rng.normal(0, 0.15)
+    shapes, weight = [], []
+    for part in parts:
+        if part == 'seat':
+            gap = 0.055 * s
+            shapes += [ellipse(x - gap, y, 0.075 * s, 0.17 * s, ang), ellipse(x + gap, y, 0.075 * s, 0.17 * s, ang),
+                       ellipse(x, y - 0.12 * s, 0.17 * s, 0.1 * s, ang)]
+            weight += [1.0, 1.0, 0.9]
+        elif part == 'back':
+            shapes.append(ellipse(x, y - 0.42 * s, 0.14 * s, 0.2 * s, ang))
+            weight.append(rng.uniform(0.4, 0.7))      # through clothing, a lighter contact
+        elif part == 'cushion':
+            shapes.append(ellipse(x, y, 0.2 * s, 0.12 * s, rng.normal(0, 0.3)))
+            weight.append(rng.uniform(0.6, 1.0))
+        elif part == 'edge':
+            half = rng.uniform(0.12, 0.2) * s
+            a = rng.normal(0, 0.12)
+            shapes.append(capsule(x - half * math.cos(a), y - half * math.sin(a),
+                                  x + half * math.cos(a), y + half * math.sin(a), 0.03 * s))
+            weight.append(rng.uniform(0.5, 0.9))
+    kept = [(sh, wt) for sh, wt in zip(shapes, weight) if sh is not None]
+    shape = _union(*[sh for sh, _ in kept])
+    if shape is None:
+        return
+    x0, y0, m = shape
+    strength = np.zeros_like(m)
+    for (sx, sy, sm), wt in kept:
+        h, w = sm.shape
+        view = strength[sy - y0:sy - y0 + h, sx - x0:sx - x0 + w]
+        np.maximum(view, sm * wt, out=view)
+    spread = 0.6 + 2.5 * math.sqrt(age / 360.0)
+    core = gaussian_filter(strength, spread)
+    core = core / max(float(core.max()), 1e-6)
+    field = amb + dt * (0.55 + 0.45 * core) * (strength > 0).astype(np.float32) + rng.normal(0, 0.08, m.shape)
+    blend = np.clip(gaussian_filter(m, spread * 0.5) * 1.2, 0.0, 1.0).astype(np.float32)
+    field = np.clip(field, amb - 0.3, skin).astype(np.float32)
+    c.paint((x0, y0, blend), None, owner=-1 if hard else oid, field=field)
+
+
 def distractor(c, rng, amb, oid=-1, kind=None):
     """Draw one thing that is warm and is not a person. Returns its class
     name (see CLASSES), or None for a patch of sun, which is background."""
@@ -436,9 +514,14 @@ def distractor(c, rng, amb, oid=-1, kind=None):
         paint(ellipse(hx + 0.02 * s * big, y - 0.1 * s * big, 0.014 * s * big, 0.014 * s * big), hot)
         paint(ellipse(hx, y - 0.15 * s * big, 0.02 * s * big, 0.03 * s * big), hot - rng.uniform(0, 2))
     elif kind == 'seat':
-        # Just left: 4 to 8C over the room on fabric, fading over minutes.
-        paint(rect(x, y, 0.42 * s, 0.4 * s, corner=0.05 * s),
-              amb + rng.uniform(4.0, 8.0) * rng.uniform(0.2, 1.0))
+        if CONTACT_HEAT:
+            # Shaped like the contact and cooling, not a flat card (see CONTACT_HEAT).
+            parts = (('seat', 'back'), ('seat',), ('cushion',))[int(rng.integers(3))]
+            contact_heat(c, rng, amb, x, y, s, oid, parts=parts)
+        else:
+            # Just left: 4 to 8C over the room on fabric, fading over minutes.
+            paint(rect(x, y, 0.42 * s, 0.4 * s, corner=0.05 * s),
+                  amb + rng.uniform(4.0, 8.0) * rng.uniform(0.2, 1.0))
     elif kind == 'plate':
         paint(ellipse(x, y, 0.13 * s, 0.05 * s), rng.uniform(38, 60))
     elif kind == 'sun':
@@ -550,6 +633,26 @@ def scene_full(rng):
     order = sorted(placed, key=lambda p: -p[0])
     for _ in range(int(rng.integers(0, 5))):
         add_distractor()
+    # Contact heat (CONTACT_HEAT only): the seat somebody just got up from, beside them, or the seats the room's last
+    # people left warm, and forearms' heat along a table edge. Drawn before the people, so a person standing in front
+    # of the seat they left covers it. A warm seat is named, never counted; an edge mark gets no label at all.
+    if CONTACT_HEAT and not overhead:
+        if n == 0 and rng.random() < 0.35:
+            for _ in range(int(rng.integers(1, 3))):
+                sd = rng.uniform(1.0, 5.0)
+                contact_heat(c, rng, amb, rng.uniform(0.1, 0.9) * W, rng.uniform(0.45, 0.95) * H, F_PX * SS / sd,
+                             new_id('warm seat'),
+                             parts=(('seat', 'back'), ('seat',), ('cushion',))[int(rng.integers(3))])
+        elif n and rng.random() < 0.25:
+            pd, phx, phy, _ = placed[int(rng.integers(len(placed)))]
+            ps = F_PX * SS / pd
+            contact_heat(c, rng, amb, phx + rng.choice([-1, 1]) * rng.uniform(0.35, 0.7) * ps,
+                         phy + rng.uniform(0.55, 0.85) * ps, ps, new_id('warm seat'),
+                         parts=(('seat', 'back'), ('seat',))[int(rng.integers(2))], age=rng.uniform(0.0, 90.0))
+        if rng.random() < 0.15:
+            ed = rng.uniform(1.0, 4.0)
+            contact_heat(c, rng, amb, rng.uniform(0.15, 0.85) * W, rng.uniform(0.5, 0.9) * H, F_PX * SS / ed,
+                         parts=('edge',))
     visible = []
     for d, hx, hy, pid in order:
         head, torso = person(c, rng, amb, d, hx, hy, pid, overhead=overhead)
