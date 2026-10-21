@@ -172,21 +172,33 @@ describe('LandingPage: images', () => {
     unmount();
   });
 
-  test('the plates load lazily, declare their size, and carry a caption', () => {
+  test('the plates load lazily, declare their size, and carry a caption or a full alt', () => {
     // Every one sits below the fold, so none may compete with the hero for the
     // first paint, and a plate with no box would shift the text as it loads.
+    // The vote capture lost its caption on 2026-10-21 at the maintainer's ask (the
+    // beat's own words name it), so a plate may go without one, but only the
+    // vote, and its image must still say what is on the screen.
     const Page = load('LandingPage');
     const { container, unmount } = render(React.createElement(Page));
     // Three beats, the venue dashboard, and since 2026-10-21 the SOS sheet.
     const plates = container.querySelectorAll('figure.lp-plate');
     expect(plates).toHaveLength(5);
+    let uncaptioned = 0;
     for (const fig of plates) {
       const img = fig.querySelector('img');
       expect(img.getAttribute('loading')).toBe('lazy');
       expect(img.getAttribute('width')).toBe('390');
       expect(img.getAttribute('height')).toBe('844');
-      expect(fig.querySelector('figcaption').textContent.trim().length).toBeGreaterThan(10);
+      const cap = fig.querySelector('figcaption');
+      if (cap) {
+        expect(cap.textContent.trim().length).toBeGreaterThan(10);
+      } else {
+        uncaptioned += 1;
+        expect(img.getAttribute('src')).toMatch(/\/chat-dark/);
+        expect(img.getAttribute('alt').length).toBeGreaterThan(40);
+      }
     }
+    expect(uncaptioned).toBeLessThanOrEqual(1);
     unmount();
   });
 });
