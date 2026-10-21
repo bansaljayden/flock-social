@@ -97,11 +97,9 @@ export default function SiteFooter({
           </ul>
           <div className="lp-footer-base">
             <span>&copy; {year} Flock Social LLC.</span>
-            {/* The data credit doubles as BestTime's standing backlink offer
-                (free credits for a link). A plain factual credit in the base
-                row, the same register as the copyright beside it: crowd
-                forecasts really are built on their foot-traffic data. */}
-            <span>Crowd data by <a href="https://besttime.app" target="_blank" rel="noopener noreferrer" style={{ color: 'inherit' }}>BestTime.app</a></span>
+            {/* No data-provider credit here (the maintainer, 2026-10-21: "get rid of
+                this"). BestTime's terms ask for none; the line was only their
+                optional link-for-credits offer. */}
           </div>
         </div>
       </footer>
