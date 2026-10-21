@@ -1397,6 +1397,7 @@ html:has(.lp) body { overflow-x: clip; }
 .lp-live-head { max-width: 40rem; }
 .lp-live-head h2 { margin-bottom: 16px; }
 .lp-live-note { margin-top: 12px; font-size: 14.5px; color: var(--ink-3); }
+.lp-live-more a { color: var(--steel); font-weight: 600; text-underline-offset: 3px; }
 
 /* One Friday plan, read top to bottom. The dead group chat comes first, then
    the same Friday in five beats, each a time and one short paragraph in a band

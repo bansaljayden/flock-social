@@ -315,7 +315,7 @@ describe('finishing an output directory', () => {
   test('a prerendered snapshot hands its scripts to the loader, inlines its CSS, and marks #root', () => {
     // The four marketing routes are written as real HTML; index.html stays
     // the shell, so "/" is landing.html and nothing claims index.html.
-    expect(build.PRERENDER.map((p) => p.file)).toEqual(['landing.html', 'how-it-works.html', 'about.html', 'research.html']);
+    expect(build.PRERENDER.map((p) => p.file)).toEqual(['landing.html', 'how-it-works.html', 'about.html', 'research.html', 'flux.html', 'ai.html']);
     expect(build.PRERENDER.find((p) => p.route === '/').file).toBe('landing.html');
 
     const snapshot = '<!DOCTYPE html><html><head>'

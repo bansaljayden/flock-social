@@ -448,6 +448,14 @@ export default function LandingPage() {
             <p className="lp-live-note">
               Three reports from people at a venue move its score for that night and hour.
             </p>
+            {/* The two pages behind this number, as one line: /ai for the
+                models (it says plainly what the card serves today), /flux for
+                the counter being built. Teasers only; the 3D lives on /flux. */}
+            <p className="lp-live-note lp-live-more">
+              We’re building <a href="/flux">Flux</a>, a box that counts the people
+              in a venue and sends Flock only numbers. The four models in Flock are
+              on <a href="/ai">How the AI works</a>.
+            </p>
           </div>
           <img
             className="lp-art lp-live-art"

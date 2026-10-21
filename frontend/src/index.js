@@ -952,6 +952,21 @@ const PAGES = [
     load: () => import(/* webpackChunkName: "howitworks" */ './website/HowItWorksPage'),
     Loading: PaperLoading,
   }]),
+  // Flux, the people counter, with its case on one slider (the 3D model is a
+  // chunk of its own that the page loads on approach), and the four AI
+  // models with the pitch figures. Web only, like How it works: /ai
+  // describes Roost, and nothing inside the app links to either.
+  ...(process.env.REACT_APP_PURCHASES === 'off' ? [] : [{
+    id: 'flux',
+    test: (p) => p === '/flux' && !isNativeShell,
+    load: () => import(/* webpackChunkName: "flux" */ './website/FluxPage'),
+    Loading: PaperLoading,
+  }, {
+    id: 'ai',
+    test: (p) => p === '/ai' && !isNativeShell,
+    load: () => import(/* webpackChunkName: "aipage" */ './website/AiPage'),
+    Loading: PaperLoading,
+  }]),
   // Flock Pro on the web. WEB ONLY: inside the native shell this route does
   // not match, so the WebView falls through to the app like any other path.
   // Apple does not allow the app to point at a web price outside the US, and

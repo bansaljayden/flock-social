@@ -146,6 +146,7 @@ const PAGE_BLOCKS = {
     ["h2", "See how busy it is before anyone leaves."],
     ["p", "Search any place below. Flock starts from how busy it usually gets at this hour and adjusts with live readings when it has them. Packed? It suggests a quieter spot nearby."],
     ["p", "Three reports from people at a venue move its score for that night and hour."],
+    ["p", "We’re building Flux, a box that counts the people in a venue and sends Flock only numbers. The four models in Flock are on How the AI works."],
     ["h2", "Everyone said yes. Then the chat went quiet."],
     ["p", "Here’s that same Friday in Flock: five steps, and nobody has to carry it."],
     ["p", "Thursday, 4:10 PM"],

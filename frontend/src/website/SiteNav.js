@@ -8,10 +8,12 @@ import React, { useEffect, useRef, useState } from 'react';
 
    NAV_LINKS is the one list both menus read, so the two can never offer
    different destinations. The # entries are sections of the landing page; off
-   it they point at /#section. How it works, Research and About are pages of
-   their own. */
+   it they point at /#section. How it works, How the AI works, Flux, Research
+   and About are pages of their own. */
 export const NAV_LINKS = [
   { href: '/how-it-works', label: 'How it works' },
+  { href: '/ai', label: 'How the AI works' },
+  { href: '/flux', label: 'Flux' },
   { href: '#try', label: 'Try it live' },
   { href: '#venues', label: 'For venues' },
   { href: '#pricing', label: 'Pricing' },

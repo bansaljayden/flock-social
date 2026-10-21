@@ -147,6 +147,8 @@
   margin-bottom: 8px;
 }
 .hw-ai dd { margin: 0; font-size: 16.5px; line-height: 1.6; color: var(--cream-2); max-width: 46ch; }
+.hw-ai-more { margin-top: clamp(28px, 4vw, 40px); font-size: 16px; color: var(--cream-2); }
+.hw-ai-more a { color: var(--steel-lift); font-weight: 600; text-underline-offset: 3px; }
 
 /* ---------- venues ---------- */
 

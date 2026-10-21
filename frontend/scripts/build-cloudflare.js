@@ -14,7 +14,8 @@
 //   scripts/build.js already turns them off when CF_PAGES is set, so this is
 //   the backstop for an explicit GENERATE_SOURCEMAP=true.
 //
-// - build/landing.html, how-it-works.html, about.html and research.html: the
+// - build/landing.html, how-it-works.html, about.html, research.html,
+//   flux.html and ai.html: the
 //   marketing routes as real HTML, snapshotted from the build itself (see
 //   prerender below). index.html stays the empty shell every app route needs.
 //
@@ -117,6 +118,8 @@ function filesUnder(dir, found = []) {
 const ROUTE_CHUNKS = [
   { route: '/', chunk: 'landing' },
   { route: '/how-it-works', chunk: 'howitworks' },
+  { route: '/flux', chunk: 'flux' },
+  { route: '/ai', chunk: 'aipage' },
 ];
 
 // Preload hints for those routes, appended to _headers. On a first visit the
@@ -180,6 +183,8 @@ const PRERENDER = [
   { route: '/how-it-works', file: 'how-it-works.html' },
   { route: '/about', file: 'about.html' },
   { route: '/research', file: 'research.html' },
+  { route: '/flux', file: 'flux.html' },
+  { route: '/ai', file: 'ai.html' },
 ];
 
 // The snapshot, made servable.
@@ -250,6 +255,7 @@ const TYPES = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json',
   '.png': 'image/png', '.webp': 'image/webp', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
   '.woff2': 'font/woff2', '.txt': 'text/plain', '.pdf': 'application/pdf', '.mp4': 'video/mp4',
+  '.avif': 'image/avif',
 };
 
 // The build over HTTP, with the fallback Pages has: a path that is not a file
