@@ -68,7 +68,7 @@ try:
 except ImportError:  # pragma: no cover
     fcntl = None
 
-VERSION = '1.21.0'
+VERSION = '1.22.0'
 
 # ---------------------------------------------------------------------------
 # Config
@@ -3456,6 +3456,34 @@ def tof_occupied(frame, floor_mm, margin_mm=None):
     return [i for i, d in enumerate(frame) if 0 < d < limit]
 
 
+TOF_CONFIRM_FRAMES = 2
+# Below this many zones with a floor, the panel asks for the counter to be
+# pointed down at the doorway: it still counts in the zones it has, but a
+# person can cross where it is blind.
+TOF_MIN_COVERAGE = 48
+
+
+def tof_confirmed(occupied, streak, trusted, frames=None):
+    """The occupied zones worth believing, from one frame's raw list.
+
+    A zone counts only where the floor is trusted and it has read somebody in
+    `frames` frames running; `streak` carries the run from frame to frame and
+    is updated in place. One frame of a zone reading near is how noise looks,
+    and at 15 Hz a person under a zone stays for several.
+    """
+    need = TOF_CONFIRM_FRAMES if frames is None else frames
+    hit = set(occupied)
+    out = []
+    for z in range(len(streak)):
+        if z in hit and (trusted is None or trusted[z]):
+            streak[z] += 1
+            if streak[z] >= need:
+                out.append(z)
+        else:
+            streak[z] = 0
+    return out
+
+
 def tof_clusters(occupied, min_cluster=None):
     """Group occupied zones into people.
 
@@ -4152,12 +4180,26 @@ class TofBackground:
     ALPHA = 0.02
     ABSORB_SECONDS = 60
 
+    # A zone has a floor only if it returned a reading in this share of the
+    # learning frames. One pointed past the sensor's range, or at something it
+    # reads only now and then, flickers between nothing and stray distances,
+    # and every flicker used to count as somebody arriving: a recording of a
+    # counter that could see the floor in 9 of its 64 zones made 37 crossings
+    # in 20 seconds with nobody there.
+    TRUST_SHARE = 0.8
+
     def __init__(self, hz=None):
         self._seed = [[] for _ in range(64)]
         self._frames = 0
         self._held = [0] * 64
         self._absorb = max(1, int(self.ABSORB_SECONDS * (hz or TOF_HZ)))
         self.floor = None
+        self.trusted = None
+
+    @property
+    def coverage(self):
+        """Zones with a floor it trusts, out of 64; None while learning."""
+        return None if self.trusted is None else sum(self.trusted)
 
     @property
     def ready(self):
@@ -4174,6 +4216,8 @@ class TofBackground:
                 # inside the sensor's range, so its floor is the edge of it.
                 self.floor = [float(sorted(v)[len(v) // 2]) if v else float(VL53_RANGE_MM)
                               for v in self._seed]
+                need = self.TRUST_SHARE * self._frames
+                self.trusted = [len(v) >= need for v in self._seed]
                 self._seed = None
             return
         for z, d in enumerate(frame):
@@ -4374,6 +4418,7 @@ def tof_loop():
         dev = bus = None
         tracker = CrossingTracker(axis=TOF_AXIS)
         background = TofBackground()
+        streak = [0] * 64
         try:
             bus = I2CBus(TOF_I2C_BUS, TOF_I2C_ADDR)
             dev = Vl53l8cx(bus)
@@ -4421,7 +4466,8 @@ def tof_loop():
                                   'Doorway counter: a corrupted frame was dropped')
                     continue
                 background.observe(frame)
-                occupied = (tof_occupied(frame, background.floor)
+                occupied = (tof_confirmed(tof_occupied(frame, background.floor),
+                                          streak, background.trusted)
                             if background.ready else [])
                 if last_frame - last_view >= 0.1:
                     last_view = last_frame
@@ -4429,6 +4475,7 @@ def tof_loop():
                         _state['tof_view'] = {
                             'frame': tuple(frame),
                             'floor': tuple(background.floor) if background.ready else None,
+                            'trusted': tuple(background.trusted) if background.ready else None,
                             'occupied': frozenset(occupied),
                         }
                 if not background.ready:
@@ -4521,6 +4568,7 @@ def tof_test(seconds=None):
     print('')
     tracker = CrossingTracker(axis=TOF_AXIS)
     background = TofBackground()
+    streak = [0] * 64
     came_in = went_out = frames = 0
     deadline = None if seconds is None else time.monotonic() + seconds
     last_print = 0.0
@@ -4533,10 +4581,18 @@ def tof_test(seconds=None):
             if frame is None:
                 continue
             frames += 1
+            was_ready = background.ready
             background.observe(frame)
             if not background.ready:
                 continue
-            occupied = set(tof_occupied(frame, background.floor))
+            if not was_ready:
+                print(f'  It can see the floor in {background.coverage} of 64 zones.')
+                if background.coverage < TOF_MIN_COVERAGE:
+                    print('  Too few to count well: point it down at the floor, 1 to 3 m away.')
+                    print('  Zones without a floor never count, so they cannot make phantoms.')
+                print('')
+            occupied = set(tof_confirmed(tof_occupied(frame, background.floor),
+                                         streak, background.trusted))
             i, o = tracker.observe(tof_clusters(occupied))
             if TOF_FLIP_DIRECTION:
                 i, o = o, i
@@ -4960,7 +5016,7 @@ def thing_colour(label):
     return BRAND_CREAM
 
 
-def tof_status_line(source, up_since, restarts, now, learning=False):
+def tof_status_line(source, up_since, restarts, now, learning=False, coverage=None):
     """The doorway counter's health in words, and the colour to set it in.
 
     Pure, so it is tested without a panel. A counter that drops and comes back
@@ -4979,6 +5035,10 @@ def tof_status_line(source, up_since, restarts, now, learning=False):
         else:
             text = f'Connected for {up // 3600} h {up % 3600 // 60} min'
         tone = BRAND_GREEN
+        if coverage is not None and coverage < TOF_MIN_COVERAGE:
+            text = (f'It sees the floor in only {coverage} of 64 squares. '
+                    'Point it down at the doorway floor')
+            tone = BRAND_AMBER
     if restarts:
         text += f'. Dropped {restarts} time{"s" if restarts != 1 else ""} since power-on'
     return text, tone
@@ -5429,8 +5489,12 @@ class Panel:
                 z = r * TOF_COLS + c
                 d = frame[z] if z < len(frame) else 0
                 rect = pg.Rect(x + c * (cell + gap), y + r * (cell + gap), cell, cell)
-                shade = tof_cell_shade(d, floor[z] if floor else None)
+                blind = view.get('trusted') is not None and not view['trusted'][z]
+                shade = BRAND_NAVY if blind else tof_cell_shade(d, floor[z] if floor else None)
                 pg.draw.rect(self.screen, shade, rect, border_radius=4)
+                if blind:
+                    # No floor here: drawn as an outline, and never counted.
+                    pg.draw.rect(self.screen, BRAND_RULE, rect, width=1, border_radius=4)
                 if z in occupied:
                     pg.draw.rect(self.screen, BRAND_GREEN, rect, width=3, border_radius=4)
                 ink = BRAND_NAVY if sum(shade) > 330 else BRAND_MUTED
@@ -5511,7 +5575,8 @@ class Panel:
         size = min(self.h - top - pad - legend_h, int(self.w * 0.48))
         if view is not None:
             self.door_grid(view, pad, top, size)
-            self.blit(self.f_body, 'Distance in cm. Lighter is nearer; green is somebody.',
+            self.blit(self.f_body, 'Distance in cm. Lighter is nearer, green is somebody, '
+                      'outlined sees no floor.',
                       BRAND_FAINT, (pad, top + size + 6))
         else:
             box = self.pygame.Rect(pad, top, size, size)
@@ -5943,7 +6008,9 @@ def display_loop():
             if dirty:
                 tof_status = (tof_status_line(
                     door_source, tof_up_since, tof_restarts, now,
-                    learning=bool(tof_view) and tof_view['floor'] is None)
+                    learning=bool(tof_view) and tof_view['floor'] is None,
+                    coverage=(sum(tof_view['trusted'])
+                              if tof_view and tof_view.get('trusted') else None))
                     if tof_fitted else None)
                 try:
                     if view == 'thermal':

@@ -4471,3 +4471,57 @@ class DoorCounterHealth(unittest.TestCase):
         self.assertEqual(main.tof_cell_shade(0, 2000), main.BRAND_NAVY)
         near = main.tof_cell_shade(800, 2000)
         self.assertGreater(sum(near), sum(main.tof_cell_shade(1800, 2000)))
+
+
+class DoorCounterNoPhantoms(unittest.TestCase):
+    """Zones without a floor, and one-frame flickers, never become people."""
+
+    def walk(self, frames):
+        bg = main.TofBackground(hz=15)
+        tr = main.CrossingTracker(axis='row')
+        streak = [0] * 64
+        came = went = 0
+        for f in frames:
+            bg.observe(f)
+            if not bg.ready:
+                continue
+            i, o = tr.observe(main.tof_clusters(
+                main.tof_confirmed(main.tof_occupied(f, bg.floor), streak, bg.trusted)))
+            came += i
+            went += o
+        return bg, came, went
+
+    def test_flicker_with_no_floor_counts_nothing(self):
+        import random
+        rnd = random.Random(7)
+        frames = []
+        for _ in range(300):
+            # Mostly no reading, now and then a stray distance: a counter
+            # pointed past its range.
+            frames.append([rnd.randint(400, 1300) if rnd.random() < 0.25 else 0
+                           for _ in range(64)])
+        bg, came, went = self.walk(frames)
+        self.assertLess(bg.coverage, main.TOF_MIN_COVERAGE)
+        self.assertEqual((came, went), (0, 0))
+
+    def test_a_person_walking_through_still_counts(self):
+        floor = [2400] * 64
+        frames = [list(floor) for _ in range(30)]
+        for row in list(range(8)) + [8, 8, 8]:
+            for _ in range(3):
+                f = list(floor)
+                if row < 8:
+                    for r in (row - 1, row):
+                        if 0 <= r < 8:
+                            for c in (3, 4):
+                                f[r * 8 + c] = 1300
+                frames.append(f)
+        frames += [list(floor) for _ in range(20)]
+        bg, came, went = self.walk(frames)
+        self.assertEqual(bg.coverage, 64)
+        self.assertEqual(came + went, 1)
+
+    def test_status_asks_for_the_floor_when_it_cannot_see_it(self):
+        text, tone = main.tof_status_line('tof', 0, 0, 120, coverage=9)
+        self.assertIn('9 of 64', text)
+        self.assertEqual(tone, main.BRAND_AMBER)
