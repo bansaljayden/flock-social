@@ -443,7 +443,9 @@ describe('targets, focus visibility, zoom floor (2.5.5 / 2.4.7 / source-level: j
     );
     const bg = container.querySelector('.auth-bg');
     expect(bg.getAttribute('aria-hidden')).toBe('true');
-    expect(container.querySelector('video').getAttribute('tabindex')).toBe('-1');
+    // The stock city footage is gone (2026-10-21): the backdrop is flat navy,
+    // so there is no video left to keep out of the tab order.
+    expect(container.querySelector('video')).toBeNull();
   });
 });
 

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo } from 'react';
 import './TapPage.css';
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -19,28 +19,12 @@ import './TapPage.css';
    saying what Flock is, one obviously primary action, and nothing on the
    critical path that the network can stall.
 
-   THE BUDGET, and why it is written down. Before the backdrop moved, the
-   whole route was a 1.4 KB JS chunk, a 1.3 KB CSS chunk, a 22 KB still and a
-   32 KB logo. bg-city.mp4 is 810 KB. That is not a rounding error against
-   this page, it is thirteen times everything else combined, so the clip is
-   allowed on exactly the terms below and no others:
-
-     • it is never in the markup at mount. The <video> ships with no src, so
-       the network has nothing to queue ahead of the logo, the headline or
-       the buttons. They paint first, every time, on every connection.
-     • the 22 KB poster is the design. The clip fades in OVER a page that was
-       already finished, and if it is refused, blocked, throttled or simply
-       slow, what stays on screen is the page as designed rather than a hole
-       where a video was going to be.
-     • it is not fetched at all when the OS or the connection has said no:
-       prefers-reduced-motion, Data Saver, or a 2g effective type.
-
-   Same contract the login and signup screens run (components/auth/AuthShell.js,
-   AuthBackdrop) and the same code, copied rather than imported for the reason
-   the stylesheet gives about its tokens: AuthShell also carries the icon set
-   and a 400-line stylesheet, and this route is the one where the connection is
-   worst. Fifteen lines duplicated is cheaper than that import. If the swap
-   logic changes there, change it here too.
+   THE BACKDROP is Flock's navy and nothing else. Until 2026-10-21 it was
+   stock drone footage of Lower Manhattan (bg-city.mp4, 810 KB) over a still of
+   the same clip: a city Flock was not built in, and the first frame a judge
+   saw after tapping a card. The audit named it a stock-media tell. Birdie,
+   standing at the bottom of the screen, is the one picture the page needs.
+   The whole route is now a small JS chunk, a small CSS chunk and the logo.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 /* ── SWITCH 1 OF 2: THE APP STORE BUTTON ────────────────────────────────────
@@ -146,120 +130,6 @@ function withApi(fn) {
   });
 }
 
-/* ── THE BACKDROP ───────────────────────────────────────────────────────────
-   Two reasons to never fetch the 810 KB clip: the user asked the OS for less
-   motion, or the connection/OS asked us for less data. Both are checked once,
-   before the src is ever assigned, so a "no" here costs zero bytes rather
-   than a cancelled request. Verbatim from AuthShell's wantsStill(). */
-const POSTER = '/bg-city-poster.jpg';
-const VIDEO = '/bg-city.mp4';
-
-const wantsStill = () => {
-  try {
-    if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return true;
-    const c = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
-    if (c && (c.saveData || /(^|-)2g$/.test(c.effectiveType || ''))) return true;
-  } catch (e) { /* no matchMedia / no NetworkInformation: fall through */ }
-  return false;
-};
-
-/* requestIdleCallback is the whole point: it will not run until the browser
-   has finished the work that paints the page. Safari got it in 16.4, so older
-   WebViews take the timeout instead. */
-const whenIdle = (fn) => (typeof window.requestIdleCallback === 'function'
-  ? window.requestIdleCallback(fn, { timeout: 2500 })
-  : window.setTimeout(fn, 700));
-const cancelIdle = (id) => (typeof window.cancelIdleCallback === 'function'
-  ? window.cancelIdleCallback(id)
-  : window.clearTimeout(id));
-
-/* The still and the clip are the same footage at the same treatment, so the
-   swap reads as the photograph starting to move rather than as a second
-   picture arriving. Everything that dims them lives on the wrapper (see
-   TapPage.css), which is what lets the video cross-fade over the plate
-   without the two briefly compositing to a brighter image than either.
-
-   Two ways this can go wrong and one way out of both. play() can be refused
-   (WKWebView does that when the muted ATTRIBUTE has not landed on the element
-   yet), or the file can never arrive at all: a 404, a captive portal, a
-   proxy that eats video. Either way the element stands down, the src is
-   dropped, and the still underneath is what stays on screen. No grey iOS
-   play glyph, no black rectangle, no second attempt.
-
-   standDown() clears `live` as well as the src, and that is the half that is
-   easy to leave out. A 404 in Chrome still resolves play(), so without it the
-   video sits at opacity 1 over the plate and the page only looks right
-   because the poster ATTRIBUTE happens to be the same image. That is a
-   correct page resting on a coincidence, and the day someone drops the
-   poster attribute it becomes a black rectangle. */
-function TapBackdrop() {
-  const ref = useRef(null);
-  const [live, setLive] = useState(false);
-
-  useEffect(() => {
-    const v = ref.current;
-    if (!v || wantsStill()) return undefined;
-
-    let cancelled = false;
-    const idle = whenIdle(() => {
-      if (cancelled || !v) return;
-      v.muted = true;
-      v.setAttribute('muted', '');
-      v.setAttribute('playsinline', '');
-      v.setAttribute('webkit-playsinline', '');
-      const standDown = () => {
-        if (!cancelled) setLive(false);
-        v.removeAttribute('src');
-        v.load();
-      };
-      const play = () => {
-        v.play().then(() => { if (!cancelled) setLive(true); }).catch(standDown);
-      };
-      v.addEventListener('canplay', play, { once: true });
-      v.addEventListener('error', standDown, { once: true });
-      v.src = VIDEO;
-      v.load();
-    });
-
-    return () => { cancelled = true; cancelIdle(idle); };
-  }, []);
-
-  return (
-    <div className="tap-bg" aria-hidden="true">
-      {/* Decorative, so alt is empty and the whole group is hidden from the
-          accessibility tree. lazy + low priority is deliberate on an image
-          that IS in the first viewport: it must never be queued ahead of the
-          logo, the font or the JS, and the navy underneath it is what the
-          page is actually designed against. */}
-      <img
-        className="tap-plate"
-        src={POSTER}
-        alt=""
-        width="640"
-        height="360"
-        loading="lazy"
-        decoding="async"
-        fetchPriority="low"
-      />
-      {/* No src. It is attached by the effect above, once, when the browser
-          is idle and only if nothing has said no. preload is "metadata" and
-          must never be "auto": auto is how an 810 KB clip gets in front of a
-          32 KB logo on venue wifi. */}
-      <video
-        ref={ref}
-        className={`tap-video${live ? ' is-live' : ''}`}
-        preload="metadata"
-        poster={POSTER}
-        loop
-        muted
-        playsInline
-        tabIndex={-1}
-        disablePictureInPicture
-      />
-    </div>
-  );
-}
-
 /* Apple's own mark, the same path LandingPage.js draws in its badge. Inline
    because one <svg> is cheaper than a request, and because this page must not
    depend on an icon module it would otherwise pull in whole. */
@@ -306,8 +176,6 @@ export default function TapPage() {
 
   return (
     <main className="tap">
-      <TapBackdrop />
-
       {/* NO SKIP LINK HERE, and that is a considered exception to DESIGN-STANDARD
           §Q1 rather than an omission. WCAG 2.4.1 is about bypassing repeated
           blocks of content, and this page has none: there is no nav, no
@@ -396,7 +264,7 @@ export default function TapPage() {
 
         <p className="tap-more">
           <a href="/about" onClick={() => record('about')}>
-            What Flock is, and why venues pay
+            Who makes Flock
           </a>
         </p>
       </div>
@@ -439,9 +307,8 @@ export default function TapPage() {
                entry because there is nothing a second entry would buy.
 
           WebP first with the PNG kept as the fallback for an engine that
-          cannot decode it. lazy + aria-hidden, so he queues behind the same
-          things the poster queues behind and says nothing to a screen
-          reader. */}
+          cannot decode it. lazy + aria-hidden, so he queues behind the logo,
+          the font and the JS and says nothing to a screen reader. */}
       <div className="tap-perch" aria-hidden="true">
         <picture>
           <source type="image/webp" srcSet="/birdie/birdie-body-400.webp" />
