@@ -1085,6 +1085,13 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
         is_open: p.currentOpeningHours?.openNow ?? null,
         lat: p.location?.latitude,
         lng: p.location?.longitude,
+        // NO PHOTO CREDIT HERE, ON PURPOSE. Google requires the photographer's
+        // name beside a Places photo, and routes/venueSearch.js sends one
+        // (utils/placePhotoCredit.js). This object is also the tool result the
+        // model reads, and a Google display name is whatever its owner typed,
+        // so it stays out of the prompt. The cards' photos are thumbnails
+        // under Google's rules: Details opens the venue sheet, which loads the
+        // credited photos from /api/venues/details.
         photo_url: p.photos?.[0]?.name ? `/api/venues/photo?ref=${encodeURIComponent(p.photos[0].name)}&maxwidth=400` : null,
       }));
       // Only a real answer is cached. An upstream error or an empty body is
