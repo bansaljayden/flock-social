@@ -43,6 +43,7 @@
  */
 import React from 'react';
 import Icons from './ui/Icons';
+import { GoogleMapsMark } from './ui/GoogleCredit';
 import { crowdLabelFor } from '../lib/crowd';
 import { onVenuePhotoError } from '../lib/venuePhoto';
 
@@ -170,6 +171,15 @@ export default function SearchResultsOverlay({
                 <div style={{ flex: 1, overflowY: 'auto', padding: '4px 12px 80px' }}>
                   {/* Skeleton cards while searching, matching the real card layout */}
                   {venueSearching && <ListSkeleton count={4} thumb={72} thumbRadius={10} label="Searching venues" />}
+                  {/* Every card below is Google Maps data off a Google map, so
+                      the list carries Google's attribution at its top. The
+                      photos go uncredited here as thumbnails: each card opens
+                      the venue sheet, which credits its photo in full. */}
+                  {!venueSearching && sorted.length > 0 && (
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '2px 2px 8px' }}>
+                      <GoogleMapsMark />
+                    </div>
+                  )}
                   {!venueSearching && sorted.length === 0 ? (
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '24px 20px 40px' }}>
                       <EmptyMark name="crowd" />
@@ -198,7 +208,7 @@ export default function SearchResultsOverlay({
                         onClick={() => {
                           setShowSearchResults(false);
                           if (window.__flockPanToVenue) window.__flockPanToVenue(venue.place_id || venue);
-                          openVenueDetail(venue.place_id, { name: venue.name, formatted_address: venue.addr, place_id: venue.place_id, rating: venue.stars, price_level: venue.price ? venue.price.length : null, photo_url: venue.photo_url });
+                          openVenueDetail(venue.place_id, { name: venue.name, formatted_address: venue.addr, place_id: venue.place_id, rating: venue.stars, price_level: venue.price ? venue.price.length : null, photo_url: venue.photo_url, photo_attribution: venue.photo_attribution || null });
                         }}
                         style={{ width: '100%', textAlign: 'left', backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px', border: `1px solid var(--border-default)`, padding: 0, marginBottom: '10px', cursor: 'pointer', overflow: 'hidden', boxShadow: '0 2px 10px rgba(0,0,0,0.04)', transition: 'opacity 0.2s' }}
                       >

@@ -5,6 +5,7 @@ import { BASE_URL } from '../services/api';
 // standing in for icons are a named tell (DESIGN-STANDARD.md H14); this is the
 // product's own star, same path the app uses.
 import Icons from '../components/ui/Icons';
+import { GoogleMapsMark, PhotoCredit } from '../components/ui/GoogleCredit';
 import { demoNoteLead } from '../lib/crowd';
 import { buildFlockStyle } from '../components/map/flockStyle';
 
@@ -1185,7 +1186,7 @@ export default function LiveDemo() {
                 // proxy that refuses gets the placeholder instead, so the card
                 // never silently changes shape between two loads of the same
                 // venue.
-                <div className="lpd-photo">
+                <div className="lpd-photo" style={{ position: 'relative' }}>
                   <img
                     src={photoSrc}
                     alt=""
@@ -1193,6 +1194,11 @@ export default function LiveDemo() {
                     decoding="async"
                     onError={() => setPhotoFailed(true)}
                   />
+                  {/* Who took it, as Google requires on its photos. Not on the
+                      placeholder, which is ours. */}
+                  {!photoFailed && (
+                    <PhotoCredit credit={selected.photo_attribution} style={{ position: 'absolute', top: 8, left: 8, maxWidth: 'calc(100% - 16px)' }} />
+                  )}
                 </div>
               )}
               <div className="lpd-card-head">
@@ -1231,6 +1237,10 @@ export default function LiveDemo() {
                       ))}
                     </p>
                   )}
+                  {/* The name, photo, rating and address are Google Maps data
+                      shown off a Google map (components/ui/GoogleCredit.js).
+                      Gray on the card's light panel. */}
+                  <p style={{ margin: '6px 0 0' }}><GoogleMapsMark dark={false} /></p>
                 </div>
               </div>
 

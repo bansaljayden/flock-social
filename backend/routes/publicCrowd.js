@@ -24,6 +24,9 @@ const { paywallEnabled } = require('../services/entitlements');
 const { recommendBestTime, findPeakTime, getLabel, publishedLabel, describePredictionSupport, describePublishedArithmetic, venueLocalNow, isOpenAt, buildHoursByDay, weekdayOffset, stripClock } = require('../services/crowdEngine');
 // The venue's IANA zone off a Places payload (utils/venueZone.js).
 const { placeTimeZone } = require('../utils/venueZone');
+// Google's credit for the card's photo (utils/placePhotoCredit.js), which the
+// demo draws on it.
+const { photoCredit } = require('../utils/placePhotoCredit');
 // The one place that decides whether a confidence integer may be called a
 // measured accuracy, defined in routes/crowd.js and imported rather than
 // re-derived — the same argument the forecast gate above records for
@@ -440,6 +443,9 @@ async function buildCard(v, weather, clock, preScored, place) {
     photo_url: place?.photos?.[0]?.name
       ? `/api/venues/photo?ref=${encodeURIComponent(place.photos[0].name)}&maxwidth=400`
       : null,
+    // Who took that photo, for the credit Google requires on it. The pins
+    // carry no credit: a 46px disc opens this card, which shows it.
+    photo_attribution: place?.photos?.[0]?.name ? photoCredit(place.photos[0]) : null,
     address: v.formatted_address,
     rating: v.rating,
     reviews: v.user_ratings_total,

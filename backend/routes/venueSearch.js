@@ -10,6 +10,10 @@ const { isPlaceIdShaped } = require('../utils/places');
 // Google's `timeZone` off a place, as a validated IANA name or null. The same
 // read routes/crowd.js makes for the card. See the field mask note below.
 const { placeTimeZone } = require('../utils/venueZone');
+// Google's credit for a photo (author name and profile link, the photo's page
+// on Google Maps), which the app has to draw with it. Off the same Photo object
+// the masks below already ask for, so no new field and no new SKU.
+const { photoCredit } = require('../utils/placePhotoCredit');
 // Per-user Places budget: 30/hour fresh calls, 3000/day globally. Shared with
 // crowd.js and ai.js so every paid Places fetch draws from the SAME pool
 // (round 8). allowGlobalPlacesCall is the door for surfaces with no
@@ -1275,8 +1279,10 @@ async function runTextSearch(searchQuery, coarse, cacheKey) {
     // Map results to clean venue objects
     const venues = (data.places || []).map(place => {
       let photo = null;
+      let credit = null;
       if (place.photos && place.photos.length > 0) {
         photo = photoUrl(place.photos[0].name);
+        credit = photoCredit(place.photos[0]);
       }
 
       return {
@@ -1287,6 +1293,8 @@ async function runTextSearch(searchQuery, coarse, cacheKey) {
         user_ratings_total: place.userRatingCount || 0,
         price_level: priceLevelToNum(place.priceLevel),
         photo_url: photo,
+        // Who took photo_url, for the credit Google requires beside it.
+        photo_attribution: credit,
         types: place.types || [],
         opening_hours: place.currentOpeningHours || null,
         location: place.location || null,
@@ -1478,7 +1486,11 @@ function shapeDetails(out) {
     return { status: 500, error: 'That venue is not loading right now. Try again in a moment.' };
   }
   const p = out.place;
-  const photos = (p.photos || []).slice(0, 5).map(photo => photoUrl(photo.name, 600));
+  const shown = (p.photos || []).slice(0, 5);
+  const photos = shown.map(photo => photoUrl(photo.name, 600));
+  // One credit per photo, index for index, null where Google sent none. The
+  // sheet draws the credit of whichever photo is on screen.
+  const photoAttributions = shown.map(photo => photoCredit(photo));
 
   return {
     status: 200,
@@ -1493,6 +1505,7 @@ function shapeDetails(out) {
         user_ratings_total: p.userRatingCount || 0,
         price_level: priceLevelToNum(p.priceLevel),
         photos,
+        photo_attributions: photoAttributions,
         // The SAME key the search results and the map pins carry. Without it,
         // frontend/src/App.js openVenueDetail() replaced the seed object it was
         // handed (which had a working photo_url) with this one (which did not),
@@ -1501,6 +1514,7 @@ function shapeDetails(out) {
         // one showing a map-pin glyph. photos[0] is that same picture; the key
         // was the only thing missing.
         photo_url: photos[0] || null,
+        photo_attribution: photoAttributions[0] || null,
         opening_hours: p.currentOpeningHours || null,
         types: p.types || [],
         location: p.location || null,

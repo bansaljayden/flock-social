@@ -38,6 +38,7 @@
  */
 import React from 'react';
 import Icons from '../ui/Icons';
+import { PhotoCredit, creditAt } from '../ui/GoogleCredit';
 import { eventWhenLine } from '../../lib/venueEvents';
 
 // Cards before "Show all". Three fill a phone screen without burying the deals
@@ -77,14 +78,27 @@ export const EventArt = ({ colors }) => {
   );
 };
 
-// Event i's photo: the one after the photo the top of the card shows, going
-// round the list again when it runs out. Null when the venue has none.
-export const eventPhoto = (photos, i) => {
-  const list = Array.isArray(photos) ? photos.filter((u) => typeof u === 'string' && u !== '') : [];
-  return list.length ? list[(i + 1) % list.length] : null;
+// Event i's photo, as its index in `photos`: the one after the photo the top
+// of the card shows, going round the list again when it runs out. -1 when the
+// venue has none. An index, not the URL, so Google's credit for it can be read
+// from the list the server aligned with `photos`.
+export const eventPhotoIndex = (photos, i) => {
+  const valid = Array.isArray(photos)
+    ? photos.map((u, k) => (typeof u === 'string' && u !== '' ? k : -1)).filter((k) => k >= 0)
+    : [];
+  return valid.length ? valid[(i + 1) % valid.length] : -1;
 };
 
-const VenueEventsSection = ({ events, photos, colors, onReport }) => {
+// Event i's photo URL, or null when the venue has none.
+export const eventPhoto = (photos, i) => {
+  const k = eventPhotoIndex(photos, i);
+  return k >= 0 ? photos[k] : null;
+};
+
+// `credits` is Google's credit for each photo, index for index with `photos`
+// (components/ui/GoogleCredit.js). A card drawn over a Google photo shows who
+// took it; a card on the drawn art shows nothing.
+const VenueEventsSection = ({ events, photos, credits, colors, onReport }) => {
   // The URLs that failed to load. Kept by URL, not by card, so a bad photo
   // turns only the cards drawn over it to the art, and a different venue's
   // photos get their own chance.
@@ -103,7 +117,9 @@ const VenueEventsSection = ({ events, photos, colors, onReport }) => {
       <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: '8px' }}>
         {shown.map((e, i) => {
           const when = eventWhenLine(e.event_date, e.event_time);
-          const src = eventPhoto(photos, i);
+          const k = eventPhotoIndex(photos, i);
+          const src = k >= 0 ? photos[k] : null;
+          const credit = src && !failed.has(src) ? creditAt(credits, k) : null;
           return (
             <li key={e.id} style={{ position: 'relative', height: '124px', borderRadius: '12px', overflow: 'hidden', backgroundColor: colors.navyBg }}>
               {src && !failed.has(src) ? (
@@ -119,6 +135,8 @@ const VenueEventsSection = ({ events, photos, colors, onReport }) => {
               {/* A plain black scrim, darker at the foot where the words sit,
                   so white text reads on any photo. */}
               <div aria-hidden="true" style={{ position: 'absolute', inset: 0, background: 'linear-gradient(180deg, rgba(0,0,0,0.12) 0%, rgba(0,0,0,0.32) 45%, rgba(0,0,0,0.78) 100%)' }} />
+              {/* Top left, clear of the Report flag and the words. */}
+              <PhotoCredit credit={credit} style={{ position: 'absolute', top: '8px', left: '8px', maxWidth: 'calc(100% - 56px)' }} />
               <button
                 aria-label={`Report ${e.title}`}
                 title="Report event"

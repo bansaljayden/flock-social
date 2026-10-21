@@ -58,6 +58,27 @@ import { BirdNote, WARM_BIRD } from '../ui/BirdieBird';
 import { onVenuePhotoError } from '../../lib/venuePhoto';
 import { submitVenueReview, getPublicReviews } from '../../services/api';
 import VenueEventsSection from './VenueEventsSection';
+import { GoogleMapsMark, PhotoCredit, creditAt, usableCredit } from '../ui/GoogleCredit';
+
+// The header photo and Google's credit for it, as one piece, keyed by photo
+// so each photo starts clean. A photo that fails to load becomes the
+// placeholder bird, and the credit goes with it: the bird is not the
+// photographer's. Out here, not inside the sheet, because the sheet returns
+// early and may not call a hook. A function declaration, not an arrow: the
+// sheet's tests read its prop list up to the first arrow head in this file.
+function CreditedPhoto({ src, credit }) {
+  const [failed, setFailed] = React.useState(false);
+  return (
+    <>
+      <img src={src} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} onError={(e) => { setFailed(true); onVenuePhotoError(e); }} />
+      {!failed && (
+        // Top left, the one corner the close button, the arrows, the dots and
+        // the name leave free.
+        <PhotoCredit credit={credit} style={{ position: 'absolute', top: '12px', left: '12px', maxWidth: 'calc(100% - 70px)', zIndex: 1 }} />
+      )}
+    </>
+  );
+}
 
 const VenueDetailSheet = ({
   // Module scope helpers and components that live in App.js and are not
@@ -217,7 +238,11 @@ const VenueDetailSheet = ({
             <div style={{ position: 'relative', height: '220px', flexShrink: 0, overflow: 'hidden' }}>
               {venueDetailModal.photos && venueDetailModal.photos.length > 0 ? (
                 <>
-                  <img src={venueDetailModal.photos[venueDetailPhotoIdx] || venueDetailModal.photos[0]} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} onError={onVenuePhotoError} />
+                  {(() => {
+                    const idx = venueDetailModal.photos[venueDetailPhotoIdx] ? venueDetailPhotoIdx : 0;
+                    const src = venueDetailModal.photos[idx];
+                    return <CreditedPhoto key={src} src={src} credit={creditAt(venueDetailModal.photo_attributions, idx)} />;
+                  })()}
                   {venueDetailModal.photos.length > 1 && (
                     <>
                       <button aria-label="Previous" className="hit44" onClick={(e) => { e.stopPropagation(); setVenueDetailPhotoIdx(i => i > 0 ? i - 1 : venueDetailModal.photos.length - 1); }} style={{ position: 'absolute', left: '8px', top: '50%', transform: 'translateY(-50%)', width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'rgba(0,0,0,0.5)', border: 'none', color: 'white', cursor: 'pointer', fontSize: 'var(--t-body)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>‹</button>
@@ -231,7 +256,7 @@ const VenueDetailSheet = ({
                   )}
                 </>
               ) : venueDetailModal.photo_url ? (
-                <img src={venueDetailModal.photo_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }} onError={onVenuePhotoError} />
+                <CreditedPhoto key={venueDetailModal.photo_url} src={venueDetailModal.photo_url} credit={usableCredit(venueDetailModal.photo_attribution)} />
               ) : (
                 /* No photo, which is every venue Places has none for and
                    every venue once the photo spend cap is reached: the block
@@ -284,7 +309,15 @@ const VenueDetailSheet = ({
                 shrink below its content without it, so the region would hold
                 its full height and push the footer straight back out. */}
             <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
-            <div style={{ padding: '16px' }}>
+            {/* Google's attribution for the place itself: the name, address,
+                photos, rating and hours on this card are Google Maps data
+                shown off a Google map (components/ui/GoogleCredit.js). Right
+                under the header those facts sit in, and drawn while the rest
+                is loading too, because the header already is. */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '6px 16px 0' }}>
+              <GoogleMapsMark dark={paletteIsDark(colors)} />
+            </div>
+            <div style={{ padding: '10px 16px 16px' }}>
               {venueDetailModal.loading ? (
                 <div style={{ textAlign: 'center', padding: '30px 0' }}>
                   <div style={{ display: 'inline-block', width: '24px', height: '24px', border: `3px solid ${colors.creamDark}`, borderTopColor: colors.navy, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
@@ -329,6 +362,8 @@ const VenueDetailSheet = ({
                     key={venueDetailModal.place_id || 'venue'}
                     events={venueDetailEvents}
                     photos={(venueDetailModal.photos && venueDetailModal.photos.length > 0) ? venueDetailModal.photos : [venueDetailModal.photo_url]}
+                    // Google's credits, aligned with that same list.
+                    credits={(venueDetailModal.photos && venueDetailModal.photos.length > 0) ? venueDetailModal.photo_attributions : [venueDetailModal.photo_attribution]}
                     colors={colors}
                     onReport={(e) => setModerationTarget({ userName: 'this venue', contentType: 'venue_event', contentId: e.id })}
                   />

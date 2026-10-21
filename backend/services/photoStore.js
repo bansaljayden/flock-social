@@ -60,7 +60,11 @@
 //     already holds the name and cannot return the name to anyone who does not.
 //   * Nothing derived from the photo is stored, republished, or resold; the
 //     bytes are served to the same surface that would have received them from
-//     Google, through the same proxy, with the same attribution.
+//     Google, through the same proxy. The author credit Google requires is NOT
+//     in these bytes and never was: it travels as `photo_attribution(s)` beside
+//     each photo URL (utils/placePhotoCredit.js, routes/venueSearch.js and
+//     routes/publicCrowd.js), and the app draws it. This line used to say the
+//     photos went out "with the same attribution" while nothing sent any.
 //
 // If Google ever objects, the fix is one constant (PHOTO_CACHE_TTL_MS) and one
 // pruner run, which is why the number is here and not spread across three files.

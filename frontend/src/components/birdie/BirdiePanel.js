@@ -92,6 +92,7 @@ import Icons from '../ui/Icons';
 import BirdieBird, { BirdieStill, WARM_BIRD } from '../ui/BirdieBird';
 import { BASE_URL } from '../../services/api';
 import { onVenuePhotoError } from '../../lib/venuePhoto';
+import { GoogleMapsMark } from '../ui/GoogleCredit';
 import { birdieBackText } from '../../lib/meterResets';
 
 // When today's free messages come back, in the reader's own clock
@@ -553,6 +554,16 @@ export default function BirdiePanel({
                         </div>
                         );
                       })}
+                      {/* These cards are Google Maps data, so the set ends on
+                          Google's attribution (components/ui/GoogleCredit.js).
+                          No per-photo credit: the cards' photos are thumbnails
+                          and Details opens the venue sheet, which credits its
+                          photo in full. The credit is also kept out of what
+                          Birdie's model reads, since a display name is anybody's
+                          text. */}
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', maxWidth: '280px' }}>
+                        <GoogleMapsMark />
+                      </div>
                     </div>
                   )}
                 </div>

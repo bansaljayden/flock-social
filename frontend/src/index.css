@@ -138,6 +138,9 @@
      Was #78859a — 3.19:1 on paper, 3.74:1 on white, 2.86:1 on --bg-tertiary.
      #586376 keeps the same hue/saturation and measures 5.18 / 6.07 / 4.64. */
   --text-tertiary: #586376;
+  /* Google's "Google Maps" text attribution may only be white, #1F1F1F or
+     #5E5E5E (components/ui/GoogleCredit.js). #5E5E5E is 5.5:1 on paper. */
+  --google-maps-attribution: #5E5E5E;
   --text-on-primary: #1e293b;
   --border-color: #e8e0d0;
   --border-light: #f3f4f6;
@@ -242,6 +245,7 @@
      hue lightened until it clears 4.5:1 everywhere: 7.22 on #0f172a, 5.92 on
      #1e293b, 4.68 on #1e3a5c. Still clearly dimmer than --text-secondary. */
   --text-tertiary: #a9a594;    /* warm muted cream */
+  --google-maps-attribution: #FFFFFF;
   --text-on-primary: #f1ede0;
   --border-color: #1e3a5c;
   --border-light: #162d4a;

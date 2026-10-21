@@ -80,6 +80,7 @@
 import React, { useState } from 'react';
 import { m } from 'framer-motion';
 import Icons from '../ui/Icons';
+import { GoogleMapsMark } from '../ui/GoogleCredit';
 import { crowdLabelFor, cardSourceLine, isPatternOnlySource } from '../../lib/crowd';
 import { submitVenueFeedback } from '../../services/api';
 // REACT_APP_PURCHASES=off (the App Store build): a forecast the server
@@ -1555,7 +1556,7 @@ export default function ConsumerVenueCard({
                 })()}
                 <div style={{ display: 'flex', gap: '8px' }}>
                   {activeVenue.place_id && (
-                    <button className="hit44 glass-btn glass-secondary" onClick={() => { openVenueDetail(activeVenue.place_id, { name: activeVenue.name, formatted_address: activeVenue.addr, place_id: activeVenue.place_id, rating: activeVenue.stars, photo_url: activeVenue.photo_url, lat: activeVenue.location?.latitude, lng: activeVenue.location?.longitude }); }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-secondary)' }}>{Icons.eye('var(--text-secondary)', 14)} Details</button>
+                    <button className="hit44 glass-btn glass-secondary" onClick={() => { openVenueDetail(activeVenue.place_id, { name: activeVenue.name, formatted_address: activeVenue.addr, place_id: activeVenue.place_id, rating: activeVenue.stars, photo_url: activeVenue.photo_url, photo_attribution: activeVenue.photo_attribution || null, lat: activeVenue.location?.latitude, lng: activeVenue.location?.longitude }); }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', fontSize: 'var(--t-meta)', fontWeight: '600', color: 'var(--text-secondary)' }}>{Icons.eye('var(--text-secondary)', 14)} Details</button>
                   )}
                   {/* No "Add to Calendar" here. It saved "Visit <venue>" for today at
                       8 PM whatever the plan, which is a calendar entry nobody made.
@@ -1563,6 +1564,16 @@ export default function ConsumerVenueCard({
                       the flock's real time lands on the calendar by itself. */}
                 </div>
               </m.div>
+              )}
+              {/* The name, type, rating, address and photo on this card are
+                  Google Maps data on a map that is not Google's, so the card
+                  ends on Google's attribution (components/ui/GoogleCredit.js).
+                  Its 104px photo goes uncredited as a thumbnail: Details opens
+                  the venue sheet, which credits it in full. */}
+              {activeVenue.place_id && (
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '6px' }}>
+                  <GoogleMapsMark />
+                </div>
               )}
             </div>
           </m.div>

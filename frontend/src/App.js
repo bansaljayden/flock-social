@@ -5972,6 +5972,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // in this app measures. It is a high rating, so it says so.
         topRated: v.rating >= 4.5,
         photo_url: v.photo_url || null,
+        // Google's credit for that photo, carried so the venue sheet a pin or
+        // a search row opens can credit it before Place Details answers.
+        photo_attribution: v.photo_attribution || null,
         location: v.location || null,
         types: v.types || [],
         opening_hours: v.opening_hours || null,
@@ -6094,13 +6097,22 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // omits photos would still have gone from a card WITH a picture to a card
       // with a map-pin glyph, purely because a field was dropped in transit.
       // Neither list is overwritten by an empty one.
+      // Google's credits travel with the photos they describe: whichever
+      // object a photo is taken from, its credit comes from the same object.
       if (venue) {
+        const detailPhotos = !!(venue.photos && venue.photos.length > 0);
         setVenueDetailModal({
           ...venue,
           photo_url: venue.photo_url || (fallbackData && fallbackData.photo_url) || null,
-          photos: (venue.photos && venue.photos.length > 0)
+          photo_attribution: venue.photo_url
+            ? (venue.photo_attribution || null)
+            : ((fallbackData && fallbackData.photo_attribution) || null),
+          photos: detailPhotos
             ? venue.photos
             : ((fallbackData && fallbackData.photos) || []),
+          photo_attributions: detailPhotos
+            ? (venue.photo_attributions || [])
+            : ((fallbackData && fallbackData.photo_attributions) || []),
           loading: false,
         });
       } else if (fallbackData) setVenueDetailModal({ ...fallbackData, loading: false });

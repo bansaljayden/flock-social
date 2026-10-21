@@ -86,6 +86,7 @@ import React from 'react';
 import { AnimatePresence } from 'framer-motion';
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
+import { GoogleMapsMark } from '../components/ui/GoogleCredit';
 import { onVenuePhotoError } from '../lib/venuePhoto';
 import { eventDistanceKm, formatEventDistance, eventTimeZoneLabel } from '../lib/eventWhereWhen';
 import { getEventDetails } from '../services/api';
@@ -343,7 +344,7 @@ export default function ExploreScreen({
                     setShowSearchDropdown(false);
                     // Pan map to this venue if it's in our markers
                     if (window.__flockPanToVenue) window.__flockPanToVenue(venue.place_id);
-                    openVenueDetail(venue.place_id, { name: venue.name, formatted_address: venue.formatted_address, place_id: venue.place_id, rating: venue.rating, price_level: venue.price_level, photo_url: venue.photo_url });
+                    openVenueDetail(venue.place_id, { name: venue.name, formatted_address: venue.formatted_address, place_id: venue.place_id, rating: venue.rating, price_level: venue.price_level, photo_url: venue.photo_url, photo_attribution: venue.photo_attribution || null });
                   }}
                   style={{ width: '100%', padding: '10px', display: 'flex', alignItems: 'center', gap: '10px', border: 'none', borderRadius: '12px', backgroundColor: 'var(--bg-tertiary)', cursor: 'pointer', textAlign: 'left', marginBottom: '6px', transition: 'background-color 0.15s' }}
                   onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-hover)'; }}
@@ -375,6 +376,13 @@ export default function ExploreScreen({
                   </div>
                 </button>
               ))}
+              {/* These rows are Google Maps data off a Google map, so the list
+                  ends on Google's attribution (components/ui/GoogleCredit.js).
+                  The 48px photos are thumbnails: each row opens the venue
+                  sheet, which credits its photo in full. */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '2px 2px 0' }}>
+                <GoogleMapsMark />
+              </div>
             </div>
           )}
           {/* A failed search and an empty search are different things and now

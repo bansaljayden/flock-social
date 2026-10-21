@@ -1717,7 +1717,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     // before Place Details answers, or after it fails, instead of searching.
     window.__flockOpenVenue = (placeId) => {
       const v = venues.find(venue => venue.place_id === placeId);
-      if (v) openVenueDetail(placeId, { name: v.name, formatted_address: v.addr, place_id: placeId, rating: v.stars, photo_url: v.photo_url, lat: v.location?.latitude, lng: v.location?.longitude });
+      if (v) openVenueDetail(placeId, { name: v.name, formatted_address: v.addr, place_id: placeId, rating: v.stars, photo_attribution: v.photo_attribution || null, photo_url: v.photo_url, lat: v.location?.latitude, lng: v.location?.longitude });
     };
 
     window.__flockPanToVenue = (target) => {
@@ -1775,6 +1775,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
             crowd: null,
             topRated: false,
             photo_url: venuePhoto,
+            photo_attribution: target?.photo_attribution || null,
             location: { latitude: fLat, longitude: fLng },
             types: [],
           };
@@ -1787,7 +1788,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
             markersRef.current.push({ marker, el, venue: tempVenue });
           }
           setActiveVenue(tempVenue);
-          if (placeId) openVenueDetail(placeId, { name: venueName, formatted_address: venueAddr, place_id: placeId, rating: venueRating, photo_url: venuePhoto, lat: fLat, lng: fLng });
+          if (placeId) openVenueDetail(placeId, { name: venueName, formatted_address: venueAddr, place_id: placeId, rating: venueRating, photo_attribution: target?.photo_attribution || null, photo_url: venuePhoto, lat: fLat, lng: fLng });
         }
       }
     };
