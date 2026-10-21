@@ -213,9 +213,6 @@ class Frames(IterableDataset):
         self.contact_heat = contact_heat
 
     def __iter__(self):
-        # Set here, in the worker, because a worker imports synth afresh: a flag set on the main process's module
-        # would not reach it. The main process keeps the default, so held-out frames stay owl-4.9's.
-        synth.CONTACT_HEAT = bool(self.contact_heat)
         info = torch.utils.data.get_worker_info()
         wid = info.id if info else 0
         rng = np.random.default_rng([self.seed, wid, int(time.time() * 1e6) % (1 << 31)])
@@ -242,7 +239,8 @@ class Frames(IterableDataset):
                 if rng.random() < 0.5:
                     t, objects = flip(t, objects)
             else:
-                t, objects = synth.scene_full(rng)
+                # Passed per call, not set on synth: held_out draws from the same module with the default.
+                t, objects = synth.scene_full(rng, contact=self.contact_heat)
                 if rng.random() < 0.5:
                     t, objects = flip(t, objects)
             # AAU and SenSys mark bodies, not heads; their head points are
@@ -408,8 +406,9 @@ def main(argv=None):
     ap.add_argument('--bank-share', type=float, default=0.7,
                     help='of the generated frames, the share read from the bank')
     ap.add_argument('--contact-heat', action='store_true',
-                    help='freshly drawn training frames get synth.CONTACT_HEAT: seats, cushions and table edges '
-                         'left warm by a body, shaped and cooling like real ones (off: the owl-4.9 generator)')
+                    help='freshly drawn training frames get contact heat (synth.contact_heat): seats, cushions and '
+                         'table edges left warm by a body, shaped and cooling like real ones. Off: the owl-4.9 '
+                         'generator. Frames read from a --bank are as bank.py drew them (bank.py --contact-heat)')
     ap.add_argument('--init', default=None,
                     help='a best.pt to start the shared layers from, such as owl-1')
     ap.add_argument('--name', default='owl-2',

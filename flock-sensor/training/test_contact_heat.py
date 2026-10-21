@@ -16,7 +16,7 @@ import stress  # noqa: E402
 import synth  # noqa: E402
 
 # synth.scene_full(np.random.default_rng(seed)) for seeds 0 to 11, recorded from synth.py at b4a5083c, before contact
-# heat existed. With CONTACT_HEAT off the generator must still draw exactly these frames: owl-4.9's.
+# heat existed. With contact heat off the generator must still draw exactly these frames: owl-4.9's.
 GOLDEN = {
     0: "932fc47753d19789b6969dab92943598f2c270c05555c8386213013e39471eb6",
     1: "2f0e2aa0ab82129507b78b6edd23d9a214f86288dbb0a8ef20651756d1637524",
@@ -32,18 +32,25 @@ GOLDEN = {
     11: "0800ed160289392fa142c24f71139d8e5d4714234ba04e34971f839bbc962062",
 }
 AMB = 22.0
+OID = 12345
 
 
-def scene_hash(seed):
-    t, objects = synth.scene_full(np.random.default_rng(seed))
+def scene_hash(seed, **kw):
+    t, objects = synth.scene_full(np.random.default_rng(seed), **kw)
     return hashlib.sha256(t.tobytes() + json.dumps(objects, sort_keys=True).encode()).hexdigest()
 
 
-def imprint(age, parts=('seat',), seed=3, oid=12345):
-    c = synth.Canvas(np.full((synth.H, synth.W), AMB, np.float32))
+def imprint(age, parts=('seat',), seed=3, amb=AMB):
+    """One mark on a flat wall at amb, 2 m away, in the middle of the canvas."""
+    c = synth.Canvas(np.full((synth.H, synth.W), amb, np.float32))
     s = synth.F_PX * synth.SS / 2.0
-    synth.contact_heat(c, np.random.default_rng(seed), AMB, synth.W / 2, synth.H / 2, s, oid, parts=parts, age=age)
+    synth.contact_heat(c, np.random.default_rng(seed), amb, synth.W / 2, synth.H / 2, s, OID, parts=parts, age=age)
     return c
+
+
+def half_peak_area(c, amb=AMB):
+    rise = c.t - amb
+    return int((rise >= 0.5 * float(rise.max())).sum())
 
 
 class ContactHeat(unittest.TestCase):
@@ -57,45 +64,54 @@ class ContactHeat(unittest.TestCase):
         self.assertFalse(synth.CONTACT_HEAT)
         for seed, h in GOLDEN.items():
             self.assertEqual(scene_hash(seed), h, f"seed {seed} drew a different frame with contact heat off")
+        for seed in (0, 7):
+            self.assertEqual(scene_hash(seed, contact=False), GOLDEN[seed])
 
     def test_a_fresh_mark_is_several_degrees_warm_never_past_skin(self):
         c = imprint(5.0)
         self.assertGreater(float(c.t.max()) - AMB, 4.0)
-        self.assertLessEqual(float(c.t.max()), 34.5)
-        self.assertGreaterEqual(float(c.t.min()), AMB - 0.3 - 0.5)  # the room, less the mark's sensor-like grain
+        self.assertLessEqual(float(c.t.max()), 36.5)            # synth's ceiling for skin
+        self.assertGreaterEqual(float(c.t.min()), AMB - 1e-4)   # heat is added, nothing cooled
+
+    def test_in_a_warm_room_it_is_still_warm_and_still_under_skin(self):
+        c = imprint(5.0, amb=30.0)
+        self.assertGreater(float(c.t.max()), 31.0)
+        self.assertLessEqual(float(c.t.max()), 36.5)
 
     def test_warmest_where_the_contact_was(self):
         c = imprint(20.0, parts=('cushion',))
         cy, cx = synth.H // 2, synth.W // 2
         centre = float(c.t[cy - 2:cy + 3, cx - 2:cx + 3].mean())
-        warm = c.t > AMB + 0.5
-        ys, xs = np.nonzero(warm)
-        rim = [float(c.t[y, x]) for y, x in zip(ys, xs)
-               if np.hypot(y - cy, x - cx) > 0.8 * max(np.hypot(ys - cy, xs - cx).max(), 1)]
-        self.assertGreater(centre, float(np.mean(rim)) + 0.5)
+        ys, xs = np.nonzero(c.t > AMB + 0.5)
+        r = np.hypot(ys - cy, xs - cx)
+        rim = c.t[ys[r > 0.8 * r.max()], xs[r > 0.8 * r.max()]]
+        self.assertGreater(centre, float(rim.mean()) + 0.5)
 
-    def test_it_cools_and_spreads_with_age(self):
-        fresh, old = imprint(5.0), imprint(300.0)
+    def test_it_cools_and_its_rim_fades_first(self):
+        fresh, old = imprint(5.0), imprint(150.0)
         self.assertGreater(float(fresh.t.max()), float(old.t.max()) + 1.0)
-        self.assertGreaterEqual(int((old.t > AMB + 0.2).sum()), int((fresh.t > fresh.t.max() - 0.5).sum()))
+        # The share of the mark within half its own peak shrinks: the lightly pressed rim cools faster.
+        self.assertLess(half_peak_area(old), 0.8 * half_peak_area(fresh))
 
-    def test_a_seat_is_named_and_an_edge_mark_is_not(self):
-        self.assertTrue((imprint(10.0, parts=('seat', 'back')).owner == 12345).any())
-        self.assertFalse((imprint(10.0, parts=('edge',)).owner == 12345).any())
+    def test_a_seat_is_named_and_an_edge_or_faded_mark_is_not(self):
+        self.assertTrue((imprint(10.0, parts=('seat', 'back')).owner == OID).any())
+        self.assertFalse((imprint(10.0, parts=('edge',)).owner == OID).any())
+        self.assertFalse((imprint(3000.0, parts=('seat',)).owner == OID).any())
 
     def test_on_it_draws_warm_seats_and_never_counts_one(self):
-        synth.CONTACT_HEAT = True
         frames, named = 240, 0
         for seed in range(frames):
-            t, objects = synth.scene_full(np.random.default_rng(10_000 + seed))
+            t, objects = synth.scene_full(np.random.default_rng(10_000 + seed), contact=True)
             self.assertTrue(all(o['cls'] in synth.CLASSES for o in objects))
             named += any(o['cls'] == 'warm seat' for o in objects)
         self.assertGreater(named / frames, 0.08)
 
-    def test_on_is_still_reproducible_and_differs_from_off(self):
+    def test_on_is_reproducible_and_the_module_default_does_the_same(self):
+        on = scene_hash(5, contact=True)
+        self.assertEqual(scene_hash(5, contact=True), on)
+        self.assertTrue(any(scene_hash(seed, contact=True) != h for seed, h in GOLDEN.items()))
         synth.CONTACT_HEAT = True
-        self.assertEqual(scene_hash(5), scene_hash(5))
-        self.assertTrue(any(scene_hash(seed) != h for seed, h in GOLDEN.items()))
+        self.assertEqual(scene_hash(5), on)
 
     def test_stress_cases_sit_apart_from_the_recorded_ones(self):
         self.assertEqual(len(stress.CASES), 41)

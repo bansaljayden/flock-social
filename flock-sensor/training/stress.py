@@ -350,7 +350,8 @@ def case_contact_seat_beside(rng):
     xf, yf = rng.uniform(.3, .7), rng.uniform(.22, .35)
     s = synth.F_PX * synth.SS / d
     side = rng.choice([-1, 1])
-    synth.contact_heat(c, rng, amb, xf * W + side * rng.uniform(.4, .7) * s, yf * H + rng.uniform(.6, .85) * s,
+    # A chair's seat beside somebody standing: about 1.1 m under the head, a bar stool's about 0.8 m.
+    synth.contact_heat(c, rng, amb, xf * W + side * rng.uniform(.4, .7) * s, yf * H + rng.uniform(.8, 1.1) * s,
                        s, 99981, parts=(('seat', 'back'), ('seat',))[int(rng.integers(2))], age=rng.uniform(0, 60))
     person_at(c, rng, amb, d, xf, yf, pose='stand')
     return c
