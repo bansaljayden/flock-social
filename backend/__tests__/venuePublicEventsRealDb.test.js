@@ -164,6 +164,18 @@ test('only upcoming events with a real date reach the card, soonest first', asyn
   for (const e of events) assert.deepStrictEqual(Object.keys(e).sort(), ['event_date', 'event_time', 'id', 'title']);
 });
 
+test('a date stored with spaces around it reads the same on the card as on the owner\'s list', async () => {
+  // freeText trims every write today; a row from before it did must not be
+  // "Showing" on the dashboard and missing from the card.
+  const place = newPlace();
+  const owner = await venue('Spaced Bar', place);
+  const viewer = await user('ViewerSpaced');
+  const e = await event(owner, place, 'Spaced night', ` ${dayAhead(3)} `);
+  assert.deepStrictEqual(titles(await card(viewer, place)), ['Spaced night']);
+  const mine = await call('GET', '/api/venue-dashboard/events', owner);
+  assert.strictEqual(mine.body.events.find((x) => x.id === e.id).public_status, 'shown');
+});
+
 test('an unverified claim shows nothing, and only the verified claimant speaks for the place', async () => {
   const place = newPlace();
   const claimant = await venue('Claimant', place, { verified: false });

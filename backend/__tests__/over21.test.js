@@ -525,7 +525,7 @@ test('venue events reach their owner, admins, moderators, and the venue card thr
     /JOIN users ou ON ou\.id = vp\.user_id AND ou\.is_banned IS NOT TRUE/,
     /COALESCE\(e\.is_hidden, false\) = false/,
     /e\.owner_deleted_at IS NULL/,
-    /e\.event_date >= \$2/,
+    /btrim\(e\.event_date\) >= \$2/,
     /cr\.content_type = 'venue_event' AND cr\.content_id = e\.id AND cr\.reporter_id = \$3/,
     /served\.some\(venueEventIsOver21\) && !\(await viewerKnownOver21\(pool, req\.user\.id\)\)/,
   ]) assert.match(route, gate);

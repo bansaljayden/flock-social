@@ -1815,17 +1815,19 @@ router.get('/public-events/:placeId', placeIdParam, async (req, res) => {
        WHERE e.google_place_id = $1
          AND COALESCE(e.is_hidden, false) = false
          AND e.owner_deleted_at IS NULL
-         AND e.event_date ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
-         AND e.event_date >= $2
+         AND btrim(e.event_date) ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+         AND btrim(e.event_date) >= $2
          AND NOT EXISTS (
            SELECT 1 FROM content_reports cr
            WHERE cr.content_type = 'venue_event' AND cr.content_id = e.id AND cr.reporter_id = $3
          )
-       ORDER BY e.event_date ASC, e.created_at ASC, e.id ASC
+       ORDER BY btrim(e.event_date) ASC, e.created_at ASC, e.id ASC
        LIMIT 50`,
       [req.params.placeId, firstUpcomingDay(), req.user.id]
     );
-    // The pattern above lets '2026-02-30' through; eventDay does not.
+    // The pattern above lets '2026-02-30' through; eventDay does not. btrim,
+    // because eventDay trims too: freeText trims every write today, but a row
+    // written before it did must read the same here as on the owner's list.
     let served = soonestFirst(rows.filter((e) => eventDay(e.event_date) !== null));
     // Same rule and the same economy as the promotions read: the birthday is
     // read only when a drink event is in the set.
