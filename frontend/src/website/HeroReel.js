@@ -63,7 +63,12 @@ function Device({ landscape, children }) {
       <div className="lp-reel-device is-flux">
         <div className="lp-flux-screen">{children}</div>
         <span className="lp-flux-pill" aria-hidden="true"><i className="lp-flux-lens" /><i className="lp-flux-led" /></span>
-        <span className="lp-flux-mark" aria-hidden="true">Flux</span>
+        {/* The Flock mark beside the wordmark (his ask, 2026-10-21: "the
+            front of the flux should have the flock logo on it"). */}
+        <span className="lp-flux-mark" aria-hidden="true">
+          <img src="/marks/logo-64.png?v=2" width="64" height="64" alt="" loading="lazy" decoding="async" />
+          Flux
+        </span>
         <i className="lp-flux-slot" aria-hidden="true" />
       </div>
     );
@@ -82,6 +87,27 @@ function Device({ landscape, children }) {
   );
 }
 
+/* The devices are solid in 3D (his ask, 2026-10-21: "the phone mockups
+   should be 3D when I go over them / click on them"). Under a mouse the one
+   you are over tilts toward the pointer, showing its edge; a click or a tap
+   turns it to its side, and another turns it back. The tilt is written as two
+   custom properties on the card, so nothing re-renders as the pointer moves.
+   "Reduce motion" keeps them flat (LandingPage.css). */
+const tilt = (e) => {
+  if (e.pointerType !== 'mouse') return;
+  const card = e.currentTarget;
+  const r = card.getBoundingClientRect();
+  const x = (e.clientX - r.left) / r.width - 0.5;
+  const y = (e.clientY - r.top) / r.height - 0.5;
+  card.style.setProperty('--ry', `${(x * 38).toFixed(1)}deg`);
+  card.style.setProperty('--rx', `${(-y * 22).toFixed(1)}deg`);
+};
+const untilt = (e) => {
+  e.currentTarget.style.removeProperty('--ry');
+  e.currentTarget.style.removeProperty('--rx');
+};
+const turn = (e) => e.currentTarget.classList.toggle('is-turned');
+
 export default function HeroReel({ shots }) {
   const [paused, setPaused] = useState(false);
   const strip = (copy) => shots.map((shot, i) => (
@@ -89,6 +115,9 @@ export default function HeroReel({ shots }) {
       key={`${copy ? 'b' : 'a'}-${shot.name}`}
       className={`lp-reel-item${shot.landscape ? ' is-wide' : ''}`}
       aria-hidden={copy ? 'true' : undefined}
+      onPointerMove={tilt}
+      onPointerLeave={untilt}
+      onClick={turn}
     >
       <Device landscape={shot.landscape}>
         <Screen shot={shot} first={i === 0} copy={copy} />
