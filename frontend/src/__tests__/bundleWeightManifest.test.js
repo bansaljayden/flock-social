@@ -116,9 +116,12 @@ const USED_WITHOUT_AN_IMPORT = {
  * Removed on 2026-08-26 after a build proved each one absent from every chunk.
  * If you are re-adding one of these, you are adding a first import for it, and
  * you should delete its line here in the same change.
+ *
+ * `three` came back on 2026-10-21, pinned to 0.137.0, for the Flux case viewer
+ * on /flux (website/flux/fluxScene.js). It is loaded on demand only;
+ * fluxPages.test.js keeps it off the startup path.
  */
 const REMOVED_AS_UNUSED = [
-  'three',
   '@react-three/fiber',
   '@react-three/drei',
   '@react-three/postprocessing',

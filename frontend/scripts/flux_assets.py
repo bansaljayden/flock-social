@@ -101,24 +101,55 @@ def model():
           f"{out.stat().st_size // 1024} KB gzipped")
 
 
+def save_pair(im, name, width):
+    for scale in (1, 2):
+        w = min(width * scale, im.width)
+        h = round(im.height * w / im.width)
+        sized = im.resize((w, h), Image.LANCZOS)
+        suffix = "" if scale == 1 else "@2x"
+        sized.save(OUT / f"{name}{suffix}.webp", quality=82, method=6)
+        sized.save(OUT / f"{name}{suffix}.avif", quality=60)
+
+
+def hero():
+    """The /flux hero: the assembled render cut to the box and its shadow, 4:3,
+    so the box fills its plate. Found from the pixels, so a re-render with the
+    same ground colour crops itself."""
+    im = Image.open(SRC / "flux-assembled.png").convert("RGB")
+    ground = im.getpixel((2, 2))
+    mask = Image.new("L", im.size)
+    px, mp = im.load(), mask.load()
+    for y in range(0, im.height, 2):
+        for x in range(0, im.width, 2):
+            # The cream stand and the soft shadow sit only a few levels off
+            # the ground, and the crop has to keep both.
+            if max(abs(a - b) for a, b in zip(px[x, y], ground)) > 3:
+                mp[x, y] = 255
+    x0, y0, x1, y1 = mask.getbbox()
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    w = max(x1 - x0, (y1 - y0) * 4 / 3) * 1.3
+    w = min(w, im.width, im.height * 4 / 3)
+    h = w * 3 / 4
+    left = min(max(0, cx - w / 2), im.width - w)
+    top = min(max(0, cy - h / 2), im.height - h)
+    crop = im.crop((round(left), round(top), round(left + w), round(top + h)))
+    save_pair(crop, "flux-hero", 560)
+    print(f"hero: {crop.width}x{crop.height} from the assembled render")
+
+
 def renders():
     for name, width in RENDERS.items():
-        im = Image.open(SRC / f"{name}.png").convert("RGB")
-        for scale in (1, 2):
-            w = min(width * scale, im.width)
-            h = round(im.height * w / im.width)
-            sized = im.resize((w, h), Image.LANCZOS)
-            suffix = "" if scale == 1 else "@2x"
-            sized.save(OUT / f"{name}{suffix}.webp", quality=82, method=6)
-            sized.save(OUT / f"{name}{suffix}.avif", quality=60)
+        save_pair(Image.open(SRC / f"{name}.png").convert("RGB"), name, width)
     print(f"renders: {len(RENDERS)} images, WebP and AVIF at 1x and 2x")
 
 
 if __name__ == "__main__":
     # --src <dir> reads the export from another folder, for a branch that does
-    # not have the latest flock-sensor/ yet.
+    # not have the latest flock-sensor/ yet. --images-only skips the model.
     if "--src" in sys.argv:
         SRC = Path(sys.argv[sys.argv.index("--src") + 1])
     OUT.mkdir(parents=True, exist_ok=True)
-    model()
+    if "--images-only" not in sys.argv:
+        model()
     renders()
+    hero()

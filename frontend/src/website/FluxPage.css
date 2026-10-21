@@ -1,0 +1,266 @@
+/* /flux, on the landing page's stylesheet (.lp tokens, Literata display,
+   Hanken body); the bar and the menu come from SiteNav.js. This file adds the
+   render plates, the sensor list, the Owl band and the case viewer
+   (flux/FluxViewer.js). Same rules as the rest of the site: type carries it,
+   no gradients, no floating shadows, nothing moves on scroll, and no colour
+   outside the token block below and the .lp tokens. */
+
+.fx {
+  /* The ground every CAD render was made on (viewer/render.cjs, #f6f5f3).
+     The plates and the 3D stage are this colour, so a render's own edge never
+     shows and the model sits on the same ground as the pictures. */
+  --fx-ground: #f6f5f3;
+  /* The slider's track: --ink at a quarter, where --rule is too faint to
+     read as a control (WCAG 1.4.11 asks 3:1 of the thumb, which is --ink). */
+  --fx-track: rgba(22, 40, 61, 0.25);
+  background: var(--paper);
+  color: var(--ink-2);
+  min-height: 100vh;
+}
+.fx main:focus { outline: none; }
+#fx-main { scroll-margin-top: 76px; }
+
+.fx h3 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: clamp(21px, 1rem + 1vw, 26px);
+  letter-spacing: -0.005em;
+  margin: 0 0 8px;
+}
+.fx-measure { max-width: 60ch; }
+.fx-measure p, .fx-where p { font-size: clamp(16px, 1.5vw, 18px); line-height: 1.65; }
+.fx-measure p + p { margin-top: 1em; }
+.fx-sub { margin: 14px 0 clamp(24px, 3.5vw, 36px); }
+
+/* A render on its own ground, rounded like the site's other plates. */
+.fx-plate {
+  display: block;
+  background: var(--fx-ground);
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid var(--rule);
+}
+.fx-plate img { width: 100%; height: auto; }
+/* The pitch figures are drawn on the deck's own paper, and on navy they read
+   as cards laid on the band. */
+.fx-plate-paper { border-color: transparent; }
+.fx-figure { margin: 0; }
+.fx-wide { margin-top: clamp(32px, 4vw, 48px); max-width: 1080px; }
+
+/* ---------- hero ---------- */
+
+.fx-hero { padding-top: clamp(44px, 6vw, 80px); }
+.fx-hero-in { display: grid; gap: clamp(28px, 4vw, 40px); align-items: center; }
+.fx-hero h1 { max-width: 8em; }
+.fx-lead { margin-top: 18px; max-width: 34ch; }
+.fx-proto {
+  margin-top: 20px;
+  max-width: 44ch;
+  font-size: 15px;
+  line-height: 1.55;
+  color: var(--ink-3);
+}
+.fx-proto strong { color: var(--ink); font-weight: 700; }
+@media (min-width: 960px) {
+  .fx-hero-in { grid-template-columns: minmax(0, 1fr) minmax(0, 560px); gap: clamp(40px, 6vw, 88px); }
+}
+.fx-hero-fig { margin: 0; }
+
+/* ---------- what's inside ---------- */
+
+.fx-sensors {
+  display: grid;
+  gap: clamp(22px, 3vw, 32px) clamp(32px, 5vw, 64px);
+  margin: clamp(24px, 3.5vw, 36px) 0 0;
+}
+@media (min-width: 760px) { .fx-sensors { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 1100px) { .fx-sensors { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.fx-sensors dt { font-weight: 700; font-size: 17px; color: var(--ink); margin-bottom: 6px; }
+.fx-sensors dd { margin: 0; font-size: 16px; line-height: 1.6; color: var(--ink-2); max-width: 44ch; }
+
+/* ---------- Owl, on navy ---------- */
+
+.fx-owl { margin-top: clamp(20px, 3vw, 28px); }
+.lp-on-navy .fx-measure p { color: var(--cream-2); }
+.lp-on-navy .fx-measure a { color: var(--steel-lift); text-underline-offset: 3px; }
+.lp-on-navy .fx-figure .lp-fig-cap { color: var(--cream-3); }
+.fx-sends {
+  display: grid;
+  gap: 24px clamp(40px, 6vw, 88px);
+  align-items: center;
+  margin-top: clamp(40px, 5vw, 64px);
+}
+@media (min-width: 960px) {
+  .fx-sends { grid-template-columns: minmax(0, 1fr) minmax(0, 520px); }
+}
+
+/* ---------- the labelled render ---------- */
+
+.fx-zoom { cursor: zoom-in; }
+.fx-zoom:focus-visible { outline: 2px solid var(--steel); outline-offset: 3px; }
+.fx-figure .lp-fig-cap a { color: var(--steel); text-underline-offset: 2px; }
+
+/* ---------- the viewer ---------- */
+
+.fx-viewer { max-width: 1080px; }
+.fx-stage {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  border-radius: 18px;
+  overflow: hidden;
+  background: var(--fx-ground);
+  border: 1px solid var(--rule);
+}
+/* The exploded render's own shape from here up, so the first frame of the
+   model and the render under it line up. */
+@media (min-width: 600px) { .fx-stage { aspect-ratio: 3 / 2; } }
+.fx-still {
+  position: absolute;
+  inset: 0;
+  display: block;
+  opacity: 0;
+  transition: opacity 0.18s linear;
+}
+.fx-still.is-on { opacity: 1; }
+.fx-still img { width: 100%; height: 100%; object-fit: contain; }
+.fx-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  opacity: 0;
+  cursor: grab;
+  transition: opacity 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.fx-canvas:active { cursor: grabbing; }
+.fx-stage.is-3d .fx-canvas { opacity: 1; }
+
+/* Small labels and buttons laid on the stage. */
+.fx-chip {
+  position: absolute;
+  margin: 0;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--plate);
+  border: 1px solid var(--rule);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.4;
+  color: var(--ink);
+}
+.fx-status { position: absolute; left: 12px; bottom: 12px; margin: 0; padding: 6px 12px; border-radius: 999px; background: var(--plate); font-size: 14px; color: var(--ink-3); }
+.fx-tag { left: 12px; top: 12px; font-weight: 600; }
+button.fx-chip {
+  min-height: 44px;
+  padding: 0 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.16s cubic-bezier(0.22, 1, 0.36, 1);
+}
+button.fx-chip:hover { border-color: var(--ink-3); }
+.fx-load { right: 12px; bottom: 12px; }
+.fx-reset { right: 12px; top: 12px; }
+
+/* The bar: a native range input, so the keyboard, touch and screen readers
+   get what they expect, drawn on the page's inks. 44px tall for the finger. */
+.fx-scrub { margin-top: 14px; }
+.fx-bar { position: relative; }
+.fx-range {
+  -webkit-appearance: none;
+  appearance: none;
+  display: block;
+  width: 100%;
+  height: 44px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.fx-range:focus { outline: none; }
+.fx-range::-webkit-slider-runnable-track { height: 6px; border-radius: 3px; background: var(--fx-track); }
+.fx-range::-moz-range-track { height: 6px; border-radius: 3px; background: var(--fx-track); }
+.fx-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 28px;
+  height: 28px;
+  margin-top: -11px;
+  border-radius: 50%;
+  background: var(--ink);
+  border: 4px solid var(--plate);
+}
+.fx-range::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--ink);
+  border: 4px solid var(--plate);
+}
+.fx-range:focus-visible::-webkit-slider-thumb { outline: 2px solid var(--steel); outline-offset: 2px; }
+.fx-range:focus-visible::-moz-range-thumb { outline: 2px solid var(--steel); outline-offset: 2px; }
+/* One mark under the track for each stop, inset by half the thumb so each
+   sits where the thumb's centre stops. Steel once the bar has passed it. */
+.fx-ticks { position: absolute; left: 14px; right: 14px; top: 30px; height: 8px; pointer-events: none; }
+.fx-ticks span {
+  position: absolute;
+  top: 0;
+  width: 8px;
+  height: 8px;
+  margin-left: -4px;
+  border-radius: 50%;
+  background: var(--fx-track);
+}
+.fx-ticks span.is-past { background: var(--steel); }
+.fx-ends {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 2px;
+  font-size: 13.5px;
+  color: var(--ink-3);
+}
+.fx-words { margin-top: 14px; min-height: 7.4em; }
+@media (min-width: 700px) { .fx-words { min-height: 5.2em; } }
+.fx-step-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.fx-step-num { font-size: 14.5px; font-weight: 700; color: var(--steel); font-variant-numeric: tabular-nums; }
+.fx-step-title { font-family: var(--font-display); font-weight: 600; font-size: clamp(20px, 1rem + 0.8vw, 24px); color: var(--ink); }
+.fx-step-cap { margin-top: 6px; max-width: 62ch; font-size: 16px; line-height: 1.55; color: var(--ink-2); }
+.fx-hint { margin-top: 8px; min-height: 3em; font-size: 14px; line-height: 1.5; color: var(--ink-3); }
+
+/* ---------- inside ---------- */
+
+.fx-inside { display: grid; gap: 28px clamp(28px, 4vw, 48px); align-items: start; }
+@media (min-width: 960px) {
+  .fx-inside { grid-template-columns: minmax(0, 640px) minmax(0, 360px); }
+}
+
+/* ---------- where it goes ---------- */
+
+.fx-where { display: grid; gap: 28px clamp(28px, 4vw, 48px); align-items: start; margin-top: clamp(24px, 3.5vw, 36px); }
+.fx-where h3 + p { margin-bottom: 22px; }
+.fx-where p { max-width: 46ch; color: var(--ink-2); }
+@media (min-width: 760px) {
+  .fx-where { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .fx-where > div { grid-column: 1 / -1; }
+}
+@media (min-width: 1100px) {
+  .fx-where { grid-template-columns: minmax(0, 1fr) minmax(0, 360px) minmax(0, 360px); }
+  .fx-where > div { grid-column: auto; }
+}
+
+/* ---------- closing band ---------- */
+
+.fx-more-lead { margin: 16px 0 26px; }
+.fx-textlink {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 6px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--cream);
+  text-underline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fx-still, .fx-canvas, button.fx-chip { transition: none; }
+}
