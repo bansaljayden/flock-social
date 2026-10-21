@@ -49,6 +49,17 @@ const VIEWS = [
       await page.locator('canvas').screenshot({ path: path.join(HERE, 'preview', `${name}.png`) });
       console.log(`preview/${name}.png`);
     }
+    // The exploded view with its part names, 2400 px wide: drawn by the page
+    // itself (window.fluxLabelled) because the names are not in the 3D scene.
+    const big = await browser.newPage({ viewport: { width: 1200, height: 800 }, deviceScaleFactor: 2 });
+    big.on('console', m => { if (m.type() === 'error') console.error('page:', m.text()); });
+    await big.goto(`http://127.0.0.1:${port}/index.html#render`);
+    await big.waitForFunction(() => window.fluxReady === true, null, { timeout: 120000 });
+    await big.evaluate(() => window.fluxShow('Exploded'));
+    await big.waitForTimeout(600);
+    const url = await big.evaluate(() => window.fluxLabelled());
+    fs.writeFileSync(path.join(HERE, 'preview', 'flux-exploded.png'), Buffer.from(url.split(',')[1], 'base64'));
+    console.log('preview/flux-exploded.png');
   } finally {
     await browser.close();
     server.close();

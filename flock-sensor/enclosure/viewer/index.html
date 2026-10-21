@@ -175,6 +175,32 @@
     Inside: { view: [0.6, 1.0, 0.55], hide: ['Back sheet (navy)', 'Back engraving'] },
     'On the wall': { view: [1.0, -0.2, 0.06], arm: true },
     'From below': { view: [0.45, -0.75, -0.55], fov: 22, arm: true },
+    // Every part pulled apart and named, for the build sheet and the website.
+    Exploded: { view: [0.95, -0.75, 0.5], explode: 1.35, zoom: 1.55, cables: false,
+                hide: ['Back engraving', 'Brass M3 inserts (8)'] },
+  };
+
+  // The names written on the exploded picture: what someone holding the parts
+  // would call them. Parts not listed are drawn but not labelled.
+  const LABELS = {
+    'Body (printed, navy)': 'Body (printed, navy)',
+    'Sensor pill (cream)': 'Sensor pill (cream)',
+    'Flux wordmark (cream)': 'Flux wordmark',
+    'Back sheet (navy)': 'Back sheet (navy acrylic)',
+    '7 inch touchscreen': '7 inch touchscreen',
+    'Anker A1336 battery': 'Battery (Anker)',
+    'Raspberry Pi 5': 'Raspberry Pi 5',
+    'Active Cooler': 'Active Cooler',
+    'SIM7600G-H 4G HAT': '4G board',
+    'PureThermal 3 + Lepton 3.5': 'Thermal camera',
+    'VL53L8CX door counter': 'Door counter',
+    'Decibel meter': 'Sound meter',
+    'RPi5 PD Power board (52Pi)': 'Power board',
+    'CHARGE port': 'CHARGE port',
+    'USB port': 'USB port',
+    'Ethernet port': 'Ethernet port',
+    'LINK light': 'Status light',
+    '4G antenna strip': '4G antenna',
   };
 
   const canvas = document.getElementById('c');
@@ -246,13 +272,13 @@
     camera.updateProjectionMatrix();
   }
 
-  function frame(dir, fov) {
+  function frame(dir, fov, zoom) {
     camera.fov = fov || 32;
     const d = new THREE.Vector3(...dir);
     const t = m2t([d.x, d.y, d.z]).normalize();
     // Room for the box, or for whatever is showing if that is bigger (the arm).
     const radius = Math.max(Math.hypot(BOX.w, BOX.h, BOX.d) * scale * 0.62, visRadius * 0.92);
-    const dist = radius / Math.sin(THREE.MathUtils.degToRad(camera.fov) / 2) * (camera.aspect < 1 ? 1.35 : 1.0);
+    const dist = radius / Math.sin(THREE.MathUtils.degToRad(camera.fov) / 2) * (camera.aspect < 1 ? 1.35 : 1.0) * (zoom || 1);
     camera.position.copy(center).addScaledVector(t, dist);
     controls.target.copy(center);
     camera.updateProjectionMatrix();
@@ -273,11 +299,13 @@
       const inStep = step && (cable
         ? step.cables === 'all' || (step.cables === 'back' && BACK_CABLES.test(name))
         : step.show.includes(name));
-      const shown = (step ? inStep : !p.userHidden && !hide.includes(name))
+      const view = !step && VIEWS[current];
+      const shown = (step ? inStep : !p.userHidden && !hide.includes(name) && !(cable && view && view.cables === false))
         && (!STAND.includes(name) || mode === 'stand') && (!ARM.includes(name) || mode === 'arm');
       const off0 = step && cable && step.cables === 'back' && BACK_CABLES.test(name) ? step.lift['Back sheet (navy)'] : null;
       p.obj.visible = shown;
-      const off = step ? (off0 || step.lift[name] || [0, 0, 0]) : (LOOK[name] ? LOOK[name].apart : [0, 0, 0]).map(v => v * explode);
+      const ex = view && view.explode !== undefined ? view.explode : explode;
+      const off = step ? (off0 || step.lift[name] || [0, 0, 0]) : (LOOK[name] ? LOOK[name].apart : [0, 0, 0]).map(v => v * ex);
       p.obj.position.copy(p.base).add(m2t(off));
     }
     renderList();
@@ -288,7 +316,7 @@
     document.getElementById('stepText').textContent = '';
     pose(VIEWS[name].stand ? 'stand' : VIEWS[name].arm ? 'arm' : 'flat');
     place(); centreOnVisible();
-    frame(VIEWS[name].view, VIEWS[name].fov);
+    frame(VIEWS[name].view, VIEWS[name].fov, VIEWS[name].zoom);
     markButtons();
   }
   function setStep(i) {
@@ -421,6 +449,51 @@
     if (m) setStep(+m[1] - 1); else setView(name);
     renderer.render(scene, camera);
     return true;
+  };
+
+  // The exploded picture with its names: the 3D frame, then every labelled
+  // part's name in a column at the side nearer to it, a hairline to the part.
+  window.fluxLabelled = () => {
+    renderer.render(scene, camera);
+    const W = canvas.width, H = canvas.height;
+    const out = document.createElement('canvas');
+    out.width = W; out.height = H;
+    const g = out.getContext('2d');
+    g.drawImage(canvas, 0, 0);
+    const fs = Math.round(W / 92);
+    g.font = `600 ${fs}px "Hanken Grotesk", "Segoe UI", system-ui, sans-serif`;
+    g.textBaseline = 'middle';
+    const items = [];
+    for (const [name, text] of Object.entries(LABELS)) {
+      const p = parts[name];
+      if (!p || !p.obj.visible) continue;
+      const c = new THREE.Box3().setFromObject(p.obj).getCenter(new THREE.Vector3()).project(camera);
+      items.push({ text, x: (c.x + 1) / 2 * W, y: (1 - c.y) / 2 * H });
+    }
+    const gap = fs * 2.1, top = H * 0.08, bottom = H * 0.92;
+    for (const side of ['left', 'right']) {
+      const col = items.filter(it => (it.x < W / 2) === (side === 'left')).sort((a, b) => a.y - b.y);
+      // Each label at its part's height, pushed down past the one above, then
+      // the whole column pulled back up if it ran off the bottom.
+      let y = top;
+      col.forEach(it => { it.ly = Math.max(it.y, y); y = it.ly + gap; });
+      const over = col.length ? col[col.length - 1].ly - bottom : 0;
+      if (over > 0) col.forEach(it => { it.ly -= over; });
+      const tx = side === 'left' ? W * 0.16 : W * 0.84;
+      col.forEach(it => {
+        const tw = g.measureText(it.text).width;
+        const lx = side === 'left' ? tx + fs * 0.6 : tx - fs * 0.6;
+        g.strokeStyle = 'rgba(15, 23, 42, 0.45)'; g.lineWidth = Math.max(1.5, W / 1600);
+        g.beginPath(); g.moveTo(lx, it.ly); g.lineTo(it.x, it.y); g.stroke();
+        g.fillStyle = '#0f172a'; g.strokeStyle = '#f6f5f3'; g.lineWidth = fs * 0.12;
+        g.beginPath(); g.arc(it.x, it.y, fs * 0.22, 0, Math.PI * 2); g.fill(); g.stroke();
+        g.fillStyle = '#0f172a';
+        g.textAlign = side === 'left' ? 'right' : 'left';
+        g.fillText(it.text, tx, it.ly);
+        void tw;
+      });
+    }
+    return out.toDataURL('image/png');
   };
 
   window.addEventListener('resize', () => { resize(); });
