@@ -244,8 +244,7 @@ export default function FluxPage() {
                   />
                 </div>
                 <figcaption className="lp-fig-cap">
-                  A mockup of the planned build, made from the CAD. It isn’t a
-                  photo of a finished unit.
+                  A mockup of the planned build, made from the CAD.
                 </figcaption>
               </figure>
               <figure className="fx-figure">
