@@ -68,7 +68,7 @@ try:
 except ImportError:  # pragma: no cover
     fcntl = None
 
-VERSION = '1.20.0'
+VERSION = '1.21.0'
 
 # ---------------------------------------------------------------------------
 # Config
@@ -333,6 +333,8 @@ TOF_I2C_BUS = _cfg_number('TOF_I2C_BUS', int, 0, 20, 1)
 TOF_I2C_ADDR = 0x29   # ST's 0x52, as the 7-bit address Linux wants
 # 15 Hz is the VL53L8CX's ceiling at 8x8.
 TOF_HZ = _cfg_number('TOF_HZ', int, 1, 15, 15)
+# Failed transfers in a row the counter rides through before it restarts.
+TOF_GLITCH_LIMIT = 5
 TOF_AXIS = 'col' if (CONFIG.get('TOF_AXIS') or '').strip().lower() == 'col' else 'row'
 TOF_FLIP_DIRECTION = bool(_cfg_number('TOF_FLIP_DIRECTION', int, 0, 1, 0))
 IR_ACTIVE_LOW = bool(_cfg_number('IR_ACTIVE_LOW', int, 0, 1, 1))
@@ -736,6 +738,7 @@ _state = {
     'tof_fitted': False,                    # The counter's thread is running
     'tof_up_since': None,                   # Monotonic mark it last came up
     'tof_restarts': 0,                      # Times it dropped since power-on
+    'tof_glitches': 0,                      # Failed transfers it rode through
     'door_history': deque(maxlen=12),       # Crossings per snapshot, for the panel
     'thermal': 0,                           # Latest snapshot
     'thermal_at': None,                     # Monotonic mark of the last GOOD read
@@ -4384,8 +4387,27 @@ def tof_loop():
             backoff = 5.0
             last_frame = time.monotonic()
             last_view = 0.0
+            glitches = 0
             while not _stop.is_set():
-                if not dev.data_ready():
+                # One failed transfer is a glitch on the wires, not a dead
+                # sensor. Tearing down for it cost fifteen dark seconds (the
+                # firmware reload and a fresh floor) for a fault that the very
+                # next read usually clears, so a few in a row are tolerated
+                # and only a run of them restarts the counter.
+                try:
+                    ready = dev.data_ready()
+                    frame = dev.read_frame() if ready else None
+                except OSError as e:
+                    glitches += 1
+                    if glitches > TOF_GLITCH_LIMIT:
+                        raise
+                    with _lock:
+                        _state['tof_glitches'] += 1
+                    log_throttled('tof_glitch', logging.WARNING,
+                                  f'Doorway counter: a transfer failed ({e}); retrying')
+                    _stop.wait(0.05)
+                    continue
+                if not ready:
                     if time.monotonic() - last_frame > 10:
                         raise Vl53l8cxError(
                             'no frame for ten seconds'
@@ -4393,7 +4415,7 @@ def tof_loop():
                     _stop.wait(0.01)
                     continue
                 last_frame = time.monotonic()
-                frame = dev.read_frame()
+                glitches = 0
                 if frame is None:
                     log_throttled('tof_frame', logging.WARNING,
                                   'Doorway counter: a corrupted frame was dropped')
@@ -5330,16 +5352,25 @@ class Panel:
         s = self.text(self.f_body, text, BRAND_FAINT)
         self.screen.blit(s, (pad, wire - s.get_height() - 8))
 
-    def home(self, ir, therm, therm_live, level, noise_live, history, door_live=True):
+    def home(self, ir, therm, therm_live, level, noise_live, history, door_live=True,
+             occupancy=None, directions=(None, None)):
         m = self.m
         self.header(live=therm_live or noise_live)
         n_value, n_caption, basis = noise_reading(level)
         word, colour = self.band(basis)
+        door_cell = ('Through the door', str(ir) if door_live else '--', BRAND_CREAM,
+                     'since the last update' if door_live else 'counter offline', door_live)
+        came_in, went_out = directions
+        if occupancy and came_in is not None:
+            # A counter that knows direction can say the one number a venue
+            # wants: how many people are inside. Crossings per update stay on
+            # the door screen.
+            door_cell = ('Inside now', str(occupancy['occupancy']), BRAND_CREAM,
+                         f'{came_in} came in, {went_out} left', True)
         cells = [
-            ('Through the door', str(ir) if door_live else '--', BRAND_CREAM,
-             'since the last update' if door_live else 'counter offline', door_live),
+            door_cell,
             ('In view now', f'{therm}' if therm_live else '--', BRAND_CREAM,
-             'people in the room' if therm_live else 'thermal offline', therm_live),
+             'seen by the heat camera' if therm_live else 'thermal offline', therm_live),
             ('Noise', word if noise_live else '--',
              colour if noise_live else BRAND_CREAM,
              n_value if noise_live else 'microphone offline', noise_live),
@@ -5926,7 +5957,8 @@ def display_loop():
                                  clipped=clipped_at is not None and now - clipped_at < 3.0)
                     else:
                         ui.home(ir, therm, therm_live, burst, noise_live, history,
-                                door_live=door_live)
+                                door_live=door_live, occupancy=occupancy,
+                                directions=directions)
                 except Exception as e:
                     # A raise in a detail screen used to end the display thread
                     # for the life of the process, taking the doorway counter
@@ -5936,7 +5968,8 @@ def display_loop():
                                   f'Screen "{view}" failed, showing home: {e}')
                     view = 'home'
                     ui.home(ir, therm, therm_live, burst, noise_live, history,
-                            door_live=door_live)
+                            door_live=door_live, occupancy=occupancy,
+                            directions=directions)
                 pygame.display.flip()
                 last_paint = now
                 dirty = False
