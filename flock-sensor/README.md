@@ -200,7 +200,7 @@ every row but the last.
 | 7 inch 1024x600 HDMI touchscreen, landscape (demo units only) | HDMI | none |
 | Two 3 mm LEDs, POWER green and LINK amber, each with a 330 ohm resistor | GPIO, off until `LED_POWER_GPIO` and `LED_LINK_GPIO` are set | GPIO 23 (pin 16), GPIO 24 (pin 18), ground pin 20. See The lights |
 | PCB Artists I2C decibel meter, PRO, JST-XH connector | I2C bus 1, address 0x48, on the same four wires as the doorway counter. Auto-detected | VCC to 3V3 (never 5V), GND, SDA pin 3, SCL pin 5. See The sound meter |
-| VL53L8CX time-of-flight doorway counter on a Pololu #3419 carrier | I2C bus 1, address 0x29. `main.py` loads its firmware at every start | VIN to 3V3 (pin 1, never 5V), GND, SDA pin 3, SCL pin 5, and the carrier's SPI/I2C pin to GND. See The doorway counter |
+| VL53L8CX time-of-flight doorway counter on a Pololu #3419 carrier | I2C bus 1, address 0x29. `main.py` loads its firmware at every start | VIN to 3V3 (pin 1, never 5V), GND, SDA pin 3, SCL pin 5, and the carrier's SPI/I2C pin to GPIO 25 (pin 22). See The doorway counter |
 
 Two things about that list that are decisions, not details.
 
@@ -305,11 +305,11 @@ The firmware and ST's licence for it are in `vl53l8cx/`.
 | GND | GND, pin 6 | |
 | SDA | GPIO 2, pin 3 | |
 | SCL | GPIO 3, pin 5 | |
-| SPI/I2C | GND, a short jumper to the carrier's own GND pin | **The one that gets missed.** The carrier pulls it high, which puts the sensor in SPI mode, and then nothing answers on I2C at all |
+| SPI/I2C | GPIO 25, pin 22 | **The one that gets missed.** The carrier pulls it high, which puts the sensor in SPI mode, and then nothing answers on I2C at all. `main.py` holds it low, and pulses it to reset the sensor's I2C if the sensor ever stops answering. Tied to ground with a jumper instead, a moment's lost contact made the counter vanish for hours with nothing to bring it back; on a GPIO that cannot happen (`TOF_SELECT_GPIO=0` if it is tied to ground after all) |
 
 Everything else (LP, INT, CS, MISO, SYNC and the two regulator outputs) stays
 unconnected. In the one-box build these four come from a Qwiic female-jumper
-cable, a few centimetres long, and the SPI/I2C pin takes a jumper cap.
+cable, a few centimetres long, and the SPI/I2C pin takes one female jumper to pin 22.
 
 **Bring it up with `main.py --tof`,** not the service; stop the service first,
 because two programs driving one sensor restart it under each other. It opens
@@ -954,7 +954,7 @@ Commit it and have `setup.sh` install from it.
 | `no reply` | Venue firewall or captive portal | Outbound HTTPS on 443 must be allowed; captive portals need the Pi's MAC allowlisted by the venue |
 | `certificate is not yet valid` | Clock unset and no NTP | Check internet access; `timedatectl set-ntp true` |
 | Service works by hand, fails under systemd | Missing hardware group membership | Re-run `setup.sh`, which installs the unit with every group it names; by hand, `sudo adduser <user> video` (also `spi`, `gpio`, `i2c`, `input`, `render`) then reboot |
-| Doorway counter: `--tof` says nothing answered at 0x29 | The carrier's SPI/I2C pin is not tied to GND, I2C is off, or a wire | Tie SPI/I2C to GND; `sudo raspi-config nonint do_i2c 0`; `i2cdetect -y 1` should show 29 |
+| Doorway counter: `--tof` says nothing answered at 0x29 | The carrier's SPI/I2C pin is not on GPIO 25 (pin 22) or ground, I2C is off, or a wire | SPI/I2C to pin 22; `sudo raspi-config nonint do_i2c 0`; `i2cdetect -y 1` should show 29 |
 | Doorway counter: firmware checksum failed | Bytes damaged on the bus | Reseat the connections, twist SDA and SCL each with a ground, and take out any raised `i2c_arm_baudrate` |
 | Doorway counter: people walk through and nothing counts, `--tof` shows them in the grid | They cross the grid sideways as mounted | `TOF_AXIS=col` |
 | Doorway counter: arrivals show as OUT | The box faces the other way round | `TOF_FLIP_DIRECTION=1` |

@@ -913,6 +913,9 @@ CABLES = {
         tof_point(0, TOF_LEADS - 2, 0)]),
     'Cable: Qwiic to sound meter': (2.0, 'i2c', [
         _pin(5), (_pin(5)[0] + 2, 30, 78), (140, 30, 84), (IN_X1 - dbm_stack - 1, DBM_C[0], DBM_C[1])]),
+    'Cable: counter select': (1.6, 'light', [
+        _pin(22), (_pin(22)[0], 30, 58), (TOF_C[0] + 4, 34, 44), tof_point(4, TOF_LEADS + 3, 0),
+        tof_point(4, TOF_LEADS - 2, 0)]),
     'Cable: LINK light': (1.6, 'light', [
         _pin(18), (_pin(18)[0], 26, 58), (LED_POS[0], 20, LED_POS[1] + 8), (LED_POS[0], FRONT_Y + 6, LED_POS[1])]),
     'Cable: 4G antenna lead': (1.4, 'antenna', [
