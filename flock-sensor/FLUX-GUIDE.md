@@ -13,7 +13,7 @@ its build sheet, with a picture for every assembly step.
 
 ## The box
 
-One unit, 180 x 171.5 x 72 mm, the width of its seven inch screen: a navy
+One unit, 183 x 175 x 74 mm, the width of its seven inch screen: a navy
 body with cream accents.
 
 - **The front** is the screen, behind a thin navy lip that shows only its
