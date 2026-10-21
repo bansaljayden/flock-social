@@ -9,3 +9,7 @@
 // and the dashboard's Post a Deal card alike.
 export const DRINK_DEAL_LINE = 'Drink deals are shown only to people we know are 21 or older.';
 export const DRINK_DEAL_LINE_PROMO = 'Drink deals, and anything set in Happy Hour, are shown only to people we know are 21 or older.';
+// The event form's version. An event is not a deal, and the server reads an
+// event's title, date and time boxes for the same words
+// (backend utils/over21.js venueEventIsOver21).
+export const DRINK_EVENT_LINE = 'Events about drinks are shown only to people we know are 21 or older.';

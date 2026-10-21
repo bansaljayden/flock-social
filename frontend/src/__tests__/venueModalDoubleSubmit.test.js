@@ -21,6 +21,7 @@
 import React from 'react';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { PromoModal, EventModal } from '../App';
+import { localDayString } from '../lib/venueEvents';
 
 const colors = { creamDark: '#e5e0d8', navy: '#0d2847', navyBg: '#0d2847' };
 
@@ -44,6 +45,10 @@ const MODALS = [
     Modal: EventModal,
     fill: () => {
       fireEvent.change(screen.getByLabelText('Event title'), { target: { value: 'Live Jazz Night' } });
+      // A new event needs its calendar date before Create works (2026-10-20).
+      const now = new Date();
+      const day = localDayString(new Date(now.getFullYear(), now.getMonth(), now.getDate() + 3));
+      fireEvent.change(screen.getByLabelText('Event date'), { target: { value: day } });
     },
   },
 ];

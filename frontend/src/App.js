@@ -8,7 +8,7 @@ import useSheetDrag from './hooks/useSheetDrag';
 // The revenue simulator math (lib/finance.js) moved to screens/RevenueScreen.js
 // with the admin console on 2026-08-27 and is imported there now. It was the
 // only reader of it in App.js, so the import went with it.
-import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, reconfirmFlock as apiReconfirmFlock, createFlock as apiCreateFlock, getMessages, addReaction, removeReaction, sendMessage as apiSendMessage, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, markDmRead, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, unsendFlockMessage, unsendDm, markFlockRead, markFlockOpened, markDmOpened, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, getMyFriendCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, cancelEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, uploadProfileImage, saveProfileImageUrl, removeProfileImage, getBudgetStatus, getBillSplit, getFeaturedEvents, searchEvents, sendAiChat, getWeatherForecast, getAdminAnalytics, getAdminCosts, getVenueProfile, updateVenueProfile, getVenuePromotions, getVenueEvents, getIncomingFlocks, getVenueReviews, getPublicReviews, getPublicPromotions, exportMyData, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, requestVenueVerification, getUserProfile, setPhoneDiscovery, pinDmVenue, unpinDmVenue as apiUnpinDmVenue, pinFlockMessage as apiPinFlockMessage, unpinFlockMessage as apiUnpinFlockMessage, markReachable, isOffline as isDeviceOffline, grantBirdieConsent, withdrawBirdieConsent } from './services/api';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, reconfirmFlock as apiReconfirmFlock, createFlock as apiCreateFlock, getMessages, addReaction, removeReaction, sendMessage as apiSendMessage, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, markDmRead, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, unsendFlockMessage, unsendDm, markFlockRead, markFlockOpened, markDmOpened, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, getMyFriendCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, cancelEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, uploadProfileImage, saveProfileImageUrl, removeProfileImage, getBudgetStatus, getBillSplit, getFeaturedEvents, searchEvents, sendAiChat, getWeatherForecast, getAdminAnalytics, getAdminCosts, getVenueProfile, updateVenueProfile, getVenuePromotions, getVenueEvents, getIncomingFlocks, getVenueReviews, getPublicReviews, getPublicPromotions, getPublicEvents, exportMyData, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, requestVenueVerification, getUserProfile, setPhoneDiscovery, pinDmVenue, unpinDmVenue as apiUnpinDmVenue, pinFlockMessage as apiPinFlockMessage, unpinFlockMessage as apiUnpinFlockMessage, markReachable, isOffline as isDeviceOffline, grantBirdieConsent, withdrawBirdieConsent } from './services/api';
 // The address book lives behind one service, so nothing in this file has to
 // know which platform it is on or which API answers. See services/contacts.js.
 import { contactsAvailable, syncContacts } from './services/contacts';
@@ -86,7 +86,8 @@ import { readVenueBillingReturn, settleVenueCheckout } from './lib/venueBillingR
 // Whether this is the native app, the one answer every surface that sells
 // asks. Here it keeps Roost's price off every screen inside the app.
 import { isNativeShell } from './lib/nativeShell';
-import { DRINK_DEAL_LINE, DRINK_DEAL_LINE_PROMO } from './lib/drinkDeals';
+import { DRINK_DEAL_LINE_PROMO, DRINK_EVENT_LINE } from './lib/drinkDeals';
+import { parseEventDay, eventPickerBounds } from './lib/venueEvents';
 import { PROMO_CUSTOM, PROMO_CUSTOM_MAX, splitPromoChoice, joinPromoChoice } from './lib/promoChoice';
 // AnimatePresence is NOT imported here any more. Its last mount in this file
 // was the presence wrapper around the venue card on Discover, and that went to
@@ -4330,11 +4331,12 @@ const setModerationHidden = (rows, contentId, hidden) => {
   return touched ? next : rows;
 };
 
-// A venue_review or a venue_promotion, out of whichever public list this client
-// is holding. The server no longer tells the author alone: routes/admin.js also
-// emits into `venue_content:{placeId}`, the room this client joins for as long
-// as a venue card is showing that venue's reviews and promotions, so the
-// recipient is usually a stranger who simply has the card open.
+// A venue_review, a venue_promotion or a venue_event, out of whichever public
+// list this client is holding. The server no longer tells the author alone:
+// routes/admin.js also emits into `venue_content:{placeId}`, the room this
+// client joins for as long as a venue card is showing that venue's reviews,
+// deals and events, so the recipient is usually a stranger who simply has the
+// card open.
 //
 // The owner dashboard's own lists are deliberately not dropped from. Nothing
 // addresses this room emit to the dashboard, the owner's read deliberately
@@ -4512,34 +4514,85 @@ export const PromoModal = React.memo(function PromoModal({ editing, onSave, onCa
   );
 });
 
-export const EventModal = React.memo(function EventModal({ editing, onSave, onCancel, colors }) {
+// Who sees a venue event, said at the top of the form that writes one, in the
+// words of the rules GET /api/venue-dashboard/public-events applies: signed-in
+// Flock users who open the venue, once the venue is verified, from the save
+// until the morning after the event (the server keeps it until noon UTC the
+// next day). `verified` is null when the form cannot tell, and the null
+// sentence is true either way.
+export const eventAudienceLine = (verified, venueName) => {
+  const place = venueName ? `${venueName}'s page` : 'your venue page';
+  if (verified === true) return `Anyone signed in to Flock sees this on ${place}, from when you save it until the morning after the event.`;
+  if (verified === false) return `This shows on ${place} in Flock once your venue is verified. Until then only you can see it.`;
+  return `Once your venue is verified, anyone signed in to Flock sees this on ${place} until the morning after the event.`;
+};
+
+export const EventModal = React.memo(function EventModal({ editing, onSave, onCancel, colors, verified = null, venueName = '' }) {
+  // A DATE ON THE CALENDAR, NOT A SENTENCE. The box used to take any text
+  // ("Jan 24", "this Friday"), which no screen can put in order or retire once
+  // it has passed, so no such event is ever shown on the venue card. An older
+  // event's typed date cannot sit in a date picker, so its words are shown
+  // under the picker, and the date is sent only once a calendar date is
+  // picked: a retitle never erases them, and picking one puts the event on
+  // the card.
+  const storedDate = editing ? String(editing.date || editing.event_date || '').trim() : '';
+  const legacyDate = storedDate && !parseEventDay(storedDate) ? storedDate : '';
   const [form, setForm] = React.useState(() => editing
-    ? { title: editing.title || '', date: editing.date || editing.event_date || '', time: editing.time || editing.event_time || '', capacity: (editing.capacity || '').toString() }
+    ? { title: editing.title || '', date: legacyDate ? '' : storedDate, time: editing.time || editing.event_time || '', capacity: (editing.capacity || '').toString() }
     : { title: '', date: '', time: '', capacity: '' });
+  const [dateTouched, setDateTouched] = React.useState(false);
   const [saving, save] = useSaveInFlight(onSave);
+  const bounds = React.useMemo(() => eventPickerBounds(), []);
+
+  // Some desktop browsers let a date be typed past the picker's bounds. A date
+  // an edit opened with is left alone even when it has passed: retitling last
+  // week's event sends its own date back, and the server takes it.
+  let dateProblem = '';
+  if (form.date) {
+    if (!parseEventDay(form.date)) dateProblem = 'Pick the date on the calendar.';
+    else if ((dateTouched || !editing) && form.date < bounds.min) dateProblem = 'Pick today or a later date.';
+    else if (form.date > bounds.max) dateProblem = 'Pick a date within the next year.';
+  }
+  // A new event needs its date, and so does an edit of one that has a
+  // calendar date already. An older event with typed words or none at all can
+  // still be retitled without one.
+  const dateRequired = !editing || (!!storedDate && !legacyDate);
+  const canSave = !saving && !!form.title.trim() && !dateProblem && (!dateRequired || !!form.date);
+  // undefined leaves the stored date alone (PUT /events keeps a field the edit
+  // does not send), which is what an untouched older date needs.
+  const sentDate = editing && !form.date && !dateRequired ? undefined : form.date;
 
   const input = { width: '100%', padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, fontSize: 'var(--t-label)', boxSizing: 'border-box', backgroundColor: 'var(--bg-tertiary)', color: 'var(--text-primary)' };
   const label = { fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' };
+  const note = { fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '6px 0 0', lineHeight: 1.45 };
 
   return (
     <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50, padding: '16px' }}>
       <DialogBehavior onClose={onCancel} label={editing ? 'Edit event' : 'New event'} />
-      <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '20px', width: '100%', maxWidth: '320px' }}>
-        <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 16px', textAlign: 'center' }}>{editing ? 'Edit Event' : 'New Event'}</h2>
+      <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '24px', padding: '20px', width: '100%', maxWidth: '320px', maxHeight: '100%', overflowY: 'auto', boxSizing: 'border-box' }}>
+        <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 8px', textAlign: 'center' }}>{editing ? 'Edit Event' : 'New Event'}</h2>
+        {/* Who will see it, before a word is typed: the first thing an owner
+            wants to know about a form that publishes something. */}
+        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 14px', lineHeight: 1.45, textAlign: 'center' }}>{eventAudienceLine(verified, venueName)}</p>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          <div><label style={label}>Event Title</label>
-            <input aria-label="Event title" type="text" value={form.title} onChange={(e) => setForm(f => ({ ...f, title: e.target.value }))} placeholder="e.g., Live Jazz Night" style={input} autoFocus /></div>
-          <div><label style={label}>Date</label>
-            <input aria-label="Event date" type="text" value={form.date} onChange={(e) => setForm(f => ({ ...f, date: e.target.value }))} placeholder="e.g., Jan 24" style={input} /></div>
-          <div><label style={label}>Time</label>
-            <input aria-label="Event time" type="text" value={form.time} onChange={(e) => setForm(f => ({ ...f, time: e.target.value }))} placeholder="e.g., 9:00 PM" style={input} /></div>
-          <div><label style={label}>Capacity</label>
-            <input aria-label="Capacity" type="number" value={form.capacity} onChange={(e) => setForm(f => ({ ...f, capacity: e.target.value }))} placeholder="e.g., 60" style={input} /></div>
+          <div><label style={label} htmlFor="event-title">Event Title</label>
+            <input id="event-title" aria-label="Event title" type="text" value={form.title} onChange={(e) => setForm(f => ({ ...f, title: e.target.value }))} placeholder="e.g., Live Jazz Night" style={input} autoFocus /></div>
+          <div><label style={label} htmlFor="event-date">Date</label>
+            <input id="event-date" aria-label="Event date" type="date" min={bounds.min} max={bounds.max} value={form.date} onChange={(e) => { setDateTouched(true); setForm(f => ({ ...f, date: e.target.value })); }} style={input} aria-invalid={dateProblem ? true : undefined} aria-describedby={dateProblem || (legacyDate && !form.date) ? 'event-date-note' : undefined} />
+            {dateProblem ? (
+              <p id="event-date-note" role="alert" style={{ ...note, color: colors.redText || 'var(--text-primary)' }}>{dateProblem}</p>
+            ) : legacyDate && !form.date ? (
+              <p id="event-date-note" style={note}>{`You wrote “${legacyDate}”. Pick the date on the calendar so people can see this event.`}</p>
+            ) : null}</div>
+          <div><label style={label} htmlFor="event-time">Time</label>
+            <input id="event-time" aria-label="Event time" type="text" maxLength={40} value={form.time} onChange={(e) => setForm(f => ({ ...f, time: e.target.value }))} placeholder="e.g., 9 PM" style={input} /></div>
+          <div><label style={label} htmlFor="event-capacity">Capacity</label>
+            <input id="event-capacity" aria-label="Capacity" type="number" value={form.capacity} onChange={(e) => setForm(f => ({ ...f, capacity: e.target.value }))} placeholder="e.g., 60" style={input} /></div>
         </div>
-        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '14px 0 0', lineHeight: 1.45 }}>{DRINK_DEAL_LINE}</p>
+        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '14px 0 0', lineHeight: 1.45 }}>{DRINK_EVENT_LINE}</p>
         <div style={{ display: 'flex', gap: '10px', marginTop: '20px' }}>
           <button className="hit44 glass-btn glass-secondary" onClick={onCancel} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', cursor: 'pointer' }}>Cancel</button>
-          <button className="hit44 glass-btn glass-navy" onClick={() => save(form)} disabled={saving || !form.title} aria-busy={saving || undefined} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: !saving && form.title ? colors.navyBg : 'var(--toggle-off)', color: 'white', fontWeight: '600', cursor: !saving && form.title ? 'pointer' : 'not-allowed' }}>{saving ? 'Saving…' : editing ? 'Save Changes' : 'Create'}</button>
+          <button className="hit44 glass-btn glass-navy" onClick={() => save({ ...form, date: sentDate })} disabled={!canSave} aria-busy={saving || undefined} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: canSave ? colors.navyBg : 'var(--toggle-off)', color: 'white', fontWeight: '600', cursor: canSave ? 'pointer' : 'not-allowed' }}>{saving ? 'Saving…' : editing ? 'Save Changes' : 'Create'}</button>
         </div>
       </div>
     </div>
@@ -7995,6 +8048,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [reviewText, setReviewText] = useState('');
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const [venueDetailPromos, setVenueDetailPromos] = useState([]);
+  // The open venue's upcoming events (GET /public-events), for the card's
+  // "Happening here" list.
+  const [venueDetailEvents, setVenueDetailEvents] = useState([]);
   // Group admission party size (auto-pulls from active flock, user can adjust)
   const [partySize, setPartySize] = useState(null); // null = not set, shows prompt
   // Reliability + Attendance
@@ -8169,11 +8225,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     return () => clearInterval(interval);
   }, [venueDetailPlaceId]);
 
-  // Load Flock reviews + promotions when venue detail modal opens, and join the
-  // room a moderator takedown of one of them is addressed to.
+  // Load Flock reviews, promotions and events when venue detail modal opens,
+  // and join the room a moderator takedown of one of them is addressed to.
   //
   // `venue_content:{placeId}` is joined and left with EXACTLY this effect on
-  // purpose: its whole job is to retract the two lists below, so the room's
+  // purpose: its whole job is to retract the three lists below, so the room's
   // lifetime is the lifetime of the state it can retract. It is not the crowd
   // room (`venue:{placeId}`, joined off the map bottom sheet a few effects up)
   // — see the note in services/socket.js for why those two sets of people are
@@ -8200,7 +8256,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   }, []);
 
   useEffect(() => {
-    if (!venueDetailPlaceId) { setVenueDetailReviews(null); setVenueDetailReviewTotal(null); setVenueDetailReviewsError(''); setVenueDetailPromos([]); setShowReviewForm(false); return undefined; }
+    if (!venueDetailPlaceId) { setVenueDetailReviews(null); setVenueDetailReviewTotal(null); setVenueDetailReviewsError(''); setVenueDetailPromos([]); setVenueDetailEvents([]); setShowReviewForm(false); return undefined; }
     loadVenueDetailReviews(venueDetailPlaceId);
     // Promotions are LEFT silent on purpose. The section renders only when
     // there is at least one promotion, so a failed read hides a heading and
@@ -8208,8 +8264,17 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // deals, and inventing an error card for a section the user was never
     // shown would be noise about something they did not ask for.
     getPublicPromotions(venueDetailPlaceId).then(d => setVenueDetailPromos(d.promotions || [])).catch(() => {});
+    // Events, the same way and for the same reason: the section renders only
+    // when there is one. Emptied first, so one venue's events never sit under
+    // the next venue's name, and an answer that lands after the card has moved
+    // on is dropped.
+    let eventsFor = true;
+    setVenueDetailEvents([]);
+    getPublicEvents(venueDetailPlaceId)
+      .then(d => { if (eventsFor) setVenueDetailEvents(Array.isArray(d?.events) ? d.events : []); })
+      .catch(() => {});
     joinVenueContentRoom(venueDetailPlaceId);
-    return () => leaveVenueContentRoom(venueDetailPlaceId);
+    return () => { eventsFor = false; leaveVenueContentRoom(venueDetailPlaceId); };
   }, [venueDetailPlaceId, loadVenueDetailReviews]);
 
   const [showConnectPanel, setShowConnectPanel] = useState(false);
@@ -18167,9 +18232,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // The takedown flag keeps the SERVER'S name on the reduced row, so
       // isModerationHidden reads a mapped event and a raw one identically and
       // nobody has to remember which shape they are holding.
+      // `public_status` is the server's answer to "can people see this?",
+      // worked out by the venue card's own rules (shown, needs_date, past,
+      // other_place, unverified, hidden).
       setVenueEventsList((d?.events || []).map(e => ({
         id: e.id, title: e.title, date: e.event_date, time: e.event_time,
         capacity: e.capacity, hidden_by_moderation: isModerationHidden(e),
+        public_status: e.public_status || null,
       })));
       setVenueListLoaded(prev => (prev.events ? prev : { ...prev, events: true }));
       setVenueListErrors(prev => (prev.events ? { ...prev, events: false } : prev));
@@ -18354,7 +18423,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           }
           break;
         case 'venue_event':
+          // The promotion's two lists, for events: the owner's own is marked,
+          // and a viewer's open card, filled by GET /public-events, drops it.
           setVenueEventsList(prev => setModerationHidden(prev, ev.contentId, hidden));
+          if (hidden) setVenueDetailEvents(prev => dropContentById(prev, ev.contentId));
           if (hidden && editingEvent && sameContentId(editingEvent.id, ev.contentId)) {
             setShowEventModal(false);
             setEditingEvent(null);
@@ -20506,6 +20578,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                   if (ev.contentType === 'venue_review') setVenueDetailReviews(prev => dropContentById(prev, ev.contentId));
                   if (ev.contentType === 'venue_reply') setVenueDetailReviews(prev => dropReplyById(prev, ev.contentId));
                   if (ev.contentType === 'venue_promotion') setVenueDetailPromos(prev => dropContentById(prev, ev.contentId));
+                  // The server leaves a reported event out of this reader's
+                  // later reads too (GET /public-events), so it stays gone.
+                  if (ev.contentType === 'venue_event') setVenueDetailEvents(prev => dropContentById(prev, ev.contentId));
                 }}
               />
             </React.Suspense>
@@ -20893,6 +20968,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             setVenueDetailPhotoIdx={setVenueDetailPhotoIdx}
             venueDetailPlaceId={venueDetailPlaceId}
             venueDetailPromos={venueDetailPromos}
+            venueDetailEvents={venueDetailEvents}
             venueDetailReviews={venueDetailReviews}
             setVenueDetailReviews={setVenueDetailReviews}
             venueDetailReviewTotal={venueDetailReviewTotal}

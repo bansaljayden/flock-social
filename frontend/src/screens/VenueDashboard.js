@@ -53,6 +53,8 @@ import VenueBillingControl, { VenueBillingStatus, roostPlanPriceLabel } from '..
 import { isNativeShell } from '../lib/nativeShell';
 import { DRINK_DEAL_LINE_PROMO } from '../lib/drinkDeals';
 import { PROMO_CUSTOM, PROMO_CUSTOM_MAX, joinPromoChoice } from '../lib/promoChoice';
+// How an event's date reads, and what the list says about who can see it.
+import { eventWhenLine, EVENT_STATUS_LINE } from '../lib/venueEvents';
 import {
   BASE_URL,
   askAdvisor,
@@ -1979,10 +1981,11 @@ export default function VenueDashboard({
           )}
 
           {/* EVENTS TAB. Free on every plan, the incoming-flocks feed included,
-              so it has no lock. Events are an owner's own list: nothing in
-              Flock lets anyone RSVP to a venue event, and venue_events has no
-              public read at all (GET /api/venue-dashboard/events is owner-only),
-              so nothing here claims events reach anybody. */}
+              so it has no lock. A verified venue's upcoming events show on its
+              card in the app ("Happening here", GET /public-events) to anyone
+              signed in, and each row below says whether that one is showing
+              and, if not, why (public_status, worked out by the card's own
+              rules). Nothing claims more: nobody can RSVP to a venue event. */}
           {venueTab === 'events' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
               {/* Create Event Button */}
@@ -2072,11 +2075,17 @@ export default function VenueDashboard({
               {/* Your Events */}
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
                 <h3 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 4px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.calendar(colors.navy, 14)} Your Events ({venueEventsList.length})</h3>
-                {/* Said plainly because an owner typing in an event has every
-                    reason to assume it reaches somebody. It does not: there is
-                    no public read of venue_events anywhere in the backend.
-                    Delete this line the day one ships. */}
-                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '0 0 10px' }}>Only you can see these. We are not showing them to Flock users yet.</p>
+                {/* Who sees these, said once above the list. It used to say
+                    nobody did, which was true until GET /public-events shipped
+                    (2026-10-20). An unverified venue is told what it is
+                    waiting on. The request button is not repeated here: the
+                    flocks card above already carries it on this tab, and one
+                    tab says it once (venueVerificationRequest.test.js). */}
+                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 10px', lineHeight: 1.5 }}>
+                  {venueIsVerified
+                    ? 'People signed in to Flock see your upcoming events on your venue page, soonest first, until the morning after each one.'
+                    : 'Your events show on your venue page in Flock once your venue is verified. Until then only you can see them.'}
+                </p>
                 {/* Banner, not a replacement for the list — same reasoning as
                     the promotions tab above. */}
                 {venueListErrors.events && (
@@ -2095,19 +2104,27 @@ export default function VenueDashboard({
                   venueListErrors.events ? null : !venueListLoaded.events ? (
                     <p aria-busy="true" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', textAlign: 'center', padding: '20px' }}>Loading your events…</p>
                   ) : (
-                    // No cheer to make the first one: the line above says
-                    // nobody can see these yet.
+                    // Plain, with no cheer: the line above already says who
+                    // will see one, and the button above is how to make it.
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', textAlign: 'center', padding: '20px' }}>No events yet.</p>
                   )
                 ) : venueEventsList.map(event => {
                   const hidden = isModerationHidden(event);
+                  // Whether people can see it, from the server (the lines and
+                  // the ones left out are in lib/venueEvents.js). A taken-down
+                  // event's notice is ModerationHiddenNotice below.
+                  const statusLine = hidden ? null : (EVENT_STATUS_LINE[event.public_status] || null);
+                  const when = eventWhenLine(event.date, event.time);
                   return (
                   <div key={event.id} style={{ padding: '10px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', marginBottom: '8px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                      <div style={{ flex: 1 }}>
-                        <h4 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0 }}>{event.title}</h4>
-                        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0' }}>{[event.date, event.time].filter(Boolean).join(' at ')}</p>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <h4 style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: 0, overflowWrap: 'anywhere' }}>{event.title}</h4>
+                        {when ? <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '2px 0' }}>{when}</p> : null}
                         {event.capacity ? <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0 }}>Capacity {event.capacity}</p> : null}
+                        {statusLine ? (
+                          <p data-status={event.public_status} style={{ fontSize: 'var(--t-meta)', fontWeight: event.public_status === 'shown' ? '600' : '500', color: event.public_status === 'shown' ? colors.steel : 'var(--text-tertiary)', margin: '4px 0 0', lineHeight: 1.4 }}>{statusLine}</p>
+                        ) : null}
                       </div>
                       <div style={{ display: 'flex', gap: '6px' }}>
                         {/* Same rule as the promotions list: PUT /events/:id
@@ -2133,11 +2150,13 @@ export default function VenueDashboard({
                   it actually was and no matter whether the venue had a single
                   event. It was a mockup that shipped: wrong dates every day of
                   the year except one week in a month it did not name, and
-                  "something is on" markers over nothing. It cannot be made real
-                  either — venue_events.event_date is a free-text field the
-                  owner types ("Friday", "8/15", "next week"), not a date, so
-                  there is nothing to place on a grid. Same rule as the claims
-                  count and the Pro Tips box: cut, do not soften. */}
+                  "something is on" markers over nothing. It could not be made
+                  real then: venue_events.event_date was free text the owner
+                  typed ("Friday", "8/15", "next week"), not a date, so there
+                  was nothing to place on a grid. The editor has asked for a
+                  calendar date since 2026-10-20, so a real grid is possible
+                  now; it has not been built. Same rule as the claims count and
+                  the Pro Tips box: cut, do not soften. */}
             </div>
           )}
 
@@ -2989,16 +3008,24 @@ export default function VenueDashboard({
             <EventModal
               editing={editingEvent}
               colors={colors}
+              verified={venueProfile ? venueIsVerified : null}
+              venueName={venueData.name || ''}
               onCancel={() => { setShowEventModal(false); setEditingEvent(null); }}
               onSave={async (form) => {
                 if (!form.title.trim()) return;
+                // `public_status` comes back on both answers, so the row says
+                // at once whether people can see what was just saved. A date
+                // the form hands back as undefined is left out of the request,
+                // which keeps an older event's typed date (PUT /events keeps a
+                // field the edit does not send).
+                const toRow = (saved) => ({ id: saved.id, title: saved.title, date: saved.event_date, time: saved.event_time, capacity: saved.capacity, hidden_by_moderation: isModerationHidden(saved), public_status: saved.public_status || null });
                 try {
                   if (editingEvent) {
                     const updated = await updateVenueEvent(editingEvent.id, { title: form.title, eventDate: form.date, eventTime: form.time, capacity: parseInt(form.capacity) || null });
-                    setVenueEventsList(prev => prev.map(e => e.id === editingEvent.id ? { id: updated.id, title: updated.title, date: updated.event_date, time: updated.event_time, capacity: updated.capacity, hidden_by_moderation: isModerationHidden(updated) } : e));
+                    setVenueEventsList(prev => prev.map(e => e.id === editingEvent.id ? toRow(updated) : e));
                   } else {
                     const created = await createVenueEvent({ title: form.title, eventDate: form.date, eventTime: form.time, capacity: parseInt(form.capacity) || null });
-                    setVenueEventsList(prev => [{ id: created.id, title: created.title, date: created.event_date, time: created.event_time, capacity: created.capacity, hidden_by_moderation: isModerationHidden(created) }, ...prev]);
+                    setVenueEventsList(prev => [toRow(created), ...prev]);
                   }
                 } catch (e) {
                   showToast(e?.message || "That event couldn't be saved. Try again.", 'error');

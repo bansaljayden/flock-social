@@ -57,6 +57,7 @@ import StaticVenueMap, { paletteIsDark } from '../map/StaticVenueMap';
 import { BirdNote, WARM_BIRD } from '../ui/BirdieBird';
 import { onVenuePhotoError } from '../../lib/venuePhoto';
 import { submitVenueReview, getPublicReviews } from '../../services/api';
+import VenueEventsSection from './VenueEventsSection';
 
 const VenueDetailSheet = ({
   // Module scope helpers and components that live in App.js and are not
@@ -73,6 +74,8 @@ const VenueDetailSheet = ({
   setVenueDetailPhotoIdx,
   venueDetailPlaceId,
   venueDetailPromos,
+  // The venue's upcoming events (GET /public-events), [] until they load.
+  venueDetailEvents,
   venueDetailReviews,
   setVenueDetailReviews,
   venueDetailReviewTotal,
@@ -313,6 +316,18 @@ const VenueDetailSheet = ({
                       </div>
                     )}
                   </div>
+
+                  {/* Happening here: the venue's own upcoming events, high on
+                      the card because a dated event is the most time-bound
+                      thing on it. Renders nothing when there are none, so a
+                      venue with no events looks exactly as it did. The
+                      background is the photo the top of this card is showing. */}
+                  <VenueEventsSection
+                    events={venueDetailEvents}
+                    photoUrl={(venueDetailModal.photos && venueDetailModal.photos[0]) || venueDetailModal.photo_url || null}
+                    colors={colors}
+                    onReport={(e) => setModerationTarget({ userName: 'this venue', contentType: 'venue_event', contentId: e.id })}
+                  />
 
                   {/* Hours */}
                   {venueDetailModal.opening_hours?.weekdayDescriptions && (

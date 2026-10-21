@@ -120,8 +120,13 @@ describe('the dashboard says what its words mean', () => {
     expect(DASH.slice(at, at + 400)).toContain('A flock is a group of friends planning a night out in the Flock app.');
   });
 
-  test('no cheer to create an event nobody can see', () => {
-    expect(DASH).toContain('Only you can see these. We are not showing them to Flock users yet.');
+  test('the Events tab says who sees an event, and still no cheer', () => {
+    // "Only you can see these" was true until GET /public-events shipped
+    // (2026-10-20). The line now says who does, and an unverified venue is
+    // told what it is waiting on.
+    expect(DASH).not.toContain('Only you can see these. We are not showing them to Flock users yet.');
+    expect(DASH).toContain("'People signed in to Flock see your upcoming events on your venue page, soonest first, until the morning after each one.'");
+    expect(DASH).toContain("'Your events show on your venue page in Flock once your venue is verified. Until then only you can see them.'");
     expect(DASH).not.toContain('No events yet. Create your first one!');
     expect(DASH).toContain('>No events yet.</p>');
   });

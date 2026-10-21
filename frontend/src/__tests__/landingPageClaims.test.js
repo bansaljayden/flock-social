@@ -114,11 +114,12 @@ describe('the page only sells things that exist', () => {
     expect(visible).not.toMatch(/(notify|alert|push) (nearby|local) (groups|users|flocks)/i);
   });
 
-  test('the page does not sell venue EVENTS, which no user can see', () => {
-    // POST /events and GET /events exist for the owner. There is no
-    // public-events route, so an event a venue types is visible to the venue
-    // and to nobody else. Promotions are the only one of the pair that reaches
-    // a reader, which is why only promotions survive in the venue card.
+  test('the page does not sell venue EVENTS until the App Store build shows them', () => {
+    // Until 2026-10-20 no user could see a venue event at all. GET
+    // /public-events/:placeId now fills the venue card's "Happening here" on
+    // the web, but the iPhone build in review then (49) does not draw it, and
+    // most people will meet Flock in the iPhone app. The pitch can name events
+    // once a build that shows them is in the App Store.
     const venueCard = visible.slice(visible.indexOf('For venues'), visible.indexOf('lp-cta'));
     expect(venueCard.length).toBeGreaterThan(200);
     expect(venueCard).not.toMatch(/events?/i);

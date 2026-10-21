@@ -2444,6 +2444,13 @@ export async function getPublicReviews(placeId) {
 export async function getPublicPromotions(placeId) {
   return request(`/api/venue-dashboard/public-promotions/${encodeURIComponent(placeId)}`);
 }
+// A verified venue's upcoming events, soonest first, for the venue card's
+// "Happening here" list. The server leaves out past and undated events, a
+// banned or unverified owner's, taken-down ones, ones this account reported,
+// and drink events for an account it does not know is 21.
+export async function getPublicEvents(placeId) {
+  return request(`/api/venue-dashboard/public-events/${encodeURIComponent(placeId)}`);
+}
 
 export function isLoggedIn() {
   return !!getToken();

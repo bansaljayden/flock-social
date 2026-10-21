@@ -17,7 +17,7 @@
 import React from 'react';
 import { render, screen } from '@testing-library/react';
 import { PromoModal, EventModal } from '../App';
-import { DRINK_DEAL_LINE, DRINK_DEAL_LINE_PROMO } from '../lib/drinkDeals';
+import { DRINK_DEAL_LINE, DRINK_DEAL_LINE_PROMO, DRINK_EVENT_LINE } from '../lib/drinkDeals';
 
 const fs = require('fs');
 const path = require('path');
@@ -30,10 +30,12 @@ const OVER21 = read('backend', 'utils', 'over21.js');
 
 const colors = { creamDark: '#e5e0d8', navy: '#0d2847', navyBg: '#0d2847' };
 
-test('the two sentences, word for word, with no em dash', () => {
+test('the sentences, word for word, with no em dash', () => {
   expect(DRINK_DEAL_LINE).toBe('Drink deals are shown only to people we know are 21 or older.');
   expect(DRINK_DEAL_LINE_PROMO).toBe('Drink deals, and anything set in Happy Hour, are shown only to people we know are 21 or older.');
-  expect(`${DRINK_DEAL_LINE}${DRINK_DEAL_LINE_PROMO}`).not.toMatch(/—/);
+  // The event form's own: an event is not a deal.
+  expect(DRINK_EVENT_LINE).toBe('Events about drinks are shown only to people we know are 21 or older.');
+  expect(`${DRINK_DEAL_LINE}${DRINK_DEAL_LINE_PROMO}${DRINK_EVENT_LINE}`).not.toMatch(/—/);
 });
 
 test('the promotion form says it, and a new deal starts in All Day', () => {
@@ -55,9 +57,12 @@ test('a deal opened to edit keeps the slot it was saved in', () => {
   expect(screen.getByText(DRINK_DEAL_LINE_PROMO)).toBeTruthy();
 });
 
-test('the event form says it', () => {
+test('the event form says it, in an event\'s words', () => {
   render(<EventModal editing={null} onSave={jest.fn()} onCancel={() => {}} colors={colors} />);
-  expect(screen.getByText(DRINK_DEAL_LINE)).toBeTruthy();
+  expect(screen.getByText(DRINK_EVENT_LINE)).toBeTruthy();
+  expect(screen.queryByText(DRINK_DEAL_LINE)).toBeNull();
+  // And the server reads all three boxes the card prints.
+  expect(OVER21).toMatch(/const shown = foldTexts\(\[e\.title, e\.event_date, e\.event_time\]\);/);
 });
 
 test('the Post a Deal card says it, and its slot starts in All Day', () => {

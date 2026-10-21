@@ -1054,11 +1054,13 @@ export default function LandingPage() {
                   false half was the important one. Promotions really do reach
                   users — POST /api/venue-dashboard/promotions writes them and
                   GET /public-promotions/:placeId is read by the venue detail
-                  screen in App.js. EVENTS DO NOT: there is no public-events
-                  route at all, so a venue event is visible to the owner who
-                  typed it and to nobody else. And neither one is delivered "to
-                  nearby groups" — both sit on the venue's own card, waiting to
-                  be opened.
+                  screen in App.js. Events did not, when this was written: there
+                  was no public-events route. There is one now (2026-10-20,
+                  GET /public-events/:placeId, the card's "Happening here"), but
+                  the iPhone build under review then (49) does not draw it, so
+                  events stay off this card until a build that does is in the
+                  App Store. And neither one is delivered "to nearby groups" —
+                  both sit on the venue's own card, waiting to be opened.
 
                   What is below ships today, with the route behind each one:
                     GET /incoming-flocks   flocks with this venue in their vote
