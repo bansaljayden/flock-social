@@ -102,7 +102,7 @@
 
 const CANONICAL_HOST = 'https://www.flockcorp.com';
 const OG_IMAGE = CANONICAL_HOST + '/og-image.png';
-const OG_IMAGE_ALT = 'Flock is how a group decides where to go out.';
+const OG_IMAGE_ALT = 'Flock. Nurturing friendship, one flock at a time.';
 const CONTACT_EMAIL = 'social@flockcorp.com';
 
 // Title and description per route mirror what each React page writes via its
@@ -111,8 +111,8 @@ const CONTACT_EMAIL = 'social@flockcorp.com';
 const PAGE_META = {
   home: {
     path: '/',
-    title: 'Flock | How a group decides where to go out',
-    description: 'Make the plan in Flock instead of the group chat. Your friends vote on where to go, and everyone’s budget stays private.',
+    title: 'Flock | Nurturing friendship, one flock at a time',
+    description: 'Flock is how a group decides where to go out. Your friends vote on the place, and everyone’s budget stays private.',
   },
   about: {
     path: '/about',
@@ -140,8 +140,8 @@ const PAGE_META = {
 // drift test told you to; see the regeneration note in the header.
 const PAGE_BLOCKS = {
   home: [
-    ["h1", "Flock is how a group decides where to go out."],
-    ["p", "Make the plan here instead of the group chat. Everyone gets a vote, and nobody has to say their budget out loud."],
+    ["h1", "Nurturing friendship, one flock at a time."],
+    ["p", "Flock is how a group decides where to go out. Make the plan here instead of the group chat: everyone gets a vote, and nobody has to say their budget out loud."],
     ["p", "It’s free and runs in your browser right now. The iPhone app is in App Store review; get an email when it’s out. Flock took 1st place at PA DECA States."],
     ["h2", "See how busy it is before anyone leaves."],
     ["p", "Search a place below. Flock starts from how busy it usually is at this hour and moves the number with the latest live readings where it has them. If your first pick is packed, it points you to a quieter one nearby."],
@@ -1029,7 +1029,7 @@ async function handler(req, res) {
     console.error('marketing-page: fallback document:', (err && err.name) || 'Error');
     try {
       send(res, '<!doctype html>\n<html lang="en"><head><meta charset="utf-8">'
-        + '<title>Flock | How a group decides where to go out</title>'
+        + '<title>Flock | Nurturing friendship, one flock at a time</title>'
         + '<meta name="description" content="Flock is a free app for making plans with friends. The group votes on where to go, and budgets stay private.">'
         + '</head><body><main><h1>Flock</h1>'
         + '<p>Flock is a free group planning app. Start a flock, invite your people, vote on where to go, match budgets privately, and split the bill after.</p>'

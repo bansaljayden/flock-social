@@ -315,7 +315,7 @@ const ANCHORS = [
   // ones the sweep was widened to reach, and a walk that stopped reaching them
   // reports them clean.
   ['api/invite-preview.js', 'Flock is a free app for sorting out where a group is going.'],
-  ['api/marketing-page.js', 'Make the plan in Flock instead of the group chat.'],
+  ['api/marketing-page.js', 'Flock is how a group decides where to go out.'],
   ['public/firebase-messaging-sw.js', 'Flock'],
 ];
 

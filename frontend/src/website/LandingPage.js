@@ -263,9 +263,9 @@ export default function LandingPage() {
   }, [menuOpen]);
 
   useEffect(() => {
-    document.title = 'Flock | How a group decides where to go out';
+    document.title = 'Flock | Nurturing friendship, one flock at a time';
     const d = document.querySelector('meta[name="description"]');
-    if (d) d.setAttribute('content', 'Make the plan in Flock instead of the group chat. Your friends vote on where to go, and everyone’s budget stays private.');
+    if (d) d.setAttribute('content', 'Flock is how a group decides where to go out. Your friends vote on the place, and everyone’s budget stays private.');
   }, []);
 
   const join = async (e) => {
@@ -375,8 +375,8 @@ export default function LandingPage() {
       <main id="lp-main" tabIndex={-1} {...pageInert}>
 
       {/* ---------------- hero ----------------
-          Says what Flock is for in plain words, one action, then the honest
-          status of the iPhone app. Flat navy: the soft glow at the top of a
+          The tagline, then what Flock is for in plain words, one action, then
+          the honest status of the iPhone app. Flat navy: the soft glow at the top of a
           dark hero is the stock generated-site hero, and nothing in a printed
           field guide glows. The phone is a plate in the margin with a caption,
           the field guide's own device and the honest way to say the screen is
@@ -384,10 +384,11 @@ export default function LandingPage() {
       <section className="lp-hero lp-on-navy" aria-labelledby="lp-h-hero">
         <div className="lp-wrap lp-hero-in">
           <div className="lp-hero-copy">
-            <h1 id="lp-h-hero">Flock is how a group decides where to <span className="lp-keep">go out.</span></h1>
+            <h1 id="lp-h-hero">Nurturing friendship, <span className="lp-keep">one flock at a time.</span></h1>
             <p className="lp-lead">
-              Make the plan here instead of the group chat. Everyone gets a vote,
-              and nobody has to say their budget out loud.
+              Flock is how a group decides where to go out. Make the plan here
+              instead of the group chat: everyone gets a vote, and nobody has to
+              say their budget out loud.
             </p>
             <div className="lp-hero-cta">
               <a className="lp-btn lp-btn-cream lp-btn-lg" href="/signup">Start a plan</a>

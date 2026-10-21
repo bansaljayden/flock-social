@@ -18,8 +18,8 @@
  * SAME SENTENCE, and `src/__tests__/ogImageCopy.test.js` fails if they drift.
  * Change the hero, run this, commit the PNG.
  *
- * Since 2026-10-21 the card is the headline and the address on the website's
- * off-white, beside a real crop of the app (the Friday Night Crew chat, its
+ * Since 2026-10-21 the card is the tagline, one plain line saying what Flock
+ * is, and the address on the website's off-white, beside a real crop of the app (the Friday Night Crew chat, its
  * vote half in) on a navy panel. It used to be the slogan, a three-item
  * feature line and a navy pill styled as a button that nobody can press
  * inside an image.
@@ -48,7 +48,10 @@ const OUT = argOut
 /* The card's copy. The headline is duplicated in the page and in the meta
    tags, and the test named in the header is what keeps the three in
    agreement. The address is plain text, never a button. */
-const HEADLINE = 'Flock is how a group decides where to go out.';
+const HEADLINE = 'Nurturing friendship, one flock at a time.';
+/* What Flock is, in one plain line under the tagline, so a preview says what
+   the product does as well as what it is for. */
+const LINE = 'Flock is how a group decides where to go out.';
 const SITE = 'flockcorp.com';
 
 /* Brand tokens, read off src/website/LandingPage.css rather than sampled from
@@ -90,8 +93,8 @@ const html = `<!doctype html>
      50% radius clips exactly along the circle and the white corners go. */
   .logo { width: 92px; height: 92px; margin-bottom: 40px; }
   .logo img { width: 100%; height: 100%; display: block; border-radius: 50%; }
-  /* Two lines, broken after "group" so "out." never stands alone. The guard
-     below measures the lines and refuses a third. */
+  /* Two lines, broken after the comma. The guard below measures the lines
+     and refuses a third. */
   h1 {
     font-family: 'Literata Display', Georgia, serif;
     font-weight: 600;
@@ -100,11 +103,19 @@ const html = `<!doctype html>
     letter-spacing: -0.4px;
     color: ${INK};
   }
-  p {
-    font-size: 25px;
+  .line {
+    font-size: 26px;
+    font-weight: 500;
+    line-height: 1.35;
+    color: ${INK};
+    margin-top: 22px;
+    max-width: 560px;
+  }
+  .site {
+    font-size: 23px;
     font-weight: 600;
     color: ${STEEL};
-    margin-top: 30px;
+    margin-top: 26px;
   }
   /* The navy panel and the real screen in it, cropped by the card's bottom
      edge the way a print crops a plate. */
@@ -121,8 +132,9 @@ const html = `<!doctype html>
 <body>
   <div class="copy">
     <div class="logo"><img src="${logo}" alt=""></div>
-    <h1>${HEADLINE.replace(' group ', ' group<br>')}</h1>
-    <p>${SITE}</p>
+    <h1>${HEADLINE.replace(', ', ',<br>')}</h1>
+    <p class="line">${LINE}</p>
+    <p class="site">${SITE}</p>
   </div>
   <div class="panel"><img src="${shot}" alt=""></div>
 </body></html>`;

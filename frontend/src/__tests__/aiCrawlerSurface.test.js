@@ -342,7 +342,7 @@ describe('the handler', () => {
       const res = fakeRes();
       await api({ query, url: '/api/marketing-page' }, res);
       expect(res.statusCode).toBe(200);
-      expect(res.body).toContain('Flock is how a group decides where to go out.');
+      expect(res.body).toContain('Nurturing friendship, one flock at a time.');
     }
   });
 
