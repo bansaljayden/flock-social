@@ -1,4 +1,4 @@
-/* /about, on the landing page's stylesheet (.lp tokens, Fraunces display,
+/* /about, on the landing page's stylesheet (.lp tokens, Literata display,
    Hanken body); the bar and the menu come from SiteNav.js. This file adds the
    people, the commitments, the milestones and the placeholder notes. No icon
    cards, no gradients, nothing on scroll, no colour outside the .lp tokens. */
@@ -18,9 +18,6 @@
 /* A placeholder that says what is coming, in the serif's caption cut, so it
    reads as an editor's note on the page rather than an empty slot. */
 .ab-coming {
-  font-family: var(--font-display);
-  font-variation-settings: 'opsz' 9;
-  font-style: italic;
   font-size: 15px !important;
   color: var(--ink-3) !important;
 }
@@ -54,16 +51,12 @@
 }
 .ab-photo img { width: 46%; height: auto; }
 .ab-photo figcaption {
-  font-family: var(--font-display);
-  font-variation-settings: 'opsz' 9;
   font-size: 14px;
   font-weight: 600;
   color: var(--ink-3);
 }
 .ab-person h3 { margin-bottom: 2px; }
 .ab-role {
-  font-family: var(--font-display);
-  font-variation-settings: 'opsz' 9;
   font-weight: 600;
   color: var(--steel) !important;
   margin-bottom: 6px;
@@ -87,8 +80,6 @@
 .ab-milestones li { display: grid; gap: 2px; font-size: 16.5px; line-height: 1.5; color: var(--ink-2); }
 @media (min-width: 640px) { .ab-milestones li { grid-template-columns: minmax(0, 10rem) minmax(0, 1fr); column-gap: 24px; } }
 .ab-when {
-  font-family: var(--font-display);
-  font-variation-settings: 'opsz' 9;
   font-size: 14.5px;
   font-weight: 600;
   color: var(--steel);

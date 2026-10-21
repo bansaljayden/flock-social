@@ -1,5 +1,5 @@
-/* /research, on the landing page's stylesheet (.lp tokens, Fraunces display,
-   Hanken body, navy chapters on cream stock); the bar and the menu come from
+/* /research, on the landing page's stylesheet (.lp tokens, Literata display,
+   Hanken body, navy chapters on off-white stock); the bar and the menu come from
    SiteNav.js. This file only adds what the landing page has no part for: the
    paper card, the stats grid and two plain bar charts drawn in HTML so they
    stay sharp on a phone. Design rules (DESIGN-STANDARD): ruled layouts, type carries it, no
@@ -38,8 +38,6 @@
   box-shadow: 0 1px 0 var(--rule-cream);
 }
 .rs-paper-kicker {
-  font-family: var(--font-display);
-  font-variation-settings: 'opsz' 9;
   font-size: 14px;
   font-weight: 600;
   color: var(--cream-3);
@@ -47,7 +45,6 @@
 }
 .rs-paper-title {
   font-family: var(--font-display);
-  font-variation-settings: 'opsz' 36;
   font-weight: 600;
   font-size: clamp(20px, 2.4vw, 26px);
   line-height: 1.2;
@@ -96,8 +93,6 @@
 .rs-row-label small {
   display: block;
   margin-top: 2px;
-  font-family: var(--font-display);
-  font-variation-settings: 'opsz' 9;
   font-weight: 400;
   font-size: 13px;
   color: var(--ink-3);
@@ -111,8 +106,6 @@
 .rs-bar.us .rs-val { color: var(--ink); font-weight: 700; }
 .rs-note {
   margin-top: 14px;
-  font-family: var(--font-display);
-  font-variation-settings: 'opsz' 9;
   font-size: 14px;
   line-height: 1.5;
   color: var(--ink-3);

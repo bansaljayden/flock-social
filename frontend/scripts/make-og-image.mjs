@@ -18,13 +18,19 @@
  * SAME SENTENCE, and `src/__tests__/ogImageCopy.test.js` fails if they drift.
  * Change the hero, run this, commit the PNG.
  *
- * Run:  node scripts/make-og-image.mjs          (from frontend/)
- *       node scripts/make-og-image.mjs --out /tmp/preview.png
+ * Since 2026-10-21 the card is the headline and the address on the website's
+ * off-white, beside a real crop of the app (the Friday Night Crew chat, its
+ * vote half in) on a navy panel. It used to be the slogan, a three-item
+ * feature line and a navy pill styled as a button that nobody can press
+ * inside an image.
  *
- * Needs network access for the two Google Fonts faces. It waits on
- * document.fonts.ready and asserts both loaded, because a silent fallback to
- * Georgia would produce a plausible-looking card in the wrong typeface and
- * nobody would notice until it was public.
+ * Run:  node scripts/make-og-image.mjs          (from frontend/)
+ *       node scripts/make-og-image.mjs --out=/tmp/preview.png
+ *
+ * Needs no network: both faces are the site's own files in src/fonts, inlined.
+ * It still waits on document.fonts.ready and asserts both loaded, because a
+ * silent fallback to Georgia would produce a plausible-looking card in the
+ * wrong typeface and nobody would notice until it was public.
  */
 
 import { fileURLToPath } from 'node:url';
@@ -39,89 +45,86 @@ const OUT = argOut
   ? path.resolve(argOut.slice('--out='.length))
   : path.join(FRONTEND_DIR, 'public', 'og-image.png');
 
-/* The card's copy. Both lines are duplicated in the page and in the meta tags,
-   and the test named in the header is what keeps the three in agreement. */
+/* The card's copy. The headline is duplicated in the page and in the meta
+   tags, and the test named in the header is what keeps the three in
+   agreement. The address is plain text, never a button. */
 const HEADLINE = 'Flock is how a group decides where to go out.';
-/* The address as plain text. It used to be a navy pill styled as a button,
-   which nobody can press inside an image (2026-10-21). */
 const SITE = 'flockcorp.com';
 
 /* Brand tokens, read off src/website/LandingPage.css rather than sampled from
-   the old PNG, so the card and the page it links to cannot drift apart. */
-const PAPER = '#f1ede0';   // --paper
+   an old PNG, so the card and the page it links to cannot drift apart. */
+const PAPER = '#f9f8f4';   // --paper
 const INK = '#16283d';     // --ink
-const SLATE = '#2d5a87';   // the subhead blue used across the marketing pages
+const STEEL = '#2d5a87';   // --steel
+const NAVY = '#0b1a2e';    // --navy
 
-const logoDataUri = `data:image/png;base64,${fs
-  .readFileSync(path.join(FRONTEND_DIR, 'public', 'flock-logo.png'))
+const dataUri = (rel, type) => `data:${type};base64,${fs
+  .readFileSync(path.join(FRONTEND_DIR, rel))
   .toString('base64')}`;
+
+const logo = dataUri('public/flock-logo.png', 'image/png');
+const shot = dataUri('public/screenshots/chat-dark@2x.webp', 'image/webp');
+const display = dataUri('src/fonts/Literata-Display-600.woff2', 'font/woff2');
+const body = dataUri('src/fonts/HankenGrotesk-var.woff2', 'font/woff2');
 
 const html = `<!doctype html>
 <html><head><meta charset="utf-8">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=Hanken+Grotesk:wght@500;700&display=block" rel="stylesheet">
 <style>
+  @font-face { font-family: 'Literata Display'; src: url(${display}) format('woff2'); font-weight: 400 700; }
+  @font-face { font-family: 'Hanken Grotesk'; src: url(${body}) format('woff2'); font-weight: 100 900; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body { width: 1200px; height: 630px; overflow: hidden; }
-  /* STACKED, not side by side, and that is what buys the single line. The
-     slogan is one sentence on one line by decision, and a 280px logo beside it
-     left about 710px for 27 characters, which works out near 52px of type:
-     small enough that the line stops reading as a headline at the thumbnail
-     size these cards are actually seen at. Full width is 1056px and carries
-     the same sentence at 76px. */
   body {
     background: ${PAPER};
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 420px;
+    font-family: 'Hanken Grotesk', -apple-system, sans-serif;
+  }
+  .copy {
+    padding: 0 40px 0 72px;
     display: flex;
     flex-direction: column;
     justify-content: center;
-    padding: 0 72px;
-    font-family: 'Hanken Grotesk', -apple-system, sans-serif;
   }
-
-  /* flock-logo.png is a cream circle inscribed in an OPAQUE WHITE square, so
-     dropping it straight onto the cream ground shows four white corners. The
-     circle touches all four edges, so a 50% radius clips exactly along it and
-     the plate disappears into the background. */
-  .logo { width: 132px; height: 132px; margin-bottom: 38px; }
+  /* flock-logo.png is a cream circle inscribed in an OPAQUE WHITE square, so a
+     50% radius clips exactly along the circle and the white corners go. */
+  .logo { width: 92px; height: 92px; margin-bottom: 40px; }
   .logo img { width: 100%; height: 100%; display: block; border-radius: 50%; }
-
-  /* Fraunces at 600. opsz is left to the optical-size axis default for the
-     rendered pixel size, which is what the landing hero does too.
-     white-space: nowrap on purpose: it makes an over-long line RUN OFF the
-     card, which the guard below measures and refuses, instead of quietly
-     wrapping into the two lines this layout exists to avoid. */
+  /* Two lines, broken after "group" so "out." never stands alone. The guard
+     below measures the lines and refuses a third. */
   h1 {
-    font-family: 'Fraunces', Georgia, serif;
+    font-family: 'Literata Display', Georgia, serif;
     font-weight: 600;
-    /* 76px when the headline was "Get the flock out the door." The tagline
-       changed on 2026-09-08 to "Nurturing friendship, one night at a time." (now "one flock", same length),
-       which is half again as many characters and measured 1263px against the
-       1056px the card allows. The guard below refused it, correctly. 62px
-       still measured 1073px and was refused too; 60px fits with room. If the
-       tagline changes again, expect to move this, and let the guard tell you
-       the number rather than guessing at it. */
-    font-size: 64px;
-    line-height: 1.08;
-    letter-spacing: -1.2px;
+    font-size: 54px;
+    line-height: 1.12;
+    letter-spacing: -0.4px;
     color: ${INK};
-    max-width: 1056px;
-    text-wrap: balance;
   }
-
   p {
-    font-size: 27px;
-    font-weight: 500;
-    color: ${SLATE};
+    font-size: 25px;
+    font-weight: 600;
+    color: ${STEEL};
     margin-top: 30px;
-    letter-spacing: -0.2px;
   }
-
+  /* The navy panel and the real screen in it, cropped by the card's bottom
+     edge the way a print crops a plate. */
+  .panel { background: ${NAVY}; position: relative; overflow: hidden; }
+  .panel img {
+    position: absolute;
+    left: 56px;
+    top: 58px;
+    width: 308px;
+    border-radius: 30px;
+    border: 1px solid rgba(244, 239, 227, 0.18);
+  }
 </style></head>
 <body>
-  <div class="logo"><img src="${logoDataUri}" alt=""></div>
-  <h1>${HEADLINE.replace('yes. ', 'yes.<br>')}</h1>
-  <p>${SITE}</p>
+  <div class="copy">
+    <div class="logo"><img src="${logo}" alt=""></div>
+    <h1>${HEADLINE.replace(' group ', ' group<br>')}</h1>
+    <p>${SITE}</p>
+  </div>
+  <div class="panel"><img src="${shot}" alt=""></div>
 </body></html>`;
 
 const { chromium } = await import('playwright');
@@ -135,48 +138,41 @@ try {
   await page.setContent(html, { waitUntil: 'load' });
   await page.evaluate(() => document.fonts.ready);
 
-  /* A missing webfont degrades to Georgia silently and the card still looks
+  /* A missing face degrades to Georgia silently and the card still looks
      deliberate, so check rather than trust. */
   const loaded = await page.evaluate(() => ({
-    fraunces: document.fonts.check('600 76px Fraunces'),
-    hanken: document.fonts.check('500 27px "Hanken Grotesk"'),
+    display: document.fonts.check('600 54px "Literata Display"'),
+    body: document.fonts.check('600 25px "Hanken Grotesk"'),
   }));
-  if (!loaded.fraunces || !loaded.hanken) {
+  if (!loaded.display || !loaded.body) {
     throw new Error(
-      `webfonts did not load (Fraunces: ${loaded.fraunces}, Hanken Grotesk: ${loaded.hanken}). ` +
-        'This machine needs network access to fonts.googleapis.com. Refusing to write a ' +
-        'card in fallback type.'
+      `fonts did not load (Literata Display: ${loaded.display}, Hanken Grotesk: ${loaded.body}). ` +
+        'Refusing to write a card in fallback type.'
     );
   }
 
-  /* The headline must not wrap past the two lines written above, and nothing
-     may spill out of the 630px card. Both are silent failures in a PNG. */
+  /* The headline must hold to two lines inside its column, and nothing may
+     spill out of the 630px card. Both are silent failures in a PNG. */
   const fits = await page.evaluate(() => {
     const h1 = document.querySelector('h1');
     const range = document.createRange();
     range.selectNodeContents(h1);
+    const rects = Array.from(range.getClientRects()).filter((r) => r.width > 1);
     return {
-      // The INK width, measured off a range over the text rather than off the
-      // block, which is full-bleed and would always "fit".
-      textWidth: Math.ceil(range.getBoundingClientRect().width),
-      available: Math.floor(h1.getBoundingClientRect().width),
       // Distinct line tops, not rect count: the <br> splits the text into two
       // nodes, and each contributes its own rects.
-      lines: new Set(Array.from(range.getClientRects()).filter((r) => r.width > 1).map((r) => Math.round(r.top))).size,
+      lines: new Set(rects.map((r) => Math.round(r.top))).size,
+      textRight: Math.ceil(Math.max(...rects.map((r) => r.right))),
+      columnRight: Math.floor(h1.getBoundingClientRect().right),
       bodyScrollH: document.body.scrollHeight,
       bodyScrollW: document.body.scrollWidth,
     };
   });
-  // nowrap means an over-long line runs OFF the card rather than wrapping, so
-  // the check is the text against the space it has, plus a line count, and
-  // either one failing stops the write.
   if (fits.lines > 2) {
     throw new Error(`the headline must fit on TWO lines, measured ${fits.lines}. Reduce font-size.`);
   }
-  if (fits.textWidth > fits.available) {
-    throw new Error(
-      `the headline runs off the card (${fits.textWidth}px of text in ${fits.available}px). Reduce font-size.`
-    );
+  if (fits.textRight > fits.columnRight) {
+    throw new Error(`the headline runs past its column (${fits.textRight} > ${fits.columnRight}). Reduce font-size.`);
   }
   if (fits.bodyScrollH > 630 || fits.bodyScrollW > 1200) {
     throw new Error(`content overflows the card (${fits.bodyScrollW}x${fits.bodyScrollH}).`);

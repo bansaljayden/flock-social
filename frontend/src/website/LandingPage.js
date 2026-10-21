@@ -1,7 +1,7 @@
 import React, { Suspense, useEffect, useRef, useState } from 'react';
 import './LandingPage.css';
 import SiteFooter from './SiteFooter';
-import frauncesUrl from '../fonts/Fraunces-var.woff2';
+import displayFontUrl from '../fonts/Literata-Display-600.woff2';
 import { NAV_LINKS } from './SiteNav';
 
 /* The live demo is code-split, and this is load-bearing rather than tidiness.
@@ -16,8 +16,8 @@ const LiveDemo = React.lazy(() => import('./LiveDemo'));
 
 const API = process.env.REACT_APP_API_URL || 'https://api.flockcorp.com';
 
-/* Fraunces sets the h1, this page's largest contentful element. The Pages
-   build already sends it as a preload with the HTML (build-cloudflare.js
+/* Literata Display sets the h1, this page's largest contentful element. The
+   Pages build already sends it as a preload with the HTML (build-cloudflare.js
    routePreloads); this covers every other host and a local build. `crossorigin`
    is not optional: fonts are fetched in CORS mode even same-origin, and a
    preload without it is a second, wasted download rather than a hit. */
@@ -26,7 +26,7 @@ if (typeof document !== 'undefined' && !document.querySelector('link[data-lp-fon
   l.rel = 'preload';
   l.as = 'font';
   l.type = 'font/woff2';
-  l.href = frauncesUrl;
+  l.href = displayFontUrl;
   l.crossOrigin = 'anonymous';
   l.setAttribute('data-lp-font', '');
   document.head.appendChild(l);

@@ -539,7 +539,7 @@ describe('token and motion discipline', () => {
     // in its own words ("No pure #000000 / pure #ffffff backgrounds"). It also
     // reads wrong — this page is printed cream stock, and a pure-white card on
     // it is a different piece of paper.
-    expect(CSS).toMatch(/--plate: #fbfaf6;/);
+    expect(CSS).toMatch(/--plate: #fdfcf9;/);
     expect(rules).not.toMatch(/background(-color)?:\s*(#fff\b|#ffffff\b|white\b)/i);
   });
 

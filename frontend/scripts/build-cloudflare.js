@@ -131,7 +131,7 @@ function routePreloads(out) {
   const { files = {} } = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
   const urls = Object.values(files).filter((u) => typeof u === 'string');
   const find = (re) => urls.find((u) => re.test(u));
-  const font = find(/\/static\/media\/Fraunces-var\.[0-9a-f]+\.woff2$/);
+  const font = find(/\/static\/media\/Literata-Display-600\.[0-9a-f]+\.woff2$/);
   const blocks = [];
   for (const { route, chunk } of ROUTE_CHUNKS) {
     const js = find(new RegExp('/static/js/' + chunk + '\\.[0-9a-f]+\\.chunk\\.js$'));
