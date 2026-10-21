@@ -384,7 +384,7 @@ export default function LandingPage() {
       <section className="lp-hero lp-on-navy" aria-labelledby="lp-h-hero">
         <div className="lp-wrap lp-hero-in">
           <div className="lp-hero-copy">
-            <h1 id="lp-h-hero">Flock is how a group <span className="lp-keep">decides where to go out.</span></h1>
+            <h1 id="lp-h-hero">Flock is how a group decides where to <span className="lp-keep">go out.</span></h1>
             <p className="lp-lead">
               Make the plan here instead of the group chat. Everyone gets a vote,
               and nobody has to say their budget out loud.
@@ -426,6 +426,7 @@ export default function LandingPage() {
           demo, so the footer link and the menu link each land somewhere. */}
       <section className="lp-sec lp-sec-paper lp-live" id="crowds" aria-labelledby="lp-h-crowds">
         <div className="lp-wrap">
+          <div className="lp-live-top">
           <div className="lp-live-head">
             <h2 id="lp-h-crowds">See how busy it is before anyone leaves.</h2>
             {/* What crowdEngine and the forecast actually do: a venue's usual
@@ -445,6 +446,16 @@ export default function LandingPage() {
             <p className="lp-live-note">
               Three reports from people at a venue move its score for that night and hour.
             </p>
+          </div>
+          <img
+            className="lp-art lp-live-art"
+            src="/art/crowd-busy-480.webp"
+            srcSet="/art/crowd-busy-480.webp 480w, /art/crowd-busy-960.webp 960w"
+            sizes="(min-width: 960px) 420px, min(360px, 90vw)"
+            width="480" height="154"
+            loading="lazy" decoding="async"
+            alt=""
+          />
           </div>
           {/* 800px of lead: the demo is loading and drawing before it reaches
               the screen. The holder is the demo's own height, so nothing shifts
@@ -469,6 +480,9 @@ export default function LandingPage() {
             steps, and nobody has to carry it.
           </p>
 
+          {/* The dead chat beside a branch of birds arriving: the same
+              Friday before and after, with no words added. */}
+          <div className="lp-friday-open">
           <figure className="lp-chat lp-friday-chat">
             <div className="lp-msg">we should all hang out this weekend</div>
             <div className="lp-msg lp-msg-me">yesss I'm down</div>
@@ -477,6 +491,16 @@ export default function LandingPage() {
             <div className="lp-msg">I'm good with anything</div>
             <div className="lp-msg lp-msg-dead">Seen by 5 · nobody went</div>
           </figure>
+          <img
+            className="lp-art lp-friday-art"
+            src="/art/hero-gathering-600.webp"
+            srcSet="/art/hero-gathering-600.webp 600w, /art/hero-gathering-1200.webp 1200w"
+            sizes="(min-width: 900px) 520px, min(420px, 90vw)"
+            width="600" height="359"
+            loading="lazy" decoding="async"
+            alt=""
+          />
+          </div>
 
           <div className="lp-friday">
             <div className="lp-beat">
@@ -698,12 +722,25 @@ export default function LandingPage() {
           for what it is. */}
       <section className="lp-sec lp-sec-sand" id="pricing" aria-labelledby="lp-h-pricing">
         <div className="lp-wrap">
+          <div className="lp-pricing-head">
+          <div>
           <h2 id="lp-h-pricing">Free for your friend group.</h2>
           <p className="lp-lead lp-pricing-lead">
             {proOffer
               ? 'Planning with your friends is free, with no ads. Flock Pro is optional, for whoever plans the most. Venues are the side Flock is built to charge, and none of them is being charged yet.'
               : 'You and your friends don’t pay, and there are no ads either. Venues are the side Flock is built to charge, and none of them is being charged yet.'}
           </p>
+          </div>
+          <img
+            className="lp-art lp-pricing-art"
+            src="/art/spot-seed-240.webp"
+            srcSet="/art/spot-seed-240.webp 240w, /art/spot-seed-480.webp 480w"
+            sizes="160px"
+            width="240" height="232"
+            loading="lazy" decoding="async"
+            alt=""
+          />
+          </div>
 
           <div className={proOffer ? 'lp-plans lp-plans-3' : 'lp-plans'}>
             <div className="lp-plan">

@@ -183,3 +183,12 @@
   .rs-paper { grid-template-columns: minmax(0, 1fr); }
   .rs-thumb img { width: 112px; }
 }
+
+/* The birds (see LandingPage.css): Flux's sensor beside the two questions,
+   a wren over the thanks. */
+.rs-why { display: grid; gap: 24px 64px; align-items: center; }
+@media (min-width: 900px) {
+  .rs-why { grid-template-columns: minmax(0, 1fr) 280px; }
+}
+.rs-why-art { width: min(280px, 100%); }
+.rs-thanks-art { width: 150px; margin-bottom: 16px; }

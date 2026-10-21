@@ -78,31 +78,50 @@ export default function AboutPage() {
 
         <section className="lp-sec lp-sec-paper" aria-labelledby="ab-h-story">
           <div className="lp-wrap ab-story">
-            <h2 id="ab-h-story">How it started</h2>
-            <p>
-              Flock exists because the group chat kept killing perfectly good
-              Friday nights.
-            </p>
-            <p className="ab-coming">
-              The full story, from the first version to now, is being written and
-              will be here soon.
-            </p>
+            <div>
+              <h2 id="ab-h-story">How it started</h2>
+              <p>
+                Flock exists because the group chat kept killing perfectly good
+                Friday nights.
+              </p>
+              <p className="ab-coming">
+                The full story, from the first version to now, is being written and
+                will be here soon.
+              </p>
+            </div>
+            <img
+              className="lp-art ab-story-art"
+              src="/art/spot-wren-perch-240.webp"
+              srcSet="/art/spot-wren-perch-240.webp 240w, /art/spot-wren-perch-480.webp 480w"
+              sizes="200px"
+              width="240" height="267"
+              loading="lazy" decoding="async"
+              alt=""
+            />
           </div>
         </section>
 
         <section className="lp-sec lp-sec-sand" aria-labelledby="ab-h-people">
           <div className="lp-wrap">
             <h2 id="ab-h-people">Who makes it</h2>
+            {/* Two empty perches, one for each founder's photo, until the
+                photos arrive: captioned as what it is, so the spot reads as
+                waiting rather than broken. */}
+            <figure className="ab-perch">
+              <img
+                className="lp-art ab-perch-art"
+                src="/art/about-perch-480.webp"
+                srcSet="/art/about-perch-480.webp 480w, /art/about-perch-960.webp 960w"
+                sizes="min(560px, 90vw)"
+                width="480" height="171"
+                loading="lazy" decoding="async"
+                alt=""
+              />
+              <figcaption>Photos of the maintainer and Asad are coming soon.</figcaption>
+            </figure>
             <div className="ab-people">
               {PEOPLE.map((p) => (
                 <div key={p.name} className="ab-person">
-                  {/* Placeholder until the founders send their photos: the
-                      same birds as the rest of the site, captioned as what it
-                      is, so the spot reads as waiting rather than broken. */}
-                  <figure className="ab-photo">
-                    <img src="/birdie/warm-bird-400.webp" width="332" height="333" alt="" loading="lazy" decoding="async" />
-                    <figcaption>Photo coming soon</figcaption>
-                  </figure>
                   <h3>{p.name}</h3>
                   <p className="ab-role">{p.role}</p>
                   <p>{p.line}</p>
@@ -129,6 +148,15 @@ export default function AboutPage() {
 
         <section className="lp-sec lp-sec-paper" aria-labelledby="ab-h-milestones">
           <div className="lp-wrap">
+            <img
+              className="lp-art ab-milestones-art"
+              src="/art/spot-hop-240.webp"
+              srcSet="/art/spot-hop-240.webp 240w, /art/spot-hop-480.webp 480w"
+              sizes="180px"
+              width="240" height="230"
+              loading="lazy" decoding="async"
+              alt=""
+            />
             <h2 id="ab-h-milestones">Milestones so far</h2>
             <ol className="ab-milestones">
               {MILESTONES.map((m) => (
@@ -144,6 +172,15 @@ export default function AboutPage() {
 
         <section className="lp-sec lp-sec-sand" aria-labelledby="ab-h-now">
           <div className="lp-wrap ab-now">
+            <img
+              className="lp-art ab-now-art"
+              src="/art/venues-360.webp"
+              srcSet="/art/venues-360.webp 360w, /art/venues-720.webp 720w"
+              sizes="min(300px, 70vw)"
+              width="360" height="274"
+              loading="lazy" decoding="async"
+              alt=""
+            />
             <h2 id="ab-h-now">Where things stand</h2>
             <p>
               The web app is live at flockcorp.com, and the iPhone app is in App

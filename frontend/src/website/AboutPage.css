@@ -36,25 +36,6 @@
 @media (min-width: 640px) { .ab-people { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .ab-person p { font-size: 16px; line-height: 1.6; color: var(--ink-2); }
 .ab-person p + p { margin-top: 8px; }
-.ab-photo {
-  margin: 0 0 18px;
-  aspect-ratio: 4 / 5;
-  max-width: 300px;
-  background: var(--plate);
-  border: 1px solid var(--rule);
-  border-radius: 20px;
-  display: grid;
-  place-items: center;
-  align-content: center;
-  gap: 14px;
-  padding: 24px;
-}
-.ab-photo img { width: 46%; height: auto; }
-.ab-photo figcaption {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--ink-3);
-}
 .ab-person h3 { margin-bottom: 2px; }
 .ab-role {
   font-weight: 600;
@@ -91,3 +72,17 @@
 .ab-contact-lead a, .ab-fine a { color: var(--cream); text-underline-offset: 3px; overflow-wrap: anywhere; }
 .ab-fine { font-size: 14px; line-height: 1.6; color: var(--cream-3); max-width: 64ch; }
 .ab-fine + .ab-fine { margin-top: 12px; }
+
+/* The birds (see LandingPage.css): the story's wren beside its two lines, the
+   two empty perches over the founders, a hop over the milestones, a wren on a
+   cafe sign over where things stand. Paper and stone sections only. */
+.ab-story { display: grid; gap: 24px 64px; align-items: center; }
+@media (min-width: 860px) {
+  .ab-story { grid-template-columns: minmax(0, 40rem) 200px; justify-content: space-between; }
+}
+.ab-story-art { width: 200px; }
+.ab-perch { margin: clamp(20px, 3vw, 32px) 0 clamp(28px, 4vw, 44px); }
+.ab-perch-art { width: min(560px, 100%); }
+.ab-perch figcaption { margin-top: 10px; font-size: 14px; color: var(--ink-3); }
+.ab-milestones-art { width: 180px; margin-bottom: 18px; }
+.ab-now-art { width: min(300px, 70%); margin-bottom: 18px; }

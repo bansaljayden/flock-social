@@ -152,7 +152,8 @@ export default function ResearchPage() {
         </section>
 
         <section className="lp-sec lp-sec-paper">
-          <div className="lp-wrap rs-measure">
+          <div className="lp-wrap rs-why">
+            <div className="rs-measure">
             <h2>Why we did this research</h2>
             <p>
               Flock's venue card answers one question for a group deciding where
@@ -168,6 +169,16 @@ export default function ResearchPage() {
               designed to count the number of people inside a venue using a
               thermal camera without identifying individuals?
             </p>
+            </div>
+            <img
+              className="lp-art rs-why-art"
+              src="/art/sensor-320.webp"
+              srcSet="/art/sensor-320.webp 320w, /art/sensor-640.webp 640w"
+              sizes="(min-width: 900px) 280px, min(240px, 70vw)"
+              width="320" height="337"
+              loading="lazy" decoding="async"
+              alt=""
+            />
           </div>
         </section>
 
@@ -225,6 +236,15 @@ export default function ResearchPage() {
             attribution line its licence asks for, word for word. */}
         <section className="lp-sec lp-sec-sand rs-thanks" aria-labelledby="rs-h-thanks">
           <div className="lp-wrap">
+            <img
+              className="lp-art rs-thanks-art"
+              src="/art/spot-wren-step-240.webp"
+              srcSet="/art/spot-wren-step-240.webp 240w, /art/spot-wren-step-480.webp 480w"
+              sizes="150px"
+              width="240" height="248"
+              loading="lazy" decoding="async"
+              alt=""
+            />
             <h2 id="rs-h-thanks">Thank you</h2>
             <p className="rs-thanks-lead">
               Both studies were tested on data that other people collected and

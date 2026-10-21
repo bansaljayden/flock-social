@@ -120,6 +120,7 @@ function PitchVideo() {
 const STEPS = [
   {
     id: 'start',
+    art: { name: 'step-start', src: '/art/step-start-240.webp', srcSet: '/art/step-start-240.webp 240w, /art/step-start-480.webp 480w', width: 240, height: 121 },
     title: 'Start a flock',
     body: [
       'Pick a day and a time and invite people from your friends list. Anyone without the app gets a link and can join in from the browser, budget included, without making an account.',
@@ -133,6 +134,7 @@ const STEPS = [
   },
   {
     id: 'vote',
+    art: { name: 'step-vote', src: '/art/step-vote-240.webp', srcSet: '/art/step-vote-240.webp 240w, /art/step-vote-480.webp 480w', width: 240, height: 151 },
     title: 'Pick the place together',
     body: [
       'Anyone in the flock can add places. Each one arrives as a card with how busy it usually gets at that hour, plus anything the venue has posted, a deal or an upcoming event. The group votes, so nobody gets stuck being the decider.',
@@ -147,6 +149,7 @@ const STEPS = [
   },
   {
     id: 'budget',
+    art: { name: 'step-budget', src: '/art/step-budget-240.webp', srcSet: '/art/step-budget-240.webp 240w, /art/step-budget-480.webp 480w', width: 240, height: 134 },
     title: 'Budgets stay private',
     body: [
       'Everyone types what they can spend, and only they ever see it. When everyone going has answered, with at least three members’ amounts in, or the plan’s creator locks it, the group gets one figure: a ceiling rounded down, so it is never anyone’s exact number. The places Flock suggests for the plan stay under it.',
@@ -160,6 +163,7 @@ const STEPS = [
   },
   {
     id: 'night',
+    art: { name: 'step-go', src: '/art/step-go-240.webp', srcSet: '/art/step-go-240.webp 240w, /art/step-go-480.webp 480w', width: 240, height: 121 },
     title: 'On the night',
     body: [
       'The chat asks “Still in?” and counts who has said yes before a deadline, so you know who is actually coming. Check how busy the place is before anyone leaves.',
@@ -174,6 +178,7 @@ const STEPS = [
   },
   {
     id: 'settle',
+    art: { name: 'spot-seed', src: '/art/spot-seed-240.webp', srcSet: '/art/spot-seed-240.webp 240w, /art/spot-seed-480.webp 480w', width: 240, height: 232 },
     title: 'Settle up',
     body: [
       'Whoever paid enters the total and Flock splits it. Everyone gets a Venmo or Cash App link, or Zelle instructions, for their share, and the night stays on everyone’s calendar in Flock.',
@@ -248,6 +253,17 @@ export default function HowItWorksPage() {
               {STEPS.map((s) => (
                 <li key={s.id} id={s.id} className={`hw-step${s.shot ? ' has-shot' : ''}`}>
                   <div className="hw-step-text">
+                    {/* A painted vignette for the step, the same birds as the
+                        rest of the site: decoration, so alt="" and lazy. */}
+                    <img
+                      className="lp-art hw-step-art"
+                      src={s.art.src}
+                      srcSet={s.art.srcSet}
+                      sizes="140px"
+                      width={s.art.width} height={s.art.height}
+                      loading="lazy" decoding="async"
+                      alt=""
+                    />
                     <h3>{s.title}</h3>
                     {s.body.map((p) => <p key={p.slice(0, 24)}>{p}</p>)}
                   </div>
@@ -278,6 +294,15 @@ export default function HowItWorksPage() {
         <section className="lp-sec lp-sec-paper" aria-labelledby="hw-h-venues">
           <div className="lp-wrap hw-venues">
             <div>
+              <img
+                className="lp-art hw-venues-art"
+                src="/art/events-480.webp"
+                srcSet="/art/events-480.webp 480w, /art/events-960.webp 960w"
+                sizes="min(420px, 90vw)"
+                width="480" height="234"
+                loading="lazy" decoding="async"
+                alt=""
+              />
               <h2 id="hw-h-venues">If you run a venue</h2>
               <p>
                 A free venue account shows which flocks have you in their vote

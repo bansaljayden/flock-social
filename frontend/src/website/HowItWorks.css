@@ -122,6 +122,11 @@
   .hw-step .lp-plate { width: 240px; margin: 0; }
 }
 
+/* Each step's painted vignette sits above its heading, small, like a
+   manual's chapter mark. The venues section opens with the string of lights. */
+.hw-step-art { width: 140px; margin-bottom: 14px; }
+.hw-venues-art { width: min(420px, 100%); margin-bottom: 24px; }
+
 /* ---------- the four AIs ---------- */
 
 .hw-ai-lead { margin: 14px 0 clamp(28px, 4vw, 44px); }

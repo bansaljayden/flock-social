@@ -299,9 +299,13 @@
 /* Fluid ramps solved for their endpoints rather than eyeballed with vw, so the
    h1:h2 ratio holds across the range instead of collapsing to 1.1 on desktop.
    Was 64/54 = 1.19 at every width, which is why every heading on the page read
-   as equally important. Now 34/27.6 at 320px and 72/45.5 at 1280px. */
+   as equally important. Now 34/27.6 at 320px and 56/45.5 at 1280px: Literata
+   sets wider than Fraunces did, and the hero line has to hold to two lines in
+   the column beside the phone. Balanced, so the lines come out close in
+   length on a phone too. */
 .lp h1 {
-  font-size: clamp(34px, 1.33rem + 3.96vw, 72px);
+  font-size: clamp(34px, 1.667rem + 2.292vw, 56px);
+  text-wrap: balance;
 }
 .lp h2 { font-size: clamp(27px, 1.35rem + 1.87vw, 46px); }
 .lp h3 { font-size: clamp(18px, 2vw, 21px); font-weight: 700; letter-spacing: -0.015em; }
@@ -1441,6 +1445,31 @@ html:has(.lp) body { overflow-x: clip; }
 .lp-venue-signin a { color: inherit; text-decoration: underline; text-underline-offset: 3px; }
 
 .lp-pricing-lead { margin-top: 16px; }
+
+/* ============ the birds ============
+   Painted with Higgsfield in the hand of the old section marks: warm sparrows
+   and navy fairy-wrens on transparent ground. They sit only on the paper and
+   stone sections, where the wrens' navy reads (on a navy band they vanish),
+   one per section that has room, never the same one twice on a page. They are
+   decoration, so alt="" and lazy; every one has its own box size, so nothing
+   shifts when it lands. */
+.lp-art { height: auto; }
+.lp-live-top { display: grid; gap: 24px clamp(32px, 5vw, 72px); align-items: end; }
+@media (min-width: 960px) {
+  .lp-live-top { grid-template-columns: minmax(0, 40rem) minmax(0, 420px); justify-content: space-between; }
+}
+.lp-live-art { width: min(420px, 100%); }
+.lp-friday-open { display: grid; gap: 28px clamp(32px, 6vw, 96px); align-items: center; margin-top: clamp(28px, 4vw, 40px); }
+.lp-friday-open .lp-friday-chat { margin: 0; }
+@media (min-width: 900px) {
+  .lp-friday-open { grid-template-columns: minmax(0, 30rem) minmax(0, 520px); justify-content: space-between; }
+}
+.lp-friday-art { width: min(520px, 100%); }
+.lp-pricing-head { display: grid; gap: 20px 48px; align-items: end; }
+@media (min-width: 760px) {
+  .lp-pricing-head { grid-template-columns: minmax(0, 44rem) 160px; justify-content: space-between; }
+}
+.lp-pricing-art { width: 160px; }
 
 /* ============ motion: arrival, menu, links ============ */
 
