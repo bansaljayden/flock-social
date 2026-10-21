@@ -646,7 +646,7 @@ def pi_spacer_part():
 
 
 def screen_fit_test():
-    m = 24
+    m = 8                      # a frame around the screen, small enough for any bed
     w, h = screen_outer_w + 2 * m, screen_outer_h + 2 * m
     t = 4.0
     part = extrude(RectangleRounded(w, h, 6), amount=t)

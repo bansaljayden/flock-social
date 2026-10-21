@@ -39,6 +39,7 @@
     "start": "react-scripts start",
     "build": "node scripts/build.js",
     "build:cloudflare": "node scripts/build-cloudflare.js",
+    "deploy:cloudflare": "node scripts/deploy-cloudflare.js",
     "test": "react-scripts test",
     "eject": "react-scripts eject"
   },
