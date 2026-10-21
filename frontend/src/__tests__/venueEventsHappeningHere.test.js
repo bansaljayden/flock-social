@@ -7,9 +7,10 @@
  *
  *   - the section draws what it is given, in that order, with the date read on
  *     the reader's own calendar, and draws nothing when there is nothing;
- *   - the background is the venue's own photo, the URL the top of the card is
- *     already showing, and anything wrong with it falls back to drawn art,
- *     never to a broken image or a committed photo file;
+ *   - each event is over a different one of the venue's own photos, starting
+ *     after the one the top of the card shows, and a photo that fails turns
+ *     only the cards over it to drawn art, never to a broken image or a
+ *     committed photo file;
  *   - every event has a Report control that opens the existing report sheet
  *     as a 'venue_event';
  *   - App.js loads the list with the card, drops a reported or taken-down event
@@ -42,7 +43,7 @@ const {
 } = require('../lib/venueEvents');
 
 const VenueEventsSection = SectionModule.default;
-const { FIRST_SHOWN } = SectionModule;
+const { FIRST_SHOWN, eventPhoto } = SectionModule;
 
 const SRC = path.resolve(__dirname, '..');
 const readSrc = (...p) => fs.readFileSync(path.join(SRC, ...p), 'utf8').replace(/\r\n/g, '\n');
@@ -112,7 +113,7 @@ describe('the dates read on the reader\'s own calendar', () => {
 describe('the Happening here section', () => {
   const mount = (over = {}) => {
     const onReport = jest.fn();
-    const utils = render(React.createElement(VenueEventsSection, { events: EVENTS.slice(0, 2), photoUrl: PHOTO, colors, onReport, ...over }));
+    const utils = render(React.createElement(VenueEventsSection, { events: EVENTS.slice(0, 2), photos: [PHOTO], colors, onReport, ...over }));
     return { ...utils, onReport };
   };
 
@@ -141,7 +142,7 @@ describe('the Happening here section', () => {
     expect(screen.queryByTestId('venue-event-art')).toBeNull();
   });
 
-  test('a photo that fails to load turns every card to the drawn art, never a broken image', () => {
+  test('a photo that fails to load turns the cards over it to the drawn art, never a broken image', () => {
     const { container } = mount();
     fireEvent.error(container.querySelector('img'));
     expect(container.querySelectorAll('img')).toHaveLength(0);
@@ -153,9 +154,9 @@ describe('the Happening here section', () => {
     expect(art.querySelector('rect').getAttribute('fill')).toBe(colors.navyBg);
   });
 
-  test('no photo at all (none on Google, or the photo budget spent) is the drawn art from the start', () => {
-    for (const photoUrl of [null, undefined, '']) {
-      const { container, unmount } = mount({ photoUrl });
+  test('no photo at all (Places has none for the venue) is the drawn art from the start', () => {
+    for (const photos of [null, undefined, [], [null], [undefined], ['']]) {
+      const { container, unmount } = mount({ photos });
       expect(container.querySelectorAll('img')).toHaveLength(0);
       expect(screen.getAllByTestId('venue-event-art')).toHaveLength(2);
       unmount();
@@ -166,8 +167,35 @@ describe('the Happening here section', () => {
     const { container, rerender, onReport } = mount();
     fireEvent.error(container.querySelector('img'));
     expect(container.querySelectorAll('img')).toHaveLength(0);
-    rerender(React.createElement(VenueEventsSection, { events: EVENTS.slice(0, 2), photoUrl: `${PHOTO}&next=1`, colors, onReport }));
+    rerender(React.createElement(VenueEventsSection, { events: EVENTS.slice(0, 2), photos: [`${PHOTO}&next=1`], colors, onReport }));
     expect(container.querySelectorAll('img')).toHaveLength(2);
+  });
+
+  const srcs = (container) => [...container.querySelectorAll('img')].map((img) => img.getAttribute('src'));
+  const FOUR = [0, 1, 2, 3].map((n) => `${PHOTO}&n=${n}`);
+
+  test('each event is over a different photo of the venue, starting after the one the top of the card shows', () => {
+    const { container } = mount({ events: EVENTS.slice(0, 3), photos: FOUR });
+    expect(srcs(container)).toEqual([FOUR[1], FOUR[2], FOUR[3]]);
+  });
+
+  test('a short list of photos goes round, and a venue with one photo has it behind every event', () => {
+    const { container } = mount({ events: EVENTS.slice(0, 3), photos: FOUR.slice(0, 2) });
+    expect(srcs(container)).toEqual([FOUR[1], FOUR[0], FOUR[1]]);
+    expect(eventPhoto([PHOTO], 0)).toBe(PHOTO);
+    expect(eventPhoto([PHOTO], 4)).toBe(PHOTO);
+    expect(eventPhoto([null, '', PHOTO], 0)).toBe(PHOTO);
+    expect(eventPhoto([], 0)).toBeNull();
+    expect(eventPhoto(undefined, 0)).toBeNull();
+  });
+
+  test('one photo that fails turns only the card over it to the drawn art', () => {
+    const { container } = mount({ events: EVENTS.slice(0, 3), photos: FOUR });
+    fireEvent.error(container.querySelector(`img[src="${FOUR[2]}"]`));
+    expect(srcs(container)).toEqual([FOUR[1], FOUR[3]]);
+    const items = within(screen.getByRole('list')).getAllByRole('listitem');
+    expect(within(items[1]).getByTestId('venue-event-art')).toBeTruthy();
+    expect(screen.getAllByTestId('venue-event-art')).toHaveLength(1);
   });
 
   test('every event can be reported, by name', () => {
@@ -233,13 +261,15 @@ describe('on the venue card', () => {
     expect(PARAMS).toContain('venueDetailEvents');
   });
 
-  test('the card shows its events over the photo the top of the card is showing, and reports them as venue events', () => {
+  test('the card shows its events over its other photos, and reports them as venue events', () => {
     const p = props();
     render(React.createElement(VenueDetailSheet, p));
     const section = screen.getByRole('heading', { name: /Happening here/ }).closest('section');
     const imgs = section.querySelectorAll('img');
     expect(imgs).toHaveLength(2);
-    expect(imgs[0].getAttribute('src')).toBe(PHOTO);
+    // The top of the card shows photos[0]; the events start on the next one
+    // and go round a two-photo list.
+    expect([...imgs].map((img) => img.getAttribute('src'))).toEqual([`${PHOTO}&n=2`, PHOTO]);
     fireEvent.click(within(section).getByRole('button', { name: 'Report Live jazz' }));
     expect(p.setModerationTarget).toHaveBeenCalledWith({ userName: 'this venue', contentType: 'venue_event', contentId: 31 });
   });
@@ -249,7 +279,7 @@ describe('on the venue card', () => {
       venueDetailModal: { place_id: 'ChIJcopperFinch01', name: 'The Copper Finch', loading: false, photos: [], photo_url: `${PHOTO}&seed=1` },
     })));
     const section = screen.getByRole('heading', { name: /Happening here/ }).closest('section');
-    expect(section.querySelector('img').getAttribute('src')).toBe(`${PHOTO}&seed=1`);
+    for (const img of section.querySelectorAll('img')) expect(img.getAttribute('src')).toBe(`${PHOTO}&seed=1`);
   });
 
   test('a venue with no events looks exactly as it did', () => {
@@ -292,6 +322,6 @@ describe('App.js loads, retracts and hands over the list', () => {
   test('the sheet is handed the list', () => {
     expect(APP).toContain('venueDetailEvents={venueDetailEvents}');
     expect(SHEET).toContain('events={venueDetailEvents}');
-    expect(SHEET).toContain("photoUrl={(venueDetailModal.photos && venueDetailModal.photos[0]) || venueDetailModal.photo_url || null}");
+    expect(SHEET).toContain('photos={(venueDetailModal.photos && venueDetailModal.photos.length > 0) ? venueDetailModal.photos : [venueDetailModal.photo_url]}');
   });
 });

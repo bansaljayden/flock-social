@@ -320,14 +320,15 @@ const VenueDetailSheet = ({
                   {/* Happening here: the venue's own upcoming events, high on
                       the card because a dated event is the most time-bound
                       thing on it. Renders nothing when there are none, so a
-                      venue with no events looks exactly as it did. The
-                      background is the photo the top of this card is showing. */}
+                      venue with no events looks exactly as it did. Each
+                      event is over a different one of this card's photos,
+                      starting after the one at the top. */}
                   <VenueEventsSection
                     // Keyed by place, so "Show all" and a failed photo belong
                     // to one venue and start over when the sheet moves on.
                     key={venueDetailModal.place_id || 'venue'}
                     events={venueDetailEvents}
-                    photoUrl={(venueDetailModal.photos && venueDetailModal.photos[0]) || venueDetailModal.photo_url || null}
+                    photos={(venueDetailModal.photos && venueDetailModal.photos.length > 0) ? venueDetailModal.photos : [venueDetailModal.photo_url]}
                     colors={colors}
                     onReport={(e) => setModerationTarget({ userName: 'this venue', contentType: 'venue_event', contentId: e.id })}
                   />

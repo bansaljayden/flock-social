@@ -6,6 +6,9 @@ their friends Nick Ferraro, Kaitlyn Brennan and Tommy Walsh, and the
 invented venues The Copper Finch, Juniper Bowl and Marigold Diner. The Nest
 and SOS frames come from a default run; the rest from a run with
 `SHOTS_SCENE=bill`, which leaves the camera account's dinner share unpaid.
+The venue card was retaken later that day with The Copper Finch given four
+drawn photos, as a listed venue has several: the dining room, a quiz
+counter, a stage corner and a basket of wings, one behind each event.
 Every venue picture is a drawing from `scripts/shot-art.mjs`. No Google Places
 photo appears in any frame, and none may: `public/` is served from
 flockcorp.com, copied into every Capacitor build and published.

@@ -6,14 +6,30 @@
  * has not gone by, not taken down, not reported by this reader, the 21 rule)
  * and put them soonest first. This draws them and nothing more.
  *
- * THE BACKGROUND IS THE VENUE'S OWN PHOTO, the same proxied Places photo URL
- * the top of the card is already showing (`photos[0]`, else `photo_url`). It is
- * fetched at runtime through the server's photo proxy like every venue photo,
- * so no Places photo is ever stored in the repo, and reusing the URL the header
- * has already loaded costs no second photo request and nothing against the
- * photo spend guards. When there is no photo (Places has none, or the spend cap
- * is reached and the server sends none) or it fails to load, the card falls
- * back to the drawn art below, which is code, not an image file.
+ * THE BACKGROUND IS ONE OF THE VENUE'S OWN PHOTOS, and each event gets a
+ * different one. The card hands in its photo list (`photos`, up to five from
+ * Place Details, else the one `photo_url` it was opened with). The top of the
+ * card shows photos[0], so event i is drawn over photos[(i + 1) % n]: three
+ * events no longer read as the same picture three times, and a venue with one
+ * photo has every event over it, as it always did.
+ *
+ * WHAT THAT COSTS. These are the same proxied Places photo URLs, at the same
+ * width, that the card's own photo arrows load, fetched at runtime through the
+ * server's photo proxy like every venue photo, so no Places photo is ever
+ * stored in the repo. Drawing them here means opening a card with three events
+ * can ask for up to three photos the header alone would not have. The proxy
+ * buys a photo once and serves it from places_photo_cache (Postgres, kept 30
+ * days) after that, and the spend ledger is charged only for that first
+ * purchase, under the yearly cap and its daily brake in
+ * backend/services/photoStore.js (PHOTO_BUDGET_USD_PER_YEAR). So the extra
+ * spend is per distinct photo per month, never per view, and no list can push
+ * past the cap.
+ *
+ * When there is no photo (Places has none) the card is the drawn art below,
+ * which is code, not an image file. A photo that fails to load turns the cards
+ * drawn over it to that art and leaves the rest alone. That includes a photo
+ * the proxy refuses because a spend cap is reached: it answers 429 for any
+ * photo it has not already bought, so a capped month costs nothing here.
  *
  * Every event carries its own Report control, which opens the same report
  * sheet the deals above it use. The server takes a 'venue_event' report, takes
@@ -61,15 +77,23 @@ export const EventArt = ({ colors }) => {
   );
 };
 
-const VenueEventsSection = ({ events, photoUrl, colors, onReport }) => {
-  const [photoFailed, setPhotoFailed] = React.useState(false);
+// Event i's photo: the one after the photo the top of the card shows, going
+// round the list again when it runs out. Null when the venue has none.
+export const eventPhoto = (photos, i) => {
+  const list = Array.isArray(photos) ? photos.filter((u) => typeof u === 'string' && u !== '') : [];
+  return list.length ? list[(i + 1) % list.length] : null;
+};
+
+const VenueEventsSection = ({ events, photos, colors, onReport }) => {
+  // The URLs that failed to load. Kept by URL, not by card, so a bad photo
+  // turns only the cards drawn over it to the art, and a different venue's
+  // photos get their own chance.
+  const [failed, setFailed] = React.useState(() => new Set());
   const [showAll, setShowAll] = React.useState(false);
-  // A different venue's photo gets its own chance to load.
-  React.useEffect(() => { setPhotoFailed(false); }, [photoUrl]);
 
   if (!Array.isArray(events) || events.length === 0) return null;
   const shown = showAll ? events : events.slice(0, FIRST_SHOWN);
-  const usePhoto = typeof photoUrl === 'string' && photoUrl !== '' && !photoFailed;
+  const markFailed = (src) => setFailed((prev) => (prev.has(src) ? prev : new Set(prev).add(src)));
 
   return (
     <section aria-labelledby="venue-events-heading" style={{ marginBottom: '16px' }}>
@@ -77,15 +101,16 @@ const VenueEventsSection = ({ events, photoUrl, colors, onReport }) => {
         {Icons.calendar(colors.steel, 14)} Happening here
       </h4>
       <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: '8px' }}>
-        {shown.map((e) => {
+        {shown.map((e, i) => {
           const when = eventWhenLine(e.event_date, e.event_time);
+          const src = eventPhoto(photos, i);
           return (
             <li key={e.id} style={{ position: 'relative', height: '124px', borderRadius: '12px', overflow: 'hidden', backgroundColor: colors.navyBg }}>
-              {usePhoto ? (
+              {src && !failed.has(src) ? (
                 <img
-                  src={photoUrl}
+                  src={src}
                   alt=""
-                  onError={() => setPhotoFailed(true)}
+                  onError={() => markFailed(src)}
                   style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
                 />
               ) : (
