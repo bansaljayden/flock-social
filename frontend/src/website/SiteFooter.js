@@ -78,7 +78,7 @@ export default function SiteFooter({
           <div className="lp-footer-top">
             {brand}
             <p className="lp-footer-blurb">
-              Flock Social LLC, a Pennsylvania company. Made by Jayden Bansal and Asad Ali.
+              Flock Social LLC, a Pennsylvania company. Made by Jayden Bansal.
             </p>
           </div>
           <ul className="lp-footer-links">

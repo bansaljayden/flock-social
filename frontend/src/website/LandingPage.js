@@ -381,8 +381,10 @@ export default function LandingPage() {
       <main id="lp-main" tabIndex={-1} {...pageInert}>
 
       {/* ---------------- hero ----------------
-          The tagline, then what Flock is for in plain words, one action, then
-          the honest status of the iPhone app. Flat navy: the soft glow at the top of a
+          The tagline, then what Flock is for in plain words, and one action.
+          The status line under the button (browser today, iPhone app in review,
+          the DECA award) came out on 2026-10-21 at the maintainer's ask; the app's
+          status is still on #get and the award on /about. Flat navy: the soft glow at the top of a
           dark hero is the stock generated-site hero, and nothing in a printed
           field guide glows. The phone is a plate in the margin with a caption,
           the field guide's own device and the honest way to say the screen is
@@ -398,11 +400,6 @@ export default function LandingPage() {
             <div className="lp-hero-cta">
               <a className="lp-btn lp-btn-cream lp-btn-lg" href="/signup">Start a plan</a>
             </div>
-            <p className="lp-hero-note">
-              Free, and it works in your browser today. The iPhone app is still in
-              App Store review (<a href="#get">get an email when it’s out</a>).
-              Flock took 1st place at PA DECA States.
-            </p>
           </div>
 
           <figure className="lp-phone-wrap">
@@ -494,16 +491,49 @@ export default function LandingPage() {
             Here’s that same Friday in Flock: five steps, and nobody has to carry it.
           </p>
 
-          {/* The dead chat beside a sparrow taking off: everyone flew, and
-              nobody went. No words added. */}
+          {/* The dead plan as it goes today: a group chat on an iPad (the maintainer,
+              2026-10-21: "make a ipad screen mock up ... showing the plan
+              dead"). Everyone is in, nobody picks, and two days later it starts
+              over. Drawn in HTML, not a capture, so it is sharp at every size
+              and costs no image; a generic messages look, no product name or
+              logo. Landscape with the conversation list where there is room,
+              the conversation alone on a phone. `lp-chat` keeps it out of the
+              crawler copy, like the chat it replaced. The sparrow still takes
+              off beside it. */}
           <div className="lp-friday-open">
-          <figure className="lp-chat lp-friday-chat">
-            <div className="lp-msg">we should all hang out this weekend</div>
-            <div className="lp-msg lp-msg-me">yesss I'm down</div>
-            <div className="lp-msg">same, where tho</div>
-            <div className="lp-msg lp-msg-me">idk what do you guys want</div>
-            <div className="lp-msg">I'm good with anything</div>
-            <div className="lp-msg lp-msg-dead">Seen by 5 · nobody went</div>
+          <figure className="lp-chat lp-tablet">
+            <div className="lp-tablet-screen">
+              <div className="lp-tablet-list" aria-hidden="true">
+                <p className="lp-tablet-title">Messages</p>
+                <p className="lp-tablet-row is-on"><b>Friday Night Crew</b><time>Thu</time><span>I’m good with anything</span></p>
+                <p className="lp-tablet-row"><b>Mom</b><time>Thu</time><span>are you home for dinner</span></p>
+                <p className="lp-tablet-row"><b>Asad Ali</b><time>Wed</time><span>lmk when you’re free</span></p>
+                <p className="lp-tablet-row"><b>Kaitlyn Brennan</b><time>Tue</time><span>lmaooo</span></p>
+              </div>
+              <div className="lp-tablet-chat">
+                <div className="lp-tablet-head">
+                  <span className="lp-tablet-faces" aria-hidden="true"><i>N</i><i>K</i><i>T</i></span>
+                  <b>Friday Night Crew</b>
+                  <span>5 people</span>
+                </div>
+                <div className="lp-tablet-msgs">
+                  <p className="lp-tablet-when"><b>Thursday</b> 4:02 PM</p>
+                  <p className="lp-tablet-from">Nick</p>
+                  <p className="lp-bub">we should all hang out this weekend</p>
+                  <p className="lp-bub is-me">yesss I’m down</p>
+                  <p className="lp-tablet-from">Kaitlyn</p>
+                  <p className="lp-bub">same, where tho</p>
+                  <p className="lp-bub is-me">idk what do you guys want</p>
+                  <p className="lp-tablet-from">Tommy</p>
+                  <p className="lp-bub">I’m good with anything</p>
+                  <p className="lp-tablet-when"><b>Sunday</b> 1:37 PM</p>
+                  <p className="lp-tablet-from">Asad</p>
+                  <p className="lp-bub">ok fr next weekend</p>
+                </div>
+                <p className="lp-tablet-input" aria-hidden="true">Message</p>
+              </div>
+            </div>
+            <figcaption className="lp-fig-cap">Seen by five. Nobody went.</figcaption>
           </figure>
           <img
             className="lp-art lp-friday-art"

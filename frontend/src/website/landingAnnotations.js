@@ -26,7 +26,7 @@ export const ANNOTATIONS = {
       srcSet: '/screenshots/chat-dark-480w.webp 480w, /screenshots/chat-dark@2x.webp 780w',
       alt: 'The Friday Night Crew chat: a vote on three places with The Copper Finch ahead, and four of five budgets in.',
     },
-    caption: 'The Friday Night Crew chat.',
+    // No caption (his ask, 2026-10-21): the beat's words already name it.
     notes: [
       { side: 'right', text: 'The Copper Finch, pinned', kind: 'text', box: [43.97, 8.0, 52.95, 9.06], y: 4.5, dot: [58, 8.53] },
       { side: 'right', text: '4 of 5 budgets in', kind: 'text', box: [4.23, 12.09, 60.26, 13.63], y: 16, dot: [65.3, 12.86] },

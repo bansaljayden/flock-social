@@ -142,7 +142,6 @@ const PAGE_BLOCKS = {
   home: [
     ["h1", "Nurturing friendship, one flock at a time."],
     ["p", "Flock is how a group decides where to go out. Everybody votes on the place, and nobody has to say their budget out loud."],
-    ["p", "Free, and it works in your browser today. The iPhone app is still in App Store review (get an email when it’s out). Flock took 1st place at PA DECA States."],
     ["h2", "See how busy it is before anyone leaves."],
     ["p", "Search any place below. Flock starts from how busy it usually gets at this hour and adjusts with live readings when it has them. Packed? It suggests a quieter spot nearby."],
     ["p", "Three reports from people at a venue move its score for that night and hour."],
