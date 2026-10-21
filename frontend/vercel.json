@@ -1,5 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "ignoreCommand": "node scripts/vercel-ignore-build.js",
   "functions": {
     "api/demo-relay.js": { "maxDuration": 30 }
   },
