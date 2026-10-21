@@ -4444,3 +4444,30 @@ class StudyMode(unittest.TestCase):
             for word in re.findall(r'[A-Za-z_]+', args):
                 self.assertNotIn(word, {'frame', 'points', 'things', 'thermal_frame', 'cells'},
                                  f'the study log was handed {word}')
+
+
+class DoorCounterHealth(unittest.TestCase):
+    """The door screen says when the counter dropped, and shows its grid."""
+
+    def test_offline_says_so_in_red(self):
+        text, tone = main.tof_status_line(None, None, 0, 100.0)
+        self.assertIn('offline', text)
+        self.assertEqual(tone, main.BRAND_RED)
+
+    def test_connected_time_and_drops(self):
+        text, tone = main.tof_status_line('tof', 100.0, 2, 400.0)
+        self.assertIn('Connected for 5 min', text)
+        self.assertIn('Dropped 2 times', text)
+        self.assertEqual(tone, main.BRAND_GREEN)
+        self.assertIn('Dropped 1 time since', main.tof_status_line('tof', 0, 1, 5)[0])
+
+    def test_learning_comes_before_connected(self):
+        text, tone = main.tof_status_line('tof', 0, 0, 3, learning=True)
+        self.assertIn('Learning', text)
+        self.assertEqual(tone, main.BRAND_AMBER)
+
+    def test_shade_lifts_only_what_is_nearer_than_the_floor(self):
+        self.assertEqual(main.tof_cell_shade(2000, 2000), main.BRAND_INK)
+        self.assertEqual(main.tof_cell_shade(0, 2000), main.BRAND_NAVY)
+        near = main.tof_cell_shade(800, 2000)
+        self.assertGreater(sum(near), sum(main.tof_cell_shade(1800, 2000)))

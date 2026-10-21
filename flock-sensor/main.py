@@ -68,7 +68,7 @@ try:
 except ImportError:  # pragma: no cover
     fcntl = None
 
-VERSION = '1.19.0'
+VERSION = '1.20.0'
 
 # ---------------------------------------------------------------------------
 # Config
@@ -729,6 +729,13 @@ _state = {
     'door_in': 0,                           # Running totals since the counter
     'door_out': 0,                          #   started, for the panel only
     'door_source': None,                    # 'tof' or 'beam' while one is counting
+    # What the doorway counter sees, for the panel's door screen only: the
+    # latest 64 distances, the learned empty doorway and the zones somebody is
+    # in. Overwritten every frame and never sent anywhere.
+    'tof_view': None,
+    'tof_fitted': False,                    # The counter's thread is running
+    'tof_up_since': None,                   # Monotonic mark it last came up
+    'tof_restarts': 0,                      # Times it dropped since power-on
     'door_history': deque(maxlen=12),       # Crossings per snapshot, for the panel
     'thermal': 0,                           # Latest snapshot
     'thermal_at': None,                     # Monotonic mark of the last GOOD read
@@ -4358,6 +4365,8 @@ def tof_loop():
     running totals as well, for the panel.
     """
     backoff = 5.0
+    with _lock:
+        _state['tof_fitted'] = True
     while not _stop.is_set():
         dev = bus = None
         tracker = CrossingTracker(axis=TOF_AXIS)
@@ -4371,8 +4380,10 @@ def tof_loop():
                         f'{time.monotonic() - started:.1f}s to load')
             with _lock:
                 _state['door_source'] = 'tof'
+                _state['tof_up_since'] = time.monotonic()
             backoff = 5.0
             last_frame = time.monotonic()
+            last_view = 0.0
             while not _stop.is_set():
                 if not dev.data_ready():
                     if time.monotonic() - last_frame > 10:
@@ -4388,10 +4399,19 @@ def tof_loop():
                                   'Doorway counter: a corrupted frame was dropped')
                     continue
                 background.observe(frame)
+                occupied = (tof_occupied(frame, background.floor)
+                            if background.ready else [])
+                if last_frame - last_view >= 0.1:
+                    last_view = last_frame
+                    with _lock:
+                        _state['tof_view'] = {
+                            'frame': tuple(frame),
+                            'floor': tuple(background.floor) if background.ready else None,
+                            'occupied': frozenset(occupied),
+                        }
                 if not background.ready:
                     continue
-                came_in, went_out = tracker.observe(
-                    tof_clusters(tof_occupied(frame, background.floor)))
+                came_in, went_out = tracker.observe(tof_clusters(occupied))
                 if TOF_FLIP_DIRECTION:
                     came_in, went_out = went_out, came_in
                 if came_in or went_out:
@@ -4403,9 +4423,13 @@ def tof_loop():
         except Exception as e:
             log_throttled('tof_loop', logging.ERROR,
                           f'Doorway counter stopped ({e}); retrying in {backoff:.0f}s')
+            with _lock:
+                _state['tof_restarts'] += 1
         finally:
             with _lock:
                 _state['door_source'] = None
+                _state['tof_view'] = None
+                _state['tof_up_since'] = None
             if dev is not None:
                 dev.stop_ranging()
             if bus is not None:
@@ -4914,6 +4938,48 @@ def thing_colour(label):
     return BRAND_CREAM
 
 
+def tof_status_line(source, up_since, restarts, now, learning=False):
+    """The doorway counter's health in words, and the colour to set it in.
+
+    Pure, so it is tested without a panel. A counter that drops and comes back
+    looked fine on the home screen between drops; this says it happened.
+    """
+    if source != 'tof':
+        text, tone = 'Counter offline, reconnecting', BRAND_RED
+    elif learning:
+        text, tone = 'Learning the empty doorway, keep it clear', BRAND_AMBER
+    else:
+        up = max(0, int(now - up_since)) if up_since is not None else 0
+        if up < 60:
+            text = f'Connected {up} s ago'
+        elif up < 3600:
+            text = f'Connected for {up // 60} min'
+        else:
+            text = f'Connected for {up // 3600} h {up % 3600 // 60} min'
+        tone = BRAND_GREEN
+    if restarts:
+        text += f'. Dropped {restarts} time{"s" if restarts != 1 else ""} since power-on'
+    return text, tone
+
+
+def tof_cell_shade(d, floor):
+    """A zone's colour: nearer is lighter, a failed reading is dark.
+
+    Against the learned floor when there is one, so a person stands out the
+    same in a near zone and a far one; against the sensor's 4 m range while
+    it is still learning.
+    """
+    if not d or d <= 0:
+        return BRAND_NAVY
+    span = float(floor) if floor else float(VL53_RANGE_MM)
+    t = max(0.0, min(1.0, 1.0 - d / max(1.0, span)))
+    if floor:
+        # The floor itself sits at the dark end; only what is nearer lifts.
+        t = max(0.0, min(1.0, (floor - d) / 1200.0))
+    lo, hi = BRAND_INK, BRAND_CREAM
+    return tuple(int(lo[i] + (hi[i] - lo[i]) * t) for i in range(3))
+
+
 def occupancy_line(estimate):
     """The door screen's sentence about people inside, or None."""
     if not estimate:
@@ -5313,10 +5379,42 @@ class Panel:
         for p in pts:
             self.pygame.draw.circle(self.screen, BRAND_CREAM, (int(p[0]), int(p[1])), 3)
 
-    def door(self, ir, history, came_in=None, went_out=None, live=True, occupancy=None):
+    def door_grid(self, view, x, y, size):
+        """The doorway counter's 64 distances as it sees them, live.
+
+        Each square is one zone, about 30 cm of floor at doorway height, with
+        its distance in centimetres. Nearer is lighter; a green edge is a zone
+        it thinks somebody is in. Nothing here identifies anyone: at this
+        resolution a person is a few squares.
+        """
+        pg = self.pygame
+        gap = 3
+        cell = (size - gap * (TOF_COLS - 1)) // TOF_COLS
+        frame = view['frame']
+        floor = view['floor']
+        occupied = view['occupied']
+        for r in range(TOF_ROWS):
+            for c in range(TOF_COLS):
+                z = r * TOF_COLS + c
+                d = frame[z] if z < len(frame) else 0
+                rect = pg.Rect(x + c * (cell + gap), y + r * (cell + gap), cell, cell)
+                shade = tof_cell_shade(d, floor[z] if floor else None)
+                pg.draw.rect(self.screen, shade, rect, border_radius=4)
+                if z in occupied:
+                    pg.draw.rect(self.screen, BRAND_GREEN, rect, width=3, border_radius=4)
+                ink = BRAND_NAVY if sum(shade) > 330 else BRAND_MUTED
+                s = self.text(self.f_body, f'{d // 10}' if d and d > 0 else '-', ink)
+                self.screen.blit(s, (rect.centerx - s.get_width() // 2,
+                                     rect.centery - s.get_height() // 2))
+
+    def door(self, ir, history, came_in=None, went_out=None, live=True, occupancy=None,
+             tof_view=None, tof_status=None):
         m = self.m
         pad = m['pad']
         self.header('Through the door', back=True)
+        if tof_status is not None:
+            self.door_live(ir, came_in, went_out, occupancy, tof_view, tof_status)
+            return
         top = m['header_h'] + pad
         vy = top + m['font_sm'] + 6
         self.label('Since the last update', (pad, top))
@@ -5371,6 +5469,56 @@ class Panel:
         else:
             self.blit_centred(self.f_body, 'Each update adds a point here.',
                               BRAND_FAINT, self.w // 2, (chart_top + self.h) // 2)
+
+    def door_live(self, ir, came_in, went_out, occupancy, view, status):
+        """The door screen for the directional counter: what it sees on the
+        left, what it has counted on the right."""
+        m = self.m
+        pad = m['pad']
+        top = m['header_h'] + pad
+        legend_h = m['font_xs'] + 10
+        size = min(self.h - top - pad - legend_h, int(self.w * 0.48))
+        if view is not None:
+            self.door_grid(view, pad, top, size)
+            self.blit(self.f_body, 'Distance in cm. Lighter is nearer; green is somebody.',
+                      BRAND_FAINT, (pad, top + size + 6))
+        else:
+            box = self.pygame.Rect(pad, top, size, size)
+            self.pygame.draw.rect(self.screen, BRAND_INK, box, border_radius=8)
+            self.blit_centred(self.f_body, 'Waiting for the counter', BRAND_MUTED,
+                              box.centerx, box.centery - m['font_xs'] // 2)
+
+        x = pad + size + pad * 2
+        y = top
+        self.label('Since the last update', (x, y))
+        y += m['font_sm'] + 6
+        v = self.text(self.f_big, str(ir), BRAND_CREAM)
+        self.screen.blit(v, (x, y))
+        y += v.get_height() + pad // 2
+        colw = (self.w - pad - x) // 2
+        for i, (name, n) in enumerate((('Came in', came_in or 0), ('Went out', went_out or 0))):
+            self.label(name, (x + i * colw, y))
+            self.blit(self.f_med, str(n), BRAND_CREAM, (x + i * colw, y + m['font_sm'] + 6))
+        y += m['font_sm'] + 6 + self.f_med.get_height() + pad // 2
+        self.blit(self.f_body, 'Since the counter started', BRAND_MUTED, (x, y))
+        y += m['font_xs'] + 14
+        line = occupancy_line(occupancy)
+        if line:
+            self.blit(self.f_body, line, BRAND_CREAM, (x, y))
+            y += m['font_xs'] + 14
+        # Health, wrapped to the column: it can run long after a few drops.
+        text, tone = status
+        words, row = text.split(' '), ''
+        for w_ in words:
+            trial = (row + ' ' + w_).strip()
+            if self.f_body.size(trial)[0] > self.w - pad - x and row:
+                self.blit(self.f_body, row, tone, (x, y))
+                y += m['font_xs'] + 8
+                row = w_
+            else:
+                row = trial
+        if row:
+            self.blit(self.f_body, row, tone, (x, y))
 
     def noise(self, level, live, average=None, insight=None, clipped=False):
         m = self.m
@@ -5718,6 +5866,10 @@ def display_loop():
                 came_in, went_out = _state['door_in'], _state['door_out']
                 door_source = _state['door_source']
                 occupancy = _state['occupancy']
+                tof_view = _state['tof_view']
+                tof_up_since = _state['tof_up_since']
+                tof_restarts = _state['tof_restarts']
+                tof_fitted = _state['tof_fitted']
 
             therm_live = therm_at is not None and now - therm_at <= THERMAL_STALE_AFTER
             noise_live = noise_at is not None and now - noise_at <= NOISE_STALE_AFTER
@@ -5750,18 +5902,25 @@ def display_loop():
             # full-screen redraws for nothing.
             signature = (view, ir, therm, therm_live, int(burst), int(db), noise_live,
                          door_source, came_in, went_out, len(door_history),
-                         len(history), len(ui.trace), id(frame) if view == 'thermal' else 0)
+                         len(history), len(ui.trace),
+                         id(frame) if view == 'thermal' else
+                         id(tof_view) if view == 'door' else 0)
             if signature != last_state or now - last_paint > 0.5:
                 dirty = True
                 last_state = signature
 
             if dirty:
+                tof_status = (tof_status_line(
+                    door_source, tof_up_since, tof_restarts, now,
+                    learning=bool(tof_view) and tof_view['floor'] is None)
+                    if tof_fitted else None)
                 try:
                     if view == 'thermal':
                         ui.thermal(frame, therm, therm_live, points, things)
                     elif view == 'door':
                         ui.door(ir, door_history, *directions, live=door_live,
-                                occupancy=occupancy)
+                                occupancy=occupancy, tof_view=tof_view,
+                                tof_status=tof_status)
                     elif view == 'noise':
                         ui.noise(burst, noise_live, average=db, insight=insight,
                                  clipped=clipped_at is not None and now - clipped_at < 3.0)
