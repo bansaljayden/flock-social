@@ -14,7 +14,14 @@
    Every path is written out in full: publicScreenshotsShipped.test.js and the
    capture rig decide what ships by finding these names literally in source.
    (This file is reelShots.js, not heroReel.js: on Windows that would be the
-   same file as the HeroReel.js component.) */
+   same file as the HeroReel.js component.)
+
+   Since the same day's second pass none of these screens appears anywhere
+   else on the site (the maintainer: "unique pictures like they aren't used anywhere
+   else"): the still-in roster, Plans, the profile, Messages and Live Events
+   replaced the chat, create, budget, bill and SOS captures, which the home
+   page's beats and How it works still show. Live Events are invented, with
+   drawn pictures, not Ticketmaster's. */
 export const REEL = [
   {
     name: 'nest',
@@ -35,12 +42,12 @@ export const REEL = [
     landscape: false,
   },
   {
-    name: 'chat',
-    src: '/screenshots/chat-dark@2x.webp',
-    srcSet: '/screenshots/chat-dark-480w.webp 480w, /screenshots/chat-dark@2x.webp 780w',
+    name: 'still-in',
+    src: '/screenshots/still-in-dark@2x.webp',
+    srcSet: '/screenshots/still-in-dark-480w.webp 480w, /screenshots/still-in-dark@2x.webp 780w',
     width: 780,
     height: 1688,
-    alt: 'The Friday Night Crew chat: The Copper Finch is pinned and leads the vote, and four of five budgets are in.',
+    alt: 'Trivia Night on the night: locked in at The Copper Finch for 10 PM, with two of the three going already marked still in.',
     landscape: false,
   },
   {
@@ -62,39 +69,39 @@ export const REEL = [
     landscape: false,
   },
   {
-    name: 'create',
-    src: '/screenshots/create-dark@2x.webp',
-    srcSet: '/screenshots/create-dark-480w.webp 480w, /screenshots/create-dark@2x.webp 780w',
+    name: 'plans-tab',
+    src: '/screenshots/plans-tab-dark@2x.webp',
+    srcSet: '/screenshots/plans-tab-dark-480w.webp 480w, /screenshots/plans-tab-dark@2x.webp 780w',
     width: 780,
     height: 1688,
-    alt: 'Starting a flock for tomorrow at 8 PM, with Asad, Nick and Kaitlyn invited.',
+    alt: 'The Plans tab: October’s calendar with tonight’s Trivia Night, and the plans coming up after it.',
     landscape: false,
   },
   {
-    name: 'budget',
-    src: '/screenshots/budget-dark@2x.webp',
-    srcSet: '/screenshots/budget-dark-480w.webp 480w, /screenshots/budget-dark@2x.webp 780w',
+    name: 'profile',
+    src: '/screenshots/profile-dark@2x.webp',
+    srcSet: '/screenshots/profile-dark-480w.webp 480w, /screenshots/profile-dark@2x.webp 780w',
     width: 780,
     height: 1688,
-    alt: 'The private budget sheet: pick an amount or type your own, and nobody else sees the answer.',
+    alt: 'the maintainer’s profile: four flocks, four friends and 92% reliable, with Add friends at the top.',
     landscape: false,
   },
   {
-    name: 'bill-split',
-    src: '/screenshots/bill-split-dark@2x.webp',
-    srcSet: '/screenshots/bill-split-dark-480w.webp 480w, /screenshots/bill-split-dark@2x.webp 780w',
+    name: 'messages',
+    src: '/screenshots/messages-dark@2x.webp',
+    srcSet: '/screenshots/messages-dark-480w.webp 480w, /screenshots/messages-dark@2x.webp 780w',
     width: 780,
     height: 1688,
-    alt: 'Split the Bill: $142.60 with the tip, paid by Asad, comes to $28.52 each, with who has paid back.',
+    alt: 'The Messages tab: a direct message from Asad and four flock chats, two of them still voting.',
     landscape: false,
   },
   {
-    name: 'sos',
-    src: '/screenshots/sos-dark@2x.webp',
-    srcSet: '/screenshots/sos-dark-480w.webp 480w, /screenshots/sos-dark@2x.webp 780w',
+    name: 'events',
+    src: '/screenshots/events-dark@2x.webp',
+    srcSet: '/screenshots/events-dark-480w.webp 480w, /screenshots/events-dark@2x.webp 780w',
     width: 780,
     height: 1688,
-    alt: 'The SOS sheet: Call 911 comes first, then alerting two trusted contacts or sharing your location.',
+    alt: 'Live Events this week nearby: an acoustic set, a night market and a sushi class, each with a Start Flock button.',
     landscape: false,
   },
   {
