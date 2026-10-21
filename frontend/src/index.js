@@ -1072,10 +1072,20 @@ if (appMounted) {
   if (hasAnalyticsConsent()) afterLoad(startAnalytics);
 }
 
-const root = ReactDOM.createRoot(document.getElementById('root'));
+const rootEl = document.getElementById('root');
+const root = ReactDOM.createRoot(rootEl);
 
-if (page) {
-  const Page = React.lazy(page.load);
+// PRERENDERED ROUTES. The Pages build writes the marketing routes as real HTML
+// (scripts/build-cloudflare.js prerender) and marks #root data-prerendered.
+// The page is already on screen, so the first render waits for the page's
+// chunk and then renders it directly: React's first commit replaces the HTML
+// with the same DOM. Rendering a React.lazy page at once would put its
+// Loading screen over the finished page while the chunk resolved. Everywhere
+// else (the iOS build, a dev server, any route not snapshotted) nothing is
+// marked and the lazy path below runs exactly as before.
+const prerendered = !!page && !!rootEl && rootEl.hasAttribute('data-prerendered');
+
+function renderPage(Page) {
   const { Loading } = page;
   root.render(
     <React.StrictMode>
@@ -1102,6 +1112,14 @@ if (page) {
       <ConsentBanner onAnswer={startAnalytics} />
     </React.StrictMode>
   );
+}
+
+if (page && prerendered) {
+  // A chunk that will not load falls back to the lazy path, whose error
+  // boundary shows the page's own failure state.
+  page.load().then((m) => renderPage(m.default), () => renderPage(React.lazy(page.load)));
+} else if (page) {
+  renderPage(React.lazy(page.load));
 } else if (path === '/reset-password') {
   // The signed-IN reset case. Signed out, the app boots and LoginScreen
   // routes into its reset view; signed IN, App.js rendered the app and the

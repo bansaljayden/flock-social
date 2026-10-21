@@ -14,6 +14,10 @@
 //   scripts/build.js already turns them off when CF_PAGES is set, so this is
 //   the backstop for an explicit GENERATE_SOURCEMAP=true.
 //
+// - build/landing.html, how-it-works.html, about.html and research.html: the
+//   marketing routes as real HTML, snapshotted from the build itself (see
+//   prerender below). index.html stays the empty shell every app route needs.
+//
 // The three Pages files are kept out of public/ on purpose: CRA copies
 // public/ into every build, and Vercel would serve them as plain files.
 //
@@ -145,6 +149,147 @@ function routePreloads(out) {
   return blocks.length ? '\n' + blocks.join('\n\n') + '\n' : '';
 }
 
+// THE MARKETING ROUTES AS REAL HTML. A Create React App page is an empty
+// <div id="root"> until about 85 KB of JavaScript has run, so the hero waited
+// on main.js, then the page's chunk, then a render (the audit's lab runs put
+// LCP at 2.0 to 3.0 s, almost all of it that wait), and view-source showed
+// nothing. Here the build is served locally, each marketing route is loaded in
+// headless Chromium with every request off the build refused (no API, no map
+// tiles, no analytics) and the consent already answered, and the rendered
+// document is written next to index.html: build/landing.html for "/" (the
+// middleware answers "/" with it; index.html must stay the shell, because
+// Pages answers every unknown path, /app and /i/<token> included, with
+// index.html), and <route>.html for the rest, which Pages serves at the
+// slashless path. Only this Pages build does it: the iOS build runs
+// scripts/build.js alone and never sees this step.
+//
+// The page then boots on top of its own snapshot: src/index.js sees
+// data-prerendered on #root, waits for the page's chunk, and renders once,
+// replacing the HTML with the same DOM, so the Loading screen never covers it.
+//
+// A failure here is never fatal. Without a snapshot the route is served as
+// before, client-rendered from index.html.
+const PRERENDER = [
+  { route: '/', file: 'landing.html' },
+  { route: '/how-it-works', file: 'how-it-works.html' },
+  { route: '/about', file: 'about.html' },
+  { route: '/research', file: 'research.html' },
+];
+
+// The snapshot, made servable. The page's own JS chunks (the ones the
+// snapshot's load fetched besides main.js) are named as preloads, so they come
+// down beside main.js instead of after it has run; webpack removes its chunk
+// <script> tags once they load, and any still in the DOM (marked data-webpack)
+// are swapped for preloads too, since as plain head scripts they would block
+// the paint. The display face is preloaded unless the page already asked for
+// it. The chunk CSS <link>s stay, so the page paints styled. #root is marked
+// so the client knows the HTML is already there.
+function servableSnapshot(html, { scripts = [], font = null } = {}) {
+  let out = html.replace(/<script\b[^>]*\bdata-webpack="[^"]*"[^>]*><\/script>/g, (tag) => {
+    const src = /\bsrc="([^"]+)"/.exec(tag);
+    return src ? '<link rel="preload" as="script" href="' + src[1] + '">' : '';
+  });
+  const hints = scripts
+    .filter((src) => !out.includes('href="' + src + '"'))
+    .map((src) => '<link rel="preload" as="script" href="' + src + '">');
+  if (font && !out.includes('href="' + font + '"')) {
+    hints.push('<link rel="preload" as="font" type="font/woff2" href="' + font + '" crossorigin="anonymous">');
+  }
+  if (hints.length) out = out.replace('</head>', hints.join('') + '</head>');
+  out = out.replace('<div id="root">', '<div id="root" data-prerendered="">');
+  if (!out.includes('<div id="root" data-prerendered="">')) throw new Error('no <div id="root"> in the snapshot');
+  if (!/<h1[\s>]/.test(out)) throw new Error('the snapshot has no h1');
+  return out;
+}
+
+const TYPES = {
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json',
+  '.png': 'image/png', '.webp': 'image/webp', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
+  '.woff2': 'font/woff2', '.txt': 'text/plain', '.pdf': 'application/pdf', '.mp4': 'video/mp4',
+};
+
+// The build over HTTP, with the fallback Pages has: a path that is not a file
+// gets index.html.
+function serveBuild(out) {
+  const http = require('http');
+  const server = http.createServer((req, res) => {
+    const pathname = decodeURIComponent(new URL(req.url, 'http://local').pathname);
+    let file = path.join(out, pathname);
+    if (!file.startsWith(out) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(out, 'index.html');
+    res.writeHead(200, { 'Content-Type': TYPES[path.extname(file)] || 'application/octet-stream' });
+    fs.createReadStream(file).pipe(res);
+  });
+  return new Promise((resolve) => { server.listen(0, '127.0.0.1', () => resolve(server)); });
+}
+
+async function prerender(out) {
+  let chromium;
+  try {
+    ({ chromium } = require('playwright'));
+  } catch (err) {
+    console.warn('build:cloudflare: playwright is not installed, so the marketing routes stay client-rendered');
+    return [];
+  }
+  const server = await serveBuild(out);
+  const base = 'http://127.0.0.1:' + server.address().port;
+  let font = null;
+  try {
+    const { files = {} } = JSON.parse(fs.readFileSync(path.join(out, 'asset-manifest.json'), 'utf8'));
+    font = Object.values(files).find((u) => /\/static\/media\/Literata-Display-600\.[0-9a-f]+\.woff2$/.test(u)) || null;
+  } catch (err) { /* no manifest: no font hint */ }
+  const snapshots = [];
+  let browser;
+  try {
+    browser = await chromium.launch();
+    const context = await browser.newContext({ viewport: { width: 412, height: 915 }, serviceWorkers: 'block' });
+    await context.addInitScript(() => {
+      try { window.localStorage.setItem('flock_analytics_consent', 'no'); } catch (e) { /* no storage */ }
+      // Nothing comes into view: the live demo mounts on approach (WhenNear in
+      // LandingPage.js), and a snapshot must hold the empty, sized holder the
+      // client's first render also draws, not a map that would be torn down
+      // and rebuilt the moment the page boots.
+      window.IntersectionObserver = class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+        takeRecords() { return []; }
+      };
+    });
+    await context.route('**/*', (route) => (route.request().url().startsWith(base + '/') ? route.continue() : route.abort()));
+    for (const { route, file } of PRERENDER) {
+      const page = await context.newPage();
+      try {
+        await page.goto(base + route, { waitUntil: 'load' });
+        await page.waitForSelector('main h1', { timeout: 20000 });
+        await page.waitForTimeout(400);
+        // The chunks the first render needs, read off the page's own resource
+        // timeline. Nothing else asks for a script here: the live demo stays
+        // unmounted (no IntersectionObserver ever fires) and analytics is off
+        // on a local origin (isLocalAnalyticsOrigin in src/index.js).
+        const snap = await page.evaluate(() => {
+          const scripts = performance.getEntriesByType('resource')
+            .map((e) => new URL(e.name).pathname)
+            .filter((p) => /^\/static\/js\/.+\.js$/.test(p) && !/^\/static\/js\/main\./.test(p));
+          return { html: document.documentElement.outerHTML, scripts };
+        });
+        snapshots.push({ route, file, html: servableSnapshot('<!DOCTYPE html>' + snap.html, { scripts: snap.scripts, font }) });
+      } catch (err) {
+        console.warn('build:cloudflare: no snapshot for ' + route + ' (' + err.message.split('\n')[0] + '); it stays client-rendered');
+      } finally {
+        await page.close();
+      }
+    }
+  } catch (err) {
+    console.warn('build:cloudflare: prerendering stopped (' + err.message.split('\n')[0] + '); the marketing routes stay client-rendered');
+  } finally {
+    if (browser) await browser.close();
+    server.close();
+  }
+  // Written only now, so no snapshot was taken from another one.
+  for (const { file, html } of snapshots) fs.writeFileSync(path.join(out, file), html);
+  return snapshots.map((s) => s.file);
+}
+
 // Everything after react-scripts: the Pages files go into `out`, then the
 // output is refused if Pages would serve it differently from Vercel.
 function finishOutput(out) {
@@ -172,22 +317,26 @@ function finishOutput(out) {
 
 module.exports = {
   outputDir, checkHeaders, headersFile, checkRoutes, appSiteAssociation, finishOutput, routePreloads,
-  ROUTE_CHUNKS, MAX_HEADER_RULES, MAX_HEADER_LINE,
+  servableSnapshot, prerender, ROUTE_CHUNKS, PRERENDER, MAX_HEADER_RULES, MAX_HEADER_LINE,
 };
 
 if (require.main === module) {
-  try {
-    if (!process.argv.includes('--skip-build')) {
-      // From the app directory: react-scripts reads package.json, src/ and
-      // BUILD_PATH relative to its working directory.
-      const result = spawnSync(process.execPath, [path.join(__dirname, 'build.js')], { cwd: ROOT, stdio: 'inherit', env: process.env });
-      if (result.status !== 0) process.exit(result.status || 1);
+  (async () => {
+    try {
+      if (!process.argv.includes('--skip-build')) {
+        // From the app directory: react-scripts reads package.json, src/ and
+        // BUILD_PATH relative to its working directory.
+        const result = spawnSync(process.execPath, [path.join(__dirname, 'build.js')], { cwd: ROOT, stdio: 'inherit', env: process.env });
+        if (result.status !== 0) process.exit(result.status || 1);
+      }
+      const out = outputDir(process.env);
+      const written = process.argv.includes('--no-prerender') ? [] : await prerender(out);
+      if (written.length) console.log('build:cloudflare: prerendered ' + written.join(', '));
+      finishOutput(out);
+      console.log('build:cloudflare: _headers, _redirects, _routes.json and the app-site-association file are in ' + out);
+    } catch (err) {
+      console.error('build:cloudflare: ' + err.message);
+      process.exit(1);
     }
-    const out = outputDir(process.env);
-    finishOutput(out);
-    console.log('build:cloudflare: _headers, _redirects, _routes.json and the app-site-association file are in ' + out);
-  } catch (err) {
-    console.error('build:cloudflare: ' + err.message);
-    process.exit(1);
-  }
+  })();
 }

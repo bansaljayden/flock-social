@@ -191,7 +191,7 @@ afterEach(() => {
 });
 
 describe('who gets what', () => {
-  test('"/" sends every AI crawler to /landing with a 307 and the query, and anyone else to the static page', async () => {
+  test('"/" sends every AI crawler to /landing with a 307 and the query, and anyone else the prerendered home page', async () => {
     for (const name of AGENTS.aiCrawlers.split('|')) {
       const { context, res } = await run(SITE + '/?utm_source=x&b=2', { headers: { 'User-Agent': botUa(name) } });
       expect([name, res.status, res.headers.get('Location')]).toEqual([name, 307, '/landing?utm_source=x&b=2']);
@@ -202,9 +202,24 @@ describe('who gets what', () => {
       expect(context.next).not.toHaveBeenCalled();
     }
     // Vercel matched the list case-sensitively, so "gptbot" is not GPTBot.
+    // Everyone else gets build/landing.html, the home page the Pages build
+    // prerenders (index.html is the shell every app route needs), fetched
+    // from the asset server as /landing and sent under "/"'s own headers.
     for (const ua of [UA.person, UA.twitterbot, UA.applebot, UA.googlebot, botUa('gptbot'), '']) {
-      const { context, res } = await run(SITE + '/', { headers: ua ? { 'User-Agent': ua } : {} });
-      expect([ua, res === context.staticAnswer]).toEqual([ua, true]);
+      const home = '<!DOCTYPE html><div id="root" data-prerendered=""><main><h1>home</h1></main></div>';
+      const { context, res } = await run(SITE + '/?utm_source=x', {
+        headers: ua ? { 'User-Agent': ua, 'If-None-Match': '"abc"' } : {},
+        env: { ASSETS: { fetch: jest.fn(async () => new Response(home, { headers: { 'Content-Type': 'text/html; charset=utf-8', Link: '<https://www.flockcorp.com/>; rel="canonical"' } })) } },
+      });
+      expect(context.next).not.toHaveBeenCalled();
+      expect(context.env.ASSETS.fetch).toHaveBeenCalledTimes(1);
+      const asked = context.env.ASSETS.fetch.mock.calls[0][0];
+      expect([ua, new URL(asked.url).pathname]).toEqual([ua, '/landing']);
+      // The visitor's own conditional headers go along, so a 304 still works.
+      if (ua) expect(asked.headers.get('If-None-Match')).toBe('"abc"');
+      expect([ua, res.status, await res.text()]).toEqual([ua, 200, home]);
+      expect(res.headers.get('Link')).toBe(ROOT_LINK);
+      expect(res.headers.get('Cache-Control')).toBe(BROWSER_CACHE);
     }
   });
 

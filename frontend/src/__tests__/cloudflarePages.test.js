@@ -312,6 +312,42 @@ describe('finishing an output directory', () => {
     expect(headerBlocks(source).find((b) => b.path === '/').headers.Link).toContain('rel="canonical"');
   });
 
+  test('a prerendered snapshot keeps its CSS, trades webpack\'s chunk scripts for preloads, and marks #root', () => {
+    // The four marketing routes are written as real HTML; index.html stays
+    // the shell, so "/" is landing.html and nothing claims index.html.
+    expect(build.PRERENDER.map((p) => p.file)).toEqual(['landing.html', 'how-it-works.html', 'about.html', 'research.html']);
+    expect(build.PRERENDER.find((p) => p.route === '/').file).toBe('landing.html');
+
+    const snapshot = '<!DOCTYPE html><html><head>'
+      + '<script defer="defer" src="/static/js/main.1a2b.js"></script>'
+      + '<link href="/static/css/main.3c4d.css" rel="stylesheet">'
+      + '<script charset="utf-8" data-webpack="flock:chunk-landing" src="/static/js/landing.5e6f.chunk.js"></script>'
+      + '<link rel="stylesheet" type="text/css" href="/static/css/7788.9a0b.chunk.css">'
+      + '</head><body><div id="root"><main><h1>Flock is how a group decides where to go out.</h1></main></div></body></html>';
+    const font = '/static/media/Literata-Display-600.9f9f.woff2';
+    const out = build.servableSnapshot(snapshot, { scripts: ['/static/js/landing.5e6f.chunk.js', '/static/js/4242.1b1b.chunk.js'], font });
+    // The chunk's script would block the paint as a plain head script; a
+    // preload fetches it as early without running it out of order. Named once,
+    // even though it was both a tag in the DOM and a request.
+    expect(out).not.toMatch(/data-webpack/);
+    expect(out.split('href="/static/js/landing.5e6f.chunk.js"')).toHaveLength(2);
+    expect(out).toContain('<link rel="preload" as="script" href="/static/js/landing.5e6f.chunk.js">');
+    // A chunk the page fetched that left no tag behind still gets its hint,
+    // and so does the display face, with crossorigin or it is fetched twice.
+    expect(out).toContain('<link rel="preload" as="script" href="/static/js/4242.1b1b.chunk.js">');
+    expect(out).toContain(`<link rel="preload" as="font" type="font/woff2" href="${font}" crossorigin="anonymous">`);
+    expect(out.indexOf('4242.1b1b')).toBeLessThan(out.indexOf('</head>'));
+    // A page that already asked for the face is not given a second hint.
+    expect(build.servableSnapshot(snapshot.replace('</head>', `<link rel="preload" as="font" href="${font}"></head>`), { font }).split(font)).toHaveLength(2);
+    // The entry script and both stylesheets are untouched.
+    expect(out).toContain('<script defer="defer" src="/static/js/main.1a2b.js"></script>');
+    expect(out).toContain('<link rel="stylesheet" type="text/css" href="/static/css/7788.9a0b.chunk.css">');
+    expect(out).toContain('<div id="root" data-prerendered=""><main><h1>');
+    // A snapshot that never rendered is refused rather than published.
+    expect(() => build.servableSnapshot('<html><body><div id="root"></div></body></html>')).toThrow(/no h1/);
+    expect(() => build.servableSnapshot('<html><body><main><h1>x</h1></main></body></html>')).toThrow(/root/);
+  });
+
   test('refuses an output with a top-level 404.html, which turns off the SPA fallback', () => {
     fs.writeFileSync(path.join(out, '404.html'), 'not found');
     expect(() => withEnv({ APPLE_TEAM_ID: fakeTeamId() }, () => build.finishOutput(out))).toThrow(/404\.html/);

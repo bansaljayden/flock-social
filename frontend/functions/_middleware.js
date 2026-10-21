@@ -79,6 +79,20 @@ export async function onRequest(context) {
     return finish(new Response(null, { status: 307, headers: { Location: '/landing' + url.search, ...ROOT_HEADERS } }), url);
   }
 
+  // "/" for everyone else: the home page as real HTML. The Pages build writes
+  // it to build/landing.html (scripts/build-cloudflare.js prerender), because
+  // index.html has to stay the empty shell every app route is answered with,
+  // so "/" is answered with the /landing asset under "/"'s own headers. If the
+  // file is missing, Pages answers /landing with the shell, which is what "/"
+  // served before; and if this throws, passThroughOnException serves the
+  // shell too.
+  if (path === '/') {
+    const home = await context.env.ASSETS.fetch(new Request(new URL('/landing', url), request));
+    const res = new Response(home.body, home);
+    for (const [name, value] of Object.entries(ROOT_HEADERS)) res.headers.set(name, value);
+    return res;
+  }
+
   // vercel.json:288-303, in that order: ?open wins over the bot check.
   const invite = INVITE.exec(path);
   if (invite) {
