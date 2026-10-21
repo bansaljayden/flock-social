@@ -164,10 +164,14 @@
   --tab-field: #c7c7cc;
 
   /* The hero reel's drawn devices (HeroReel.js): a graphite phone frame,
-     its black glass, and the Flux sensor's navy body. */
+     its black glass, and the Flux sensor as the CAD renders it from the
+     front (the printed navy face as lit, the touchscreen's glass, the dark
+     of the lens and of the door counter's slot). */
   --phone-frame: #24272d;
   --phone-glass: #050608;
-  --flux-body: #2e3a57;
+  --flux-body: #3b4666;
+  --flux-glass: #141b26;
+  --flux-lens: #1a1f2b;
 
   font-family: 'Hanken Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   background: var(--paper);
@@ -887,13 +891,82 @@ html:has(.lp) body { overflow-x: clip; }
   height: auto;
   background: var(--navy-deep);
 }
-/* The Flux screen: the sensor's own navy bezel, no phone furniture. */
-.lp-reel-device.is-panel {
-  padding: calc(var(--reel-w) * 0.07);
-  border-radius: calc(var(--reel-w) * 0.08);
+/* The Flux sensor from the front, to the CAD's proportions (fluxData.js BOX,
+   182.9 x 175.2 mm, and the /flux renders): the screen inset 8% at the sides
+   and 5.7% at the top, the cream pill centred under it with the heat
+   camera's lens to the left and its light to the right, the wordmark below,
+   and the door counter's slot cut into the chin. Sizes are shares of the
+   face's width (--fw), so it scales whole. */
+.lp-reel-device.is-flux {
+  --fw: calc(var(--reel-w) * 1.9);
+  position: relative;
+  height: calc(var(--fw) * 0.958);
+  padding: calc(var(--fw) * 0.057) calc(var(--fw) * 0.08) 0;
+  border-radius: calc(var(--fw) * 0.05);
   background: var(--flux-body);
+  border: 1px solid var(--edge-cream);
 }
-.lp-reel-device.is-panel img { border-radius: calc(var(--reel-w) * 0.025); }
+.lp-flux-screen {
+  overflow: hidden;
+  border: calc(var(--fw) * 0.006) solid var(--flux-glass);
+  border-radius: calc(var(--fw) * 0.012);
+  background: var(--flux-glass);
+}
+.lp-flux-screen img { display: block; width: 100%; height: auto; }
+.lp-flux-pill {
+  position: absolute;
+  top: 70%;
+  left: 50%;
+  width: 31%;
+  height: calc(var(--fw) * 0.13);
+  border-radius: 999px;
+  background: var(--cream);
+  transform: translate(-50%, -50%);
+}
+.lp-flux-lens {
+  position: absolute;
+  top: 50%;
+  left: 13%;
+  width: calc(var(--fw) * 0.075);
+  height: calc(var(--fw) * 0.075);
+  border-radius: 50%;
+  background: var(--flux-lens);
+  box-sizing: border-box;
+  border: calc(var(--fw) * 0.008) solid var(--cream-2);
+  transform: translateY(-50%);
+}
+.lp-flux-led {
+  position: absolute;
+  top: 50%;
+  right: 16%;
+  width: calc(var(--fw) * 0.012);
+  height: calc(var(--fw) * 0.012);
+  border-radius: 50%;
+  background: var(--cream-2);
+  transform: translateY(-50%);
+}
+.lp-flux-mark {
+  position: absolute;
+  top: 84%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: var(--cream);
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: calc(var(--fw) * 0.048);
+  line-height: 1;
+  letter-spacing: 0.01em;
+}
+.lp-flux-slot {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  width: 13%;
+  height: calc(var(--fw) * 0.03);
+  border-radius: calc(var(--fw) * 0.01) calc(var(--fw) * 0.01) 0 0;
+  background: var(--flux-lens);
+  transform: translateX(-50%);
+}
 .lp-reel-item:hover { z-index: 2; transform: translateY(-6px) scale(1.12); }
 .lp-reel:hover .lp-reel-track,
 .lp-reel.is-paused .lp-reel-track { animation-play-state: paused; }

@@ -51,11 +51,22 @@ function Screen({ shot, first, copy }) {
 /* Each screen sits in a drawn device (his ask, 2026-10-21: "put the photos
    in phone like a mockup"): a phone's frame and black glass, with the
    status row and the island above the capture, since the web app's captures
-   carry no status bar of their own; the Flux screen sits in the sensor's
-   navy bezel instead. Drawn in CSS, flat, no shadow. */
+   carry no status bar of their own. The Flux screen sits in the sensor as the
+   CAD has it from the front ("make the flux screen actually what the cad
+   looks like"): the navy face, 182.9 by 175.2 mm, with the 7 inch screen near
+   the top, the cream pill holding the heat camera's lens and its light, the
+   Flux wordmark, and the door counter's slot in the chin (fluxData.js BOX,
+   and the /flux renders). Drawn in CSS, flat, no shadow. */
 function Device({ landscape, children }) {
   if (landscape) {
-    return <div className="lp-reel-device is-panel">{children}</div>;
+    return (
+      <div className="lp-reel-device is-flux">
+        <div className="lp-flux-screen">{children}</div>
+        <span className="lp-flux-pill" aria-hidden="true"><i className="lp-flux-lens" /><i className="lp-flux-led" /></span>
+        <span className="lp-flux-mark" aria-hidden="true">Flux</span>
+        <i className="lp-flux-slot" aria-hidden="true" />
+      </div>
+    );
   }
   return (
     <div className="lp-reel-device">
