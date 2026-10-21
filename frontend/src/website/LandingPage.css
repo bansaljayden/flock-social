@@ -1381,23 +1381,19 @@ html:has(.lp) body { overflow-x: clip; }
 .lp-live-note { margin-top: 12px; font-size: 14.5px; color: var(--ink-3); }
 
 /* One Friday plan, read top to bottom. The dead group chat comes first, then
-   the same Friday in five beats, each a time and one short paragraph, set as a
-   timeline down a single column. Three beats carry a plate, a real capture of
-   that moment in the app, in a margin column of its own on a wide screen and
-   under the text on a phone. Not a numbered grid: the times are the order, and
-   the beats differ in length the way real messages do. */
+   the same Friday in five beats, each a time and one short paragraph in a band
+   of its own, paper and navy in turn (the maintainer, 2026-10-21), so each step reads
+   as its own. Three beats carry a plate, a real capture of that moment in the
+   app, in a margin column of its own on a wide screen and under the text on a
+   phone. Not a numbered grid: the times are the order, and the beats differ in
+   length the way real messages do. */
 .lp-friday-title { max-width: 18em; }
 .lp-friday-lead { margin-top: 16px; }
 .lp-friday-chat { margin: clamp(28px, 4vw, 40px) 0 0; max-width: 30rem; }
-.lp-friday {
-  list-style: none;
-  margin: clamp(36px, 5vw, 56px) 0 0;
-  padding: 0;
-  display: grid;
-  gap: clamp(30px, 4vw, 44px);
-  max-width: 44rem;
-}
-.lp-beat { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
+/* A band is one beat: tighter than a chapter section, so five of them read as
+   one sequence rather than five chapters. */
+.lp-sec.lp-beat-band { padding: clamp(40px, 6vw, 72px) 0; }
+.lp-beat { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; max-width: 62rem; }
 @media (min-width: 760px) {
   /* The time sits in a margin column of its own, the way a log reads. */
   .lp-beat { grid-template-columns: minmax(0, 9.5rem) minmax(0, 1fr); column-gap: 28px; }
@@ -1407,7 +1403,6 @@ html:has(.lp) body { overflow-x: clip; }
 @media (min-width: 960px) {
   /* Every beat keeps the plate column, filled or not, so the text column is
      one width all the way down. */
-  .lp-friday { max-width: 62rem; }
   .lp-beat { grid-template-columns: minmax(0, 9.5rem) minmax(0, 1fr) 220px; }
   .lp-beat .lp-plate { grid-column: 3; width: 220px; margin: 0; }
 }
@@ -1428,6 +1423,17 @@ html:has(.lp) body { overflow-x: clip; }
 .lp-fig-cap { margin-top: 10px; font-size: 13.5px; line-height: 1.45; color: var(--ink-3); }
 .lp-friday-more { margin-top: clamp(28px, 4vw, 40px); font-size: 16px; color: var(--ink-2); }
 .lp-friday-more a { color: var(--steel); font-weight: 600; text-underline-offset: 3px; }
+
+/* A beat on a navy band takes the on-navy inks. The capture is the dark
+   theme on every band, so on navy it gets a light hairline in place of the
+   paper's ink one, or the phone's own navy would run into the band's. */
+.lp-on-navy .lp-beat-when { color: var(--steel-lift); }
+.lp-on-navy .lp-beat p { color: var(--cream-2); }
+.lp-on-navy .lp-beat-note { color: var(--cream-3) !important; }
+.lp-on-navy .lp-fig-cap { color: var(--cream-3); }
+.lp-on-navy .lp-plate .lp-shot { border-color: rgba(244, 239, 227, 0.24); }
+.lp-on-navy .lp-friday-more { color: var(--cream-2); }
+.lp-on-navy .lp-friday-more a { color: var(--steel-lift); }
 
 /* The hero note's one link, to the waitlist at the foot of the page. */
 .lp-hero-note a { color: inherit; text-decoration: underline; text-underline-offset: 3px; }

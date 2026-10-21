@@ -1,7 +1,7 @@
 {
   "generatedAt": "2026-10-21T06:50:00.000Z",
   "generator": "frontend/scripts/capture-screenshots.mjs",
-  "note": "Real captures of the web app against a seeded local stack (Waikiki, Honolulu; invented people and venues). Every venue picture is a drawing from scripts/shot-art.mjs; no Google Places photo appears in any frame. See WIRING.md for where each one is used.",
+  "note": "Real captures of the web app against a seeded local stack (Waikiki, Honolulu; invented people and venues). Every capture the site shows is the dark theme. Every venue picture is a drawing from scripts/shot-art.mjs; no Google Places photo appears in any frame. See WIRING.md for where each one is used.",
   "captures": [
     {
       "file": "screenshots/bill-split-dark-480w.webp",
@@ -16,22 +16,6 @@
       "screen": "bill-split",
       "title": "Split the bill: $142.60 with an 18% tip, $28.52 each",
       "mode": "dark",
-      "width": 780,
-      "height": 1688
-    },
-    {
-      "file": "screenshots/bill-split-light-480w.webp",
-      "screen": "bill-split",
-      "title": "Split the bill: $142.60 with an 18% tip, $28.52 each",
-      "mode": "light",
-      "width": 480,
-      "height": 1039
-    },
-    {
-      "file": "screenshots/bill-split-light@2x.webp",
-      "screen": "bill-split",
-      "title": "Split the bill: $142.60 with an 18% tip, $28.52 each",
-      "mode": "light",
       "width": 780,
       "height": 1688
     },
@@ -52,22 +36,6 @@
       "height": 1688
     },
     {
-      "file": "screenshots/budget-light-480w.webp",
-      "screen": "budget",
-      "title": "Private budget: $35 typed in, and the note that nobody sees it",
-      "mode": "light",
-      "width": 480,
-      "height": 1039
-    },
-    {
-      "file": "screenshots/budget-light@2x.webp",
-      "screen": "budget",
-      "title": "Private budget: $35 typed in, and the note that nobody sees it",
-      "mode": "light",
-      "width": 780,
-      "height": 1688
-    },
-    {
       "file": "screenshots/chat-dark-480w.webp",
       "screen": "chat",
       "title": "Friday Night Crew's chat: the poll on three places, 5 of 5 voted",
@@ -84,18 +52,18 @@
       "height": 1688
     },
     {
-      "file": "screenshots/create-light-480w.webp",
+      "file": "screenshots/create-dark-480w.webp",
       "screen": "create",
       "title": "Starting a flock: day and time chips, three friends invited",
-      "mode": "light",
+      "mode": "dark",
       "width": 480,
       "height": 1039
     },
     {
-      "file": "screenshots/create-light@2x.webp",
+      "file": "screenshots/create-dark@2x.webp",
       "screen": "create",
       "title": "Starting a flock: day and time chips, three friends invited",
-      "mode": "light",
+      "mode": "dark",
       "width": 780,
       "height": 1688
     },
@@ -116,66 +84,66 @@
       "height": 1688
     },
     {
-      "file": "screenshots/owner-dashboard-light-480w.webp",
+      "file": "screenshots/owner-dashboard-dark-480w.webp",
       "screen": "owner-dashboard",
       "title": "Venue owner dashboard, Events tab: flocks with the venue in their vote",
-      "mode": "light",
+      "mode": "dark",
       "width": 480,
       "height": 1039
     },
     {
-      "file": "screenshots/owner-dashboard-light@2x.webp",
+      "file": "screenshots/owner-dashboard-dark@2x.webp",
       "screen": "owner-dashboard",
       "title": "Venue owner dashboard, Events tab: flocks with the venue in their vote",
-      "mode": "light",
+      "mode": "dark",
       "width": 780,
       "height": 1688
     },
     {
-      "file": "screenshots/sos-light-480w.webp",
+      "file": "screenshots/sos-dark-480w.webp",
       "screen": "sos",
       "title": "The SOS sheet: Call 911, Alert Contacts, Share Location",
-      "mode": "light",
+      "mode": "dark",
       "width": 480,
       "height": 1039
     },
     {
-      "file": "screenshots/sos-light@2x.webp",
+      "file": "screenshots/sos-dark@2x.webp",
       "screen": "sos",
       "title": "The SOS sheet: Call 911, Alert Contacts, Share Location",
-      "mode": "light",
+      "mode": "dark",
       "width": 780,
       "height": 1688
     },
     {
-      "file": "screenshots/venue-card-events-light-480w.webp",
+      "file": "screenshots/venue-card-events-dark-480w.webp",
       "screen": "venue-card-events",
       "title": "The Copper Finch's card: three events under Happening here",
-      "mode": "light",
+      "mode": "dark",
       "width": 480,
       "height": 1039
     },
     {
-      "file": "screenshots/venue-card-events-light@2x.webp",
+      "file": "screenshots/venue-card-events-dark@2x.webp",
       "screen": "venue-card-events",
       "title": "The Copper Finch's card: three events under Happening here",
-      "mode": "light",
+      "mode": "dark",
       "width": 780,
       "height": 1688
     },
     {
-      "file": "screenshots/vote-light-480w.webp",
+      "file": "screenshots/vote-dark-480w.webp",
       "screen": "vote",
       "title": "Vote for a venue: The Copper Finch ahead with 3 of 5 votes",
-      "mode": "light",
+      "mode": "dark",
       "width": 480,
       "height": 1039
     },
     {
-      "file": "screenshots/vote-light@2x.webp",
+      "file": "screenshots/vote-dark@2x.webp",
       "screen": "vote",
       "title": "Vote for a venue: The Copper Finch ahead with 3 of 5 votes",
-      "mode": "light",
+      "mode": "dark",
       "width": 780,
       "height": 1688
     }

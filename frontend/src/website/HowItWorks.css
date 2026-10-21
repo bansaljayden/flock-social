@@ -94,14 +94,11 @@
 
 /* ---------- the steps ---------- */
 
-.hw-steps-title { margin-bottom: clamp(28px, 4vw, 44px); }
-.hw-steps {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  gap: clamp(44px, 7vw, 88px);
-}
+.hw-steps-title { margin-bottom: 12px; }
+/* Each step is a full-width band, paper and navy in turn (the maintainer,
+   2026-10-21), tighter than a chapter so the five read as one sequence. */
+.lp-sec.hw-step-band { padding: clamp(44px, 6vw, 80px) 0; }
+.hw-step { max-width: 62rem; }
 /* A step is the text at a reading measure with its plate in the margin, on
    the same side every time, the way a manual sets its figures. Plates that
    swap sides from row to row are the stock zig-zag of a generated page. */
@@ -123,7 +120,12 @@
 }
 
 /* Each step's painted vignette sits above its heading, small, like a
-   manual's chapter mark. The venues section opens with the string of lights. */
+   manual's chapter mark. The venues section opens with the string of lights.
+   On a navy band the copy takes the on-navy inks, and the dark capture a
+   light hairline so the phone's navy does not run into the band's. */
+.lp-on-navy .hw-step p { color: var(--cream-2); }
+.lp-on-navy .lp-fig-cap { color: var(--cream-3); }
+.lp-on-navy .lp-plate .lp-shot { border-color: rgba(244, 239, 227, 0.24); }
 .hw-step-art { width: 140px; margin-bottom: 14px; }
 .hw-venues-art { width: min(420px, 100%); margin-bottom: 24px; }
 

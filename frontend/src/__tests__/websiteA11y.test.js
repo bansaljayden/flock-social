@@ -164,7 +164,11 @@ describe('LandingPage: images', () => {
     expect(shot('chat-dark').getAttribute('alt')).toMatch(/Friday Night Crew/);
     expect(shot('budget-dark').getAttribute('alt')).toMatch(/\$35/);
     expect(shot('bill-split-dark').getAttribute('alt')).toMatch(/\$142\.60/);
-    expect(shot('owner-dashboard-light').getAttribute('alt')).toMatch(/dashboard/);
+    expect(shot('owner-dashboard-dark').getAttribute('alt')).toMatch(/dashboard/);
+    // One theme for every capture on the site, the hero's own (2026-10-21).
+    for (const img of container.querySelectorAll('img.lp-shot')) {
+      expect(img.getAttribute('src')).toMatch(/-dark(@2x|-480w)\./);
+    }
     unmount();
   });
 

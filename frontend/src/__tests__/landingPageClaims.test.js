@@ -382,7 +382,9 @@ describe('structural fingerprint', () => {
     expect(CSS).not.toMatch(/\.lp-sec-ruled\b/);
     expect(CSS).not.toMatch(/\.lp-hero-rule\b/);
     expect(visible).not.toMatch(/lp-hero-rule|lp-sec-ruled/);
-    for (const sel of ['\\.lp-friday', '\\.lp-beat']) {
+    // The beats are bands now (2026-10-21): the band's ground comes from the
+    // section classes, and nothing draws a rule between or around a beat.
+    for (const sel of ['\\.lp-beat', '\\.lp-sec\\.lp-beat-band']) {
       const rules = CSS.match(new RegExp(`${sel} \\{[^}]*\\}`, 'g')) || [];
       expect(rules.length).toBeGreaterThan(0);
       for (const r of rules) expect(r).not.toMatch(/border|background/);

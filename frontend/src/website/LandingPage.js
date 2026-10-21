@@ -503,124 +503,146 @@ export default function LandingPage() {
           />
           </div>
 
-          <div className="lp-friday">
-            <div className="lp-beat">
-              <p className="lp-beat-when">Thursday, 4:10 PM</p>
-              <div className="lp-beat-text">
-                <h3>Maya starts a flock.</h3>
-                <p>
-                  Friday Night Crew, 8 o’clock. Four friends get the invite; anyone
-                  without the app can join in from a link, budget and all, with no
-                  account.
-                </p>
-              </div>
-            </div>
+        </div>
+      </section>
 
-            <div className="lp-beat has-plate" id="birdie">
-              <p className="lp-beat-when">Thursday, 6:30 PM</p>
-              <div className="lp-beat-text">
-                <h3>Three places go to a vote.</h3>
-                <p>
-                  Each card shows how busy the place usually gets and anything the
-                  venue has posted, like a live acoustic set at The Copper Finch on
-                  Friday at 8:30. Sam asks Birdie for somewhere cheaper, the way
-                  you’d ask a friend who knows the city, and shares its pick to the
-                  chat.
-                </p>
-                {/* FTC AI disclosure, in the page's own voice where Birdie is
-                    marketed. MIRRORED in api/marketing-page.js PAGE_BLOCKS.home;
-                    aiCrawlerSurface.test.js requires the two to match. */}
-                <p className="lp-beat-note">
-                  Birdie is AI. It runs on Google Gemini, and the crowd numbers it
-                  quotes are the app’s own.
-                </p>
-              </div>
-              <figure className="lp-plate">
-                <img
-                  className="lp-shot"
-                  src="/screenshots/chat-dark@2x.webp"
-                  srcSet="/screenshots/chat-dark-480w.webp 480w, /screenshots/chat-dark@2x.webp 780w"
-                  sizes="(min-width: 960px) 220px, 200px"
-                  width="390" height="844"
-                  loading="lazy" decoding="async"
-                  alt="The Friday Night Crew chat: a vote on three places with The Copper Finch ahead, and four of five budgets in."
-                />
-                <figcaption className="lp-fig-cap">Thursday night in the chat. Everyone has voted, and one budget is still out.</figcaption>
-              </figure>
-            </div>
-
-            <div className="lp-beat has-plate" id="money">
-              <p className="lp-beat-when">Friday, noon</p>
-              <div className="lp-beat-text">
-                <h3>The budgets come in privately.</h3>
-                {/* budget.js publishes nothing until the budget settles (everyone
-                    going has answered with at least three members' amounts in, or
-                    the creator locks it once three have), and then a figure
-                    rounded down to a band so it is nobody's own number (bandCeiling). The
-                    vote and Discover then drop places priced over it
-                    (getMaxPriceLevel in ChatDetail.js and ExploreScreen.js). */}
-                <p>
-                  Each person types what they can spend, privately. The group gets
-                  back one number, rounded down to a band; the places Flock suggests
-                  for the plan stay under it.
-                </p>
-                <p className="lp-beat-note">
-                  That number appears when everyone going has answered or the plan’s
-                  creator locks it, and either way only once at least three members
-                  have shared an amount.
-                </p>
-              </div>
-              <figure className="lp-plate">
-                <img
-                  className="lp-shot"
-                  src="/screenshots/budget-dark@2x.webp"
-                  srcSet="/screenshots/budget-dark-480w.webp 480w, /screenshots/budget-dark@2x.webp 780w"
-                  sizes="(min-width: 960px) 220px, 200px"
-                  width="390" height="844"
-                  loading="lazy" decoding="async"
-                  alt="The budget sheet: preset amounts, a custom $35, and a note that no one else sees the answer."
-                />
-                <figcaption className="lp-fig-cap">Maya’s answer. Nobody else in the flock sees the $35.</figcaption>
-              </figure>
-            </div>
-
-            <div className="lp-beat">
-              <p className="lp-beat-when">Friday, 7:15 PM</p>
-              <div className="lp-beat-text">
-                <h3>“Still in?”</h3>
-                <p>
-                  The chat asks who is still in before a deadline. All five say yes,
-                  and a last look at the crowd before anyone leaves shows The Copper
-                  Finch filling up.
-                </p>
-              </div>
-            </div>
-
-            <div className="lp-beat has-plate">
-              <p className="lp-beat-when">Saturday morning</p>
-              <div className="lp-beat-text">
-                <h3>Jordan paid, so Flock splits it.</h3>
-                <p>
-                  $142.60 with the tip comes to $28.52 each. Everyone gets a Venmo or
-                  Cash App link for their share (or Zelle instructions), and the night
-                  stays on everyone’s calendar in Flock.
-                </p>
-              </div>
-              <figure className="lp-plate">
-                <img
-                  className="lp-shot"
-                  src="/screenshots/bill-split-dark@2x.webp"
-                  srcSet="/screenshots/bill-split-dark-480w.webp 480w, /screenshots/bill-split-dark@2x.webp 780w"
-                  sizes="(min-width: 960px) 220px, 200px"
-                  width="390" height="844"
-                  loading="lazy" decoding="async"
-                  alt="Split the Bill: $142.60 with an 18% tip, paid by Jordan Avery, $28.52 each for five people."
-                />
-                <figcaption className="lp-fig-cap">Sam and Priya have paid Jordan back. Maya and Leo still owe.</figcaption>
-              </figure>
+      {/* ---------------- the five beats ----------------
+          Each beat is its own full-width band, paper and navy in turn, so each
+          step of the night reads as its own (the maintainer, 2026-10-21: "cream, then
+          dark blue, then cream"). Flat grounds, no gradients and no shadows; on
+          navy the copy takes the on-navy inks and the dark capture gets a light
+          hairline so it does not sink into the band. Every capture on the site
+          is the dark theme, the hero's own. #birdie and #money stay on the
+          beats they always named, for old links. */}
+      <section className="lp-sec lp-sec-paper lp-beat-band" aria-labelledby="lp-h-beat-1">
+        <div className="lp-wrap">
+          <div className="lp-beat">
+            <p className="lp-beat-when">Thursday, 4:10 PM</p>
+            <div className="lp-beat-text">
+              <h3 id="lp-h-beat-1">Maya starts a flock.</h3>
+              <p>
+                Friday Night Crew, 8 o’clock. Four friends get the invite; anyone
+                without the app can join in from a link, budget and all, with no
+                account.
+              </p>
             </div>
           </div>
-
+        </div>
+      </section>
+      <section className="lp-sec lp-sec-navy lp-on-navy lp-beat-band" id="birdie" aria-labelledby="lp-h-beat-2">
+        <div className="lp-wrap">
+          <div className="lp-beat has-plate">
+            <p className="lp-beat-when">Thursday, 6:30 PM</p>
+            <div className="lp-beat-text">
+              <h3 id="lp-h-beat-2">Three places go to a vote.</h3>
+              <p>
+                Each card shows how busy the place usually gets and anything the
+                venue has posted, like a live acoustic set at The Copper Finch on
+                Friday at 8:30. Sam asks Birdie for somewhere cheaper, the way
+                you’d ask a friend who knows the city, and shares its pick to the
+                chat.
+              </p>
+              {/* FTC AI disclosure, in the page's own voice where Birdie is
+                  marketed. MIRRORED in api/marketing-page.js PAGE_BLOCKS.home;
+                  aiCrawlerSurface.test.js requires the two to match. */}
+              <p className="lp-beat-note">
+                Birdie is AI. It runs on Google Gemini, and the crowd numbers it
+                quotes are the app’s own.
+              </p>
+            </div>
+            <figure className="lp-plate">
+              <img
+                className="lp-shot"
+                src="/screenshots/chat-dark@2x.webp"
+                srcSet="/screenshots/chat-dark-480w.webp 480w, /screenshots/chat-dark@2x.webp 780w"
+                sizes="(min-width: 960px) 220px, 200px"
+                width="390" height="844"
+                loading="lazy" decoding="async"
+                alt="The Friday Night Crew chat: a vote on three places with The Copper Finch ahead, and four of five budgets in."
+              />
+              <figcaption className="lp-fig-cap">Thursday night in the chat. Everyone has voted, and one budget is still out.</figcaption>
+            </figure>
+          </div>
+        </div>
+      </section>
+      <section className="lp-sec lp-sec-paper lp-beat-band" id="money" aria-labelledby="lp-h-beat-3">
+        <div className="lp-wrap">
+          <div className="lp-beat has-plate">
+            <p className="lp-beat-when">Friday, noon</p>
+            <div className="lp-beat-text">
+              <h3 id="lp-h-beat-3">The budgets come in privately.</h3>
+              {/* budget.js publishes nothing until the budget settles (everyone
+                  going has answered with at least three members' amounts in, or
+                  the creator locks it once three have), and then a figure
+                  rounded down to a band so it is nobody's own number (bandCeiling). The
+                  vote and Discover then drop places priced over it
+                  (getMaxPriceLevel in ChatDetail.js and ExploreScreen.js). */}
+              <p>
+                Each person types what they can spend, privately. The group gets
+                back one number, rounded down to a band; the places Flock suggests
+                for the plan stay under it.
+              </p>
+              <p className="lp-beat-note">
+                That number appears when everyone going has answered or the plan’s
+                creator locks it, and either way only once at least three members
+                have shared an amount.
+              </p>
+            </div>
+            <figure className="lp-plate">
+              <img
+                className="lp-shot"
+                src="/screenshots/budget-dark@2x.webp"
+                srcSet="/screenshots/budget-dark-480w.webp 480w, /screenshots/budget-dark@2x.webp 780w"
+                sizes="(min-width: 960px) 220px, 200px"
+                width="390" height="844"
+                loading="lazy" decoding="async"
+                alt="The budget sheet: preset amounts, a custom $35, and a note that no one else sees the answer."
+              />
+              <figcaption className="lp-fig-cap">Maya’s answer. Nobody else in the flock sees the $35.</figcaption>
+            </figure>
+          </div>
+        </div>
+      </section>
+      <section className="lp-sec lp-sec-navy lp-on-navy lp-beat-band" aria-labelledby="lp-h-beat-4">
+        <div className="lp-wrap">
+          <div className="lp-beat">
+            <p className="lp-beat-when">Friday, 7:15 PM</p>
+            <div className="lp-beat-text">
+              <h3 id="lp-h-beat-4">“Still in?”</h3>
+              <p>
+                The chat asks who is still in before a deadline. All five say yes,
+                and a last look at the crowd before anyone leaves shows The Copper
+                Finch filling up.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+      <section className="lp-sec lp-sec-paper lp-beat-band" aria-labelledby="lp-h-beat-5">
+        <div className="lp-wrap">
+          <div className="lp-beat has-plate">
+            <p className="lp-beat-when">Saturday morning</p>
+            <div className="lp-beat-text">
+              <h3 id="lp-h-beat-5">Jordan paid, so Flock splits it.</h3>
+              <p>
+                $142.60 with the tip comes to $28.52 each. Everyone gets a Venmo or
+                Cash App link for their share (or Zelle instructions), and the night
+                stays on everyone’s calendar in Flock.
+              </p>
+            </div>
+            <figure className="lp-plate">
+              <img
+                className="lp-shot"
+                src="/screenshots/bill-split-dark@2x.webp"
+                srcSet="/screenshots/bill-split-dark-480w.webp 480w, /screenshots/bill-split-dark@2x.webp 780w"
+                sizes="(min-width: 960px) 220px, 200px"
+                width="390" height="844"
+                loading="lazy" decoding="async"
+                alt="Split the Bill: $142.60 with an 18% tip, paid by Jordan Avery, $28.52 each for five people."
+              />
+              <figcaption className="lp-fig-cap">Sam and Priya have paid Jordan back. Maya and Leo still owe.</figcaption>
+            </figure>
+          </div>
           <p className="lp-friday-more">
             <a href="/how-it-works">See every step on How it works</a>, or watch the
             two-minute pitch there.
@@ -705,8 +727,8 @@ export default function LandingPage() {
           <figure className="lp-plate lp-venues-plate">
             <img
               className="lp-shot"
-              src="/screenshots/owner-dashboard-light@2x.webp"
-              srcSet="/screenshots/owner-dashboard-light-480w.webp 480w, /screenshots/owner-dashboard-light@2x.webp 780w"
+              src="/screenshots/owner-dashboard-dark@2x.webp"
+              srcSet="/screenshots/owner-dashboard-dark-480w.webp 480w, /screenshots/owner-dashboard-dark@2x.webp 780w"
               sizes="(min-width: 900px) 240px, 200px"
               width="390" height="844"
               loading="lazy" decoding="async"

@@ -112,10 +112,12 @@ function PitchVideo() {
   );
 }
 
-// The plan, in order. Each `shot` is a real capture of the web app against
-// seeded demo data (scripts/capture-screenshots.mjs, 2026-10-21), the same
-// Friday Night Crew flock the home page follows, in the app's light theme
-// (the home page uses the dark captures, so no screen repeats across the two). Paths are written out in full
+// The plan, in order, one band per step, paper and navy in turn (the maintainer,
+// 2026-10-21). Each `shot` is a real capture of the web app against seeded
+// demo data (scripts/capture-screenshots.mjs, 2026-10-21), the same Friday
+// Night Crew flock the home page follows, in the dark theme every capture on
+// the site uses. The navy bands' vignettes are sparrows: the beige birds read
+// on navy, the navy wrens would vanish into it. Paths are written out in full
 // so publicScreenshotsShipped.test.js can see what ships.
 const STEPS = [
   {
@@ -126,23 +128,23 @@ const STEPS = [
       'Pick a day and a time and invite people from your friends list. Anyone without the app gets a link and can join in from the browser, budget included, without making an account.',
     ],
     shot: {
-      src: '/screenshots/create-light@2x.webp',
-      srcSet: '/screenshots/create-light-480w.webp 480w, /screenshots/create-light@2x.webp 780w',
+      src: '/screenshots/create-dark@2x.webp',
+      srcSet: '/screenshots/create-dark-480w.webp 480w, /screenshots/create-dark@2x.webp 780w',
       alt: 'Starting a flock: which day, what time, and three friends invited.',
       caption: 'Invites go out as soon as the flock exists.',
     },
   },
   {
     id: 'vote',
-    art: { name: 'step-vote', src: '/art/step-vote-240.webp', srcSet: '/art/step-vote-240.webp 240w, /art/step-vote-480.webp 480w', width: 240, height: 151 },
+    art: { name: 'spot-hop', src: '/art/spot-hop-240.webp', srcSet: '/art/spot-hop-240.webp 240w, /art/spot-hop-480.webp 480w', width: 240, height: 230 },
     title: 'Pick the place together',
     body: [
       'Anyone in the flock can add places. Each one arrives as a card with how busy it usually gets at that hour, plus anything the venue has posted, a deal or an upcoming event. The group votes, so nobody gets stuck being the decider.',
       'Stuck for ideas? Ask Birdie, the assistant inside the app, for spots near you that fit the group. Birdie is AI, built on Google’s Gemini, and it asks before it does anything for you.',
     ],
     shot: {
-      src: '/screenshots/vote-light@2x.webp',
-      srcSet: '/screenshots/vote-light-480w.webp 480w, /screenshots/vote-light@2x.webp 780w',
+      src: '/screenshots/vote-dark@2x.webp',
+      srcSet: '/screenshots/vote-dark-480w.webp 480w, /screenshots/vote-dark@2x.webp 780w',
       alt: 'Vote for a Venue: five votes cast, The Copper Finch ahead with three, Juniper Bowl and Marigold Diner with one each.',
       caption: 'Five votes in. The Copper Finch is ahead.',
     },
@@ -155,37 +157,37 @@ const STEPS = [
       'Everyone types what they can spend, and only they ever see it. When everyone going has answered, with at least three members’ amounts in, or the plan’s creator locks it, the group gets one figure: a ceiling rounded down, so it is never anyone’s exact number. The places Flock suggests for the plan stay under it.',
     ],
     shot: {
-      src: '/screenshots/budget-light@2x.webp',
-      srcSet: '/screenshots/budget-light-480w.webp 480w, /screenshots/budget-light@2x.webp 780w',
+      src: '/screenshots/budget-dark@2x.webp',
+      srcSet: '/screenshots/budget-dark-480w.webp 480w, /screenshots/budget-dark@2x.webp 780w',
       alt: 'The budget sheet: preset amounts, a custom $35, and a note that no one else sees the answer.',
       caption: 'What you type here is never shown to the group.',
     },
   },
   {
     id: 'night',
-    art: { name: 'step-go', src: '/art/step-go-240.webp', srcSet: '/art/step-go-240.webp 240w, /art/step-go-480.webp 480w', width: 240, height: 121 },
+    art: { name: 'spot-flap', src: '/art/spot-flap-240.webp', srcSet: '/art/spot-flap-240.webp 240w, /art/spot-flap-480.webp 480w', width: 240, height: 308 },
     title: 'On the night',
     body: [
       'The chat asks “Still in?” and counts who has said yes before a deadline, so you know who is actually coming. Check how busy the place is before anyone leaves.',
       'Sharing your live location with the group is there if you want it, and only while the plan is on. If something goes wrong, SOS sends where you are to the people you picked, with two taps.',
     ],
     shot: {
-      src: '/screenshots/sos-light@2x.webp',
-      srcSet: '/screenshots/sos-light-480w.webp 480w, /screenshots/sos-light@2x.webp 780w',
+      src: '/screenshots/sos-dark@2x.webp',
+      srcSet: '/screenshots/sos-dark-480w.webp 480w, /screenshots/sos-dark@2x.webp 780w',
       alt: 'The SOS sheet: call 911, alert two trusted contacts by email, or share your location.',
       caption: 'Call 911 comes first, because Flock does not call emergency services for you.',
     },
   },
   {
     id: 'settle',
-    art: { name: 'spot-seed', src: '/art/spot-seed-240.webp', srcSet: '/art/spot-seed-240.webp 240w, /art/spot-seed-480.webp 480w', width: 240, height: 232 },
+    art: { name: 'step-go', src: '/art/step-go-240.webp', srcSet: '/art/step-go-240.webp 240w, /art/step-go-480.webp 480w', width: 240, height: 121 },
     title: 'Settle up',
     body: [
       'Whoever paid enters the total and Flock splits it. Everyone gets a Venmo or Cash App link, or Zelle instructions, for their share, and the night stays on everyone’s calendar in Flock.',
     ],
     shot: {
-      src: '/screenshots/bill-split-light@2x.webp',
-      srcSet: '/screenshots/bill-split-light-480w.webp 480w, /screenshots/bill-split-light@2x.webp 780w',
+      src: '/screenshots/bill-split-dark@2x.webp',
+      srcSet: '/screenshots/bill-split-dark-480w.webp 480w, /screenshots/bill-split-dark@2x.webp 780w',
       alt: 'Split the Bill: $142.60 with an 18% tip, paid by Jordan Avery, $28.52 each for five people.',
       caption: 'Jordan paid. Everyone else settles their $28.52 from here.',
     },
@@ -246,33 +248,42 @@ export default function HowItWorksPage() {
           </div>
         </section>
 
-        <section className="lp-sec lp-sec-sand" aria-labelledby="hw-h-steps">
+        <section className="lp-sec lp-sec-sand hw-steps-intro" aria-labelledby="hw-h-steps">
           <div className="lp-wrap">
             <h2 id="hw-h-steps" className="hw-steps-title">Every step of a plan</h2>
-            <ol className="hw-steps">
-              {STEPS.map((s) => (
-                <li key={s.id} id={s.id} className={`hw-step${s.shot ? ' has-shot' : ''}`}>
-                  <div className="hw-step-text">
-                    {/* A painted vignette for the step, the same birds as the
-                        rest of the site: decoration, so alt="" and lazy. */}
-                    <img
-                      className="lp-art hw-step-art"
-                      src={s.art.src}
-                      srcSet={s.art.srcSet}
-                      sizes="140px"
-                      width={s.art.width} height={s.art.height}
-                      loading="lazy" decoding="async"
-                      alt=""
-                    />
-                    <h3>{s.title}</h3>
-                    {s.body.map((p) => <p key={p.slice(0, 24)}>{p}</p>)}
-                  </div>
-                  <Shot shot={s.shot} />
-                </li>
-              ))}
-            </ol>
+            <p className="lp-lead">Five of them, from the first invite to settling up.</p>
           </div>
         </section>
+
+        {STEPS.map((s, i) => (
+          <section
+            key={s.id}
+            id={s.id}
+            className={i % 2 ? 'lp-sec lp-sec-navy lp-on-navy hw-step-band' : 'lp-sec lp-sec-paper hw-step-band'}
+            aria-labelledby={`hw-h-${s.id}`}
+          >
+            <div className="lp-wrap">
+              <div className={`hw-step${s.shot ? ' has-shot' : ''}`}>
+                <div className="hw-step-text">
+                  {/* A painted vignette for the step, the same birds as the
+                      rest of the site: decoration, so alt="" and lazy. */}
+                  <img
+                    className="lp-art hw-step-art"
+                    src={s.art.src}
+                    srcSet={s.art.srcSet}
+                    sizes="140px"
+                    width={s.art.width} height={s.art.height}
+                    loading="lazy" decoding="async"
+                    alt=""
+                  />
+                  <h3 id={`hw-h-${s.id}`}>{s.title}</h3>
+                  {s.body.map((para) => <p key={para.slice(0, 24)}>{para}</p>)}
+                </div>
+                <Shot shot={s.shot} />
+              </div>
+            </div>
+          </section>
+        ))}
 
         <section className="lp-sec lp-sec-navy lp-on-navy" aria-labelledby="hw-h-ai">
           <div className="lp-wrap">
@@ -320,8 +331,8 @@ export default function HowItWorksPage() {
             <figure className="lp-plate hw-venues-plate">
               <img
                 className="lp-shot"
-                src="/screenshots/venue-card-events-light@2x.webp"
-                srcSet="/screenshots/venue-card-events-light-480w.webp 480w, /screenshots/venue-card-events-light@2x.webp 780w"
+                src="/screenshots/venue-card-events-dark@2x.webp"
+                srcSet="/screenshots/venue-card-events-dark-480w.webp 480w, /screenshots/venue-card-events-dark@2x.webp 780w"
                 sizes="(min-width: 860px) 240px, 200px"
                 width="390" height="844"
                 loading="lazy" decoding="async"

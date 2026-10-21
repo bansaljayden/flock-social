@@ -309,13 +309,10 @@ describe('LandingPage structure and keyboard operation', () => {
 
   test('the anchored sections are named regions, not anonymous divs', () => {
     const { container } = render(React.createElement(LandingPage));
-    // #birdie and #money were sections until 2026-10-21 and are beats of the
-    // Friday plan now. Old links to them still land, inside #how.
-    for (const id of ['birdie', 'money']) {
-      expect(container.querySelector(`section#how #${id}`)).not.toBeNull();
-    }
-    // Every section an in-page link offers.
-    for (const id of ['how', 'crowds', 'safety', 'venues', 'pricing', 'get']) {
+    // #birdie and #money name two of the Friday plan's beats, each a band of
+    // its own since 2026-10-21, so old links to them still land on a region.
+    // Every section an in-page link offers, and those two.
+    for (const id of ['how', 'birdie', 'money', 'crowds', 'safety', 'venues', 'pricing', 'get']) {
       const section = container.querySelector(`section#${id}`);
       expect(section).not.toBeNull();
       const labelledBy = section.getAttribute('aria-labelledby');
