@@ -443,7 +443,6 @@ export default function LandingPage() {
         <div className="lp-wrap lp-hero-in">
           <div className="lp-hero-copy">
             <h1 id="lp-h-hero">Nurturing friendship, <span className="lp-keep">one flock at a time.</span></h1>
-            {/* the maintainer's own line (2026-10-21), the one on his DECA deck. */}
             <p className="lp-lead">
               Flock is an app that helps a group of friends finalize plans by
               integrating artificial intelligence &amp; industry-leading features

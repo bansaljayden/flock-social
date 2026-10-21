@@ -23,6 +23,41 @@ const MARK = new Color(0x6d9ac3).convertSRGBToLinear();
 // The shape of the frame the stills were rendered in; a wider stage crops it.
 const FRAME_ASPECT = 1.5;
 
+// Printed parts show their layers: ridges 1.2 mm apart up the box's height,
+// drawn by tipping the surface normal along each ridge and darkening its
+// groove a touch, so the plastic reads as printed rather than as flat colour.
+// No texture: the shader works from each point's height, so the file needs
+// no UVs, and the ridges fade out where they would be under about three
+// pixels apart, so a small viewer never shimmers. Faces that look straight
+// up or down stay smooth, as a print's top does.
+const PRINTED = /\(printed|Sensor pill|Flux wordmark/;
+const LAYER_MM = 1.2;
+const layer = { uLayerPitch: { value: 1 }, uLayerTilt: { value: 0.3 }, uLayerShade: { value: 0.09 } };
+function addLayers(m, axis) {
+  m.onBeforeCompile = (shader) => {
+    Object.assign(shader.uniforms, layer, { uLayerAxis: { value: axis } });
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <common>', '#include <common>\nuniform vec3 uLayerAxis;\nvarying float vLayerH;\nvarying vec3 vLayerUp;')
+      .replace('#include <project_vertex>', '#include <project_vertex>\nvLayerH = dot(transformed, uLayerAxis);\nvLayerUp = normalize((modelViewMatrix * vec4(uLayerAxis, 0.0)).xyz);');
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <common>', '#include <common>\nuniform float uLayerPitch;\nuniform float uLayerTilt;\nuniform float uLayerShade;\nvarying float vLayerH;\nvarying vec3 vLayerUp;')
+      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+        {
+          float ph = vLayerH / uLayerPitch * 6.2831853;
+          vec3 up = normalize(vLayerUp);
+          vec3 along = up - dot(up, normal) * normal;
+          float side = length(along);
+          float k = clamp(2.2 - fwidth(ph) / 1.6, 0.0, 1.0) * smoothstep(0.05, 0.4, side);
+          if (k > 0.0) {
+            float ridge = sin(ph) + 0.35 * sin(2.0 * ph + 1.3);
+            normal = normalize(normal + along / side * (uLayerTilt * ridge * k));
+            diffuseColor.rgb *= 1.0 - uLayerShade * k * (0.5 - 0.5 * ridge);
+          }
+        }`);
+  };
+  m.customProgramCacheKey = () => 'flux-layers';
+}
+
 // The loader rewrites node names (spaces to underscores, some punctuation
 // dropped) and keeps the original in userData.name; match on either.
 const plain = (s) => String(s || '').replace(/[[\].:/]/g, '').replace(/\s/g, '_');
@@ -286,6 +321,10 @@ export function createFluxScene(canvas, { onPick, onTurn } = {}) {
         yUp = size.y > size.z;
         model = root;
         scene.add(root);
+        // dot(point, M^T up) is a point's height in the file's units, M the
+        // mesh's place in the file, whatever turn or scale that holds.
+        root.updateMatrixWorld(true);
+        const up = m2t([0, 0, 1]).normalize();
         const byPlain = {};
         root.traverse((o) => {
           const original = (o.userData && o.userData.name) || '';
@@ -302,6 +341,9 @@ export function createFluxScene(canvas, { onPick, onTurn } = {}) {
             const base = m.material && m.material.color ? m.material.color.getHex() : 0x888888;
             if (m.material) m.material.dispose();
             m.material = material(name, base);
+            if (PRINTED.test(name)) {
+              addLayers(m.material, up.clone().applyMatrix3(new Matrix3().setFromMatrix4(m.matrixWorld).transpose()));
+            }
             m.castShadow = true;
             m.receiveShadow = true;
             materials.push(m.material);
@@ -312,6 +354,7 @@ export function createFluxScene(canvas, { onPick, onTurn } = {}) {
         // Millimetres to the file's units, measured on the body.
         const body = parts['Body (printed, navy)'];
         scale = (body ? new Box3().setFromObject(body.obj).getSize(new Vector3()).x : size.x) / BOX.w;
+        layer.uLayerPitch.value = LAYER_MM * scale;
         camera.near = scale * 2;
         camera.far = scale * 20000;
         ground.scale.setScalar(scale * 4000);

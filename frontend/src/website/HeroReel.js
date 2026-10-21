@@ -48,67 +48,48 @@ function Screen({ shot, first, copy }) {
   );
 }
 
-/* Each screen sits in a drawn device (his ask, 2026-10-21: "put the photos
-   in phone like a mockup"): a phone's frame and black glass, with the
-   status row and the island above the capture, since the web app's captures
-   carry no status bar of their own. Behind the front, the phone's outline is
-   drawn again in ten slices through its depth (.lp-reel-rim), so a tilted
-   phone shows one solid rounded rim, corners, top and bottom included, where
-   two flat side faces left gaps.
+/* Each screen sits in a drawn device: a phone's frame and black glass, with
+   the status row and the island above the capture, since the web app's
+   captures carry no status bar of their own. Behind the front, the phone's
+   outline is drawn again in ten slices through its depth (.lp-reel-rim), so a
+   tilted phone shows one solid rounded rim, corners, top and bottom included,
+   where two flat side faces left gaps.
 
-   The Flux screen sits in the sensor itself, a box of four photographs: the
-   front, both sides and the top, each cut to the CAD's own size (fluxData.js
-   BOX: 182.9 wide, 175.2 tall, 74.4 deep, in mm) and folded together in
-   LandingPage.css. Drawn in CSS, the face read as a cartoon beside the
-   phones' real screens. The photographs are generated from the CAD's
-   straight-on renders of the assembled box, so every edge, the lens, the
-   pill's light and the door counter's slot sit where the CAD has them, in
-   printed navy plastic with its layer lines; the right side is the left one
-   mirrored, its one light set where the CAD has it, and the Flock mark beside
-   the wordmark is the logo file itself, laid over the badge. The sensor's
-   screen is the capture above, set into the photo's glass, so the reel still
-   shows the one reelShots.js names. */
+   The Flux screen sits in the sensor itself, in two photographs of the box:
+   straight on, and turned to show its right side and top. Both are generated
+   from the CAD's own renders of the assembled box (fluxData.js BOX: 182.9
+   wide, 175.2 tall, 74.4 deep, in mm), so every edge, the lens, the pill's
+   light and the door counter's slot sit where the CAD has them, in printed
+   navy plastic with its layer lines, and the turned one has the rounded
+   corners and bottom edge a box folded from flat photographs could not.
+   Straight on, the Flock mark beside the wordmark is the logo file itself,
+   laid over the badge, and the screen is the capture reelShots.js names, set
+   into the photo's glass; the turned photograph carries the same capture,
+   set into its glass in perspective when it was made. */
 const RIM = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-const FLUX_FACE_SIZES = '(min-width: 1100px) 437px, (min-width: 600px) 380px, 320px';
-const FLUX_DEPTH_SIZES = '(min-width: 1100px) 178px, (min-width: 600px) 155px, 130px';
+const FLUX_SIZES = '(min-width: 1100px) 437px, (min-width: 600px) 380px, 320px';
 
 function Device({ landscape, children }) {
   if (landscape) {
     return (
       <div className="lp-reel-device is-flux">
-        <div className="lp-flux-face is-front">
+        <div className="lp-flux-view is-front">
           <img
             className="lp-flux-photo"
             src="/sensor/flux-real-front.webp"
             srcSet="/sensor/flux-real-front.webp 440w, /sensor/flux-real-front@2x.webp 880w"
-            sizes={FLUX_FACE_SIZES}
+            sizes={FLUX_SIZES}
             width="440" height="421"
             alt="" loading="lazy" decoding="async"
           />
           <div className="lp-flux-screen">{children}</div>
         </div>
         <img
-          className="lp-flux-face is-right"
-          src="/sensor/flux-real-right.webp"
-          srcSet="/sensor/flux-real-right.webp 179w, /sensor/flux-real-right@2x.webp 358w"
-          sizes={FLUX_DEPTH_SIZES}
-          width="179" height="421"
-          alt="" loading="lazy" decoding="async"
-        />
-        <img
-          className="lp-flux-face is-left"
-          src="/sensor/flux-real-left.webp"
-          srcSet="/sensor/flux-real-left.webp 179w, /sensor/flux-real-left@2x.webp 358w"
-          sizes={FLUX_DEPTH_SIZES}
-          width="179" height="421"
-          alt="" loading="lazy" decoding="async"
-        />
-        <img
-          className="lp-flux-face is-top"
-          src="/sensor/flux-real-top.webp"
-          srcSet="/sensor/flux-real-top.webp 440w, /sensor/flux-real-top@2x.webp 880w"
-          sizes={FLUX_FACE_SIZES}
-          width="440" height="179"
+          className="lp-flux-view is-turned"
+          src="/sensor/flux-real-turned.webp"
+          srcSet="/sensor/flux-real-turned.webp 440w, /sensor/flux-real-turned@2x.webp 880w"
+          sizes={FLUX_SIZES}
+          width="440" height="421"
           alt="" loading="lazy" decoding="async"
         />
       </div>
@@ -119,10 +100,10 @@ function Device({ landscape, children }) {
       <span className="lp-reel-rim" aria-hidden="true">
         {RIM.map((k) => <i key={k} style={{ '--k': k }} />)}
       </span>
-      {/* The front (frame and glass) is a 3D layer of its own, a pixel in
-          front of the rim: Safari otherwise painted the rim's slices over a
-          front that sat flat at depth zero, and a tilted phone showed only a
-          grey slab (found on the maintainer's iPad, 2026-10-21). */}
+      {/* The front (frame and glass) is a layer of its own, a pixel in front
+          of the rim and after it in the page, so the rim stays behind the
+          screen even where a browser draws the device flat and paints the
+          rim's positioned slices over the glass. */}
       <div className="lp-reel-front">
         <div className="lp-reel-glass">
           <div className="lp-reel-status" aria-hidden="true">
@@ -137,12 +118,12 @@ function Device({ landscape, children }) {
   );
 }
 
-/* The devices are solid in 3D (his ask, 2026-10-21: "the phone mockups
-   should be 3D when I go over them / click on them"). Under a mouse the one
-   you are over tilts toward the pointer, showing its edge; a click or a tap
-   turns it to its side, and another turns it back. The tilt is written as two
-   custom properties on the card, so nothing re-renders as the pointer moves.
-   "Reduce motion" keeps them flat (LandingPage.css). */
+/* The devices are solid in 3D. Under a mouse the phone you are over tilts
+   toward the pointer, showing its edge; a click or a tap turns it to its
+   side, and another turns it back. The tilt is written as two custom
+   properties on the card, so nothing re-renders as the pointer moves. The
+   Flux box turns to its second photograph instead (LandingPage.css).
+   "Reduce motion" keeps the phones flat. */
 const tilt = (e) => {
   if (e.pointerType !== 'mouse') return;
   const card = e.currentTarget;
