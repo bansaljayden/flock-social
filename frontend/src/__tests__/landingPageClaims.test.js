@@ -324,6 +324,17 @@ describe('the page only sells things that exist', () => {
     expect(card).toContain('Accurate to about 15 m.');
     expect(safety).toContain('Alert sent at ${time}');
     expect(card).toContainEqual(expect.stringMatching(/^Alert sent at \d{1,2}\/\d{1,2}\/\d{4}, \d{1,2}:\d{2}:\d{2} [AP]M [A-Z]{2,4}$/));
+
+    // Since 2026-10-21 the card is as tall as the sheet beside it, and it is
+    // filled with two more of the email's own lines, not invented ones: the
+    // opening sentence, and the line that tells each contact how many others
+    // were asked. Maya's sheet says two contacts will be emailed.
+    expect(safety).toContain('${safeName} has triggered an emergency alert on the <strong>Flock</strong> app and may need your assistance.');
+    expect(card).toContain('Maya has triggered an emergency alert on the Flock app and may need your assistance.');
+    expect(safety).toContain('You are one of ${withEmail.length} people ${safeName} asked us to alert.');
+    expect(card).toContain('You are one of 2 people Maya asked us to alert.');
+    expect(safety).toContain('This is an automated safety alert from the Flock app. If this is an emergency, call your local emergency number. Replying to this message does not reach ${safeName}.');
+    expect(card).toContain('This is an automated safety alert from the Flock app. If this is an emergency, call your local emergency number. Replying to this message does not reach Maya.');
   });
 
   test('nothing on the page claims a team that does not exist', () => {
@@ -362,15 +373,20 @@ describe('structural fingerprint', () => {
     const hero = grid('lp-hero-in');
     const safety = grid('lp-safety');
     const venues = grid('lp-venues-in');
-    const beat = grid('lp-beat-main');
-    expect(new Set([hero, safety, venues, beat]).size).toBe(4);
-    // And the beat's is a log, a narrow time column first, not two halves.
-    expect(beat).toMatch(/^minmax\(0, 9\.5rem\)/);
+    expect(new Set([hero, safety, venues]).size).toBe(3);
+    // The beats are not side by side at all since 2026-10-21: each is its
+    // words centred over a capture with its parts named, or a painting.
+    expect(CSS).toMatch(/\.lp-beat \{[^}]*text-align: center;/);
+    expect(visible).not.toMatch(/lp-beat-main|has-plate/);
   });
 
-  test('Safety puts its guarantees across the full width, not in a sidebar', () => {
-    expect(visible).toMatch(/className="lp-list lp-safety-rules"/);
-    expect(CSS).toMatch(/\.lp-safety-rules \{[\s\S]{0,400}?grid-column: 1 \/ -1;/);
+  test('Safety keeps its two standing guarantees in one row under its facts', () => {
+    // They sat as two loose lines at the foot of the band, a page width apart
+    // (2026-10-21). Now they follow the facts, inside the same column.
+    const body = visible.slice(visible.indexOf('className="lp-safety-body"'), visible.indexOf('className="lp-safety-exhibits"'));
+    expect(body.indexOf('className="lp-safety-facts"')).toBeGreaterThan(-1);
+    expect(body.indexOf('className="lp-list lp-safety-rules"')).toBeGreaterThan(body.indexOf('className="lp-safety-facts"'));
+    expect(CSS).toMatch(/\.lp-safety \.lp-safety-rules \{\s*display: flex;/);
   });
 
   test('no hairline dividers: lists, beats, sections and the hero carry no rules', () => {

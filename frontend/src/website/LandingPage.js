@@ -1,6 +1,7 @@
 import React, { Suspense, useEffect, useRef, useState } from 'react';
 import './LandingPage.css';
 import SiteFooter from './SiteFooter';
+import AnnotatedShot from './AnnotatedShot';
 import displayFontUrl from '../fonts/Literata-Display-600.woff2';
 import { NAV_LINKS } from './SiteNav';
 
@@ -519,162 +520,157 @@ export default function LandingPage() {
       {/* ---------------- the five beats ----------------
           Each beat is its own full-width band, paper and navy in turn, so each
           step of the night reads as its own (the maintainer, 2026-10-21: "cream, then
-          dark blue, then cream"). Flat grounds, no gradients and no shadows; on
-          navy the copy takes the on-navy inks and the dark capture gets a light
-          hairline so it does not sink into the band. Every capture on the site
-          is the dark theme, the hero's own. #birdie and #money stay on the
-          beats they always named, for old links. */}
+          dark blue, then cream"). Since his second look the same day ("a lot
+          of open space ... put the screenshot in the middle and draw arrows to
+          explain"), a beat is its time, headline and line, centred, with the
+          capture under it and its parts named (AnnotatedShot), or, where the
+          beat has no screen, a painted scene: above the words for the
+          invitation, flying off under them for "Still in?". Flat grounds, no
+          gradients and no shadows. Every capture on the site is the dark
+          theme, the hero's own. #birdie and #money stay on the beats they
+          always named, for old links. Each callout's `at` is measured on the
+          780 x 1688 capture, in percent. */}
       <section className="lp-sec lp-sec-paper lp-beat-band" aria-labelledby="lp-h-beat-1">
         <div className="lp-wrap">
+          {/* The invitation: a wren holding the folded note while two
+              sparrows lean in. */}
+          <img
+            className="lp-art lp-beat-scene is-invite"
+            src="/art/step-start-480.webp"
+            srcSet="/art/step-start-480.webp 480w, /art/step-start-960.webp 960w"
+            sizes="min(400px, 84vw)"
+            width="480" height="243"
+            loading="lazy" decoding="async"
+            alt=""
+          />
           <div className="lp-beat">
-            <div className="lp-beat-main">
-              <p className="lp-beat-when">Thursday, 4:10 PM</p>
-              <div className="lp-beat-text">
-                <h3 id="lp-h-beat-1">Maya starts a flock.</h3>
-                <p>
-                  Friday Night Crew, 8 o’clock, four friends invited. Anyone without
-                  the app joins from a link (budget too), no account needed.
-                </p>
-              </div>
-            </div>
+            <p className="lp-beat-when">Thursday, 4:10 PM</p>
+            <h3 id="lp-h-beat-1">Maya starts a flock.</h3>
+            <p>
+              Friday Night Crew, 8 o’clock, four friends invited. Anyone without
+              the app joins from a link (budget too), no account needed.
+            </p>
           </div>
         </div>
       </section>
       <section className="lp-sec lp-sec-navy lp-on-navy lp-beat-band" id="birdie" aria-labelledby="lp-h-beat-2">
         <div className="lp-wrap">
-          <div className="lp-beat has-plate">
-            <div className="lp-beat-main">
-              <p className="lp-beat-when">Thursday, 6:30 PM</p>
-              <div className="lp-beat-text">
-                <h3 id="lp-h-beat-2">Three places go to a vote.</h3>
-                <p>
-                  Each card shows how busy the place usually gets, plus anything the
-                  venue posted. The Copper Finch has a live acoustic set Friday at
-                  8:30. Sam asks Birdie for somewhere cheaper, the way you’d ask a
-                  friend who knows the city, and drops its pick in the chat.
-                </p>
-                {/* FTC AI disclosure, in the page's own voice where Birdie is
-                    marketed. MIRRORED in api/marketing-page.js PAGE_BLOCKS.home;
-                    aiCrawlerSurface.test.js requires the two to match. */}
-                <p className="lp-beat-note">
-                  Birdie is AI. It runs on Google Gemini, and the crowd numbers it
-                  quotes are the app’s own.
-                </p>
-              </div>
-            </div>
-            <figure className="lp-plate">
-              <img
-                className="lp-shot"
-                src="/screenshots/chat-dark@2x.webp"
-                srcSet="/screenshots/chat-dark-480w.webp 480w, /screenshots/chat-dark@2x.webp 780w"
-                sizes="(min-width: 960px) 220px, (min-width: 760px) 200px, min(260px, 70vw)"
-                width="390" height="844"
-                loading="lazy" decoding="async"
-                alt="The Friday Night Crew chat: a vote on three places with The Copper Finch ahead, and four of five budgets in."
-              />
-              <figcaption className="lp-fig-cap">One budget is still out.</figcaption>
-            </figure>
+          <div className="lp-beat">
+            <p className="lp-beat-when">Thursday, 6:30 PM</p>
+            <h3 id="lp-h-beat-2">Three places go to a vote.</h3>
+            <p>
+              Sam asks Birdie for somewhere cheaper, the way you’d ask a friend
+              who knows the city, and drops its pick in the chat.
+            </p>
+            {/* FTC AI disclosure, in the page's own voice where Birdie is
+                marketed. MIRRORED in api/marketing-page.js PAGE_BLOCKS.home;
+                aiCrawlerSurface.test.js requires the two to match. */}
+            <p className="lp-beat-note">
+              Birdie is AI. It runs on Google Gemini, and the crowd numbers it
+              quotes are the app’s own.
+            </p>
           </div>
+          <AnnotatedShot
+            id="vote"
+            shot={{
+              src: '/screenshots/chat-dark@2x.webp',
+              srcSet: '/screenshots/chat-dark-480w.webp 480w, /screenshots/chat-dark@2x.webp 780w',
+              alt: 'The Friday Night Crew chat: a vote on three places with The Copper Finch ahead, and four of five budgets in.',
+            }}
+            notes={[
+              { side: 'right', text: 'The Copper Finch, pinned', at: [48.5, 8.5] },
+              { side: 'left', text: '4 of 5 budgets in', at: [15, 12.7] },
+              { side: 'right', text: 'Votes, counted live', at: [87.7, 62] },
+              { side: 'left', text: '5 of 5 voted', at: [16.7, 78.7] },
+            ]}
+            caption="The Friday Night Crew chat."
+          />
         </div>
       </section>
       <section className="lp-sec lp-sec-paper lp-beat-band" id="money" aria-labelledby="lp-h-beat-3">
         <div className="lp-wrap">
-          <div className="lp-beat has-plate">
-            <div className="lp-beat-main">
-              <p className="lp-beat-when">Friday, noon</p>
-              <div className="lp-beat-text">
-                <h3 id="lp-h-beat-3">The budgets come in privately.</h3>
-                {/* budget.js publishes nothing until the budget settles (everyone
-                    going has answered with at least three members' amounts in, or
-                    the creator locks it once three have), and then a figure
-                    rounded down to a band so it is nobody's own number (bandCeiling). The
-                    vote and Discover then drop places priced over it
-                    (getMaxPriceLevel in ChatDetail.js and ExploreScreen.js). */}
-                <p>
-                  Everyone types what they can spend. The group only ever sees one
-                  number, rounded down, and the places Flock suggests stay under it.
-                </p>
-                <p className="lp-beat-note">
-                  It appears when everyone going has answered or the creator locks
-                  it, and only once at least three members have shared an amount.
-                </p>
-                <img
-                  className="lp-art lp-beat-art"
-                  src="/art/step-budget-240.webp"
-                  srcSet="/art/step-budget-240.webp 240w, /art/step-budget-480.webp 480w"
-                  sizes="160px"
-                  width="240" height="134"
-                  loading="lazy" decoding="async"
-                  alt=""
-                />
-              </div>
-            </div>
-            <figure className="lp-plate">
-              <img
-                className="lp-shot"
-                src="/screenshots/budget-dark@2x.webp"
-                srcSet="/screenshots/budget-dark-480w.webp 480w, /screenshots/budget-dark@2x.webp 780w"
-                sizes="(min-width: 960px) 220px, (min-width: 760px) 200px, min(260px, 70vw)"
-                width="390" height="844"
-                loading="lazy" decoding="async"
-                alt="The budget sheet: preset amounts, a custom $35, and a note that no one else sees the answer."
-              />
-              <figcaption className="lp-fig-cap">Nobody else sees Maya’s $35.</figcaption>
-            </figure>
+          <div className="lp-beat">
+            <p className="lp-beat-when">Friday, noon</p>
+            <h3 id="lp-h-beat-3">The budgets come in privately.</h3>
+            {/* budget.js publishes nothing until the budget settles (everyone
+                going has answered with at least three members' amounts in, or
+                the creator locks it once three have), and then a figure
+                rounded down to a band so it is nobody's own number (bandCeiling). The
+                vote and Discover then drop places priced over it
+                (getMaxPriceLevel in ChatDetail.js and ExploreScreen.js). */}
+            <p>
+              Everyone types what they can spend. The group only ever sees one
+              number, rounded down, and the places Flock suggests stay under it.
+            </p>
+            <p className="lp-beat-note">
+              It appears when everyone going has answered or the creator locks
+              it, and only once at least three members have shared an amount.
+            </p>
           </div>
+          <AnnotatedShot
+            id="budget"
+            shot={{
+              src: '/screenshots/budget-dark@2x.webp',
+              srcSet: '/screenshots/budget-dark-480w.webp 480w, /screenshots/budget-dark@2x.webp 780w',
+              alt: 'The budget sheet: preset amounts, a custom $35, and a note that no one else sees the answer.',
+            }}
+            notes={[
+              { side: 'left', text: 'Pick a preset or type your own', at: [15.4, 54.9], y: 52 },
+              { side: 'left', text: 'Nobody else sees your $35', at: [12.8, 65.3], y: 67 },
+              { side: 'right', text: 'One rounded number for the group', at: [80, 71.4] },
+              { side: 'right', text: 'Skip if any budget works', at: [80, 94.9], y: 92 },
+            ]}
+            caption="Maya’s budget sheet."
+          />
         </div>
       </section>
       <section className="lp-sec lp-sec-navy lp-on-navy lp-beat-band" aria-labelledby="lp-h-beat-4">
         <div className="lp-wrap">
           <div className="lp-beat">
-            <div className="lp-beat-main">
-              <p className="lp-beat-when">Friday, 7:15 PM</p>
-              <div className="lp-beat-text">
-                <h3 id="lp-h-beat-4">“Still in?”</h3>
-                <p>
-                  Before the deadline, the chat asks who’s still in. All five say
-                  yes, and one last crowd check shows The Copper Finch filling up.
-                </p>
-              </div>
-            </div>
+            <p className="lp-beat-when">Friday, 7:15 PM</p>
+            <h3 id="lp-h-beat-4">“Still in?”</h3>
+            <p>
+              Before the deadline, the chat asks who’s still in. All five say
+              yes, and one last crowd check shows The Copper Finch filling up.
+            </p>
           </div>
+          {/* All five said yes, so the flock heads out together, flying off
+              to the right under the words. Five beige sparrows and two wrens:
+              on navy the wrens hold by their white breasts and the pale edges
+              of their wings. */}
+          <img
+            className="lp-art lp-beat-scene is-flight"
+            src="/art/step-go-480.webp"
+            srcSet="/art/step-go-480.webp 480w, /art/step-go-960.webp 960w"
+            sizes="min(520px, 90vw)"
+            width="480" height="243"
+            loading="lazy" decoding="async"
+            alt=""
+          />
         </div>
       </section>
       <section className="lp-sec lp-sec-paper lp-beat-band" aria-labelledby="lp-h-beat-5">
         <div className="lp-wrap">
-          <div className="lp-beat has-plate">
-            <div className="lp-beat-main">
-              <p className="lp-beat-when">Saturday morning</p>
-              <div className="lp-beat-text">
-                <h3 id="lp-h-beat-5">Jordan paid, so Flock splits it.</h3>
-                <p>
-                  $142.60 with the tip is $28.52 each. Everyone gets a Venmo or Cash
-                  App link for their share, or Zelle instructions.
-                </p>
-                <img
-                  className="lp-art lp-beat-art"
-                  src="/art/step-go-240.webp"
-                  srcSet="/art/step-go-240.webp 240w, /art/step-go-480.webp 480w"
-                  sizes="160px"
-                  width="240" height="121"
-                  loading="lazy" decoding="async"
-                  alt=""
-                />
-              </div>
-            </div>
-            <figure className="lp-plate">
-              <img
-                className="lp-shot"
-                src="/screenshots/bill-split-dark@2x.webp"
-                srcSet="/screenshots/bill-split-dark-480w.webp 480w, /screenshots/bill-split-dark@2x.webp 780w"
-                sizes="(min-width: 960px) 220px, (min-width: 760px) 200px, min(260px, 70vw)"
-                width="390" height="844"
-                loading="lazy" decoding="async"
-                alt="Split the Bill: $142.60 with an 18% tip, paid by Jordan Avery, $28.52 each for five people."
-              />
-              <figcaption className="lp-fig-cap">Two paid back, two still owe.</figcaption>
-            </figure>
+          <div className="lp-beat">
+            <p className="lp-beat-when">Saturday morning</p>
+            <h3 id="lp-h-beat-5">Jordan paid, so Flock splits it.</h3>
+            <p>$142.60 with the tip comes to $28.52 each.</p>
           </div>
+          <AnnotatedShot
+            id="bill"
+            shot={{
+              src: '/screenshots/bill-split-dark@2x.webp',
+              srcSet: '/screenshots/bill-split-dark-480w.webp 480w, /screenshots/bill-split-dark@2x.webp 780w',
+              alt: 'Split the Bill: $142.60 with an 18% tip, paid by Jordan Avery, $28.52 each for five people.',
+            }}
+            notes={[
+              { side: 'left', text: 'Total: $142.60, paid by Jordan', at: [19.2, 56.2] },
+              { side: 'right', text: 'Tip included', at: [80, 56.2] },
+              { side: 'right', text: 'Who’s paid back, who still owes', at: [89.2, 72.3] },
+              { side: 'left', text: 'Pay by Venmo, Cash App or Zelle', at: [28, 88.7] },
+            ]}
+            caption="Split the Bill, after two paid back."
+          />
           <p className="lp-friday-more">
             Every step, and the two-minute pitch video, is on{' '}
             <a href="/how-it-works">How it works</a>.
@@ -697,7 +693,7 @@ export default function LandingPage() {
           (landingPageClaims.test.js checks each one), with no decoration. */}
       <section className="lp-sec lp-sec-sand" id="safety" aria-labelledby="lp-h-safety">
         <div className="lp-wrap lp-safety">
-          <div className="lp-safety-copy">
+          <div className="lp-safety-head">
             <img
               className="lp-art lp-safety-art"
               src="/art/safety-360.webp"
@@ -712,6 +708,8 @@ export default function LandingPage() {
               Sharing your live location with the flock is optional, and off until
               you turn it on. SOS is separate. Here’s exactly what it does.
             </p>
+          </div>
+          <div className="lp-safety-body">
             <div className="lp-safety-facts">
               <div>
                 <h3>Who hears</h3>
@@ -741,20 +739,32 @@ export default function LandingPage() {
                 </p>
               </div>
             </div>
+            <ul className="lp-list lp-safety-rules">
+              <li>No background tracking, ever</li>
+              <li>Report and block on any message or profile</li>
+            </ul>
           </div>
+          {/* The sheet with its three buttons named, and beside it the email
+              the second button sends. Measured on sos-dark@2x: Call 911 at
+              70.5% of the height, Alert Contacts 81.3%, Share Location 88.6%;
+              Share Location emails the same contacts your location alone
+              (POST /api/safety/share-location). */}
           <div className="lp-safety-exhibits">
-            <figure className="lp-plate lp-safety-plate">
-              <img
-                className="lp-shot"
-                src="/screenshots/sos-dark@2x.webp"
-                srcSet="/screenshots/sos-dark-480w.webp 480w, /screenshots/sos-dark@2x.webp 780w"
-                sizes="(min-width: 640px) 200px, min(260px, 70vw)"
-                width="390" height="844"
-                loading="lazy" decoding="async"
-                alt="The SOS sheet: Call 911 first, then Alert Contacts for two trusted contacts, Share Location, and Cancel."
-              />
-              <figcaption className="lp-fig-cap">The second tap sends it.</figcaption>
-            </figure>
+            <AnnotatedShot
+              id="sos"
+              layout="left"
+              shot={{
+                src: '/screenshots/sos-dark@2x.webp',
+                srcSet: '/screenshots/sos-dark-480w.webp 480w, /screenshots/sos-dark@2x.webp 780w',
+                alt: 'The SOS sheet: Call 911 first, then Alert Contacts for two trusted contacts, Share Location, and Cancel.',
+              }}
+              notes={[
+                { side: 'left', text: 'Call 911 comes first', at: [22, 70.5], y: 66 },
+                { side: 'left', text: 'Alert Contacts emails your two contacts', at: [22, 81.3], y: 80 },
+                { side: 'left', text: 'Share Location emails just where you are', at: [22, 88.6], y: 94 },
+              ]}
+              caption="The second tap sends it."
+            />
             {/* Excerpt of the real SOS email the backend sends, not a mock UI.
                 Every line is copied from the template in routes/safety.js, and
                 landingPageClaims.test.js checks each one against it. */}
@@ -766,18 +776,18 @@ export default function LandingPage() {
               </div>
               <div className="lp-sos-body">
                 <p className="lp-sos-headline">Maya needs help</p>
+                <p className="lp-sos-intro">Maya has triggered an emergency alert on the Flock app and may need your assistance.</p>
                 <p className="lp-sos-link">View Location on Map</p>
                 <p className="lp-sos-fine">Accurate to about 15 m.</p>
+                <p className="lp-sos-fine">You are one of 2 people Maya asked us to alert.</p>
+              </div>
+              <div className="lp-sos-foot">
                 <p className="lp-sos-fine">Alert sent at 9/26/2026, 11:42:04 PM EDT</p>
+                <p className="lp-sos-small">This is an automated safety alert from the Flock app. If this is an emergency, call your local emergency number. Replying to this message does not reach Maya.</p>
               </div>
               <p className="lp-sos-cap">The actual email, word for word.</p>
             </div>
           </div>
-
-          <ul className="lp-list lp-safety-rules">
-            <li>No background tracking, ever</li>
-            <li>Report and block on any message or profile</li>
-          </ul>
         </div>
       </section>
 
@@ -809,18 +819,25 @@ export default function LandingPage() {
               </a>
             </div>
           </div>
-          <figure className="lp-plate lp-venues-plate">
-            <img
-              className="lp-shot"
-              src="/screenshots/owner-dashboard-dark@2x.webp"
-              srcSet="/screenshots/owner-dashboard-dark-480w.webp 480w, /screenshots/owner-dashboard-dark@2x.webp 780w"
-              sizes="(min-width: 900px) 240px, (min-width: 760px) 200px, min(260px, 70vw)"
-              width="390" height="844"
-              loading="lazy" decoding="async"
-              alt="The Copper Finch’s venue dashboard: the flocks with it in their vote, and the events showing on its verified card."
-            />
-            <figcaption className="lp-fig-cap">What a venue owner sees.</figcaption>
-          </figure>
+          {/* The dashboard with three of its parts named, measured on
+              owner-dashboard-dark@2x: the Promotions tab (17.5% down), Create
+              Event (26.2%), and the Flocks With You in Their Vote panel
+              (33.2%). Events show on the card only for a verified venue. */}
+          <AnnotatedShot
+            id="venue"
+            layout="right"
+            shot={{
+              src: '/screenshots/owner-dashboard-dark@2x.webp',
+              srcSet: '/screenshots/owner-dashboard-dark-480w.webp 480w, /screenshots/owner-dashboard-dark@2x.webp 780w',
+              alt: 'The Copper Finch’s venue dashboard: the flocks with it in their vote, and the events showing on its verified card.',
+            }}
+            notes={[
+              { side: 'right', text: 'Deals go under Promotions', at: [42.6, 17.5], y: 12 },
+              { side: 'right', text: 'Add events, shown once verified', at: [75, 26.2], y: 27 },
+              { side: 'right', text: 'Flocks with you in their vote', at: [51, 33.2], y: 42 },
+            ]}
+            caption="A venue owner’s dashboard."
+          />
         </div>
       </section>
 
