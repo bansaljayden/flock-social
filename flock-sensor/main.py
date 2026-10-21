@@ -5552,6 +5552,8 @@ class Panel:
 # How long to wait at boot for a real display before settling for none.
 DISPLAY_WAIT_SECONDS = 45
 DISPLAY_RETRY_SECONDS = 3
+# How long Esc hands the screen back to the desktop before the panel returns.
+PANEL_HIDE_SECONDS = 600
 
 
 def open_display(pygame, candidates_fn=None, wait=None, retry=None, sleep=None):
@@ -5654,6 +5656,13 @@ def display_loop():
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     return
+                # Esc on a plugged-in keyboard hands the screen back to the
+                # desktop for a while, so Wi-Fi can be set up on a unit that
+                # boots straight into the panel. Counting carries on behind it.
+                if (event.type == pygame.KEYDOWN
+                        and event.key == pygame.K_ESCAPE):
+                    pygame.display.quit()
+                    return 'hidden'
                 # A touch panel reports as a mouse under some SDL drivers and as
                 # a finger under others, and which one you get depends on the
                 # driver. A pitch is a bad place to find out you picked wrong.
@@ -6798,7 +6807,9 @@ def main():
         # keep-alive below rather than returning, because main() exits 0,
         # and systemd does not restart a clean exit, so a pygame crash used to
         # silently take the whole sensor offline until someone visited.
-        display_loop()
+        while display_loop() == 'hidden' and not _stop.is_set():
+            logger.info(f'Panel hidden by Esc; back in {PANEL_HIDE_SECONDS} s')
+            _stop.wait(PANEL_HIDE_SECONDS)
 
     # Watchdog. If the push thread is somehow gone, exit non-zero so systemd
     # restarts the service. Sitting here alive but mute is the one failure that
