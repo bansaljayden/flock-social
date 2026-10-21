@@ -23,11 +23,11 @@ function Screen({ shot, first, copy }) {
   if (first) {
     return (
       <picture>
-        <source type="image/avif" srcSet="/screenshots/home-reel.avif" />
-        <source type="image/webp" srcSet="/screenshots/nest-dark@2x.webp" />
+        <source type="image/avif" srcSet="/screenshots/home-reel-v2.avif" />
+        <source type="image/webp" srcSet="/screenshots/nest-dark-v2@2x.webp" />
         <img
           className="lp-shot-hero"
-          src="/screenshots/nest-dark@2x.png"
+          src="/screenshots/nest-dark-v2@2x.png"
           width="390" height="844"
           alt={copy ? '' : HOME_ALT}
           {...(copy ? { loading: 'lazy', decoding: 'async' } : {})}

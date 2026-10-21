@@ -94,6 +94,7 @@ import { BASE_URL } from '../../services/api';
 import { onVenuePhotoError } from '../../lib/venuePhoto';
 import { GoogleMapsMark } from '../ui/GoogleCredit';
 import { birdieBackText } from '../../lib/meterResets';
+import { venuesByMention } from '../../lib/birdieCardOrder';
 
 // When today's free messages come back, in the reader's own clock
 // (lib/meterResets.js, shared with the Pro sheet so the two never disagree).
@@ -488,7 +489,7 @@ export default function BirdiePanel({
                   )}
                   {msg.venues && msg.venues.length > 0 && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '8px' }}>
-                      {msg.venues.map((v, vi) => {
+                      {venuesByMention(msg.venues, msg.text).map((v, vi) => {
                         // Real crowd data only. When Birdie hasn't checked this
                         // venue, the card simply has no crowd row; a number
                         // derived from the venue's name is a lie, not a design.

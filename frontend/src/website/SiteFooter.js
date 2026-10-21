@@ -97,9 +97,12 @@ export default function SiteFooter({
           </ul>
           <div className="lp-footer-base">
             <span>&copy; {year} Flock Social LLC.</span>
-            {/* No data-provider credit here (the maintainer, 2026-10-21: "get rid of
-                this"). BestTime's terms ask for none; the line was only their
-                optional link-for-credits offer. */}
+            {/* The app screenshots on these pages show real places' photos
+                from Google Maps, and a still picture cannot carry the app's
+                own per-photo credit, so the credit is here. No crowd-data
+                credit: BestTime's terms ask for none; the line that was here
+                was only their optional link-for-credits offer. */}
+            <span>Venue photos in the app screenshots: Google Maps and its contributors.</span>
           </div>
         </div>
       </footer>

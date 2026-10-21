@@ -20,7 +20,9 @@
  *
  * Since 2026-10-21 the card is the tagline, one plain line saying what Flock
  * is, and the address on the website's off-white, beside a real crop of the app (the Friday Night Crew chat, its
- * vote half in) on a navy panel. It used to be the slogan, a three-item
+ * vote half in) on a navy panel. The crop is the earlier chat with invented venues and drawn pictures,
+ * kept in frontend/screenshots/: a link preview is copied and cached by every site it is shared on,
+ * so the card carries no Google Maps photo, unlike the site's own captures. It used to be the slogan, a three-item
  * feature line and a navy pill styled as a button that nobody can press
  * inside an image.
  *
@@ -66,7 +68,7 @@ const dataUri = (rel, type) => `data:${type};base64,${fs
   .toString('base64')}`;
 
 const logo = dataUri('public/flock-logo.png', 'image/png');
-const shot = dataUri('public/screenshots/chat-dark@2x.webp', 'image/webp');
+const shot = dataUri('screenshots/chat-dark@2x.webp', 'image/webp');
 const display = dataUri('src/fonts/Literata-Display-600.woff2', 'font/woff2');
 const body = dataUri('src/fonts/HankenGrotesk-var.woff2', 'font/woff2');
 

@@ -167,7 +167,7 @@ describe('LandingPage: images', () => {
     expect(shot('owner-dashboard-dark').getAttribute('alt')).toMatch(/dashboard/);
     // One theme for every capture on the site, the hero's own (2026-10-21).
     for (const img of container.querySelectorAll('img.lp-shot')) {
-      expect(img.getAttribute('src')).toMatch(/-dark(@2x|-480w)\./);
+      expect(img.getAttribute('src')).toMatch(/-dark(-v\d+)?(@2x|-480w)\./);
     }
     unmount();
   });

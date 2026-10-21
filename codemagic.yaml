@@ -191,7 +191,13 @@ workflows:
           fi
           echo "This build sells Flock Pro, and REACT_APP_REVENUECAT_IOS_KEY is RevenueCat's Apple key (${#KEY} characters)."
       - name: Capacitor sync iOS
-        script: npx cap sync ios
+        script: |
+          # The marketing site's app screenshots stay out of the iPhone app. The
+          # native shell boots the app at / and never shows the marketing pages,
+          # and the site's captures show Google Maps photos of real venues,
+          # which are for the website only.
+          rm -rf build/screenshots
+          npx cap sync ios
       - name: Write and verify GoogleService-Info.plist (push notifications)
         script: |
           # The plist holds a Firebase client API key, so it lives in the
@@ -699,7 +705,13 @@ workflows:
         # films the same app the reviewer installs: no purchase surface at all.
         script: REACT_APP_REVIEW_HIDE_LOCATION_BANNER=true REACT_APP_REVIEW_FORCE_LIGHT=true REACT_APP_PURCHASES=off npm run build
       - name: Capacitor sync iOS
-        script: npx cap sync ios
+        script: |
+          # The marketing site's app screenshots stay out of the iPhone app. The
+          # native shell boots the app at / and never shows the marketing pages,
+          # and the site's captures show Google Maps photos of real venues,
+          # which are for the website only.
+          rm -rf build/screenshots
+          npx cap sync ios
       - name: Firebase config for the recording build, optional
         script: |
           # Push is not exercised by the recording, but the Firebase plugin

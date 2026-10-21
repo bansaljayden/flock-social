@@ -1,6 +1,7 @@
 /* The notes on the home page's annotated captures (AnnotatedShot.js).
 
-   Every box was measured on its 780 x 1688 capture (2026-10-21): the pixels
+   Every box was measured on its 780 x 1688 capture (2026-10-21, and again on
+   the real-venue captures the same evening): the pixels
    that differ from the element's own background, boxed, in percent of the
    capture's width and height. A note marks its target from OUTSIDE it, so the
    marker never covers what it names:
@@ -14,7 +15,7 @@
    would otherwise sit too close; the leader then bends in the gap beside the
    phone, never across the screen.
    The three Friday beats keep every note on the phone's far side from their
-   words (the maintainer, 2026-10-21: "both text boxes on the other side"), so their
+   words, so the words and the notes never compete for one side; their
    layouts are one-sided and the sides follow the beat: words left, notes right
    on the vote; words right, notes left on the budget and the bill. */
 
@@ -22,13 +23,13 @@ export const ANNOTATIONS = {
   vote: {
     layout: 'right',
     shot: {
-      src: '/screenshots/chat-dark@2x.webp',
-      srcSet: '/screenshots/chat-dark-480w.webp 480w, /screenshots/chat-dark@2x.webp 780w',
-      alt: 'The Friday Night Crew chat: a vote on three places with The Copper Finch ahead, and four of five budgets in.',
+      src: '/screenshots/chat-dark-v2@2x.webp',
+      srcSet: '/screenshots/chat-dark-v2-480w.webp 480w, /screenshots/chat-dark-v2@2x.webp 780w',
+      alt: 'The Friday Night Crew chat: a vote on three places with Pizzeria Stella ahead, and four of five budgets in.',
     },
-    // No caption (his ask, 2026-10-21): the beat's words already name it.
+    // No caption: the beat's words already name it.
     notes: [
-      { side: 'right', text: 'The Copper Finch, pinned', kind: 'text', box: [43.97, 8.0, 52.95, 9.06], y: 4.5, dot: [58, 8.53] },
+      { side: 'right', text: 'Pizzeria Stella, pinned', kind: 'text', box: [37.05, 8.0, 46.03, 9.06], y: 4.5, dot: [51, 8.53] },
       { side: 'right', text: '4 of 5 budgets in', kind: 'text', box: [4.23, 12.09, 60.26, 13.63], y: 16, dot: [65.3, 12.86] },
       { side: 'right', text: 'Votes, counted live', kind: 'text', box: [86.92, 61.43, 88.72, 62.56], dot: [81.9, 62] },
       { side: 'right', text: '5 of 5 voted', kind: 'text', box: [8.46, 78.14, 24.87, 79.21], dot: [29.9, 78.68] },
@@ -37,8 +38,8 @@ export const ANNOTATIONS = {
   budget: {
     layout: 'left',
     shot: {
-      src: '/screenshots/budget-dark@2x.webp',
-      srcSet: '/screenshots/budget-dark-480w.webp 480w, /screenshots/budget-dark@2x.webp 780w',
+      src: '/screenshots/budget-dark-v2@2x.webp',
+      srcSet: '/screenshots/budget-dark-v2-480w.webp 480w, /screenshots/budget-dark-v2@2x.webp 780w',
       alt: 'The budget sheet: preset amounts, a custom $35, and a note that no one else sees the answer.',
     },
     caption: 'the maintainer’s budget sheet.',
@@ -53,7 +54,7 @@ export const ANNOTATIONS = {
       },
       {
         side: 'left', text: 'One rounded number for the group', kind: 'text', box: [9.74, 70.91, 93.97, 72.3], y: 75,
-        dot: [4.6, 77], avoid: [[9.74, 70.91, 93.97, 82.88], [5.64, 70.73, 7.82, 71.92]],
+        dot: [4.6, 77], avoid: [[9.74, 70.91, 93.97, 82.88], [5.51, 70.73, 7.69, 71.92]],
       },
       {
         side: 'left', text: 'Skip if any budget works', kind: 'box', box: [5.13, 92.3, 94.87, 97.69], y: 92,
@@ -64,8 +65,8 @@ export const ANNOTATIONS = {
   bill: {
     layout: 'left',
     shot: {
-      src: '/screenshots/bill-split-dark@2x.webp',
-      srcSet: '/screenshots/bill-split-dark-480w.webp 480w, /screenshots/bill-split-dark@2x.webp 780w',
+      src: '/screenshots/bill-split-dark-v2@2x.webp',
+      srcSet: '/screenshots/bill-split-dark-v2-480w.webp 480w, /screenshots/bill-split-dark-v2@2x.webp 780w',
       alt: 'Split the Bill: $142.60 with an 18% tip, paid by Asad Ali, $28.52 each for five people.',
     },
     caption: 'Split the Bill, after two paid back.',
@@ -82,15 +83,15 @@ export const ANNOTATIONS = {
       },
       {
         side: 'left', text: 'Pay by Venmo, Cash App or Zelle', kind: 'box', box: [5.13, 85.78, 94.87, 91.94], y: 86,
-        dot: [22, 88.9], avoid: [[33.97, 88.03, 65.9, 89.81]],
+        dot: [22, 88.9], avoid: [[33.97, 87.97, 65.9, 89.81]],
       },
     ],
   },
   sos: {
     layout: 'left',
     shot: {
-      src: '/screenshots/sos-dark@2x.webp',
-      srcSet: '/screenshots/sos-dark-480w.webp 480w, /screenshots/sos-dark@2x.webp 780w',
+      src: '/screenshots/sos-dark-v2@2x.webp',
+      srcSet: '/screenshots/sos-dark-v2-480w.webp 480w, /screenshots/sos-dark-v2@2x.webp 780w',
       alt: 'The SOS sheet: Call 911 first, then Alert Contacts for two trusted contacts, Share Location, and Cancel.',
     },
     caption: 'The second tap sends it.',
@@ -112,8 +113,8 @@ export const ANNOTATIONS = {
   venue: {
     layout: 'right',
     shot: {
-      src: '/screenshots/owner-dashboard-dark@2x.webp',
-      srcSet: '/screenshots/owner-dashboard-dark-480w.webp 480w, /screenshots/owner-dashboard-dark@2x.webp 780w',
+      src: '/screenshots/owner-dashboard-dark-v2@2x.webp',
+      srcSet: '/screenshots/owner-dashboard-dark-v2-480w.webp 480w, /screenshots/owner-dashboard-dark-v2@2x.webp 780w',
       alt: 'The Copper Finch’s venue dashboard: the flocks with it in their vote, and the events showing on its verified card.',
     },
     caption: 'A venue owner’s dashboard.',

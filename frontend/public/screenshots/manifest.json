@@ -1,10 +1,26 @@
 {
-  "generatedAt": "2026-10-21T06:50:00.000Z",
-  "generator": "frontend/scripts/capture-screenshots.mjs",
-  "note": "Real captures of the web app against a seeded local stack (Waikiki, Honolulu; invented people and venues). Every capture the site shows is the dark theme. Every venue picture is a drawing from scripts/shot-art.mjs; no Google Places photo appears in any frame. See WIRING.md for where each one is used.",
+  "generatedAt": "2026-10-21T23:30:00.000Z",
+  "generator": "frontend/scripts/capture-screenshots.mjs (real-venue run)",
+  "note": "Real captures of the web app on a seeded account in Old City, Philadelphia: the five friends are invented, the places are real ones from Google Places with their Google Maps photos, Birdie's answer is a live reply and the crowd figures are the live model's. The venue-side screens (owner dashboard, venue card) keep the invented The Copper Finch with drawn photos. Every capture the site shows is the dark theme. See WIRING.md for where each one is used.",
   "captures": [
     {
-      "file": "screenshots/bill-split-dark-480w.webp",
+      "file": "screenshots/bill-chat-dark-v2-480w.webp",
+      "screen": "bill-chat",
+      "title": "Thursday Dinner's chat at Race Street Cafe: the $142.60 bill, three of five settled",
+      "mode": "dark",
+      "width": 480,
+      "height": 1039
+    },
+    {
+      "file": "screenshots/bill-chat-dark-v2@2x.webp",
+      "screen": "bill-chat",
+      "title": "Thursday Dinner's chat at Race Street Cafe: the $142.60 bill, three of five settled",
+      "mode": "dark",
+      "width": 780,
+      "height": 1688
+    },
+    {
+      "file": "screenshots/bill-split-dark-v2-480w.webp",
       "screen": "bill-split",
       "title": "Split the bill: $142.60 with an 18% tip, $28.52 each",
       "mode": "dark",
@@ -12,7 +28,7 @@
       "height": 1039
     },
     {
-      "file": "screenshots/bill-split-dark@2x.webp",
+      "file": "screenshots/bill-split-dark-v2@2x.webp",
       "screen": "bill-split",
       "title": "Split the bill: $142.60 with an 18% tip, $28.52 each",
       "mode": "dark",
@@ -20,7 +36,23 @@
       "height": 1688
     },
     {
-      "file": "screenshots/budget-dark-480w.webp",
+      "file": "screenshots/birdie-pick-dark-v2-480w.webp",
+      "screen": "birdie-pick",
+      "title": "Birdie picks a cheap spot for five: European Republic, open now",
+      "mode": "dark",
+      "width": 480,
+      "height": 1039
+    },
+    {
+      "file": "screenshots/birdie-pick-dark-v2@2x.webp",
+      "screen": "birdie-pick",
+      "title": "Birdie picks a cheap spot for five: European Republic, open now",
+      "mode": "dark",
+      "width": 780,
+      "height": 1688
+    },
+    {
+      "file": "screenshots/budget-dark-v2-480w.webp",
       "screen": "budget",
       "title": "Private budget: $35 typed in, and the note that nobody sees it",
       "mode": "dark",
@@ -28,7 +60,7 @@
       "height": 1039
     },
     {
-      "file": "screenshots/budget-dark@2x.webp",
+      "file": "screenshots/budget-dark-v2@2x.webp",
       "screen": "budget",
       "title": "Private budget: $35 typed in, and the note that nobody sees it",
       "mode": "dark",
@@ -36,23 +68,23 @@
       "height": 1688
     },
     {
-      "file": "screenshots/chat-dark-480w.webp",
+      "file": "screenshots/chat-dark-v2-480w.webp",
       "screen": "chat",
-      "title": "Friday Night Crew's chat: the poll on three places, 5 of 5 voted",
+      "title": "Friday Night Crew's chat: the poll on three places, 5 of 5 voted, Pizzeria Stella pinned",
       "mode": "dark",
       "width": 480,
       "height": 1039
     },
     {
-      "file": "screenshots/chat-dark@2x.webp",
+      "file": "screenshots/chat-dark-v2@2x.webp",
       "screen": "chat",
-      "title": "Friday Night Crew's chat: the poll on three places, 5 of 5 voted",
+      "title": "Friday Night Crew's chat: the poll on three places, 5 of 5 voted, Pizzeria Stella pinned",
       "mode": "dark",
       "width": 780,
       "height": 1688
     },
     {
-      "file": "screenshots/create-dark-480w.webp",
+      "file": "screenshots/create-dark-v2-480w.webp",
       "screen": "create",
       "title": "Starting a flock: day and time chips, three friends invited",
       "mode": "dark",
@@ -60,7 +92,7 @@
       "height": 1039
     },
     {
-      "file": "screenshots/create-dark@2x.webp",
+      "file": "screenshots/create-dark-v2@2x.webp",
       "screen": "create",
       "title": "Starting a flock: day and time chips, three friends invited",
       "mode": "dark",
@@ -68,39 +100,135 @@
       "height": 1688
     },
     {
-      "file": "screenshots/nest-dark@2x.png",
-      "screen": "nest",
-      "title": "The Nest: tonight's status, Start a flock, and three plans",
-      "mode": "dark",
-      "width": 780,
-      "height": 1688
-    },
-    {
-      "file": "screenshots/nest-dark@2x.webp",
-      "screen": "nest",
-      "title": "The Nest: tonight's status, Start a flock, and three plans",
-      "mode": "dark",
-      "width": 780,
-      "height": 1688
-    },
-    {
-      "file": "screenshots/owner-dashboard-dark-480w.webp",
-      "screen": "owner-dashboard",
-      "title": "Venue owner dashboard, Events tab: flocks with the venue in their vote",
+      "file": "screenshots/crowd-dial-dark-v2-480w.webp",
+      "screen": "crowd-dial",
+      "title": "Sonny's Famous Steaks: a crowd estimate of 78, usually busy, and the crowd by hour",
       "mode": "dark",
       "width": 480,
       "height": 1039
     },
     {
-      "file": "screenshots/owner-dashboard-dark@2x.webp",
-      "screen": "owner-dashboard",
-      "title": "Venue owner dashboard, Events tab: flocks with the venue in their vote",
+      "file": "screenshots/crowd-dial-dark-v2@2x.webp",
+      "screen": "crowd-dial",
+      "title": "Sonny's Famous Steaks: a crowd estimate of 78, usually busy, and the crowd by hour",
       "mode": "dark",
       "width": 780,
       "height": 1688
     },
     {
-      "file": "screenshots/sos-dark-480w.webp",
+      "file": "screenshots/home-reel-v2.avif",
+      "screen": "nest",
+      "title": "The Nest: tonight's status, Start a flock, and three plans at real Old City places",
+      "mode": "dark",
+      "width": 780,
+      "height": 1688
+    },
+    {
+      "file": "screenshots/map-crowd-dark-v2-480w.webp",
+      "screen": "map-crowd",
+      "title": "The Discover map over Old City with twenty places and the crowd heat",
+      "mode": "dark",
+      "width": 480,
+      "height": 1039
+    },
+    {
+      "file": "screenshots/map-crowd-dark-v2@2x.webp",
+      "screen": "map-crowd",
+      "title": "The Discover map over Old City with twenty places and the crowd heat",
+      "mode": "dark",
+      "width": 780,
+      "height": 1688
+    },
+    {
+      "file": "screenshots/messages-dark-v2-480w.webp",
+      "screen": "messages",
+      "title": "Messages: a direct message and four flock chats",
+      "mode": "dark",
+      "width": 480,
+      "height": 1039
+    },
+    {
+      "file": "screenshots/messages-dark-v2@2x.webp",
+      "screen": "messages",
+      "title": "Messages: a direct message and four flock chats",
+      "mode": "dark",
+      "width": 780,
+      "height": 1688
+    },
+    {
+      "file": "screenshots/nest-dark-v2-480w.webp",
+      "screen": "nest",
+      "title": "The Nest: tonight's status, Start a flock, and three plans at real Old City places",
+      "mode": "dark",
+      "width": 480,
+      "height": 1039
+    },
+    {
+      "file": "screenshots/nest-dark-v2@2x.png",
+      "screen": "nest",
+      "title": "The Nest: tonight's status, Start a flock, and three plans at real Old City places",
+      "mode": "dark",
+      "width": 780,
+      "height": 1688
+    },
+    {
+      "file": "screenshots/nest-dark-v2@2x.webp",
+      "screen": "nest",
+      "title": "The Nest: tonight's status, Start a flock, and three plans at real Old City places",
+      "mode": "dark",
+      "width": 780,
+      "height": 1688
+    },
+    {
+      "file": "screenshots/owner-dashboard-dark-v2-480w.webp",
+      "screen": "owner-dashboard",
+      "title": "Venue owner dashboard (the invented The Copper Finch), Events tab: flocks with the venue in their vote",
+      "mode": "dark",
+      "width": 480,
+      "height": 1039
+    },
+    {
+      "file": "screenshots/owner-dashboard-dark-v2@2x.webp",
+      "screen": "owner-dashboard",
+      "title": "Venue owner dashboard (the invented The Copper Finch), Events tab: flocks with the venue in their vote",
+      "mode": "dark",
+      "width": 780,
+      "height": 1688
+    },
+    {
+      "file": "screenshots/plans-tab-dark-v2-480w.webp",
+      "screen": "plans-tab",
+      "title": "The Plans tab: October, tonight's weather and tonight's plan",
+      "mode": "dark",
+      "width": 480,
+      "height": 1039
+    },
+    {
+      "file": "screenshots/plans-tab-dark-v2@2x.webp",
+      "screen": "plans-tab",
+      "title": "The Plans tab: October, tonight's weather and tonight's plan",
+      "mode": "dark",
+      "width": 780,
+      "height": 1688
+    },
+    {
+      "file": "screenshots/profile-dark-v2-480w.webp",
+      "screen": "profile",
+      "title": "the maintainer's profile: flocks, friends and reliability",
+      "mode": "dark",
+      "width": 480,
+      "height": 1039
+    },
+    {
+      "file": "screenshots/profile-dark-v2@2x.webp",
+      "screen": "profile",
+      "title": "the maintainer's profile: flocks, friends and reliability",
+      "mode": "dark",
+      "width": 780,
+      "height": 1688
+    },
+    {
+      "file": "screenshots/sos-dark-v2-480w.webp",
       "screen": "sos",
       "title": "The SOS sheet: Call 911, Alert Contacts, Share Location",
       "mode": "dark",
@@ -108,7 +236,7 @@
       "height": 1039
     },
     {
-      "file": "screenshots/sos-dark@2x.webp",
+      "file": "screenshots/sos-dark-v2@2x.webp",
       "screen": "sos",
       "title": "The SOS sheet: Call 911, Alert Contacts, Share Location",
       "mode": "dark",
@@ -116,33 +244,49 @@
       "height": 1688
     },
     {
-      "file": "screenshots/venue-card-events-dark-480w.webp",
-      "screen": "venue-card-events",
-      "title": "The Copper Finch's card: three events under Happening here",
+      "file": "screenshots/still-in-dark-v2-480w.webp",
+      "screen": "still-in",
+      "title": "The cheesesteak run on the night: locked in, two of three marked still in",
       "mode": "dark",
       "width": 480,
       "height": 1039
     },
     {
-      "file": "screenshots/venue-card-events-dark@2x.webp",
-      "screen": "venue-card-events",
-      "title": "The Copper Finch's card: three events under Happening here",
+      "file": "screenshots/still-in-dark-v2@2x.webp",
+      "screen": "still-in",
+      "title": "The cheesesteak run on the night: locked in, two of three marked still in",
       "mode": "dark",
       "width": 780,
       "height": 1688
     },
     {
-      "file": "screenshots/vote-dark-480w.webp",
-      "screen": "vote",
-      "title": "Vote for a venue: The Copper Finch ahead with 3 of 5 votes",
+      "file": "screenshots/venue-card-events-dark-v2-480w.webp",
+      "screen": "venue-card-events",
+      "title": "The Copper Finch's card (invented, drawn photos): three events under Happening here",
       "mode": "dark",
       "width": 480,
       "height": 1039
     },
     {
-      "file": "screenshots/vote-dark@2x.webp",
+      "file": "screenshots/venue-card-events-dark-v2@2x.webp",
+      "screen": "venue-card-events",
+      "title": "The Copper Finch's card (invented, drawn photos): three events under Happening here",
+      "mode": "dark",
+      "width": 780,
+      "height": 1688
+    },
+    {
+      "file": "screenshots/vote-dark-v2-480w.webp",
       "screen": "vote",
-      "title": "Vote for a venue: The Copper Finch ahead with 3 of 5 votes",
+      "title": "Vote for a venue: Pizzeria Stella ahead with 3 of 5 votes",
+      "mode": "dark",
+      "width": 480,
+      "height": 1039
+    },
+    {
+      "file": "screenshots/vote-dark-v2@2x.webp",
+      "screen": "vote",
+      "title": "Vote for a venue: Pizzeria Stella ahead with 3 of 5 votes",
       "mode": "dark",
       "width": 780,
       "height": 1688

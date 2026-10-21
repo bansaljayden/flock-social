@@ -110,7 +110,7 @@ https://:version.:project.pages.dev/*
 
 # Public pages. All of these are the SPA's index.html.
 /
-  Link: <https://www.flockcorp.com/>; rel="canonical", </screenshots/home-reel.avif>; rel=preload; as=image; type="image/avif"; fetchpriority=high
+  Link: <https://www.flockcorp.com/>; rel="canonical", </screenshots/home-reel-v2.avif>; rel=preload; as=image; type="image/avif"; fetchpriority=high
   Cache-Control: public, max-age=0, must-revalidate
 
 /landing

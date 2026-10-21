@@ -54,7 +54,7 @@ describe('the hero screenshot preload lives on / only', () => {
   test('the / Link header keeps the canonical and adds an AVIF-gated, high-priority preload', () => {
     expect(link).toBeTruthy();
     expect(link.value).toContain('<https://www.flockcorp.com/>; rel="canonical"');
-    expect(link.value).toContain('</screenshots/home-reel.avif>; rel=preload; as=image; type="image/avif"; fetchpriority=high');
+    expect(link.value).toContain('</screenshots/home-reel-v2.avif>; rel=preload; as=image; type="image/avif"; fetchpriority=high');
   });
 
   test('the preloaded file is the one the hero <picture> actually requests', () => {
@@ -62,10 +62,10 @@ describe('the hero screenshot preload lives on / only', () => {
     // (type-gated to AVIF) also picks that source; the rest fall to WebP.
     // The home screen leads the hero reel since 2026-10-21 (HeroReel.js).
     const page = read('src/website/HeroReel.js');
-    const avif = page.indexOf('<source type="image/avif" srcSet="/screenshots/home-reel.avif" />');
+    const avif = page.indexOf('<source type="image/avif" srcSet="/screenshots/home-reel-v2.avif" />');
     expect(avif).toBeGreaterThan(-1);
-    expect(page.indexOf('<source type="image/webp" srcSet="/screenshots/nest-dark@2x.webp" />')).toBeGreaterThan(avif);
-    for (const f of ['home-reel.avif', 'nest-dark@2x.webp']) {
+    expect(page.indexOf('<source type="image/webp" srcSet="/screenshots/nest-dark-v2@2x.webp" />')).toBeGreaterThan(avif);
+    for (const f of ['home-reel-v2.avif', 'nest-dark-v2@2x.webp']) {
       expect(fs.existsSync(path.join(FRONTEND, 'public', 'screenshots', f))).toBe(true);
     }
   });
@@ -75,7 +75,7 @@ describe('the hero screenshot preload lives on / only', () => {
     // shows every screen whole, the home screen included.
     // ISO-BMFF image spatial extents ("ispe"): version/flags, then width and
     // height as 32-bit big-endian integers.
-    const buf = fs.readFileSync(path.join(FRONTEND, 'public', 'screenshots', 'home-reel.avif'));
+    const buf = fs.readFileSync(path.join(FRONTEND, 'public', 'screenshots', 'home-reel-v2.avif'));
     expect(buf.toString('ascii', 4, 12)).toBe('ftypavif');
     const at = buf.indexOf('ispe');
     expect(at).toBeGreaterThan(-1);
@@ -86,7 +86,7 @@ describe('the hero screenshot preload lives on / only', () => {
   test('no other route carries it, and the shared index.html has no preload link of its own', () => {
     const others = vercel.headers.filter((h) => h !== home)
       .flatMap((h) => h.headers.filter((x) => x.key === 'Link').map((x) => x.value));
-    for (const v of others) expect(v).not.toContain('nest-dark');
+    for (const v of others) expect(v).not.toContain('home-reel');
     // Comments may describe the link; no live <link rel="preload"> element may
     // sit in the shared head, where every route would fetch it.
     const html = read('public/index.html').replace(/<!--[\s\S]*?-->/g, '');

@@ -39,28 +39,28 @@
   ],
   "screenshots": [
     {
-      "src": "screenshots/nest-dark@2x.png",
+      "src": "screenshots/nest-dark-v2@2x.png",
       "type": "image/png",
       "sizes": "780x1688",
       "form_factor": "narrow",
       "label": "Your flocks, and which plans still need votes"
     },
     {
-      "src": "screenshots/create-dark@2x.webp",
+      "src": "screenshots/create-dark-v2@2x.webp",
       "type": "image/webp",
       "sizes": "780x1688",
       "form_factor": "narrow",
       "label": "Starting a flock: pick a night and invite people"
     },
     {
-      "src": "screenshots/chat-dark@2x.webp",
+      "src": "screenshots/chat-dark-v2@2x.webp",
       "type": "image/webp",
       "sizes": "780x1688",
       "form_factor": "narrow",
       "label": "The group votes on where to go, in the chat"
     },
     {
-      "src": "screenshots/bill-split-dark@2x.webp",
+      "src": "screenshots/bill-split-dark-v2@2x.webp",
       "type": "image/webp",
       "sizes": "780x1688",
       "form_factor": "narrow",
