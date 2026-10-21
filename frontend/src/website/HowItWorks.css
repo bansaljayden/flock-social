@@ -115,7 +115,8 @@
 .hw-step p + p { margin-top: 1em; }
 .hw-shot { margin: 0; }
 @media (min-width: 860px) {
-  .hw-step.has-shot { grid-template-columns: minmax(0, 1fr) 240px; gap: clamp(40px, 6vw, 88px); }
+  /* The text centred against the phone beside it (2026-10-21). */
+  .hw-step.has-shot { grid-template-columns: minmax(0, 1fr) 240px; gap: clamp(40px, 6vw, 88px); align-items: center; }
   .hw-step .lp-plate { width: 240px; margin: 0; }
 }
 

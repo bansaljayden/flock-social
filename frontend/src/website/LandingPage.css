@@ -1402,17 +1402,21 @@ html:has(.lp) body { overflow-x: clip; }
    one sequence rather than five chapters. */
 .lp-sec.lp-beat-band { padding: clamp(40px, 6vw, 72px) 0; }
 .lp-beat { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; max-width: 62rem; }
+.lp-beat-main { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
 @media (min-width: 760px) {
-  /* The time sits in a margin column of its own, the way a log reads. */
-  .lp-beat { grid-template-columns: minmax(0, 9.5rem) minmax(0, 1fr); column-gap: 28px; }
-  .lp-beat-text, .lp-beat .lp-plate { grid-column: 2; }
+  /* The time sits in a margin column of its own, the way a log reads, and
+     the plate lines up under the text on a tablet. */
+  .lp-beat-main { grid-template-columns: minmax(0, 9.5rem) minmax(0, 1fr); column-gap: 28px; }
   .lp-beat-when { padding-top: 4px; }
+  .lp-beat .lp-plate { margin-left: calc(9.5rem + 28px); }
 }
 @media (min-width: 960px) {
-  /* Every beat keeps the plate column, filled or not, so the text column is
-     one width all the way down. */
-  .lp-beat { grid-template-columns: minmax(0, 9.5rem) minmax(0, 1fr) 220px; }
-  .lp-beat .lp-plate { grid-column: 3; width: 220px; margin: 0; }
+  /* The time and the text are one block, centred against the plate beside
+     it, so a short beat does not leave the tall phone running on alone below
+     it (2026-10-21). Every beat keeps the plate column, filled or not, so the
+     text column is one width all the way down. */
+  .lp-beat { grid-template-columns: minmax(0, 1fr) 220px; column-gap: 28px; align-items: center; }
+  .lp-beat .lp-plate { width: 220px; margin: 0; }
 }
 .lp-beat-when {
   font-size: 14px;
@@ -1422,6 +1426,8 @@ html:has(.lp) body { overflow-x: clip; }
 .lp-beat h3 { margin-bottom: 4px; }
 .lp-beat p { font-size: 16.5px; line-height: 1.6; color: var(--ink-2); max-width: 56ch; }
 .lp-beat-note { font-size: 14.5px !important; color: var(--ink-3) !important; margin-top: 6px; }
+/* A short beat beside a tall phone gets one painted bird under its text. */
+.lp-beat-art { width: 160px; margin-top: 18px; }
 
 /* A plate: a capture of the web app printed flat on the page, with its
    caption under it. No shadow and no device frame (the "printed plates" rule in

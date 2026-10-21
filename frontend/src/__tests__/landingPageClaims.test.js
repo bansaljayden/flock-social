@@ -362,7 +362,7 @@ describe('structural fingerprint', () => {
     const hero = grid('lp-hero-in');
     const safety = grid('lp-safety');
     const venues = grid('lp-venues-in');
-    const beat = grid('lp-beat');
+    const beat = grid('lp-beat-main');
     expect(new Set([hero, safety, venues, beat]).size).toBe(4);
     // And the beat's is a log, a narrow time column first, not two halves.
     expect(beat).toMatch(/^minmax\(0, 9\.5rem\)/);

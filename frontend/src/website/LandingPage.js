@@ -517,14 +517,16 @@ export default function LandingPage() {
       <section className="lp-sec lp-sec-paper lp-beat-band" aria-labelledby="lp-h-beat-1">
         <div className="lp-wrap">
           <div className="lp-beat">
-            <p className="lp-beat-when">Thursday, 4:10 PM</p>
-            <div className="lp-beat-text">
-              <h3 id="lp-h-beat-1">Maya starts a flock.</h3>
-              <p>
-                Friday Night Crew, 8 o’clock. Four friends get the invite; anyone
-                without the app can join in from a link, budget and all, with no
-                account.
-              </p>
+            <div className="lp-beat-main">
+              <p className="lp-beat-when">Thursday, 4:10 PM</p>
+              <div className="lp-beat-text">
+                <h3 id="lp-h-beat-1">Maya starts a flock.</h3>
+                <p>
+                  Friday Night Crew, 8 o’clock. Four friends get the invite; anyone
+                  without the app can join in from a link, budget and all, with no
+                  account.
+                </p>
+              </div>
             </div>
           </div>
         </div>
@@ -532,23 +534,25 @@ export default function LandingPage() {
       <section className="lp-sec lp-sec-navy lp-on-navy lp-beat-band" id="birdie" aria-labelledby="lp-h-beat-2">
         <div className="lp-wrap">
           <div className="lp-beat has-plate">
-            <p className="lp-beat-when">Thursday, 6:30 PM</p>
-            <div className="lp-beat-text">
-              <h3 id="lp-h-beat-2">Three places go to a vote.</h3>
-              <p>
-                Each card shows how busy the place usually gets and anything the
-                venue has posted, like a live acoustic set at The Copper Finch on
-                Friday at 8:30. Sam asks Birdie for somewhere cheaper, the way
-                you’d ask a friend who knows the city, and shares its pick to the
-                chat.
-              </p>
-              {/* FTC AI disclosure, in the page's own voice where Birdie is
-                  marketed. MIRRORED in api/marketing-page.js PAGE_BLOCKS.home;
-                  aiCrawlerSurface.test.js requires the two to match. */}
-              <p className="lp-beat-note">
-                Birdie is AI. It runs on Google Gemini, and the crowd numbers it
-                quotes are the app’s own.
-              </p>
+            <div className="lp-beat-main">
+              <p className="lp-beat-when">Thursday, 6:30 PM</p>
+              <div className="lp-beat-text">
+                <h3 id="lp-h-beat-2">Three places go to a vote.</h3>
+                <p>
+                  Each card shows how busy the place usually gets and anything the
+                  venue has posted, like a live acoustic set at The Copper Finch on
+                  Friday at 8:30. Sam asks Birdie for somewhere cheaper, the way
+                  you’d ask a friend who knows the city, and shares its pick to the
+                  chat.
+                </p>
+                {/* FTC AI disclosure, in the page's own voice where Birdie is
+                    marketed. MIRRORED in api/marketing-page.js PAGE_BLOCKS.home;
+                    aiCrawlerSurface.test.js requires the two to match. */}
+                <p className="lp-beat-note">
+                  Birdie is AI. It runs on Google Gemini, and the crowd numbers it
+                  quotes are the app’s own.
+                </p>
+              </div>
             </div>
             <figure className="lp-plate">
               <img
@@ -568,25 +572,36 @@ export default function LandingPage() {
       <section className="lp-sec lp-sec-paper lp-beat-band" id="money" aria-labelledby="lp-h-beat-3">
         <div className="lp-wrap">
           <div className="lp-beat has-plate">
-            <p className="lp-beat-when">Friday, noon</p>
-            <div className="lp-beat-text">
-              <h3 id="lp-h-beat-3">The budgets come in privately.</h3>
-              {/* budget.js publishes nothing until the budget settles (everyone
-                  going has answered with at least three members' amounts in, or
-                  the creator locks it once three have), and then a figure
-                  rounded down to a band so it is nobody's own number (bandCeiling). The
-                  vote and Discover then drop places priced over it
-                  (getMaxPriceLevel in ChatDetail.js and ExploreScreen.js). */}
-              <p>
-                Each person types what they can spend, privately. The group gets
-                back one number, rounded down to a band; the places Flock suggests
-                for the plan stay under it.
-              </p>
-              <p className="lp-beat-note">
-                That number appears when everyone going has answered or the plan’s
-                creator locks it, and either way only once at least three members
-                have shared an amount.
-              </p>
+            <div className="lp-beat-main">
+              <p className="lp-beat-when">Friday, noon</p>
+              <div className="lp-beat-text">
+                <h3 id="lp-h-beat-3">The budgets come in privately.</h3>
+                {/* budget.js publishes nothing until the budget settles (everyone
+                    going has answered with at least three members' amounts in, or
+                    the creator locks it once three have), and then a figure
+                    rounded down to a band so it is nobody's own number (bandCeiling). The
+                    vote and Discover then drop places priced over it
+                    (getMaxPriceLevel in ChatDetail.js and ExploreScreen.js). */}
+                <p>
+                  Each person types what they can spend, privately. The group gets
+                  back one number, rounded down to a band; the places Flock suggests
+                  for the plan stay under it.
+                </p>
+                <p className="lp-beat-note">
+                  That number appears when everyone going has answered or the plan’s
+                  creator locks it, and either way only once at least three members
+                  have shared an amount.
+                </p>
+                <img
+                  className="lp-art lp-beat-art"
+                  src="/art/step-budget-240.webp"
+                  srcSet="/art/step-budget-240.webp 240w, /art/step-budget-480.webp 480w"
+                  sizes="160px"
+                  width="240" height="134"
+                  loading="lazy" decoding="async"
+                  alt=""
+                />
+              </div>
             </div>
             <figure className="lp-plate">
               <img
@@ -606,14 +621,16 @@ export default function LandingPage() {
       <section className="lp-sec lp-sec-navy lp-on-navy lp-beat-band" aria-labelledby="lp-h-beat-4">
         <div className="lp-wrap">
           <div className="lp-beat">
-            <p className="lp-beat-when">Friday, 7:15 PM</p>
-            <div className="lp-beat-text">
-              <h3 id="lp-h-beat-4">“Still in?”</h3>
-              <p>
-                The chat asks who is still in before a deadline. All five say yes,
-                and a last look at the crowd before anyone leaves shows The Copper
-                Finch filling up.
-              </p>
+            <div className="lp-beat-main">
+              <p className="lp-beat-when">Friday, 7:15 PM</p>
+              <div className="lp-beat-text">
+                <h3 id="lp-h-beat-4">“Still in?”</h3>
+                <p>
+                  The chat asks who is still in before a deadline. All five say yes,
+                  and a last look at the crowd before anyone leaves shows The Copper
+                  Finch filling up.
+                </p>
+              </div>
             </div>
           </div>
         </div>
@@ -621,14 +638,25 @@ export default function LandingPage() {
       <section className="lp-sec lp-sec-paper lp-beat-band" aria-labelledby="lp-h-beat-5">
         <div className="lp-wrap">
           <div className="lp-beat has-plate">
-            <p className="lp-beat-when">Saturday morning</p>
-            <div className="lp-beat-text">
-              <h3 id="lp-h-beat-5">Jordan paid, so Flock splits it.</h3>
-              <p>
-                $142.60 with the tip comes to $28.52 each. Everyone gets a Venmo or
-                Cash App link for their share (or Zelle instructions), and the night
-                stays on everyone’s calendar in Flock.
-              </p>
+            <div className="lp-beat-main">
+              <p className="lp-beat-when">Saturday morning</p>
+              <div className="lp-beat-text">
+                <h3 id="lp-h-beat-5">Jordan paid, so Flock splits it.</h3>
+                <p>
+                  $142.60 with the tip comes to $28.52 each. Everyone gets a Venmo or
+                  Cash App link for their share (or Zelle instructions), and the night
+                  stays on everyone’s calendar in Flock.
+                </p>
+                <img
+                  className="lp-art lp-beat-art"
+                  src="/art/step-go-240.webp"
+                  srcSet="/art/step-go-240.webp 240w, /art/step-go-480.webp 480w"
+                  sizes="160px"
+                  width="240" height="121"
+                  loading="lazy" decoding="async"
+                  alt=""
+                />
+              </div>
             </div>
             <figure className="lp-plate">
               <img
