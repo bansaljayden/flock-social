@@ -1063,7 +1063,10 @@ export default function VenueDashboard({
             </div>
             )}
             <div style={{ flex: 1 }}>
-              <h1 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'white', margin: 0 }}>Welcome, {venueData.name}</h1>
+              {/* The venue's name and nothing before it. "Welcome," sat in
+                  front of it on every visit, and it is the owner's own
+                  dashboard, so the name is the whole header. */}
+              <h1 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'white', margin: 0 }}>{venueData.name || 'Your venue'}</h1>
               <p style={{ fontSize: 'var(--t-meta)', color: 'rgba(255,255,255,0.7)', margin: 0 }}>{venueProfile?.category || venueOnboardingData.category || 'Venue Dashboard'}{(venueProfile?.location || venueOnboardingData.location) ? ` · ${venueProfile?.location || venueOnboardingData.location}` : ''}</p>
             </div>
           </div>
@@ -1733,12 +1736,13 @@ export default function VenueDashboard({
             {dealDescription.length >= QUICK_DEAL_MAX - 20 && (
               <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '-4px 0 8px', textAlign: 'right' }}>{dealDescription.length}/{QUICK_DEAL_MAX}</p>
             )}
-            {/* Wraps: five chips do not fit one line at 320px. Custom is its own
-                button after the list, not a list entry, because every entry in
-                the list is a value the promotion editor offers by name, and
-                Custom is a box for the owner's own words (lib/promoChoice.js). */}
+            {/* Wraps, so the row never runs off a 320px screen. Custom is its
+                own button after the list, not a list entry, because every entry
+                in the list is a value the promotion editor offers by name, and
+                Custom is a box for the owner's own words (lib/promoChoice.js).
+                "Weekend" left this row when the editor dropped it as a slot. */}
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px' }}>
-              {['Happy Hour', 'Late Night', 'Weekend', 'All Day'].map(slot => (
+              {['Happy Hour', 'Late Night', 'All Day'].map(slot => (
                 <button key={slot} aria-pressed={dealTimeSlot === slot} className="hit44 glass-btn glass-secondary" onClick={() => setDealTimeSlot(slot)} style={{ padding: '6px 10px', borderRadius: '16px', border: `1px solid ${dealTimeSlot === slot ? colors.navy : colors.creamDark}`, backgroundColor: dealTimeSlot === slot ? colors.navyBg : 'var(--bg-card-solid)', color: dealTimeSlot === slot ? 'white' : colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer' }}>
                   {slot}
                 </button>

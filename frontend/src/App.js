@@ -2746,8 +2746,14 @@ const SHARE_FIX_FRESH_MS = 60 * 1000;
 // The values the promotion editor's two selects offer. Each select also has a
 // Custom choice for the owner's own words (lib/promoChoice.js), and a stored
 // value these lists do not name opens as Custom with its words in the box.
-const PROMO_TIME_SLOTS = ['Happy Hour', 'Late Night', 'Weekend', 'Weekend Brunch', 'All Day'];
-const PROMO_DAYS = ['Daily', 'Weekdays', 'Weekends', 'Mon-Fri', 'Fri-Sun'];
+//
+// "Mon-Fri" and "Weekend" were dropped on 2026-10-20: "Mon-Fri" said what
+// "Weekdays" already says, and "Weekend" as a time slot sat beside a Days menu
+// that already offers "Weekends". A deal saved with either opens as Custom with
+// that word in the box, the card prints it exactly as before, and the server
+// still takes it from an older app, because both fields are free text there.
+const PROMO_TIME_SLOTS = ['Happy Hour', 'Late Night', 'Weekend Brunch', 'All Day'];
+const PROMO_DAYS = ['Daily', 'Weekdays', 'Weekends', 'Fri-Sun'];
 
 const newestFromOthers = (messages) => {
   let newest = null;
@@ -4459,17 +4465,17 @@ export const PromoModal = React.memo(function PromoModal({ editing, onSave, onCa
           <div><label style={label}>Description</label>
             <input aria-label="Deal description" type="text" value={form.desc} onChange={(e) => setForm(f => ({ ...f, desc: e.target.value }))} placeholder="e.g., 50% off all appetizers" style={input} /></div>
           <div><label style={label} htmlFor="promo-time-slot">Time Slot</label>
-            {/* "Weekend" is what the dashboard's quick-deal chips save, and it was
-                not here: a quick deal opened in Edit showing Happy Hour, the
-                select's first option, and choosing Happy Hour then changed
-                nothing because the select already claimed it (venue audit
-                2026-10-03). Anything else a deal can carry, a quick deal's
-                custom time included, opens under Custom with its words in the
-                box below, never as whatever comes first. */}
+            {/* Every slot the dashboard's quick-deal chips save is offered here.
+                One was not, once: a quick deal opened in Edit showing Happy
+                Hour, the select's first option, and choosing Happy Hour then
+                changed nothing because the select already claimed it (venue
+                audit 2026-10-03). Anything else a deal can carry, a quick
+                deal's custom time and a "Weekend" saved before that slot was
+                dropped included, opens under Custom with its words in the box
+                below, never as whatever comes first. */}
             <select id="promo-time-slot" value={form.time} onChange={(e) => setForm(f => ({ ...f, time: e.target.value }))} style={input}>
               <option value="Happy Hour">Happy Hour (4-7pm)</option>
               <option value="Late Night">Late Night (10pm-close)</option>
-              <option value="Weekend">Weekend</option>
               <option value="Weekend Brunch">Weekend Brunch (10am-2pm)</option>
               <option value="All Day">All Day</option>
               <option value={PROMO_CUSTOM}>Custom</option>
@@ -4482,7 +4488,6 @@ export const PromoModal = React.memo(function PromoModal({ editing, onSave, onCa
               <option value="Daily">Daily</option>
               <option value="Weekdays">Weekdays</option>
               <option value="Weekends">Weekends</option>
-              <option value="Mon-Fri">Mon-Fri</option>
               <option value="Fri-Sun">Fri-Sun</option>
               <option value={PROMO_CUSTOM}>Custom</option>
             </select>
