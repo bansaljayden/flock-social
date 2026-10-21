@@ -17,7 +17,8 @@
  *     plus the year with no second sheet;
  *   - an Apple ID that already has an account is simply signed in;
  *   - an under-13 refusal is shown as the server wrote it;
- *   - switching halves, or the password path's backfill ask, drops the step;
+ *   - switching halves, or leaving the step for the email form, drops the
+ *     step, and the form steps aside while the step is open;
  *   - the sign-up half lets an empty year through to Apple's sheet, the way
  *     the consumer screens do, and asks it afterwards in the same step, while
  *     a half-typed year is still stopped before the sheet.
@@ -176,9 +177,14 @@ describe('the venue sign-in half, a brand-new Apple ID', () => {
     expect(utils.queryByLabelText('Year of birth')).toBeNull();
   });
 
-  it('a password sign-in answered with the backfill ask closes the step for the date field', async () => {
+  it('the step sets the email form aside, and a password sign-in after leaving it gets the date field', async () => {
     const utils = openVenue();
     await firstTap(utils);
+    // While the step is open there is one thing to do on screen: the email
+    // form steps aside, as on the consumer screens, and one tap brings it back.
+    expect(utils.queryByLabelText('Email')).toBeNull();
+    fireEvent.click(utils.getByRole('button', { name: 'Sign in with email instead' }));
+    expect(continueButton(utils)).toBeNull();
     fireEvent.change(utils.getByLabelText('Email'), { target: { value: 'owner@example.com' } });
     fireEvent.change(utils.getByLabelText('Password'), { target: { value: 'Password1' } });
     api.login.mockRejectedValueOnce(httpError(403, 'Add your date of birth to continue.', { needsDob: true }));
@@ -241,11 +247,15 @@ describe('the venue sign-up half', () => {
     expect(api.appleLogin.mock.calls[0][3]).toBeUndefined();
   });
 
-  it('Create account goes through without a year in the iPhone app, even with a step open', async () => {
+  it('Create account goes through without a year in the iPhone app, after leaving a step for the form', async () => {
     // The app asks for no date of birth, so the email form never waits on one;
-    // the server creates the account without it.
+    // the server creates the account without it. While a step is open the form
+    // is set aside, so the way to it is the step's own "Sign up with email
+    // instead", which drops the held sign-in.
     const utils = openSignupHalf();
     await firstTap(utils);
+    expect(utils.queryByLabelText('Your name')).toBeNull();
+    fireEvent.click(utils.getByRole('button', { name: 'Sign up with email instead' }));
     fireEvent.change(utils.getByLabelText('Your name'), { target: { value: 'Robin' } });
     fireEvent.change(utils.getByLabelText('Email'), { target: { value: 'owner@example.com' } });
     fireEvent.change(utils.getByLabelText('Password'), { target: { value: 'Password1' } });

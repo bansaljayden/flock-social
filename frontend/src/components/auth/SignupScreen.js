@@ -41,8 +41,10 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
   // flock, joining one or adding a friend. It sat at the very bottom, under
   // four fields, the Create button, the legal line and Google. So on iOS the
   // two provider buttons come first, Apple on top, with the email form under
-  // them. The web has no Apple button (AppleSignInButton draws nothing there)
-  // and keeps the form-first layout it had.
+  // them. flockcorp.com has the Apple button too (Apple's popup), so the
+  // website takes the same order, as do the sign-in screen and the venue
+  // portal: Apple, Google, email everywhere Apple is offered. A host without
+  // it (a preview deploy, a laptop) keeps the form-first layout it had.
   const providersFirst = isAppleSignInAvailable();
   // A provider's message is drawn beside the providers when they come first.
   // With the form above them (the web) the form's own error box is already
@@ -216,7 +218,9 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
 
   // Live password checklist. Mirrors backend/routes/auth.js EXACTLY (8 chars,
   // 1 uppercase, 1 number) so nobody submits a password the server will bounce
-  // for a rule they were never shown. Shown only once the field has content.
+  // for a rule they were never shown. Shown from the start, every rule in its
+  // not-yet state, so the rule is read before it is broken (error
+  // prevention) instead of learned from a refusal.
   const pwChecks = [
     { label: '8 characters', ok: password.length >= 8 },
     { label: 'One uppercase letter', ok: /[A-Z]/.test(password) },
@@ -344,7 +348,7 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
       )}>
         <p className="auth-sub" style={{ margin: '0 0 18px' }}>
           {linkSent
-            ? 'Your account exists. Clicking the link is what lets you start a flock, add friends and save a pay-back handle. If it has not landed in a minute, check your spam folder.'
+            ? 'Your account exists. Clicking the link is what lets you start a flock, add friends and save a pay-back handle. It comes from social@flockcorp.com. If it has not landed in a minute, check your spam folder.'
             : 'Your account exists and your password works. Our mail did not leave, so there is nothing in your inbox to look for yet. Ask for the link below, and check your spam folder once it arrives.'}
         </p>
         {resendNote && <p role="status" className="auth-hint" style={{ margin: '0 0 12px' }}>{resendNote}</p>}
@@ -493,45 +497,41 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
             />
             <PasswordEye shown={showPassword} onToggle={() => setShowPassword(!showPassword)} />
           </div>
-          {/* The full rule set, described ON the field. The visible checklist
-              only exists once the field has content, so without this a screen
-              reader lands on an empty password field and hears nothing about
-              what a valid password is; the placeholder names one rule of
-              three. sr-only, because the visual design already carries the
-              rules through the placeholder and the live checklist. */}
+          {/* The full rule set, described ON the field, so a screen reader
+              hears it on arriving at the empty field: the checklist under it
+              is a separate list, not part of the field's description. sr-only,
+              because the checklist already shows the same rules. */}
           <p className="sr-only" id="signup-pw-rules">
             Password must be at least 8 characters, with one uppercase letter and one number.
           </p>
-          {password.length > 0 && (
-            <ul aria-label="Password requirements" style={{ listStyle: 'none', margin: '12px 0 0', padding: 0, display: 'grid', gap: '7px' }}>
-              {pwChecks.map((c) => (
-                <li
-                  key={c.label}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: '8px',
-                    fontSize: '12.5px', fontWeight: '500',
-                    color: c.ok ? AUTH.green : AUTH.cream2,
-                  }}
-                >
-                  {/* System glyphs (Icons.check met / Icons.minus not-yet),
-                      same pair as VenueLoginScreen; the old row drew a local
-                      <svg> from outside the icon system. Decorative: the
-                      state is announced by the sr-only text below, and shown
-                      visually by glyph shape plus colour, so neither channel
-                      is colour-only (1.4.1). */}
-                  <span aria-hidden="true" style={{ display: 'inline-flex', flexShrink: 0 }}>
-                    {(c.ok ? Icons.check : Icons.minus)('currentColor', 14)}
-                  </span>
-                  {c.label}
-                  {/* The met/unmet signal a screen reader was never getting:
-                      the old row encoded state in colour and a glyph, both
-                      aria-hidden, so "8 characters" read identically whether
-                      satisfied or not. */}
-                  <span className="sr-only">{c.ok ? ', met' : ', not met yet'}</span>
-                </li>
-              ))}
-            </ul>
-          )}
+          <ul aria-label="Password requirements" style={{ listStyle: 'none', margin: '12px 0 0', padding: 0, display: 'grid', gap: '7px' }}>
+            {pwChecks.map((c) => (
+              <li
+                key={c.label}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '8px',
+                  fontSize: '12.5px', fontWeight: '500',
+                  color: c.ok ? AUTH.green : AUTH.cream2,
+                }}
+              >
+                {/* System glyphs (Icons.check met / Icons.minus not-yet),
+                    same pair as VenueLoginScreen; the old row drew a local
+                    <svg> from outside the icon system. Decorative: the
+                    state is announced by the sr-only text below, and shown
+                    visually by glyph shape plus colour, so neither channel
+                    is colour-only (1.4.1). */}
+                <span aria-hidden="true" style={{ display: 'inline-flex', flexShrink: 0 }}>
+                  {(c.ok ? Icons.check : Icons.minus)('currentColor', 14)}
+                </span>
+                {c.label}
+                {/* The met/unmet signal a screen reader was never getting:
+                    the old row encoded state in colour and a glyph, both
+                    aria-hidden, so "8 characters" read identically whether
+                    satisfied or not. */}
+                <span className="sr-only">{c.ok ? ', met' : ', not met yet'}</span>
+              </li>
+            ))}
+          </ul>
         </div>
 
         <button type="submit" className="auth-primary" disabled={loading}>

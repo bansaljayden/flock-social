@@ -8,9 +8,11 @@
  * a bar or cafe owner who knows nothing about the app. What was found and
  * fixed on the frontend is pinned here:
  *
- *   - the website's sign-in hint named an Apple button the website does not
- *     have; it now names the iPhone app for Apple accounts, and the iPhone app
- *     keeps the old line;
+ *   - the sign-in hint named an Apple button a page did not have; it names
+ *     only the buttons on the screen: Google alone where Apple's button is
+ *     not drawn, both in the iPhone app and on flockcorp.com (where the
+ *     website's Apple popup replaced a stopgap that sent Apple accounts to
+ *     the iPhone app);
  *   - the Events tab used "flock" with no explanation, and cheered an owner to
  *     create a first event one line below "Only you can see these";
  *   - "People who tapped your tag" named a tag nobody had introduced;
@@ -73,7 +75,7 @@ const SRC_DIR = path.resolve(__dirname, '..');
 const DASH = fs.readFileSync(path.join(SRC_DIR, 'screens', 'VenueDashboard.js'), 'utf8');
 const ONBOARDING = fs.readFileSync(path.join(SRC_DIR, 'screens', 'VenueOnboarding.js'), 'utf8');
 
-const WEB_HINT = 'Signed up with Google? Use that button. Signed up with Apple? Use the iPhone app.';
+const WEB_HINT = 'Signed up with Google? Use that button.';
 const IOS_HINT = 'Signed up with Google or Apple? Use that button.';
 
 const asNativeIos = () => {
@@ -93,11 +95,12 @@ const mountVenueLogin = () => render(React.createElement(VenueLoginScreen, {
 }));
 
 describe('the sign-in hint names only buttons the screen has', () => {
-  test('the website: no Apple button, so Apple accounts are sent to the iPhone app', () => {
+  test('a page without the Apple button names only Google, and no app', () => {
     for (const mount of [mountLogin, mountVenueLogin]) {
       const { container, unmount } = mount();
       expect(container.textContent).toContain(WEB_HINT);
       expect(container.textContent).not.toContain(IOS_HINT);
+      expect(container.textContent).not.toMatch(/iPhone app/);
       unmount();
     }
   });

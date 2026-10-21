@@ -322,6 +322,27 @@ describe('CSP covers the hosts the code actually talks to', () => {
     expect(allows(directive('connect-src'), 'https://firebaseinstallations.googleapis.com')).toBe(true);
   });
 
+  it("covers Sign in with Apple on the website: Apple's script, read from the file that loads it", () => {
+    // AppleSignInButton.js loads appleid.auth.js from Apple's CDN on
+    // flockcorp.com, so that host is a script-src decision, in both copies of
+    // the policy (the meta copy applies on the web too). Nothing else is
+    // needed: the script opens appleid.apple.com with window.open and hears
+    // back through postMessage, and it fetches nothing and frames nothing
+    // (appleid.auth.js 1.5.7, read 2026-10-20), so neither connect-src nor
+    // frame-src names Apple.
+    const APPLE = read('src', 'components', 'auth', 'AppleSignInButton.js');
+    const src = firstUrl(APPLE, /https:\/\/appleid\.cdn-apple\.com\/[^'"\s]+/);
+    expect(src).toBeTruthy();
+    expect(allows(directive('script-src'), src)).toBe(true);
+    expect(allows(metaDirective('script-src'), src)).toBe(true);
+    expect(allows(directive('connect-src'), 'https://appleid.apple.com')).toBe(false);
+    expect(allows(directive('frame-src'), 'https://appleid.apple.com')).toBe(false);
+    // The popup answers through window.opener. An opener policy of
+    // same-origin would cut it off, and Google's popup with it.
+    const coop = HEADERS.find((h) => h.key === 'Cross-Origin-Opener-Policy');
+    expect(coop ? coop.value : 'unsafe-none').not.toBe('same-origin');
+  });
+
   it('covers Sentry, which is dark today and would otherwise fail on the day a DSN is set', () => {
     expect(INDEX).toContain('REACT_APP_SENTRY_DSN');
     expect(allows(directive('connect-src'), 'https://o1.ingest.us.sentry.io')).toBe(true);

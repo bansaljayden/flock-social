@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { login, signup, resendVerificationEmail } from '../../services/api';
-import useGoogleAuth, { isGoogleSignInAvailable, isNativeIos } from './useGoogleAuth';
+import useGoogleAuth, { isGoogleSignInAvailable } from './useGoogleAuth';
 import AppleSignInButton, { isAppleSignInAvailable } from './AppleSignInButton';
 import AppleYearStep, { AppleStepContinue, useAppleYearStep } from './AppleYearStep';
 import AuthShell, {
@@ -104,6 +104,12 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
   // cannot open there either. Everything above about the two asks is the
   // website's.
   const askAge = asksForAge();
+  // APPLE, GOOGLE, EMAIL wherever Apple is one of the ways in (the iPhone
+  // app and flockcorp.com): the consumer screens' order, from the same
+  // test, so an owner finds the way they signed up in the same place here.
+  const providersFirst = isAppleSignInAvailable();
+  // Where the date read-back sits, seen from the provider buttons.
+  const dobCheckWhere = providersFirst ? 'below' : 'above';
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -171,7 +177,9 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
 
   // Live password checklist, identical rules to backend/routes/auth.js, so
   // nobody submits a password the server will bounce for a rule they were
-  // never shown. Only used on the signup path.
+  // never shown. Only used on the signup path, where it shows from the
+  // start: the rule is read before it is broken (error prevention), not
+  // learned from a refusal.
   const pwChecks = [
     { label: '8 characters', ok: password.length >= 8 },
     { label: 'One uppercase letter', ok: /[A-Z]/.test(password) },
@@ -390,7 +398,7 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
       >
         <p className="auth-sub" style={{ margin: '0 0 18px' }}>
           {linkSent
-            ? 'Your account exists. Clicking the link is what lets you claim your venue and reply to reviews. If it has not landed in a minute, check your spam folder.'
+            ? 'Your account exists. Clicking the link is what lets you claim your venue and reply to reviews. It comes from social@flockcorp.com. If it has not landed in a minute, check your spam folder.'
             : 'Your account exists and your password works. Our mail did not leave, so there is nothing in your inbox to look for yet. Ask for the link below, and check your spam folder once it arrives.'}
         </p>
         {mailRefused && !resendNote && (
@@ -420,8 +428,20 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
     );
   }
 
-  return (
-    <AuthShell hero={hero}>
+  // Guideline 1.2 / EULA consent, one paragraph drawn in exactly one place:
+  // inside the form where the form comes first (see the comment there), and
+  // beside the providers where they come first (see the return below).
+  const consent = (
+    <p className="auth-legal">
+      Creating an account means you agree to the{' '}
+      <a href={TERMS_URL} target="_blank" rel="noopener noreferrer">Terms</a>,{' '}
+      <a href={PRIVACY_URL} target="_blank" rel="noopener noreferrer">Privacy Policy</a>, and{' '}
+      <a href={GUIDELINES_URL} target="_blank" rel="noopener noreferrer">Community Guidelines</a>, including the product analytics they describe.
+    </p>
+  );
+
+  const form = (
+    <>
       {/* noValidate: see the signup screen. iOS shows no validation bubble, so
           `required` here meant the button silently refused to submit. */}
       <form onSubmit={handleSubmit} noValidate>
@@ -570,12 +590,18 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
               placeholder={isSignup ? 'At least 8 characters' : 'Your password'}
               autoComplete={isSignup ? 'new-password' : 'current-password'}
               minLength={isSignup ? 8 : undefined}
+              aria-describedby={isSignup ? 'venue-pw-rules' : undefined}
               required
             />
             <PasswordEye shown={showPassword} onToggle={() => setShowPassword(!showPassword)} />
           </div>
-          {isSignup && password.length > 0 && (
-            <ul style={{ listStyle: 'none', margin: '12px 0 0', padding: 0, display: 'grid', gap: '7px' }}>
+          {isSignup && (
+            <p className="sr-only" id="venue-pw-rules">
+              Password must be at least 8 characters, with one uppercase letter and one number.
+            </p>
+          )}
+          {isSignup && (
+            <ul aria-label="Password requirements" style={{ listStyle: 'none', margin: '12px 0 0', padding: 0, display: 'grid', gap: '7px' }}>
               {pwChecks.map((c) => (
                 <li
                   key={c.label}
@@ -600,6 +626,7 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
                     {(c.ok ? Icons.check : Icons.minus)('currentColor', 14)}
                   </span>
                   {c.label}
+                  <span className="sr-only">{c.ok ? ', met' : ', not met yet'}</span>
                 </li>
               ))}
             </ul>
@@ -622,23 +649,18 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
             account signs in without seeing it. That holds on the website. The
             iPhone app is never answered needsDob, so there a first provider tap
             creates the account at once and the line shows from the start. */}
-        {(isSignup || needsDob || !askAge) && (
-          <p className="auth-legal">
-            Creating an account means you agree to the{' '}
-            <a href={TERMS_URL} target="_blank" rel="noopener noreferrer">Terms</a>,{' '}
-            <a href={PRIVACY_URL} target="_blank" rel="noopener noreferrer">Privacy Policy</a>, and{' '}
-            <a href={GUIDELINES_URL} target="_blank" rel="noopener noreferrer">Community Guidelines</a>, including the product analytics they describe.
-          </p>
-        )}
+        {!providersFirst && (isSignup || needsDob || !askAge) && consent}
       </form>
+    </>
+  );
 
-      <AuthRule label={isSignup ? 'or sign up with' : 'or continue with'} />
-
+  const googleBlock = isGoogleSignInAvailable() && (
+    <>
       {/* Hidden only when a native build carries no iOS Google client id, i.e.
           when the button could not work by any route. On web it always shows.
           While a new Google account's year is being asked, the Google step
           and its Continue take the button's place. */}
-      {isGoogleSignInAvailable() && google.step && (
+      {google.step && (
         <AppleYearStep
           idPrefix="venue"
           provider="google"
@@ -648,7 +670,7 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
           hint="Yours, not the venue's. We use it to check your age."
         />
       )}
-      {isGoogleSignInAvailable() && (google.step === 'resume' ? (
+      {google.step === 'resume' ? (
         <AppleStepContinue
           busy={google.busy}
           busyLabel={isSignup ? 'Creating account…' : 'Signing in…'}
@@ -661,7 +683,7 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
           disabled={loading}
           onClick={() => {
             if (dobNeedsCheck) {
-              setError('Check the date of birth above before you continue.');
+              setError(`Check the date of birth ${dobCheckWhere} before you continue.`);
               document.getElementById('venue-dob-check')?.focus();
               return;
             }
@@ -674,18 +696,20 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
             }
             if (isSignup) {
               // The server needs a year to create an account on this path.
-              // In the iOS app an empty one goes through, the way it does for
-              // Apple here and for Google on the consumer sign-up screen: an
-              // account that already exists needs none, so a returning owner
-              // was being stopped for nothing, and a new one is asked for it
-              // after Google's sheet, in this button's place (the Google step
-              // above). On the web the field sits right above this button and
-              // is asked for first, as it always was. A year that is not four
-              // digits yet, or one no living person can have, is stopped
-              // either way. What the year says about age is not decided here,
-              // exactly as it is not decided in handleSubmit.
+              // Where the providers come first (flockcorp.com; the iPhone app
+              // asks for no year at all, above) an empty one goes through, the
+              // way it does for Apple here and for Google on the consumer
+              // sign-up screen: an account that already exists needs none, so
+              // a returning owner was being stopped for nothing, and a new one
+              // is asked for it after Google's sheet, in this button's place
+              // (the Google step above). With the form on top the field sits
+              // right above this button and is asked for first, as it always
+              // was. A year that is not four digits yet, or one no living
+              // person can have, is stopped either way. What the year says
+              // about age is not decided here, exactly as it is not decided
+              // in handleSubmit.
               if (!dob) {
-                if (!isNativeIos()) {
+                if (!providersFirst) {
                   setError('Add the year you were born above first, then continue with Google.');
                   return;
                 }
@@ -706,12 +730,17 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
         >
           <GoogleG /> Continue with Google
         </button>
-      ))}
+      )}
+    </>
+  );
 
+  const appleBlock = (
+    <>
       {/* Apple guideline 4.8: the venue portal ships inside the same iOS binary
-          and offers Google above, so it must offer Sign in with Apple too.
-          Renders null on web. Its absence here was a standing 4.8 rejection
-          risk that the consumer screens had already fixed.
+          and offers Google, so it must offer Sign in with Apple too. On the
+          web it draws only on flockcorp.com, through Apple's popup. Its
+          absence here was a standing 4.8 rejection risk that the consumer
+          screens had already fixed.
 
           A new Apple ID's year is asked in this button's place (see THE APPLE
           STEP above), with the owner's hint rather than the consumer one. */}
@@ -773,11 +802,12 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
         dob={askAge ? dob : undefined}
         dobGranularity={askAge && askYearOnly ? 'year' : undefined}
         /* Under the Google step's Continue the stylesheet's provider-to-
-           provider gap does not apply, so the gap is given here. */
-        style={google.step === 'resume' ? { marginTop: '10px' } : undefined}
+           provider gap does not apply, so the gap is given here. Apple
+           sits under Google only where the form comes first. */
+        style={!providersFirst && google.step === 'resume' ? { marginTop: '10px' } : undefined}
         beforeAuthorize={() => {
           if (dobNeedsCheck) {
-            setError('Check the date of birth above before you continue.');
+            setError(`Check the date of birth ${dobCheckWhere} before you continue.`);
             document.getElementById('venue-dob-check')?.focus();
             return false;
           }
@@ -810,17 +840,71 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
         }}
       />
       )}
+    </>
+  );
+
+  return (
+    <AuthShell hero={hero}>
+      {/* THE ORDER (providersFirst above): Apple, Google, then the email
+          form wherever Apple is offered; the form on top where it is not. */}
+      {!providersFirst && (
+        <>
+          {form}
+          <AuthRule label={isSignup ? 'or sign up with' : 'or continue with'} />
+        </>
+      )}
+
+      {/* With the providers first, the agreement goes above them wherever
+          their first tap can create an account: the sign-up half, and the
+          iPhone app, which is never asked for a year first. The website's
+          sign-in half shows it under them once the server has asked for a
+          date, as the consumer sign-in screen does. */}
+      {providersFirst && (isSignup || !askAge) && <div style={{ marginBottom: '16px' }}>{consent}</div>}
+
+      {providersFirst ? (
+        <>
+          {appleBlock}
+          {/* Wrapped for its gap: under the Apple step's Continue the
+              stylesheet's provider-to-provider rule gives none. */}
+          {googleBlock && <div style={{ marginTop: '10px' }}>{googleBlock}</div>}
+        </>
+      ) : (
+        <>
+          {googleBlock}
+          {appleBlock}
+        </>
+      )}
+
+      {providersFirst && !isSignup && askAge && needsDob && consent}
+
+      {/* Under the providers, the form; while a provider's year step is
+          open it steps aside, so there is one year field and one thing to
+          tap, as on the consumer screens. */}
+      {providersFirst && (stepOpen ? (
+        <button
+          type="button"
+          className="auth-textbtn"
+          onClick={() => { leaveSteps(); setError(''); }}
+          style={{ display: 'block', margin: '16px auto 0' }}
+        >
+          {isSignup ? 'Sign up with email instead' : 'Sign in with email instead'}
+        </button>
+      ) : (
+        <>
+          <AuthRule label={isSignup ? 'or sign up with email' : 'or sign in with email'} />
+          {form}
+        </>
+      ))}
 
       {/* The server will not say which addresses belong to Google or Apple
-          accounts — answering that turns login into an account enumeration
-          oracle — so the hint stands here for everyone, same as the consumer
-          login screen. The Apple button exists only in the iPhone app, so the
-          website names where an Apple account can sign in. */}
-      {!isSignup && (
+          accounts (answering that turns login into an account enumeration
+          oracle), so the hint stands here for everyone, same as the consumer
+          login screen, and names only the buttons this screen has. */}
+      {!isSignup && (!providersFirst || !stepOpen) && (
         <p className="auth-hint" style={{ textAlign: 'center', marginTop: '12px' }}>
           {isAppleSignInAvailable()
             ? 'Signed up with Google or Apple? Use that button.'
-            : 'Signed up with Google? Use that button. Signed up with Apple? Use the iPhone app.'}
+            : 'Signed up with Google? Use that button.'}
         </p>
       )}
 
