@@ -31,6 +31,7 @@ export const THERMAL_SETS = [
   { name: "LITIV 2012 and 2014 thermal-visible sets", who: "Bilodeau, Torabi, Massé, St-Charles and Riahi, Polytechnique Montréal", terms: "by permission" },
   { name: "MlDetection", who: "Vandersteegen, Reusen, Van Beeck and Goedemé, KU Leuven EAVISE, with Melexis", terms: "by permission" },
   { name: "Thermal-IM", who: "Tang, Ye, Ma and Zhao, Tsinghua University and MIT", terms: "BSD-3-Clause" },
+  { name: "Multi-View Visible-Thermal images for Human Pose Estimation", who: "Lupión, Polo-Rodríguez, Medina-Quero, Sanjuan and Ortigosa, Universidad de Almería", terms: "CC BY-NC 3.0, by permission" },
 ];
 
 export const ROBOFLOW_SETS = [
