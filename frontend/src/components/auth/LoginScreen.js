@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { login, trackAuthScreen, RESET_DONE_KEY } from '../../services/api';
 import useGoogleAuth, { isGoogleSignInAvailable } from './useGoogleAuth';
-import AppleSignInButton from './AppleSignInButton';
+import AppleSignInButton, { isAppleSignInAvailable } from './AppleSignInButton';
 import AppleYearStep, { AppleStepContinue, useAppleYearStep } from './AppleYearStep';
 import AuthShell, {
   ageFromDob, AuthError, AuthLabelRow, AuthNotice, AuthRule, formatDob, GoogleG, MIN_AGE, PasswordEye,
@@ -577,9 +577,13 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
           accounts, because answering that turns login into an account
           enumeration oracle. So the hint lives here instead, standing, for
           everyone: a returning OAuth user who types their email and password
-          gets a password failure they cannot otherwise explain. */}
+          gets a password failure they cannot otherwise explain. The Apple
+          button exists only in the iPhone app, so the website names the
+          place an Apple account can sign in instead of a button it lacks. */}
       <p className="auth-hint" style={{ textAlign: 'center', marginTop: '12px' }}>
-        Signed up with Google or Apple? Use that button.
+        {isAppleSignInAvailable()
+          ? 'Signed up with Google or Apple? Use that button.'
+          : 'Signed up with Google? Use that button. Signed up with Apple? Use the iPhone app.'}
       </p>
 
       <p className="auth-foot">

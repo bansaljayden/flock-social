@@ -100,7 +100,7 @@ export default function VenueOnboarding({
               performance", which is the register of a plan page rather than a
               first screen, and names two outcomes nothing here delivers on its
               own. This says what the next twelve steps actually are. */}
-          <p style={{ fontSize: 'var(--t-body)', color: 'rgba(148,163,184,0.7)', lineHeight: 1.5, maxWidth: '300px' }}>A few questions about your venue. The first five set up your listing, and the rest are things about the room that no dataset holds. Every one of those is skippable.</p>
+          <p style={{ fontSize: 'var(--t-body)', color: 'rgba(148,163,184,0.7)', lineHeight: 1.5, maxWidth: '300px' }}>A few questions about your venue. The first five set up your listing. The rest are details about the room that only you know, and you can skip any of them.</p>
         </div>
       ),
       // Step 1: pick the venue out of Google Places. THE PLACE ID IS THE POINT.

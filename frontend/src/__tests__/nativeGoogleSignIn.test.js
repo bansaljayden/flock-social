@@ -81,7 +81,12 @@ jest.mock('@capgo/capacitor-social-login', () => ({
   },
 }));
 
-jest.mock('../components/auth/AppleSignInButton', () => () => null);
+// Default AND the named export the sign-in screens read for their hint line.
+jest.mock('../components/auth/AppleSignInButton', () => ({
+  __esModule: true,
+  default: () => null,
+  isAppleSignInAvailable: () => false,
+}));
 jest.mock('../components/auth/PasswordReset', () => ({
   ForgotPasswordScreen: () => null,
   ResetPasswordScreen: () => null,

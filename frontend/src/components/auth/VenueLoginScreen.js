@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { login, signup, resendVerificationEmail } from '../../services/api';
 import useGoogleAuth, { isGoogleSignInAvailable, isNativeIos } from './useGoogleAuth';
-import AppleSignInButton from './AppleSignInButton';
+import AppleSignInButton, { isAppleSignInAvailable } from './AppleSignInButton';
 import AppleYearStep, { AppleStepContinue, useAppleYearStep } from './AppleYearStep';
 import AuthShell, {
   ageFromDob, AUTH, AuthError, AuthLabelRow, AuthRule, formatDob, GoogleG, MIN_AGE, PasswordEye,
@@ -814,10 +814,13 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
       {/* The server will not say which addresses belong to Google or Apple
           accounts — answering that turns login into an account enumeration
           oracle — so the hint stands here for everyone, same as the consumer
-          login screen. */}
+          login screen. The Apple button exists only in the iPhone app, so the
+          website names where an Apple account can sign in. */}
       {!isSignup && (
         <p className="auth-hint" style={{ textAlign: 'center', marginTop: '12px' }}>
-          Signed up with Google or Apple? Use that button.
+          {isAppleSignInAvailable()
+            ? 'Signed up with Google or Apple? Use that button.'
+            : 'Signed up with Google? Use that button. Signed up with Apple? Use the iPhone app.'}
         </p>
       )}
 

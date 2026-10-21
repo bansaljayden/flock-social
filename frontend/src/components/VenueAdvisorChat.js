@@ -518,7 +518,11 @@ const hasKeyboardPointer = () => {
   }
 };
 
-const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, grantConsent, withdrawConsent, colors }) => {
+// `unverifiedNote`: what the greeter says in place of the server's reason while
+// the venue is not verified. The dashboard passes it, because the intel card at
+// the top of the same tab already prints that reason with the button, and this
+// box printing it again was the third copy on one tab.
+const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, grantConsent, withdrawConsent, colors, unverifiedNote = null }) => {
   const navy = colors?.navy || 'var(--text-primary)';
   const navyBg = colors?.navyBg || navy;
   // 'loading' | 'ready' | 'locked' | 'error'
@@ -1043,7 +1047,7 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, grantConsent, with
         <div data-roost="greeter" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', padding: '14px 0 2px' }}>
           <BirdieStill size={88} eager />
           <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '10px 0 0', lineHeight: 1.5, maxWidth: '300px' }}>
-            {offReason || (freeText ? LEAD_IN_FREE : LEAD_IN_CHIPS)}
+            {offReason ? (unverifiedNote || offReason) : (freeText ? LEAD_IN_FREE : LEAD_IN_CHIPS)}
           </p>
         </div>
       )}

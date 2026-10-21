@@ -414,6 +414,10 @@ const holdCards = (issuedUnder, payload) => {
     : { key: null, at: 0, payload: null };
 };
 
+// What this card says while the venue is not verified. The why and the button
+// are on the intel card at the top of the same tab (see the unavailable branch).
+const UNVERIFIED_NOTE = "Roost's cards open once your venue is verified.";
+
 const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHours, onOpenSettings, now }) => {
   const navy = colors?.navy || 'var(--text-primary)';
   // What the last mount left behind, read once. A payload still inside the
@@ -592,13 +596,21 @@ const VenueInsightCards = ({ fetchCards, colors, intel, liveReading, operatingHo
   // 2026-08-21). The dashboard stopped passing the handler on 2026-09-01 and
   // the dormant path was deleted on 2026-09-02: the one ask lives on the
   // dashboard (renderVerificationAsk in screens/VenueDashboard.js), and this
-  // card only prints the server's reason sentence, which is the answer to
-  // "why are there no cards".
+  // card says why there are no cards.
+  //
+  // THE SENTENCE TOO, FOR A VENUE NOT VERIFIED YET (2026-10-20). Removing the
+  // second button left the second sentence: the server's "Not verified yet..."
+  // reason was printed by the intel card, then again here, then again by the questions
+  // box, so the tab still said the same thing three times. The intel card at
+  // the top of the tab keeps the server's sentence and the button; this card
+  // says only what is closed. Every other unavailable state (no linked
+  // listing) still reads the server's reason, because nothing else on the tab
+  // explains it.
   if (payload && payload.available === false) {
     return (
       <div style={CARD_STYLE}>
         <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: navy, margin: '0 0 8px' }}>{FEATURE_NAME}</h3>
-        <BirdNote layout="row" bird={WARM_BIRD} size={48} body={payload.reason || 'Nothing to show yet.'} style={{ marginBottom: '10px' }} />
+        <BirdNote layout="row" bird={WARM_BIRD} size={48} body={payload.unverified ? UNVERIFIED_NOTE : (payload.reason || 'Nothing to show yet.')} style={{ marginBottom: '10px' }} />
       </div>
     );
   }

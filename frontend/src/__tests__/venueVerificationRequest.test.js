@@ -61,18 +61,31 @@ const mount = (props = {}) => render(
 // button contract (button only while un-requested, server sentences verbatim,
 // error left pressable). The dashboard stopped passing that handler on
 // 2026-09-01 and nothing else ever did, so the path was dead code and has been
-// deleted from the card. What is left to pin is that the card still says the
-// server's reason, in every unavailable state, and never grows a button back.
-describe('Roost card: the reason line, and no button', () => {
-  test('an unverified venue reads the server reason verbatim, with nothing to press', async () => {
+// deleted from the card. What is left to pin is that the card says why there
+// are no cards, in every unavailable state, and never grows a button back.
+//
+// 2026-10-20: AND THE SENTENCE IS SAID ONCE. With the second button gone, the
+// server's not-verified sentence was still printed by the intel card, by this
+// card and by the questions box, three times on one tab, which is the same
+// TestFlight complaint about saying it too often. The intel card keeps the
+// sentence and the button; this card says only what is closed, in both the
+// un-requested and the pending state. A state that is not the unverified one
+// (no linked listing) still reads the server's reason, because nothing else on
+// the tab explains it.
+const UNVERIFIED_NOTE = "Roost's cards open once your venue is verified.";
+
+describe('Roost card: why there are no cards, said once, and no button', () => {
+  test('an unverified venue says what is closed, leaving the sentence to the intel card', async () => {
     mount();
-    expect(await screen.findByText(UNREQUESTED_REASON)).toBeInTheDocument();
+    expect(await screen.findByText(UNVERIFIED_NOTE)).toBeInTheDocument();
+    expect(screen.queryByText(UNREQUESTED_REASON)).toBeNull();
     expect(screen.queryByRole('button')).toBeNull();
   });
 
-  test('a pending request reads the pending sentence, with nothing to press', async () => {
+  test('a pending request says the same, with nothing to press', async () => {
     mount({ fetchCards: () => Promise.resolve(unverifiedPayload(PENDING_REASON)) });
-    expect(await screen.findByText(PENDING_REASON)).toBeInTheDocument();
+    expect(await screen.findByText(UNVERIFIED_NOTE)).toBeInTheDocument();
+    expect(screen.queryByText(PENDING_REASON)).toBeNull();
     expect(screen.queryByRole('button')).toBeNull();
   });
 
@@ -153,6 +166,17 @@ describe('The wiring behind the button', () => {
     // Both reads come from the same `can` object, so the two copies of the
     // button can never be on the tab at once.
     expect(DASH_SRC).toContain('venueBusyNow.unverified && !can.analytics && renderVerificationAsk()');
+  });
+
+  test('the sentence is said once on Analytics: the live-number card and the questions box defer to the intel card', () => {
+    // 2026-10-20. While the intel card is on screen saying the venue is not
+    // verified, the live-number card above it says only what is closed, and
+    // the questions box is handed a short note to print instead of the
+    // server's reason. Where the intel card is not on screen (no analytics
+    // tier yet, tier unknown), the live-number card keeps the server's sentence.
+    expect(DASH_SRC).toContain('venueBusyNow.unverified && can.analytics && tierKnown && venueIntel?.unverified');
+    expect(DASH_SRC).toContain("'Your live number opens once your venue is verified.'");
+    expect(DASH_SRC).toContain("unverifiedNote={venueIsVerified ? null : 'Questions open once your venue is verified.'}");
   });
 
   test('an unverified venue is not offered a reply the server refuses', () => {

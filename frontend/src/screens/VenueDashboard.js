@@ -110,6 +110,13 @@ const reviewWhen = (iso) => {
   return REVIEW_DATE_FMT.format(d);
 };
 
+// The letter on the logo tile when there is no logo. A leading "The" is
+// skipped, so "The Copper Finch" reads C rather than a T that stands for nothing.
+const venueInitial = (name) => {
+  const rest = String(name || '').trim().replace(/^the\s+/i, '');
+  return (rest || 'V').charAt(0).toUpperCase();
+};
+
 // WHAT VERIFICATION TURNS ON, SAID FOR THIS VENUE'S PLAN. On every plan it is
 // review replies, the live number and deals on the venue card: the reply and
 // the live number refuse an unverified claim, and the card serves no deal from
@@ -1023,7 +1030,7 @@ export default function VenueDashboard({
                 <img src={venueLogoUrl} alt="Logo" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
               ) : (
                 <span style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'white' }}>
-                  {(venueData.name || 'V').charAt(0).toUpperCase()}
+                  {venueInitial(venueData.name)}
                 </span>
               )}
               {/* A real spinner, not the bare "…" this overlay used to show —
@@ -1050,7 +1057,7 @@ export default function VenueDashboard({
                 <img src={venueLogoUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
               ) : (
                 <span style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: 'white' }}>
-                  {(venueData.name || 'V').charAt(0).toUpperCase()}
+                  {venueInitial(venueData.name)}
                 </span>
               )}
             </div>
@@ -1115,7 +1122,14 @@ export default function VenueDashboard({
           {venueTab === 'analytics' && venueBusyNow && !venueBusyNow.available && (
             <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
               <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>How full are you compared to your capacity?</h3>
-              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>{venueBusyNow.reason || 'Your live number is unavailable right now.'}</p>
+              {/* While the intel card right below is on screen saying the
+                  venue is not verified (with the button), this card says only
+                  what is closed. Printing the server's sentence here too made
+                  the tab say it twice before the first scroll. Anywhere the
+                  intel card is not on screen, the server's sentence stays. */}
+              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>{venueBusyNow.unverified && can.analytics && tierKnown && venueIntel?.unverified
+                ? 'Your live number opens once your venue is verified.'
+                : (venueBusyNow.reason || 'Your live number is unavailable right now.')}</p>
               {/* The sentence above is the server's, and when the reason is a
                   missing verification it names a request. `!can.analytics` is
                   the condition under which the intel card that carries the
@@ -1411,7 +1425,11 @@ export default function VenueDashboard({
           {/* Roost chat: suggested questions, plus a field the owner can type into.
               Grounded answers come from the same fact engine as the cards above;
               advice is labeled as advice; anything else is refused. */}
-          <VenueAdvisorChat fetchQuestions={getAdvisorQuestions} ask={askAdvisor} askQuestion={askAdvisorQuestion} grantConsent={grantRoostConsent} withdrawConsent={withdrawRoostConsent} colors={colors} />
+          {/* unverifiedNote: the intel card at the top of this tab prints the
+              server's not-verified sentence and the button, so the questions
+              box says only what is closed (2026-10-20, same reason as the Roost
+              card above). */}
+          <VenueAdvisorChat fetchQuestions={getAdvisorQuestions} ask={askAdvisor} askQuestion={askAdvisorQuestion} grantConsent={grantRoostConsent} withdrawConsent={withdrawRoostConsent} colors={colors} unverifiedNote={venueIsVerified ? null : 'Questions open once your venue is verified.'} />
 
           {/* Week ahead — projected peak per evening */}
           {intelReady && venueIntel.week?.length > 0 && (
@@ -1564,7 +1582,7 @@ export default function VenueDashboard({
             <div style={{ padding: '12px 14px', borderRadius: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', marginBottom: '12px' }}>
               <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-secondary)', margin: 0, textTransform: 'uppercase' }}>Last Hour Check-ins</p>
               <p style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '4px 0 0' }}>{ownerSensorData.recent_checkins || 0}</p>
-              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '4px 0 0' }}>People who tapped your tag or checked in from the app.</p>
+              <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '4px 0 0' }}>People who checked in from the app or tapped a Flock tag at your venue.</p>
             </div>
           )}
           {ownerSensorData?.sensor_data && (() => {
@@ -1970,7 +1988,9 @@ export default function VenueDashboard({
 
               {/* Flocks with you in their vote (GET /incoming-flocks) */}
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-                <h3 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 10px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.users(colors.steel, 14)} Flocks With You in Their Vote</h3>
+                <h3 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 4px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.users(colors.steel, 14)} Flocks With You in Their Vote</h3>
+                {/* An owner new to the app has no reason to know the word. */}
+                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '0 0 10px' }}>A flock is a group of friends planning a night out in the Flock app.</p>
                 {/* Banner above the list, never instead of it — same rule as
                     the promotions and events tabs. */}
                 {venueListErrors.incomingFlocks && (
@@ -2071,7 +2091,9 @@ export default function VenueDashboard({
                   venueListErrors.events ? null : !venueListLoaded.events ? (
                     <p aria-busy="true" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', textAlign: 'center', padding: '20px' }}>Loading your events…</p>
                   ) : (
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', textAlign: 'center', padding: '20px' }}>No events yet. Create your first one!</p>
+                    // No cheer to make the first one: the line above says
+                    // nobody can see these yet.
+                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', textAlign: 'center', padding: '20px' }}>No events yet.</p>
                   )
                 ) : venueEventsList.map(event => {
                   const hidden = isModerationHidden(event);

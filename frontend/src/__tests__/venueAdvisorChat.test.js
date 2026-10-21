@@ -1002,6 +1002,33 @@ describe('Roost chat: design-standard pins on the source itself', () => {
   });
 });
 
+describe('an unverified venue: the reason is the intel card\'s, the box says what is closed', () => {
+  // 2026-10-20. The server answers an unverified venue's GET /questions with
+  // no questions and its not-verified sentence. The intel card at the top of
+  // the same tab prints that sentence with the button, so the dashboard hands
+  // this box a short note to print in its place. Without the note (a verified
+  // venue with no linked listing), the server's reason is what explains it.
+  const REASON = 'Not verified yet. Request verification and we confirm you own this venue by hand. Forecasts turn on once that clears.';
+  const LOCKED = async () => ({ name: 'Roost', freeText: false, lead: [], groups: [], reason: REASON });
+
+  test('with the dashboard\'s note, the greeter prints the note and not the sentence', async () => {
+    mount({ fetchQuestions: LOCKED, unverifiedNote: 'Questions open once your venue is verified.' });
+    expect(await screen.findByText('Questions open once your venue is verified.')).toBeInTheDocument();
+    expect(screen.queryByText(REASON)).toBeNull();
+  });
+
+  test('without a note, the server\'s reason is printed as before', async () => {
+    mount({ fetchQuestions: LOCKED });
+    expect(await screen.findByText(REASON)).toBeInTheDocument();
+  });
+
+  test('the note never replaces the lead-in on a venue that has questions', async () => {
+    mount({ unverifiedNote: 'Questions open once your venue is verified.' });
+    await waitFor(field);
+    expect(screen.queryByText('Questions open once your venue is verified.')).toBeNull();
+  });
+});
+
 test('the free-text-off note does not point at chips that are not there', () => {
   const src = require('fs').readFileSync(
     require('path').join(__dirname, '..', 'components', 'VenueAdvisorChat.js'), 'utf8');

@@ -45,7 +45,9 @@ test('a claimed place is said at step one, with an address to write to', () => {
 
 test('Roost shows the server\'s one reason instead of chips that all refuse', () => {
   expect(chat).toMatch(/setOffReason\(typeof data\?\.reason === 'string' \? data\.reason : ''\);/);
-  expect(chat).toMatch(/\{offReason \|\| \(freeText \? LEAD_IN_FREE : LEAD_IN_CHIPS\)\}/);
+  // 2026-10-20: an unverified venue's dashboard hands in a short note to print
+  // in the reason's place, because the intel card above already prints it.
+  expect(chat).toMatch(/\{offReason \? \(unverifiedNote \|\| offReason\) : \(freeText \? LEAD_IN_FREE : LEAD_IN_CHIPS\)\}/);
 });
 
 test('the deal toast, the claim repair and the intelligence labels tell the truth', () => {
