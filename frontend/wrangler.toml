@@ -1,0 +1,13 @@
+# Cloudflare Pages: the host for flockcorp.com. `wrangler pages deploy` reads
+# this file from frontend/ (scripts/deploy-cloudflare.js runs it), together
+# with build/ (npm run build:cloudflare) and functions/.
+name = "flockcorp"
+pages_build_output_dir = "build"
+compatibility_date = "2026-09-01"
+# api/demo-relay.js and api/invite-preview.js require node:crypto, and
+# demo-relay.js node:net for isIP.
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+# Already public in /.well-known/apple-app-site-association.
+APPLE_TEAM_ID = "998W73654F"
