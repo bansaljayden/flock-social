@@ -566,7 +566,7 @@ def tof_view_cut(length=None, half=None):
     angle, it is the window cut through the chin; long and at the true 22.5
     degrees each way, it is what nothing outside the box may stand in."""
     sk = Plane(origin=(0, -0.3, 0), x_dir=(1, 0, 0), z_dir=(0, -1, 0)) * \
-        RectangleRounded(tof_sensor[0] + 1.0, tof_sensor[1] + 1.0, 0.8)
+        RectangleRounded(tof_sensor[0] + 2.0, tof_sensor[1] + 2.0, 1.0)
     return TOF_LOC * extrude(sk, amount=_off + 1.5 if length is None else length,
                              taper=-(tof_half if half is None else half))
 
