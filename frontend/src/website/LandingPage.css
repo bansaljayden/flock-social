@@ -425,6 +425,18 @@
   padding: 0 18px;
   border-radius: 10px;
   font-size: 14.5px;
+  position: relative;
+}
+/* Drawn 40 tall, 44 to a finger: a transparent band inside the 64px bar, so
+   the tap target meets 44 without the button growing. 3px, not 2: the band is
+   placed from the padding box, inside .lp-btn's 1px border. */
+.lp-nav .lp-nav-open::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -3px;
+  bottom: -3px;
 }
 .lp-nav.is-menu-open .lp-nav-open { display: none; }
 .lp-brand {
