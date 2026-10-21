@@ -143,26 +143,45 @@ def laser_svg(cut, engrave, title):
     return '\n'.join(parts) + '\n'
 
 
-def write_plate(made, names, path, gap=10.0):
-    """Lay parts out on one bed, side by side, each on the bed, the group
-    centred, and write them as one .3mf with every part named."""
+def write_plate(made, names, path, gap=10.0, bed=200.0):
+    """Lay parts out on one bed, each standing on it, in rows no wider
+    than `bed`, the group centred, and write them as one .3mf with every
+    part named."""
     import zipfile
     from build123d import Pos
-    placed, x = [], 0.0
+    placed, x, y, row_d, width = [], 0.0, 0.0, 0.0, 0.0
     for i, name in enumerate(names):
         part = made[name]
         bb = part.bounding_box()
+        w, d = bb.max.X - bb.min.X, bb.max.Y - bb.min.Y
+        if x > 0 and x + w > bed:
+            x, y, row_d = 0.0, y + row_d + gap, 0.0
         placed.append((f'{name}-{i + 1}' if names.count(name) > 1 else name,
-                       Pos(x - bb.min.X, -(bb.min.Y + bb.max.Y) / 2, -bb.min.Z) * part))
-        x += bb.max.X - bb.min.X + gap
-    width = x - gap
+                       Pos(x - bb.min.X, -(y + d) - bb.min.Y, -bb.min.Z) * part))
+        x += w + gap
+        row_d = max(row_d, d)
+        width = max(width, x - gap)
+    depth = y + row_d
+    centre = Pos(-width / 2, depth / 2, 0)
     # Written by hand rather than through build123d's Mesher, whose check
     # refuses the body's mesh outright; every slicer opens this plain form.
     objects, items = [], []
     for n, (label, part) in enumerate(placed, start=1):
-        verts, tris = (Pos(-width / 2, 0, 0) * part).tessellate(0.01, 0.1)
-        vx = ''.join(f'<vertex x="{v.X:.4f}" y="{v.Y:.4f}" z="{v.Z:.4f}"/>' for v in verts)
-        tx = ''.join(f'<triangle v1="{a}" v2="{b}" v3="{c}"/>' for a, b, c in tris)
+        verts, tris = (centre * part).tessellate(0.01, 0.1)
+        # Each face comes back with its own copy of the points on its edges;
+        # welded, the faces share them and the mesh is closed, which is what a
+        # slicer checks before it will print without a repair.
+        index, points, remap = {}, [], []
+        for v in verts:
+            key = (round(v.X, 4), round(v.Y, 4), round(v.Z, 4))
+            if key not in index:
+                index[key] = len(points)
+                points.append(key)
+            remap.append(index[key])
+        faces = [(remap[a], remap[b], remap[c]) for a, b, c in tris]
+        faces = [f for f in faces if len(set(f)) == 3]
+        vx = ''.join(f'<vertex x="{a:.4f}" y="{b:.4f}" z="{c:.4f}"/>' for a, b, c in points)
+        tx = ''.join(f'<triangle v1="{a}" v2="{b}" v3="{c}"/>' for a, b, c in faces)
         objects.append(f'<object id="{n}" name="{label}" type="model"><mesh>'
                        f'<vertices>{vx}</vertices><triangles>{tx}</triangles></mesh></object>')
         items.append(f'<item objectid="{n}"/>')
