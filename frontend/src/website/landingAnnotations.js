@@ -117,13 +117,23 @@ export const ANNOTATIONS = {
       srcSet: '/screenshots/owner-dashboard-dark-v2-480w.webp 480w, /screenshots/owner-dashboard-dark-v2@2x.webp 780w',
       alt: 'The Copper Finch’s venue dashboard: the flocks with it in their vote, and the events showing on its verified card.',
     },
-    caption: 'A venue owner’s dashboard.',
+    // No caption: the section's heading already names it.
     notes: [
       {
         side: 'right', text: 'Add events, shown once verified', kind: 'box', box: [3.08, 23.1, 96.92, 29.38], y: 21,
         dot: [80, 26.2], avoid: [[35.9, 25.36, 64.62, 27.01]],
       },
       { side: 'right', text: 'Flocks with you in their vote', kind: 'text', box: [6.41, 32.7, 51.67, 33.95], y: 37, dot: [57, 33.33] },
+      // The two status chips, Confirmed and Considering you, boxed together.
+      {
+        side: 'right', text: 'Confirmed, or still deciding', kind: 'box', box: [64.74, 42.3, 91.41, 53.73],
+        dot: [57.5, 48], avoid: [[72.56, 42.3, 91.28, 45.38], [64.74, 50.53, 91.41, 53.73]],
+      },
+      // The pencil and the bin on the first event.
+      {
+        side: 'right', text: 'Edit or remove an event', kind: 'box', box: [78.33, 71.45, 89.49, 72.87],
+        dot: [72.8, 72.16], avoid: [[78.33, 71.45, 89.49, 72.87], [8.72, 70.79, 25.64, 72.27]],
+      },
     ],
   },
 };

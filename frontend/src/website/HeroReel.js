@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import PhoneDevice from './PhoneDevice';
 
 /* The hero's reel: real screens of the web app (and the Flux sensor's own
    screen) drifting past under the headline, the way you would flick through
@@ -66,7 +67,6 @@ function Screen({ shot, first, copy }) {
    laid over the badge, and the screen is the capture reelShots.js names, set
    into the photo's glass; the turned photograph carries the same capture,
    set into its glass in perspective when it was made. */
-const RIM = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
 const FLUX_SIZES = '(min-width: 1100px) 437px, (min-width: 600px) 380px, 320px';
 
 function Device({ landscape, children }) {
@@ -95,27 +95,7 @@ function Device({ landscape, children }) {
       </div>
     );
   }
-  return (
-    <div className="lp-reel-device">
-      <span className="lp-reel-rim" aria-hidden="true">
-        {RIM.map((k) => <i key={k} style={{ '--k': k }} />)}
-      </span>
-      {/* The front (frame and glass) is a layer of its own, a pixel in front
-          of the rim and after it in the page, so the rim stays behind the
-          screen even where a browser draws the device flat and paints the
-          rim's positioned slices over the glass. */}
-      <div className="lp-reel-front">
-        <div className="lp-reel-glass">
-          <div className="lp-reel-status" aria-hidden="true">
-            <span>7:15</span>
-            <i className="lp-reel-island" />
-            <i className="lp-reel-battery" />
-          </div>
-          {children}
-        </div>
-      </div>
-    </div>
-  );
+  return <PhoneDevice rim>{children}</PhoneDevice>;
 }
 
 /* The devices are solid in 3D. Under a mouse the phone you are over tilts

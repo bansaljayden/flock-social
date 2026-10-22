@@ -1,4 +1,5 @@
 import React from 'react';
+import { PhoneStatus } from './PhoneDevice';
 
 /* A capture of the app with its parts named, the way a field guide labels a
    plate (2026-10-21: "put the screenshot in the middle and draw arrows to
@@ -80,6 +81,12 @@ export default function AnnotatedShot({ id, layout = 'center', shot, notes, capt
     <figure className={`lp-plate lp-anno lp-anno-${layout}${className ? ` ${className}` : ''}`} style={style}>
       <div className="lp-anno-stage">
         <div className="lp-anno-phone">
+          {/* The site's drawn phone (PhoneDevice.js): its frame, glass and
+              status row sit outside the capture's box, so the capture keeps
+              the exact box every leader and number is measured on. */}
+          <div className="lp-anno-device" aria-hidden="true">
+            <div className="lp-anno-glass"><PhoneStatus /></div>
+          </div>
           <img
             className="lp-shot"
             src={shot.src}

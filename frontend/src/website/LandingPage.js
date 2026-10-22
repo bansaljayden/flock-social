@@ -887,9 +887,10 @@ export default function LandingPage() {
               </a>
             </div>
           </div>
-          {/* The dashboard with two of its parts named: Create Event, and
-              the Flocks With You in Their Vote panel. Events show on the card
-              only for a verified venue, and the note says so. */}
+          {/* The dashboard with four of its parts named: Create Event, the
+              Flocks With You in Their Vote panel, each flock's status chip,
+              and an event's edit and remove buttons. Events show on the card
+              only for a verified venue, and the first note says so. */}
           <AnnotatedShot id="venue" {...ANNOTATIONS.venue} />
         </div>
       </section>

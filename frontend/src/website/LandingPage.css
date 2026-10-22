@@ -1826,9 +1826,10 @@ html:has(.lp) body { overflow-x: clip; }
   .lp-beat-row > .lp-plate.lp-anno { --anno-scale: 1.3; }
 }
 
-/* A plate: a capture of the web app printed flat on the page, with its
-   caption under it. No shadow and no device frame (the "printed plates" rule in
-   landingPageClaims.test.js); the screen's own rounded corners are the edge.
+/* A plate: a capture of the web app on the page, with its caption under it.
+   No shadow (the "printed plates" rule in landingPageClaims.test.js). Since
+   2026-10-22 every capture sits in the site's drawn phone, the hero reel's
+   frame, glass and status row (PhoneDevice.js), drawn flat.
    On a phone every plate is centred, as wide as the screen allows beside a
    caption; from a tablet up it is 200px in its column. */
 .lp-plate { margin: 22px auto 0; width: min(260px, 70vw); }
@@ -1836,6 +1837,11 @@ html:has(.lp) body { overflow-x: clip; }
   .lp-plate { margin: 18px 0 0; width: 200px; }
 }
 .lp-plate .lp-shot { display: block; width: 100%; height: auto; border-radius: 20px; }
+/* The phone is the plate's width; --reel-w, the width every part of the
+   reel's phone is a share of, is that width in container units. */
+.lp-phone { container-type: inline-size; }
+.lp-phone > .lp-reel-device { --reel-w: 100cqw; }
+.lp-phone .lp-shot { border: 0; border-radius: 0; background: var(--navy-deep); }
 .lp-fig-cap { margin-top: 10px; font-size: 13.5px; line-height: 1.45; color: var(--ink-3); }
 .lp-friday-more { margin-top: clamp(28px, 4vw, 40px); font-size: 16px; color: var(--ink-2); text-align: center; }
 .lp-friday-more a { color: var(--steel); font-weight: 600; text-underline-offset: 3px; }
@@ -1853,10 +1859,42 @@ html:has(.lp) body { overflow-x: clip; }
 @media (min-width: 1100px) {
   .lp-anno { --anno-scale: 1.3; }
 }
-.lp-plate.lp-anno { width: auto; margin: clamp(26px, 4vw, 40px) 0 0; }
+/* flow-root keeps the room made above the phone (below) from collapsing into
+   the figure's own top margin. */
+.lp-plate.lp-anno { width: auto; margin: clamp(26px, 4vw, 40px) 0 0; display: flow-root; }
 .lp-anno-stage { position: relative; }
-.lp-anno-phone { position: relative; width: min(260px, 70vw); margin: 0 auto; }
-.lp-anno-phone .lp-shot { display: block; width: 100%; height: auto; border-radius: 20px; }
+/* The capture sits in the site's drawn phone (PhoneDevice.js), drawn around
+   the outside of the capture so the capture keeps the box every leader and
+   number is measured on: a frame 3.8% of the capture's width at the sides and
+   below, and the frame plus the status row, 16.7%, above. --reel-w is the
+   whole phone's width, the capture's plus two frames, which every part of the
+   reel's phone is a share of. The phone leaves that room above and below. */
+.lp-anno-phone {
+  position: relative;
+  width: min(260px, 70vw);
+  margin: calc(min(260px, 70vw) * 0.167) auto calc(min(260px, 70vw) * 0.038);
+  container-type: inline-size;
+}
+.lp-anno-device {
+  --reel-w: 107.6cqw;
+  position: absolute;
+  inset: -16.7cqw -3.8cqw -3.8cqw;
+  box-sizing: border-box;
+  padding: 3.8cqw;
+  border-radius: 18.3cqw;
+  background: var(--phone-frame);
+  border: 1px solid var(--edge-cream);
+}
+.lp-anno-glass { height: 100%; overflow: hidden; border-radius: 14.5cqw; background: var(--phone-glass); }
+.lp-anno-phone .lp-shot {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 0;
+  border-radius: 0 0 14.5cqw 14.5cqw;
+  background: var(--navy-deep);
+}
 .lp-anno-lines { display: none; }
 /* Placed beside its element in landingAnnotations.js, clear of its text. */
 .lp-anno-dot {
@@ -1912,6 +1950,9 @@ html:has(.lp) body { overflow-x: clip; }
     width: calc(240 / var(--anno-w) * 100%);
   }
   .lp-anno-stage { aspect-ratio: var(--anno-w) / 519.38; }
+  /* The room above and below the drawn phone: 16.7% and 3.8% of the phone's
+     240 units, in percent of the stage's width. */
+  .lp-anno-stage { margin: calc(40.08 / var(--anno-w) * 100%) 0 calc(9.12 / var(--anno-w) * 100%); }
   .lp-anno-phone {
     position: absolute;
     top: 0;

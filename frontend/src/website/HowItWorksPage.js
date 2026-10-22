@@ -4,6 +4,7 @@ import './LandingPage.css';
 import './HowItWorks.css';
 import SiteFooter from './SiteFooter';
 import SiteNav, { useSiteMenu } from './SiteNav';
+import PhoneDevice from './PhoneDevice';
 
 // /how-it-works: one plan from the first invite to the bill, then the venue
 // side and the four AIs, with the app's three-minute video at the top. Built on the
@@ -193,24 +194,28 @@ const STEPS = [
 const AIS = [
   { name: 'Starling', what: 'The crowd forecast. It’s 800 small decision trees, and we tested it on three cities it never trained on.' },
   { name: 'Birdie', what: 'Built on Google’s Gemini. Ask it where to go and it suggests places that fit the group. It checks with you before it does anything.' },
-  { name: 'Owl', what: 'A small neural network that counts people from body heat, on the Raspberry Pi inside Flux. Only the count leaves the box. So far it’s been tested on research footage, not in a real venue.' },
+  { name: 'Owl', what: 'A small neural network that counts people from body heat, on the Raspberry Pi inside Flux. Only the count leaves the box. So far it’s been tested on research footage.' },
   { name: 'Roost’s advisor', what: 'Answers a venue owner’s questions in plain sentences. The model can’t type a single digit, so every number in an answer is filled in from the venue’s measured data.' },
 ];
 
-// A plate, printed flat beside its step: the landing page's .lp-plate.
+// A plate beside its step, the capture in the site's drawn phone.
 function Shot({ shot }) {
   if (!shot) return null;
   return (
     <figure className="lp-plate hw-shot">
-      <img
-        className="lp-shot"
-        src={shot.src}
-        srcSet={shot.srcSet}
-        sizes="(min-width: 860px) 240px, (min-width: 760px) 200px, min(260px, 70vw)"
-        width="390" height="844"
-        loading="lazy" decoding="async"
-        alt={shot.alt}
-      />
+      <div className="lp-phone">
+        <PhoneDevice>
+          <img
+            className="lp-shot"
+            src={shot.src}
+            srcSet={shot.srcSet}
+            sizes="(min-width: 860px) 224px, (min-width: 760px) 186px, min(242px, 65vw)"
+            width="390" height="844"
+            loading="lazy" decoding="async"
+            alt={shot.alt}
+          />
+        </PhoneDevice>
+      </div>
       {shot.caption ? <figcaption className="lp-fig-cap">{shot.caption}</figcaption> : null}
     </figure>
   );
@@ -329,15 +334,19 @@ export default function HowItWorksPage() {
               </p>
             </div>
             <figure className="lp-plate hw-venues-plate">
-              <img
-                className="lp-shot"
-                src="/screenshots/venue-card-events-dark-v2@2x.webp"
-                srcSet="/screenshots/venue-card-events-dark-v2-480w.webp 480w, /screenshots/venue-card-events-dark-v2@2x.webp 780w"
-                sizes="(min-width: 860px) 240px, (min-width: 760px) 200px, min(260px, 70vw)"
-                width="390" height="844"
-                loading="lazy" decoding="async"
-                alt="A verified venue’s card in Flock with three upcoming events under Happening here."
-              />
+              <div className="lp-phone">
+                <PhoneDevice>
+                  <img
+                    className="lp-shot"
+                    src="/screenshots/venue-card-events-dark-v2@2x.webp"
+                    srcSet="/screenshots/venue-card-events-dark-v2-480w.webp 480w, /screenshots/venue-card-events-dark-v2@2x.webp 780w"
+                    sizes="(min-width: 860px) 224px, (min-width: 760px) 186px, min(242px, 65vw)"
+                    width="390" height="844"
+                    loading="lazy" decoding="async"
+                    alt="A verified venue’s card in Flock with three upcoming events under Happening here."
+                  />
+                </PhoneDevice>
+              </div>
               {/* No caption (the maintainer, 2026-10-21); the alt names it. */}
             </figure>
           </div>
