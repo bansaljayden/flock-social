@@ -165,7 +165,7 @@ const PAGE_BLOCKS = {
     ["p", "Saturday morning"],
     ["h3", "Asad paid, so Flock splits it."],
     ["p", "$142.60 with the tip comes to $28.52 each."],
-    ["p", "Every step, and the two-minute pitch video, is on How it works."],
+    ["p", "Every step, and a three-minute video of the app, is on How it works."],
     ["h2", "If something goes wrong, two taps tell your people where you are."],
     ["p", "Sharing your live location with the flock is optional, and off until you turn it on. SOS is a separate button."],
     ["h3", "Who hears"],

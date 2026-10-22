@@ -6,7 +6,7 @@ import SiteFooter from './SiteFooter';
 import SiteNav, { useSiteMenu } from './SiteNav';
 
 // /how-it-works: one plan from the first invite to the bill, then the venue
-// side and the four AIs, with the Stevens pitch video at the top. Built on the
+// side and the four AIs, with the app's three-minute video at the top. Built on the
 // landing page's stylesheet (.lp tokens, Fraunces display, Hanken body) like
 // /research, so it reads as the same site.
 //
@@ -20,25 +20,27 @@ import SiteNav, { useSiteMenu } from './SiteNav';
 // The four AI lines began as the video's own description and were rewritten
 // in plain sentences on 2026-10-21 (the maintainer's ask), with the same facts.
 
-const VIDEO_ID = 'Kdt9FI9CQZo';
-const VIDEO_TITLE = 'Flock: four kinds of AI so the plan actually happens';
+// The app's three-minute video (2:57), the Congressional App Challenge entry.
+const VIDEO_ID = 'zpujGx88coU';
+const VIDEO_TITLE = 'Flock: Nurturing friendship, one flock at a time';
 const CONTACT_EMAIL = 'social@flockcorp.com';
 
-// The video's own chapter list, from its YouTube description.
+// The video's own chapter list, from its YouTube description; each button
+// starts the player at its time.
 const CHAPTERS = [
-  { t: 0, label: 'The problem' },
-  { t: 20, label: 'How Flock works' },
-  { t: 30, label: 'Starling: the crowd forecast' },
-  { t: 53, label: 'Owl: counting people on the Flux sensor' },
-  { t: 68, label: 'Birdie and Roost' },
-  { t: 80, label: 'Who it’s for' },
-  { t: 92, label: 'How it makes money' },
-  { t: 106, label: 'What’s next' },
+  { t: 0, label: 'The problem, and who I am' },
+  { t: 20, label: 'Making a plan with friends' },
+  { t: 46, label: 'Where to go: the crowd forecast' },
+  { t: 65, label: 'Voting, the budget and the bill' },
+  { t: 91, label: 'How it’s built, and how the budget stays private' },
+  { t: 115, label: 'The forecast data and model' },
+  { t: 139, label: 'The iPhone app and the venue side' },
+  { t: 159, label: 'Wrap-up' },
 ];
 
 const stamp = (t) => `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
 
-const DESCRIPTION = 'How a plan comes together in Flock, from the first invite to splitting the bill, plus the two-minute pitch video.';
+const DESCRIPTION = 'How a plan comes together in Flock, from the first invite to splitting the bill, plus a three-minute video of the app.';
 
 /* The video is a poster until someone asks for it. A YouTube embed loads about
    a megabyte of player script and opens connections to Google the moment it
@@ -75,10 +77,10 @@ function PitchVideo() {
             <picture>
               <source
                 type="image/webp"
-                srcSet="/how/pitch-poster-640.webp 640w, /how/pitch-poster-1280.webp 1280w"
+                srcSet="/how/video-poster-640.webp 640w, /how/video-poster-1280.webp 1280w"
                 sizes="(min-width: 1100px) 860px, calc(100vw - 40px)"
               />
-              <img src="/how/pitch-poster-960.jpg" width="1280" height="720" alt="" fetchPriority="high" />
+              <img src="/how/video-poster-960.jpg" width="1280" height="720" alt="" fetchPriority="high" />
             </picture>
             <span className="hw-play" aria-hidden="true">
               <svg viewBox="0 0 24 24" width="28" height="28"><path d="M8 5.5v13l11-6.5z" fill="currentColor" /></svg>

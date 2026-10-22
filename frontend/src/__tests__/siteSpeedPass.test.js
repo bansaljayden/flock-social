@@ -129,8 +129,8 @@ describe('every width-described image candidate is the width it claims', () => {
   const sets = PAGES.flatMap((rel) => [...read(rel).matchAll(/srcSet="([^"]* \d+w[^"]*)"(\s*sizes="[^"]+")?/g)]
     .map((m) => ({ rel, set: m[1], sizes: Boolean(m[2]) })));
 
-  test('the pitch video poster is one of them, so the scan is reading real markup', () => {
-    expect(sets.filter((s) => /pitch-poster/.test(s.set))).toHaveLength(1);
+  test('the video poster is one of them, so the scan is reading real markup', () => {
+    expect(sets.filter((s) => /video-poster/.test(s.set))).toHaveLength(1);
   });
 
   test('each candidate file exists and has the declared pixel width', () => {

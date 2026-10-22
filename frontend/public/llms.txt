@@ -26,8 +26,8 @@ Updated: October 21, 2026.
   the first invite to the split bill, a live crowd demo, safety, venues and
   pricing.
 - [How it works](https://www.flockcorp.com/how-it-works): Each step of a plan,
-  the four AIs inside Flock, and the two-minute pitch video, which is also on
-  YouTube at https://www.youtube.com/@flock-social2026.
+  the four AIs inside Flock, and a three-minute video of the app, which is also
+  on YouTube at https://www.youtube.com/@flock-social2026.
 - [How the AI works](https://www.flockcorp.com/ai): The four models in Flock,
   each with the figures from the pitch video: Starling, the crowd forecast;
   Owl, the people counter written for the Flux sensor; Roost's advisor, which

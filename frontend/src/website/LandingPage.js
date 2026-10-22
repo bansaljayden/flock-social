@@ -734,7 +734,7 @@ export default function LandingPage() {
             <AnnotatedShot id="bill" {...ANNOTATIONS.bill} />
           </div>
           <p className="lp-friday-more">
-            Every step, and the two-minute pitch video, is on{' '}
+            Every step, and a three-minute video of the app, is on{' '}
             <a href="/how-it-works">How it works</a>.
           </p>
         </div>
