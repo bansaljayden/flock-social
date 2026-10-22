@@ -812,6 +812,8 @@ html:has(.lp) body { overflow-x: clip; }
 
 .lp-hero .lp-lead { margin-bottom: 30px; max-width: 44ch; }
 .lp-hero-cta { display: flex; flex-wrap: wrap; gap: 12px; }
+/* On a phone the two buttons stack; full width keeps them one size. */
+@media (max-width: 480px) { .lp-hero-cta .lp-btn { flex: 1 1 100%; } }
 
 /* ---- The reel (HeroReel.js; 2026-10-21, his ask) ----
    One strip drawn twice and moved left by exactly one strip, so the loop has

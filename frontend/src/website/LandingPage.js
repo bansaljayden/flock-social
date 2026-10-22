@@ -40,6 +40,9 @@ if (typeof document !== 'undefined' && !document.querySelector('link[data-lp-fon
 // inbox (set up 2026-08-12). Outbound stays on Resend.
 const CONTACT_EMAIL = 'social@flockcorp.com';
 
+// Flock's code is public; the hero's second button opens it.
+const GITHUB_URL = 'https://github.com/bansaljayden/flock-social';
+
 
 /* The Flock mark: the actual logo, served from a 64px derivative. The nav mark
    renders at 32 CSS px and the footer one at 24, so 64 covers both at 2x;
@@ -448,9 +451,10 @@ export default function LandingPage() {
       <main id="lp-main" tabIndex={-1} {...pageInert}>
 
       {/* ---------------- hero ----------------
-          The tagline, then what Flock is for in plain words, and one action.
-          The status line under the button (browser today, iPhone app in review,
-          the DECA award) came out on 2026-10-21 at the maintainer's ask; the app's
+          The tagline, then what Flock is for in plain words, and two actions:
+          start a plan, or read the code on GitHub (a new tab, so the page
+          stays open). The status line under the buttons (browser today, iPhone
+          app in review, the DECA award) came out on 2026-10-21; the app's
           status is still on #get and the award on /about. Flat navy: the soft glow at the top of a
           dark hero is the stock generated-site hero, and nothing in a printed
           field guide glows. The phone is a plate in the margin with a caption,
@@ -480,6 +484,14 @@ export default function LandingPage() {
             </p>
             <div className="lp-hero-cta">
               <a className="lp-btn lp-btn-cream lp-btn-lg" href="/signup">Start a plan</a>
+              <a
+                className="lp-btn lp-btn-ghost lp-btn-lg"
+                href={GITHUB_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Want to know the code?
+              </a>
             </div>
           </div>
 
