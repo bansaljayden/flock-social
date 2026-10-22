@@ -143,7 +143,7 @@ const STEPS = [
       src: '/screenshots/vote-dark-v2@2x.webp',
       srcSet: '/screenshots/vote-dark-v2-480w.webp 480w, /screenshots/vote-dark-v2@2x.webp 780w',
       alt: 'Vote for a Venue: five votes cast, Pizzeria Stella ahead with three, Oh Brother Philly and Silk City with one each.',
-      caption: 'The Copper Finch is ahead.',
+      // No caption; the alt says what it shows.
     },
   },
   {
