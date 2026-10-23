@@ -145,6 +145,7 @@ import { owedOn } from './lib/billShares';
 // answer buttons for the reason owedOn is shared: see lib/budgetStatus.js.
 import { mergeBudgetUpdate } from './lib/budgetStatus';
 import { isNightOver } from './lib/planNight';
+import { tablePartyForFlockId } from './lib/tableSummaries';
 import { nestAsks, nestAskLine, NEST_ASK_CHIP, owesOnBill } from './lib/nestAsks';
 // The create screen, the one the Nest points a brand new account at, left
 // App.js on 2026-09-01 as the ninth screen of the sweep. Static for the
@@ -8083,6 +8084,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [venueDetailEvents, setVenueDetailEvents] = useState([]);
   // Group admission party size (auto-pulls from active flock, user can adjust)
   const [partySize, setPartySize] = useState(null); // null = not set, shows prompt
+  // The party every Discover surface writes its table line for (the search
+  // rows, the pins, the venue sheet; lib/tableSummaries.js): the flock a venue
+  // is being picked for, else two.
+  const tableParty = tablePartyForFlockId(flocks, pickingVenueForFlockId);
   // Reliability + Attendance
   const [showAttendanceModal, setShowAttendanceModal] = useState(false);
   const [attendanceFlockId, setAttendanceFlockId] = useState(null);
@@ -17695,7 +17700,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       setCrowdData, setCurrentScreen, setCurrentTab, setPartySize, setPaywallTrigger: openPaywall,
       setPickingVenueForCreate, setPickingVenueForDm, setPickingVenueForFlockId, setSelectedDmId,
       setSelectedFlockId, setSelectedVenueForCreate, setVenueDetailHistory, setVenueDetailReturnTo,
-      skipCrowdFetchRef, updateFlockVenue, venueDetailHistory, venueDetailReturnTo,
+      skipCrowdFetchRef, tableParty, updateFlockVenue, venueDetailHistory, venueDetailReturnTo,
     };
     // Shorthand on purpose, so the name at this call site and the parameter in
     // the module cannot drift apart. All forty of the FlockAppInner names are
@@ -20570,6 +20575,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setShowSearchResults,
     setVenueQuery,
     setVenueResults,
+    tableParty,
     userLocation,
     venueLoadError,
     venueQuery,
@@ -20671,6 +20677,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     showSearchDropdown,
     startNewDmWithUser,
     stopLocationSharing,
+    tableParty,
     toggleLocation,
     userLocation,
     venueLoadError,

@@ -46,6 +46,11 @@ import Icons from './ui/Icons';
 import { GoogleMapsMark } from './ui/GoogleCredit';
 import { crowdLabelFor } from '../lib/crowd';
 import { onVenuePhotoError } from '../lib/venuePhoto';
+// Tables at the listed venues, for the ones whose Flux sensor watches them:
+// one POST for the whole list, again each minute while it is open
+// (lib/tableSummaries.js), the words TableAvailability's.
+import { useTableSummaries } from '../lib/tableSummaries';
+import TableAvailability from './venue/TableAvailability';
 
 export default function SearchResultsOverlay({
   // Module-level helpers and components that live in App.js and are shared with
@@ -70,12 +75,18 @@ export default function SearchResultsOverlay({
   setShowSearchResults,
   setVenueQuery,
   setVenueResults,
+  // The party the table lines are written for (App.js's tableParty): the
+  // flock a venue is being picked for, else two.
+  tableParty,
   userLocation,
   venueLoadError,
   venueQuery,
   SearchInputLocal,
   venueSearching,
 }) {
+            // One ask for every listed place; most answer nothing and draw
+            // nothing. A hook, so it sits above the first line of the body.
+            const tableSummaries = useTableSummaries(budgetFilteredVenues.map((v) => v.place_id), tableParty);
             const calcDist = (vLoc) => {
               if (!userLocation || !vLoc) return null;
               const dLat = (vLoc.latitude - userLocation.lat) * Math.PI / 180;
@@ -285,6 +296,11 @@ export default function SearchResultsOverlay({
                             <div style={{ flex: 1, minWidth: 0 }}>
                               <h3 style={{ fontSize: 'var(--t-body)', fontWeight: '600', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.name}</h3>
                               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '2px 0 0', fontWeight: '500' }}>{venue.type}{venue.price ? ` • ${venue.price}` : ''}</p>
+                              {/* The table line, under the name, for a venue
+                                  whose Flux sensor answered. */}
+                              {tableSummaries[venue.place_id] && (
+                                <TableAvailability summary={tableSummaries[venue.place_id]} party={tableParty} compact style={{ marginTop: '2px' }} />
+                              )}
                             </div>
                             {venue.stars && (
                               <div style={{ display: 'flex', alignItems: 'center', gap: '3px', padding: '3px 8px', borderRadius: '8px', backgroundColor: '#FEF3C7', flexShrink: 0 }}>

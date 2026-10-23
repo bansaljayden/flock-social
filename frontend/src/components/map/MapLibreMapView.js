@@ -75,6 +75,12 @@ import { lsGet, lsSet } from '../../lib/storage';
 import { queueSync } from '../../services/userSettings';
 import { geolocationAvailable, getCurrentPosition, watchPosition, clearWatch } from '../../services/geolocation';
 import { crowdLabelFor } from '../../lib/crowd';
+// The table line under a pin's name, for a venue whose Flux sensor watches
+// its tables. Discover asks (lib/tableSummaries.js) and hands the answers in
+// as `tableSummaries`; the words are TableAvailability's, the same words the
+// search rows under the same map use.
+import { TABLE_PARTY_DEFAULT } from '../../lib/tableSummaries';
+import { tableCompactText } from '../venue/TableAvailability';
 import { loadMapEngine } from './mapEngine';
 import { scrubUrlTokens } from '../../lib/scrubUrlTokens';
 import { buildFlockStyle, satelliteStyleUrl } from './flockStyle';
@@ -589,7 +595,7 @@ function paintCrowdBuildings(map, venues, filterCategory, tinted) {
 // opens at the default view instead.
 const IP_VIEW_WAIT_MS = 1500;
 
-const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, activeVenue, setActiveVenue, getCategoryColor, pickingVenueForCreate, setPickingVenueForCreate, setSelectedVenueForCreate, setCurrentScreen, openVenueDetail, flockMemberLocations, calcDistance, colorsDark, colorsLight, resolveVenuePhoto, NO_LOCATION_VIEW, ownerPlaceId = null, initialCenter = null, followUser = true, locationAllowed = true, mapVisible = true, ipStartView = false, onIpStartView = null }) => {
+const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, activeVenue, setActiveVenue, getCategoryColor, pickingVenueForCreate, setPickingVenueForCreate, setSelectedVenueForCreate, setCurrentScreen, openVenueDetail, flockMemberLocations, calcDistance, colorsDark, colorsLight, resolveVenuePhoto, NO_LOCATION_VIEW, ownerPlaceId = null, initialCenter = null, followUser = true, locationAllowed = true, mapVisible = true, ipStartView = false, onIpStartView = null, tableSummaries = null, tableParty = TABLE_PARTY_DEFAULT }) => {
   const mapRef = useRef(null);
   const mapRootRef = useRef(null);   // outermost node — see the attribution note in init
   const mapInstanceRef = useRef(null);
@@ -1570,6 +1576,36 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     return () => { if (watchIdRef.current !== null) clearWatch(watchIdRef.current); };
   }, [mapVisible, mapReady, followUser, locationAllowed]);
 
+  // ---------- table lines on the pins ----------
+  // place_id -> the compact table line, for the venues whose sensor answered.
+  // A ref, so the marker rebuild below can dress a fresh pin without taking
+  // the answers as a dependency and rebuilding every pin once a minute; the
+  // effect after the rebuild repaints the standing pins when the answers
+  // change. textContent, never innerHTML: the words are the app's own, but
+  // the label is an innerHTML sink and this keeps it one sink, not two.
+  const tableLinesRef = useRef(new Map());
+  const paintTableLine = useCallback((el, venue) => {
+    const label = el.querySelector('.mlb-marker-label');
+    if (!label) return;
+    const text = tableLinesRef.current.get(venue.place_id) || null;
+    let line = label.querySelector('.mlb-label-tables');
+    if (!text) {
+      if (line) line.remove();
+    } else {
+      if (!line) {
+        line = document.createElement('span');
+        line.className = 'mlb-label-tables';
+        label.appendChild(line);
+      }
+      line.textContent = text;
+    }
+    // The pin's accessible name carries the line too, after the name and the
+    // crowd figure buildMarkerEl gives it, because the line is now part of
+    // what the pin is showing.
+    const base = Number.isFinite(venue.crowd) ? `${venue.name}, crowd ${Math.round(venue.crowd)}` : `${venue.name}`;
+    el.setAttribute('aria-label', text ? `${base}, ${text}` : base);
+  }, []);
+
   // ---------- venue markers ----------
   useEffect(() => {
     const map = mapInstanceRef.current;
@@ -1600,6 +1636,7 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
 
       const isActive = activeVenue?.id === v.id;
       const el = buildMarkerEl(v, isActive);
+      paintTableLine(el, v);
       if (ownerPlaceId && v.place_id === ownerPlaceId) {
         // The dashboard map marks the owner's own pin with a permanent chip
         // so they can spot themselves without zooming to the label tier.
@@ -1681,6 +1718,21 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       });
     } catch { /* container not measured yet — the next result set re-fits */ }
   }, [venues, mapReady, buildMarkerEl, ownerPlaceId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The answers changed (a minute passed, a venue's sensor answered, Discover
+  // started picking for a different flock): rewrite the lines and repaint the
+  // pins already standing. No marker is rebuilt for it.
+  useEffect(() => {
+    const lines = new Map();
+    if (tableSummaries && typeof tableSummaries === 'object') {
+      Object.keys(tableSummaries).forEach((placeId) => {
+        const text = tableCompactText(tableSummaries[placeId], tableParty);
+        if (text) lines.set(placeId, text);
+      });
+    }
+    tableLinesRef.current = lines;
+    markersRef.current.forEach(({ el, venue }) => paintTableLine(el, venue));
+  }, [tableSummaries, tableParty, paintTableLine]);
 
   // ---------- active venue highlight (only resize the 2 changed markers) ----------
   useEffect(() => {
@@ -2072,6 +2124,22 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
           display: inline-flex;
           align-items: center;
           gap: 3px;
+        }
+        /* The table line, for a pin whose venue's Flux sensor answered: its
+           own row inside the same plate, under the name and the rating, so
+           it appears and disappears with them at the label tier. One
+           truncating row, in the plate's own width. */
+        .mlb-marker-label { flex-wrap: wrap; row-gap: 2px; }
+        .mlb-label-tables {
+          flex-basis: 100%;
+          min-width: 0;
+          max-width: 166px;
+          font-size: 11px;
+          font-weight: 600;
+          color: #cbd5e1;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
 
         /* The owner's own pin on the dashboard map: a chip that is never

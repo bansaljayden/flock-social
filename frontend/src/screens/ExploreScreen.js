@@ -89,6 +89,12 @@ import Icons from '../components/ui/Icons';
 import { GoogleMapsMark } from '../components/ui/GoogleCredit';
 import { onVenuePhotoError } from '../lib/venuePhoto';
 import { eventDistanceKm, formatEventDistance, eventTimeZoneLabel } from '../lib/eventWhereWhen';
+// Tables at the venues on the map and in the search dropdown, for the ones
+// whose Flux sensor watches them: one POST for all of them, again each minute
+// while Discover is on screen (lib/tableSummaries.js), the words
+// TableAvailability's. The pins get the same answers through MapLibreMapView.
+import { useTableSummaries } from '../lib/tableSummaries';
+import TableAvailability from '../components/venue/TableAvailability';
 import { getEventDetails } from '../services/api';
 
 export default function ExploreScreen({
@@ -180,6 +186,9 @@ export default function ExploreScreen({
   showSearchDropdown,
   startNewDmWithUser,
   stopLocationSharing,
+  // The party the table lines are written for (App.js's tableParty): the
+  // flock a venue is being picked for, else two.
+  tableParty,
   toggleLocation,
   userLocation,
   venueLoadError,
@@ -226,6 +235,15 @@ export default function ExploreScreen({
     const t = setTimeout(() => setEventsDrawerHeld(false), 350);
     return () => clearTimeout(t);
   }, [showEventsView, eventsDrawerHeld]);
+
+  // One ask for every place Discover is showing, the pins and the dropdown
+  // rows together. Parked behind another tab it asks nothing, the same gate
+  // the map's own marker work keeps.
+  const tableSummaries = useTableSummaries(
+    [...allVenues.map((v) => v.place_id), ...venueResults.map((v) => v.place_id)],
+    tableParty,
+    isExploreVisible,
+  );
 
   return (
     <div key="explore-screen-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--pill-bg)' }}>
@@ -357,6 +375,11 @@ export default function ExploreScreen({
                   )}
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <p style={{ fontWeight: '600', fontSize: 'var(--t-label)', color: colors.navy, margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{venue.name}</p>
+                    {/* The table line, under the name, for a venue whose Flux
+                        sensor answered. */}
+                    {tableSummaries[venue.place_id] && (
+                      <TableAvailability summary={tableSummaries[venue.place_id]} party={tableParty} compact style={{ marginTop: '2px' }} />
+                    )}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px', flexWrap: 'wrap' }}>
                       {venue.rating && <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy }}>{venue.rating} {Icons.starFilled('currentColor', 12)}</span>}
                       {venue.user_ratings_total > 0 && <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)' }}>({venue.user_ratings_total})</span>}
@@ -420,6 +443,8 @@ export default function ExploreScreen({
           calcDistance={calcDistance}
           locationAllowed={locationEnabled}
           mapVisible={isExploreVisible}
+          tableSummaries={tableSummaries}
+          tableParty={tableParty}
         />
 
         {/* Live location sharing indicator on map */}

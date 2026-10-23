@@ -83,6 +83,11 @@ import Icons from '../ui/Icons';
 import { GoogleMapsMark } from '../ui/GoogleCredit';
 import { crowdLabelFor, cardSourceLine, isPatternOnlySource } from '../../lib/crowd';
 import { submitVenueFeedback } from '../../services/api';
+// Tables at this venue, for venues whose Flux sensor watches them. The read
+// is lib/tableSummaries.js's (one GET a minute while the card is open, its
+// 404 swallowed); the words are TableAvailability's.
+import { useTableSummary } from '../../lib/tableSummaries';
+import TableAvailability from './TableAvailability';
 // REACT_APP_PURCHASES=off (the App Store build): a forecast the server
 // withholds is stated as a limit, with nothing offered and no Pro wording.
 // lib/purchasesBuild.js has the rules.
@@ -480,6 +485,9 @@ export default function ConsumerVenueCard({
   setVenueDetailHistory,
   setVenueDetailReturnTo,
   skipCrowdFetchRef,
+  // The party Discover is browsing for (App.js's tableParty): the flock a
+  // venue is being picked for, else two.
+  tableParty,
   updateFlockVenue,
   venueDetailHistory,
   venueDetailReturnTo,
@@ -487,6 +495,13 @@ export default function ConsumerVenueCard({
   // consumer card is what you get when nobody asks for the owner variant.
   venueOwnerView = false,
 }) {
+    // THE TABLE SUMMARY, read before the guard because a hook has to run on
+    // every render. The party is the flock's when a venue is being picked for
+    // one, else the number the person set with the Group chips, else two: a
+    // card reading "Group: 5" over "Table for 2" would be the card arguing
+    // with itself.
+    const tableLineParty = pickingVenueForFlockId ? tableParty : (partySize || tableParty);
+    const tableSummary = useTableSummary(activeVenue?.place_id || null, tableLineParty);
     if (!activeVenue) return null;
     return (
           <m.div
@@ -1308,6 +1323,23 @@ export default function ConsumerVenueCard({
               </m.div>
                 );
               })()}
+
+              {/* Tables, for a venue whose Flux sensor watches them. Its own
+                  card above Live Occupancy rather than a row inside it: that
+                  card needs a current room reading and this needs a table
+                  summary, and a venue can have either without the other.
+                  Hidden entirely, not blank, for the venues with no summary,
+                  which is most of them. */}
+              {tableSummary && (
+                <m.div
+                  initial={{ opacity: 0, y: 14 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 1.0, duration: 0.4, ease: 'easeOut' }}
+                  style={{ backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-default)', borderRadius: '14px', padding: '14px 16px', boxShadow: 'var(--card-shadow)', marginBottom: '8px' }}
+                >
+                  <TableAvailability summary={tableSummary} party={tableLineParty} />
+                </m.div>
+              )}
 
               {/* Live Occupancy card — only renders when a Pi sensor exists for this venue */}
               {sensorData && !sensorData.sensor_data && sensorData.recent_checkins > 0 && (

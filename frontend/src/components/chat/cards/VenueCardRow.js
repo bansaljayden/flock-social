@@ -67,6 +67,10 @@ import React, { useState } from 'react';
 import { CardShell } from './SystemRow';
 import Icons from '../../ui/Icons';
 import { crowdLabelFor, crowdArcFor } from '../../../lib/crowd';
+/* The table line, for a shared place whose Flux sensor watches its tables.
+   The summary rides on the row like the vote does (`tables`, stamped by the
+   screen's dressing pass); this file draws it and asks nothing. */
+import TableAvailability from '../../venue/TableAvailability';
 import './cards.css';
 
 /* An explicit prop wins over the field on the shared row, and either can be
@@ -161,6 +165,10 @@ export default function VenueCardRow({
   placeholder = null,
   onOpen,
   onAction,
+  // The venue's table summary (lib/tableSummaries.js) and the party it was
+  // asked for. Absent for every venue without a sensor, which is most.
+  tables = null,
+  tableParty = null,
 }) {
   // Declared above the guard so the hook count is the same on every render.
   const [photoBroken, setPhotoBroken] = useState(false);
@@ -292,6 +300,19 @@ export default function VenueCardRow({
               </React.Fragment>
             ))}
           </div>
+        )}
+
+        {/* A third line, under the facts, only for a venue with a table
+            summary: one truncating row, so the 88pt card keeps its height
+            and the name and the facts keep their rows. */}
+        {tables && (
+          <TableAvailability
+            summary={tables}
+            party={tableParty}
+            compact
+            className="chat-truncate"
+            style={{ fontSize: '12px', lineHeight: '16px', marginTop: '2px' }}
+          />
         )}
       </div>
 

@@ -66,6 +66,10 @@ import useEdgeSwipeBack from '../hooks/useEdgeSwipeBack';
 import useSheetDrag from '../hooks/useSheetDrag';
 import { hapticTap } from '../services/haptics';
 import { localeDate, localeDateTime } from '../lib/localeFormat';
+// Tables at the plan's venue, for venues whose Flux sensor watches them
+// (lib/tableSummaries.js reads, TableAvailability writes the words).
+import { tablePartyFor, useTableSummary } from '../lib/tableSummaries';
+import TableAvailability from '../components/venue/TableAvailability';
 
 // The time editor's day chips are relative words (Tonight, Tomorrow, This
 // Weekend, Next Week). A plan that sits on none of those days, a Saturday
@@ -178,6 +182,12 @@ export default function FlockDetail({
     // (hooks/useSheetDrag.js), with the close its backdrop and Escape use.
     const timeSheetDrag = useSheetDrag(() => setShowTimeEditor(false));
     const flock = getSelectedFlock();
+    // The table line at the plan's venue, for everyone going. Live only:
+    // "Table for 5 likely free at 8:00" needs the forecast that lands with
+    // plan item I3, and until then the line says what the sensor sees now.
+    // Before the missing-plan return, as the hooks above are.
+    const tableParty = tablePartyFor(flock);
+    const tableSummary = useTableSummary(flock?.venueId || null, tableParty);
     if (!flock) return <MissingFlockPanel />;
     const acceptedMembers = (flock.members || []).filter(m => typeof m === 'object' ? (m.status === 'accepted' || !m.status) : true);
     // Guests are merged for DISPLAY only. flock.guests stays its own array
@@ -451,6 +461,11 @@ export default function FlockDetail({
                   <p style={{ color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', margin: '0 0 12px', display: 'flex', alignItems: 'flex-start', gap: '5px' }}>
                     {Icons.mapPin(colors.textSecondary, 13)} <span style={{ lineHeight: '1.3' }}>{flock.venueAddress}</span>
                   </p>
+                )}
+                {/* Tables, when the venue's Flux sensor watches them. Nothing
+                    at all for the venues it does not, which is most. */}
+                {tableSummary && (
+                  <TableAvailability summary={tableSummary} party={tableParty} style={{ marginBottom: '12px' }} />
                 )}
                 {/* Under the address, because this is where a guest works out
                     how to get there. A tap opens the same maps chooser as

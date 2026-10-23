@@ -193,6 +193,11 @@ import { VENUE_PHOTO_PLACEHOLDER } from '../lib/venuePhoto';
 import { isEstimateBill, isQuarantinedBill, owedOn, shellEstimate } from '../lib/billShares';
 import { mergeBudgetUpdate, budgetCrowdSize } from '../lib/budgetStatus';
 import { lsSet } from '../lib/storage';
+/* Tables at the places this flock is weighing: one ask for the vote rows and
+   the venue cards together (lib/tableSummaries.js), the line itself
+   TableAvailability's. */
+import { flockTablePlaceIds, tablePartyFor, useTableSummaries } from '../lib/tableSummaries';
+import TableAvailability from '../components/venue/TableAvailability';
 /* "On my way" arithmetic and bounds. The ETA is a labelled estimate by
    design; that file's header says why there is no routing call behind it. */
 import { MAX_SEATS, etaMinutes, formatDistance, formatEta } from '../lib/travel';
@@ -1423,6 +1428,11 @@ export default function ChatDetail({
     const billRemindingRef = React.useRef(null);
 
     const flock = getSelectedFlock();
+    // THE TABLE SUMMARIES for the vote rows and the venue cards, one ask for
+    // all of them, written for everyone going. Before the missing-flock
+    // return, as every hook here is; with no flock there is nothing to ask.
+    const tableParty = tablePartyFor(flock);
+    const tableSummaries = useTableSummaries(flockTablePlaceIds(flock), tableParty);
     // Every line below reads off `flock` unguarded, starting with flock.name in
     // the header. An empty flock list here is a TypeError during render, which
     // React answers by unmounting the entire app.
@@ -2048,8 +2058,12 @@ export default function ChatDetail({
       const carded1 = m.reply_to
         ? { ...carded0, reply_to: { ...m.reply_to, text: messagePreview({ ...m.reply_to, hadContent: true }) } }
         : carded0;
-      /* See voteOnCard above for why this rides on the row. */
-      const carded = isCard ? { ...carded1, vote: voteOnCard(m.venue_data) } : carded1;
+      /* See voteOnCard above for why this rides on the row. The table summary
+         rides the same way and for the same reason: it changes once a minute
+         on the cache's clock, which moves nothing else on the row. */
+      const carded = isCard
+        ? { ...carded1, vote: voteOnCard(m.venue_data), tables: tableSummaries[m.venue_data.place_id] || null }
+        : carded1;
       /* AND ON THE SEARCH PATH TOO. The highlight below rebuilds `text` from
          the row's own copy, so a query the caption matched ("check out") put
          that caption straight back under the card the line above had just
@@ -2592,6 +2606,8 @@ export default function ChatDetail({
             surface="flock"
             actionActive={voted}
             count={m.vote ? m.vote.count : null}
+            tables={m.tables || null}
+            tableParty={tableParty}
             /* The card is presentational and has no BASE_URL, so the path
                resolver is handed in, and so is the placeholder the rest of the
                app swaps to on an error. Both used to be withheld here on the
@@ -4512,6 +4528,12 @@ export default function ChatDetail({
                                 {isAssigned && <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'white', backgroundColor: colors.navyBg, padding: '1px 6px', borderRadius: '6px', flexShrink: 0 }}>Assigned</span>}
                                 {(isLeading || isTiedTop) && <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.steel, backgroundColor: `${colors.steel}15`, padding: '1px 6px', borderRadius: '6px', flexShrink: 0 }}>{isLeading ? 'Leading' : 'Tied'}</span>}
                               </div>
+                              {/* The table line, under the name, for a venue
+                                  whose Flux sensor answered; a legacy vote
+                                  with no place id has nothing to ask about. */}
+                              {v.place_id && tableSummaries[v.place_id] && (
+                                <TableAvailability summary={tableSummaries[v.place_id]} party={tableParty} compact style={{ marginTop: '1px' }} />
+                              )}
                               <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '1px 0 0' }}>{(() => {
                                 const guests = v.guestCount || 0;
                                 const names = v.voters.join(', ');
