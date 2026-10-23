@@ -27,8 +27,8 @@ const YOUTUBE_URL = 'https://www.youtube.com/@flock-social2026';
 const DESCRIPTION = 'Who makes Flock, what it holds to, where it stands, and how to reach the people behind it.';
 
 const PEOPLE = [
-  { name: 'Jayden Bansal', role: 'Solo technical founder & CEO', line: 'An 11th grader in Pennsylvania who started Flock and builds all of it, from the app to the Flux sensor.' },
-  { name: 'Asad Ali', role: 'Growth & competitions lead', line: 'On Flock since late August 2026.' },
+  { name: 'Jayden Bansal', role: 'Solo Technical Founder & CEO', line: 'An 11th grader in Pennsylvania who started Flock and builds all of it, from the app to the Flux sensor.' },
+  { name: 'Asad Ali', role: 'Growth & Competitions Lead', line: 'On Flock since late August 2026.' },
 ];
 
 // Commitments the product already keeps, each one enforced in code, which is
