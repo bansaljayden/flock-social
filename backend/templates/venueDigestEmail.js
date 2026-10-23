@@ -169,6 +169,7 @@ const SOURCE_WORDS = {
   votes: 'group votes',
   events: 'Ticketmaster',
   weather: 'weather service',
+  table_sensor: 'your table sensor',
 };
 
 function sourceWord(source) {

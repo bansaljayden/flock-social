@@ -291,7 +291,26 @@ const DIGEST_CARDS = [
   { id: 'around_you', title: 'Around you this week', tier: 'pro' },
   { id: 'listing_read_back', title: 'Your listing, read back', tier: 'pro' },
   { id: 'readings_vs_estimates', title: 'What you said vs what we estimated', tier: 'pro' },
+  // Only for a venue whose table unit recorded seatings in the week: last
+  // night at the tables, then the week's full hours, typical turn, share of
+  // seatings that waited for a server and typical time to clear. Venue wide
+  // figures only, never a table number and never a person
+  // (services/tableInsights.js buildDigestTableFacts). Absent, not refused,
+  // for every other venue.
+  { id: 'your_tables', title: 'Your tables', tier: 'pro' },
 ];
+
+// The table section's builder, required lazily for the same reason as the
+// verdict's: a build without it loses one section, not the digest.
+function tableFactsBuilder() {
+  try {
+    // eslint-disable-next-line global-require
+    return require('./tableInsights').buildDigestTableFacts;
+  } catch (err) {
+    console.warn('[VenueDigest] table section unavailable:', err.message);
+    return null;
+  }
+}
 
 // Required lazily for the same reason the fact engine is: a build without it
 // loses one card, not the whole digest.
@@ -332,6 +351,19 @@ async function buildDigestCards(advisorFacts, { userId, tier, now }) {
   cards.push(finished(aroundDef, await advisorFacts.buildAroundYou(ctx, opts)));
   cards.push(finished(listingDef, await advisorFacts.buildListingReadBack(ctx, weekFacts, opts)));
   cards.push(finished(readingsDef, await advisorFacts.buildReadingsVsServed(ctx, opts)));
+  // The table section, only when the week had seatings. A failed read drops
+  // the section and keeps the rest of the email.
+  const buildTables = tableFactsBuilder();
+  if (buildTables) {
+    try {
+      const tableFacts = await buildTables(ctx.profile.google_place_id, now);
+      if (Array.isArray(tableFacts) && tableFacts.length) {
+        cards.push(finished(DIGEST_CARDS.find((c) => c.id === 'your_tables'), tableFacts));
+      }
+    } catch (err) {
+      console.warn('[VenueDigest] table section skipped:', err.message);
+    }
+  }
   return cards;
 }
 
