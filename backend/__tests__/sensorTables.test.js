@@ -1221,9 +1221,12 @@ test('the alert copy promotes nothing, reads like a person and carries no em or 
   }
 });
 
-test('a table alert in the owner\'s quiet hours is dropped, not held until morning', () => {
+test('a table alert in the owner\'s quiet hours is dropped, not held until morning, and a failed send is dropped, not retried', () => {
   assert.ok(pushHelper.DROPPED_IN_QUIET_HOURS.has('table_alert'));
   assert.ok(!pushHelper.RINGS_THROUGH_THE_NIGHT.has('table_alert'), 'only safety rings through the night');
+  // The alert's gates (owner, plan, switch) are read by its producer only, and
+  // its words are about one moment, so no copy may wait in push_outbox.
+  assert.ok(pushHelper.NEVER_RETRIED.has('table_alert'));
 });
 
 // --- The owner's routes -----------------------------------------------------------

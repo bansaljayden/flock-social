@@ -382,6 +382,26 @@ test('a crowd alert is never queued for retry, because its producer already retr
   assert.strictEqual(res.sent, 0);
 });
 
+test('a table alert whose send fails is dropped, never queued: a replay would be about a moment that has passed, past gates only its producer reads', async () => {
+  reset();
+  visible();
+  zoneIs(null);
+  const ledger = ledgerAndLiveness();
+  on(/INSERT INTO push_outbox/i, () => {
+    throw new Error('a table alert released minutes later describes a table that has since been visited, cleared or sold to somebody else');
+  });
+  on(/UPDATE push_outbox/i, () => { throw new Error('nor may it merge into a held row'); });
+  sendResult = { sent: 0, failed: 1 };
+  const res = await pushHelper.pushAlways(41, 'Table 3', 'Seated 6 min and nobody has stopped by yet.', {
+    type: 'table_alert', table: '3', state: 'waiting',
+  });
+  assert.strictEqual(res.sent, 0);
+  assert.strictEqual(sends.length, 1, 'the send itself was attempted');
+  assert.ok(ledger.some((p) => p[1] === 'table_alert' && p[2] === 'failed'), 'the failure is still counted in the ledger');
+  assert.ok(pushHelper.NEVER_RETRIED.has('table_alert'));
+  assert.ok(!pushHelper.NEVER_RETRIED.has('dm_message'), 'a message still waits for its retry');
+});
+
 test('a batch with a dead token and a live one is not retried', async () => {
   reset();
   visible();

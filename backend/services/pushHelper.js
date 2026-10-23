@@ -58,7 +58,8 @@
 // by the sensor they installed there. It names a table and how long its party
 // has sat, and never a guest, a price or an offer. It has its own switch
 // (venue_profiles.notification_prefs.tables, on unless the owner turns it
-// off), read by its one producer before anything is claimed or sent.
+// off), read by its one producer before anything is claimed or sent. A send
+// of it that fails is dropped, never retried (NEVER_RETRIED below).
 //
 // THE RULE FOR ADDING A PUSH. If the notification promotes anything — Flock
 // Pro, an upgrade, a venue's offer or slow night, a discount, a "we miss you"
@@ -241,6 +242,22 @@ const DROPPED_IN_QUIET_HOURS = new Set(['crowd_alert', 'table_alert']);
 // to have one. The claim is also strictly better than a retry here: it re-scores
 // the venue against a fresh forecast instead of replaying an old sentence.
 const OWN_RETRY = new Set(['crowd_alert']);
+
+// Types whose failed send is DROPPED: nobody retries them, not the outbox and
+// not the producer.
+//
+// table_alert is the one. It is a notice about one table at one moment, the
+// reason it is dropped in quiet hours rather than held: "Seated 6 min and
+// nobody has stopped by yet" replayed from the outbox minutes later is about a
+// party that has been visited or has left, at a table the owner's dashboard
+// may already show as free, and the lock-screen slot it would land in
+// (firebaseService gives each table one) may hold a newer alert about the
+// same table, which the replay would cover. Its gates are also read only by
+// its producer (services/sensorTables.js: the verified owner, the Roost plan,
+// the tables switch), and a released row is not asked them again, so a retry
+// could reach somebody who stopped being the venue's owner in between. The
+// dashboard shows the table as it is; a send that fails costs one glance.
+const NEVER_RETRIED = new Set(['table_alert']);
 
 // Types queued for retry when their visibility check could not be answered,
 // rather than dropped. canNotify fails closed on purpose and the reasoning
@@ -2057,7 +2074,7 @@ async function afterSend(userId, title, body, data, type, opts, tally) {
 
   if (sent > 0 && failed === 0) touchDeviceTokens(userId);
 
-  if (failed > 0 && !opts.fromOutbox && !OWN_RETRY.has(type)) {
+  if (failed > 0 && !opts.fromOutbox && !OWN_RETRY.has(type) && !NEVER_RETRIED.has(type)) {
     // Something answered with an error. Usually that is an FCM 5xx or a
     // network blip, which a second attempt fixes. A token the provider called
     // dead has already been deleted and is not retried.
@@ -2558,6 +2575,7 @@ module.exports = {
   QUIET_END_HOUR,
   RINGS_THROUGH_THE_NIGHT,
   DROPPED_IN_QUIET_HOURS,
+  NEVER_RETRIED,
   // The presence fix: which devices a live socket actually speaks for.
   attentiveTokens,
   repairMergedHold,

@@ -421,11 +421,12 @@ async function storeTableStates(device, tables, recordedAt) {
 // THE SWITCH. venue_profiles.notification_prefs, key `tables`: absent means
 // on, false means off. The dashboard writes it through PUT /api/venue-profile,
 // which keeps it among the switches it stores (routes/venueProfile.js). It is
-// read when the alert is sent, and only then: a send that fails is retried by
-// services/pushHelper.js for up to 30 minutes without asking the switch again,
-// so an owner who turns alerts off inside that window can still receive the
-// one retried alert. Accepted as it stands; deliver() would need a table_alert
-// check like its crowd_alert one to close it.
+// read when the alert is sent, and only then, which is enough because a send
+// that fails is dropped, never retried: table_alert is in NEVER_RETRIED in
+// services/pushHelper.js, so no copy waits in push_outbox to be released
+// minutes later, past the switch, past the owner's verification, with words
+// about a moment that has passed. The claims above stay spent for it: the
+// dashboard shows the table, and the next change is news again.
 //
 // THE PLAN. Table monitoring is a Roost feature, so an alert goes out only
 // while the venue is on Roost: the same rule, through the same decision, as
