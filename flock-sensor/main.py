@@ -3414,12 +3414,45 @@ class TableLearner:
         out = []
         for members in groups.values():
             members = sorted(members)[:self.MAX_SEATS_PER_TABLE]
-            xs = [m[0] for m in members]
-            ys = [m[1] for m in members]
-            box = (max(0.0, min(xs) - self.PAD), max(0.0, min(ys) - self.PAD),
-                   min(float(THERMAL_COLS), max(xs) + self.PAD), min(float(THERMAL_ROWS), max(ys) + self.PAD))
-            out.append({'seats': members, 'box': tuple(round(v, 1) for v in box)})
+            out.append({'seats': members, 'box': self._box(members)})
         return sorted(out, key=lambda t: (t['box'][1], t['box'][0]))
+
+    def _box(self, seats):
+        xs = [m[0] for m in seats]
+        ys = [m[1] for m in seats]
+        box = (max(0.0, min(xs) - self.PAD), max(0.0, min(ys) - self.PAD),
+               min(float(THERMAL_COLS), max(xs) + self.PAD), min(float(THERMAL_ROWS), max(ys) + self.PAD))
+        return tuple(round(v, 1) for v in box)
+
+    def merged(self, previous=()):
+        """The tables to write: the learned ones, numbered, each with any
+        seats its earlier self had that this memory has not seen again, and
+        every earlier table that no learned table has taken the place of.
+        Memory holds 12 hours and starts empty after a restart, so a table
+        nobody has sat at since is kept, not dropped, and a table's seats only
+        ever grow. A learned table replaces an earlier one when one of its
+        seats lands inside the earlier one's zone."""
+        out, claimed = [], set()
+        for t in self.numbered(previous):
+            old = next((o for o in previous if o['n'] == t['n']), None)
+            seats = list(t['seats'])
+            if old is not None:
+                for ox, oy in old.get('seats') or ():
+                    if not any(math.hypot(x - ox, y - oy) <= 4.0 for x, y in seats):
+                        seats.append((ox, oy))
+            seats = sorted(seats)[:self.MAX_SEATS_PER_TABLE]
+            out.append({'n': t['n'], 'seats': seats, 'box': self._box(seats)})
+            claimed.add(t['n'])
+        learned_seats = [p for t in out for p in t['seats']]
+        for o in previous:
+            if o['n'] in claimed or not o.get('seats'):
+                continue
+            x0, y0, x1, y1 = o['box']
+            if any(x0 <= x < x1 and y0 <= y < y1 for x, y in learned_seats):
+                continue
+            seats = sorted(o['seats'])
+            out.append({'n': o['n'], 'seats': seats, 'box': tuple(o['box'])})
+        return sorted(out, key=lambda t: t['n'])[:TABLE_MAX]
 
     def numbered(self, previous=()):
         """The learned tables with numbers: a table with a seat within 6 px
@@ -3461,7 +3494,7 @@ class TableLearner:
             pass
         except (OSError, ValueError):
             return False
-        tables = self.numbered(previous)
+        tables = self.merged(previous)
         if not tables:
             return False
         same = len(tables) == len(previous) and all(

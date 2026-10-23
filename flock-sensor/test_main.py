@@ -4905,6 +4905,24 @@ class TablesLearnedFromHeat(unittest.TestCase):
         self.assertFalse(learner.maybe_write(10_000.0 + 2 * main.TableLearner.LEARN_EVERY))
         self.assertEqual(json.loads(path.read_text(encoding='utf-8'))['source'], 'camera')
 
+    def test_a_restart_keeps_the_tables_it_has_not_seen_again(self):
+        path = Path(_TMP) / 'learned-restart.json'
+        if path.exists():
+            path.unlink()
+        learner = main.TableLearner(path)
+        _evening(learner, _NIGHT, 210)
+        self.assertTrue(learner.maybe_write(10_000.0))
+        before = {z['n']: z for z in main.load_table_zones(path)}
+        # The box restarts: memory is empty, and the next hour only table A
+        # is sat at, by one person, in one of its two seats.
+        learner = main.TableLearner(path)
+        _evening(learner, [(_A[:1], 0, 50)], 60)
+        learner.maybe_write(20_000.0)
+        after = {z['n']: z for z in main.load_table_zones(path)}
+        self.assertEqual(sorted(after), sorted(before))
+        for n in before:
+            self.assertEqual(len(after[n]['seats']), len(before[n]['seats']))
+
     def test_learning_is_off_unless_the_box_is_told(self):
         self.assertFalse(main.TABLES_LEARN)
         self.assertIsNone(main._table_learner)
