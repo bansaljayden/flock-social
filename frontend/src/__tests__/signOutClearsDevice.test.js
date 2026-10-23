@@ -114,6 +114,9 @@ const USER_SCOPED = {
   flock_push_token: 'fcm-token-xyz',
   flock_pending_invite: '{"token":"abcdefgh12"}',
   flock_avatar_refit: '7:28151',
+  // The venue whose tables the owner's dashboard has shown on this device
+  // (lib/venueTablesReading.js): a place id, which says where they work.
+  flock_venue_tables_place: 'ChIJ_place_id_123',
   // The prefix family. Handled by iterating keys, never by naming them: one
   // row per venue the user tapped into, i.e. where they physically were.
   'flock_checkin_ChIJ_place_id_123': '1755300000000',

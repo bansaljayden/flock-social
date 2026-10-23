@@ -12,8 +12,52 @@
 // bundle every user downloads and imports this; the tab's words and chart
 // code are needed only by the dashboard's own lazily loaded chunk.
 
+import { lsGet, lsRemove, lsSet } from './storage';
+
 // How long after one answer the next read goes out.
 export const TABLES_READ_EVERY_MS = 15 * 1000;
+
+// THE PLACE WHOSE TABLES THIS DEVICE HAS SEEN.
+//
+// The Tables tab used to enter the bar only when a visit's first read came
+// back with a table, so on every open the bar drew six tabs, then seven a
+// round trip later, with Map through Settings each moving one slot right
+// under the owner's thumb, and a dashboard reopened on Tables was sent back
+// to Analytics every time. So the place is remembered here, and the next open
+// shows the tab from the first paint with a skeleton under it until the read
+// answers. One place, under a flock* key: the sign-out sweep in services/api.js
+// removes it with the rest of the account, so it never reaches another
+// account on the same phone. localStorage can be unavailable (Safari with
+// cookies blocked, a full quota, a private window), and lib/storage.js turns
+// every such failure into "not remembered", which is the old behaviour.
+//
+// Cosmetic only, like every gate on this side: the tab's body is still what
+// the server answers, and the first answer corrects the memory. A read that
+// says the venue has no tables now (an empty list, since the server drops a
+// unit's tables after 10 minutes without them; a refusal) forgets the place.
+const TABLES_SEEN_KEY = 'flock_venue_tables_place';
+
+// Whether the tables of `placeId` have been seen on this device, or, before
+// the dashboard knows its place (the profile read is still out on a cold
+// launch), whether any place has: an owner has one venue, so the tab is drawn
+// for it from the first paint and taken away only if the profile then names
+// another place.
+export const tablesRemembered = (placeId) => {
+  const stored = lsGet(TABLES_SEEN_KEY);
+  if (!stored) return false;
+  return placeId === null || placeId === undefined || stored === String(placeId);
+};
+
+export const rememberTables = (placeId) => {
+  if (placeId === null || placeId === undefined || placeId === '') return;
+  lsSet(TABLES_SEEN_KEY, String(placeId));
+};
+
+// Forgets `placeId`, and leaves a memory of another place alone.
+export const forgetTables = (placeId) => {
+  const stored = lsGet(TABLES_SEEN_KEY);
+  if (stored && (placeId === null || placeId === undefined || stored === String(placeId))) lsRemove(TABLES_SEEN_KEY);
+};
 
 // Answers that asking again cannot change: 401 once signed out, 403 for anyone
 // but the verified owner or for a plan below Roost, 404 where the server has

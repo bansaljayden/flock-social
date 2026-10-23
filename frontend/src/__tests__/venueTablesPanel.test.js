@@ -74,11 +74,14 @@ import {
 import {
   TABLES_READ_EVERY_MS,
   TABLE_HOURS_RETRY_EVERY_TURNS,
+  forgetTables,
   nextTablesState,
   planCheckFailed,
   planLockedWithTables,
+  rememberTables,
   startTableHoursReading,
   startTablesReading,
+  tablesRemembered,
 } from '../lib/venueTablesReading';
 
 const SRC = path.join(__dirname, '..');
@@ -523,6 +526,19 @@ describe('a sensor that has gone quiet', () => {
     expect(screen.queryByRole('list', { name: 'All tables' })).toBeNull();
     expect(screen.queryByText(/No table readings|Table 2/)).toBeNull();
     expect(jest.getTimerCount()).toBe(0);
+  });
+});
+
+describe('the visit\'s first read, still out', () => {
+  test('the board is a skeleton, not a claim about tables nobody has read yet', () => {
+    const { rerender } = renderTab({ data: undefined, hours: undefined });
+    expect(screen.getByTestId('tables-board-loading').getAttribute('aria-hidden')).toBe('true');
+    expect(screen.queryByRole('heading', { name: 'Right now' })).toBeNull();
+    expect(screen.queryByText(/couldn't load|not reporting/)).toBeNull();
+    expect(jest.getTimerCount()).toBe(0);
+    rerender(<VenueTablesTab data={LIVE} hours={HOURS} colors={COLORS} wellPx={50} />);
+    expect(screen.queryByTestId('tables-board-loading')).toBeNull();
+    expect(screen.getByText('1 of 5 free')).toBeTruthy();
   });
 });
 
@@ -1024,12 +1040,16 @@ describe('App.js reads the tables for the dashboard and hands them down', () => 
     expect(reopen).toContain('React.useLayoutEffect(');
   });
 
-  test('only while the owner\'s dashboard is open, starting from nothing each time', () => {
-    expect(effect).toMatch(/setOwnerTables\(null\);\s*setOwnerTableHours\(undefined\);\s*setOwnerTablesSeen\(false\);\s*setOwnerTablesLocked\(false\);\s*if \(!pid \|\| currentScreen !== 'venueDashboard'\) return undefined;/);
+  test('only while the owner\'s dashboard is open, starting each visit from the memory and nothing else, before the first paint', () => {
+    // The reset is a layout effect: the bar is drawn from the memory once,
+    // never six tabs and then seven. Both reads are undefined until they
+    // answer, which the tab draws as skeletons.
+    expect(effect).toMatch(/React\.useLayoutEffect\(\(\) => \{\s*setOwnerTables\(undefined\);\s*setOwnerTableHours\(undefined\);\s*setOwnerTablesLocked\(false\);\s*setOwnerTablesSeen\(currentScreen === 'venueDashboard' && tablesRemembered\(ownerVenuePlaceId\)\);\s*\}, \[ownerVenuePlaceId, currentScreen, venueTier\]\);/);
+    expect(effect).toMatch(/React\.useEffect\(\(\) => \{\s*const pid = ownerVenuePlaceId;\s*if \(!pid \|\| currentScreen !== 'venueDashboard'\) return undefined;/);
   });
 
   test('read again when the plan changes, as the Analytics reads are, so a lock never outlasts a purchase', () => {
-    expect(effect).toContain('}, [ownerVenuePlaceId, currentScreen, venueTier]);');
+    expect(effect.match(/\}, \[ownerVenuePlaceId, currentScreen, venueTier\]\);/g)).toHaveLength(2);
   });
 
   test('the tables on the loop, the hours once and again while failed, and both stopped on the way out', () => {
@@ -1042,23 +1062,80 @@ describe('App.js reads the tables for the dashboard and hands them down', () => 
     expect(effect).not.toContain('getSensorTableHours(pid).then(');
   });
 
-  test('a table, or the plan lock of a venue with tables, puts the tab in the bar, and nothing takes it out mid-visit', () => {
+  test('a table, or the plan lock of a venue with tables, puts the tab in the bar and remembers the place; no tables forgets it, and takes out a tab that stood on the memory alone', () => {
     // Every answer goes through nextTablesState, so a failed read keeps the
     // last good one and a refusal clears it.
-    expect(effect).toMatch(/setOwnerTables\(\(prev\) => nextTablesState\(prev, data, refused\)\);\s*if \(planLocked\) setOwnerTablesLocked\(true\);\s*if \(planLocked \|\| \(data && data\.tables\.length > 0\)\) setOwnerTablesSeen\(true\);/);
-    // The only other writes are the resets when the visit, the place or the
-    // plan changes.
-    expect(APP.match(/setOwnerTablesSeen\(/g)).toHaveLength(2);
+    expect(effect).toMatch(/setOwnerTables\(\(prev\) => nextTablesState\(prev, data, refused\)\);\s*if \(planLocked\) setOwnerTablesLocked\(true\);\s*if \(planLocked \|\| \(data && data\.tables\.length > 0\)\) \{\s*seenThisVisit = true;\s*setOwnerTablesSeen\(true\);\s*rememberTables\(pid\);\s*\} else if \(data \|\| refused\) \{\s*forgetTables\(pid\);\s*if \(!seenThisVisit\) setOwnerTablesSeen\(false\);\s*\}/);
+    // A failure that will be asked again (data null, not refused) touches
+    // neither the memory nor the tab. The only other writes are the resets
+    // when the visit, the place or the plan changes.
+    expect(APP.match(/setOwnerTablesSeen\(/g)).toHaveLength(3);
     expect(APP.match(/setOwnerTablesLocked\(/g)).toHaveLength(2);
+    expect(APP.match(/rememberTables\(/g)).toHaveLength(1);
+    expect(APP.match(/forgetTables\(/g)).toHaveLength(1);
   });
 
-  test('a dashboard reopened on the Tables tab opens on Analytics, and leaving it starts nothing', () => {
-    expect(reopen).toContain("if (currentScreen === 'venueDashboard' && venueTab === 'tables' && !ownerTablesSeen) setVenueTab('analytics');");
-    expect(reopen).toContain('}, [currentScreen, venueTab, ownerTablesSeen]);');
+  test('a dashboard reopened on the Tables tab stays on it when the tab is in the bar from the memory, else opens on Analytics; leaving it starts nothing', () => {
+    expect(reopen).toContain("if (currentScreen === 'venueDashboard' && venueTab === 'tables' && !ownerTablesSeen && !tablesRemembered(ownerVenuePlaceId)) setVenueTab('analytics');");
+    expect(reopen).toContain('}, [currentScreen, venueTab, ownerTablesSeen, ownerVenuePlaceId]);');
   });
 
   test('all four reach the dashboard beside the sensor data', () => {
     expect(APP).toMatch(/ownerSensorData,\s*ownerSensorHistory,\s*ownerTableHours,\s*ownerTables,\s*ownerTablesLocked,\s*ownerTablesSeen,\s*promotions,/);
+  });
+});
+
+describe('the place whose tables this device has seen', () => {
+  const KEY = 'flock_venue_tables_place';
+  beforeEach(() => { localStorage.clear(); });
+  afterEach(() => { localStorage.clear(); jest.restoreAllMocks(); });
+
+  test('nothing is remembered until a table has been read', () => {
+    expect(tablesRemembered('place_1')).toBe(false);
+    expect(tablesRemembered(null)).toBe(false);
+    expect(tablesRemembered(undefined)).toBe(false);
+  });
+
+  test('remembered for the place, and for a dashboard that does not know its place yet, not for another place', () => {
+    rememberTables('place_1');
+    // A flock* key, so the sign-out sweep in services/api.js takes it with the
+    // rest of the account (signOutClearsDevice.test.js seeds it).
+    expect(localStorage.getItem(KEY)).toBe('place_1');
+    expect(tablesRemembered('place_1')).toBe(true);
+    expect(tablesRemembered(null)).toBe(true);
+    expect(tablesRemembered('place_2')).toBe(false);
+  });
+
+  test('forgetting is for the place named; another place\'s memory stays', () => {
+    rememberTables('place_1');
+    forgetTables('place_2');
+    expect(tablesRemembered('place_1')).toBe(true);
+    forgetTables('place_1');
+    expect(tablesRemembered('place_1')).toBe(false);
+    expect(localStorage.getItem(KEY)).toBeNull();
+    rememberTables('place_1');
+    forgetTables(null);
+    expect(localStorage.getItem(KEY)).toBeNull();
+  });
+
+  test('no place, nothing written; a later place replaces the earlier one', () => {
+    rememberTables(null);
+    rememberTables('');
+    expect(localStorage.getItem(KEY)).toBeNull();
+    rememberTables('place_1');
+    rememberTables('place_2');
+    expect(tablesRemembered('place_1')).toBe(false);
+    expect(tablesRemembered('place_2')).toBe(true);
+  });
+
+  test('a device with no localStorage is a device that remembers nothing, and nothing throws', () => {
+    jest.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('SecurityError'); });
+    jest.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('QuotaExceededError'); });
+    jest.spyOn(Storage.prototype, 'removeItem').mockImplementation(() => { throw new Error('SecurityError'); });
+    expect(() => rememberTables('place_1')).not.toThrow();
+    expect(tablesRemembered('place_1')).toBe(false);
+    expect(tablesRemembered(null)).toBe(false);
+    expect(() => forgetTables('place_1')).not.toThrow();
   });
 });
 
@@ -1149,6 +1226,17 @@ describe('the tab bar', () => {
     await settle();
     fireEvent.click(screen.getByRole('button', { name: 'Tables' }));
     expect(props.setVenueTab).toHaveBeenCalledWith('tables');
+  });
+
+  test('a venue this device remembers gets the tab from the first paint, with skeletons until the first read answers', async () => {
+    // App.js sets the flag from the memory before paint and hands both reads
+    // down as undefined until they answer.
+    const { container } = dashboard({ venueTab: 'tables', ownerTablesSeen: true, ownerTables: undefined, ownerTableHours: undefined });
+    await settle();
+    expect(tabBar()).toEqual(['Analytics', 'Tables', 'Map', 'Promotions', 'Events', 'Reviews', 'Settings']);
+    expect(screen.getByTestId('tables-board-loading').className).toBe('skeleton');
+    expect(screen.getByTestId('tables-hours-loading').className).toBe('skeleton');
+    expect(container.textContent).not.toMatch(/couldn't load|not reporting|Right now/);
   });
 });
 

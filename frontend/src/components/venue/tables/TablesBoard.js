@@ -16,9 +16,11 @@
  *     solid amber, the loudest thing on the tab. A table whose seat count the
  *     sensor's setup knows says it ("4 seats").
  *
- * The tab only exists once a read this session has returned a table, so when
- * a later read fails or comes back empty the board says so in one line rather
- * than leaving the tab blank. A failed read that will be asked again arrives
+ * The tab exists once a read has returned a table, this visit or on an earlier
+ * one on this device (App.js remembers the place), so the board is a skeleton
+ * while the visit's first read is out, and when a read fails or comes back
+ * empty it says so in one line rather than leaving the tab blank. A failed
+ * read that will be asked again arrives
  * as the reading before it, marked unrefreshed (nextTablesState in
  * lib/venueTablesReading.js): the board keeps it, dimmed, clocks stopped at
  * the moment it arrived, under "Couldn't refresh just now." An empty list is
@@ -153,6 +155,15 @@ export default function TablesBoard({ data, colors }) {
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
   }, [hasTables]);
+
+  // `undefined` is the visit's first read still out: the tab is in the bar
+  // from the first paint for a venue whose tables this device has seen
+  // (App.js, tablesRemembered), so the board is the shape of itself in the
+  // global shimmer until the read answers, never "couldn't load" about a read
+  // that has not failed. Roughly the card's height with a small floor in it.
+  if (data === undefined) {
+    return <div aria-hidden="true" data-testid="tables-board-loading" className="skeleton" style={{ height: '220px', borderRadius: '12px', marginBottom: '12px' }} />;
+  }
 
   if (!hasTables) {
     return (

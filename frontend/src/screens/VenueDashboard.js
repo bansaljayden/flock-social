@@ -475,11 +475,11 @@ export default function VenueDashboard({
 
     const venueTabs = [
       { id: 'analytics', label: 'Analytics', icon: Icons.barChart },
-      // Only for a venue whose sensor has reported a table since the
-      // dashboard opened, or whose plan the server refused while saying it
-      // has tables (ownerTablesSeen in App.js): a venue with no table zones
-      // never sees the tab. Icons.users is a party at a table, a glyph no
-      // other tab here uses.
+      // Only for a venue whose sensor has reported a table, this visit or on
+      // an earlier visit this device remembers, or whose plan the server
+      // refused while saying it has tables (ownerTablesSeen in App.js): a
+      // venue with no table zones never sees the tab. Icons.users is a party
+      // at a table, a glyph no other tab here uses.
       ...(ownerTablesSeen ? [{ id: 'tables', label: 'Tables', icon: Icons.users }] : []),
       // The venue as consumers see it. Presence, not a paid feature.
       { id: 'map', label: 'Map', icon: Icons.map },
@@ -1867,9 +1867,10 @@ export default function VenueDashboard({
           </>)}
 
           {/* TABLES TAB. Its button is in the bar only once the sensor has
-              reported a table since the dashboard opened, or the server has
-              refused the plan of a venue it says has tables (ownerTablesSeen),
-              and nothing here renders without it. That refusal is the server's
+              reported a table, this visit or on a visit this device
+              remembers, or the server has refused the plan of a venue it says
+              has tables (ownerTablesSeen), and nothing here renders without
+              it. That refusal is the server's
               Roost check on both table routes, and it shows the lock whatever
               this side thinks the plan is (ownerTablesLocked). Otherwise gated
               the way Live Sensor is on Analytics, from the same `can` and
