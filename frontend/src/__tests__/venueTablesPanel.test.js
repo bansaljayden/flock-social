@@ -67,7 +67,7 @@ import {
   tablesByLocalHour,
 } from '../lib/venueTables';
 // eslint-disable-next-line import/first
-import { TABLES_READ_EVERY_MS, startTablesReading } from '../lib/venueTablesReading';
+import { TABLES_READ_EVERY_MS, planLockedWithTables, startTablesReading } from '../lib/venueTablesReading';
 
 const SRC = path.join(__dirname, '..');
 const read = (...p) => fs.readFileSync(path.join(SRC, ...p), 'utf8').replace(/\r\n/g, '\n');
@@ -81,6 +81,16 @@ const NOW = new Date('2026-10-23T23:30:00.000Z').getTime();
 const ago = (ms) => new Date(NOW - ms).toISOString();
 
 const COLORS = { navy: '#1e293b', steel: '#2d5a87', amber: '#F59E0B' };
+
+// What the read loop hands on beside each answer.
+const OPEN = { planLocked: false };
+const LOCKED = { planLocked: true };
+// The requirePro refusal both table routes give a plan below Roost, shaped the
+// way api.js throws it (the body's code on err.code, the body on err.data).
+const UPGRADE_BODY = (hasTables) => ({ error: 'This feature needs a venue plan upgrade.', code: 'UPGRADE_REQUIRED', requiredTier: 'pro', has_tables: hasTables });
+const upgradeRequired = (hasTables) => Object.assign(new Error('This feature needs a venue plan upgrade.'), {
+  status: 403, code: 'UPGRADE_REQUIRED', data: UPGRADE_BODY(hasTables),
+});
 
 // One table in every state, listed out of order on purpose. Seats are known
 // for some tables and not for others, as the server allows.
@@ -478,7 +488,7 @@ describe('the read loop', () => {
     const stop = startTablesReading(readTables, onData);
     expect(readTables).toHaveBeenCalledTimes(1);
     await flush();
-    expect(onData).toHaveBeenLastCalledWith(LIVE);
+    expect(onData).toHaveBeenLastCalledWith(LIVE, OPEN);
     jest.advanceTimersByTime(15 * SEC - 1);
     await flush();
     expect(readTables).toHaveBeenCalledTimes(1);
@@ -499,7 +509,7 @@ describe('the read loop', () => {
     expect(readTables).toHaveBeenCalledTimes(1);
     answer(LIVE);
     await flush();
-    expect(onData).toHaveBeenCalledWith(LIVE);
+    expect(onData).toHaveBeenCalledWith(LIVE, OPEN);
     expect(readTables).toHaveBeenCalledTimes(1);
     jest.advanceTimersByTime(15 * SEC);
     await flush();
@@ -540,13 +550,13 @@ describe('the read loop', () => {
     const onData = jest.fn();
     const stop = startTablesReading(readTables, onData);
     await flush();
-    expect(onData).toHaveBeenNthCalledWith(1, null);
+    expect(onData).toHaveBeenNthCalledWith(1, null, OPEN);
     jest.advanceTimersByTime(15 * SEC);
     await flush();
-    expect(onData).toHaveBeenNthCalledWith(2, null);
+    expect(onData).toHaveBeenNthCalledWith(2, null, OPEN);
     jest.advanceTimersByTime(15 * SEC);
     await flush();
-    expect(onData).toHaveBeenNthCalledWith(3, LIVE);
+    expect(onData).toHaveBeenNthCalledWith(3, LIVE, OPEN);
     stop();
   });
 
@@ -555,7 +565,7 @@ describe('the read loop', () => {
     const onData = jest.fn();
     startTablesReading(readTables, onData);
     await flush();
-    expect(onData).toHaveBeenCalledWith(null);
+    expect(onData).toHaveBeenCalledWith(null, OPEN);
     expect(jest.getTimerCount()).toBe(0);
     jest.advanceTimersByTime(MIN);
     await flush();
@@ -568,9 +578,51 @@ describe('the read loop', () => {
       const stop = startTablesReading(() => Promise.resolve(answer), onData);
       // eslint-disable-next-line no-await-in-loop
       await flush();
-      expect(onData).toHaveBeenCalledWith(null);
+      expect(onData).toHaveBeenCalledWith(null, OPEN);
       stop();
     }
+  });
+
+  // Below Roost both routes answer the requirePro 403 with `has_tables`.
+  test.each([
+    ['a venue with tables: no data, the tab with its lock', true, LOCKED],
+    ['a venue without tables: nothing, as for a venue with none', false, OPEN],
+  ])('the plan refusal for %s, and no more reads', async (_, hasTables, info) => {
+    const readTables = jest.fn(() => Promise.reject(upgradeRequired(hasTables)));
+    const onData = jest.fn();
+    startTablesReading(readTables, onData);
+    await flush();
+    expect(onData).toHaveBeenCalledTimes(1);
+    expect(onData).toHaveBeenCalledWith(null, info);
+    expect(jest.getTimerCount()).toBe(0);
+    jest.advanceTimersByTime(MIN);
+    await flush();
+    expect(readTables).toHaveBeenCalledTimes(1);
+  });
+
+  test('only that refusal, with has_tables exactly true, counts as the plan lock', () => {
+    expect(planLockedWithTables(upgradeRequired(true))).toBe(true);
+    expect(planLockedWithTables(upgradeRequired(false))).toBe(false);
+    // Another 403 (not the verified owner) has no code and is a plain refusal.
+    expect(planLockedWithTables(Object.assign(new Error('No'), { status: 403, data: { error: 'No' } }))).toBe(false);
+    expect(planLockedWithTables(Object.assign(upgradeRequired(true), { data: { code: 'UPGRADE_REQUIRED', has_tables: 'true' } }))).toBe(false);
+    expect(planLockedWithTables(Object.assign(upgradeRequired(true), { data: undefined }))).toBe(false);
+    expect(planLockedWithTables(Object.assign(upgradeRequired(true), { status: 401 }))).toBe(false);
+    expect(planLockedWithTables(null)).toBe(false);
+  });
+
+  test('a plan that lapses mid-visit locks the tab it had opened', async () => {
+    const readTables = jest.fn()
+      .mockResolvedValueOnce(LIVE)
+      .mockRejectedValueOnce(upgradeRequired(true));
+    const onData = jest.fn();
+    startTablesReading(readTables, onData);
+    await flush();
+    expect(onData).toHaveBeenNthCalledWith(1, LIVE, OPEN);
+    jest.advanceTimersByTime(15 * SEC);
+    await flush();
+    expect(onData).toHaveBeenNthCalledWith(2, null, LOCKED);
+    expect(jest.getTimerCount()).toBe(0);
   });
 });
 
@@ -587,22 +639,27 @@ describe('App.js reads the tables for the dashboard and hands them down', () => 
   });
 
   test('only while the owner\'s dashboard is open, starting from nothing each time', () => {
-    expect(effect).toMatch(/setOwnerTables\(null\);\s*setOwnerTableHours\(undefined\);\s*setOwnerTablesSeen\(false\);\s*if \(!pid \|\| currentScreen !== 'venueDashboard'\) return undefined;/);
-    expect(effect).toContain('}, [ownerVenuePlaceId, currentScreen]);');
+    expect(effect).toMatch(/setOwnerTables\(null\);\s*setOwnerTableHours\(undefined\);\s*setOwnerTablesSeen\(false\);\s*setOwnerTablesLocked\(false\);\s*if \(!pid \|\| currentScreen !== 'venueDashboard'\) return undefined;/);
+  });
+
+  test('read again when the plan changes, as the Analytics reads are, so a lock never outlasts a purchase', () => {
+    expect(effect).toContain('}, [ownerVenuePlaceId, currentScreen, venueTier]);');
   });
 
   test('the tables on the loop, the hours once, and both stopped on the way out', () => {
-    expect(effect).toContain('const stopReading = startTablesReading(() => getSensorTables(pid), (data) => {');
+    expect(effect).toContain('const stopReading = startTablesReading(() => getSensorTables(pid), (data, { planLocked }) => {');
     expect(effect).toContain('getSensorTableHours(pid).then(tableHoursFrom, () => null)');
     expect(effect).toContain('if (!cancelled) setOwnerTableHours(hours);');
     expect(effect).toMatch(/return \(\) => \{\s*cancelled = true;\s*stopReading\(\);\s*\};/);
     expect(effect).not.toContain('setInterval');
   });
 
-  test('the first answer with a table in it puts the tab in the bar, and nothing takes it out mid-visit', () => {
-    expect(effect).toMatch(/setOwnerTables\(data\);\s*if \(data && data\.tables\.length > 0\) setOwnerTablesSeen\(true\);/);
-    // The only other write is the reset when the visit or the place changes.
+  test('a table, or the plan lock of a venue with tables, puts the tab in the bar, and nothing takes it out mid-visit', () => {
+    expect(effect).toMatch(/setOwnerTables\(data\);\s*if \(planLocked\) setOwnerTablesLocked\(true\);\s*if \(planLocked \|\| \(data && data\.tables\.length > 0\)\) setOwnerTablesSeen\(true\);/);
+    // The only other writes are the resets when the visit, the place or the
+    // plan changes.
     expect(APP.match(/setOwnerTablesSeen\(/g)).toHaveLength(2);
+    expect(APP.match(/setOwnerTablesLocked\(/g)).toHaveLength(2);
   });
 
   test('a dashboard reopened on the Tables tab opens on Analytics, and leaving it starts nothing', () => {
@@ -610,8 +667,8 @@ describe('App.js reads the tables for the dashboard and hands them down', () => 
     expect(reopen).toContain('}, [currentScreen, venueTab, ownerTablesSeen]);');
   });
 
-  test('all three reach the dashboard beside the sensor data', () => {
-    expect(APP).toMatch(/ownerSensorData,\s*ownerSensorHistory,\s*ownerTableHours,\s*ownerTables,\s*ownerTablesSeen,\s*promotions,/);
+  test('all four reach the dashboard beside the sensor data', () => {
+    expect(APP).toMatch(/ownerSensorData,\s*ownerSensorHistory,\s*ownerTableHours,\s*ownerTables,\s*ownerTablesLocked,\s*ownerTablesSeen,\s*promotions,/);
   });
 });
 
@@ -673,8 +730,8 @@ const settle = () => act(async () => {});
 const tabBar = () => screen.getAllByRole('button').map((b) => b.textContent.trim()).filter((t) => TAB_NAMES.includes(t));
 
 describe('the tab bar', () => {
-  test('the dashboard takes the tables, the hours and the flag', () => {
-    expect(PARAMS).toEqual(expect.arrayContaining(['ownerTables', 'ownerTableHours', 'ownerTablesSeen']));
+  test('the dashboard takes the tables, the hours and both flags', () => {
+    expect(PARAMS).toEqual(expect.arrayContaining(['ownerTables', 'ownerTableHours', 'ownerTablesSeen', 'ownerTablesLocked']));
   });
 
   test('a venue whose sensor has reported a table gets Tables, right after Analytics', async () => {
@@ -687,6 +744,8 @@ describe('the tab bar', () => {
     ['nothing read yet', { ownerTablesSeen: false, ownerTables: undefined }],
     ['no tables at all', { ownerTablesSeen: false, ownerTables: { tables: [], updated_at: null, stale: false, next_free: null } }],
     ['a refused read', { ownerTablesSeen: false, ownerTables: null }],
+    // The plan refusal with has_tables false: App.js leaves both flags down.
+    ['a plan refusal for a venue without tables', { ownerTablesSeen: false, ownerTablesLocked: false, ownerTables: null, venueTier: 'free' }],
   ])('%s: no Tables tab, and nothing about tables anywhere', async (_, overrides) => {
     const { container } = dashboard({ ownerSensorData: SENSOR, ...overrides });
     await settle();
@@ -746,6 +805,25 @@ describe('the Tables tab', () => {
     } finally {
       delete window.Capacitor;
     }
+  });
+
+  test('the server\'s plan refusal for a venue with tables shows the lock, even where this side reads Roost', async () => {
+    // A stale plan read here and the server's own check disagree: the server
+    // wins, so the lock shows and no board is drawn from data nobody sent.
+    const { container } = dashboard({ venueTab: 'tables', venueTier: 'pro', ownerTablesSeen: true, ownerTablesLocked: true, ownerTables: null, ownerTableHours: null });
+    await settle();
+    expect(tabBar()).toContain('Tables');
+    expect(screen.getByRole('heading', { name: 'Tables' })).toBeTruthy();
+    expect(screen.getByText('Each table live from your sensor: which are free, seated, waiting for a server or need clearing, and how many are in use at each hour.')).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Right now' })).toBeNull();
+    expect(container.textContent).not.toMatch(/couldn't load|Needs a server/);
+  });
+
+  test('that lock does not wait for the plan read', async () => {
+    dashboard({ venueTab: 'tables', venueTier: 'free', venueTierKnown: false, ownerTablesSeen: true, ownerTablesLocked: true, ownerTables: null });
+    await settle();
+    expect(screen.getByRole('heading', { name: 'Tables' })).toBeTruthy();
+    expect(document.querySelectorAll('.skeleton')).toHaveLength(0);
   });
 
   test('until the plan is known, the shimmer stands in for both', async () => {
@@ -821,6 +899,19 @@ describe('the two api.js calls', () => {
     const err = await api.getSensorTables('place_1').catch((e) => e);
     expect(err).toBeInstanceOf(Error);
     expect(err.status).toBe(403);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+    expect(planLockedWithTables(err)).toBe(false);
+  });
+
+  test.each([[true, true], [false, false]])('the plan refusal with has_tables %s reaches the loop as the plan lock: %s', async (hasTables, locked) => {
+    // The body the server's requirePro sends below Roost, through the real
+    // request(): the code lands on err.code and the body on err.data, which is
+    // all planLockedWithTables reads.
+    global.fetch = jest.fn(() => reply(403, UPGRADE_BODY(hasTables)));
+    const err = await api.getSensorTables('place_1').catch((e) => e);
+    expect(err.status).toBe(403);
+    expect(err.code).toBe('UPGRADE_REQUIRED');
+    expect(planLockedWithTables(err)).toBe(locked);
     expect(global.fetch).toHaveBeenCalledTimes(1);
   });
 });

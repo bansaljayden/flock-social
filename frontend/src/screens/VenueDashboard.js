@@ -348,6 +348,7 @@ export default function VenueDashboard({
   ownerSensorHistory,
   ownerTableHours,
   ownerTables,
+  ownerTablesLocked,
   ownerTablesSeen,
   promotions,
   realIncomingFlocks,
@@ -475,9 +476,10 @@ export default function VenueDashboard({
     const venueTabs = [
       { id: 'analytics', label: 'Analytics', icon: Icons.barChart },
       // Only for a venue whose sensor has reported a table since the
-      // dashboard opened (ownerTablesSeen in App.js): a venue with no table
-      // zones never sees the tab. Icons.users is a party at a table, a glyph
-      // no other tab here uses.
+      // dashboard opened, or whose plan the server refused while saying it
+      // has tables (ownerTablesSeen in App.js): a venue with no table zones
+      // never sees the tab. Icons.users is a party at a table, a glyph no
+      // other tab here uses.
       ...(ownerTablesSeen ? [{ id: 'tables', label: 'Tables', icon: Icons.users }] : []),
       // The venue as consumers see it. Presence, not a paid feature.
       { id: 'map', label: 'Map', icon: Icons.map },
@@ -1865,21 +1867,26 @@ export default function VenueDashboard({
           </>)}
 
           {/* TABLES TAB. Its button is in the bar only once the sensor has
-              reported a table since the dashboard opened (ownerTablesSeen), and
-              nothing here renders without it. Gated the way Live Sensor is on
-              Analytics, from the same `can` and `tierKnown`: until the profile
-              answers the plan is unknown, so the shimmer stands in; a plan
-              without Roost gets the lock Analytics uses; Roost gets the tab. */}
-          {venueTab === 'tables' && ownerTablesSeen && !tierKnown && (
+              reported a table since the dashboard opened, or the server has
+              refused the plan of a venue it says has tables (ownerTablesSeen),
+              and nothing here renders without it. That refusal is the server's
+              Roost check on both table routes, and it shows the lock whatever
+              this side thinks the plan is (ownerTablesLocked). Otherwise gated
+              the way Live Sensor is on Analytics, from the same `can` and
+              `tierKnown`, as the cosmetic layer over the server's check: until
+              the profile answers the plan is unknown, so the shimmer stands
+              in; a plan without Roost gets the lock Analytics uses; Roost gets
+              the tab. */}
+          {venueTab === 'tables' && ownerTablesSeen && !ownerTablesLocked && !tierKnown && (
             <div aria-hidden="true">
               <div className="skeleton" style={{ height: '220px', borderRadius: '12px', marginBottom: '12px' }} />
               <div className="skeleton" style={{ height: '120px', borderRadius: '12px', marginBottom: '12px' }} />
             </div>
           )}
-          {venueTab === 'tables' && ownerTablesSeen && !can.analytics && tierKnown && (
+          {venueTab === 'tables' && ownerTablesSeen && (ownerTablesLocked || (!can.analytics && tierKnown)) && (
             <LockedTab featureName="Tables" description="Each table live from your sensor: which are free, seated, waiting for a server or need clearing, and how many are in use at each hour." />
           )}
-          {venueTab === 'tables' && ownerTablesSeen && can.analytics && tierKnown && (
+          {venueTab === 'tables' && ownerTablesSeen && !ownerTablesLocked && can.analytics && tierKnown && (
             <VenueTablesTab data={ownerTables} hours={ownerTableHours} colors={colors} wellPx={HOUR_BAR_WELL_PX} />
           )}
 
