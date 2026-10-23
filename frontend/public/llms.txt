@@ -37,7 +37,7 @@ Updated: October 21, 2026.
   for venues, a prototype whose case has not been printed yet. The page covers
   what is inside it, how Owl counts people from heat, where it mounts, and the
   case part by part, in a labelled render and a 3D model that assembles on one
-  slider. Only numbers leave the box: no images, video or identities.
+  slider. Only counts and table states leave the box: no images, video or identities.
 - Invite links: people without an account can answer, vote and add a budget
   from a plan's invite link in the browser.
 - Voting: everyone in the group suggests places and the group votes, so no single

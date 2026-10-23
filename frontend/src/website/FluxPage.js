@@ -192,8 +192,10 @@ export default function FluxPage() {
                 <p>
                   Every 30 seconds Flux is built to send a few numbers over Wi-Fi
                   or Ethernet: the people it counts, door crossings, an estimate of
-                  how full the room is, and the noise level. No images, video or
-                  identities leave it.
+                  how full the room is, and the noise level. A unit set up for
+                  tables also sends, for each table, how many people are at it and
+                  whether it is free, seated, waiting or needs clearing. No images,
+                  video or identities leave it.
                 </p>
               </div>
               <figure className="fx-figure fx-flow">

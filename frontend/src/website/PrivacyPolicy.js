@@ -397,6 +397,12 @@ export default function PrivacyPolicy() {
                 delete. We do not currently delete them on a schedule.
               </p>
               <p>
+                On a unit set up for tables, the venue owner can also get a
+                notification when a table has gone a while with nobody stopping
+                by, or has been left uncleared. It names the table and nothing
+                about who is at it.
+              </p>
+              <p>
                 The occupancy card also shows how many Flock accounts checked in at that
                 venue in the last hour. That is a count of separate accounts. No names go
                 with it.
