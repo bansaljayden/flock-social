@@ -65,6 +65,10 @@ const FACT_SOURCES = new Set([
   // 'cohort_reported' is other venues' own live readings, aggregated above a
   // k-anonymity floor and published as a median and a count only.
   'corpus', 'cohort_reported',
+  // The venue's own table unit (services/tableInsights.js): seatings, turn
+  // and wait figures and table readings, measured at this venue. Venue wide
+  // or per table number, never about a person.
+  'table_sensor',
 ]);
 
 // Sources that are the owner's own testimony. Facts built from them carry
@@ -1615,6 +1619,17 @@ function buildCohortSameNight(ctx, opts) {
   return require('./advisorCohort').buildCohortSameNight(ctx, opts);
 }
 
+// ─── Your tables ─────────────────────────────────────────────────────────────
+//
+// What the venue's own table unit measured: last night, the last seven days,
+// turn and wait by weekday, the table numbers that waited most, and the hours
+// a table was rarely free. services/tableInsights.js holds the reads and the
+// floors; it builds through makeFact and makeRefusal from this module, so the
+// require is lazy on both sides, as with the cohort pair.
+function buildTableFacts(ctx, opts) {
+  return require('./tableInsights').buildTableFacts(ctx, opts);
+}
+
 module.exports = {
   // constructors and guards
   makeFact,
@@ -1631,6 +1646,7 @@ module.exports = {
   buildReadingsVsServed,
   buildCohortStanding,
   buildCohortSameNight,
+  buildTableFacts,
   // constants + helpers, exported for the standing test
   FACT_SOURCES,
   OWNER_SOURCES,

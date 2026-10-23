@@ -418,6 +418,12 @@ THE INTENT IDS. This list is closed. An id outside it voids your answer.
                          like it, as a group, with no venue named
   cohort_same_night      whether other venues like this one reported a day the
                          same way it did, as a median across reporting venues
+  tables_service         the venue's own table sensor: how long parties sit by
+                         weekday, how often seatings waited for a server, the
+                         hours every table was in use, last night at the tables;
+                         staffing questions and "how slow was Friday" land here
+  tables_free            how often a table was free at a weekday and hour over
+                         past weeks, from the venue's own table sensor
 
 FRUSTRATION IS NOT A ROUTE.
 

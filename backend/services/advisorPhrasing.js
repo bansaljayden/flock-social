@@ -136,6 +136,13 @@ const ADVISOR_INTENTS = Object.assign(Object.create(null), {
   busy_nights_check: { chip: 'Are our busy times what we think they are?', group: 'your_room' },
   around_you: { chip: 'What is happening around us this week?', group: 'your_street' },
   data_status: { chip: 'What data do you have on us?', group: 'your_data' },
+  // The table pair (services/tableInsights.js), offered only to a venue whose
+  // table unit has recorded seatings. tables_service is the staffing question:
+  // turn and wait by weekday, the full hours, the tables that waited most, and
+  // last night. tables_free is the record of how often a table was free at
+  // each hour over past weeks, owner side only.
+  tables_service: { chip: 'How are our tables running?', group: 'your_room' },
+  tables_free: { chip: 'When is a table usually free?', group: 'your_room' },
 });
 
 // The order chips are OFFERED in, which is a different question from what the
@@ -168,6 +175,8 @@ const CHIP_PRIORITY = [
   'peak_hours',
   'quiet_nights',
   'week_recap',
+  'tables_service',
+  'tables_free',
   'readings_vs_estimates',
   'slow_night',
   'cohort_typical',
@@ -537,6 +546,7 @@ const SOURCE_PHRASES = Object.assign(Object.create(null), {
   // Other venues' own readings, never one venue's and never a named one: a
   // median over at least five reporting venues (services/advisorCohort.js).
   cohort_reported: 'readings from venues like yours',
+  table_sensor: 'your table sensor',
 });
 
 function sourcePhrase(source) {
@@ -690,6 +700,7 @@ function formatFactValue(fact) {
   if (fact.unit === 'percentile' && Number.isFinite(Number(v))) return `${ordinal(v)} percentile`;
   if (fact.unit === 'percent' && Number.isFinite(Number(v))) return `${v}%`;
   if (fact.unit === 'km' && Number.isFinite(Number(v))) return `${v} km`;
+  if (fact.unit === 'minutes' && Number.isFinite(Number(v))) return `about ${v} minutes`;
   if (fact.unit === 'days' && Number.isFinite(Number(v))) return `${v} days`;
   if (fact.unit === 'tempF' && Number.isFinite(Number(v))) return `${v} F`;
   // "a theater or music hall, a shopping center" is a list a database wrote.
@@ -769,6 +780,10 @@ function partUnit(key) {
   // live answer read "your usual pattern sits around the 38 percentile".
   // The suffix is the server's to supply, exactly like the clock and the unit.
   if (/percentile$/i.test(key)) return 'percentile';
+  // The table facts (services/tableInsights.js) name their unit in the key:
+  // turnMinutes, clearMinutes, waitedPercent. The server supplies the noun.
+  if (/minutes$/i.test(key)) return 'minutes';
+  if (/percent$/i.test(key)) return 'percent';
   return undefined;
 }
 

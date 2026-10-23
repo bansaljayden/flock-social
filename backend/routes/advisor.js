@@ -336,6 +336,19 @@ const INTENT_PLANS = {
   capacity_math: async (b) => (await b.listing()).filter((e) => /capacity/.test(e.id)),
   busy_nights_check: async (b) => (await b.listing()).filter((e) => /busy_/.test(e.id)),
   around_you: (b) => b.around(),
+  // The table pair. tables_service answers the staffing questions ("how long
+  // do tables sit on Fridays", "do we need another server Saturday") from the
+  // venue's own table unit; tables_free is the record of how often a table
+  // was free at an hour over past weeks. Both SELECT from one builder and
+  // compute nothing here. Neither is a cause: a slow Friday is shown next to
+  // its turn and wait figures, and the owner draws the conclusion.
+  tables_service: async (b) => (await b.tables())
+    .filter((e) => advisorFacts.isRefusal(e) || !/^tables_(rarely|usually)_free$/.test(e.id)),
+  tables_free: async (b) => {
+    const entries = await b.tables();
+    const picked = entries.filter((e) => /^(tables_(rarely|usually)_free|refuse_table_free_forecast|refuse_no_table_history|refuse_table_read_failed)$/.test(e.id));
+    return picked.length ? picked : entries;
+  },
   // The corpus explainer: the gate refusal IS the honest answer for the modal
   // case, and it already names the unlock path. In the corpus, the profile's
   // own corpus columns are the fact.
@@ -389,6 +402,10 @@ async function bridgeFactBlock(userId, intentId) {
         : Promise.resolve([]))),
     cohortNight: () => (memo.cohortNight = memo.cohortNight || advisorFacts.buildCohortSameNight(ctx, opts)),
     cohortTypical: () => (memo.cohortTypical = memo.cohortTypical || advisorFacts.buildCohortStanding(ctx, opts)),
+    tables: () => (memo.tables = memo.tables
+      || (typeof advisorFacts.buildTableFacts === 'function'
+        ? advisorFacts.buildTableFacts(ctx, opts)
+        : Promise.resolve([]))),
   };
 
   const plan = INTENT_PLANS[intentId];
@@ -596,6 +613,30 @@ const NEEDS_CORPUS_AND_INTAKE = {
   busy_nights_check: 'owner_busy_nights',
 };
 
+// The table questions need table history: a closed seating at this place in
+// the last 28 days. A venue with no table unit is not shown two chips that
+// can only decline.
+const NEEDS_TABLES = new Set(['tables_service', 'tables_free']);
+
+async function hasTableHistory(placeId) {
+  if (!placeId) return false;
+  try {
+    const { rows } = await pool.query(
+      `SELECT EXISTS (SELECT 1 FROM sensor_table_seatings
+                       WHERE venue_place_id = $1
+                         AND left_at IS NOT NULL
+                         AND seated_at >= NOW() - INTERVAL '28 days') AS tables`,
+      [placeId]
+    );
+    return !!(rows[0] && rows[0].tables);
+  } catch (err) {
+    // Same posture as hasRecentHistory: a failed check offers the chips, and
+    // the builder refuses honestly if there is nothing behind them.
+    console.error('Advisor table availability check failed:', err.message);
+    return true;
+  }
+}
+
 function intakeFilled(profile, column) {
   const v = profile ? profile[column] : null;
   if (v === null || v === undefined || v === '') return false;
@@ -637,10 +678,14 @@ async function hasRecentHistory(placeId) {
 async function availableIntents(ctx) {
   const profile = ctx ? ctx.profile : null;
   const inCorpus = !!profile && advisorFacts.corpusGate(profile) === null;
-  const history = await hasRecentHistory(profile && profile.google_place_id);
+  const [history, tables] = await Promise.all([
+    hasRecentHistory(profile && profile.google_place_id),
+    hasTableHistory(profile && profile.google_place_id),
+  ]);
   return advisorPhrasing.CHIP_PRIORITY.filter((id) => {
     if (!advisorPhrasing.isKnownIntent(id)) return false;
     if (ALWAYS_AVAILABLE.has(id)) return true;
+    if (NEEDS_TABLES.has(id)) return tables;
     if (NEEDS_CORPUS.has(id)) return inCorpus;
     if (NEEDS_HISTORY.has(id)) return history;
     const column = NEEDS_CORPUS_AND_INTAKE[id];
