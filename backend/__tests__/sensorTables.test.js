@@ -39,6 +39,8 @@ const {
 // The unit's advisory lock, exactly as services/sensorTables.js spells it: the
 // real suite holds this same key to prove the write waits on it.
 const TABLE_LOCK_STATEMENT = /^SELECT pg_advisory_xact_lock\(hashtext\('sensor_tables:' \|\| \$1::text\)\)$/;
+// The floor read (routes/sensors.js TABLE_FLOOR_SQL), by its head.
+const FLOOR_READ = /^SELECT s\.sensor_device_id, s\.table_no, .* FROM sensor_table_states s WHERE s\.venue_place_id = \$1/;
 
 let devices = [];
 let readings = [];
@@ -106,7 +108,7 @@ pool.query = (sql, params = []) => {
     const hit = tableStates.some((r) => r.venue_place_id === params[0]);
     return Promise.resolve({ rows: hit ? [{ '?column?': 1 }] : [], rowCount: hit ? 1 : 0 });
   }
-  if (/^WITH unit AS \( SELECT sensor_device_id FROM sensor_table_states WHERE venue_place_id = \$1/.test(flat)) {
+  if (FLOOR_READ.test(flat)) {
     const rows = floorModel(params[0], params[1]);
     return Promise.resolve({ rows, rowCount: rows.length });
   }
@@ -117,19 +119,18 @@ pool.query = (sql, params = []) => {
   return Promise.reject(new Error(`unscripted query: ${flat.slice(0, 140)}`));
 };
 
-// The floor read (routes/sensors.js TABLE_FLOOR_SQL) over the fake rows: the
-// unit with the newest rows at the place, its rows at the place in number
-// order, each flagged stale past the window. sensorIngestStatement.test.js
-// runs the real statement.
+// The floor read (routes/sensors.js TABLE_FLOOR_SQL) over the fake rows: every
+// unit's rows at the place, by number, newest first within a number and then
+// by unit, each flagged stale past the window. The route settles a shared
+// number from that order. sensorIngestStatement.test.js runs the real
+// statement.
 function floorModel(placeId, minutes) {
-  const atPlace = tableStates.filter((r) => r.venue_place_id === placeId);
-  if (atPlace.length === 0) return [];
-  const unit = atPlace.slice().sort((a, b) => (b.updated_at - a.updated_at)
-    || a.sensor_device_id.localeCompare(b.sensor_device_id))[0].sensor_device_id;
-  return atPlace
-    .filter((r) => r.sensor_device_id === unit)
-    .sort((a, b) => a.table_no - b.table_no)
+  return tableStates
+    .filter((r) => r.venue_place_id === placeId)
+    .sort((a, b) => (a.table_no - b.table_no) || (b.updated_at - a.updated_at)
+      || a.sensor_device_id.localeCompare(b.sensor_device_id))
     .map((r) => ({
+      sensor_device_id: r.sensor_device_id,
       table_no: r.table_no, people: r.people, state: r.state, state_since: r.state_since,
       seats: r.seats ?? null, updated_at: r.updated_at,
       stale: r.updated_at.getTime() < Date.now() - minutes * 60 * 1000,
@@ -137,23 +138,32 @@ function floorModel(placeId, minutes) {
 }
 
 // The hours read (TABLE_HOURS_SQL) over the fake readings: the last 7 days,
-// readings with tables only, one row per hour, occupied as the numeric string
-// pg hands back.
+// readings with tables only, each unit's hour averaged on its own (and its
+// most tables kept), then the units added per hour, occupied rounded once as
+// the numeric string pg hands back and total as the bigint string SUM gives.
 function hoursModel(placeId) {
   const HOUR = 3600 * 1000;
-  const buckets = new Map();
+  const perUnit = new Map();
   for (const r of readings) {
     if (r.venue_place_id !== placeId || !(r.tables_total > 0)) continue;
     if (r.recorded_at.getTime() < Date.now() - 7 * 24 * HOUR) continue;
     const hour = Math.floor(r.recorded_at.getTime() / HOUR) * HOUR;
-    const b = buckets.get(hour) || { sum: 0, n: 0, total: 0 };
+    const key = `${hour}|${r.sensor_device_id}`;
+    const b = perUnit.get(key) || { hour, sum: 0, n: 0, total: 0 };
     b.sum += r.tables_occupied;
     b.n += 1;
     b.total = Math.max(b.total, r.tables_total);
-    buckets.set(hour, b);
+    perUnit.set(key, b);
   }
-  return [...buckets.entries()].sort((a, b) => a[0] - b[0]).map(([hour, b]) => ({
-    hour: new Date(hour), occupied: (Math.round((b.sum / b.n) * 10) / 10).toFixed(1), total: b.total,
+  const hours = new Map();
+  for (const b of perUnit.values()) {
+    const h = hours.get(b.hour) || { occupied: 0, total: 0 };
+    h.occupied += b.sum / b.n;
+    h.total += b.total;
+    hours.set(b.hour, h);
+  }
+  return [...hours.entries()].sort((a, b) => a[0] - b[0]).map(([hour, h]) => ({
+    hour: new Date(hour), occupied: (Math.round(h.occupied * 10) / 10).toFixed(1), total: String(h.total),
   }));
 }
 
@@ -1316,7 +1326,101 @@ test('a floor not refreshed for three minutes is stale, and still shown', async 
   const res = await get(FLOOR, OWNER_ID);
   assert.strictEqual(res.body.stale, true);
   assert.strictEqual(res.body.tables.length, 1);
-  assert.ok(queryLog.some((q) => /WITH unit AS/.test(q.sql) && q.params[1] === 3), 'the window is three minutes');
+  assert.ok(queryLog.some((q) => FLOOR_READ.test(q.sql) && q.params[1] === 3), 'the window is three minutes');
+});
+
+// Two units at one venue, numbered apart as the contract asks, and the clash
+// a box not yet renumbered makes.
+test('the floor is every unit\'s tables together, in number order, and does not change units between reads', async () => {
+  reset();
+  // The front room pushed thirty seconds before the back room; both live.
+  await call('/api/sensors/data', { apiKey: KEY, body: reading({ recorded_at: ago(30 * 1000), tables: '1:2:s:300;2:0:f:40;3:3:w:700' }) });
+  await call('/api/sensors/data', { apiKey: OTHER_KEY, body: reading({ recorded_at: ago(10 * 1000), tables: '41:0:c:20;42:4:s:900:6' }) });
+  await settle();
+  const res = await get(FLOOR, OWNER_ID);
+  assert.strictEqual(res.status, 200, res.raw);
+  assert.deepStrictEqual(res.body.tables.map((t) => `${t.number}:${t.people}:${t.state}:${t.seats}`),
+    ['1:2:seated:null', '2:0:free:null', '3:3:waiting:null', '41:0:needs_clearing:null', '42:4:seated:6']);
+  assert.strictEqual(res.body.updated_at, tableStates.find((r) => r.table_no === 41).updated_at.toISOString(), 'the newest row, whichever unit wrote it');
+  assert.strictEqual(res.body.stale, false);
+  assert.strictEqual(res.body.next_free, 42, 'the party seated longest is in the back room');
+  assert.ok(!/flux_tables|sensor_device/.test(res.raw), 'unit ids stay on the server');
+
+  // The front room pushes again: the same floor, the same order, nothing
+  // swapped out from under the owner.
+  ageDevice();
+  await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: '1:2:s:330;2:0:f:70;3:3:w:730' }) });
+  await settle();
+  const again = await get(FLOOR, OWNER_ID);
+  assert.deepStrictEqual(again.body.tables.map((t) => t.number), [1, 2, 3, 41, 42]);
+  assert.strictEqual(again.body.stale, false);
+
+  // One unit going quiet does not hide its tables; the floor is as fresh as
+  // its newest row, and stale only when every unit is.
+  for (const r of tableStates) if (r.sensor_device_id === 'flux_tables_02') r.updated_at = new Date(Date.now() - 5 * 60 * 1000);
+  assert.strictEqual((await get(FLOOR, OWNER_ID)).body.stale, false);
+  assert.strictEqual((await get(FLOOR, OWNER_ID)).body.tables.length, 5);
+  for (const r of tableStates) r.updated_at = new Date(Date.now() - 4 * 60 * 1000);
+  assert.strictEqual((await get(FLOOR, OWNER_ID)).body.stale, true);
+});
+
+test('two units reporting the same table number: the newer row is shown, and the clash is logged once an hour per place with device ids and numbers only', async () => {
+  reset();
+  await call('/api/sensors/data', { apiKey: KEY, body: reading({ recorded_at: ago(30 * 1000), tables: '1:2:s:300;2:0:f:40' }) });
+  await call('/api/sensors/data', { apiKey: OTHER_KEY, body: reading({ recorded_at: ago(10 * 1000), tables: '2:4:w:400;3:0:c:9' }) });
+  await settle();
+  let res;
+  const lines = await capturingLogs(async () => {
+    res = await get(FLOOR, OWNER_ID);
+    await get(FLOOR, OWNER_ID);
+    await get(FLOOR, OWNER_ID);
+  });
+  assert.strictEqual(res.status, 200, res.raw);
+  assert.deepStrictEqual(res.body.tables.map((t) => `${t.number}:${t.people}:${t.state}`),
+    ['1:2:seated', '2:4:waiting', '3:0:needs_clearing'], 'table 2 is the back room\'s newer row');
+  assert.strictEqual(res.body.next_free, 2);
+  const notes = lines.filter((l) => /report the same table number/.test(l));
+  assert.strictEqual(notes.length, 1, lines.join('\n'));
+  assert.match(notes[0], /Venue ChIJtableMonitoring0001: units flux_tables_01, flux_tables_02 report the same table number \(2\)/);
+  assert.ok(!/seated|waiting|people|:4:/.test(notes[0]), 'the line says which units and which number, nothing about the tables');
+
+  // The front room writes table 2 again, newer: now its row is the one shown.
+  ageDevice();
+  await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: '1:2:s:330;2:1:s:60' }) });
+  await settle();
+  const after = await capturingLogs(async () => { res = await get(FLOOR, OWNER_ID); });
+  assert.deepStrictEqual(res.body.tables.map((t) => `${t.number}:${t.people}:${t.state}`), ['1:2:seated', '2:1:seated', '3:0:needs_clearing']);
+  assert.deepStrictEqual(after, [], 'inside the hour the clash is not said again');
+
+  // The note comes back after an hour, and is per place.
+  const realWarn = console.warn;
+  console.warn = () => {};
+  try {
+    const t0 = Date.now();
+    assert.strictEqual(sensorTables.noteTableClash(VENUE, [{ table_no: 2, shown: 'a', hidden: 'b' }], t0 + 59 * 60 * 1000), false);
+    assert.strictEqual(sensorTables.noteTableClash('ChIJanotherPlace', [{ table_no: 2, shown: 'a', hidden: 'b' }], t0), true);
+    assert.strictEqual(sensorTables.noteTableClash(VENUE, [{ table_no: 2, shown: 'a', hidden: 'b' }], t0 + 60 * 60 * 1000), true);
+  } finally {
+    console.warn = realWarn;
+  }
+});
+
+test('hours with two units: each unit\'s hour is averaged on its own and the units are added, so two rooms read as one floor', async () => {
+  reset();
+  const HOUR = 3600 * 1000;
+  const lastHour = Math.floor(Date.now() / HOUR) * HOUR - HOUR;
+  const at = (m) => new Date(lastHour + m * 60 * 1000).toISOString();
+  const floorOfSize = (total, occupied) => Array.from({ length: total }, (_, i) => `${i + 1}:${i < occupied ? 2 : 0}:${i < occupied ? 's' : 'f'}:60`).join(';');
+  // Backfill (older than 15 minutes, so no flood guard): the front room
+  // watches 12 tables with 9 in use, the back room 6 with 1, both twice.
+  for (const [key, m, total, occupied] of [[KEY, 5, 12, 9], [KEY, 20, 12, 9], [OTHER_KEY, 10, 6, 1], [OTHER_KEY, 25, 6, 1]]) {
+    const res = await call('/api/sensors/data', { apiKey: key, body: reading({ recorded_at: at(m), tables: floorOfSize(total, occupied) }) });
+    assert.strictEqual(res.status, 201, res.raw);
+  }
+  const res = await get(HOURS, OWNER_ID);
+  assert.strictEqual(res.status, 200, res.raw);
+  assert.deepStrictEqual(res.body, { hours: [{ hour: new Date(lastHour).toISOString(), occupied: 10, total: 18 }] },
+    'averaged across both units this read as 5 of 12');
 });
 
 test('hours: the owner gets one row per hour with tables, oldest first, as numbers; readings without tables are left out', async () => {
@@ -1392,7 +1496,7 @@ const UNAVAILABLE = {
   retryable: true,
 };
 const TIER_READ = /FROM venue_profiles vp LEFT JOIN venue_subscriptions/;
-const TABLE_DATA_READ = /WITH unit AS|tables_total > 0/;
+const TABLE_DATA_READ = /FROM sensor_table_states s WHERE|tables_total > 0/;
 const HAS_TABLES_READ = /^SELECT 1 FROM sensor_table_states WHERE venue_place_id/;
 
 function billingOn() {

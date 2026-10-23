@@ -174,38 +174,70 @@ function tableCounts(tables) {
 }
 
 // ---------------------------------------------------------------------------
-// The log line for an ignored value: once an hour per device at most.
+// Two log lines, each once an hour per key at most.
 //
-// A unit with a firmware bug sends the same bad string with every reading,
-// twice a minute, so one line per reading would bury everything else in the
-// log. One line an hour still says which unit needs attention and why.
+// An ignored value: a unit with a firmware bug sends the same bad string with
+// every reading, twice a minute, so one line per reading would bury
+// everything else in the log. One line an hour still says which unit needs
+// attention and why. Keyed by device id.
 //
-// In process memory, and on purpose. This is a log throttle, not a rule: a
+// A table-number clash: two units at one place reporting the same table
+// number, which the floor read settles by showing the newer row (routes/
+// sensors.js TABLE_FLOOR_SQL). The dashboard reads every 15 seconds for as
+// long as it is open, so the clash would otherwise be a line every 15 seconds
+// until a box is renumbered. Keyed by place.
+//
+// In process memory, and on purpose. These are log throttles, not rules: a
 // deploy or a second instance costs at most one extra line, and nothing a
-// device or a person sees depends on it. Keyed only by device ids that have
-// already authenticated, so the map is no bigger than the fleet; the bound is
-// there for the day that stops being true, and it evicts the oldest note
-// first (utils/cacheKeyInventory.js has the row).
+// device or a person sees depends on them. Keyed only by device ids that have
+// already authenticated and by places a verified owner has read, so neither
+// map is bigger than the fleet; the bound is there for the day that stops
+// being true, and it evicts the oldest note first (utils/cacheKeyInventory.js
+// has both rows).
 // ---------------------------------------------------------------------------
-const IGNORED_NOTE_INTERVAL_MS = 60 * 60 * 1000;
-const IGNORED_NOTE_MAX_DEVICES = 1000;
+const NOTE_INTERVAL_MS = 60 * 60 * 1000;
+const NOTE_MAX_KEYS = 1000;
 const ignoredNotedAt = new Map();
+const clashNotedAt = new Map();
 
-function noteIgnoredTables(deviceId, reason, now = Date.now()) {
-  const last = ignoredNotedAt.get(deviceId);
-  if (last !== undefined && now - last < IGNORED_NOTE_INTERVAL_MS) return false;
+// Whether a line may be written for `key` now, and the note that it was.
+function noteOnceAnHour(notes, key, now) {
+  const last = notes.get(key);
+  if (last !== undefined && now - last < NOTE_INTERVAL_MS) return false;
   // Deleted and set again, so the map's own order stays oldest note first and
   // the bound below always drops the note that matters least.
-  ignoredNotedAt.delete(deviceId);
-  while (ignoredNotedAt.size >= IGNORED_NOTE_MAX_DEVICES) {
-    ignoredNotedAt.delete(ignoredNotedAt.keys().next().value);
+  notes.delete(key);
+  while (notes.size >= NOTE_MAX_KEYS) {
+    notes.delete(notes.keys().next().value);
   }
-  ignoredNotedAt.set(deviceId, now);
+  notes.set(key, now);
+  return true;
+}
+
+function noteIgnoredTables(deviceId, reason, now = Date.now()) {
+  if (!noteOnceAnHour(ignoredNotedAt, deviceId, now)) return false;
   // The reason, never the value: the value is whatever the device (or whoever
   // holds its key) chose to send, and a log line is not a place to replay it.
   console.warn(
     `Sensor ${deviceId}: a reading's tables value was ignored (${reason}). The reading was stored without it. `
     + 'Logged at most once an hour per device.'
+  );
+  return true;
+}
+
+/**
+ * Say that two units at a place report the same table number(s). `clashes` is
+ * [{ table_no, shown, hidden }] with the two units' device ids: the ids and
+ * the numbers, and nothing about what is at the tables.
+ */
+function noteTableClash(placeId, clashes, now = Date.now()) {
+  if (!noteOnceAnHour(clashNotedAt, placeId, now)) return false;
+  const units = [...new Set(clashes.flatMap((c) => [c.shown, c.hidden]))].sort();
+  const numbers = [...new Set(clashes.map((c) => c.table_no))].sort((a, b) => a - b);
+  console.warn(
+    `Venue ${placeId}: units ${units.join(', ')} report the same table number${numbers.length > 1 ? 's' : ''} `
+    + `(${numbers.join(', ')}); the newer row is shown. Set TABLE_NUMBER_START on one box so they number apart. `
+    + 'Logged at most once an hour per place.'
   );
   return true;
 }
@@ -574,6 +606,7 @@ module.exports = {
   readTables,
   tableCounts,
   noteIgnoredTables,
+  noteTableClash,
   applyTableReading,
   wantsTableAlerts,
   tableAlertCopy,
@@ -581,8 +614,8 @@ module.exports = {
   TABLE_ALERT_VENUE_WINDOW_MINUTES,
   TABLE_ALERT_MAX_AGE_MS,
   TABLES_STALE_AFTER_MINUTES,
-  // Test seams: the throttle is process-global state, and the floor is
+  // Test seams: the log throttles are process-global state, and the floor is
   // written after the answer.
-  _resetIgnoredNotes: () => ignoredNotedAt.clear(),
+  _resetIgnoredNotes: () => { ignoredNotedAt.clear(); clashNotedAt.clear(); },
   _settled: () => Promise.allSettled([...inFlight]),
 };

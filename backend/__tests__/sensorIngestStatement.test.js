@@ -775,27 +775,39 @@ async function withVenueOwner(fn, { verified = true } = {}) {
   }
 }
 
-test('on the real schema: the owner reads the floor of the unit with the newest rows, with seats, staleness and next_free', async () => {
+test('on the real schema: the owner reads every unit\'s tables as one floor, a shared number settled by the newer row, with seats, staleness and next_free', async () => {
   await withVenueOwner(async (ownerId) => {
     const FLOOR = `/api/sensors/${VENUE}/tables`;
     assert.deepEqual((await ownerGet(FLOOR, ownerId)).body, { tables: [], updated_at: null, stale: true, next_free: null });
     assert.equal((await ownerGet(FLOOR, ownerId + 1000)).status, 403, 'a stranger read the floor');
 
-    // A second unit at the venue, last heard from a minute ago.
+    // A second unit at the venue, last heard from a minute ago, with a table
+    // of its own (9) and one numbered the same as the front room's (1).
     await pool.query(
       "INSERT INTO sensor_devices (device_id, venue_place_id, api_key, is_active) VALUES ('sensor_back_room', $1, $2, true)",
       [VENUE, digestOf('f'.repeat(64))]
     );
     await pool.query(
       `INSERT INTO sensor_table_states (sensor_device_id, table_no, venue_place_id, people, state, state_since, updated_at)
-       VALUES ('sensor_back_room', 1, $1, 6, 'w', NOW() - INTERVAL '20 minutes', NOW() - INTERVAL '1 minute')`,
+       VALUES ('sensor_back_room', 1, $1, 6, 'w', NOW() - INTERVAL '20 minutes', NOW() - INTERVAL '1 minute'),
+              ('sensor_back_room', 9, $1, 0, 'f', NOW() - INTERVAL '30 minutes', NOW() - INTERVAL '1 minute')`,
       [VENUE]
     );
+    // The clash note is once an hour per place; start this read with a clean slate.
+    require('../services/sensorTables')._resetIgnoredNotes();
 
     const live = await push(reading({ tables: '1:2:s:600:4;2:3:w:900;3:0:c:50:2' }));
     assert.equal(live.status, 201);
     await settleTables();
-    let res = await ownerGet(FLOOR, ownerId);
+    let res;
+    const logged = [];
+    const realWarn = console.warn;
+    console.warn = (...a) => logged.push(a.join(' '));
+    try {
+      res = await ownerGet(FLOOR, ownerId);
+    } finally {
+      console.warn = realWarn;
+    }
     assert.equal(res.status, 200, JSON.stringify(res.body));
     const at = new Date(live.body.recorded_at).getTime();
     assert.deepEqual(res.body, {
@@ -803,23 +815,29 @@ test('on the real schema: the owner reads the floor of the unit with the newest 
         { number: 1, people: 2, state: 'seated', since: new Date(at - 600000).toISOString(), seats: 4 },
         { number: 2, people: 3, state: 'waiting', since: new Date(at - 900000).toISOString(), seats: null },
         { number: 3, people: 0, state: 'needs_clearing', since: new Date(at - 50000).toISOString(), seats: 2 },
+        { number: 9, people: 0, state: 'free', since: (await floor()).find((r) => r.table_no === 9).state_since.toISOString(), seats: null },
       ],
       updated_at: new Date(at).toISOString(),
       stale: false,
       next_free: 2,
     });
+    assert.ok(logged.some((l) => /Venue .*: units sensor_back_room, sensor_live report the same table number \(1\)/.test(l)), logged.join('\n'));
+    assert.ok(!/sensor_back_room|sensor_live/.test(JSON.stringify(res.body)), 'unit ids stay on the server');
 
-    // The front unit goes quiet: the back room's rows are now the newest.
+    // The front unit goes quiet: its tables stay on the floor, table 1 is now
+    // the back room's newer row, and the floor is as fresh as its newest row.
     await pool.query(`UPDATE sensor_table_states SET updated_at = NOW() - INTERVAL '4 minutes' WHERE sensor_device_id = 'sensor_live'`);
     res = await ownerGet(FLOOR, ownerId);
-    assert.deepEqual(res.body.tables.map((t) => `${t.number}:${t.people}:${t.state}`), ['1:6:waiting']);
+    assert.deepEqual(res.body.tables.map((t) => `${t.number}:${t.people}:${t.state}`),
+      ['1:6:waiting', '2:3:waiting', '3:0:needs_clearing', '9:0:free']);
     assert.equal(res.body.stale, false);
-    assert.equal(res.body.next_free, 1);
+    assert.equal(res.body.next_free, 1, 'the back room\'s party at table 1 has sat longest');
 
-    // Both go quiet: the newest is past three minutes, and the floor says so.
+    // Both go quiet: the newest row is past three minutes, and the floor says so.
     await pool.query(`UPDATE sensor_table_states SET updated_at = NOW() - INTERVAL '10 minutes' WHERE sensor_device_id = 'sensor_back_room'`);
     res = await ownerGet(FLOOR, ownerId);
-    assert.equal(res.body.tables.length, 3, 'the front unit is the newest again');
+    assert.deepEqual(res.body.tables.map((t) => `${t.number}:${t.people}:${t.state}`),
+      ['1:2:seated', '2:3:waiting', '3:0:needs_clearing', '9:0:free'], 'table 1 is the front room\'s again, its row now the newer');
     assert.equal(res.body.stale, true);
   });
   await withVenueOwner(async (ownerId) => {
@@ -841,6 +859,10 @@ test('on the real schema: tables in use by hour, the last 7 days, oldest first, 
     ['sensor_live', VENUE, lastHour + 40 * 60000, 5, 4],
     ['sensor_live', VENUE, Date.now() - 8 * 24 * HOUR, 4, 4],
     ['sensor_elsewhere', 'ChIJsomewhereElse0002', lastHour + 30 * 60000, 9, 9],
+    // A second unit at the venue in the last hour: its own average and its
+    // own total are added to the front room's, not averaged into them.
+    ['sensor_back_room', VENUE, lastHour + 15 * 60000, 6, 1],
+    ['sensor_back_room', VENUE, lastHour + 45 * 60000, 6, 1],
   ];
   for (const [device, place, ms, total, occupied] of rowsToStore) {
     await pool.query(
@@ -856,7 +878,8 @@ test('on the real schema: tables in use by hour, the last 7 days, oldest first, 
     assert.deepEqual(res.body, {
       hours: [
         { hour: new Date(lastHour - 2 * HOUR).toISOString(), occupied: 1.5, total: 3 },
-        { hour: new Date(lastHour).toISOString(), occupied: 3.7, total: 5 },
+        // 11/3 of 5 in the front room plus 1 of 6 in the back: 4.7 of 11, rounded once.
+        { hour: new Date(lastHour).toISOString(), occupied: 4.7, total: 11 },
       ],
     });
     assert.equal((await ownerGet(`/api/sensors/${VENUE}/tables/hours`, ownerId + 1000)).status, 403);

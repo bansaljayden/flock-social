@@ -601,6 +601,16 @@ const INVENTORY = [
     why: 'Nothing reads this to decide anything a device or a person sees: the reading is stored and answered 201 whether or not the line is written, so the worst a flood of keys could do is make a unit log once more often, which makes a problem more visible rather than less. The key space is the fleet, because a note is written only after the key has authenticated and the reading has been stored. It lives in this process, so a deploy or a second instance costs at most one extra line per unit.',
   },
   {
+    file: 'services/sensorTables.js', name: 'clashNotedAt', kind: 'cache',
+    key: 'the place id of a venue whose floor read found two units reporting the same table number -> when that was last logged',
+    callerControls: 'the place id in the URL of GET /api/sensors/:placeId/tables, but a note is written only past authenticate, the verified-owner gate and the Roost gate, and only when the place holds rows from two units sharing a number. So the key space is the venues with two table units whose owner is reading, and an owner reaches exactly the places they own.',
+    protects: 'the log, not a resource: the dashboard reads the floor every 15 seconds for as long as it is open, and this keeps a clash to one line an hour per venue instead of one every 15 seconds until a box is renumbered',
+    denominator: 'not a counter. One entry per place, holding the time of its last line',
+    bound: '1000 entries, oldest note evicted first (re-set on every line so insertion order is age order); never cleared wholesale',
+    verdict: 'SAFE',
+    why: 'Nothing reads this to decide anything a person sees: the floor is answered the same way whether or not the line is written (the newer row is shown either way), so the worst a flood of keys could do is make a venue log once more often. The keys come from reads that have already passed three gates, and the line names device ids and table numbers only, never a table\'s people or state. It lives in this process, so a deploy or a second instance costs at most one extra line per venue.',
+  },
+  {
     file: 'routes/venueSearch.js', name: 'inflight', kind: 'inflight',
     key: '`search:${normalizedQuery}|${coords}` (the `detail:${placeId}` half moved to services/placeDetailsCache.js)',
     callerControls: 'the query text (NFKC-normalised, whitespace-collapsed, lowercased, 80 chars)',

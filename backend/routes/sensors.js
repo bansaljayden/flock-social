@@ -11,7 +11,7 @@ const { scalarOnly } = require('../validators/shape');
 // refused are at the top of that file.
 const {
   MAX_TABLES_LENGTH, STATE_WORDS, TABLES_STALE_AFTER_MINUTES,
-  readTables, tableCounts, noteIgnoredTables, applyTableReading,
+  readTables, tableCounts, noteIgnoredTables, noteTableClash, applyTableReading,
 } = require('../services/sensorTables');
 // The table routes are a Roost feature, gated the way requireVenueTier gates.
 const { checkVenueTier } = require('../services/venueEntitlements');
@@ -914,45 +914,58 @@ async function tablesPlanRefusal(callerId, placeId) {
 // off, offline, or has stopped sending tables, and the dashboard is told so
 // rather than shown an old floor as the present one.
 
-// ONE UNIT'S FLOOR. Each unit numbers its own tables, so a place with two
-// units would have two table 3s, and they are never merged into one floor:
-// the unit with the newest rows is the floor. The place is checked on the
-// rows themselves as well as on the pick, so a unit moved to another venue
-// cannot carry this one's tables with it.
+// EVERY UNIT'S FLOOR. A venue with more than one box numbers its tables apart
+// (the contract in services/sensorTables.js: TABLE_NUMBER_START on the box),
+// so the owner's floor is every unit's rows at the place together, in number
+// order. It used to be the one unit with the newest rows, and with two live
+// units that is a different unit on almost every 15-second read: the board
+// changed rooms, "table 3" was a different table each time and next_free
+// jumped between rooms. Two units that do report the same number (a box not
+// yet renumbered) are not merged into one tile, because a tile cannot say
+// which room it is: the newer row is the one shown and the clash is said in
+// the log once an hour (noteTableClash). Rows come newest first within a
+// number so the keeper is the first row seen for it. The place is checked on
+// the rows themselves, so a unit moved to another venue cannot carry this
+// one's tables with it. updated_at and stale on the answer are the newest
+// row's, whichever unit wrote it.
 const TABLE_FLOOR_SQL = `
-  WITH unit AS (
-    SELECT sensor_device_id
-      FROM sensor_table_states
-     WHERE venue_place_id = $1
-     ORDER BY updated_at DESC, sensor_device_id
-     LIMIT 1
-  )
-  SELECT s.table_no, s.people, s.state, s.state_since, s.seats, s.updated_at,
+  SELECT s.sensor_device_id, s.table_no, s.people, s.state, s.state_since, s.seats, s.updated_at,
          s.updated_at < NOW() - $2::int * INTERVAL '1 minute' AS stale
     FROM sensor_table_states s
-    JOIN unit u ON u.sensor_device_id = s.sensor_device_id
    WHERE s.venue_place_id = $1
-   ORDER BY s.table_no`;
+   ORDER BY s.table_no, s.updated_at DESC, s.sensor_device_id`;
 
 /**
  * The floor as the dashboard reads it. `next_free` is the seated or waiting
  * table whose party has sat longest (earliest state_since, which for s and w
  * is the party's arrival), the best guess at which table frees up next; on a
- * tie, the lower number. null when no table has a party.
+ * tie, the lower number. null when no table has a party. Unit ids stay on the
+ * server: they are read only to settle and report a clash.
  */
-function floorResponse(rows) {
+function floorResponse(rows, placeId) {
   if (rows.length === 0) return { tables: [], updated_at: null, stale: true, next_free: null };
   let newest = rows[0];
   let longestSeated = null;
+  const kept = [];
+  const clashes = [];
   for (const r of rows) {
     if (new Date(r.updated_at) > new Date(newest.updated_at)) newest = r;
+    const last = kept[kept.length - 1];
+    if (last && Number(last.table_no) === Number(r.table_no)) {
+      // The same number from another unit. The rows arrive newest first, so
+      // the row already kept is the newer one; this one is only noted.
+      clashes.push({ table_no: Number(r.table_no), shown: last.sensor_device_id, hidden: r.sensor_device_id });
+      continue;
+    }
+    kept.push(r);
     const hasParty = r.state === 's' || r.state === 'w';
     if (hasParty && (longestSeated === null || new Date(r.state_since) < new Date(longestSeated.state_since))) {
       longestSeated = r;
     }
   }
+  if (clashes.length > 0) noteTableClash(placeId, clashes);
   return {
-    tables: rows.map((r) => ({
+    tables: kept.map((r) => ({
       number: Number(r.table_no),
       people: Number(r.people),
       state: STATE_WORDS[r.state],
@@ -988,7 +1001,7 @@ router.get('/:placeId/tables',
       if (refusal) return res.status(403).json(refusal);
 
       const floor = await pool.query(TABLE_FLOOR_SQL, [placeId, TABLES_STALE_AFTER_MINUTES]);
-      res.json(floorResponse(floor.rows));
+      res.json(floorResponse(floor.rows, placeId));
     } catch (err) {
       console.error('Get table floor error:', err);
       res.status(500).json({ error: 'Failed to fetch tables' });
@@ -1001,22 +1014,38 @@ router.get('/:placeId/tables',
 //
 // { hours: [{ hour, occupied, total }] }, oldest first: one row per hour that
 // has at least one reading with tables, occupied the average count of tables
-// with a party at them (one decimal), total the most tables the unit watched
-// that hour. The hours are absolute instants; the browser folds them into
-// averages by local hour of day, so this route never has to guess the venue's
-// zone. Readings with no tables (older firmware, an ignored string) are left
-// out rather than counted as an empty floor.
+// with a party at them (one decimal), total the tables watched that hour. The
+// hours are absolute instants; the browser folds them into averages by local
+// hour of day, so this route never has to guess the venue's zone. Readings
+// with no tables (older firmware, an ignored string) are left out rather than
+// counted as an empty floor.
+//
+// EACH UNIT FIRST, THEN THE UNITS ADDED. Each reading counts one unit's
+// tables, so a venue with two units has two readings a minute that describe
+// different rooms. Averaged together they described neither: twelve tables
+// with nine in use beside six with one read as 5 of 12, when the room has 10
+// of 18. So each unit's hour is averaged on its own (and its total is the
+// most tables it watched), and the units' figures are added. With one unit
+// the answer is exactly what it always was. Rounded once, after the sum, so
+// per-unit rounding cannot add up.
 // ---------------------------------------------------------------------------
 const TABLE_HOURS_SQL = `
-  SELECT date_trunc('hour', recorded_at) AS hour,
-         ROUND(AVG(tables_occupied)::numeric, 1) AS occupied,
-         MAX(tables_total) AS total
-    FROM venue_sensor_data
-   WHERE venue_place_id = $1
-     AND recorded_at >= NOW() - INTERVAL '7 days'
-     AND tables_total > 0
-   GROUP BY date_trunc('hour', recorded_at)
-   ORDER BY 1`;
+  SELECT hour,
+         ROUND(SUM(occupied), 1) AS occupied,
+         SUM(total) AS total
+    FROM (
+      SELECT date_trunc('hour', recorded_at) AS hour,
+             sensor_device_id,
+             AVG(tables_occupied)::numeric AS occupied,
+             MAX(tables_total) AS total
+        FROM venue_sensor_data
+       WHERE venue_place_id = $1
+         AND recorded_at >= NOW() - INTERVAL '7 days'
+         AND tables_total > 0
+       GROUP BY 1, 2
+    ) per_unit
+   GROUP BY hour
+   ORDER BY hour`;
 
 router.get('/:placeId/tables/hours',
   authenticate,
