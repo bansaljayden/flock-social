@@ -1168,11 +1168,12 @@ router.get('/:placeId/tables/settings',
   }
 );
 
-// Validator-admitted spellings of a boolean switch ('true'/'false' from a
-// form, or the JSON boolean), as the boolean to store, or null for absent.
+// A switch the chain admitted (isBoolean strict: the JSON booleans only, so a
+// form's "true" or a 1 is refused rather than guessed at) as the boolean to
+// store, or null for a switch the body left out.
 function switchValue(v) {
   if (v === undefined || v === null) return null;
-  return v === true || v === 'true';
+  return v === true;
 }
 
 router.put('/:placeId/tables/settings',
