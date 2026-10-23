@@ -1744,6 +1744,7 @@ app.use('/api/venue-profile', venueProfileLimiter, venueProfileRoutes); // Handl
 app.use('/api/venue-dashboard', venueDashboardLimiter, venueDashboardRoutes); // Handles promotions, events, reviews CRUD
 app.use('/api/venue/advisor/question', advisorQuestionLimiter);  // free text, tighter: 10/hour per account
 app.use('/api/venue/advisor', advisorLimiter, advisorRoutes);  // Roost: fact cards + chip chat (own limiter, see above)
+app.use('/api/venue/tables', apiLimiter, require('./routes/tableInsights')); // owner table read: last night at the tables, free forecast (verified owner, Roost)
 app.use('/api/availability', apiLimiter, availabilityRoutes); // 3-tap status pulse: down / maybe / not
 app.use('/api/calendar', apiLimiter, calendarRoutes);          // personal calendar events (CRUD, per-user)
 
