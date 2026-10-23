@@ -28,7 +28,7 @@ import { resendVerificationEmail, trackPurchaseCompleted, hasRenewableSession, r
 // carrying when they made an account, then open the flock they were invited to.
 // The reasoning, and everything the token has to survive, is in the service.
 import { redeemPendingInvite, openJoinedFlock, rememberInvite, storedGuestTokens } from './services/inviteHandoff';
-import { setAvailability, clearAvailability, getMyAvailability, getFriendsAvailability, getSensorCurrent, getSensorHistory, getSensorTables, getSensorTableHours, checkInManual, getNfcCheckin, getCalendarEvents, createCalendarEvent, deleteCalendarEvent } from './services/api';
+import { setAvailability, clearAvailability, getMyAvailability, getFriendsAvailability, getSensorCurrent, getSensorHistory, getSensorTables, getSensorTableHours, getSensorTableStats, getSensorTableWaits, getSensorTableIncoming, getSensorTableSettings, checkInManual, getNfcCheckin, getCalendarEvents, createCalendarEvent, deleteCalendarEvent } from './services/api';
 import { joinVenueRoom, leaveVenueRoom, joinVenueContentRoom, leaveVenueContentRoom, onVenueSensorUpdate, onVenueCheckin, onSessionRevoked, onSocketError, onAvailabilityUpdated, onBlockedBy, onUnblockedBy, onContentRemoved, onContentRestored } from './services/socket';
 import { pullSettings, queueSync, sameAsAccount, latestPull } from './services/userSettings';
 import { liftReaders } from './services/flockReaders';
@@ -66,7 +66,7 @@ import { AVATAR_EDGE, AVATAR_REFIT_MARKER_KEY, encodeAvatar, dataUrlToBlob, need
 // staleness rule is measured in. See lib/livePins.js.
 import { LOCATION_EMIT_MS, withoutFlockPins, withoutPersonPin, withoutStalePins } from './lib/livePins';
 import { foldSensorReading } from './lib/sensorHistory';
-import { forgetTables, nextTablesState, rememberTables, startTableHoursReading, startTablesReading, tablesRemembered } from './lib/venueTablesReading';
+import { forgetTables, nextIncomingState, nextTablesState, nextWaitsState, rememberTables, startTableHoursReading, startTableIncomingReading, startTableSettingsReading, startTableStatsReading, startTableWaitsReading, startTablesReading, tablesRemembered } from './lib/venueTablesReading';
 // Whether the viewer's own Tonight pulse is still on. See lib/pulse.js.
 import { livePulse, pulseEndsAt, pulseTapAction } from './lib/pulse';
 // PaywallSheet is NOT imported here; it is fetched, at the lazy block below.
@@ -17930,6 +17930,26 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [ownerTableHours, setOwnerTableHours] = useState(undefined);
   const [ownerTablesSeen, setOwnerTablesSeen] = useState(false);
   const [ownerTablesLocked, setOwnerTablesLocked] = useState(false);
+  // The rest of the Tables tab, read only while that tab is on screen with
+  // tables on the board (the effect below the tables read): the walk-in
+  // waits on the tables' loop and the incoming flocks once a minute, each
+  // held like the tables (the answer, the last good answer marked
+  // unrefreshed after a failed read, null after a refusal); the turn-time
+  // stats once per visit, kept across tab switches, null while the read has
+  // failed. And the tables settings (whether the tables show in the Flock
+  // app, whether the owner gets table alerts), read once each time the
+  // Settings tab opens for a venue with tables. Each undefined until read.
+  const [ownerTableWaits, setOwnerTableWaits] = useState(undefined);
+  const [ownerTableIncoming, setOwnerTableIncoming] = useState(undefined);
+  const [ownerTableStats, setOwnerTableStats] = useState(undefined);
+  const [ownerTableSettings, setOwnerTableSettings] = useState(undefined);
+  // Whether the tables on the board are live ones: the Tables tab's other
+  // reads start and stop on this, which flips only when a visit goes from
+  // tables to none or back, never on the 15-second answers in between.
+  const ownerTablesLive = !!(ownerTables && Array.isArray(ownerTables.tables) && ownerTables.tables.length > 0);
+  // The place whose stats this visit has read, so a return to the tab does
+  // not read them again; cleared with the stats.
+  const ownerTableStatsReadFor = useRef(null);
   const [ownerVenuePlaceId, setOwnerVenuePlaceId] = useState(null);
   // The venue's IANA zone, with the place it is for, so the Tables tab's hours
   // chart keeps the venue's clock, the clock the Analytics hourly chart is
@@ -18823,6 +18843,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   React.useLayoutEffect(() => {
     setOwnerTables(undefined);
     setOwnerTableHours(undefined);
+    setOwnerTableWaits(undefined);
+    setOwnerTableIncoming(undefined);
+    setOwnerTableStats(undefined);
+    setOwnerTableSettings(undefined);
+    ownerTableStatsReadFor.current = null;
     setOwnerTablesLocked(false);
     setOwnerTablesSeen(currentScreen === 'venueDashboard' && tablesRemembered(ownerVenuePlaceId));
   }, [ownerVenuePlaceId, currentScreen, venueTier]);
@@ -18853,6 +18878,61 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       stopReading();
     };
   }, [ownerVenuePlaceId, currentScreen, venueTier]);
+
+  // THE TABLES TAB'S OWN READS, while that tab is on screen with tables on
+  // the board (ownerTablesLive): none of the three says anything without
+  // them, and the tab is the only reader. The walk-in waits go on the
+  // tables' own cadence (startTableWaitsReading), never two out at once,
+  // ended by the same refusals; the incoming flocks once a minute; the
+  // turn-time stats once per visit, the first time the tab opens live, and
+  // again after every 20th good waits answer while that read has failed,
+  // the hours' own retry. Every route is under the same plan gate as the
+  // tables, so the plan is in the deps for the same reason it is above.
+  //
+  // Leaving the tab stops the loops and drops the waits and the incoming
+  // list to undefined: both describe this minute, and kept across a switch
+  // they would stand as live for the round trip after the owner came back.
+  // The stats are kept, being the month's; a return reads them only if the
+  // read had failed.
+  React.useEffect(() => {
+    const pid = ownerVenuePlaceId;
+    if (!pid || currentScreen !== 'venueDashboard' || venueTab !== 'tables' || !ownerTablesLive) return undefined;
+    const statsReading = ownerTableStatsReadFor.current === pid ? null : startTableStatsReading(() => getSensorTableStats(pid), (stats) => {
+      setOwnerTableStats(stats);
+      if (stats) ownerTableStatsReadFor.current = pid;
+    });
+    const stopWaits = startTableWaitsReading(() => getSensorTableWaits(pid), (data, { refused }) => {
+      setOwnerTableWaits((prev) => nextWaitsState(prev, data, refused));
+      if (data && statsReading) statsReading.turn();
+    });
+    const stopIncoming = startTableIncomingReading(() => getSensorTableIncoming(pid), (data, { refused }) => {
+      setOwnerTableIncoming((prev) => nextIncomingState(prev, data, refused));
+    });
+    return () => {
+      if (statsReading) statsReading.stop();
+      stopWaits();
+      stopIncoming();
+      setOwnerTableWaits(undefined);
+      setOwnerTableIncoming(undefined);
+    };
+  }, [ownerVenuePlaceId, currentScreen, venueTab, ownerTablesLive, venueTier]);
+
+  // THE TABLES SETTINGS, read once each time the Settings tab opens for a
+  // venue with tables (ownerTablesSeen: the same flag that puts the Tables
+  // card on Settings, the server's lock included, since the settings route
+  // has no plan gate and a venue below Roost can still turn its tables off
+  // in the app). A failure keeps the answer before it when there is one, so
+  // a switch does not vanish on a blip, and is null otherwise, which the
+  // card says; the next open of the tab is the retry. Leaving the tab drops
+  // a late answer.
+  React.useEffect(() => {
+    const pid = ownerVenuePlaceId;
+    if (!pid || currentScreen !== 'venueDashboard' || venueTab !== 'settings' || !ownerTablesSeen) return undefined;
+    const reading = startTableSettingsReading(() => getSensorTableSettings(pid), (settings) => {
+      setOwnerTableSettings((prev) => (settings || !prev ? settings : prev));
+    });
+    return () => reading.stop();
+  }, [ownerVenuePlaceId, currentScreen, venueTab, ownerTablesSeen, venueTier]);
 
   // The tab a dashboard opens on is the one it was left on. A dashboard
   // reopened on Tables stays on it when the tab is in the bar from the first
@@ -19861,9 +19941,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         ownerSensorData,
         ownerSensorHistory,
         ownerTableHours,
+        ownerTableIncoming,
+        ownerTableSettings,
+        ownerTableStats,
+        ownerTableWaits,
         ownerTables,
         ownerTablesLocked,
         ownerTablesSeen,
+        ownerVenuePlaceId,
         ownerVenueTimeZone,
         promotions,
         realIncomingFlocks,
@@ -19885,6 +19970,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         setEditingPromo,
         setEditingVenueInfo,
         setOperatingHours,
+        setOwnerTableSettings,
         setPickingVenueForCreate,
         setPromotions,
         setReplyText,

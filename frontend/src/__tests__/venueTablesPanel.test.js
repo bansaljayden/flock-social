@@ -55,6 +55,9 @@ jest.mock('../services/api', () => ({
   // The Table alerts switch's one write. react-scripts resets mocks between
   // tests, so each test that presses the switch gives it its answer.
   updateVenueProfile: jest.fn(),
+  // The show-in-app switch's one write, beside it on the same card since
+  // phase 2 (venueTablesPhase2.test.js); never pressed here.
+  updateSensorTableSettings: jest.fn(),
 }));
 jest.mock('../components/ui/BirdieBird', () => {
   const R = require('react');
@@ -1112,7 +1115,9 @@ describe('App.js reads the tables for the dashboard and hands them down', () => 
     // The reset is a layout effect: the bar is drawn from the memory once,
     // never six tabs and then seven. Both reads are undefined until they
     // answer, which the tab draws as skeletons.
-    expect(effect).toMatch(/React\.useLayoutEffect\(\(\) => \{\s*setOwnerTables\(undefined\);\s*setOwnerTableHours\(undefined\);\s*setOwnerTablesLocked\(false\);\s*setOwnerTablesSeen\(currentScreen === 'venueDashboard' && tablesRemembered\(ownerVenuePlaceId\)\);\s*\}, \[ownerVenuePlaceId, currentScreen, venueTier\]\);/);
+    // Phase 2's four reads and the stats memory reset in the same block
+    // (venueTablesPhase2.test.js pins them); the two below are phase 1's.
+    expect(effect).toMatch(/React\.useLayoutEffect\(\(\) => \{\s*setOwnerTables\(undefined\);\s*setOwnerTableHours\(undefined\);\s*(?:setOwnerTable\w+\(undefined\);\s*|ownerTableStatsReadFor\.current = null;\s*)*setOwnerTablesLocked\(false\);\s*setOwnerTablesSeen\(currentScreen === 'venueDashboard' && tablesRemembered\(ownerVenuePlaceId\)\);\s*\}, \[ownerVenuePlaceId, currentScreen, venueTier\]\);/);
     expect(effect).toMatch(/React\.useEffect\(\(\) => \{\s*const pid = ownerVenuePlaceId;\s*if \(!pid \|\| currentScreen !== 'venueDashboard'\) return undefined;/);
   });
 
@@ -1149,7 +1154,9 @@ describe('App.js reads the tables for the dashboard and hands them down', () => 
   });
 
   test('all four reach the dashboard beside the sensor data, and the venue\'s zone with them', () => {
-    expect(APP).toMatch(/ownerSensorData,\s*ownerSensorHistory,\s*ownerTableHours,\s*ownerTables,\s*ownerTablesLocked,\s*ownerTablesSeen,\s*ownerVenueTimeZone,\s*promotions,/);
+    // Phase 2's reads sit between the hours and the tables in the same list
+    // (venueTablesPhase2.test.js names them).
+    expect(APP).toMatch(/ownerSensorData,\s*ownerSensorHistory,\s*ownerTableHours,\s*(?:ownerTable\w+,\s*)*ownerTables,\s*ownerTablesLocked,\s*ownerTablesSeen,\s*ownerVenuePlaceId,\s*ownerVenueTimeZone,\s*promotions,/);
   });
 
   test('the venue\'s zone is the Google listing\'s, kept with its place, from every read the dashboard already makes of the listing', () => {
@@ -1280,7 +1287,7 @@ const tabBar = () => screen.getAllByRole('button').map((b) => b.textContent.trim
 describe('the tab bar', () => {
   test('the dashboard takes the tables, the hours, both flags and the venue\'s zone', () => {
     expect(PARAMS).toEqual(expect.arrayContaining(['ownerTables', 'ownerTableHours', 'ownerTablesSeen', 'ownerTablesLocked', 'ownerVenueTimeZone']));
-    expect(DASH).toContain('<VenueTablesTab data={ownerTables} hours={ownerTableHours} colors={colors} wellPx={HOUR_BAR_WELL_PX} timeZone={ownerVenueTimeZone} />');
+    expect(DASH).toContain('<VenueTablesTab data={ownerTables} hours={ownerTableHours} waits={ownerTableWaits} incoming={ownerTableIncoming} stats={ownerTableStats} colors={colors} wellPx={HOUR_BAR_WELL_PX} timeZone={ownerVenueTimeZone} />');
   });
 
   test('the zone reaches the chart: a Roost venue in Los Angeles read from New York sees its own 4 PM', async () => {
@@ -1433,7 +1440,8 @@ describe('the Table alerts switch', () => {
     await settle();
     expect(theSwitch().checked).toBe(true);
     expect(screen.getByText(HELP)).toBeTruthy();
-    expect(screen.getByRole('heading', { name: /Table alerts/ })).toBeTruthy();
+    // On the Tables card since phase 2, with the switch's own name beside it.
+    expect(screen.getByRole('heading', { name: /Tables/ })).toBeTruthy();
     expect(container.textContent).not.toContain(EM_DASH);
   });
 

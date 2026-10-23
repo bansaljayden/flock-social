@@ -72,8 +72,10 @@ import {
   replyToReview,
   updateVenueEvent,
   updateVenueProfile,
+  updateSensorTableSettings,
   updateVenuePromotion,
 } from '../services/api';
+import { tableSettingsFrom } from '../lib/venueTablesReading';
 
 
 // When an incoming group is coming, from the row's event_time. The same
@@ -347,9 +349,14 @@ export default function VenueDashboard({
   ownerSensorData,
   ownerSensorHistory,
   ownerTableHours,
+  ownerTableIncoming,
+  ownerTableSettings,
+  ownerTableStats,
+  ownerTableWaits,
   ownerTables,
   ownerTablesLocked,
   ownerTablesSeen,
+  ownerVenuePlaceId,
   ownerVenueTimeZone,
   promotions,
   realIncomingFlocks,
@@ -373,6 +380,7 @@ export default function VenueDashboard({
   setOperatingHours,
   setPickingVenueForCreate,
   setPromotions,
+  setOwnerTableSettings,
   setReplyText,
   setReplyingToReview,
   setSavingVenueIntake,
@@ -1889,7 +1897,7 @@ export default function VenueDashboard({
             <LockedTab featureName="Tables" description="Each table live from your sensor: which are free, seated, waiting for a server or need clearing, and how many are in use at each hour." />
           )}
           {venueTab === 'tables' && ownerTablesSeen && !ownerTablesLocked && can.analytics && tierKnown && (
-            <VenueTablesTab data={ownerTables} hours={ownerTableHours} colors={colors} wellPx={HOUR_BAR_WELL_PX} timeZone={ownerVenueTimeZone} />
+            <VenueTablesTab data={ownerTables} hours={ownerTableHours} waits={ownerTableWaits} incoming={ownerTableIncoming} stats={ownerTableStats} colors={colors} wellPx={HOUR_BAR_WELL_PX} timeZone={ownerVenueTimeZone} />
           )}
 
           {/* PROMOTIONS TAB. Free on every plan, so it has no lock. */}
@@ -2633,42 +2641,94 @@ export default function VenueDashboard({
               </div>
               )}
 
-              {/* TABLE ALERTS. The second switch, because the second send
-                  exists: backend/services/sensorTables.js pushes the verified
-                  owner a table_alert when a table has waited for a server or
-                  needs clearing, and reads notification_prefs.tables before
-                  each one, absent meaning on. Until this switch nothing wrote
-                  that key, so the only way off the alerts was every Flock
+              {/* TABLES. One card for a venue whose tables the dashboard has
+                  seen (ownerTablesSeen, the same flag as the Tables tab,
+                  memory and the server's lock included), with the two
+                  switches a venue with tables has.
+
+                  TABLE ALERTS, because the send exists:
+                  backend/services/sensorTables.js pushes the verified owner a
+                  table_alert when a table has waited for a server or needs
+                  clearing, and reads notification_prefs.tables before each
+                  one, absent meaning on. Until this switch nothing wrote that
+                  key, so the only way off the alerts was every Flock
                   notification in iOS Settings. Same PUT as the Monday email,
                   which merges one key at a time, so this write leaves `weekly`
                   alone. `!== false`, not `=== true`, because the server's
-                  default is on. Shown only where the alerts can be sent: a
-                  venue whose tables the dashboard has seen (the same flag as
-                  the Tables tab, memory included) on a plan the server has not
-                  refused them for, so a venue without Flux, or below Roost,
-                  never sees a switch that does nothing. */}
-              {ownerTablesSeen && !ownerTablesLocked && can.analytics && tierKnown && (
+                  default is on. Shown only where the alerts can be sent: on a
+                  plan the server has not refused the tables for, so a venue
+                  below Roost never sees a switch that does nothing.
+
+                  SHOW TABLES IN THE FLOCK APP, because the surface exists:
+                  groups choosing a place see how many tables are open and
+                  the likely wait, never one table's details. Its route,
+                  .../tables/settings, has no plan gate, so the switch is
+                  offered to every venue with tables, the server's lock
+                  included: a venue below Roost can still take its tables out
+                  of the app. The value is read once each time this tab opens
+                  (App.js, ownerTableSettings): a skeleton until it answers,
+                  one line if the read failed, then the switch. The save
+                  writes that one key and nothing else, and keeps what the
+                  server answered. */}
+              {ownerTablesSeen && (
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
-                <h3 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 8px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.bell ? Icons.bell(colors.navy, 14) : null} Table alerts</h3>
-                <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    aria-label="Table alerts"
-                    checked={venueProfile?.notification_prefs?.tables !== false}
-                    onChange={async (e) => {
-                      const tables = e.target.checked;
-                      try {
-                        const saved = await updateVenueProfile({ notificationPrefs: { tables } });
-                        setVenueProfile((prev) => mergeSavedProfile(prev, saved));
-                        showToast(tables ? 'Table alerts on.' : 'Table alerts off.');
-                      } catch (err) {
-                        showToast(err?.message || 'Could not save that. Try again.', 'error');
-                      }
-                    }}
-                    style={{ marginTop: '2px', width: '18px', height: '18px', flexShrink: 0 }}
-                  />
-                  <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', lineHeight: 1.5 }}>A push when a table has waited for a server or needs clearing.</span>
-                </label>
+                <h3 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 8px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.users ? Icons.users(colors.navy, 14) : null} Tables</h3>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  {!ownerTablesLocked && can.analytics && tierKnown && (
+                  <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      aria-label="Table alerts"
+                      checked={venueProfile?.notification_prefs?.tables !== false}
+                      onChange={async (e) => {
+                        const tables = e.target.checked;
+                        try {
+                          const saved = await updateVenueProfile({ notificationPrefs: { tables } });
+                          setVenueProfile((prev) => mergeSavedProfile(prev, saved));
+                          showToast(tables ? 'Table alerts on.' : 'Table alerts off.');
+                        } catch (err) {
+                          showToast(err?.message || 'Could not save that. Try again.', 'error');
+                        }
+                      }}
+                      style={{ marginTop: '2px', width: '18px', height: '18px', flexShrink: 0 }}
+                    />
+                    <span style={{ fontSize: 'var(--t-meta)', lineHeight: 1.5, minWidth: 0 }}>
+                      <span style={{ display: 'block', fontWeight: '600', color: 'var(--text-primary)' }}>Table alerts</span>
+                      <span style={{ color: 'var(--text-secondary)' }}>A push when a table has waited for a server or needs clearing.</span>
+                    </span>
+                  </label>
+                  )}
+                  {ownerVenuePlaceId && ownerTableSettings === undefined && (
+                    <div aria-hidden="true" data-testid="tables-settings-loading" className="skeleton" style={{ height: '44px', borderRadius: '8px' }} />
+                  )}
+                  {ownerVenuePlaceId && ownerTableSettings === null && (
+                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>Couldn't load whether your tables show in the Flock app. Open Settings again to retry.</p>
+                  )}
+                  {ownerVenuePlaceId && ownerTableSettings && (
+                  <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      aria-label="Show tables in the Flock app"
+                      checked={ownerTableSettings.show_in_app !== false}
+                      onChange={async (e) => {
+                        const show_in_app = e.target.checked;
+                        try {
+                          const saved = await updateSensorTableSettings(ownerVenuePlaceId, { show_in_app });
+                          setOwnerTableSettings((prev) => tableSettingsFrom(saved) || { ...(prev || {}), show_in_app });
+                          showToast(show_in_app ? 'Tables shown in the Flock app.' : 'Tables hidden in the Flock app.');
+                        } catch (err) {
+                          showToast(err?.message || 'Could not save that. Try again.', 'error');
+                        }
+                      }}
+                      style={{ marginTop: '2px', width: '18px', height: '18px', flexShrink: 0 }}
+                    />
+                    <span style={{ fontSize: 'var(--t-meta)', lineHeight: 1.5, minWidth: 0 }}>
+                      <span style={{ display: 'block', fontWeight: '600', color: 'var(--text-primary)' }}>Show tables in the Flock app</span>
+                      <span style={{ color: 'var(--text-secondary)' }}>Groups choosing a place see how many tables are open and the likely wait. Never one table's details.</span>
+                    </span>
+                  </label>
+                  )}
+                </div>
               </div>
               )}
 
