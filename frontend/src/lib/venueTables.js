@@ -159,13 +159,38 @@ export function tableAlerts(tables, nowMs) {
     });
 }
 
-// The server's pick for the table likely to free up next: the seated or
-// waiting table seated longest. Said only while that table is on the list as
-// seated or waiting, so the line never names a table its tile contradicts.
+// The table likely to free up next, or null.
+//
+// THE RULE. The seated table whose party has sat longest: a party that has
+// been served is the one furthest along its stay. A table nobody has stopped
+// by for (waiting) has not ordered yet, however long it has sat, so it is the
+// party least likely to leave next; waiting tables are picked from only when
+// no table is plainly seated, longest first. Among equals the lower number.
+// A table with no usable time ranks last. The server sends its own pick
+// (next_free, the seated or waiting table seated longest); it is kept as a
+// hint only where it agrees with the rule, that is, when it names a table in
+// the class the rule chose, where it may settle a tie this side cannot see.
+// Otherwise the pick is made here. So the line never names the table the
+// alerts above it say needs a server while a served table is on the floor.
+export function nextFreePick(data, tables, nowMs) {
+  const seated = tables.filter((t) => t.state === 'seated');
+  const pool = seated.length ? seated : tables.filter((t) => t.state === 'waiting');
+  if (!pool.length) return null;
+  const age = (t) => msSince(t.since, nowMs);
+  const ranked = pool.slice().sort((a, b) => {
+    const am = age(a);
+    const bm = age(b);
+    if (am === null || bm === null) return (am === null) - (bm === null) || a.number - b.number;
+    return bm - am || a.number - b.number;
+  });
+  const hint = data ? num(data.next_free) : null;
+  return ranked.find((t) => t.number === hint) || ranked[0];
+}
+
+// The one line under the alerts that names that table and how long its party
+// has sat, or null.
 export function nextFreeText(data, tables, nowMs) {
-  const pick = data ? num(data.next_free) : null;
-  if (pick === null) return null;
-  const table = tables.find((t) => t.number === pick && (t.state === 'seated' || t.state === 'waiting'));
+  const table = nextFreePick(data, tables, nowMs);
   if (!table) return null;
   const ms = msSince(table.since, nowMs);
   return ms === null

@@ -330,16 +330,85 @@ describe('the tables that need someone', () => {
 });
 
 describe('next likely free', () => {
-  test('names the server\'s pick and how long it has been seated', () => {
+  test('names the seated table whose party has sat longest, and how long', () => {
     renderTab();
     expect(screen.getByText('Next likely free: Table 2 (seated 24 min)')).toBeTruthy();
   });
 
-  test('says nothing without a pick, or when the pick is not seated on the tiles', () => {
+  test('the rule holds without the server\'s pick, and over a pick that is not a seated table', () => {
+    // No pick: Table 2 (24 min) over Table 5 (65 s), and never Table 3, the
+    // party nobody has stopped by for.
     const { unmount } = renderTab({ data: { ...LIVE, next_free: null } });
-    expect(screen.queryByText(/Next likely free/)).toBeNull();
+    expect(screen.getByText('Next likely free: Table 2 (seated 24 min)')).toBeTruthy();
     unmount();
-    renderTab({ data: { ...LIVE, next_free: 1 } });
+    // A pick naming a free table, or the waiting table, is not taken.
+    for (const pick of [1, 3, 4, 99]) {
+      const r = renderTab({ data: { ...LIVE, next_free: pick } });
+      expect(screen.getByText('Next likely free: Table 2 (seated 24 min)')).toBeTruthy();
+      r.unmount();
+    }
+  });
+
+  test('a party nobody has served is never named over a served one, however long it has sat', () => {
+    // The server's own rule, the seated or waiting table seated longest, picks
+    // the waiting Table 3 here. The board said "Table 3 needs a server" and
+    // "Table 3 likely free next" in the same breath.
+    renderTab({
+      data: {
+        ...LIVE,
+        next_free: 3,
+        tables: [
+          { number: 3, people: 4, state: 'waiting', since: ago(40 * MIN) },
+          { number: 2, people: 2, state: 'seated', since: ago(24 * MIN) },
+          { number: 5, people: 1, state: 'seated', since: ago(65 * SEC) },
+        ],
+      },
+    });
+    expect(screen.getByText('Next likely free: Table 2 (seated 24 min)')).toBeTruthy();
+    expect(alertLines()).toEqual(['Table 3: seated 40 min, nobody has stopped by yet']);
+  });
+
+  test('with no seated table at all, the longest-waiting party is the best guess there is', () => {
+    renderTab({
+      data: {
+        ...LIVE,
+        next_free: null,
+        tables: [
+          { number: 1, people: 0, state: 'free', since: ago(50 * MIN) },
+          { number: 3, people: 4, state: 'waiting', since: ago(6 * MIN) },
+          { number: 8, people: 2, state: 'waiting', since: ago(9 * MIN) },
+          { number: 4, people: 0, state: 'needs_clearing', since: ago(2 * MIN) },
+        ],
+      },
+    });
+    expect(screen.getByText('Next likely free: Table 8 (seated 9 min)')).toBeTruthy();
+  });
+
+  test('the server\'s pick settles a tie among seated tables, and a seated table with no time ranks last', () => {
+    const since = ago(20 * MIN);
+    const tables = [
+      { number: 6, people: 2, state: 'seated', since },
+      { number: 7, people: 2, state: 'seated', since },
+      { number: 9, people: 2, state: 'seated', since: null },
+    ];
+    const { unmount } = renderTab({ data: { ...LIVE, next_free: 7, tables } });
+    expect(screen.getByText('Next likely free: Table 7 (seated 20 min)')).toBeTruthy();
+    unmount();
+    renderTab({ data: { ...LIVE, next_free: null, tables } });
+    expect(screen.getByText('Next likely free: Table 6 (seated 20 min)')).toBeTruthy();
+  });
+
+  test('says nothing when nobody is sitting anywhere', () => {
+    renderTab({
+      data: {
+        ...LIVE,
+        next_free: 2,
+        tables: [
+          { number: 1, people: 0, state: 'free', since: ago(3 * MIN) },
+          { number: 2, people: 0, state: 'needs_clearing', since: ago(2 * MIN) },
+        ],
+      },
+    });
     expect(screen.queryByText(/Next likely free/)).toBeNull();
   });
 });
