@@ -28,7 +28,7 @@ import { resendVerificationEmail, trackPurchaseCompleted, hasRenewableSession, r
 // carrying when they made an account, then open the flock they were invited to.
 // The reasoning, and everything the token has to survive, is in the service.
 import { redeemPendingInvite, openJoinedFlock, rememberInvite, storedGuestTokens } from './services/inviteHandoff';
-import { setAvailability, clearAvailability, getMyAvailability, getFriendsAvailability, getSensorCurrent, getSensorHistory, checkInManual, getNfcCheckin, getCalendarEvents, createCalendarEvent, deleteCalendarEvent } from './services/api';
+import { setAvailability, clearAvailability, getMyAvailability, getFriendsAvailability, getSensorCurrent, getSensorHistory, getSensorTables, getSensorTableHours, checkInManual, getNfcCheckin, getCalendarEvents, createCalendarEvent, deleteCalendarEvent } from './services/api';
 import { joinVenueRoom, leaveVenueRoom, joinVenueContentRoom, leaveVenueContentRoom, onVenueSensorUpdate, onVenueCheckin, onSessionRevoked, onSocketError, onAvailabilityUpdated, onBlockedBy, onUnblockedBy, onContentRemoved, onContentRestored } from './services/socket';
 import { pullSettings, queueSync, sameAsAccount, latestPull } from './services/userSettings';
 import { liftReaders } from './services/flockReaders';
@@ -17891,6 +17891,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // Hardware sensor data for the venue owner dashboard's analytics tab
   const [ownerSensorData, setOwnerSensorData] = useState(null);
   const [ownerSensorHistory, setOwnerSensorHistory] = useState([]);
+  // The same sensor's table zones (GET /api/sensors/:placeId/tables), and its
+  // tables in use by hour over the last 7 days. Null until read, and null
+  // again after any failed read: the Tables panel draws nothing for null.
+  const [ownerTables, setOwnerTables] = useState(null);
+  const [ownerTableHours, setOwnerTableHours] = useState(null);
   const [ownerVenuePlaceId, setOwnerVenuePlaceId] = useState(null);
   const [editingVenueInfo, setEditingVenueInfo] = useState(false);
   // The fuller intake, editable AFTER onboarding.
@@ -18731,6 +18736,50 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       leaveVenueRoom(pid);
       offUpdate && offUpdate();
       offCheckin && offCheckin();
+    };
+  }, [ownerVenuePlaceId, currentScreen]);
+
+  // The same sensor's tables, for the same place. Read when the dashboard
+  // opens and again 15 seconds after each answer while it stays open. The
+  // next read is set only once the last one has answered, so two never
+  // overlap on a slow connection; a slow answer pushes the next read back
+  // instead of stacking requests behind it. The hours are read once per open.
+  // What was shown is dropped whenever the place or the screen changes, so a
+  // reopened dashboard never shows an old snapshot as if it were live.
+  //
+  // Any failure reads as no tables, which draws nothing. A refusal also ends
+  // the reading for this open: the server answers 403 to anyone but the
+  // verified owner, 401 once signed out and 404 where it has no tables for the
+  // place, and asking again every 15 seconds changes none of those. A dropped
+  // connection or a server error is asked again on the next turn.
+  React.useEffect(() => {
+    const pid = ownerVenuePlaceId;
+    setOwnerTables(null);
+    setOwnerTableHours(null);
+    if (!pid || currentScreen !== 'venueDashboard') return undefined;
+    const READ_EVERY_MS = 15 * 1000;
+    let cancelled = false;
+    let timer = null;
+    const readTables = () => {
+      getSensorTables(pid).then(
+        (data) => ({ data: data && Array.isArray(data.tables) ? data : null, refused: false }),
+        (err) => ({ data: null, refused: [401, 403, 404].includes(err?.status) }),
+      ).then(({ data, refused }) => {
+        if (cancelled) return;
+        setOwnerTables(data);
+        if (!refused) timer = setTimeout(readTables, READ_EVERY_MS);
+      });
+    };
+    readTables();
+    getSensorTableHours(pid).then(
+      (data) => (Array.isArray(data?.hours) ? data.hours : null),
+      () => null,
+    ).then((hours) => {
+      if (!cancelled) setOwnerTableHours(hours);
+    });
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
     };
   }, [ownerVenuePlaceId, currentScreen]);
 
@@ -19688,6 +19737,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         operatingHours,
         ownerSensorData,
         ownerSensorHistory,
+        ownerTableHours,
+        ownerTables,
         promotions,
         realIncomingFlocks,
         renderConsumerVenueCard,

@@ -43,6 +43,8 @@ import VenueInsightCards, { clearAdvisorCards } from '../components/VenueInsight
 import VenueAdvisorChat from '../components/VenueAdvisorChat';
 import { hourlySourcePhrase, peersSourcePhrase, stripPeakBars, stripRowMethod } from '../lib/crowd';
 import VenueBillingControl, { VenueBillingStatus, roostPlanPriceLabel } from '../components/venue/VenueBillingControl';
+// The Flux sensor's table zones, beside Live Sensor on the Analytics tab.
+import VenueTablesPanel from '../components/venue/VenueTablesPanel';
 // REACT_APP_PURCHASES=off (the App Store build): no plan badge, no plans
 // sheet, no prices, no upgrade buttons and no Subscription card. A tab the
 // server withholds says so without offering anything. lib/purchasesBuild.js.
@@ -344,6 +346,8 @@ export default function VenueDashboard({
   operatingHours,
   ownerSensorData,
   ownerSensorHistory,
+  ownerTableHours,
+  ownerTables,
   promotions,
   realIncomingFlocks,
   renderConsumerVenueCard,
@@ -1721,6 +1725,16 @@ export default function VenueDashboard({
               </div>
             );
           })()}
+
+          {/* Tables: the same sensor's table zones, for a venue whose Flux is
+              set up with them. Inside this Roost body like Live Sensor, so a
+              free plan sees the lock instead, and drawn only once the sensor
+              has sent at least one table; any failed read arrives as null and
+              draws nothing. The panel keeps its own one-second clock, which is
+              why it is a component and not a block in this stateless body. */}
+          {ownerTables && Array.isArray(ownerTables.tables) && ownerTables.tables.length > 0 && (
+            <VenueTablesPanel data={ownerTables} hours={ownerTableHours} colors={colors} wellPx={HOUR_BAR_WELL_PX} />
+          )}
 
           {/* Post a Deal. Deals are free on every plan, so nothing here is
               locked. A venue on the free plan does not see this tab's body,

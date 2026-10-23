@@ -3828,6 +3828,18 @@ export async function getSensorHistory(placeId, hours = 24) {
   return request(`/api/sensors/${encodeURIComponent(placeId)}/history?hours=${encodeURIComponent(hours)}`);
 }
 
+// Table zones on the same sensor: every table's state and head count now, and
+// tables in use by hour over the last 7 days. Both answer only the venue's
+// verified owner (403 to anyone else, 401 once signed out), and App.js's
+// dashboard read takes any failure as no tables.
+export async function getSensorTables(placeId) {
+  return request(`/api/sensors/${encodeURIComponent(placeId)}/tables`);
+}
+
+export async function getSensorTableHours(placeId) {
+  return request(`/api/sensors/${encodeURIComponent(placeId)}/tables/hours`);
+}
+
 export async function checkInManual(placeId) {
   return request(`/api/checkin/${encodeURIComponent(placeId)}`, { method: 'POST' });
 }
