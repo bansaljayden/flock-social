@@ -1,7 +1,8 @@
-"""What Flux sees at the tables, from the ceiling: one generated thermal
-frame (no real person), looking straight down through the wide 95 degree
-lens at four tables, with Owl's people found in it and each table's zone,
-seats and state drawn on by the box's own TableTracker.
+"""What Flux sees at the tables: one generated thermal frame (no real
+person) from the box on the ceiling above the door, looking down across the
+dining room through its Lepton 3.5 (57 degrees). Owl's people are found in
+it, the box's own TableTracker puts each at a table, and each table is drawn
+in the Tables tab's colours, with the same eight tables as the tab's demo.
 
 Run with the flux-training venv, from flock-sensor:
   python training/table_illustration.py . <out.png>
@@ -14,7 +15,7 @@ from pathlib import Path
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
-from scipy.ndimage import gaussian_filter, zoom
+from scipy.ndimage import gaussian_filter, map_coordinates, zoom
 
 SENSOR = Path(sys.argv[1])
 OUT = Path(sys.argv[2])
@@ -29,126 +30,131 @@ sys.path.insert(0, str(SENSOR))
 import main  # noqa: E402
 
 COLS, ROWS, SS = synth.COLS, synth.ROWS, synth.SS
-HFOV = 95.0                                   # the Lepton 3.1R
-F_WIDE = (COLS / 2) / math.tan(math.radians(HFOV / 2))
-CEILING = 3.0
-rng = np.random.default_rng(7)
+F_WIDE = synth.F_PX                           # the Lepton 3.5's 57 degrees
+CAM_H, PITCH = 3.0, math.radians(30.0)       # ceiling above the door, looking into the room
+rng = np.random.default_rng(5)
 amb = 22.5
 
 
-def project(x, y, h):
-    """Floor position (x across, y into the room) at height h, seen straight
-    down from the ceiling: frame pixels, and metres from the lens."""
-    dz = CEILING - h
-    return COLS / 2 + F_WIDE * x / dz, ROWS / 2 - F_WIDE * y / dz, dz
+def project(x, h, z):
+    """Room position (x across, h up, z into the room from the door wall) to
+    frame pixels and depth along the lens's axis."""
+    dy = h - CAM_H
+    yc = dy * math.cos(PITCH) + z * math.sin(PITCH)
+    zc = -dy * math.sin(PITCH) + z * math.cos(PITCH)
+    return COLS / 2 + F_WIDE * x / zc, ROWS / 2 - F_WIDE * yc / zc, zc
 
 
-def canvas(x, y, h):
-    u, v, dz = project(x, y, h)
-    return u * SS, v * SS, dz
-
-
-def px_per_m(dz):
-    """Canvas pixels per metre at dz metres from the lens."""
-    return F_WIDE * SS / dz
+def canvas(x, h, z):
+    u, v, zc = project(x, h, z)
+    return u * SS, v * SS, zc
 
 
 H, W = ROWS * SS, COLS * SS
 t = np.full((H, W), amb - 0.3, dtype=np.float32)
 low = gaussian_filter(rng.normal(0, 1, (H // 8, W // 8)).astype(np.float32), 2)
 t += np.kron(low, np.ones((8, 8), dtype=np.float32)) * 0.3
+# The back wall, a touch warmer than the floor, where the view reaches it.
+far_wall_v = project(0, 1.5, 9.0)[1] * SS
+t[: max(0, int(far_wall_v))] += 0.4
 c = synth.Canvas(t)
 
 
-def rect_at(x, y, h, w, d, temp):
-    cx, cy, dz = canvas(x, y, h)
-    s = px_per_m(dz)
-    c.paint(synth.rect(cx, cy, w * s, d * s, corner=0.03 * s), temp)
+def polygon_shape(points):
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    x0, y0 = int(max(0, math.floor(min(xs)))), int(max(0, math.floor(min(ys))))
+    x1, y1 = int(min(W, math.ceil(max(xs)) + 1)), int(min(H, math.ceil(max(ys)) + 1))
+    if x1 <= x0 or y1 <= y0:
+        return None
+    gx, gy = np.meshgrid(np.arange(x0, x1) + 0.5, np.arange(y0, y1) + 0.5)
+    inside = np.zeros(gx.shape, dtype=bool)
+    n = len(points)
+    for i in range(n):
+        ax, ay = points[i]
+        bx, by = points[(i + 1) % n]
+        cross = ((ay > gy) != (by > gy)) & (gx < (bx - ax) * (gy - ay) / ((by - ay) or 1e-9) + ax)
+        inside ^= cross
+    return x0, y0, gaussian_filter(inside.astype(np.float32), 0.6)
 
 
-def disc_at(x, y, h, r, temp):
-    cx, cy, dz = canvas(x, y, h)
-    s = px_per_m(dz)
-    c.paint(synth.ellipse(cx, cy, r * s, r * s), temp)
+def flat(x, z, h, w, d, temp):
+    corners = [canvas(x + dx, h, z + dz)[:2] for dx, dz in ((-w / 2, -d / 2), (w / 2, -d / 2),
+                                                             (w / 2, d / 2), (-w / 2, d / 2))]
+    c.paint(polygon_shape(corners), temp)
 
 
-class _Facing:
-    """The generator's random numbers, except the one that turns a person
-    seen from above: that is set, so shoulders run along the table's edge."""
-
-    def __init__(self, rng, angle):
-        self._rng, self._angle = rng, angle
-
-    def uniform(self, low=0.0, high=1.0, size=None):
-        if size is None and low == 0 and high == math.pi:
-            return self._angle
-        return self._rng.uniform(low, high, size)
-
-    def __getattr__(self, name):
-        return getattr(self._rng, name)
+def disc(x, z, h, r, temp):
+    pts = [canvas(x + r * math.cos(a), h, z + r * math.sin(a))[:2]
+           for a in np.linspace(0, 2 * math.pi, 16, endpoint=False)]
+    c.paint(polygon_shape(pts), temp)
 
 
-def diner(x, y, facing, pid, standing=False):
-    """Someone seen from above, drawn by synth as Owl learned people under a
-    ceiling camera: shoulders round a head, at the right size for this lens,
-    turned to face `facing` (radians, 0 = +x, in room axes)."""
+def person_at(x, z, facing, pid, standing=False):
+    """A person as synth draws one for a camera on a wall, then shortened
+    top to bottom for how steeply this box looks down on them."""
     h = 1.65 if standing else 1.2
-    cx, cy, dz = canvas(x, y, h)
-    # Canvas y runs down the image, so a facing in room axes flips; the
-    # shoulders run across it.
-    shoulders = (-facing + math.pi / 2) % math.pi
-    # synth sizes a person with the 57 deg lens's focal length; give it the
-    # distance that makes the size right for the 95 deg one.
-    synth.person(c, _Facing(rng, shoulders), amb, dz * synth.F_PX / F_WIDE, cx, cy, pid,
-                 overhead=True, child=False, shirtless=False, coat=False)
+    hx, hy, zc = canvas(x, h, z)
+    down = math.atan2(CAM_H - h, math.hypot(x, z))
+    toward = math.cos(facing - math.pi / 2)      # facing the door is -1
+    view = 'front' if toward < -0.5 else 'back' if toward > 0.5 else 'side'
+    scratch = synth.Canvas(np.full((H, W), amb, dtype=np.float32))
+    # synth sizes people with the 57 deg lens's focal length; this distance
+    # makes the size right for the 95 deg one.
+    synth.person(scratch, rng, amb, zc * synth.F_PX / F_WIDE, hx, hy, pid, view=view,
+                 pose='stand' if standing else 'sit', child=False, shirtless=False, coat=False)
+    k = math.cos(down)
+    rows, cols = np.mgrid[0:H, 0:W].astype(np.float32)
+    src_rows = hy + (rows - hy) / k
+    body = map_coordinates(scratch.t, [src_rows, cols], order=1, mode='constant', cval=amb)
+    mask = np.clip(np.abs(body - amb) / 0.3, 0, 1)
+    c.t = c.t * (1 - mask) + body * mask
 
 
-def warm_seat(x, y):
-    cx, cy, dz = canvas(x, y, 0.45)
-    synth.contact_heat(c, rng, amb, cx, cy, px_per_m(dz), parts=('seat',), age=300)
+def warm_seat(x, z):
+    cx, cy, zc = canvas(x, 0.45, z)
+    synth.contact_heat(c, rng, amb, cx, cy, F_WIDE * SS / zc, parts=('seat',), age=300)
 
 
 CHAIR = 0.6
-SIDE = {'n': (0, CHAIR), 's': (0, -CHAIR), 'w': (-CHAIR, 0), 'e': (CHAIR, 0)}
+SIDE = {'far': (0, CHAIR), 'near': (0, -CHAIR), 'left': (-CHAIR, 0), 'right': (CHAIR, 0)}
+FOUR = ('far', 'near', 'left', 'right')
+# Eight tables, like the dashboard's demo. Far row first, so nearer things
+# are painted over farther ones.
 TABLES = {
-    1: {'at': (-1.1, 0.6), 'size': (0.8, 0.8), 'chairs': 'nswe', 'state': 's',
-        'label': 'Seated', 'clock': '18:04', 'who': 'nswe'},
-    2: {'at': (1.1, 0.6), 'size': (0.8, 0.8), 'chairs': 'nswe', 'state': 'w',
-        'label': 'Needs a server', 'clock': '7:12', 'who': 'we'},
-    3: {'at': (-1.25, -0.95), 'size': (0.7, 0.6), 'chairs': 'we', 'state': 'c',
-        'label': 'Needs clearing', 'time': '3 min', 'who': ''},
-    4: {'at': (1.25, -0.95), 'size': (0.7, 0.6), 'chairs': 'we', 'state': 'f',
-        'label': 'Free', 'time': '25 min', 'who': ''},
+    6: {'at': (-2.8, 7.7), 'chairs': FOUR, 'who': (), 'state': 'c', 'time': '2 min'},
+    7: {'at': (0.0, 7.9), 'chairs': FOUR, 'who': ('far', 'left', 'right'), 'state': 's', 'clock': '9:33'},
+    8: {'at': (2.8, 7.7), 'chairs': FOUR, 'who': (), 'state': 'f', 'time': '31 min'},
+    3: {'at': (-2.0, 5.3), 'chairs': FOUR, 'who': ('far', 'right'), 'state': 'w', 'clock': '6:12'},
+    4: {'at': (0.0, 5.4), 'chairs': FOUR, 'who': (), 'state': 'f', 'time': '3 min'},
+    5: {'at': (2.0, 5.3), 'chairs': FOUR, 'who': ('far', 'left'), 'state': 's', 'clock': '21:40'},
+    1: {'at': (-1.1, 3.1), 'chairs': FOUR, 'who': (), 'state': 'f', 'time': '14 min'},
+    2: {'at': (1.15, 3.1), 'chairs': FOUR, 'who': FOUR, 'state': 's', 'clock': '48:17'},
 }
-SERVER = (0.0, -0.65)
+SERVER = (-0.95, 6.55)
 
-# Chairs and tables first (a little cooler than the air, as furniture often
-# reads), then what is on them, then people.
 for n, tb in TABLES.items():
-    tx, ty = tb['at']
+    tx, tz = tb['at']
+    behind = [s for s in tb['who'] if s == 'far']
+    front = [s for s in tb['who'] if s != 'far']
     for side in tb['chairs']:
-        dx, dy = SIDE[side]
-        rect_at(tx + dx, ty + dy, 0.45, 0.42, 0.42, amb - 0.5)
-    rect_at(tx, ty, 0.75, tb['size'][0], tb['size'][1], amb - 0.8)
-
-# Table 1: four people with hot drinks.
-tx, ty = TABLES[1]['at']
-disc_at(tx - 0.12, ty + 0.12, 0.76, 0.04, amb + 25.0)
-disc_at(tx + 0.14, ty - 0.1, 0.76, 0.04, amb + 22.0)
-# Table 2: two people, nothing on the table yet.
-# Table 3: they have gone. Their seats are still a little warm.
-tx, ty = TABLES[3]['at']
-for side in 'we':
-    dx, dy = SIDE[side]
-    warm_seat(tx + dx, ty + dy)
-
-for n, tb in TABLES.items():
-    tx, ty = tb['at']
-    for side in tb['who']:
-        dx, dy = SIDE[side]
-        # Seated, the head is a little in from the chair, toward the table.
-        diner(tx + dx * 0.85, ty + dy * 0.85, math.atan2(-dy, -dx), 10 * n + 'nswe'.index(side))
-diner(*SERVER, math.pi / 2, 99, standing=True)
+        dx, dz = SIDE[side]
+        flat(tx + dx, tz + dz, 0.45, 0.42, 0.42, amb - 0.5)
+    if tb['state'] == 'c':
+        for side in ('left', 'right'):
+            dx, dz = SIDE[side]
+            warm_seat(tx + dx, tz + dz)
+    for side in behind:
+        dx, dz = SIDE[side]
+        person_at(tx + dx * 0.85, tz + dz * 0.85, math.atan2(-dz, -dx), 10 * n)
+    flat(tx, tz, 0.75, 0.8, 0.8, amb - 0.8)
+    if tb['who']:
+        disc(tx + 0.12, tz - 0.1, 0.76, 0.05, amb + 24.0)        # a hot drink
+    for side in front:
+        dx, dz = SIDE[side]
+        person_at(tx + dx * 0.85, tz + dz * 0.85, math.atan2(-dz, -dx), 10 * n + len(side))
+    if n == 3:
+        person_at(SERVER[0], SERVER[1], -math.pi / 2, 99, standing=True)
 
 # Down to the camera's resolution, then its optics and electronics, as
 # synth.scene_full() finishes a frame (fixed amounts, not drawn at random).
@@ -158,8 +164,8 @@ yy, xx = np.mgrid[0:ROWS, 0:COLS].astype(np.float32)
 frame += 0.25 * (((xx - COLS / 2) / (COLS / 2)) ** 2 + ((yy - ROWS / 2) / (ROWS / 2)) ** 2)
 frame += rng.normal(0, 0.05, (ROWS, COLS))
 for sigma, amount in ((0.8, 0.12), (2.5, 0.2), (8.0, 0.25)):
-    n = gaussian_filter(rng.normal(0, 1, (ROWS, COLS)).astype(np.float32), sigma)
-    frame += n / max(float(n.std()), 1e-6) * amount
+    n_ = gaussian_filter(rng.normal(0, 1, (ROWS, COLS)).astype(np.float32), sigma)
+    frame += n_ / max(float(n_.std()), 1e-6) * amount
 frame = np.round(frame * 100) / 100
 
 # Owl, exactly as the box runs it.
@@ -169,54 +175,46 @@ if main.PEOPLE_FINE_MODEL_PATH.exists():
 people, things, count = model.read_crowd(frame.reshape(-1).tolist())
 print('Owl found', len(people), 'people at', [(round(x, 1), round(y, 1)) for x, y in people])
 
-# Each table's zone and seats, as the zones file would hold them.
+# Each table's zone and seats, as the zones file would hold them: a seat is
+# where the head of someone in that chair lands.
 zone_list = []
 for n, tb in TABLES.items():
-    tx, ty = tb['at']
-    seats = [project(tx + SIDE[s][0] * 0.85, ty + SIDE[s][1] * 0.85, 1.2)[:2] for s in tb['chairs']]
-    w, dd = tb['size']
-    edge = [project(tx + dx, ty + dy, 0.75)[:2] for dx in (-w / 2, w / 2) for dy in (-dd / 2, dd / 2)]
+    tx, tz = tb['at']
+    seats = [project(tx + SIDE[s][0] * 0.85, 1.2, tz + SIDE[s][1] * 0.85)[:2] for s in tb['chairs']]
+    edge = [project(tx + dx, 0.75, tz + dz)[:2] for dx in (-0.4, 0.4) for dz in (-0.4, 0.4)]
     us = [p[0] for p in seats + edge]
     vs = [p[1] for p in seats + edge]
-    pad = 6.0
+    pad = 3.0
     zone_list.append({'n': n, 'box': (max(0.0, min(us) - pad), max(0.0, min(vs) - pad),
                                        min(COLS - 0.01, max(us) + pad), min(ROWS - 0.01, max(vs) + pad)),
                       'seats': tuple(seats)})
-zones = {z['n']: z['box'] for z in zone_list}
-
-# The box's own code decides which table each person is at.
 tracker = main.TableTracker(zone_list)
 tracker.update(0.0, people)
 at_table = {n: p for n, p, s, a in tracker.view(0.0)}
 print('people per table', at_table)
-su, sv, _ = project(SERVER[0], SERVER[1], 1.65)
-assert not any(x0 <= su < x1 and y0 <= sv < y1 for x0, y0, x1, y1 in zones.values()), 'server inside a zone'
+expected = {n: len(tb['who']) for n, tb in TABLES.items()}
+print('drawn per table  ', expected)
 
-# A black-to-white heat palette through red and orange, then up to 1600 x 1200.
+# White-hot: warmer is brighter, as most heat cameras show it.
 SCALE = 10
 big = zoom(frame, SCALE, order=3)
-lo, hi = amb - 1.5, amb + 13.0
-k = np.clip((big - lo) / (hi - lo), 0, 1)
-stops = np.array([[0.00, 10, 8, 8], [0.22, 58, 14, 12], [0.42, 140, 28, 18], [0.60, 214, 72, 22],
-                  [0.76, 245, 140, 30], [0.90, 252, 212, 92], [1.00, 255, 250, 232]], dtype=np.float32)
-rgb = np.stack([np.interp(k, stops[:, 0], stops[:, i]) for i in (1, 2, 3)], axis=-1).astype(np.uint8)
-img = Image.fromarray(rgb, 'RGB').convert('RGBA')
+lo, hi = amb - 1.5, amb + 12.0
+g = (np.clip((big - lo) / (hi - lo), 0, 1) ** 0.85 * 225 + 18).astype(np.uint8)
+img = Image.fromarray(np.stack([g, g, g], axis=-1), 'RGB').convert('RGBA')
 
 fonts = Path(os.environ.get('WINDIR', 'C:/Windows')) / 'Fonts'
-bold = ImageFont.truetype(str(fonts / 'seguisb.ttf'), 30)
-small = ImageFont.truetype(str(fonts / 'segoeui.ttf'), 24)
-tiny = ImageFont.truetype(str(fonts / 'segoeui.ttf'), 22)
-# The Tables tab's four looks, so the picture and the dashboard read as one
-# system: free green, seated red with its timer, needs a server solid amber,
-# needs clearing pale yellow with a dashed edge.
+bold = ImageFont.truetype(str(fonts / 'seguisb.ttf'), 26)
+small = ImageFont.truetype(str(fonts / 'segoeui.ttf'), 21)
+tiny = ImageFont.truetype(str(fonts / 'segoeui.ttf'), 21)
+# The Tables tab's four looks: free green, seated red with its timer, needs
+# a server solid amber, needs clearing pale yellow with a dashed edge.
 COLOR = {'f': (34, 197, 94), 's': (239, 68, 68), 'w': (245, 158, 11), 'c': (253, 230, 138)}
 WORDS = {'f': 'Free', 's': 'Seated', 'w': 'Needs a server', 'c': 'Needs clearing'}
 
 
-def dashed(draw, box, color, width, dash=22, gap=14):
-    x0, y0, x1, y1 = box
-    for (ax, ay), (bx_, by_) in (((x0, y0), (x1, y0)), ((x1, y0), (x1, y1)),
-                                 ((x1, y1), (x0, y1)), ((x0, y1), (x0, y0))):
+def dashed_poly(draw, pts, color, width, dash=18, gap=12):
+    for i in range(len(pts)):
+        (ax, ay), (bx_, by_) = pts[i], pts[(i + 1) % len(pts)]
         length = math.hypot(bx_ - ax, by_ - ay)
         pos = 0.0
         while pos < length:
@@ -227,81 +225,105 @@ def dashed(draw, box, color, width, dash=22, gap=14):
             pos = end + gap
 
 
+def footprint(n):
+    """The floor a table and its chairs take up, as the camera sees it."""
+    tx, tz = TABLES[n]['at']
+    r = CHAIR + 0.3
+    return [tuple(v * SCALE for v in project(tx + dx, 0.0, tz + dz)[:2])
+            for dx, dz in ((-r, -r), (r, -r), (r, r), (-r, r))]
+
+
 over = Image.new('RGBA', img.size, (0, 0, 0, 0))
 d = ImageDraw.Draw(over)
-for n, (x0, y0, x1, y1) in zones.items():
-    state = TABLES[n]['state']
-    col = COLOR[state]
-    box = [x0 * SCALE, y0 * SCALE, x1 * SCALE, y1 * SCALE]
-    d.rounded_rectangle(box, radius=18, fill=col + (46 if state == 'w' else 30,))
-    if state == 'c':
-        dashed(d, box, col + (255,), 5)
-    else:
-        d.rounded_rectangle(box, radius=18, outline=col + (255,), width=7 if state == 'w' else 5)
+for n, tb in TABLES.items():
+    d.polygon(footprint(n), fill=COLOR[tb['state']] + (60 if tb['state'] == 'w' else 42,))
 img = Image.alpha_composite(img, over)
 over = Image.new('RGBA', img.size, (0, 0, 0, 0))
 d = ImageDraw.Draw(over)
-# The tables, outlined. Heat barely shows a table; the box knows where each
-# one is from its zones file.
 for n, tb in TABLES.items():
-    tx, ty = tb['at']
-    w, dd = tb['size']
-    a = project(tx - w / 2, ty + dd / 2, 0.75)
-    b = project(tx + w / 2, ty - dd / 2, 0.75)
-    d.rounded_rectangle([a[0] * SCALE, a[1] * SCALE, b[0] * SCALE, b[1] * SCALE], radius=10,
-                        outline=(255, 255, 255, 190), width=4)
+    pts = footprint(n)
+    col = COLOR[tb['state']]
+    if tb['state'] == 'c':
+        dashed_poly(d, pts, col + (255,), 5)
+    else:
+        d.polygon(pts, outline=col + (255,), width=6 if tb['state'] == 'w' else 4)
 dots = []
 for x, y in people:
     cx, cy = x * SCALE, y * SCALE
     dots.append((cx, cy))
-    d.ellipse([cx - 12, cy - 12, cx + 12, cy + 12], fill=(255, 255, 255, 255), outline=(15, 23, 42, 255), width=4)
+    d.ellipse([cx - 10, cy - 10, cx + 10, cy + 10], fill=(255, 255, 255, 255), outline=(15, 23, 42, 255), width=4)
 img = Image.alpha_composite(img, over)
 
 d = ImageDraw.Draw(img)
-big_font = ImageFont.truetype(str(fonts / 'seguisb.ttf'), 30)
-for n in sorted(zones):
-    x0, y0, x1, y1 = (v * SCALE for v in zones[n])
+lines = ['Made from generated heat, no real people.', 'White dots are the people Owl found.']
+nw = max(d.textlength(t_, font=tiny) for t_ in lines)
+note = (img.width / 2 - (nw + 28) / 2, img.height - 80, img.width / 2 + (nw + 28) / 2, img.height - 12)
+placed = [note]
+
+
+def clear(box):
+    bx0, by0, bx1, by1 = box
+    if bx0 < 6 or by0 < 6 or bx1 > img.width - 6 or by1 > img.height - 6:
+        return False
+    for cx, cy in dots:
+        if bx0 - 14 <= cx <= bx1 + 14 and by0 - 14 <= cy <= by1 + 14:
+            return False
+    for px0, py0, px1, py1 in placed:
+        if bx0 < px1 + 6 and px0 < bx1 + 6 and by0 < py1 + 6 and py0 < by1 + 6:
+            return False
+    return True
+
+
+for n in sorted(TABLES):
     tb = TABLES[n]
     state = tb['state']
     col = COLOR[state]
     here = at_table[n]
     people_txt = f"{here} {'person' if here == 1 else 'people'}"
-    head = f"Table {n}  {WORDS[state]}"
-    if state in ('s', 'w'):
-        head += f"  {tb['clock']}"
+    head = f"Table {n}  {WORDS[state]}" + (f"  {tb['clock']}" if state in ('s', 'w') else '')
     if state == 'f':
         sub = f"Free for {tb['time']}"
     elif state == 's':
         sub = people_txt
     elif state == 'w':
-        sub = f"{people_txt}, nobody has stopped by yet"
+        sub = f"{people_txt}, nobody by yet"
     else:
         sub = f"Waiting to be cleared {tb['time']}"
-    w = max(d.textlength(head, font=big_font) + 40, d.textlength(sub, font=small) + 34)
-    h = 84
-    bx = min(max(8, (x0 + x1) / 2 - w / 2), img.width - w - 8)
-    by = y0 - h - 10 if n in (1, 2) else y1 + 10
-    box = [bx, by, bx + w, by + h]
+    w = max(d.textlength(head, font=bold) + 32, d.textlength(sub, font=small) + 32)
+    h = 70
+    pts = footprint(n)
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    mid = (min(xs) + max(xs)) / 2
+    spots = [(mid - w / 2, max(ys) + 6), (mid - w / 2, min(ys) - h - 6), (min(xs) - w - 6, min(ys)),
+             (max(xs) + 6, min(ys)), (mid - w / 2, max(ys) + 6 + h), (mid - w / 2, min(ys) - 2 * h - 6)]
+    box = None
+    for bx, by in spots:
+        bx = min(max(8, bx), img.width - w - 8)
+        if clear((bx, by, bx + w, by + h)):
+            box = (bx, by, bx + w, by + h)
+            break
+    if box is None:
+        raise SystemExit(f'no room for the label of table {n}')
+    placed.append(box)
+    bx, by = box[0], box[1]
     if state == 'w':
-        # Solid amber, as the card is: it is the one asking for someone.
-        d.rounded_rectangle(box, radius=12, fill=col + (255,), outline=(124, 45, 18, 255), width=3)
+        d.rounded_rectangle(box, radius=10, fill=col + (255,), outline=(124, 45, 18, 255), width=3)
         ink, sub_ink = (28, 25, 23, 255), (41, 37, 36, 255)
     else:
-        d.rounded_rectangle(box, radius=12, fill=(15, 23, 42, 236))
+        d.rounded_rectangle(box, radius=10, fill=(15, 23, 42, 236))
         if state == 'c':
-            dashed(d, box, col + (255,), 3, dash=14, gap=9)
+            dashed_poly(d, [(box[0], box[1]), (box[2], box[1]), (box[2], box[3]), (box[0], box[3])],
+                        col + (255,), 3, dash=12, gap=8)
         else:
-            d.rounded_rectangle(box, radius=12, outline=col + (255,), width=3)
+            d.rounded_rectangle(box, radius=10, outline=col + (255,), width=3)
         ink, sub_ink = (255, 255, 255, 255), (203, 213, 225, 255)
-    d.text((bx + 18, by + 8), head, font=big_font, fill=ink)
-    d.text((bx + 18, by + 48), sub, font=small, fill=sub_ink)
+    d.text((bx + 16, by + 6), head, font=bold, fill=ink)
+    d.text((bx + 16, by + 39), sub, font=small, fill=sub_ink)
 
-lines = ['Made from generated heat, no real people.', 'White dots are the people Owl found.']
-nw = max(d.textlength(t_, font=tiny) for t_ in lines)
-nx = img.width / 2 - (nw + 28) / 2
-d.rounded_rectangle([nx, img.height - 84, nx + nw + 28, img.height - 14], radius=10, fill=(15, 23, 42, 220))
+d.rounded_rectangle(note, radius=10, fill=(15, 23, 42, 225))
 for i, t_ in enumerate(lines):
-    d.text((nx + 14, img.height - 79 + i * 30), t_, font=tiny, fill=(226, 232, 240, 255))
+    d.text((note[0] + 14, note[1] + 6 + i * 29), t_, font=tiny, fill=(226, 232, 240, 255))
 
 OUT.parent.mkdir(parents=True, exist_ok=True)
 img.convert('RGB').save(OUT, optimize=True)
