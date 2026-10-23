@@ -188,9 +188,9 @@ export default function AboutPage() {
               forecasts and crowd alerts, and it is not on sale to the public today.
             </p>
             <p>
-              Flux has only been tested on research footage so far, not in a
-              venue. A retrained crowd model gets scored in early November, and it
-              ships only if it beats today’s numbers on days it never saw.
+              Flux has only been tested on research footage so far. A retrained
+              crowd model gets scored in early November, and it ships only if it
+              beats today’s numbers on days it never saw.
             </p>
           </div>
         </section>

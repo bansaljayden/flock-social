@@ -232,7 +232,7 @@ const PAGE_BLOCKS = {
     ["p", "Photos and the story behind each one are coming soon."],
     ["h2", "Where things stand"],
     ["p", "The web app is live at flockcorp.com, and the iPhone app is in App Store review. Venues can make a free account; Roost, the paid plan for venues, isn’t charging anyone yet. There’s a paid plan for people too, Flock Pro, with more Birdie, more crowd forecasts and crowd alerts, and it is not on sale to the public today."],
-    ["p", "Flux has only been tested on research footage so far, not in a venue. A retrained crowd model gets scored in early November, and it ships only if it beats today’s numbers on days it never saw."],
+    ["p", "Flux has only been tested on research footage so far. A retrained crowd model gets scored in early November, and it ships only if it beats today’s numbers on days it never saw."],
     ["h2", "Get in touch"],
     ["p", "Email social@flockcorp.com about anything, venues included. The pitch and anything new go up on our YouTube channel."],
     ["p", "Flock Social LLC is not affiliated with Flock Safety or its license plate cameras."],
