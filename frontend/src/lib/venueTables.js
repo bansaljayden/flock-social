@@ -227,29 +227,54 @@ export function tablesByLocalHour(hours, hourOf = localHourOf) {
   return { slots, tables };
 }
 
-// The hours to draw, in clock order, starting after the longest run of hours
-// with no data, which for a venue is the hours it is shut. A place open 11 AM
-// to 11 PM gets 13 bars instead of 24 with 11 empty, and a bar open until 2 AM
-// reads 6 PM to 1 AM in one run instead of breaking at midnight. A gap inside
-// the open hours stays in, drawn empty.
+// The first hour of the longest run of `flag` hours around the clock, or null
+// when no run has a first hour (no hour is flagged, or every hour is). Equal
+// runs go to the one earlier in clock order from midnight.
+function longestRunStart(flag) {
+  let start = null;
+  let longest = 0;
+  for (let i = 0; i < 24; i += 1) {
+    // Only the first hour of a run starts one.
+    if (!flag[i] || flag[(i + 23) % 24]) continue;
+    let length = 0;
+    while (length < 24 && flag[(i + length) % 24]) length += 1;
+    if (length > longest) {
+      longest = length;
+      start = i;
+    }
+  }
+  return start === null ? null : { start, length: longest };
+}
+
+// The hours to draw, in clock order, and where the day starts.
+//
+// A venue with hours that have no row at all (a box switched off overnight,
+// the first days of a new unit) starts after the longest run of such hours,
+// which for a venue is the hours it is shut: a place open 11 AM to 11 PM gets
+// 13 bars instead of 24 with 11 empty. A gap inside the open hours stays in,
+// drawn empty.
+//
+// A box that stays on has a row for every hour, the closed hours at zero, so
+// there is no gap to trim, and drawn from midnight a bar open until 2 AM had
+// its 10 PM to 1 AM rush split across both ends of the chart. So with a row in
+// every hour the day starts at the quietest hour: the first hour of the
+// longest run of hours at the day's lowest average, read at the one-decimal
+// resolution the chart prints so one reading in a week does not break the
+// run. All 24 bars are drawn, and an evening that runs past midnight is one
+// continuous run. A day with every hour at the same level starts at midnight.
 export function hoursToDraw(slots) {
   const has = slots.map((s) => s.avg !== null);
   if (!has.some(Boolean)) return [];
-  if (has.every(Boolean)) return slots.slice();
-  let gapStart = 0;
-  let gapLength = 0;
-  for (let i = 0; i < 24; i += 1) {
-    // Only the first hour of a gap starts a run.
-    if (has[i] || !has[(i + 23) % 24]) continue;
-    let length = 0;
-    while (length < 24 && !has[(i + length) % 24]) length += 1;
-    if (length > gapLength) {
-      gapLength = length;
-      gapStart = i;
-    }
+  if (has.every(Boolean)) {
+    const level = slots.map((s) => Math.round(s.avg * 10) / 10);
+    const low = Math.min(...level);
+    const quiet = longestRunStart(level.map((v) => v === low));
+    const first = quiet ? quiet.start : 0;
+    return Array.from({ length: 24 }, (_, k) => slots[(first + k) % 24]);
   }
-  const first = (gapStart + gapLength) % 24;
-  return Array.from({ length: 24 - gapLength }, (_, k) => slots[(first + k) % 24]);
+  const gap = longestRunStart(has.map((h) => !h));
+  const first = (gap.start + gap.length) % 24;
+  return Array.from({ length: 24 - gap.length }, (_, k) => slots[(first + k) % 24]);
 }
 
 // An hour reaching this share of the busiest hour is drawn as busy, so the

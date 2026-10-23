@@ -470,6 +470,61 @@ describe('tables in use by hour', () => {
     expect(tableHoursChart(rows, (h) => h).bars.map((b) => b.hour)).toEqual(Array.from({ length: 24 }, (_, h) => h));
   });
 
+  // A box that stays on reports the closed hours as zero tables in use, so
+  // every hour has a row and there is no gap to trim. The day then starts at
+  // the quietest hour, and the night is one run instead of two ends.
+  describe('a box that stays on all night', () => {
+    const EVENING = [18, 19, 20, 21, 22, 23, 0, 1];
+    const allNight = (occupiedAt) => Array.from({ length: 24 }, (_, h) => ({ hour: h, occupied: occupiedAt(h), total: 10 }));
+    const hoursOf = (chart) => chart.bars.map((b) => b.hour);
+    // Where the evening sits on the axis, and that it sits there whole.
+    const eveningRun = (hours) => {
+      const i = hours.indexOf(18);
+      return i === -1 ? null : hours.slice(i, i + EVENING.length);
+    };
+
+    test('a bar open 6 PM to 2 AM draws all 24 hours from the first closed hour, with the night in one run', () => {
+      const chart = tableHoursChart(allNight((h) => (EVENING.includes(h) ? (h === 22 ? 6 : 2) : 0)), (h) => h);
+      expect(hoursOf(chart)).toEqual([2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, ...EVENING]);
+      expect(chart.bars).toHaveLength(24);
+      expect([...chart.busy]).toEqual([22]);
+    });
+
+    test('one party in a week inside the closed hours does not split them: the night still reads whole', () => {
+      // 9 AM averaged 0.14 over the week, which the chart reads as 0.1, so the
+      // closed run is 10 AM to 5 PM and the day starts there.
+      const chart = tableHoursChart(allNight((h) => (EVENING.includes(h) ? 3 : h === 9 ? 0.14 : 0)), (h) => h);
+      expect(hoursOf(chart)[0]).toBe(10);
+      expect(eveningRun(hoursOf(chart))).toEqual(EVENING);
+    });
+
+    test('a venue whose quiet hour is inside its day starts there, and a flat day starts at midnight', () => {
+      // A diner open around the clock, emptiest at 4 AM.
+      const diner = tableHoursChart(allNight((h) => (h === 4 ? 0.5 : 3)), (h) => h);
+      expect(hoursOf(diner)[0]).toBe(4);
+      expect(hoursOf(diner)).toHaveLength(24);
+      const flat = tableHoursChart(allNight(() => 0), (h) => h);
+      expect(hoursOf(flat)).toEqual(Array.from({ length: 24 }, (_, h) => h));
+    });
+
+    test('a box switched off overnight keeps the trim: the closed hours are left off', () => {
+      const rows = EVENING.map((h) => ({ hour: h, occupied: 2, total: 10 }));
+      expect(hoursOf(tableHoursChart(rows, (h) => h))).toEqual(EVENING);
+    });
+
+    test('drawn on the tab: 24 bars, the closed ones empty stubs, the busy stretch marked once', () => {
+      const day = 19;
+      const rows = Array.from({ length: 24 }, (_, h) => ({ hour: at(day, h), occupied: EVENING.includes(h) ? (h === 23 || h === 0 ? 7 : 3) : 0, total: 10 }));
+      renderTab({ hours: rows });
+      const bars = [...screen.getByTestId('tables-hours-chart').querySelectorAll('[data-hour]')];
+      expect(bars).toHaveLength(24);
+      const hours = bars.map((b) => Number(b.getAttribute('data-hour')));
+      expect(eveningRun(hours)).toEqual(EVENING);
+      expect(bars.filter((b) => b.getAttribute('data-busy') === 'true').map((b) => Number(b.getAttribute('data-hour')))).toEqual([23, 0]);
+      expect(screen.getByText('Busiest around 11 PM, with 7 of 10 tables in use on average.')).toBeTruthy();
+    });
+  });
+
   test('hour labels match the app\'s', () => {
     expect([0, 1, 11, 12, 13, 19, 23].map(hourLabel)).toEqual(['12 AM', '1 AM', '11 AM', '12 PM', '1 PM', '7 PM', '11 PM']);
   });
