@@ -3,9 +3,10 @@
 // GET /api/sensors/:placeId/tables answers the venue's verified owner with the
 // Flux sensor's tables now; GET /api/sensors/:placeId/tables/hours with tables
 // in use by hour over the last 7 days. App.js reads the first on a loop while
-// the dashboard is open and the second once per open, and hands both to the
-// dashboard's Tables tab (components/venue/tables/, whose words and arithmetic
-// are lib/venueTables.js).
+// the dashboard is open and the second once per open, again every few minutes
+// while it has failed, and hands both to the dashboard's Tables tab
+// (components/venue/tables/, whose words and arithmetic are
+// lib/venueTables.js).
 //
 // This file is apart from lib/venueTables.js on purpose. App.js is in the
 // bundle every user downloads and imports this; the tab's words and chart
@@ -98,3 +99,41 @@ export function nextTablesState(prev, data, refused, nowMs = Date.now()) {
 
 // The hours list out of GET .../tables/hours, or null for anything else.
 export const tableHoursFrom = (data) => (data && Array.isArray(data.hours) ? data.hours : null);
+
+// How many tables answers go by before a failed hours read is asked again:
+// 20 turns of 15 seconds, about five minutes.
+export const TABLE_HOURS_RETRY_EVERY_TURNS = 20;
+
+// Reads the hours once now and, for as long as the last hours read failed,
+// again after every `everyTurns` tables answers (turn() is called on each
+// good one), until one succeeds. One hours read is out at a time. Each
+// answer is handed to onHours as the list, or null for a failure, which the
+// tab says in its card instead of hiding the chart; a failure at open used to
+// hide it for the rest of the visit with nothing asking again. stop() drops a
+// late answer. Returns { turn, stop }.
+export function startTableHoursReading(read, onHours, everyTurns = TABLE_HOURS_RETRY_EVERY_TURNS) {
+  let stopped = false;
+  let out = false;
+  let failed = false;
+  let turns = 0;
+  const go = () => {
+    out = true;
+    turns = 0;
+    new Promise((resolve) => resolve(read()))
+      .then(tableHoursFrom, () => null)
+      .then((hours) => {
+        out = false;
+        if (stopped) return;
+        failed = hours === null;
+        onHours(hours);
+      });
+  };
+  go();
+  return {
+    turn: () => {
+      turns += 1;
+      if (failed && !out && turns >= everyTurns) go();
+    },
+    stop: () => { stopped = true; },
+  };
+}

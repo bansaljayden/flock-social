@@ -4,8 +4,9 @@
  * A section of the Tables tab, for staffing: the average number of tables in
  * use at each hour of the day, on the viewer's own clock, with the stretch near
  * the busiest hour drawn in the accent and the peak named in words under it.
- * A skeleton while the hours read is out, then drawn only when it brought
- * something to draw. The averaging is lib/venueTables.js.
+ * A skeleton while the hours read is out; one line while that read has failed
+ * (App.js asks again every few minutes); then the chart, drawn only when the
+ * week brought something to draw. The averaging is lib/venueTables.js.
  */
 import React from 'react';
 import TablesSection from './TablesSection';
@@ -27,9 +28,19 @@ const LOADING_HEIGHT_PX = 170;
 export default function TablesByHour({ hours, colors, wellPx }) {
   // `undefined` is a read that has not answered yet: the shape of the card
   // in the global shimmer (DESIGN-STANDARD rule 10, skeletons for page loads).
-  // Null, an empty week or nothing usable draws nothing.
+  // Null is a read that failed, said in the card rather than hidden, because
+  // a chart that is simply absent reads as "no data" when the truth is "not
+  // loaded", and the owner would never know a retry was coming. An empty
+  // week or nothing usable draws nothing: there is nothing to say.
   if (hours === undefined) {
     return <div aria-hidden="true" data-testid="tables-hours-loading" className="skeleton" style={{ height: `${LOADING_HEIGHT_PX}px`, borderRadius: '12px', marginBottom: '12px' }} />;
+  }
+  if (hours === null) {
+    return (
+      <TablesSection title="Tables in use by hour" colors={colors}>
+        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>Tables by hour couldn't load.</p>
+      </TablesSection>
+    );
   }
   const chart = tableHoursChart(hours);
   if (!chart) return null;

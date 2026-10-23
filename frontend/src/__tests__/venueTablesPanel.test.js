@@ -71,7 +71,15 @@ import {
   tablesByLocalHour,
 } from '../lib/venueTables';
 // eslint-disable-next-line import/first
-import { TABLES_READ_EVERY_MS, nextTablesState, planCheckFailed, planLockedWithTables, startTablesReading } from '../lib/venueTablesReading';
+import {
+  TABLES_READ_EVERY_MS,
+  TABLE_HOURS_RETRY_EVERY_TURNS,
+  nextTablesState,
+  planCheckFailed,
+  planLockedWithTables,
+  startTableHoursReading,
+  startTablesReading,
+} from '../lib/venueTablesReading';
 
 const SRC = path.join(__dirname, '..');
 const read = (...p) => fs.readFileSync(path.join(SRC, ...p), 'utf8').replace(/\r\n/g, '\n');
@@ -657,7 +665,6 @@ describe('tables in use by hour', () => {
   });
 
   test.each([
-    ['a failed hours read', null],
     ['an empty week', []],
     ['nothing usable in it', [{ hour: 'never', occupied: 2, total: 8 }]],
   ])('is left out when there is %s', (_, hours) => {
@@ -667,6 +674,19 @@ describe('tables in use by hour', () => {
     expect(screen.queryByRole('heading', { name: 'Tables in use by hour' })).toBeNull();
     // The board is still there.
     expect(screen.getByRole('heading', { name: 'Right now' })).toBeTruthy();
+  });
+
+  test('a failed hours read is said in the card, not hidden', () => {
+    // Absent, the chart read as "no data" when the truth was "not loaded".
+    const { rerender } = renderTab({ hours: null });
+    expect(screen.getByRole('heading', { name: 'Tables in use by hour' })).toBeTruthy();
+    expect(screen.getByText("Tables by hour couldn't load.")).toBeTruthy();
+    expect(screen.queryByTestId('tables-hours-chart')).toBeNull();
+    expect(screen.queryByTestId('tables-hours-loading')).toBeNull();
+    // The retry that App.js runs brings the chart in its place.
+    rerender(<VenueTablesTab data={LIVE} hours={HOURS} colors={COLORS} wellPx={50} />);
+    expect(screen.queryByText("Tables by hour couldn't load.")).toBeNull();
+    expect(screen.getByTestId('tables-hours-chart')).toBeTruthy();
   });
 
   test('while the hours read is out, the card is a skeleton, then the chart', () => {
@@ -887,6 +907,85 @@ describe('the read loop', () => {
     expect(jest.getTimerCount()).toBe(0);
   });
 
+  describe('the hours read', () => {
+    const WEEK = { hours: HOURS };
+    // Twenty good tables answers, which is what App.js counts.
+    const turns = (reading, n) => { for (let i = 0; i < n; i += 1) reading.turn(); };
+
+    test('reads once at open, hands the list on, and asks no more once it has it', async () => {
+      expect(TABLE_HOURS_RETRY_EVERY_TURNS).toBe(20);
+      const readHours = jest.fn(() => Promise.resolve(WEEK));
+      const onHours = jest.fn();
+      const reading = startTableHoursReading(readHours, onHours);
+      expect(readHours).toHaveBeenCalledTimes(1);
+      await flush();
+      expect(onHours).toHaveBeenCalledWith(HOURS);
+      turns(reading, 3 * TABLE_HOURS_RETRY_EVERY_TURNS);
+      await flush();
+      expect(readHours).toHaveBeenCalledTimes(1);
+      reading.stop();
+    });
+
+    test('a failure is handed on as null and asked again after every 20th turn until it succeeds', async () => {
+      const readHours = jest.fn()
+        .mockRejectedValueOnce(Object.assign(new Error('Something went wrong on our end. Try again.'), { status: 500 }))
+        .mockResolvedValueOnce({ nope: true })
+        .mockResolvedValue(WEEK);
+      const onHours = jest.fn();
+      const reading = startTableHoursReading(readHours, onHours);
+      await flush();
+      expect(onHours).toHaveBeenNthCalledWith(1, null);
+      turns(reading, TABLE_HOURS_RETRY_EVERY_TURNS - 1);
+      expect(readHours).toHaveBeenCalledTimes(1);
+      reading.turn();
+      expect(readHours).toHaveBeenCalledTimes(2);
+      await flush();
+      // An answer without a list is a failure too.
+      expect(onHours).toHaveBeenNthCalledWith(2, null);
+      turns(reading, TABLE_HOURS_RETRY_EVERY_TURNS);
+      await flush();
+      expect(readHours).toHaveBeenCalledTimes(3);
+      expect(onHours).toHaveBeenNthCalledWith(3, HOURS);
+      turns(reading, 2 * TABLE_HOURS_RETRY_EVERY_TURNS);
+      await flush();
+      expect(readHours).toHaveBeenCalledTimes(3);
+      reading.stop();
+    });
+
+    test('never two hours reads at once: turns during a slow read do not start another', async () => {
+      let answer;
+      const readHours = jest.fn()
+        .mockRejectedValueOnce(new Error('offline'))
+        .mockImplementationOnce(() => new Promise((resolve) => { answer = resolve; }));
+      const onHours = jest.fn();
+      const reading = startTableHoursReading(readHours, onHours);
+      await flush();
+      turns(reading, TABLE_HOURS_RETRY_EVERY_TURNS);
+      expect(readHours).toHaveBeenCalledTimes(2);
+      turns(reading, 3 * TABLE_HOURS_RETRY_EVERY_TURNS);
+      expect(readHours).toHaveBeenCalledTimes(2);
+      answer(WEEK);
+      await flush();
+      expect(onHours).toHaveBeenLastCalledWith(HOURS);
+      reading.stop();
+    });
+
+    test('once stopped, a late answer is dropped', async () => {
+      let answer;
+      const readHours = jest.fn(() => new Promise((resolve) => { answer = resolve; }));
+      const onHours = jest.fn();
+      const reading = startTableHoursReading(readHours, onHours);
+      reading.stop();
+      answer(WEEK);
+      await flush();
+      expect(onHours).not.toHaveBeenCalled();
+    });
+
+    test('the hours retry runs every fifth minute of good tables answers', () => {
+      expect(TABLE_HOURS_RETRY_EVERY_TURNS * TABLES_READ_EVERY_MS).toBe(5 * MIN);
+    });
+  });
+
   describe('what the dashboard holds after each answer (nextTablesState)', () => {
     test('a good answer is shown as it came, stamped with when it arrived', () => {
       expect(nextTablesState(null, LIVE, false, NOW)).toEqual({ ...LIVE, readAt: NOW });
@@ -933,12 +1032,14 @@ describe('App.js reads the tables for the dashboard and hands them down', () => 
     expect(effect).toContain('}, [ownerVenuePlaceId, currentScreen, venueTier]);');
   });
 
-  test('the tables on the loop, the hours once, and both stopped on the way out', () => {
+  test('the tables on the loop, the hours once and again while failed, and both stopped on the way out', () => {
+    expect(effect).toContain('const hoursReading = startTableHoursReading(() => getSensorTableHours(pid), setOwnerTableHours);');
     expect(effect).toContain('const stopReading = startTablesReading(() => getSensorTables(pid), (data, { planLocked, refused }) => {');
-    expect(effect).toContain('getSensorTableHours(pid).then(tableHoursFrom, () => null)');
-    expect(effect).toContain('if (!cancelled) setOwnerTableHours(hours);');
-    expect(effect).toMatch(/return \(\) => \{\s*cancelled = true;\s*stopReading\(\);\s*\};/);
+    // A good tables answer is the turn a failed hours read may be retried on.
+    expect(effect).toContain('if (data) hoursReading.turn();');
+    expect(effect).toMatch(/return \(\) => \{\s*hoursReading\.stop\(\);\s*stopReading\(\);\s*\};/);
     expect(effect).not.toContain('setInterval');
+    expect(effect).not.toContain('getSensorTableHours(pid).then(');
   });
 
   test('a table, or the plan lock of a venue with tables, puts the tab in the bar, and nothing takes it out mid-visit', () => {

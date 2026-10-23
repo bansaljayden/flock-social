@@ -66,7 +66,7 @@ import { AVATAR_EDGE, AVATAR_REFIT_MARKER_KEY, encodeAvatar, dataUrlToBlob, need
 // staleness rule is measured in. See lib/livePins.js.
 import { LOCATION_EMIT_MS, withoutFlockPins, withoutPersonPin, withoutStalePins } from './lib/livePins';
 import { foldSensorReading } from './lib/sensorHistory';
-import { nextTablesState, startTablesReading, tableHoursFrom } from './lib/venueTablesReading';
+import { nextTablesState, startTableHoursReading, startTablesReading } from './lib/venueTablesReading';
 // Whether the viewer's own Tonight pulse is still on. See lib/pulse.js.
 import { livePulse, pulseEndsAt, pulseTapAction } from './lib/pulse';
 // PaywallSheet is NOT imported here; it is fetched, at the lazy block below.
@@ -18754,7 +18754,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // The same sensor's tables, for the same place: read when the dashboard
   // opens and again 15 seconds after each answer while it stays open, never
   // two at once (startTablesReading, lib/venueTablesReading.js). The hours
-  // are read once per open. Any failure arrives as null; a refusal (403 for
+  // are read once per open and, while that read has failed, again after every
+  // 20th good tables answer, about five minutes, until one succeeds
+  // (startTableHoursReading). Any failure arrives as null; a refusal (403 for
   // anyone but the verified owner or for a plan below Roost, 401 signed out)
   // ends the reading for this open, since asking again cannot change it. The
   // 403 for a plan check the server could not run is not a refusal: it is
@@ -18774,17 +18776,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setOwnerTablesSeen(false);
     setOwnerTablesLocked(false);
     if (!pid || currentScreen !== 'venueDashboard') return undefined;
-    let cancelled = false;
+    const hoursReading = startTableHoursReading(() => getSensorTableHours(pid), setOwnerTableHours);
     const stopReading = startTablesReading(() => getSensorTables(pid), (data, { planLocked, refused }) => {
       setOwnerTables((prev) => nextTablesState(prev, data, refused));
       if (planLocked) setOwnerTablesLocked(true);
       if (planLocked || (data && data.tables.length > 0)) setOwnerTablesSeen(true);
-    });
-    getSensorTableHours(pid).then(tableHoursFrom, () => null).then((hours) => {
-      if (!cancelled) setOwnerTableHours(hours);
+      // A good tables answer is a turn the hours read may be asked again on.
+      if (data) hoursReading.turn();
     });
     return () => {
-      cancelled = true;
+      hoursReading.stop();
       stopReading();
     };
   }, [ownerVenuePlaceId, currentScreen, venueTier]);
