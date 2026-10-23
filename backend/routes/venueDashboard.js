@@ -707,8 +707,15 @@ router.delete('/events/:id', param('id').isInt({ min: 1, max: INT4_MAX }), async
 //     vote, the same membership the tally reads.
 // The status is still what the card shows: 'confirmed' now always means
 // "confirmed here".
-const INCOMING_PAST_HOURS = 12;   // = the tail of the routes/checkin.js window
-const INCOMING_AHEAD_HOURS = 168; // = 7 days
+//
+// THE STATEMENT LIVES IN services/incomingFlocks.js, because the table routes
+// (GET /api/sensors/:placeId/tables/incoming) lay the same plans over the
+// live table floor, and a second copy of this query would be a second place
+// for its window, its membership rule and its column list to drift. The
+// rules above are still the rules; they are enforced by the one statement.
+const {
+  INCOMING_PAST_HOURS, INCOMING_AHEAD_HOURS, listIncomingFlocks,
+} = require('../services/incomingFlocks');
 
 // GET /api/venue-dashboard/incoming-flocks — flocks coming to this venue, or
 // still deciding with it in the running (the rule above). Free on every plan,
@@ -760,26 +767,7 @@ router.get('/incoming-flocks', async (req, res) => {
     // server writes it now, from the party size, and it is derived from a
     // COUNT rather than from anything a user typed. Nothing user-authored
     // crosses this boundary any more.
-    const { rows } = await pool.query(
-      `SELECT f.id, f.event_time, f.status,
-              (SELECT COUNT(*) FROM flock_members fm WHERE fm.flock_id = f.id AND fm.status = 'accepted') AS member_count
-       FROM flocks f
-       WHERE (
-               (f.venue_id = $1 AND (f.status IS NULL OR f.status IN ('planning', 'confirmed')))
-               OR ((f.status IS NULL OR f.status = 'planning') AND EXISTS (
-                 SELECT 1 FROM venue_votes vv
-                   JOIN users u ON u.id = vv.user_id AND u.is_banned IS NOT TRUE
-                   JOIN flock_members vm ON vm.flock_id = vv.flock_id AND vm.user_id = vv.user_id
-                     AND vm.status = 'accepted'
-                  WHERE vv.flock_id = f.id AND vv.venue_id = $1))
-             )
-         AND f.event_time IS NOT NULL
-         AND f.event_time > (NOW() AT TIME ZONE 'UTC') - INTERVAL '12 hours'
-         AND f.event_time < (NOW() AT TIME ZONE 'UTC') + INTERVAL '7 days'
-       ORDER BY f.event_time ASC
-       LIMIT 20`,
-      [venue.google_place_id]
-    );
+    const rows = await listIncomingFlocks(venue.google_place_id);
 
     res.json({
       // The heading the venue reads, built here rather than selected. A group
