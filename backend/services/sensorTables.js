@@ -7,8 +7,11 @@
 // table, and each reading it already sends to POST /api/sensors/data carries
 // the result in one more field. This module is what the server does with that
 // field: the strict parse, the four counts stored on the reading, the live
-// state of each table (sensor_table_states, migration 130), and the alert to
-// the venue's owner when a table starts waiting or needs clearing.
+// state of each table (sensor_table_states, migration 130), the history of
+// seatings built from the changes between readings (sensor_table_seatings,
+// migration 131, THE HISTORY below), and the alert to the venue's owner when
+// a table starts waiting or needs clearing. What is read back out of the
+// history (turn times, waits, the public summary) is services/tableHistory.js.
 //
 // NOTHING HERE IDENTIFIES OR FOLLOWS A PERSON, and every part of this file is
 // held to that. What leaves the Pi is a table number the owner chose, how many
@@ -372,12 +375,156 @@ const TABLE_STATES_SQL = `
     LEFT JOIN prior p ON p.table_no = v.table_no
    ORDER BY v.table_no`;
 
+// ---------------------------------------------------------------------------
+// THE HISTORY: one row per seating (sensor_table_seatings, migration 131),
+// written in the floor's transaction, after the floor, from the change each
+// table made with this reading. The floor says what a table is doing now; a
+// seating says how long a party sat, whether it waited and how long the
+// table then stood uncleared, which is what a turn time, a wait estimate and
+// the owner's stats are made of. Nothing in a seating says who sat there: a
+// table number, four times and a head count.
+//
+// FROM THE CHANGE, NEVER FROM THE STATE ALONE. The floor statement reports
+// each table's state before the reading (prior_state), and that is what this
+// compares with:
+//   f, c or no row -> s or w   OPENS a seating, seated_at the reading's time
+//                              minus the unit's seated timer (A), which for s
+//                              and w is the seconds since the party arrived,
+//                              so a seating is dated from the moment the
+//                              party sat, not from the reading that first
+//                              said so. party_max is the head count, waited
+//                              is true when the table is already w. A table's
+//                              first reading ever opens one only this way: a
+//                              first reading of f or c has no party to count.
+//   s or w -> s or w           CONTINUES it: party_max keeps the most people
+//                              seen while open, and any reading in w sets
+//                              waited, which stays set.
+//   s or w -> c                CLOSES it: left_at is the reading's time minus
+//                              A, which for c is the seconds since the table
+//                              emptied, so the party left when it left, not
+//                              when the box noticed 90 seconds later.
+//   s or w -> f                CLOSES it at the reading's time, and clears it
+//                              as it closes: the box only says needs-clearing
+//                              after 90 seconds empty, so a table seen free
+//                              again was cleared inside that, and the clear
+//                              took no measurable time. Without this the next
+//                              c -> f at the table would be read as its clear,
+//                              hours late.
+//   c -> f                     sets cleared_at on the table's latest closed
+//                              seating that has none: the table was bussed.
+//   not in the reading         CLOSES its open seating at the reading's time:
+//                              the owner removed the table on the box.
+// The open seating of a table is the one with left_at NULL, so each step is
+// idempotent and a reading replayed in order changes nothing twice; the
+// steps touch disjoint rows (a table is in one of them, and the clear step
+// reaches only rows already closed in the snapshot), which is what lets them
+// be one statement. left_at is never earlier than seated_at, whatever timer
+// the unit sent.
+//
+// IN THE FLOOR'S TRANSACTION, AFTER THE FLOOR, BEHIND A SAVEPOINT. The same
+// unit lock serialises it with the floor, so the change it reads is the
+// change the floor just made. The savepoint is so that a failure here (a
+// constraint the box found a way to trip, a bug in a statement nobody has
+// run on that data) costs this reading's history and nothing else: the
+// floor still commits, the device already has its answer, and the next
+// reading finds the open seatings as they were and carries on. Logged like
+// every failure after the answer.
+//
+// Every parameter has one cast, used the same way each time it appears, for
+// __tests__/sqlParameterTypes.test.js.
+// ---------------------------------------------------------------------------
+const TABLE_SEATINGS_SQL = `
+  WITH reading AS (
+    SELECT LEAST($3::timestamptz, NOW()) AS as_of
+  ),
+  incoming AS (
+    SELECT t.table_no, t.prior_state, t.state, t.people, t.seconds
+      FROM unnest($4::smallint[], $5::text[], $6::text[], $7::smallint[], $8::integer[])
+           AS t(table_no, prior_state, state, people, seconds)
+  ),
+  open_now AS (
+    SELECT o.id, o.table_no
+      FROM sensor_table_seatings o
+     WHERE o.sensor_device_id = $1::varchar AND o.left_at IS NULL
+  ),
+  opened AS (
+    INSERT INTO sensor_table_seatings (sensor_device_id, table_no, venue_place_id, seated_at, party_max, waited)
+    SELECT $1::varchar, i.table_no, $2::varchar,
+           r.as_of - i.seconds * INTERVAL '1 second', i.people, i.state = 'w'
+      FROM incoming i, reading r
+     WHERE i.state IN ('s', 'w')
+       AND NOT EXISTS (SELECT 1 FROM open_now o WHERE o.table_no = i.table_no)
+    RETURNING id
+  ),
+  continued AS (
+    UPDATE sensor_table_seatings g
+       SET party_max = GREATEST(g.party_max, i.people),
+           waited = g.waited OR i.state = 'w'
+      FROM open_now o
+      JOIN incoming i ON i.table_no = o.table_no
+     WHERE g.id = o.id
+       AND i.state IN ('s', 'w')
+    RETURNING g.id
+  ),
+  closed AS (
+    UPDATE sensor_table_seatings g
+       SET left_at = GREATEST(g.seated_at,
+                              CASE WHEN i.state = 'c' THEN r.as_of - i.seconds * INTERVAL '1 second' ELSE r.as_of END),
+           cleared_at = CASE WHEN i.state = 'f' THEN r.as_of ELSE g.cleared_at END
+      FROM open_now o
+     CROSS JOIN reading r
+      LEFT JOIN incoming i ON i.table_no = o.table_no
+     WHERE g.id = o.id
+       AND (i.table_no IS NULL OR i.state IN ('f', 'c'))
+    RETURNING g.id
+  ),
+  cleared AS (
+    UPDATE sensor_table_seatings g
+       SET cleared_at = r.as_of
+      FROM reading r
+     WHERE g.cleared_at IS NULL
+       AND g.id IN (
+         SELECT (SELECT c.id
+                   FROM sensor_table_seatings c
+                  WHERE c.sensor_device_id = $1::varchar
+                    AND c.table_no = i.table_no
+                    AND c.left_at IS NOT NULL
+                  ORDER BY c.left_at DESC, c.id DESC
+                  LIMIT 1)
+           FROM incoming i
+          WHERE i.prior_state = 'c' AND i.state = 'f')
+    RETURNING g.id
+  )
+  SELECT (SELECT COUNT(*) FROM opened)::int AS opened,
+         (SELECT COUNT(*) FROM continued)::int AS continued,
+         (SELECT COUNT(*) FROM closed)::int AS closed,
+         (SELECT COUNT(*) FROM cleared)::int AS cleared`;
+
+// The history statement's parameters: the tables the floor statement wrote,
+// each with its state before the reading, joined back to the head count and
+// timer the reading carried for it.
+function seatingParams(device, tables, recordedAt, written) {
+  const sent = new Map(tables.map((t) => [t.number, t]));
+  const rows = written.map((w) => ({ ...sent.get(Number(w.table_no)), number: Number(w.table_no), prior: w.prior_state, state: w.state }));
+  return [
+    device.device_id,
+    device.venue_place_id,
+    recordedAt,
+    rows.map((r) => r.number),
+    rows.map((r) => (r.prior == null ? null : r.prior)),
+    rows.map((r) => r.state),
+    rows.map((r) => r.people),
+    rows.map((r) => r.seconds),
+  ];
+}
+
 /**
- * Write one live reading's tables. Resolves to the tables written, each
- * { table_no, state, prior_state, minutes }: prior_state is null for a table
- * that had no row, and minutes is whole minutes from state_since to the
- * reading's own time, at least 1. Resolves to [] when the gate found newer
- * rows.
+ * Write one live reading's tables, and the seatings they open, continue and
+ * close. Resolves to the tables written, each { table_no, state, prior_state,
+ * minutes }: prior_state is null for a table that had no row, and minutes is
+ * whole minutes from state_since to the reading's own time, at least 1.
+ * Resolves to [] when the gate found newer rows, and then writes no history
+ * either.
  */
 async function storeTableStates(device, tables, recordedAt) {
   const client = await pool.connect();
@@ -395,6 +542,17 @@ async function storeTableStates(device, tables, recordedAt) {
       // null where the entry carried no seat count; the upsert keeps the old one.
       tables.map((t) => (t.seats === undefined ? null : t.seats)),
     ]);
+    if (rows.length > 0) {
+      await client.query('SAVEPOINT history');
+      try {
+        await client.query(TABLE_SEATINGS_SQL, seatingParams(device, tables, recordedAt, rows));
+      } catch (err) {
+        // The floor commits without this reading's history (THE HISTORY
+        // above); the next reading carries on from the open seatings.
+        await client.query('ROLLBACK TO SAVEPOINT history');
+        console.error(`Table history for ${device.device_id} failed after the reading was stored; the floor was kept:`, err.message);
+      }
+    }
     await client.query('COMMIT');
     return rows;
   } catch (err) {
@@ -428,12 +586,29 @@ async function storeTableStates(device, tables, recordedAt) {
 // rule in its WHERE, so a row a newer reading wrote in the meantime survives
 // it, and no lock is needed for one statement that re-checks its own
 // condition on the row it reaches.
+//
+// AND THE HISTORY CLOSES WITH THE ROWS. A table the unit has stopped
+// reporting cannot be sat at as far as this server knows, so the open
+// seating of every table the DELETE forgets is closed at that moment, in the
+// same statement, so that a seating cannot be left open by a unit that went
+// quiet about its tables and sit there inflating the next turn-time median.
+// Only the tables the DELETE actually removed: a row a newer reading wrote
+// survives the DELETE and keeps its seating open.
 // ---------------------------------------------------------------------------
 const SILENT_UNIT_MINUTES = 10;
 const SILENT_UNIT_SQL = `
-  DELETE FROM sensor_table_states s
-   WHERE s.sensor_device_id = $1::varchar
-     AND s.updated_at < LEAST($2::timestamptz, NOW()) - ($3::int * INTERVAL '1 minute')`;
+  WITH gone AS (
+    DELETE FROM sensor_table_states s
+     WHERE s.sensor_device_id = $1::varchar
+       AND s.updated_at < LEAST($2::timestamptz, NOW()) - ($3::int * INTERVAL '1 minute')
+    RETURNING s.table_no
+  )
+  UPDATE sensor_table_seatings g
+     SET left_at = GREATEST(g.seated_at, LEAST($2::timestamptz, NOW()))
+    FROM gone
+   WHERE g.sensor_device_id = $1::varchar
+     AND g.table_no = gone.table_no
+     AND g.left_at IS NULL`;
 
 /**
  * Forget a unit's table rows once a live reading without tables finds them

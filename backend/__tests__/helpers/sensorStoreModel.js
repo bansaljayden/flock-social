@@ -141,8 +141,10 @@ function runIngest(store, params) {
 // changed in one has to be changed in the other in the same commit.
 // ---------------------------------------------------------------------------
 
-// Recognised by its first CTE (whitespace already collapsed).
-const TABLE_STATES_STATEMENT = /WITH reading AS \( SELECT LEAST\(\$3::timestamptz, NOW\(\)\) AS as_of \)/;
+// Recognised by its first two CTEs (whitespace already collapsed): the history
+// statement below opens with the same `reading` CTE, so the shape of
+// `incoming` is what tells them apart.
+const TABLE_STATES_STATEMENT = /WITH reading AS \( SELECT LEAST\(\$3::timestamptz, NOW\(\)\) AS as_of \), incoming AS \( SELECT t\.table_no, t\.people, t\.state, t\.seconds, t\.seats/;
 
 /**
  * Run TABLE_STATES_SQL against `store.tableStates` (an array of rows shaped
@@ -197,32 +199,128 @@ function runTableStates(store, params) {
 }
 
 // ---------------------------------------------------------------------------
-// The silence rule, services/sensorTables.js SILENT_UNIT_SQL: a device's table
-// rows older than the window before the reading's time (capped at the server
-// clock) are deleted. Modelled and real-run under the same agreement as above.
+// The history writer, services/sensorTables.js TABLE_SEATINGS_SQL (migration
+// 131), modelled the same way: one seating row per party at a table, opened,
+// continued, closed and cleared from the change each table made with the
+// reading. The real statement runs in sensorTableHistoryStatement.test.js,
+// and a rule changed in one has to be changed in the other in the same commit.
 // ---------------------------------------------------------------------------
-const SILENT_UNIT_STATEMENT = /^DELETE FROM sensor_table_states s WHERE s\.sensor_device_id = \$1::varchar AND s\.updated_at < LEAST\(\$2::timestamptz, NOW\(\)\) - \(\$3::int \* INTERVAL '1 minute'\)$/;
+
+// Recognised by the shape of its `incoming` CTE (see TABLE_STATES_STATEMENT).
+const TABLE_SEATINGS_STATEMENT = /WITH reading AS \( SELECT LEAST\(\$3::timestamptz, NOW\(\)\) AS as_of \), incoming AS \( SELECT t\.table_no, t\.prior_state, t\.state, t\.people, t\.seconds/;
+
+let nextSeatingId = 1;
 
 /**
- * Run SILENT_UNIT_SQL against `store.tableStates`. Parameters: $1 device_id,
- * $2 the reading's recorded_at, $3 the window in minutes.
+ * Run TABLE_SEATINGS_SQL against `store.seatings` (an array of rows shaped
+ * like sensor_table_seatings, mutated in place; created when absent).
+ * Parameters in statement order: $1 device_id, $2 venue place id, $3 the
+ * reading's recorded_at, then five parallel arrays: $4 table numbers, $5 the
+ * state each table had before the reading (null for none), $6 its state now,
+ * $7 people, $8 the seconds its state has held. Returns the four counts the
+ * statement does.
+ */
+function runTableSeatings(store, params) {
+  const [deviceId, placeId, recordedAt, numbers, priors, states, people, seconds] = params;
+  if (!Array.isArray(store.seatings)) store.seatings = [];
+  const asOf = new Date(Math.min(new Date(recordedAt).getTime(), Date.now()));
+  // The snapshot every step reads: which seating is open per table, and the
+  // latest closed one, BEFORE anything in this statement moves.
+  const openByTable = new Map();
+  const latestClosedByTable = new Map();
+  for (const g of store.seatings) {
+    if (g.sensor_device_id !== deviceId) continue;
+    if (g.left_at === null) openByTable.set(g.table_no, g);
+    else {
+      const have = latestClosedByTable.get(g.table_no);
+      if (!have || g.left_at.getTime() > have.left_at.getTime()
+        || (g.left_at.getTime() === have.left_at.getTime() && g.id > have.id)) {
+        latestClosedByTable.set(g.table_no, g);
+      }
+    }
+  }
+  const counts = { opened: 0, continued: 0, closed: 0, cleared: 0 };
+  const inReading = new Set(numbers);
+  numbers.forEach((n, i) => {
+    const state = states[i];
+    const open = openByTable.get(n);
+    if ((state === 's' || state === 'w') && !open) {
+      store.seatings.push({
+        id: nextSeatingId++,
+        sensor_device_id: deviceId,
+        table_no: n,
+        venue_place_id: placeId,
+        seated_at: new Date(asOf.getTime() - seconds[i] * 1000),
+        left_at: null,
+        party_max: people[i],
+        waited: state === 'w',
+        cleared_at: null,
+      });
+      counts.opened += 1;
+    } else if ((state === 's' || state === 'w') && open) {
+      open.party_max = Math.max(open.party_max, people[i]);
+      open.waited = open.waited || state === 'w';
+      counts.continued += 1;
+    } else if ((state === 'f' || state === 'c') && open) {
+      const at = state === 'c' ? asOf.getTime() - seconds[i] * 1000 : asOf.getTime();
+      open.left_at = new Date(Math.max(open.seated_at.getTime(), at));
+      if (state === 'f') open.cleared_at = asOf;
+      counts.closed += 1;
+    }
+    if (priors[i] === 'c' && state === 'f') {
+      const latest = latestClosedByTable.get(n);
+      if (latest && latest.cleared_at === null) {
+        latest.cleared_at = asOf;
+        counts.cleared += 1;
+      }
+    }
+  });
+  // Tables that left the reading close at the reading's time.
+  for (const [n, open] of openByTable) {
+    if (inReading.has(n)) continue;
+    open.left_at = new Date(Math.max(open.seated_at.getTime(), asOf.getTime()));
+    counts.closed += 1;
+  }
+  return { rows: [counts], rowCount: 1 };
+}
+
+// ---------------------------------------------------------------------------
+// The silence rule, services/sensorTables.js SILENT_UNIT_SQL: a device's table
+// rows older than the window before the reading's time (capped at the server
+// clock) are deleted, and the open seating of each table so forgotten is
+// closed at that time. Modelled and real-run under the same agreement as
+// above.
+// ---------------------------------------------------------------------------
+const SILENT_UNIT_STATEMENT = /^WITH gone AS \( DELETE FROM sensor_table_states s WHERE s\.sensor_device_id = \$1::varchar AND s\.updated_at < LEAST\(\$2::timestamptz, NOW\(\)\) - \(\$3::int \* INTERVAL '1 minute'\) RETURNING s\.table_no \) UPDATE sensor_table_seatings g SET left_at = GREATEST\(g\.seated_at, LEAST\(\$2::timestamptz, NOW\(\)\)\) FROM gone WHERE g\.sensor_device_id = \$1::varchar AND g\.table_no = gone\.table_no AND g\.left_at IS NULL$/;
+
+/**
+ * Run SILENT_UNIT_SQL against `store.tableStates` and `store.seatings`.
+ * Parameters: $1 device_id, $2 the reading's recorded_at, $3 the window in
+ * minutes.
  */
 function runSilentUnit(store, params) {
   const [deviceId, recordedAt, minutes] = params;
   const asOf = Math.min(new Date(recordedAt).getTime(), Date.now());
   const cutoff = asOf - minutes * 60000;
-  let deleted = 0;
+  const gone = new Set();
   for (let i = store.tableStates.length - 1; i >= 0; i -= 1) {
     const r = store.tableStates[i];
     if (r.sensor_device_id === deviceId && r.updated_at.getTime() < cutoff) {
       store.tableStates.splice(i, 1);
-      deleted += 1;
+      gone.add(r.table_no);
     }
   }
-  return { rows: [], rowCount: deleted };
+  let closed = 0;
+  for (const g of Array.isArray(store.seatings) ? store.seatings : []) {
+    if (g.sensor_device_id === deviceId && g.left_at === null && gone.has(g.table_no)) {
+      g.left_at = new Date(Math.max(g.seated_at.getTime(), asOf));
+      closed += 1;
+    }
+  }
+  return { rows: [], rowCount: closed };
 }
 
 module.exports = {
   INGEST_STATEMENT, runIngest, intervalToMs, TABLE_STATES_STATEMENT, runTableStates,
-  SILENT_UNIT_STATEMENT, runSilentUnit,
+  TABLE_SEATINGS_STATEMENT, runTableSeatings, SILENT_UNIT_STATEMENT, runSilentUnit,
 };

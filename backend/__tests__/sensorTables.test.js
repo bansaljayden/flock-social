@@ -34,6 +34,7 @@ const pool = require('../config/database');
 // the table-state writer modelled beside it.
 const {
   INGEST_STATEMENT, runIngest, TABLE_STATES_STATEMENT, runTableStates, SILENT_UNIT_STATEMENT, runSilentUnit,
+  TABLE_SEATINGS_STATEMENT, runTableSeatings,
 } = require('./helpers/sensorStoreModel');
 
 // The unit's advisory lock, exactly as services/sensorTables.js spells it: the
@@ -45,6 +46,9 @@ const FLOOR_READ = /^SELECT s\.sensor_device_id, s\.table_no, .* FROM sensor_tab
 let devices = [];
 let readings = [];
 let tableStates = [];
+// The history (sensor_table_seatings, migration 131), written in the floor's
+// transaction after the floor. sensorTableHistory.test.js reads it back.
+let seatings = [];
 let venueProfiles = [];
 // The venue plan per owner account, and a switch to make the lookup fail.
 let venueTiers = new Map();
@@ -60,14 +64,16 @@ pool.query = (sql, params = []) => {
   queryLog.push({ sql: flat, params });
   // The ingest reads the floor's newest row for the device too (tables_updated_at).
   if (INGEST_STATEMENT.test(flat)) return Promise.resolve(runIngest({ devices, readings, tableStates }, params));
-  // The floor write's transaction and the unit's lock, around the statement.
-  if (/^(BEGIN|COMMIT|ROLLBACK)$/.test(flat)) return Promise.resolve({ rows: [], rowCount: 0 });
+  // The floor write's transaction and the unit's lock, around the statement,
+  // and the savepoint the history is written behind.
+  if (/^(BEGIN|COMMIT|ROLLBACK|SAVEPOINT history|ROLLBACK TO SAVEPOINT history)$/.test(flat)) return Promise.resolve({ rows: [], rowCount: 0 });
   if (TABLE_LOCK_STATEMENT.test(flat)) return Promise.resolve({ rows: [{ pg_advisory_xact_lock: '' }], rowCount: 1 });
   if (TABLE_STATES_STATEMENT.test(flat)) {
     if (tableStatesImpl) return tableStatesImpl(params);
     return Promise.resolve(runTableStates({ tableStates }, params));
   }
-  if (SILENT_UNIT_STATEMENT.test(flat)) return Promise.resolve(runSilentUnit({ tableStates }, params));
+  if (TABLE_SEATINGS_STATEMENT.test(flat)) return Promise.resolve(runTableSeatings({ seatings }, params));
+  if (SILENT_UNIT_STATEMENT.test(flat)) return Promise.resolve(runSilentUnit({ tableStates, seatings }, params));
   // The alert's owner lookup. The verified clause is honoured only when the
   // statement carries it, so dropping it from the code fails a test here
   // rather than being supplied by the fake.
@@ -278,6 +284,7 @@ function reset() {
   clientsOut = 0;
   readings = [];
   tableStates = [];
+  seatings = [];
   tableStatesImpl = null;
   claims = new Map();
   pushes = [];
@@ -926,18 +933,21 @@ test('the floor is written after the answer, and a write that never finishes can
   await settle();
 });
 
-test('the floor write is one transaction that first takes the unit\'s own advisory lock, and the client goes back to the pool', async () => {
+test('the floor write is one transaction that first takes the unit\'s own advisory lock, writes the history behind a savepoint, and the client goes back to the pool', async () => {
   reset();
   await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: EXAMPLE }) });
   await settle();
   assert.strictEqual(clientLogs.length, 1, 'one client for one write');
   const ran = clientLogs[0];
-  assert.deepStrictEqual(ran.map((q) => (TABLE_STATES_STATEMENT.test(q.sql) ? 'write' : q.sql)), [
+  assert.deepStrictEqual(ran.map((q) => (TABLE_STATES_STATEMENT.test(q.sql) ? 'write'
+    : TABLE_SEATINGS_STATEMENT.test(q.sql) ? 'history' : q.sql)), [
     'BEGIN',
     "SELECT pg_advisory_xact_lock(hashtext('sensor_tables:' || $1::text))",
     'write',
+    'SAVEPOINT history',
+    'history',
     'COMMIT',
-  ], 'the lock is taken inside the transaction and before the write');
+  ], 'the lock is taken inside the transaction and before the write, and the history follows the floor');
   assert.deepStrictEqual(ran[1].params, ['flux_tables_01'], 'the lock is the unit\'s, so two units never wait on each other');
   assert.strictEqual(clientsOut, 0, 'the client was not released');
 
