@@ -4702,8 +4702,8 @@ class TablesAtTheVenue(unittest.TestCase):
         t.update(86400 * 2, [])
         text = t.payload(86400 * 2)
         self.assertEqual(len(text.split(';')), 40)
-        self.assertEqual(main.TableTracker.MAX_CHARS, 700)
-        self.assertLessEqual(len(text), 700)
+        self.assertEqual(main.TableTracker.MAX_CHARS, 800)
+        self.assertLessEqual(len(text), 800)
 
     def test_a_string_over_the_cap_ends_at_a_whole_table(self):
         zones = [{'n': n, 'box': (float(n * 3), 0.0, float(n * 3 + 2.5), 3.0)} for n in range(1, 41)]
@@ -4743,11 +4743,12 @@ class TablesAtTheVenue(unittest.TestCase):
             {'n': 2, 'x0': 50, 'y0': 10, 'x1': 70, 'y1': 30},
             {'n': 1, 'x0': 10, 'y0': 10, 'x1': 30, 'y1': 30},
             {'n': 1, 'x0': 90, 'y0': 10, 'x1': 99, 'y1': 30},    # a second table 1
-            {'n': 41, 'x0': 10, 'y0': 40, 'x1': 30, 'y1': 60},   # past 40
+            {'n': 201, 'x0': 10, 'y0': 40, 'x1': 30, 'y1': 60},  # past 200
+            {'n': 150, 'x0': 110, 'y0': 40, 'x1': 130, 'y1': 60},  # a second box's table
             {'n': 3, 'x0': 200, 'y0': 10, 'x1': 220, 'y1': 30},  # off the frame
             {'n': 4, 'x0': 'a'},
         ]}), encoding='utf-8')
-        self.assertEqual([z['n'] for z in main.load_table_zones(path)], [1, 2])
+        self.assertEqual([z['n'] for z in main.load_table_zones(path)], [1, 2, 150])
         path.write_text('not json', encoding='utf-8')
         self.assertEqual(main.load_table_zones(path), [])
         self.assertEqual(main.load_table_zones(Path(_TMP) / 'no-such.json'), [])

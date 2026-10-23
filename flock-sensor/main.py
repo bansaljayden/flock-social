@@ -3011,7 +3011,8 @@ _occupancy = OccupancyTracker()
 # time, the way OccupancyTracker's timers come from counts. No point is ever
 # matched to the one before it, so nothing here can follow anyone; a table
 # knows how many, never who.
-TABLE_MAX = 40
+TABLE_MAX = 40              # tables one box reports
+TABLE_NUMBER_MAX = 200      # table numbers across a venue, so several boxes never share one
 TABLE_SEATS_MAX = 30
 
 
@@ -3037,8 +3038,9 @@ def load_table_zones(path):
         except (KeyError, TypeError, ValueError):
             log_throttled('tables_zone', logging.WARNING, f'Skipping a table zone that is not a zone: {item!r}')
             continue
-        if not (1 <= n <= TABLE_MAX) or n in seen:
-            log_throttled('tables_zone', logging.WARNING, f'Skipping table {n}: numbers run 1 to {TABLE_MAX}, once each')
+        if not (1 <= n <= TABLE_NUMBER_MAX) or n in seen:
+            log_throttled('tables_zone', logging.WARNING,
+                          f'Skipping table {n}: numbers run 1 to {TABLE_NUMBER_MAX}, once each')
             continue
         x0, x1 = max(0.0, x0), min(float(THERMAL_COLS), x1)
         y0, y1 = max(0.0, y0), min(float(THERMAL_ROWS), y1)
@@ -3087,10 +3089,10 @@ class TableTracker:
     CLEAR_RESET = 3 * 3600.0
     STALE_AFTER = 60.0      # no frames this long: send no tables at all
     MAX_AGE = 86400
-    # The server's cap on the string. Forty tables at every limit, seats
-    # included, come to 670, so a whole list always fits; the cut below is
-    # only a safety net.
-    MAX_CHARS = 700
+    # The server's cap on the string. Forty tables at every limit, three-digit
+    # numbers and seats included, come to 719, so a whole list always fits;
+    # the cut below is only a safety net.
+    MAX_CHARS = 800
     RELOAD_EVERY = 30.0
 
     def __init__(self, zones=(), wait_after=None, path=None, now=None):
