@@ -20,13 +20,20 @@ import { shareThisPage } from './shareCard';
 //   Owl's training data: generated frames and six public sets      models/NOTICE.md
 //   counts every 30 s over Wi-Fi or Ethernet; no images, video or
 //   identities leave the box; the case is a design, not printed    sensor work
+// Tables (the tables work, 2026-10-23): one box over the door sees most of a
+// dining room, never every table; states free, seated (timer from sit-down),
+// needs a server (nobody by in 5 minutes), needs clearing; the venue's Tables
+// tab with alerts; worked out on the box, only table number, head count,
+// state and duration leave; table spots can be learned from where people sit.
+// The room picture is generated heat and the tab shots use demo data, and
+// the captions say so. No colour camera is mentioned: not built or approved.
 // No accuracy figure appears here (they are on /research, with their
 // limits), nothing says the 4G board works, and nothing gives a battery life.
 
-const DESCRIPTION = 'Flux is the people counter Flock is building for venues. See what is inside it, how its Owl model counts people from heat, where it mounts and every part of the case.';
+const DESCRIPTION = 'Flux is the people counter Flock is building for venues. See what is inside it, how its Owl model counts people from heat, how it reads tables, where it mounts and every part of the case.';
 
 // Every picture on the page, at the two widths each file was written at
-// (scripts/flux_assets.py; the mockup and the figures from /ai by hand).
+// (scripts/flux_assets.py, the tables pictures with --tables-src; the mockup and the figures from /ai by hand).
 // fluxPages.test.js checks each file exists at the width it claims.
 export const IMAGES = {
   hero: { base: '/sensor/flux-hero', one: 560, two: 1120, height: 419 },
@@ -37,6 +44,9 @@ export const IMAGES = {
   back: { base: '/sensor/flux-back', one: 520, two: 1040, height: 390 },
   pipeline: { base: '/ai-figures/owl-pipeline', one: 1100, two: 2200, height: 249 },
   flow: { base: '/ai-figures/owl-flow', one: 640, two: 1280, height: 107 },
+  tablesRoom: { base: '/sensor/flux-tables-room', one: 640, two: 1280, height: 480 },
+  tablesDesktop: { base: '/sensor/tables-tab-desktop', one: 1080, two: 2160, height: 619 },
+  tablesPhone: { base: '/sensor/tables-tab-phone', one: 260, two: 520, height: 679 },
 };
 
 function Pic({ img, sizes, alt, eager = false }) {
@@ -194,7 +204,7 @@ export default function FluxPage() {
                   or Ethernet: the people it counts, door crossings, an estimate of
                   how full the room is, and the noise level. A unit set up for
                   tables also sends, for each table, how many people are at it and
-                  whether it is free, seated, waiting or needs clearing. No images,
+                  whether it is free, seated, needs a server or needs clearing. No images,
                   video or identities leave it.
                 </p>
               </div>
@@ -206,6 +216,70 @@ export default function FluxPage() {
                     alt="The Flux sensor deletes the frame and sends only “count: 3” to the Flock server."
                   />
                 </div>
+              </figure>
+            </div>
+          </div>
+        </section>
+
+        <section className="lp-sec lp-sec-sand" aria-labelledby="fx-h-tables">
+          <div className="lp-wrap">
+            <div className="fx-tables">
+              <div className="fx-measure">
+                <h2 id="fx-h-tables">Tables</h2>
+                <p>
+                  One box on the ceiling above the door looks down on most of a
+                  dining room. Each table in view is free, seated, needs a server
+                  or needs clearing. A seated table carries a timer from when the
+                  party sat down, and it needs a server when nobody has come by in
+                  5 minutes.
+                </p>
+                <p>
+                  The venue sees every table on a Tables tab, with an alert when
+                  one needs a server or clearing. It’s all worked out from heat on
+                  the box. What leaves is each table’s number, head count, state
+                  and how long it has been that way.
+                </p>
+                <p>
+                  Flux can learn where the tables are from where people sit, so
+                  nobody has to draw them in.
+                </p>
+              </div>
+              <figure className="fx-figure">
+                <div className="fx-plate">
+                  <Pic
+                    img={IMAGES.tablesRoom}
+                    sizes="(min-width: 960px) 520px, calc(100vw - 40px)"
+                    alt="A dining room in generated heat, seen from above the door, with eight tables outlined. Each has a label: free and for how long, seated with a timer and a head count, one needing a server, one needing clearing."
+                  />
+                </div>
+                <figcaption className="lp-fig-cap">
+                  Made from generated heat, no real people. White dots are the
+                  people Owl found.
+                </figcaption>
+              </figure>
+            </div>
+            <div className="fx-tabs">
+              <figure className="fx-figure">
+                <div className="fx-plate">
+                  <Pic
+                    img={IMAGES.tablesDesktop}
+                    sizes="(min-width: 1160px) 760px, (min-width: 760px) calc(100vw - 340px), calc(100vw - 40px)"
+                    alt="The Tables tab on a computer: 3 of 8 tables free, two alerts at the top for a table waiting on a server and one needing clearing, a card for each table, and a chart of tables in use by hour."
+                  />
+                </div>
+                <figcaption className="lp-fig-cap">
+                  The Tables tab on the venue dashboard, with demo data.
+                </figcaption>
+              </figure>
+              <figure className="fx-figure fx-phone">
+                <div className="fx-plate">
+                  <Pic
+                    img={IMAGES.tablesPhone}
+                    sizes="260px"
+                    alt="The same Tables tab on a phone, with the table cards two to a row."
+                  />
+                </div>
+                <figcaption className="lp-fig-cap">The same tab on a phone.</figcaption>
               </figure>
             </div>
           </div>

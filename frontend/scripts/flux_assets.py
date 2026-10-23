@@ -143,12 +143,38 @@ def renders():
     print(f"renders: {len(RENDERS)} images, WebP and AVIF at 1x and 2x")
 
 
+# The /flux Tables section: a generated-heat picture of a dining room from
+# the box over the door, and the venue dashboard's Tables tab with demo data.
+# The PNGs live outside the repo (the tables work's images/ folder), so
+#   python frontend/scripts/flux_assets.py --tables-only --tables-src <dir>
+TABLES = {
+    "flux-tables-room": 640,
+    "tables-tab-desktop": 1080,
+    "tables-tab-phone": 260,
+}
+TABLES_FILES = {
+    "flux-tables-room": "flux-sees-tables-room.png",
+    "tables-tab-desktop": "tables-tab-desktop.png",
+    "tables-tab-phone": "tables-tab-phone.png",
+}
+
+
+def tables(src):
+    for name, width in TABLES.items():
+        save_pair(Image.open(src / TABLES_FILES[name]).convert("RGB"), name, width)
+    print(f"tables: {len(TABLES)} images, WebP and AVIF at 1x and 2x")
+
+
 if __name__ == "__main__":
     # --src <dir> reads the export from another folder, for a branch that does
     # not have the latest flock-sensor/ yet. --images-only skips the model.
     if "--src" in sys.argv:
         SRC = Path(sys.argv[sys.argv.index("--src") + 1])
     OUT.mkdir(parents=True, exist_ok=True)
+    if "--tables-src" in sys.argv:
+        tables(Path(sys.argv[sys.argv.index("--tables-src") + 1]))
+    if "--tables-only" in sys.argv:
+        sys.exit(0)
     if "--images-only" not in sys.argv:
         model()
     renders()
