@@ -47,10 +47,11 @@ export const planCheckFailed = (err) => !!err
 // function it returns is called. The next read is set only once the last one
 // has answered, so two never overlap and a slow answer pushes the next read
 // back instead of stacking requests behind it. Nothing is handed on after the
-// stop. Each answer is handed on as (data, { planLocked }): the data, or null
-// for any failure; planLocked only for the plan refusal of a venue with
-// tables. A dropped connection, a server error or a plan check that could not
-// run is asked again on the next turn, and a refusal ends the reading.
+// stop. Each answer is handed on as (data, { planLocked, refused }): the
+// data, or null for any failure; planLocked only for the plan refusal of a
+// venue with tables; refused when no further read will come. A dropped
+// connection, a server error or a plan check that could not run is asked
+// again on the next turn, and a refusal ends the reading.
 export function startTablesReading(read, onData, everyMs = TABLES_READ_EVERY_MS) {
   let stopped = false;
   let timer = null;
@@ -66,7 +67,7 @@ export function startTablesReading(read, onData, everyMs = TABLES_READ_EVERY_MS)
       )
       .then(({ data, refused, planLocked }) => {
         if (stopped) return;
-        onData(data, { planLocked });
+        onData(data, { planLocked, refused });
         if (!refused) timer = setTimeout(turn, everyMs);
       });
   };
@@ -75,6 +76,24 @@ export function startTablesReading(read, onData, everyMs = TABLES_READ_EVERY_MS)
     stopped = true;
     clearTimeout(timer);
   };
+}
+
+// What the dashboard holds after each answer, from what it held before.
+//
+// A good answer is shown as it came, stamped with when it arrived (readAt),
+// which is the moment every clock on the board describes. A failed read that
+// will be asked again KEEPS the last good answer, marked unrefreshed: the
+// board then dims it, freezes its clocks at readAt and says it could not
+// refresh, instead of wiping every tile for the 15 seconds until the next
+// turn, which on a host stand's patchy Wi-Fi was a board that flickered. The
+// same rule the dashboard's lists follow: a failed refresh does not delete
+// what the owner can already see. A refusal shows nothing, since no further
+// read will come and what was shown would never update again. An empty list
+// is a good answer and replaces the old tiles like any other.
+export function nextTablesState(prev, data, refused, nowMs = Date.now()) {
+  if (data) return { ...data, readAt: nowMs };
+  if (refused || !prev || !Array.isArray(prev.tables)) return null;
+  return prev.unrefreshed === true ? prev : { ...prev, unrefreshed: true };
 }
 
 // The hours list out of GET .../tables/hours, or null for anything else.

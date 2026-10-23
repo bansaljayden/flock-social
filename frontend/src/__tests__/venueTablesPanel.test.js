@@ -71,7 +71,7 @@ import {
   tablesByLocalHour,
 } from '../lib/venueTables';
 // eslint-disable-next-line import/first
-import { TABLES_READ_EVERY_MS, planCheckFailed, planLockedWithTables, startTablesReading } from '../lib/venueTablesReading';
+import { TABLES_READ_EVERY_MS, nextTablesState, planCheckFailed, planLockedWithTables, startTablesReading } from '../lib/venueTablesReading';
 
 const SRC = path.join(__dirname, '..');
 const read = (...p) => fs.readFileSync(path.join(SRC, ...p), 'utf8').replace(/\r\n/g, '\n');
@@ -86,9 +86,11 @@ const ago = (ms) => new Date(NOW - ms).toISOString();
 
 const COLORS = { navy: '#1e293b', steel: '#2d5a87', amber: '#F59E0B' };
 
-// What the read loop hands on beside each answer.
-const OPEN = { planLocked: false };
-const LOCKED = { planLocked: true };
+// What the read loop hands on beside each answer: whether this is the plan
+// lock of a venue with tables, and whether the reading has ended on it.
+const OPEN = { planLocked: false, refused: false };
+const REFUSED = { planLocked: false, refused: true };
+const LOCKED = { planLocked: true, refused: true };
 // The requirePro refusal both table routes give a plan below Roost, shaped the
 // way api.js throws it (the body's code on err.code, the body on err.data).
 const UPGRADE_BODY = (hasTables) => ({ error: 'This feature needs a venue plan upgrade.', code: 'UPGRADE_REQUIRED', requiredTier: 'pro', has_tables: hasTables });
@@ -480,6 +482,29 @@ describe('a sensor that has gone quiet', () => {
     expect(screen.queryByText(/No table readings/)).toBeNull();
   });
 
+  test('a read that failed keeps the last reading, dimmed, clocks stopped where it arrived, under one line', () => {
+    // The reading arrived 40 seconds ago and the read after it failed.
+    const kept = { ...LIVE, readAt: NOW - 40 * SEC, unrefreshed: true };
+    renderTab({ data: kept });
+    expect(paragraph("Couldn't refresh just now. Showing the last reading from under 1 min ago.")).toBeTruthy();
+    expect(screen.queryByText('1 of 5 free')).toBeNull();
+    expect(screen.getByTestId('tables-live')).toHaveStyle({ opacity: '0.55' });
+    expect(tiles()).toHaveLength(5);
+    // Table 5 sat down 65 s before now, so 25 s before the reading arrived.
+    expect(within(tileFor(5)).getByText('0:25')).toBeTruthy();
+    expect(within(tileFor(2)).getByText('23:25')).toBeTruthy();
+    act(() => { jest.advanceTimersByTime(65 * SEC); });
+    expect(within(tileFor(5)).getByText('0:25')).toBeTruthy();
+    expect(paragraph("Couldn't refresh just now. Showing the last reading from 1 min ago.")).toBeTruthy();
+  });
+
+  test('a failed refresh of a stopped reading says the refresh failed, and keeps the clocks at the reading', () => {
+    renderTab({ data: { ...STALE, readAt: NOW - 20 * SEC, unrefreshed: true } });
+    expect(paragraph("Couldn't refresh just now. Showing the last reading from under 1 min ago.")).toBeTruthy();
+    expect(screen.queryByText(/No table readings/)).toBeNull();
+    expect(within(tileFor(2)).getByText('10:00')).toBeTruthy();
+  });
+
   test('a later read with no tables in it clears the board instead of keeping the old tiles', () => {
     // The server drops a unit's tables once it has stopped sending them for
     // 10 minutes, so an empty list is the answer "not reporting tables now".
@@ -768,7 +793,7 @@ describe('the read loop', () => {
     const onData = jest.fn();
     startTablesReading(readTables, onData);
     await flush();
-    expect(onData).toHaveBeenCalledWith(null, OPEN);
+    expect(onData).toHaveBeenCalledWith(null, REFUSED);
     expect(jest.getTimerCount()).toBe(0);
     jest.advanceTimersByTime(MIN);
     await flush();
@@ -823,7 +848,7 @@ describe('the read loop', () => {
   // Below Roost both routes answer the requirePro 403 with `has_tables`.
   test.each([
     ['a venue with tables: no data, the tab with its lock', true, LOCKED],
-    ['a venue without tables: nothing, as for a venue with none', false, OPEN],
+    ['a venue without tables: nothing, as for a venue with none', false, REFUSED],
   ])('the plan refusal for %s, and no more reads', async (_, hasTables, info) => {
     const readTables = jest.fn(() => Promise.reject(upgradeRequired(hasTables)));
     const onData = jest.fn();
@@ -861,6 +886,31 @@ describe('the read loop', () => {
     expect(onData).toHaveBeenNthCalledWith(2, null, LOCKED);
     expect(jest.getTimerCount()).toBe(0);
   });
+
+  describe('what the dashboard holds after each answer (nextTablesState)', () => {
+    test('a good answer is shown as it came, stamped with when it arrived', () => {
+      expect(nextTablesState(null, LIVE, false, NOW)).toEqual({ ...LIVE, readAt: NOW });
+      const empty = { tables: [], updated_at: null, stale: false, next_free: null };
+      expect(nextTablesState({ ...LIVE, readAt: NOW - MIN }, empty, false, NOW)).toEqual({ ...empty, readAt: NOW });
+    });
+
+    test('a failed read that will be asked again keeps the last good answer, marked unrefreshed, once', () => {
+      const shown = { ...LIVE, readAt: NOW - 15 * SEC };
+      const kept = nextTablesState(shown, null, false, NOW);
+      expect(kept).toEqual({ ...shown, unrefreshed: true });
+      // A second failure changes nothing, so the board does not re-render for it.
+      expect(nextTablesState(kept, null, false, NOW + 15 * SEC)).toBe(kept);
+      // And the next good answer replaces it, unmarked.
+      expect(nextTablesState(kept, LIVE, false, NOW + 30 * SEC)).toEqual({ ...LIVE, readAt: NOW + 30 * SEC });
+    });
+
+    test('a refusal shows nothing, and so does a failure with nothing good before it', () => {
+      expect(nextTablesState({ ...LIVE, readAt: NOW }, null, true, NOW)).toBeNull();
+      expect(nextTablesState(null, null, false, NOW)).toBeNull();
+      expect(nextTablesState(undefined, null, false, NOW)).toBeNull();
+      expect(nextTablesState({ readAt: NOW }, null, false, NOW)).toBeNull();
+    });
+  });
 });
 
 describe('App.js reads the tables for the dashboard and hands them down', () => {
@@ -884,7 +934,7 @@ describe('App.js reads the tables for the dashboard and hands them down', () => 
   });
 
   test('the tables on the loop, the hours once, and both stopped on the way out', () => {
-    expect(effect).toContain('const stopReading = startTablesReading(() => getSensorTables(pid), (data, { planLocked }) => {');
+    expect(effect).toContain('const stopReading = startTablesReading(() => getSensorTables(pid), (data, { planLocked, refused }) => {');
     expect(effect).toContain('getSensorTableHours(pid).then(tableHoursFrom, () => null)');
     expect(effect).toContain('if (!cancelled) setOwnerTableHours(hours);');
     expect(effect).toMatch(/return \(\) => \{\s*cancelled = true;\s*stopReading\(\);\s*\};/);
@@ -892,7 +942,9 @@ describe('App.js reads the tables for the dashboard and hands them down', () => 
   });
 
   test('a table, or the plan lock of a venue with tables, puts the tab in the bar, and nothing takes it out mid-visit', () => {
-    expect(effect).toMatch(/setOwnerTables\(data\);\s*if \(planLocked\) setOwnerTablesLocked\(true\);\s*if \(planLocked \|\| \(data && data\.tables\.length > 0\)\) setOwnerTablesSeen\(true\);/);
+    // Every answer goes through nextTablesState, so a failed read keeps the
+    // last good one and a refusal clears it.
+    expect(effect).toMatch(/setOwnerTables\(\(prev\) => nextTablesState\(prev, data, refused\)\);\s*if \(planLocked\) setOwnerTablesLocked\(true\);\s*if \(planLocked \|\| \(data && data\.tables\.length > 0\)\) setOwnerTablesSeen\(true\);/);
     // The only other writes are the resets when the visit, the place or the
     // plan changes.
     expect(APP.match(/setOwnerTablesSeen\(/g)).toHaveLength(2);

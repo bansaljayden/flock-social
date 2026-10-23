@@ -66,7 +66,7 @@ import { AVATAR_EDGE, AVATAR_REFIT_MARKER_KEY, encodeAvatar, dataUrlToBlob, need
 // staleness rule is measured in. See lib/livePins.js.
 import { LOCATION_EMIT_MS, withoutFlockPins, withoutPersonPin, withoutStalePins } from './lib/livePins';
 import { foldSensorReading } from './lib/sensorHistory';
-import { startTablesReading, tableHoursFrom } from './lib/venueTablesReading';
+import { nextTablesState, startTablesReading, tableHoursFrom } from './lib/venueTablesReading';
 // Whether the viewer's own Tonight pulse is still on. See lib/pulse.js.
 import { livePulse, pulseEndsAt, pulseTapAction } from './lib/pulse';
 // PaywallSheet is NOT imported here; it is fetched, at the lazy block below.
@@ -17894,7 +17894,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [ownerSensorHistory, setOwnerSensorHistory] = useState([]);
   // The same sensor's table zones (GET /api/sensors/:placeId/tables), and its
   // tables in use by hour over the last 7 days. The tables are null until
-  // read, and null again after any failed read. The hours are undefined until
+  // read; after a failed read that will be asked again they are the last good
+  // answer marked unrefreshed, and null after a refusal (nextTablesState in
+  // lib/venueTablesReading.js). The hours are undefined until
   // their read answers, which the Tables tab draws as a skeleton, then the
   // list, or null when the read failed. `ownerTablesSeen` is whether a read
   // since the dashboard opened has returned at least one table, or the plan
@@ -18773,8 +18775,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setOwnerTablesLocked(false);
     if (!pid || currentScreen !== 'venueDashboard') return undefined;
     let cancelled = false;
-    const stopReading = startTablesReading(() => getSensorTables(pid), (data, { planLocked }) => {
-      setOwnerTables(data);
+    const stopReading = startTablesReading(() => getSensorTables(pid), (data, { planLocked, refused }) => {
+      setOwnerTables((prev) => nextTablesState(prev, data, refused));
       if (planLocked) setOwnerTablesLocked(true);
       if (planLocked || (data && data.tables.length > 0)) setOwnerTablesSeen(true);
     });

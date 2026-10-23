@@ -221,6 +221,17 @@ export function staleLines(tables, updatedAtMs, nowMs) {
   };
 }
 
+// The two sentences that replace the summary while the last read failed and
+// the board is showing the reading before it (nextTablesState in
+// lib/venueTablesReading.js). `readAtMs` is when that reading arrived.
+export function refreshLines(readAtMs, nowMs) {
+  const ms = msSince(new Date(readAtMs), nowMs);
+  return {
+    lead: "Couldn't refresh just now.",
+    detail: ms === null ? 'Showing the last reading.' : `Showing the last reading from ${durationText(ms)} ago.`,
+  };
+}
+
 // ── Tables in use by hour ──────────────────────────────────────────────────
 
 // The hour of the day, on the viewer's own clock, that an hour row starts in.

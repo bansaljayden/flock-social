@@ -18,9 +18,13 @@
  *
  * The tab only exists once a read this session has returned a table, so when
  * a later read fails or comes back empty the board says so in one line rather
- * than leaving the tab blank. An empty list is a real answer (the server
- * drops a unit's tables once it has stopped sending them for 10 minutes), so
- * it clears the board: no tile from an earlier reading stays up as if live.
+ * than leaving the tab blank. A failed read that will be asked again arrives
+ * as the reading before it, marked unrefreshed (nextTablesState in
+ * lib/venueTablesReading.js): the board keeps it, dimmed, clocks stopped at
+ * the moment it arrived, under "Couldn't refresh just now." An empty list is
+ * a real answer (the server drops a unit's tables once it has stopped sending
+ * them for 10 minutes), so it clears the board: no tile from an earlier
+ * reading stays up as if live.
  *
  * One interval drives every clock on the board, so the tiles tick together and
  * there is one timer to clear when the board goes. The words and arithmetic
@@ -33,6 +37,7 @@ import {
   freeSummary,
   nextFreeText,
   peopleText,
+  refreshLines,
   seatsText,
   staleLines,
   tableAlerts,
@@ -163,27 +168,35 @@ export default function TablesBoard({ data, colors }) {
 
   const stale = data.stale === true;
   const updatedAtMs = timeMs(data.updated_at);
+  // The last read failed and this is the reading before it (nextTablesState
+  // in lib/venueTablesReading.js), stamped with when it arrived.
+  const unrefreshed = data.unrefreshed === true && Number.isFinite(data.readAt);
   // While the readings have stopped every clock on the tiles stops at the
-  // last one instead of running on as if the box still saw the room. With no
-  // time for that reading there is nothing to stop them at, so they are left
-  // off.
-  const clockAt = stale ? updatedAtMs : now;
+  // last one instead of running on as if the box still saw the room; while
+  // this side cannot refresh they stop at the moment the reading arrived,
+  // which is the last moment it was true. With no time for a stopped reading
+  // there is nothing to stop them at, so they are left off.
+  const clockAt = stale ? updatedAtMs : unrefreshed ? data.readAt : now;
+  const frozen = stale || unrefreshed;
   const alerts = tableAlerts(tables, clockAt);
   const nextFree = nextFreeText(data, tables, clockAt);
-  const quiet = stale ? staleLines(tables, updatedAtMs, now) : null;
+  // One line in place of the summary while the board is not live. A failed
+  // refresh is this side's problem and says so first; the readings having
+  // stopped is the box's, said when the refresh itself works.
+  const lines = unrefreshed ? refreshLines(data.readAt, now) : stale ? staleLines(tables, updatedAtMs, now) : null;
 
   return (
     <TablesSection title="Right now" colors={colors}>
-      {quiet ? (
+      {lines ? (
         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 10px', lineHeight: 1.45 }}>
-          <span style={{ fontWeight: '700', color: 'var(--accent-amber-text)' }}>{quiet.lead}</span>
-          {' '}{quiet.detail}
+          <span style={{ fontWeight: '700', color: 'var(--accent-amber-text)' }}>{lines.lead}</span>
+          {' '}{lines.detail}
         </p>
       ) : (
         <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-secondary)', margin: '0 0 10px' }}>{freeSummary(tables)}</p>
       )}
 
-      <div data-testid="tables-live" style={{ opacity: stale ? STALE_OPACITY : 1 }}>
+      <div data-testid="tables-live" style={{ opacity: frozen ? STALE_OPACITY : 1 }}>
         {alerts.length > 0 && (
           <ul aria-label="Needs attention" style={{ listStyle: 'none', margin: '0 0 10px', padding: 0 }}>
             {alerts.map((a, i) => (
