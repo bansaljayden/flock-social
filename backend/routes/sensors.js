@@ -10,7 +10,7 @@ const { scalarOnly } = require('../validators/shape');
 // with it. The contract and the reason a bad value is ignored rather than
 // refused are at the top of that file.
 const {
-  MAX_TABLES_LENGTH, readTables, tableCounts, noteIgnoredTables, applyTableReading,
+  MAX_TABLES_LENGTH, STATE_WORDS, readTables, tableCounts, noteIgnoredTables, applyTableReading,
 } = require('../services/sensorTables');
 
 const router = express.Router();
@@ -853,6 +853,166 @@ router.get('/:placeId/status',
     } catch (err) {
       console.error('Get sensor status error:', err);
       res.status(500).json({ error: 'Failed to fetch sensor status' });
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// TABLE MONITORING, the owner's side: the live floor, and tables in use by
+// hour.
+//
+// Both routes are for the venue's VERIFIED owner and nobody else, the gate
+// /status uses and for the same reason: what a venue's tables are doing is
+// that business's own operational detail. Neither returns anything about a
+// person. The floor comes from sensor_table_states (written by
+// services/sensorTables.js after each live reading), the hours from the four
+// counts each reading carries (migration 130).
+// ---------------------------------------------------------------------------
+
+// The /status gate, shared by both table routes: is the caller's claim on this
+// place a VERIFIED one. One row at most, as there. An unverified claim can sit
+// on a place somebody else has verified, and it is told nothing.
+async function isVerifiedOwner(callerId, placeId) {
+  const owns = await pool.query(
+    'SELECT 1 FROM venue_profiles WHERE user_id = $1 AND google_place_id = $2 AND verified = true LIMIT 1',
+    [callerId, placeId]
+  );
+  return owns.rows.length > 0;
+}
+
+const NOT_THE_OWNER = { error: 'Table monitoring is for the verified owner of this venue.' };
+
+// A unit writes the floor with every live reading, about every thirty seconds,
+// so three minutes without a fresh row is six missed readings: the unit is
+// off, offline, or has stopped sending tables. The dashboard is told so rather
+// than shown an old floor as the present one.
+const TABLES_STALE_AFTER_MINUTES = 3;
+
+// ONE UNIT'S FLOOR. Each unit numbers its own tables, so a place with two
+// units would have two table 3s, and they are never merged into one floor:
+// the unit with the newest rows is the floor. The place is checked on the
+// rows themselves as well as on the pick, so a unit moved to another venue
+// cannot carry this one's tables with it.
+const TABLE_FLOOR_SQL = `
+  WITH unit AS (
+    SELECT sensor_device_id
+      FROM sensor_table_states
+     WHERE venue_place_id = $1
+     ORDER BY updated_at DESC, sensor_device_id
+     LIMIT 1
+  )
+  SELECT s.table_no, s.people, s.state, s.state_since, s.seats, s.updated_at,
+         s.updated_at < NOW() - $2::int * INTERVAL '1 minute' AS stale
+    FROM sensor_table_states s
+    JOIN unit u ON u.sensor_device_id = s.sensor_device_id
+   WHERE s.venue_place_id = $1
+   ORDER BY s.table_no`;
+
+/**
+ * The floor as the dashboard reads it. `next_free` is the seated or waiting
+ * table whose party has sat longest (earliest state_since, which for s and w
+ * is the party's arrival), the best guess at which table frees up next; on a
+ * tie, the lower number. null when no table has a party.
+ */
+function floorResponse(rows) {
+  if (rows.length === 0) return { tables: [], updated_at: null, stale: true, next_free: null };
+  let newest = rows[0];
+  let longestSeated = null;
+  for (const r of rows) {
+    if (new Date(r.updated_at) > new Date(newest.updated_at)) newest = r;
+    const hasParty = r.state === 's' || r.state === 'w';
+    if (hasParty && (longestSeated === null || new Date(r.state_since) < new Date(longestSeated.state_since))) {
+      longestSeated = r;
+    }
+  }
+  return {
+    tables: rows.map((r) => ({
+      number: Number(r.table_no),
+      people: Number(r.people),
+      state: STATE_WORDS[r.state],
+      since: new Date(r.state_since).toISOString(),
+      seats: r.seats === null || r.seats === undefined ? null : Number(r.seats),
+    })),
+    updated_at: new Date(newest.updated_at).toISOString(),
+    stale: newest.stale === true,
+    next_free: longestSeated ? Number(longestSeated.table_no) : null,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/sensors/:placeId/tables: what each table is doing now.
+//
+// { tables: [{ number, people, state, since, seats }], updated_at, stale,
+//   next_free }, tables in number order. state is a word (free, seated,
+// waiting, needs_clearing), since is when that state began, and seats is null
+// until the unit sends a count. With no rows at all: no tables, no time,
+// stale, nothing next.
+// ---------------------------------------------------------------------------
+router.get('/:placeId/tables',
+  authenticate,
+  param('placeId').isString().isLength({ min: 1, max: 255 }).withMessage('placeId required'),
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
+
+      const { placeId } = req.params;
+      if (!(await isVerifiedOwner(req.user.id, placeId))) return res.status(403).json(NOT_THE_OWNER);
+
+      const floor = await pool.query(TABLE_FLOOR_SQL, [placeId, TABLES_STALE_AFTER_MINUTES]);
+      res.json(floorResponse(floor.rows));
+    } catch (err) {
+      console.error('Get table floor error:', err);
+      res.status(500).json({ error: 'Failed to fetch tables' });
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// GET /api/sensors/:placeId/tables/hours: tables in use by hour, last 7 days.
+//
+// { hours: [{ hour, occupied, total }] }, oldest first: one row per hour that
+// has at least one reading with tables, occupied the average count of tables
+// with a party at them (one decimal), total the most tables the unit watched
+// that hour. The hours are absolute instants; the browser folds them into
+// averages by local hour of day, so this route never has to guess the venue's
+// zone. Readings with no tables (older firmware, an ignored string) are left
+// out rather than counted as an empty floor.
+// ---------------------------------------------------------------------------
+const TABLE_HOURS_SQL = `
+  SELECT date_trunc('hour', recorded_at) AS hour,
+         ROUND(AVG(tables_occupied)::numeric, 1) AS occupied,
+         MAX(tables_total) AS total
+    FROM venue_sensor_data
+   WHERE venue_place_id = $1
+     AND recorded_at >= NOW() - INTERVAL '7 days'
+     AND tables_total > 0
+   GROUP BY date_trunc('hour', recorded_at)
+   ORDER BY 1`;
+
+router.get('/:placeId/tables/hours',
+  authenticate,
+  param('placeId').isString().isLength({ min: 1, max: 255 }).withMessage('placeId required'),
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
+
+      const { placeId } = req.params;
+      if (!(await isVerifiedOwner(req.user.id, placeId))) return res.status(403).json(NOT_THE_OWNER);
+
+      const result = await pool.query(TABLE_HOURS_SQL, [placeId]);
+      res.json({
+        hours: result.rows.map((r) => ({
+          hour: new Date(r.hour).toISOString(),
+          // numeric arrives from pg as a string, so the chart is handed numbers.
+          occupied: Number(r.occupied),
+          total: Number(r.total),
+        })),
+      });
+    } catch (err) {
+      console.error('Get table hours error:', err);
+      res.status(500).json({ error: 'Failed to fetch table hours' });
     }
   }
 );

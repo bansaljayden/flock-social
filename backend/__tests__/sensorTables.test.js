@@ -71,8 +71,64 @@ pool.query = (sql, params = []) => {
     claims.set(key, Date.now());
     return Promise.resolve({ rows: [{ debounce_key: key }], rowCount: 1 });
   }
+  // The read routes' owner gate, honouring the verified clause only when the
+  // statement carries it.
+  if (/^SELECT 1 FROM venue_profiles WHERE user_id = \$1 AND google_place_id = \$2/.test(flat)) {
+    const needsVerified = /AND verified = true/.test(flat);
+    const hit = venueProfiles.find((v) => v.user_id === params[0] && v.google_place_id === params[1]
+      && (!needsVerified || v.verified === true));
+    return Promise.resolve({ rows: hit ? [{ '?column?': 1 }] : [], rowCount: hit ? 1 : 0 });
+  }
+  if (/^WITH unit AS \( SELECT sensor_device_id FROM sensor_table_states WHERE venue_place_id = \$1/.test(flat)) {
+    const rows = floorModel(params[0], params[1]);
+    return Promise.resolve({ rows, rowCount: rows.length });
+  }
+  if (/AS occupied, MAX\(tables_total\) AS total FROM venue_sensor_data/.test(flat)) {
+    const rows = hoursModel(params[0]);
+    return Promise.resolve({ rows, rowCount: rows.length });
+  }
   return Promise.reject(new Error(`unscripted query: ${flat.slice(0, 140)}`));
 };
+
+// The floor read (routes/sensors.js TABLE_FLOOR_SQL) over the fake rows: the
+// unit with the newest rows at the place, its rows at the place in number
+// order, each flagged stale past the window. sensorIngestStatement.test.js
+// runs the real statement.
+function floorModel(placeId, minutes) {
+  const atPlace = tableStates.filter((r) => r.venue_place_id === placeId);
+  if (atPlace.length === 0) return [];
+  const unit = atPlace.slice().sort((a, b) => (b.updated_at - a.updated_at)
+    || a.sensor_device_id.localeCompare(b.sensor_device_id))[0].sensor_device_id;
+  return atPlace
+    .filter((r) => r.sensor_device_id === unit)
+    .sort((a, b) => a.table_no - b.table_no)
+    .map((r) => ({
+      table_no: r.table_no, people: r.people, state: r.state, state_since: r.state_since,
+      seats: r.seats ?? null, updated_at: r.updated_at,
+      stale: r.updated_at.getTime() < Date.now() - minutes * 60 * 1000,
+    }));
+}
+
+// The hours read (TABLE_HOURS_SQL) over the fake readings: the last 7 days,
+// readings with tables only, one row per hour, occupied as the numeric string
+// pg hands back.
+function hoursModel(placeId) {
+  const HOUR = 3600 * 1000;
+  const buckets = new Map();
+  for (const r of readings) {
+    if (r.venue_place_id !== placeId || !(r.tables_total > 0)) continue;
+    if (r.recorded_at.getTime() < Date.now() - 7 * 24 * HOUR) continue;
+    const hour = Math.floor(r.recorded_at.getTime() / HOUR) * HOUR;
+    const b = buckets.get(hour) || { sum: 0, n: 0, total: 0 };
+    b.sum += r.tables_occupied;
+    b.n += 1;
+    b.total = Math.max(b.total, r.tables_total);
+    buckets.set(hour, b);
+  }
+  return [...buckets.entries()].sort((a, b) => a[0] - b[0]).map(([hour, b]) => ({
+    hour: new Date(hour), occupied: (Math.round((b.sum / b.n) * 10) / 10).toFixed(1), total: b.total,
+  }));
+}
 
 pool.connect = async () => {
   throw new Error('routes/sensors.js must not check a client out of the pool');
@@ -956,6 +1012,155 @@ test('the alert copy promotes nothing and carries no em or en dash', () => {
 test('a table alert in the owner\'s quiet hours is dropped, not held until morning', () => {
   assert.ok(pushHelper.DROPPED_IN_QUIET_HOURS.has('table_alert'));
   assert.ok(!pushHelper.RINGS_THROUGH_THE_NIGHT.has('table_alert'), 'only safety rings through the night');
+});
+
+// --- The owner's routes -----------------------------------------------------------
+//
+// GET /api/sensors/:placeId/tables and /tables/hours: the venue's verified owner
+// only, the gate /status uses.
+
+const get = (path, user) => call(path, { method: 'GET', user });
+const FLOOR = `/api/sensors/${VENUE}/tables`;
+const HOURS = `/api/sensors/${VENUE}/tables/hours`;
+
+test('the table routes are for the verified owner only: 401 signed out, 403 for anyone else, and nothing read behind the gate', async () => {
+  reset();
+  await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: EXAMPLE }) });
+  await settle();
+  for (const path of [FLOOR, HOURS]) {
+    const signedOut = await get(path);
+    assert.strictEqual(signedOut.status, 401, path);
+
+    queryLog = [];
+    const stranger = await get(path, 999);
+    assert.strictEqual(stranger.status, 403, path);
+    assert.match(stranger.body.error, /verified owner/);
+    assert.ok(!/table_no|needs_clearing|"tables"|"hours"/.test(stranger.raw), stranger.raw);
+    assert.ok(!queryLog.some((q) => /sensor_table_states|venue_sensor_data/.test(q.sql)), `${path}: read behind a refused gate`);
+    const gate = queryLog.find((q) => /FROM venue_profiles/.test(q.sql));
+    assert.match(gate.sql, /AND verified = true/);
+    assert.deepStrictEqual(gate.params, [999, VENUE]);
+  }
+  // A claim on the place that is not verified is not the owner.
+  venueProfiles[0].verified = false;
+  for (const path of [FLOOR, HOURS]) assert.strictEqual((await get(path, OWNER_ID)).status, 403, path);
+});
+
+test('an over-long place id is a 400 before anything is read', async () => {
+  reset();
+  queryLog = [];
+  const res = await get(`/api/sensors/${'x'.repeat(256)}/tables`, OWNER_ID);
+  assert.strictEqual(res.status, 400);
+  assert.deepStrictEqual(queryLog, []);
+});
+
+test('the floor: words for states, when each began, seats, in number order, fresh right after a live reading', async () => {
+  reset();
+  const ingest = await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: '1:0:f:340;2:3:s:845:4;3:2:w:410;4:0:c:95:6' }) });
+  await settle();
+  const res = await get(FLOOR, OWNER_ID);
+  assert.strictEqual(res.status, 200, res.raw);
+  assert.deepStrictEqual(Object.keys(res.body).sort(), ['next_free', 'stale', 'tables', 'updated_at']);
+  const at = new Date(ingest.body.recorded_at).getTime();
+  assert.deepStrictEqual(res.body.tables, [
+    { number: 1, people: 0, state: 'free', since: new Date(at - 340000).toISOString(), seats: null },
+    { number: 2, people: 3, state: 'seated', since: new Date(at - 845000).toISOString(), seats: 4 },
+    { number: 3, people: 2, state: 'waiting', since: new Date(at - 410000).toISOString(), seats: null },
+    { number: 4, people: 0, state: 'needs_clearing', since: new Date(at - 95000).toISOString(), seats: 6 },
+  ]);
+  assert.strictEqual(res.body.updated_at, new Date(at).toISOString());
+  assert.strictEqual(res.body.stale, false);
+  assert.strictEqual(res.body.next_free, 2, 'table 2 has been seated longest');
+  assert.ok(!/flux_tables|sensor_device|api_key|sha256/.test(res.raw), 'unit ids and keys stay on the server');
+});
+
+test('next_free is the seated or waiting table whose party has sat longest; a tie goes to the lower number; none without a party', async () => {
+  reset();
+  await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: '1:2:s:300;2:3:w:900;3:0:c:5000;4:2:s:900;5:0:f:9000' }) });
+  await settle();
+  assert.strictEqual((await get(FLOOR, OWNER_ID)).body.next_free, 2, 'the tie between 2 and 4 goes to 2; c and f never count');
+
+  ageDevice();
+  await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: '1:0:f:10;2:0:c:20;3:0:c:30' }) });
+  await settle();
+  assert.strictEqual((await get(FLOOR, OWNER_ID)).body.next_free, null);
+});
+
+test('a floor nobody has written is empty, unknown and stale', async () => {
+  reset();
+  const res = await get(FLOOR, OWNER_ID);
+  assert.strictEqual(res.status, 200);
+  assert.deepStrictEqual(res.body, { tables: [], updated_at: null, stale: true, next_free: null });
+});
+
+test('a floor not refreshed for three minutes is stale, and still shown', async () => {
+  reset();
+  await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: '1:2:s:100' }) });
+  await settle();
+  for (const r of tableStates) r.updated_at = new Date(Date.now() - 4 * 60 * 1000);
+  const res = await get(FLOOR, OWNER_ID);
+  assert.strictEqual(res.body.stale, true);
+  assert.strictEqual(res.body.tables.length, 1);
+  assert.ok(queryLog.some((q) => /WITH unit AS/.test(q.sql) && q.params[1] === 3), 'the window is three minutes');
+});
+
+test('hours: the owner gets one row per hour with tables, oldest first, as numbers; readings without tables are left out', async () => {
+  reset();
+  const HOUR = 3600 * 1000;
+  const lastHour = Math.floor(Date.now() / HOUR) * HOUR - HOUR;
+  const at = (h, m) => new Date(lastHour - h * HOUR + m * 60 * 1000).toISOString();
+  // Backfill (older than 15 minutes, so no flood guard), across three hours.
+  const sends = [
+    [at(2, 5), '1:2:s:60;2:0:f:60;3:0:f:60'],
+    [at(2, 35), '1:2:s:60;2:3:w:400;3:0:f:60'],
+    [at(1, 10), null],
+    [at(1, 20), '1:0:f:9;2:0:c:9'],
+    [at(0, 15), '1:2:s:60;2:2:s:60;3:2:s:60;4:1:w:400'],
+  ];
+  for (const [stamp, tables] of sends) {
+    const res = await call('/api/sensors/data', {
+      apiKey: KEY, body: reading(tables ? { recorded_at: stamp, tables } : { recorded_at: stamp }),
+    });
+    assert.strictEqual(res.status, 201, res.raw);
+  }
+  const res = await get(HOURS, OWNER_ID);
+  assert.strictEqual(res.status, 200, res.raw);
+  assert.deepStrictEqual(res.body, {
+    hours: [
+      { hour: new Date(lastHour - 2 * HOUR).toISOString(), occupied: 1.5, total: 3 },
+      { hour: new Date(lastHour - HOUR).toISOString(), occupied: 0, total: 2 },
+      { hour: new Date(lastHour).toISOString(), occupied: 4, total: 4 },
+    ],
+  });
+});
+
+test('hours with no table readings is an empty list, not an error', async () => {
+  reset();
+  await call('/api/sensors/data', { apiKey: KEY, body: reading() });
+  const res = await get(HOURS, OWNER_ID);
+  assert.strictEqual(res.status, 200);
+  assert.deepStrictEqual(res.body, { hours: [] });
+});
+
+test('a failing read is a 500 with nothing in it but the error', async () => {
+  reset();
+  const realQuery = pool.query;
+  pool.query = (sql, params) => (/sensor_table_states|tables_total > 0/.test(String(sql))
+    ? Promise.reject(new Error('connection terminated'))
+    : realQuery(sql, params));
+  try {
+    const logged = await capturingLogs(async () => {
+      for (const path of [FLOOR, HOURS]) {
+        const res = await get(path, OWNER_ID);
+        assert.strictEqual(res.status, 500, path);
+        assert.deepStrictEqual(Object.keys(res.body), ['error']);
+      }
+    });
+    assert.ok(logged.some((l) => /Get table floor error/.test(l)));
+    assert.ok(logged.some((l) => /Get table hours error/.test(l)));
+  } finally {
+    pool.query = realQuery;
+  }
 });
 
 test('the switch is stored when the dashboard sends it: tables is one of the venue profile switches', () => {

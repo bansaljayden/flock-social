@@ -79,9 +79,10 @@ test.before(async () => {
   });
   // The read routes sit behind authenticate(), which is not what this suite
   // tests; it is stubbed BEFORE the router is required, because the router
-  // destructures it at load.
+  // destructures it at load. A test that needs a particular caller (the table
+  // routes' owner gate) names it in a header; everything else is user 1.
   require('../middleware/auth').authenticate = (req, _res, next) => {
-    req.user = { id: 1, name: 'Owner', role: 'user' };
+    req.user = { id: Number(req.headers['x-test-user']) || 1, name: 'Owner', role: 'user' };
     next();
   };
   app.use('/api/sensors', require('../routes/sensors'));
@@ -638,6 +639,119 @@ test('on the real schema: seat counts are stored, kept when an entry leaves them
       `${bad} seats was stored`
     );
   }
+});
+
+// --- The owner's table routes, through the real schema ---------------------------
+//
+// sensorTables.test.js pins the gate and the response shape against a model;
+// these run routes/sensors.js TABLE_FLOOR_SQL and TABLE_HOURS_SQL for real.
+const ownerGet = async (p, userId) => {
+  const res = await fetch(`${base}${p}`, { headers: { 'x-test-user': String(userId) } });
+  return { status: res.status, body: await res.json() };
+};
+
+async function withVenueOwner(fn, { verified = true } = {}) {
+  const { rows: [owner] } = await pool.query(
+    "INSERT INTO users (name, email, password) VALUES ('Floor Owner', 'floor.owner@example.com', 'x') RETURNING id"
+  );
+  try {
+    await pool.query(
+      "INSERT INTO venue_profiles (user_id, business_name, google_place_id, verified) VALUES ($1, 'The Floor Bar', $2, $3)",
+      [owner.id, VENUE, verified]
+    );
+    await fn(owner.id);
+  } finally {
+    await pool.query('DELETE FROM venue_profiles WHERE user_id = $1', [owner.id]);
+    await pool.query('DELETE FROM users WHERE id = $1', [owner.id]);
+  }
+}
+
+test('on the real schema: the owner reads the floor of the unit with the newest rows, with seats, staleness and next_free', async () => {
+  await withVenueOwner(async (ownerId) => {
+    const FLOOR = `/api/sensors/${VENUE}/tables`;
+    assert.deepEqual((await ownerGet(FLOOR, ownerId)).body, { tables: [], updated_at: null, stale: true, next_free: null });
+    assert.equal((await ownerGet(FLOOR, ownerId + 1000)).status, 403, 'a stranger read the floor');
+
+    // A second unit at the venue, last heard from a minute ago.
+    await pool.query(
+      "INSERT INTO sensor_devices (device_id, venue_place_id, api_key, is_active) VALUES ('sensor_back_room', $1, $2, true)",
+      [VENUE, digestOf('f'.repeat(64))]
+    );
+    await pool.query(
+      `INSERT INTO sensor_table_states (sensor_device_id, table_no, venue_place_id, people, state, state_since, updated_at)
+       VALUES ('sensor_back_room', 1, $1, 6, 'w', NOW() - INTERVAL '20 minutes', NOW() - INTERVAL '1 minute')`,
+      [VENUE]
+    );
+
+    const live = await push(reading({ tables: '1:2:s:600:4;2:3:w:900;3:0:c:50:2' }));
+    assert.equal(live.status, 201);
+    await settleTables();
+    let res = await ownerGet(FLOOR, ownerId);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    const at = new Date(live.body.recorded_at).getTime();
+    assert.deepEqual(res.body, {
+      tables: [
+        { number: 1, people: 2, state: 'seated', since: new Date(at - 600000).toISOString(), seats: 4 },
+        { number: 2, people: 3, state: 'waiting', since: new Date(at - 900000).toISOString(), seats: null },
+        { number: 3, people: 0, state: 'needs_clearing', since: new Date(at - 50000).toISOString(), seats: 2 },
+      ],
+      updated_at: new Date(at).toISOString(),
+      stale: false,
+      next_free: 2,
+    });
+
+    // The front unit goes quiet: the back room's rows are now the newest.
+    await pool.query(`UPDATE sensor_table_states SET updated_at = NOW() - INTERVAL '4 minutes' WHERE sensor_device_id = 'sensor_live'`);
+    res = await ownerGet(FLOOR, ownerId);
+    assert.deepEqual(res.body.tables.map((t) => `${t.number}:${t.people}:${t.state}`), ['1:6:waiting']);
+    assert.equal(res.body.stale, false);
+    assert.equal(res.body.next_free, 1);
+
+    // Both go quiet: the newest is past three minutes, and the floor says so.
+    await pool.query(`UPDATE sensor_table_states SET updated_at = NOW() - INTERVAL '10 minutes' WHERE sensor_device_id = 'sensor_back_room'`);
+    res = await ownerGet(FLOOR, ownerId);
+    assert.equal(res.body.tables.length, 3, 'the front unit is the newest again');
+    assert.equal(res.body.stale, true);
+  });
+  await withVenueOwner(async (ownerId) => {
+    assert.equal((await ownerGet(`/api/sensors/${VENUE}/tables`, ownerId)).status, 403, 'an unverified claim read the floor');
+  }, { verified: false });
+});
+
+test('on the real schema: tables in use by hour, the last 7 days, oldest first, readings with tables only', async () => {
+  const HOUR = 3600 * 1000;
+  const lastHour = Math.floor(Date.now() / HOUR) * HOUR - HOUR;
+  const rowsToStore = [
+    // [device, place, ms, total, occupied]
+    ['sensor_live', VENUE, lastHour - 2 * HOUR + 5 * 60000, 3, 1],
+    ['sensor_live', VENUE, lastHour - 2 * HOUR + 35 * 60000, 3, 2],
+    ['sensor_live', VENUE, lastHour - HOUR + 10 * 60000, 0, 0],
+    ['sensor_live', VENUE, lastHour - HOUR + 20 * 60000, null, null],
+    ['sensor_live', VENUE, lastHour + 10 * 60000, 4, 3],
+    ['sensor_live', VENUE, lastHour + 20 * 60000, 5, 4],
+    ['sensor_live', VENUE, lastHour + 40 * 60000, 5, 4],
+    ['sensor_live', VENUE, Date.now() - 8 * 24 * HOUR, 4, 4],
+    ['sensor_elsewhere', 'ChIJsomewhereElse0002', lastHour + 30 * 60000, 9, 9],
+  ];
+  for (const [device, place, ms, total, occupied] of rowsToStore) {
+    await pool.query(
+      `INSERT INTO venue_sensor_data (venue_place_id, sensor_device_id, recorded_at, ir_beam_count, thermal_headcount,
+                                      noise_db, tables_total, tables_occupied)
+       VALUES ($1, $2, $3, 1, 1, 60, $4, $5)`,
+      [place, device, new Date(ms), total, occupied]
+    );
+  }
+  await withVenueOwner(async (ownerId) => {
+    const res = await ownerGet(`/api/sensors/${VENUE}/tables/hours`, ownerId);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.deepEqual(res.body, {
+      hours: [
+        { hour: new Date(lastHour - 2 * HOUR).toISOString(), occupied: 1.5, total: 3 },
+        { hour: new Date(lastHour).toISOString(), occupied: 3.7, total: 5 },
+      ],
+    });
+    assert.equal((await ownerGet(`/api/sensors/${VENUE}/tables/hours`, ownerId + 1000)).status, 403);
+  });
 });
 
 test('the table rows refuse what the box can never send', async () => {
