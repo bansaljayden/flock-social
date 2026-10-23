@@ -43,7 +43,7 @@
 //
 //   1:0:f:340;2:3:s:845:4;3:2:w:410;4:0:c:95:6
 //
-// At most 40 entries, and nothing longer than 600 characters is looked at.
+// At most 40 entries, and nothing longer than 700 characters is looked at.
 // Any part out of range, C included, makes the whole value invalid.
 //
 // A BAD VALUE IS IGNORED, NEVER REFUSED. The Pi reads 400, 413 and 422 as "this
@@ -68,12 +68,13 @@ const MAX_STATE_SECONDS = 86400;
 const MIN_TABLE_SEATS = 1;
 const MAX_TABLE_SEATS = 30;
 // The contract's ceiling, and the pattern below is never asked to look at a
-// megabyte. Without seat counts, forty of the longest entry ("40:30:w:86400")
-// and their separators come to 559 characters. With them a string at every
-// ceiling at once would reach 670 and be ignored like anything else over the
-// limit; that takes forty tables each holding ten or more people at ten or more
-// seats, with every state hours old, so a real floor stays well inside it.
-const MAX_TABLES_LENGTH = 600;
+// megabyte. The longest legal string, forty tables each at every limit with a
+// seat count ("40:30:w:86400:30"), is 670 characters, so 700 always holds a
+// whole list. That is the point of the number: a live reading replaces the
+// unit's rows, so a list the box had to cut short would read here as tables
+// the owner removed. The box cuts at a whole entry under the same ceiling, and
+// with 700 that path never runs on a legal list.
+const MAX_TABLES_LENGTH = 700;
 
 // One entry, in canonical decimal only: no sign, no leading zero, no exponent,
 // no space. Each number is bounded in length here and in range in parseTables,
@@ -337,7 +338,12 @@ async function storeTableStates(device, tables, recordedAt) {
 //
 // THE SWITCH. venue_profiles.notification_prefs, key `tables`: absent means
 // on, false means off. The dashboard writes it through PUT /api/venue-profile,
-// which keeps it among the switches it stores (routes/venueProfile.js).
+// which keeps it among the switches it stores (routes/venueProfile.js). It is
+// read when the alert is sent, and only then: a send that fails is retried by
+// services/pushHelper.js for up to 30 minutes without asking the switch again,
+// so an owner who turns alerts off inside that window can still receive the
+// one retried alert. Accepted as it stands; deliver() would need a table_alert
+// check like its crowd_alert one to close it.
 //
 // THE WORDS name a table and how long its party has sat. No head count, no
 // guest, no price, no offer: transactional under App Store 4.5.4, for the

@@ -283,7 +283,7 @@ test('the example from the contract parses to four tables in order, one per stat
 
 test('every ceiling in the contract is inside the fence: forty tables, thirty people, a day', () => {
   const full = Array.from({ length: 40 }, (_, i) => `${i + 1}:30:w:86400`).join(';');
-  assert.ok(full.length <= 600, `the longest honest string is ${full.length} characters`);
+  assert.ok(full.length <= sensorTables.MAX_TABLES_LENGTH, `the longest honest string is ${full.length} characters`);
   const parsed = sensorTables.parseTables(full);
   assert.strictEqual(parsed.ok, true, parsed.reason);
   assert.strictEqual(parsed.tables.length, 40);
@@ -306,7 +306,7 @@ test('the box\'s strings parse: two tables seated a hundred seconds, one free; f
     { number: 3, people: 0, state: 'f', seconds: 100, seats: null },
   ]);
   const forty = boxFortyFree();
-  assert.strictEqual(forty.length, 510, 'the box writes this one at 510 characters, under the 600 cap');
+  assert.strictEqual(forty.length, 510, 'the box writes this one at 510 characters, under the 700 cap');
   const parsed = sensorTables.parseTables(forty);
   assert.strictEqual(parsed.ok, true, parsed.reason);
   assert.strictEqual(parsed.tables.length, 40);
@@ -362,14 +362,21 @@ test('a seat count out of range makes the whole value invalid, not just its entr
   assert.match(sensorTables.parseTables('1:2:s:100:31').reason, /seat count outside 1-30/);
 });
 
-test('with a seat count on every table at every ceiling, the string passes the 600 cap and is ignored like any other', () => {
-  // Pinned so that raising the cap is a decision made on purpose, with the Pi
-  // side told: forty tables, each holding ten or more people at ten or more
-  // seats with every state hours old, is 670 characters. No floor this was built
-  // for sends it, but the contract's limit is 600 and that is what holds.
+test('the longest legal string, seat counts on all forty tables at every limit, fits whole under the 700 cap; 701 characters is ignored', () => {
+  // The cap is 700 so that a whole list always fits: a live reading replaces
+  // the unit's rows, and a list the box had to cut short would read here as
+  // tables the owner removed.
+  assert.strictEqual(sensorTables.MAX_TABLES_LENGTH, 700);
   const full = Array.from({ length: 40 }, (_, i) => `${i + 1}:30:w:86400:30`).join(';');
   assert.strictEqual(full.length, 670);
-  assert.strictEqual(sensorTables.parseTables(full).ok, false);
+  const parsed = sensorTables.parseTables(full);
+  assert.strictEqual(parsed.ok, true, parsed.reason);
+  assert.strictEqual(parsed.tables.length, 40);
+  assert.ok(parsed.tables.every((t) => t.seats === 30 && t.people === 30 && t.seconds === 86400));
+
+  const tooLong = `${full};${'9'.repeat(701 - full.length - 1)}`;
+  assert.strictEqual(tooLong.length, 701);
+  assert.deepStrictEqual(sensorTables.parseTables(tooLong), { ok: false, reason: 'longer than 700 characters' });
 });
 
 // Every way a string can be wrong, each with the reason the parse gives. None
@@ -401,7 +408,7 @@ const INVALID = [
   ['1:0:f:5\n', 'a trailing newline'],
   ['1:0:f:5,2:0:f:5', 'the wrong separator'],
   [Array.from({ length: 41 }, (_, i) => `${i + 1}:0:f:5`).join(';'), 'forty-one tables'],
-  ['9'.repeat(601), 'longer than 600 characters'],
+  ['9'.repeat(701), 'longer than 700 characters'],
 ];
 
 test('the parse refuses every malformed string, and its reason never repeats the value', () => {
@@ -696,6 +703,17 @@ test('seat counts reach the floor; a table sent without one keeps the last, and 
   await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: '1:2:s:160:8;3:0:f:90' }) });
   await settle();
   assert.deepStrictEqual(seatsOf(), { 1: 8, 3: 6 });
+});
+
+test('through the ingest, the longest legal list is stored whole: forty tables, counts and seats', async () => {
+  reset();
+  const full = Array.from({ length: 40 }, (_, i) => `${i + 1}:30:w:86400:30`).join(';');
+  const res = await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: full }) });
+  assert.strictEqual(res.status, 201, res.raw);
+  await settle();
+  assert.deepStrictEqual(countsOf(readings[0]), [40, 40, 40, 0]);
+  assert.strictEqual(floorOf().length, 40);
+  assert.ok(Object.values(seatsOf()).every((s) => s === 30));
 });
 
 test('a seat count out of range is ignored with the rest of the value: 201, null counts, the floor untouched', async () => {

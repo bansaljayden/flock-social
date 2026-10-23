@@ -465,7 +465,7 @@ test('a tables string is counted onto the stored reading; a bad one leaves the r
 
 test('a tables value of the wrong shape is a 201 and a stored reading, never a 400 or a 500', async () => {
   const base = Date.now() - 40 * 60 * 1000;
-  const shapes = [['1:0:f:5'], { $gt: '' }, 12, 'x'.repeat(601)];
+  const shapes = [['1:0:f:5'], { $gt: '' }, 12, 'x'.repeat(701)];
   for (let i = 0; i < shapes.length; i += 1) {
     const res = await push(reading({ recorded_at: new Date(base + i * 30000).toISOString(), tables: shapes[i] }));
     assert.equal(res.status, 201, `${JSON.stringify(shapes[i]).slice(0, 40)} -> ${res.status} ${JSON.stringify(res.body)}`);
