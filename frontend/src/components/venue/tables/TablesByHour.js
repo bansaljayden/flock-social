@@ -4,8 +4,8 @@
  * A section of the Tables tab, for staffing: the average number of tables in
  * use at each hour of the day, on the viewer's own clock, with the stretch near
  * the busiest hour drawn in the accent and the peak named in words under it.
- * Drawn only when the hours read brought something to draw. The averaging is
- * lib/venueTables.js.
+ * A skeleton while the hours read is out, then drawn only when it brought
+ * something to draw. The averaging is lib/venueTables.js.
  */
 import React from 'react';
 import TablesSection from './TablesSection';
@@ -20,7 +20,17 @@ const DEFAULT_WELL_PX = 50;
 // its neighbours with 24 bars on a 320px screen.
 const MAX_HOUR_LABELS = 5;
 
+// Roughly the card's own height with a week in it at 320px, so the chart
+// arriving in its place barely moves the page.
+const LOADING_HEIGHT_PX = 170;
+
 export default function TablesByHour({ hours, colors, wellPx }) {
+  // `undefined` is a read that has not answered yet: the shape of the card
+  // in the global shimmer (DESIGN-STANDARD rule 10, skeletons for page loads).
+  // Null, an empty week or nothing usable draws nothing.
+  if (hours === undefined) {
+    return <div aria-hidden="true" data-testid="tables-hours-loading" className="skeleton" style={{ height: `${LOADING_HEIGHT_PX}px`, borderRadius: '12px', marginBottom: '12px' }} />;
+  }
   const chart = tableHoursChart(hours);
   if (!chart) return null;
   const well = Number.isFinite(wellPx) && wellPx > 0 ? wellPx : DEFAULT_WELL_PX;

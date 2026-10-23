@@ -419,15 +419,27 @@ describe('tables in use by hour', () => {
   });
 
   test.each([
-    ['no hours read', null],
+    ['a failed hours read', null],
     ['an empty week', []],
     ['nothing usable in it', [{ hour: 'never', occupied: 2, total: 8 }]],
   ])('is left out when there is %s', (_, hours) => {
     renderTab({ hours });
     expect(screen.queryByTestId('tables-hours-chart')).toBeNull();
+    expect(screen.queryByTestId('tables-hours-loading')).toBeNull();
     expect(screen.queryByRole('heading', { name: 'Tables in use by hour' })).toBeNull();
     // The board is still there.
     expect(screen.getByRole('heading', { name: 'Right now' })).toBeTruthy();
+  });
+
+  test('while the hours read is out, the card is a skeleton, then the chart', () => {
+    const { rerender } = renderTab({ hours: undefined });
+    const loading = screen.getByTestId('tables-hours-loading');
+    expect(loading.className).toBe('skeleton');
+    expect(loading.getAttribute('aria-hidden')).toBe('true');
+    expect(screen.queryByTestId('tables-hours-chart')).toBeNull();
+    rerender(<VenueTablesTab data={LIVE} hours={HOURS} colors={COLORS} wellPx={50} />);
+    expect(screen.queryByTestId('tables-hours-loading')).toBeNull();
+    expect(screen.getByTestId('tables-hours-chart')).toBeTruthy();
   });
 });
 
@@ -575,7 +587,7 @@ describe('App.js reads the tables for the dashboard and hands them down', () => 
   });
 
   test('only while the owner\'s dashboard is open, starting from nothing each time', () => {
-    expect(effect).toMatch(/setOwnerTables\(null\);\s*setOwnerTableHours\(null\);\s*setOwnerTablesSeen\(false\);\s*if \(!pid \|\| currentScreen !== 'venueDashboard'\) return undefined;/);
+    expect(effect).toMatch(/setOwnerTables\(null\);\s*setOwnerTableHours\(undefined\);\s*setOwnerTablesSeen\(false\);\s*if \(!pid \|\| currentScreen !== 'venueDashboard'\) return undefined;/);
     expect(effect).toContain('}, [ownerVenuePlaceId, currentScreen]);');
   });
 

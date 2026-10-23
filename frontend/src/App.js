@@ -17893,12 +17893,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [ownerSensorData, setOwnerSensorData] = useState(null);
   const [ownerSensorHistory, setOwnerSensorHistory] = useState([]);
   // The same sensor's table zones (GET /api/sensors/:placeId/tables), and its
-  // tables in use by hour over the last 7 days. Null until read, and null
-  // again after any failed read. `ownerTablesSeen` is whether a read since the
-  // dashboard opened has returned at least one table: the Tables tab is in the
-  // bar only then, and stays for the rest of that visit.
+  // tables in use by hour over the last 7 days. The tables are null until
+  // read, and null again after any failed read. The hours are undefined until
+  // their read answers, which the Tables tab draws as a skeleton, then the
+  // list, or null when the read failed. `ownerTablesSeen` is whether a read
+  // since the dashboard opened has returned at least one table: the Tables
+  // tab is in the bar only then, and stays for the rest of that visit.
   const [ownerTables, setOwnerTables] = useState(null);
-  const [ownerTableHours, setOwnerTableHours] = useState(null);
+  const [ownerTableHours, setOwnerTableHours] = useState(undefined);
   const [ownerTablesSeen, setOwnerTablesSeen] = useState(false);
   const [ownerVenuePlaceId, setOwnerVenuePlaceId] = useState(null);
   const [editingVenueInfo, setEditingVenueInfo] = useState(false);
@@ -18756,7 +18758,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   React.useEffect(() => {
     const pid = ownerVenuePlaceId;
     setOwnerTables(null);
-    setOwnerTableHours(null);
+    setOwnerTableHours(undefined);
     setOwnerTablesSeen(false);
     if (!pid || currentScreen !== 'venueDashboard') return undefined;
     let cancelled = false;
