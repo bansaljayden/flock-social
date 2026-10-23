@@ -180,6 +180,7 @@ const PAGE_BLOCKS = {
     ["li", "Report and block on any message or profile"],
     ["h2", "Run a bar or a restaurant?"],
     ["p", "A free venue account shows which flocks have you in their vote this week. Once you’re verified, you can put a deal on your venue’s card while they decide."],
+    ["p", "A Flux box over the door, still a prototype, is being built to show which tables are free, seated, waiting on a server or ready to clear."],
     ["h2", "Free for your friend group."],
     ["p", "You and your friends don’t pay, and there are no ads. Venues are where Flock will make its money, and none is being charged yet."],
     ["h3", "Free"],

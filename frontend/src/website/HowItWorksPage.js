@@ -330,6 +330,11 @@ export default function HowItWorksPage() {
                 “Happening here”.
               </p>
               <p>
+                A <a href="/flux">Flux</a> box over the door, still a prototype,
+                is being built to show which tables are free, seated, waiting on
+                a server or ready to clear.
+              </p>
+              <p>
                 Roost, the paid plan, adds your own hour-by-hour forecast and the
                 advisor above. No venue is being charged yet. Want in early? Write
                 to <a href={`mailto:${CONTACT_EMAIL}?subject=Flock%20for%20venues`}>{CONTACT_EMAIL}</a>.

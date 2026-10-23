@@ -881,6 +881,11 @@ export default function LandingPage() {
               week. Once you’re verified, you can put a deal on your venue’s card
               while they decide.
             </p>
+            <p>
+              A <a href="/flux">Flux</a> box over the door, still a prototype, is
+              being built to show which tables are free, seated, waiting on a
+              server or ready to clear.
+            </p>
             <div className="lp-venues-actions">
               <a className="lp-btn lp-btn-cream" href={`mailto:${CONTACT_EMAIL}?subject=Flock%20for%20venues`}>
                 Get in touch
