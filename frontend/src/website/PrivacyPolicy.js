@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import './PrivacyPolicy.css';
 import SiteFooter from './SiteFooter';
 
-const EFFECTIVE_DATE = 'October 18, 2026';
+const EFFECTIVE_DATE = 'October 23, 2026';
 const CONTACT_EMAIL = 'social@flockcorp.com';
 
 // THE OPERATOR IS A REGISTERED COMPANY NOW, and this name is its legal name.
@@ -364,11 +364,12 @@ export default function PrivacyPolicy() {
               </p>
 
               <h3>What the sensor sends us</h3>
-              <p>Every 30 seconds it sends these numbers, and nothing else:</p>
+              <p>Every 30 seconds it sends these readings, and nothing else:</p>
               <ul>
                 <li><strong>Doorway crossings:</strong> how many times someone crossed the doorway since the last reading, in either direction. Depending on the unit, it counts them with an infrared beam across the doorway or with an infrared distance sensor that looks down at it.</li>
                 <li><strong>Warm bodies in view:</strong> a count of the people in a grid of 19,200 temperature readings, worked out on the device. A small counting model marks each person. It was trained on more than two million thermal images, none of them from a Flux sensor, and it names kinds of things, never who anyone is. A device without the model counts heat clusters instead.</li>
                 <li><strong>Estimated people inside:</strong> the doorway count and the warm-bodies count combined on the device into one number with a likely range, and how long people typically stay. These are counts, worked out on the device.</li>
+                <li><strong>Tables, on a unit set up for them:</strong> for each table, how many people are at it and whether it is free, seated, waiting for someone to come by, or waiting to be cleared, with how long it has been that way (for a party at the table, since they sat down). These come from the same warm-bodies count, split by table on the device. They are counts and states, never who is at a table.</li>
                 <li><strong>Ambient loudness:</strong> one loudness level, the typical level over the last minute.</li>
               </ul>
 
@@ -390,7 +391,7 @@ export default function PrivacyPolicy() {
               <p>
                 They produce the "Live Occupancy" figure and the 12-hour chart on that
                 venue's page in the app, and the same figures in that venue owner's
-                dashboard. We keep them as a record of how busy the venue has been over
+                dashboard, along with the table figures when the venue has them. We keep them as a record of how busy the venue has been over
                 time. Because they contain no identifiers, deleting your Flock account
                 does not touch them and there is nothing in them belonging to you to
                 delete. We do not currently delete them on a schedule.
