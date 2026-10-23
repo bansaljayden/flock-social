@@ -4,6 +4,7 @@ import './FluxPage.css';
 import SiteFooter from './SiteFooter';
 import SiteNav, { useSiteMenu } from './SiteNav';
 import FluxViewer from './flux/FluxViewer';
+import { shareThisPage } from './shareCard';
 
 // /flux: the people counter Flock is building for venues. What it measures,
 // how Owl counts, the case part by part (the labelled render, then the 3D
@@ -85,6 +86,7 @@ export default function FluxPage() {
     document.title = 'Flux, the people counter | Flock';
     const meta = document.querySelector('meta[name="description"]');
     if (meta) meta.setAttribute('content', DESCRIPTION);
+    return shareThisPage('/flux');
   }, []);
 
   return (

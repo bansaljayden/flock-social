@@ -3,6 +3,7 @@ import './LandingPage.css';
 import './AiPage.css';
 import SiteFooter from './SiteFooter';
 import SiteNav, { useSiteMenu } from './SiteNav';
+import { shareThisPage } from './shareCard';
 
 // /ai, "How the AI works": the four models in Flock, one band each, with the
 // figures from the Stevens pitch video. Built on the landing page's
@@ -103,6 +104,7 @@ export default function AiPage() {
     document.title = 'How the AI works | Flock';
     const meta = document.querySelector('meta[name="description"]');
     if (meta) meta.setAttribute('content', DESCRIPTION);
+    return shareThisPage('/ai');
   }, []);
 
   return (

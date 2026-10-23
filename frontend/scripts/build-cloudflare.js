@@ -211,6 +211,11 @@ function joinHeaderBlocks(base, extra) {
 //
 // A failure here is never fatal. Without a snapshot the route is served as
 // before, client-rendered from index.html.
+//
+// Every page here but "/" writes its own link card (src/website/shareCard.js)
+// from the effect that sets its title, so the snapshot is also what gives
+// iMessage, LinkedIn and Slack that page's title instead of index.html's.
+// marketingRouteMetadata.test.js fails if a route is added without one.
 const PRERENDER = [
   { route: '/', file: 'landing.html' },
   { route: '/how-it-works', file: 'how-it-works.html' },

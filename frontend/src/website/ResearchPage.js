@@ -4,6 +4,7 @@ import './ResearchPage.css';
 import SiteFooter from './SiteFooter';
 import SiteNav, { useSiteMenu } from './SiteNav';
 import { THERMAL_SETS, ROBOFLOW_SETS, COUNT_SOURCES, SOFTWARE } from './researchThanks';
+import { shareThisPage } from './shareCard';
 
 // Two documents, read in order: a three-page summary first (the questions,
 // the findings, the equations and every model input), and the full paper for
@@ -96,6 +97,7 @@ export default function ResearchPage() {
     document.title = 'Research: forecasting and counting crowds | Flock';
     const meta = document.querySelector('meta[name="description"]');
     if (meta) meta.setAttribute('content', DESCRIPTION);
+    return shareThisPage('/research');
   }, []);
 
   return (

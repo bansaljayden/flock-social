@@ -113,7 +113,12 @@
 
          These are the DEFAULT tags. One index.html is served for every route
          (CRA has no server rendering), so whatever is written here is what
-         iMessage, Slack, Discord and WhatsApp show for the marketing pages.
+         iMessage, Slack, Discord and WhatsApp show for the homepage and for
+         every page that is not prerendered. The pages the Cloudflare build
+         prerenders besides "/" (scripts/build-cloudflare.js PRERENDER) write
+         their own title, description and og:url over these from their
+         effects (src/website/shareCard.js, which restores these values on the
+         way out), and the snapshot keeps what they wrote.
 
          Invite links are the EXCEPTION and no longer fall back to this block.
          frontend/api/invite-preview.js now answers /i/<token> for the preview
@@ -135,7 +140,11 @@
            invite link IS the homepage, and Facebook/Messenger would then
            collapse the preview onto flockcorp.com and send the tap there
            instead of to the invite. With it absent, scrapers use the URL they
-           actually fetched, which is correct on every route.
+           actually fetched, which is correct on every route. A prerendered
+           page's own og:url is safe because its snapshot is served only at
+           that page's path, and shareCard.js removes it on navigation.
+         - shareCard.js repeats this block's title and description as
+           DEFAULT_CARD; marketingRouteMetadata.test.js holds them equal.
          - Every claim here has to be true of the shipping build. Voting, the
            crowd read, and bill splitting all ship. "Free" is true while
            PAYWALL_ENABLED is unset; if the paywall is ever switched on, this

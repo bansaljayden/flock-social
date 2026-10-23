@@ -3,6 +3,7 @@ import './LandingPage.css';
 import './AboutPage.css';
 import SiteFooter from './SiteFooter';
 import SiteNav, { useSiteMenu } from './SiteNav';
+import { shareThisPage } from './shareCard';
 
 const CONTACT_EMAIL = 'social@flockcorp.com';
 const YOUTUBE_URL = 'https://www.youtube.com/@flock-social2026';
@@ -59,6 +60,7 @@ export default function AboutPage() {
     document.title = 'About Flock: Jayden Bansal and Asad Ali | Flock';
     const meta = document.querySelector('meta[name="description"]');
     if (meta) meta.setAttribute('content', DESCRIPTION);
+    return shareThisPage('/about');
   }, []);
 
   return (

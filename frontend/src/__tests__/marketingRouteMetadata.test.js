@@ -23,8 +23,11 @@
  *      and nothing anywhere fails. So every page is rendered and its written
  *      value is read back off the document.
  *
- * Scrapers that do not execute JavaScript (iMessage, Slack, Discord) keep the
- * static og: block in index.html. That is why the og: block stays generic.
+ * Scrapers that do not execute JavaScript (iMessage, Slack, Discord) read the
+ * static og: block in index.html on every route that is not prerendered. That
+ * is why the og: block stays generic. The routes the Cloudflare build
+ * prerenders write their own card into the snapshot (src/website/shareCard.js),
+ * and the last block below holds every one of them to it.
  *
  * THE FAQ MARKUP IS COMPARED AGAINST THE PAGE, NOT REVIEWED BY EYE.
  * JSON-LD that describes questions a page does not carry is fabricated markup
@@ -43,6 +46,13 @@ const fs = require('fs');
 const path = require('path');
 const React = require('react');
 const { render } = require('@testing-library/react');
+const { DEFAULT_CARD } = require('../website/shareCard');
+
+// The 3D viewer is not what is under test on /flux, only the page's head.
+jest.mock('../website/flux/FluxViewer', () => ({
+  __esModule: true,
+  default: () => null,
+}));
 
 const FRONTEND = path.join(__dirname, '..', '..');
 const WEBSITE = path.join(__dirname, '..', 'website');
@@ -316,5 +326,78 @@ describe('/support FAQPage: the markup describes the page it is on', () => {
     const raw = jsonLd()[0].textContent;
     expect(raw).not.toMatch(/aggregateRating|ratingValue|upvoteCount|answerCount|dateCreated/);
     unmount();
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+describe('the prerendered pages carry their own link card', () => {
+  // The routes scripts/build-cloudflare.js snapshots, besides "/", whose card
+  // is index.html's own. Pasted into iMessage, LinkedIn or Slack, each of these
+  // must show its own title, not the homepage's.
+  const PRERENDERED = [
+    { route: '/how-it-works', file: 'HowItWorksPage.js' },
+    { route: '/about', file: 'AboutPage.js' },
+    { route: '/research', file: 'ResearchPage.js' },
+    { route: '/flux', file: 'FluxPage.js' },
+    { route: '/ai', file: 'AiPage.js' },
+  ];
+
+  const card = () => {
+    const read = (selector) => {
+      const tag = document.head.querySelector(selector);
+      return tag && tag.getAttribute('content');
+    };
+    return {
+      ogTitle: read('meta[property="og:title"]'),
+      ogDescription: read('meta[property="og:description"]'),
+      ogUrl: read('meta[property="og:url"]'),
+      twitterTitle: read('meta[name="twitter:title"]'),
+      twitterDescription: read('meta[name="twitter:description"]'),
+    };
+  };
+
+  const indexValue = (re) => {
+    const m = re.exec(INDEX_HTML);
+    if (!m) throw new Error(`public/index.html has no match for ${re}`);
+    return m[1];
+  };
+
+  test('every route the build prerenders, besides "/", is listed here', () => {
+    // eslint-disable-next-line global-require
+    const { PRERENDER } = require('../../scripts/build-cloudflare.js');
+    const routes = PRERENDER.map((p) => p.route).filter((route) => route !== '/');
+    expect([...routes].sort()).toEqual(PRERENDERED.map((p) => p.route).sort());
+  });
+
+  test("the card a page puts back is index.html's", () => {
+    expect(DEFAULT_CARD.title).toBe(indexValue(/<meta property="og:title" content="([^"]*)"/));
+    expect(DEFAULT_CARD.title).toBe(indexValue(/<meta name="twitter:title" content="([^"]*)"/));
+    expect(DEFAULT_CARD.description).toBe(indexValue(/<meta property="og:description" content="([^"]*)"/));
+    expect(DEFAULT_CARD.description).toBe(indexValue(/<meta name="twitter:description" content="([^"]*)"/));
+    // The static head names no page; see the og:url rule in index.html.
+    expect(INDEX_HTML).not.toMatch(/<meta property="og:url"/);
+  });
+
+  test.each(PRERENDERED.map((p) => [p.route, p]))('%s', (route, { file }) => {
+    const { unmount } = mount(file);
+
+    expect(document.title).not.toBe(DEFAULT_CARD.title);
+    expect(card()).toEqual({
+      ogTitle: document.title,
+      ogDescription: describedBy(),
+      ogUrl: `https://www.flockcorp.com${route}`,
+      twitterTitle: document.title,
+      twitterDescription: describedBy(),
+    });
+
+    // Navigating away inside the app leaves index.html's card, not this one.
+    unmount();
+    expect(card()).toEqual({
+      ogTitle: DEFAULT_CARD.title,
+      ogDescription: DEFAULT_CARD.description,
+      ogUrl: null,
+      twitterTitle: DEFAULT_CARD.title,
+      twitterDescription: DEFAULT_CARD.description,
+    });
   });
 });

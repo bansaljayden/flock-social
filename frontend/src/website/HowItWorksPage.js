@@ -5,6 +5,7 @@ import './HowItWorks.css';
 import SiteFooter from './SiteFooter';
 import SiteNav, { useSiteMenu } from './SiteNav';
 import PhoneDevice from './PhoneDevice';
+import { shareThisPage } from './shareCard';
 
 // /how-it-works: one plan from the first invite to the bill, then the venue
 // side and the four AIs, with the app's three-minute video at the top. Built on the
@@ -229,6 +230,7 @@ export default function HowItWorksPage() {
     document.title = 'How Flock works | Flock';
     const meta = document.querySelector('meta[name="description"]');
     if (meta) meta.setAttribute('content', DESCRIPTION);
+    return shareThisPage('/how-it-works');
   }, []);
 
   return (
