@@ -60,8 +60,8 @@ import VenueDashboard from '../screens/VenueDashboard';
 import {
   TABLE_STATE_WORDS,
   clockText,
+  durationText,
   hourLabel,
-  minutesText,
   seatsText,
   tableHoursChart,
   tablesByLocalHour,
@@ -200,8 +200,47 @@ describe('the seated clock', () => {
     expect(clockText(6 * MIN + 5 * SEC)).toBe('6:05');
     expect(clockText(75 * MIN + 2 * SEC)).toBe('75:02');
     expect(clockText(-5 * SEC)).toBe('0:00');
-    expect(minutesText(59 * SEC)).toBe('under 1 min');
-    expect(minutesText(12 * MIN + 59 * SEC)).toBe('12 min');
+  });
+
+  test('every other duration rolls up: minutes, then hours and minutes, then days', () => {
+    const HOUR = 60 * MIN;
+    expect(durationText(59 * SEC)).toBe('under 1 min');
+    expect(durationText(12 * MIN + 59 * SEC)).toBe('12 min');
+    expect(durationText(59 * MIN + 59 * SEC)).toBe('59 min');
+    expect(durationText(HOUR)).toBe('1 h');
+    expect(durationText(2 * HOUR + 10 * MIN)).toBe('2 h 10 min');
+    expect(durationText(16 * HOUR)).toBe('16 h');
+    expect(durationText(23 * HOUR + 59 * MIN)).toBe('23 h 59 min');
+    expect(durationText(24 * HOUR)).toBe('1 day');
+    expect(durationText(48 * HOUR + 5 * HOUR)).toBe('2 days');
+    expect(durationText(-MIN)).toBe('under 1 min');
+  });
+
+  test('a table free since last night and a party at its second hour read in hours, not hundreds of minutes', () => {
+    const HOUR = 60 * MIN;
+    renderTab({
+      data: {
+        ...LIVE,
+        next_free: 2,
+        tables: [
+          { number: 1, people: 0, state: 'free', since: ago(16 * HOUR) },
+          { number: 2, people: 2, state: 'seated', since: ago(2 * HOUR + 5 * MIN) },
+          { number: 3, people: 3, state: 'waiting', since: ago(HOUR + 1 * MIN) },
+          { number: 4, people: 0, state: 'needs_clearing', since: ago(2 * HOUR + 30 * MIN) },
+        ],
+      },
+    });
+    expect(within(tileFor(1)).getByText('Free for 16 h')).toBeTruthy();
+    expect(within(tileFor(4)).getByText('Waiting to be cleared 2 h 30 min')).toBeTruthy();
+    // The seated clock is still the timer.
+    expect(within(tileFor(2)).getByText('125:00')).toBeTruthy();
+    expect(within(tileFor(2)).getByText('for 2 h 5 min').className).toBe('sr-only');
+    expect(screen.getByText('Next likely free: Table 2 (seated 2 h 5 min)')).toBeTruthy();
+    expect(alertLines()).toEqual([
+      'Table 4: left 2 h 30 min ago, needs clearing',
+      'Table 3: seated 1 h 1 min, nobody has stopped by yet',
+    ]);
+    expect(screen.getByText('Free for 16 h').textContent).not.toMatch(/\d{3,} min/);
   });
 
   test('ticks every second, and every tile ticks off the same one interval', () => {
@@ -426,6 +465,11 @@ describe('tables in use by hour', () => {
 
   test('hour labels match the app\'s', () => {
     expect([0, 1, 11, 12, 13, 19, 23].map(hourLabel)).toEqual(['12 AM', '1 AM', '11 AM', '12 PM', '1 PM', '7 PM', '11 PM']);
+  });
+
+  test('a one-table setup is "of 1 table", not "of 1 tables"', () => {
+    renderTab({ hours: [{ hour: at(19, 19), occupied: 0.8, total: 1 }, { hour: at(18, 19), occupied: 1, total: 1 }] });
+    expect(screen.getByText('Busiest around 7 PM, with 0.9 of 1 table in use on average.')).toBeTruthy();
   });
 
   test.each([

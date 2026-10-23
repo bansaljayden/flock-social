@@ -76,21 +76,34 @@ export function clockText(ms) {
   return `${minutes}:${String(seconds).padStart(2, '0')}`;
 }
 
-// Whole minutes, for the lines that have no use for seconds.
-export function minutesText(ms) {
+// A length of time in the words a manager reads at a glance: under an hour in
+// minutes ("14 min"), under a day in hours and minutes ("2 h 10 min", or "2 h"
+// on the hour), and from a day on in days ("1 day", "2 days"). Under a minute
+// is "under 1 min". A table free since last night's close used to read "Free
+// for 960 min". Every duration the panel prints goes through this; the seated
+// tile's ticking clock (clockText) is the one timer and stays a timer.
+export function durationText(ms) {
   const minutes = Math.floor(Math.max(0, ms) / 60000);
-  return minutes < 1 ? 'under 1 min' : `${minutes} min`;
+  if (minutes < 1) return 'under 1 min';
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) {
+    const rest = minutes % 60;
+    return rest ? `${hours} h ${rest} min` : `${hours} h`;
+  }
+  const days = Math.floor(hours / 24);
+  return `${days} ${days === 1 ? 'day' : 'days'}`;
 }
 
 // The time line on a tile. Seated and waiting count up in minutes and seconds
-// from when the party sat down; free and needs clearing say whole minutes.
+// from when the party sat down; free and needs clearing say how long in words.
 // Null when there is no time to show.
 export function tileTimeText(table, nowMs) {
   const ms = msSince(table.since, nowMs);
   if (ms === null) return null;
   if (table.state === 'seated' || table.state === 'waiting') return clockText(ms);
-  if (table.state === 'free') return `Free for ${minutesText(ms)}`;
-  if (table.state === 'needs_clearing') return `Waiting to be cleared ${minutesText(ms)}`;
+  if (table.state === 'free') return `Free for ${durationText(ms)}`;
+  if (table.state === 'needs_clearing') return `Waiting to be cleared ${durationText(ms)}`;
   return null;
 }
 
@@ -99,7 +112,7 @@ export function tileTimeText(table, nowMs) {
 export function tileClockSpoken(table, nowMs) {
   const ms = msSince(table.since, nowMs);
   if (ms === null) return null;
-  return table.state === 'waiting' ? `seated ${minutesText(ms)}` : `for ${minutesText(ms)}`;
+  return table.state === 'waiting' ? `seated ${durationText(ms)}` : `for ${durationText(ms)}`;
 }
 
 // The head count the sensor gives a seated table. Nothing for a count below
@@ -130,11 +143,11 @@ export function tableAlerts(tables, nowMs) {
       if (t.state === 'waiting') {
         text = ms === null
           ? `Table ${t.number}: nobody has stopped by yet`
-          : `Table ${t.number}: seated ${minutesText(ms)}, nobody has stopped by yet`;
+          : `Table ${t.number}: seated ${durationText(ms)}, nobody has stopped by yet`;
       } else {
         text = ms === null
           ? `Table ${t.number}: needs clearing`
-          : `Table ${t.number}: left ${minutesText(ms)} ago, needs clearing`;
+          : `Table ${t.number}: left ${durationText(ms)} ago, needs clearing`;
       }
       return { number: t.number, state: t.state, ms, text };
     })
@@ -157,7 +170,7 @@ export function nextFreeText(data, tables, nowMs) {
   const ms = msSince(table.since, nowMs);
   return ms === null
     ? `Next likely free: Table ${table.number}`
-    : `Next likely free: Table ${table.number} (seated ${minutesText(ms)})`;
+    : `Next likely free: Table ${table.number} (seated ${durationText(ms)})`;
 }
 
 // "3 of 8 free".
@@ -174,7 +187,7 @@ export function staleDetail(tables, updatedAtMs, nowMs) {
   const ms = updatedAtMs === null ? null : msSince(new Date(updatedAtMs), nowMs);
   return ms === null
     ? `At its last reading ${free} of ${tables.length} ${were} free.`
-    : `Last reading ${minutesText(ms)} ago, when ${free} of ${tables.length} ${were} free.`;
+    : `Last reading ${durationText(ms)} ago, when ${free} of ${tables.length} ${were} free.`;
 }
 
 // ── Tables in use by hour ──────────────────────────────────────────────────
@@ -267,7 +280,8 @@ export function busiestText(chart) {
   const avg = Math.round(chart.peak.avg * 10) / 10;
   if (!(avg > 0)) return null;
   const when = hourLabel(chart.peak.hour);
-  return chart.tables > 0
-    ? `Busiest around ${when}, with ${avg} of ${Math.round(chart.tables)} tables in use on average.`
+  const all = Math.round(chart.tables);
+  return all > 0
+    ? `Busiest around ${when}, with ${avg} of ${all} ${all === 1 ? 'table' : 'tables'} in use on average.`
     : `Busiest around ${when}, with ${avg} ${avg === 1 ? 'table' : 'tables'} in use on average.`;
 }
