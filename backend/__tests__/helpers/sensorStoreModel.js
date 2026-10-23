@@ -35,7 +35,9 @@ const sameReading = (r, deviceId, at) => r.sensor_device_id === deviceId
  *   $1 digest, $2 legacy key, $3 may write, $4 claimed device_id, $5 client
  *   stamped, $6 recorded_at, $7 affects the live figure, $8 guard interval,
  *   $9-$11 the reading, $12-$15 the occupancy estimate (occupancy, its low
- *   and high band, dwell minutes), each null when the device sent none.
+ *   and high band, dwell minutes), each null when the device sent none,
+ *   $16-$19 the table counts (total, occupied, waiting, to clear; migration
+ *   130), each null when the reading carried no usable tables string.
  *
  * `store.snapshot`, when a suite sets it, is the readings this statement's
  * snapshot can see, for modelling two deliveries that raced: the duplicate
@@ -45,7 +47,8 @@ const sameReading = (r, deviceId, at) => r.sensor_device_id === deviceId
  */
 function runIngest(store, params) {
   const [digest, legacy, mayWrite, claim, clientSupplied, recordedAt, affectsLive, gap, ir, thermal, noise,
-    occupancy, occupancyLow, occupancyHigh, dwellMinutes] = params;
+    occupancy, occupancyLow, occupancyHigh, dwellMinutes,
+    tablesTotal, tablesOccupied, tablesWaiting, tablesToClear] = params;
 
   // device: the key lookup, first match, as LIMIT 1 without an ORDER BY.
   const device = store.devices.find((d) => d.api_key === digest || d.api_key === legacy);
@@ -96,6 +99,10 @@ function runIngest(store, params) {
         occupancy_low: occupancyLow,
         occupancy_high: occupancyHigh,
         dwell_minutes: dwellMinutes,
+        tables_total: tablesTotal,
+        tables_occupied: tablesOccupied,
+        tables_waiting: tablesWaiting,
+        tables_to_clear: tablesToClear,
         sensor_device_id: writer.device_id,
         recorded_at: at,
       };

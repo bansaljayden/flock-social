@@ -433,3 +433,40 @@ test('the hourly history averages the estimate and skips the readings that had n
   assert.equal(h.sample_count, 3);
   assert.equal(h.thermal_headcount, 11);
 });
+
+// --- Table monitoring, through the real schema ------------------------------
+//
+// Migration 130 added four nullable table counts to each reading. The model
+// suite (sensorTables.test.js) proves the route hands them over; these prove
+// Postgres stores them through $16-$19, and that a tables value the strict
+// parse ignores still leaves the reading itself stored and answered 201.
+const EXAMPLE_TABLES = '1:0:f:340;2:3:s:845;3:2:w:410;4:0:c:95';
+const tableCountRows = async () => (await pool.query(
+  `SELECT ir_beam_count, tables_total, tables_occupied, tables_waiting, tables_to_clear
+     FROM venue_sensor_data ORDER BY recorded_at`
+)).rows;
+
+test('a tables string is counted onto the stored reading; a bad one leaves the reading stored with null counts', async () => {
+  const good = await push(reading({ tables: EXAMPLE_TABLES }));
+  assert.equal(good.status, 201, JSON.stringify(good.body));
+  assert.deepEqual(Object.keys(good.body).sort(), ['recorded_at', 'success']);
+  // Backfill, so the flood guard the live push just armed does not apply.
+  const bad = await push(reading({ recorded_at: new Date(Date.now() - 30 * 60 * 1000).toISOString(), tables: '3:1:s:5;2:0:f:9' }));
+  assert.equal(bad.status, 201, JSON.stringify(bad.body));
+  assert.deepEqual(await tableCountRows(), [
+    { ir_beam_count: 6, tables_total: null, tables_occupied: null, tables_waiting: null, tables_to_clear: null },
+    { ir_beam_count: 6, tables_total: 4, tables_occupied: 2, tables_waiting: 1, tables_to_clear: 1 },
+  ]);
+});
+
+test('a tables value of the wrong shape is a 201 and a stored reading, never a 400 or a 500', async () => {
+  const base = Date.now() - 40 * 60 * 1000;
+  const shapes = [['1:0:f:5'], { $gt: '' }, 12, 'x'.repeat(601)];
+  for (let i = 0; i < shapes.length; i += 1) {
+    const res = await push(reading({ recorded_at: new Date(base + i * 30000).toISOString(), tables: shapes[i] }));
+    assert.equal(res.status, 201, `${JSON.stringify(shapes[i]).slice(0, 40)} -> ${res.status} ${JSON.stringify(res.body)}`);
+  }
+  const stored = await tableCountRows();
+  assert.equal(stored.length, shapes.length);
+  for (const row of stored) assert.equal(row.tables_total, null);
+});

@@ -6,6 +6,10 @@ const { authenticate } = require('../middleware/auth');
 // Shape before content — see validators/shape.js. Nothing a sensor sends is
 // ever legitimately structured.
 const { scalarOnly } = require('../validators/shape');
+// Table monitoring: the `tables` string a reading may carry, and what is done
+// with it. The contract and the reason a bad value is ignored rather than
+// refused are at the top of that file.
+const { MAX_TABLES_LENGTH, readTables, tableCounts, noteIgnoredTables } = require('../services/sensorTables');
 
 const router = express.Router();
 
@@ -153,6 +157,12 @@ const DIGEST_FORM = /^sha256:/i;
 // its number. All four are optional: a device on older firmware sends none of
 // them and its row stores NULL, which is the truth for it.
 //
+// $16-$19 are the table counts (migration 130), trailing for the same reason:
+// how many tables the unit watches, how many have a party at them (seated or
+// waiting), how many are waiting, and how many need clearing. Counted in JS
+// from the `tables` string (services/sensorTables.js), and NULL for a reading
+// that carried none or carried one the strict parse ignored.
+//
 // Every parameter keeps ONE type through the statement ($4, $6 and $7 are each
 // used more than once, with the same cast every time):
 // __tests__/sqlParameterTypes.test.js prepares this against a migrated
@@ -194,10 +204,12 @@ const INGEST_SQL = `
   ins AS (
     INSERT INTO venue_sensor_data
       (venue_place_id, ir_beam_count, thermal_headcount, noise_db, sensor_device_id, recorded_at,
-       occupancy, occupancy_low, occupancy_high, dwell_minutes)
+       occupancy, occupancy_low, occupancy_high, dwell_minutes,
+       tables_total, tables_occupied, tables_waiting, tables_to_clear)
     SELECT w.venue_place_id, $9::integer, $10::integer, $11::numeric, w.device_id,
            COALESCE($6::timestamptz, NOW()),
-           $12::integer, $13::integer, $14::integer, $15::integer
+           $12::integer, $13::integer, $14::integer, $15::integer,
+           $16::integer, $17::integer, $18::integer, $19::integer
       FROM writer w
      WHERE NOT EXISTS (SELECT 1 FROM dup)
        AND (NOT $7::boolean OR EXISTS (SELECT 1 FROM touch))
@@ -222,7 +234,10 @@ const NO_FILING = null;
 
 function ingestParams(digest, legacy, filing) {
   const gap = `${MIN_LIVE_GAP_SECONDS} seconds`;
-  if (!filing) return [digest, legacy, false, null, false, null, false, gap, null, null, null, null, null, null, null];
+  if (!filing) {
+    return [digest, legacy, false, null, false, null, false, gap, null, null, null, null, null, null, null,
+      null, null, null, null];
+  }
   return [
     digest, legacy, true,
     filing.claimedDeviceId,
@@ -237,7 +252,22 @@ function ingestParams(digest, legacy, filing) {
     filing.occupancyLow,
     filing.occupancyHigh,
     filing.dwellMinutes,
+    filing.tablesTotal,
+    filing.tablesOccupied,
+    filing.tablesWaiting,
+    filing.tablesToClear,
   ];
+}
+
+// The `tables` field never refuses a reading (services/sensorTables.js says
+// why), so an error the validator chain raises on it is taken out of the list
+// that decides the 400 and handed on as "drop the field". Every other field is
+// judged exactly as before. Returns the remaining errors as an array, and
+// whether `tables` was among the refused.
+function setTablesAside(result) {
+  const all = result.array();
+  const errors = all.filter((e) => !(e.location === 'body' && e.path === 'tables'));
+  return { errors, tablesRefused: errors.length !== all.length };
 }
 
 // An absent optional field is null, never undefined: node-postgres binds both
@@ -441,6 +471,14 @@ router.post('/data',
   scalarOnly(body('dwell_minutes').optional({ nullable: true }), 'dwell_minutes')
     .isInt({ min: MIN_DWELL_MINUTES, max: MAX_DWELL_MINUTES })
     .withMessage(`dwell_minutes must be an integer ${MIN_DWELL_MINUTES}-${MAX_DWELL_MINUTES}`),
+  // Table monitoring: one string, shape first like every field here. Unlike
+  // every field here, an error on it is NOT a 400. A 400 makes the device drop
+  // the whole reading, so setTablesAside below takes this field's errors out of
+  // the verdict and the reading is stored without it. The strict parse of the
+  // content happens after, in readTables.
+  scalarOnly(body('tables').optional({ nullable: true }), 'tables').isString()
+    .isLength({ max: MAX_TABLES_LENGTH })
+    .withMessage(`tables must be a string of at most ${MAX_TABLES_LENGTH} characters`),
   async (req, res) => {
     try {
       const apiKey = req.headers['x-api-key'];
@@ -456,8 +494,13 @@ router.post('/data',
       // runs, so the statement knows whether it may write (see INGEST_SQL).
       // None of it is REPORTED yet: the order in which refusals are answered
       // is unchanged and starts after the statement, with authentication.
-      const errors = validationResult(req);
+      const { errors, tablesRefused } = setTablesAside(validationResult(req));
       const claimedDeviceId = req.body.device_id;
+      // Parsed only once the rest of the body has passed: a body that is about
+      // to be refused stores nothing, tables included.
+      const tableField = errors.length === 0
+        ? readTables(req.body.tables, tablesRefused)
+        : { tables: null, ignored: null };
 
       // An installer's self test proves the key and the network work without
       // writing a fabricated "0 people" row into the venue's live occupancy
@@ -480,7 +523,7 @@ router.post('/data',
       const nowMs = Date.now();
       // Only a body that passed validation is resolved: this is the
       // time-forgery guard and it is only ever handed a settled shape.
-      const stamp = errors.isEmpty() ? resolveRecordedAt(req.body.recorded_at, nowMs) : null;
+      const stamp = errors.length === 0 ? resolveRecordedAt(req.body.recorded_at, nowMs) : null;
 
       // Two DIFFERENT questions about the same timestamp, and conflating them
       // is what left the live figure writable (see MIN_LIVE_GAP_SECONDS):
@@ -488,7 +531,7 @@ router.post('/data',
       //   affectsLiveFigure — will GET /:placeId/current serve it? (15 minutes)
       // A server-stamped row is always both.
       let filing = NO_FILING;
-      if (errors.isEmpty() && !dryRun && stamp.ok
+      if (errors.length === 0 && !dryRun && stamp.ok
           // A device_id that is present but not a string can never be this
           // device's own, so it is refused below and must not write.
           && (!claimedDeviceId || typeof claimedDeviceId === 'string')) {
@@ -504,6 +547,8 @@ router.post('/data',
           thermalHeadcount: req.body.thermal_headcount,
           noiseDb: req.body.noise_db,
           ...occupancyEstimate(req.body),
+          tables: tableField.tables,
+          ...tableCounts(tableField.tables),
         };
       }
 
@@ -543,7 +588,7 @@ router.post('/data',
       // goes quiet instead of hammering, and re-activating one loses nothing.
       if (!device.is_active) return res.status(403).json({ error: 'Device deactivated' });
 
-      if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
+      if (errors.length > 0) return res.status(400).json({ error: errors[0].msg });
 
       if (req.body.device_id && req.body.device_id !== device.device_id) {
         // Strip control characters before logging an attacker-supplied string:
@@ -596,6 +641,17 @@ router.post('/data',
       // occupancy. After the response, and unable to change it: see
       // broadcastReading.
       if (!filing.isBackfill) broadcastReading(req, device, req.body, filing, device.recorded_at);
+
+      // A tables value that was sent and dropped is said in the log, at most
+      // once an hour per device, and only now: the device has its 201 and the
+      // reading is stored, so nothing here can change either.
+      if (tableField.ignored) {
+        try {
+          noteIgnoredTables(device.device_id, tableField.ignored);
+        } catch (err) {
+          console.error('Sensor tables note failed after the reading was stored:', err.message);
+        }
+      }
     } catch (err) {
       console.error('Sensor data ingest error:', err);
       res.status(500).json({ error: 'Failed to ingest sensor data' });
