@@ -8,10 +8,18 @@
  * and the dashboard gives it a tab of its own. This file pins what that tab
  * says and does:
  *
- *   - the tab is in the bar only once a read since the dashboard opened has
- *     returned a table, right after Analytics, and a venue with no tables
- *     never sees it; inside, the same Roost gate as Live Sensor;
+ *   - the tab is in the bar, right after Analytics, once a read has returned a
+ *     table, this visit or on a visit this device remembers (then from the
+ *     first paint, with skeletons until the first read), and a venue with no
+ *     tables never sees it; inside, the same Roost gate as Live Sensor;
  *   - Analytics keeps Live Sensor and no longer carries the board;
+ *   - the read loop asks again after a failed read, a server error and the
+ *     403 for a plan check the server could not run, and a failed read keeps
+ *     the last reading on the board rather than wiping it;
+ *   - the hours read is asked again while it has failed, and the card says so;
+ *   - the hours chart keeps the venue's clock when the dashboard has its zone;
+ *   - Settings carries the Table alerts switch, the one writer of
+ *     notification_prefs.tables, only where the alerts can be sent;
  *   - every state reads in words on its tile, so none rests on colour alone,
  *     and a tile names its seats when the setup knows them;
  *   - seated and waiting tiles count up in minutes and seconds off one interval
@@ -44,6 +52,9 @@ jest.mock('../services/api', () => ({
   getVenueBillingStatus: jest.fn(() => Promise.resolve(null)),
   startVenueCheckout: jest.fn(),
   openVenuePortal: jest.fn(),
+  // The Table alerts switch's one write. react-scripts resets mocks between
+  // tests, so each test that presses the switch gives it its answer.
+  updateVenueProfile: jest.fn(),
 }));
 jest.mock('../components/ui/BirdieBird', () => {
   const R = require('react');
@@ -1403,6 +1414,102 @@ describe('the Tables tab', () => {
     await settle();
     expect(screen.getByText("Your tables couldn't load just now.")).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Tables in use by hour' })).toBeTruthy();
+  });
+});
+
+// ── The Table alerts switch, on Settings ───────────────────────────────────
+//
+// backend/services/sensorTables.js pushes the verified owner a table_alert
+// when a table has waited for a server or needs clearing, and reads
+// notification_prefs.tables before each one, absent meaning on. The switch is
+// the one writer of that key.
+describe('the Table alerts switch', () => {
+  const { updateVenueProfile: updateVenueProfileMock } = jest.requireMock('../services/api');
+  const HELP = 'A push when a table has waited for a server or needs clearing.';
+  const theSwitch = () => screen.getByRole('checkbox', { name: 'Table alerts' });
+
+  test('sits on Settings for a Roost venue whose tables the dashboard has seen, on by default, with plain help', async () => {
+    const { container } = dashboard({ venueTab: 'settings', ownerTablesSeen: true, ownerTables: LIVE });
+    await settle();
+    expect(theSwitch().checked).toBe(true);
+    expect(screen.getByText(HELP)).toBeTruthy();
+    expect(screen.getByRole('heading', { name: /Table alerts/ })).toBeTruthy();
+    expect(container.textContent).not.toContain(EM_DASH);
+  });
+
+  test('is in the bar\'s terms: the same flag as the Tables tab, so a venue without Flux never sees a dead switch', async () => {
+    const none = dashboard({ venueTab: 'settings', ownerTablesSeen: false, ownerTables: { tables: [], updated_at: null, stale: false, next_free: null } });
+    await settle();
+    expect(screen.queryByRole('checkbox', { name: 'Table alerts' })).toBeNull();
+    expect(screen.queryByText(HELP)).toBeNull();
+    none.unmount();
+    // Remembered, with the visit's first read still out: the tab is in the
+    // bar, and so is the switch.
+    dashboard({ venueTab: 'settings', ownerTablesSeen: true, ownerTables: undefined });
+    await settle();
+    expect(theSwitch()).toBeTruthy();
+  });
+
+  test('is not offered where the server would not send the alert: below Roost, or under the server\'s own refusal', async () => {
+    for (const overrides of [
+      { venueTier: 'free', ownerTablesSeen: true, ownerTables: LIVE },
+      { ownerTablesSeen: true, ownerTablesLocked: true, ownerTables: null },
+      { venueTierKnown: false, ownerTablesSeen: true, ownerTables: LIVE },
+    ]) {
+      const r = dashboard({ venueTab: 'settings', ...overrides });
+      // eslint-disable-next-line no-await-in-loop
+      await settle();
+      expect(screen.queryByRole('checkbox', { name: 'Table alerts' })).toBeNull();
+      r.unmount();
+    }
+  });
+
+  test('reads the stored key the way the server does: only an explicit false is off', async () => {
+    for (const [prefs, on] of [[undefined, true], [{}, true], [{ weekly: true }, true], [{ tables: true }, true], [{ tables: false }, false], [{ tables: 'false' }, true]]) {
+      const r = dashboard({ venueTab: 'settings', ownerTablesSeen: true, ownerTables: LIVE, venueProfile: { ...ROOST.venueProfile, notification_prefs: prefs } });
+      // eslint-disable-next-line no-await-in-loop
+      await settle();
+      expect(theSwitch().checked).toBe(on);
+      r.unmount();
+    }
+    expect(DASH).toContain("checked={venueProfile?.notification_prefs?.tables !== false}");
+  });
+
+  test('turning it off writes notification_prefs.tables through the PUT the Monday email uses, merges the answer, and says so', async () => {
+    updateVenueProfileMock.mockResolvedValue({ business_name: 'Hoppers', notification_prefs: { weekly: true, tables: false } });
+    const { props } = dashboard({ venueTab: 'settings', ownerTablesSeen: true, ownerTables: LIVE, venueProfile: { ...ROOST.venueProfile, notification_prefs: { weekly: true } } });
+    await settle();
+    await act(async () => { fireEvent.click(theSwitch()); });
+    expect(updateVenueProfileMock).toHaveBeenCalledTimes(1);
+    expect(updateVenueProfileMock).toHaveBeenCalledWith({ notificationPrefs: { tables: false } });
+    // The answer merges into the profile the GET returned, so the Monday
+    // switch and the plan lines beside it keep what the server worked out.
+    expect(props.setVenueProfile).toHaveBeenCalledTimes(1);
+    const merge = props.setVenueProfile.mock.calls[0][0];
+    const merged = merge({ ...ROOST.venueProfile, digest_enabled: true, notification_prefs: { weekly: true } });
+    expect(merged.notification_prefs).toEqual({ weekly: true, tables: false });
+    expect(merged.digest_enabled).toBe(true);
+    expect(props.showToast).toHaveBeenCalledWith('Table alerts off.');
+    expect(DASH).toContain('updateVenueProfile({ notificationPrefs: { tables } })');
+  });
+
+  test('turning it back on writes true and says so', async () => {
+    updateVenueProfileMock.mockResolvedValue({ notification_prefs: { tables: true } });
+    const { props } = dashboard({ venueTab: 'settings', ownerTablesSeen: true, ownerTables: LIVE, venueProfile: { ...ROOST.venueProfile, notification_prefs: { tables: false } } });
+    await settle();
+    expect(theSwitch().checked).toBe(false);
+    await act(async () => { fireEvent.click(theSwitch()); });
+    expect(updateVenueProfileMock).toHaveBeenCalledWith({ notificationPrefs: { tables: true } });
+    expect(props.showToast).toHaveBeenCalledWith('Table alerts on.');
+  });
+
+  test('a save that fails says so as an error and writes nothing to the profile', async () => {
+    updateVenueProfileMock.mockRejectedValue(new Error('Could not reach the server.'));
+    const { props } = dashboard({ venueTab: 'settings', ownerTablesSeen: true, ownerTables: LIVE });
+    await settle();
+    await act(async () => { fireEvent.click(theSwitch()); });
+    expect(props.setVenueProfile).not.toHaveBeenCalled();
+    expect(props.showToast).toHaveBeenCalledWith('Could not reach the server.', 'error');
   });
 });
 

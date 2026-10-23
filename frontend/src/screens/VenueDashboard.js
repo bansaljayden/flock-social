@@ -2633,11 +2633,51 @@ export default function VenueDashboard({
               </div>
               )}
 
+              {/* TABLE ALERTS. The second switch, because the second send
+                  exists: backend/services/sensorTables.js pushes the verified
+                  owner a table_alert when a table has waited for a server or
+                  needs clearing, and reads notification_prefs.tables before
+                  each one, absent meaning on. Until this switch nothing wrote
+                  that key, so the only way off the alerts was every Flock
+                  notification in iOS Settings. Same PUT as the Monday email,
+                  which merges one key at a time, so this write leaves `weekly`
+                  alone. `!== false`, not `=== true`, because the server's
+                  default is on. Shown only where the alerts can be sent: a
+                  venue whose tables the dashboard has seen (the same flag as
+                  the Tables tab, memory included) on a plan the server has not
+                  refused them for, so a venue without Flux, or below Roost,
+                  never sees a switch that does nothing. */}
+              {ownerTablesSeen && !ownerTablesLocked && can.analytics && tierKnown && (
+              <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
+                <h3 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 8px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.bell ? Icons.bell(colors.navy, 14) : null} Table alerts</h3>
+                <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    aria-label="Table alerts"
+                    checked={venueProfile?.notification_prefs?.tables !== false}
+                    onChange={async (e) => {
+                      const tables = e.target.checked;
+                      try {
+                        const saved = await updateVenueProfile({ notificationPrefs: { tables } });
+                        setVenueProfile((prev) => mergeSavedProfile(prev, saved));
+                        showToast(tables ? 'Table alerts on.' : 'Table alerts off.');
+                      } catch (err) {
+                        showToast(err?.message || 'Could not save that. Try again.', 'error');
+                      }
+                    }}
+                    style={{ marginTop: '2px', width: '18px', height: '18px', flexShrink: 0 }}
+                  />
+                  <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', lineHeight: 1.5 }}>A push when a table has waited for a server or needs clearing.</span>
+                </label>
+              </div>
+              )}
+
               {/* The Notifications panel used to sit here: three switches, one
                   offering to tell the owner when a flock books their venue, one
                   for new customer reviews, one for a weekly performance summary
-                  by email. The weekly one is back above, alone, because its
-                  send now exists; the other two do not, and stay gone.
+                  by email. The weekly one is back above because its send now
+                  exists, and table alerts beside it for the same reason; the
+                  other two do not, and stay gone.
 
                   It is gone because none of those three notifications exists,
                   and none of them can be made to exist from this file.
