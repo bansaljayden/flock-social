@@ -145,9 +145,10 @@ const inFlight = new Set();
 const pending = new Map();
 let flushTimer = null;
 let flushWaiters = [];
-// Bumped on every cache write; the hooks render off it.
-let version = 0;
-const listeners = new Set();
+// fn -> the cache keys it watches. A write calls only the listeners watching
+// a key it wrote, so a surface showing other places (a Discover tab parked
+// behind the chat, say) is not rendered for an answer that was not about it.
+const listeners = new Map();
 
 const keyOf = (placeId, party) => `${party}|${placeId}`;
 
@@ -160,9 +161,19 @@ const canAsk = () => typeof isLoggedIn === 'function' && !!isLoggedIn()
 
 const now = () => Date.now();
 
-function notify() {
-  version += 1;
-  listeners.forEach((fn) => { try { fn(version); } catch { /* a listener's own problem */ } });
+// Tells the listeners watching any of `keys` (cache keys) that it was written.
+function notify(keys) {
+  const changed = keys instanceof Set ? keys : new Set(keys);
+  if (changed.size === 0) return;
+  listeners.forEach((watched, fn) => {
+    const [few, many] = changed.size <= watched.size ? [changed, watched] : [watched, changed];
+    for (const key of few) {
+      if (many.has(key)) {
+        try { fn(); } catch { /* a listener's own problem */ }
+        break;
+      }
+    }
+  });
 }
 
 function write(placeId, party, summary, at = now()) {
@@ -192,8 +203,11 @@ function isFresh(placeId, party, slackMs = 0) {
   return !!entry && now() - entry.at < limit;
 }
 
-export function subscribeTableSummaries(fn) {
-  listeners.add(fn);
+// Calls `fn` after a write to any of the places in `placeIds` under `party`.
+// Returns the unsubscribe.
+export function subscribeTableSummaries(fn, placeIds, party = TABLE_PARTY_DEFAULT) {
+  const p = clampParty(party);
+  listeners.set(fn, new Set(distinctPlaceIds(placeIds).map((id) => keyOf(id, p))));
   return () => { listeners.delete(fn); };
 }
 
@@ -234,6 +248,7 @@ async function flush() {
   const waiters = flushWaiters;
   flushWaiters = [];
   const sends = [];
+  const written = new Set();
   batches.forEach((ids, party) => {
     const list = Array.from(ids);
     for (let i = 0; i < list.length; i += TABLE_SUMMARY_BATCH_MAX) {
@@ -247,7 +262,10 @@ async function flush() {
             const at = now();
             // Every id asked for gets an entry: the ones the server named with
             // their summary, the rest as a remembered "no data".
-            chunk.forEach((id) => write(id, party, Object.prototype.hasOwnProperty.call(got, id) ? got[id] : null, at));
+            chunk.forEach((id) => {
+              write(id, party, Object.prototype.hasOwnProperty.call(got, id) ? got[id] : null, at);
+              written.add(keyOf(id, party));
+            });
           })
           // A failed read leaves what was known in place (readTableSummary
           // ages it out) and is asked again at the next tick. A line that
@@ -259,7 +277,7 @@ async function flush() {
     }
   });
   await Promise.all(sends);
-  if (sends.length > 0) notify();
+  notify(written);
   waiters.forEach((resolve) => resolve());
 }
 
@@ -297,20 +315,37 @@ export function requestTableSummary(placeId, party = TABLE_PARTY_DEFAULT, { refr
   sweep();
   return Promise.resolve()
     .then(() => getTableSummary(placeId, p))
-    .then((data) => { write(placeId, p, data); notify(); })
+    .then((data) => { write(placeId, p, data); notify([key]); })
     .catch((err) => {
-      if (err && err.status === 404) { write(placeId, p, null); notify(); }
+      if (err && err.status === 404) { write(placeId, p, null); notify([key]); }
     })
     .finally(() => { inFlight.delete(key); });
 }
 
 // ---- the hooks ------------------------------------------------------------
+//
+// Both read through React.useSyncExternalStore, for two reasons:
+//
+//   * The snapshot is read again right after the subscription is made and
+//     compared with the one the render used. The subscription is a passive
+//     effect and a POST or GET from another surface can resolve between the
+//     render and it; a listener attached by hand missed that write, found
+//     its own ids fresh, sent nothing, and drew nothing for a minute.
+//   * A snapshot that did not change is the same object, so React skips the
+//     render and whatever hangs off the object (MapLibreMapView under
+//     React.memo, its pass over every standing pin) stays put.
+//
+// A hook that is not `enabled` does not subscribe at all. A parked Discover
+// tab keeps whatever it last drew; shown again, the subscribe function
+// changes with `enabled`, React subscribes anew and reads the cache fresh.
 
-// Re-renders the caller whenever the cache changes, and nothing else.
-function useCacheVersion() {
-  const [, setSeen] = React.useState(version);
-  React.useEffect(() => subscribeTableSummaries((v) => setSeen(v)), []);
-  return version;
+const noop = () => {};
+
+// Same lines: every place maps to the same summary object.
+function sameEntries(a, b) {
+  const ka = Object.keys(a);
+  const kb = Object.keys(b);
+  return ka.length === kb.length && kb.every((k) => a[k] === b[k]);
 }
 
 // The summaries for a list of places, asked for as one POST now and again
@@ -320,21 +355,29 @@ function useCacheVersion() {
 // Discover tab, a signed out page) asks nothing and keeps whatever is cached.
 export function useTableSummaries(placeIds, party = TABLE_PARTY_DEFAULT, enabled = true) {
   const p = clampParty(party);
-  const ids = distinctPlaceIds(placeIds);
   // The ids as one string, so a list that re-renders with the same places
-  // does not restart the minute.
-  const idsKey = ids.join('\n');
-  const v = useCacheVersion();
+  // does not restart the minute or resubscribe.
+  const idsKey = distinctPlaceIds(placeIds).join('\n');
+  const lastRef = React.useRef({});
+  const getSnapshot = React.useCallback(() => {
+    const next = readTableSummaries(idsKey ? idsKey.split('\n') : [], p);
+    if (sameEntries(lastRef.current, next)) return lastRef.current;
+    lastRef.current = next;
+    return next;
+  }, [idsKey, p]);
+  const subscribe = React.useCallback((onChange) => {
+    if (!enabled || !idsKey) return noop;
+    return subscribeTableSummaries(onChange, idsKey.split('\n'), p);
+  }, [idsKey, p, enabled]);
+  const out = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   React.useEffect(() => {
-    if (!enabled || ids.length === 0) return undefined;
+    if (!enabled || !idsKey) return undefined;
+    const ids = idsKey.split('\n');
     requestTableSummaries(ids, p);
     const timer = setInterval(() => { requestTableSummaries(ids, p, { refresh: true }); }, TABLE_SUMMARY_FRESH_MS);
     return () => clearInterval(timer);
-    // ids is derived from idsKey, which is the dependency that stands for it.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [idsKey, p, enabled]);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  return React.useMemo(() => readTableSummaries(ids, p), [idsKey, p, v]);
+  return out;
 }
 
 // The summary for one place, by the GET, refreshed each minute while mounted.
@@ -343,14 +386,27 @@ export function useTableSummaries(placeIds, party = TABLE_PARTY_DEFAULT, enabled
 export function useTableSummary(placeId, party = TABLE_PARTY_DEFAULT, enabled = true) {
   const p = clampParty(party);
   const id = usableId(placeId) ? placeId : null;
-  useCacheVersion();
+  const getSnapshot = React.useCallback(() => (id ? (readTableSummary(id, p) || null) : null), [id, p]);
+  const subscribe = React.useCallback((onChange) => {
+    if (!enabled || !id) return noop;
+    return subscribeTableSummaries(onChange, [id], p);
+  }, [id, p, enabled]);
+  const out = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   React.useEffect(() => {
     if (!enabled || !id) return undefined;
     requestTableSummary(id, p);
     const timer = setInterval(() => { requestTableSummary(id, p, { refresh: true }); }, TABLE_SUMMARY_FRESH_MS);
     return () => clearInterval(timer);
   }, [id, p, enabled]);
-  return id ? (readTableSummary(id, p) || null) : null;
+  return out;
+}
+
+// Tests only: an answer written straight into the cache, as a request's
+// would be, so a test can land one at a chosen moment.
+export function seedTableSummaryForTests(placeId, party, summary) {
+  const p = clampParty(party);
+  write(placeId, p, summary);
+  notify([keyOf(placeId, p)]);
 }
 
 // Tests only: back to nothing known and nothing queued.

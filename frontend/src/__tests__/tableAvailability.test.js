@@ -89,6 +89,7 @@ const {
   useTableSummary,
   resetTableSummariesForTests,
   tableSummaryCacheSizeForTests,
+  seedTableSummaryForTests,
 } = lib;
 const TableAvailabilityModule = require('../components/venue/TableAvailability');
 const TableAvailability = TableAvailabilityModule.default;
@@ -769,5 +770,108 @@ describe('the read', () => {
     view.unmount();
     await act(async () => { jest.advanceTimersByTime(3 * TABLE_SUMMARY_FRESH_MS); await settle(); });
     expect(api.getTableSummary).toHaveBeenCalledTimes(3);
+  });
+
+  it('a write about other places renders neither hook, and hands the list the same object back', async () => {
+    api.getTableSummaries.mockImplementation((ids) => answer(ids));
+    api.getTableSummary.mockImplementation(() => Promise.resolve(live({ party: 5 })));
+    const listSeen = [];
+    const detailSeen = [];
+    function List() { listSeen.push(useTableSummaries(['a'], 5)); return null; }
+    function Detail() { detailSeen.push(useTableSummary('d', 5)); return null; }
+    await act(async () => { render(<><List /><Detail /></>); });
+    await act(async () => { await tick(0); });
+    const got = listSeen[listSeen.length - 1];
+    expect(got).toEqual({ a: live({ party: 5 }) });
+    expect(detailSeen[detailSeen.length - 1]).toEqual(live({ party: 5 }));
+    const listRenders = listSeen.length;
+    const detailRenders = detailSeen.length;
+    // Another surface's answers land: a POST for other places, a GET for
+    // another venue, and a no-data 404. None of them is about these two.
+    await act(async () => {
+      const p = requestTableSummaries(['x', 'y'], 5);
+      jest.advanceTimersByTime(0);
+      await p;
+      await requestTableSummary('z', 5);
+      api.getTableSummary.mockImplementation(() => Promise.reject(Object.assign(new Error('Not found'), { status: 404 })));
+      await requestTableSummary('w', 5);
+    });
+    expect(readTableSummaries(['x', 'y', 'z'], 5)).toEqual({ x: live({ party: 5 }), y: live({ party: 5 }), z: live({ party: 5 }) });
+    expect(listSeen.length).toBe(listRenders);
+    expect(detailSeen.length).toBe(detailRenders);
+    expect(listSeen[listSeen.length - 1]).toBe(got);
+    // Their own minute: a new answer, so a new object, and one render each.
+    api.getTableSummary.mockImplementation(() => Promise.resolve(live({ party: 5 })));
+    await act(async () => { await tick(TABLE_SUMMARY_FRESH_MS); });
+    expect(listSeen.length).toBe(listRenders + 1);
+    expect(detailSeen.length).toBe(detailRenders + 1);
+    expect(listSeen[listSeen.length - 1]).not.toBe(got);
+    expect(listSeen[listSeen.length - 1]).toEqual({ a: live({ party: 5 }) });
+  });
+
+  it('a list under another party is not rendered for a write under this one', async () => {
+    api.getTableSummaries.mockImplementation((ids) => answer(ids));
+    const seen = [];
+    function List() { seen.push(useTableSummaries(['a'], 2)); return null; }
+    await act(async () => { render(<List />); });
+    await act(async () => { await tick(0); });
+    const renders = seen.length;
+    await act(async () => {
+      const p = requestTableSummaries(['a'], 5);
+      jest.advanceTimersByTime(0);
+      await p;
+    });
+    expect(api.getTableSummaries).toHaveBeenCalledTimes(2);
+    expect(seen.length).toBe(renders);
+  });
+
+  it('a parked list does not subscribe: nothing renders it until it is shown again, when it reads the cache fresh', async () => {
+    api.getTableSummaries.mockImplementation((ids) => answer(ids));
+    const seen = [];
+    function List({ enabled }) { seen.push(Object.keys(useTableSummaries(['a'], 5, enabled)).length); return null; }
+    let view;
+    await act(async () => { view = render(<List enabled={false} />); });
+    expect(seen).toEqual([0]);
+    // Another surface fetches the parked list's own place.
+    await act(async () => {
+      const p = requestTableSummaries(['a'], 5);
+      jest.advanceTimersByTime(0);
+      await p;
+    });
+    expect(readTableSummary('a', 5)).toEqual(live({ party: 5 }));
+    expect(seen).toEqual([0]);
+    // Shown again: the render reads the cache, and the answer is fresh, so
+    // nothing new is sent.
+    await act(async () => { view.rerender(<List enabled />); });
+    await act(async () => { await tick(0); });
+    expect(seen[seen.length - 1]).toBe(1);
+    expect(api.getTableSummaries).toHaveBeenCalledTimes(1);
+  });
+
+  it('a write landing between a render and its subscription is read on subscribe, not a minute later', async () => {
+    api.getTableSummaries.mockImplementation((ids) => answer(ids));
+    api.getTableSummary.mockImplementation(() => Promise.resolve(live({ party: 5 })));
+    function List() {
+      const got = useTableSummaries(['a'], 5);
+      return <div data-testid="n">{Object.keys(got).length}</div>;
+    }
+    function Detail() {
+      const s = useTableSummary('a', 5);
+      return <div data-testid="t">{s ? 'yes' : 'no'}</div>;
+    }
+    // A layout effect runs after the render and before the subscriptions,
+    // which are passive effects: the window another surface's answer can
+    // land in.
+    function Writer() {
+      React.useLayoutEffect(() => { seedTableSummaryForTests('a', 5, live({ party: 5 })); }, []);
+      return null;
+    }
+    await act(async () => { render(<><List /><Detail /><Writer /></>); });
+    expect(screen.getByTestId('n').textContent).toBe('1');
+    expect(screen.getByTestId('t').textContent).toBe('yes');
+    // The mount's own asks found the answer fresh, so nothing went out.
+    await act(async () => { await tick(0); });
+    expect(api.getTableSummaries).not.toHaveBeenCalled();
+    expect(api.getTableSummary).not.toHaveBeenCalled();
   });
 });
