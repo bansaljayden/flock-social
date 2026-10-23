@@ -344,13 +344,23 @@ describe('the party', () => {
     expect(clampParty('6')).toBe(6);
   });
 
-  it("is the flock's going count inside one", () => {
+  it("is the flock's going count inside one, never below two", () => {
     expect(tablePartyFor({ memberCount: 5 })).toBe(5);
-    expect(tablePartyFor({ memberCount: 1 })).toBe(1);
+    expect(tablePartyFor({ memberCount: 2 })).toBe(2);
     expect(tablePartyFor({ memberCount: 45 })).toBe(30);
     expect(tablePartyFor({ memberCount: 0 })).toBe(2);
     expect(tablePartyFor({})).toBe(2);
     expect(tablePartyFor(null)).toBe(2);
+  });
+
+  it('a flock with only its host accepted is written for two, not one', () => {
+    // The host is accepted on creation and the invites are still out, so a
+    // going count of one is the planning order, not a party of one.
+    expect(tablePartyFor({ memberCount: 1 })).toBe(2);
+    expect(tablePartyFor({ memberCount: '1' })).toBe(2);
+    expect(tablePartyForFlockId([{ id: 7, memberCount: 1 }], 7)).toBe(2);
+    // Discover's own chip is not a flock and may still ask for one.
+    expect(clampParty(1)).toBe(1);
   });
 
   it("follows the flock Discover is picking for, else two", () => {

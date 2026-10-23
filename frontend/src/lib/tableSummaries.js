@@ -68,10 +68,13 @@ export function clampParty(n) {
 
 // The party for a flock: everyone who said they are going (memberCount is the
 // server's going count, accounts and guests), or the default while the flock
-// has no count yet.
+// has no count yet. A count below two is "not yet": the host is accepted the
+// moment the flock exists and the invites are still out, and a line written
+// for a table for one would be about a group that does not exist. Two is the
+// floor here and only here; Discover's own Group chip may still ask for one.
 export function tablePartyFor(flock) {
   const count = flock ? Number(flock.memberCount) : NaN;
-  if (!Number.isFinite(count) || count < TABLE_PARTY_MIN) return TABLE_PARTY_DEFAULT;
+  if (!Number.isFinite(count) || count < TABLE_PARTY_DEFAULT) return TABLE_PARTY_DEFAULT;
   return clampParty(count);
 }
 
