@@ -26,9 +26,13 @@
 //     minute behind the sensor and never costs more than one request a minute
 //     per venue.
 //   * A venue with no table data costs nothing twice. The GET's 404 and the
-//     POST's silence both mean "no data", are remembered for the same minute,
-//     and render nothing: most venues have no sensor, and that is not a
-//     failure to show.
+//     POST's silence both mean "no data", are remembered for the same minute
+//     under the place itself (the server decides absence before it looks at
+//     the party, so a Group chip change asks nothing new), and render
+//     nothing: most venues have no sensor, and that is not a failure to show.
+//   * Nothing is kept past five minutes. An answer that old is not read, and
+//     each batch of writes drops what has aged out, so the cache holds the
+//     places seen lately and not every place a session ever showed.
 //   * Nothing goes out signed out. Both routes need a session, and a signed
 //     out view of a venue (the shared invite page's map, say) has no line.
 //
@@ -124,11 +128,17 @@ export function usableSummary(s) {
 // ---- the cache ------------------------------------------------------------
 
 // `${party}|${placeId}` -> { summary: object | null, at: ms }. null is a
-// remembered "no data" answer. The three stores are const and emptied in
-// place, never swapped: the per-chunk closures in flush() read them, and a
-// closure in a loop over a reassignable binding is the no-loop-func warning
-// the build treats as an error.
+// remembered "no data" answer. The stores are const and emptied in place,
+// never swapped: the per-chunk closures in flush() read them, and a closure
+// in a loop over a reassignable binding is the no-loop-func warning the build
+// treats as an error.
 const cache = new Map();
+// placeId -> ms of the last "no data" answer for the place: the GET's 404 or
+// the POST's silence. The server decides absence (no fresh floor, tables
+// hidden) before it looks at the party, so one such answer stands for every
+// party: the venue sheet cycling its Group chips over a venue with no sensor
+// asks once, not once per chip. A real answer for the place clears it.
+const noData = new Map();
 // Keys with a request out, so a second ask for the same place joins it.
 const inFlight = new Set();
 // Place ids asked for this tick, per party, sent together on the next flush.
@@ -156,13 +166,30 @@ function notify() {
 }
 
 function write(placeId, party, summary, at = now()) {
-  cache.set(keyOf(placeId, party), { summary: usableSummary(summary) ? summary : null, at });
+  const ok = usableSummary(summary);
+  cache.set(keyOf(placeId, party), { summary: ok ? summary : null, at });
+  if (ok) noData.delete(placeId);
+  else noData.set(placeId, at);
 }
 
-// Whether the cached answer for a place is young enough to skip asking again.
+// Entries past TABLE_SUMMARY_KEEP_MS are already unreadable; dropped, so an
+// evening of panning a city does not keep every place id ever shown. Run once
+// per batch of writes. Ids on a mounted surface are rewritten every minute,
+// so nothing a surface is showing is ever swept.
+function sweep() {
+  const cutoff = now() - TABLE_SUMMARY_KEEP_MS;
+  cache.forEach((entry, key) => { if (entry.at < cutoff) cache.delete(key); });
+  noData.forEach((at, placeId) => { if (at < cutoff) noData.delete(placeId); });
+}
+
+// Whether the place was answered recently enough to skip asking again: its
+// own party's answer, or a "no data" for the place under any party.
 function isFresh(placeId, party, slackMs = 0) {
+  const limit = TABLE_SUMMARY_FRESH_MS - slackMs;
+  const none = noData.get(placeId);
+  if (none !== undefined && now() - none < limit) return true;
   const entry = cache.get(keyOf(placeId, party));
-  return !!entry && now() - entry.at < TABLE_SUMMARY_FRESH_MS - slackMs;
+  return !!entry && now() - entry.at < limit;
 }
 
 export function subscribeTableSummaries(fn) {
@@ -171,12 +198,19 @@ export function subscribeTableSummaries(fn) {
 }
 
 // The cached summary for a place: the object, null for a remembered "no
-// data", undefined when nothing has been asked or the answer has aged out.
+// data" (the place's own, under any party), undefined when nothing has been
+// asked or the answer has aged out.
 export function readTableSummary(placeId, party = TABLE_PARTY_DEFAULT) {
   const entry = cache.get(keyOf(placeId, clampParty(party)));
-  if (!entry) return undefined;
-  if (now() - entry.at > TABLE_SUMMARY_KEEP_MS) return undefined;
-  return entry.summary;
+  if (entry && now() - entry.at <= TABLE_SUMMARY_KEEP_MS) return entry.summary;
+  const none = noData.get(placeId);
+  if (none !== undefined && now() - none <= TABLE_SUMMARY_KEEP_MS) return null;
+  return undefined;
+}
+
+// Tests only: how many answers the cache is holding.
+export function tableSummaryCacheSizeForTests() {
+  return cache.size + noData.size;
 }
 
 // The summaries a list can draw now: { [placeId]: summary } for the places
@@ -194,6 +228,7 @@ export function readTableSummaries(placeIds, party = TABLE_PARTY_DEFAULT) {
 // every POST has settled; callers that only wanted the ask sent ignore it.
 async function flush() {
   flushTimer = null;
+  sweep();
   const batches = new Map(pending);
   pending.clear();
   const waiters = flushWaiters;
@@ -259,6 +294,7 @@ export function requestTableSummary(placeId, party = TABLE_PARTY_DEFAULT, { refr
   const key = keyOf(placeId, p);
   if (inFlight.has(key) || isFresh(placeId, p, refresh ? DUE_SLACK_MS : 0)) return Promise.resolve();
   inFlight.add(key);
+  sweep();
   return Promise.resolve()
     .then(() => getTableSummary(placeId, p))
     .then((data) => { write(placeId, p, data); notify(); })
@@ -320,6 +356,7 @@ export function useTableSummary(placeId, party = TABLE_PARTY_DEFAULT, enabled = 
 // Tests only: back to nothing known and nothing queued.
 export function resetTableSummariesForTests() {
   cache.clear();
+  noData.clear();
   inFlight.clear();
   pending.clear();
   if (flushTimer !== null) clearTimeout(flushTimer);

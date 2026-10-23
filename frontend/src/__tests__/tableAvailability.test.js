@@ -88,6 +88,7 @@ const {
   useTableSummaries,
   useTableSummary,
   resetTableSummariesForTests,
+  tableSummaryCacheSizeForTests,
 } = lib;
 const TableAvailabilityModule = require('../components/venue/TableAvailability');
 const TableAvailability = TableAvailabilityModule.default;
@@ -541,14 +542,89 @@ describe('the read', () => {
     expect(api.getTableSummaries).toHaveBeenCalledTimes(3);
   });
 
-  it('an answer older than five minutes is no longer read', async () => {
-    api.getTableSummaries.mockImplementation((ids) => answer(ids));
-    const p = requestTableSummaries(['a'], 5);
+  it('an answer older than five minutes is no longer read, and the next batch of writes drops it', async () => {
+    api.getTableSummaries.mockImplementation(() => answer(['a']));
+    let p = requestTableSummaries(['a', 'left-out'], 5);
     jest.advanceTimersByTime(0);
     await p;
+    expect(tableSummaryCacheSizeForTests()).toBe(3); // a, the left-out id, and its no-data memory
     jest.advanceTimersByTime(5 * 60 * 1000 + 1);
     expect(readTableSummary('a', 5)).toBeUndefined();
     expect(readTableSummaries(['a'], 5)).toEqual({});
+    // Still held until something is written; then gone, the no-data memory
+    // with it, while the fresh answer stays.
+    expect(tableSummaryCacheSizeForTests()).toBe(3);
+    api.getTableSummaries.mockImplementation(() => answer(['b']));
+    p = requestTableSummaries(['b'], 5);
+    jest.advanceTimersByTime(0);
+    await p;
+    expect(tableSummaryCacheSizeForTests()).toBe(1);
+    expect(readTableSummary('b', 5)).toEqual(live({ party: 5 }));
+    expect(readTableSummary('left-out', 5)).toBeUndefined();
+  });
+
+  it('the GET sweeps too, and a surface showing a place keeps it from being swept', async () => {
+    api.getTableSummaries.mockImplementation((ids) => answer(ids));
+    api.getTableSummary.mockImplementation(() => Promise.resolve(live({ party: 5 })));
+    let p = requestTableSummaries(['old'], 5);
+    jest.advanceTimersByTime(0);
+    await p;
+    // 'shown' is rewritten every minute, as a mounted surface's ids are.
+    for (let minute = 0; minute < 6; minute += 1) {
+      jest.advanceTimersByTime(TABLE_SUMMARY_FRESH_MS);
+      p = requestTableSummaries(['shown'], 5, { refresh: true });
+      jest.advanceTimersByTime(0);
+      await p;
+    }
+    expect(readTableSummary('shown', 5)).toEqual(live({ party: 5 }));
+    expect(readTableSummary('old', 5)).toBeUndefined();
+    await requestTableSummary('detail', 5);
+    expect(tableSummaryCacheSizeForTests()).toBe(2); // shown and detail; old is gone
+  });
+
+  it("a no-data answer is the place's, not the party's: the GET is not asked again for another party", async () => {
+    const notFound = Object.assign(new Error('Not found'), { status: 404 });
+    api.getTableSummary.mockImplementation(() => Promise.reject(notFound));
+    await requestTableSummary('a', 2);
+    expect(readTableSummary('a', 2)).toBeNull();
+    // The venue sheet's Group chips: 1 through 7, one GET for all of them.
+    for (const party of [1, 3, 4, 5, 6, 7]) await requestTableSummary('a', party);
+    expect(api.getTableSummary).toHaveBeenCalledTimes(1);
+    expect(readTableSummary('a', 5)).toBeNull();
+    expect(readTableSummaries(['a'], 7)).toEqual({});
+    // Remembered for the same minute as any answer, then asked once more.
+    jest.advanceTimersByTime(TABLE_SUMMARY_FRESH_MS + 1000);
+    await requestTableSummary('a', 5);
+    expect(api.getTableSummary).toHaveBeenCalledTimes(2);
+  });
+
+  it("the POST's silence is the place's too, and is not asked by the GET for another party", async () => {
+    api.getTableSummaries.mockImplementation(() => answer(['a']));
+    api.getTableSummary.mockImplementation(() => Promise.resolve(live({ party: 5 })));
+    const p = requestTableSummaries(['a', 'b'], 2);
+    jest.advanceTimersByTime(0);
+    await p;
+    await requestTableSummary('b', 5);
+    expect(api.getTableSummary).not.toHaveBeenCalled();
+    expect(readTableSummary('b', 5)).toBeNull();
+    // The place that answered is still asked for a party it has not been asked for.
+    await requestTableSummary('a', 5);
+    expect(api.getTableSummary).toHaveBeenCalledTimes(1);
+    expect(api.getTableSummary).toHaveBeenCalledWith('a', 5);
+  });
+
+  it('a real answer for the place clears its no-data memory', async () => {
+    const notFound = Object.assign(new Error('Not found'), { status: 404 });
+    api.getTableSummary.mockImplementation(() => Promise.reject(notFound));
+    await requestTableSummary('a', 2);
+    jest.advanceTimersByTime(TABLE_SUMMARY_FRESH_MS + 1000);
+    api.getTableSummary.mockImplementation(() => Promise.resolve(live({ party: 5 })));
+    await requestTableSummary('a', 5);
+    expect(readTableSummary('a', 5)).toEqual(live({ party: 5 }));
+    // Party two's own answer is the old null, past its minute, so it is asked
+    // again rather than held back by a memory the place has outgrown.
+    await requestTableSummary('a', 2);
+    expect(api.getTableSummary).toHaveBeenCalledTimes(3);
   });
 
   it('nothing goes out signed out', async () => {
