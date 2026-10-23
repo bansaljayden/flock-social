@@ -4693,16 +4693,25 @@ class TablesAtTheVenue(unittest.TestCase):
         self.assertEqual(rows[0][1:3], ['2', 's'])
         self.assertEqual(rows[1][1:3], ['1', 's'])
         self.assertEqual(rows[2][1:3], ['0', 'f'])
-        self.assertLessEqual(len(text), 600)
+        self.assertLessEqual(len(text), 700)
 
-    def test_forty_tables_fit_in_six_hundred_characters(self):
+    def test_forty_tables_fit_under_the_servers_cap(self):
         zones = [{'n': n, 'box': (float(n * 3), 0.0, float(n * 3 + 2.5), 3.0)} for n in range(1, 41)]
         t = main.TableTracker(zones)
         t.update(0, [])
         t.update(86400 * 2, [])
         text = t.payload(86400 * 2)
         self.assertEqual(len(text.split(';')), 40)
-        self.assertLessEqual(len(text), 600)
+        self.assertEqual(main.TableTracker.MAX_CHARS, 700)
+        self.assertLessEqual(len(text), 700)
+
+    def test_a_string_over_the_cap_ends_at_a_whole_table(self):
+        zones = [{'n': n, 'box': (float(n * 3), 0.0, float(n * 3 + 2.5), 3.0)} for n in range(1, 41)]
+        t = main.TableTracker(zones)
+        t.MAX_CHARS = 25
+        t.update(0, [])
+        text = t.payload(10)
+        self.assertEqual(text, '1:0:f:10;2:0:f:10')
 
     def test_no_frames_means_no_tables_sent(self):
         t = self.tracker()

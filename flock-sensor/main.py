@@ -3087,6 +3087,10 @@ class TableTracker:
     CLEAR_RESET = 3 * 3600.0
     STALE_AFTER = 60.0      # no frames this long: send no tables at all
     MAX_AGE = 86400
+    # The server's cap on the string. Forty tables at every limit, seats
+    # included, come to 670, so a whole list always fits; the cut below is
+    # only a safety net.
+    MAX_CHARS = 700
     RELOAD_EVERY = 30.0
 
     def __init__(self, zones=(), wait_after=None, path=None, now=None):
@@ -3235,12 +3239,12 @@ class TableTracker:
         rows = self.view(now)
         if not rows:
             return None
-        # Whole entries only, up to the server's 600 characters: a cut entry
-        # would make the server drop the lot.
+        # Whole entries only, up to MAX_CHARS: a cut entry would make the
+        # server drop the lot.
         out, size = [], 0
         for n, p, s, a in rows:
             entry = f'{n}:{p}:{s}:{a}'
-            if size + len(entry) + (1 if out else 0) > 600:
+            if size + len(entry) + (1 if out else 0) > self.MAX_CHARS:
                 break
             out.append(entry)
             size += len(entry) + (1 if len(out) > 1 else 0)
