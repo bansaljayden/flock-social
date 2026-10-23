@@ -132,6 +132,9 @@ test('the types that used to resolve to nothing now have a destination', () => {
   // A cancellation whose flock is already deleted carries no id on purpose:
   // there is no row for the visibility gate and no screen to open.
   assert.strictEqual(deepLinkPath({ type: 'flock_cancelled' }), '/?tab=chat');
+  // The owner's dashboard on its Tables tab; the table number rides only in
+  // the data payload, so a cold web tap lands on the board, not on a table.
+  assert.strictEqual(deepLinkPath({ type: 'table_alert', table: '3', state: 'w' }), '/?venue=tables');
 });
 
 test('a link is never built from an id the payload cannot vouch for', () => {

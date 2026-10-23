@@ -426,6 +426,11 @@ function deepLinkPath(data = {}) {
   // did nothing at all) and then to '/?admin=true', which the app turned into
   // the analytics dashboard, one screen short of the queue the alert names.
   if (type === 'moderation_report') return '/admin/moderation';
+  // The owner's dashboard, on its Tables tab. The table number rides in the
+  // data payload for the tap paths that read it (services/pushNavigation.js
+  // intentFromData); the link form only needs the tab, because the board shows
+  // every table and the alert is out of date by the time a cold tap lands.
+  if (type === 'table_alert') return '/?venue=tables';
   // The SOS tap is routed from the data payload, not a URL. Its live fields are
   // a person's name and their coordinates, which do not belong in a query
   // string, so this deliberately returns no deep link: a native tap and a web
