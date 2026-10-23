@@ -36,6 +36,10 @@ const {
   INGEST_STATEMENT, runIngest, TABLE_STATES_STATEMENT, runTableStates,
 } = require('./helpers/sensorStoreModel');
 
+// The unit's advisory lock, exactly as services/sensorTables.js spells it: the
+// real suite holds this same key to prove the write waits on it.
+const TABLE_LOCK_STATEMENT = /^SELECT pg_advisory_xact_lock\(hashtext\('sensor_tables:' \|\| \$1::text\)\)$/;
+
 let devices = [];
 let readings = [];
 let tableStates = [];
@@ -53,6 +57,9 @@ pool.query = (sql, params = []) => {
   const flat = String(sql).replace(/\s+/g, ' ').trim();
   queryLog.push({ sql: flat, params });
   if (INGEST_STATEMENT.test(flat)) return Promise.resolve(runIngest({ devices, readings }, params));
+  // The floor write's transaction and the unit's lock, around the statement.
+  if (/^(BEGIN|COMMIT|ROLLBACK)$/.test(flat)) return Promise.resolve({ rows: [], rowCount: 0 });
+  if (TABLE_LOCK_STATEMENT.test(flat)) return Promise.resolve({ rows: [{ pg_advisory_xact_lock: '' }], rowCount: 1 });
   if (TABLE_STATES_STATEMENT.test(flat)) {
     if (tableStatesImpl) return tableStatesImpl(params);
     return Promise.resolve(runTableStates({ tableStates }, params));
@@ -150,8 +157,30 @@ function hoursModel(placeId) {
   }));
 }
 
+// The floor write checks a client out for its transaction: BEGIN, the unit's
+// advisory lock, the statement, COMMIT (services/sensorTables.js, ONE WRITER
+// PER UNIT AT A TIME). The fake client runs every statement through pool.query
+// above, so a test's swap of pool.query still applies, and keeps what ran on
+// it in order so a test can hold the write to its transaction. The ingest
+// itself never takes a client: sensorIngest.test.js pins it to one statement.
+let clientLogs = [];
+let clientsOut = 0;
 pool.connect = async () => {
-  throw new Error('routes/sensors.js must not check a client out of the pool');
+  const ran = [];
+  clientLogs.push(ran);
+  clientsOut += 1;
+  let released = false;
+  return {
+    query(sql, params) {
+      ran.push({ sql: String(sql).replace(/\s+/g, ' ').trim(), params });
+      return pool.query(sql, params);
+    },
+    release() {
+      if (released) throw new Error('a pool client was released twice');
+      released = true;
+      clientsOut -= 1;
+    },
+  };
 };
 
 // authenticate() is replaced BEFORE the router is required, because the router
@@ -233,6 +262,8 @@ const OWNER_ID = 41;
 
 function reset() {
   queryLog = [];
+  clientLogs = [];
+  clientsOut = 0;
   readings = [];
   tableStates = [];
   tableStatesImpl = null;
@@ -771,13 +802,38 @@ test('the floor is written after the answer, and a write that never finishes can
   const res = await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: EXAMPLE }) });
   assert.strictEqual(res.status, 201, 'the answer waited for the floor');
   assert.ok(typeof release === 'function', 'the floor write did start');
-  const order = queryLog.map((q) => (INGEST_STATEMENT.test(q.sql) ? 'reading' : 'floor'));
-  assert.deepStrictEqual(order, ['reading', 'floor']);
+  const order = queryLog
+    .filter((q) => INGEST_STATEMENT.test(q.sql) || q.sql === 'BEGIN' || TABLE_STATES_STATEMENT.test(q.sql))
+    .map((q) => (INGEST_STATEMENT.test(q.sql) ? 'reading' : q.sql === 'BEGIN' ? 'transaction' : 'floor'));
+  assert.deepStrictEqual(order, ['reading', 'transaction', 'floor'], 'the ingest itself is one statement and no transaction');
   release();
   await settle();
 });
 
-test('a floor write that fails is logged and changes neither the answer nor the stored reading', async () => {
+test('the floor write is one transaction that first takes the unit\'s own advisory lock, and the client goes back to the pool', async () => {
+  reset();
+  await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: EXAMPLE }) });
+  await settle();
+  assert.strictEqual(clientLogs.length, 1, 'one client for one write');
+  const ran = clientLogs[0];
+  assert.deepStrictEqual(ran.map((q) => (TABLE_STATES_STATEMENT.test(q.sql) ? 'write' : q.sql)), [
+    'BEGIN',
+    "SELECT pg_advisory_xact_lock(hashtext('sensor_tables:' || $1::text))",
+    'write',
+    'COMMIT',
+  ], 'the lock is taken inside the transaction and before the write');
+  assert.deepStrictEqual(ran[1].params, ['flux_tables_01'], 'the lock is the unit\'s, so two units never wait on each other');
+  assert.strictEqual(clientsOut, 0, 'the client was not released');
+
+  // A second unit's write takes its own lock, under its own id.
+  await call('/api/sensors/data', { apiKey: OTHER_KEY, body: reading({ tables: '1:0:f:5' }) });
+  await settle();
+  assert.strictEqual(clientLogs.length, 2);
+  assert.deepStrictEqual(clientLogs[1][1].params, ['flux_tables_02']);
+  assert.strictEqual(clientsOut, 0);
+});
+
+test('a floor write that fails is logged, rolled back and its client released, and changes neither the answer nor the stored reading', async () => {
   reset();
   tableStatesImpl = () => Promise.reject(new Error('relation "sensor_table_states" is on fire'));
   let res;
@@ -790,6 +846,8 @@ test('a floor write that fails is logged and changes neither the answer nor the 
   assert.strictEqual(readings.length, 1);
   assert.deepStrictEqual(countsOf(readings[0]), [4, 2, 1, 1]);
   assert.ok(lines.some((l) => /Table states for flux_tables_01 failed after the reading was stored/.test(l)), lines.join('\n'));
+  assert.strictEqual(clientLogs[0][clientLogs[0].length - 1].sql, 'ROLLBACK', 'a failed write must not leave its transaction open');
+  assert.strictEqual(clientsOut, 0, 'a client checked out and never released is how a Node service dies slowly');
 });
 
 test('a floor write that throws before it ever returns a promise is caught the same way', async () => {

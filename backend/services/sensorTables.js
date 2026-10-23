@@ -248,6 +248,20 @@ function noteIgnoredTables(deviceId, reason, now = Date.now()) {
 // gone and saved touch disjoint rows (in the reading or not), and the parse
 // guarantees each table appears once, so no row is written twice.
 //
+// ONE WRITER PER UNIT AT A TIME. The statement runs in a transaction that
+// first takes a transaction-scoped advisory lock on the unit, so two table
+// writes for one unit run one after the other. Two can overlap: the ingest
+// never awaits this, the pool has twenty connections, and a drain delivers a
+// reading every two seconds. Without the lock an older reading's statement
+// could start before a newer one's commit and read the snapshot from before
+// it: its gate would say fresh, its DELETE would remove a table the newer
+// reading had just written, and its upsert would bring back one the newer
+// reading removed, and the floor would be wrong until the next reading. With
+// it, the second statement starts after the first commits, sees its rows,
+// and the gate holds. The lock is released with the commit. BEGIN, the lock
+// and COMMIT are three more short round trips on one connection, all after
+// the device has its answer, so they cost nothing anybody waits for.
+//
 // Every parameter has one cast, used the same way each time it appears, for
 // __tests__/sqlParameterTypes.test.js.
 // ---------------------------------------------------------------------------
@@ -257,6 +271,11 @@ function noteIgnoredTables(deviceId, reason, now = Date.now()) {
 // stale rather than shown an old one as now. The alert reads the same number,
 // below, so a push never describes a floor the dashboard would call stale.
 const TABLES_STALE_AFTER_MINUTES = 3;
+
+// The unit's lock (ONE WRITER PER UNIT AT A TIME above), in the namespaced
+// form every advisory lock in this codebase uses, so it can never collide
+// with a vote's or a budget's.
+const TABLE_WRITE_LOCK_SQL = "SELECT pg_advisory_xact_lock(hashtext('sensor_tables:' || $1::text))";
 
 const TABLE_STATES_SQL = `
   WITH reading AS (
@@ -315,18 +334,29 @@ const TABLE_STATES_SQL = `
  * rows.
  */
 async function storeTableStates(device, tables, recordedAt) {
-  const { rows } = await pool.query(TABLE_STATES_SQL, [
-    device.device_id,
-    device.venue_place_id,
-    recordedAt,
-    tables.map((t) => t.number),
-    tables.map((t) => t.people),
-    tables.map((t) => t.state),
-    tables.map((t) => t.seconds),
-    // null where the entry carried no seat count; the upsert keeps the old one.
-    tables.map((t) => (t.seats === undefined ? null : t.seats)),
-  ]);
-  return rows;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(TABLE_WRITE_LOCK_SQL, [device.device_id]);
+    const { rows } = await client.query(TABLE_STATES_SQL, [
+      device.device_id,
+      device.venue_place_id,
+      recordedAt,
+      tables.map((t) => t.number),
+      tables.map((t) => t.people),
+      tables.map((t) => t.state),
+      tables.map((t) => t.seconds),
+      // null where the entry carried no seat count; the upsert keeps the old one.
+      tables.map((t) => (t.seats === undefined ? null : t.seats)),
+    ]);
+    await client.query('COMMIT');
+    return rows;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 // ---------------------------------------------------------------------------

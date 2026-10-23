@@ -527,6 +527,44 @@ test('on the real schema: an older live reading arriving after a newer one chang
   assert.deepEqual(await floorShape(), ['1:2:w', '2:0:f']);
 });
 
+// Waits until `n` statements matching `like` are blocked on a lock.
+async function blockedOnLock(like, n) {
+  for (let i = 0; i < 200; i += 1) {
+    const { rows: [r] } = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE $1`, [like]
+    );
+    if (r.n >= n) return r.n;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return 0;
+}
+
+test('on the real schema: a unit\'s table write waits on the unit\'s advisory lock, so two writes for one unit run one after the other', async () => {
+  // THE RACE. The ingest never awaits the floor write and a drain delivers a
+  // reading every two seconds, so two writes for one unit can overlap, and an
+  // older one that read its snapshot before the newer committed would pass
+  // its own gate and undo the newer's rows. The write therefore runs behind a
+  // per-unit advisory lock. Held here under the key the service spells, so a
+  // key spelled differently on either side fails this test rather than
+  // letting two writes through.
+  const blocker = await pool.connect();
+  let waiting = 0;
+  try {
+    await blocker.query('BEGIN');
+    await blocker.query("SELECT pg_advisory_xact_lock(hashtext('sensor_tables:' || $1::text))", ['sensor_live']);
+    const res = await push(reading({ tables: '1:2:s:60' }));
+    assert.equal(res.status, 201, JSON.stringify(res.body));
+    waiting = await blockedOnLock("%pg_advisory_xact_lock(hashtext('sensor_tables:%", 1);
+    assert.deepEqual(await floorShape(), [], 'the write ran while another writer held the unit');
+  } finally {
+    await blocker.query('ROLLBACK').catch(() => {});
+    blocker.release();
+  }
+  assert.equal(waiting, 1, 'the write must have been waiting on the lock for this to test anything');
+  await settleTables();
+  assert.deepEqual(await floorShape(), ['1:2:s'], 'the write goes through once the lock is free');
+});
+
 test('on the real schema: a clock running ahead is capped at the server clock, and a deleted unit takes its tables', async () => {
   const res = await push(reading({ recorded_at: new Date(Date.now() + 90 * 1000).toISOString(), tables: '1:2:s:0' }));
   assert.equal(res.status, 201, JSON.stringify(res.body));
