@@ -9,7 +9,11 @@
  *     and sending readings with no tables in them, and the Live Sensor card
  *     on Analytics may be calling the same box online.
  *   - The tables that need someone, longest first.
- *   - The table likely to free up next (nextFreePick in lib/venueTables.js).
+ *   - The table likely to free up next (nextFreePick in lib/venueTables.js),
+ *     with the server's estimate of when ("likely free around 8:10 PM") when
+ *     the table carries one, else how long its party has sat. The time is on
+ *     the venue's clock when the dashboard has its zone, else this device's,
+ *     and a line under the tiles says which whenever a time is printed.
  *   - One tile per table, in number order, with its state in words, so no
  *     state rests on colour alone: free is green, seated red, needs clearing a
  *     pale yellow with a dashed edge, and a party nobody has stopped by for is
@@ -28,16 +32,19 @@
  * them for 10 minutes), so it clears the board: no tile from an earlier
  * reading stays up as if live.
  *
- * One interval drives every clock on the board, so the tiles tick together and
- * there is one timer to clear when the board goes. The words and arithmetic
- * are lib/venueTables.js.
+ * One clock drives every running figure on the tab (`now`, from
+ * useTablesClock in VenueTablesTab), so the tiles tick together and there is
+ * one timer to clear when the tab goes. The words and arithmetic are
+ * lib/venueTables.js.
  */
-import React, { useEffect, useState } from 'react';
-import TablesSection from './TablesSection';
+import React from 'react';
+import TablesSection, { STALE_OPACITY } from './TablesSection';
 import {
   TABLE_STATE_WORDS,
+  clockIn,
+  clockWords,
   freeSummary,
-  nextFreeText,
+  nextFreeLine,
   peopleText,
   refreshLines,
   seatsText,
@@ -54,9 +61,6 @@ import {
 // themes too: 6.81:1 on that fill. A theme token would turn cream after dark
 // and sink into the amber.
 const ON_AMBER_INK = '#1e293b';
-
-// How far the live part of the board fades while the readings have stopped.
-const STALE_OPACITY = 0.55;
 
 function tileLook(state, colors) {
   if (state === 'waiting') {
@@ -142,19 +146,9 @@ function TableTile({ table, clockAt, colors }) {
   );
 }
 
-export default function TablesBoard({ data, colors }) {
+export default function TablesBoard({ data, colors, now, timeZone }) {
   const tables = tablesFrom(data);
   const hasTables = tables.length > 0;
-  const [now, setNow] = useState(() => Date.now());
-
-  useEffect(() => {
-    if (!hasTables) return undefined;
-    // From the moment there are tables to time, not from when the board
-    // mounted: it can mount on the unavailable line and get tables later.
-    setNow(Date.now());
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, [hasTables]);
 
   // `undefined` is the visit's first read still out: the tab is in the bar
   // from the first paint for a venue whose tables this device has seen
@@ -190,7 +184,8 @@ export default function TablesBoard({ data, colors }) {
   const clockAt = stale ? updatedAtMs : unrefreshed ? data.readAt : now;
   const frozen = stale || unrefreshed;
   const alerts = tableAlerts(tables, clockAt);
-  const nextFree = nextFreeText(data, tables, clockAt);
+  const clock = clockIn(timeZone);
+  const nextFree = nextFreeLine(data, tables, clockAt, clock);
   // One line in place of the summary while the board is not live. A failed
   // refresh is this side's problem and says so first; the readings having
   // stopped is the box's, said when the refresh itself works.
@@ -224,7 +219,7 @@ export default function TablesBoard({ data, colors }) {
         )}
 
         {nextFree && (
-          <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 10px', lineHeight: 1.45 }}>{nextFree}</p>
+          <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 10px', lineHeight: 1.45 }}>{nextFree.text}</p>
         )}
 
         <ul aria-label="All tables" style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(112px, 1fr))', gap: '8px' }}>
@@ -233,6 +228,9 @@ export default function TablesBoard({ data, colors }) {
           ))}
         </ul>
       </div>
+      {nextFree && nextFree.timed && (
+        <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '8px 0 0', lineHeight: 1.45 }}>{`Times on ${clockWords(clock.venue)}.`}</p>
+      )}
     </TablesSection>
   );
 }

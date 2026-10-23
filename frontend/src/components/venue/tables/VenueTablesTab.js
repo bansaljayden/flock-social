@@ -5,27 +5,49 @@
  * table, this visit or on an earlier visit this device remembers, or whose
  * plan the server refused while saying it has tables (`ownerTablesSeen` in
  * App.js), so a venue without table zones never sees it. The server checks the
- * plan on both table routes; the dashboard draws the lock for its refusal and
+ * plan on every table route; the dashboard draws the lock for its refusal and
  * repeats the Roost gate Live Sensor has, and this component renders only for
  * a plan that includes it. The data arrives as props from App.js: the tables
  * every 15 seconds while the dashboard is open, the hours once per open and
- * again while that read has failed; both undefined, drawn as skeletons, until
- * the visit's first read answers.
+ * again while that read has failed; and, while this tab is on screen with
+ * tables on the board, the walk-in waits on the tables' loop, the incoming
+ * flocks once a minute and the turn-time stats once per visit. Each is
+ * undefined, drawn as a skeleton, until the visit's first read answers.
  *
  * The tab is a stack of sections, each its own card and its own component, in
- * the order a manager reads them: the live board first, then the week by hour.
- * A section added later is one more line at the end of the stack and changes
- * nothing above it. TablesSection is the card frame they share.
+ * the order a manager reads them: tonight first (the live board, the waits at
+ * the door, who is coming), then the week (tables in use by hour, turn
+ * times). A section added later is one more line in the stack and changes
+ * nothing above it. TablesSection is the card frame they share, and
+ * useTablesClock the one clock every running figure reads.
+ *
+ * The three sections that only mean something with tables on the board (the
+ * waits, the incoming flocks, the turn times) are drawn while the board has
+ * tables, and while the visit's first read is still out, when the board is a
+ * skeleton and so are they. After a read that failed or came back empty the
+ * board says so alone: App.js reads none of the three without tables, so a
+ * skeleton for them would wait for nothing.
  */
 import React from 'react';
 import TablesBoard from './TablesBoard';
 import TablesByHour from './TablesByHour';
+import TablesIncoming from './TablesIncoming';
+import TablesTurnTimes from './TablesTurnTimes';
+import TablesWaits from './TablesWaits';
+import useTablesClock from './useTablesClock';
+import { tablesFrom } from '../../../lib/venueTables';
 
-export default function VenueTablesTab({ data, hours, colors, wellPx, timeZone }) {
+export default function VenueTablesTab({ data, hours, waits, incoming, stats, colors, wellPx, timeZone }) {
+  const live = tablesFrom(data).length > 0;
+  const pending = data === undefined;
+  const now = useTablesClock(live);
   return (
     <>
-      <TablesBoard data={data} colors={colors} />
+      <TablesBoard data={data} colors={colors} now={now} timeZone={timeZone} />
+      {(live || pending) && <TablesWaits waits={pending ? undefined : waits} colors={colors} now={now} />}
+      {live && <TablesIncoming incoming={incoming} colors={colors} now={now} timeZone={timeZone} />}
       <TablesByHour hours={hours} colors={colors} wellPx={wellPx} timeZone={timeZone} />
+      {(live || pending) && <TablesTurnTimes stats={pending ? undefined : stats} colors={colors} />}
     </>
   );
 }
