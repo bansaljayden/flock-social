@@ -54,7 +54,7 @@ const INDEX_HTML = fs.readFileSync(path.join(FRONTEND, 'public', 'index.html'), 
 const PAGES = [
   // /about moved onto the landing page's system on 2026-10-21, so its way home is
   // the wordmark in the top bar, like /research.
-  { file: 'AboutPage.js', route: '/about', title: 'About Flock | Flock', back: '.lp-brand' },
+  { file: 'AboutPage.js', route: '/about', title: 'About Flock: Jayden Bansal and Asad Ali | Flock', back: '.lp-brand' },
   { file: 'SupportPage.js', route: '/support', title: 'Support and common questions | Flock' },
   { file: 'PrivacyPolicy.js', route: '/privacy', title: 'Privacy Policy | Flock' },
   { file: 'TermsOfService.js', route: '/terms', title: 'Terms of Service and EULA | Flock' },

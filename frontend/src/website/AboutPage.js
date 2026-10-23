@@ -24,7 +24,9 @@ const YOUTUBE_URL = 'https://www.youtube.com/@flock-social2026';
 //   iPhone app in App Store review; no venue charged; Flock Pro not on public sale
 // The photos, the bios, the full story and the milestone details are
 // placeholders until the founders write them.
-const DESCRIPTION = 'Who makes Flock, what it holds to, where it stands, and how to reach the people behind it.';
+// The names are in the title and description because the page is what a
+// search for either name, or for the company, should land on.
+const DESCRIPTION = 'Flock, an app for making plans with friends, is made by Jayden Bansal (Solo Technical Founder & CEO) and Asad Ali (Growth & Competitions Lead).';
 
 const PEOPLE = [
   { name: 'Jayden Bansal', role: 'Solo Technical Founder & CEO', line: 'An 11th grader in Pennsylvania who started Flock and builds all of it, from the app to the Flux sensor.' },
@@ -54,7 +56,7 @@ export default function AboutPage() {
   const pageInert = menu.menuOpen ? { inert: true } : {};
 
   useEffect(() => {
-    document.title = 'About Flock | Flock';
+    document.title = 'About Flock: Jayden Bansal and Asad Ali | Flock';
     const meta = document.querySelector('meta[name="description"]');
     if (meta) meta.setAttribute('content', DESCRIPTION);
   }, []);

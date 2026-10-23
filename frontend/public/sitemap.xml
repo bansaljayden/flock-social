@@ -7,6 +7,10 @@
   <lastmod> that is not maintained by the deploy is worse than none.
   Keep this list in step with the route table in src/index.js and with the
   canonical Link headers in vercel.json.
+  IndexNow (Bing, and through it DuckDuckGo and Yahoo): the key is the public
+  file /46ad557949bb64bf58b495700088586e.txt. After a deploy that changes these
+  pages, POST this list to https://api.indexnow.org/indexnow with that key and
+  keyLocation, and the engines re-read them without waiting for a crawl.
 -->
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url><loc>https://www.flockcorp.com/</loc></url>

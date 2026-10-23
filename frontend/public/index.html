@@ -232,6 +232,12 @@
            listing 404s until Apple approves the app (checked 2026-08-14),
            and LandingPage.js keeps APP_STORE_LIVE=false for the same reason.
            Add it in the same change that flips that flag.
+         - sameAs lists only profiles the site itself links to: the YouTube
+           channel (footer and /about) and the GitHub repository (home page).
+           The two Person entries carry the names and titles /about shows, in
+           the same words, so a search for either name can resolve to Flock.
+           The address is the state only, as /about says it ("a Pennsylvania
+           company").
          - operatingSystem stays generic. The iOS build is on TestFlight, not
            the App Store, so claiming iOS here would outrun the shipping
            product.
@@ -264,6 +270,7 @@
           "@type": "Organization",
           "@id": "https://www.flockcorp.com/#organization",
           "name": "Flock",
+          "alternateName": "Flock Social",
           "legalName": "Flock Social LLC",
           "url": "https://www.flockcorp.com/",
           "email": "social@flockcorp.com",
@@ -276,18 +283,41 @@
             "height": 512,
             "caption": "Flock"
           },
-          "founder": {
-            "@type": "Person",
-            "name": "Jayden Bansal",
-            "jobTitle": "Founder and CEO"
+          "foundingDate": "2026-09",
+          "address": {
+            "@type": "PostalAddress",
+            "addressRegion": "PA",
+            "addressCountry": "US"
           },
+          "founder": { "@id": "https://www.flockcorp.com/#jayden-bansal" },
+          "sameAs": [
+            "https://www.youtube.com/@flock-social2026",
+            "https://github.com/bansaljayden/flock-social"
+          ],
           "award": "1st place, PA DECA States"
+        },
+        {
+          "@type": "Person",
+          "@id": "https://www.flockcorp.com/#jayden-bansal",
+          "name": "Jayden Bansal",
+          "jobTitle": "Solo Technical Founder & CEO",
+          "url": "https://www.flockcorp.com/about",
+          "worksFor": { "@id": "https://www.flockcorp.com/#organization" }
+        },
+        {
+          "@type": "Person",
+          "@id": "https://www.flockcorp.com/#asad-ali",
+          "name": "Asad Ali",
+          "jobTitle": "Growth & Competitions Lead",
+          "url": "https://www.flockcorp.com/about",
+          "worksFor": { "@id": "https://www.flockcorp.com/#organization" }
         },
         {
           "@type": "WebSite",
           "@id": "https://www.flockcorp.com/#website",
           "url": "https://www.flockcorp.com/",
           "name": "Flock",
+          "alternateName": "Flock Social",
           "description": "A free app for making plans with friends. The group votes on where to go, and budgets stay private.",
           "inLanguage": "en-US",
           "publisher": { "@id": "https://www.flockcorp.com/#organization" }
