@@ -3843,12 +3843,16 @@ export async function getSensorTableHours(placeId) {
 // Table availability for the people choosing a venue, never a table's detail.
 // Both answer any signed-in user with the same shape per place:
 // { open, total, party, fits_now, wait_minutes, busy_hours: [{ dow, hour }],
-// updated_at, stale }, where `party` is the group size the fit was judged
-// for (1 to 30), `dow` is 0 to 6 with 0 Sunday, `hour` 0 to 23 on the venue's
-// own clock, and `stale` true once the sensor has stopped reporting. The GET
-// answers 404 for a venue with no table data, or one that hid it; the POST
-// simply leaves such venues out of `summaries`. lib/tableSummaries.js is the
-// one caller of either, and it batches, caches and swallows the 404.
+// timeZone, updated_at, stale }, where `party` is the group size the fit was
+// judged for (1 to 30); `fits_now` is true, false, or null when tables are
+// open and no open table's fit for the party is known (`wait_minutes` is
+// null then too); `timeZone` is the venue's IANA zone, or null when the
+// server does not know it; `dow` is 0 to 6 with 0 Sunday and `hour` 0 to 23
+// on that zone's clock (UTC when the zone is null); and `stale` is true once
+// the sensor has stopped reporting. The GET answers 404 for a venue with no
+// table data, or one that hid it; the POST simply leaves such venues out of
+// `summaries`. lib/tableSummaries.js is the one caller of either, and it
+// batches, caches and swallows the 404.
 export async function getTableSummary(placeId, party) {
   return request(`/api/sensors/${encodeURIComponent(placeId)}/tables/summary?party=${encodeURIComponent(party)}`);
 }

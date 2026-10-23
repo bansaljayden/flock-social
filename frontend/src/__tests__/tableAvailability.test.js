@@ -102,9 +102,14 @@ const {
   hourLabel,
 } = TableAvailabilityModule;
 
+// The venue's zone is this machine's, so a local Date below is the same wall
+// clock on the venue's clock and the "nearest" answers do not move with the
+// machine running the suite.
+const ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
 const live = (over = {}) => ({
   open: 3, total: 10, party: 5, fits_now: true, wait_minutes: null, busy_hours: [],
-  updated_at: '2026-10-23T20:00:00Z', stale: false, ...over,
+  timeZone: ZONE, updated_at: '2026-10-23T20:00:00Z', stale: false, ...over,
 });
 
 // A Friday at 7:30 PM, so "nearest" has a fixed answer.
@@ -158,23 +163,59 @@ describe('the live sentence', () => {
   it('a known wait is said as about so many minutes', () => {
     expect(tableLineText(live({ fits_now: false, wait_minutes: 10 }), 5)).toBe('About 10 min for a table for 5');
     expect(tableLineText(live({ fits_now: false, wait_minutes: 7.6 }), 5)).toBe('About 8 min for a table for 5');
+    // Compact: the wait and the party, nothing a cut row could lose first.
+    expect(tableLineText(live({ fits_now: false, wait_minutes: 10 }), 5, true)).toBe('About 10 min for 5');
+    expect(tableLineText(live({ fits_now: false, wait_minutes: 7.6, party: 2 }), 2, true)).toBe('About 8 min for 2');
   });
 
-  it('tables open that do not seat the party are counted', () => {
+  it('tables open that the server says do not seat the party are counted, verdict first in the compact form', () => {
     expect(tableLineText(live({ fits_now: false, wait_minutes: null, open: 3 }), 5)).toBe('3 tables open, none seats 5');
+    expect(tableLineText(live({ fits_now: false, wait_minutes: null, open: 3 }), 5, true)).toBe('None seats 5, 3 open');
+    expect(tableLineText(live({ fits_now: false, wait_minutes: null, open: 12 }), 5, true)).toBe('None seats 5, 12 open');
+  });
+
+  it('tables open whose fit for the party is not known are counted with no verdict', () => {
+    // fits_now null: the server knows tables are open and not whether any
+    // seats the party (no seat count sent, no seating seen yet). The words
+    // say what it knows and nothing about what it does not.
+    expect(tableLineText(live({ fits_now: null, wait_minutes: null, open: 3 }), 5)).toBe('3 tables open');
+    expect(tableLineText(live({ fits_now: null, wait_minutes: null, open: 3 }), 5, true)).toBe('3 tables open');
+    expect(tableLineText(live({ fits_now: null, wait_minutes: null, open: 1 }), 5)).toBe('1 table open');
+    expect(tableLineText(live({ fits_now: undefined, wait_minutes: null, open: 3 }), 5)).toBe('3 tables open');
+    expect(tableLineText(live({ fits_now: null, wait_minutes: null, open: 3 }), 5)).not.toMatch(/seats|for 5/);
   });
 
   it('one table takes its singular', () => {
     expect(tableLineText(live({ fits_now: false, wait_minutes: null, open: 1 }), 5)).toBe('1 table open, none seats 5');
+    expect(tableLineText(live({ fits_now: false, wait_minutes: null, open: 1 }), 5, true)).toBe('None seats 5, 1 open');
+    expect(tableLineText(live({ fits_now: null, wait_minutes: null, open: 1 }), 5, true)).toBe('1 table open');
   });
 
   it('no tables and no wait is said plainly', () => {
     expect(tableLineText(live({ fits_now: false, wait_minutes: null, open: 0 }), 5)).toBe('No tables open right now');
     expect(tableLineText(live({ fits_now: false, wait_minutes: 0, open: 0 }), 5)).toBe('No tables open right now');
+    expect(tableLineText(live({ fits_now: null, wait_minutes: null, open: 0 }), 5)).toBe('No tables open right now');
   });
 
   it('the wait is tried before the open count', () => {
     expect(tableLineText(live({ fits_now: false, wait_minutes: 12, open: 2 }), 5)).toBe('About 12 min for a table for 5');
+  });
+
+  it('the compact forms put what the group needs first, so a cut row keeps it', () => {
+    // The chat card's text column is about 120px on a 320px phone, roughly
+    // twenty characters of this line, and the row ellipsizes from the end.
+    const WIDTH = 20;
+    const wait = tableLineText(live({ fits_now: false, wait_minutes: 10 }), 5, true);
+    const none = tableLineText(live({ fits_now: false, wait_minutes: null, open: 3 }), 5, true);
+    const unknown = tableLineText(live({ fits_now: null, wait_minutes: null, open: 3 }), 5, true);
+    const fits = tableLineText(live(), 5, true);
+    expect(wait.length).toBeLessThanOrEqual(WIDTH);
+    expect(none.length).toBeLessThanOrEqual(WIDTH);
+    expect(unknown.length).toBeLessThanOrEqual(WIDTH);
+    expect(fits.length).toBeLessThanOrEqual(WIDTH);
+    // Even the widest values keep the verdict inside the first twenty.
+    expect(tableLineText(live({ fits_now: false, wait_minutes: 120, party: 30 }), 30, true).slice(0, WIDTH)).toBe('About 120 min for 30');
+    expect(tableLineText(live({ fits_now: false, wait_minutes: null, open: 99, party: 30 }), 30, true).slice(0, WIDTH)).toMatch(/^None seats 30/);
   });
 
   it('nothing is said from nothing', () => {
@@ -189,13 +230,17 @@ describe('the live sentence', () => {
   it('carries no em dash and none of the banned words', () => {
     const all = [
       tableLineText(live(), 5),
+      tableLineText(live(), 5, true),
       tableLineText(live({ fits_now: false, wait_minutes: 10 }), 5),
+      tableLineText(live({ fits_now: false, wait_minutes: 10 }), 5, true),
       tableLineText(live({ fits_now: false, wait_minutes: null, open: 3 }), 5),
+      tableLineText(live({ fits_now: false, wait_minutes: null, open: 3 }), 5, true),
+      tableLineText(live({ fits_now: null, wait_minutes: null, open: 3 }), 5),
       tableLineText(live({ fits_now: false, wait_minutes: null, open: 0 }), 5),
       busyHoursText(live({ busy_hours: [{ dow: 5, hour: 20 }, { dow: 5, hour: 21 }] }), 2, FRIDAY_1930),
     ].join(' ');
     noEmDash(all);
-    expect(all).not.toMatch(/seamless|effortless|unlock|likely/i);
+    expect(all).not.toMatch(/seamless|effortless|unlock|likely|~/i);
   });
 });
 
@@ -296,6 +341,52 @@ describe('busy hours', () => {
     expect(busyRanges([{ dow: 7, hour: 20 }, { dow: 5, hour: 24 }, { dow: '5', hour: 20 }, null, { dow: 5 }], FRIDAY_1930)).toEqual([]);
     expect(busyHoursText(live({ busy_hours: 'Fri' }), 2, FRIDAY_1930)).toBeNull();
     expect(busyHoursText(live({ busy_hours: [] }), 2, FRIDAY_1930)).toBeNull();
+  });
+
+  it('a summary with no zone says no busy hours: its hours are UTC, which means nothing to the group', () => {
+    const hours = [{ dow: 5, hour: 20 }, { dow: 5, hour: 21 }];
+    for (const timeZone of [null, undefined, '', 7]) {
+      expect(busyHoursText(live({ busy_hours: hours, timeZone }), 2, FRIDAY_1930)).toBeNull();
+      expect(tableCompactText(live({ stale: true, busy_hours: hours, timeZone }), 5, FRIDAY_1930)).toBeNull();
+    }
+    // The live line still stands; only the pattern is withheld.
+    expect(tableCompactText(live({ busy_hours: hours, timeZone: null }), 5, FRIDAY_1930)).toBe('Table for 5 open now');
+    expect(tableLineText(live({ busy_hours: hours, timeZone: null }), 5)).toBe('Table for 5 open now');
+    // Nothing in the words says UTC either way.
+    expect(busyHoursText(live({ busy_hours: hours }), 2, FRIDAY_1930)).toBe('Usually full Fri 8 to 10 PM');
+    expect(busyHoursText(live({ busy_hours: hours }), 2, FRIDAY_1930)).not.toMatch(/UTC/);
+  });
+
+  it('the full form with no zone draws the live line and its caption, and no busy line', () => {
+    const { container } = render(<TableAvailability summary={live({ busy_hours: [{ dow: 5, hour: 21 }], timeZone: null })} party={5} />);
+    const lines = Array.from(container.querySelectorAll('p')).map((p) => p.textContent);
+    expect(lines).toEqual(['Table for 5 open now', "Live from the venue's Flux sensor"]);
+    // Stale and no zone: nothing at all, as with no hours.
+    const stale = render(<TableAvailability summary={live({ stale: true, busy_hours: [{ dow: 5, hour: 21 }], timeZone: null })} party={5} />);
+    expect(stale.container.firstChild).toBeNull();
+  });
+
+  it("the nearest range is picked on the venue's clock, not the phone's", () => {
+    // 02:30 UTC on Saturday Oct 24: Friday 10:30 PM in New York, Friday 7:30
+    // PM in Los Angeles. The same hours read differently on each clock.
+    const now = new Date('2026-10-24T02:30:00Z');
+    const hours = [{ dow: 5, hour: 20 }, { dow: 5, hour: 21 }, { dow: 5, hour: 23 }];
+    // Los Angeles at 7:30 PM: 8 PM is half an hour away.
+    expect(busyHoursText(live({ busy_hours: hours, timeZone: 'America/Los_Angeles' }), 2, now)).toBe('Usually full Fri 8 to 10 PM and 11 PM to 12 AM');
+    // New York at 10:30 PM: 8 to 10 PM is over, 11 PM is half an hour away.
+    expect(busyHoursText(live({ busy_hours: hours, timeZone: 'America/New_York' }), 2, now)).toBe('Usually full Fri 11 PM to 12 AM and 8 to 10 PM');
+    // Tokyo, where it is already Saturday morning: Friday is six days off.
+    expect(busyHoursText(live({ busy_hours: [...hours, { dow: 6, hour: 12 }], timeZone: 'Asia/Tokyo' }), 1, now)).toBe('Usually full Sat 12 to 1 PM');
+    // The ranges themselves, by the same clock.
+    expect(busyRanges(hours, now, 'America/New_York')[0]).toEqual({ dow: 5, start: 23, end: 24 });
+    expect(busyRanges(hours, now, 'America/Los_Angeles')[0]).toEqual({ dow: 5, start: 20, end: 22 });
+  });
+
+  it("a zone this device cannot resolve falls back to the phone's clock for the order and still labels the hours", () => {
+    // The hours are on the venue's clock whatever the phone can resolve, so
+    // the label is right; only which range comes first is decided locally.
+    const s = live({ busy_hours: [{ dow: 5, hour: 20 }, { dow: 6, hour: 20 }], timeZone: 'Mars/Olympus_Mons' });
+    expect(busyHoursText(s, 2, FRIDAY_1930)).toBe('Usually full Fri 8 to 9 PM and Sat 8 to 9 PM');
   });
 
   it('the full form says the live line, then the busy hours, then the source', () => {

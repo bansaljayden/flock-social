@@ -7,8 +7,11 @@
 //   POST /api/sensors/tables/summaries { place_ids: [up to 50], party }
 //
 // Each place comes back as { open, total, party, fits_now, wait_minutes,
-// busy_hours: [{ dow, hour }], updated_at, stale }. That is the whole of what
-// a group is told: whether a table for their number is open, roughly how long
+// busy_hours: [{ dow, hour }], timeZone, updated_at, stale }: fits_now is
+// true, false, or null when tables are open and no open table's fit for the
+// party is known; timeZone is the venue's IANA zone, or null when the server
+// does not know it and the busy hours are UTC. That is the whole of what a
+// group is told: whether a table for their number is open, roughly how long
 // one takes, and when the room is usually full. Never a table's own state;
 // the owner's dashboard has that (lib/venueTablesReading.js) and nobody else.
 //
