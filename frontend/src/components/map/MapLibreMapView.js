@@ -949,7 +949,9 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     const ratingHtml = Number.isFinite(ratingValue) && ratingValue > 0
       ? `<span class="mlb-label-rating">${starSvgString(12)} ${escapeHtml(ratingValue.toFixed(1))}</span>`
       : '';
-    label.innerHTML = `<span class="mlb-label-name">${escapeHtml(venue.name || '')}</span>${ratingHtml}`;
+    // One row for the name and the rating; paintTableLine adds the table line
+    // as a second row under it when the venue's sensor answered.
+    label.innerHTML = `<span class="mlb-label-main"><span class="mlb-label-name">${escapeHtml(venue.name || '')}</span>${ratingHtml}</span>`;
     // OUT OF THE MARKER'S BOX. The label used to be laid out under the pin
     // inside the element MapLibre positions, so that element was pin plus
     // label tall, the anchor was measured on the taller box, and the pin sat
@@ -2103,9 +2105,22 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
           transition: opacity 0.18s ease, transform 0.18s ease;
           pointer-events: none;
           max-width: 180px;
+          /* A column of rows: the name and rating row, then the table line
+             when there is one. Rows start at the left and the plate is as
+             wide as its widest row, 180px at most. */
+          display: flex;
+          flex-direction: column;
+          align-items: flex-start;
+          row-gap: 2px;
+        }
+        /* The name beside the rating in one row that never wraps: a long
+           name shrinks and clamps to two lines, the rating stays beside it.
+           100% of the plate's inner width, so the clamp still happens. */
+        .mlb-label-main {
           display: flex;
           align-items: center;
           gap: 5px;
+          max-width: 100%;
         }
         .mlb-label-name {
           /* Allow up to 2 lines on long names; ellipsize if it still overflows. */
@@ -2128,12 +2143,11 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
         /* The table line, for a pin whose venue's Flux sensor answered: its
            own row inside the same plate, under the name and the rating, so
            it appears and disappears with them at the label tier. One
-           truncating row, in the plate's own width. */
-        .mlb-marker-label { flex-wrap: wrap; row-gap: 2px; }
+           truncating row, no wider than the plate's inner width. A pin with
+           no line has one row and the plate it had before the line existed. */
         .mlb-label-tables {
-          flex-basis: 100%;
           min-width: 0;
-          max-width: 166px;
+          max-width: 100%;
           font-size: 11px;
           font-weight: 600;
           color: #cbd5e1;

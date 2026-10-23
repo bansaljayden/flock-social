@@ -421,6 +421,38 @@ describe('busy hours', () => {
 });
 
 // ---------------------------------------------------------------------------
+// 3b. the map plate
+// ---------------------------------------------------------------------------
+
+describe('the map plate', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const MAP = fs.readFileSync(path.join(__dirname, '..', 'components', 'map', 'MapLibreMapView.js'), 'utf8').replace(/\r\n/g, '\n');
+
+  it('keeps the name and the rating in one row and gives the table line a row of its own', () => {
+    // The plate is a column of rows. A plate with no table line has one row
+    // and the layout it had before the line existed (measured: identical
+    // width, height, clamp and rating position for every pin without a line);
+    // only a plate with a line grows a second row. The row flex that used to
+    // wrap pushed the rating under any name wider than about 130px.
+    expect(MAP).toContain('label.innerHTML = `<span class="mlb-label-main"><span class="mlb-label-name">${escapeHtml(venue.name || \'\')}</span>${ratingHtml}</span>`;');
+    const plate = MAP.slice(MAP.indexOf('.mlb-marker-label {'), MAP.indexOf('.mlb-label-name {'));
+    expect(plate).toMatch(/display: flex;\s*flex-direction: column;\s*align-items: flex-start;\s*row-gap: 2px;/);
+    expect(plate).not.toMatch(/flex-wrap/);
+    expect(MAP).not.toMatch(/\.mlb-marker-label \{ flex-wrap: wrap/);
+    const main = MAP.slice(MAP.indexOf('.mlb-label-main {'), MAP.indexOf('.mlb-label-name {'));
+    expect(main).toMatch(/display: flex;\s*align-items: center;\s*gap: 5px;\s*max-width: 100%;/);
+    const tables = MAP.slice(MAP.indexOf('.mlb-label-tables {'));
+    const rule = tables.slice(0, tables.indexOf('}'));
+    expect(rule).toMatch(/max-width: 100%;/);
+    expect(rule).not.toMatch(/flex-basis|166px/);
+    expect(rule).toMatch(/white-space: nowrap;\s*overflow: hidden;\s*text-overflow: ellipsis;/);
+    // paintTableLine still appends the line to the plate, after the main row.
+    expect(MAP).toContain("line.className = 'mlb-label-tables';\n        label.appendChild(line);");
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 4. the party
 // ---------------------------------------------------------------------------
 
