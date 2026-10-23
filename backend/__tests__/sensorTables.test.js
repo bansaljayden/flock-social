@@ -314,6 +314,12 @@ test('every ceiling in the contract is inside the fence: forty tables, thirty pe
   assert.strictEqual(parsed.tables.length, 40);
   assert.deepStrictEqual(sensorTables.parseTables('40:0:f:0').tables,
     [{ number: 40, people: 0, state: 'f', seconds: 0, seats: null }]);
+  // Numbers run past a box's forty entries, so a venue's second box can
+  // continue the first one's numbering.
+  assert.deepStrictEqual(sensorTables.parseTables('161:0:f:0;200:2:s:30').tables, [
+    { number: 161, people: 0, state: 'f', seconds: 0, seats: null },
+    { number: 200, people: 2, state: 's', seconds: 30, seats: null },
+  ]);
 });
 
 // --- The strings the box sends (flock-sensor 1.24.0) ------------------------------
@@ -331,7 +337,7 @@ test('the box\'s strings parse: two tables seated a hundred seconds, one free; f
     { number: 3, people: 0, state: 'f', seconds: 100, seats: null },
   ]);
   const forty = boxFortyFree();
-  assert.strictEqual(forty.length, 510, 'the box writes this one at 510 characters, under the 700 cap');
+  assert.strictEqual(forty.length, 510, 'the box writes this one at 510 characters, under the 800 cap');
   const parsed = sensorTables.parseTables(forty);
   assert.strictEqual(parsed.ok, true, parsed.reason);
   assert.strictEqual(parsed.tables.length, 40);
@@ -387,21 +393,23 @@ test('a seat count out of range makes the whole value invalid, not just its entr
   assert.match(sensorTables.parseTables('1:2:s:100:31').reason, /seat count outside 1-30/);
 });
 
-test('the longest legal string, seat counts on all forty tables at every limit, fits whole under the 700 cap; 701 characters is ignored', () => {
-  // The cap is 700 so that a whole list always fits: a live reading replaces
+test('the longest legal string, seat counts on forty three-digit tables at every limit, fits whole under the 800 cap; 801 characters is ignored', () => {
+  // The cap is 800 so that a whole list always fits: a live reading replaces
   // the unit's rows, and a list the box had to cut short would read here as
-  // tables the owner removed.
-  assert.strictEqual(sensorTables.MAX_TABLES_LENGTH, 700);
-  const full = Array.from({ length: 40 }, (_, i) => `${i + 1}:30:w:86400:30`).join(';');
-  assert.strictEqual(full.length, 670);
+  // tables the owner removed. The longest list is a venue's last box, whose
+  // forty tables are numbered 161 to 200.
+  assert.strictEqual(sensorTables.MAX_TABLES_LENGTH, 800);
+  const full = Array.from({ length: 40 }, (_, i) => `${161 + i}:30:w:86400:30`).join(';');
+  assert.strictEqual(full.length, 719);
   const parsed = sensorTables.parseTables(full);
   assert.strictEqual(parsed.ok, true, parsed.reason);
   assert.strictEqual(parsed.tables.length, 40);
   assert.ok(parsed.tables.every((t) => t.seats === 30 && t.people === 30 && t.seconds === 86400));
+  assert.strictEqual(parsed.tables[39].number, 200);
 
-  const tooLong = `${full};${'9'.repeat(701 - full.length - 1)}`;
-  assert.strictEqual(tooLong.length, 701);
-  assert.deepStrictEqual(sensorTables.parseTables(tooLong), { ok: false, reason: 'longer than 700 characters' });
+  const tooLong = `${full};${'9'.repeat(801 - full.length - 1)}`;
+  assert.strictEqual(tooLong.length, 801);
+  assert.deepStrictEqual(sensorTables.parseTables(tooLong), { ok: false, reason: 'longer than 800 characters' });
 });
 
 // Every way a string can be wrong, each with the reason the parse gives. None
@@ -415,8 +423,9 @@ const INVALID = [
   ['1:0:x:5', 'a state that is not f, s, w or c'],
   ['1:0:F:5', 'an upper-case state'],
   ['0:0:f:5', 'table 0'],
-  ['41:0:f:5', 'a table above 40'],
-  ['100:0:f:5', 'a three-digit table'],
+  ['201:0:f:5', 'a table above 200'],
+  ['999:0:f:5', 'a table far above 200'],
+  ['1000:0:f:5', 'a four-digit table'],
   ['1:31:s:5', 'more than 30 people at one table'],
   ['1:0:f:86401', 'a state older than the cap of a day'],
   ['1:0:f:999999', 'a six-digit age'],
@@ -433,7 +442,7 @@ const INVALID = [
   ['1:0:f:5\n', 'a trailing newline'],
   ['1:0:f:5,2:0:f:5', 'the wrong separator'],
   [Array.from({ length: 41 }, (_, i) => `${i + 1}:0:f:5`).join(';'), 'forty-one tables'],
-  ['9'.repeat(701), 'longer than 700 characters'],
+  ['9'.repeat(801), 'longer than 800 characters'],
 ];
 
 test('the parse refuses every malformed string, and its reason never repeats the value', () => {

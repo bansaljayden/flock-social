@@ -13,7 +13,8 @@
 -- owner's dashboard has nothing to show and nobody can be told that table 3
 -- has been waiting ten minutes.
 --
--- WHAT IT HOLDS, AND WHAT IT NEVER WILL. A table number the owner chose, a
+-- WHAT IT HOLDS, AND WHAT IT NEVER WILL. A table number (1-200: a box sends at
+-- most 40 tables, but a venue with more than one box numbers them apart), a
 -- head count, a one-letter state and when that state began, and the number of
 -- seats at the table when the unit knows it. Nothing here identifies or
 -- follows a person: the box sends no track, position, image or id of anyone,
@@ -71,7 +72,7 @@ ALTER TABLE venue_sensor_data ADD COLUMN IF NOT EXISTS tables_to_clear INTEGER;
 
 CREATE TABLE IF NOT EXISTS sensor_table_states (
   sensor_device_id VARCHAR(100) NOT NULL REFERENCES sensor_devices(device_id) ON DELETE CASCADE,
-  table_no SMALLINT NOT NULL CHECK (table_no BETWEEN 1 AND 40),
+  table_no SMALLINT NOT NULL CHECK (table_no BETWEEN 1 AND 200),
   venue_place_id VARCHAR(255) NOT NULL,
   people SMALLINT NOT NULL CHECK (people BETWEEN 0 AND 30),
   state CHAR(1) NOT NULL CHECK (state IN ('f', 's', 'w', 'c')),

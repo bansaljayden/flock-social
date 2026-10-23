@@ -21,7 +21,10 @@
 // Present only when the unit has at least one table zone.
 //
 //   entries joined by `;`, each N:P:S:A or N:P:S:A:C
-//   N  table number, 1-40, unique, strictly ascending
+//   N  table number, 1-200, unique, strictly ascending. A box sends at most
+//      40 tables, but numbers run to 200 so that a venue with more than one
+//      box (a second room, a big floor) can number its tables apart: each box
+//      starts where the last one ended (TABLE_NUMBER_START on the box).
 //   P  people counted at the table now, 0-30
 //   S  f  free
 //      s  seated: a party is at the table. The box says so once someone has
@@ -43,7 +46,7 @@
 //
 //   1:0:f:340;2:3:s:845:4;3:2:w:410;4:0:c:95:6
 //
-// At most 40 entries, and nothing longer than 700 characters is looked at.
+// At most 40 entries, and nothing longer than 800 characters is looked at.
 // Any part out of range, C included, makes the whole value invalid.
 //
 // A BAD VALUE IS IGNORED, NEVER REFUSED. The Pi reads 400, 413 and 422 as "this
@@ -64,6 +67,7 @@ const pushHelper = require('./pushHelper');
 const venueEntitlements = require('./venueEntitlements');
 
 const MAX_TABLES = 40;
+const MAX_TABLE_NUMBER = 200;
 const MAX_TABLE_PEOPLE = 30;
 // The unit caps A at a day, so anything above it was not written by one.
 const MAX_STATE_SECONDS = 86400;
@@ -71,12 +75,12 @@ const MIN_TABLE_SEATS = 1;
 const MAX_TABLE_SEATS = 30;
 // The contract's ceiling, and the pattern below is never asked to look at a
 // megabyte. The longest legal string, forty tables each at every limit with a
-// seat count ("40:30:w:86400:30"), is 670 characters, so 700 always holds a
+// seat count ("200:30:w:86400:30"), is 719 characters, so 800 always holds a
 // whole list. That is the point of the number: a live reading replaces the
 // unit's rows, so a list the box had to cut short would read here as tables
 // the owner removed. The box cuts at a whole entry under the same ceiling, and
-// with 700 that path never runs on a legal list.
-const MAX_TABLES_LENGTH = 700;
+// with 800 that path never runs on a legal list.
+const MAX_TABLES_LENGTH = 800;
 
 // One entry, in canonical decimal only: no sign, no leading zero, no exponent,
 // no space. Each number is bounded in length here and in range in parseTables,
@@ -85,7 +89,7 @@ const MAX_TABLES_LENGTH = 700;
 // both ends (a JS `$` without the m flag does not match before a trailing
 // newline). Each field ends at a `:` or `;` it cannot contain, and every
 // repetition starts with a `;`, so the pattern has nothing to backtrack over.
-const TABLE_ENTRY = String.raw`[1-9]\d?:(?:0|[1-9]\d?):[fswc]:(?:0|[1-9]\d{0,4})(?::[1-9]\d?)?`;
+const TABLE_ENTRY = String.raw`[1-9]\d{0,2}:(?:0|[1-9]\d?):[fswc]:(?:0|[1-9]\d{0,4})(?::[1-9]\d?)?`;
 const TABLES_SHAPE = new RegExp(`^${TABLE_ENTRY}(?:;${TABLE_ENTRY}){0,${MAX_TABLES - 1}}$`);
 
 // The words the owner's dashboard is given for each letter, so no client has
@@ -112,7 +116,7 @@ function parseTables(raw) {
     const people = Number(p);
     const seconds = Number(a);
     const seats = c === undefined ? null : Number(c);
-    if (number > MAX_TABLES) return { ok: false, reason: `a table number above ${MAX_TABLES}` };
+    if (number > MAX_TABLE_NUMBER) return { ok: false, reason: `a table number above ${MAX_TABLE_NUMBER}` };
     // Strictly ascending is what makes the numbers unique, and a repeated
     // number would ask the state writer to set one row twice in one statement.
     if (number <= previous) return { ok: false, reason: 'table numbers not strictly ascending' };
@@ -463,6 +467,7 @@ function applyTableReading(device, tables, recordedAt) {
 
 module.exports = {
   MAX_TABLES,
+  MAX_TABLE_NUMBER,
   MAX_TABLE_PEOPLE,
   MAX_STATE_SECONDS,
   MIN_TABLE_SEATS,
