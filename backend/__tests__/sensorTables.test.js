@@ -217,10 +217,10 @@ test('the example from the contract parses to four tables in order, one per stat
   assert.deepStrictEqual(parsed, {
     ok: true,
     tables: [
-      { number: 1, people: 0, state: 'f', seconds: 340 },
-      { number: 2, people: 3, state: 's', seconds: 845 },
-      { number: 3, people: 2, state: 'w', seconds: 410 },
-      { number: 4, people: 0, state: 'c', seconds: 95 },
+      { number: 1, people: 0, state: 'f', seconds: 340, seats: null },
+      { number: 2, people: 3, state: 's', seconds: 845, seats: null },
+      { number: 3, people: 2, state: 'w', seconds: 410, seats: null },
+      { number: 4, people: 0, state: 'c', seconds: 95, seats: null },
     ],
   });
 });
@@ -231,7 +231,89 @@ test('every ceiling in the contract is inside the fence: forty tables, thirty pe
   const parsed = sensorTables.parseTables(full);
   assert.strictEqual(parsed.ok, true, parsed.reason);
   assert.strictEqual(parsed.tables.length, 40);
-  assert.deepStrictEqual(sensorTables.parseTables('40:0:f:0').tables, [{ number: 40, people: 0, state: 'f', seconds: 0 }]);
+  assert.deepStrictEqual(sensorTables.parseTables('40:0:f:0').tables,
+    [{ number: 40, people: 0, state: 'f', seconds: 0, seats: null }]);
+});
+
+// --- The strings the box sends (flock-sensor 1.24.0) ------------------------------
+//
+// Copied from the box's own code, so the parse is held to what the Pi actually
+// writes and not only to what this file imagines. The box sends no seat count
+// yet; that arrives with the table camera, and only when it is known.
+const BOX_TWO_SEATED = '1:2:s:100;2:1:s:100;3:0:f:100';
+const boxFortyFree = () => Array.from({ length: 40 }, (_, i) => `${i + 1}:0:f:86400`).join(';');
+
+test('the box\'s strings parse: two tables seated a hundred seconds, one free; forty free tables at the cap', () => {
+  assert.deepStrictEqual(sensorTables.parseTables(BOX_TWO_SEATED).tables, [
+    { number: 1, people: 2, state: 's', seconds: 100, seats: null },
+    { number: 2, people: 1, state: 's', seconds: 100, seats: null },
+    { number: 3, people: 0, state: 'f', seconds: 100, seats: null },
+  ]);
+  const forty = boxFortyFree();
+  assert.strictEqual(forty.length, 510, 'the box writes this one at 510 characters, under the 600 cap');
+  const parsed = sensorTables.parseTables(forty);
+  assert.strictEqual(parsed.ok, true, parsed.reason);
+  assert.strictEqual(parsed.tables.length, 40);
+  assert.ok(parsed.tables.every((t, i) => t.number === i + 1 && t.people === 0 && t.state === 'f'
+    && t.seconds === 86400 && t.seats === null));
+});
+
+test('through the ingest, the box\'s strings are counted onto the reading and written to the floor', async () => {
+  reset();
+  const first = await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: BOX_TWO_SEATED }) });
+  assert.strictEqual(first.status, 201, first.raw);
+  await settle();
+  assert.deepStrictEqual(countsOf(readings[0]), [3, 2, 0, 0]);
+  assert.deepStrictEqual(floorOf(), ['1:2:s', '2:1:s', '3:0:f']);
+
+  ageDevice();
+  const second = await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: boxFortyFree() }) });
+  assert.strictEqual(second.status, 201, second.raw);
+  await settle();
+  assert.deepStrictEqual(countsOf(readings[1]), [40, 0, 0, 0]);
+  assert.strictEqual(floorOf().length, 40);
+  assert.ok(floorOf().every((t) => t.endsWith(':0:f')));
+  assert.deepStrictEqual(pushes, [], 'seated to free is not an alert');
+});
+
+// --- The seat count: an optional fifth field ------------------------------------
+
+test('a fifth field is the seat count, 1-30, and entries with and without it mix in one string', () => {
+  assert.deepStrictEqual(sensorTables.parseTables('1:2:s:100:4;2:0:f:30;3:6:w:400:30;4:0:c:9:1').tables, [
+    { number: 1, people: 2, state: 's', seconds: 100, seats: 4 },
+    { number: 2, people: 0, state: 'f', seconds: 30, seats: null },
+    { number: 3, people: 6, state: 'w', seconds: 400, seats: 30 },
+    { number: 4, people: 0, state: 'c', seconds: 9, seats: 1 },
+  ]);
+});
+
+test('a seat count out of range makes the whole value invalid, not just its entry', () => {
+  for (const [raw, what] of [
+    ['1:2:s:100:0', 'zero seats'],
+    ['1:2:s:100:31', 'thirty-one seats'],
+    ['1:2:s:100:99', 'ninety-nine seats'],
+    ['1:2:s:100:100', 'a three-digit seat count'],
+    ['1:2:s:100:04', 'a leading zero'],
+    ['1:2:s:100:-1', 'a negative seat count'],
+    ['1:2:s:100:1.5', 'half a seat'],
+    ['1:2:s:100:', 'an empty fifth field'],
+    ['1:2:s:100:4:2', 'a sixth field'],
+    ['1:0:f:30;2:2:s:100:31;3:0:f:30', 'one bad seat count among good entries'],
+  ]) {
+    const parsed = sensorTables.parseTables(raw);
+    assert.strictEqual(parsed.ok, false, `${what} was accepted`);
+  }
+  assert.match(sensorTables.parseTables('1:2:s:100:31').reason, /seat count outside 1-30/);
+});
+
+test('with a seat count on every table at every ceiling, the string passes the 600 cap and is ignored like any other', () => {
+  // Pinned so that raising the cap is a decision made on purpose, with the Pi
+  // side told: forty tables, each holding ten or more people at ten or more
+  // seats with every state hours old, is 670 characters. No floor this was built
+  // for sends it, but the contract's limit is 600 and that is what holds.
+  const full = Array.from({ length: 40 }, (_, i) => `${i + 1}:30:w:86400:30`).join(';');
+  assert.strictEqual(full.length, 670);
+  assert.strictEqual(sensorTables.parseTables(full).ok, false);
 });
 
 // Every way a string can be wrong, each with the reason the parse gives. None
@@ -239,7 +321,9 @@ test('every ceiling in the contract is inside the fence: forty tables, thirty pe
 const INVALID = [
   ['', 'empty'],
   ['1:0:f', 'a missing part'],
-  ['1:0:f:5:9', 'an extra part'],
+  ['1:0:f:5:9:9', 'a sixth part'],
+  ['1:0:f:5:0', 'zero seats'],
+  ['1:0:f:5:31', 'more than 30 seats'],
   ['1:0:x:5', 'a state that is not f, s, w or c'],
   ['1:0:F:5', 'an upper-case state'],
   ['0:0:f:5', 'table 0'],
@@ -536,6 +620,42 @@ test('each device keeps its own floor', async () => {
   assert.deepStrictEqual(floorOf('flux_tables_02'), ['1:0:c', '2:4:w']);
 });
 
+const seatsOf = (deviceId = 'flux_tables_01') => Object.fromEntries(tableStates
+  .filter((r) => r.sensor_device_id === deviceId)
+  .map((r) => [r.table_no, r.seats]));
+
+test('seat counts reach the floor; a table sent without one keeps the last, and a new count replaces it', async () => {
+  reset();
+  await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: '1:2:s:100:4;2:0:f:30;3:0:f:30:6' }) });
+  await settle();
+  assert.deepStrictEqual(seatsOf(), { 1: 4, 2: null, 3: 6 });
+  assert.deepStrictEqual(countsOf(readings[0]), [3, 1, 0, 0], 'seats change no count');
+
+  ageDevice();
+  await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: '1:2:s:130;2:0:f:60:2;3:0:f:60' }) });
+  await settle();
+  assert.deepStrictEqual(seatsOf(), { 1: 4, 2: 2, 3: 6 }, 'a reading without a count forgot the one it had');
+
+  ageDevice();
+  await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: '1:2:s:160:8;3:0:f:90' }) });
+  await settle();
+  assert.deepStrictEqual(seatsOf(), { 1: 8, 3: 6 });
+});
+
+test('a seat count out of range is ignored with the rest of the value: 201, null counts, the floor untouched', async () => {
+  reset();
+  await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: '1:2:s:100:4' }) });
+  await settle();
+  ageDevice();
+  const res = await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: '1:0:c:5:31' }) });
+  assert.strictEqual(res.status, 201, res.raw);
+  await settle();
+  assert.strictEqual(readings.length, 2);
+  assert.deepStrictEqual(countsOf(readings[1]), [null, null, null, null]);
+  assert.deepStrictEqual(floorOf(), ['1:2:s']);
+  assert.deepStrictEqual(seatsOf(), { 1: 4 });
+});
+
 test('the floor is written after the answer, and a write that never finishes cannot hold the answer', async () => {
   reset();
   let release;
@@ -698,10 +818,11 @@ test('a venue with no owner on record sends nothing and claims nothing', async (
   assert.strictEqual(claims.size, 0);
 });
 
-test('at most one push per unit, table and state in fifteen minutes, however the party flickers', async () => {
+test('at most one push per unit, table and state in fifteen minutes, however the states move', async () => {
   reset();
   await readings2('3:2:s:200', '3:2:w:410');
-  // A server walks past without stopping: seated, then waiting again.
+  // The box lets one seating wait once, so waiting again this soon means a
+  // fast turnover or a restarted unit. Either way the phone has heard it.
   for (const tables of ['3:2:s:440', '3:2:w:470', '3:2:s:500', '3:2:w:530']) {
     ageDevice();
     await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables }) });

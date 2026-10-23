@@ -479,7 +479,7 @@ test('a tables value of the wrong shape is a 201 and a stored reading, never a 4
 // .js has to agree with every assertion here.
 const settleTables = () => require('../services/sensorTables')._settled();
 const floor = async () => (await pool.query(
-  `SELECT sensor_device_id, table_no, venue_place_id, people, state, state_since, updated_at
+  `SELECT sensor_device_id, table_no, venue_place_id, people, state, state_since, updated_at, seats
      FROM sensor_table_states ORDER BY sensor_device_id, table_no`
 )).rows;
 const floorShape = async () => (await floor()).map((r) => `${r.table_no}:${r.people}:${r.state}`);
@@ -596,6 +596,47 @@ test('on the real schema: a change into waiting or clearing is one push to the v
     await pool.query('DELETE FROM venue_profiles WHERE user_id = $1', [owner.id]);
     await pool.query('DELETE FROM users WHERE id = $1', [owner.id]);
     await pool.query("DELETE FROM push_debounce WHERE debounce_key LIKE 'table_alert:%'");
+  }
+});
+
+test('on the real schema: the box\'s forty free tables at the cap are written whole, then its two-seated string replaces them', async () => {
+  // Both strings are the box's own (flock-sensor 1.24.0).
+  const forty = Array.from({ length: 40 }, (_, i) => `${i + 1}:0:f:86400`).join(';');
+  assert.equal(forty.length, 510);
+  const res = await push(reading({ tables: forty }));
+  assert.equal(res.status, 201, JSON.stringify(res.body));
+  await settleTables();
+  const rows = await floor();
+  assert.equal(rows.length, 40);
+  const at = new Date(res.body.recorded_at).getTime();
+  for (const r of rows) {
+    assert.equal(r.state, 'f');
+    assert.equal(at - r.state_since.getTime(), 86400 * 1000);
+    assert.equal(r.seats, null, 'the box sends no seat count yet');
+  }
+  await pool.query(`UPDATE sensor_devices SET last_seen_at = NOW() - INTERVAL '1 hour' WHERE device_id = 'sensor_live'`);
+  assert.equal((await push(reading({ tables: '1:2:s:100;2:1:s:100;3:0:f:100' }))).status, 201);
+  await settleTables();
+  assert.deepEqual(await floorShape(), ['1:2:s', '2:1:s', '3:0:f']);
+  assert.deepEqual((await tableCountRows()).map((r) => [r.tables_total, r.tables_occupied, r.tables_waiting, r.tables_to_clear]),
+    [[40, 0, 0, 0], [3, 2, 0, 0]]);
+});
+
+test('on the real schema: seat counts are stored, kept when an entry leaves them out, and held to 1-30', async () => {
+  const seats = async () => Object.fromEntries((await floor()).map((r) => [r.table_no, r.seats]));
+  assert.equal((await push(reading({ tables: '1:2:s:100:4;2:0:f:30' }))).status, 201);
+  await settleTables();
+  assert.deepEqual(await seats(), { 1: 4, 2: null });
+  await pool.query(`UPDATE sensor_devices SET last_seen_at = NOW() - INTERVAL '1 hour' WHERE device_id = 'sensor_live'`);
+  assert.equal((await push(reading({ tables: '1:2:s:130;2:0:f:60:2' }))).status, 201);
+  await settleTables();
+  assert.deepEqual(await seats(), { 1: 4, 2: 2 }, 'a reading without a count forgot the one it had');
+  for (const bad of [0, 31]) {
+    await assert.rejects(
+      pool.query("UPDATE sensor_table_states SET seats = $1 WHERE sensor_device_id = 'sensor_live' AND table_no = 1", [bad]),
+      (err) => err.code === '23514',
+      `${bad} seats was stored`
+    );
   }
 });
 

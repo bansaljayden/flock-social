@@ -20,20 +20,31 @@
 // (validators/shape.js and the scalarOnly rule on every field of /data).
 // Present only when the unit has at least one table zone.
 //
-//   entries joined by `;`, each N:P:S:A
+//   entries joined by `;`, each N:P:S:A or N:P:S:A:C
 //   N  table number, 1-40, unique, strictly ascending
 //   P  people counted at the table now, 0-30
 //   S  f  free
-//      s  seated: a party is at the table
+//      s  seated: a party is at the table. The box says so once someone has
+//         been there 60 seconds, but times the seating from the first moment
+//         someone was.
 //      w  seated, and nobody has come by since the party sat down, for longer
-//         than the unit's wait limit (5 minutes unless the owner changed it)
-//      c  the party left and nobody has cleared the table yet
+//         than the box's wait limit (TABLE_WAIT_SECONDS, 300 unless the owner
+//         changed it). A visit turns it back to s for the rest of that
+//         seating, so a seating waits at most once.
+//      c  the party left and nobody has cleared the table yet: the box says
+//         so after 90 seconds empty. It goes back to f once someone spends 5
+//         to 60 seconds at the empty table (bussing it), or after 3 hours.
 //   A  seconds since that state began, 0-86400 (the unit caps it). For s and
-//      w it is the seconds since the party arrived: the seated timer.
+//      w it is the seconds since the party arrived: the seated timer. For c it
+//      is the seconds since the table emptied.
+//   C  optional: the seats at the table, 1-30, sent only when the unit knows
+//      it (a table camera will count chairs). Entries with and without it mix
+//      freely in one string.
 //
-//   1:0:f:340;2:3:s:845;3:2:w:410;4:0:c:95
+//   1:0:f:340;2:3:s:845:4;3:2:w:410;4:0:c:95:6
 //
 // At most 40 entries, and nothing longer than 600 characters is looked at.
+// Any part out of range, C included, makes the whole value invalid.
 //
 // A BAD VALUE IS IGNORED, NEVER REFUSED. The Pi reads 400, 413 and 422 as "this
 // reading can never succeed" and drops the WHOLE reading (flock-sensor/main.py,
@@ -54,19 +65,25 @@ const MAX_TABLES = 40;
 const MAX_TABLE_PEOPLE = 30;
 // The unit caps A at a day, so anything above it was not written by one.
 const MAX_STATE_SECONDS = 86400;
-// Forty of the longest entry ("40:30:w:86400") and their separators come to
-// 559 characters, so nothing honest is near this, and the pattern below is
-// never asked to look at a megabyte.
+const MIN_TABLE_SEATS = 1;
+const MAX_TABLE_SEATS = 30;
+// The contract's ceiling, and the pattern below is never asked to look at a
+// megabyte. Without seat counts, forty of the longest entry ("40:30:w:86400")
+// and their separators come to 559 characters. With them a string at every
+// ceiling at once would reach 670 and be ignored like anything else over the
+// limit; that takes forty tables each holding ten or more people at ten or more
+// seats, with every state hours old, so a real floor stays well inside it.
 const MAX_TABLES_LENGTH = 600;
 
 // One entry, in canonical decimal only: no sign, no leading zero, no exponent,
 // no space. Each number is bounded in length here and in range in parseTables,
-// so a 400-digit "table number" is refused before Number() ever sees it.
-// Anchored at both ends (a JS `$` without the m flag does not match before a
-// trailing newline), and every repetition starts with a `;` the entry cannot
-// contain, so the pattern has nothing to backtrack over.
-const TABLES_SHAPE =
-  /^[1-9]\d?:(?:0|[1-9]\d?):[fswc]:(?:0|[1-9]\d{0,4})(?:;[1-9]\d?:(?:0|[1-9]\d?):[fswc]:(?:0|[1-9]\d{0,4})){0,39}$/;
+// so a 400-digit "table number" is refused before Number() ever sees it. The
+// optional seat count is a fifth field, and 0 is not a seat count. Anchored at
+// both ends (a JS `$` without the m flag does not match before a trailing
+// newline). Each field ends at a `:` or `;` it cannot contain, and every
+// repetition starts with a `;`, so the pattern has nothing to backtrack over.
+const TABLE_ENTRY = String.raw`[1-9]\d?:(?:0|[1-9]\d?):[fswc]:(?:0|[1-9]\d{0,4})(?::[1-9]\d?)?`;
+const TABLES_SHAPE = new RegExp(`^${TABLE_ENTRY}(?:;${TABLE_ENTRY}){0,${MAX_TABLES - 1}}$`);
 
 // The words the owner's dashboard is given for each letter, so no client has
 // to carry the box's alphabet.
@@ -74,8 +91,9 @@ const STATE_WORDS = Object.freeze({ f: 'free', s: 'seated', w: 'waiting', c: 'ne
 
 /**
  * The strict parse. Returns { ok: true, tables } with tables as
- * [{ number, people, state, seconds }] in table order, or { ok: false, reason }
- * where the reason names the problem in words and never quotes the value.
+ * [{ number, people, state, seconds, seats }] in table order (seats null where
+ * the entry carried none), or { ok: false, reason } where the reason names the
+ * problem in words and never quotes the value.
  */
 function parseTables(raw) {
   if (typeof raw !== 'string') return { ok: false, reason: 'not a string' };
@@ -86,17 +104,21 @@ function parseTables(raw) {
   const tables = [];
   let previous = 0;
   for (const entry of raw.split(';')) {
-    const [n, p, state, a] = entry.split(':');
+    const [n, p, state, a, c] = entry.split(':');
     const number = Number(n);
     const people = Number(p);
     const seconds = Number(a);
+    const seats = c === undefined ? null : Number(c);
     if (number > MAX_TABLES) return { ok: false, reason: `a table number above ${MAX_TABLES}` };
     // Strictly ascending is what makes the numbers unique, and a repeated
     // number would ask the state writer to set one row twice in one statement.
     if (number <= previous) return { ok: false, reason: 'table numbers not strictly ascending' };
     if (people > MAX_TABLE_PEOPLE) return { ok: false, reason: `a head count above ${MAX_TABLE_PEOPLE}` };
     if (seconds > MAX_STATE_SECONDS) return { ok: false, reason: `a state age above ${MAX_STATE_SECONDS} seconds` };
-    tables.push({ number, people, state, seconds });
+    if (seats !== null && (seats < MIN_TABLE_SEATS || seats > MAX_TABLE_SEATS)) {
+      return { ok: false, reason: `a seat count outside ${MIN_TABLE_SEATS}-${MAX_TABLE_SEATS}` };
+    }
+    tables.push({ number, people, state, seconds, seats });
     previous = number;
   }
   return { ok: true, tables };
@@ -202,7 +224,10 @@ function noteIgnoredTables(deviceId, reason, now = Date.now()) {
 //            removed them on the box.
 //   saved    every table in the reading, upserted. state_since is the
 //            reading's time minus A, so it holds still from one reading to
-//            the next while the state does.
+//            the next while the state does. A table sent without a seat
+//            count keeps the one it had: chairs do not move with every
+//            reading, and a unit that counts them may not send the count
+//            every time.
 // gone and saved touch disjoint rows (in the reading or not), and the parse
 // guarantees each table appears once, so no row is written twice.
 //
@@ -214,9 +239,9 @@ const TABLE_STATES_SQL = `
     SELECT LEAST($3::timestamptz, NOW()) AS as_of
   ),
   incoming AS (
-    SELECT t.table_no, t.people, t.state, t.seconds
-      FROM unnest($4::smallint[], $5::smallint[], $6::text[], $7::integer[])
-           AS t(table_no, people, state, seconds)
+    SELECT t.table_no, t.people, t.state, t.seconds, t.seats
+      FROM unnest($4::smallint[], $5::smallint[], $6::text[], $7::integer[], $8::smallint[])
+           AS t(table_no, people, state, seconds, seats)
   ),
   gate AS (
     SELECT NOT EXISTS (
@@ -236,9 +261,9 @@ const TABLE_STATES_SQL = `
   ),
   saved AS (
     INSERT INTO sensor_table_states AS s
-           (sensor_device_id, table_no, venue_place_id, people, state, state_since, updated_at)
+           (sensor_device_id, table_no, venue_place_id, people, state, state_since, updated_at, seats)
     SELECT $1::varchar, i.table_no, $2::varchar, i.people, i.state,
-           r.as_of - i.seconds * INTERVAL '1 second', r.as_of
+           r.as_of - i.seconds * INTERVAL '1 second', r.as_of, i.seats
       FROM incoming i, reading r, gate g
      WHERE g.fresh
     ON CONFLICT (sensor_device_id, table_no) DO UPDATE
@@ -246,7 +271,8 @@ const TABLE_STATES_SQL = `
            people = EXCLUDED.people,
            state = EXCLUDED.state,
            state_since = EXCLUDED.state_since,
-           updated_at = EXCLUDED.updated_at
+           updated_at = EXCLUDED.updated_at,
+           seats = COALESCE(EXCLUDED.seats, s.seats)
      WHERE s.updated_at <= EXCLUDED.updated_at
     RETURNING s.table_no, s.state, s.state_since
   )
@@ -271,6 +297,8 @@ async function storeTableStates(device, tables, recordedAt) {
     tables.map((t) => t.people),
     tables.map((t) => t.state),
     tables.map((t) => t.seconds),
+    // null where the entry carried no seat count; the upsert keeps the old one.
+    tables.map((t) => (t.seats === undefined ? null : t.seats)),
   ]);
   return rows;
 }
@@ -288,15 +316,18 @@ async function storeTableStates(device, tables, recordedAt) {
 // after this shipped, and a burst of alerts about tables that may have been
 // waiting since before anybody was watching tells the owner nothing new.
 //
-// AT MOST ONE PER UNIT, TABLE AND STATE IN 15 MINUTES. A party that flickers
-// between seated and waiting (a server walks past without stopping) must not
-// ring the owner's phone every thirty seconds. Claimed in push_debounce, not a
-// Map: a Map is per process, so it is empty after every deploy and a second
-// server instance would keep a copy of its own, each allowing an alert of its
-// own. sweepPushMaintenance keeps a row there for an hour, longer than the
-// window, so the window and the table agree. Claimed only once every refusal
-// (no push service, no verified owner, the switch off) has passed, so a
-// refused alert does not burn it.
+// AT MOST ONE PER UNIT, TABLE AND STATE IN 15 MINUTES. The box already lets a
+// seating wait only once (a visit ends waiting for the rest of it), so this is
+// the ceiling over everything the box cannot see: a table turned over fast, a
+// unit restarted mid-seating, a wait limit set very low. However the states
+// move, one table cannot ring the owner's phone about the same thing twice in
+// fifteen minutes; the dashboard shows every change, the phone gets the first.
+// Claimed in push_debounce, not a Map: a Map is per process, so it is empty
+// after every deploy and a second server instance would keep a copy of its
+// own, each allowing an alert of its own. sweepPushMaintenance keeps a row
+// there for an hour, longer than the window, so the window and the table
+// agree. Claimed only once every refusal (no push service, no verified owner,
+// the switch off) has passed, so a refused alert does not burn it.
 //
 // WHO. The verified owner of the unit's place and nobody else: the
 // venue_profiles row for that place with verified true, the same claim GET
@@ -415,6 +446,8 @@ module.exports = {
   MAX_TABLES,
   MAX_TABLE_PEOPLE,
   MAX_STATE_SECONDS,
+  MIN_TABLE_SEATS,
+  MAX_TABLE_SEATS,
   MAX_TABLES_LENGTH,
   STATE_WORDS,
   parseTables,

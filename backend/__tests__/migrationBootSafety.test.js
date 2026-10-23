@@ -1683,6 +1683,34 @@ test('117 lets a recurring bill carry the day it ends, refuses one on a one-time
   await pool.query(`DELETE FROM business_expenses WHERE vendor LIKE 'Boot117%'`);
 });
 
+// ---------------------------------------------------------------------------
+// 130: table monitoring. The seat count joined the file before it shipped, as
+// its own ALTER, so a database that applied the file without it (recorded as
+// applied, column absent) is repaired by the @requires heal on the next boot
+// rather than left reading a column that will never appear. The table's rows
+// survive the repair.
+// ---------------------------------------------------------------------------
+
+test('130 gives sensor_table_states its seat count on a database that applied the file without it', async () => {
+  await pool.query(
+    `INSERT INTO sensor_devices (device_id, venue_place_id, api_key, is_active)
+     VALUES ('boot130_unit', 'ChIJboot130', 'sha256:boot130', true)`
+  );
+  await pool.query(
+    `INSERT INTO sensor_table_states (sensor_device_id, table_no, venue_place_id, people, state, state_since)
+     VALUES ('boot130_unit', 3, 'ChIJboot130', 2, 's', NOW())`
+  );
+  await pool.query('ALTER TABLE sensor_table_states DROP COLUMN IF EXISTS seats');
+  assert.equal(await columnExists('sensor_table_states', 'seats'), false);
+
+  await migrate(pool); // 130 is still recorded as applied; the heal must re-apply it
+  assert.equal(await columnExists('sensor_table_states', 'seats'), true, 'the heal did not bring the seat count back');
+  const { rows } = await pool.query("SELECT table_no, state, seats FROM sensor_table_states WHERE sensor_device_id = 'boot130_unit'");
+  assert.deepEqual(rows, [{ table_no: 3, state: 's', seats: null }], 'the repair moved a table row');
+
+  await pool.query("DELETE FROM sensor_devices WHERE device_id = 'boot130_unit'");
+});
+
 test('every migration file declares post-conditions the runner can actually parse', async () => {
   // parseRequirements throws on a line that looks like a declaration and is
   // not: mis-cased, schema-mangled, malformed, or buried in a $$ body, a block

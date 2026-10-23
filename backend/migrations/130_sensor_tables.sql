@@ -14,10 +14,11 @@
 -- has been waiting ten minutes.
 --
 -- WHAT IT HOLDS, AND WHAT IT NEVER WILL. A table number the owner chose, a
--- head count, a one-letter state and when that state began. Nothing here
--- identifies or follows a person: the box sends no track, position, image or
--- id of anyone, only per-table counts and states, and that is all this
--- migration has room for.
+-- head count, a one-letter state and when that state began, and the number of
+-- seats at the table when the unit knows it. Nothing here identifies or
+-- follows a person: the box sends no track, position, image or id of anyone,
+-- only per-table counts and states, and that is all this migration has room
+-- for.
 --
 -- WHO WRITES IT.
 --   venue_sensor_data.tables_total / tables_occupied (seated or waiting) /
@@ -45,6 +46,14 @@
 --   value venue_sensor_data.sensor_device_id holds. A unit deleted from
 --   sensor_devices takes its tables with it.
 --
+-- seats is NULL until the unit sends a count for that table (an optional
+--   fifth field per table, which a table camera that counts chairs will fill
+--   in). A reading that leaves it out keeps the last count rather than
+--   forgetting it, because chairs do not move with every reading. It is its
+--   own ALTER, not a line of the CREATE, so a database built before the
+--   column joined this file gains it too; the @requires line makes the runner
+--   re-apply the file there.
+--
 -- ADDITIVE. Nullable columns with no default are catalog changes: no rewrite,
 --   no scan, and every existing row reads NULL, which is the truth for it. The
 --   table and its index are IF NOT EXISTS. A replay is a no-op.
@@ -53,6 +62,7 @@
 -- @requires column venue_sensor_data.tables_waiting
 -- @requires column venue_sensor_data.tables_to_clear
 -- @requires table sensor_table_states
+-- @requires column sensor_table_states.seats
 
 ALTER TABLE venue_sensor_data ADD COLUMN IF NOT EXISTS tables_total INTEGER;
 ALTER TABLE venue_sensor_data ADD COLUMN IF NOT EXISTS tables_occupied INTEGER;
@@ -69,6 +79,8 @@ CREATE TABLE IF NOT EXISTS sensor_table_states (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY (sensor_device_id, table_no)
 );
+
+ALTER TABLE sensor_table_states ADD COLUMN IF NOT EXISTS seats SMALLINT CHECK (seats BETWEEN 1 AND 30);
 
 -- The owner's reads go by place. The primary key already serves the writer,
 -- which goes by device.

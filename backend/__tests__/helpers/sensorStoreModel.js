@@ -137,13 +137,14 @@ const TABLE_STATES_STATEMENT = /WITH reading AS \( SELECT LEAST\(\$3::timestampt
 /**
  * Run TABLE_STATES_SQL against `store.tableStates` (an array of rows shaped
  * like sensor_table_states, mutated in place). Parameters in statement order:
- *   $1 device_id, $2 venue place id, $3 the reading's recorded_at, then four
- *   parallel arrays: $4 table numbers, $5 people, $6 states, $7 seconds.
+ *   $1 device_id, $2 venue place id, $3 the reading's recorded_at, then five
+ *   parallel arrays: $4 table numbers, $5 people, $6 states, $7 seconds, $8
+ *   seat counts (null where the entry carried none).
  * Returns the written tables as the statement does: { table_no, state,
  * prior_state, minutes }, in table order.
  */
 function runTableStates(store, params) {
-  const [deviceId, placeId, recordedAt, numbers, people, states, seconds] = params;
+  const [deviceId, placeId, recordedAt, numbers, people, states, seconds, seats] = params;
   const now = Date.now();
   // reading: the stamp, capped at the server's clock.
   const asOf = new Date(Math.min(new Date(recordedAt).getTime(), now));
@@ -161,14 +162,16 @@ function runTableStates(store, params) {
   const rows = [];
   numbers.forEach((n, i) => {
     const since = new Date(asOf.getTime() - seconds[i] * 1000);
+    const sent = seats && seats[i] !== undefined ? seats[i] : null;
     const next = {
       sensor_device_id: deviceId, table_no: n, venue_place_id: placeId,
-      people: people[i], state: states[i], state_since: since, updated_at: asOf,
+      people: people[i], state: states[i], state_since: since, updated_at: asOf, seats: sent,
     };
     const existing = store.tableStates.find((r) => r.sensor_device_id === deviceId && r.table_no === n);
     if (existing) {
       if (existing.updated_at.getTime() > asOf.getTime()) return;
-      Object.assign(existing, next);
+      // COALESCE(EXCLUDED.seats, s.seats): no count sent keeps the last one.
+      Object.assign(existing, next, { seats: sent === null ? (existing.seats ?? null) : sent });
     } else {
       store.tableStates.push(next);
     }
