@@ -552,6 +552,13 @@ test('the remaining column types this schema holds survive the trip', async () =
     ['float8', `1.7976931348623157e308`, 'the largest finite double'],
     ['bytea', `'\\x0027225c0aff'`, 'bytea carrying a NUL, a quote and a backslash byte'],
     ['inet', `'203.0.113.9'`, 'inet, which this suite has always claimed to cover and did not'],
+    // bpchar arrived with migration 130: sensor_table_states.state is CHAR(1),
+    // one letter of f, s, w or c. The wider case is the one that could go
+    // wrong. The server pads a char(n) with blanks and pg hands the padding
+    // back, so the dump writes it out and the restore has to store the same
+    // value, not a longer one.
+    ['char(1)', `'w'`, 'sensor_table_states.state, a one-letter table state'],
+    ['char(4)', `'ab'`, 'a char shorter than its width, which comes back blank-padded'],
   ];
   for (const [sqlType, seed, what] of cases) {
     const r = await dumpAndRestore(sqlType, seed);
@@ -583,7 +590,7 @@ test('the remaining column types this schema holds survive the trip', async () =
 // case above chooses its values by asking what the column can actually hold
 // rather than what a caller happens to write today.
 const ROUND_TRIPPED = new Set([
-  '_int4', '_text', 'bool', 'bytea', 'date', 'float4', 'float8', 'int2', 'int4', 'int8',
+  '_int4', '_text', 'bool', 'bpchar', 'bytea', 'date', 'float4', 'float8', 'int2', 'int4', 'int8',
   'json', 'jsonb', 'numeric', 'text', 'time', 'timestamp', 'timestamptz', 'uuid', 'varchar',
 ]);
 
