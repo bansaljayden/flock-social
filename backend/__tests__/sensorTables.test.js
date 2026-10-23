@@ -40,6 +40,9 @@ let devices = [];
 let readings = [];
 let tableStates = [];
 let venueProfiles = [];
+// The venue plan per owner account, and a switch to make the lookup fail.
+let venueTiers = new Map();
+let tierLookupFails = false;
 // push_debounce, as key -> the ms it was last claimed.
 let claims = new Map();
 let queryLog = [];
@@ -77,6 +80,23 @@ pool.query = (sql, params = []) => {
     const needsVerified = /AND verified = true/.test(flat);
     const hit = venueProfiles.find((v) => v.user_id === params[0] && v.google_place_id === params[1]
       && (!needsVerified || v.verified === true));
+    return Promise.resolve({ rows: hit ? [{ '?column?': 1 }] : [], rowCount: hit ? 1 : 0 });
+  }
+  // The venue plan lookup (services/venueEntitlements.js TIER_SQL), keyed by
+  // the owner's account. A row with no grant resolves to its cached tier, and
+  // roost_legacy false keeps it out of the Roost notice window.
+  if (/FROM venue_profiles vp LEFT JOIN venue_subscriptions/.test(flat)) {
+    if (tierLookupFails) return Promise.reject(new Error('connection terminated'));
+    const tier = venueTiers.get(params[0]);
+    const rows = tier === undefined ? [] : [{
+      tier, grant_tier: null, grant_status: null, grant_source: null, granted_reason: null, granted_at: null,
+      expires_at: null, roost_legacy: false, roost_notice_until: null, grant_place_id: null, place_id: VENUE,
+      current_period_end: null, cancel_at: null, trial_end: null, verified: true,
+    }];
+    return Promise.resolve({ rows, rowCount: rows.length });
+  }
+  if (/^SELECT 1 FROM sensor_table_states WHERE venue_place_id = \$1 LIMIT 1$/.test(flat)) {
+    const hit = tableStates.some((r) => r.venue_place_id === params[0]);
     return Promise.resolve({ rows: hit ? [{ '?column?': 1 }] : [], rowCount: hit ? 1 : 0 });
   }
   if (/^WITH unit AS \( SELECT sensor_device_id FROM sensor_table_states WHERE venue_place_id = \$1/.test(flat)) {
@@ -222,6 +242,11 @@ function reset() {
   pushBehaviour = async () => ({ sent: 1, failed: 0 });
   // The verified owner of VENUE, who never touched the table switch.
   venueProfiles = [{ user_id: OWNER_ID, google_place_id: VENUE, verified: true, notification_prefs: { bookings: true } }];
+  // Venue billing off, as it is until it ships: every owner acts Roost and no
+  // plan is read. The plan tests switch it on.
+  delete process.env.VENUE_BILLING_ENABLED;
+  venueTiers = new Map([[OWNER_ID, 'free']]);
+  tierLookupFails = false;
   emits = [];
   devices = [
     { id: 1, device_id: 'flux_tables_01', venue_place_id: VENUE, is_active: true,
@@ -1183,6 +1208,134 @@ test('a failing read is a 500 with nothing in it but the error', async () => {
   } finally {
     pool.query = realQuery;
   }
+});
+
+// --- The plan: table monitoring is a Roost feature ---------------------------------
+//
+// The dashboard shows the Tables tab only on Roost, so the server enforces the
+// same thing: through requireVenueTier's own decision (checkVenueTier), after
+// the owner check, with has_tables on the refusal and no table data behind it.
+
+const UPGRADE = { error: 'This feature needs a venue plan upgrade.', code: 'UPGRADE_REQUIRED', requiredTier: 'pro' };
+const UNAVAILABLE = {
+  error: 'Could not check your venue plan just now. Try again.',
+  code: 'UPGRADE_REQUIRED',
+  reason: 'ENTITLEMENT_UNAVAILABLE',
+  retryable: true,
+};
+const TIER_READ = /FROM venue_profiles vp LEFT JOIN venue_subscriptions/;
+const TABLE_DATA_READ = /WITH unit AS|tables_total > 0/;
+const HAS_TABLES_READ = /^SELECT 1 FROM sensor_table_states WHERE venue_place_id/;
+
+function billingOn() {
+  process.env.VENUE_BILLING_ENABLED = 'true';
+  // So the preflight warning about an unreachable grant route stays quiet.
+  if (!process.env.ADMIN_USER_IDS) process.env.ADMIN_USER_IDS = '1';
+}
+
+test('below Roost the table routes answer the gate\'s own refusal plus has_tables, and send no table data', async () => {
+  reset();
+  await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: EXAMPLE }) });
+  await settle();
+  billingOn();
+  for (const path of [FLOOR, HOURS]) {
+    queryLog = [];
+    const res = await get(path, OWNER_ID);
+    assert.strictEqual(res.status, 403, path);
+    assert.deepStrictEqual(res.body, { ...UPGRADE, has_tables: true }, path);
+    assert.ok(!queryLog.some((q) => TABLE_DATA_READ.test(q.sql)), `${path}: table data was read for a venue below Roost`);
+    assert.ok(!/seated|waiting|needs_clearing|"since"/.test(res.raw), res.raw);
+  }
+});
+
+test('below Roost with no unit at the place ever writing tables, has_tables is false', async () => {
+  reset();
+  billingOn();
+  for (const path of [FLOOR, HOURS]) {
+    const res = await get(path, OWNER_ID);
+    assert.strictEqual(res.status, 403, path);
+    assert.deepStrictEqual(res.body, { ...UPGRADE, has_tables: false }, path);
+  }
+});
+
+test('on Roost the table routes answer in full, and a stored premium tier is Roost', async () => {
+  for (const tier of ['pro', 'premium']) {
+    reset();
+    await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: EXAMPLE }) });
+    await settle();
+    billingOn();
+    venueTiers.set(OWNER_ID, tier);
+    const floor = await get(FLOOR, OWNER_ID);
+    assert.strictEqual(floor.status, 200, `${tier}: ${floor.raw}`);
+    assert.strictEqual(floor.body.tables.length, 4);
+    assert.strictEqual((await get(HOURS, OWNER_ID)).status, 200, tier);
+    assert.ok(queryLog.some((q) => TIER_READ.test(q.sql)), 'the plan was never read');
+  }
+});
+
+test('a plan lookup that fails is the gate\'s retryable refusal, never "not on the plan", and carries no has_tables', async () => {
+  reset();
+  await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: EXAMPLE }) });
+  await settle();
+  billingOn();
+  tierLookupFails = true;
+  const logged = await capturingLogs(async () => {
+    for (const path of [FLOOR, HOURS]) {
+      queryLog = [];
+      const res = await get(path, OWNER_ID);
+      assert.strictEqual(res.status, 403, path);
+      assert.deepStrictEqual(res.body, UNAVAILABLE, path);
+      assert.ok(!queryLog.some((q) => TABLE_DATA_READ.test(q.sql) || HAS_TABLES_READ.test(q.sql)), path);
+    }
+  });
+  assert.ok(logged.some((l) => /Venue tier check error/.test(l)), logged.join('\n'));
+});
+
+test('the order holds: signed out is 401, a stranger is 403 with nothing about the place and no plan read', async () => {
+  reset();
+  await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: EXAMPLE }) });
+  await settle();
+  billingOn();
+  for (const path of [FLOOR, HOURS]) {
+    assert.strictEqual((await get(path)).status, 401, path);
+    queryLog = [];
+    const stranger = await get(path, 999);
+    assert.strictEqual(stranger.status, 403, path);
+    assert.deepStrictEqual(stranger.body, { error: 'Table monitoring is for the verified owner of this venue.' });
+    assert.ok(!queryLog.some((q) => TIER_READ.test(q.sql) || HAS_TABLES_READ.test(q.sql)),
+      `${path}: a stranger's request reached the plan or the has_tables read`);
+  }
+});
+
+test('with venue billing off no plan is read and every verified owner is through', async () => {
+  reset();
+  await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: EXAMPLE }) });
+  await settle();
+  queryLog = [];
+  assert.strictEqual((await get(FLOOR, OWNER_ID)).status, 200);
+  assert.strictEqual((await get(HOURS, OWNER_ID)).status, 200);
+  assert.ok(!queryLog.some((q) => TIER_READ.test(q.sql)), 'a plan was read with billing off');
+});
+
+test('no table alert below Roost or when the plan cannot be read, and no claim spent; on Roost it goes out', async () => {
+  reset();
+  billingOn();
+  await readings2('3:2:s:200', '3:2:w:410');
+  assert.deepStrictEqual(pushes, [], 'a venue below Roost was sent a table alert');
+  assert.strictEqual(claims.size, 0, 'a refused alert burned its claim');
+
+  reset();
+  billingOn();
+  tierLookupFails = true;
+  await capturingLogs(() => readings2('3:2:s:200', '3:2:w:410'));
+  assert.deepStrictEqual(pushes, [], 'an unreadable plan sent a table alert');
+  assert.strictEqual(claims.size, 0);
+
+  reset();
+  billingOn();
+  venueTiers.set(OWNER_ID, 'pro');
+  await readings2('3:2:s:200', '3:2:w:410');
+  assert.strictEqual(pushes.length, 1);
 });
 
 test('the switch is stored when the dashboard sends it: tables is one of the venue profile switches', () => {

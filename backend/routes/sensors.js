@@ -12,6 +12,8 @@ const { scalarOnly } = require('../validators/shape');
 const {
   MAX_TABLES_LENGTH, STATE_WORDS, readTables, tableCounts, noteIgnoredTables, applyTableReading,
 } = require('../services/sensorTables');
+// The table routes are a Roost feature, gated the way requireVenueTier gates.
+const { checkVenueTier } = require('../services/venueEntitlements');
 
 const router = express.Router();
 
@@ -882,6 +884,30 @@ async function isVerifiedOwner(callerId, placeId) {
 
 const NOT_THE_OWNER = { error: 'Table monitoring is for the verified owner of this venue.' };
 
+// THE PLAN. The Tables tab is a Roost feature, and a gate that lives only in
+// the dashboard is one any client can walk past, so these routes ask too. In
+// this order: signed out is 401 (authenticate), not the verified owner is 403
+// with nothing about the place in it, and only then the plan, through the
+// same decision requireVenueTier makes (services/venueEntitlements.js
+// checkVenueTier). So with venue billing off every verified owner is through,
+// and a plan lookup that FAILED is the gate's retryable refusal, never read as
+// "not on the plan".
+//
+// Below Roost the refusal is the gate's own body plus `has_tables`: whether
+// any unit at this place has written table rows. That one bit lets the
+// dashboard show the lock to a free venue that has tables, and an empty state
+// to one that has none, without being sent a single table.
+const HAS_TABLES_SQL = `SELECT 1 FROM sensor_table_states WHERE venue_place_id = $1 LIMIT 1`;
+
+// Resolves to null when the caller may read tables, or to the 403 body.
+async function tablesPlanRefusal(callerId, placeId) {
+  const plan = await checkVenueTier(callerId, 'pro');
+  if (plan.ok) return null;
+  if (plan.unavailable) return plan.body;
+  const has = await pool.query(HAS_TABLES_SQL, [placeId]);
+  return { ...plan.body, has_tables: has.rows.length > 0 };
+}
+
 // A unit writes the floor with every live reading, about every thirty seconds,
 // so three minutes without a fresh row is six missed readings: the unit is
 // off, offline, or has stopped sending tables. The dashboard is told so rather
@@ -958,6 +984,8 @@ router.get('/:placeId/tables',
 
       const { placeId } = req.params;
       if (!(await isVerifiedOwner(req.user.id, placeId))) return res.status(403).json(NOT_THE_OWNER);
+      const refusal = await tablesPlanRefusal(req.user.id, placeId);
+      if (refusal) return res.status(403).json(refusal);
 
       const floor = await pool.query(TABLE_FLOOR_SQL, [placeId, TABLES_STALE_AFTER_MINUTES]);
       res.json(floorResponse(floor.rows));
@@ -1000,6 +1028,8 @@ router.get('/:placeId/tables/hours',
 
       const { placeId } = req.params;
       if (!(await isVerifiedOwner(req.user.id, placeId))) return res.status(403).json(NOT_THE_OWNER);
+      const refusal = await tablesPlanRefusal(req.user.id, placeId);
+      if (refusal) return res.status(403).json(refusal);
 
       const result = await pool.query(TABLE_HOURS_SQL, [placeId]);
       res.json({

@@ -60,6 +60,8 @@ const pool = require('../config/database');
 // Held as a module object, not destructured: tests replace pushAlways, and a
 // destructured copy would keep calling the original.
 const pushHelper = require('./pushHelper');
+// The plan rule the table routes enforce, asked before a table alert too.
+const venueEntitlements = require('./venueEntitlements');
 
 const MAX_TABLES = 40;
 const MAX_TABLE_PEOPLE = 30;
@@ -329,7 +331,7 @@ async function storeTableStates(device, tables, recordedAt) {
 // own, each allowing an alert of its own. sweepPushMaintenance keeps a row
 // there for an hour, longer than the window, so the window and the table
 // agree. Claimed only once every refusal (no push service, no verified owner,
-// the switch off) has passed, so a refused alert does not burn it.
+// the switch off, no Roost) has passed, so a refused alert does not burn it.
 //
 // WHO. The verified owner of the unit's place and nobody else: the
 // venue_profiles row for that place with verified true, the same claim GET
@@ -344,6 +346,14 @@ async function storeTableStates(device, tables, recordedAt) {
 // so an owner who turns alerts off inside that window can still receive the
 // one retried alert. Accepted as it stands; deliver() would need a table_alert
 // check like its crowd_alert one to close it.
+//
+// THE PLAN. Table monitoring is a Roost feature, so an alert goes out only
+// while the venue is on Roost: the same rule, through the same decision, as
+// GET /tables (venueEntitlements.checkVenueTier). With venue billing off
+// every venue qualifies, as every gate there agrees. A plan lookup that fails
+// sends nothing, which is the gate's fail-closed answer applied to a push: an
+// alert that does not go out costs a glance at the dashboard, and the next
+// change tries again.
 //
 // THE WORDS name a table and how long its party has sat. No head count, no
 // guest, no price, no offer: transactional under App Store 4.5.4, for the
@@ -402,6 +412,8 @@ async function alertOwner(device, changes) {
     if (owner.rows.length === 0) return;
     const { user_id: ownerId, notification_prefs: prefs } = owner.rows[0];
     if (!wantsTableAlerts(prefs)) return;
+    const plan = await venueEntitlements.checkVenueTier(ownerId, 'pro');
+    if (!plan.ok) return;
 
     for (const change of changes) {
       try {

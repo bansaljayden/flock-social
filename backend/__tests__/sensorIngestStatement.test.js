@@ -754,6 +754,37 @@ test('on the real schema: tables in use by hour, the last 7 days, oldest first, 
   });
 });
 
+test('on the real schema: below Roost the table routes refuse with has_tables and no table data; on Roost they answer', async () => {
+  const before = { billing: process.env.VENUE_BILLING_ENABLED, admins: process.env.ADMIN_USER_IDS };
+  process.env.VENUE_BILLING_ENABLED = 'true';
+  if (!process.env.ADMIN_USER_IDS) process.env.ADMIN_USER_IDS = '1';
+  const UPGRADE = { error: 'This feature needs a venue plan upgrade.', code: 'UPGRADE_REQUIRED', requiredTier: 'pro' };
+  try {
+    await withVenueOwner(async (ownerId) => {
+      const FLOOR = `/api/sensors/${VENUE}/tables`;
+      const HOURS = `/api/sensors/${VENUE}/tables/hours`;
+      // A claim made after Roost had a price, with no grant: the free plan.
+      assert.deepEqual(await ownerGet(FLOOR, ownerId), { status: 403, body: { ...UPGRADE, has_tables: false } });
+
+      assert.equal((await push(reading({ tables: '1:2:s:600;2:0:f:30' }))).status, 201);
+      await settleTables();
+      assert.deepEqual(await ownerGet(FLOOR, ownerId), { status: 403, body: { ...UPGRADE, has_tables: true } });
+      assert.deepEqual(await ownerGet(HOURS, ownerId), { status: 403, body: { ...UPGRADE, has_tables: true } });
+
+      await pool.query("UPDATE venue_profiles SET tier = 'pro' WHERE user_id = $1", [ownerId]);
+      const floor = await ownerGet(FLOOR, ownerId);
+      assert.equal(floor.status, 200, JSON.stringify(floor.body));
+      assert.deepEqual(floor.body.tables.map((t) => t.number), [1, 2]);
+      assert.equal((await ownerGet(HOURS, ownerId)).status, 200);
+    });
+  } finally {
+    if (before.billing === undefined) delete process.env.VENUE_BILLING_ENABLED;
+    else process.env.VENUE_BILLING_ENABLED = before.billing;
+    if (before.admins === undefined) delete process.env.ADMIN_USER_IDS;
+    else process.env.ADMIN_USER_IDS = before.admins;
+  }
+});
+
 test('the table rows refuse what the box can never send', async () => {
   for (const [no, people, state] of [[0, 1, 's'], [41, 1, 's'], [1, 31, 's'], [1, 1, 'x']]) {
     await assert.rejects(

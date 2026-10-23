@@ -330,6 +330,27 @@ async function getVenueTier(userId) {
 // The consumer side answers this same condition differently on purpose:
 // GET /api/entitlements is a STATE READ rather than a gate on a feature, so it
 // has no lock contract to preserve and answers a plain 503.
+//
+// The two refusal bodies are built here, once, because two callers send them:
+// this middleware and checkVenueTier below. A word changed in one and not the
+// other would split the client contract described above.
+function tierUnavailableRefusal() {
+  return {
+    error: 'Could not check your venue plan just now. Try again.',
+    code: 'UPGRADE_REQUIRED',
+    reason: 'ENTITLEMENT_UNAVAILABLE',
+    retryable: true,
+  };
+}
+
+function tierUpgradeRefusal(minTier) {
+  return {
+    error: 'This feature needs a venue plan upgrade.',
+    code: 'UPGRADE_REQUIRED',
+    requiredTier: minTier,
+  };
+}
+
 function requireVenueTier(minTier) {
   const minRank = rankOf(minTier);
   // A typo in a call site would otherwise produce a gate that denies everyone
@@ -368,23 +389,42 @@ function requireVenueTier(minTier) {
       console.error('Venue tier check error:', err);
       // Fail closed on a paid boundary, and say which kind of no this is.
       if (res.headersSent) return next(err);
-      return res.status(403).json({
-        error: 'Could not check your venue plan just now. Try again.',
-        code: 'UPGRADE_REQUIRED',
-        reason: 'ENTITLEMENT_UNAVAILABLE',
-        retryable: true,
-      });
+      return res.status(403).json(tierUnavailableRefusal());
     }
 
     // Explicit null check: `null >= 0` is true in JS, so an unrecognised tier
     // would have walked through any gate whose minimum is 'free'.
     if (rank !== null && rank >= minRank) return next();
-    return res.status(403).json({
-      error: 'This feature needs a venue plan upgrade.',
-      code: 'UPGRADE_REQUIRED',
-      requiredTier: minTier,
-    });
+    return res.status(403).json(tierUpgradeRefusal(minTier));
   };
+}
+
+// THE SAME DECISION, FOR A CALLER THAT CANNOT BE THE MIDDLEWARE. Two today,
+// both in table monitoring: routes/sensors.js gates its table routes AFTER its
+// own verified-owner check and puts `has_tables` on the upgrade refusal (so
+// the dashboard can show the lock to a free venue that has tables without
+// being sent any table data), and services/sensorTables.js asks it before a
+// table alert. Neither may be a second copy of the rules, so this asks the
+// same questions in the same order as requireVenueTier: billing off lets every
+// venue through without a lookup, the lookup is getVenueTier, and a lookup
+// that FAILS is the retryable refusal, never "not on the plan".
+//
+// Resolves to { ok: true } or { ok: false, unavailable, body }: body is
+// exactly what requireVenueTier would have answered, and unavailable says
+// which of its two refusals it is. A failed lookup resolves; it never throws.
+async function checkVenueTier(userId, minTier) {
+  const minRank = rankOf(minTier);
+  if (minRank === null) throw new Error(`checkVenueTier: unknown tier "${minTier}"`);
+  if (!venueBillingEnabled()) return { ok: true };
+  let rank;
+  try {
+    rank = rankOf(await getVenueTier(userId));
+  } catch (err) {
+    console.error('Venue tier check error:', err);
+    return { ok: false, unavailable: true, body: tierUnavailableRefusal() };
+  }
+  if (rank !== null && rank >= minRank) return { ok: true };
+  return { ok: false, unavailable: false, body: tierUpgradeRefusal(minTier) };
 }
 
 // GRANT_LIVE_STATUSES as a frozen array, for any query that has to make this
@@ -396,6 +436,7 @@ const GRANT_LIVE_STATUS_LIST = Object.freeze([...GRANT_LIVE_STATUSES]);
 
 module.exports = {
   requireVenueTier,
+  checkVenueTier,
   getVenueTier,
   getVenueEntitlement,
   resolveGrantedTier,
