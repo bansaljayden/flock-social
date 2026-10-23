@@ -4,11 +4,11 @@
 // Flux sensor's tables now; GET /api/sensors/:placeId/tables/hours with tables
 // in use by hour over the last 7 days. App.js reads the first on a loop while
 // the dashboard is open and the second once per open, and hands both to the
-// Tables panel (components/venue/VenueTablesPanel.js, whose words and
-// arithmetic are lib/venueTables.js).
+// dashboard's Tables tab (components/venue/tables/, whose words and arithmetic
+// are lib/venueTables.js).
 //
 // This file is apart from lib/venueTables.js on purpose. App.js is in the
-// bundle every user downloads and imports this; the panel's words and chart
+// bundle every user downloads and imports this; the tab's words and chart
 // code are needed only by the dashboard's own lazily loaded chunk.
 
 // How long after one answer the next read goes out.

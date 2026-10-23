@@ -17894,9 +17894,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [ownerSensorHistory, setOwnerSensorHistory] = useState([]);
   // The same sensor's table zones (GET /api/sensors/:placeId/tables), and its
   // tables in use by hour over the last 7 days. Null until read, and null
-  // again after any failed read: the Tables panel draws nothing for null.
+  // again after any failed read. `ownerTablesSeen` is whether a read since the
+  // dashboard opened has returned at least one table: the Tables tab is in the
+  // bar only then, and stays for the rest of that visit.
   const [ownerTables, setOwnerTables] = useState(null);
   const [ownerTableHours, setOwnerTableHours] = useState(null);
+  const [ownerTablesSeen, setOwnerTablesSeen] = useState(false);
   const [ownerVenuePlaceId, setOwnerVenuePlaceId] = useState(null);
   const [editingVenueInfo, setEditingVenueInfo] = useState(false);
   // The fuller intake, editable AFTER onboarding.
@@ -18743,9 +18746,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // The same sensor's tables, for the same place: read when the dashboard
   // opens and again 15 seconds after each answer while it stays open, never
   // two at once (startTablesReading, lib/venueTablesReading.js). The hours
-  // are read once per open. Any failure arrives as null and draws nothing; a
-  // refusal (403 for anyone but the verified owner, 401 signed out) ends the
-  // reading for this open, since asking again cannot change it. What was
+  // are read once per open. Any failure arrives as null; a refusal (403 for
+  // anyone but the verified owner, 401 signed out) ends the reading for this
+  // open, since asking again cannot change it. The first answer with a table
+  // in it puts the Tables tab in the bar for the rest of the visit. What was
   // shown is dropped whenever the place or the screen changes, so a reopened
   // dashboard never shows an old snapshot as if it were live, and nothing is
   // set once the screen has moved on.
@@ -18753,9 +18757,13 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     const pid = ownerVenuePlaceId;
     setOwnerTables(null);
     setOwnerTableHours(null);
+    setOwnerTablesSeen(false);
     if (!pid || currentScreen !== 'venueDashboard') return undefined;
     let cancelled = false;
-    const stopReading = startTablesReading(() => getSensorTables(pid), setOwnerTables);
+    const stopReading = startTablesReading(() => getSensorTables(pid), (data) => {
+      setOwnerTables(data);
+      if (data && data.tables.length > 0) setOwnerTablesSeen(true);
+    });
     getSensorTableHours(pid).then(tableHoursFrom, () => null).then((hours) => {
       if (!cancelled) setOwnerTableHours(hours);
     });
@@ -18764,6 +18772,16 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       stopReading();
     };
   }, [ownerVenuePlaceId, currentScreen]);
+
+  // The tab a dashboard opens on is the one it was left on, and the Tables
+  // tab is not in the bar again until this visit's first read returns a
+  // table. A dashboard reopened on it would open on a blank page under a bar
+  // with no Tables in it, so it opens on Analytics instead. A layout effect,
+  // so the blank page is never painted; on the dashboard only, so leaving it
+  // does not start the Analytics reads for a screen nobody is looking at.
+  React.useLayoutEffect(() => {
+    if (currentScreen === 'venueDashboard' && venueTab === 'tables' && !ownerTablesSeen) setVenueTab('analytics');
+  }, [currentScreen, venueTab, ownerTablesSeen]);
 
   // Seed venueInfo from onboarding data if backend profile hasn't loaded yet
   React.useEffect(() => {
@@ -19721,6 +19739,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         ownerSensorHistory,
         ownerTableHours,
         ownerTables,
+        ownerTablesSeen,
         promotions,
         realIncomingFlocks,
         renderConsumerVenueCard,

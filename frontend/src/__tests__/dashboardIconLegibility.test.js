@@ -150,12 +150,15 @@ describe('no tab bar offers two tabs you cannot tell apart', () => {
     expect(new Set(names).size).toBe(4);
   });
 
-  it('venue tabs are six distinct glyphs', () => {
-    // Six since the Map tab landed (2026-08-20); the count is here so a
-    // seventh tab has to say what glyph it brings.
+  it('venue tabs are seven distinct glyphs', () => {
+    // Six since the Map tab landed (2026-08-20), seven since Tables did
+    // (2026-10-23). Tables brings Icons.users, a party at a table, and is in
+    // the bar only for a venue whose sensor reports tables. The count is here
+    // so an eighth tab has to say what glyph it brings.
     const names = tabIconNames('venueTabs');
-    expect(names).toHaveLength(6);
-    expect(new Set(names).size).toBe(6);
+    expect(names).toHaveLength(7);
+    expect(new Set(names).size).toBe(7);
+    expect(names).toContain('users');
   });
 
   it('every tab glyph named actually exists in the set', () => {

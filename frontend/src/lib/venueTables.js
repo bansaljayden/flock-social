@@ -7,18 +7,18 @@
 // that to the venue's verified owner and to nobody else:
 //
 //   GET /api/sensors/:placeId/tables
-//     { tables: [{ number, people, state, since }], updated_at, stale, next_free }
+//     { tables: [{ number, people, state, since, seats }], updated_at, stale, next_free }
 //     `since` is when the state began, and for seated and waiting it is when
-//     the party sat down. `stale` is true once the sensor has not reported for
-//     over 3 minutes. `next_free` is the seated or waiting table seated
-//     longest, or null.
+//     the party sat down. `seats` is optional, null when unknown. `stale` is
+//     true once the sensor has not reported for over 3 minutes. `next_free`
+//     is the seated or waiting table seated longest, or null.
 //
 //   GET /api/sensors/:placeId/tables/hours
 //     { hours: [{ hour, occupied, total }] } for the last 7 days, oldest first.
 //
-// This file turns those answers into the sentences and bar heights that
-// components/venue/VenueTablesPanel.js draws. Nothing here estimates: every
-// figure is one the sensor sent, or an average of figures it sent.
+// This file turns those answers into the sentences and bar heights that the
+// dashboard's Tables tab draws (components/venue/tables/). Nothing here
+// estimates: every figure is one the sensor sent, or an average of them.
 
 // The reading itself (when, how often, what a failure becomes) is
 // lib/venueTablesReading.js, kept apart because App.js imports it and this
@@ -109,6 +109,14 @@ export function peopleText(people) {
   if (n === null || n < 1) return null;
   const whole = Math.round(n);
   return `${whole} ${whole === 1 ? 'person' : 'people'}`;
+}
+
+// How many seats a table has, when the sensor's setup says. Optional: null,
+// zero or anything that is not a whole number says nothing.
+export function seatsText(seats) {
+  const n = num(seats);
+  if (n === null || !Number.isInteger(n) || n < 1) return null;
+  return `${n} ${n === 1 ? 'seat' : 'seats'}`;
 }
 
 // The tables that need someone, longest first: a party nobody has stopped by

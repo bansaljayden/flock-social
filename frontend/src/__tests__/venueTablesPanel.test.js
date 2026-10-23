@@ -1,27 +1,31 @@
 /**
- * TABLES ON THE OWNER DASHBOARD.
+ * THE TABLES TAB ON THE OWNER DASHBOARD.
  *
  * A venue's Flux sensor can count people per table zone and keep a state for
  * every table. The verified owner reads it through
  * GET /api/sensors/:placeId/tables (the tables now) and
  * GET /api/sensors/:placeId/tables/hours (tables in use by hour, last 7 days),
- * and the Analytics tab draws it in a Tables panel beside Live Sensor. This
- * file pins what the panel says and does:
+ * and the dashboard gives it a tab of its own. This file pins what that tab
+ * says and does:
  *
- *   - every state reads in words on its tile, so none rests on colour alone;
+ *   - the tab is in the bar only once a read since the dashboard opened has
+ *     returned a table, right after Analytics, and a venue with no tables
+ *     never sees it; inside, the same Roost gate as Live Sensor;
+ *   - Analytics keeps Live Sensor and no longer carries the board;
+ *   - every state reads in words on its tile, so none rests on colour alone,
+ *     and a tile names its seats when the setup knows them;
  *   - seated and waiting tiles count up in minutes and seconds off one interval
- *     for the whole panel, which goes when the panel goes;
+ *     for the whole board, which goes when the board goes;
  *   - only waiting and needs-clearing tables are listed as needing someone, and
  *     the one that has waited longest leads;
  *   - the server's next-free pick is named with how long it has been seated;
  *   - an offline sensor is called offline, the live part dims and its clocks
  *     stop at the last reading;
- *   - no tables, or a failed read, draws nothing at all, and a free plan sees
- *     the lock instead of the panel;
  *   - the hours chart averages each hour of the day on the viewer's own clock,
  *     draws the open hours and marks the busy stretch;
- *   - nothing the panel renders holds an em dash;
- *   - the read loop never has two reads out at once and stops cleanly;
+ *   - nothing the tab renders holds an em dash;
+ *   - the read loop never has two reads out at once and stops cleanly, and
+ *     App.js wires it, the tab's flag and the reopen rule as described;
  *   - the two api.js calls ask the paths the server serves.
  *
  * HOW TO RUN
@@ -30,7 +34,7 @@
 import fs from 'fs';
 import path from 'path';
 import React from 'react';
-import { render, screen, act, within } from '@testing-library/react';
+import { render, screen, act, within, fireEvent } from '@testing-library/react';
 
 jest.mock('../services/api', () => ({
   getVenueBillingStatus: jest.fn(() => Promise.resolve(null)),
@@ -44,12 +48,12 @@ jest.mock('../components/ui/BirdieBird', () => {
   return { __esModule: true, default: Stub, BirdieStill: Stub, BirdNote, WARM_BIRD: {}, BIRDIE: {} };
 });
 // Roost's cards and its questions fetch on mount. Neither is what this file is
-// about, and both sit in the same Analytics body as the panel.
+// about, and both sit in the Analytics body the tests below open.
 jest.mock('../components/VenueInsightCards', () => ({ __esModule: true, default: () => null, clearAdvisorCards: () => {} }));
 jest.mock('../components/VenueAdvisorChat', () => ({ __esModule: true, default: () => null }));
 
 // eslint-disable-next-line import/first
-import VenueTablesPanel from '../components/venue/VenueTablesPanel';
+import VenueTablesTab from '../components/venue/tables/VenueTablesTab';
 // eslint-disable-next-line import/first
 import VenueDashboard from '../screens/VenueDashboard';
 // eslint-disable-next-line import/first
@@ -58,6 +62,7 @@ import {
   clockText,
   hourLabel,
   minutesText,
+  seatsText,
   tableHoursChart,
   tablesByLocalHour,
 } from '../lib/venueTables';
@@ -77,13 +82,14 @@ const ago = (ms) => new Date(NOW - ms).toISOString();
 
 const COLORS = { navy: '#1e293b', steel: '#2d5a87', amber: '#F59E0B' };
 
-// One table in every state, listed out of order on purpose.
+// One table in every state, listed out of order on purpose. Seats are known
+// for some tables and not for others, as the server allows.
 const LIVE = {
   tables: [
-    { number: 4, people: 0, state: 'needs_clearing', since: ago(2 * MIN + 10 * SEC) },
-    { number: 1, people: 0, state: 'free', since: ago(12 * MIN + 30 * SEC) },
-    { number: 3, people: 4, state: 'waiting', since: ago(6 * MIN + 12 * SEC) },
-    { number: 2, people: 2, state: 'seated', since: ago(24 * MIN + 5 * SEC) },
+    { number: 4, people: 0, state: 'needs_clearing', since: ago(2 * MIN + 10 * SEC), seats: 2 },
+    { number: 1, people: 0, state: 'free', since: ago(12 * MIN + 30 * SEC), seats: 4 },
+    { number: 3, people: 4, state: 'waiting', since: ago(6 * MIN + 12 * SEC), seats: null },
+    { number: 2, people: 2, state: 'seated', since: ago(24 * MIN + 5 * SEC), seats: 1 },
     { number: 5, people: 1, state: 'seated', since: ago(65 * SEC) },
   ],
   updated_at: ago(5 * SEC),
@@ -102,12 +108,12 @@ const HOURS = [
   { hour: at(19, 23), occupied: 1, total: 8 },
 ];
 
-const renderPanel = (props = {}) => render(
-  <VenueTablesPanel data={LIVE} hours={null} colors={COLORS} wellPx={50} {...props} />
+const renderTab = (props = {}) => render(
+  <VenueTablesTab data={LIVE} hours={null} colors={COLORS} wellPx={50} {...props} />
 );
 const tiles = () => within(screen.getByRole('list', { name: 'All tables' })).getAllByRole('listitem');
 const tileFor = (n) => tiles().find((li) => li.querySelector('p').textContent === `Table ${n}`);
-const stateWord = (tile) => tile.querySelectorAll('p')[1].textContent;
+const stateWord = (tile) => tile.querySelector('[data-testid="table-state"]').textContent;
 const alertLines = () => within(screen.getByRole('list', { name: 'Needs attention' }))
   .getAllByRole('listitem').map((li) => li.textContent);
 // A paragraph whose whole text is `text`, across the spans inside it.
@@ -123,13 +129,13 @@ afterEach(() => {
 
 describe('each tile says its table and its state in words', () => {
   test('tiles run in table-number order with the word for every state', () => {
-    renderPanel();
+    renderTab();
     expect(tiles().map((t) => t.querySelector('p').textContent)).toEqual(['Table 1', 'Table 2', 'Table 3', 'Table 4', 'Table 5']);
     expect(tiles().map(stateWord)).toEqual(['Free', 'Seated', 'Needs a server', 'Needs clearing', 'Seated']);
   });
 
   test('free and needs clearing say whole minutes; seated and waiting add the head count', () => {
-    renderPanel();
+    renderTab();
     expect(within(tileFor(1)).getByText('Free for 12 min')).toBeTruthy();
     expect(within(tileFor(4)).getByText('Waiting to be cleared 2 min')).toBeTruthy();
     expect(within(tileFor(2)).getByText('24:05')).toBeTruthy();
@@ -142,8 +148,25 @@ describe('each tile says its table and its state in words', () => {
     expect(tileFor(4).textContent).not.toMatch(/people|person|\d:\d\d/);
   });
 
+  test('a tile names its seats when the setup knows them, and says nothing when it does not', () => {
+    renderTab();
+    expect(within(tileFor(1)).getByText('4 seats')).toBeTruthy();
+    expect(within(tileFor(4)).getByText('2 seats')).toBeTruthy();
+    expect(within(tileFor(2)).getByText('1 seat')).toBeTruthy();
+    // "seated 6 min" is the waiting tile's spoken clock; no seat count.
+    expect(tileFor(3).textContent).not.toMatch(/\d seats?\b/);
+    expect(tileFor(5).textContent).not.toMatch(/\d seats?\b/);
+  });
+
+  test('seats are optional: null, zero, a fraction or a word say nothing', () => {
+    expect(seatsText(4)).toBe('4 seats');
+    expect(seatsText(1)).toBe('1 seat');
+    expect(seatsText('6')).toBe('6 seats');
+    for (const seats of [null, undefined, 0, -2, 2.5, 'four', '']) expect(seatsText(seats)).toBeNull();
+  });
+
   test('a screen reader hears minutes, not a clock face', () => {
-    renderPanel();
+    renderTab();
     const clock = within(tileFor(3)).getByText('6:12');
     expect(clock.getAttribute('aria-hidden')).toBe('true');
     expect(within(tileFor(3)).getByText('seated 6 min').className).toBe('sr-only');
@@ -151,7 +174,7 @@ describe('each tile says its table and its state in words', () => {
   });
 
   test('the party nobody has stopped by for is the solid amber tile', () => {
-    renderPanel();
+    renderTab();
     expect(tileFor(3)).toHaveStyle({ backgroundColor: COLORS.amber });
     for (const n of [1, 2, 4, 5]) expect(tileFor(n)).not.toHaveStyle({ backgroundColor: COLORS.amber });
   });
@@ -172,8 +195,9 @@ describe('the seated clock', () => {
   });
 
   test('ticks every second, and every tile ticks off the same one interval', () => {
-    renderPanel();
-    // Two seated tiles and a waiting one, and still one timer.
+    renderTab({ hours: HOURS });
+    // Two seated tiles and a waiting one, and the chart beside them, and still
+    // one timer.
     expect(jest.getTimerCount()).toBe(1);
     expect(within(tileFor(5)).getByText('1:05')).toBeTruthy();
     act(() => { jest.advanceTimersByTime(SEC); });
@@ -184,22 +208,30 @@ describe('the seated clock', () => {
     expect(within(tileFor(1)).getByText('Free for 13 min')).toBeTruthy();
   });
 
-  test('the interval goes when the panel goes', () => {
-    const { unmount } = renderPanel();
+  test('the interval goes when the tab goes', () => {
+    const { unmount } = renderTab();
     expect(jest.getTimerCount()).toBe(1);
     unmount();
     expect(jest.getTimerCount()).toBe(0);
   });
 
   test('a clock a little ahead of this phone reads zero, never a countdown', () => {
-    renderPanel({ data: { ...LIVE, tables: [{ number: 7, people: 2, state: 'seated', since: new Date(NOW + 3 * SEC).toISOString() }] } });
+    renderTab({ data: { ...LIVE, tables: [{ number: 7, people: 2, state: 'seated', since: new Date(NOW + 3 * SEC).toISOString() }] } });
     expect(within(tileFor(7)).getByText('0:00')).toBeTruthy();
+  });
+
+  test('tables that arrive after the board mounted are timed from now, not from the mount', () => {
+    const { rerender } = renderTab({ data: null });
+    act(() => { jest.advanceTimersByTime(40 * SEC); });
+    const later = { ...LIVE, tables: [{ number: 6, people: 2, state: 'seated', since: new Date(NOW + 40 * SEC - 70 * SEC).toISOString() }] };
+    rerender(<VenueTablesTab data={later} hours={null} colors={COLORS} wellPx={50} />);
+    expect(within(tileFor(6)).getByText('1:10')).toBeTruthy();
   });
 });
 
 describe('the tables that need someone', () => {
   test('lists only waiting and needs clearing, longest first', () => {
-    renderPanel();
+    renderTab();
     expect(alertLines()).toEqual([
       'Table 3: seated 6 min, nobody has stopped by yet',
       'Table 4: left 2 min ago, needs clearing',
@@ -207,7 +239,7 @@ describe('the tables that need someone', () => {
   });
 
   test('a table left longer than a party has waited goes first', () => {
-    renderPanel({
+    renderTab({
       data: {
         ...LIVE,
         next_free: null,
@@ -228,7 +260,7 @@ describe('the tables that need someone', () => {
   });
 
   test('a room where nobody is waiting and nothing needs clearing lists nothing', () => {
-    renderPanel({
+    renderTab({
       data: {
         ...LIVE,
         tables: [
@@ -243,22 +275,23 @@ describe('the tables that need someone', () => {
 
 describe('next likely free', () => {
   test('names the server\'s pick and how long it has been seated', () => {
-    renderPanel();
+    renderTab();
     expect(screen.getByText('Next likely free: Table 2 (seated 24 min)')).toBeTruthy();
   });
 
   test('says nothing without a pick, or when the pick is not seated on the tiles', () => {
-    const { unmount } = renderPanel({ data: { ...LIVE, next_free: null } });
+    const { unmount } = renderTab({ data: { ...LIVE, next_free: null } });
     expect(screen.queryByText(/Next likely free/)).toBeNull();
     unmount();
-    renderPanel({ data: { ...LIVE, next_free: 1 } });
+    renderTab({ data: { ...LIVE, next_free: 1 } });
     expect(screen.queryByText(/Next likely free/)).toBeNull();
   });
 });
 
-describe('the summary line', () => {
-  test('counts free tables against all of them', () => {
-    renderPanel();
+describe('the board\'s heading and summary', () => {
+  test('"Right now", then free tables counted against all of them', () => {
+    renderTab();
+    expect(screen.getByRole('heading', { name: 'Right now' })).toBeTruthy();
     expect(screen.getByText('1 of 5 free')).toBeTruthy();
   });
 });
@@ -275,13 +308,13 @@ describe('a sensor that has gone quiet', () => {
   };
 
   test('is called offline, with how old its last reading is and what it saw', () => {
-    renderPanel({ data: STALE });
+    renderTab({ data: STALE });
     expect(paragraph('Sensor offline. Last reading 4 min ago, when 1 of 2 was free.')).toBeTruthy();
     expect(screen.queryByText('1 of 2 free')).toBeNull();
   });
 
-  test('the tiles dim and their clocks stop where the sensor left them', () => {
-    renderPanel({ data: STALE });
+  test('the live part dims and its clocks stop where the sensor left them', () => {
+    renderTab({ data: STALE });
     expect(screen.getByTestId('tables-live')).toHaveStyle({ opacity: '0.55' });
     // Seated 14 minutes ago by this phone's clock, 10 at the last reading.
     expect(within(tileFor(2)).getByText('10:00')).toBeTruthy();
@@ -294,29 +327,31 @@ describe('a sensor that has gone quiet', () => {
   });
 
   test('with no time for the last reading, no clock is shown at all', () => {
-    renderPanel({ data: { ...STALE, updated_at: null } });
+    renderTab({ data: { ...STALE, updated_at: null } });
     expect(paragraph('Sensor offline. At its last reading 1 of 2 was free.')).toBeTruthy();
     expect(tileFor(2).textContent).not.toMatch(/\d:\d\d/);
     expect(tileFor(1).textContent).not.toMatch(/min/);
   });
 
   test('a live sensor is not dimmed', () => {
-    renderPanel();
+    renderTab();
     expect(screen.getByTestId('tables-live')).toHaveStyle({ opacity: '1' });
     expect(screen.queryByText(/Sensor offline/)).toBeNull();
   });
 });
 
-describe('no tables draws nothing', () => {
+describe('a later read that brings no tables', () => {
+  // The tab stays for the rest of the visit once a table has been read, so a
+  // read that fails or comes back empty after that is said in one line.
   test.each([
-    ['an empty list', { tables: [], updated_at: null, stale: false, next_free: null }],
-    ['a failed read', null],
-    ['no answer yet', undefined],
-    ['a list with nothing the panel can draw', { tables: [{ number: 'two', state: 'free' }, { number: 3, state: 'dancing' }] }],
-  ])('%s', (_, data) => {
-    const { container } = renderPanel({ data });
-    expect(container.innerHTML).toBe('');
-    // And no clock is left running for a panel that is not there.
+    ['a failed read', null, "Your tables couldn't load just now."],
+    ['an empty list', { tables: [], updated_at: null, stale: false, next_free: null }, 'Your sensor is not reporting any tables right now.'],
+    ['a list with nothing the board can draw', { tables: [{ number: 'two', state: 'free' }, { number: 3, state: 'dancing' }] }, 'Your sensor is not reporting any tables right now.'],
+  ])('%s says so, with no tiles and no clock running', (_, data, line) => {
+    renderTab({ data });
+    expect(screen.getByRole('heading', { name: 'Right now' })).toBeTruthy();
+    expect(screen.getByText(line)).toBeTruthy();
+    expect(screen.queryByRole('list', { name: 'All tables' })).toBeNull();
     expect(jest.getTimerCount()).toBe(0);
   });
 });
@@ -339,7 +374,7 @@ describe('tables in use by hour', () => {
     expect(slots.filter((s) => s.avg !== null).map((s) => s.hour)).toEqual([19]);
   });
 
-  test('rows the panel cannot read are skipped, not counted as zero', () => {
+  test('rows the tab cannot read are skipped, not counted as zero', () => {
     const { slots } = tablesByLocalHour([
       { hour: at(19, 19), occupied: 4, total: 8 },
       { hour: 'not a time', occupied: 9, total: 8 },
@@ -350,8 +385,12 @@ describe('tables in use by hour', () => {
     expect(slots[19]).toEqual({ hour: 19, avg: 4, samples: 1 });
   });
 
-  test('draws the open hours, the gap inside them empty, and marks the busy stretch', () => {
-    renderPanel({ hours: HOURS });
+  test('is its own section under the board, with the open hours, the gap inside them empty, and the busy stretch marked', () => {
+    renderTab({ hours: HOURS });
+    const board = screen.getByRole('heading', { name: 'Right now' });
+    const hoursHeading = screen.getByRole('heading', { name: 'Tables in use by hour' });
+    // eslint-disable-next-line no-bitwise
+    expect(board.compareDocumentPosition(hoursHeading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     const chart = screen.getByTestId('tables-hours-chart');
     const bars = [...chart.querySelectorAll('[data-hour]')];
     // 7 PM to 11 PM: the long overnight gap is left off, 9 and 10 PM stay in.
@@ -359,7 +398,6 @@ describe('tables in use by hour', () => {
     expect(bars.map((b) => b.querySelector('div').children.length)).toEqual([1, 1, 0, 0, 1]);
     // 8 PM's 5.5 is the peak; 7 PM's 3 is not within a fifth of it.
     expect(bars.filter((b) => b.getAttribute('data-busy') === 'true').map((b) => Number(b.getAttribute('data-hour')))).toEqual([20]);
-    expect(screen.getByRole('heading', { name: 'Tables in use by hour' })).toBeTruthy();
     expect(screen.getByText('Busiest around 8 PM, with 5.5 of 8 tables in use on average.')).toBeTruthy();
     expect(screen.getByText('Averages for each hour of the day over the last 7 days.')).toBeTruthy();
   });
@@ -384,27 +422,29 @@ describe('tables in use by hour', () => {
     ['no hours read', null],
     ['an empty week', []],
     ['nothing usable in it', [{ hour: 'never', occupied: 2, total: 8 }]],
-  ])('is hidden when there is %s', (_, hours) => {
-    renderPanel({ hours });
+  ])('is left out when there is %s', (_, hours) => {
+    renderTab({ hours });
     expect(screen.queryByTestId('tables-hours-chart')).toBeNull();
-    expect(screen.queryByText('Tables in use by hour')).toBeNull();
-    // The tables themselves are still there.
-    expect(screen.getByRole('heading', { name: 'Tables' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Tables in use by hour' })).toBeNull();
+    // The board is still there.
+    expect(screen.getByRole('heading', { name: 'Right now' })).toBeTruthy();
   });
 });
 
-describe('no em dash in anything the panel renders', () => {
-  test('live, offline and offline without a time, with the chart', () => {
+describe('no em dash in anything the tab renders', () => {
+  test('live, offline, offline without a time and with nothing to show, with the chart', () => {
     const cases = [
       LIVE,
       { ...LIVE, stale: true, updated_at: ago(5 * MIN) },
       { ...LIVE, stale: true, updated_at: null },
+      null,
+      { tables: [] },
     ];
     for (const data of cases) {
-      const { container, unmount } = renderPanel({ data, hours: HOURS });
-      expect(container.textContent.length).toBeGreaterThan(100);
+      const { container, unmount } = renderTab({ data, hours: HOURS });
+      expect(container.textContent.length).toBeGreaterThan(50);
       expect(container.textContent).not.toContain(EM_DASH);
-      // No range is drawn anywhere on the panel, so no en dash either.
+      // No range is drawn anywhere on the tab, so no en dash either.
       expect(container.textContent).not.toContain(EN_DASH);
       unmount();
     }
@@ -525,28 +565,41 @@ describe('the read loop', () => {
 describe('App.js reads the tables for the dashboard and hands them down', () => {
   const APP = read('App.js');
   const start = APP.indexOf("// The same sensor's tables, for the same place");
-  const effect = APP.slice(start, APP.indexOf('// Seed venueInfo from onboarding data', start));
+  const effect = APP.slice(start, APP.indexOf('// The tab a dashboard opens on is the one it was left on', start));
+  const reopen = APP.slice(APP.indexOf('// The tab a dashboard opens on is the one it was left on'), APP.indexOf('// Seed venueInfo from onboarding data'));
 
-  test('the read is found, so the checks below are reading something', () => {
+  test('the read and the reopen rule are found, so the checks below are reading something', () => {
     expect(start).toBeGreaterThan(-1);
     expect(effect).toContain('React.useEffect(');
+    expect(reopen).toContain('React.useLayoutEffect(');
   });
 
   test('only while the owner\'s dashboard is open, starting from nothing each time', () => {
-    expect(effect).toMatch(/setOwnerTables\(null\);\s*setOwnerTableHours\(null\);\s*if \(!pid \|\| currentScreen !== 'venueDashboard'\) return undefined;/);
+    expect(effect).toMatch(/setOwnerTables\(null\);\s*setOwnerTableHours\(null\);\s*setOwnerTablesSeen\(false\);\s*if \(!pid \|\| currentScreen !== 'venueDashboard'\) return undefined;/);
     expect(effect).toContain('}, [ownerVenuePlaceId, currentScreen]);');
   });
 
   test('the tables on the loop, the hours once, and both stopped on the way out', () => {
-    expect(effect).toContain('const stopReading = startTablesReading(() => getSensorTables(pid), setOwnerTables);');
+    expect(effect).toContain('const stopReading = startTablesReading(() => getSensorTables(pid), (data) => {');
     expect(effect).toContain('getSensorTableHours(pid).then(tableHoursFrom, () => null)');
     expect(effect).toContain('if (!cancelled) setOwnerTableHours(hours);');
     expect(effect).toMatch(/return \(\) => \{\s*cancelled = true;\s*stopReading\(\);\s*\};/);
     expect(effect).not.toContain('setInterval');
   });
 
-  test('both reach the dashboard beside the sensor data', () => {
-    expect(APP).toMatch(/ownerSensorData,\s*ownerSensorHistory,\s*ownerTableHours,\s*ownerTables,\s*promotions,/);
+  test('the first answer with a table in it puts the tab in the bar, and nothing takes it out mid-visit', () => {
+    expect(effect).toMatch(/setOwnerTables\(data\);\s*if \(data && data\.tables\.length > 0\) setOwnerTablesSeen\(true\);/);
+    // The only other write is the reset when the visit or the place changes.
+    expect(APP.match(/setOwnerTablesSeen\(/g)).toHaveLength(2);
+  });
+
+  test('a dashboard reopened on the Tables tab opens on Analytics, and leaving it starts nothing', () => {
+    expect(reopen).toContain("if (currentScreen === 'venueDashboard' && venueTab === 'tables' && !ownerTablesSeen) setVenueTab('analytics');");
+    expect(reopen).toContain('}, [currentScreen, venueTab, ownerTablesSeen]);');
+  });
+
+  test('all three reach the dashboard beside the sensor data', () => {
+    expect(APP).toMatch(/ownerSensorData,\s*ownerSensorHistory,\s*ownerTableHours,\s*ownerTables,\s*ownerTablesSeen,\s*promotions,/);
   });
 });
 
@@ -562,8 +615,9 @@ const PARAMS = (() => {
 })();
 const STUB_COMPONENTS = new Set(['DialogBehavior', 'EventModal', 'MapLibreMapView', 'ModerationHiddenNotice', 'PromoModal', 'SearchInputLocal']);
 const FUNCTIONS = /^(set|handle|load|open|render|retry|cancel|switch|calc|get|crowd|is|member)[A-Za-z]/;
+const TAB_NAMES = ['Analytics', 'Tables', 'Map', 'Promotions', 'Events', 'Reviews', 'Settings'];
 
-const ROOST_ANALYTICS = {
+const ROOST = {
   colors: new Proxy({}, { get: () => '#2d5a87' }),
   HOUR_BAR_WELL_PX: 50,
   venueTab: 'analytics',
@@ -588,6 +642,10 @@ const ROOST_ANALYTICS = {
   venuePlanPriceLabel: () => null,
   venueProfileToIntake: jest.fn(),
 };
+const SENSOR = {
+  sensor_data: { thermal_headcount: 12, noise_db: 60, ir_beam_count: 3, recorded_at: ago(MIN) },
+  recent_checkins: 2,
+};
 
 function dashboard(overrides = {}) {
   const props = {};
@@ -596,65 +654,120 @@ function dashboard(overrides = {}) {
     else if (FUNCTIONS.test(name)) props[name] = jest.fn();
     else props[name] = undefined;
   }
-  return render(<VenueDashboard {...props} showToast={jest.fn()} onLogout={jest.fn()} {...ROOST_ANALYTICS} {...overrides} />);
+  const all = { ...props, showToast: jest.fn(), onLogout: jest.fn(), ...ROOST, ...overrides };
+  return { ...render(<VenueDashboard {...all} />), props: all };
 }
 const settle = () => act(async () => {});
+const tabBar = () => screen.getAllByRole('button').map((b) => b.textContent.trim()).filter((t) => TAB_NAMES.includes(t));
 
-describe('on the dashboard', () => {
-  const SENSOR = {
-    sensor_data: { thermal_headcount: 12, noise_db: 60, ir_beam_count: 3, recorded_at: ago(MIN) },
-    recent_checkins: 2,
-  };
-
-  test('the dashboard takes both, so App.js has somewhere to hand them', () => {
-    expect(PARAMS).toEqual(expect.arrayContaining(['ownerTables', 'ownerTableHours']));
+describe('the tab bar', () => {
+  test('the dashboard takes the tables, the hours and the flag', () => {
+    expect(PARAMS).toEqual(expect.arrayContaining(['ownerTables', 'ownerTableHours', 'ownerTablesSeen']));
   });
 
-  test('a Roost venue sees Tables right after Live Sensor and before Post a Deal', async () => {
-    dashboard({ ownerSensorData: SENSOR, ownerTables: LIVE, ownerTableHours: HOURS });
+  test('a venue whose sensor has reported a table gets Tables, right after Analytics', async () => {
+    dashboard({ ownerTablesSeen: true, ownerTables: LIVE });
     await settle();
-    const live = screen.getByRole('heading', { name: 'Live Sensor' });
-    const tables = screen.getByRole('heading', { name: 'Tables' });
-    const deal = screen.getByText('Post a Deal');
-    // eslint-disable-next-line no-bitwise
-    expect(live.compareDocumentPosition(tables) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    // eslint-disable-next-line no-bitwise
-    expect(tables.compareDocumentPosition(deal) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(screen.getByText('1 of 5 free')).toBeTruthy();
-    expect(screen.getByTestId('tables-hours-chart')).toBeTruthy();
-  });
-
-  test('it does not need Live Sensor to be there', async () => {
-    dashboard({ ownerTables: LIVE });
-    await settle();
-    expect(screen.getByRole('heading', { name: 'Tables' })).toBeTruthy();
-    expect(screen.queryByRole('heading', { name: 'Live Sensor' })).toBeNull();
-  });
-
-  test('a free venue sees the lock, not the panel', async () => {
-    dashboard({ venueTier: 'free', ownerTables: LIVE, ownerTableHours: HOURS });
-    await settle();
-    expect(screen.getByRole('heading', { name: 'Analytics' })).toBeTruthy();
-    expect(screen.queryByRole('heading', { name: 'Tables' })).toBeNull();
-  });
-
-  test('another tab does not draw it', async () => {
-    dashboard({ venueTab: 'events', ownerTables: LIVE });
-    await settle();
-    expect(screen.queryByRole('heading', { name: 'Tables' })).toBeNull();
+    expect(tabBar()).toEqual(['Analytics', 'Tables', 'Map', 'Promotions', 'Events', 'Reviews', 'Settings']);
   });
 
   test.each([
-    ['no answer yet', undefined],
-    ['a failed read', null],
-    ['an empty list', { tables: [], updated_at: null, stale: false, next_free: null }],
-    ['an answer with no list', { stale: false }],
-  ])('%s draws nothing on the tab', async (_, ownerTables) => {
-    dashboard({ ownerSensorData: SENSOR, ownerTables, ownerTableHours: HOURS });
+    ['nothing read yet', { ownerTablesSeen: false, ownerTables: undefined }],
+    ['no tables at all', { ownerTablesSeen: false, ownerTables: { tables: [], updated_at: null, stale: false, next_free: null } }],
+    ['a refused read', { ownerTablesSeen: false, ownerTables: null }],
+  ])('%s: no Tables tab, and nothing about tables anywhere', async (_, overrides) => {
+    const { container } = dashboard({ ownerSensorData: SENSOR, ...overrides });
+    await settle();
+    expect(tabBar()).toEqual(['Analytics', 'Map', 'Promotions', 'Events', 'Reviews', 'Settings']);
+    expect(container.textContent).not.toMatch(/Right now|Tables in use by hour|Needs a server/);
+    expect(container.textContent).not.toMatch(/coming soon/i);
+  });
+
+  test('the Tables button opens the tab', async () => {
+    const { props } = dashboard({ ownerTablesSeen: true, ownerTables: LIVE });
+    await settle();
+    fireEvent.click(screen.getByRole('button', { name: 'Tables' }));
+    expect(props.setVenueTab).toHaveBeenCalledWith('tables');
+  });
+});
+
+describe('the Tables tab', () => {
+  // The lock's web half is the build that sells; pinned here so the lock tests
+  // do not depend on what the machine running them has set.
+  const FLAG_BEFORE = process.env.REACT_APP_PURCHASES;
+  beforeEach(() => { delete process.env.REACT_APP_PURCHASES; });
+  afterEach(() => {
+    if (FLAG_BEFORE === undefined) delete process.env.REACT_APP_PURCHASES;
+    else process.env.REACT_APP_PURCHASES = FLAG_BEFORE;
+  });
+
+  test('a Roost venue gets the board and the week by hour', async () => {
+    dashboard({ venueTab: 'tables', ownerTablesSeen: true, ownerTables: LIVE, ownerTableHours: HOURS, ownerSensorData: SENSOR });
+    await settle();
+    expect(screen.getByRole('heading', { name: 'Right now' })).toBeTruthy();
+    expect(screen.getByText('1 of 5 free')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Tables in use by hour' })).toBeTruthy();
+    // The tab is the tables and nothing else: Live Sensor stays on Analytics.
+    expect(screen.queryByRole('heading', { name: 'Live Sensor' })).toBeNull();
+    expect(screen.queryByText('Post a Deal')).toBeNull();
+  });
+
+  test('a plan without Roost gets the same lock Analytics uses, named for the tab', async () => {
+    const { container } = dashboard({ venueTab: 'tables', venueTier: 'free', ownerTablesSeen: true, ownerTables: LIVE, ownerTableHours: HOURS });
+    await settle();
+    expect(screen.getByRole('heading', { name: 'Tables' })).toBeTruthy();
+    expect(screen.getByText('Each table live from your sensor: which are free, seated, waiting for a server or need clearing, and how many are in use at each hour.')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Upgrade to Roost' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Right now' })).toBeNull();
+    expect(screen.queryByTestId('tables-hours-chart')).toBeNull();
+    expect(container.textContent).not.toContain(EM_DASH);
+  });
+
+  test('inside the app the lock names no price and offers nothing to buy', async () => {
+    window.Capacitor = { isNativePlatform: () => true, getPlatform: () => 'ios' };
+    try {
+      const { container } = dashboard({ venueTab: 'tables', venueTier: 'free', ownerTablesSeen: true, ownerTables: LIVE });
+      await settle();
+      expect(screen.getByText('This is not turned on for your venue.')).toBeTruthy();
+      expect(screen.queryByRole('button', { name: /Upgrade/ })).toBeNull();
+      expect(container.textContent).not.toMatch(/\$\s?\d/);
+    } finally {
+      delete window.Capacitor;
+    }
+  });
+
+  test('until the plan is known, the shimmer stands in for both', async () => {
+    dashboard({ venueTab: 'tables', venueTierKnown: false, ownerTablesSeen: true, ownerTables: LIVE });
+    await settle();
+    expect(screen.queryByRole('heading', { name: 'Right now' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Tables' })).toBeNull();
+    expect(document.querySelectorAll('.skeleton').length).toBeGreaterThan(0);
+  });
+
+  test('without the flag the tab draws nothing, even asked for by name', async () => {
+    const { container } = dashboard({ venueTab: 'tables', ownerTablesSeen: false, ownerTables: LIVE, ownerTableHours: HOURS });
+    await settle();
+    expect(screen.queryByRole('heading', { name: 'Right now' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Tables' })).toBeNull();
+    expect(container.textContent).not.toMatch(/Needs a server|Tables in use by hour/);
+  });
+
+  test('a read that failed after the tab appeared says so on the tab', async () => {
+    dashboard({ venueTab: 'tables', ownerTablesSeen: true, ownerTables: null, ownerTableHours: HOURS });
+    await settle();
+    expect(screen.getByText("Your tables couldn't load just now.")).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Tables in use by hour' })).toBeTruthy();
+  });
+});
+
+describe('Analytics', () => {
+  test('keeps Live Sensor and no longer carries the board', async () => {
+    dashboard({ venueTab: 'analytics', ownerTablesSeen: true, ownerTables: LIVE, ownerTableHours: HOURS, ownerSensorData: SENSOR });
     await settle();
     expect(screen.getByRole('heading', { name: 'Live Sensor' })).toBeTruthy();
-    expect(screen.queryByRole('heading', { name: 'Tables' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Right now' })).toBeNull();
     expect(screen.queryByTestId('tables-hours-chart')).toBeNull();
+    expect(screen.queryByText('Needs a server')).toBeNull();
   });
 });
 
@@ -675,7 +788,7 @@ describe('the two api.js calls', () => {
   afterEach(() => { global.fetch = realFetch; });
 
   test('getSensorTables asks for the place\'s tables, with the id encoded', async () => {
-    const body = { tables: [], updated_at: null, stale: false, next_free: null };
+    const body = { tables: [{ number: 1, people: 0, state: 'free', since: '2026-10-23T23:00:00.000Z', seats: 4 }], updated_at: null, stale: false, next_free: null };
     global.fetch = jest.fn(() => reply(200, body));
     await expect(api.getSensorTables('ChIJ a/b')).resolves.toEqual(body);
     expect(global.fetch).toHaveBeenCalledTimes(1);

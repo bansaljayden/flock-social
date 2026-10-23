@@ -43,8 +43,8 @@ import VenueInsightCards, { clearAdvisorCards } from '../components/VenueInsight
 import VenueAdvisorChat from '../components/VenueAdvisorChat';
 import { hourlySourcePhrase, peersSourcePhrase, stripPeakBars, stripRowMethod } from '../lib/crowd';
 import VenueBillingControl, { VenueBillingStatus, roostPlanPriceLabel } from '../components/venue/VenueBillingControl';
-// The Flux sensor's table zones, beside Live Sensor on the Analytics tab.
-import VenueTablesPanel from '../components/venue/VenueTablesPanel';
+// The Flux sensor's table zones, on a tab of their own.
+import VenueTablesTab from '../components/venue/tables/VenueTablesTab';
 // REACT_APP_PURCHASES=off (the App Store build): no plan badge, no plans
 // sheet, no prices, no upgrade buttons and no Subscription card. A tab the
 // server withholds says so without offering anything. lib/purchasesBuild.js.
@@ -348,6 +348,7 @@ export default function VenueDashboard({
   ownerSensorHistory,
   ownerTableHours,
   ownerTables,
+  ownerTablesSeen,
   promotions,
   realIncomingFlocks,
   renderConsumerVenueCard,
@@ -473,6 +474,11 @@ export default function VenueDashboard({
 
     const venueTabs = [
       { id: 'analytics', label: 'Analytics', icon: Icons.barChart },
+      // Only for a venue whose sensor has reported a table since the
+      // dashboard opened (ownerTablesSeen in App.js): a venue with no table
+      // zones never sees the tab. Icons.users is a party at a table, a glyph
+      // no other tab here uses.
+      ...(ownerTablesSeen ? [{ id: 'tables', label: 'Tables', icon: Icons.users }] : []),
       // The venue as consumers see it. Presence, not a paid feature.
       { id: 'map', label: 'Map', icon: Icons.map },
       // Was Icons.gift. A wrapped present means "a gift", and nothing on this
@@ -1726,16 +1732,6 @@ export default function VenueDashboard({
             );
           })()}
 
-          {/* Tables: the same sensor's table zones, for a venue whose Flux is
-              set up with them. Inside this Roost body like Live Sensor, so a
-              free plan sees the lock instead, and drawn only once the sensor
-              has sent at least one table; any failed read arrives as null and
-              draws nothing. The panel keeps its own one-second clock, which is
-              why it is a component and not a block in this stateless body. */}
-          {ownerTables && Array.isArray(ownerTables.tables) && ownerTables.tables.length > 0 && (
-            <VenueTablesPanel data={ownerTables} hours={ownerTableHours} colors={colors} wellPx={HOUR_BAR_WELL_PX} />
-          )}
-
           {/* Post a Deal. Deals are free on every plan, so nothing here is
               locked. A venue on the free plan does not see this tab's body,
               and posts from the Promotions tab, which is open to everyone. */}
@@ -1867,6 +1863,25 @@ export default function VenueDashboard({
               is nothing above it to sell; the free venue's way in is the
               lock in front of this body. */}
           </>)}
+
+          {/* TABLES TAB. Its button is in the bar only once the sensor has
+              reported a table since the dashboard opened (ownerTablesSeen), and
+              nothing here renders without it. Gated the way Live Sensor is on
+              Analytics, from the same `can` and `tierKnown`: until the profile
+              answers the plan is unknown, so the shimmer stands in; a plan
+              without Roost gets the lock Analytics uses; Roost gets the tab. */}
+          {venueTab === 'tables' && ownerTablesSeen && !tierKnown && (
+            <div aria-hidden="true">
+              <div className="skeleton" style={{ height: '220px', borderRadius: '12px', marginBottom: '12px' }} />
+              <div className="skeleton" style={{ height: '120px', borderRadius: '12px', marginBottom: '12px' }} />
+            </div>
+          )}
+          {venueTab === 'tables' && ownerTablesSeen && !can.analytics && tierKnown && (
+            <LockedTab featureName="Tables" description="Each table live from your sensor: which are free, seated, waiting for a server or need clearing, and how many are in use at each hour." />
+          )}
+          {venueTab === 'tables' && ownerTablesSeen && can.analytics && tierKnown && (
+            <VenueTablesTab data={ownerTables} hours={ownerTableHours} colors={colors} wellPx={HOUR_BAR_WELL_PX} />
+          )}
 
           {/* PROMOTIONS TAB. Free on every plan, so it has no lock. */}
           {venueTab === 'promotions' && (
