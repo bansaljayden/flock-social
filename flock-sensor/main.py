@@ -3277,12 +3277,20 @@ class TableLearner:
               of occupied minutes over its 3 x 3 neighbourhood;
       sittings each seat's runs of SIT_MINUTES or more occupied minutes
               (gaps of up to GAP_MINUTES allowed): one party's stay;
-      tables  seats whose sittings begin and end together. Two seats within
-              LINK_PX of each other join when at least half of the fewer
-              sittings match one of the other's (start or end within
-              MATCH_MINUTES, mostly overlapping) and no two of their
-              sittings overlap without matching, which only happens when two
-              different parties sat there at once.
+      tables  seats whose sittings begin and end together. Two sittings
+              match when both their starts and both their ends are within
+              MATCH_MINUTES; a start or end the memory cannot see (a party
+              still sitting, or already sitting when the memory began) is
+              not compared. Two seats within LINK_PX of each other join when
+              at least half of the fewer sittings match one of the other's,
+              and no two of their sittings overlap without sharing a start
+              or an end: that only happens when two different parties sat
+              there at once. Someone who joins late or leaves early still
+              shares the other end with their party.
+    A table whose seats were never used by one party together (two couples
+    on its two sides, on different evenings) comes out as two groups; a
+    second pass joins groups whose nearest seats are within JOIN_PX and that
+    never held two different parties at once, up to JOIN_SEATS seats.
     A table's zone is its seats' bounding box plus PAD pixels; its seats go
     in the zones file so TableTracker can tell overlapping zones apart."""
 
@@ -3293,6 +3301,8 @@ class TableLearner:
     GAP_MINUTES = 2
     MATCH_MINUTES = 4
     LINK_PX = 60.0
+    JOIN_PX = 30.0
+    JOIN_SEATS = 8
     PAD = 5.0
     OCC_KEEP = 12 * 60
     LEARN_EVERY = 30 * 60.0
@@ -3307,6 +3317,7 @@ class TableLearner:
         self._seen = 0.0             # seconds of frames this minute
         self._last = None
         self._learned_at = None
+        self._closed = None          # the newest minute closed so far
 
     def observe(self, now, points):
         """One frame's people, as (x, y) frame pixels."""
@@ -3323,6 +3334,7 @@ class TableLearner:
             self._present[cell] = self._present.get(cell, 0.0) + dt
 
     def _close_minute(self):
+        self._closed = self._minute
         if self._seen > 0:
             for cell, secs in self._present.items():
                 if secs >= self.PRESENT_SHARE * self._seen:
@@ -3338,6 +3350,8 @@ class TableLearner:
 
     def _seats(self):
         count = {c: len(m) for c, m in self.minutes.items()}
+        first = min((min(m) for m in self.minutes.values() if m), default=0)
+        last = self._closed if self._closed is not None else first
 
         def around(c):
             return [(c[0] + dx, c[1] + dy) for dx in (-1, 0, 1) for dy in (-1, 0, 1)]
@@ -3359,10 +3373,13 @@ class TableLearner:
             mins = set()
             for n in [c, (c[0] - 1, c[1]), (c[0] + 1, c[1]), (c[0], c[1] - 1), (c[0], c[1] + 1)]:
                 mins |= self.minutes.get(n, set())
-            seats.append((c, (round(x, 1), round(y, 1)), self._sittings(mins)))
+            seats.append((c, (round(x, 1), round(y, 1)), self._sittings(mins, first, last)))
         return [(xy, sittings) for _, xy, sittings in seats if sittings]
 
-    def _sittings(self, mins):
+    def _sittings(self, mins, first=None, last=None):
+        """Runs of occupied minutes, as (start, end, start unseen, end
+        unseen): unseen when the run touches the oldest or newest minute
+        the memory holds, so the real start or end lies outside it."""
         runs, start, prev = [], None, None
         for m in sorted(mins):
             if start is None:
@@ -3374,22 +3391,48 @@ class TableLearner:
                 start = prev = m
         if start is not None:
             runs.append((start, prev))
-        return [(a, b) for a, b in runs if b - a + 1 >= self.SIT_MINUTES]
+        edge = self.GAP_MINUTES + 1
+        return [(a, b, first is not None and a - first <= edge, last is not None and last - b <= edge)
+                for a, b in runs if b - a + 1 >= self.SIT_MINUTES]
 
     def _linked(self, a, b):
-        def matches(r, q):
-            overlap = min(r[1], q[1]) - max(r[0], q[0]) + 1
-            shorter = min(r[1] - r[0], q[1] - q[0]) + 1
-            close = abs(r[0] - q[0]) <= self.MATCH_MINUTES or abs(r[1] - q[1]) <= self.MATCH_MINUTES
-            return close and overlap >= 0.7 * shorter
+        m = self.MATCH_MINUTES
 
-        for r in a:
-            for q in b:
-                overlaps = min(r[1], q[1]) >= max(r[0], q[0])
-                if overlaps and not matches(r, q):
-                    return False
+        def ends(r, q):
+            start_seen = not (r[2] or q[2])
+            end_seen = not (r[3] or q[3])
+            return start_seen, end_seen, abs(r[0] - q[0]) <= m, abs(r[1] - q[1]) <= m
+
+        def matches(r, q):
+            start_seen, end_seen, start_close, end_close = ends(r, q)
+            return ((start_seen or end_seen) and (start_close or not start_seen)
+                    and (end_close or not end_seen))
+
+        def share_an_end(r, q):
+            start_seen, end_seen, start_close, end_close = ends(r, q)
+            return (start_seen and start_close) or (end_seen and end_close) or not (start_seen or end_seen)
+
+        if self._clash(a, b):
+            return False
         matched = sum(1 for r in a if any(matches(r, q) for q in b))
         return matched >= 1 and matched >= 0.5 * min(len(a), len(b))
+
+    def _clash(self, a, b):
+        """True when a sitting of one overlaps a sitting of the other and
+        they share neither a start nor an end: two parties at once."""
+        m = self.MATCH_MINUTES
+        for r in a:
+            for q in b:
+                if min(r[1], q[1]) < max(r[0], q[0]):
+                    continue
+                start_seen = not (r[2] or q[2])
+                end_seen = not (r[3] or q[3])
+                if not (start_seen or end_seen):
+                    continue
+                if (start_seen and abs(r[0] - q[0]) <= m) or (end_seen and abs(r[1] - q[1]) <= m):
+                    continue
+                return True
+        return False
 
     def tables(self):
         """[{'seats': [(x, y), ...], 'box': (x0, y0, x1, y1)}] learned so far."""
@@ -3408,12 +3451,31 @@ class TableLearner:
                 (xb, yb), sb = seats[j]
                 if math.hypot(xa - xb, ya - yb) <= self.LINK_PX and self._linked(sa, sb):
                     parent[root(i)] = root(j)
-        groups = {}
+        found = {}
         for i in range(len(seats)):
-            groups.setdefault(root(i), []).append(seats[i][0])
+            found.setdefault(root(i), []).append(i)
+        groups = list(found.values())
+        while True:
+            best = None
+            for gi in range(len(groups)):
+                for gj in range(gi + 1, len(groups)):
+                    if len(groups[gi]) + len(groups[gj]) > self.JOIN_SEATS:
+                        continue
+                    d = min(math.hypot(seats[i][0][0] - seats[j][0][0], seats[i][0][1] - seats[j][0][1])
+                            for i in groups[gi] for j in groups[gj])
+                    if d > self.JOIN_PX or (best is not None and d >= best[0]):
+                        continue
+                    if any(self._clash(seats[i][1], seats[j][1]) for i in groups[gi] for j in groups[gj]):
+                        continue
+                    best = (d, gi, gj)
+            if best is None:
+                break
+            _, gi, gj = best
+            groups[gi] = groups[gi] + groups[gj]
+            del groups[gj]
         out = []
-        for members in groups.values():
-            members = sorted(members)[:self.MAX_SEATS_PER_TABLE]
+        for group in groups:
+            members = sorted(seats[i][0] for i in group)[:self.MAX_SEATS_PER_TABLE]
             out.append({'seats': members, 'box': self._box(members)})
         return sorted(out, key=lambda t: (t['box'][1], t['box'][0]))
 
