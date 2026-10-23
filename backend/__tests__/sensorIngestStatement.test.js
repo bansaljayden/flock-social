@@ -843,12 +843,16 @@ test('on the real schema: the owner reads every unit\'s tables as one floor, a s
     }
     assert.equal(res.status, 200, JSON.stringify(res.body));
     const at = new Date(live.body.recorded_at).getTime();
+    // likely_free_at is null throughout: no closed seatings yet
+    // (sensorTableHistoryStatement.test.js is where the venue gets some).
+    // Table 2 sent no seat count, so its seats are the largest party seen
+    // there, the three sitting at it now; nobody has sat at table 9.
     assert.deepEqual(res.body, {
       tables: [
-        { number: 1, people: 2, state: 'seated', since: new Date(at - 600000).toISOString(), seats: 4 },
-        { number: 2, people: 3, state: 'waiting', since: new Date(at - 900000).toISOString(), seats: null },
-        { number: 3, people: 0, state: 'needs_clearing', since: new Date(at - 50000).toISOString(), seats: 2 },
-        { number: 9, people: 0, state: 'free', since: (await floor()).find((r) => r.table_no === 9).state_since.toISOString(), seats: null },
+        { number: 1, people: 2, state: 'seated', since: new Date(at - 600000).toISOString(), seats: 4, likely_free_at: null },
+        { number: 2, people: 3, state: 'waiting', since: new Date(at - 900000).toISOString(), seats: 3, likely_free_at: null },
+        { number: 3, people: 0, state: 'needs_clearing', since: new Date(at - 50000).toISOString(), seats: 2, likely_free_at: null },
+        { number: 9, people: 0, state: 'free', since: (await floor()).find((r) => r.table_no === 9).state_since.toISOString(), seats: null, likely_free_at: null },
       ],
       updated_at: new Date(at).toISOString(),
       stale: false,
@@ -914,6 +918,8 @@ test('on the real schema: tables in use by hour, the last 7 days, oldest first, 
         // 11/3 of 5 in the front room plus 1 of 6 in the back: 4.7 of 11, rounded once.
         { hour: new Date(lastHour).toISOString(), occupied: 4.7, total: 11 },
       ],
+      // This venue has no corpus row, so the server knows no zone for it.
+      timeZone: null,
     });
     assert.equal((await ownerGet(`/api/sensors/${VENUE}/tables/hours`, ownerId + 1000)).status, 403);
   });

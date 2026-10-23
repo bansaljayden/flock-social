@@ -1711,6 +1711,79 @@ test('130 gives sensor_table_states its seat count on a database that applied th
   await pool.query("DELETE FROM sensor_devices WHERE device_id = 'boot130_unit'");
 });
 
+// ---------------------------------------------------------------------------
+// 131: table history. A seatings table and the owner's "show tables in the
+// app" switch, both declared, so a database that lost either is repaired by
+// the heal rather than left serving a floor whose history statement answers
+// 42P01 on every reading. The switch column arrives NOT NULL with a default,
+// which on this Postgres is a catalog change that reads true on every row
+// already there: the truth for a venue that never touched it.
+// ---------------------------------------------------------------------------
+
+test('131 restores the seatings table and the tables_in_app switch on a database recorded as having them, and the rows read true', async () => {
+  const owner131 = await insertUser('owner131.bootsafety@example.com', 'Owner 131');
+  await pool.query(
+    `INSERT INTO sensor_devices (device_id, venue_place_id, api_key, is_active)
+     VALUES ('boot131_unit', 'ChIJboot131', 'sha256:boot131', true)`
+  );
+  await pool.query(
+    `INSERT INTO venue_profiles (user_id, business_name, google_place_id)
+     VALUES ($1, 'The Boot Room 131', 'ChIJboot131')`,
+    [owner131]
+  );
+  assert.equal(
+    (await pool.query("SELECT tables_in_app FROM venue_profiles WHERE google_place_id = 'ChIJboot131'")).rows[0].tables_in_app,
+    true, 'a profile row reads true for the switch it never touched'
+  );
+  await pool.query(
+    `INSERT INTO sensor_table_seatings (sensor_device_id, table_no, venue_place_id, seated_at, left_at, party_max, waited)
+     VALUES ('boot131_unit', 4, 'ChIJboot131', NOW() - INTERVAL '2 hours', NOW() - INTERVAL '1 hour', 3, true)`
+  );
+  for (const [no, party] of [[0, 1], [201, 1], [1, 31], [1, -1]]) {
+    await assert.rejects(
+      pool.query(
+        `INSERT INTO sensor_table_seatings (sensor_device_id, table_no, venue_place_id, seated_at, party_max)
+         VALUES ('boot131_unit', $1, 'ChIJboot131', NOW(), $2)`,
+        [no, party]
+      ),
+      (err) => err.code === '23514',
+      `a seating of table ${no} with a party of ${party} was stored`
+    );
+  }
+
+  // The damage, with 131 still recorded as applied.
+  await pool.query('ALTER TABLE venue_profiles DROP COLUMN IF EXISTS tables_in_app');
+  await pool.query('DROP TABLE IF EXISTS sensor_table_seatings');
+  assert.equal(await columnExists('venue_profiles', 'tables_in_app'), false);
+  assert.equal(await migrationRowCount('131_sensor_table_seatings.sql'), 1);
+
+  await migrate(pool); // a boot: the heal must re-apply 131 and leave its row where it was
+
+  assert.ok(await columnExists('venue_profiles', 'tables_in_app'), 'the heal did not bring the switch back');
+  assert.ok(await columnExists('sensor_table_seatings', 'party_max'), 'the heal did not bring the seatings table back');
+  assert.equal(await migrationRowCount('131_sensor_table_seatings.sql'), 1);
+  assert.equal(
+    (await pool.query("SELECT tables_in_app FROM venue_profiles WHERE google_place_id = 'ChIJboot131'")).rows[0].tables_in_app,
+    true
+  );
+  const { rows: idx } = await pool.query(
+    `SELECT c.relname FROM pg_class c JOIN pg_index i ON i.indexrelid = c.oid
+      WHERE i.indrelid = 'sensor_table_seatings'::regclass ORDER BY 1`
+  );
+  assert.deepEqual(idx.map((r) => r.relname),
+    ['idx_sensor_table_seatings_unit', 'idx_sensor_table_seatings_venue', 'sensor_table_seatings_pkey']);
+
+  // A unit deleted takes its history with it.
+  await pool.query(
+    `INSERT INTO sensor_table_seatings (sensor_device_id, table_no, venue_place_id, seated_at)
+     VALUES ('boot131_unit', 4, 'ChIJboot131', NOW())`
+  );
+  await pool.query("DELETE FROM sensor_devices WHERE device_id = 'boot131_unit'");
+  assert.equal(await count("SELECT COUNT(*) AS n FROM sensor_table_seatings WHERE venue_place_id = 'ChIJboot131'"), 0);
+  await pool.query("DELETE FROM venue_profiles WHERE google_place_id = 'ChIJboot131'");
+  await pool.query('DELETE FROM users WHERE id = $1', [owner131]);
+});
+
 test('every migration file declares post-conditions the runner can actually parse', async () => {
   // parseRequirements throws on a line that looks like a declaration and is
   // not: mis-cased, schema-mangled, malformed, or buried in a $$ body, a block

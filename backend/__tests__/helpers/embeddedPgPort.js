@@ -171,6 +171,12 @@ const SUITE_SLOTS = {
                                  // through the real routes. Near the top on
                                  // purpose: 94 is the last slot whose range
                                  // ends below 65536.
+  sensorTableHistoryStatement: 92, // new in 2026-10-23; the table history
+                                 // (migration 131): the seatings statement,
+                                 // the medians, the waits, the switches and
+                                 // the public summary against a real,
+                                 // migrated schema. Beside 93 for the same
+                                 // reason it took the top.
 };
 
 // Two suites sharing a slot would silently reintroduce exactly the collision the

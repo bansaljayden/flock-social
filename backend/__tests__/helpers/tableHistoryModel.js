@@ -152,7 +152,16 @@ function fullHoursModel(store, params) {
 
 // The incoming feed over store.flocks, the way incomingFlocksWindow.test.js
 // models it: plans whose own venue_id is the place, inside the window,
-// soonest first, twenty at most. member_count is a bigint, so a string.
+// soonest first, twenty at most. member_count is a bigint, so a string, and
+// event_time comes back the way node-postgres reads a TIMESTAMP WITHOUT TIME
+// ZONE: a Date whose LOCAL fields are the stored UTC wall clock, which is the
+// instant itself only on a UTC server (services/tableHistory.js
+// naiveUtcInstant rebuilds it; the fixture holds the true instant).
+function asDriverReadsNaive(instant) {
+  const d = new Date(instant);
+  return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds(), d.getUTCMilliseconds());
+}
+
 function incomingModel(store, params) {
   const [placeId] = params;
   const now = Date.now();
@@ -161,7 +170,7 @@ function incomingModel(store, params) {
     .filter((f) => f.event_time && ms(f.event_time) > now - 12 * 3600 * 1000 && ms(f.event_time) < now + 7 * DAY)
     .sort((a, b) => ms(a.event_time) - ms(b.event_time))
     .slice(0, 20)
-    .map((f) => ({ id: f.id, event_time: f.event_time, status: f.status, member_count: String(f.member_count) }));
+    .map((f) => ({ id: f.id, event_time: asDriverReadsNaive(f.event_time), status: f.status, member_count: String(f.member_count) }));
 }
 
 /**

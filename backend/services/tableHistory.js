@@ -435,13 +435,28 @@ async function tableIncoming(placeId) {
       const party = partyOf(f);
       return {
         id: f.id,
+        // As the feed hands it over, so the two routes agree about a plan.
         event_time: f.event_time,
         status: f.status,
         party,
-        suggestion: suggestionFor(kept, party, new Date(f.event_time).getTime(), ctx.likely),
+        suggestion: suggestionFor(kept, party, naiveUtcInstant(f.event_time), ctx.likely),
       };
     }),
   };
+}
+
+// flocks.event_time is a TIMESTAMP WITHOUT TIME ZONE holding a UTC wall
+// clock (config/database.js says why), and the driver reads such a column in
+// THIS process's zone: right on Railway, which runs UTC, and four hours off
+// on a laptop in New York. The instant is rebuilt from the wall clock the
+// Date carries, so "before the plan's time" means the same thing on both.
+// A string (a fixture, or a driver configured to hand text back) is read as
+// written.
+function naiveUtcInstant(v) {
+  if (v instanceof Date) {
+    return Date.UTC(v.getFullYear(), v.getMonth(), v.getDate(), v.getHours(), v.getMinutes(), v.getSeconds(), v.getMilliseconds());
+  }
+  return new Date(v).getTime();
 }
 
 function suggestionFor(kept, party, eventTimeMs, likely) {
