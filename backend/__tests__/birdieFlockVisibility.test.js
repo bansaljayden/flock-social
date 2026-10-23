@@ -7,14 +7,20 @@ const path = require('path');
 
 const ai = fs.readFileSync(path.join(__dirname, '..', 'routes', 'ai.js'), 'utf8');
 const vd = fs.readFileSync(path.join(__dirname, '..', 'routes', 'venueDashboard.js'), 'utf8');
+// The dashboard's incoming feed statement lives in services/incomingFlocks.js
+// (one statement for the feed and the table routes); its status filter is
+// counted there.
+const feed = fs.readFileSync(path.join(__dirname, '..', 'services', 'incomingFlocks.js'), 'utf8');
 
 test('get_user_flocks filters on statuses the schema can hold', () => {
   const i = ai.indexOf('SELECT f.id, f.name, f.venue_name, f.event_time, f.status,');
   const q = ai.slice(i, i + 700);
   assert.match(q, /AND f\.status IN \('planning', 'confirmed'\)/);
   assert.doesNotMatch(q, /'active'/);
-  assert.doesNotMatch(vd, /f\.status IN \('active', 'confirmed'\)/);
-  assert.strictEqual((vd.match(/f\.status IN \('planning', 'confirmed'\)/g) || []).length, 2);
+  assert.doesNotMatch(vd + feed, /f\.status IN \('active', 'confirmed'\)/);
+  // The unattributed count in the dashboard, and the feed in its own module.
+  assert.strictEqual((vd.match(/f\.status IN \('planning', 'confirmed'\)/g) || []).length, 1);
+  assert.strictEqual((feed.match(/f\.status IN \('planning', 'confirmed'\)/g) || []).length, 1);
 });
 
 test('navigate_app teaches the model the tab id the enum accepts', () => {
