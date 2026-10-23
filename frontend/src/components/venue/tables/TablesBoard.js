@@ -2,11 +2,14 @@
  * RIGHT NOW: EVERY TABLE ON THE SENSOR, LIVE.
  *
  * The first section of the Tables tab. What a manager reads, top to bottom:
- *   - "3 of 8 free", or, once the sensor has gone quiet for 3 minutes, that it
- *     is offline and how old its last reading is. The board then keeps that
- *     reading, dimmed, with every clock stopped where the sensor left it.
+ *   - "3 of 8 free", or, once no table reading has come for 3 minutes, how
+ *     long that has been and what the last reading saw. The board then keeps
+ *     that reading, dimmed, with every clock stopped where the readings left
+ *     it. Not "offline": the server's stale flag also covers a box that is on
+ *     and sending readings with no tables in them, and the Live Sensor card
+ *     on Analytics may be calling the same box online.
  *   - The tables that need someone, longest first.
- *   - The server's pick for the table likely to free up next.
+ *   - The table likely to free up next (nextFreePick in lib/venueTables.js).
  *   - One tile per table, in number order, with its state in words, so no
  *     state rests on colour alone: free is green, seated red, needs clearing a
  *     pale yellow with a dashed edge, and a party nobody has stopped by for is
@@ -15,7 +18,9 @@
  *
  * The tab only exists once a read this session has returned a table, so when
  * a later read fails or comes back empty the board says so in one line rather
- * than leaving the tab blank.
+ * than leaving the tab blank. An empty list is a real answer (the server
+ * drops a unit's tables once it has stopped sending them for 10 minutes), so
+ * it clears the board: no tile from an earlier reading stays up as if live.
  *
  * One interval drives every clock on the board, so the tiles tick together and
  * there is one timer to clear when the board goes. The words and arithmetic
@@ -29,7 +34,7 @@ import {
   nextFreeText,
   peopleText,
   seatsText,
-  staleDetail,
+  staleLines,
   tableAlerts,
   tablesFrom,
   tileClockSpoken,
@@ -43,7 +48,7 @@ import {
 // and sink into the amber.
 const ON_AMBER_INK = '#1e293b';
 
-// How far the live part of the board fades while the sensor is offline.
+// How far the live part of the board fades while the readings have stopped.
 const STALE_OPACITY = 0.55;
 
 function tileLook(state, colors) {
@@ -158,19 +163,21 @@ export default function TablesBoard({ data, colors }) {
 
   const stale = data.stale === true;
   const updatedAtMs = timeMs(data.updated_at);
-  // While the sensor is offline every clock on the tiles stops at its last
-  // reading instead of running on as if it still saw the room. With no time
-  // for that reading there is nothing to stop them at, so they are left off.
+  // While the readings have stopped every clock on the tiles stops at the
+  // last one instead of running on as if the box still saw the room. With no
+  // time for that reading there is nothing to stop them at, so they are left
+  // off.
   const clockAt = stale ? updatedAtMs : now;
   const alerts = tableAlerts(tables, clockAt);
   const nextFree = nextFreeText(data, tables, clockAt);
+  const quiet = stale ? staleLines(tables, updatedAtMs, now) : null;
 
   return (
     <TablesSection title="Right now" colors={colors}>
-      {stale ? (
+      {quiet ? (
         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 10px', lineHeight: 1.45 }}>
-          <span style={{ fontWeight: '700', color: 'var(--accent-red-text)' }}>Sensor offline.</span>
-          {' '}{staleDetail(tables, updatedAtMs, now)}
+          <span style={{ fontWeight: '700', color: 'var(--accent-amber-text)' }}>{quiet.lead}</span>
+          {' '}{quiet.detail}
         </p>
       ) : (
         <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-secondary)', margin: '0 0 10px' }}>{freeSummary(tables)}</p>

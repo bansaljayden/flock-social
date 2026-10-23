@@ -204,15 +204,21 @@ export function freeSummary(tables) {
   return `${free} of ${tables.length} free`;
 }
 
-// What follows "Sensor offline." while the sensor is quiet. The tiles keep
-// its last reading, so the line says how old that reading is and what it saw.
-export function staleDetail(tables, updatedAtMs, nowMs) {
+// The two sentences that replace the summary while the server marks the
+// tables stale (no table reading for over 3 minutes). `lead` says how long,
+// `detail` what the last reading saw. The server's flag covers a box that is
+// off, one that is offline, and one that is on and sending readings with no
+// tables in them (zones removed, the thermal frames gone stale), and the
+// board cannot tell those apart, so the words claim only what the data shows:
+// no table readings, for this long. "Sensor offline." used to be the lead,
+// and it contradicted the Live Sensor card calling the same box online.
+export function staleLines(tables, updatedAtMs, nowMs) {
   const free = tables.filter((t) => t.state === 'free').length;
-  const were = free === 1 ? 'was' : 'were';
   const ms = updatedAtMs === null ? null : msSince(new Date(updatedAtMs), nowMs);
-  return ms === null
-    ? `At its last reading ${free} of ${tables.length} ${were} free.`
-    : `Last reading ${durationText(ms)} ago, when ${free} of ${tables.length} ${were} free.`;
+  return {
+    lead: ms === null ? 'No recent table readings.' : `No table readings for ${durationText(ms)}.`,
+    detail: `Last reading had ${free} of ${tables.length} free.`,
+  };
 }
 
 // ── Tables in use by hour ──────────────────────────────────────────────────

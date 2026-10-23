@@ -18,11 +18,15 @@
  *     for the whole board, which goes when the board goes;
  *   - only waiting and needs-clearing tables are listed as needing someone, and
  *     the one that has waited longest leads;
- *   - the server's next-free pick is named with how long it has been seated;
- *   - an offline sensor is called offline, the live part dims and its clocks
- *     stop at the last reading;
- *   - the hours chart averages each hour of the day on the viewer's own clock,
- *     draws the open hours and marks the busy stretch;
+ *   - next likely free is the longest-seated served table, named with how long
+ *     it has been seated, and a waiting party only when nothing is seated;
+ *   - every duration past an hour reads in hours, past a day in days;
+ *   - readings that have stopped are said as that, never as "offline": the
+ *     live part dims and its clocks stop at the last reading, and an empty
+ *     list afterwards clears the board;
+ *   - the hours chart averages each hour of the day, starts the day at the
+ *     quietest hour when a box reports every hour, trims the closed hours when
+ *     it does not, and marks the busy stretch;
  *   - nothing the tab renders holds an em dash;
  *   - the read loop never has two reads out at once and stops cleanly, and
  *     App.js wires it, the tab's flag and the reopen rule as described;
@@ -432,13 +436,16 @@ describe('a sensor that has gone quiet', () => {
     next_free: 2,
   };
 
-  test('is called offline, with how old its last reading is and what it saw', () => {
-    renderTab({ data: STALE });
-    expect(paragraph('Sensor offline. Last reading 4 min ago, when 1 of 2 was free.')).toBeTruthy();
+  test('says how long the readings have been missing and what the last one saw, and never calls the box offline', () => {
+    // The server's stale flag also covers a box that is on and sending
+    // readings with no tables in them, while Live Sensor calls it online.
+    const { container } = renderTab({ data: STALE });
+    expect(paragraph('No table readings for 4 min. Last reading had 1 of 2 free.')).toBeTruthy();
     expect(screen.queryByText('1 of 2 free')).toBeNull();
+    expect(container.textContent).not.toMatch(/offline/i);
   });
 
-  test('the live part dims and its clocks stop where the sensor left them', () => {
+  test('the live part dims and its clocks stop where the readings left them', () => {
     renderTab({ data: STALE });
     expect(screen.getByTestId('tables-live')).toHaveStyle({ opacity: '0.55' });
     // Seated 14 minutes ago by this phone's clock, 10 at the last reading.
@@ -448,20 +455,41 @@ describe('a sensor that has gone quiet', () => {
     act(() => { jest.advanceTimersByTime(65 * SEC); });
     expect(within(tileFor(2)).getByText('10:00')).toBeTruthy();
     // The age of the reading is the one thing that keeps moving.
-    expect(paragraph('Sensor offline. Last reading 5 min ago, when 1 of 2 was free.')).toBeTruthy();
+    expect(paragraph('No table readings for 5 min. Last reading had 1 of 2 free.')).toBeTruthy();
+  });
+
+  test('a long silence reads in hours, then days', () => {
+    const HOUR = 60 * MIN;
+    const { unmount } = renderTab({ data: { ...STALE, updated_at: ago(2 * HOUR + 10 * MIN) } });
+    expect(paragraph('No table readings for 2 h 10 min. Last reading had 1 of 2 free.')).toBeTruthy();
+    unmount();
+    renderTab({ data: { ...STALE, updated_at: ago(49 * HOUR) } });
+    expect(paragraph('No table readings for 2 days. Last reading had 1 of 2 free.')).toBeTruthy();
   });
 
   test('with no time for the last reading, no clock is shown at all', () => {
     renderTab({ data: { ...STALE, updated_at: null } });
-    expect(paragraph('Sensor offline. At its last reading 1 of 2 was free.')).toBeTruthy();
+    expect(paragraph('No recent table readings. Last reading had 1 of 2 free.')).toBeTruthy();
     expect(tileFor(2).textContent).not.toMatch(/\d:\d\d/);
     expect(tileFor(1).textContent).not.toMatch(/min/);
   });
 
-  test('a live sensor is not dimmed', () => {
+  test('a board with fresh readings is not dimmed', () => {
     renderTab();
     expect(screen.getByTestId('tables-live')).toHaveStyle({ opacity: '1' });
-    expect(screen.queryByText(/Sensor offline/)).toBeNull();
+    expect(screen.queryByText(/No table readings/)).toBeNull();
+  });
+
+  test('a later read with no tables in it clears the board instead of keeping the old tiles', () => {
+    // The server drops a unit's tables once it has stopped sending them for
+    // 10 minutes, so an empty list is the answer "not reporting tables now".
+    const { rerender } = renderTab({ data: STALE });
+    expect(tiles()).toHaveLength(2);
+    rerender(<VenueTablesTab data={{ tables: [], updated_at: null, stale: false, next_free: null }} hours={null} colors={COLORS} wellPx={50} />);
+    expect(screen.getByText('Your sensor is not reporting any tables right now.')).toBeTruthy();
+    expect(screen.queryByRole('list', { name: 'All tables' })).toBeNull();
+    expect(screen.queryByText(/No table readings|Table 2/)).toBeNull();
+    expect(jest.getTimerCount()).toBe(0);
   });
 });
 
