@@ -149,9 +149,14 @@ describe('the page only sells things that exist', () => {
     expect(venueCard).toMatch(/which flocks have you in their vote this week/i);
     expect(venueCard).not.toMatch(/\b(chose|picked|choosing|picking) you\b/i);
     expect(venueCard).not.toMatch(/\btonight\b/i);
+    // The feed's statement lives in services/incomingFlocks.js since the
+    // tables work (the table routes lay the same plans over the floor), and
+    // the dashboard route reads it from there.
     const route = fs.readFileSync(
-      path.join(REPO, 'backend', 'routes', 'venueDashboard.js'), 'utf8'
+      path.join(REPO, 'backend', 'services', 'incomingFlocks.js'), 'utf8'
     );
+    expect(fs.readFileSync(path.join(REPO, 'backend', 'routes', 'venueDashboard.js'), 'utf8'))
+      .toMatch(/listIncomingFlocks\(venue\.google_place_id\)/);
     // Where the plan is going, and a member's vote while it is still deciding:
     // the two halves of "in their vote".
     expect(route).toMatch(/\(f\.venue_id = \$1 AND \(f\.status IS NULL OR f\.status IN \('planning', 'confirmed'\)\)\)/);
@@ -248,7 +253,7 @@ describe('the page only sells things that exist', () => {
     // come. "This week" would have been worse: the This Week card sits just
     // below the tile and counts the LAST 7 days of votes, so the same screen
     // would show two numbers under one name.
-    const route = fs.readFileSync(path.join(REPO, 'backend', 'routes', 'venueDashboard.js'), 'utf8');
+    const route = fs.readFileSync(path.join(REPO, 'backend', 'services', 'incomingFlocks.js'), 'utf8');
     const hours = (name) => Number((route.match(new RegExp(`const ${name} = (\\d+);`)) || [])[1]);
     expect(hours('INCOMING_PAST_HOURS')).toBeGreaterThan(0);
     expect(hours('INCOMING_AHEAD_HOURS')).toBe(7 * 24);
