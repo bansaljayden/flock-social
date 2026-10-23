@@ -32,6 +32,7 @@ _TMP = tempfile.mkdtemp(prefix='flock-sensor-test-')
 os.environ['FLOCK_CONFIG'] = str(Path(_TMP) / 'config.env')
 os.environ['FLOCK_LOG'] = str(Path(_TMP) / 'sensor.log')
 os.environ['FLOCK_BUFFER'] = str(Path(_TMP) / 'buffer.json')
+os.environ['FLOCK_TABLES'] = str(Path(_TMP) / 'tables.json')
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import main  # noqa: E402
@@ -4565,3 +4566,194 @@ class DoorCounterSelectPin(unittest.TestCase):
 
     def test_no_gpio_means_no_reset(self):
         self.assertFalse(main.TofSelect(0).reset())
+
+
+
+# One table at (40..60, 40..60), its centre (50, 50); just outside it, (63, 50)
+# is around it and (80, 80) is nowhere near.
+_ZONE = [{'n': 1, 'box': (40.0, 40.0, 60.0, 60.0)}]
+_AT, _AROUND, _AWAY = (50.0, 50.0), (63.0, 50.0), (80.0, 80.0)
+
+
+def _run(tracker, start, seconds, points, every=2.0):
+    """Feed the same people for `seconds`, a frame every `every` seconds."""
+    t = start
+    while t < start + seconds:
+        tracker.update(t, points)
+        t += every
+    return t
+
+
+class TablesAtTheVenue(unittest.TestCase):
+    """Free, seated, waiting, needs clearing: all from counts in a zone."""
+
+    def tracker(self, wait=300):
+        return main.TableTracker(_ZONE, wait_after=wait)
+
+    def state(self, tracker, now):
+        return {n: (p, s, a) for n, p, s, a in tracker.view(now)}[1]
+
+    def test_two_people_sitting_down_are_seated_after_a_minute(self):
+        for every in (2.0, 0.1):
+            with self.subTest(every=every):
+                t = self.tracker()
+                now = _run(t, 0, 30, [_AT, _AT], every)
+                self.assertEqual(self.state(t, now)[1], 'f')
+                now = _run(t, now, 40, [_AT, _AT], every)
+                people, state, age = self.state(t, now)
+                self.assertEqual((people, state), (2, 's'))
+                # Timed from when they arrived, not from when it decided.
+                self.assertGreaterEqual(age, 68)
+
+    def test_somebody_walking_past_does_not_seat_a_table(self):
+        t = self.tracker()
+        now = _run(t, 0, 20, [_AT])
+        now = _run(t, now, 120, [])
+        self.assertEqual(self.state(t, now)[1], 'f')
+
+    def test_nobody_coming_by_turns_seated_into_waiting(self):
+        for every in (2.0, 0.1):
+            with self.subTest(every=every):
+                t = self.tracker(wait=300)
+                now = _run(t, 0, 290, [_AT, _AT], every)
+                self.assertEqual(self.state(t, now)[1], 's')
+                now = _run(t, now, 20, [_AT, _AT], every)
+                self.assertEqual(self.state(t, now)[1], 'w')
+
+    def test_a_waiter_at_the_table_stops_the_wait_clock(self):
+        t = self.tracker(wait=300)
+        now = _run(t, 0, 120, [_AT, _AT])
+        # Someone standing beside the table for ten seconds, then gone.
+        now = _run(t, now, 10, [_AT, _AT, _AROUND])
+        now = _run(t, now, 400, [_AT, _AT])
+        self.assertEqual(self.state(t, now)[1], 's')
+
+    def test_a_waiter_ends_a_wait_already_running(self):
+        t = self.tracker(wait=300)
+        now = _run(t, 0, 320, [_AT])
+        self.assertEqual(self.state(t, now)[1], 'w')
+        now = _run(t, now, 8, [_AT, _AROUND])
+        self.assertEqual(self.state(t, now)[1], 's')
+
+    def test_the_host_walking_them_over_is_not_a_visit(self):
+        t = self.tracker(wait=300)
+        # The host stands with them for the first half minute.
+        now = _run(t, 0, 30, [_AT, _AT, _AROUND])
+        now = _run(t, now, 300, [_AT, _AT])
+        self.assertEqual(self.state(t, now)[1], 'w')
+
+    def test_a_glance_is_not_a_visit(self):
+        t = self.tracker(wait=300)
+        now = _run(t, 0, 120, [_AT, _AT])
+        now = _run(t, now, 2, [_AT, _AT, _AROUND])
+        now = _run(t, now, 200, [_AT, _AT])
+        self.assertEqual(self.state(t, now)[1], 'w')
+
+    def test_a_diner_at_the_next_table_is_not_a_visit(self):
+        zones = _ZONE + [{'n': 2, 'box': (61.0, 40.0, 80.0, 60.0)}]
+        t = main.TableTracker(zones, wait_after=300)
+        # Table 2's diner sits inside table 1's ring, but at table 2.
+        now = _run(t, 0, 320, [_AT, (62.0, 50.0)])
+        self.assertEqual(self.state(t, now)[1], 'w')
+
+    def test_a_party_leaving_needs_clearing_then_a_busser_frees_it(self):
+        t = self.tracker()
+        now = _run(t, 0, 600, [_AT, _AT])
+        now = _run(t, now, 60, [])
+        self.assertIn(self.state(t, now)[1], ('s', 'w'))
+        now = _run(t, now, 40, [])
+        self.assertEqual(self.state(t, now)[1], 'c')
+        # Someone at the empty table for 20 seconds, then gone.
+        now = _run(t, now, 20, [_AT])
+        now = _run(t, now, 4, [])
+        self.assertEqual(self.state(t, now)[1], 'f')
+
+    def test_needs_clearing_gives_up_after_three_hours(self):
+        t = self.tracker()
+        now = _run(t, 0, 200, [_AT])
+        now = _run(t, now, 100, [])
+        self.assertEqual(self.state(t, now)[1], 'c')
+        now = _run(t, now, 3 * 3600, [], every=30.0)
+        self.assertEqual(self.state(t, now)[1], 'f')
+
+    def test_one_person_stepping_out_does_not_end_the_party(self):
+        t = self.tracker()
+        now = _run(t, 0, 200, [_AT, _AT])
+        now = _run(t, now, 60, [_AT])
+        self.assertIn(self.state(t, now)[1], ('s', 'w'))
+
+    def test_the_payload_string_is_the_servers_grammar(self):
+        zones = [{'n': n, 'box': (10.0 * n, 10.0, 10.0 * n + 8, 18.0)} for n in (1, 2, 3)]
+        t = main.TableTracker(zones, wait_after=300)
+        now = _run(t, 0, 100, [(15.0, 14.0), (14.0, 15.0), (25.0, 14.0)])
+        text = t.payload(now)
+        self.assertRegex(text, r'^\d{1,2}:\d{1,2}:[fswc]:\d{1,5}(;\d{1,2}:\d{1,2}:[fswc]:\d{1,5})*$')
+        rows = [r.split(':') for r in text.split(';')]
+        self.assertEqual([r[0] for r in rows], ['1', '2', '3'])
+        self.assertEqual(rows[0][1:3], ['2', 's'])
+        self.assertEqual(rows[1][1:3], ['1', 's'])
+        self.assertEqual(rows[2][1:3], ['0', 'f'])
+        self.assertLessEqual(len(text), 600)
+
+    def test_forty_tables_fit_in_six_hundred_characters(self):
+        zones = [{'n': n, 'box': (float(n * 3), 0.0, float(n * 3 + 2.5), 3.0)} for n in range(1, 41)]
+        t = main.TableTracker(zones)
+        t.update(0, [])
+        t.update(86400 * 2, [])
+        text = t.payload(86400 * 2)
+        self.assertEqual(len(text.split(';')), 40)
+        self.assertLessEqual(len(text), 600)
+
+    def test_no_frames_means_no_tables_sent(self):
+        t = self.tracker()
+        now = _run(t, 0, 10, [_AT])
+        self.assertIsNotNone(t.payload(now))
+        self.assertIsNone(t.payload(now + 61))
+
+    def test_a_unit_without_tables_sends_none(self):
+        t = main.TableTracker([])
+        t.update(0, [_AT])
+        self.assertIsNone(t.payload(0))
+
+    def test_tables_ride_in_the_reading_only_when_there_are_any(self):
+        saved = main._tables
+        try:
+            main._tables = main.TableTracker([])
+            self.assertNotIn('tables', main.snapshot())
+            main._tables = self.tracker()
+            main._tables.update(time.monotonic(), [_AT])
+            payload = main.snapshot()
+            self.assertRegex(payload['tables'], r'^1:\d+:[fswc]:\d+$')
+            self.assertIsInstance(payload['tables'], str)
+        finally:
+            main._tables = saved
+
+    def test_zones_file_is_checked(self):
+        path = Path(_TMP) / 'zones-check.json'
+        path.write_text(json.dumps({'tables': [
+            {'n': 2, 'x0': 50, 'y0': 10, 'x1': 70, 'y1': 30},
+            {'n': 1, 'x0': 10, 'y0': 10, 'x1': 30, 'y1': 30},
+            {'n': 1, 'x0': 90, 'y0': 10, 'x1': 99, 'y1': 30},    # a second table 1
+            {'n': 41, 'x0': 10, 'y0': 40, 'x1': 30, 'y1': 60},   # past 40
+            {'n': 3, 'x0': 200, 'y0': 10, 'x1': 220, 'y1': 30},  # off the frame
+            {'n': 4, 'x0': 'a'},
+        ]}), encoding='utf-8')
+        self.assertEqual([z['n'] for z in main.load_table_zones(path)], [1, 2])
+        path.write_text('not json', encoding='utf-8')
+        self.assertEqual(main.load_table_zones(path), [])
+        self.assertEqual(main.load_table_zones(Path(_TMP) / 'no-such.json'), [])
+
+    def test_a_new_zones_file_is_picked_up_and_unchanged_tables_keep_their_state(self):
+        path = Path(_TMP) / 'zones-live.json'
+        path.write_text(json.dumps({'tables': [{'n': 1, 'x0': 40, 'y0': 40, 'x1': 60, 'y1': 60}]}),
+                        encoding='utf-8')
+        t = main.TableTracker.from_file(path)
+        now = _run(t, 0, 100, [_AT])
+        self.assertEqual(self.state(t, now)[1], 's')
+        path.write_text(json.dumps({'tables': [
+            {'n': 1, 'x0': 40, 'y0': 40, 'x1': 60, 'y1': 60},
+            {'n': 2, 'x0': 100, 'y0': 40, 'x1': 120, 'y1': 60}]}), encoding='utf-8')
+        os.utime(path, (time.time() + 5, time.time() + 5))
+        now = _run(t, now, 40, [_AT])
+        self.assertEqual([r[0] for r in t.view(now)], [1, 2])
+        self.assertEqual(self.state(t, now)[1], 's')

@@ -68,7 +68,7 @@ try:
 except ImportError:  # pragma: no cover
     fcntl = None
 
-VERSION = '1.23.1'
+VERSION = '1.24.0'
 
 # The Pi 5's GPIO library (rpi-lgpio, under RPi.GPIO) makes a small file in
 # the working directory before it will drive a pin, and the service runs in
@@ -94,6 +94,11 @@ LOG_PATH = Path(os.environ.get('FLOCK_LOG')
 BUFFER_PATH = Path(os.environ.get('FLOCK_BUFFER')
                    or ('/var/lib/flock-sensor/buffer.json' if _INSTALLED
                        else '/home/pi/flock_buffer.json'))
+# Where each table sits in the thermal frame. See TableTracker. Beside the
+# buffer because the service may write nowhere else (ProtectSystem=full).
+TABLES_PATH = Path(os.environ.get('FLOCK_TABLES')
+                   or ('/var/lib/flock-sensor/tables.json' if _INSTALLED
+                       else '/home/pi/flock_tables.json'))
 
 DEFAULTS = {
     'FLOCK_API_KEY': '',
@@ -323,6 +328,9 @@ PEOPLE_MODEL_PATH = Path(__file__).resolve().parent / 'models' / 'people.onnx'
 # A second, finer-grid counter for crowds. Optional: see PeopleModel.CROWD_AT.
 PEOPLE_FINE_MODEL_PATH = Path(__file__).resolve().parent / 'models' / 'people-fine.onnx'
 OCCUPANCY_EMPTY_MINUTES = _cfg_number('OCCUPANCY_EMPTY_MINUTES', int, 2, 240, 20)
+# How long a seated party may go with nobody coming by before its table says
+# "waiting". Venues differ, so it is a setting: 5 minutes unless told.
+TABLE_WAIT_SECONDS = _cfg_number('TABLE_WAIT_SECONDS', int, 60, 3600, 300)
 IR_GPIO_PIN = _cfg_number('IR_GPIO_PIN', int, 2, 27, 17)
 DOOR_SENSOR = (CONFIG.get('DOOR_SENSOR') or 'auto').strip().lower()
 if DOOR_SENSOR not in ('auto', 'tof', 'beam', 'off'):
@@ -2072,6 +2080,10 @@ def thermal_loop():
                         _state['thermal_frame_at'] = time.monotonic()
                         _state['thermal_points'] = points
                         _state['thermal_things'] = things
+                # Only the model gives points; on the rule there are no tables
+                # to fill, and they go stale and drop out of the readings.
+                if points is not None:
+                    _tables.update(time.monotonic(), points)
                 if _study is not None:
                     _study.frame(int(frame_count), published, counter, infer_ms,
                                  tag if counter == 'model' else 'rule')
@@ -2985,6 +2997,226 @@ class OccupancyTracker:
 _occupancy = OccupancyTracker()
 
 
+# Tables. Each table has a zone: the floor it and its chairs take up in the
+# thermal frame, in frame pixels, kept in TABLES_PATH as
+#   {"tables": [{"n": 1, "x0": 12, "y0": 40, "x1": 30, "y1": 58}, ...]}
+# Every frame, each person Owl finds is a point. A point inside a zone belongs
+# to that table, and a table's state comes from how many points it holds over
+# time, the way OccupancyTracker's timers come from counts. No point is ever
+# matched to the one before it, so nothing here can follow anyone; a table
+# knows how many, never who.
+TABLE_MAX = 40
+
+
+def load_table_zones(path):
+    """The zones in `path`, checked. A missing file is a unit with no tables,
+    so it says nothing; a file that is wrong is logged and treated the same."""
+    try:
+        raw = json.loads(Path(path).read_text(encoding='utf-8'))
+    except FileNotFoundError:
+        return []
+    except (OSError, ValueError) as e:
+        log_throttled('tables_file', logging.ERROR, f'Table zones in {path} unreadable: {e}')
+        return []
+    zones, seen = [], set()
+    items = raw.get('tables') if isinstance(raw, dict) else None
+    if not isinstance(items, list):
+        log_throttled('tables_file', logging.ERROR, f'Table zones in {path} have no "tables" list')
+        return []
+    for item in items[:TABLE_MAX]:
+        try:
+            n = int(item['n'])
+            x0, y0, x1, y1 = (float(item[k]) for k in ('x0', 'y0', 'x1', 'y1'))
+        except (KeyError, TypeError, ValueError):
+            log_throttled('tables_zone', logging.WARNING, f'Skipping a table zone that is not a zone: {item!r}')
+            continue
+        if not (1 <= n <= TABLE_MAX) or n in seen:
+            log_throttled('tables_zone', logging.WARNING, f'Skipping table {n}: numbers run 1 to {TABLE_MAX}, once each')
+            continue
+        x0, x1 = max(0.0, x0), min(float(THERMAL_COLS), x1)
+        y0, y1 = max(0.0, y0), min(float(THERMAL_ROWS), y1)
+        if x1 - x0 < 2 or y1 - y0 < 2:
+            log_throttled('tables_zone', logging.WARNING, f'Skipping table {n}: its zone is off the frame or too small')
+            continue
+        seen.add(n)
+        zones.append({'n': n, 'box': (x0, y0, x1, y1)})
+    return sorted(zones, key=lambda z: z['n'])
+
+
+class TableTracker:
+    """Each table free, seated, waiting or needing clearing, from counts.
+
+    free (f): nobody at it. Seated (s): people at it for SEAT_AFTER, timed
+    from when they arrived. Waiting (w): seated wait_after with nobody coming
+    by since. Needs clearing (c): the party has been gone LEFT_AFTER and
+    nobody has been to the table since; someone at it for VISIT_FOR or more,
+    but too briefly to be a new party, clears it.
+
+    "Came by" is the number at and around the table rising above the party's
+    own for VISIT_FOR, not counting the first HOST_GRACE after arrival (the
+    host walking them over). The party's own number is a long median, which a
+    visit is too short to move. Everything is in seconds of the clock passed
+    in, so a headless unit reading every 2 s and a screen unit reading every
+    0.1 s reach the same states."""
+
+    SEAT_AFTER = 60.0
+    LEFT_AFTER = 90.0
+    VISIT_FOR = 5.0
+    HOST_GRACE = 60.0
+    SMOOTH = 6.0            # median that says how many are at the table now
+    PARTY_WINDOW = 60.0     # median that says how many are in the party
+    RING = 9.0              # pixels past a zone that count as around it
+    CLEAR_RESET = 3 * 3600.0
+    STALE_AFTER = 60.0      # no frames this long: send no tables at all
+    MAX_AGE = 86400
+    RELOAD_EVERY = 30.0
+
+    def __init__(self, zones=(), wait_after=None, path=None, now=None):
+        self.wait_after = float(TABLE_WAIT_SECONDS if wait_after is None else wait_after)
+        self.path = path
+        self._mtime = None
+        self._checked_at = None
+        self._lock = threading.Lock()
+        self.tables = {}
+        self.last_frame = None
+        self.set_zones(zones, now)
+
+    @classmethod
+    def from_file(cls, path):
+        t = cls(path=path)
+        t._reload(None)
+        return t
+
+    def _reload(self, now):
+        self._checked_at = now
+        try:
+            mtime = Path(self.path).stat().st_mtime
+        except OSError:
+            mtime = None
+        if mtime != self._mtime:
+            self._mtime = mtime
+            zones = load_table_zones(self.path) if mtime is not None else []
+            self.set_zones(zones, now)
+            if zones:
+                logger.info(f'Tables: {len(zones)} zone(s) from {self.path}')
+
+    def set_zones(self, zones, now):
+        """A table whose zone is unchanged keeps its state; any other starts
+        free, from `now`, or from its first frame when `now` is None."""
+        fresh = {}
+        for z in zones:
+            old = self.tables.get(z['n'])
+            if old is not None and old['box'] == tuple(z['box']):
+                fresh[z['n']] = old
+            else:
+                fresh[z['n']] = {'box': tuple(z['box']), 'state': 'f', 'since': now,
+                                 'arrival': None, 'present_since': None, 'empty_since': None,
+                                 'extra_since': None, 'visited': False,
+                                 'window': deque(), 'people': 0}
+        with self._lock:
+            self.tables = fresh
+
+    @staticmethod
+    def _inside(box, x, y, grow=0.0):
+        x0, y0, x1, y1 = box
+        return x0 - grow <= x < x1 + grow and y0 - grow <= y < y1 + grow
+
+    def update(self, now, points):
+        """One frame's people, as (x, y) frame pixels."""
+        if self.path is not None and (self._checked_at is None
+                                      or now - self._checked_at >= self.RELOAD_EVERY):
+            self._reload(now)
+        with self._lock:
+            self.last_frame = now
+            if not self.tables:
+                return
+            at = {n: 0 for n in self.tables}
+            near = {n: 0 for n in self.tables}
+            for x, y in points or ():
+                homes = [n for n, t in self.tables.items() if self._inside(t['box'], x, y)]
+                if homes:
+                    # Zones can touch; a point belongs to the nearest centre.
+                    def far(n):
+                        x0, y0, x1, y1 = self.tables[n]['box']
+                        return (x - (x0 + x1) / 2) ** 2 + (y - (y0 + y1) / 2) ** 2
+                    at[min(homes, key=far)] += 1
+                    continue
+                # Only a point at no table is someone around one: a diner at
+                # the next table sits inside that table's zone, not this ring.
+                for n, t in self.tables.items():
+                    if self._inside(t['box'], x, y, self.RING):
+                        near[n] += 1
+            for n, t in self.tables.items():
+                self._step(t, now, at[n], at[n] + near[n])
+
+    def _step(self, t, now, here, around):
+        if t['since'] is None:
+            t['since'] = now
+        w = t['window']
+        w.append((now, here))
+        while w and now - w[0][0] > self.PARTY_WINDOW:
+            w.popleft()
+        people = int(round(_median([c for ts, c in w if now - ts <= self.SMOOTH])))
+        t['people'] = people
+        if t['state'] in ('f', 'c'):
+            if here or people:
+                if t['present_since'] is None:
+                    t['present_since'] = now
+                if people and now - t['present_since'] >= self.SEAT_AFTER:
+                    t.update(state='s', since=t['present_since'], arrival=t['present_since'],
+                             visited=False, extra_since=None, empty_since=None)
+            else:
+                if (t['state'] == 'c' and t['present_since'] is not None
+                        and now - t['present_since'] >= self.VISIT_FOR):
+                    t.update(state='f', since=now)
+                t['present_since'] = None
+                if t['state'] == 'c' and now - t['since'] >= self.CLEAR_RESET:
+                    t.update(state='f', since=now)
+            return
+        if here or people:
+            t['empty_since'] = None
+        else:
+            if t['empty_since'] is None:
+                t['empty_since'] = now
+            if now - t['empty_since'] >= self.LEFT_AFTER:
+                t.update(state='c', since=t['empty_since'], arrival=None,
+                         present_since=None, extra_since=None)
+                return
+        party = int(round(_median([c for _, c in w])))
+        if now - t['arrival'] >= self.HOST_GRACE and around > party:
+            if t['extra_since'] is None:
+                t['extra_since'] = now
+            if now - t['extra_since'] >= self.VISIT_FOR:
+                t['visited'] = True
+                if t['state'] == 'w':
+                    t['state'] = 's'
+        else:
+            t['extra_since'] = None
+        if t['state'] == 's' and not t['visited'] and now - t['arrival'] >= self.wait_after:
+            t['state'] = 'w'
+
+    def view(self, now):
+        """[(n, people, state, seconds in it)], or [] with no tables or no
+        recent frames. For seated and waiting the seconds run from arrival."""
+        with self._lock:
+            if not self.tables or self.last_frame is None or now - self.last_frame > self.STALE_AFTER:
+                return []
+            return [(n, max(0, min(30, t['people'])), t['state'],
+                     max(0, min(self.MAX_AGE, int(now - (now if t['since'] is None else t['since'])))))
+                    for n, t in sorted(self.tables.items())]
+
+    def payload(self, now):
+        """The `tables` string the server takes, "N:P:S:A" joined by ";", or
+        None. A string so every value in a reading stays a plain scalar."""
+        rows = self.view(now)
+        if not rows:
+            return None
+        return ';'.join(f'{n}:{p}:{s}:{a}' for n, p, s, a in rows)[:600]
+
+
+_tables = TableTracker.from_file(TABLES_PATH)
+
+
 def snapshot():
     """Take a reading and hand its IR crossings to exactly one payload.
 
@@ -3054,6 +3286,9 @@ def snapshot():
         payload['occupancy_high'] = estimate['high']
         if estimate['dwell_minutes'] is not None:
             payload['dwell_minutes'] = estimate['dwell_minutes']
+    tables = _tables.payload(time.monotonic())
+    if tables:
+        payload['tables'] = tables
 
     device_id = CONFIG.get('SENSOR_DEVICE_ID', '').strip()
     if device_id:
