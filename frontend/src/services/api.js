@@ -3860,6 +3860,50 @@ export async function getTableSummaries(placeIds, party) {
   });
 }
 
+// The rest of the Tables tab, on the same sensor and under the same owner-only
+// answers as the two above (401 signed out, 403 for anyone but the verified
+// owner or for a plan below Roost, the plan check's own retryable 403), read
+// by the same loops in App.js (lib/venueTablesReading.js):
+//   /tables/stats     turn times over the last `days` (28 by default): the
+//                     median, a day-by-hour grid of medians, how many
+//                     seatings waited for a server, how long clearing takes
+//                     and the hours the room is usually full; nulls when
+//                     there are too few seatings to say.
+//   /tables/waits     the walk-in wait for a party of 2, 4, 6 and 8 now.
+//   /tables/incoming  flocks with a plan here, each with the table that could
+//                     seat them; party sizes and times, never names.
+//   /tables/settings  whether the tables show in the Flock app and whether
+//                     the owner gets table alerts. The one route here with no
+//                     plan gate, so a venue below Roost can still turn its
+//                     tables off in the app. Both keys default to true.
+export const TABLE_STATS_DAYS = 28;
+
+export async function getSensorTableStats(placeId, days = TABLE_STATS_DAYS) {
+  return request(`/api/sensors/${encodeURIComponent(placeId)}/tables/stats?days=${encodeURIComponent(days)}`);
+}
+
+export async function getSensorTableWaits(placeId) {
+  return request(`/api/sensors/${encodeURIComponent(placeId)}/tables/waits`);
+}
+
+export async function getSensorTableIncoming(placeId) {
+  return request(`/api/sensors/${encodeURIComponent(placeId)}/tables/incoming`);
+}
+
+export async function getSensorTableSettings(placeId) {
+  return request(`/api/sensors/${encodeURIComponent(placeId)}/tables/settings`);
+}
+
+// Writes only the keys it is given, as booleans: the Settings card has one
+// switch per key, and a switch never writes the value of the switch beside
+// it, which is the rule the venue profile's notificationPrefs PUT follows too.
+export async function updateSensorTableSettings(placeId, settings = {}) {
+  const body = {};
+  if (typeof settings.show_in_app === 'boolean') body.show_in_app = settings.show_in_app;
+  if (typeof settings.alerts === 'boolean') body.alerts = settings.alerts;
+  return request(`/api/sensors/${encodeURIComponent(placeId)}/tables/settings`, { method: 'PUT', body: JSON.stringify(body) });
+}
+
 export async function checkInManual(placeId) {
   return request(`/api/checkin/${encodeURIComponent(placeId)}`, { method: 'POST' });
 }
