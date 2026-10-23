@@ -4909,6 +4909,19 @@ class TablesLearnedFromHeat(unittest.TestCase):
         self.assertFalse(main.TABLES_LEARN)
         self.assertIsNone(main._table_learner)
 
+    def test_a_unit_with_tables_reports_at_least_every_minute(self):
+        saved_interval, saved_tables = main.PUSH_INTERVAL, main._tables
+        try:
+            main.PUSH_INTERVAL = 600
+            main._tables = main.TableTracker([])
+            self.assertEqual(main.push_interval(), 600)
+            main._tables = main.TableTracker(_ZONE)
+            self.assertEqual(main.push_interval(), 60)
+            main.PUSH_INTERVAL = 30
+            self.assertEqual(main.push_interval(), 30)
+        finally:
+            main.PUSH_INTERVAL, main._tables = saved_interval, saved_tables
+
     def test_only_minutes_per_spot_are_kept(self):
         learner = main.TableLearner()
         _evening(learner, [(_A, 0, 30)], 40)

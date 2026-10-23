@@ -3896,11 +3896,28 @@ def led_loop():
         _stop.wait(0.05)
 
 
+# A unit with tables reports at least this often: the venue's Tables tab
+# calls the floor stale after three minutes without a reading.
+TABLES_PUSH_MAX = 60
+
+
+def push_interval():
+    """PUSH_INTERVAL, or TABLES_PUSH_MAX on a unit with tables if that is
+    shorter, with a note in the log that the setting was overruled."""
+    if PUSH_INTERVAL > TABLES_PUSH_MAX and _tables.tables:
+        log_throttled('push_tables', logging.WARNING,
+                      f'PUSH_INTERVAL_SECONDS={PUSH_INTERVAL}, but this unit has tables, which '
+                      f'report at least every {TABLES_PUSH_MAX}s; pushing every {TABLES_PUSH_MAX}s',
+                      every_seconds=3600)
+        return TABLES_PUSH_MAX
+    return PUSH_INTERVAL
+
+
 def push_loop():
     pusher = Pusher()
     while not _stop.is_set():
         # Jitter the cadence so a fleet of devices never lands together.
-        _stop.wait(PUSH_INTERVAL * random.uniform(0.95, 1.05))
+        _stop.wait(push_interval() * random.uniform(0.95, 1.05))
         if _stop.is_set():
             break
         try:
