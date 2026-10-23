@@ -18755,6 +18755,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // are read once per open. Any failure arrives as null; a refusal (403 for
   // anyone but the verified owner or for a plan below Roost, 401 signed out)
   // ends the reading for this open, since asking again cannot change it. The
+  // 403 for a plan check the server could not run is not a refusal: it is
+  // asked again on the next turn, like a 500 (planCheckFailed). The
   // first answer with a table in it puts the Tables tab in the bar for the
   // rest of the visit, and so does the plan refusal of a venue the server says
   // has tables, which the tab then answers with its lock; the same refusal

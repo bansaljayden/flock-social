@@ -16,7 +16,8 @@ export const TABLES_READ_EVERY_MS = 15 * 1000;
 
 // Answers that asking again cannot change: 401 once signed out, 403 for anyone
 // but the verified owner or for a plan below Roost, 404 where the server has
-// no tables for the place.
+// no tables for the place. One 403 is not on this list in effect: the one the
+// server sends when it could not look the plan up (planCheckFailed below).
 const TABLES_REFUSALS = [401, 403, 404];
 
 // The plan refusal, for a venue that does have tables. Below Roost both table
@@ -30,14 +31,26 @@ export const planLockedWithTables = (err) => !!err
   && !!err.data
   && err.data.has_tables === true;
 
+// The 403 that asking again can change. When the plan lookup itself fails the
+// gate answers 403 with the same UPGRADE_REQUIRED code and adds
+// reason ENTITLEMENT_UNAVAILABLE and retryable true (backend
+// services/venueEntitlements.js, tierUnavailableRefusal), so a venue that is
+// paying is never told it is not. That is a failure to ask again on the next
+// turn, like a 500, not a refusal; loadIncomingFlocks in App.js and
+// VenueAdvisorChat read it the same way.
+export const planCheckFailed = (err) => !!err
+  && err.status === 403
+  && !!err.data
+  && (err.data.reason === 'ENTITLEMENT_UNAVAILABLE' || err.data.retryable === true);
+
 // Reads the tables now and again `everyMs` after each answer, until the
 // function it returns is called. The next read is set only once the last one
 // has answered, so two never overlap and a slow answer pushes the next read
 // back instead of stacking requests behind it. Nothing is handed on after the
 // stop. Each answer is handed on as (data, { planLocked }): the data, or null
 // for any failure; planLocked only for the plan refusal of a venue with
-// tables. A dropped connection or a server error is asked again on the next
-// turn, and a refusal of any kind ends the reading.
+// tables. A dropped connection, a server error or a plan check that could not
+// run is asked again on the next turn, and a refusal ends the reading.
 export function startTablesReading(read, onData, everyMs = TABLES_READ_EVERY_MS) {
   let stopped = false;
   let timer = null;
@@ -45,7 +58,11 @@ export function startTablesReading(read, onData, everyMs = TABLES_READ_EVERY_MS)
     new Promise((resolve) => resolve(read()))
       .then(
         (data) => ({ data: data && Array.isArray(data.tables) ? data : null, refused: false, planLocked: false }),
-        (err) => ({ data: null, refused: TABLES_REFUSALS.includes(err && err.status), planLocked: planLockedWithTables(err) }),
+        (err) => ({
+          data: null,
+          refused: TABLES_REFUSALS.includes(err && err.status) && !planCheckFailed(err),
+          planLocked: planLockedWithTables(err),
+        }),
       )
       .then(({ data, refused, planLocked }) => {
         if (stopped) return;

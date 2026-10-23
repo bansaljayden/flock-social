@@ -67,7 +67,7 @@ import {
   tablesByLocalHour,
 } from '../lib/venueTables';
 // eslint-disable-next-line import/first
-import { TABLES_READ_EVERY_MS, planLockedWithTables, startTablesReading } from '../lib/venueTablesReading';
+import { TABLES_READ_EVERY_MS, planCheckFailed, planLockedWithTables, startTablesReading } from '../lib/venueTablesReading';
 
 const SRC = path.join(__dirname, '..');
 const read = (...p) => fs.readFileSync(path.join(SRC, ...p), 'utf8').replace(/\r\n/g, '\n');
@@ -90,6 +90,13 @@ const LOCKED = { planLocked: true };
 const UPGRADE_BODY = (hasTables) => ({ error: 'This feature needs a venue plan upgrade.', code: 'UPGRADE_REQUIRED', requiredTier: 'pro', has_tables: hasTables });
 const upgradeRequired = (hasTables) => Object.assign(new Error('This feature needs a venue plan upgrade.'), {
   status: 403, code: 'UPGRADE_REQUIRED', data: UPGRADE_BODY(hasTables),
+});
+// The gate's answer when the plan lookup itself failed (tierUnavailableRefusal
+// in backend/services/venueEntitlements.js): the same code, no has_tables, and
+// the two fields that say it is temporary.
+const PLAN_CHECK_FAILED_BODY = { error: 'Could not check your venue plan just now. Try again.', code: 'UPGRADE_REQUIRED', reason: 'ENTITLEMENT_UNAVAILABLE', retryable: true };
+const planCheckFailedErr = () => Object.assign(new Error(PLAN_CHECK_FAILED_BODY.error), {
+  status: 403, code: 'UPGRADE_REQUIRED', data: PLAN_CHECK_FAILED_BODY,
 });
 
 // One table in every state, listed out of order on purpose. Seats are known
@@ -616,6 +623,40 @@ describe('the read loop', () => {
     expect(readTables).toHaveBeenCalledTimes(1);
   });
 
+  test('the 403 for a plan check that could not run is no tables this turn, no lock, and is asked again', async () => {
+    // One pool timeout inside the gate's tier lookup used to end the reading
+    // for the rest of the visit, on the screen meant to stay open all shift.
+    const readTables = jest.fn()
+      .mockRejectedValueOnce(planCheckFailedErr())
+      .mockResolvedValue(LIVE);
+    const onData = jest.fn();
+    const stop = startTablesReading(readTables, onData);
+    await flush();
+    expect(onData).toHaveBeenNthCalledWith(1, null, OPEN);
+    expect(jest.getTimerCount()).toBe(1);
+    jest.advanceTimersByTime(15 * SEC);
+    await flush();
+    expect(onData).toHaveBeenNthCalledWith(2, LIVE, OPEN);
+    expect(readTables).toHaveBeenCalledTimes(2);
+    stop();
+  });
+
+  test('only that 403 is retried: the fields that mark it, on a 403', () => {
+    expect(planCheckFailed(planCheckFailedErr())).toBe(true);
+    expect(planCheckFailed(Object.assign(planCheckFailedErr(), { data: { code: 'UPGRADE_REQUIRED', retryable: true } }))).toBe(true);
+    // The real plan refusals, with and without tables, still end the reading.
+    expect(planCheckFailed(upgradeRequired(true))).toBe(false);
+    expect(planCheckFailed(upgradeRequired(false))).toBe(false);
+    // Not the owner: no body fields that say temporary.
+    expect(planCheckFailed(Object.assign(new Error('No'), { status: 403, data: { error: 'No' } }))).toBe(false);
+    // A 500 carrying the words is a 500, handled as one already.
+    expect(planCheckFailed(Object.assign(planCheckFailedErr(), { status: 500 }))).toBe(false);
+    expect(planCheckFailed(Object.assign(planCheckFailedErr(), { data: undefined }))).toBe(false);
+    expect(planCheckFailed(null)).toBe(false);
+    // And it is never the lock.
+    expect(planLockedWithTables(planCheckFailedErr())).toBe(false);
+  });
+
   test('an answer without a tables list is no tables', async () => {
     for (const answer of [{}, { tables: 'x' }, null]) {
       const onData = jest.fn();
@@ -956,6 +997,15 @@ describe('the two api.js calls', () => {
     expect(err.status).toBe(403);
     expect(err.code).toBe('UPGRADE_REQUIRED');
     expect(planLockedWithTables(err)).toBe(locked);
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  test('the failed plan check reaches the loop as the one 403 to ask again, asked once by the transport', async () => {
+    global.fetch = jest.fn(() => reply(403, PLAN_CHECK_FAILED_BODY));
+    const err = await api.getSensorTables('place_1').catch((e) => e);
+    expect(err.status).toBe(403);
+    expect(planCheckFailed(err)).toBe(true);
+    expect(planLockedWithTables(err)).toBe(false);
     expect(global.fetch).toHaveBeenCalledTimes(1);
   });
 });
