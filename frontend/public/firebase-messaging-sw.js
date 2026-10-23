@@ -70,6 +70,9 @@ var TAB_TYPES = {
   attendance_marked: '/?tab=you',
   availability_pulse: '/?tab=home',
   moderation_report: '/admin/moderation',
+  // The owner's table alert: the venue dashboard's Tables tab
+  // (src/services/pushNavigation.js reads this form).
+  table_alert: '/?venue=tables',
 };
 
 function targetUrl(data) {

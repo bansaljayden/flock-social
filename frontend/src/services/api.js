@@ -4037,7 +4037,7 @@ export function trackPurchaseCompleted(store, plan) {
    payload is server-authored data reaching a clamp for the same reason
    nfc_tap's source is clamped. A tap that resolved to no screen is 'none'; a
    screen the allowlist does not know is 'unknown'. */
-const PUSH_DESTINATIONS = ['flock', 'flockInvite', 'flocks', 'dm', 'friends', 'home', 'admin'];
+const PUSH_DESTINATIONS = ['flock', 'flockInvite', 'flocks', 'dm', 'friends', 'home', 'admin', 'venueTables'];
 function pushDestination(screen) {
   if (!screen) return 'none';
   return PUSH_DESTINATIONS.includes(screen) ? screen : 'unknown';

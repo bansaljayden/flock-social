@@ -291,8 +291,34 @@ describe('every type the app declares has somewhere to go', () => {
     expect(intentFromUrl('/?tab=chat')).toEqual({ screen: 'flocks', type: 'link' });
   });
 
+  test('a table alert opens the venue dashboard\'s Tables tab, on both paths a tap can arrive on', () => {
+    // The owner's push that a table has waited for a server or needs clearing.
+    // It names no plan and no person, so it used to fall through to null and
+    // the tap opened whatever screen the app was last on.
+    expect(intentFromData({ type: 'table_alert', table: '3', state: 'w' }))
+      .toEqual({ screen: 'venueTables', type: 'table_alert' });
+    expect(intentFromUrl('/?venue=tables')).toEqual({ screen: 'venueTables', type: 'link' });
+    // The venue sign-in arrival is not an intent; App.js reads it directly.
+    expect(intentFromUrl('/?venue=true')).toBeNull();
+    // The service worker's fallback for a notification with no link agrees.
+    const SW = readSource('frontend', 'public', 'firebase-messaging-sw.js');
+    expect(SW).toContain("table_alert: '/?venue=tables',");
+  });
+
+  test('App.js finishes the table alert once the dashboard is open and the tab is in its bar', () => {
+    expect(APP).toContain("} else if (intent.screen === 'venueTables') {");
+    expect(APP).toMatch(/setPushTablesIntent\(true\);/);
+    // The role check the dashboard's own redirect makes, then the dashboard's
+    // own door, then the tab, and never a second pull once the owner has left.
+    expect(APP).toMatch(/if \(!pushTablesIntent \|\| !authUser\) return;\s*if \(authUser\.role !== 'venue_owner' && authUser\.role !== 'admin'\) \{\s*setPushTablesIntent\(false\);\s*return;\s*\}/);
+    expect(APP).toMatch(/if \(currentScreen !== 'venueDashboard'\) \{\s*if \(pushTablesReachedRef\.current\) \{\s*pushTablesReachedRef\.current = false;\s*setPushTablesIntent\(false\);\s*return;\s*\}\s*openVenueDashboard\(\);\s*return;\s*\}/);
+    expect(APP).toMatch(/if \(ownerTablesSeen\) \{\s*setVenueTab\('tables'\);\s*\} else if \(ownerTables === undefined\) \{/);
+    // The boot routing is left to the dashboard's own door for this tap.
+    expect(APP).toContain("if (intent.screen !== 'safety' && intent.screen !== 'admin' && intent.screen !== 'venueTables') launchChoseScreenRef.current = true;");
+  });
+
   test('App.js has a branch for every screen the intent parser can produce', () => {
-    for (const screen of ['flockInvite', 'flocks', 'home', 'admin', 'safety']) {
+    for (const screen of ['flockInvite', 'flocks', 'home', 'admin', 'safety', 'venueTables']) {
       expect(APP).toContain(`intent.screen === '${screen}'`);
     }
   });

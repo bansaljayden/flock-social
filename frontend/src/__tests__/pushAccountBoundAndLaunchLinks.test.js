@@ -245,8 +245,11 @@ describe('App.js', () => {
   });
 
   test('a screen a launch intent chose is not replaced by the venue boot routing', () => {
-    // The push router marks it for every intent that picks a screen.
-    expect(handler).toContain("if (intent.screen !== 'safety' && intent.screen !== 'admin') launchChoseScreenRef.current = true;");
+    // The push router marks it for every intent that picks a screen. The
+    // table alert is left out with the overlay and the console: it opens the
+    // venue dashboard through openVenueDashboard, which makes the choice
+    // itself (pushDestinations.test.js pins that branch).
+    expect(handler).toContain("if (intent.screen !== 'safety' && intent.screen !== 'admin' && intent.screen !== 'venueTables') launchChoseScreenRef.current = true;");
     // A tag URL the app booted on counts from the start.
     expect(APP).toMatch(/const launchChoseScreenRef = useRef\(\s*typeof window !== 'undefined' && \/\^\\\/checkin\\\/\[\^\/\?#\]\+\/\.test\(window\.location\?\.pathname \|\| ''\)\s*\);/);
     // Both venue routes check it before they move anyone.

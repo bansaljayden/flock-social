@@ -716,6 +716,7 @@ describe('push_opened is an allowlist destination, never the id the tap carried'
     ['friends', 'friends'],
     ['home', 'home'],
     ['admin', 'admin'],
+    ['venueTables', 'venueTables'],
     ['checkout_upsell_9d3f', 'unknown'],
     ['', 'none'],
     [undefined, 'none'],

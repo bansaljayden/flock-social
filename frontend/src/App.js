@@ -8487,6 +8487,14 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [highlightedInviteId, setHighlightedInviteId] = useState(null);
   // An admin-only tap held until authUser has loaded and can be role-checked.
   const [pushAdminIntent, setPushAdminIntent] = useState(false);
+  // A tapped table alert (type table_alert: the owner's push that a table has
+  // waited for a server or needs clearing). Its destination is the venue
+  // dashboard's Tables tab, which is in the bar only once the dashboard has
+  // read a table or remembers one, so the tap is held here and finished by
+  // the effect beside the tables reads. The ref marks that the tap reached
+  // the dashboard, so an owner who then leaves is not pulled back.
+  const [pushTablesIntent, setPushTablesIntent] = useState(false);
+  const pushTablesReachedRef = useRef(false);
 
   // A push-notification tap resolves (in services/pushNavigation) into a
   // navigation intent. Consume it here and set the SAME state the in-app
@@ -8527,10 +8535,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // names the recipient on every copy (routes/safety.js), and a copy for
     // another account, or one that names nobody, draws nothing.
     if (intent.screen === 'safety' && !safetyIntentIsFor(intent, authUser?.id)) return;
-    // The safety modal is an overlay, and the admin tap leaves for the console
-    // page; everything else picks where this launch opens, which the venue
-    // boot routing must then leave alone (launchChoseScreenRef).
-    if (intent.screen !== 'safety' && intent.screen !== 'admin') launchChoseScreenRef.current = true;
+    // The safety modal is an overlay, the admin tap leaves for the console
+    // page, and the table alert opens the venue dashboard through its own
+    // door below, which makes that choice itself; everything else picks where
+    // this launch opens, which the venue boot routing must then leave alone
+    // (launchChoseScreenRef).
+    if (intent.screen !== 'safety' && intent.screen !== 'admin' && intent.screen !== 'venueTables') launchChoseScreenRef.current = true;
     if (intent.screen === 'flock' && intent.flockId) {
       setSelectedFlockId(intent.flockId);
       setCurrentTab('chat');
@@ -8583,6 +8593,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // The role check is the same one renderScreen and the redirect effect
       // apply. A non-admin tap is not an error, it just has nowhere to go.
       setPushAdminIntent(true);
+    } else if (intent.screen === 'venueTables') {
+      // The owner's table alert. Finished by the effect beside the tables
+      // reads, once the dashboard is open and the Tables tab is in its bar.
+      setPushTablesIntent(true);
     } else if (intent.screen === 'safety' && intent.cancelled) {
       // The stand-down, tapped. Clears the alarm the earlier push opened, by
       // the same user id the live event clears it by, and says who is OK.
@@ -18849,6 +18863,43 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   React.useLayoutEffect(() => {
     if (currentScreen === 'venueDashboard' && venueTab === 'tables' && !ownerTablesSeen && !tablesRemembered(ownerVenuePlaceId)) setVenueTab('analytics');
   }, [currentScreen, venueTab, ownerTablesSeen, ownerVenuePlaceId]);
+
+  // A TAPPED TABLE ALERT lands on the Tables tab (pushTablesIntent, set by
+  // the push handler). The tap arrives before the account is known on a cold
+  // start, so the role is checked here, the same check the dashboard's own
+  // redirect makes; an account that is not a venue owner has nowhere for it
+  // to go. Off the dashboard it opens the dashboard through the door the You
+  // tab uses (openVenueDashboard), once: an owner who then leaves is not
+  // pulled back. On the dashboard it waits for the tab to be in the bar (the
+  // memory puts it there at once, otherwise the visit's first read does) and
+  // switches to it. If that first read answers that the venue has no tables
+  // now, or fails, the tap is dropped where it stands, on Analytics, where
+  // the tab will appear by itself if a later read brings tables.
+  React.useEffect(() => {
+    if (!pushTablesIntent || !authUser) return;
+    if (authUser.role !== 'venue_owner' && authUser.role !== 'admin') {
+      setPushTablesIntent(false);
+      return;
+    }
+    if (currentScreen !== 'venueDashboard') {
+      if (pushTablesReachedRef.current) {
+        pushTablesReachedRef.current = false;
+        setPushTablesIntent(false);
+        return;
+      }
+      openVenueDashboard();
+      return;
+    }
+    pushTablesReachedRef.current = true;
+    if (ownerTablesSeen) {
+      setVenueTab('tables');
+    } else if (ownerTables === undefined) {
+      // The visit's first read is still out.
+      return;
+    }
+    pushTablesReachedRef.current = false;
+    setPushTablesIntent(false);
+  }, [pushTablesIntent, authUser, currentScreen, ownerTablesSeen, ownerTables, openVenueDashboard]);
 
   // Seed venueInfo from onboarding data if backend profile hasn't loaded yet
   React.useEffect(() => {

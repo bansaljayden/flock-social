@@ -119,6 +119,14 @@ export function intentFromData(data) {
     // App.js refuses this for any account without the role.
     return { screen: 'admin', type };
   }
+  if (type === 'table_alert') {
+    // The owner's push that a table has waited for a server or needs clearing
+    // (backend services/sensorTables.js). It names no plan and no person, so
+    // it fell through to null and the tap opened whatever screen the app was
+    // last on. The thing it is about is the venue dashboard's Tables tab,
+    // which App.js opens once the dashboard is up and the tab is in its bar.
+    return { screen: 'venueTables', type };
+  }
 
   if (type === 'safety_alert_cancelled') {
     // The stand-down. Until now the one push with no branch at all: the tap
@@ -364,6 +372,11 @@ export function intentFromUrl(rawUrl) {
   if (tab === 'you' || tab === 'profile') return { screen: 'friends', tab: 'profile', type: 'link' };
   if (tab === 'home') return { screen: 'home', type: 'link' };
   if (tab === 'chat') return { screen: 'flocks', type: 'link' };
+  // The link form of a table alert, for a web tap with no Flock tab open
+  // (index.js counts `venue` among the parameters that boot the app rather
+  // than the marketing page). `?venue=true` is the venue sign-in arrival and
+  // is read by App.js directly, not an intent, so only the Tables form is one.
+  if (q.get('venue') === 'tables') return { screen: 'venueTables', type: 'link' };
 
   // asId, not Number(), for the same reason the query forms above use it: \d+
   // matches "0", and Number('0') is a perfectly well formed id that no row can

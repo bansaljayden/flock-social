@@ -108,6 +108,12 @@ describe('a native notification tap files push_opened with the resolved destinat
     expect(pushOpens()).toEqual([{ destination: 'flockInvite' }]);
   });
 
+  test('a table alert opens to venueTables, and the table number never leaves', async () => {
+    await tap({ type: 'table_alert', table: '17', state: 'c' });
+    expect(pushOpens()).toEqual([{ destination: 'venueTables' }]);
+    expect(JSON.stringify(mockCapture.mock.calls)).not.toContain('17');
+  });
+
   test('a tap that resolves to no screen is still an open, reported as none', async () => {
     // A payload with nothing to route to: intentFromData answers null, and the
     // open is still recorded because the user did open the app.
