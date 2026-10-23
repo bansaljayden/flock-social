@@ -30,17 +30,27 @@ const pool = require('../config/database');
 
 // --- Fake database --------------------------------------------------------
 // The same stateful model sensorIngest.test.js uses (helpers/sensorStoreModel
-// .js), so the flood guard and the dedupe behave as they do in Postgres.
-const { INGEST_STATEMENT, runIngest } = require('./helpers/sensorStoreModel');
+// .js), so the flood guard and the dedupe behave as they do in Postgres, and
+// the table-state writer modelled beside it.
+const {
+  INGEST_STATEMENT, runIngest, TABLE_STATES_STATEMENT, runTableStates,
+} = require('./helpers/sensorStoreModel');
 
 let devices = [];
 let readings = [];
+let tableStates = [];
 let queryLog = [];
+// Swapped in by a test that needs the table-state write to fail or wait.
+let tableStatesImpl = null;
 
 pool.query = (sql, params = []) => {
   const flat = String(sql).replace(/\s+/g, ' ').trim();
   queryLog.push({ sql: flat, params });
   if (INGEST_STATEMENT.test(flat)) return Promise.resolve(runIngest({ devices, readings }, params));
+  if (TABLE_STATES_STATEMENT.test(flat)) {
+    if (tableStatesImpl) return tableStatesImpl(params);
+    return Promise.resolve(runTableStates({ tableStates }, params));
+  }
   return Promise.reject(new Error(`unscripted query: ${flat.slice(0, 140)}`));
 };
 
@@ -112,6 +122,8 @@ const EXAMPLE = '1:0:f:340;2:3:s:845;3:2:w:410;4:0:c:95';
 function reset() {
   queryLog = [];
   readings = [];
+  tableStates = [];
+  tableStatesImpl = null;
   emits = [];
   devices = [
     { id: 1, device_id: 'flux_tables_01', venue_place_id: VENUE, is_active: true,
@@ -130,6 +142,15 @@ function ageDevice(deviceId = 'flux_tables_01', ms = 60000) {
 }
 
 const countsOf = (r) => [r.tables_total, r.tables_occupied, r.tables_waiting, r.tables_to_clear];
+
+// The floor is written after the answer; this waits for that work to finish.
+const settle = () => sensorTables._settled();
+const floorOf = (deviceId = 'flux_tables_01') => tableStates
+  .filter((r) => r.sensor_device_id === deviceId)
+  .sort((a, b) => a.table_no - b.table_no)
+  .map((r) => `${r.table_no}:${r.people}:${r.state}`);
+const stateWrites = () => queryLog.filter((q) => TABLE_STATES_STATEMENT.test(q.sql));
+const ago = (ms) => new Date(Date.now() - ms).toISOString();
 
 // Captures console.warn and console.error for the length of fn.
 async function capturingLogs(fn) {
@@ -356,4 +377,159 @@ test('a dry run with a bad tables value is still just a dry run', async () => {
   assert.strictEqual(res.status, 200);
   assert.strictEqual(res.body.dry_run, true);
   assert.strictEqual(readings.length, 0);
+});
+
+// --- The live floor ----------------------------------------------------------
+//
+// One row per table, replaced by every LIVE reading after it is stored. Live
+// means what GET /current would serve (the 15 minute window), the same flag the
+// flood guard reads, so the floor and the venue's live figure agree on what
+// "now" is.
+
+test('a live reading writes one row per table, each dated by its own seated or state timer', async () => {
+  reset();
+  const res = await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: EXAMPLE }) });
+  assert.strictEqual(res.status, 201, res.raw);
+  await settle();
+  assert.deepStrictEqual(floorOf(), ['1:0:f', '2:3:s', '3:2:w', '4:0:c']);
+  const at = readings[0].recorded_at.getTime();
+  const seated = tableStates.find((r) => r.table_no === 2);
+  assert.strictEqual(seated.venue_place_id, VENUE, 'the venue comes from the device row, as for the reading');
+  assert.strictEqual(seated.updated_at.getTime(), at);
+  assert.strictEqual(seated.state_since.getTime(), at - 845 * 1000, 'state_since is the reading time minus A');
+});
+
+test('a reading from five minutes ago is still live: it writes the floor, at its own time', async () => {
+  reset();
+  const stamp = ago(5 * 60 * 1000);
+  const res = await call('/api/sensors/data', { apiKey: KEY, body: reading({ recorded_at: stamp, tables: '7:4:s:120' }) });
+  assert.strictEqual(res.status, 201, res.raw);
+  await settle();
+  assert.deepStrictEqual(floorOf(), ['7:4:s']);
+  assert.strictEqual(tableStates[0].updated_at.toISOString(), stamp);
+  assert.strictEqual(emits.length, 0, 'old enough not to be broadcast, young enough to be the floor');
+});
+
+test('a backfilled reading never touches the floor, though its counts are stored', async () => {
+  reset();
+  const res = await call('/api/sensors/data', {
+    apiKey: KEY, body: reading({ recorded_at: ago(30 * 60 * 1000), tables: EXAMPLE }),
+  });
+  assert.strictEqual(res.status, 201, res.raw);
+  await settle();
+  assert.deepStrictEqual(countsOf(readings[0]), [4, 2, 1, 1], 'history keeps its counts');
+  assert.deepStrictEqual(tableStates, []);
+  assert.strictEqual(stateWrites().length, 0, 'a backfilled reading must not even ask');
+});
+
+test('a table the owner removed on the box loses its row; the rest are replaced', async () => {
+  reset();
+  await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: EXAMPLE }) });
+  await settle();
+  ageDevice();
+  await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: '1:2:s:30;2:0:c:12;4:0:f:5' }) });
+  await settle();
+  assert.deepStrictEqual(floorOf(), ['1:2:s', '2:0:c', '4:0:f']);
+});
+
+test('a live reading without tables leaves the floor exactly as it was', async () => {
+  reset();
+  await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: EXAMPLE }) });
+  await settle();
+  const before = JSON.stringify(tableStates);
+  for (const extra of [{}, { tables: null }, { tables: 'not-a-table-string' }]) {
+    ageDevice();
+    const res = await call('/api/sensors/data', { apiKey: KEY, body: reading(extra) });
+    assert.strictEqual(res.status, 201, res.raw);
+    await settle();
+  }
+  assert.strictEqual(JSON.stringify(tableStates), before);
+  assert.strictEqual(stateWrites().length, 1, 'only the reading that carried tables wrote the floor');
+});
+
+test('a re-delivered reading and a throttled one write nothing to the floor', async () => {
+  reset();
+  const stamp = ago(3 * 60 * 1000);
+  await call('/api/sensors/data', { apiKey: KEY, body: reading({ recorded_at: stamp, tables: '1:2:s:60' }) });
+  await settle();
+  const dup = await call('/api/sensors/data', { apiKey: KEY, body: reading({ recorded_at: stamp, tables: '1:0:c:5' }) });
+  assert.strictEqual(dup.body.duplicate, true);
+  const throttled = await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: '1:0:c:5' }) });
+  assert.strictEqual(throttled.status, 429);
+  await settle();
+  assert.deepStrictEqual(floorOf(), ['1:2:s']);
+  assert.strictEqual(stateWrites().length, 1);
+});
+
+test('an older live reading that arrives after a newer one changes nothing', async () => {
+  reset();
+  await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: '1:2:w:400;2:0:f:9' }) });
+  await settle();
+  ageDevice();
+  const late = await call('/api/sensors/data', {
+    apiKey: KEY, body: reading({ recorded_at: ago(4 * 60 * 1000), tables: '1:2:s:160;3:1:s:5' }),
+  });
+  assert.strictEqual(late.status, 201, late.raw);
+  await settle();
+  assert.deepStrictEqual(floorOf(), ['1:2:w', '2:0:f'], 'the late reading rewrote a newer floor');
+});
+
+test('a device clock running ahead cannot date a table in the future', async () => {
+  reset();
+  const res = await call('/api/sensors/data', {
+    apiKey: KEY, body: reading({ recorded_at: new Date(Date.now() + 90 * 1000).toISOString(), tables: '1:2:s:0' }),
+  });
+  assert.strictEqual(res.status, 201, res.raw);
+  await settle();
+  assert.ok(tableStates[0].updated_at.getTime() <= Date.now(), 'updated_at is in the future');
+  assert.ok(tableStates[0].state_since.getTime() <= Date.now(), 'state_since is in the future');
+});
+
+test('each device keeps its own floor', async () => {
+  reset();
+  await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: '1:2:s:30' }) });
+  await call('/api/sensors/data', { apiKey: OTHER_KEY, body: reading({ tables: '1:0:c:30;2:4:w:400' }) });
+  await settle();
+  assert.deepStrictEqual(floorOf('flux_tables_01'), ['1:2:s']);
+  assert.deepStrictEqual(floorOf('flux_tables_02'), ['1:0:c', '2:4:w']);
+});
+
+test('the floor is written after the answer, and a write that never finishes cannot hold the answer', async () => {
+  reset();
+  let release;
+  tableStatesImpl = () => new Promise((resolve) => { release = () => resolve({ rows: [], rowCount: 0 }); });
+  const res = await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: EXAMPLE }) });
+  assert.strictEqual(res.status, 201, 'the answer waited for the floor');
+  assert.ok(typeof release === 'function', 'the floor write did start');
+  const order = queryLog.map((q) => (INGEST_STATEMENT.test(q.sql) ? 'reading' : 'floor'));
+  assert.deepStrictEqual(order, ['reading', 'floor']);
+  release();
+  await settle();
+});
+
+test('a floor write that fails is logged and changes neither the answer nor the stored reading', async () => {
+  reset();
+  tableStatesImpl = () => Promise.reject(new Error('relation "sensor_table_states" is on fire'));
+  let res;
+  const lines = await capturingLogs(async () => {
+    res = await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: EXAMPLE }) });
+    await settle();
+  });
+  assert.strictEqual(res.status, 201);
+  assert.deepStrictEqual(Object.keys(res.body).sort(), ['recorded_at', 'success']);
+  assert.strictEqual(readings.length, 1);
+  assert.deepStrictEqual(countsOf(readings[0]), [4, 2, 1, 1]);
+  assert.ok(lines.some((l) => /Table states for flux_tables_01 failed after the reading was stored/.test(l)), lines.join('\n'));
+});
+
+test('a floor write that throws before it ever returns a promise is caught the same way', async () => {
+  reset();
+  tableStatesImpl = () => { throw new Error('driver blew up synchronously'); };
+  let res;
+  const lines = await capturingLogs(async () => {
+    res = await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: EXAMPLE }) });
+    await settle();
+  });
+  assert.strictEqual(res.status, 201);
+  assert.ok(lines.some((l) => /driver blew up synchronously/.test(l)), lines.join('\n'));
 });

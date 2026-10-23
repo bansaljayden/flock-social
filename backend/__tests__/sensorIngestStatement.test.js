@@ -99,6 +99,9 @@ test.after(async () => {
 });
 
 test.beforeEach(async () => {
+  // A live reading with tables writes the table floor after its answer. Let
+  // the last test's writes land before the devices they name are deleted.
+  await require('../services/sensorTables')._settled();
   events = [];
   emitImpl = (room, event, payload) => { events.push('broadcast'); lastEmit = { room, event, payload }; };
   lastEmit = null;
@@ -469,4 +472,82 @@ test('a tables value of the wrong shape is a 201 and a stored reading, never a 4
   const stored = await tableCountRows();
   assert.equal(stored.length, shapes.length);
   for (const row of stored) assert.equal(row.tables_total, null);
+});
+
+// The live floor (sensor_table_states), written after the answer by the one
+// statement in services/sensorTables.js. The model in helpers/sensorStoreModel
+// .js has to agree with every assertion here.
+const settleTables = () => require('../services/sensorTables')._settled();
+const floor = async () => (await pool.query(
+  `SELECT sensor_device_id, table_no, venue_place_id, people, state, state_since, updated_at
+     FROM sensor_table_states ORDER BY sensor_device_id, table_no`
+)).rows;
+const floorShape = async () => (await floor()).map((r) => `${r.table_no}:${r.people}:${r.state}`);
+
+test('a live reading writes the floor: one row per table, dated by the reading minus each timer', async () => {
+  const res = await push(reading({ tables: EXAMPLE_TABLES }));
+  assert.equal(res.status, 201, JSON.stringify(res.body));
+  await settleTables();
+  const rows = await floor();
+  assert.deepEqual(rows.map((r) => `${r.table_no}:${r.people}:${r.state}`), ['1:0:f', '2:3:s', '3:2:w', '4:0:c']);
+  const at = new Date(res.body.recorded_at).getTime();
+  for (const r of rows) {
+    assert.equal(r.sensor_device_id, 'sensor_live');
+    assert.equal(r.venue_place_id, VENUE);
+    assert.equal(r.updated_at.getTime(), at, 'updated_at is the time the figures were true');
+  }
+  assert.deepEqual(rows.map((r) => (at - r.state_since.getTime()) / 1000), [340, 845, 410, 95]);
+});
+
+test('on the real schema: a removed table is deleted, a backfill and a reading without tables change nothing', async () => {
+  assert.equal((await push(reading({ tables: EXAMPLE_TABLES }))).status, 201);
+  await settleTables();
+  await pool.query(`UPDATE sensor_devices SET last_seen_at = NOW() - INTERVAL '1 hour' WHERE device_id = 'sensor_live'`);
+  assert.equal((await push(reading({ tables: '1:2:s:30;4:0:f:5' }))).status, 201);
+  await settleTables();
+  assert.deepEqual(await floorShape(), ['1:2:s', '4:0:f']);
+
+  // History, not the floor.
+  assert.equal((await push(reading({ recorded_at: new Date(Date.now() - 30 * 60 * 1000).toISOString(), tables: '9:1:s:5' }))).status, 201);
+  // Live, but silent about tables.
+  await pool.query(`UPDATE sensor_devices SET last_seen_at = NOW() - INTERVAL '1 hour' WHERE device_id = 'sensor_live'`);
+  assert.equal((await push(reading())).status, 201);
+  await settleTables();
+  assert.deepEqual(await floorShape(), ['1:2:s', '4:0:f']);
+});
+
+test('on the real schema: an older live reading arriving after a newer one changes nothing', async () => {
+  assert.equal((await push(reading({ tables: '1:2:w:400;2:0:f:9' }))).status, 201);
+  await settleTables();
+  await pool.query(`UPDATE sensor_devices SET last_seen_at = NOW() - INTERVAL '1 hour' WHERE device_id = 'sensor_live'`);
+  const late = await push(reading({ recorded_at: new Date(Date.now() - 4 * 60 * 1000).toISOString(), tables: '1:2:s:160;3:1:s:5' }));
+  assert.equal(late.status, 201, JSON.stringify(late.body));
+  await settleTables();
+  assert.deepEqual(await floorShape(), ['1:2:w', '2:0:f']);
+});
+
+test('on the real schema: a clock running ahead is capped at the server clock, and a deleted unit takes its tables', async () => {
+  const res = await push(reading({ recorded_at: new Date(Date.now() + 90 * 1000).toISOString(), tables: '1:2:s:0' }));
+  assert.equal(res.status, 201, JSON.stringify(res.body));
+  await settleTables();
+  const [row] = await floor();
+  const { rows: [{ now }] } = await pool.query('SELECT NOW() AS now');
+  assert.ok(row.updated_at <= now, 'a table dated in the future');
+  assert.ok(row.state_since <= now);
+  await pool.query("DELETE FROM sensor_devices WHERE device_id = 'sensor_live'");
+  assert.deepEqual(await floor(), [], 'the unit is gone and its tables are not');
+});
+
+test('the table rows refuse what the box can never send', async () => {
+  for (const [no, people, state] of [[0, 1, 's'], [41, 1, 's'], [1, 31, 's'], [1, 1, 'x']]) {
+    await assert.rejects(
+      pool.query(
+        `INSERT INTO sensor_table_states (sensor_device_id, table_no, venue_place_id, people, state, state_since)
+         VALUES ('sensor_live', $1, $2, $3, $4, NOW())`,
+        [no, VENUE, people, state]
+      ),
+      (err) => err.code === '23514',
+      `${no}:${people}:${state} was stored`
+    );
+  }
 });

@@ -6,7 +6,8 @@
 // box counts the people at each table and runs a small state machine per
 // table, and each reading it already sends to POST /api/sensors/data carries
 // the result in one more field. This module is what the server does with that
-// field: the strict parse and the four counts stored on the reading.
+// field: the strict parse, the four counts stored on the reading, and the live
+// state of each table (sensor_table_states, migration 130).
 //
 // NOTHING HERE IDENTIFIES OR FOLLOWS A PERSON, and every part of this file is
 // held to that. What leaves the Pi is a table number the owner chose, how many
@@ -42,6 +43,8 @@
 // is answered 201, and the server log says so at most once an hour per device,
 // naming the problem and never repeating the value.
 // ---------------------------------------------------------------------------
+
+const pool = require('../config/database');
 
 const MAX_TABLES = 40;
 const MAX_TABLE_PEOPLE = 30;
@@ -169,6 +172,128 @@ function noteIgnoredTables(deviceId, reason, now = Date.now()) {
   return true;
 }
 
+// ---------------------------------------------------------------------------
+// THE LIVE FLOOR: one row per table, replaced by every live reading.
+//
+// WHICH READINGS. Only the ones GET /api/sensors/:placeId/current could serve
+// as the venue's live figure (`affectsLiveFigure` in routes/sensors.js, $7 of
+// INGEST_SQL), and only after the reading is stored and the device has its
+// answer. A backfilled reading from an hour ago is history, not the floor, so
+// it never touches these rows. A live reading with no tables string leaves
+// them alone: the contract has no way to say "no tables" other than silence,
+// and silence from an older build is not a reason to wipe the floor. Rows that
+// stop being refreshed are reported stale by the read route instead.
+//
+// ONE STATEMENT, for the reason INGEST_SQL is one: the database is a network
+// round trip away. In it, all reading the same snapshot:
+//   reading  the time the figures were true: the reading's stamp, capped at
+//            the server's clock, so a device clock running ahead cannot date
+//            a table in the future. For a live push the two are seconds apart.
+//   gate     a reading older than the rows already hold changes nothing. The
+//            device delivers oldest first, so this only matters when two
+//            deliveries cross, and then the newer one must win.
+//   prior    each table's state BEFORE this reading, for the alert, which
+//            fires on a change of state and never on a repeat.
+//   gone     this device's tables that are not in the reading: the owner
+//            removed them on the box.
+//   saved    every table in the reading, upserted. state_since is the
+//            reading's time minus A, so it holds still from one reading to
+//            the next while the state does.
+// gone and saved touch disjoint rows (in the reading or not), and the parse
+// guarantees each table appears once, so no row is written twice.
+//
+// Every parameter has one cast, used the same way each time it appears, for
+// __tests__/sqlParameterTypes.test.js.
+// ---------------------------------------------------------------------------
+const TABLE_STATES_SQL = `
+  WITH reading AS (
+    SELECT LEAST($3::timestamptz, NOW()) AS as_of
+  ),
+  incoming AS (
+    SELECT t.table_no, t.people, t.state, t.seconds
+      FROM unnest($4::smallint[], $5::smallint[], $6::text[], $7::integer[])
+           AS t(table_no, people, state, seconds)
+  ),
+  gate AS (
+    SELECT NOT EXISTS (
+      SELECT 1 FROM sensor_table_states s, reading r
+       WHERE s.sensor_device_id = $1::varchar AND s.updated_at > r.as_of
+    ) AS fresh
+  ),
+  prior AS (
+    SELECT s.table_no, s.state FROM sensor_table_states s WHERE s.sensor_device_id = $1::varchar
+  ),
+  gone AS (
+    DELETE FROM sensor_table_states s
+     USING gate g
+     WHERE g.fresh
+       AND s.sensor_device_id = $1::varchar
+       AND s.table_no <> ALL ($4::smallint[])
+  ),
+  saved AS (
+    INSERT INTO sensor_table_states AS s
+           (sensor_device_id, table_no, venue_place_id, people, state, state_since, updated_at)
+    SELECT $1::varchar, i.table_no, $2::varchar, i.people, i.state,
+           r.as_of - i.seconds * INTERVAL '1 second', r.as_of
+      FROM incoming i, reading r, gate g
+     WHERE g.fresh
+    ON CONFLICT (sensor_device_id, table_no) DO UPDATE
+       SET venue_place_id = EXCLUDED.venue_place_id,
+           people = EXCLUDED.people,
+           state = EXCLUDED.state,
+           state_since = EXCLUDED.state_since,
+           updated_at = EXCLUDED.updated_at
+     WHERE s.updated_at <= EXCLUDED.updated_at
+    RETURNING s.table_no, s.state, s.state_since
+  )
+  SELECT v.table_no, v.state, p.state AS prior_state,
+         GREATEST(1, FLOOR(EXTRACT(EPOCH FROM (NOW() - v.state_since)) / 60))::int AS minutes
+    FROM saved v
+    LEFT JOIN prior p ON p.table_no = v.table_no
+   ORDER BY v.table_no`;
+
+/**
+ * Write one live reading's tables. Resolves to the tables written, each
+ * { table_no, state, prior_state, minutes }: prior_state is null for a table
+ * that had no row, and minutes is whole minutes since state_since, at least 1.
+ * Resolves to [] when the gate found newer rows.
+ */
+async function storeTableStates(device, tables, recordedAt) {
+  const { rows } = await pool.query(TABLE_STATES_SQL, [
+    device.device_id,
+    device.venue_place_id,
+    recordedAt,
+    tables.map((t) => t.number),
+    tables.map((t) => t.people),
+    tables.map((t) => t.state),
+    tables.map((t) => t.seconds),
+  ]);
+  return rows;
+}
+
+// Work started after an answer has been written, so a test can wait for it to
+// finish instead of sleeping and hoping.
+const inFlight = new Set();
+
+/**
+ * Apply a stored live reading's tables to the floor. Called by the ingest
+ * AFTER the device has its 201, and never awaited there: it cannot delay the
+ * answer, and nothing it does can change it. It never throws and never
+ * rejects; a failure is logged, and the reading stays stored either way. The
+ * next live reading writes every table again, so one failure costs the floor
+ * thirty seconds, not a table.
+ */
+function applyTableReading(device, tables, recordedAt) {
+  const run = (async () => {
+    await storeTableStates(device, tables, recordedAt);
+  })().catch((err) => {
+    console.error(`Table states for ${device.device_id} failed after the reading was stored:`, err.message);
+  });
+  inFlight.add(run);
+  run.then(() => inFlight.delete(run));
+  return run;
+}
+
 module.exports = {
   MAX_TABLES,
   MAX_TABLE_PEOPLE,
@@ -179,6 +304,9 @@ module.exports = {
   readTables,
   tableCounts,
   noteIgnoredTables,
-  // Test seam: the throttle is process-global state.
+  applyTableReading,
+  // Test seams: the throttle is process-global state, and the floor is
+  // written after the answer.
   _resetIgnoredNotes: () => ignoredNotedAt.clear(),
+  _settled: () => Promise.allSettled([...inFlight]),
 };

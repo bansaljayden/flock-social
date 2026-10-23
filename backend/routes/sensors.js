@@ -9,7 +9,9 @@ const { scalarOnly } = require('../validators/shape');
 // Table monitoring: the `tables` string a reading may carry, and what is done
 // with it. The contract and the reason a bad value is ignored rather than
 // refused are at the top of that file.
-const { MAX_TABLES_LENGTH, readTables, tableCounts, noteIgnoredTables } = require('../services/sensorTables');
+const {
+  MAX_TABLES_LENGTH, readTables, tableCounts, noteIgnoredTables, applyTableReading,
+} = require('../services/sensorTables');
 
 const router = express.Router();
 
@@ -641,6 +643,16 @@ router.post('/data',
       // occupancy. After the response, and unable to change it: see
       // broadcastReading.
       if (!filing.isBackfill) broadcastReading(req, device, req.body, filing, device.recorded_at);
+
+      // The live floor, for the venue's owner. Same window as the live figure
+      // (affectsLiveFigure, not isBackfill): a reading /current would serve is
+      // the newest word on the tables too, and an older one is history. Not
+      // awaited, never throws: applyTableReading logs its own failures, and
+      // the device already has its answer. Nothing of it reaches the public
+      // broadcast above; venue:{placeId} is a room anyone can join.
+      if (filing.tables && filing.affectsLiveFigure) {
+        applyTableReading(device, filing.tables, device.recorded_at);
+      }
 
       // A tables value that was sent and dropped is said in the log, at most
       // once an hour per device, and only now: the device has its 201 and the
