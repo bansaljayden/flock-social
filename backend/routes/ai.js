@@ -34,6 +34,8 @@ const {
 // two different numbers for one room.
 const ownerReports = require('../services/ownerReports');
 const gameNights = require('../services/gameNights');
+// The public table summary for search results (withTableSummaries below).
+const tableHistory = require('../services/tableHistory');
 const venueLabel = require('../utils/venueLabel');
 const mlPredictor = require('../services/mlPredictor');
 const { getPremiumState, paywallEnabled, EntitlementUnavailableError } = require('../services/entitlements');
@@ -802,6 +804,35 @@ function copySearchResult(result) {
   };
 }
 
+// TABLES ON A SEARCH RESULT. A venue whose table unit is live gets the public
+// table summary (services/tableHistory.js publicSummaries): how many tables
+// are open, whether a party of two fits now, and the likely wait. Counts and
+// minutes only, never a table number. A venue whose owner turned "show tables
+// in the Flock app" off, or with no fresh floor, is absent from that answer
+// and gets nothing here, so Birdie cannot mention it. A floor marked stale is
+// left off too: "a table is open" from a reading ten minutes old is a promise
+// we cannot keep. Added to the COPY after the cache, never cached itself,
+// because a floor changes by the minute. A failed read leaves the venues as
+// they were.
+async function withTableSummaries(result) {
+  if (!result || !Array.isArray(result.venues) || !result.venues.length) return result;
+  const ids = result.venues.map((v) => v.place_id).filter((id) => typeof id === 'string' && id);
+  if (!ids.length) return result;
+  let summaries;
+  try {
+    summaries = await tableHistory.publicSummaries(ids.slice(0, tableHistory.SUMMARIES_MAX_PLACES));
+  } catch (err) {
+    console.error('Birdie table summaries failed:', err.message);
+    return result;
+  }
+  for (const v of result.venues) {
+    const s = summaries[v.place_id];
+    if (!s || s.stale) continue;
+    v.tables = { open_tables: s.open, party_of_two_fits_now: s.fits_now, wait_minutes: s.wait_minutes };
+  }
+  return result;
+}
+
 // THE PAID HALF OF A CROWD LOOKUP, AND WHAT REPLACES IT WHEN THE VENUE IS NOT
 // OPEN TO THIS ACCOUNT. Two places lock it: the tool, when the peek said
 // locked and nothing paid was computed, and the tool loop, when another turn
@@ -1035,9 +1066,9 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
       // nothing. See BIRDIE'S VENUE SEARCH CACHE above.
       const searchKey = birdieSearchKey(toolInput.query, toolInput.location);
       const cachedVenues = birdieSearchGet(searchKey);
-      if (cachedVenues) return copySearchResult({ venues: cachedVenues });
+      if (cachedVenues) return withTableSummaries(copySearchResult({ venues: cachedVenues }));
       const inflight = birdieSearchInflight.get(searchKey);
-      if (inflight) return copySearchResult(await inflight);
+      if (inflight) return withTableSummaries(copySearchResult(await inflight));
       // Birdie was a complete bypass of every Places cost control: the tool
       // loop runs up to 5 iterations and executes every call the model emits,
       // so one free account could drive thousands of PAID Places calls a day
@@ -1104,7 +1135,7 @@ async function executeTool(toolName, toolInput, userId, opts = {}) {
       try {
         // A copy for the leader too: `venues` inside `work` is the array the
         // cache just stored and the one every joined flight reads.
-        return copySearchResult(await work);
+        return await withTableSummaries(copySearchResult(await work));
       } finally {
         birdieSearchInflight.delete(searchKey);
       }
@@ -2080,6 +2111,7 @@ How to answer:
 - Crowds: translate numbers into advice. "68% and climbing, go now or wait till 11" beats reciting the data. Mention best time when it helps.
 - WHEN TO GO IS \`best_time\`, ALWAYS. Never rank the hours in \`hourly_forecast\` yourself and never name a quieter hour \`best_time\` did not name. Those scores are how busy each hour is, and they were measured to order hours WORSE than the curve \`best_time\` ranks on: inside 10 points, ordering two hours is a coin flip. \`best_time\` already refuses to name an hour when the difference is that small, so "No quiet hour stands out" means the hours really do look alike and the honest answer is that it doesn't matter much when they go.
 - If you have their coordinates, always pass location to search_venues. If not, ask where they are, once.
+- A search_venues result may carry \`tables\`: that venue's live table count from its own sensor. \`open_tables\` is how many tables are free now, \`party_of_two_fits_now\` whether a party of two can sit right away, and \`wait_minutes\` the likely wait in minutes when nothing fits (null when unknown). You may use it to suggest a place with a table free. Never mention tables for a venue whose result has no \`tables\`, never guess them, and never promise a table will still be free when they arrive.
 
 Hard rules:
 - Never invent venue data, crowd numbers, or forecasts. Tools only. If a tool has no data, say you don't have a read on that spot.
@@ -2989,4 +3021,5 @@ router.__clearBirdieSearchCache = () => {
 // It decides whether $ai_generation leaves this process at all, and the whole
 // point of it is that a dev machine holding the live POSTHOG_API_KEY stops
 // filing its turns as product data.
-module.exports.__testables = { executeTool, buildSystemPrompt, analyticsEnvAllowed, aiTracingConfigured, aiTracingAllowedFor };
+// withTableSummaries is exposed for backend/__tests__/birdieTables.test.js.
+module.exports.__testables = { executeTool, buildSystemPrompt, analyticsEnvAllowed, aiTracingConfigured, aiTracingAllowedFor, withTableSummaries };
