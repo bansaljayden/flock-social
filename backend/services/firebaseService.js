@@ -571,15 +571,24 @@ function normalizeTitle(title) {
 //                  help" notification, which stayed in the tray and redrew the
 //                  full-screen alarm when tapped. Sharing it, the all-clear
 //                  replaces the alarm. Two people's alarms keep their own.
+//   table_alert    names no plan and no person, so it would have been ONE slot
+//                  for every table at the venue. An owner told that table 3
+//                  needs clearing and then that table 5 has waited six minutes
+//                  has two things to do, and one slot would leave only the
+//                  second on the lock screen. One slot per table: a newer
+//                  alert about the same table replaces the older one, which is
+//                  out of date by then.
 // ---------------------------------------------------------------------------
 const ONE_SLOT_PER_PAYER = new Set(['bill_settled']);
 const SAFETY_SLOT = new Set(['safety_alert', 'safety_alert_cancelled']);
-const SCOPE_PREFIX = { flockId: 'f', senderId: 'u', fromUserId: 'u' };
+const ONE_SLOT_PER_TABLE = new Set(['table_alert']);
+const SCOPE_PREFIX = { flockId: 'f', senderId: 'u', fromUserId: 'u', table: 't' };
 
 // The payload keys, in order, whose values name the conversation.
 function scopeKeys(data = {}) {
   const type = data.type ? String(data.type) : '';
   if (SAFETY_SLOT.has(type)) return data.fromUserId != null ? ['fromUserId'] : [];
+  if (ONE_SLOT_PER_TABLE.has(type)) return data.table != null ? ['table'] : [];
   if (data.flockId != null) {
     return ONE_SLOT_PER_PAYER.has(type) && data.fromUserId != null ? ['flockId', 'fromUserId'] : ['flockId'];
   }

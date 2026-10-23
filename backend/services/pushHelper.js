@@ -42,13 +42,22 @@
 //   moderation_report  admin-only: a report needs review      (services/moderationAlerts.js)
 //   ops_alert          admin-only: something on the server broke (services/opsAlert.js)
 //   crowd_alert        forecast for an event they committed to (services/crowdAlerts.js)
+//   table_alert        venue owner only: a table at the venue they own has waited
+//                      too long for a server, or needs clearing  (services/sensorTables.js)
 //
-// crowd_alert is the only push not directly triggered by a person's action, so
-// it sits closest to the 4.5.4 line and carries its own user switch
-// (user_settings.settings.crowdAlerts). That switch is enforced twice: at the
-// producer (services/crowdAlerts.js filters recipients before claiming the
-// alert) and again below in deliver(), so no future caller can reuse the type
-// and skip the check.
+// crowd_alert and table_alert are the two pushes not directly triggered by a
+// person's action. crowd_alert sits closest to the 4.5.4 line and carries its
+// own user switch (user_settings.settings.crowdAlerts). That switch is enforced
+// twice: at the producer (services/crowdAlerts.js filters recipients before
+// claiming the alert) and again below in deliver(), so no future caller can
+// reuse the type and skip the check.
+//
+// table_alert is further from the line. It reports the recipient's own
+// business to them: a table at the venue they are the VERIFIED owner of, seen
+// by the sensor they installed there. It names a table and how long its party
+// has sat, and never a guest, a price or an offer. It has its own switch
+// (venue_profiles.notification_prefs.tables, on unless the owner turns it
+// off), read by its one producer before anything is claimed or sent.
 //
 // THE RULE FOR ADDING A PUSH. If the notification promotes anything — Flock
 // Pro, an upgrade, a venue's offer or slow night, a discount, a "we miss you"
@@ -189,13 +198,16 @@ const LEDGER_RETENTION_DAYS = 30;
 //     exactly the thing that should wake him.
 // Nothing else. Not a DM, not a flock invite, not "your plan is confirmed".
 //
-// WHAT IS DROPPED RATHER THAN HELD. crowd_alert, and only crowd_alert. It
-// fires inside the three hours before an event and says "head out now"; held
-// until 08:00 it is a sentence about an evening that already happened. It is
-// also the app's only unsolicited push, so the one hour it must not arrive at
-// is the one nobody asked for it in. services/crowdAlerts.js releases its
-// once-per-flock claim when nothing was delivered, so the flock is not
-// permanently marked as alerted.
+// WHAT IS DROPPED RATHER THAN HELD. crowd_alert, and table_alert. A crowd
+// alert fires inside the three hours before an event and says "head out now";
+// held until 08:00 it is a sentence about an evening that already happened. It
+// is also the app's only unsolicited push to a user, so the one hour it must
+// not arrive at is the one nobody asked for it in. services/crowdAlerts.js
+// releases its once-per-flock claim when nothing was delivered, so the flock
+// is not permanently marked as alerted. A table alert is about one table at
+// one moment: held until 08:00 it would tell an owner that a table needed
+// clearing in the middle of the night, long after somebody cleared it. The
+// owner's dashboard shows the tables as they are whenever it is open.
 //
 // WHOSE CLOCK. device_tokens.timezone, the IANA name the device itself reports
 // (migration 050). NULL means unknown, and unknown means DO NOT DEFER: holding
@@ -215,7 +227,7 @@ const RINGS_THROUGH_THE_NIGHT = new Set([
   'safety_alert_cancelled',
   'moderation_report',
 ]);
-const DROPPED_IN_QUIET_HOURS = new Set(['crowd_alert']);
+const DROPPED_IN_QUIET_HOURS = new Set(['crowd_alert', 'table_alert']);
 
 // Types whose PRODUCER already owns a durable retry, so the outbox must keep
 // its hands off them or the same notification goes out twice.
@@ -2484,10 +2496,12 @@ async function pushIfOfflineDebounced(io, userId, title, body, data = {}) {
   return result;
 }
 
-// Send push regardless of online status. Two callers, both time-sensitive
-// enough that "already in the app" is not a reason to stay silent: the
-// organizer-initiated budget reminder (routes/budget.js) and the pre-event
-// crowd alert (services/crowdAlerts.js). Not a channel for anything
+// Send push regardless of online status, for pushes time-sensitive enough
+// that "already in the app" is not a reason to stay silent: the
+// organizer-initiated budget reminder (routes/budget.js), the pre-event crowd
+// alert (services/crowdAlerts.js) and the table alert to a venue's owner
+// (services/sensorTables.js), who may well have the app open on another
+// screen while a table waits, among others. Not a channel for anything
 // promotional — see the 4.5.4 block at the top of this file.
 // ---------------------------------------------------------------------------
 // BADGE SYNC (2026-09-01). The icon badge is an ABSOLUTE number that only ever

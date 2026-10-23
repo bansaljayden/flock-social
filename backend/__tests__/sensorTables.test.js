@@ -39,6 +39,9 @@ const {
 let devices = [];
 let readings = [];
 let tableStates = [];
+let venueProfiles = [];
+// push_debounce, as key -> the ms it was last claimed.
+let claims = new Map();
 let queryLog = [];
 // Swapped in by a test that needs the table-state write to fail or wait.
 let tableStatesImpl = null;
@@ -50,6 +53,23 @@ pool.query = (sql, params = []) => {
   if (TABLE_STATES_STATEMENT.test(flat)) {
     if (tableStatesImpl) return tableStatesImpl(params);
     return Promise.resolve(runTableStates({ tableStates }, params));
+  }
+  // The alert's owner lookup. The verified clause is honoured only when the
+  // statement carries it, so dropping it from the code fails a test here
+  // rather than being supplied by the fake.
+  if (/^SELECT user_id, notification_prefs FROM venue_profiles WHERE google_place_id = \$1/.test(flat)) {
+    const needsVerified = /AND verified = true/.test(flat);
+    const hit = venueProfiles.find((v) => v.google_place_id === params[0] && (!needsVerified || v.verified === true));
+    const rows = hit ? [{ user_id: hit.user_id, notification_prefs: hit.notification_prefs }] : [];
+    return Promise.resolve({ rows, rowCount: rows.length });
+  }
+  // The alert's claim: an upsert that only wins once the window has passed.
+  if (/^INSERT INTO push_debounce \(debounce_key, sent_at\)/.test(flat)) {
+    const [key, minutes] = params;
+    const at = claims.get(key);
+    if (at !== undefined && Date.now() - at < minutes * 60 * 1000) return Promise.resolve({ rows: [], rowCount: 0 });
+    claims.set(key, Date.now());
+    return Promise.resolve({ rows: [{ debounce_key: key }], rowCount: 1 });
   }
   return Promise.reject(new Error(`unscripted query: ${flat.slice(0, 140)}`));
 };
@@ -71,6 +91,20 @@ authMod.authenticate = (req, res, next) => {
 
 const sensorRouter = require('../routes/sensors');
 const sensorTables = require('../services/sensorTables');
+
+// The push helper is replaced on the module object, which is what
+// services/sensorTables.js holds, so the alert path is measured up to the
+// hand-off and no further. services/pushHelper.js has its own suites.
+const pushHelper = require('../services/pushHelper');
+const firebaseService = require('../services/firebaseService');
+let pushConfigured = true;
+let pushes = [];
+let pushBehaviour = async () => ({ sent: 1, failed: 0 });
+pushHelper.isPushConfigured = () => pushConfigured;
+pushHelper.pushAlways = (userId, title, body, data) => {
+  pushes.push({ userId, title, body, data });
+  return pushBehaviour(userId, title, body, data);
+};
 
 let emits = [];
 const io = { to(room) { return { emit(event, payload) { emits.push({ room, event, payload }); } }; } };
@@ -119,11 +153,19 @@ const digestOf = (key) => 'sha256:' + crypto.createHash('sha256').update(key, 'u
 
 const EXAMPLE = '1:0:f:340;2:3:s:845;3:2:w:410;4:0:c:95';
 
+const OWNER_ID = 41;
+
 function reset() {
   queryLog = [];
   readings = [];
   tableStates = [];
   tableStatesImpl = null;
+  claims = new Map();
+  pushes = [];
+  pushConfigured = true;
+  pushBehaviour = async () => ({ sent: 1, failed: 0 });
+  // The verified owner of VENUE, who never touched the table switch.
+  venueProfiles = [{ user_id: OWNER_ID, google_place_id: VENUE, verified: true, notification_prefs: { bookings: true } }];
   emits = [];
   devices = [
     { id: 1, device_id: 'flux_tables_01', venue_place_id: VENUE, is_active: true,
@@ -532,4 +574,275 @@ test('a floor write that throws before it ever returns a promise is caught the s
   });
   assert.strictEqual(res.status, 201);
   assert.ok(lines.some((l) => /driver blew up synchronously/.test(l)), lines.join('\n'));
+});
+
+// --- The table alert ------------------------------------------------------------
+//
+// One push to the venue's verified owner when a table changes INTO waiting or
+// into needs-clearing, compared with its row from before the reading. Never on
+// a repeat, never past the owner's switch, never to an unverified claim, at
+// most once per unit, table and state in fifteen minutes, and never able to
+// touch the device's answer.
+
+// Two live readings in a row from the first unit, the flood guard aged between.
+async function readings2(first, second) {
+  const a = await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: first }) });
+  assert.strictEqual(a.status, 201, a.raw);
+  await settle();
+  ageDevice();
+  const b = await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: second }) });
+  assert.strictEqual(b.status, 201, b.raw);
+  await settle();
+}
+
+test('a table that starts waiting sends the verified owner one push, in exactly these words', async () => {
+  reset();
+  await readings2('1:0:f:30;3:2:s:200', '1:0:f:60;3:2:w:410');
+  assert.strictEqual(pushes.length, 1, JSON.stringify(pushes));
+  assert.deepStrictEqual(pushes[0], {
+    userId: OWNER_ID,
+    title: 'Table 3',
+    body: 'Seated 6 min and nobody has stopped by yet.',
+    data: { type: 'table_alert', table: '3', state: 'waiting' },
+  });
+});
+
+test('a party that leaves an uncleared table sends the clearing words', async () => {
+  reset();
+  await readings2('2:4:w:500', '2:0:c:15');
+  assert.strictEqual(pushes.length, 1);
+  assert.deepStrictEqual(
+    [pushes[0].title, pushes[0].body, pushes[0].data.state],
+    ['Table 2', "The party left and the table hasn't been cleared.", 'needs_clearing']
+  );
+});
+
+test('a table that stays waiting is told once, not once per reading', async () => {
+  reset();
+  await readings2('3:2:s:200', '3:2:w:410');
+  for (let i = 0; i < 3; i += 1) {
+    ageDevice();
+    await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: `3:2:w:${440 + i * 30}` }) });
+    await settle();
+  }
+  assert.strictEqual(pushes.length, 1);
+});
+
+test('a table with no row before has no change to report, whatever its state', async () => {
+  reset();
+  await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: '1:2:w:900;2:0:c:400' }) });
+  await settle();
+  assert.deepStrictEqual(pushes, []);
+  assert.ok(!queryLog.some((q) => /FROM venue_profiles/.test(q.sql)), 'nothing to tell, so nobody is looked up');
+});
+
+test('changes into free or seated are not alerts', async () => {
+  reset();
+  await readings2('1:0:c:30;2:3:w:400', '1:0:f:2;2:3:s:420');
+  assert.deepStrictEqual(pushes, []);
+});
+
+test('two tables changing in one reading are two pushes, each in its own lock-screen slot', async () => {
+  reset();
+  await readings2('3:2:s:200;5:0:s:600', '3:2:w:400;5:0:c:5');
+  assert.deepStrictEqual(pushes.map((p) => p.title), ['Table 3', 'Table 5']);
+  const slots = pushes.map((p) => firebaseService.collapseId(p.data));
+  assert.deepStrictEqual(slots, ['table_alert-t3', 'table_alert-t5']);
+});
+
+test('the waiting minutes are whole minutes since the party arrived, never less than one', async () => {
+  reset();
+  await readings2('4:2:s:10', '4:2:w:20');
+  assert.strictEqual(pushes[0].body, 'Seated 1 min and nobody has stopped by yet.');
+  assert.deepStrictEqual(sensorTables.tableAlertCopy({ table_no: 9, state: 'w', minutes: 0 }).body,
+    'Seated 1 min and nobody has stopped by yet.');
+  assert.deepStrictEqual(sensorTables.tableAlertCopy({ table_no: 9, state: 'w', minutes: 61 }),
+    { title: 'Table 9', body: 'Seated 61 min and nobody has stopped by yet.' });
+});
+
+test('the owner who switched table alerts off is not pushed; a switch never touched is on', async () => {
+  for (const [prefs, expected] of [
+    [{ tables: false }, 0],
+    [{ tables: true }, 1],
+    [{ bookings: false }, 1],
+    [{}, 1],
+    [null, 1],
+    ['legacy-garbage', 1],
+  ]) {
+    reset();
+    venueProfiles[0].notification_prefs = prefs;
+    await readings2('3:2:s:200', '3:2:w:410');
+    assert.strictEqual(pushes.length, expected, `prefs ${JSON.stringify(prefs)}`);
+    if (expected === 0) {
+      assert.ok(!queryLog.some((q) => /INSERT INTO push_debounce/.test(q.sql)), 'a refused alert burned its claim');
+    }
+  }
+});
+
+test('an unverified claim on the venue is told nothing, and the lookup asks for a verified owner', async () => {
+  reset();
+  venueProfiles = [{ user_id: OWNER_ID, google_place_id: VENUE, verified: false, notification_prefs: {} }];
+  await readings2('3:2:s:200', '3:2:w:410');
+  assert.deepStrictEqual(pushes, []);
+  const lookup = queryLog.find((q) => /FROM venue_profiles/.test(q.sql));
+  assert.ok(lookup, 'the owner lookup ran');
+  assert.match(lookup.sql, /AND verified = true/);
+  assert.deepStrictEqual(lookup.params, [VENUE], 'the place comes from the device row');
+});
+
+test('a venue with no owner on record sends nothing and claims nothing', async () => {
+  reset();
+  venueProfiles = [];
+  await readings2('3:2:s:200', '3:2:w:410');
+  assert.deepStrictEqual(pushes, []);
+  assert.strictEqual(claims.size, 0);
+});
+
+test('at most one push per unit, table and state in fifteen minutes, however the party flickers', async () => {
+  reset();
+  await readings2('3:2:s:200', '3:2:w:410');
+  // A server walks past without stopping: seated, then waiting again.
+  for (const tables of ['3:2:s:440', '3:2:w:470', '3:2:s:500', '3:2:w:530']) {
+    ageDevice();
+    await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables }) });
+    await settle();
+  }
+  assert.strictEqual(pushes.length, 1, 'the flicker rang the phone again');
+  const key = 'table_alert:flux_tables_01:3:w';
+  assert.ok(claims.has(key), `claimed under ${[...claims.keys()]}`);
+  assert.deepStrictEqual(queryLog.find((q) => /INSERT INTO push_debounce/.test(q.sql)).params,
+    [key, sensorTables.TABLE_ALERT_WINDOW_MINUTES]);
+  assert.strictEqual(sensorTables.TABLE_ALERT_WINDOW_MINUTES, 15);
+
+  // Another state of the same table is its own alert.
+  ageDevice();
+  await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: '3:0:c:5' }) });
+  await settle();
+  assert.strictEqual(pushes.length, 2);
+
+  // And once the window has passed, the same change is news again.
+  claims.set(key, Date.now() - 16 * 60 * 1000);
+  for (const tables of ['3:0:f:20', '3:2:s:30', '3:2:w:400']) {
+    ageDevice();
+    await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables }) });
+    await settle();
+  }
+  assert.strictEqual(pushes.length, 3);
+});
+
+test('the window is per unit: the same table number on another unit at the venue is its own alert', async () => {
+  reset();
+  await readings2('3:2:s:200', '3:2:w:410');
+  await call('/api/sensors/data', { apiKey: OTHER_KEY, body: reading({ tables: '3:1:s:100' }) });
+  await settle();
+  ageDevice('flux_tables_02');
+  await call('/api/sensors/data', { apiKey: OTHER_KEY, body: reading({ tables: '3:1:w:400' }) });
+  await settle();
+  assert.strictEqual(pushes.length, 2);
+});
+
+test('with push unconfigured nothing is read and no claim is spent', async () => {
+  reset();
+  pushConfigured = false;
+  await readings2('3:2:s:200', '3:2:w:410');
+  assert.deepStrictEqual(pushes, []);
+  assert.ok(!queryLog.some((q) => /FROM venue_profiles|push_debounce/.test(q.sql)));
+});
+
+test('a push that throws never fails the ingest, and the floor is still written', async () => {
+  reset();
+  pushBehaviour = async () => { throw new Error('FCM unreachable'); };
+  let second;
+  const lines = await capturingLogs(async () => {
+    await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: '3:2:s:200' }) });
+    await settle();
+    ageDevice();
+    second = await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: '3:2:w:410' }) });
+    await settle();
+  });
+  assert.strictEqual(second.status, 201);
+  assert.deepStrictEqual(Object.keys(second.body).sort(), ['recorded_at', 'success']);
+  assert.strictEqual(pushes.length, 1, 'the push was attempted');
+  assert.deepStrictEqual(floorOf(), ['3:2:w']);
+  assert.strictEqual(readings.length, 2);
+  assert.ok(lines.some((l) => /Table alert for flux_tables_01 table 3 failed/.test(l)), lines.join('\n'));
+});
+
+test('a push that throws synchronously, or an owner lookup that fails, is caught the same way', async () => {
+  reset();
+  pushBehaviour = () => { throw new Error('push client blew up'); };
+  await readings2('3:2:s:200;4:0:s:100', '3:2:w:410;4:0:c:5');
+  assert.strictEqual(pushes.length, 2, 'one failed push must not stop the next table');
+
+  reset();
+  const realQuery = pool.query;
+  pool.query = (sql, params) => (/FROM venue_profiles/.test(String(sql))
+    ? Promise.reject(new Error('connection terminated'))
+    : realQuery(sql, params));
+  try {
+    let res;
+    const lines = await capturingLogs(async () => {
+      await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: '3:2:s:200' }) });
+      await settle();
+      ageDevice();
+      res = await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: '3:2:w:410' }) });
+      await settle();
+    });
+    assert.strictEqual(res.status, 201);
+    assert.deepStrictEqual(floorOf(), ['3:2:w']);
+    assert.ok(lines.some((l) => /Table alerts for flux_tables_01 failed: connection terminated/.test(l)), lines.join('\n'));
+  } finally {
+    pool.query = realQuery;
+  }
+});
+
+test('a push that never settles cannot hold the device answer', async () => {
+  reset();
+  let release;
+  pushBehaviour = () => new Promise((resolve) => { release = resolve; });
+  await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: '3:2:s:200' }) });
+  await settle();
+  ageDevice();
+  const res = await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: '3:2:w:410' }) });
+  assert.strictEqual(res.status, 201);
+  // The push is reached only after the floor write, so give that its turn.
+  for (let i = 0; i < 50 && typeof release !== 'function'; i += 1) await new Promise((r) => setImmediate(r));
+  assert.strictEqual(typeof release, 'function', 'the push was never attempted');
+  release({ sent: 1, failed: 0 });
+  await settle();
+});
+
+test('the push carries a table and a state and nothing about anybody at it', async () => {
+  reset();
+  await readings2('3:4:s:200', '3:4:w:410');
+  assert.deepStrictEqual(Object.keys(pushes[0].data).sort(), ['state', 'table', 'type']);
+  assert.ok(!/4 people|people|guest/i.test(`${pushes[0].title} ${pushes[0].body}`));
+});
+
+// The lexicon pushGuideline454.test.js holds the crowd alert to: a notification
+// that names an offer, a price or an upgrade is marketing under App Store 4.5.4.
+const MARKETING = /\b(pro|premium|upgrade|subscribe|subscription|offer|deal|discount|sale|trial|unlock|paywall|buy|redeem|promo|exclusive|limited time|free)\b|[%$]/i;
+
+test('the alert copy promotes nothing and carries no em or en dash', () => {
+  for (const change of [{ table_no: 3, state: 'w', minutes: 6 }, { table_no: 12, state: 'c', minutes: 1 }]) {
+    const { title, body } = sensorTables.tableAlertCopy(change);
+    const text = `${title} ${body}`;
+    assert.strictEqual(text.match(MARKETING), null, text);
+    assert.ok(!/[–—]/.test(text), text);
+  }
+});
+
+test('a table alert in the owner\'s quiet hours is dropped, not held until morning', () => {
+  assert.ok(pushHelper.DROPPED_IN_QUIET_HOURS.has('table_alert'));
+  assert.ok(!pushHelper.RINGS_THROUGH_THE_NIGHT.has('table_alert'), 'only safety rings through the night');
+});
+
+test('the switch is stored when the dashboard sends it: tables is one of the venue profile switches', () => {
+  // routes/venueProfile.js drops every key it does not know, so a switch it
+  // did not list would look saved and be forgotten.
+  const src = require('node:fs').readFileSync(require('node:path').join(__dirname, '..', 'routes', 'venueProfile.js'), 'utf8');
+  assert.match(src, /const PREF_KEYS = \[[^\]]*'tables'[^\]]*\];/);
+  assert.strictEqual(sensorTables.wantsTableAlerts({ tables: false }), false);
+  assert.strictEqual(sensorTables.wantsTableAlerts({ tables: true }), true);
+  assert.strictEqual(sensorTables.wantsTableAlerts(undefined), true);
 });

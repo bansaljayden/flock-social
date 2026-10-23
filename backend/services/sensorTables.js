@@ -6,8 +6,9 @@
 // box counts the people at each table and runs a small state machine per
 // table, and each reading it already sends to POST /api/sensors/data carries
 // the result in one more field. This module is what the server does with that
-// field: the strict parse, the four counts stored on the reading, and the live
-// state of each table (sensor_table_states, migration 130).
+// field: the strict parse, the four counts stored on the reading, the live
+// state of each table (sensor_table_states, migration 130), and the alert to
+// the venue's owner when a table starts waiting or needs clearing.
 //
 // NOTHING HERE IDENTIFIES OR FOLLOWS A PERSON, and every part of this file is
 // held to that. What leaves the Pi is a table number the owner chose, how many
@@ -45,6 +46,9 @@
 // ---------------------------------------------------------------------------
 
 const pool = require('../config/database');
+// Held as a module object, not destructured: tests replace pushAlways, and a
+// destructured copy would keep calling the original.
+const pushHelper = require('./pushHelper');
 
 const MAX_TABLES = 40;
 const MAX_TABLE_PEOPLE = 30;
@@ -271,21 +275,134 @@ async function storeTableStates(device, tables, recordedAt) {
   return rows;
 }
 
+// ---------------------------------------------------------------------------
+// THE TABLE ALERT: one push to the venue's verified owner when a table starts
+// waiting, or is left needing a clear.
+//
+// WHEN. A table whose state CHANGED with this reading into w (seated, and
+// nobody has come by for longer than the unit's wait limit) or into c (the
+// party left and the table has not been cleared), judged against the table's
+// row from before the reading. A table that stays waiting across fifty
+// readings is told once, not fifty times. A table with no row before has no
+// change to report: that is the first reading after the table was drawn, or
+// after this shipped, and a burst of alerts about tables that may have been
+// waiting since before anybody was watching tells the owner nothing new.
+//
+// AT MOST ONE PER UNIT, TABLE AND STATE IN 15 MINUTES. A party that flickers
+// between seated and waiting (a server walks past without stopping) must not
+// ring the owner's phone every thirty seconds. Claimed in push_debounce, not a
+// Map: a Map is per process, so it is empty after every deploy and a second
+// server instance would keep a copy of its own, each allowing an alert of its
+// own. sweepPushMaintenance keeps a row there for an hour, longer than the
+// window, so the window and the table agree. Claimed only once every refusal
+// (no push service, no verified owner, the switch off) has passed, so a
+// refused alert does not burn it.
+//
+// WHO. The verified owner of the unit's place and nobody else: the
+// venue_profiles row for that place with verified true, the same claim GET
+// /status and GET /tables ask for. An unverified claim on the place is told
+// nothing, and nobody else ever is.
+//
+// THE SWITCH. venue_profiles.notification_prefs, key `tables`: absent means
+// on, false means off. The dashboard writes it through PUT /api/venue-profile,
+// which keeps it among the switches it stores (routes/venueProfile.js).
+//
+// THE WORDS name a table and how long its party has sat. No head count, no
+// guest, no price, no offer: transactional under App Store 4.5.4, for the
+// reason the header of services/pushHelper.js gives for table_alert.
+//
+// AFTER THE ANSWER, like everything here: a push service that is down, slow or
+// throwing costs the owner a notification and costs the device nothing.
+// ---------------------------------------------------------------------------
+const ALERT_STATES = new Set(['w', 'c']);
+const TABLE_ALERT_WINDOW_MINUTES = 15;
+const TABLE_ALERT_CLAIM_SQL = `
+  INSERT INTO push_debounce (debounce_key, sent_at)
+  VALUES ($1, NOW())
+  ON CONFLICT (debounce_key) DO UPDATE
+     SET sent_at = NOW()
+   WHERE push_debounce.sent_at < NOW() - ($2::int * INTERVAL '1 minute')
+  RETURNING debounce_key`;
+
+// One row at most: the partial unique index on venue_profiles allows a single
+// VERIFIED claim per place.
+const VENUE_OWNER_SQL = `
+  SELECT user_id, notification_prefs
+    FROM venue_profiles
+   WHERE google_place_id = $1 AND verified = true
+   LIMIT 1`;
+
+// Absent means on, false means off. A value that is not an object (a legacy
+// row) is "never touched", which is on, the same as an empty object.
+function wantsTableAlerts(prefs) {
+  if (!prefs || typeof prefs !== 'object' || Array.isArray(prefs)) return true;
+  return prefs.tables !== false;
+}
+
+// The copy, exactly. `minutes` is whole minutes since the party arrived (the
+// seated timer the unit keeps for s and w), never less than 1.
+function tableAlertCopy(change) {
+  const title = `Table ${change.table_no}`;
+  if (change.state === 'w') {
+    const minutes = Math.max(1, Math.floor(Number(change.minutes)) || 1);
+    return { title, body: `Seated ${minutes} min and nobody has stopped by yet.` };
+  }
+  return { title, body: "The party left and the table hasn't been cleared." };
+}
+
+// The tables in a write that changed INTO a state worth telling the owner about.
+function alertWorthy(written) {
+  return written.filter((r) => r.prior_state != null && r.prior_state !== r.state && ALERT_STATES.has(r.state));
+}
+
+async function alertOwner(device, changes) {
+  try {
+    // No push service, no work: nothing is read and no claim is spent on a push
+    // that cannot go anywhere.
+    if (!pushHelper.isPushConfigured()) return;
+    const owner = await pool.query(VENUE_OWNER_SQL, [device.venue_place_id]);
+    if (owner.rows.length === 0) return;
+    const { user_id: ownerId, notification_prefs: prefs } = owner.rows[0];
+    if (!wantsTableAlerts(prefs)) return;
+
+    for (const change of changes) {
+      try {
+        const key = `table_alert:${device.device_id}:${change.table_no}:${change.state}`;
+        const claim = await pool.query(TABLE_ALERT_CLAIM_SQL, [key, TABLE_ALERT_WINDOW_MINUTES]);
+        if (claim.rowCount === 0) continue;
+        const { title, body } = tableAlertCopy(change);
+        await pushHelper.pushAlways(ownerId, title, body, {
+          type: 'table_alert',
+          table: String(change.table_no),
+          state: STATE_WORDS[change.state],
+        });
+      } catch (err) {
+        console.error(`Table alert for ${device.device_id} table ${change.table_no} failed:`, err.message);
+      }
+    }
+  } catch (err) {
+    console.error(`Table alerts for ${device.device_id} failed:`, err.message);
+  }
+}
+
 // Work started after an answer has been written, so a test can wait for it to
 // finish instead of sleeping and hoping.
 const inFlight = new Set();
 
 /**
- * Apply a stored live reading's tables to the floor. Called by the ingest
- * AFTER the device has its 201, and never awaited there: it cannot delay the
- * answer, and nothing it does can change it. It never throws and never
- * rejects; a failure is logged, and the reading stays stored either way. The
- * next live reading writes every table again, so one failure costs the floor
- * thirty seconds, not a table.
+ * Apply a stored live reading's tables to the floor, then alert the owner
+ * about any table that changed into waiting or needs clearing. Called by the
+ * ingest AFTER the device has its 201, and never awaited there: it cannot
+ * delay the answer, and nothing it does can change it. It never throws and
+ * never rejects; a failure is logged, and the reading stays stored either way.
+ * The next live reading writes every table again, so one failure costs the
+ * floor thirty seconds, not a table.
  */
 function applyTableReading(device, tables, recordedAt) {
   const run = (async () => {
-    await storeTableStates(device, tables, recordedAt);
+    const written = await storeTableStates(device, tables, recordedAt);
+    const changes = alertWorthy(written);
+    if (changes.length > 0) await alertOwner(device, changes);
   })().catch((err) => {
     console.error(`Table states for ${device.device_id} failed after the reading was stored:`, err.message);
   });
@@ -305,6 +422,9 @@ module.exports = {
   tableCounts,
   noteIgnoredTables,
   applyTableReading,
+  wantsTableAlerts,
+  tableAlertCopy,
+  TABLE_ALERT_WINDOW_MINUTES,
   // Test seams: the throttle is process-global state, and the floor is
   // written after the answer.
   _resetIgnoredNotes: () => ignoredNotedAt.clear(),

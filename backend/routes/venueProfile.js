@@ -98,12 +98,13 @@ const MAX_HOURS_FIELD = 60;
 // route. A bound that lives in another file is a bound that changes when nobody
 // is looking at this one.
 //
-// 12 is four times the three switches the dashboard renders (PREF_KEYS below).
-// A client can only round-trip keys this dashboard has ever produced, and it has
-// only ever produced three, so four times that already covers a stale build
-// posting an older shape back at us. Unknown keys are still ACCEPTED and
-// dropped, exactly as before, because refusing them would break that stale
-// client; what is refused is somebody using the column as a bucket.
+// 12 is four times the three switches the dashboard rendered when this was
+// written, and still three times the four PREF_KEYS below now that table alerts
+// have one. A client can only round-trip keys this dashboard has ever produced,
+// so that already covers a stale build posting an older shape back at us.
+// Unknown keys are still ACCEPTED and dropped, exactly as before, because
+// refusing them would break that stale client; what is refused is somebody
+// using the column as a bucket.
 //
 // The VALUES are deliberately not bounded, and that is not the same oversight
 // wearing a different hat: sanitizePrefs keeps only booleans, and only for the
@@ -205,7 +206,13 @@ const prefsRule = body('notificationPrefs').optional({ nullable: true }).custom(
 // values are already stored, so the fix belongs here now rather than in the
 // change that finally reads it. The statement below merges with jsonb `||`,
 // which is per-key and leaves the keys this request did not mention alone.
-const PREF_KEYS = ['bookings', 'reviews', 'weekly'];
+//
+// `tables` (migration 130) is the switch for table alerts, and it had a
+// reader from the day it was added: services/sensorTables.js asks it before
+// every alert to the venue's owner. Absent means on and false means off, so a
+// venue that never touches the switch gets the alerts its own sensor exists to
+// send.
+const PREF_KEYS = ['bookings', 'reviews', 'weekly', 'tables'];
 function sanitizePrefs(prefs) {
   const out = {};
   for (const key of PREF_KEYS) {

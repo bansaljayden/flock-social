@@ -538,6 +538,67 @@ test('on the real schema: a clock running ahead is capped at the server clock, a
   assert.deepEqual(await floor(), [], 'the unit is gone and its tables are not');
 });
 
+test('on the real schema: a change into waiting or clearing is one push to the verified owner; a repeat, the switch off and an unverified claim are none', async () => {
+  // The push helper is stubbed at the hand-off (services/sensorTables.js holds
+  // it as a module object). Everything before it is real: the prior state the
+  // statement reads, the minutes it works out, the owner lookup, the claim.
+  const pushHelper = require('../services/pushHelper');
+  const real = { configured: pushHelper.isPushConfigured, always: pushHelper.pushAlways };
+  const sent = [];
+  pushHelper.isPushConfigured = () => true;
+  pushHelper.pushAlways = async (userId, title, body, data) => {
+    sent.push({ userId, title, body, data });
+    return { sent: 1, failed: 0 };
+  };
+  const { rows: [owner] } = await pool.query(
+    "INSERT INTO users (name, email, password) VALUES ('Table Owner', 'tables.owner@example.com', 'x') RETURNING id"
+  );
+  const age = () => pool.query(
+    `UPDATE sensor_devices SET last_seen_at = NOW() - INTERVAL '1 hour' WHERE device_id = 'sensor_live'`
+  );
+  const step = async (tables) => {
+    await age();
+    const res = await push(reading({ tables }));
+    assert.equal(res.status, 201, JSON.stringify(res.body));
+    await settleTables();
+  };
+  try {
+    await pool.query(
+      `INSERT INTO venue_profiles (user_id, business_name, google_place_id, verified, notification_prefs)
+       VALUES ($1, 'The Table Bar', $2, true, '{"bookings": true}'::jsonb)`,
+      [owner.id, VENUE]
+    );
+    await pool.query("DELETE FROM push_debounce WHERE debounce_key LIKE 'table_alert:%'");
+
+    await step('3:2:s:200;4:0:s:900;5:1:s:60;6:1:s:60');
+    assert.deepEqual(sent, [], 'a first reading has no change to report');
+    await step('3:2:w:410;4:0:c:20;5:1:s:90;6:1:s:90');
+    await step('3:2:w:440;4:0:c:50;5:1:s:120;6:1:s:120');
+    assert.deepEqual(sent.map((s) => [s.userId, s.title, s.body, s.data.state]), [
+      [owner.id, 'Table 3', 'Seated 6 min and nobody has stopped by yet.', 'waiting'],
+      [owner.id, 'Table 4', "The party left and the table hasn't been cleared.", 'needs_clearing'],
+    ]);
+    const { rows: claimRows } = await pool.query(
+      "SELECT debounce_key FROM push_debounce WHERE debounce_key LIKE 'table_alert:%' ORDER BY 1"
+    );
+    assert.deepEqual(claimRows.map((r) => r.debounce_key), ['table_alert:sensor_live:3:w', 'table_alert:sensor_live:4:c']);
+
+    // The owner turns table alerts off: table 5 starts waiting, nobody is told.
+    await pool.query(`UPDATE venue_profiles SET notification_prefs = notification_prefs || '{"tables": false}'::jsonb WHERE user_id = $1`, [owner.id]);
+    await step('3:2:w:470;4:0:c:80;5:1:w:400;6:1:s:150');
+    // Back on, but the claim on the place is no longer verified: table 6 waits, nobody is told.
+    await pool.query(`UPDATE venue_profiles SET notification_prefs = '{}'::jsonb, verified = false WHERE user_id = $1`, [owner.id]);
+    await step('3:2:w:500;4:0:c:110;5:1:w:430;6:1:w:400');
+    assert.equal(sent.length, 2, JSON.stringify(sent.slice(2)));
+  } finally {
+    pushHelper.isPushConfigured = real.configured;
+    pushHelper.pushAlways = real.always;
+    await pool.query('DELETE FROM venue_profiles WHERE user_id = $1', [owner.id]);
+    await pool.query('DELETE FROM users WHERE id = $1', [owner.id]);
+    await pool.query("DELETE FROM push_debounce WHERE debounce_key LIKE 'table_alert:%'");
+  }
+});
+
 test('the table rows refuse what the box can never send', async () => {
   for (const [no, people, state] of [[0, 1, 's'], [41, 1, 's'], [1, 31, 's'], [1, 1, 'x']]) {
     await assert.rejects(
