@@ -10,7 +10,8 @@ const { scalarOnly } = require('../validators/shape');
 // with it. The contract and the reason a bad value is ignored rather than
 // refused are at the top of that file.
 const {
-  MAX_TABLES_LENGTH, STATE_WORDS, readTables, tableCounts, noteIgnoredTables, applyTableReading,
+  MAX_TABLES_LENGTH, STATE_WORDS, TABLES_STALE_AFTER_MINUTES,
+  readTables, tableCounts, noteIgnoredTables, applyTableReading,
 } = require('../services/sensorTables');
 // The table routes are a Roost feature, gated the way requireVenueTier gates.
 const { checkVenueTier } = require('../services/venueEntitlements');
@@ -908,11 +909,10 @@ async function tablesPlanRefusal(callerId, placeId) {
   return { ...plan.body, has_tables: has.rows.length > 0 };
 }
 
-// A unit writes the floor with every live reading, about every thirty seconds,
-// so three minutes without a fresh row is six missed readings: the unit is
-// off, offline, or has stopped sending tables. The dashboard is told so rather
-// than shown an old floor as the present one.
-const TABLES_STALE_AFTER_MINUTES = 3;
+// A floor not refreshed for TABLES_STALE_AFTER_MINUTES (services/sensorTables
+// .js, where the alert reads the same number) is reported stale: the unit is
+// off, offline, or has stopped sending tables, and the dashboard is told so
+// rather than shown an old floor as the present one.
 
 // ONE UNIT'S FLOOR. Each unit numbers its own tables, so a place with two
 // units would have two table 3s, and they are never merged into one floor:

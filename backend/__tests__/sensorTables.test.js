@@ -856,6 +856,38 @@ test('a table that stays waiting is told once, not once per reading', async () =
   assert.strictEqual(pushes.length, 1);
 });
 
+test('an alert comes only from a recent reading: seven minutes old writes the floor and sends nothing; a minute old alerts, with the minutes from the reading\'s own timer', async () => {
+  reset();
+  // After an outage the box drains its buffer oldest first, so both readings
+  // are stamped in order and both are inside the 15-minute live window.
+  let res = await call('/api/sensors/data', { apiKey: KEY, body: reading({ recorded_at: ago(8 * 60 * 1000), tables: '3:2:s:200' }) });
+  assert.strictEqual(res.status, 201, res.raw);
+  await settle();
+  ageDevice();
+  res = await call('/api/sensors/data', { apiKey: KEY, body: reading({ recorded_at: ago(7 * 60 * 1000), tables: '3:2:w:410' }) });
+  assert.strictEqual(res.status, 201, res.raw);
+  await settle();
+  assert.deepStrictEqual(floorOf(), ['3:2:w'], 'a buffered reading still writes the floor');
+  assert.deepStrictEqual(pushes, [], 'a wait reported seven minutes late rang the phone');
+  assert.strictEqual(claims.size, 0, 'a reading too old to alert spent a claim');
+  assert.ok(!queryLog.some((q) => /FROM venue_profiles/.test(q.sql)), 'nobody is looked up for it either');
+
+  reset();
+  await call('/api/sensors/data', { apiKey: KEY, body: reading({ recorded_at: ago(2 * 60 * 1000), tables: '3:2:s:200' }) });
+  await settle();
+  ageDevice();
+  await call('/api/sensors/data', { apiKey: KEY, body: reading({ recorded_at: ago(60 * 1000), tables: '3:2:w:410' }) });
+  await settle();
+  assert.strictEqual(pushes.length, 1, JSON.stringify(pushes));
+  // 410 seconds is six whole minutes. Measured to the server's clock it would
+  // read seven: the minute the reading waited in the box is not the party's.
+  assert.strictEqual(pushes[0].body, 'Seated 6 min and nobody has stopped by yet.');
+
+  // One number for the floor's staleness and the alert's age ceiling.
+  assert.strictEqual(sensorTables.TABLES_STALE_AFTER_MINUTES, 3);
+  assert.strictEqual(sensorTables.TABLE_ALERT_MAX_AGE_MS, 3 * 60 * 1000);
+});
+
 test('a table with no row before has no change to report, whatever its state', async () => {
   reset();
   await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: '1:2:w:900;2:0:c:400' }) });

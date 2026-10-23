@@ -18,7 +18,11 @@
 // THE CONTRACT. The Pi side (flock-sensor/) is written to this exactly. An
 // optional key `tables`, a STRING, because a sensor payload is scalars only
 // (validators/shape.js and the scalarOnly rule on every field of /data).
-// Present only when the unit has at least one table zone.
+// Present only when the unit has at least one table zone. A unit that sends
+// it pushes a reading at least every 60 seconds, whatever its push interval
+// is set to (the box warns when a longer one is configured): the floor is
+// called stale TABLES_STALE_AFTER_MINUTES after its last row, and a unit on a
+// five-minute interval would read as offline for most of every interval.
 //
 //   entries joined by `;`, each N:P:S:A or N:P:S:A:C
 //   N  table number, 1-200, unique, strictly ascending. A box sends at most
@@ -236,12 +240,24 @@ function noteIgnoredTables(deviceId, reason, now = Date.now()) {
 //            count keeps the one it had: chairs do not move with every
 //            reading, and a unit that counts them may not send the count
 //            every time.
+//   minutes  whole minutes since the party arrived, on the reading's own
+//            clock: as_of minus state_since is the A the unit sent. Not
+//            NOW(): a reading that sat in the box's buffer through an outage
+//            would otherwise have its delay added to the party's wait, and
+//            "Seated 12 min" would be said of a party seated for five.
 // gone and saved touch disjoint rows (in the reading or not), and the parse
 // guarantees each table appears once, so no row is written twice.
 //
 // Every parameter has one cast, used the same way each time it appears, for
 // __tests__/sqlParameterTypes.test.js.
 // ---------------------------------------------------------------------------
+// How long the floor stays the present: a unit sending tables pushes at least
+// every 60 seconds (the contract above), so three minutes without a fresh row
+// is at least three missed readings, and the dashboard is told the floor is
+// stale rather than shown an old one as now. The alert reads the same number,
+// below, so a push never describes a floor the dashboard would call stale.
+const TABLES_STALE_AFTER_MINUTES = 3;
+
 const TABLE_STATES_SQL = `
   WITH reading AS (
     SELECT LEAST($3::timestamptz, NOW()) AS as_of
@@ -285,16 +301,18 @@ const TABLE_STATES_SQL = `
     RETURNING s.table_no, s.state, s.state_since
   )
   SELECT v.table_no, v.state, p.state AS prior_state,
-         GREATEST(1, FLOOR(EXTRACT(EPOCH FROM (NOW() - v.state_since)) / 60))::int AS minutes
+         GREATEST(1, FLOOR(EXTRACT(EPOCH FROM (r.as_of - v.state_since)) / 60))::int AS minutes
     FROM saved v
+   CROSS JOIN reading r
     LEFT JOIN prior p ON p.table_no = v.table_no
    ORDER BY v.table_no`;
 
 /**
  * Write one live reading's tables. Resolves to the tables written, each
  * { table_no, state, prior_state, minutes }: prior_state is null for a table
- * that had no row, and minutes is whole minutes since state_since, at least 1.
- * Resolves to [] when the gate found newer rows.
+ * that had no row, and minutes is whole minutes from state_since to the
+ * reading's own time, at least 1. Resolves to [] when the gate found newer
+ * rows.
  */
 async function storeTableStates(device, tables, recordedAt) {
   const { rows } = await pool.query(TABLE_STATES_SQL, [
@@ -323,6 +341,21 @@ async function storeTableStates(device, tables, recordedAt) {
 // change to report: that is the first reading after the table was drawn, or
 // after this shipped, and a burst of alerts about tables that may have been
 // waiting since before anybody was watching tells the owner nothing new.
+//
+// ONLY FROM A RECENT READING. The floor is written from any live reading (the
+// 15-minute window /current reads), but an alert only from one at most
+// TABLE_ALERT_MAX_AGE_MS old, measured from the reading's own stamp. After an
+// outage the box drains its buffer oldest first, one reading every two
+// seconds, and each is the floor as it was minutes ago: a table that started
+// waiting at minute two and was visited at minute five would ring the phone
+// about a wait that ended, seconds before the reading that ended it arrives.
+// The ceiling is TABLES_STALE_AFTER_MINUTES, so a push never describes a floor
+// the dashboard would call stale, and it is longer than the box's wait after
+// one failed delivery (its first backoff step is 60 seconds), so one failure
+// does not cost an alert. The trade, accepted: a state that begins inside a
+// longer gap and still holds when the drain catches up is on the dashboard
+// and never pushed, because the first recent reading finds the replayed row
+// already in that state. An old reading spends no claim.
 //
 // AT MOST ONE PER UNIT, TABLE AND STATE IN 15 MINUTES. The box already lets a
 // seating wait only once (a visit ends waiting for the rest of it), so this is
@@ -368,6 +401,7 @@ async function storeTableStates(device, tables, recordedAt) {
 // ---------------------------------------------------------------------------
 const ALERT_STATES = new Set(['w', 'c']);
 const TABLE_ALERT_WINDOW_MINUTES = 15;
+const TABLE_ALERT_MAX_AGE_MS = TABLES_STALE_AFTER_MINUTES * 60 * 1000;
 const TABLE_ALERT_CLAIM_SQL = `
   INSERT INTO push_debounce (debounce_key, sent_at)
   VALUES ($1, NOW())
@@ -407,6 +441,12 @@ function alertWorthy(written) {
   return written.filter((r) => r.prior_state != null && r.prior_state !== r.state && ALERT_STATES.has(r.state));
 }
 
+// Whether a reading is recent enough to alert from (ONLY FROM A RECENT READING
+// above). A stamp a little ahead of this clock is recent.
+function recentEnoughToAlert(recordedAt, now = Date.now()) {
+  return now - new Date(recordedAt).getTime() <= TABLE_ALERT_MAX_AGE_MS;
+}
+
 async function alertOwner(device, changes) {
   try {
     // No push service, no work: nothing is read and no claim is spent on a push
@@ -444,17 +484,18 @@ async function alertOwner(device, changes) {
 const inFlight = new Set();
 
 /**
- * Apply a stored live reading's tables to the floor, then alert the owner
- * about any table that changed into waiting or needs clearing. Called by the
- * ingest AFTER the device has its 201, and never awaited there: it cannot
- * delay the answer, and nothing it does can change it. It never throws and
- * never rejects; a failure is logged, and the reading stays stored either way.
- * The next live reading writes every table again, so one failure costs the
- * floor thirty seconds, not a table.
+ * Apply a stored live reading's tables to the floor, then, if the reading is
+ * recent, alert the owner about any table that changed into waiting or needs
+ * clearing. Called by the ingest AFTER the device has its 201, and never
+ * awaited there: it cannot delay the answer, and nothing it does can change
+ * it. It never throws and never rejects; a failure is logged, and the reading
+ * stays stored either way. The next live reading writes every table again, so
+ * one failure costs the floor thirty seconds, not a table.
  */
 function applyTableReading(device, tables, recordedAt) {
   const run = (async () => {
     const written = await storeTableStates(device, tables, recordedAt);
+    if (!recentEnoughToAlert(recordedAt)) return;
     const changes = alertWorthy(written);
     if (changes.length > 0) await alertOwner(device, changes);
   })().catch((err) => {
@@ -482,6 +523,8 @@ module.exports = {
   wantsTableAlerts,
   tableAlertCopy,
   TABLE_ALERT_WINDOW_MINUTES,
+  TABLE_ALERT_MAX_AGE_MS,
+  TABLES_STALE_AFTER_MINUTES,
   // Test seams: the throttle is process-global state, and the floor is
   // written after the answer.
   _resetIgnoredNotes: () => ignoredNotedAt.clear(),

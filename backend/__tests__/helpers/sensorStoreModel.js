@@ -179,7 +179,8 @@ function runTableStates(store, params) {
       table_no: n,
       state: states[i],
       prior_state: prior.has(n) ? prior.get(n) : null,
-      minutes: Math.max(1, Math.floor((now - since.getTime()) / 60000)),
+      // On the reading's own clock (as_of minus state_since), never NOW().
+      minutes: Math.max(1, Math.floor((asOf.getTime() - since.getTime()) / 60000)),
     });
   });
   return { rows, rowCount: rows.length };

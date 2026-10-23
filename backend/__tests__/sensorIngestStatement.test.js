@@ -600,6 +600,59 @@ test('on the real schema: a change into waiting or clearing is one push to the v
   }
 });
 
+// The push helper stubbed at the hand-off for the length of fn, which is
+// given the pushes sent. Every table alert claim is cleared afterwards, so one
+// test's window never closes another's.
+async function withPushStub(fn) {
+  const pushHelper = require('../services/pushHelper');
+  const real = { configured: pushHelper.isPushConfigured, always: pushHelper.pushAlways };
+  const sent = [];
+  pushHelper.isPushConfigured = () => true;
+  pushHelper.pushAlways = async (userId, title, body, data) => {
+    sent.push({ userId, title, body, data });
+    return { sent: 1, failed: 0 };
+  };
+  try {
+    await pool.query("DELETE FROM push_debounce WHERE debounce_key LIKE 'table_alert:%'");
+    await fn(sent);
+  } finally {
+    pushHelper.isPushConfigured = real.configured;
+    pushHelper.pushAlways = real.always;
+    await pool.query("DELETE FROM push_debounce WHERE debounce_key LIKE 'table_alert:%'");
+  }
+}
+
+const ageLiveUnit = () => pool.query(
+  `UPDATE sensor_devices SET last_seen_at = NOW() - INTERVAL '1 hour' WHERE device_id = 'sensor_live'`
+);
+
+test('on the real schema: a reading seven minutes old writes the floor and alerts nobody; one a minute old alerts, with the minutes from its own timer', async () => {
+  await withVenueOwner(async (ownerId) => {
+    await withPushStub(async (sent) => {
+      const at = (minutesAgo) => new Date(Date.now() - minutesAgo * 60 * 1000).toISOString();
+      const step = async (minutesAgo, tables) => {
+        await ageLiveUnit();
+        const res = await push(reading({ recorded_at: at(minutesAgo), tables }));
+        assert.equal(res.status, 201, JSON.stringify(res.body));
+        await settleTables();
+      };
+      // A drain after an outage: oldest first, each inside the live window.
+      await step(8, '3:2:s:200');
+      await step(7, '3:2:w:410');
+      assert.deepEqual(await floorShape(), ['3:2:w'], 'a buffered reading still writes the floor');
+      assert.deepEqual(sent, [], 'a wait reported seven minutes late rang the phone');
+      const { rows: claims } = await pool.query("SELECT 1 FROM push_debounce WHERE debounce_key LIKE 'table_alert:%'");
+      assert.equal(claims.length, 0, 'a reading too old to alert spent a claim');
+
+      await step(2, '3:2:s:30');
+      await step(1, '3:2:w:410');
+      assert.deepEqual(sent.map((s) => [s.userId, s.title, s.body]),
+        [[ownerId, 'Table 3', 'Seated 6 min and nobody has stopped by yet.']],
+        'the minute the reading waited in the box is not the party\'s');
+    });
+  });
+});
+
 test('on the real schema: the box\'s forty free tables at the cap are written whole, then its two-seated string replaces them', async () => {
   // Both strings are the box's own (flock-sensor 1.24.0).
   const forty = Array.from({ length: 40 }, (_, i) => `${i + 1}:0:f:86400`).join(';');
