@@ -2999,13 +2999,20 @@ _occupancy = OccupancyTracker()
 
 # Tables. Each table has a zone: the floor it and its chairs take up in the
 # thermal frame, in frame pixels, kept in TABLES_PATH as
-#   {"tables": [{"n": 1, "x0": 12, "y0": 40, "x1": 30, "y1": 58}, ...]}
+#   {"tables": [{"n": 1, "x0": 12, "y0": 40, "x1": 30, "y1": 58,
+#                "seats": [[16, 44], [26, 44]]}, ...]}
 # Every frame, each person Owl finds is a point. A point inside a zone belongs
-# to that table, and a table's state comes from how many points it holds over
+# to that table. Seen at an angle from the ceiling, the head of someone on the
+# far side of a near table lands inside the zone of the table behind it, so a
+# point inside two zones goes to the table with a seat nearest it, when the
+# file says where the seats are (the head of someone sitting in each chair),
+# and to the nearest zone centre when it does not. A table's state comes from
+# how many points it holds over
 # time, the way OccupancyTracker's timers come from counts. No point is ever
 # matched to the one before it, so nothing here can follow anyone; a table
 # knows how many, never who.
 TABLE_MAX = 40
+TABLE_SEATS_MAX = 30
 
 
 def load_table_zones(path):
@@ -3038,8 +3045,19 @@ def load_table_zones(path):
         if x1 - x0 < 2 or y1 - y0 < 2:
             log_throttled('tables_zone', logging.WARNING, f'Skipping table {n}: its zone is off the frame or too small')
             continue
+        raw_seats = item.get('seats')
+        if not isinstance(raw_seats, list):
+            raw_seats = []
+        seats = []
+        for seat in raw_seats[:TABLE_SEATS_MAX]:
+            try:
+                sx, sy = float(seat[0]), float(seat[1])
+            except (TypeError, ValueError, IndexError, KeyError):
+                continue
+            if 0 <= sx < THERMAL_COLS and 0 <= sy < THERMAL_ROWS:
+                seats.append((sx, sy))
         seen.add(n)
-        zones.append({'n': n, 'box': (x0, y0, x1, y1)})
+        zones.append({'n': n, 'box': (x0, y0, x1, y1), 'seats': tuple(seats)})
     return sorted(zones, key=lambda z: z['n'])
 
 
@@ -3106,10 +3124,12 @@ class TableTracker:
         fresh = {}
         for z in zones:
             old = self.tables.get(z['n'])
+            seats = tuple(tuple(p) for p in z.get('seats') or ())
             if old is not None and old['box'] == tuple(z['box']):
+                old['seats'] = seats
                 fresh[z['n']] = old
             else:
-                fresh[z['n']] = {'box': tuple(z['box']), 'state': 'f', 'since': now,
+                fresh[z['n']] = {'box': tuple(z['box']), 'seats': seats, 'state': 'f', 'since': now,
                                  'arrival': None, 'present_since': None, 'empty_since': None,
                                  'extra_since': None, 'visited': False,
                                  'window': deque(), 'people': 0}
@@ -3135,8 +3155,12 @@ class TableTracker:
             for x, y in points or ():
                 homes = [n for n, t in self.tables.items() if self._inside(t['box'], x, y)]
                 if homes:
-                    # Zones can touch; a point belongs to the nearest centre.
+                    # Zones overlap seen at an angle: the nearest seat
+                    # decides, or the nearest centre for a table without seats.
                     def far(n):
+                        seats = self.tables[n]['seats']
+                        if seats:
+                            return min((x - sx) ** 2 + (y - sy) ** 2 for sx, sy in seats)
                         x0, y0, x1, y1 = self.tables[n]['box']
                         return (x - (x0 + x1) / 2) ** 2 + (y - (y0 + y1) / 2) ** 2
                     at[min(homes, key=far)] += 1

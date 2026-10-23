@@ -4757,3 +4757,31 @@ class TablesAtTheVenue(unittest.TestCase):
         now = _run(t, now, 40, [_AT])
         self.assertEqual([r[0] for r in t.view(now)], [1, 2])
         self.assertEqual(self.state(t, now)[1], 's')
+
+
+    def test_a_head_inside_two_zones_goes_to_the_nearest_seat(self):
+        # Seen at an angle, the far-side diner of the near table (1) has a
+        # head that lands inside the zone of the table behind it (2), nearer
+        # table 2's centre than table 1's. Its seat says it is table 1's.
+        near = {'n': 1, 'box': (40.0, 40.0, 70.0, 70.0), 'seats': ((55.0, 42.0), (55.0, 66.0))}
+        behind = {'n': 2, 'box': (40.0, 20.0, 70.0, 46.0), 'seats': ((50.0, 24.0), (60.0, 24.0))}
+        head = (55.0, 43.0)
+        t = main.TableTracker([near, behind])
+        t.update(0, [head])
+        rows = {n: p for n, p, s, a in t.view(0)}
+        self.assertEqual(rows, {1: 1, 2: 0})
+        # Without seats, the nearest centre decides, and gets it wrong here.
+        t = main.TableTracker([{'n': 1, 'box': near['box']}, {'n': 2, 'box': behind['box']}])
+        t.update(0, [head])
+        self.assertEqual({n: p for n, p, s, a in t.view(0)}, {1: 0, 2: 1})
+
+    def test_seats_in_the_zones_file_are_checked(self):
+        path = Path(_TMP) / 'zones-seats.json'
+        path.write_text(json.dumps({'tables': [
+            {'n': 1, 'x0': 10, 'y0': 10, 'x1': 30, 'y1': 30,
+             'seats': [[12, 14], [28, 14], 'x', [500, 3], [20]]},
+            {'n': 2, 'x0': 40, 'y0': 10, 'x1': 60, 'y1': 30, 'seats': 'none'},
+        ]}), encoding='utf-8')
+        zones = main.load_table_zones(path)
+        self.assertEqual(zones[0]['seats'], ((12.0, 14.0), (28.0, 14.0)))
+        self.assertEqual(zones[1]['seats'], ())
