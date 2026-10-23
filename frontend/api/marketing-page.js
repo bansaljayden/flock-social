@@ -206,8 +206,8 @@ const PAGE_BLOCKS = {
     ["p", "The full story is coming soon."],
     ["h2", "Who makes it"],
     ["h3", "Jayden Bansal"],
-    ["p", "Founder"],
-    ["p", "An 11th grader in Pennsylvania, and the person who started Flock."],
+    ["p", "Founder & CEO"],
+    ["p", "An 11th grader in Pennsylvania who started Flock and builds it, from the app to the Flux sensor."],
     ["p", "A longer bio is coming soon."],
     ["h3", "Asad Ali"],
     ["p", "COO"],
@@ -786,6 +786,7 @@ const SITE_GRAPH = [
     founder: {
       '@type': 'Person',
       name: 'Jayden Bansal',
+      jobTitle: 'Founder and CEO',
     },
     award: '1st place, PA DECA States',
   },

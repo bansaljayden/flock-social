@@ -15,7 +15,8 @@ const YOUTUBE_URL = 'https://www.youtube.com/@flock-social2026';
 // THE RULE FOR THIS PAGE: every fact is real and on the record, and anything
 // not yet written is a placeholder that says it is coming, never invented copy.
 //   Flock Social LLC, a Pennsylvania company, organized September 2026   PA entity record
-//   Jayden Bansal, founder, an 11th grader in Pennsylvania                the pitch video's own description
+//   Jayden Bansal, founder and CEO, an 11th grader in Pennsylvania        the pitch video's own description, and the company's own title for the role
+//     who builds the app and the Flux sensor                              the repository
 //   Asad Ali, COO                                                         the pitch video's own description
 //   1st place at PA DECA States                                           the landing page, since August
 //   research paper, October 2026; pitch video entry, October 2026         /research; the video, 18 Oct 2026
@@ -26,7 +27,7 @@ const YOUTUBE_URL = 'https://www.youtube.com/@flock-social2026';
 const DESCRIPTION = 'Who makes Flock, what it holds to, where it stands, and how to reach the people behind it.';
 
 const PEOPLE = [
-  { name: 'Jayden Bansal', role: 'Founder', line: 'An 11th grader in Pennsylvania, and the person who started Flock.' },
+  { name: 'Jayden Bansal', role: 'Founder & CEO', line: 'An 11th grader in Pennsylvania who started Flock and builds it, from the app to the Flux sensor.' },
   { name: 'Asad Ali', role: 'COO' },
 ];
 

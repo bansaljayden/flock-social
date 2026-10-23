@@ -166,8 +166,9 @@ nearby groups. Neither exists.
 
 ## Company
 
-Flock Social LLC, a Pennsylvania limited liability company. Made by the maintainer
-Bansal, the founder, a student in Bethlehem, Pennsylvania, and Asad Ali, the COO.
+Flock Social LLC, a Pennsylvania limited liability company. Jayden Bansal, a
+student in Bethlehem, Pennsylvania, is the founder and CEO and builds the app
+and the Flux sensor. Asad Ali is the COO.
 Flock took 1st place at PA DECA States.
 
 Contact: social@flockcorp.com
