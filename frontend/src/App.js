@@ -17912,6 +17912,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [ownerTablesSeen, setOwnerTablesSeen] = useState(false);
   const [ownerTablesLocked, setOwnerTablesLocked] = useState(false);
   const [ownerVenuePlaceId, setOwnerVenuePlaceId] = useState(null);
+  // The venue's IANA zone, with the place it is for, so the Tables tab's hours
+  // chart keeps the venue's clock, the clock the Analytics hourly chart is
+  // built on server-side from the same Google listing field. The dashboard
+  // has no read of its own for it: the zone comes off the venue's listing
+  // wherever this file already reads it for the owner's place (the Map tab's
+  // load, the profile effect's Google fill-in) and off the hours answer when
+  // the server sends one. Kept with its place id and read only for the place
+  // on screen, so a re-pointed listing never keeps the old zone; null means
+  // the chart falls back to this device's clock and says so.
+  const [ownerVenueZone, setOwnerVenueZone] = useState(null);
+  const ownerVenueTimeZone = ownerVenueZone && ownerVenuePlaceId && ownerVenueZone.placeId === ownerVenuePlaceId
+    ? ownerVenueZone.timeZone
+    : null;
   const [editingVenueInfo, setEditingVenueInfo] = useState(false);
   // The fuller intake, editable AFTER onboarding.
   //
@@ -18052,6 +18065,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         utcOffsetMinutes: v.utcOffsetMinutes != null ? v.utcOffsetMinutes : null,
         timeZone: v.timeZone || null,
       };
+      // The same zone keeps the Tables tab's hours chart on the venue's clock.
+      if (typeof v.timeZone === 'string' && v.timeZone) setOwnerVenueZone({ placeId, timeZone: v.timeZone });
       let nearby = [];
       try {
         const res = await searchVenues('popular restaurants cafes bars fast food', `${loc.latitude},${loc.longitude}`);
@@ -18646,6 +18661,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             // 1) Try saved place ID — only trust result if venue name matches
             // (savedPlaceId is resolved and published above, unconditionally.)
             const verifiedVenue = await fetchAndVerify(savedPlaceId);
+            // Its zone keeps the Tables tab's hours chart on the venue's clock.
+            if (verifiedVenue && typeof verifiedVenue.timeZone === 'string' && verifiedVenue.timeZone) {
+              setOwnerVenueZone({ placeId: savedPlaceId, timeZone: verifiedVenue.timeZone });
+            }
 
             // No search fallback, and no re-pointing of the claim. This branch
             // used to text-search the name when the saved id failed the fuzzy
@@ -18792,7 +18811,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     const pid = ownerVenuePlaceId;
     if (!pid || currentScreen !== 'venueDashboard') return undefined;
     let seenThisVisit = false;
-    const hoursReading = startTableHoursReading(() => getSensorTableHours(pid), setOwnerTableHours);
+    const hoursReading = startTableHoursReading(() => getSensorTableHours(pid), (hours, zone) => {
+      setOwnerTableHours(hours);
+      if (zone) setOwnerVenueZone({ placeId: pid, timeZone: zone });
+    });
     const stopReading = startTablesReading(() => getSensorTables(pid), (data, { planLocked, refused }) => {
       setOwnerTables((prev) => nextTablesState(prev, data, refused));
       if (planLocked) setOwnerTablesLocked(true);
@@ -19786,6 +19808,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         ownerTables,
         ownerTablesLocked,
         ownerTablesSeen,
+        ownerVenueTimeZone,
         promotions,
         realIncomingFlocks,
         renderConsumerVenueCard,

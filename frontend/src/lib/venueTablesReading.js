@@ -148,13 +148,20 @@ export const tableHoursFrom = (data) => (data && Array.isArray(data.hours) ? dat
 // 20 turns of 15 seconds, about five minutes.
 export const TABLE_HOURS_RETRY_EVERY_TURNS = 20;
 
+// The venue's IANA zone off an hours answer, when the server sends one, or
+// null. The chart folds the hours on the venue's clock when it has a zone
+// (lib/venueTables.js, hourOfIn); the route does not carry one today, and
+// this is where it is read the day it does.
+export const tableHoursZoneFrom = (data) => (data && typeof data.timeZone === 'string' && data.timeZone ? data.timeZone : null);
+
 // Reads the hours once now and, for as long as the last hours read failed,
 // again after every `everyTurns` tables answers (turn() is called on each
 // good one), until one succeeds. One hours read is out at a time. Each
-// answer is handed to onHours as the list, or null for a failure, which the
-// tab says in its card instead of hiding the chart; a failure at open used to
-// hide it for the rest of the visit with nothing asking again. stop() drops a
-// late answer. Returns { turn, stop }.
+// answer is handed to onHours as (hours, timeZone): the list, or null for a
+// failure, which the tab says in its card instead of hiding the chart (a
+// failure at open used to hide it for the rest of the visit with nothing
+// asking again), and the venue's zone when the answer carried one. stop()
+// drops a late answer. Returns { turn, stop }.
 export function startTableHoursReading(read, onHours, everyTurns = TABLE_HOURS_RETRY_EVERY_TURNS) {
   let stopped = false;
   let out = false;
@@ -164,12 +171,12 @@ export function startTableHoursReading(read, onHours, everyTurns = TABLE_HOURS_R
     out = true;
     turns = 0;
     new Promise((resolve) => resolve(read()))
-      .then(tableHoursFrom, () => null)
-      .then((hours) => {
+      .then((data) => [tableHoursFrom(data), tableHoursZoneFrom(data)], () => [null, null])
+      .then(([hours, zone]) => {
         out = false;
         if (stopped) return;
         failed = hours === null;
-        onHours(hours);
+        onHours(hours, zone);
       });
   };
   go();

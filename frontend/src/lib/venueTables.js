@@ -236,10 +236,43 @@ export function refreshLines(readAtMs, nowMs) {
 
 // The hour of the day, on the viewer's own clock, that an hour row starts in.
 // The server sends each hour as an ISO time; read in local time, 7 PM on the
-// chart is 7 PM where the owner is.
+// chart is 7 PM where the viewer is. The fallback clock: hourOfIn below reads
+// the venue's own when its zone is known.
 export const localHourOf = (iso) => {
   const t = timeMs(iso);
   return t === null ? null : new Date(t).getHours();
+};
+
+// The hour of the day on the VENUE's clock, when its zone is known.
+//
+// The Analytics chart one card over ("Today, Hour by Hour") is labelled on
+// the venue's clock: the server builds it in the IANA zone Google lists for
+// the place. This chart read the same instants on the viewer's clock, so an
+// owner reading a New York venue from Los Angeles saw the dinner rush at 4 PM
+// here and at 7 PM there, and staffing planned off this chart was three hours
+// out. So the hours are folded in the venue's zone, the same Google listing
+// field, which reaches the dashboard with the venue's own listing when it is
+// read this visit (App.js, ownerVenueTimeZone) or on the hours answer when
+// the server sends one. With no zone, or one this device cannot keep time in,
+// the viewer's clock is the fallback, and the card says which clock it used,
+// so an owner away from the venue is not shown the venue's hours as theirs.
+// Returns localHourOf itself for the fallback, so a caller can tell.
+export const hourOfIn = (timeZone) => {
+  if (typeof timeZone !== 'string' || !timeZone) return localHourOf;
+  let format;
+  try {
+    format = new Intl.DateTimeFormat('en-US', { timeZone, hour: 'numeric', hourCycle: 'h23' });
+  } catch {
+    return localHourOf;
+  }
+  return (iso) => {
+    const t = timeMs(iso);
+    if (t === null) return null;
+    const part = format.formatToParts(t).find((p) => p.type === 'hour');
+    const hour = part ? Number(part.value) : NaN;
+    // An engine that ignores hourCycle writes midnight as "24".
+    return Number.isInteger(hour) ? hour % 24 : null;
+  };
 };
 
 // Average tables in use for each hour of the day across the window the server

@@ -38,7 +38,7 @@
 import fs from 'fs';
 import path from 'path';
 import React from 'react';
-import { render, screen, act, within, fireEvent } from '@testing-library/react';
+import { render, screen, act, within, fireEvent, cleanup } from '@testing-library/react';
 
 jest.mock('../services/api', () => ({
   getVenueBillingStatus: jest.fn(() => Promise.resolve(null)),
@@ -66,6 +66,8 @@ import {
   clockText,
   durationText,
   hourLabel,
+  hourOfIn,
+  localHourOf,
   seatsText,
   tableHoursChart,
   tablesByLocalHour,
@@ -568,12 +570,50 @@ describe('tables in use by hour', () => {
     expect(tables).toBe(8);
   });
 
-  test('the hour is the one on the viewer\'s clock, not the one written in the ISO string', () => {
+  test('with no venue zone the hour is the one on the viewer\'s clock, not the one written in the ISO string', () => {
     // 7 PM here is 11 PM UTC in New York. Bucketed by the string's own hour,
     // this row would land at 23.
     const iso = new Date(2026, 9, 19, 19).toISOString();
     const { slots } = tablesByLocalHour([{ hour: iso, occupied: 3, total: 8 }]);
     expect(slots.filter((s) => s.avg !== null).map((s) => s.hour)).toEqual([19]);
+  });
+
+  describe('the venue\'s clock', () => {
+    // 11 PM UTC on October 19: 7 PM in New York, 4 PM in Los Angeles, 8 AM the
+    // next morning in Tokyo. The Analytics hourly chart is labelled in the
+    // venue's zone, so the same instant must land on the same hour here.
+    const AT = '2026-10-19T23:00:00.000Z';
+
+    test('an hour row is folded on the venue\'s clock when its zone is known', () => {
+      expect(hourOfIn('America/New_York')(AT)).toBe(19);
+      expect(hourOfIn('America/Los_Angeles')(AT)).toBe(16);
+      expect(hourOfIn('Asia/Tokyo')(AT)).toBe(8);
+      // Midnight is 0, never 24, whatever the engine writes.
+      expect(hourOfIn('America/New_York')('2026-10-20T04:00:00.000Z')).toBe(0);
+      expect(hourOfIn('America/New_York')('not a time')).toBeNull();
+      const { slots } = tablesByLocalHour([{ hour: AT, occupied: 3, total: 8 }], hourOfIn('America/Los_Angeles'));
+      expect(slots.filter((s) => s.avg !== null).map((s) => s.hour)).toEqual([16]);
+    });
+
+    test('no zone, or one this device cannot keep time in, is the viewer\'s own clock, told apart by identity', () => {
+      for (const zone of [null, undefined, '', 42, 'Mars/Olympus_Mons']) expect(hourOfIn(zone)).toBe(localHourOf);
+      expect(hourOfIn('America/New_York')).not.toBe(localHourOf);
+    });
+
+    test('the chart is drawn on the venue\'s clock and says so; without a zone it says it is this device\'s', () => {
+      // Three nights of the same UTC hour: 7 PM in New York, 4 PM in Los Angeles.
+      const rows = [19, 20, 21].map((day) => ({ hour: `2026-10-${day}T23:00:00.000Z`, occupied: 4, total: 8 }));
+      const { unmount } = renderTab({ hours: rows, timeZone: 'America/Los_Angeles' });
+      expect(screen.getByText('Busiest around 4 PM, with 4 of 8 tables in use on average.')).toBeTruthy();
+      expect(screen.getByText("Averages for each hour of the day over the last 7 days, on your venue's clock.")).toBeTruthy();
+      unmount();
+      renderTab({ hours: rows, timeZone: 'America/New_York' });
+      expect(screen.getByText('Busiest around 7 PM, with 4 of 8 tables in use on average.')).toBeTruthy();
+      cleanup();
+      renderTab({ hours: rows });
+      expect(screen.getByText(`Busiest around ${hourLabel(localHourOf(rows[0].hour))}, with 4 of 8 tables in use on average.`)).toBeTruthy();
+      expect(screen.getByText("Averages for each hour of the day over the last 7 days, on this device's clock.")).toBeTruthy();
+    });
   });
 
   test('rows the tab cannot read are skipped, not counted as zero', () => {
@@ -601,7 +641,7 @@ describe('tables in use by hour', () => {
     // 8 PM's 5.5 is the peak; 7 PM's 3 is not within a fifth of it.
     expect(bars.filter((b) => b.getAttribute('data-busy') === 'true').map((b) => Number(b.getAttribute('data-hour')))).toEqual([20]);
     expect(screen.getByText('Busiest around 8 PM, with 5.5 of 8 tables in use on average.')).toBeTruthy();
-    expect(screen.getByText('Averages for each hour of the day over the last 7 days.')).toBeTruthy();
+    expect(screen.getByText("Averages for each hour of the day over the last 7 days, on this device's clock.")).toBeTruthy();
   });
 
   test('a late bar reads in one run across midnight', () => {
@@ -935,11 +975,28 @@ describe('the read loop', () => {
       const reading = startTableHoursReading(readHours, onHours);
       expect(readHours).toHaveBeenCalledTimes(1);
       await flush();
-      expect(onHours).toHaveBeenCalledWith(HOURS);
+      // No zone on today's answer: the chart falls back to this device's clock.
+      expect(onHours).toHaveBeenCalledWith(HOURS, null);
       turns(reading, 3 * TABLE_HOURS_RETRY_EVERY_TURNS);
       await flush();
       expect(readHours).toHaveBeenCalledTimes(1);
       reading.stop();
+    });
+
+    test('the venue\'s zone is handed on beside the list when the server sends one', async () => {
+      const onHours = jest.fn();
+      const reading = startTableHoursReading(() => Promise.resolve({ ...WEEK, timeZone: 'America/New_York' }), onHours);
+      await flush();
+      expect(onHours).toHaveBeenCalledWith(HOURS, 'America/New_York');
+      reading.stop();
+      for (const bad of [{ ...WEEK, timeZone: '' }, { ...WEEK, timeZone: 7 }, { ...WEEK, timeZone: { id: 'America/New_York' } }]) {
+        const on = jest.fn();
+        const r = startTableHoursReading(() => Promise.resolve(bad), on);
+        // eslint-disable-next-line no-await-in-loop
+        await flush();
+        expect(on).toHaveBeenCalledWith(HOURS, null);
+        r.stop();
+      }
     });
 
     test('a failure is handed on as null and asked again after every 20th turn until it succeeds', async () => {
@@ -950,18 +1007,18 @@ describe('the read loop', () => {
       const onHours = jest.fn();
       const reading = startTableHoursReading(readHours, onHours);
       await flush();
-      expect(onHours).toHaveBeenNthCalledWith(1, null);
+      expect(onHours).toHaveBeenNthCalledWith(1, null, null);
       turns(reading, TABLE_HOURS_RETRY_EVERY_TURNS - 1);
       expect(readHours).toHaveBeenCalledTimes(1);
       reading.turn();
       expect(readHours).toHaveBeenCalledTimes(2);
       await flush();
       // An answer without a list is a failure too.
-      expect(onHours).toHaveBeenNthCalledWith(2, null);
+      expect(onHours).toHaveBeenNthCalledWith(2, null, null);
       turns(reading, TABLE_HOURS_RETRY_EVERY_TURNS);
       await flush();
       expect(readHours).toHaveBeenCalledTimes(3);
-      expect(onHours).toHaveBeenNthCalledWith(3, HOURS);
+      expect(onHours).toHaveBeenNthCalledWith(3, HOURS, null);
       turns(reading, 2 * TABLE_HOURS_RETRY_EVERY_TURNS);
       await flush();
       expect(readHours).toHaveBeenCalledTimes(3);
@@ -982,7 +1039,7 @@ describe('the read loop', () => {
       expect(readHours).toHaveBeenCalledTimes(2);
       answer(WEEK);
       await flush();
-      expect(onHours).toHaveBeenLastCalledWith(HOURS);
+      expect(onHours).toHaveBeenLastCalledWith(HOURS, null);
       reading.stop();
     });
 
@@ -1053,7 +1110,7 @@ describe('App.js reads the tables for the dashboard and hands them down', () => 
   });
 
   test('the tables on the loop, the hours once and again while failed, and both stopped on the way out', () => {
-    expect(effect).toContain('const hoursReading = startTableHoursReading(() => getSensorTableHours(pid), setOwnerTableHours);');
+    expect(effect).toMatch(/const hoursReading = startTableHoursReading\(\(\) => getSensorTableHours\(pid\), \(hours, zone\) => \{\s*setOwnerTableHours\(hours\);\s*if \(zone\) setOwnerVenueZone\(\{ placeId: pid, timeZone: zone \}\);\s*\}\);/);
     expect(effect).toContain('const stopReading = startTablesReading(() => getSensorTables(pid), (data, { planLocked, refused }) => {');
     // A good tables answer is the turn a failed hours read may be retried on.
     expect(effect).toContain('if (data) hoursReading.turn();');
@@ -1080,8 +1137,21 @@ describe('App.js reads the tables for the dashboard and hands them down', () => 
     expect(reopen).toContain('}, [currentScreen, venueTab, ownerTablesSeen, ownerVenuePlaceId]);');
   });
 
-  test('all four reach the dashboard beside the sensor data', () => {
-    expect(APP).toMatch(/ownerSensorData,\s*ownerSensorHistory,\s*ownerTableHours,\s*ownerTables,\s*ownerTablesLocked,\s*ownerTablesSeen,\s*promotions,/);
+  test('all four reach the dashboard beside the sensor data, and the venue\'s zone with them', () => {
+    expect(APP).toMatch(/ownerSensorData,\s*ownerSensorHistory,\s*ownerTableHours,\s*ownerTables,\s*ownerTablesLocked,\s*ownerTablesSeen,\s*ownerVenueTimeZone,\s*promotions,/);
+  });
+
+  test('the venue\'s zone is the Google listing\'s, kept with its place, from every read the dashboard already makes of the listing', () => {
+    // Read for the place on screen only, so a re-pointed listing never keeps
+    // the old zone, and null, this device's clock, until a read carries one.
+    expect(APP).toMatch(/const ownerVenueTimeZone = ownerVenueZone && ownerVenuePlaceId && ownerVenueZone\.placeId === ownerVenuePlaceId\s*\? ownerVenueZone\.timeZone\s*: null;/);
+    // The Map tab's load of the owner's venue, the profile effect's Google
+    // fill-in, and the hours answer: three writers, no read of its own, so no
+    // Places spend is added for a clock.
+    expect(APP.match(/setOwnerVenueZone\(\{/g)).toHaveLength(3);
+    expect(APP).toContain("if (typeof v.timeZone === 'string' && v.timeZone) setOwnerVenueZone({ placeId, timeZone: v.timeZone });");
+    expect(APP).toMatch(/if \(verifiedVenue && typeof verifiedVenue\.timeZone === 'string' && verifiedVenue\.timeZone\) \{\s*setOwnerVenueZone\(\{ placeId: savedPlaceId, timeZone: verifiedVenue\.timeZone \}\);/);
+    expect(APP).not.toMatch(/getVenueDetails\([^)]*\)[^\n]*timeZone/);
   });
 });
 
@@ -1197,8 +1267,16 @@ const settle = () => act(async () => {});
 const tabBar = () => screen.getAllByRole('button').map((b) => b.textContent.trim()).filter((t) => TAB_NAMES.includes(t));
 
 describe('the tab bar', () => {
-  test('the dashboard takes the tables, the hours and both flags', () => {
-    expect(PARAMS).toEqual(expect.arrayContaining(['ownerTables', 'ownerTableHours', 'ownerTablesSeen', 'ownerTablesLocked']));
+  test('the dashboard takes the tables, the hours, both flags and the venue\'s zone', () => {
+    expect(PARAMS).toEqual(expect.arrayContaining(['ownerTables', 'ownerTableHours', 'ownerTablesSeen', 'ownerTablesLocked', 'ownerVenueTimeZone']));
+    expect(DASH).toContain('<VenueTablesTab data={ownerTables} hours={ownerTableHours} colors={colors} wellPx={HOUR_BAR_WELL_PX} timeZone={ownerVenueTimeZone} />');
+  });
+
+  test('the zone reaches the chart: a Roost venue in Los Angeles read from New York sees its own 4 PM', async () => {
+    const rows = [19, 20, 21].map((day) => ({ hour: `2026-10-${day}T23:00:00.000Z`, occupied: 4, total: 8 }));
+    dashboard({ venueTab: 'tables', ownerTablesSeen: true, ownerTables: LIVE, ownerTableHours: rows, ownerVenueTimeZone: 'America/Los_Angeles' });
+    await settle();
+    expect(screen.getByText('Busiest around 4 PM, with 4 of 8 tables in use on average.')).toBeTruthy();
   });
 
   test('a venue whose sensor has reported a table gets Tables, right after Analytics', async () => {

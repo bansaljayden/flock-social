@@ -21,11 +21,11 @@ import React from 'react';
 import TablesBoard from './TablesBoard';
 import TablesByHour from './TablesByHour';
 
-export default function VenueTablesTab({ data, hours, colors, wellPx }) {
+export default function VenueTablesTab({ data, hours, colors, wellPx, timeZone }) {
   return (
     <>
       <TablesBoard data={data} colors={colors} />
-      <TablesByHour hours={hours} colors={colors} wellPx={wellPx} />
+      <TablesByHour hours={hours} colors={colors} wellPx={wellPx} timeZone={timeZone} />
     </>
   );
 }

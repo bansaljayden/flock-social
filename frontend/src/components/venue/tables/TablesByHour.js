@@ -2,15 +2,17 @@
  * TABLES IN USE BY HOUR, OVER THE LAST 7 DAYS.
  *
  * A section of the Tables tab, for staffing: the average number of tables in
- * use at each hour of the day, on the viewer's own clock, with the stretch near
- * the busiest hour drawn in the accent and the peak named in words under it.
- * A skeleton while the hours read is out; one line while that read has failed
- * (App.js asks again every few minutes); then the chart, drawn only when the
- * week brought something to draw. The averaging is lib/venueTables.js.
+ * use at each hour of the day, on the venue's own clock when its zone is known
+ * (the clock the Analytics hourly chart keeps) and on this device's when it is
+ * not, which the line under the chart says. The stretch near the busiest hour
+ * is drawn in the accent and the peak named in words under it. A skeleton
+ * while the hours read is out; one line while that read has failed (App.js
+ * asks again every few minutes); then the chart, drawn only when the week
+ * brought something to draw. The averaging is lib/venueTables.js.
  */
 import React from 'react';
 import TablesSection from './TablesSection';
-import { busiestText, hourLabel, tableHoursChart } from '../../../lib/venueTables';
+import { busiestText, hourLabel, hourOfIn, localHourOf, tableHoursChart } from '../../../lib/venueTables';
 
 // The bar well when the dashboard does not hand one down. It hands down
 // HOUR_BAR_WELL_PX, the well "Today, Hour by Hour" uses on Analytics, so the
@@ -25,7 +27,7 @@ const MAX_HOUR_LABELS = 5;
 // arriving in its place barely moves the page.
 const LOADING_HEIGHT_PX = 170;
 
-export default function TablesByHour({ hours, colors, wellPx }) {
+export default function TablesByHour({ hours, colors, wellPx, timeZone }) {
   // `undefined` is a read that has not answered yet: the shape of the card
   // in the global shimmer (DESIGN-STANDARD rule 10, skeletons for page loads).
   // Null is a read that failed, said in the card rather than hidden, because
@@ -42,7 +44,11 @@ export default function TablesByHour({ hours, colors, wellPx }) {
       </TablesSection>
     );
   }
-  const chart = tableHoursChart(hours);
+  // The venue's clock when its zone is known and this device can keep it;
+  // otherwise this device's, said under the chart (hourOfIn).
+  const hourOf = hourOfIn(timeZone);
+  const venueClock = hourOf !== localHourOf;
+  const chart = tableHoursChart(hours, hourOf);
   if (!chart) return null;
   const well = Number.isFinite(wellPx) && wellPx > 0 ? wellPx : DEFAULT_WELL_PX;
   // Heights run from zero to the venue's table count, so a full bar is every
@@ -89,7 +95,7 @@ export default function TablesByHour({ hours, colors, wellPx }) {
         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '8px 0 0', lineHeight: 1.45 }}>{busiest}</p>
       )}
       <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: busiest ? '2px 0 0' : '8px 0 0', lineHeight: 1.45 }}>
-        Averages for each hour of the day over the last 7 days.
+        {`Averages for each hour of the day over the last 7 days, on ${venueClock ? "your venue's clock" : "this device's clock"}.`}
       </p>
     </TablesSection>
   );
