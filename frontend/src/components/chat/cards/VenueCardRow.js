@@ -70,7 +70,7 @@ import { crowdLabelFor, crowdArcFor } from '../../../lib/crowd';
 /* The table line, for a shared place whose Flux sensor watches its tables.
    The summary rides on the row like the vote does (`tables`, stamped by the
    screen's dressing pass); this file draws it and asks nothing. */
-import TableAvailability from '../../venue/TableAvailability';
+import TableAvailability, { tableCompactText } from '../../venue/TableAvailability';
 import './cards.css';
 
 /* An explicit prop wins over the field on the shared row, and either can be
@@ -226,6 +226,11 @@ export default function VenueCardRow({
     <span aria-hidden="true" style={{ color: 'var(--text-tertiary)', padding: '0 5px' }}>·</span>
   );
 
+  // The table line's words for the card's accessible name: an aria-label
+  // replaces the content it wraps, so the line drawn below would otherwise be
+  // read by nobody.
+  const tableLine = tables ? tableCompactText(tables, tableParty) : null;
+
   return (
     <CardShell
       onOpen={canOpen ? onOpen : undefined}
@@ -233,7 +238,7 @@ export default function VenueCardRow({
          reader user still hears which place this is before deciding to open
          it, and a sighted reader has the name, the category and the picture. */
       ariaLabel={canOpen
-        ? `${venue.name}${address ? `, ${address}` : ''}. Open the place.`
+        ? `${venue.name}${address ? `, ${address}` : ''}${tableLine ? `. ${tableLine}` : ''}. Open the place.`
         : undefined}
       data-card="venue"
       data-venue-surface={surface}

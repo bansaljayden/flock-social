@@ -1258,6 +1258,24 @@ describe('VenueCardRow', () => {
     expect(textOf(container)).toBe('Kome');
   });
 
+  test('a table line is drawn under the facts and said in the card\'s name', () => {
+    const tables = {
+      open: 3, total: 10, party: 5, fits_now: false, wait_minutes: null, busy_hours: [],
+      timeZone: 'America/New_York', updated_at: '2026-09-25T20:00:00Z', stale: false,
+    };
+    const { container } = render(
+      <VenueCardRow venue={venue} tables={tables} tableParty={5} onOpen={() => {}} onAction={() => {}} />
+    );
+    // The compact line, verdict first, so a cut row keeps it.
+    const line = container.querySelector('p[data-table-line="compact"]');
+    expect(line.textContent).toBe('None seats 5, 3 open');
+    expect(line.className).toContain('chat-truncate');
+    expect(line.getAttribute('aria-hidden')).toBeNull();
+    // The card is an aria-labelled button, which hides its content from a
+    // screen reader, so the line is in the name too.
+    expect(screen.getByRole('button', { name: 'Kome, 17 W Broad St. None seats 5, 3 open. Open the place.' })).toBeTruthy();
+  });
+
   test('a venue with nothing to open is not announced as a button', () => {
     /* A card with no place_id has no page behind it. Announced as a button it
        is a promise the card cannot keep: a screen reader calls it a button, a

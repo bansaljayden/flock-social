@@ -187,7 +187,13 @@ export default function FlockDetail({
     // plan item I3, and until then the line says what the sensor sees now.
     // Before the missing-plan return, as the hooks above are.
     const tableParty = tablePartyFor(flock);
-    const tableSummary = useTableSummary(flock?.venueId || null, tableParty);
+    // Nothing for a plan that is over, ended by status (isCompleted below) or
+    // a locked-in plan an hour past its time (nightOver below, the same
+    // isNightOver): the room may well have a table now, but the plan is not
+    // going there. A null id asks nothing and the hook returns null, so no
+    // cached answer from the venue sheet shows through either.
+    const tablesOver = !!flock && (flock.status === 'completed' || flock.status === 'cancelled' || isNightOver(flock));
+    const tableSummary = useTableSummary(tablesOver ? null : (flock?.venueId || null), tableParty);
     if (!flock) return <MissingFlockPanel />;
     const acceptedMembers = (flock.members || []).filter(m => typeof m === 'object' ? (m.status === 'accepted' || !m.status) : true);
     // Guests are merged for DISPLAY only. flock.guests stays its own array

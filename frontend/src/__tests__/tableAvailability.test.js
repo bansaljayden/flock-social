@@ -453,6 +453,42 @@ describe('the map plate', () => {
 });
 
 // ---------------------------------------------------------------------------
+// 3c. the chat and the plan
+// ---------------------------------------------------------------------------
+
+describe('the chat and the plan', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const read = (...p) => fs.readFileSync(path.join(__dirname, '..', ...p), 'utf8').replace(/\r\n/g, '\n');
+  const CHAT = read('screens', 'ChatDetail.js');
+  const PLAN = read('screens', 'FlockDetail.js');
+  const CARD = read('components', 'chat', 'cards', 'VenueCardRow.js');
+
+  it('stop asking and drawing once the plan is over, by status or by the night being over', () => {
+    const gate = "flock.status === 'completed' || flock.status === 'cancelled' || isNightOver(flock)";
+    expect(CHAT).toContain(`const tablesOver = !!flock && (${gate});`);
+    expect(CHAT).toContain('useTableSummaries(tablesOver ? [] : flockTablePlaceIds(flock), tableParty)');
+    expect(CHAT).toContain("import { isNightOver } from '../lib/planNight';");
+    expect(PLAN).toContain(`const tablesOver = !!flock && (${gate});`);
+    expect(PLAN).toContain('useTableSummary(tablesOver ? null : (flock?.venueId || null), tableParty)');
+    expect(PLAN).toContain("import { isNightOver } from '../lib/planNight';");
+  });
+
+  it("the vote row's and the venue card's accessible names carry the table line", () => {
+    // Both are aria-labelled controls, and an aria-label replaces the content
+    // it wraps; the line drawn inside is read by nobody unless it is in the name.
+    expect(CHAT).toContain("import TableAvailability, { tableCompactText } from '../components/venue/TableAvailability';");
+    expect(CHAT).toContain('const tableLine = v.place_id && tableSummaries[v.place_id] ? tableCompactText(tableSummaries[v.place_id], tableParty) : null;');
+    expect(CHAT).toContain("aria-label={`${v.venue}, ${count} vote${count === 1 ? '' : 's'}${tableLine ? `, ${tableLine}` : ''}`}");
+    expect(CARD).toContain('const tableLine = tables ? tableCompactText(tables, tableParty) : null;');
+    expect(CARD).toContain("? `${venue.name}${address ? `, ${address}` : ''}${tableLine ? `. ${tableLine}` : ''}. Open the place.`");
+    // And the drawn line is not hidden from the tree either.
+    expect(CHAT).not.toMatch(/<TableAvailability[^>]*aria-hidden/);
+    expect(CARD).not.toMatch(/<TableAvailability[^>]*aria-hidden/);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 4. the party
 // ---------------------------------------------------------------------------
 

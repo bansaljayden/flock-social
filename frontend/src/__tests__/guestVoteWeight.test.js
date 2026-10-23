@@ -446,6 +446,29 @@ describe('4. the screen draws the server\'s tally', () => {
     expect(params.filter((name) => !(name in supplied))).toEqual([]);
   });
 
+  test('a vote row with a table line says it in its name, and an ended plan has no line', () => {
+    const tables = require('../lib/tableSummaries');
+    tables.resetTableSummariesForTests();
+    try {
+      // The flock's going count is 3, so the line is written for three.
+      tables.seedTableSummaryForTests('p1', 3, {
+        open: 3, total: 10, party: 3, fits_now: true, wait_minutes: null, busy_hours: [],
+        timeZone: 'America/New_York', updated_at: '2026-09-25T20:00:00Z', stale: false,
+      });
+      const { unmount } = mount({ flock: { votes: normalizeVotes(WIRE, ME) }, showVotePanel: true });
+      const kome = screen.getByRole('button', { name: 'Kome, 3 votes, Table for 3 open now' });
+      expect(within(kome).getByText('Table for 3 open now')).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Corvid Coffee, 3 votes' })).toBeTruthy();
+      unmount();
+      // The same flock, completed: the line is gone and the name is as before.
+      mount({ flock: { votes: normalizeVotes(WIRE, ME), status: 'completed' }, showVotePanel: true });
+      expect(screen.getByRole('button', { name: 'Kome, 3 votes' })).toBeTruthy();
+      expect(screen.queryByText('Table for 3 open now')).toBeNull();
+    } finally {
+      tables.resetTableSummariesForTests();
+    }
+  });
+
   test('the vote panel does not call the link-holder\'s pick Leading, and lists the members\' first', () => {
     mount({ flock: { votes: normalizeVotes(WIRE, ME) }, showVotePanel: true });
     const rows = screen.getAllByRole('button', { name: /^(Kome|Corvid Coffee), \d+ votes?$/ });

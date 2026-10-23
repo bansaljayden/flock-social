@@ -197,7 +197,8 @@ import { lsSet } from '../lib/storage';
    the venue cards together (lib/tableSummaries.js), the line itself
    TableAvailability's. */
 import { flockTablePlaceIds, tablePartyFor, useTableSummaries } from '../lib/tableSummaries';
-import TableAvailability from '../components/venue/TableAvailability';
+import TableAvailability, { tableCompactText } from '../components/venue/TableAvailability';
+import { isNightOver } from '../lib/planNight';
 /* "On my way" arithmetic and bounds. The ETA is a labelled estimate by
    design; that file's header says why there is no routing call behind it. */
 import { MAX_SEATS, etaMinutes, formatDistance, formatEta } from '../lib/travel';
@@ -1432,7 +1433,13 @@ export default function ChatDetail({
     // all of them, written for everyone going. Before the missing-flock
     // return, as every hook here is; with no flock there is nothing to ask.
     const tableParty = tablePartyFor(flock);
-    const tableSummaries = useTableSummaries(flockTablePlaceIds(flock), tableParty);
+    // No line for a plan that is over: ended by status (planClosed below,
+    // computed after the guard) or a locked-in plan an hour past its time
+    // (lib/planNight.js, the plan screen's own rule). A live table line under
+    // last Friday's venue is true of the room and false of the plan, and the
+    // asking stops with it. An empty list asks nothing and reads back {}.
+    const tablesOver = !!flock && (flock.status === 'completed' || flock.status === 'cancelled' || isNightOver(flock));
+    const tableSummaries = useTableSummaries(tablesOver ? [] : flockTablePlaceIds(flock), tableParty);
     // Every line below reads off `flock` unguarded, starting with flock.name in
     // the header. An empty flock list here is a TypeError during render, which
     // React answers by unmounting the entire app.
@@ -4492,6 +4499,11 @@ export default function ChatDetail({
                       const isAssigned = v.venue === assignedVenue;
                       const isMyVote = v.voters.includes('You');
                       const count = voteTotal(v);
+                      // The table line's words, for the row's accessible name:
+                      // the button's aria-label replaces its content for a
+                      // screen reader, so a line drawn inside it alone is
+                      // read by nobody.
+                      const tableLine = v.place_id && tableSummaries[v.place_id] ? tableCompactText(tableSummaries[v.place_id], tableParty) : null;
                       const votePercent = totalVoters > 0 ? Math.round((count / totalVoters) * 100) : 0;
                       // Two venues at the same count are not "Leading" and a flame;
                       // the host reads that as the group's pick.
@@ -4518,7 +4530,7 @@ export default function ChatDetail({
                           {/* Progress bar background */}
                           <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: `${votePercent}%`, backgroundColor: isMyVote ? `${colors.navy}10` : 'var(--bg-tertiary)', transition: 'width 0.4s ease', borderRadius: '14px' }} />
                           <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                            <button type="button" aria-pressed={isMyVote} aria-label={`${v.venue}, ${count} vote${count === 1 ? '' : 's'}`} className="hit44" onClick={(e) => { confirmClick(e); isMyVote ? handleUnvote() : handleQuickVote(v.venue, v.type, v.place_id); }} style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: '10px', padding: 0, border: 'none', background: 'none', textAlign: 'left', cursor: 'pointer', color: 'inherit', font: 'inherit' }}>
+                            <button type="button" aria-pressed={isMyVote} aria-label={`${v.venue}, ${count} vote${count === 1 ? '' : 's'}${tableLine ? `, ${tableLine}` : ''}`} className="hit44" onClick={(e) => { confirmClick(e); isMyVote ? handleUnvote() : handleQuickVote(v.venue, v.type, v.place_id); }} style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: '10px', padding: 0, border: 'none', background: 'none', textAlign: 'left', cursor: 'pointer', color: 'inherit', font: 'inherit' }}>
                             <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: iconBg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                               {isAssigned ? Icons.mapPin('white', 16) : isLeading ? Icons.flame('#fff', 18) : Icons.mapPin(colors.navy, 16)}
                             </div>
