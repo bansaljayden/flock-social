@@ -42,8 +42,9 @@
 //   moderation_report  admin-only: a report needs review      (services/moderationAlerts.js)
 //   ops_alert          admin-only: something on the server broke (services/opsAlert.js)
 //   crowd_alert        forecast for an event they committed to (services/crowdAlerts.js)
-//   table_alert        venue owner only: a table at the venue they own has waited
-//                      too long for a server, or needs clearing  (services/sensorTables.js)
+//   table_alert        venue owner only: a party at the venue they own has sat past
+//                      the sensor's wait limit with no visit, or a table needs
+//                      clearing                               (services/sensorTables.js)
 //
 // crowd_alert and table_alert are the two pushes not directly triggered by a
 // person's action. crowd_alert sits closest to the 4.5.4 line and carries its

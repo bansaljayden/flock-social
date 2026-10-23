@@ -172,8 +172,9 @@ function tableCounts(tables) {
 // In process memory, and on purpose. This is a log throttle, not a rule: a
 // deploy or a second instance costs at most one extra line, and nothing a
 // device or a person sees depends on it. Keyed only by device ids that have
-// already authenticated, so the set is no bigger than the fleet; the prune is
-// there for the day that stops being true.
+// already authenticated, so the map is no bigger than the fleet; the bound is
+// there for the day that stops being true, and it evicts the oldest note
+// first (utils/cacheKeyInventory.js has the row).
 // ---------------------------------------------------------------------------
 const IGNORED_NOTE_INTERVAL_MS = 60 * 60 * 1000;
 const IGNORED_NOTE_MAX_DEVICES = 1000;
@@ -182,11 +183,11 @@ const ignoredNotedAt = new Map();
 function noteIgnoredTables(deviceId, reason, now = Date.now()) {
   const last = ignoredNotedAt.get(deviceId);
   if (last !== undefined && now - last < IGNORED_NOTE_INTERVAL_MS) return false;
-  if (ignoredNotedAt.size >= IGNORED_NOTE_MAX_DEVICES) {
-    for (const [id, at] of ignoredNotedAt) {
-      if (now - at >= IGNORED_NOTE_INTERVAL_MS) ignoredNotedAt.delete(id);
-    }
-    if (ignoredNotedAt.size >= IGNORED_NOTE_MAX_DEVICES) ignoredNotedAt.clear();
+  // Deleted and set again, so the map's own order stays oldest note first and
+  // the bound below always drops the note that matters least.
+  ignoredNotedAt.delete(deviceId);
+  while (ignoredNotedAt.size >= IGNORED_NOTE_MAX_DEVICES) {
+    ignoredNotedAt.delete(ignoredNotedAt.keys().next().value);
   }
   ignoredNotedAt.set(deviceId, now);
   // The reason, never the value: the value is whatever the device (or whoever

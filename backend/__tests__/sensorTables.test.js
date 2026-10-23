@@ -1000,12 +1000,16 @@ test('the push carries a table and a state and nothing about anybody at it', asy
 // that names an offer, a price or an upgrade is marketing under App Store 4.5.4.
 const MARKETING = /\b(pro|premium|upgrade|subscribe|subscription|offer|deal|discount|sale|trial|unlock|paywall|buy|redeem|promo|exclusive|limited time|free)\b|[%$]/i;
 
-test('the alert copy promotes nothing and carries no em or en dash', () => {
+// DESIGN-STANDARD.md section B: the words that make copy read as generated.
+const SLOP_WORDS = /\b(seamless|effortless|empower|unlock|elevate|supercharge)\w*/i;
+
+test('the alert copy promotes nothing, reads like a person and carries no em or en dash', () => {
   for (const change of [{ table_no: 3, state: 'w', minutes: 6 }, { table_no: 12, state: 'c', minutes: 1 }]) {
     const { title, body } = sensorTables.tableAlertCopy(change);
     const text = `${title} ${body}`;
     assert.strictEqual(text.match(MARKETING), null, text);
-    assert.ok(!/[–—]/.test(text), text);
+    assert.strictEqual(text.match(SLOP_WORDS), null, text);
+    assert.ok(!/[\u2013\u2014]/.test(text), text);
   }
 });
 

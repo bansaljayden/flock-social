@@ -565,7 +565,11 @@ test('a non-scalar reading is a 400 and is never written', async () => {
       const label = `${field}=${JSON.stringify(v)}`;
       assert.strictEqual(res.status, 400, `${label} -> ${res.status} ${res.text}`);
       assert.deepStrictEqual(sensorWrites(), [], `${label}: wrote something`);
-      assert.deepStrictEqual(ingestParams.slice(2), [false, null, false, null, false, '2 seconds', null, null, null, null, null, null, null],
+      // The last four nulls are the table counts (migration 130). `tables` is
+      // not in the field list above on purpose: a bad tables value is ignored
+      // and the reading stored, never refused (sensorTables.test.js).
+      assert.deepStrictEqual(ingestParams.slice(2), [false, null, false, null, false, '2 seconds', null, null, null, null, null, null, null,
+        null, null, null, null],
         `${label}: a refused body reached the statement's parameters`);
     }
   }

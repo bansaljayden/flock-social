@@ -586,6 +586,20 @@ const INVENTORY = [
     verdict: 'SAFE',
     why: 'The key space is a closed set of literals written in this file. No caller input reaches it, so it cannot grow, and nothing is refused on the strength of it, because throttling the log never throttles a request. It is listed because a keyed Map that protects an operator signal is exactly the kind of thing the four audit rounds found unlisted, and because the signal itself matters: a budget that is being reached is information an operator needs to act on, so the throttle exists to keep that line readable rather than to hide it.',
   },
+
+  // ── services/sensorTables.js ──────────────────────────────────────────────
+  // Table monitoring. The state, the claims and the counts are Postgres
+  // (migration 130, push_debounce), so the only heap map is a log throttle.
+  {
+    file: 'services/sensorTables.js', name: 'ignoredNotedAt', kind: 'cache',
+    key: 'the device_id of a sensor unit whose reading carried a tables value the strict parse ignored -> when that was last logged',
+    callerControls: 'nothing it can choose freely: the id comes from the sensor_devices row the presented API key resolved to, read back from the ingest statement, never from the body. A holder of one stolen key reaches exactly one key.',
+    protects: 'the log, not a resource: a unit with a firmware bug sends the same bad string twice a minute, and this keeps it to one line an hour per unit',
+    denominator: 'not a counter. One entry per unit, holding the time of its last line',
+    bound: '1000 entries, oldest note evicted first (re-set on every line so insertion order is age order); never cleared wholesale',
+    verdict: 'SAFE',
+    why: 'Nothing reads this to decide anything a device or a person sees: the reading is stored and answered 201 whether or not the line is written, so the worst a flood of keys could do is make a unit log once more often, which makes a problem more visible rather than less. The key space is the fleet, because a note is written only after the key has authenticated and the reading has been stored. It lives in this process, so a deploy or a second instance costs at most one extra line per unit.',
+  },
   {
     file: 'routes/venueSearch.js', name: 'inflight', kind: 'inflight',
     key: '`search:${normalizedQuery}|${coords}` (the `detail:${placeId}` half moved to services/placeDetailsCache.js)',
