@@ -261,11 +261,14 @@ app.use(faultMiddleware);
 //   venueProfileLimiter       30 / min     =  450
 //   digestOptOutLimiter       20 / min     =  300
 //   proLimiter                30 / min     =  450
+//   clientCrashLimiter        10 / hour    =    3
+//   tablesPublicLimiter      120 / min     = 1800
 //                                           -----
-//                                            8853
+//                                           10656
 //
-// 8900 is that, rounded up to the next hundred (8500 until proLimiter arrived
-// on 2026-09-24 and moved the sum past it). The sum deliberately includes
+// 10700 is that, rounded up to the next hundred (8500 until proLimiter arrived
+// on 2026-09-24 and moved the sum past it, 8900 until tablesPublicLimiter
+// arrived on 2026-10-23 and did the same). The sum deliberately includes
 // imageSpendLimiter and advisorQuestionLimiter even though both are EXTRA gates
 // on requests already counted elsewhere and add nothing a caller can push
 // through: a sharper model exists, but a backstop derived from a subtle model
@@ -355,7 +358,7 @@ app.use(faultMiddleware);
 // Same MemoryStore caveat as every other limiter in this file: it resets on
 // deploy and divides by the instance count.
 const GLOBAL_BACKSTOP_WINDOW_MS = 15 * 60 * 1000;
-const GLOBAL_BACKSTOP_MAX = 8900;
+const GLOBAL_BACKSTOP_MAX = 10700;
 
 // isDev is declared HERE rather than in the rate-limiting section below, which
 // is where it used to live, because this limiter has to be defined before the
@@ -1601,6 +1604,25 @@ const venueProfileLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
   message: { error: 'Too many profile requests, please slow down' },
 });
 
+// The public table summary on the sensors router (GET /api/sensors/:placeId/
+// tables/summary and POST /api/sensors/tables/summaries, routes/sensors.js):
+// counts and minutes about a venue's tables for any signed-in user, read by
+// the app as a venue card opens and as a list scrolls. Each read is a scan of
+// the venue's recent seatings and readings, so it gets a ceiling of its own
+// rather than riding the shared apiLimiter bucket, sized like the other
+// public venue reads (venueSearchLimiter) and keyed on the account for the
+// reason billedImageKey states: the routes are authenticated, and an address
+// meter on an authenticated route is a meter IP rotation defeats. Mounted
+// ahead of the sensors router so it is charged before apiLimiter is.
+const tablesPublicLimiter = isDev ? (_req, _res, next) => next() : rateLimit({
+  windowMs: 60 * 1000,
+  max: 120,
+  keyGenerator: billedAccountKey,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many table lookups, please slow down' },
+});
+
 // The digest unsubscribe link is the one venue surface with NO login, so it is
 // the one that cannot key on an account: the address is all there is. The token
 // is an HMAC and is not guessable, so this is not a brute-force gate; it is
@@ -1645,6 +1667,8 @@ app.use('/api/guest', apiLimiter, require('./routes/guest').router); // Guest li
 app.use('/api/badge', apiLimiter, require('./routes/badge'));        // Embeddable live-busyness SVG (public, claimed venues only)
 app.use('/api/avatars', apiLimiter, require('./routes/avatars'));    // PUBLIC: the cartoon avatars, drawn here (services/avatarArt.js)
 app.use('/api/og', apiLimiter, require('./routes/ogCard'));          // PUBLIC: invite share cards the website signed, drawn here (routes/ogCard.js)
+app.use('/api/sensors/tables/summaries', tablesPublicLimiter);  // the public table summary, batch (declared with the limiter above)
+app.use('/api/sensors/:placeId/tables/summary', tablesPublicLimiter); // the public table summary, one venue
 app.use('/api/sensors', apiLimiter, sensorRoutes);              // Pi sensor ingest (x-api-key) + read APIs (JWT)
 app.use('/api/checkin', apiLimiter, checkinRoutes);             // NFC tap + manual venue check-in (anon-friendly GET)
 app.use('/api/waitlist', apiLimiter, waitlistRoutes);           // PUBLIC, no auth — MUST stay before the /api catch-alls

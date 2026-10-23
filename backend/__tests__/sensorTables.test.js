@@ -37,11 +37,15 @@ const {
   TABLE_SEATINGS_STATEMENT, runTableSeatings,
 } = require('./helpers/sensorStoreModel');
 
+// The read side of the history (services/tableHistory.js: the floor with its
+// seats fallback, the venue's zone, the turn medians), modelled beside it so
+// the owner's floor keeps answering here; sensorTableHistory.test.js is the
+// suite about what those reads say.
+const { FLOOR_READ, dispatchTableHistory } = require('./helpers/tableHistoryModel');
+
 // The unit's advisory lock, exactly as services/sensorTables.js spells it: the
 // real suite holds this same key to prove the write waits on it.
 const TABLE_LOCK_STATEMENT = /^SELECT pg_advisory_xact_lock\(hashtext\('sensor_tables:' \|\| \$1::text\)\)$/;
-// The floor read (routes/sensors.js TABLE_FLOOR_SQL), by its head.
-const FLOOR_READ = /^SELECT s\.sensor_device_id, s\.table_no, .* FROM sensor_table_states s WHERE s\.venue_place_id = \$1/;
 
 let devices = [];
 let readings = [];
@@ -50,6 +54,9 @@ let tableStates = [];
 // transaction after the floor. sensorTableHistory.test.js reads it back.
 let seatings = [];
 let venueProfiles = [];
+// No corpus row for the venue here, so every clock question is answered in
+// UTC and no zone statement has anything to say.
+const mlVenues = [];
 // The venue plan per owner account, and a switch to make the lookup fail.
 let venueTiers = new Map();
 let tierLookupFails = false;
@@ -116,34 +123,15 @@ pool.query = (sql, params = []) => {
     const hit = tableStates.some((r) => r.venue_place_id === params[0]);
     return Promise.resolve({ rows: hit ? [{ '?column?': 1 }] : [], rowCount: hit ? 1 : 0 });
   }
-  if (FLOOR_READ.test(flat)) {
-    const rows = floorModel(params[0], params[1]);
-    return Promise.resolve({ rows, rowCount: rows.length });
-  }
   if (/AS occupied, MAX\(tables_total\) AS total FROM venue_sensor_data/.test(flat)) {
     const rows = hoursModel(params[0]);
     return Promise.resolve({ rows, rowCount: rows.length });
   }
+  // The floor read with its seats fallback, the zone and the medians.
+  const history = dispatchTableHistory({ tableStates, seatings, readings, venueProfiles, mlVenues }, flat, params);
+  if (history) return Promise.resolve(history);
   return Promise.reject(new Error(`unscripted query: ${flat.slice(0, 140)}`));
 };
-
-// The floor read (routes/sensors.js TABLE_FLOOR_SQL) over the fake rows: every
-// unit's rows at the place, by number, newest first within a number and then
-// by unit, each flagged stale past the window. The route settles a shared
-// number from that order. sensorIngestStatement.test.js runs the real
-// statement.
-function floorModel(placeId, minutes) {
-  return tableStates
-    .filter((r) => r.venue_place_id === placeId)
-    .sort((a, b) => (a.table_no - b.table_no) || (b.updated_at - a.updated_at)
-      || a.sensor_device_id.localeCompare(b.sensor_device_id))
-    .map((r) => ({
-      sensor_device_id: r.sensor_device_id,
-      table_no: r.table_no, people: r.people, state: r.state, state_since: r.state_since,
-      seats: r.seats ?? null, updated_at: r.updated_at,
-      stale: r.updated_at.getTime() < Date.now() - minutes * 60 * 1000,
-    }));
-}
 
 // The hours read (TABLE_HOURS_SQL) over the fake readings: the last 7 days,
 // readings with tables only, each unit's hour averaged on its own (and its
@@ -1403,11 +1391,16 @@ test('the floor: words for states, when each began, seats, in number order, fres
   assert.strictEqual(res.status, 200, res.raw);
   assert.deepStrictEqual(Object.keys(res.body).sort(), ['next_free', 'stale', 'tables', 'updated_at']);
   const at = new Date(ingest.body.recorded_at).getTime();
+  // likely_free_at is null on every table: the venue has no closed seatings
+  // yet, and sensorTableHistory.test.js is where it gets some. seats is the
+  // unit's count where it sent one (2 and 4); table 3 sent none, so it is the
+  // largest party seen there, the two people sitting at it now; table 1 has
+  // had nobody.
   assert.deepStrictEqual(res.body.tables, [
-    { number: 1, people: 0, state: 'free', since: new Date(at - 340000).toISOString(), seats: null },
-    { number: 2, people: 3, state: 'seated', since: new Date(at - 845000).toISOString(), seats: 4 },
-    { number: 3, people: 2, state: 'waiting', since: new Date(at - 410000).toISOString(), seats: null },
-    { number: 4, people: 0, state: 'needs_clearing', since: new Date(at - 95000).toISOString(), seats: 6 },
+    { number: 1, people: 0, state: 'free', since: new Date(at - 340000).toISOString(), seats: null, likely_free_at: null },
+    { number: 2, people: 3, state: 'seated', since: new Date(at - 845000).toISOString(), seats: 4, likely_free_at: null },
+    { number: 3, people: 2, state: 'waiting', since: new Date(at - 410000).toISOString(), seats: 2, likely_free_at: null },
+    { number: 4, people: 0, state: 'needs_clearing', since: new Date(at - 95000).toISOString(), seats: 6, likely_free_at: null },
   ]);
   assert.strictEqual(res.body.updated_at, new Date(at).toISOString());
   assert.strictEqual(res.body.stale, false);
@@ -1455,8 +1448,10 @@ test('the floor is every unit\'s tables together, in number order, and does not 
   await settle();
   const res = await get(FLOOR, OWNER_ID);
   assert.strictEqual(res.status, 200, res.raw);
+  // Seats: the unit's count on 42, the party now sitting on 1 and 3 (the
+  // largest seen there), nothing on the two tables nobody has sat at.
   assert.deepStrictEqual(res.body.tables.map((t) => `${t.number}:${t.people}:${t.state}:${t.seats}`),
-    ['1:2:seated:null', '2:0:free:null', '3:3:waiting:null', '41:0:needs_clearing:null', '42:4:seated:6']);
+    ['1:2:seated:2', '2:0:free:null', '3:3:waiting:3', '41:0:needs_clearing:null', '42:4:seated:6']);
   assert.strictEqual(res.body.updated_at, tableStates.find((r) => r.table_no === 41).updated_at.toISOString(), 'the newest row, whichever unit wrote it');
   assert.strictEqual(res.body.stale, false);
   assert.strictEqual(res.body.next_free, 42, 'the party seated longest is in the back room');
@@ -1535,7 +1530,7 @@ test('hours with two units: each unit\'s hour is averaged on its own and the uni
   }
   const res = await get(HOURS, OWNER_ID);
   assert.strictEqual(res.status, 200, res.raw);
-  assert.deepStrictEqual(res.body, { hours: [{ hour: new Date(lastHour).toISOString(), occupied: 10, total: 18 }] },
+  assert.deepStrictEqual(res.body, { hours: [{ hour: new Date(lastHour).toISOString(), occupied: 10, total: 18 }], timeZone: null },
     'averaged across both units this read as 5 of 12');
 });
 
@@ -1566,6 +1561,9 @@ test('hours: the owner gets one row per hour with tables, oldest first, as numbe
       { hour: new Date(lastHour - HOUR).toISOString(), occupied: 0, total: 2 },
       { hour: new Date(lastHour).toISOString(), occupied: 4, total: 4 },
     ],
+    // The server knows no zone for this venue (no corpus row), and says so
+    // rather than guessing one; the dashboard folds on what it has.
+    timeZone: null,
   });
 });
 
@@ -1574,7 +1572,7 @@ test('hours with no table readings is an empty list, not an error', async () => 
   await call('/api/sensors/data', { apiKey: KEY, body: reading() });
   const res = await get(HOURS, OWNER_ID);
   assert.strictEqual(res.status, 200);
-  assert.deepStrictEqual(res.body, { hours: [] });
+  assert.deepStrictEqual(res.body, { hours: [], timeZone: null });
 });
 
 test('a failing read is a 500 with nothing in it but the error', async () => {
@@ -1612,7 +1610,7 @@ const UNAVAILABLE = {
   retryable: true,
 };
 const TIER_READ = /FROM venue_profiles vp LEFT JOIN venue_subscriptions/;
-const TABLE_DATA_READ = /FROM sensor_table_states s WHERE|tables_total > 0/;
+const TABLE_DATA_READ = /FROM sensor_table_states s|FROM sensor_table_seatings|tables_total > 0/;
 const HAS_TABLES_READ = /^SELECT 1 FROM sensor_table_states WHERE venue_place_id/;
 
 function billingOn() {
