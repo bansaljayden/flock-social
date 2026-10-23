@@ -517,6 +517,39 @@ test('on the real schema: a removed table is deleted, a backfill and a reading w
   assert.deepEqual(await floorShape(), ['1:2:s', '4:0:f']);
 });
 
+test('on the real schema: ten minutes of silence about tables forgets the unit\'s rows; nine, an ignored string and a backfill leave them', async () => {
+  assert.equal((await push(reading({ tables: EXAMPLE_TABLES }))).status, 201);
+  await settleTables();
+  const ageRows = (minutes) => pool.query(
+    `UPDATE sensor_table_states SET updated_at = NOW() - ($1::int * INTERVAL '1 minute') WHERE sensor_device_id = 'sensor_live'`, [minutes]
+  );
+  const spy = spyOnPool();
+  try {
+    await ageRows(9);
+    await ageLiveUnit();
+    assert.equal((await push(reading())).status, 201);
+    await settleTables();
+    assert.equal((await floor()).length, 4, 'nine minutes of silence is a hiccup');
+    assert.ok(!spy.sent.some((s) => /DELETE FROM sensor_table_states/.test(s)), 'rows inside the window cost no statement');
+
+    await ageRows(11);
+    await ageLiveUnit();
+    // An ignored string is not silence, and a backfill is not a word on the floor.
+    assert.equal((await push(reading({ tables: '2:0:f:9;1:0:f:9' }))).status, 201);
+    assert.equal((await push(reading({ recorded_at: new Date(Date.now() - 30 * 60 * 1000).toISOString() }))).status, 201);
+    await settleTables();
+    assert.equal((await floor()).length, 4);
+
+    await ageLiveUnit();
+    assert.equal((await push(reading())).status, 201);
+    await settleTables();
+    assert.deepEqual(await floor(), [], 'eleven minutes of silence is the last table removed');
+    assert.equal(spy.sent.filter((s) => /DELETE FROM sensor_table_states/.test(s)).length, 1);
+  } finally {
+    spy.restore();
+  }
+});
+
 test('on the real schema: an older live reading arriving after a newer one changes nothing', async () => {
   assert.equal((await push(reading({ tables: '1:2:w:400;2:0:f:9' }))).status, 201);
   await settleTables();

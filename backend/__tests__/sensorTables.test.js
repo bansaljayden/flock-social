@@ -33,7 +33,7 @@ const pool = require('../config/database');
 // .js), so the flood guard and the dedupe behave as they do in Postgres, and
 // the table-state writer modelled beside it.
 const {
-  INGEST_STATEMENT, runIngest, TABLE_STATES_STATEMENT, runTableStates,
+  INGEST_STATEMENT, runIngest, TABLE_STATES_STATEMENT, runTableStates, SILENT_UNIT_STATEMENT, runSilentUnit,
 } = require('./helpers/sensorStoreModel');
 
 // The unit's advisory lock, exactly as services/sensorTables.js spells it: the
@@ -58,7 +58,8 @@ let tableStatesImpl = null;
 pool.query = (sql, params = []) => {
   const flat = String(sql).replace(/\s+/g, ' ').trim();
   queryLog.push({ sql: flat, params });
-  if (INGEST_STATEMENT.test(flat)) return Promise.resolve(runIngest({ devices, readings }, params));
+  // The ingest reads the floor's newest row for the device too (tables_updated_at).
+  if (INGEST_STATEMENT.test(flat)) return Promise.resolve(runIngest({ devices, readings, tableStates }, params));
   // The floor write's transaction and the unit's lock, around the statement.
   if (/^(BEGIN|COMMIT|ROLLBACK)$/.test(flat)) return Promise.resolve({ rows: [], rowCount: 0 });
   if (TABLE_LOCK_STATEMENT.test(flat)) return Promise.resolve({ rows: [{ pg_advisory_xact_lock: '' }], rowCount: 1 });
@@ -66,6 +67,7 @@ pool.query = (sql, params = []) => {
     if (tableStatesImpl) return tableStatesImpl(params);
     return Promise.resolve(runTableStates({ tableStates }, params));
   }
+  if (SILENT_UNIT_STATEMENT.test(flat)) return Promise.resolve(runSilentUnit({ tableStates }, params));
   // The alert's owner lookup. The verified clause is honoured only when the
   // statement carries it, so dropping it from the code fails a test here
   // rather than being supplied by the fake.
@@ -696,7 +698,7 @@ test('a table the owner removed on the box loses its row; the rest are replaced'
   assert.deepStrictEqual(floorOf(), ['1:2:s', '2:0:c', '4:0:f']);
 });
 
-test('a live reading without tables leaves the floor exactly as it was', async () => {
+test('a live reading without tables leaves a fresh floor exactly as it was, and asks nothing of the database for it', async () => {
   reset();
   await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: EXAMPLE }) });
   await settle();
@@ -709,6 +711,110 @@ test('a live reading without tables leaves the floor exactly as it was', async (
   }
   assert.strictEqual(JSON.stringify(tableStates), before);
   assert.strictEqual(stateWrites().length, 1, 'only the reading that carried tables wrote the floor');
+  assert.strictEqual(queryLog.filter((q) => SILENT_UNIT_STATEMENT.test(q.sql)).length, 0, 'rows inside the window cost no statement');
+});
+
+// The box cannot say "no tables": it stops sending the field, for a reading
+// or two when its model yields nothing and for good when the owner removes
+// the last table. Ten minutes of silence tells the two apart.
+const silentWrites = () => queryLog.filter((q) => SILENT_UNIT_STATEMENT.test(q.sql));
+const ageFloor = (deviceId, ms) => {
+  for (const r of tableStates) if (r.sensor_device_id === deviceId) r.updated_at = new Date(Date.now() - ms);
+};
+
+test('ten minutes of silence about tables forgets the unit\'s rows; nine leaves them, as do an ignored string and a backfill; the other unit keeps its own', async () => {
+  reset();
+  await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: EXAMPLE }) });
+  await call('/api/sensors/data', { apiKey: OTHER_KEY, body: reading({ tables: '41:0:f:5' }) });
+  await settle();
+
+  // Nine minutes: a model hiccup. The rows stay and nothing is asked for them.
+  ageFloor('flux_tables_01', 9 * 60 * 1000);
+  ageDevice();
+  assert.strictEqual((await call('/api/sensors/data', { apiKey: KEY, body: reading() })).status, 201);
+  await settle();
+  assert.strictEqual(floorOf().length, 4);
+  assert.strictEqual(silentWrites().length, 0);
+
+  // Eleven minutes. An ignored string is not silence: the unit has tables and a bug.
+  ageFloor('flux_tables_01', 11 * 60 * 1000);
+  ageDevice();
+  await capturingLogs(async () => {
+    assert.strictEqual((await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: 'junk' }) })).status, 201);
+    await settle();
+  });
+  assert.strictEqual(floorOf().length, 4, 'a bad string emptied the floor');
+  // Nor is a backfilled reading a word on the floor.
+  assert.strictEqual((await call('/api/sensors/data', { apiKey: KEY, body: reading({ recorded_at: ago(30 * 60 * 1000) }) })).status, 201);
+  await settle();
+  assert.strictEqual(floorOf().length, 4, 'history emptied the floor');
+  assert.strictEqual(silentWrites().length, 0);
+
+  // A live reading without tables: the rows go, the other unit's stay, and
+  // the device's answer is what it always was.
+  ageDevice();
+  const res = await call('/api/sensors/data', { apiKey: KEY, body: reading() });
+  assert.strictEqual(res.status, 201, res.raw);
+  assert.deepStrictEqual(Object.keys(res.body).sort(), ['recorded_at', 'success']);
+  await settle();
+  assert.deepStrictEqual(floorOf(), []);
+  assert.deepStrictEqual(floorOf('flux_tables_02'), ['41:0:f']);
+  assert.strictEqual(silentWrites().length, 1);
+  const [deviceId, stamp, minutes] = silentWrites()[0].params;
+  assert.deepStrictEqual([deviceId, minutes], ['flux_tables_01', sensorTables.SILENT_UNIT_MINUTES]);
+  assert.strictEqual(new Date(stamp).getTime(), readings[readings.length - 1].recorded_at.getTime(), 'judged at the reading\'s own time');
+  assert.strictEqual(sensorTables.SILENT_UNIT_MINUTES, 10);
+
+  // With no rows left there is nothing to forget, and nothing is asked again.
+  ageDevice();
+  await call('/api/sensors/data', { apiKey: KEY, body: reading() });
+  await settle();
+  assert.strictEqual(silentWrites().length, 1);
+});
+
+test('silence is judged on the reading\'s own clock: a buffered reading seven minutes after the last tables leaves rows that are twelve minutes old by now', async () => {
+  reset();
+  await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: EXAMPLE }) });
+  await settle();
+  ageFloor('flux_tables_01', 12 * 60 * 1000);
+  // A drain after an outage: this reading was taken seven minutes after the
+  // rows were written, well inside the window, however late it arrives.
+  ageDevice();
+  assert.strictEqual((await call('/api/sensors/data', { apiKey: KEY, body: reading({ recorded_at: ago(5 * 60 * 1000) }) })).status, 201);
+  await settle();
+  assert.strictEqual(floorOf().length, 4, 'a late reading was judged by its arrival');
+  assert.strictEqual(silentWrites().length, 0);
+  // The one taken eleven minutes after them forgets them.
+  ageDevice();
+  assert.strictEqual((await call('/api/sensors/data', { apiKey: KEY, body: reading({ recorded_at: ago(60 * 1000) }) })).status, 201);
+  await settle();
+  assert.deepStrictEqual(floorOf(), []);
+  assert.strictEqual(silentWrites().length, 1);
+});
+
+test('a forgetting that fails is logged and changes neither the answer nor the stored reading', async () => {
+  reset();
+  await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: EXAMPLE }) });
+  await settle();
+  ageFloor('flux_tables_01', 11 * 60 * 1000);
+  ageDevice();
+  const realQuery = pool.query;
+  pool.query = (sql, params) => (SILENT_UNIT_STATEMENT.test(String(sql).replace(/\s+/g, ' ').trim())
+    ? Promise.reject(new Error('connection terminated'))
+    : realQuery(sql, params));
+  try {
+    let res;
+    const lines = await capturingLogs(async () => {
+      res = await call('/api/sensors/data', { apiKey: KEY, body: reading() });
+      await settle();
+    });
+    assert.strictEqual(res.status, 201);
+    assert.deepStrictEqual(Object.keys(res.body).sort(), ['recorded_at', 'success']);
+    assert.strictEqual(readings.length, 2);
+    assert.ok(lines.some((l) => /Table states for flux_tables_01 could not be forgotten after the reading was stored: connection terminated/.test(l)), lines.join('\n'));
+  } finally {
+    pool.query = realQuery;
+  }
 });
 
 test('a re-delivered reading and a throttled one write nothing to the floor', async () => {

@@ -30,8 +30,13 @@
 --   because a refused reading is one the device drops forever).
 --   sensor_table_states: services/sensorTables.js, after a LIVE reading is
 --   stored (one GET /current could serve), replacing that device's rows with
---   the tables in the reading. A backfilled reading never touches it, and a
---   live reading without the string leaves the rows as they were.
+--   the tables in the reading. A backfilled reading never touches it. A live
+--   reading without the string leaves the rows as they were for ten minutes
+--   (the box cannot say "no tables", and a moment of silence is its model
+--   yielding nothing for a reading) and deletes the device's rows once they
+--   are older than that, measured from the reading's own time: the owner
+--   removed the last table, or the unit runs a build without tables. A
+--   string that was sent and ignored is not silence and changes nothing.
 --
 -- WHO READS IT. GET /api/sensors/:placeId/tables (the live floor) and
 --   /tables/hours (tables in use by hour), both for the venue's verified owner

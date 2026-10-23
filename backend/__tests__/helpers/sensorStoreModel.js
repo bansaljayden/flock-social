@@ -111,6 +111,15 @@ function runIngest(store, params) {
     }
   }
 
+  // tables_updated_at: when the device last wrote its table rows (migration
+  // 130), for the silence rule. Null for a suite whose store has no floor.
+  const tableRows = Array.isArray(store.tableStates)
+    ? store.tableStates.filter((r) => r.sensor_device_id === device.device_id)
+    : [];
+  const tablesUpdatedAt = tableRows.length
+    ? new Date(Math.max(...tableRows.map((r) => r.updated_at.getTime())))
+    : null;
+
   return {
     rows: [{
       id: device.id,
@@ -119,6 +128,7 @@ function runIngest(store, params) {
       is_active: device.is_active,
       duplicate_of: dup ? dup.recorded_at : raced,
       recorded_at: inserted,
+      tables_updated_at: tablesUpdatedAt,
     }],
     rowCount: 1,
   };
@@ -186,4 +196,33 @@ function runTableStates(store, params) {
   return { rows, rowCount: rows.length };
 }
 
-module.exports = { INGEST_STATEMENT, runIngest, intervalToMs, TABLE_STATES_STATEMENT, runTableStates };
+// ---------------------------------------------------------------------------
+// The silence rule, services/sensorTables.js SILENT_UNIT_SQL: a device's table
+// rows older than the window before the reading's time (capped at the server
+// clock) are deleted. Modelled and real-run under the same agreement as above.
+// ---------------------------------------------------------------------------
+const SILENT_UNIT_STATEMENT = /^DELETE FROM sensor_table_states s WHERE s\.sensor_device_id = \$1::varchar AND s\.updated_at < LEAST\(\$2::timestamptz, NOW\(\)\) - \(\$3::int \* INTERVAL '1 minute'\)$/;
+
+/**
+ * Run SILENT_UNIT_SQL against `store.tableStates`. Parameters: $1 device_id,
+ * $2 the reading's recorded_at, $3 the window in minutes.
+ */
+function runSilentUnit(store, params) {
+  const [deviceId, recordedAt, minutes] = params;
+  const asOf = Math.min(new Date(recordedAt).getTime(), Date.now());
+  const cutoff = asOf - minutes * 60000;
+  let deleted = 0;
+  for (let i = store.tableStates.length - 1; i >= 0; i -= 1) {
+    const r = store.tableStates[i];
+    if (r.sensor_device_id === deviceId && r.updated_at.getTime() < cutoff) {
+      store.tableStates.splice(i, 1);
+      deleted += 1;
+    }
+  }
+  return { rows: [], rowCount: deleted };
+}
+
+module.exports = {
+  INGEST_STATEMENT, runIngest, intervalToMs, TABLE_STATES_STATEMENT, runTableStates,
+  SILENT_UNIT_STATEMENT, runSilentUnit,
+};

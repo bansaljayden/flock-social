@@ -11,7 +11,7 @@ const { scalarOnly } = require('../validators/shape');
 // refused are at the top of that file.
 const {
   MAX_TABLES_LENGTH, STATE_WORDS, TABLES_STALE_AFTER_MINUTES,
-  readTables, tableCounts, noteIgnoredTables, noteTableClash, applyTableReading,
+  readTables, tableCounts, noteIgnoredTables, noteTableClash, applyTableReading, applySilentReading,
 } = require('../services/sensorTables');
 // The table routes are a Roost feature, gated the way requireVenueTier gates.
 const { checkVenueTier } = require('../services/venueEntitlements');
@@ -168,6 +168,14 @@ const DIGEST_FORM = /^sha256:/i;
 // from the `tables` string (services/sensorTables.js), and NULL for a reading
 // that carried none or carried one the strict parse ignored.
 //
+// tables_updated_at, on the answer, is when this unit last wrote its table
+// rows (migration 130). It is read in this same round trip so that a live
+// reading with no tables string can tell whether the unit's rows have been
+// silent long enough to be forgotten (services/sensorTables.js, SILENCE)
+// without a statement of its own on every reading: most units have no table
+// rows at all, and this is the one place the handler already learns about
+// the device. One index lookup of at most forty rows.
+//
 // Every parameter keeps ONE type through the statement ($4, $6 and $7 are each
 // used more than once, with the same cast every time):
 // __tests__/sqlParameterTypes.test.js prepares this against a migrated
@@ -230,7 +238,8 @@ const INGEST_SQL = `
   )
   SELECT d.id, d.device_id, d.venue_place_id, d.is_active,
          COALESCE((SELECT recorded_at FROM dup), (SELECT recorded_at FROM raced)) AS duplicate_of,
-         (SELECT recorded_at FROM ins) AS recorded_at
+         (SELECT recorded_at FROM ins) AS recorded_at,
+         (SELECT MAX(t.updated_at) FROM sensor_table_states t WHERE t.sensor_device_id = d.device_id) AS tables_updated_at
     FROM device d`;
 
 // What the statement is told when this request must not write: nothing but the
@@ -650,11 +659,16 @@ router.post('/data',
       // The live floor, for the venue's owner. Same window as the live figure
       // (affectsLiveFigure, not isBackfill): a reading /current would serve is
       // the newest word on the tables too, and an older one is history. Not
-      // awaited, never throws: applyTableReading logs its own failures, and
-      // the device already has its answer. Nothing of it reaches the public
-      // broadcast above; venue:{placeId} is a room anyone can join.
-      if (filing.tables && filing.affectsLiveFigure) {
-        applyTableReading(device, filing.tables, device.recorded_at);
+      // awaited, never throws: both calls log their own failures, and the
+      // device already has its answer. Nothing of it reaches the public
+      // broadcast above; venue:{placeId} is a room anyone can join. A live
+      // reading with no tables string is a word on the floor as well: silence
+      // long enough forgets the unit's rows (SILENCE in sensorTables.js). A
+      // string that was sent and ignored is not silence, it is the bug the
+      // log names below, and the rows stay.
+      if (filing.affectsLiveFigure) {
+        if (filing.tables) applyTableReading(device, filing.tables, device.recorded_at);
+        else if (!tableField.ignored) applySilentReading(device, device.recorded_at);
       }
 
       // A tables value that was sent and dropped is said in the log, at most

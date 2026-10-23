@@ -23,6 +23,12 @@
 // is set to (the box warns when a longer one is configured): the floor is
 // called stale TABLES_STALE_AFTER_MINUTES after its last row, and a unit on a
 // five-minute interval would read as offline for most of every interval.
+// A unit that stops sending it says nothing: the box cannot say "no tables".
+// The server keeps the unit's table rows through ten minutes of such silence,
+// which covers its model yielding nothing for a reading or two, and deletes
+// them at the first live reading without the field after that, which is the
+// owner having removed the last table zone or a build without tables
+// (SILENCE below). Agreed with the box side.
 //
 //   entries joined by `;`, each N:P:S:A or N:P:S:A:C
 //   N  table number, 1-200, unique, strictly ascending. A box sends at most
@@ -250,9 +256,12 @@ function noteTableClash(placeId, clashes, now = Date.now()) {
 // INGEST_SQL), and only after the reading is stored and the device has its
 // answer. A backfilled reading from an hour ago is history, not the floor, so
 // it never touches these rows. A live reading with no tables string leaves
-// them alone: the contract has no way to say "no tables" other than silence,
-// and silence from an older build is not a reason to wipe the floor. Rows that
-// stop being refreshed are reported stale by the read route instead.
+// them alone for ten minutes and then forgets them (SILENCE below): the
+// contract has no way to say "no tables" other than silence, a moment of it
+// is the box's model yielding nothing for a reading, and ten minutes of it is
+// the owner having removed the last table or a unit running a build without
+// tables. Rows that stop being refreshed are reported stale by the read route
+// in the meantime.
 //
 // ONE STATEMENT, for the reason INGEST_SQL is one: the database is a network
 // round trip away. In it, all reading the same snapshot:
@@ -303,6 +312,11 @@ function noteTableClash(placeId, clashes, now = Date.now()) {
 // stale rather than shown an old one as now. The alert reads the same number,
 // below, so a push never describes a floor the dashboard would call stale.
 const TABLES_STALE_AFTER_MINUTES = 3;
+
+// Work started after an answer has been written (the floor write, the alert,
+// the forgetting of a silent unit's rows), so a test can wait for it to
+// finish instead of sleeping and hoping.
+const inFlight = new Set();
 
 // The unit's lock (ONE WRITER PER UNIT AT A TIME above), in the namespaced
 // form every advisory lock in this codebase uses, so it can never collide
@@ -389,6 +403,57 @@ async function storeTableStates(device, tables, recordedAt) {
   } finally {
     client.release();
   }
+}
+
+// ---------------------------------------------------------------------------
+// SILENCE: a live reading with no `tables` from a unit that has table rows.
+//
+// The box cannot say "no tables". When the owner removes the last table zone
+// it stops sending the field, and it also stops for a moment when its model
+// yields nothing for a reading or two. The two look the same from here and
+// need opposite answers, so time tells them apart (agreed with the box side):
+// the unit's rows are kept through SILENT_UNIT_MINUTES of silence and deleted
+// by the first live reading without tables after that. Measured on the
+// reading's own clock, like everything in the floor, so a drain after an
+// outage judges each reading by when it was taken, not when it arrived, and
+// a reading older than the rows (two deliveries crossing) deletes nothing. A
+// string that was sent and ignored is not silence: the unit still has tables,
+// and a bug that noteIgnoredTables names.
+//
+// NO ROUND TRIP FOR MOST READINGS. Most units have no table rows at all, and
+// the ingest is pinned to one statement, so that statement reports when the
+// unit last wrote its rows (INGEST_SQL, tables_updated_at) and the DELETE is
+// sent only when there is something old enough to delete: once per silence,
+// since afterwards there are no rows to report. The DELETE still carries the
+// rule in its WHERE, so a row a newer reading wrote in the meantime survives
+// it, and no lock is needed for one statement that re-checks its own
+// condition on the row it reaches.
+// ---------------------------------------------------------------------------
+const SILENT_UNIT_MINUTES = 10;
+const SILENT_UNIT_SQL = `
+  DELETE FROM sensor_table_states s
+   WHERE s.sensor_device_id = $1::varchar
+     AND s.updated_at < LEAST($2::timestamptz, NOW()) - ($3::int * INTERVAL '1 minute')`;
+
+/**
+ * Forget a unit's table rows once a live reading without tables finds them
+ * older than SILENT_UNIT_MINUTES. `device` is the ingest statement's row, with
+ * tables_updated_at. Called like applyTableReading: after the 201, never
+ * awaited, never throws. Resolves to null when there is nothing to do.
+ */
+function applySilentReading(device, recordedAt) {
+  const lastWrite = device.tables_updated_at;
+  if (!lastWrite) return null;
+  const asOf = Math.min(new Date(recordedAt).getTime(), Date.now());
+  if (new Date(lastWrite).getTime() >= asOf - SILENT_UNIT_MINUTES * 60 * 1000) return null;
+  const run = (async () => {
+    await pool.query(SILENT_UNIT_SQL, [device.device_id, recordedAt, SILENT_UNIT_MINUTES]);
+  })().catch((err) => {
+    console.error(`Table states for ${device.device_id} could not be forgotten after the reading was stored:`, err.message);
+  });
+  inFlight.add(run);
+  run.then(() => inFlight.delete(run));
+  return run;
 }
 
 // ---------------------------------------------------------------------------
@@ -566,10 +631,6 @@ async function alertOwner(device, changes) {
   }
 }
 
-// Work started after an answer has been written, so a test can wait for it to
-// finish instead of sleeping and hoping.
-const inFlight = new Set();
-
 /**
  * Apply a stored live reading's tables to the floor, then, if the reading is
  * recent, alert the owner about any table that changed into waiting or needs
@@ -608,6 +669,8 @@ module.exports = {
   noteIgnoredTables,
   noteTableClash,
   applyTableReading,
+  applySilentReading,
+  SILENT_UNIT_MINUTES,
   wantsTableAlerts,
   tableAlertCopy,
   TABLE_ALERT_WINDOW_MINUTES,
