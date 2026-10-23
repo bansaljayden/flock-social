@@ -121,12 +121,15 @@ export function usableSummary(s) {
 // ---- the cache ------------------------------------------------------------
 
 // `${party}|${placeId}` -> { summary: object | null, at: ms }. null is a
-// remembered "no data" answer.
-let cache = new Map();
+// remembered "no data" answer. The three stores are const and emptied in
+// place, never swapped: the per-chunk closures in flush() read them, and a
+// closure in a loop over a reassignable binding is the no-loop-func warning
+// the build treats as an error.
+const cache = new Map();
 // Keys with a request out, so a second ask for the same place joins it.
-let inFlight = new Set();
+const inFlight = new Set();
 // Place ids asked for this tick, per party, sent together on the next flush.
-let pending = new Map();
+const pending = new Map();
 let flushTimer = null;
 let flushWaiters = [];
 // Bumped on every cache write; the hooks render off it.
@@ -188,8 +191,8 @@ export function readTableSummaries(placeIds, party = TABLE_PARTY_DEFAULT) {
 // every POST has settled; callers that only wanted the ask sent ignore it.
 async function flush() {
   flushTimer = null;
-  const batches = pending;
-  pending = new Map();
+  const batches = new Map(pending);
+  pending.clear();
   const waiters = flushWaiters;
   flushWaiters = [];
   const sends = [];
@@ -313,9 +316,9 @@ export function useTableSummary(placeId, party = TABLE_PARTY_DEFAULT, enabled = 
 
 // Tests only: back to nothing known and nothing queued.
 export function resetTableSummariesForTests() {
-  cache = new Map();
-  inFlight = new Set();
-  pending = new Map();
+  cache.clear();
+  inFlight.clear();
+  pending.clear();
   if (flushTimer !== null) clearTimeout(flushTimer);
   flushTimer = null;
   flushWaiters = [];

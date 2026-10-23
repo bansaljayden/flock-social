@@ -965,6 +965,36 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     return el;
   }, [buildPinSvg, buildDiscSvg, buildPhotoPin, categoryRingColor, resolveVenuePhoto]);
 
+  // ---------- table lines on the pins ----------
+  // place_id -> the compact table line, for the venues whose sensor answered.
+  // A ref, so the marker rebuild below can dress a fresh pin without taking
+  // the answers as a dependency and rebuilding every pin once a minute; the
+  // effect after the rebuild repaints the standing pins when the answers
+  // change. textContent, never innerHTML: the words are the app's own, but
+  // the label is an innerHTML sink and this keeps it one sink, not two.
+  const tableLinesRef = useRef(new Map());
+  const paintTableLine = useCallback((el, venue) => {
+    const label = el.querySelector('.mlb-marker-label');
+    if (!label) return;
+    const text = tableLinesRef.current.get(venue.place_id) || null;
+    let line = label.querySelector('.mlb-label-tables');
+    if (!text) {
+      if (line) line.remove();
+    } else {
+      if (!line) {
+        line = document.createElement('span');
+        line.className = 'mlb-label-tables';
+        label.appendChild(line);
+      }
+      line.textContent = text;
+    }
+    // The pin's accessible name carries the line too, after the name and the
+    // crowd figure buildMarkerEl gives it, because the line is now part of
+    // what the pin is showing.
+    const base = Number.isFinite(venue.crowd) ? `${venue.name}, crowd ${Math.round(venue.crowd)}` : `${venue.name}`;
+    el.setAttribute('aria-label', text ? `${base}, ${text}` : base);
+  }, []);
+
   // ---------- init map (once) ----------
   useEffect(() => {
     if (!mapRef.current || mapInstanceRef.current) return;
@@ -1575,36 +1605,6 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
     );
     return () => { if (watchIdRef.current !== null) clearWatch(watchIdRef.current); };
   }, [mapVisible, mapReady, followUser, locationAllowed]);
-
-  // ---------- table lines on the pins ----------
-  // place_id -> the compact table line, for the venues whose sensor answered.
-  // A ref, so the marker rebuild below can dress a fresh pin without taking
-  // the answers as a dependency and rebuilding every pin once a minute; the
-  // effect after the rebuild repaints the standing pins when the answers
-  // change. textContent, never innerHTML: the words are the app's own, but
-  // the label is an innerHTML sink and this keeps it one sink, not two.
-  const tableLinesRef = useRef(new Map());
-  const paintTableLine = useCallback((el, venue) => {
-    const label = el.querySelector('.mlb-marker-label');
-    if (!label) return;
-    const text = tableLinesRef.current.get(venue.place_id) || null;
-    let line = label.querySelector('.mlb-label-tables');
-    if (!text) {
-      if (line) line.remove();
-    } else {
-      if (!line) {
-        line = document.createElement('span');
-        line.className = 'mlb-label-tables';
-        label.appendChild(line);
-      }
-      line.textContent = text;
-    }
-    // The pin's accessible name carries the line too, after the name and the
-    // crowd figure buildMarkerEl gives it, because the line is now part of
-    // what the pin is showing.
-    const base = Number.isFinite(venue.crowd) ? `${venue.name}, crowd ${Math.round(venue.crowd)}` : `${venue.name}`;
-    el.setAttribute('aria-label', text ? `${base}, ${text}` : base);
-  }, []);
 
   // ---------- venue markers ----------
   useEffect(() => {
