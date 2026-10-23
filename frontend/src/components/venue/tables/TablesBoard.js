@@ -18,7 +18,10 @@
  *     state rests on colour alone: free is green, seated red, needs clearing a
  *     pale yellow with a dashed edge, and a party nobody has stopped by for is
  *     solid amber, the loudest thing on the tab. A table whose seat count the
- *     sensor's setup knows says it ("4 seats").
+ *     unit itself knows says it ("4 seats"); one it does not, but has seen a
+ *     party at lately, says that and only that, in the muted style ("seats 4
+ *     so far", from the server's party_max), since the largest party seen is
+ *     not a seat count (seatsLine in lib/venueTables.js).
  *
  * The tab exists once a read has returned a table, this visit or on an earlier
  * one on this device (App.js remembers the place), so the board is a skeleton
@@ -47,7 +50,7 @@ import {
   nextFreeLine,
   peopleText,
   refreshLines,
-  seatsText,
+  seatsLine,
   staleLines,
   tableAlerts,
   tablesFrom,
@@ -62,6 +65,8 @@ import {
 // and sink into the amber.
 const ON_AMBER_INK = '#1e293b';
 
+// `faint` is the muted tier, for the seats-so-far line: the page's tertiary
+// ink, except on the amber tile, where every word is the one dark ink.
 function tileLook(state, colors) {
   if (state === 'waiting') {
     return {
@@ -70,6 +75,7 @@ function tileLook(state, colors) {
       word: ON_AMBER_INK,
       ink: ON_AMBER_INK,
       sub: ON_AMBER_INK,
+      faint: ON_AMBER_INK,
     };
   }
   if (state === 'needs_clearing') {
@@ -79,6 +85,7 @@ function tileLook(state, colors) {
       word: 'var(--accent-amber-text)',
       ink: 'var(--text-primary)',
       sub: 'var(--text-secondary)',
+      faint: 'var(--text-tertiary)',
     };
   }
   if (state === 'seated') {
@@ -88,6 +95,7 @@ function tileLook(state, colors) {
       word: 'var(--accent-red-text)',
       ink: 'var(--text-primary)',
       sub: 'var(--text-secondary)',
+      faint: 'var(--text-tertiary)',
     };
   }
   return {
@@ -96,6 +104,7 @@ function tileLook(state, colors) {
     word: 'var(--accent-green-text)',
     ink: 'var(--text-primary)',
     sub: 'var(--text-secondary)',
+    faint: 'var(--text-tertiary)',
   };
 }
 
@@ -119,7 +128,7 @@ function TableTile({ table, clockAt, colors }) {
   const counting = table.state === 'seated' || table.state === 'waiting';
   const timeLine = tileTimeText(table, clockAt);
   const people = counting ? peopleText(table.people) : null;
-  const seats = seatsText(table.seats);
+  const seats = seatsLine(table);
   return (
     <li
       data-state={table.state}
@@ -127,7 +136,7 @@ function TableTile({ table, clockAt, colors }) {
     >
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'baseline', justifyContent: 'space-between', columnGap: '6px' }}>
         <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: look.ink, margin: 0 }}>Table {table.number}</p>
-        {seats && <p style={{ fontSize: 'var(--t-meta)', color: look.sub, margin: 0 }}>{seats}</p>}
+        {seats && <p data-seats={seats.seen ? 'seen' : 'known'} style={{ fontSize: 'var(--t-meta)', color: seats.seen ? look.faint : look.sub, margin: 0 }}>{seats.text}</p>}
       </div>
       <p data-testid="table-state" style={{ fontSize: 'var(--t-meta)', fontWeight: '700', color: look.word, margin: '2px 0 0' }}>{TABLE_STATE_WORDS[table.state]}</p>
       {counting && timeLine && (

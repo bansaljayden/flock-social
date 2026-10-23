@@ -25,6 +25,19 @@
  *     unrefreshed, empty, full, and every null the stats can carry;
  *   - the board's next-free line uses the server's estimate when there is
  *     one, inside the rule phase 1 set, and says whose clock the time is on;
+ *   - the waits keep "no table that fits" apart from "no estimate yet" and
+ *     from "tables open, seats unknown" (open_now true, false or null);
+ *   - Coming up leads every row with its day on the venue's clock (today,
+ *     earlier today, yesterday, the weekday, the date from six days out),
+ *     and prints an estimate only while it is ahead of the clock and on the
+ *     plan's own day, else says the table should be free now, or may not be
+ *     free in time, or simply fits;
+ *   - the turn-time grid carries a key and a label per measured cell, reads
+ *     "Busiest" and "Longest turns" from the measured cells only, and never
+ *     calls UTC the venue's clock (timeZone null or 'UTC');
+ *   - a tile says "N seats" from the unit's own count only, and "seats N so
+ *     far" from the largest party seen (party_max), in the muted style;
+ *   - the Settings Tables card is never drawn without a place id;
  *   - the sections stack in the order a manager reads them;
  *   - the turn-time grid cannot push the page wider than the screen: fluid
  *     columns down to a floor, then a scroll inside its own card;
@@ -40,7 +53,7 @@
  *   2. the incoming loop accepting an answer without a flocks list
  *   3. nextFreePick ignoring likely_free_at
  *   4. dayHourRanges not joining a run over midnight
- *   5. VenueTablesTab drawing Coming tonight above Walk-in waits
+ *   5. VenueTablesTab drawing Coming up above Walk-in waits
  *   6. the show-in-app switch gated by the plan
  *   7. updateSensorTableSettings sending both keys on a one-key save
  *   8. an em dash in a waits row
@@ -80,6 +93,7 @@ import VenueDashboard from '../screens/VenueDashboard';
 // eslint-disable-next-line import/first
 import {
   TABLE_STATS_DAYS,
+  TURN_GRID_KEY,
   clearedText,
   clockIn,
   clockWords,
@@ -88,16 +102,20 @@ import {
   hoursInClockOrder,
   incomingRows,
   incomingText,
+  isUtcZone,
   longestTurnText,
   medianTurnText,
   nextFreeLine,
   nextFreePick,
   nextFreeText,
+  seatsLine,
   suggestionText,
   tablesFrom,
+  turnCellLabel,
   turnGrid,
   turnTimes,
   turnTimesFooter,
+  venueZoneOf,
   waitRows,
   waitText,
   waitedShareText,
@@ -167,6 +185,10 @@ const ESTIMATED = {
   }),
 };
 
+// One row in each state of open_now: a table open and named (true), the
+// server's estimate of the next (false, with minutes), tables open but none
+// known to seat the party (null, with the count of open tables the answer
+// carries), and no table that fits (false, nothing named).
 const WAITS = {
   updated_at: ago(5 * SEC),
   stale: false,
@@ -174,24 +196,38 @@ const WAITS = {
     { party: 8, open_now: false, minutes: null, table: null },
     { party: 4, open_now: false, minutes: 12, table: 6 },
     { party: 2, open_now: true, minutes: 0, table: 1 },
-    { party: 6, open_now: false, minutes: null, table: null },
+    { party: 6, open_now: null, minutes: null, table: 3, open: 3 },
   ],
 };
 const WAIT_LINES = [
-  'Party of 2: a table is open now',
+  'Party of 2: table 1 is open now',
   'Party of 4: about 12 min, table 6 next',
-  'Party of 6: no table that fits right now',
+  'Party of 6: 3 tables open, seats unknown',
   'Party of 8: no table that fits right now',
 ];
 
-// Three plans: 8:00 PM and 9:30 PM tonight in New York, and 8:00 PM tomorrow.
+// Five plans, out of time order: 6:00 PM earlier tonight in New York (the
+// server's window reaches 12 hours back), 8:00 PM and 9:30 PM tonight, 8:00
+// PM tomorrow, and 7:00 PM next Friday (the window's far edge, where the
+// weekday alone reads as tonight). Table 4's estimate is behind the clock;
+// Table 2's 7:50 PM is today's and is offered for tonight's 9:30 and for next
+// Friday's plan alike, since the server bounds it by the plan's time only.
 const INCOMING = {
   flocks: [
     { id: 'f2', event_time: '2026-10-24T01:30:00.000Z', status: 'active', party: 3, suggestion: { table: 2, free_now: false, likely_free_at: '2026-10-23T23:50:00.000Z' } },
     { id: 'f3', event_time: '2026-10-25T00:00:00.000Z', status: 'confirmed', party: 10, suggestion: null },
+    { id: 'f4', event_time: '2026-10-30T23:00:00.000Z', status: 'active', party: 6, suggestion: { table: 2, free_now: false, likely_free_at: '2026-10-23T23:50:00.000Z' } },
     { id: 'f1', event_time: '2026-10-24T00:00:00.000Z', status: 'confirmed', party: 5, suggestion: { table: 6, free_now: true, likely_free_at: null } },
+    { id: 'f0', event_time: '2026-10-23T22:00:00.000Z', status: 'confirmed', party: 4, suggestion: { table: 4, free_now: false, likely_free_at: ago(10 * MIN) } },
   ],
 };
+const INCOMING_LINES = [
+  ['Earlier today 6:00 PM: party of 4, confirmed', 'Table 4 should be free now'],
+  ['Today 8:00 PM: party of 5, confirmed', 'Table 6 is free now'],
+  ['Today 9:30 PM: party of 3, considering you', 'Table 2 likely free by 7:50 PM'],
+  ['Sat 8:00 PM: party of 10, confirmed', 'No table that fits yet'],
+  ['Fri 10/30 7:00 PM: party of 6, considering you', 'Table 2 fits them'],
+];
 
 const STATS = {
   days: 28,
@@ -219,11 +255,12 @@ const STATS = {
   ],
   timeZone: NY,
 };
-// What the server sends under 20 seatings.
+// What the server sends under 20 seatings: every median null, and still a
+// seating count for every cell that had one, two seatings included.
 const TOO_FEW = {
   days: 28,
   seatings: 7,
-  turn_minutes: { median: null, by_hour: [] },
+  turn_minutes: { median: null, by_hour: [{ dow: 2, hour: 19, median: null, seatings: 2 }, { dow: 5, hour: 20, median: null, seatings: 5 }] },
   waited_share: null,
   clear_minutes_median: null,
   full_hours: [],
@@ -237,7 +274,7 @@ const renderTab = (props = {}) => render(
 );
 const headings = () => screen.getAllByRole('heading').map((h) => h.textContent);
 const waitLines = () => within(screen.getByRole('list', { name: 'Walk-in waits' })).getAllByRole('listitem').map((li) => li.textContent);
-const incomingItems = () => within(screen.getByRole('list', { name: 'Coming tonight' })).getAllByRole('listitem');
+const incomingItems = () => within(screen.getByRole('list', { name: 'Coming up' })).getAllByRole('listitem');
 const incomingLines = () => incomingItems().map((li) => [...li.querySelectorAll('p')].map((p) => p.textContent));
 const paragraph = (text) => screen.getByText((_, el) => el.tagName === 'P' && el.textContent === text);
 const flush = async () => {
@@ -284,18 +321,40 @@ describe('the clock a time of day is printed on', () => {
     expect(clockWords(false)).toBe("this device's clock");
   });
 
-  test('a time on another day carries its weekday, judged on the same clock', () => {
+  test('every time carries its day, judged on the same clock: today, earlier today, yesterday, the weekday, the date from six days out', () => {
     const clock = clockIn(NY);
-    // 8:00 PM tonight in New York, and 8:00 PM tomorrow.
-    expect(clock.when('2026-10-24T00:00:00.000Z', NOW)).toBe('8:00 PM');
+    const DAY = 24 * 60 * MIN;
+    // 8:00 PM tonight in New York, 6:00 PM earlier tonight, and 8:00 PM tomorrow.
+    expect(clock.when('2026-10-24T00:00:00.000Z', NOW)).toBe('Today 8:00 PM');
+    expect(clock.when('2026-10-23T22:00:00.000Z', NOW)).toBe('Earlier today 6:00 PM');
     expect(clock.when('2026-10-25T00:00:00.000Z', NOW)).toBe('Sat 8:00 PM');
+    // A plan that has passed on another day: yesterday is said as that, so
+    // "Thu 11:00 PM" on a Friday does not read as next Thursday's.
+    expect(clock.when('2026-10-23T03:00:00.000Z', NOW)).toBe('Yesterday 11:00 PM');
+    expect(clock.when(ago(3 * DAY), NOW)).toBe('Tue 7:30 PM');
+    // From six full days out the weekday alone is this week's or next's, so
+    // the date goes with it: next Friday, at the window's far edge, above all.
+    expect(clock.when(ahead(6 * DAY), NOW)).toBe('Thu 10/29 7:30 PM');
+    expect(clock.when('2026-10-30T23:00:00.000Z', NOW)).toBe('Fri 10/30 7:00 PM');
+    expect(clock.when(ahead(6 * DAY - MIN), NOW)).toBe('Thu 7:29 PM');
+    expect(clock.when(ahead(5 * DAY), NOW)).toBe('Wed 7:30 PM');
     // In Tokyo it is already Saturday morning at NOW, so 8:00 PM New York
     // tonight is 9:00 AM today there, and tomorrow's plan is Sunday's.
-    expect(clockIn('Asia/Tokyo').when('2026-10-24T00:00:00.000Z', NOW)).toBe('9:00 AM');
+    expect(clockIn('Asia/Tokyo').when('2026-10-24T00:00:00.000Z', NOW)).toBe('Today 9:00 AM');
     expect(clockIn('Asia/Tokyo').when('2026-10-25T00:00:00.000Z', NOW)).toBe('Sun 9:00 AM');
     expect(clock.when('nope', NOW)).toBeNull();
     // With no now to judge by the weekday is always said.
     expect(clock.when('2026-10-24T00:00:00.000Z', null)).toBe('Fri 8:00 PM');
+    // The day a time falls on, on this clock, as a key: tonight's two plans
+    // share one, tomorrow's does not, and midnight New York is still Friday
+    // in Los Angeles.
+    expect(clock.day('2026-10-24T00:00:00.000Z')).toBe(clock.day(NOW));
+    expect(clock.day('2026-10-24T01:30:00.000Z')).toBe(clock.day(NOW));
+    expect(clock.day('2026-10-25T00:00:00.000Z')).not.toBe(clock.day(NOW));
+    expect(clock.day('2026-10-24T04:00:00.000Z')).not.toBe(clock.day(NOW));
+    expect(clockIn('America/Los_Angeles').day('2026-10-24T04:00:00.000Z')).toBe(clockIn('America/Los_Angeles').day(NOW));
+    expect(clock.day('nope')).toBeNull();
+    expect(clock.day(NaN)).toBeNull();
   });
 
   test('one clock per zone, built once', () => {
@@ -396,15 +455,31 @@ describe('walk-in waits', () => {
     expect(screen.getByRole('list', { name: 'Walk-in waits' }).querySelector('[data-party="2"]').getAttribute('data-open')).toBe('true');
   });
 
-  test('every form the row can take', () => {
-    expect(waitText({ party: 4, open_now: true, minutes: 12, table: 6 })).toBe('Party of 4: a table is open now');
+  test('every form the row can take, with "no table that fits" kept apart from "no estimate yet" and "seats unknown"', () => {
+    // Open now: the table is named when the server sent one.
+    expect(waitText({ party: 4, open_now: true, minutes: 0, table: 6 })).toBe('Party of 4: table 6 is open now');
+    expect(waitText({ party: 4, open_now: true, minutes: 12, table: null })).toBe('Party of 4: a table is open now');
+    // The server's estimate of the next table.
     expect(waitText({ party: 4, open_now: false, minutes: 12, table: 6 })).toBe('Party of 4: about 12 min, table 6 next');
     expect(waitText({ party: 4, open_now: false, minutes: 12, table: null })).toBe('Party of 4: about 12 min');
     expect(waitText({ party: 4, open_now: false, minutes: 0.4, table: 6 })).toBe('Party of 4: under 1 min, table 6 next');
     expect(waitText({ party: 4, open_now: false, minutes: 75, table: 6 })).toBe('Party of 4: about 1 h 15 min, table 6 next');
-    expect(waitText({ party: 4, open_now: false, minutes: null, table: 6 })).toBe('Party of 4: table 6 next, wait unknown');
+    // A table that fits, with no history to estimate from yet.
+    expect(waitText({ party: 4, open_now: false, minutes: null, table: 6 })).toBe('Party of 4: table 6 next, no estimate yet');
+    // Nothing named at all is the one case that says no table fits.
     expect(waitText({ party: 6, open_now: false, minutes: null, table: null })).toBe('Party of 6: no table that fits right now');
     expect(waitText({ party: '8', open_now: false, minutes: -3, table: null })).toBe('Party of 8: no table that fits right now');
+    // Tables open, none known to seat the party: the count from the row,
+    // else from beside the list, else the words alone. The lowest open
+    // table the server names is not printed, since it is not known to fit.
+    expect(waitText({ party: 6, open_now: null, minutes: null, table: 3, open: 3 })).toBe('Party of 6: 3 tables open, seats unknown');
+    expect(waitText({ party: 6, open_now: null, minutes: null, table: 3, open: 1 })).toBe('Party of 6: 1 table open, seats unknown');
+    expect(waitText({ party: 6, open_now: null, minutes: null, table: 3 }, { open: 2 })).toBe('Party of 6: 2 tables open, seats unknown');
+    expect(waitText({ party: 6, open_now: null, minutes: null, table: 3 }, { open: 'many' })).toBe('Party of 6: tables open, seats unknown');
+    expect(waitText({ party: 6, open_now: null, minutes: null, table: null })).toBe('Party of 6: tables open, seats unknown');
+    // Through the rows: the null row is not the bold "open" row.
+    expect(waitRows({ by_party: [{ party: 6, open_now: null, table: 3 }] })).toEqual([{ party: 6, open: false, text: 'Party of 6: tables open, seats unknown' }]);
+    expect(waitRows({ open: 4, by_party: [{ party: 6, open_now: null, table: 3 }] })[0].text).toBe('Party of 6: 4 tables open, seats unknown');
   });
 
   test('rows with no usable party size are left out, and no rows at all is said', () => {
@@ -450,63 +525,101 @@ describe('walk-in waits', () => {
   });
 });
 
-// ── Coming tonight ─────────────────────────────────────────────────────────
+// ── Coming up ──────────────────────────────────────────────────────────────
 
-describe('coming tonight', () => {
-  test('one row per flock in time order: party, time, standing, and the table that could seat them', () => {
+describe('coming up', () => {
+  test('one row per flock in time order, each led by its day: party, standing, and the table that could seat them', () => {
     renderTab();
-    expect(screen.getByRole('heading', { name: 'Coming tonight' })).toBeTruthy();
-    expect(incomingLines()).toEqual([
-      ['Party of 5 at 8:00 PM, confirmed', 'Table 6 is free now'],
-      ['Party of 3 at 9:30 PM, considering you', 'Table 2 likely free by 7:50 PM'],
-      ['Party of 10 at Sat 8:00 PM, confirmed', 'No table that fits yet'],
-    ]);
-    expect(incomingItems().map((li) => li.getAttribute('data-confirmed'))).toEqual(['true', null, 'true']);
-    expect(screen.getByText("Times on your venue's clock.")).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Coming up' })).toBeTruthy();
+    expect(screen.queryByText(/Coming tonight/)).toBeNull();
+    expect(incomingLines()).toEqual(INCOMING_LINES);
+    expect(incomingItems().map((li) => li.getAttribute('data-confirmed'))).toEqual(['true', 'true', null, 'true', null]);
+    // The window, and whose clock, under the list.
+    expect(screen.getByText("Plans from the last 12 hours to 7 days ahead. Times on your venue's clock.")).toBeTruthy();
     expect(screen.getByText('A flock is a group of friends planning a night out in the Flock app. Each row is a party size and a time, never who.')).toBeTruthy();
   });
 
-  test('the words for every suggestion and every gap in a row', () => {
+  test('the words for every row and every gap in one', () => {
     const clock = clockIn(NY);
-    expect(suggestionText({ table: 6, free_now: true, likely_free_at: null }, clock)).toBe('Table 6 is free now');
-    expect(suggestionText({ table: 2, free_now: false, likely_free_at: '2026-10-23T23:50:00.000Z' }, clock)).toBe('Table 2 likely free by 7:50 PM');
-    expect(suggestionText({ table: 2, free_now: false, likely_free_at: null }, clock)).toBe('Table 2 fits them');
-    expect(suggestionText({ table: null, free_now: false, likely_free_at: null }, clock)).toBe('No table that fits yet');
-    expect(suggestionText(null, clock)).toBe('No table that fits yet');
-    expect(suggestionText(undefined, clock)).toBe('No table that fits yet');
-    expect(incomingText({ party: 5, event_time: '2026-10-24T00:00:00.000Z', status: 'confirmed' }, clock, NOW)).toBe('Party of 5 at 8:00 PM, confirmed');
-    expect(incomingText({ party: 5, event_time: '2026-10-24T00:00:00.000Z', status: 'voting' }, clock, NOW)).toBe('Party of 5 at 8:00 PM, considering you');
-    expect(incomingText({ party: null, event_time: '2026-10-24T00:00:00.000Z', status: 'confirmed' }, clock, NOW)).toBe('A flock at 8:00 PM, confirmed');
+    expect(incomingText({ party: 5, event_time: '2026-10-24T00:00:00.000Z', status: 'confirmed' }, clock, NOW)).toBe('Today 8:00 PM: party of 5, confirmed');
+    expect(incomingText({ party: 5, event_time: '2026-10-24T00:00:00.000Z', status: 'voting' }, clock, NOW)).toBe('Today 8:00 PM: party of 5, considering you');
+    expect(incomingText({ party: 4, event_time: '2026-10-23T22:00:00.000Z', status: 'confirmed' }, clock, NOW)).toBe('Earlier today 6:00 PM: party of 4, confirmed');
+    expect(incomingText({ party: 10, event_time: '2026-10-25T00:00:00.000Z', status: 'confirmed' }, clock, NOW)).toBe('Sat 8:00 PM: party of 10, confirmed');
+    expect(incomingText({ party: null, event_time: '2026-10-24T00:00:00.000Z', status: 'confirmed' }, clock, NOW)).toBe('Today 8:00 PM: a flock, confirmed');
     expect(incomingText({ party: 5, event_time: null, status: 'confirmed' }, clock, NOW)).toBe('Party of 5, confirmed');
-    // A row with no time goes last; a row that is not an object is skipped.
+    expect(incomingText({ party: null, event_time: null, status: 'confirmed' }, clock, NOW)).toBe('A flock, confirmed');
+    // A row with no time goes last; a row that is not an object is skipped;
+    // the rows run in time order whatever order the server sent.
     const rows = incomingRows({ flocks: [{ id: 1, event_time: null, party: 2 }, 'x', { id: 2, event_time: '2026-10-24T00:00:00.000Z', party: 4 }] }, clock, NOW);
     expect(rows.map((r) => r.key)).toEqual(['2', '1']);
+    expect(incomingRows(INCOMING, clock, NOW).map((r) => r.key)).toEqual(['f0', 'f1', 'f2', 'f3', 'f4']);
+  });
+
+  test('the table that could seat them: an estimate is printed only while it is ahead of the clock and on the plan\'s day', () => {
+    const clock = clockIn(NY);
+    const tonight = '2026-10-24T00:00:00.000Z'; // 8:00 PM
+    const later = '2026-10-24T01:30:00.000Z'; // 9:30 PM
+    const estimate = '2026-10-23T23:50:00.000Z'; // 7:50 PM, ahead of NOW (7:30 PM)
+    expect(suggestionText({ table: 6, free_now: true, likely_free_at: null }, clock, NOW, tonight)).toBe('Table 6 is free now');
+    expect(suggestionText({ table: 2, free_now: false, likely_free_at: estimate }, clock, NOW, later)).toBe('Table 2 likely free by 7:50 PM');
+    expect(suggestionText({ table: 2, free_now: false, likely_free_at: estimate }, clock, NOW, null)).toBe('Table 2 likely free by 7:50 PM');
+    // Behind the clock: the party may still be there, and "likely free by
+    // 7:50" at 8:05 has been wrong for a quarter of an hour.
+    expect(suggestionText({ table: 2, free_now: false, likely_free_at: ago(10 * MIN) }, clock, NOW, later)).toBe('Table 2 should be free now');
+    expect(suggestionText({ table: 2, free_now: false, likely_free_at: ago(10 * MIN) }, clock, NOW, null)).toBe('Table 2 should be free now');
+    // After the plan's time, on the same day.
+    expect(suggestionText({ table: 6, free_now: false, likely_free_at: '2026-10-24T00:40:00.000Z' }, clock, NOW, tonight)).toBe('Table 6 may not be free in time (likely around 8:40 PM)');
+    // After the plan's time and on another day (1:00 AM for an 11:00 PM
+    // plan): the fact without a time that would read as the plan's day's.
+    expect(suggestionText({ table: 6, free_now: false, likely_free_at: '2026-10-24T05:00:00.000Z' }, clock, NOW, '2026-10-24T03:00:00.000Z')).toBe('Table 6 may not be free in time');
+    // A plan on another day: today's estimate says nothing about Saturday.
+    expect(suggestionText({ table: 2, free_now: false, likely_free_at: estimate }, clock, NOW, '2026-10-25T00:00:00.000Z')).toBe('Table 2 fits them');
+    expect(suggestionText({ table: 2, free_now: false, likely_free_at: ago(10 * MIN) }, clock, NOW, '2026-10-25T00:00:00.000Z')).toBe('Table 2 fits them');
+    // No plan time and an estimate on another day; no estimate; no clock to
+    // judge by; an estimate that does not parse.
+    expect(suggestionText({ table: 2, free_now: false, likely_free_at: '2026-10-24T05:00:00.000Z' }, clock, NOW, null)).toBe('Table 2 fits them');
+    expect(suggestionText({ table: 2, free_now: false, likely_free_at: null }, clock, NOW, tonight)).toBe('Table 2 fits them');
+    expect(suggestionText({ table: 2, free_now: false, likely_free_at: estimate }, clock, null, tonight)).toBe('Table 2 fits them');
+    expect(suggestionText({ table: 2, free_now: false, likely_free_at: 'soon' }, clock, NOW, tonight)).toBe('Table 2 fits them');
+    expect(suggestionText({ table: null, free_now: false, likely_free_at: null }, clock, NOW, tonight)).toBe('No table that fits yet');
+    expect(suggestionText(null, clock, NOW, tonight)).toBe('No table that fits yet');
+    expect(suggestionText(undefined, clock, NOW, tonight)).toBe('No table that fits yet');
+  });
+
+  test('a stale estimate goes once the clock passes it, on the tab, between two reads', () => {
+    renderTab();
+    expect(incomingLines()[2]).toEqual(['Today 9:30 PM: party of 3, considering you', 'Table 2 likely free by 7:50 PM']);
+    act(() => { jest.advanceTimersByTime(21 * MIN); });
+    expect(incomingLines()[2]).toEqual(['Today 9:30 PM: party of 3, considering you', 'Table 2 should be free now']);
   });
 
   test('on this device\'s clock when the dashboard has no zone, and it says so', () => {
     renderTab({ timeZone: null });
     const device = clockIn(null);
-    expect(incomingLines()[0][0]).toBe(`Party of 5 at ${device.when('2026-10-24T00:00:00.000Z', NOW)}, confirmed`);
-    expect(incomingLines()[1][1]).toBe(`Table 2 likely free by ${device.time('2026-10-23T23:50:00.000Z')}`);
-    expect(screen.getByText("Times on this device's clock.")).toBeTruthy();
+    expect(incomingLines()[1][0]).toBe(`${device.when('2026-10-24T00:00:00.000Z', NOW)}: party of 5, confirmed`);
+    // The estimate is printed only when it is on the plan's day on this
+    // device's clock, which depends on where the suite runs.
+    const sameDay = device.day('2026-10-23T23:50:00.000Z') === device.day('2026-10-24T01:30:00.000Z');
+    expect(incomingLines()[2][1]).toBe(sameDay ? `Table 2 likely free by ${device.time('2026-10-23T23:50:00.000Z')}` : 'Table 2 fits them');
+    expect(screen.getByText("Plans from the last 12 hours to 7 days ahead. Times on this device's clock.")).toBeTruthy();
   });
 
   test('nothing is drawn while the read is out or when no flock has a plan here, and a failure is said', () => {
     const { rerender } = renderTab({ incoming: undefined });
-    expect(screen.queryByRole('heading', { name: 'Coming tonight' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Coming up' })).toBeNull();
     expect(document.querySelector('[data-testid="tables-incoming-loading"]')).toBeNull();
     rerender(<VenueTablesTab data={LIVE} hours={null} waits={WAITS} incoming={{ flocks: [] }} stats={STATS} colors={COLORS} wellPx={50} timeZone={NY} />);
-    expect(screen.queryByRole('heading', { name: 'Coming tonight' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Coming up' })).toBeNull();
     rerender(<VenueTablesTab data={LIVE} hours={null} waits={WAITS} incoming={null} stats={STATS} colors={COLORS} wellPx={50} timeZone={NY} />);
-    expect(screen.getByRole('heading', { name: 'Coming tonight' })).toBeTruthy();
-    expect(screen.getByText("Coming tonight couldn't load.")).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Coming up' })).toBeTruthy();
+    expect(screen.getByText("Coming up couldn't load.")).toBeTruthy();
   });
 
   test('a refresh that failed keeps the list, dimmed, with its age', () => {
     renderTab({ incoming: { ...INCOMING, readAt: NOW - 3 * MIN, unrefreshed: true } });
     expect(paragraph("Couldn't refresh just now. Showing the last list from 3 min ago.")).toBeTruthy();
     expect(screen.getByTestId('tables-incoming-live')).toHaveStyle({ opacity: '0.55' });
-    expect(incomingLines()).toHaveLength(3);
+    expect(incomingLines()).toHaveLength(5);
   });
 });
 
@@ -532,6 +645,32 @@ describe('turn times', () => {
     const tue = grid.rows.find((r) => r.label === 'Tue');
     expect(at(tue, 12).busy).toBe(false);
     expect(at(tue, 12).shade).toBeCloseTo(35 / 65);
+  });
+
+  test('a cell under the server\'s floor keeps its column and says nothing else: never busy, never the longest, however many seatings it counts', () => {
+    // The server sends a seating count for every cell and a median only
+    // from 20; a cell with 40 seatings and no median is drawn empty.
+    const grid = turnGrid([...STATS.turn_minutes.by_hour, { dow: 6, hour: 18, median: null, seatings: 40 }]);
+    expect(grid.maxSeatings).toBe(14);
+    expect(grid.maxMedian).toBe(65);
+    const sat = grid.rows.find((r) => r.label === 'Sat');
+    const cell = sat.cells[grid.hours.indexOf(18)];
+    expect(cell).toEqual({ dow: 6, hour: 18, median: null, seatings: 40, shade: 0, busy: false });
+    expect(grid.rows.flatMap((r) => r.cells.filter((c) => c && c.busy)).map((c) => `${c.dow}:${c.hour}`)).toEqual(['5:20', '5:21', '6:19']);
+    expect(turnCellLabel('Sat', cell)).toBeNull();
+    expect(turnCellLabel('Fri', grid.rows.find((r) => r.label === 'Fri').cells[grid.hours.indexOf(20)])).toBe('Fri 8 PM: typical turn 1 h 5 min, most seatings');
+    expect(turnCellLabel('Tue', grid.rows.find((r) => r.label === 'Tue').cells[grid.hours.indexOf(12)])).toBe('Tue 12 PM: typical turn 35 min');
+    expect(turnCellLabel('Fri', null)).toBeNull();
+    // With no measured cell there is nothing to shade or ring, and no grid,
+    // so neither "Busiest" nor "Longest turns" is said off a few seatings.
+    expect(turnGrid(TOO_FEW.turn_minutes.by_hour)).toBeNull();
+    expect(turnGrid([{ dow: 2, hour: 19, median: null, seatings: 1 }])).toBeNull();
+    const few = turnTimes(TOO_FEW);
+    expect(few.grid).toBeNull();
+    expect(few.busiest).toBeNull();
+    expect(few.longest).toBeNull();
+    expect(few.any).toBe(false);
+    expect(longestTurnText(null)).toBeNull();
   });
 
   test('rows the grid cannot read are skipped, and no rows is no grid', () => {
@@ -574,9 +713,23 @@ describe('turn times', () => {
     expect(waitedShareText(0)).toBe('Waited for a server: 0% of seatings');
     expect(clearedText(t.cleared)).toBe('Cleared after: about 4 min, typically');
     expect(t.full).toBe('Fri 8 to 10 PM, Sat 7 to 11 PM');
+    expect(t.timeZone).toBe(NY);
     expect(turnTimesFooter(28, NY)).toBe("Last 28 days, on your venue's clock.");
     expect(turnTimesFooter(28, null)).toBe('Last 28 days. Hours in UTC, since your listing has no time zone.');
     expect(TABLE_STATS_DAYS).toBe(28);
+  });
+
+  test('UTC is never the venue\'s clock: the server says "no zone" with null today and said it with the string before', () => {
+    for (const zone of [null, undefined, '', 'UTC', 'utc', 'Etc/UTC', ' UTC ', 42]) {
+      expect(turnTimes({ ...STATS, timeZone: zone }).timeZone).toBeNull();
+      expect(venueZoneOf(zone)).toBeNull();
+    }
+    expect(turnTimes({ ...STATS, timeZone: 'Europe/London' }).timeZone).toBe('Europe/London');
+    expect(venueZoneOf('Europe/London')).toBe('Europe/London');
+    expect(isUtcZone('UTC')).toBe(true);
+    expect(isUtcZone('Etc/UTC')).toBe(true);
+    expect(isUtcZone('Europe/London')).toBe(false);
+    expect(isUtcZone(null)).toBe(false);
   });
 
   test('nulls: each part is left out on its own, and all of them together is one line', () => {
@@ -588,6 +741,7 @@ describe('turn times', () => {
     expect(partial.median).toBe(52);
     const none = turnTimes(TOO_FEW);
     expect(none.any).toBe(false);
+    expect(turnTimes({ ...TOO_FEW, turn_minutes: { median: null, by_hour: [] } }).any).toBe(false);
     // A share outside 0 to 1, a negative median and a bad day count are not figures.
     const odd = turnTimes({ days: -3, turn_minutes: { median: -5, by_hour: null }, waited_share: 1.5, clear_minutes_median: 'x', full_hours: 'x' });
     expect(odd.any).toBe(false);
@@ -608,7 +762,6 @@ describe('turn times', () => {
     expect(screen.getByText('Usually full: Fri 8 to 10 PM, Sat 7 to 11 PM')).toBeTruthy();
     expect(screen.getByText("Last 28 days, on your venue's clock.")).toBeTruthy();
     const grid = screen.getByTestId('turn-grid');
-    expect(grid.getAttribute('aria-hidden')).toBe('true');
     const rows = [...grid.querySelectorAll('[data-dow]')];
     expect(rows.map((r) => Number(r.getAttribute('data-dow')))).toEqual([1, 2, 3, 4, 5, 6, 0]);
     const fri = rows[4];
@@ -619,6 +772,30 @@ describe('turn times', () => {
     // Ten columns, labels on every other one: noon, 2, 4, 6 and 8 PM.
     const labels = [...grid.querySelectorAll('span')].map((s) => s.textContent).filter((t) => /M$/.test(t));
     expect(labels).toEqual(['12 PM', '2 PM', '4 PM', '6 PM', '8 PM']);
+    // The key, for the eye: what the blue and the ring mean, in words the
+    // dark theme does not turn backwards. Hidden from a screen reader, which
+    // gets the grid cell by cell instead.
+    const key = screen.getByTestId('turn-grid-key');
+    expect(key.textContent).toBe('A stronger blue means a longer typical turn. The amber ring marks the hours with the most seatings.');
+    expect(key.textContent).toBe(TURN_GRID_KEY);
+    expect(key.getAttribute('aria-hidden')).toBe('true');
+    expect(key.textContent).not.toMatch(/darker/i);
+    // Each measured cell says its median in words, and whether it is one of
+    // the ringed ones; a cell with no median is hidden.
+    expect(grid.getAttribute('aria-hidden')).toBeNull();
+    expect(grid.getAttribute('role')).toBe('group');
+    expect(grid.getAttribute('aria-label')).toBe('Typical turn by day and hour');
+    const cell = fri.querySelector('[data-hour="20"]');
+    expect(cell.getAttribute('role')).toBe('img');
+    expect(cell.getAttribute('aria-label')).toBe('Fri 8 PM: typical turn 1 h 5 min, most seatings');
+    expect(cell.getAttribute('title')).toBe('Fri 8 PM: typical turn 1 h 5 min, most seatings');
+    expect(screen.getByRole('img', { name: 'Tue 12 PM: typical turn 35 min' })).toBeTruthy();
+    expect(screen.getByRole('img', { name: 'Sat 7 PM: typical turn 49 min, most seatings' })).toBeTruthy();
+    const empty = fri.querySelector('[data-hour="18"]');
+    expect(empty.getAttribute('aria-hidden')).toBe('true');
+    expect(empty.getAttribute('aria-label')).toBeNull();
+    expect(empty.getAttribute('role')).toBeNull();
+    expect(screen.getAllByRole('img')).toHaveLength(4);
   });
 
   test('a skeleton while the read is out, one line when it failed, one line with too few seatings', () => {
@@ -630,20 +807,37 @@ describe('turn times', () => {
     rerender(<VenueTablesTab data={LIVE} hours={null} waits={WAITS} incoming={INCOMING} stats={TOO_FEW} colors={COLORS} wellPx={50} timeZone={NY} />);
     expect(screen.getByText('Not enough seatings yet to say.')).toBeTruthy();
     expect(screen.queryByTestId('turn-grid')).toBeNull();
+    expect(screen.queryByText(/Busiest|Longest|stronger blue/)).toBeNull();
     expect(screen.queryByText(/Last 28 days/)).toBeNull();
   });
 
-  test('hidden parts: a grid with no median line, lines with no grid, and the UTC footer', () => {
-    const { unmount } = renderTab({ stats: { ...STATS, turn_minutes: { median: null, by_hour: STATS.turn_minutes.by_hour }, timeZone: null } });
-    expect(screen.queryByText(/Half the parties/)).toBeNull();
-    expect(screen.getByTestId('turn-grid')).toBeTruthy();
-    expect(screen.getByText('Last 28 days. Hours in UTC, since your listing has no time zone.')).toBeTruthy();
-    unmount();
-    renderTab({ stats: { ...STATS, days: 14, turn_minutes: { median: 40, by_hour: [] }, full_hours: [] } });
+  test('hidden parts: lines with no grid, a median with every cell under the floor, and the UTC footer for null and for the old string', () => {
+    const { unmount } = renderTab({ stats: { ...STATS, days: 14, turn_minutes: { median: 40, by_hour: [] }, full_hours: [] } });
     expect(screen.getByText('Half the parties stay under 40 min, half stay longer.')).toBeTruthy();
     expect(screen.queryByTestId('turn-grid')).toBeNull();
-    expect(screen.queryByText(/Busiest|Longest|Usually full/)).toBeNull();
+    expect(screen.queryByText(/Busiest|Longest|Usually full|stronger blue/)).toBeNull();
     expect(screen.getByText("Last 14 days, on your venue's clock.")).toBeTruthy();
+    unmount();
+    // Twenty-odd seatings spread thin: the server says the overall median
+    // and no cell's. The median line, the full hours and the footer stand;
+    // nothing is drawn or said off the cells.
+    const thin = { ...STATS, turn_minutes: { median: 52, by_hour: [{ dow: 5, hour: 20, median: null, seatings: 9 }, { dow: 6, hour: 19, median: null, seatings: 8 }] } };
+    const r = renderTab({ stats: thin });
+    expect(screen.getByText('Half the parties stay under 52 min, half stay longer.')).toBeTruthy();
+    expect(screen.queryByTestId('turn-grid')).toBeNull();
+    expect(screen.queryByTestId('turn-grid-key')).toBeNull();
+    expect(screen.queryByText(/Busiest|Longest/)).toBeNull();
+    expect(screen.getByText('Usually full: Fri 8 to 10 PM, Sat 7 to 11 PM')).toBeTruthy();
+    expect(screen.getByText("Last 28 days, on your venue's clock.")).toBeTruthy();
+    r.unmount();
+    for (const zone of [null, 'UTC']) {
+      const u = renderTab({ stats: { ...STATS, timeZone: zone } });
+      const card = screen.getByRole('heading', { name: 'Turn times' }).parentElement;
+      expect(within(card).getByTestId('turn-grid')).toBeTruthy();
+      expect(within(card).getByText('Last 28 days. Hours in UTC, since your listing has no time zone.')).toBeTruthy();
+      expect(within(card).queryByText(/venue's clock/)).toBeNull();
+      u.unmount();
+    }
   });
 
   test('on a phone the grid shrinks to a floor and then scrolls inside its card, never the page', () => {
@@ -671,7 +865,7 @@ describe('turn times', () => {
 describe('the tab is a stack of sections in the order a manager reads them', () => {
   test('tonight first, then the week', () => {
     renderTab({ hours: [{ hour: '2026-10-22T23:00:00.000Z', occupied: 3, total: 8 }] });
-    expect(headings()).toEqual(['Right now', 'Walk-in waits', 'Coming tonight', 'Tables in use by hour', 'Turn times']);
+    expect(headings()).toEqual(['Right now', 'Walk-in waits', 'Coming up', 'Tables in use by hour', 'Turn times']);
   });
 
   test('while the visit\'s first read is out, every section that will come is a skeleton and none claims anything', () => {
@@ -716,6 +910,7 @@ describe('no em dash in anything the tab renders', () => {
       { waits: null, incoming: null, stats: null },
       { waits: { ...WAITS, by_party: [] }, incoming: { flocks: [] }, stats: TOO_FEW },
       { stats: { ...STATS, timeZone: null }, timeZone: null },
+      { stats: { ...STATS, timeZone: 'UTC' }, data: { ...LIVE, tables: LIVE.tables.map((t) => ({ ...t, seats: null, party_max: 3 })) } },
     ];
     for (const props of cases) {
       const { container, unmount } = renderTab(props);
@@ -1088,9 +1283,36 @@ describe('the Tables card on Settings', () => {
     rerender(<VenueDashboard {...props} ownerTableSettings={{ show_in_app: false, alerts: true }} />);
     expect(showSwitch().checked).toBe(false);
     expect(screen.queryByTestId('tables-settings-loading')).toBeNull();
-    // Without a place to write to there is no switch to offer.
-    rerender(<VenueDashboard {...props} ownerVenuePlaceId={null} />);
-    expect(showSwitch()).toBeNull();
+  });
+
+  test('no card at all without a place id: not a heading over nothing, whatever the plan and the settings read say', async () => {
+    // The profile read failed, or has not answered yet, on a device that
+    // remembers the venue's tables: the tab is in the bar, the place is
+    // unknown, and the plan is unknown too (tierKnown false), so neither
+    // switch could be drawn. The card used to be drawn anyway, empty.
+    for (const overrides of [
+      { ownerVenuePlaceId: null, venueProfile: null, venueTierKnown: false, ownerTableSettings: undefined, ownerTables: undefined },
+      { ownerVenuePlaceId: null, ownerTableSettings: undefined },
+      { ownerVenuePlaceId: null, ownerTableSettings: null },
+      { ownerVenuePlaceId: null, ownerTableSettings: SETTINGS },
+      { ownerVenuePlaceId: '', ownerTableSettings: SETTINGS },
+    ]) {
+      const r = dashboard(overrides);
+      // eslint-disable-next-line no-await-in-loop
+      await settle();
+      expect(screen.queryByRole('heading', { name: /^Tables$/ })).toBeNull();
+      expect(showSwitch()).toBeNull();
+      expect(alertsSwitch()).toBeNull();
+      expect(screen.queryByTestId('tables-settings-loading')).toBeNull();
+      expect(screen.queryByText(/Couldn't load whether your tables show/)).toBeNull();
+      r.unmount();
+    }
+    // The card comes with the place.
+    dashboard({ ownerVenuePlaceId: 'place_1', ownerTableSettings: undefined });
+    await settle();
+    expect(screen.getByRole('heading', { name: /^Tables$/ })).toBeTruthy();
+    expect(screen.getByTestId('tables-settings-loading')).toBeTruthy();
+    expect(alertsSwitch()).toBeTruthy();
   });
 
   test('turning it off writes that one key for the place, keeps what the server answered, and says so', async () => {
@@ -1140,19 +1362,21 @@ describe('the Tables tab on the dashboard', () => {
   test('a Roost venue gets all five sections in order', async () => {
     dashboard({ venueTab: 'tables', ownerTableWaits: WAITS, ownerTableIncoming: INCOMING, ownerTableStats: STATS, ownerTableHours: [{ hour: '2026-10-22T23:00:00.000Z', occupied: 3, total: 8 }], ownerVenueTimeZone: NY });
     await settle();
-    const names = ['Right now', 'Walk-in waits', 'Coming tonight', 'Tables in use by hour', 'Turn times'];
+    const names = ['Right now', 'Walk-in waits', 'Coming up', 'Tables in use by hour', 'Turn times'];
     const found = screen.getAllByRole('heading').map((h) => h.textContent).filter((t) => names.includes(t));
     expect(found).toEqual(names);
-    expect(screen.getByText('Party of 5 at 8:00 PM, confirmed')).toBeTruthy();
+    expect(screen.getByText('Today 8:00 PM: party of 5, confirmed')).toBeTruthy();
     expect(screen.getByText('Party of 4: about 12 min, table 6 next')).toBeTruthy();
+    expect(screen.getByText('Party of 6: 3 tables open, seats unknown')).toBeTruthy();
     expect(screen.getByText('Usually full: Fri 8 to 10 PM, Sat 7 to 11 PM')).toBeTruthy();
+    expect(screen.getByText(TURN_GRID_KEY)).toBeTruthy();
   });
 
   test('a plan without Roost gets the lock and none of the words', async () => {
     const { container } = dashboard({ venueTab: 'tables', venueTier: 'free', ownerTableWaits: WAITS, ownerTableIncoming: INCOMING, ownerTableStats: STATS });
     await settle();
     expect(screen.getByRole('button', { name: 'Upgrade to Roost' })).toBeTruthy();
-    expect(container.textContent).not.toMatch(/Walk-in waits|Coming tonight|Turn times|Party of/);
+    expect(container.textContent).not.toMatch(/Walk-in waits|Coming up|Turn times|Party of|party of/);
   });
 });
 

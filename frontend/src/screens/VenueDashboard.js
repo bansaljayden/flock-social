@@ -2669,8 +2669,15 @@ export default function VenueDashboard({
                   (App.js, ownerTableSettings): a skeleton until it answers,
                   one line if the read failed, then the switch. The save
                   writes that one key and nothing else, and keeps what the
-                  server answered. */}
-              {ownerTablesSeen && (
+                  server answered.
+
+                  Both need the place (ownerVenuePlaceId): the settings are
+                  read and written under it, and the alerts go to the owner
+                  of the sensor's place, whose tables are never read without
+                  one. Until the profile names it, or when the profile read
+                  failed and it never does, there is no card, rather than a
+                  heading over nothing. */}
+              {ownerTablesSeen && ownerVenuePlaceId && (
               <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', boxShadow: 'var(--card-shadow-sm)' }}>
                 <h3 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 8px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.users ? Icons.users(colors.navy, 14) : null} Tables</h3>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -2698,13 +2705,13 @@ export default function VenueDashboard({
                     </span>
                   </label>
                   )}
-                  {ownerVenuePlaceId && ownerTableSettings === undefined && (
+                  {ownerTableSettings === undefined && (
                     <div aria-hidden="true" data-testid="tables-settings-loading" className="skeleton" style={{ height: '44px', borderRadius: '8px' }} />
                   )}
-                  {ownerVenuePlaceId && ownerTableSettings === null && (
+                  {ownerTableSettings === null && (
                     <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>Couldn't load whether your tables show in the Flock app. Open Settings again to retry.</p>
                   )}
-                  {ownerVenuePlaceId && ownerTableSettings && (
+                  {ownerTableSettings && (
                   <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: 'pointer' }}>
                     <input
                       type="checkbox"

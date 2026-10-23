@@ -21,7 +21,8 @@
  *   - Settings carries the Table alerts switch, the one writer of
  *     notification_prefs.tables, only where the alerts can be sent;
  *   - every state reads in words on its tile, so none rests on colour alone,
- *     and a tile names its seats when the setup knows them;
+ *     and a tile names its seats when the unit itself knows them, and the
+ *     largest party it has seen only as that ("seats 4 so far", muted);
  *   - seated and waiting tiles count up in minutes and seconds off one interval
  *     for the whole board, which goes when the board goes;
  *   - only waiting and needs-clearing tables are listed as needing someone, and
@@ -82,6 +83,7 @@ import {
   hourLabel,
   hourOfIn,
   localHourOf,
+  seatsLine,
   seatsText,
   tableHoursChart,
   tablesByLocalHour,
@@ -213,6 +215,51 @@ describe('each tile says its table and its state in words', () => {
     expect(seatsText(1)).toBe('1 seat');
     expect(seatsText('6')).toBe('6 seats');
     for (const seats of [null, undefined, 0, -2, 2.5, 'four', '']) expect(seatsText(seats)).toBeNull();
+  });
+
+  test('the seats line: the unit\'s own count as seats, else the largest party seen as only that, nothing with neither', () => {
+    // `seats` is the unit's count and `party_max` the largest party the box
+    // has seen lately, which is not a seat count: a six-top that has only
+    // seated couples is not a two-top.
+    expect(seatsLine({ seats: 4, party_max: 2 })).toEqual({ text: '4 seats', seen: false });
+    expect(seatsLine({ seats: 1 })).toEqual({ text: '1 seat', seen: false });
+    expect(seatsLine({ seats: null, party_max: 4 })).toEqual({ text: 'seats 4 so far', seen: true });
+    expect(seatsLine({ party_max: '6' })).toEqual({ text: 'seats 6 so far', seen: true });
+    expect(seatsLine({ party_max: 1 })).toEqual({ text: 'seats 1 so far', seen: true });
+    for (const table of [{}, { seats: null, party_max: null }, { seats: 0, party_max: 0 }, { seats: 2.5, party_max: -1 }, { party_max: 'four' }, { party_max: 3.5 }, null, undefined]) {
+      expect(seatsLine(table)).toBeNull();
+    }
+  });
+
+  test('on the tile: "6 seats" from the unit\'s count whatever party it has seen, "seats 4 so far" in the muted ink from the party alone, nothing with neither', () => {
+    renderTab({
+      data: {
+        ...LIVE,
+        tables: [
+          { number: 1, people: 0, state: 'free', since: ago(MIN), seats: 6, party_max: 2 },
+          { number: 2, people: 2, state: 'seated', since: ago(MIN), seats: null, party_max: 4 },
+          { number: 3, people: 4, state: 'waiting', since: ago(MIN), seats: null, party_max: 1 },
+          { number: 4, people: 0, state: 'needs_clearing', since: ago(MIN), seats: null, party_max: null },
+          { number: 5, people: 0, state: 'free', since: ago(MIN), party_max: 0 },
+        ],
+      },
+    });
+    // jsdom keeps no var() colour, so the muted style is pinned by the mark
+    // the tile puts on the line (known or seen) and by the source below.
+    expect(within(tileFor(1)).getByText('6 seats')).toBeTruthy();
+    expect(tileFor(1).textContent).not.toMatch(/2 seats|so far/);
+    expect(tileFor(1).querySelector('[data-seats]').getAttribute('data-seats')).toBe('known');
+    expect(within(tileFor(2)).getByText('seats 4 so far')).toBeTruthy();
+    expect(tileFor(2).textContent).not.toMatch(/\d seats?\b/);
+    expect(tileFor(2).querySelector('[data-seats]').getAttribute('data-seats')).toBe('seen');
+    expect(read('components', 'venue', 'tables', 'TablesBoard.js')).toContain("color: seats.seen ? look.faint : look.sub");
+    expect(read('components', 'venue', 'tables', 'TablesBoard.js')).toMatch(/faint: 'var\(--text-tertiary\)'/);
+    // On the amber tile every word is the one dark ink.
+    expect(within(tileFor(3)).getByText('seats 1 so far')).toBeTruthy();
+    expect(tileFor(3).querySelector('[data-seats="seen"]')).toHaveStyle({ color: '#1e293b' });
+    expect(tileFor(4).textContent).not.toMatch(/seat/);
+    expect(tileFor(5).textContent).not.toMatch(/seat/);
+    expect(document.querySelectorAll('[data-seats]')).toHaveLength(3);
   });
 
   test('a screen reader hears minutes, not a clock face', () => {
@@ -1003,7 +1050,10 @@ describe('the read loop', () => {
       await flush();
       expect(onHours).toHaveBeenCalledWith(HOURS, 'America/New_York');
       reading.stop();
-      for (const bad of [{ ...WEEK, timeZone: '' }, { ...WEEK, timeZone: 7 }, { ...WEEK, timeZone: { id: 'America/New_York' } }]) {
+      // UTC itself is no zone: it is what the server folds a venue without
+      // one in, and kept as the venue's clock it would label UTC hours as
+      // the venue's on every section that prints a time.
+      for (const bad of [{ ...WEEK, timeZone: '' }, { ...WEEK, timeZone: 7 }, { ...WEEK, timeZone: { id: 'America/New_York' } }, { ...WEEK, timeZone: 'UTC' }, { ...WEEK, timeZone: 'Etc/UTC' }]) {
         const on = jest.fn();
         const r = startTableHoursReading(() => Promise.resolve(bad), on);
         // eslint-disable-next-line no-await-in-loop
@@ -1265,6 +1315,9 @@ const ROOST = {
   showUpgradeModal: false,
   venuePlanPriceLabel: () => null,
   venueProfileToIntake: jest.fn(),
+  // The place App.js reads off the profile above; the Settings Tables card
+  // is drawn only with one (venueTablesPhase2.test.js pins that).
+  ownerVenuePlaceId: 'place_1',
 };
 const SENSOR = {
   sensor_data: { thermal_headcount: 12, noise_db: 60, ir_beam_count: 3, recorded_at: ago(MIN) },

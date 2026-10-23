@@ -7,11 +7,15 @@
 // that to the venue's verified owner and to nobody else:
 //
 //   GET /api/sensors/:placeId/tables
-//     { tables: [{ number, people, state, since, seats }], updated_at, stale, next_free }
+//     { tables: [{ number, people, state, since, seats, party_max }],
+//     updated_at, stale, next_free }
 //     `since` is when the state began, and for seated and waiting it is when
-//     the party sat down. `seats` is optional, null when unknown. `stale` is
-//     true once the sensor has not reported for over 3 minutes. `next_free`
-//     is the seated or waiting table seated longest, or null.
+//     the party sat down. `seats` is the unit's own count of the table's
+//     seats, null when the unit does not know it; `party_max` is the largest
+//     party the box has seen at the table lately, null when none, and is not
+//     a seat count. `stale` is true once the sensor has not reported for over
+//     3 minutes. `next_free` is the seated or waiting table seated longest,
+//     or null.
 //
 //   GET /api/sensors/:placeId/tables/hours
 //     { hours: [{ hour, occupied, total }], timeZone } for the last 7 days,
@@ -19,19 +23,28 @@
 //
 //   GET /api/sensors/:placeId/tables/waits
 //     { updated_at, stale, by_party: [{ party, open_now, minutes, table }] }
-//     for a party of 2, 4, 6 and 8; `minutes` and `table` null when unknown.
+//     for a party of 2, 4, 6 and 8. `open_now` is true when an open table is
+//     known to fit (then `table` names it), false when none does (then
+//     `minutes` and `table` are the server's estimate of the next, or null
+//     with no estimate yet), and null when tables are open but no open
+//     table's seat count is known for that party (then `table` is the lowest
+//     open table and `minutes` is null). The answer may carry how many
+//     tables are open, `open`, on the row or beside the list.
 //
 //   GET /api/sensors/:placeId/tables/incoming
 //     { flocks: [{ id, event_time, status, party, suggestion }] }, where
 //     `suggestion` is { table, free_now, likely_free_at } or null. Party sizes
-//     and times, never names.
+//     and times, never names. The window is the last 12 hours to 7 days
+//     ahead, so a plan can be on another day, or already past.
 //
 //   GET /api/sensors/:placeId/tables/stats?days=28
 //     { days, seatings, turn_minutes: { median, by_hour: [{ dow, hour, median,
 //     seatings }] }, waited_share, clear_minutes_median, full_hours: [{ dow,
 //     hour, share }], timeZone }. `dow` 0 to 6 from Sunday and `hour` 0 to
-//     23, on the venue's clock when `timeZone` is set and in UTC when it is
-//     null. Nulls mean too few seatings (under 20) to say.
+//     23, on the venue's clock when `timeZone` is a zone and in UTC when it
+//     is null (an older server said 'UTC', read the same way). A cell's
+//     median is null under 20 seatings in the cell, the overall median null
+//     under 20 in the window; a cell's `seatings` is sent whatever the count.
 //
 // A table that is seated or waiting may also carry `likely_free_at` (an ISO
 // time, or null), the server's estimate from its history of when the party
@@ -152,6 +165,20 @@ export function seatsText(seats) {
   const n = num(seats);
   if (n === null || !Number.isInteger(n) || n < 1) return null;
   return `${n} ${n === 1 ? 'seat' : 'seats'}`;
+}
+
+// The seats line on a tile, or null. `seats` is the unit's own count and is
+// printed as what it is ("4 seats"). Without one, `party_max`, the largest
+// party the box has seen at the table lately, is printed as what IT is
+// ("seats 4 so far", `seen`, drawn in the muted style): a six-top that has
+// only seated couples this month is not a two-top, and the line must not say
+// it is. Nothing when both are unknown.
+export function seatsLine(table) {
+  const known = seatsText(table && table.seats);
+  if (known) return { text: known, seen: false };
+  const n = num(table && table.party_max);
+  if (n === null || !Number.isInteger(n) || n < 1) return null;
+  return { text: `seats ${n} so far`, seen: true };
 }
 
 // The tables that need someone, longest first: a party nobody has stopped by
@@ -310,15 +337,24 @@ const CLOCK_PARTS = { weekday: 'short', year: 'numeric', month: 'numeric', day: 
 // building the formatter is the expensive half of formatting a time.
 const CLOCKS = new Map();
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 // The clock a time of day is printed on: the venue's when its zone is known
 // and this device can keep it, the Analytics charts' clock and the hours
 // chart's (hourOfIn), else this device's, which the section says (clockWords).
 //   venue       whether it is the venue's
 //   time(iso)   "8:10 PM", or null for a time that does not parse
-//   when(iso, nowMs)  the same, with the weekday in front ("Sat 8:10 PM")
-//               when the time is not on the same day as `nowMs` on this clock,
-//               since "at 8:00 PM" on a list of tonight's plans must mean
-//               tonight
+//   day(t)      the calendar day `t` (an ISO time or milliseconds) falls on,
+//               on this clock, as a key two times are compared by; null for
+//               one that does not parse
+//   when(iso, nowMs)  the time with its day in front, judged on this clock
+//               at `nowMs`: "Today 8:00 PM"; "Earlier today 7:00 PM" once
+//               the time has passed; "Yesterday 11:00 PM"; "Sat 8:00 PM" on
+//               another day; and with the date, "Fri 10/30 7:00 PM", from
+//               six days out, where the weekday alone is this week's or
+//               next's. A list of plans a week wide must say which day each
+//               is on, and a bare "Fri 7:00 PM" on a Friday reads as
+//               tonight. With no `nowMs` to judge by, the weekday.
 export function clockIn(timeZone) {
   const key = typeof timeZone === 'string' ? timeZone : '';
   if (CLOCKS.has(key)) return CLOCKS.get(key);
@@ -343,11 +379,20 @@ export function clockIn(timeZone) {
       const p = read(iso);
       return p ? timeOf(p) : null;
     },
+    day: (t) => {
+      const ms = typeof t === 'number' ? (Number.isFinite(t) ? t : null) : timeMs(t);
+      return ms === null ? null : dayOf(parts(ms));
+    },
     when: (iso, nowMs) => {
       const p = read(iso);
       if (!p) return null;
-      const today = Number.isFinite(nowMs) ? parts(nowMs) : null;
-      return today && dayOf(today) === dayOf(p) ? timeOf(p) : `${p.weekday} ${timeOf(p)}`;
+      if (!Number.isFinite(nowMs)) return `${p.weekday} ${timeOf(p)}`;
+      const t = timeMs(iso);
+      const day = dayOf(p);
+      if (day === dayOf(parts(nowMs))) return `${t < nowMs ? 'Earlier today' : 'Today'} ${timeOf(p)}`;
+      if (t < nowMs) return day === dayOf(parts(nowMs - DAY_MS)) ? `Yesterday ${timeOf(p)}` : `${p.weekday} ${timeOf(p)}`;
+      if (t - nowMs >= 6 * DAY_MS) return `${p.weekday} ${p.month}/${p.day} ${timeOf(p)}`;
+      return `${p.weekday} ${timeOf(p)}`;
     },
   };
   // The device clock is one entry too (key ''), with the same cap.
@@ -369,22 +414,49 @@ export function waitRows(waits) {
     .filter((r) => r && num(r.party) !== null && num(r.party) > 0)
     .map((r) => ({ ...r, party: Math.round(num(r.party)) }))
     .sort((a, b) => a.party - b.party)
-    .map((r) => ({ party: r.party, open: r.open_now === true, text: waitText(r) }));
+    .map((r) => ({ party: r.party, open: r.open_now === true, text: waitText(r, waits) }));
 }
 
-// "Party of 4: a table is open now", "Party of 4: about 12 min, table 6 next"
-// or "Party of 6: no table that fits right now". The minutes are the
-// server's estimate, so "about"; under a minute is said as that rather than
-// "about 0 min". A table named with no minutes is still the next table.
-export function waitText(row) {
+// How many tables are open, when the waits answer says: on the row, else
+// beside the list (the key the public summary uses for the same count).
+// Null when it does not.
+function openTables(row, waits) {
+  for (const v of [row && row.open, waits && waits.open]) {
+    const n = num(v);
+    if (n !== null && n >= 0) return Math.round(n);
+  }
+  return null;
+}
+
+// One row in words, each state of `open_now` kept apart, since "no table
+// that fits" is a claim about the room and "no estimate yet" is not:
+//   true    "Party of 4: table 1 is open now" (or "a table is open now"
+//           when the server sent no number)
+//   null    "Party of 6: 3 tables open, seats unknown", or "tables open,
+//           seats unknown" with no count: tables are open and none is known
+//           to seat the party, which is not the same as none does
+//   false   "Party of 4: about 12 min, table 6 next" from the server's
+//           estimate, so "about" (under a minute said as that rather than
+//           "about 0 min"); "Party of 4: table 6 next, no estimate yet" when
+//           it named the table and could not say when; and "Party of 4: no
+//           table that fits right now" only when it named nothing
+export function waitText(row, waits) {
   const party = Math.round(num(row.party));
-  if (row.open_now === true) return `Party of ${party}: a table is open now`;
-  const minutes = num(row.minutes);
   const table = num(row.table);
+  if (row.open_now === true) {
+    return table !== null ? `Party of ${party}: table ${table} is open now` : `Party of ${party}: a table is open now`;
+  }
+  if (row.open_now === null) {
+    const open = openTables(row, waits);
+    return open !== null
+      ? `Party of ${party}: ${open} ${open === 1 ? 'table' : 'tables'} open, seats unknown`
+      : `Party of ${party}: tables open, seats unknown`;
+  }
+  const minutes = num(row.minutes);
   const wait = minutes === null || minutes < 0 ? null : minutes < 1 ? 'under 1 min' : `about ${durationText(minutes * 60000)}`;
   if (wait && table !== null) return `Party of ${party}: ${wait}, table ${table} next`;
   if (wait) return `Party of ${party}: ${wait}`;
-  if (table !== null) return `Party of ${party}: table ${table} next, wait unknown`;
+  if (table !== null) return `Party of ${party}: table ${table} next, no estimate yet`;
   return `Party of ${party}: no table that fits right now`;
 }
 
@@ -398,7 +470,7 @@ export function waitsStaleLines(updatedAtMs, nowMs) {
   };
 }
 
-// ── Coming tonight ─────────────────────────────────────────────────────────
+// ── Coming up ──────────────────────────────────────────────────────────────
 
 // The incoming flocks in time order (one with no usable time last), each as
 // its line and the table that could seat it. The server sends party sizes
@@ -411,7 +483,7 @@ export function incomingRows(incoming, clock, nowMs) {
       key: f.id === null || f.id === undefined ? `row-${i}` : String(f.id),
       at: timeMs(f.event_time),
       text: incomingText(f, clock, nowMs),
-      fit: suggestionText(f.suggestion, clock),
+      fit: suggestionText(f.suggestion, clock, nowMs, f.event_time),
       confirmed: f.status === 'confirmed',
     }))
     .sort((a, b) => {
@@ -420,28 +492,54 @@ export function incomingRows(incoming, clock, nowMs) {
     });
 }
 
-// "Party of 5 at 8:00 PM, confirmed". The feed sends a confirmed plan only
-// to the venue it is locked in at, so confirmed means coming here; anything
-// else is a plan still deciding with this venue in the running, the words
-// the Events tab's card uses. A plan on another day carries its weekday.
+// "Today 8:00 PM: party of 5, confirmed". The day leads (clock.when), since
+// the list runs from the last 12 hours to a week ahead and is read in time
+// order: "Earlier today 7:00 PM: party of 4, confirmed", "Sat 8:00 PM:
+// party of 10, confirmed". The feed sends a confirmed plan only to the
+// venue it is locked in at, so confirmed means coming here; anything else
+// is a plan still deciding with this venue in the running, the words the
+// Events tab's card uses. With no usable time, "Party of 5, confirmed".
 export function incomingText(flock, clock, nowMs) {
   const party = num(flock.party);
-  const who = party !== null && party > 0 ? `Party of ${Math.round(party)}` : 'A flock';
+  const who = party !== null && party > 0 ? `party of ${Math.round(party)}` : 'a flock';
   const when = clock.when(flock.event_time, nowMs);
   const status = flock.status === 'confirmed' ? 'confirmed' : 'considering you';
-  return when ? `${who} at ${when}, ${status}` : `${who}, ${status}`;
+  if (!when) return `${who[0].toUpperCase()}${who.slice(1)}, ${status}`;
+  return `${when}: ${who}, ${status}`;
 }
 
-// "Table 6 is free now", "Table 6 likely free by 7:50 PM" or "No table that
-// fits yet". A table named with neither a free flag nor an estimate fits
-// and that is all that can be said.
-export function suggestionText(suggestion, clock) {
+// The table that could seat a plan, in words. "Table 6 is free now" when the
+// server says so, and "No table that fits yet" with no table at all. With
+// the server's estimate of when a table will be up, judged at `nowMs`
+// against the plan's time:
+//   "Table 6 likely free by 7:50 PM"       ahead of the clock, before the plan
+//   "Table 6 should be free now"           the clock has passed it; the party
+//                                          may still be there, and "likely
+//                                          free by 7:50" at 8:05 is a line
+//                                          that has been wrong for a quarter
+//                                          of an hour (the board's own rule)
+//   "Table 6 may not be free in time (likely around 8:40 PM)"
+//                                          after the plan's time
+// A time of day is printed only when it falls on the plan's day on this
+// clock: today's 7:50 PM under a plan for Saturday reads as Saturday's. An
+// estimate is about today's room, so for a plan on another day it says
+// nothing and the table simply fits, "Table 6 fits them", which is also all
+// that can be said with no estimate, or no clock to judge one by.
+export function suggestionText(suggestion, clock, nowMs, eventTime) {
   const table = suggestion && typeof suggestion === 'object' ? num(suggestion.table) : null;
   if (table === null) return 'No table that fits yet';
   if (suggestion.free_now === true) return `Table ${table} is free now`;
-  const when = clock.time(suggestion.likely_free_at);
-  if (when) return `Table ${table} likely free by ${when}`;
-  return `Table ${table} fits them`;
+  const fits = `Table ${table} fits them`;
+  const at = timeMs(suggestion.likely_free_at);
+  if (at === null || !Number.isFinite(nowMs)) return fits;
+  const planAt = timeMs(eventTime);
+  if (planAt !== null && clock.day(planAt) !== clock.day(nowMs)) return fits;
+  if (at <= nowMs) return `Table ${table} should be free now`;
+  const when = clock.day(at) === clock.day(planAt === null ? nowMs : planAt) ? clock.time(suggestion.likely_free_at) : null;
+  if (planAt !== null && at > planAt) {
+    return when ? `Table ${table} may not be free in time (likely around ${when})` : `Table ${table} may not be free in time`;
+  }
+  return when ? `Table ${table} likely free by ${when}` : fits;
 }
 
 // ── Tables in use by hour ──────────────────────────────────────────────────
@@ -639,14 +737,20 @@ const nonNegative = (v) => {
 //   rows    one per day from Monday: { dow, label, cells }, a cell being
 //           { dow, hour, median, seatings, shade, busy } or null where the
 //           day has no row at that hour. `median` is null where the server
-//           had too few seatings in the cell to say; `shade` is the median
-//           against the longest in the grid, 0 to 1, the cell's darkness;
-//           `busy` marks the cells with the most seatings (within BUSY_SHARE
-//           of the most, the rule the hours chart uses), the ones a manager
-//           staffs for.
+//           had too few seatings in the cell to say (its floor is 20); such
+//           a cell is drawn empty and keeps its column, and says nothing
+//           else: `shade`, the median against the longest in the grid, 0 to
+//           1, and `busy`, the cells with the most seatings (within
+//           BUSY_SHARE of the most among the measured cells, the rule the
+//           hours chart uses), are read from the cells with a median only,
+//           since the server sends a count for every cell, two seatings
+//           included, and "Busiest" off two seatings is a planning claim
+//           built on less than the server will put a median on. With no
+//           measured cell there is nothing to shade or ring, and no grid.
 export function turnGrid(byHour) {
   const cells = new Map();
   const has = new Array(24).fill(false);
+  let measured = 0;
   let maxMedian = 0;
   let maxSeatings = 0;
   for (const row of Array.isArray(byHour) ? byHour : []) {
@@ -659,11 +763,13 @@ export function turnGrid(byHour) {
     if (median === null && seatings <= 0) continue;
     cells.set(dow * 24 + hour, { dow, hour, median, seatings });
     has[hour] = true;
-    if (median !== null && median > maxMedian) maxMedian = median;
+    if (median === null) continue;
+    measured += 1;
+    if (median > maxMedian) maxMedian = median;
     if (seatings > maxSeatings) maxSeatings = seatings;
   }
   const hours = hoursInClockOrder(has);
-  if (!hours.length) return null;
+  if (!hours.length || !measured) return null;
   const rows = WEEK_FROM_MONDAY.map((dow) => ({
     dow,
     label: DOW_SHORT[dow],
@@ -673,12 +779,25 @@ export function turnGrid(byHour) {
       return {
         ...c,
         shade: c.median === null || maxMedian <= 0 ? 0 : c.median / maxMedian,
-        busy: maxSeatings > 0 && c.seatings >= maxSeatings * BUSY_SHARE,
+        busy: c.median !== null && maxSeatings > 0 && c.seatings >= maxSeatings * BUSY_SHARE,
       };
     }),
   }));
   return { hours, rows, maxMedian, maxSeatings };
 }
+
+// What a screen reader hears for one measured cell of the grid, which is
+// otherwise shading and a ring: "Fri 8 PM: typical turn 1 h 5 min", and
+// ", most seatings" on a ringed cell. Null for a cell with no median.
+export function turnCellLabel(dayLabel, cell) {
+  if (!cell || cell.median === null) return null;
+  return `${dayLabel} ${hourLabel(cell.hour)}: typical turn ${durationText(cell.median * 60000)}${cell.busy ? ', most seatings' : ''}`;
+}
+
+// The one line under the grid that says what its marks mean. "Stronger"
+// rather than "darker": after dark the card is the dark surface and a fuller
+// cell is the lighter one.
+export const TURN_GRID_KEY = 'A stronger blue means a longer typical turn. The amber ring marks the hours with the most seatings.';
 
 // "8 to 10 PM", "11 AM to 1 PM", "11 PM to 2 AM": the hours from `start` to
 // `end`, the end exclusive and allowed past 24 for a run over midnight. One
@@ -744,11 +863,20 @@ export function turnTimes(stats) {
     })(),
     cleared: nonNegative(stats.clear_minutes_median),
     full,
-    timeZone: typeof stats.timeZone === 'string' && stats.timeZone ? stats.timeZone : null,
+    timeZone: venueZoneOf(stats.timeZone),
   };
   out.any = out.median !== null || out.grid !== null || out.waited !== null || out.cleared !== null || out.full !== null;
   return out;
 }
+
+// Whether a zone name is UTC itself, which no listing carries: the server
+// folds a venue without a zone in UTC and says so with null today and with
+// the string 'UTC' before, and both must read as "no zone", never as the
+// venue's clock.
+export const isUtcZone = (zone) => typeof zone === 'string' && /^(utc|etc\/utc)$/i.test(zone.trim());
+
+// The venue's zone off a stats answer, or null for none, UTC included.
+export const venueZoneOf = (zone) => (typeof zone === 'string' && zone && !isUtcZone(zone) ? zone : null);
 
 // "Half the parties stay under 52 min, half stay longer." is what a median
 // means, said without the word.

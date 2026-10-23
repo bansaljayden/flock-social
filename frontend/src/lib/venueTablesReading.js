@@ -203,8 +203,14 @@ export const TABLE_HOURS_RETRY_EVERY_TURNS = 20;
 // The venue's IANA zone off an hours answer, when the server sends one, or
 // null. The chart folds the hours on the venue's clock when it has a zone
 // (lib/venueTables.js, hourOfIn); the route does not carry one today, and
-// this is where it is read the day it does.
-export const tableHoursZoneFrom = (data) => (data && typeof data.timeZone === 'string' && data.timeZone ? data.timeZone : null);
+// this is where it is read the day it does. UTC itself is no zone: it is
+// what the server folds a venue without one in, and must never be kept as
+// the venue's clock (the stats answer is read the same way, venueZoneOf).
+export const tableHoursZoneFrom = (data) => (
+  data && typeof data.timeZone === 'string' && data.timeZone && !/^(utc|etc\/utc)$/i.test(data.timeZone.trim())
+    ? data.timeZone
+    : null
+);
 
 // Reads once now and, for as long as the last read failed, again after every
 // `everyTurns` turns (turn() is called by the caller on each good answer of a

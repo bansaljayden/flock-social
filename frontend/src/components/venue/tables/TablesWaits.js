@@ -2,10 +2,12 @@
  * WALK-IN WAITS: WHAT TO TELL A PARTY AT THE DOOR.
  *
  * The second section of the Tables tab, under the board. One line per party
- * size the server estimates for (2, 4, 6 and 8): a table is open now, or
- * about how long and which table comes up next, or nothing fits right now.
- * The minutes are the server's estimate from its turn history, so the line
- * says "about"; the words are waitText in lib/venueTables.js.
+ * size the server estimates for (2, 4, 6 and 8): a table is open now, named;
+ * or tables are open but none is known to seat the party; or about how long
+ * and which table comes up next; or the next table with no estimate yet; or
+ * no table that fits, said only when the server named nothing. The minutes
+ * are the server's estimate from its turn history, so the line says "about";
+ * the words are waitText in lib/venueTables.js.
  *
  * Read on the tables' own 15-second loop while the tab is open (App.js), so
  * the waits and the board describe the same room. Handled like the board:
