@@ -201,8 +201,8 @@ describe('the pages link to the canonical homepage', () => {
 // ───────────────────────────────────────────────────────────────────────────
 describe('the register matches the company that exists', () => {
   test('no page claims an invented team, and /about names the two real people', () => {
-    // /about names the two people who make Flock, the founder and the COO, as the
-    // pitch video's own description does. Support and the guidelines once said
+    // /about names the two people who make Flock, the founder and the growth and
+    // competitions lead. Support and the guidelines once said
     // "we're a small team" and "our team reviews reports", and the second of those
     // is a moderation commitment App Review reads, so headcount words stay out.
     for (const { file } of PAGES) {
