@@ -1393,14 +1393,14 @@ test('the floor: words for states, when each began, seats, in number order, fres
   const at = new Date(ingest.body.recorded_at).getTime();
   // likely_free_at is null on every table: the venue has no closed seatings
   // yet, and sensorTableHistory.test.js is where it gets some. seats is the
-  // unit's count where it sent one (2 and 4); table 3 sent none, so it is the
-  // largest party seen there, the two people sitting at it now; table 1 has
-  // had nobody.
+  // unit's count where it sent one (2 and 4) and null elsewhere; party_max is
+  // the largest party seen at the table, the people sitting at 2 and 3 now,
+  // and nothing at 1 and 4, which have had nobody.
   assert.deepStrictEqual(res.body.tables, [
-    { number: 1, people: 0, state: 'free', since: new Date(at - 340000).toISOString(), seats: null, likely_free_at: null },
-    { number: 2, people: 3, state: 'seated', since: new Date(at - 845000).toISOString(), seats: 4, likely_free_at: null },
-    { number: 3, people: 2, state: 'waiting', since: new Date(at - 410000).toISOString(), seats: 2, likely_free_at: null },
-    { number: 4, people: 0, state: 'needs_clearing', since: new Date(at - 95000).toISOString(), seats: 6, likely_free_at: null },
+    { number: 1, people: 0, state: 'free', since: new Date(at - 340000).toISOString(), seats: null, party_max: null, likely_free_at: null },
+    { number: 2, people: 3, state: 'seated', since: new Date(at - 845000).toISOString(), seats: 4, party_max: 3, likely_free_at: null },
+    { number: 3, people: 2, state: 'waiting', since: new Date(at - 410000).toISOString(), seats: null, party_max: 2, likely_free_at: null },
+    { number: 4, people: 0, state: 'needs_clearing', since: new Date(at - 95000).toISOString(), seats: 6, party_max: null, likely_free_at: null },
   ]);
   assert.strictEqual(res.body.updated_at, new Date(at).toISOString());
   assert.strictEqual(res.body.stale, false);
@@ -1448,10 +1448,11 @@ test('the floor is every unit\'s tables together, in number order, and does not 
   await settle();
   const res = await get(FLOOR, OWNER_ID);
   assert.strictEqual(res.status, 200, res.raw);
-  // Seats: the unit's count on 42, the party now sitting on 1 and 3 (the
-  // largest seen there), nothing on the two tables nobody has sat at.
-  assert.deepStrictEqual(res.body.tables.map((t) => `${t.number}:${t.people}:${t.state}:${t.seats}`),
-    ['1:2:seated:2', '2:0:free:null', '3:3:waiting:3', '41:0:needs_clearing:null', '42:4:seated:6']);
+  // Seats: the unit's count on 42 and nothing else; party_max the party now
+  // sitting on 1, 3 and 42 (the largest seen there), nothing on the two
+  // tables nobody has sat at.
+  assert.deepStrictEqual(res.body.tables.map((t) => `${t.number}:${t.people}:${t.state}:${t.seats}/${t.party_max}`),
+    ['1:2:seated:null/2', '2:0:free:null/null', '3:3:waiting:null/3', '41:0:needs_clearing:null/null', '42:4:seated:6/4']);
   assert.strictEqual(res.body.updated_at, tableStates.find((r) => r.table_no === 41).updated_at.toISOString(), 'the newest row, whichever unit wrote it');
   assert.strictEqual(res.body.stale, false);
   assert.strictEqual(res.body.next_free, 42, 'the party seated longest is in the back room');

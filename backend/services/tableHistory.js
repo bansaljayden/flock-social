@@ -27,11 +27,26 @@
 // venue's IANA zone only where the corpus has it: ml_venues.timezone, written
 // from Google's own timeZone for every corpus venue, and never a paid call
 // from here. A venue outside the corpus is read in UTC and every answer that
-// folds by hour says so (timeZone). The name is checked with ICU
-// (utils/venueZone.js validTimeZone) before Postgres sees it, and if Postgres
-// still refuses it (22023, a name the two databases disagree on) the read is
-// repeated in UTC rather than failing: a wrong clock is a worse answer than a
-// stated one, and no answer at all is worse than both.
+// folds by hour says so: timeZone is the zone the weekdays and hours are on,
+// and null when they are UTC, the same word GET /tables/hours uses, so no
+// client can mistake the string 'UTC' for a venue's own clock. The name is
+// checked with ICU (utils/venueZone.js validTimeZone) before Postgres sees
+// it, and if Postgres still refuses it (22023, a name the two databases
+// disagree on) the read is repeated in UTC rather than failing: a wrong clock
+// is a worse answer than a stated one, and no answer at all is worse than
+// both. After that fallback the cells are UTC cells, and every lookup into
+// them (likely_free_at, the waits, the summary's minutes) is made with the
+// UTC clock too, whatever zone the venue has.
+//
+// A DARK UNIT HAS NO SAY IN WHAT IS OPEN NOW. A venue with two boxes keeps
+// both units' rows on the owner's floor (phase 1 settled that: the floor is
+// every unit's tables, marked stale as a whole only when every unit is), but
+// nothing ever removes the rows of a unit that stops sending altogether, and
+// a back room unplugged at close would otherwise count ten free tables for
+// as long as the front room stays live. So the counts, the fits, the waits
+// and the suggestions are built only from rows a unit refreshed inside
+// TABLES_STALE_AFTER_MINUTES (liveRows); the owner's floor still shows the
+// rest, each marked stale.
 //
 // TWENTY SEATINGS BEFORE A MEDIAN IS SAID. A median of six turns is a
 // coincidence with a decimal point, and likely_free_at built on one would
@@ -55,11 +70,12 @@ const { listIncomingFlocks, partyOf } = require('./incomingFlocks');
 const TURN_WINDOW_DAYS = 28;
 const STATS_DAYS_MIN = 7;
 const STATS_DAYS_MAX = 90;
-// How far back the largest party seen at a table counts as its seat count.
+// How far back the largest party seen at a table stands in for its seat count.
 const SEATS_WINDOW_DAYS = 30;
 const MIN_SEATINGS_FOR_MEDIAN = 20;
 // A table whose seats nobody has counted (no C from the unit, no party seen)
-// fits a party this big: the common restaurant table.
+// fits a party up to this big: the common restaurant table. Whether it fits
+// a bigger party is not known, and is said so (null), never guessed either way.
 const UNKNOWN_SEATS_FIT_UP_TO = 4;
 const WAIT_PARTIES = Object.freeze([2, 4, 6, 8]);
 // An hour of a weekday is "full" when at least this share of its readings
@@ -229,12 +245,20 @@ function likelyFreeAt(since, zone, venue) {
 // place is checked on the rows themselves. Over every place asked about at
 // once, for the public summary.
 //
-// SEATS. The unit's own count (C) when it ever sent one, kept on the row by
-// the floor writer; else the largest party seen at the table in the last
-// SEATS_WINDOW_DAYS, which is the table's capacity as actually used; else
-// unknown. The aggregate is one scan of the venue's recent seatings joined
-// to the floor, not a lookup per table. NULLIF turns "parties of nobody"
-// (every seating at party_max 0) back into unknown.
+// SEATS, AND THE PARTY SEEN. The unit's own count (C) when it ever sent one,
+// kept on the row by the floor writer, is the table's seats; the largest
+// party seen at the table in the last SEATS_WINDOW_DAYS is a second, weaker
+// fact (the table's capacity as actually used), and the two are handed to
+// the owner apart (seats, party_max) so a six-top that only sat couples this
+// month is never tiled "2 seats". A fit is judged on the seats, else on the
+// party seen, else on the unknown-table default (fitOf). The aggregate is
+// one scan of the venue's recent seatings joined to the floor, not a lookup
+// per table, and it is joined on the VENUE as well as the unit and table: a
+// unit moved from one venue to another keeps its old seatings under the old
+// venue, and the batch summary reads many venues' floors in one statement,
+// so without the venue in the join one venue's head counts would stand in
+// as another venue's seats. NULLIF turns "parties of nobody" (every seating
+// at party_max 0) back into unknown.
 // ---------------------------------------------------------------------------
 const TABLE_FLOOR_SQL = `
   SELECT s.venue_place_id, s.sensor_device_id, s.table_no, s.people, s.state, s.state_since, s.seats, s.updated_at,
@@ -242,12 +266,12 @@ const TABLE_FLOOR_SQL = `
          m.party_max AS party_max_seen
     FROM sensor_table_states s
     LEFT JOIN (
-      SELECT g.sensor_device_id, g.table_no, NULLIF(MAX(g.party_max), 0) AS party_max
+      SELECT g.venue_place_id, g.sensor_device_id, g.table_no, NULLIF(MAX(g.party_max), 0) AS party_max
         FROM sensor_table_seatings g
        WHERE g.venue_place_id = ANY($1::varchar[])
          AND g.seated_at >= NOW() - ($3::int * INTERVAL '1 day')
-       GROUP BY g.sensor_device_id, g.table_no
-    ) m ON m.sensor_device_id = s.sensor_device_id AND m.table_no = s.table_no
+       GROUP BY g.venue_place_id, g.sensor_device_id, g.table_no
+    ) m ON m.venue_place_id = s.venue_place_id AND m.sensor_device_id = s.sensor_device_id AND m.table_no = s.table_no
    WHERE s.venue_place_id = ANY($1::varchar[])
    ORDER BY s.venue_place_id, s.table_no, s.updated_at DESC, s.sensor_device_id`;
 
@@ -290,18 +314,30 @@ async function readFloors(placeIds) {
 
 const hasParty = (r) => r.state === 's' || r.state === 'w';
 
-// The seats rule (item 3 of the contract): the unit's count, else the largest
-// party seen, else unknown.
+// Rows a unit refreshed inside TABLES_STALE_AFTER_MINUTES (the per-row stale
+// the floor read computes): what "open now", a fit, a wait and a suggestion
+// may be built on. Every live reading rewrites all of a unit's rows with one
+// updated_at and deletes the rest, so a row's staleness is its unit's.
+const liveRows = (kept) => kept.filter((r) => r.stale !== true);
+
+// The seats a fit is judged on (item 3 of the contract): the unit's count,
+// else the largest party seen at the table, else unknown.
 function seatsOf(r) {
   if (r.seats !== null && r.seats !== undefined) return Number(r.seats);
   if (r.party_max_seen !== null && r.party_max_seen !== undefined) return Number(r.party_max_seen);
   return null;
 }
 
-// Whether a table with `seats` seats (null for unknown) takes a party of `party`.
+// Whether a table with `seats` seats takes a party of `party`: true or false
+// from a known count, and with the count unknown (null) true up to the
+// unknown-table default and null above it. Nothing says a table nobody has
+// counted or sat six at does not seat six, so nothing here says so either.
 function fits(seats, party) {
-  return seats === null ? party <= UNKNOWN_SEATS_FIT_UP_TO : seats >= party;
+  if (seats !== null) return seats >= party;
+  return party <= UNKNOWN_SEATS_FIT_UP_TO ? true : null;
 }
+
+const fitOf = (r, party) => fits(seatsOf(r), party);
 
 // Each kept row's likely_free_at (a Date or null), once per floor read.
 function likelyByTable(kept, zone, venue) {
@@ -310,21 +346,29 @@ function likelyByTable(kept, zone, venue) {
   return out;
 }
 
-// The lowest-numbered free table that fits, or null.
-function freeFitting(kept, party) {
+// What the free tables say about a party: { fits: true, row } with the
+// lowest-numbered free table known to fit; else { fits: null, row } with the
+// lowest free table whose fit is not known, because "no table fits" cannot
+// be said while one of them might; else { fits: false, row: null }, which is
+// every free table known too small, or none free.
+function openFor(kept, party) {
+  let unknown = null;
   for (const r of kept) {
-    if (r.state === 'f' && fits(seatsOf(r), party)) return r;
+    if (r.state !== 'f') continue;
+    const fit = fitOf(r, party);
+    if (fit === true) return { fits: true, row: r };
+    if (fit === null && unknown === null) unknown = r;
   }
-  return null;
+  return unknown ? { fits: null, row: unknown } : { fits: false, row: null };
 }
 
-// The seated or waiting table that fits and is likely free soonest, among
+// The seated or waiting table known to fit that is likely free soonest, among
 // those with a likely_free_at before `beforeMs` (no bound when null), or null.
 function soonestFitting(kept, party, likely, beforeMs = null) {
   let best = null;
   let bestAt = null;
   for (const r of kept) {
-    if (!hasParty(r) || !fits(seatsOf(r), party)) continue;
+    if (!hasParty(r) || fitOf(r, party) !== true) continue;
     const at = likely.get(Number(r.table_no));
     if (!at) continue;
     if (beforeMs !== null && at.getTime() >= beforeMs) continue;
@@ -342,7 +386,8 @@ function minutesUntil(at, nowMs) {
   return Math.max(0, Math.ceil((at.getTime() - nowMs) / 60000));
 }
 
-// One table as the owner's floor shows it. No unit id.
+// One table as the owner's floor shows it: the unit's seat count and the
+// largest party seen apart, each null when there is none. No unit id.
 function tableView(r, likely) {
   const at = likely.get(Number(r.table_no));
   return {
@@ -350,20 +395,23 @@ function tableView(r, likely) {
     people: Number(r.people),
     state: STATE_WORDS[r.state],
     since: new Date(r.state_since).toISOString(),
-    seats: seatsOf(r),
+    seats: r.seats === null || r.seats === undefined ? null : Number(r.seats),
+    party_max: r.party_max_seen === null || r.party_max_seen === undefined ? null : Number(r.party_max_seen),
     likely_free_at: at ? at.toISOString() : null,
   };
 }
 
 // The floor, its medians and its zone for one place, read together: the zone
-// and the floor in parallel, the medians once the zone is known.
+// and the floor in parallel, the medians once the zone is known. The clock
+// the cells are looked up with is the one they were folded in: the venue's,
+// or UTC after Postgres refused the venue's (queryInZones).
 async function floorContext(placeId) {
   const [zones, floors] = await Promise.all([venueTimeZones([placeId]), readFloors([placeId])]);
   const zone = zones.get(placeId) || null;
   const turns = await turnMedians([placeId], zones);
   const floor = floors.get(placeId) || null;
   const venue = turns.byVenue.get(placeId) || null;
-  const likely = likelyByTable(floor ? floor.kept : [], zone, venue);
+  const likely = likelyByTable(floor ? floor.kept : [], turns.fellBack ? null : zone, venue);
   return { zone, floor, venue, likely };
 }
 
@@ -374,11 +422,14 @@ function floorClock(floor) {
 }
 
 /**
- * GET /tables: { tables: [{ number, people, state, since, seats,
- * likely_free_at }], updated_at, stale, next_free }. next_free is the seated
- * or waiting table whose party has sat longest (the best guess at which
- * table frees up next; on a tie, the lower number), null when no table has a
- * party. With no rows at all: no tables, no time, stale, nothing next.
+ * GET /tables: { tables: [{ number, people, state, since, seats, party_max,
+ * likely_free_at }], updated_at, stale, next_free }. seats is the unit's own
+ * count or null; party_max the largest party seen at the table in
+ * SEATS_WINDOW_DAYS or null. next_free is the seated or waiting table whose
+ * party has sat longest (the best guess at which table frees up next; on a
+ * tie, the lower number), null when no table has a party. Every unit's rows,
+ * stale ones included. With no rows at all: no tables, no time, stale,
+ * nothing next.
  */
 async function ownerFloor(placeId) {
   const { floor, likely } = await floorContext(placeId);
@@ -398,14 +449,17 @@ async function ownerFloor(placeId) {
 
 /**
  * GET /tables/waits: { updated_at, stale, by_party: [{ party, open_now,
- * minutes, table }] } for parties of 2, 4, 6 and 8. open_now when a free
- * table fits (then minutes is 0 and table that table's number, the lowest);
- * else minutes until the soonest likely_free_at among fitting seated tables
- * and that table's number; both null with no fitting table or no history.
+ * minutes, table }] } for parties of 2, 4, 6 and 8, over the live units'
+ * rows. open_now is true when a free table is known to fit (minutes 0, table
+ * that table's number, the lowest); null when tables are free but none is
+ * known to fit and one might (minutes null, table the lowest such table);
+ * else false, with minutes until the soonest likely_free_at among the seated
+ * tables known to fit and that table's number, both null with no such table
+ * or no history.
  */
 async function tableWaits(placeId, nowMs = Date.now()) {
   const { floor, likely } = await floorContext(placeId);
-  const kept = floor ? floor.kept : [];
+  const kept = floor ? liveRows(floor.kept) : [];
   return {
     ...floorClock(floor),
     by_party: WAIT_PARTIES.map((party) => waitFor(kept, party, likely, nowMs)),
@@ -413,8 +467,11 @@ async function tableWaits(placeId, nowMs = Date.now()) {
 }
 
 function waitFor(kept, party, likely, nowMs) {
-  const free = freeFitting(kept, party);
-  if (free) return { party, open_now: true, minutes: 0, table: Number(free.table_no) };
+  const open = openFor(kept, party);
+  if (open.fits === true) return { party, open_now: true, minutes: 0, table: Number(open.row.table_no) };
+  // A free table that might seat the party: no wait is said for a party that
+  // may not have to wait at all.
+  if (open.fits === null) return { party, open_now: null, minutes: null, table: Number(open.row.table_no) };
   const soon = soonestFitting(kept, party, likely);
   if (!soon) return { party, open_now: false, minutes: null, table: null };
   return { party, open_now: false, minutes: minutesUntil(soon.at, nowMs), table: Number(soon.row.table_no) };
@@ -424,12 +481,12 @@ function waitFor(kept, party, likely, nowMs) {
  * GET /tables/incoming: { flocks: [{ id, event_time, status, party,
  * suggestion }] }, the plans the dashboard's incoming feed lists (the same
  * statement, services/incomingFlocks.js: no name, no member, no user text),
- * each with the best fitting table: free now, else the one likely free
- * soonest before the plan's time, else null.
+ * each with the best table known to fit it: free now, else the one likely
+ * free soonest before the plan's time, else null. Over the live units' rows.
  */
 async function tableIncoming(placeId) {
   const [flocks, ctx] = await Promise.all([listIncomingFlocks(placeId), floorContext(placeId)]);
-  const kept = ctx.floor ? ctx.floor.kept : [];
+  const kept = ctx.floor ? liveRows(ctx.floor.kept) : [];
   return {
     flocks: flocks.map((f) => {
       const party = partyOf(f);
@@ -459,9 +516,13 @@ function naiveUtcInstant(v) {
   return new Date(v).getTime();
 }
 
+// A suggestion names a table KNOWN to fit; a free table whose fit is not
+// known is not suggested, and does not stop a fitting seated table from
+// being, since "table 4 fits them and is likely free at eight" stays true
+// whatever table 3 turns out to seat.
 function suggestionFor(kept, party, eventTimeMs, likely) {
-  const free = freeFitting(kept, party);
-  if (free) return { table: Number(free.table_no), free_now: true, likely_free_at: null };
+  const open = openFor(kept, party);
+  if (open.fits === true) return { table: Number(open.row.table_no), free_now: true, likely_free_at: null };
   const soon = soonestFitting(kept, party, likely, Number.isFinite(eventTimeMs) ? eventTimeMs : null);
   if (!soon) return null;
   return { table: Number(soon.row.table_no), free_now: false, likely_free_at: soon.at.toISOString() };
@@ -517,7 +578,10 @@ async function fullHours(placeIds, zones, days = TURN_WINDOW_DAYS) {
  * seatings is the closed seatings in the window; every median, the waited
  * share and the clear median are null under MIN_SEATINGS_FOR_MEDIAN (overall,
  * or in that hour of that weekday; the clear median counts the seatings
- * whose clear was seen). timeZone is the zone the weekdays and hours are on.
+ * whose clear was seen). timeZone is the venue's IANA zone the weekdays and
+ * hours are on, or null when they are in UTC (no zone known, or Postgres
+ * refused it): never the string 'UTC', which a client would read as a clock
+ * the venue keeps.
  */
 async function tableStats(placeId, days = TURN_WINDOW_DAYS) {
   const zones = await venueTimeZones([placeId]);
@@ -546,7 +610,7 @@ async function tableStats(placeId, days = TURN_WINDOW_DAYS) {
     waited_share: enough && all.waited_share !== null ? Math.round(all.waited_share * 1000) / 1000 : null,
     clear_minutes_median: all.cleared >= MIN_SEATINGS_FOR_MEDIAN ? round1(all.clear_median) : null,
     full_hours: full.byVenue.get(placeId) || [],
-    timeZone: fellBack ? 'UTC' : zoneOrUtc(zones.get(placeId)),
+    timeZone: fellBack ? null : (zones.get(placeId) || null),
   };
 }
 
@@ -618,7 +682,18 @@ async function writeTableSettings(callerId, placeId, { showInApp = null, alerts 
 // the single-venue route answers 404 for both in the same words, so nobody
 // can tell from outside whether a venue has tables it chose not to show. A
 // floor past TABLES_STALE_AFTER_MINUTES but inside the day is served with
-// stale true, as the owner's floor is.
+// stale true, as the owner's floor is, and with the counts of its live rows
+// only (none, when every unit is dark: a stale floor says nothing is known
+// to be open, and says it is stale).
+//
+// WHAT FITS, AND WHAT NOBODY KNOWS. fits_now is true when a free table is
+// known to seat the party, false when none is free or every free table is
+// known too small, and null when tables are free but whether one seats the
+// party is not known (no seat count, no party that size seen, and the party
+// bigger than the unknown-table default). wait_minutes is null with null:
+// a party that may not have to wait is not told how long it will. timeZone
+// is the venue's zone, or null when the busy hours are UTC weekdays and
+// hours, so the app can say which clock they are on or say nothing.
 //
 // ONE STATEMENT PER QUESTION, however many venues are asked about: the
 // floors, then (for the venues that have one) the switch, the zones, the
@@ -639,8 +714,11 @@ async function hiddenInApp(placeIds) {
 /**
  * The public summaries of `placeIds` for a party of `party`: a plain object
  * keyed by place id, each { open, total, party, fits_now, wait_minutes,
- * busy_hours: [{ dow, hour }], updated_at, stale }. A venue without a fresh
- * floor, or whose owner hides its tables from the app, is absent.
+ * busy_hours: [{ dow, hour }], timeZone, updated_at, stale }. open and total
+ * count the live units' tables; fits_now is true, false or null and
+ * wait_minutes null whenever it is not false; timeZone is the IANA zone the
+ * busy hours are on, or null for UTC. A venue without a fresh floor, or
+ * whose owner hides its tables from the app, is absent.
  */
 async function publicSummaries(placeIds, party = PUBLIC_PARTY_DEFAULT, nowMs = Date.now()) {
   const out = {};
@@ -659,15 +737,19 @@ async function publicSummaries(placeIds, party = PUBLIC_PARTY_DEFAULT, nowMs = D
   for (const id of shown) {
     const floor = floors.get(id);
     const zone = zones.get(id) || null;
-    const likely = likelyByTable(floor.kept, zone, turns.byVenue.get(id) || null);
-    const wait = waitFor(floor.kept, party, likely, nowMs);
+    const kept = liveRows(floor.kept);
+    // Each read's cells are looked up in the clock they were folded in: UTC
+    // after a 22023 fallback, whatever zone the venue has.
+    const likely = likelyByTable(kept, turns.fellBack ? null : zone, turns.byVenue.get(id) || null);
+    const wait = waitFor(kept, party, likely, nowMs);
     out[id] = {
-      open: floor.kept.filter((r) => r.state === 'f').length,
-      total: floor.kept.length,
+      open: kept.filter((r) => r.state === 'f').length,
+      total: kept.length,
       party,
       fits_now: wait.open_now,
       wait_minutes: wait.minutes,
       busy_hours: (full.byVenue.get(id) || []).map((c) => ({ dow: c.dow, hour: c.hour })),
+      timeZone: full.fellBack ? null : zone,
       ...floorClock(floor),
     };
   }
@@ -693,6 +775,7 @@ module.exports = {
   medianFor,
   likelyFreeAt,
   readFloors,
+  liveRows,
   seatsOf,
   fits,
   ownerFloor,

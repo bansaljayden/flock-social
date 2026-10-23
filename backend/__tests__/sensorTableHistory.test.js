@@ -22,6 +22,10 @@
 //   * What leaves the public summary is counts and minutes. Never a table
 //     number, a per-table state or a unit id, and a venue that hid its tables
 //     reads exactly like one with none.
+//   * A unit that has gone dark keeps its rows on the owner's floor and has
+//     no say in what is open now, and a fit nobody can judge (no seat count,
+//     no party that size seen, more than four) is said as null, never as
+//     "none fits".
 //
 // sensorTableHistoryStatement.test.js runs the same statements against a real,
 // migrated Postgres.
@@ -245,21 +249,22 @@ function sameCellEarlier(atMs, zone, weeks) {
 }
 
 // Twenty-one closed seatings in the same weekday-and-hour cell as `atMs`
-// (seven per week over three weeks), with turns of 40 to 60 minutes: median 50.
-function seedCell(atMs, placeId = VENUE, zone = ZONE, { count = 21, tableNo = 9 } = {}) {
+// (seven per week over three weeks), with turns of `base` to `base` + 20
+// minutes: median `base` + 10, so 50 as a rule.
+function seedCell(atMs, placeId = VENUE, zone = ZONE, { count = 21, tableNo = 9, base = 40 } = {}) {
   const weeks = sameCellEarlier(atMs, zone, 3);
   let n = 0;
-  const turns = Array.from({ length: count }, (_, i) => 40 + Math.round((20 * i) / (count - 1)));
+  const turns = Array.from({ length: count }, (_, i) => base + Math.round((20 * i) / (count - 1)));
   for (let i = 0; i < count; i += 1) {
-    const base = weeks[i % weeks.length];
+    const week = weeks[i % weeks.length];
     // Minutes apart inside the hour, so no two are the same row.
-    seed(placeId, tableNo, base + (i % 7) * 7 * MIN - (civilTime(base, zone).minute) * MIN, turns[i]);
+    seed(placeId, tableNo, week + (i % 7) * 7 * MIN - (civilTime(week, zone).minute) * MIN, turns[i]);
     n += 1;
   }
-  return { n, median: 50 };
+  return { n, median: base + 10 };
 }
 
-const SUMMARY_KEYS = ['busy_hours', 'fits_now', 'open', 'party', 'stale', 'total', 'updated_at', 'wait_minutes'];
+const SUMMARY_KEYS = ['busy_hours', 'fits_now', 'open', 'party', 'stale', 'timeZone', 'total', 'updated_at', 'wait_minutes'];
 
 // --- The seatings, through the ingest ---------------------------------------
 
@@ -384,7 +389,7 @@ test('a history write that fails is rolled back to its savepoint and logged, and
 
 const FLOOR = `/api/sensors/${VENUE}/tables`;
 
-test('likely_free_at is seated_at plus the median turn for that weekday and hour in the venue\'s zone, once twenty closed seatings exist there; seats fall back to the largest party seen', async () => {
+test('likely_free_at is seated_at plus the median turn for that weekday and hour in the venue\'s zone, once twenty closed seatings exist there; the largest party seen is told apart from the seats', async () => {
   reset();
   const t = await push('2:2:s:600;5:0:f:30');
   const since = t - 600 * 1000;
@@ -392,7 +397,7 @@ test('likely_free_at is seated_at plus the median turn for that weekday and hour
   seedCell(since, VENUE, ZONE, { count: 19, tableNo: 2 });
   let res = await get(FLOOR, OWNER_ID);
   assert.strictEqual(res.status, 200, res.raw);
-  assert.deepStrictEqual(Object.keys(res.body.tables[0]).sort(), ['likely_free_at', 'number', 'people', 'seats', 'since', 'state']);
+  assert.deepStrictEqual(Object.keys(res.body.tables[0]).sort(), ['likely_free_at', 'number', 'party_max', 'people', 'seats', 'since', 'state']);
   assert.strictEqual(res.body.tables[0].likely_free_at, null, 'nineteen seatings are not a median');
   assert.strictEqual(res.body.tables[1].likely_free_at, null, 'a free table has nothing to free');
 
@@ -400,8 +405,8 @@ test('likely_free_at is seated_at plus the median turn for that weekday and hour
   seedCell(since, VENUE, ZONE, { count: 21, tableNo: 2 });
   res = await get(FLOOR, OWNER_ID);
   assert.strictEqual(res.body.tables[0].likely_free_at, new Date(since + 50 * MIN).toISOString(), 'seated_at plus the cell median of 50');
-  assert.strictEqual(res.body.tables[0].seats, 2, 'the party sitting there is the largest seen at the table');
-  assert.strictEqual(res.body.tables[1].seats, null, 'nobody has sat at table 5');
+  assert.deepStrictEqual([res.body.tables[0].seats, res.body.tables[0].party_max], [null, 2], 'no count from the unit; the party sitting there is the largest seen at the table');
+  assert.deepStrictEqual([res.body.tables[1].seats, res.body.tables[1].party_max], [null, null], 'nobody has sat at table 5');
   assert.strictEqual(res.body.next_free, 2);
   // The medians were asked for in the venue's zone, over 28 days.
   const medians = queryLog.filter((q) => MEDIANS_READ.test(q.sql));
@@ -426,7 +431,7 @@ test('with too few seatings in the hour the venue\'s overall median stands in; w
   assert.strictEqual(res.body.tables[0].likely_free_at, null);
 });
 
-test('the seats fallback counts only the last 30 days and only parties of somebody; the unit\'s own count wins over it', async () => {
+test('the largest party seen counts only the last 30 days and only parties of somebody, and sits beside the unit\'s own count rather than under it', async () => {
   reset();
   await push('1:0:f:30;2:0:f:30:4;3:0:f:30');
   const now = Date.now();
@@ -435,7 +440,8 @@ test('the seats fallback counts only the last 30 days and only parties of somebo
   seed(VENUE, 2, now - 2 * DAY, 60, { party: 6 });
   seed(VENUE, 3, now - 2 * DAY, 60, { party: 0 });
   const res = await get(FLOOR, OWNER_ID);
-  assert.deepStrictEqual(res.body.tables.map((t) => [t.number, t.seats]), [[1, 3], [2, 4], [3, null]]);
+  assert.deepStrictEqual(res.body.tables.map((t) => [t.number, t.seats, t.party_max]), [[1, null, 3], [2, 4, 6], [3, null, null]],
+    'table 2 seats four by the unit and has sat six; nothing is folded into one number');
   const floor = queryLog.find((q) => FLOOR_READ.test(q.sql));
   assert.deepStrictEqual(floor.params, [[VENUE], 3, 30], 'the place, the stale window and the seats window');
 });
@@ -501,7 +507,7 @@ test('stats: the turn median by weekday and hour on the venue\'s clock, the wait
   assert.strictEqual(few.body.turn_minutes.by_hour[0].seatings, 19);
 });
 
-test('stats: a venue the server knows no zone for is read in UTC and says so; the same seatings land in a different hour', async () => {
+test('stats: a venue the server knows no zone for is read in UTC and says so with a null zone; the same seatings land in a different hour', async () => {
   reset();
   const at = Math.floor((Date.now() - 3 * DAY) / HOUR) * HOUR + 5 * MIN;
   for (let i = 0; i < 20; i += 1) seed(VENUE, 1, at + i * MIN, 50);
@@ -509,7 +515,7 @@ test('stats: a venue the server knows no zone for is read in UTC and says so; th
   mlVenues = [];
   const inUtc = await get(STATS, OWNER_ID);
   assert.strictEqual(inZone.body.timeZone, ZONE);
-  assert.strictEqual(inUtc.body.timeZone, 'UTC');
+  assert.strictEqual(inUtc.body.timeZone, null, 'null means UTC, as on /tables/hours; never the string, which reads as a clock the venue keeps');
   const ny = clockInZone(at, ZONE);
   const utc = clockInZone(at, 'UTC');
   assert.deepStrictEqual([inZone.body.turn_minutes.by_hour[0].dow, inZone.body.turn_minutes.by_hour[0].hour], [ny.day, ny.hour]);
@@ -539,8 +545,44 @@ test('stats: a zone Postgres refuses is read again in UTC rather than failing th
     console.error = realError;
   }
   assert.strictEqual(res.status, 200, res.raw);
-  assert.strictEqual(res.body.timeZone, 'UTC');
+  assert.strictEqual(res.body.timeZone, null, 'the hours are UTC now, and the answer says so the one way');
   assert.strictEqual(res.body.turn_minutes.median, 50);
+});
+
+test('after Postgres refuses the venue\'s zone, likely_free_at and the summary\'s wait read the UTC cells with the UTC clock, not with the venue\'s hour', async () => {
+  reset();
+  const t = await push('2:2:s:600');
+  const since = t - 600 * 1000;
+  // Twenty-one seatings in the UTC cell the party sat in (median 50), and
+  // twenty-one in the UTC cell that carries the party's NEW YORK weekday and
+  // hour (median 80): the cell a lookup with the wrong clock lands in.
+  seedCell(since, VENUE, 'UTC', { count: 21, tableNo: 2 });
+  const ny = civilTime(since, ZONE);
+  const decoy = instantForWallClock({ year: ny.year, month: ny.month, day: ny.day, hour: ny.hour, minute: ny.minute }, 'UTC');
+  seedCell(decoy, VENUE, 'UTC', { count: 21, tableNo: 7, base: 70 });
+  queryOverride = (flat, params) => {
+    if ((MEDIANS_READ.test(flat) || FULL_HOURS_READ.test(flat)) && params[1].some((z) => z !== 'UTC')) {
+      const err = new Error('time zone "America/New_York" not recognized');
+      err.code = '22023';
+      return Promise.reject(err);
+    }
+    return null;
+  };
+  const realError = console.error;
+  console.error = () => {};
+  let floor;
+  let summary;
+  try {
+    floor = await get(FLOOR, OWNER_ID);
+    summary = await get(`${SUMMARY}?party=2`, USER_ID);
+  } finally {
+    console.error = realError;
+  }
+  assert.strictEqual(floor.status, 200, floor.raw);
+  assert.strictEqual(floor.body.tables[0].likely_free_at, new Date(since + 50 * MIN).toISOString(), 'the UTC cell the party sat in, not the one at New York\'s hour');
+  assert.strictEqual(summary.status, 200, summary.raw);
+  assert.strictEqual(summary.body.wait_minutes, 40, 'fifty minutes from a party seated ten minutes ago');
+  assert.strictEqual(summary.body.timeZone, null, 'the busy hours are UTC cells too, and the summary says so');
 });
 
 test('stats: days is 7 to 90, 28 unless asked, and a corpus with no seatings is zeros and nulls', async () => {
@@ -568,7 +610,7 @@ test('stats: days is 7 to 90, 28 unless asked, and a corpus with no seatings is 
 
 const WAITS = `/api/sensors/${VENUE}/tables/waits`;
 
-test('waits: a free table that fits is open now with its number; otherwise the soonest likely-free fitting table and its minutes; unknown seats fit up to four; no fit or no history is null', async () => {
+test('waits: a free table known to fit is open now with its number; a free table nobody has counted fits four and might fit more, so above four nothing is claimed; otherwise the soonest likely-free fitting table and its minutes; no fit or no history is null', async () => {
   reset();
   // Table 1: free, 2 seats. Table 3: free, seats unknown. Table 2: seated,
   // party of 2 (seats unknown, so the party seen). Table 4: seated 20 minutes,
@@ -582,14 +624,22 @@ test('waits: a free table that fits is open now with its number; otherwise the s
   assert.deepStrictEqual(res.body.by_party, [
     { party: 2, open_now: true, minutes: 0, table: 1 },
     { party: 4, open_now: true, minutes: 0, table: 3 },
-    { party: 6, open_now: false, minutes: null, table: null },
-    { party: 8, open_now: false, minutes: null, table: null },
-  ], 'no history yet: a party of 6 has a table that fits (4) but no estimate');
+    { party: 6, open_now: null, minutes: null, table: 3 },
+    { party: 8, open_now: null, minutes: null, table: 3 },
+  ], 'table 3 might seat six or eight: nobody has counted it or sat that many there, so neither a fit nor a wait is claimed');
 
   // Twenty-one closed seatings in table 4's cell: median 50, so table 4 is
-  // likely free 30 minutes from the reading.
+  // likely free 30 minutes from the reading. Nothing is said for six while
+  // table 3 might seat them now.
   seedCell(t - 1200 * 1000, VENUE, ZONE, { count: 21, tableNo: 4 });
   res = await get(WAITS, OWNER_ID);
+  assert.deepStrictEqual(res.body.by_party[2], { party: 6, open_now: null, minutes: null, table: 3 });
+
+  // Table 3 counted at four: six and eight are known not to fit it, so the
+  // wait for six is table 4's and nothing seats eight.
+  await push('1:0:f:90:2;2:2:s:630;3:0:f:60:4;4:4:s:1230:6;5:0:c:60:8');
+  res = await get(WAITS, OWNER_ID);
+  assert.deepStrictEqual(res.body.by_party[1], { party: 4, open_now: true, minutes: 0, table: 3 });
   assert.deepStrictEqual(res.body.by_party[2], { party: 6, open_now: false, minutes: 30, table: 4 });
   assert.deepStrictEqual(res.body.by_party[3], { party: 8, open_now: false, minutes: null, table: null }, 'nothing seats eight');
 
@@ -779,11 +829,12 @@ const SUMMARY = `/api/sensors/${VENUE}/tables/summary`;
 const SUMMARIES = '/api/sensors/tables/summaries';
 const USER_ID = 7;
 
-test('the public summary: counts and minutes for a party, the busy hours, and never a table number, a state or a unit id', async () => {
+test('the public summary: counts and minutes for a party, the busy hours and their zone, a fit nobody can judge said as null, and never a table number, a state or a unit id', async () => {
   reset();
   const now = Date.now();
-  const t = await push('1:0:f:60:2;2:2:s:600;3:0:f:30;4:4:s:1200:6;5:0:c:30:8');
-  seedCell(t - 1200 * 1000, VENUE, ZONE, { count: 21, tableNo: 4 });
+  // Table 3 is free, and nobody has counted it or sat at it.
+  const t1 = await push('1:0:f:60:2;2:2:s:600;3:0:f:30;4:4:s:1200:6;5:0:c:30:8');
+  seedCell(t1 - 1200 * 1000, VENUE, ZONE, { count: 21, tableNo: 4 });
   const full = Math.floor((now - 2 * DAY) / HOUR) * HOUR + 5 * MIN;
   for (let i = 0; i < 10; i += 1) {
     readings.push({ venue_place_id: VENUE, sensor_device_id: 'flux_history_01', recorded_at: new Date(full + i * MIN), tables_total: 5, tables_occupied: i < 6 ? 5 : 4 });
@@ -791,6 +842,14 @@ test('the public summary: counts and minutes for a party, the busy hours, and ne
   let res = await get(`${SUMMARY}?party=6`, USER_ID);
   assert.strictEqual(res.status, 200, res.raw);
   assert.deepStrictEqual(Object.keys(res.body).sort(), SUMMARY_KEYS);
+  assert.deepStrictEqual([res.body.fits_now, res.body.wait_minutes], [null, null], 'table 3 might seat six: neither a fit nor "none fits" nor a wait is claimed');
+  res = await get(`${SUMMARY}?party=4`, USER_ID);
+  assert.deepStrictEqual([res.body.fits_now, res.body.wait_minutes], [true, 0], 'a table nobody has counted fits four');
+
+  // Table 3 counted at four: six are known not to fit it, and the wait is
+  // table 4's.
+  const t = await push('1:0:f:90:2;2:2:s:630;3:0:f:60:4;4:4:s:1230:6;5:0:c:60:8');
+  res = await get(`${SUMMARY}?party=6`, USER_ID);
   const fullCell = clockInZone(full, ZONE);
   assert.deepStrictEqual(res.body, {
     open: 2,
@@ -799,6 +858,7 @@ test('the public summary: counts and minutes for a party, the busy hours, and ne
     fits_now: false,
     wait_minutes: 30,
     busy_hours: [{ dow: fullCell.day, hour: fullCell.hour }],
+    timeZone: ZONE,
     updated_at: new Date(t).toISOString(),
     stale: false,
   });
@@ -856,7 +916,7 @@ test('the batch: one floor read and one busy-hours read for every id asked, venu
   assert.deepStrictEqual(Object.keys(res.body.summaries), [VENUE]);
   assert.deepStrictEqual(Object.keys(res.body.summaries[VENUE]).sort(), SUMMARY_KEYS);
   assert.deepStrictEqual(res.body.summaries[VENUE], {
-    open: 1, total: 2, party: 2, fits_now: true, wait_minutes: 0, busy_hours: [], updated_at: new Date(t).toISOString(), stale: false,
+    open: 1, total: 2, party: 2, fits_now: true, wait_minutes: 0, busy_hours: [], timeZone: ZONE, updated_at: new Date(t).toISOString(), stale: false,
   });
   assert.strictEqual(queryLog.filter((q) => FLOOR_READ.test(q.sql)).length, 1, 'one floor read for every id');
   assert.strictEqual(queryLog.filter((q) => FULL_HOURS_READ.test(q.sql)).length, 1, 'one busy-hours read for every id');
@@ -883,6 +943,62 @@ test('the batch: one floor read and one busy-hours read for every id asked, venu
   assert.deepStrictEqual([fifty.status, fifty.body], [200, { summaries: {} }]);
 });
 
+test('a unit that has gone dark keeps its rows on the owner\'s floor and has no say in what is open: the counts, the fits, the waits and the suggestions come from the live units alone', async () => {
+  reset();
+  // The front room, live and full.
+  const t = await push('1:2:s:600;2:4:s:300');
+  // The back room, unplugged at close ten minutes ago with every table free.
+  // Nothing ever removes its rows: the silence rule runs only from the unit's
+  // own readings, and it sends none.
+  const dark = new Date(Date.now() - 10 * MIN);
+  for (const n of [11, 12, 13]) {
+    tableStates.push({ sensor_device_id: 'flux_history_03', table_no: n, venue_place_id: VENUE, people: 0, state: 'f', state_since: dark, updated_at: dark, seats: null });
+  }
+  const floor = await get(FLOOR, OWNER_ID);
+  assert.deepStrictEqual(floor.body.tables.map((x) => x.number), [1, 2, 11, 12, 13], 'the owner still sees the dark unit\'s tables');
+  assert.strictEqual(floor.body.stale, false, 'as fresh as its newest row, as phase 1 settled');
+
+  const summary = await get(`${SUMMARY}?party=2`, USER_ID);
+  assert.strictEqual(summary.status, 200, summary.raw);
+  const { busy_hours, ...counts } = summary.body;
+  assert.ok(Array.isArray(busy_hours));
+  assert.deepStrictEqual(counts, {
+    open: 0, total: 2, party: 2, fits_now: false, wait_minutes: null, timeZone: ZONE,
+    updated_at: new Date(t).toISOString(), stale: false,
+  }, 'the back room\'s free tables are not open now');
+  const waits = await get(WAITS, OWNER_ID);
+  assert.deepStrictEqual(waits.body.by_party.map((p) => [p.party, p.open_now, p.table]), [[2, false, null], [4, false, null], [6, false, null], [8, false, null]]);
+  flocks = [{ id: 601, venue_id: VENUE, name: 'Two of us', event_time: new Date(Date.now() + HOUR), status: 'confirmed', member_count: 2 }];
+  const incoming = await get(INCOMING, OWNER_ID);
+  assert.strictEqual(incoming.body.flocks[0].suggestion, null, 'no phantom table is suggested');
+
+  // Every unit dark: the floor is stale, and nothing is known to be open.
+  for (const r of tableStates) r.updated_at = new Date(Date.now() - 4 * MIN);
+  const stale = await get(`${SUMMARY}?party=2`, USER_ID);
+  assert.deepStrictEqual([stale.body.open, stale.body.total, stale.body.fits_now, stale.body.stale], [0, 0, false, true]);
+});
+
+test('the seats fallback never crosses venues: a unit\'s seatings at its old venue are not the seats of its tables at the new one, in the batch or alone, and a venue outside the corpus says its hours are UTC', async () => {
+  reset();
+  // The second unit is at OTHER now, table 3 free and uncounted; its
+  // seatings at VENUE, where it used to be, sat a party of eight at table 3.
+  ageDevice('flux_history_02');
+  assert.strictEqual((await call('/api/sensors/data', { apiKey: OTHER_KEY, body: reading({ tables: '3:0:f:30' }) })).status, 201);
+  await settle();
+  seed(VENUE, 3, Date.now() - 2 * DAY, 60, { party: 8, device: 'flux_history_02' });
+  await push('1:0:f:30');
+  const batch = await call(SUMMARIES, { body: { place_ids: [VENUE, OTHER], party: 8 }, user: USER_ID });
+  assert.strictEqual(batch.status, 200, batch.raw);
+  assert.deepStrictEqual(Object.keys(batch.body.summaries).sort(), [VENUE, OTHER].sort());
+  assert.strictEqual(batch.body.summaries[OTHER].fits_now, null, 'eight seated at VENUE say nothing about OTHER\'s table 3');
+  assert.strictEqual(batch.body.summaries[VENUE].fits_now, null, 'nor about VENUE\'s table 1, which is another unit\'s');
+  const alone = await get(`/api/sensors/${OTHER}/tables/summary?party=8`, USER_ID);
+  assert.strictEqual(alone.status, 200, alone.raw);
+  assert.strictEqual(alone.body.fits_now, batch.body.summaries[OTHER].fits_now, 'the batch and the single read agree');
+  assert.strictEqual(batch.body.summaries[OTHER].timeZone, null, 'OTHER is outside the corpus: its busy hours are UTC');
+  assert.strictEqual(batch.body.summaries[VENUE].timeZone, ZONE);
+});
+
 test('the public summary routes have a limiter of their own in server.js, mounted ahead of the sensors router, 120 a minute', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
   const decl = /const tablesPublicLimiter = isDev \? \(_req, _res, next\) => next\(\) : rateLimit\(\{([\s\S]*?)\n\}\);/.exec(src);
@@ -903,12 +1019,13 @@ test('the public summary routes have a limiter of their own in server.js, mounte
 
 // --- The arithmetic, on its own -------------------------------------------------------
 
-test('fits: unknown seats take up to four; known seats take their own number', () => {
+test('fits: unknown seats take up to four and say nothing above; known seats take their own number; only live rows count', () => {
   assert.strictEqual(tableHistory.UNKNOWN_SEATS_FIT_UP_TO, 4);
-  assert.deepStrictEqual([1, 2, 4, 5, 8].map((p) => tableHistory.fits(null, p)), [true, true, true, false, false]);
+  assert.deepStrictEqual([1, 2, 4, 5, 8].map((p) => tableHistory.fits(null, p)), [true, true, true, null, null]);
   assert.deepStrictEqual([1, 2, 4, 5].map((p) => tableHistory.fits(4, p)), [true, true, true, false]);
   assert.deepStrictEqual([{ seats: 6 }, { seats: null, party_max_seen: 3 }, { seats: null, party_max_seen: null }, { seats: 2, party_max_seen: 5 }]
     .map(tableHistory.seatsOf), [6, 3, null, 2]);
+  assert.deepStrictEqual(tableHistory.liveRows([{ table_no: 1, stale: false }, { table_no: 2, stale: true }, { table_no: 3 }]).map((r) => r.table_no), [1, 3]);
 });
 
 test('the twenty-seating floor and the cell-then-overall fallback, on the medians themselves', () => {

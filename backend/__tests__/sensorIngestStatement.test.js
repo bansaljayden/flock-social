@@ -845,14 +845,15 @@ test('on the real schema: the owner reads every unit\'s tables as one floor, a s
     const at = new Date(live.body.recorded_at).getTime();
     // likely_free_at is null throughout: no closed seatings yet
     // (sensorTableHistoryStatement.test.js is where the venue gets some).
-    // Table 2 sent no seat count, so its seats are the largest party seen
-    // there, the three sitting at it now; nobody has sat at table 9.
+    // seats is the unit's count where it sent one; party_max the largest
+    // party seen at the table, the people sitting at 1 and 2 now, and nothing
+    // at 3 (a first reading of needs-clearing has no party) or 9.
     assert.deepEqual(res.body, {
       tables: [
-        { number: 1, people: 2, state: 'seated', since: new Date(at - 600000).toISOString(), seats: 4, likely_free_at: null },
-        { number: 2, people: 3, state: 'waiting', since: new Date(at - 900000).toISOString(), seats: 3, likely_free_at: null },
-        { number: 3, people: 0, state: 'needs_clearing', since: new Date(at - 50000).toISOString(), seats: 2, likely_free_at: null },
-        { number: 9, people: 0, state: 'free', since: (await floor()).find((r) => r.table_no === 9).state_since.toISOString(), seats: null, likely_free_at: null },
+        { number: 1, people: 2, state: 'seated', since: new Date(at - 600000).toISOString(), seats: 4, party_max: 2, likely_free_at: null },
+        { number: 2, people: 3, state: 'waiting', since: new Date(at - 900000).toISOString(), seats: null, party_max: 3, likely_free_at: null },
+        { number: 3, people: 0, state: 'needs_clearing', since: new Date(at - 50000).toISOString(), seats: 2, party_max: null, likely_free_at: null },
+        { number: 9, people: 0, state: 'free', since: (await floor()).find((r) => r.table_no === 9).state_since.toISOString(), seats: null, party_max: null, likely_free_at: null },
       ],
       updated_at: new Date(at).toISOString(),
       stale: false,

@@ -295,7 +295,7 @@ const SETTINGS = `/api/sensors/${VENUE}/tables/settings`;
 const SUMMARY = `/api/sensors/${VENUE}/tables/summary`;
 const SUMMARIES = '/api/sensors/tables/summaries';
 
-test('on the real schema: likely_free_at from the New York cell\'s median once twenty seatings exist there, seats from the largest party in 30 days, and the hours route says the zone', async () => {
+test('on the real schema: likely_free_at from the New York cell\'s median once twenty seatings exist there, the largest party in 30 days beside the seats, and the hours route says the zone', async () => {
   const t = await live('2:2:s:600;5:0:f:30');
   const since = t - 600 * 1000;
   await seedCell(since, { count: 19, tableNo: 2 });
@@ -305,17 +305,17 @@ test('on the real schema: likely_free_at from the New York cell\'s median once t
   await pool.query('DELETE FROM sensor_table_seatings WHERE left_at IS NOT NULL');
   await seedCell(since, { count: 21, tableNo: 2 });
   res = await get(FLOOR, ownerId);
-  assert.deepEqual(res.body.tables.map((x) => [x.number, x.seats, x.likely_free_at]), [
-    [2, 2, new Date(since + 50 * MIN).toISOString()],
-    [5, null, null],
-  ]);
+  assert.deepEqual(res.body.tables.map((x) => [x.number, x.seats, x.party_max, x.likely_free_at]), [
+    [2, null, 2, new Date(since + 50 * MIN).toISOString()],
+    [5, null, null, null],
+  ], 'no unit count on either; the party sitting at 2 is the largest seen there');
   await seed(5, Date.now() - 31 * DAY, 60, { party: 8 });
   await seed(5, Date.now() - 2 * DAY, 60, { party: 0 });
   res = await get(FLOOR, ownerId);
-  assert.equal(res.body.tables[1].seats, null, 'a party outside 30 days and a party of nobody count for nothing');
+  assert.equal(res.body.tables[1].party_max, null, 'a party outside 30 days and a party of nobody count for nothing');
   await seed(5, Date.now() - 2 * DAY, 60, { party: 5 });
   res = await get(FLOOR, ownerId);
-  assert.equal(res.body.tables[1].seats, 5);
+  assert.deepEqual([res.body.tables[1].seats, res.body.tables[1].party_max], [null, 5]);
 
   const hours = await get(`/api/sensors/${VENUE}/tables/hours`, ownerId);
   assert.equal(hours.status, 200, hours.text);
@@ -363,7 +363,7 @@ test('on the real schema: stats are the medians Postgres computes, folded on the
   await pool.query('DELETE FROM ml_venues WHERE google_place_id = $1', [VENUE]);
   try {
     const utc = await get(STATS, ownerId);
-    assert.equal(utc.body.timeZone, 'UTC');
+    assert.equal(utc.body.timeZone, null, 'null means UTC, as on /tables/hours');
     assert.notEqual(utc.body.turn_minutes.by_hour[0].hour, cell.hour, 'New York is never on UTC');
     assert.equal(utc.body.turn_minutes.median, 50);
   } finally {
@@ -387,7 +387,8 @@ test('on the real schema: stats are the medians Postgres computes, folded on the
 });
 
 test('on the real schema: the waits by party, the incoming feed over the real flock tables with a suggestion and no name, and the switches', async () => {
-  const t = await live('1:0:f:60:2;2:2:s:600;3:0:f:30;4:4:s:1200:6;5:0:c:30:8');
+  // Table 3 is counted at four, so six and eight are known not to fit it.
+  const t = await live('1:0:f:60:2;2:2:s:600;3:0:f:30:4;4:4:s:1200:6;5:0:c:30:8');
   await seedCell(t - 1200 * 1000, { count: 21, tableNo: 4 });
   const waits = await get(WAITS, ownerId);
   assert.equal(waits.status, 200, waits.text);
@@ -467,7 +468,7 @@ test('on the real schema: the waits by party, the incoming feed over the real fl
 
 test('on the real schema: the public summary is counts and minutes, absent for a hidden or dayold floor, and the batch reads every venue in one statement each', async () => {
   const now = Date.now();
-  const t = await live('1:0:f:60:2;2:2:s:600;3:0:f:30;4:4:s:1200:6;5:0:c:30:8');
+  const t = await live('1:0:f:60:2;2:2:s:600;3:0:f:30:4;4:4:s:1200:6;5:0:c:30:8');
   await seedCell(t - 1200 * 1000, { count: 21, tableNo: 4 });
   const full = Math.floor((now - 2 * DAY) / HOUR) * HOUR + 5 * MIN;
   for (let i = 0; i < 10; i += 1) {
@@ -485,7 +486,7 @@ test('on the real schema: the public summary is counts and minutes, absent for a
   assert.equal(res.status, 200, res.text);
   assert.deepEqual(res.body, {
     open: 2, total: 5, party: 6, fits_now: false, wait_minutes: 30,
-    busy_hours: [{ dow: fullCell.dow, hour: fullCell.hour }],
+    busy_hours: [{ dow: fullCell.dow, hour: fullCell.hour }], timeZone: ZONE,
     updated_at: new Date(t).toISOString(), stale: false,
   });
   assert.ok(!/"number"|"table"|history_unit|seated|waiting|needs_clearing|"since"|seats/.test(res.text), res.text);
@@ -511,4 +512,73 @@ test('on the real schema: the public summary is counts and minutes, absent for a
   assert.equal(res.body.stale, true);
   await pool.query("UPDATE sensor_table_states SET updated_at = NOW() - INTERVAL '25 hours' WHERE sensor_device_id = 'history_unit'");
   assert.equal((await get(SUMMARY, userId)).status, 404);
+});
+
+test('on the real schema: a second unit that has gone dark stays on the owner\'s floor but counts for nothing open, and a free table nobody has counted is a fit nobody can judge above four', async () => {
+  // The back room, unplugged at close ten minutes ago with every table free;
+  // nothing ever removes its rows.
+  await pool.query(
+    `INSERT INTO sensor_devices (device_id, venue_place_id, api_key, device_name, is_active)
+     VALUES ('back_room_unit', $1, $2, 'back room', true)`,
+    [VENUE, digestOf('b'.repeat(64))]
+  );
+  await pool.query(
+    `INSERT INTO sensor_table_states (sensor_device_id, table_no, venue_place_id, people, state, state_since, updated_at)
+     SELECT 'back_room_unit', n, $1, 0, 'f', NOW() - INTERVAL '3 hours', NOW() - INTERVAL '10 minutes' FROM unnest(ARRAY[11, 12, 13]) AS n`,
+    [VENUE]
+  );
+  // The front room, live and full.
+  const t = await live('1:2:s:600;2:4:s:300');
+  const floor = await get(FLOOR, ownerId);
+  assert.equal(floor.status, 200, floor.text);
+  assert.deepEqual(floor.body.tables.map((x) => x.number), [1, 2, 11, 12, 13], 'the owner sees every unit\'s tables');
+  assert.equal(floor.body.stale, false);
+
+  let summary = await get(`${SUMMARY}?party=2`, userId);
+  assert.equal(summary.status, 200, summary.text);
+  const { busy_hours, ...counts } = summary.body;
+  assert.ok(Array.isArray(busy_hours));
+  assert.deepEqual(counts, {
+    open: 0, total: 2, party: 2, fits_now: false, wait_minutes: null, timeZone: ZONE,
+    updated_at: new Date(t).toISOString(), stale: false,
+  }, 'the back room\'s free tables are not open now');
+  let waits = await get(WAITS, ownerId);
+  assert.deepEqual(waits.body.by_party, [2, 4, 6, 8].map((party) => ({ party, open_now: false, minutes: null, table: null })));
+
+  // The back room comes back: its tables are open, and table 11, which nobody
+  // has counted or sat at, fits four and might fit six.
+  await pool.query("UPDATE sensor_table_states SET updated_at = NOW() WHERE sensor_device_id = 'back_room_unit'");
+  summary = await get(`${SUMMARY}?party=4`, userId);
+  assert.deepEqual([summary.body.open, summary.body.total, summary.body.fits_now, summary.body.wait_minutes], [3, 5, true, 0]);
+  summary = await get(`${SUMMARY}?party=6`, userId);
+  assert.deepEqual([summary.body.fits_now, summary.body.wait_minutes], [null, null], 'neither "fits" nor "none fits" is claimed for six');
+  waits = await get(WAITS, ownerId);
+  assert.deepEqual(waits.body.by_party[2], { party: 6, open_now: null, minutes: null, table: 11 });
+});
+
+test('on the real schema: the seats fallback is the venue\'s own history, so a unit\'s seatings at its old venue never stand in for its tables at the new one, in the batch or alone', async () => {
+  const VENUE_B = 'ChIJtableHistoryStatement02';
+  // A unit now at VENUE_B with table 3 free and uncounted, whose seatings at
+  // VENUE (where it used to be) sat a party of eight at table 3.
+  await pool.query(
+    `INSERT INTO sensor_devices (device_id, venue_place_id, api_key, device_name, is_active)
+     VALUES ('moved_unit', $1, $2, 'moved', true)`,
+    [VENUE_B, digestOf('m'.repeat(64))]
+  );
+  await pool.query(
+    `INSERT INTO sensor_table_states (sensor_device_id, table_no, venue_place_id, people, state, state_since, updated_at)
+     VALUES ('moved_unit', 3, $1, 0, 'f', NOW() - INTERVAL '20 minutes', NOW())`,
+    [VENUE_B]
+  );
+  await seed(3, Date.now() - 2 * DAY, 60, { party: 8, device: 'moved_unit', place: VENUE });
+  await live('1:0:f:30');
+  const batch = await api('POST', SUMMARIES, { user: userId, body: { place_ids: [VENUE, VENUE_B], party: 8 } });
+  assert.equal(batch.status, 200, batch.text);
+  assert.deepEqual(Object.keys(batch.body.summaries).sort(), [VENUE, VENUE_B].sort());
+  assert.equal(batch.body.summaries[VENUE_B].fits_now, null, 'eight seated at VENUE say nothing about VENUE_B\'s table 3');
+  const alone = await get(`/api/sensors/${VENUE_B}/tables/summary?party=8`, userId);
+  assert.equal(alone.status, 200, alone.text);
+  assert.equal(alone.body.fits_now, batch.body.summaries[VENUE_B].fits_now, 'the batch and the single read agree');
+  assert.equal(batch.body.summaries[VENUE_B].timeZone, null, 'VENUE_B is outside the corpus: its busy hours are UTC');
+  assert.equal(batch.body.summaries[VENUE].timeZone, ZONE);
 });

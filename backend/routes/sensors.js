@@ -959,15 +959,17 @@ const placeIdParam = () => param('placeId').isString().isLength({ min: 1, max: 2
 // ---------------------------------------------------------------------------
 // GET /api/sensors/:placeId/tables: what each table is doing now.
 //
-// { tables: [{ number, people, state, since, seats, likely_free_at }],
-//   updated_at, stale, next_free }, tables in number order. state is a word
-// (free, seated, waiting, needs_clearing), since is when that state began,
-// seats is the unit's count, else the largest party seen at the table in 30
-// days, else null, and likely_free_at is, for a seated or waiting table, when
-// its party sat plus the median turn for that weekday and hour over 28 days
-// (null without enough history, and for a table with no party). A floor not
-// refreshed for TABLES_STALE_AFTER_MINUTES is reported stale and still shown.
-// With no rows at all: no tables, no time, stale, nothing next.
+// { tables: [{ number, people, state, since, seats, party_max,
+//   likely_free_at }], updated_at, stale, next_free }, tables in number
+// order. state is a word (free, seated, waiting, needs_clearing), since is
+// when that state began, seats is the unit's own count (null when it never
+// sent one), party_max the largest party seen at the table in 30 days (null
+// when none), kept apart so an estimate is never printed as a capacity, and
+// likely_free_at is, for a seated or waiting table, when its party sat plus
+// the median turn for that weekday and hour over 28 days (null without enough
+// history, and for a table with no party). A floor not refreshed for
+// TABLES_STALE_AFTER_MINUTES is reported stale and still shown, every unit's
+// rows included. With no rows at all: no tables, no time, stale, nothing next.
 // ---------------------------------------------------------------------------
 router.get('/:placeId/tables',
   authenticate,
@@ -1062,10 +1064,10 @@ router.get('/:placeId/tables/hours',
 // seatings whose party waited past the unit's wait limit, and full_hours the
 // hours of the week when every table was in use in at least half the
 // readings. dow is 0-6 (0 Sunday) and hour 0-23 on the venue's zone when the
-// server knows it, else UTC, and timeZone says which. Every median and the
-// share are null under twenty closed seatings (services/tableHistory.js says
-// why), so the dashboard can say "not yet known" instead of a number built on
-// six tables.
+// server knows it, else UTC, and timeZone is then null (the IANA name
+// otherwise, as /tables/hours says it). Every median and the share are null
+// under twenty closed seatings (services/tableHistory.js says why), so the
+// dashboard can say "not yet known" instead of a number built on six tables.
 // ---------------------------------------------------------------------------
 router.get('/:placeId/tables/stats',
   authenticate,
@@ -1088,12 +1090,15 @@ router.get('/:placeId/tables/stats',
 // GET /api/sensors/:placeId/tables/waits: how long a party waits, by size.
 //
 // { updated_at, stale, by_party: [{ party, open_now, minutes, table }] } for
-// parties of 2, 4, 6 and 8. A table fits a party when its seats (as on the
-// floor: the unit's count, else the largest party seen; unknown fits up to
-// four) are at least the party. open_now when a free table fits, with
-// minutes 0 and that table's number; otherwise minutes until the soonest
-// likely_free_at among the seated tables that fit and that table's number,
-// both null when no table fits or there is no turn-time history yet.
+// parties of 2, 4, 6 and 8, over the tables of the units heard from inside
+// the stale window. A table fits a party when its seats (the unit's count,
+// else the largest party seen there) are at least the party; a table with
+// neither fits up to four and above that nobody knows. open_now is true when
+// a free table is known to fit, with minutes 0 and that table's number; null
+// when tables are free but none is known to fit and one might, with minutes
+// null and table the lowest such table; else false, with minutes until the
+// soonest likely_free_at among the seated tables known to fit and that
+// table's number, both null when no such table or no turn-time history yet.
 // updated_at and stale are the floor's.
 // ---------------------------------------------------------------------------
 router.get('/:placeId/tables/waits',
@@ -1206,17 +1211,20 @@ router.put('/:placeId/tables/settings',
 // THE PUBLIC SUMMARY: what the Flock app may know about a venue's tables.
 //
 // Any signed-in user. { open, total, party, fits_now, wait_minutes,
-// busy_hours: [{ dow, hour }], updated_at, stale }: how many tables are free
-// of how many, whether a party of `party` (1-30, 2 unless asked) can sit
-// now, how long it likely waits otherwise (null without history), and the
-// hours of the week the tables are usually all taken (the stats route's
-// full_hours over 28 days, dow and hour only). NEVER a table number, a
-// per-table state or a unit id: the app is read by everyone, and which table
-// a party is at is the owner's business. A venue with no fresh floor (none
-// inside 24 hours) and a venue whose owner turned "show tables in the Flock
-// app" off are both a 404 in the same words, so the two cannot be told apart
-// from outside. Rate limited in server.js (tablesPublicLimiter), like the
-// other public venue reads.
+// busy_hours: [{ dow, hour }], timeZone, updated_at, stale }: how many tables
+// are free of how many (the units heard from inside the stale window),
+// whether a party of `party` (1-30, 2 unless asked) can sit now (true, false,
+// or null when tables are free but none is known to seat the party and one
+// might), how long it likely waits otherwise (null without history, and null
+// whenever fits_now is not false), the hours of the week the tables are
+// usually all taken (the stats route's full_hours over 28 days, dow and hour
+// only) and the IANA zone those hours are on, null when they are UTC. NEVER a
+// table number, a per-table state or a unit id: the app is read by everyone,
+// and which table a party is at is the owner's business. A venue with no
+// fresh floor (none inside 24 hours) and a venue whose owner turned "show
+// tables in the Flock app" off are both a 404 in the same words, so the two
+// cannot be told apart from outside. Rate limited in server.js
+// (tablesPublicLimiter), like the other public venue reads.
 //
 // POST /api/sensors/tables/summaries takes { place_ids: [1-50], party } and
 // answers { summaries: { <placeId>: <the same shape> } }, with the venues

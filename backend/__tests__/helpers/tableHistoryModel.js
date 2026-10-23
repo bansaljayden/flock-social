@@ -20,7 +20,7 @@ const { clockInZone } = require('../../utils/venueZone');
 const DAY = 24 * 3600 * 1000;
 
 // The floor read (services/tableHistory.js TABLE_FLOOR_SQL), by its head.
-const FLOOR_READ = /^SELECT s\.venue_place_id, s\.sensor_device_id, s\.table_no, .* FROM sensor_table_states s LEFT JOIN \( SELECT g\.sensor_device_id, g\.table_no, NULLIF\(MAX\(g\.party_max\), 0\) AS party_max FROM sensor_table_seatings g WHERE g\.venue_place_id = ANY\(\$1::varchar\[\]\)/;
+const FLOOR_READ = /^SELECT s\.venue_place_id, s\.sensor_device_id, s\.table_no, .* FROM sensor_table_states s LEFT JOIN \( SELECT g\.venue_place_id, g\.sensor_device_id, g\.table_no, NULLIF\(MAX\(g\.party_max\), 0\) AS party_max FROM sensor_table_seatings g WHERE g\.venue_place_id = ANY\(\$1::varchar\[\]\)/;
 const ZONES_READ = /^SELECT google_place_id, timezone FROM ml_venues WHERE google_place_id = ANY\(\$1::varchar\[\]\)$/;
 const MEDIANS_READ = /^SELECT g\.venue_place_id, g\.dow, g\.hour, COUNT\(\*\)::int AS seatings, percentile_cont\(0\.5\) WITHIN GROUP \(ORDER BY g\.turn_minutes\) AS median/;
 const FULL_HOURS_READ = /^SELECT v\.venue_place_id, EXTRACT\(DOW FROM \(v\.recorded_at AT TIME ZONE z\.zone\)\)::int AS dow/;
@@ -61,8 +61,9 @@ function fold(at, zone) {
  * at the places asked about, by place, number, newest first within a number
  * and then by unit, each flagged stale past the window and carrying the
  * largest party seen at the table inside the seats window (null for none or
- * for parties of nobody). Parameters: $1 place ids, $2 the stale window in
- * minutes, $3 the seats window in days.
+ * for parties of nobody), from the seatings of that unit and table AT THAT
+ * VENUE only. Parameters: $1 place ids, $2 the stale window in minutes, $3
+ * the seats window in days.
  */
 function floorModel(store, params) {
   const [ids, minutes, days] = params;
@@ -76,7 +77,7 @@ function floorModel(store, params) {
       let seen = null;
       for (const g of seatings) {
         if (g.sensor_device_id !== r.sensor_device_id || g.table_no !== r.table_no) continue;
-        if (!ids.includes(g.venue_place_id) || ms(g.seated_at) < since) continue;
+        if (g.venue_place_id !== r.venue_place_id || !ids.includes(g.venue_place_id) || ms(g.seated_at) < since) continue;
         seen = Math.max(seen ?? 0, g.party_max);
       }
       return {
