@@ -3282,14 +3282,19 @@ class TableLearner:
               MATCH_MINUTES; a start or end the memory cannot see (a party
               still sitting, or already sitting when the memory began) is
               not compared. Two seats within LINK_PX of each other join when
-              at least half of the fewer sittings match one of the other's,
-              and no two of their sittings overlap without sharing a start
+              finished sittings match (both ends seen): two of them when both
+              seats have had two or more, since two parties at neighbouring
+              tables do sometimes arrive and leave within minutes of each
+              other, and one otherwise; and no two of their sittings overlap
+              without sharing a start
               or an end: that only happens when two different parties sat
               there at once. Someone who joins late or leaves early still
               shares the other end with their party.
     A table whose seats were never used by one party together (two couples
     on its two sides, on different evenings) comes out as two groups; a
-    second pass joins groups whose nearest seats are within JOIN_PX and that
+    second pass joins groups whose nearest seats are within JOIN_PX, plus
+    JOIN_PER_ROW for every row down the frame (a nearer table is lower in the
+    frame and bigger), and that
     never held two different parties at once, up to JOIN_SEATS seats.
     A table's zone is its seats' bounding box plus PAD pixels; its seats go
     in the zones file so TableTracker can tell overlapping zones apart."""
@@ -3298,10 +3303,11 @@ class TableLearner:
     PRESENT_SHARE = 0.5
     SEAT_MINUTES = 15
     SIT_MINUTES = 10
-    GAP_MINUTES = 2
+    GAP_MINUTES = 5             # Owl losing someone for a few minutes is not them leaving
     MATCH_MINUTES = 4
     LINK_PX = 60.0
-    JOIN_PX = 30.0
+    JOIN_PX = 20.0
+    JOIN_PER_ROW = 0.45
     JOIN_SEATS = 8
     PAD = 5.0
     OCC_KEEP = 12 * 60
@@ -3414,8 +3420,11 @@ class TableLearner:
 
         if self._clash(a, b):
             return False
-        matched = sum(1 for r in a if any(matches(r, q) for q in b))
-        return matched >= 1 and matched >= 0.5 * min(len(a), len(b))
+        finished_a = [r for r in a if not (r[2] or r[3])]
+        finished_b = [q for q in b if not (q[2] or q[3])]
+        need = min(2, len(finished_a), len(finished_b))
+        matched = sum(1 for r in finished_a if any(matches(r, q) for q in finished_b))
+        return need >= 1 and matched >= need
 
     def _clash(self, a, b):
         """True when a sitting of one overlaps a sitting of the other and
@@ -3430,6 +3439,11 @@ class TableLearner:
                 if not (start_seen or end_seen):
                     continue
                 if (start_seen and abs(r[0] - q[0]) <= m) or (end_seen and abs(r[1] - q[1]) <= m):
+                    continue
+                # A short stay inside a longer one is most often the same
+                # party with a gap Owl did not see across, not a second party.
+                inner, outer = (r, q) if r[1] - r[0] <= q[1] - q[0] else (q, r)
+                if outer[0] <= inner[0] and inner[1] <= outer[1] and inner[1] - inner[0] < 30:
                     continue
                 return True
         return False
@@ -3461,9 +3475,10 @@ class TableLearner:
                 for gj in range(gi + 1, len(groups)):
                     if len(groups[gi]) + len(groups[gj]) > self.JOIN_SEATS:
                         continue
-                    d = min(math.hypot(seats[i][0][0] - seats[j][0][0], seats[i][0][1] - seats[j][0][1])
-                            for i in groups[gi] for j in groups[gj])
-                    if d > self.JOIN_PX or (best is not None and d >= best[0]):
+                    d, i, j = min((math.hypot(seats[i][0][0] - seats[j][0][0], seats[i][0][1] - seats[j][0][1]), i, j)
+                                  for i in groups[gi] for j in groups[gj])
+                    row = (seats[i][0][1] + seats[j][0][1]) / 2
+                    if d > self.JOIN_PX + self.JOIN_PER_ROW * row or (best is not None and d >= best[0]):
                         continue
                     if any(self._clash(seats[i][1], seats[j][1]) for i in groups[gi] for j in groups[gj]):
                         continue
@@ -3495,11 +3510,17 @@ class TableLearner:
         ever grow. A learned table replaces an earlier one when one of its
         seats lands inside the earlier one's zone."""
         out, claimed = [], set()
-        for t in self.numbered(previous):
+        numbered = self.numbered(previous)
+        for t in numbered:
             old = next((o for o in previous if o['n'] == t['n']), None)
             seats = list(t['seats'])
+            others = [p for u in numbered if u is not t for p in u['seats']]
             if old is not None:
                 for ox, oy in old.get('seats') or ():
+                    # An old seat another learned table now has is that
+                    # table's: an earlier evening joined them wrongly.
+                    if any(math.hypot(x - ox, y - oy) <= 6.0 for x, y in others):
+                        continue
                     if not any(math.hypot(x - ox, y - oy) <= 4.0 for x, y in seats):
                         seats.append((ox, oy))
             seats = sorted(seats)[:self.MAX_SEATS_PER_TABLE]

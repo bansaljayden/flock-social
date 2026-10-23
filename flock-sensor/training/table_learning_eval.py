@@ -214,7 +214,8 @@ def score(learner, parties):
 
     found, merged, split, stray = 0, 0, 0, 0
     claimed = {}
-    for t in learned:
+    single = {}
+    for k, t in enumerate(learned):
         owners = {owner(p) for p in t['seats']}
         real = owners - {None}
         if not real:
@@ -222,13 +223,18 @@ def score(learner, parties):
             continue
         if len(real) > 1:
             merged += 1
+        else:
+            single[k] = next(iter(real))
         for n in real:
-            claimed.setdefault(n, []).append(t)
+            claimed.setdefault(n, []).append(k)
+    exact = 0
     for n in TABLES:
         if n in claimed:
             found += 1
             if len(claimed[n]) > 1:
                 split += 1
+            elif single.get(claimed[n][0]) == n:
+                exact += 1
     seat_hits = seat_total = 0
     for n, idx in used.items():
         for i in idx:
@@ -237,7 +243,7 @@ def score(learner, parties):
             if any(math.hypot(sx - x, sy - y) <= 6.0 for t in learned for x, y in t['seats']):
                 seat_hits += 1
     return {'tables_real': len(TABLES), 'tables_used': sum(1 for n in used if used[n]),
-            'tables_learned': len(learned), 'tables_found': found,
+            'tables_learned': len(learned), 'tables_found': found, 'tables_exact': exact,
             'merged': merged, 'split': split, 'stray': stray,
             'seats_used': seat_total, 'seats_found': seat_hits}
 
