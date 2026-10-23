@@ -6,7 +6,11 @@
 // the dashboard is open and the second once per open, again every few minutes
 // while it has failed, and hands both to the dashboard's Tables tab
 // (components/venue/tables/, whose words and arithmetic are
-// lib/venueTables.js).
+// lib/venueTables.js). While that tab is on screen with tables on the board,
+// App.js also reads .../tables/waits on the same loop, .../tables/incoming
+// once a minute and .../tables/stats once per visit, and reads
+// .../tables/settings once each time the Settings tab opens; the readers for
+// those are further down and follow the same rules.
 //
 // This file is apart from lib/venueTables.js on purpose. App.js is in the
 // bundle every user downloads and imports this; the tab's words and chart
@@ -88,22 +92,25 @@ export const planCheckFailed = (err) => !!err
   && !!err.data
   && (err.data.reason === 'ENTITLEMENT_UNAVAILABLE' || err.data.retryable === true);
 
-// Reads the tables now and again `everyMs` after each answer, until the
-// function it returns is called. The next read is set only once the last one
-// has answered, so two never overlap and a slow answer pushes the next read
-// back instead of stacking requests behind it. Nothing is handed on after the
+// Reads now and again `everyMs` after each answer, until the function it
+// returns is called. The next read is set only once the last one has
+// answered, so two never overlap and a slow answer pushes the next read back
+// instead of stacking requests behind it. Nothing is handed on after the
 // stop. Each answer is handed on as (data, { planLocked, refused }): the
-// data, or null for any failure; planLocked only for the plan refusal of a
-// venue with tables; refused when no further read will come. A dropped
-// connection, a server error or a plan check that could not run is asked
-// again on the next turn, and a refusal ends the reading.
-export function startTablesReading(read, onData, everyMs = TABLES_READ_EVERY_MS) {
+// data when `good` accepts it, or null for any failure; planLocked only for
+// the plan refusal of a venue with tables; refused when no further read will
+// come. A dropped connection, a server error or a plan check that could not
+// run is asked again on the next turn, and a refusal ends the reading. The
+// tables loop below is this with the tables' own shape, and the Tables tab's
+// other loops (waits, incoming) are the same loop with theirs, so every owner
+// route is read under one set of rules.
+function startLoop(read, good, onData, everyMs) {
   let stopped = false;
   let timer = null;
   const turn = () => {
     new Promise((resolve) => resolve(read()))
       .then(
-        (data) => ({ data: data && Array.isArray(data.tables) ? data : null, refused: false, planLocked: false }),
+        (data) => ({ data: good(data) ? data : null, refused: false, planLocked: false }),
         (err) => ({
           data: null,
           refused: TABLES_REFUSALS.includes(err && err.status) && !planCheckFailed(err),
@@ -123,6 +130,35 @@ export function startTablesReading(read, onData, everyMs = TABLES_READ_EVERY_MS)
   };
 }
 
+// An answer with a list under `key`, which is what every list route here
+// answers with; anything else (a body with no list, null, a string) is a
+// failure to ask again.
+const hasList = (key) => (data) => !!data && Array.isArray(data[key]);
+
+// The tables, every 15 seconds while the dashboard is open.
+export function startTablesReading(read, onData, everyMs = TABLES_READ_EVERY_MS) {
+  return startLoop(read, hasList('tables'), onData, everyMs);
+}
+
+// THE TABLES TAB'S OWN LOOPS. Both run only while that tab is on screen with
+// tables on the board (App.js), since neither says anything without them.
+//
+// GET .../tables/waits: { updated_at, stale, by_party: [{ party, open_now,
+// minutes, table }] }, the walk-in wait for a party of 2, 4, 6 and 8, read on
+// the tables' own cadence so the waits and the board describe the same room.
+export function startTableWaitsReading(read, onData, everyMs = TABLES_READ_EVERY_MS) {
+  return startLoop(read, hasList('by_party'), onData, everyMs);
+}
+
+// GET .../tables/incoming: { flocks: [{ id, event_time, status, party,
+// suggestion }] }, the flocks with a plan here and the table that could seat
+// each. A plan changes on the scale of minutes, not seconds, so once a minute.
+export const TABLE_INCOMING_READ_EVERY_MS = 60 * 1000;
+
+export function startTableIncomingReading(read, onData, everyMs = TABLE_INCOMING_READ_EVERY_MS) {
+  return startLoop(read, hasList('flocks'), onData, everyMs);
+}
+
 // What the dashboard holds after each answer, from what it held before.
 //
 // A good answer is shown as it came, stamped with when it arrived (readAt),
@@ -134,11 +170,27 @@ export function startTablesReading(read, onData, everyMs = TABLES_READ_EVERY_MS)
 // same rule the dashboard's lists follow: a failed refresh does not delete
 // what the owner can already see. A refusal shows nothing, since no further
 // read will come and what was shown would never update again. An empty list
-// is a good answer and replaces the old tiles like any other.
-export function nextTablesState(prev, data, refused, nowMs = Date.now()) {
+// is a good answer and replaces the old tiles like any other. `key` names the
+// list a kept answer must have: the one before it could be a read that
+// failed outright, which is nothing to keep.
+function nextKeptState(prev, data, refused, key, nowMs) {
   if (data) return { ...data, readAt: nowMs };
-  if (refused || !prev || !Array.isArray(prev.tables)) return null;
+  if (refused || !prev || !Array.isArray(prev[key])) return null;
   return prev.unrefreshed === true ? prev : { ...prev, unrefreshed: true };
+}
+
+export function nextTablesState(prev, data, refused, nowMs = Date.now()) {
+  return nextKeptState(prev, data, refused, 'tables', nowMs);
+}
+
+// The same rule for the waits (kept, dimmed, under "Couldn't refresh") and
+// for the incoming flocks (kept, with the age of the list).
+export function nextWaitsState(prev, data, refused, nowMs = Date.now()) {
+  return nextKeptState(prev, data, refused, 'by_party', nowMs);
+}
+
+export function nextIncomingState(prev, data, refused, nowMs = Date.now()) {
+  return nextKeptState(prev, data, refused, 'flocks', nowMs);
 }
 
 // The hours list out of GET .../tables/hours, or null for anything else.
@@ -154,15 +206,15 @@ export const TABLE_HOURS_RETRY_EVERY_TURNS = 20;
 // this is where it is read the day it does.
 export const tableHoursZoneFrom = (data) => (data && typeof data.timeZone === 'string' && data.timeZone ? data.timeZone : null);
 
-// Reads the hours once now and, for as long as the last hours read failed,
-// again after every `everyTurns` tables answers (turn() is called on each
-// good one), until one succeeds. One hours read is out at a time. Each
-// answer is handed to onHours as (hours, timeZone): the list, or null for a
-// failure, which the tab says in its card instead of hiding the chart (a
-// failure at open used to hide it for the rest of the visit with nothing
-// asking again), and the venue's zone when the answer carried one. stop()
-// drops a late answer. Returns { turn, stop }.
-export function startTableHoursReading(read, onHours, everyTurns = TABLE_HOURS_RETRY_EVERY_TURNS) {
+// Reads once now and, for as long as the last read failed, again after every
+// `everyTurns` turns (turn() is called by the caller on each good answer of a
+// loop beside it), until one succeeds. One read is out at a time. `parse`
+// turns the answer into the arguments handed to onAnswer, the first of them
+// the answer itself or null for a failure; a rejection is parsed as
+// undefined, so a parser answers null for nothing. stop() drops a late
+// answer. Returns { turn, stop }. The hours, the turn-time stats and the
+// settings are each this with their own parser.
+function startOnceReading(read, parse, onAnswer, everyTurns) {
   let stopped = false;
   let out = false;
   let failed = false;
@@ -171,12 +223,12 @@ export function startTableHoursReading(read, onHours, everyTurns = TABLE_HOURS_R
     out = true;
     turns = 0;
     new Promise((resolve) => resolve(read()))
-      .then((data) => [tableHoursFrom(data), tableHoursZoneFrom(data)], () => [null, null])
-      .then(([hours, zone]) => {
+      .then((data) => parse(data), () => parse(undefined))
+      .then((args) => {
         out = false;
         if (stopped) return;
-        failed = hours === null;
-        onHours(hours, zone);
+        failed = args[0] === null;
+        onAnswer(...args);
       });
   };
   go();
@@ -187,4 +239,50 @@ export function startTableHoursReading(read, onHours, everyTurns = TABLE_HOURS_R
     },
     stop: () => { stopped = true; },
   };
+}
+
+// Reads the hours once now and, for as long as the last hours read failed,
+// again after every `everyTurns` tables answers (turn() is called on each
+// good one), until one succeeds. Each answer is handed to onHours as (hours,
+// timeZone): the list, or null for a failure, which the tab says in its card
+// instead of hiding the chart (a failure at open used to hide it for the rest
+// of the visit with nothing asking again), and the venue's zone when the
+// answer carried one.
+export function startTableHoursReading(read, onHours, everyTurns = TABLE_HOURS_RETRY_EVERY_TURNS) {
+  return startOnceReading(read, (data) => [tableHoursFrom(data), tableHoursZoneFrom(data)], onHours, everyTurns);
+}
+
+// TURN TIMES. GET .../tables/stats?days=28 answers { days, seatings,
+// turn_minutes: { median, by_hour }, waited_share, clear_minutes_median,
+// full_hours, timeZone }, with nulls inside once there are too few seatings
+// to say anything. The answer is the object itself when it has that shape,
+// so a section can read its nulls; anything else is a failure. Read once per
+// visit when the Tables tab first opens with tables on the board, and again
+// after every 20th good waits answer while it has failed, like the hours.
+export const tableStatsFrom = (data) => (
+  data && typeof data === 'object' && !Array.isArray(data)
+    && (Object.prototype.hasOwnProperty.call(data, 'turn_minutes') || Object.prototype.hasOwnProperty.call(data, 'seatings'))
+    ? data
+    : null
+);
+
+export function startTableStatsReading(read, onStats, everyTurns = TABLE_HOURS_RETRY_EVERY_TURNS) {
+  return startOnceReading(read, (data) => [tableStatsFrom(data)], onStats, everyTurns);
+}
+
+// SETTINGS. GET .../tables/settings answers { show_in_app, alerts }, both
+// true unless the owner has turned one off. A key the answer leaves out is
+// read as its default, so a switch is never drawn off for a setting nobody
+// turned off. Anything that is not such an object is a failure. Read once
+// each time the Settings tab opens for a venue with tables; there is no
+// retry, since the next open is one.
+export const tableSettingsFrom = (data) => (
+  data && typeof data === 'object' && !Array.isArray(data)
+    && (Object.prototype.hasOwnProperty.call(data, 'show_in_app') || Object.prototype.hasOwnProperty.call(data, 'alerts'))
+    ? { show_in_app: data.show_in_app !== false, alerts: data.alerts !== false }
+    : null
+);
+
+export function startTableSettingsReading(read, onSettings) {
+  return startOnceReading(read, (data) => [tableSettingsFrom(data)], onSettings, Infinity);
 }
