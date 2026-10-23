@@ -867,8 +867,12 @@ test('a floor write that throws before it ever returns a promise is caught the s
 // One push to the venue's verified owner when a table changes INTO waiting or
 // into needs-clearing, compared with its row from before the reading. Never on
 // a repeat, never past the owner's switch, never to an unverified claim, at
-// most once per unit, table and state in fifteen minutes, and never able to
-// touch the device's answer.
+// most once per unit, table and state in fifteen minutes, at most once per
+// venue in two minutes, and never able to touch the device's answer.
+
+// The venue's claim, and a way to let its window pass.
+const VENUE_KEY = `table_alert:venue:${VENUE}`;
+const openVenueWindow = () => claims.set(VENUE_KEY, Date.now() - 3 * 60 * 1000);
 
 // Two live readings in a row from the first unit, the flood guard aged between.
 async function readings2(first, second) {
@@ -960,12 +964,48 @@ test('changes into free or seated are not alerts', async () => {
   assert.deepStrictEqual(pushes, []);
 });
 
-test('two tables changing in one reading are two pushes, each in its own lock-screen slot', async () => {
+test('two tables changing in one reading: the lowest is pushed in its own lock-screen slot, the other is left to the dashboard, and the next window rings again', async () => {
   reset();
   await readings2('3:2:s:200;5:0:s:600', '3:2:w:400;5:0:c:5');
+  assert.deepStrictEqual(pushes.map((p) => p.title), ['Table 3'], 'one push per venue in two minutes');
+  assert.strictEqual(firebaseService.collapseId(pushes[0].data), 'table_alert-t3');
+  // The pushed table's claim, then the venue's; table 5 was never reached, so
+  // nothing of its was spent.
+  assert.deepStrictEqual([...claims.keys()], ['table_alert:flux_tables_01:3:w', VENUE_KEY]);
+  assert.deepStrictEqual(queryLog.find((q) => /INSERT INTO push_debounce/.test(q.sql) && q.params[0] === VENUE_KEY).params,
+    [VENUE_KEY, sensorTables.TABLE_ALERT_VENUE_WINDOW_MINUTES]);
+  assert.strictEqual(sensorTables.TABLE_ALERT_VENUE_WINDOW_MINUTES, 2);
+
+  // Inside the window a change at another table is not pushed either.
+  ageDevice();
+  await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: '3:0:c:5;5:0:c:35' }) });
+  await settle();
+  assert.strictEqual(pushes.length, 1, 'the venue window let a second push through');
+
+  // Once it has passed, the next change rings.
+  openVenueWindow();
+  ageDevice();
+  await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: '3:0:c:35;5:2:s:60' }) });
+  await settle();
+  ageDevice();
+  await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: '3:0:c:65;5:2:w:400' }) });
+  await settle();
   assert.deepStrictEqual(pushes.map((p) => p.title), ['Table 3', 'Table 5']);
-  const slots = pushes.map((p) => firebaseService.collapseId(p.data));
-  assert.deepStrictEqual(slots, ['table_alert-t3', 'table_alert-t5']);
+});
+
+test('forty tables flapping through seated, waiting and clearing ring the phone once per venue window, not eighty times', async () => {
+  reset();
+  const all = (state) => Array.from({ length: 40 }, (_, i) => `${i + 1}:2:${state}:400`).join(';');
+  for (const tables of [all('s'), all('w'), all('c')]) {
+    ageDevice();
+    const res = await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables }) });
+    assert.strictEqual(res.status, 201, res.raw);
+    await settle();
+  }
+  assert.deepStrictEqual(pushes.map((p) => p.title), ['Table 1']);
+  // Each reading stopped at the venue's one push or its refusal rather than
+  // claiming every table: three claims in all, not eighty.
+  assert.deepStrictEqual([...claims.keys()], ['table_alert:flux_tables_01:1:w', VENUE_KEY, 'table_alert:flux_tables_01:1:c']);
 });
 
 test('the waiting minutes are whole minutes since the party arrived, never less than one', async () => {
@@ -1033,7 +1073,9 @@ test('at most one push per unit, table and state in fifteen minutes, however the
     [key, sensorTables.TABLE_ALERT_WINDOW_MINUTES]);
   assert.strictEqual(sensorTables.TABLE_ALERT_WINDOW_MINUTES, 15);
 
-  // Another state of the same table is its own alert.
+  // Another state of the same table is its own alert (the venue's two-minute
+  // window let pass).
+  openVenueWindow();
   ageDevice();
   await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: '3:0:c:5' }) });
   await settle();
@@ -1041,6 +1083,7 @@ test('at most one push per unit, table and state in fifteen minutes, however the
 
   // And once the window has passed, the same change is news again.
   claims.set(key, Date.now() - 16 * 60 * 1000);
+  openVenueWindow();
   for (const tables of ['3:0:f:20', '3:2:s:30', '3:2:w:400']) {
     ageDevice();
     await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables }) });
@@ -1049,7 +1092,7 @@ test('at most one push per unit, table and state in fifteen minutes, however the
   assert.strictEqual(pushes.length, 3);
 });
 
-test('the window is per unit: the same table number on another unit at the venue is its own alert', async () => {
+test('the table window is per unit: the same table number on another unit at the venue is its own alert; the venue window is shared', async () => {
   reset();
   await readings2('3:2:s:200', '3:2:w:410');
   await call('/api/sensors/data', { apiKey: OTHER_KEY, body: reading({ tables: '3:1:s:100' }) });
@@ -1057,7 +1100,17 @@ test('the window is per unit: the same table number on another unit at the venue
   ageDevice('flux_tables_02');
   await call('/api/sensors/data', { apiKey: OTHER_KEY, body: reading({ tables: '3:1:w:400' }) });
   await settle();
+  assert.strictEqual(pushes.length, 1, 'the second unit rang inside the venue\'s window');
+  assert.ok(claims.has('table_alert:flux_tables_02:3:w'), 'the second unit\'s table has its own claim');
+
+  // With the venue's window open, the other unit's table 3 is its own alert:
+  // the first unit's table 3 claim does not stand in its way.
+  openVenueWindow();
+  ageDevice('flux_tables_02');
+  await call('/api/sensors/data', { apiKey: OTHER_KEY, body: reading({ tables: '3:0:c:5' }) });
+  await settle();
   assert.strictEqual(pushes.length, 2);
+  assert.deepStrictEqual(pushes[1].data, { type: 'table_alert', table: '3', state: 'needs_clearing' });
 });
 
 test('with push unconfigured nothing is read and no claim is spent', async () => {
@@ -1090,8 +1143,21 @@ test('a push that throws never fails the ingest, and the floor is still written'
 test('a push that throws synchronously, or an owner lookup that fails, is caught the same way', async () => {
   reset();
   pushBehaviour = () => { throw new Error('push client blew up'); };
-  await readings2('3:2:s:200;4:0:s:100', '3:2:w:410;4:0:c:5');
-  assert.strictEqual(pushes.length, 2, 'one failed push must not stop the next table');
+  let lines = await capturingLogs(() => readings2('3:2:s:200;4:0:s:100', '3:2:w:410;4:0:c:5'));
+  assert.strictEqual(pushes.length, 1, 'the push was attempted');
+  assert.ok(lines.some((l) => /Table alert for flux_tables_01 table 3 failed: push client blew up/.test(l)), lines.join('\n'));
+  assert.deepStrictEqual(floorOf(), ['3:2:w', '4:0:c']);
+  // The venue's one push for the window went to the attempt that failed, and
+  // table 4 is on the dashboard. The next window is unaffected.
+  pushBehaviour = async () => ({ sent: 1, failed: 0 });
+  openVenueWindow();
+  ageDevice();
+  lines = await capturingLogs(async () => {
+    await call('/api/sensors/data', { apiKey: KEY, body: reading({ tables: '3:0:c:5;4:0:c:35' }) });
+    await settle();
+  });
+  assert.strictEqual(pushes.length, 2, 'a sync throw must not break the path for the next alert');
+  assert.deepStrictEqual(lines, []);
 
   reset();
   const realQuery = pool.query;

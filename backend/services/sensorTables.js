@@ -400,6 +400,19 @@ async function storeTableStates(device, tables, recordedAt) {
 // agree. Claimed only once every refusal (no push service, no verified owner,
 // the switch off, no Roost) has passed, so a refused alert does not burn it.
 //
+// AND AT MOST ONE PER VENUE IN 2 MINUTES, over that. The table window bounds
+// each table, not the phone: forty tables are eighty table-and-state keys, so
+// one reading could ring the owner eighty times, and whoever holds a unit's
+// key (routes/sensors.js opens with the walked-off Pi) could make it do so
+// every fifteen minutes. One more push_debounce claim, table_alert:venue:
+// <place>, lets one push through per venue per window; the tables after it,
+// in the same reading or the next, are on the dashboard, which shows every
+// change. The venue claim is taken after the table's, so a table already told
+// of inside its fifteen minutes does not spend the venue's one push, and a
+// reading's changes are tried in table order, so the lowest-numbered changed
+// table is the one named. Two minutes is shorter than any seating and well
+// inside the hour push_debounce rows are kept.
+//
 // WHO. The verified owner of the unit's place and nobody else: the
 // venue_profiles row for that place with verified true, the same claim GET
 // /status and GET /tables ask for. An unverified claim on the place is told
@@ -431,6 +444,7 @@ async function storeTableStates(device, tables, recordedAt) {
 // ---------------------------------------------------------------------------
 const ALERT_STATES = new Set(['w', 'c']);
 const TABLE_ALERT_WINDOW_MINUTES = 15;
+const TABLE_ALERT_VENUE_WINDOW_MINUTES = 2;
 const TABLE_ALERT_MAX_AGE_MS = TABLES_STALE_AFTER_MINUTES * 60 * 1000;
 const TABLE_ALERT_CLAIM_SQL = `
   INSERT INTO push_debounce (debounce_key, sent_at)
@@ -489,11 +503,18 @@ async function alertOwner(device, changes) {
     const plan = await venueEntitlements.checkVenueTier(ownerId, 'pro');
     if (!plan.ok) return;
 
+    const venueKey = `table_alert:venue:${device.venue_place_id}`;
     for (const change of changes) {
+      let spentTheVenueWindow = false;
       try {
         const key = `table_alert:${device.device_id}:${change.table_no}:${change.state}`;
         const claim = await pool.query(TABLE_ALERT_CLAIM_SQL, [key, TABLE_ALERT_WINDOW_MINUTES]);
         if (claim.rowCount === 0) continue;
+        // The venue's one push per window. Refused: the rest of this reading
+        // would be refused by the same row, so nothing more is tried.
+        const venue = await pool.query(TABLE_ALERT_CLAIM_SQL, [venueKey, TABLE_ALERT_VENUE_WINDOW_MINUTES]);
+        if (venue.rowCount === 0) return;
+        spentTheVenueWindow = true;
         const { title, body } = tableAlertCopy(change);
         await pushHelper.pushAlways(ownerId, title, body, {
           type: 'table_alert',
@@ -503,6 +524,9 @@ async function alertOwner(device, changes) {
       } catch (err) {
         console.error(`Table alert for ${device.device_id} table ${change.table_no} failed:`, err.message);
       }
+      // Sent or not, the window went to this table; the rest are on the
+      // dashboard.
+      if (spentTheVenueWindow) return;
     }
   } catch (err) {
     console.error(`Table alerts for ${device.device_id} failed:`, err.message);
@@ -553,6 +577,7 @@ module.exports = {
   wantsTableAlerts,
   tableAlertCopy,
   TABLE_ALERT_WINDOW_MINUTES,
+  TABLE_ALERT_VENUE_WINDOW_MINUTES,
   TABLE_ALERT_MAX_AGE_MS,
   TABLES_STALE_AFTER_MINUTES,
   // Test seams: the throttle is process-global state, and the floor is

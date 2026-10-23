@@ -609,26 +609,44 @@ test('on the real schema: a change into waiting or clearing is one push to the v
     );
     await pool.query("DELETE FROM push_debounce WHERE debounce_key LIKE 'table_alert:%'");
 
+    const claimKeys = async () => (await pool.query(
+      "SELECT debounce_key FROM push_debounce WHERE debounce_key LIKE 'table_alert:%' ORDER BY 1"
+    )).rows.map((r) => r.debounce_key);
+    const venueKey = `table_alert:venue:${VENUE}`;
+
     await step('3:2:s:200;4:0:s:900;5:1:s:60;6:1:s:60');
     assert.deepEqual(sent, [], 'a first reading has no change to report');
     await step('3:2:w:410;4:0:c:20;5:1:s:90;6:1:s:90');
     await step('3:2:w:440;4:0:c:50;5:1:s:120;6:1:s:120');
+    // Two tables changed in one reading: the venue's one push per two
+    // minutes goes to table 3, and table 4 is on the dashboard.
     assert.deepEqual(sent.map((s) => [s.userId, s.title, s.body, s.data.state]), [
       [owner.id, 'Table 3', 'Seated 6 min and nobody has stopped by yet.', 'waiting'],
-      [owner.id, 'Table 4', "The party left and the table hasn't been cleared.", 'needs_clearing'],
     ]);
-    const { rows: claimRows } = await pool.query(
-      "SELECT debounce_key FROM push_debounce WHERE debounce_key LIKE 'table_alert:%' ORDER BY 1"
-    );
-    assert.deepEqual(claimRows.map((r) => r.debounce_key), ['table_alert:sensor_live:3:w', 'table_alert:sensor_live:4:c']);
+    assert.deepEqual(await claimKeys(), ['table_alert:sensor_live:3:w', venueKey], 'the push stops the reading; table 4 spends nothing');
 
+    // The venue's window let pass, so what follows is refused by the switch
+    // and the claim alone.
+    const openVenueWindow = () => pool.query(
+      "UPDATE push_debounce SET sent_at = NOW() - INTERVAL '3 minutes' WHERE debounce_key = $1", [venueKey]
+    );
+    await openVenueWindow();
     // The owner turns table alerts off: table 5 starts waiting, nobody is told.
     await pool.query(`UPDATE venue_profiles SET notification_prefs = notification_prefs || '{"tables": false}'::jsonb WHERE user_id = $1`, [owner.id]);
     await step('3:2:w:470;4:0:c:80;5:1:w:400;6:1:s:150');
     // Back on, but the claim on the place is no longer verified: table 6 waits, nobody is told.
     await pool.query(`UPDATE venue_profiles SET notification_prefs = '{}'::jsonb, verified = false WHERE user_id = $1`, [owner.id]);
     await step('3:2:w:500;4:0:c:110;5:1:w:430;6:1:w:400');
-    assert.equal(sent.length, 2, JSON.stringify(sent.slice(2)));
+    assert.equal(sent.length, 1, JSON.stringify(sent.slice(1)));
+    assert.deepEqual(await claimKeys(), ['table_alert:sensor_live:3:w', venueKey],
+      'a refused alert must not spend a claim, the venue\'s included');
+
+    // Verified again with the switch on: the next change at table 5 goes out,
+    // so neither refusal above was the venue window's doing.
+    await pool.query('UPDATE venue_profiles SET verified = true WHERE user_id = $1', [owner.id]);
+    await step('3:2:w:530;4:0:c:140;5:1:s:490;6:1:w:430');
+    await step('3:2:w:560;4:0:c:170;5:1:w:520;6:1:w:460');
+    assert.deepEqual(sent.slice(1).map((s) => [s.title, s.body]), [['Table 5', 'Seated 8 min and nobody has stopped by yet.']]);
   } finally {
     pushHelper.isPushConfigured = real.configured;
     pushHelper.pushAlways = real.always;
