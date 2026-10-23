@@ -16,6 +16,7 @@ import ctypes
 import hashlib
 import io
 import json
+import math
 import os
 import re
 import struct
@@ -4795,3 +4796,124 @@ class TablesAtTheVenue(unittest.TestCase):
         zones = main.load_table_zones(path)
         self.assertEqual(zones[0]['seats'], ((12.0, 14.0), (28.0, 14.0)))
         self.assertEqual(zones[1]['seats'], ())
+
+
+
+def _evening(learner, parties, minutes, every=2.0, seed=3, extras=True):
+    """An evening as Owl would report it: each party is (seats, first
+    minute, last minute) with seats as (x, y) on Owl's 4-pixel grid; a seated
+    head sometimes lands one cell over. Two people walk across the room the
+    whole time and someone stands at the bar for two minutes now and then."""
+    import random
+    rng = random.Random(seed)
+    t = 0.0
+    while t < minutes * 60:
+        m = t / 60.0
+        points = []
+        for seats, first, last in parties:
+            if first <= m < last:
+                for x, y in seats:
+                    if rng.random() < 0.1:
+                        x += rng.choice((-4, 4))
+                    if rng.random() < 0.1:
+                        y += rng.choice((-4, 4))
+                    points.append((x, y))
+        if extras:
+            points.append(((t * 0.9) % 160, 100.0))
+            points.append((160 - (t * 1.3) % 160, 80.0 + 10 * math.sin(t / 30)))
+            if int(m) % 45 < 2:
+                points.append((150.0, 110.0))
+        learner.observe(t, points)
+        t += every
+    learner.observe(minutes * 60 + 61, [])
+
+
+_A = [(22.0, 42.0), (42.0, 42.0)]
+_B = [(74.0, 34.0), (94.0, 34.0), (74.0, 50.0), (94.0, 50.0)]
+_C = [(130.0, 62.0), (146.0, 62.0)]
+_NIGHT = [
+    (_A, 0, 50), (_A, 60, 120), (_A[:1], 130, 170),
+    (_B, 5, 70), (_B[:3], 80, 150), (_B[1:3], 155, 200),
+    (_C, 10, 90), (_C, 100, 180),
+]
+
+
+def _same_seats(learned, truth, px=4.0):
+    return len(learned) == len(truth) and all(
+        any(math.hypot(x - tx, y - ty) <= px for tx, ty in truth) for x, y in learned)
+
+
+class TablesLearnedFromHeat(unittest.TestCase):
+    """Where the tables are, from where people sat, with no camera."""
+
+    def test_an_evening_finds_each_table_and_its_seats(self):
+        learner = main.TableLearner()
+        _evening(learner, _NIGHT, 210)
+        tables = learner.tables()
+        self.assertEqual(len(tables), 3, tables)
+        for truth in (_A, _B, _C):
+            self.assertTrue(any(_same_seats(t['seats'], truth) for t in tables), (truth, tables))
+
+    def test_the_same_at_a_screen_units_frame_rate(self):
+        learner = main.TableLearner()
+        night = [(_A, 0, 40), (_A, 50, 90), (_B, 5, 60), (_B[:2], 70, 95)]
+        _evening(learner, night, 100, every=0.25)
+        tables = learner.tables()
+        self.assertEqual(len(tables), 2, tables)
+        self.assertTrue(any(_same_seats(t['seats'], _A) for t in tables))
+        self.assertTrue(any(_same_seats(t['seats'], _B) for t in tables))
+
+    def test_people_walking_past_or_stopping_briefly_make_no_table(self):
+        learner = main.TableLearner()
+        _evening(learner, [], 180)
+        self.assertEqual(learner.tables(), [])
+
+    def test_neighbouring_tables_seated_at_different_times_stay_apart(self):
+        # Close enough to be one table, but their parties come and go apart,
+        # and twice two parties sit at them at once.
+        left, right = [(50.0, 60.0)], [(70.0, 60.0)]
+        learner = main.TableLearner()
+        _evening(learner, [(left, 0, 40), (right, 20, 70), (left, 60, 100), (right, 85, 120)], 130)
+        tables = learner.tables()
+        self.assertEqual(len(tables), 2, tables)
+
+    def test_learned_tables_keep_their_numbers_and_new_ones_start_where_told(self):
+        learner = main.TableLearner(number_start=12)
+        _evening(learner, _NIGHT, 210)
+        previous = [{'n': 7, 'box': (10.0, 30.0, 50.0, 50.0), 'seats': ((22.0, 42.0), (42.0, 42.0))}]
+        numbered = learner.numbered(previous)
+        by_n = {t['n']: t for t in numbered}
+        self.assertTrue(_same_seats(by_n[7]['seats'], _A))
+        self.assertEqual(sorted(by_n), [7, 12, 13])
+
+    def test_the_zones_file_is_written_once_and_never_over_someone_elses(self):
+        path = Path(_TMP) / 'learned-tables.json'
+        if path.exists():
+            path.unlink()
+        learner = main.TableLearner(path)
+        _evening(learner, _NIGHT, 210)
+        self.assertTrue(learner.maybe_write(10_000.0))
+        written = json.loads(path.read_text(encoding='utf-8'))
+        self.assertEqual(written['source'], 'heat')
+        zones = main.load_table_zones(path)
+        self.assertEqual(len(zones), 3)
+        self.assertTrue(all(z['seats'] for z in zones))
+        # Nothing changed: no rewrite, so the tables keep their timers.
+        self.assertFalse(learner.maybe_write(10_000.0 + main.TableLearner.LEARN_EVERY))
+        # A file the camera wrote is left alone.
+        path.write_text(json.dumps({'source': 'camera', 'tables': []}), encoding='utf-8')
+        self.assertFalse(learner.maybe_write(10_000.0 + 2 * main.TableLearner.LEARN_EVERY))
+        self.assertEqual(json.loads(path.read_text(encoding='utf-8'))['source'], 'camera')
+
+    def test_learning_is_off_unless_the_box_is_told(self):
+        self.assertFalse(main.TABLES_LEARN)
+        self.assertIsNone(main._table_learner)
+
+    def test_only_minutes_per_spot_are_kept(self):
+        learner = main.TableLearner()
+        _evening(learner, [(_A, 0, 30)], 40)
+        # The whole memory: anonymous grid cells, each with the minutes it
+        # was occupied. No points, no paths, nothing per person.
+        for cell, minutes in learner.minutes.items():
+            self.assertEqual(len(cell), 2)
+            self.assertTrue(all(isinstance(m, int) for m in minutes))

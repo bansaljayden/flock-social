@@ -101,8 +101,9 @@ design choice below follows from that.
 
 ## What it collects (and what it cannot)
 
-Three numbers every 30 seconds, and from version 1.15 up to four more, every
-one of them a count worked out on the device:
+Three numbers every 30 seconds, from version 1.15 up to four more, and from
+1.24 one line of table states on a unit set up for tables, every one of them
+worked out on the device:
 
 | Field | What it is | How it is measured |
 |---|---|---|
@@ -112,6 +113,7 @@ one of them a count worked out on the device:
 | `occupancy` | Estimated people inside | The doorway's in minus out, never less than the camera's count, reset when the room has been still and empty (`OccupancyTracker`). The camera's count alone on a unit without a directional doorway counter |
 | `occupancy_low`, `occupancy_high` | The likely range around it | Widens by a few percent of the crossings since the last reset |
 | `dwell_minutes` | How long people typically stay | Little's law over the last hour; left out until an hour has enough arrivals |
+| `tables` | Each table's people, state (free, seated, needs a server, needs clearing) and seconds in it, as `N:P:S:A` joined by `;` | The trained counter's people split by table on the device (`TableTracker`). Sent only by a unit with a zones file, while the trained counter is running |
 
 **It counts. It cannot identify anyone.**
 
@@ -147,6 +149,18 @@ one of them a count worked out on the device:
   is about 30 cm of floor, so a person in it is a few zones reading nearer than
   the floor. It becomes crossings in the loop that reads it and is discarded;
   nothing keeps a frame.
+- Tables. A zones file (`/var/lib/flock-sensor/tables.json`) holds each table
+  as a rectangle in thermal pixels and the spots its seats are, where the head
+  of someone in each chair lands. With `TABLES_LEARN=1` the box learns it from
+  where people sat (`TableLearner`): every minute, each 4-pixel spot that held
+  a person for half of that minute is marked occupied for that minute, and
+  that is all it keeps, in memory, for 12 hours. No point is linked to the one
+  before it, so there are no paths and nothing per person. Seats are the spots
+  occupied for 15 minutes or more; a table is the seats whose sittings begin
+  and end together. Only the table outlines and seat spots are written.
+  `TABLE_NUMBER_START` sets a box's first table number so two boxes in one
+  venue never share one. Learning is off until the privacy policy's table line
+  is live.
 - The microphone's samples become one RMS number every half second and are
   discarded. No audio is recorded, buffered or sent. You cannot recover speech
   from a loudness level.

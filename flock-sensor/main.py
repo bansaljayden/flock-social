@@ -68,7 +68,7 @@ try:
 except ImportError:  # pragma: no cover
     fcntl = None
 
-VERSION = '1.24.0'
+VERSION = '1.25.0'
 
 # The Pi 5's GPIO library (rpi-lgpio, under RPi.GPIO) makes a small file in
 # the working directory before it will drive a pin, and the service runs in
@@ -331,6 +331,12 @@ OCCUPANCY_EMPTY_MINUTES = _cfg_number('OCCUPANCY_EMPTY_MINUTES', int, 2, 240, 20
 # How long a seated party may go with nobody coming by before its table says
 # "waiting". Venues differ, so it is a setting: 5 minutes unless told.
 TABLE_WAIT_SECONDS = _cfg_number('TABLE_WAIT_SECONDS', int, 60, 3600, 300)
+# Learn where the tables are from where people sit (TableLearner) and write
+# the zones file. Off until the privacy policy's table line is live.
+TABLES_LEARN = bool(_cfg_number('TABLES_LEARN', int, 0, 1, 0))
+# The first table number this box gives a learned table. A venue with two
+# boxes starts the second after the first's last table, so no two share one.
+TABLE_NUMBER_START = _cfg_number('TABLE_NUMBER_START', int, 1, 200, 1)
 IR_GPIO_PIN = _cfg_number('IR_GPIO_PIN', int, 2, 27, 17)
 DOOR_SENSOR = (CONFIG.get('DOOR_SENSOR') or 'auto').strip().lower()
 if DOOR_SENSOR not in ('auto', 'tof', 'beam', 'off'):
@@ -2084,6 +2090,9 @@ def thermal_loop():
                 # to fill, and they go stale and drop out of the readings.
                 if points is not None:
                     _tables.update(time.monotonic(), points)
+                    if _table_learner is not None:
+                        _table_learner.observe(time.monotonic(), points)
+                        _table_learner.maybe_write(time.monotonic())
                 if _study is not None:
                     _study.frame(int(frame_count), published, counter, infer_ms,
                                  tag if counter == 'model' else 'rule')
@@ -3253,7 +3262,232 @@ class TableTracker:
         return ';'.join(out)
 
 
+class TableLearner:
+    """Where the tables are, learned from where people sit, with no camera.
+
+    Owl gives each person as a point on its own 4-pixel grid. Every minute,
+    each grid cell that held a point for at least half of that minute is
+    marked occupied for that minute. That is all that is kept: which spots
+    were occupied in which minutes, in memory, for the last OCC_KEEP hours.
+    Nothing links a point to the one before it, so nothing here can follow
+    anyone; the cells are anonymous, and so are the minutes.
+
+    From that:
+      seats   the spots occupied for SEAT_MINUTES or more, each a local peak
+              of occupied minutes over its 3 x 3 neighbourhood;
+      sittings each seat's runs of SIT_MINUTES or more occupied minutes
+              (gaps of up to GAP_MINUTES allowed): one party's stay;
+      tables  seats whose sittings begin and end together. Two seats within
+              LINK_PX of each other join when at least half of the fewer
+              sittings match one of the other's (start or end within
+              MATCH_MINUTES, mostly overlapping) and no two of their
+              sittings overlap without matching, which only happens when two
+              different parties sat there at once.
+    A table's zone is its seats' bounding box plus PAD pixels; its seats go
+    in the zones file so TableTracker can tell overlapping zones apart."""
+
+    CELL = 4
+    PRESENT_SHARE = 0.5
+    SEAT_MINUTES = 15
+    SIT_MINUTES = 10
+    GAP_MINUTES = 2
+    MATCH_MINUTES = 4
+    LINK_PX = 60.0
+    PAD = 5.0
+    OCC_KEEP = 12 * 60
+    LEARN_EVERY = 30 * 60.0
+    MAX_SEATS_PER_TABLE = 12
+
+    def __init__(self, path=None, number_start=None):
+        self.path = path
+        self.number_start = TABLE_NUMBER_START if number_start is None else int(number_start)
+        self.minutes = {}            # cell -> set of minutes it was occupied
+        self._minute = None
+        self._present = {}           # cell -> seconds with a point, this minute
+        self._seen = 0.0             # seconds of frames this minute
+        self._last = None
+        self._learned_at = None
+
+    def observe(self, now, points):
+        """One frame's people, as (x, y) frame pixels."""
+        minute = int(now // 60)
+        if self._minute is None:
+            self._minute = minute
+        if minute != self._minute:
+            self._close_minute()
+            self._minute = minute
+        dt = 0.0 if self._last is None else min(10.0, max(0.0, now - self._last))
+        self._last = now
+        self._seen += dt
+        for cell in {(int(x // self.CELL), int(y // self.CELL)) for x, y in points or ()}:
+            self._present[cell] = self._present.get(cell, 0.0) + dt
+
+    def _close_minute(self):
+        if self._seen > 0:
+            for cell, secs in self._present.items():
+                if secs >= self.PRESENT_SHARE * self._seen:
+                    self.minutes.setdefault(cell, set()).add(self._minute)
+        self._present, self._seen = {}, 0.0
+        oldest = self._minute - self.OCC_KEEP
+        for cell in list(self.minutes):
+            kept = {m for m in self.minutes[cell] if m > oldest}
+            if kept:
+                self.minutes[cell] = kept
+            else:
+                del self.minutes[cell]
+
+    def _seats(self):
+        count = {c: len(m) for c, m in self.minutes.items()}
+
+        def around(c):
+            return [(c[0] + dx, c[1] + dy) for dx in (-1, 0, 1) for dy in (-1, 0, 1)]
+
+        score = {}
+        for c in count:
+            for n in around(c):
+                score[n] = score.get(n, 0) + count[c]
+        seats = []
+        for c in sorted(score, key=lambda c: (-score[c], c)):
+            if score[c] < self.SEAT_MINUTES or count.get(c, 0) == 0:
+                continue
+            if any(max(abs(c[0] - o[0]), abs(c[1] - o[1])) <= 1 for o, _, _ in seats):
+                continue
+            weight = [(n, count.get(n, 0)) for n in around(c) if count.get(n, 0)]
+            total = float(sum(w for _, w in weight))
+            x = sum((n[0] + 0.5) * self.CELL * w for n, w in weight) / total
+            y = sum((n[1] + 0.5) * self.CELL * w for n, w in weight) / total
+            mins = set()
+            for n in [c, (c[0] - 1, c[1]), (c[0] + 1, c[1]), (c[0], c[1] - 1), (c[0], c[1] + 1)]:
+                mins |= self.minutes.get(n, set())
+            seats.append((c, (round(x, 1), round(y, 1)), self._sittings(mins)))
+        return [(xy, sittings) for _, xy, sittings in seats if sittings]
+
+    def _sittings(self, mins):
+        runs, start, prev = [], None, None
+        for m in sorted(mins):
+            if start is None:
+                start = prev = m
+            elif m - prev <= self.GAP_MINUTES + 1:
+                prev = m
+            else:
+                runs.append((start, prev))
+                start = prev = m
+        if start is not None:
+            runs.append((start, prev))
+        return [(a, b) for a, b in runs if b - a + 1 >= self.SIT_MINUTES]
+
+    def _linked(self, a, b):
+        def matches(r, q):
+            overlap = min(r[1], q[1]) - max(r[0], q[0]) + 1
+            shorter = min(r[1] - r[0], q[1] - q[0]) + 1
+            close = abs(r[0] - q[0]) <= self.MATCH_MINUTES or abs(r[1] - q[1]) <= self.MATCH_MINUTES
+            return close and overlap >= 0.7 * shorter
+
+        for r in a:
+            for q in b:
+                overlaps = min(r[1], q[1]) >= max(r[0], q[0])
+                if overlaps and not matches(r, q):
+                    return False
+        matched = sum(1 for r in a if any(matches(r, q) for q in b))
+        return matched >= 1 and matched >= 0.5 * min(len(a), len(b))
+
+    def tables(self):
+        """[{'seats': [(x, y), ...], 'box': (x0, y0, x1, y1)}] learned so far."""
+        seats = self._seats()
+        parent = list(range(len(seats)))
+
+        def root(i):
+            while parent[i] != i:
+                parent[i] = parent[parent[i]]
+                i = parent[i]
+            return i
+
+        for i in range(len(seats)):
+            for j in range(i + 1, len(seats)):
+                (xa, ya), sa = seats[i]
+                (xb, yb), sb = seats[j]
+                if math.hypot(xa - xb, ya - yb) <= self.LINK_PX and self._linked(sa, sb):
+                    parent[root(i)] = root(j)
+        groups = {}
+        for i in range(len(seats)):
+            groups.setdefault(root(i), []).append(seats[i][0])
+        out = []
+        for members in groups.values():
+            members = sorted(members)[:self.MAX_SEATS_PER_TABLE]
+            xs = [m[0] for m in members]
+            ys = [m[1] for m in members]
+            box = (max(0.0, min(xs) - self.PAD), max(0.0, min(ys) - self.PAD),
+                   min(float(THERMAL_COLS), max(xs) + self.PAD), min(float(THERMAL_ROWS), max(ys) + self.PAD))
+            out.append({'seats': members, 'box': tuple(round(v, 1) for v in box)})
+        return sorted(out, key=lambda t: (t['box'][1], t['box'][0]))
+
+    def numbered(self, previous=()):
+        """The learned tables with numbers: a table with a seat within 6 px
+        of a seat of one in `previous` keeps that one's number, and new ones
+        take the next free numbers from number_start."""
+        learned = self.tables()
+        used, out = set(), []
+        for t in learned:
+            n = None
+            for old in previous:
+                if old['n'] in used:
+                    continue
+                if any(math.hypot(x - ox, y - oy) <= 6.0 for x, y in t['seats'] for ox, oy in old.get('seats') or ()):
+                    n = old['n']
+                    break
+            if n is not None:
+                used.add(n)
+            out.append(dict(t, n=n))
+        free = (k for k in range(self.number_start, TABLE_NUMBER_MAX + 1) if k not in used)
+        for t in out:
+            if t['n'] is None:
+                t['n'] = next(free, None)
+        return sorted([t for t in out if t['n'] is not None], key=lambda t: t['n'])[:TABLE_MAX]
+
+    def maybe_write(self, now):
+        """Every LEARN_EVERY, write the zones file if the tables changed.
+        A file someone else wrote ("source" not "heat") is never touched."""
+        if self.path is None or (self._learned_at is not None and now - self._learned_at < self.LEARN_EVERY):
+            return False
+        self._learned_at = now
+        path = Path(self.path)
+        previous = []
+        try:
+            raw = json.loads(path.read_text(encoding='utf-8'))
+            if isinstance(raw, dict) and raw.get('source', 'heat') != 'heat':
+                return False
+            previous = load_table_zones(path)
+        except FileNotFoundError:
+            pass
+        except (OSError, ValueError):
+            return False
+        tables = self.numbered(previous)
+        if not tables:
+            return False
+        same = len(tables) == len(previous) and all(
+            any(o['n'] == t['n'] and len(o.get('seats') or ()) == len(t['seats'])
+                and all(math.hypot(x - ox, y - oy) <= 4.0
+                        for (x, y), (ox, oy) in zip(t['seats'], sorted(o.get('seats') or ())))
+                for o in previous)
+            for t in tables)
+        if same:
+            return False
+        body = {'source': 'heat', 'tables': [
+            {'n': t['n'], 'x0': t['box'][0], 'y0': t['box'][1], 'x1': t['box'][2], 'y1': t['box'][3],
+             'seats': [list(p) for p in t['seats']]} for t in tables]}
+        tmp = path.with_name(path.name + '.tmp')
+        try:
+            tmp.write_text(json.dumps(body), encoding='utf-8')
+            os.replace(tmp, path)
+        except OSError as e:
+            log_throttled('tables_learn', logging.ERROR, f'Could not write learned tables to {path}: {e}')
+            return False
+        logger.info(f'Tables: learned {len(tables)} table(s) from where people sat; wrote {path}')
+        return True
+
+
 _tables = TableTracker.from_file(TABLES_PATH)
+_table_learner = TableLearner(TABLES_PATH) if TABLES_LEARN else None
 
 
 def snapshot():
