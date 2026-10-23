@@ -20,6 +20,10 @@
 // components/venue/VenueTablesPanel.js draws. Nothing here estimates: every
 // figure is one the sensor sent, or an average of figures it sent.
 
+// The reading itself (when, how often, what a failure becomes) is
+// lib/venueTablesReading.js, kept apart because App.js imports it and this
+// file is only ever needed by the dashboard's own chunk.
+
 // A number, or a numeric string, or null.
 const num = (v) => {
   const n = typeof v === 'string' && v.trim() !== '' ? Number(v) : v;

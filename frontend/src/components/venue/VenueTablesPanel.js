@@ -200,7 +200,7 @@ export default function VenueTablesPanel({ data, hours, colors, wellPx }) {
 
       <div data-testid="tables-live" style={{ opacity: stale ? STALE_OPACITY : 1 }}>
         {alerts.length > 0 && (
-          <ul style={{ listStyle: 'none', margin: '0 0 10px', padding: 0 }}>
+          <ul aria-label="Needs attention" style={{ listStyle: 'none', margin: '0 0 10px', padding: 0 }}>
             {alerts.map((a, i) => (
               <li
                 key={`${a.number}-${a.state}-${i}`}
@@ -218,7 +218,7 @@ export default function VenueTablesPanel({ data, hours, colors, wellPx }) {
           <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 10px', lineHeight: 1.45 }}>{nextFree}</p>
         )}
 
-        <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(112px, 1fr))', gap: '8px' }}>
+        <ul aria-label="All tables" style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(112px, 1fr))', gap: '8px' }}>
           {tables.map((t, i) => {
             const look = tileLook(t.state, colors);
             const counting = t.state === 'seated' || t.state === 'waiting';

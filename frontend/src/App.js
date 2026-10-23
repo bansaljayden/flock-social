@@ -66,6 +66,7 @@ import { AVATAR_EDGE, AVATAR_REFIT_MARKER_KEY, encodeAvatar, dataUrlToBlob, need
 // staleness rule is measured in. See lib/livePins.js.
 import { LOCATION_EMIT_MS, withoutFlockPins, withoutPersonPin, withoutStalePins } from './lib/livePins';
 import { foldSensorReading } from './lib/sensorHistory';
+import { startTablesReading, tableHoursFrom } from './lib/venueTablesReading';
 // Whether the viewer's own Tonight pulse is still on. See lib/pulse.js.
 import { livePulse, pulseEndsAt, pulseTapAction } from './lib/pulse';
 // PaywallSheet is NOT imported here; it is fetched, at the lazy block below.
@@ -18739,47 +18740,28 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     };
   }, [ownerVenuePlaceId, currentScreen]);
 
-  // The same sensor's tables, for the same place. Read when the dashboard
-  // opens and again 15 seconds after each answer while it stays open. The
-  // next read is set only once the last one has answered, so two never
-  // overlap on a slow connection; a slow answer pushes the next read back
-  // instead of stacking requests behind it. The hours are read once per open.
-  // What was shown is dropped whenever the place or the screen changes, so a
-  // reopened dashboard never shows an old snapshot as if it were live.
-  //
-  // Any failure reads as no tables, which draws nothing. A refusal also ends
-  // the reading for this open: the server answers 403 to anyone but the
-  // verified owner, 401 once signed out and 404 where it has no tables for the
-  // place, and asking again every 15 seconds changes none of those. A dropped
-  // connection or a server error is asked again on the next turn.
+  // The same sensor's tables, for the same place: read when the dashboard
+  // opens and again 15 seconds after each answer while it stays open, never
+  // two at once (startTablesReading, lib/venueTablesReading.js). The hours
+  // are read once per open. Any failure arrives as null and draws nothing; a
+  // refusal (403 for anyone but the verified owner, 401 signed out) ends the
+  // reading for this open, since asking again cannot change it. What was
+  // shown is dropped whenever the place or the screen changes, so a reopened
+  // dashboard never shows an old snapshot as if it were live, and nothing is
+  // set once the screen has moved on.
   React.useEffect(() => {
     const pid = ownerVenuePlaceId;
     setOwnerTables(null);
     setOwnerTableHours(null);
     if (!pid || currentScreen !== 'venueDashboard') return undefined;
-    const READ_EVERY_MS = 15 * 1000;
     let cancelled = false;
-    let timer = null;
-    const readTables = () => {
-      getSensorTables(pid).then(
-        (data) => ({ data: data && Array.isArray(data.tables) ? data : null, refused: false }),
-        (err) => ({ data: null, refused: [401, 403, 404].includes(err?.status) }),
-      ).then(({ data, refused }) => {
-        if (cancelled) return;
-        setOwnerTables(data);
-        if (!refused) timer = setTimeout(readTables, READ_EVERY_MS);
-      });
-    };
-    readTables();
-    getSensorTableHours(pid).then(
-      (data) => (Array.isArray(data?.hours) ? data.hours : null),
-      () => null,
-    ).then((hours) => {
+    const stopReading = startTablesReading(() => getSensorTables(pid), setOwnerTables);
+    getSensorTableHours(pid).then(tableHoursFrom, () => null).then((hours) => {
       if (!cancelled) setOwnerTableHours(hours);
     });
     return () => {
       cancelled = true;
-      clearTimeout(timer);
+      stopReading();
     };
   }, [ownerVenuePlaceId, currentScreen]);
 
