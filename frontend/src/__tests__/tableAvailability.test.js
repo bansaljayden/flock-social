@@ -6,21 +6,26 @@
  * per list, one GET per detail, a minute's cache under both. This file pins
  * both halves:
  *
- *   1. Every wording branch, the compact shortening, the singular, the party
- *      the server echoed winning over the caller's, nothing said when there
- *      is nothing to say, and no em dash in any of it.
+ *   1. Every wording branch, the compact forms (verdict first, so a cut row
+ *      keeps it), the singular, fits_now null counted with no verdict, the
+ *      party the server echoed winning over the caller's, nothing said when
+ *      there is nothing to say, and no em dash in any of it.
  *   2. Stale: nothing live, the busy hours still said, the caption honest.
  *   3. Busy hours: consecutive hours fold into one range per day, the range
- *      nearest to now comes first, at most two, the day said once when both
- *      share it, and the AM/PM and midnight edges of the range label.
+ *      nearest to now on the venue's clock comes first, at most two, the day
+ *      said once when both share it, the AM/PM and midnight edges of the
+ *      range label, and none said at all for a summary with no zone. Then the
+ *      map plate's rows, and the chat's and the plan's gate and names.
  *   4. The party defaults: two outside a flock, the flock's going count inside
- *      one, clamped to what the server accepts.
+ *      one from two up, clamped to what the server accepts.
  *   5. The read: ids asked for in one tick go as one POST, deduplicated, split
  *      at fifty; a fresh answer is not asked for again; a minute later it is;
- *      an id the server left out is remembered as "no data" and draws
- *      nothing; the GET's 404 is the same silence; a failed read keeps what
- *      was known; nothing goes out signed out; the hooks ask on mount, again
- *      each minute, and stop on unmount.
+ *      an id the server left out is remembered as "no data" under the place,
+ *      for every party, and draws nothing; the GET's 404 is the same silence;
+ *      a failed read keeps what was known; answers past five minutes are
+ *      dropped; nothing goes out signed out; the hooks ask on mount, again
+ *      each minute, stop on unmount, render only for their own places, do not
+ *      subscribe while parked, and catch a write landing before they subscribe.
  *
  * MUTATIONS RUN AGAINST THIS FILE (2026-10-23), each applied to the source
  * by a script, the suite run, the file restored, the failing tests recorded
