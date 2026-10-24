@@ -1063,7 +1063,9 @@ router.get('/:placeId/tables/hours',
 // the time from its leaving to the table cleared, waited_share the share of
 // seatings whose party waited past the unit's wait limit, and full_hours the
 // hours of the week when every table was in use in at least half the
-// readings. dow is 0-6 (0 Sunday) and hour 0-23 on the venue's zone when the
+// readings, counted only once an hour has readings on four dates and ten in
+// all (services/tableHistory.js says why; a window under four weeks has
+// none). dow is 0-6 (0 Sunday) and hour 0-23 on the venue's zone when the
 // server knows it, else UTC, and timeZone is then null (the IANA name
 // otherwise, as /tables/hours says it). Every median and the share are null
 // under twenty closed seatings (services/tableHistory.js says why), so the

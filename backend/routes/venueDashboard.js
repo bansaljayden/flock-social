@@ -714,7 +714,7 @@ router.delete('/events/:id', param('id').isInt({ min: 1, max: INT4_MAX }), async
 // for its window, its membership rule and its column list to drift. The
 // rules above are still the rules; they are enforced by the one statement.
 const {
-  INCOMING_PAST_HOURS, INCOMING_AHEAD_HOURS, listIncomingFlocks,
+  INCOMING_PAST_HOURS, INCOMING_AHEAD_HOURS, listIncomingFlocks, partyOf,
 } = require('../services/incomingFlocks');
 
 // GET /api/venue-dashboard/incoming-flocks — flocks coming to this venue, or
@@ -771,12 +771,12 @@ router.get('/incoming-flocks', async (req, res) => {
 
     res.json({
       // The heading the venue reads, built here rather than selected. A group
-      // whose accepted count has not landed yet is "A group", not "Party of
+      // whose going count (accepted members plus going guests) has not landed yet is "A group", not "Party of
       // 0": the count is the thing being said, so saying it wrong is worse
       // than not saying it.
       flocks: rows.map((f) => {
-        const n = Number(f.member_count);
-        return { ...f, title: Number.isFinite(n) && n > 0 ? `Party of ${n}` : 'A group' };
+        const n = partyOf(f);
+        return { ...f, title: n > 0 ? `Party of ${n}` : 'A group' };
       }),
       // The window is published because the list alone cannot distinguish "no
       // group is coming" from "the feed only looks a day ahead". A client that

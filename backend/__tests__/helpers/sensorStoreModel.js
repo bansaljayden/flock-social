@@ -165,6 +165,7 @@ function runTableStates(store, params) {
   if (mine.some((r) => r.updated_at.getTime() > asOf.getTime())) return { rows: [], rowCount: 0 };
   // prior: read before anything moves, as the statement's snapshot is.
   const prior = new Map(mine.map((r) => [r.table_no, r.state]));
+  const priorAt = new Map(mine.map((r) => [r.table_no, r.updated_at]));
   // gone: this device's tables that are not in the reading.
   for (let i = store.tableStates.length - 1; i >= 0; i -= 1) {
     const r = store.tableStates[i];
@@ -191,6 +192,7 @@ function runTableStates(store, params) {
       table_no: n,
       state: states[i],
       prior_state: prior.has(n) ? prior.get(n) : null,
+      prior_updated_at: priorAt.has(n) ? priorAt.get(n) : null,
       // On the reading's own clock (as_of minus state_since), never NOW().
       minutes: Math.max(1, Math.floor((asOf.getTime() - since.getTime()) / 60000)),
     });
@@ -215,21 +217,33 @@ let nextSeatingId = 1;
  * Run TABLE_SEATINGS_SQL against `store.seatings` (an array of rows shaped
  * like sensor_table_seatings, mutated in place; created when absent).
  * Parameters in statement order: $1 device_id, $2 venue place id, $3 the
- * reading's recorded_at, then five parallel arrays: $4 table numbers, $5 the
+ * reading's recorded_at, then six parallel arrays: $4 table numbers, $5 the
  * state each table had before the reading (null for none), $6 its state now,
- * $7 people, $8 the seconds its state has held. Returns the four counts the
+ * $7 people, $8 the seconds its state has held, $9 when its previous row was
+ * written (null for none). Open seatings at another venue close (moved).
+ * Returns the five counts the
  * statement does.
  */
 function runTableSeatings(store, params) {
-  const [deviceId, placeId, recordedAt, numbers, priors, states, people, seconds] = params;
+  const [deviceId, placeId, recordedAt, numbers, priors, states, people, seconds, priorAts = []] = params;
   if (!Array.isArray(store.seatings)) store.seatings = [];
   const asOf = new Date(Math.min(new Date(recordedAt).getTime(), Date.now()));
   // The snapshot every step reads: which seating is open per table, and the
   // latest closed one, BEFORE anything in this statement moves.
   const openByTable = new Map();
   const latestClosedByTable = new Map();
+  const counts = { moved: 0, opened: 0, continued: 0, closed: 0, cleared: 0 };
   for (const g of store.seatings) {
     if (g.sensor_device_id !== deviceId) continue;
+    // moved: an open seating at another venue closes at the reading's time,
+    // and nothing at another venue is continued, closed or cleared.
+    if (g.venue_place_id !== placeId) {
+      if (g.left_at === null) {
+        g.left_at = new Date(Math.max(g.seated_at.getTime(), asOf.getTime()));
+        counts.moved += 1;
+      }
+      continue;
+    }
     if (g.left_at === null) openByTable.set(g.table_no, g);
     else {
       const have = latestClosedByTable.get(g.table_no);
@@ -239,7 +253,6 @@ function runTableSeatings(store, params) {
       }
     }
   }
-  const counts = { opened: 0, continued: 0, closed: 0, cleared: 0 };
   const inReading = new Set(numbers);
   numbers.forEach((n, i) => {
     const state = states[i];
@@ -262,9 +275,11 @@ function runTableSeatings(store, params) {
       open.waited = open.waited || state === 'w';
       counts.continued += 1;
     } else if ((state === 'f' || state === 'c') && open) {
+      // Never later than the table was last seen plus two minutes.
+      const cap = priorAts[i] ? new Date(priorAts[i]).getTime() + 2 * 60000 : asOf.getTime();
       const at = state === 'c' ? asOf.getTime() - seconds[i] * 1000 : asOf.getTime();
-      open.left_at = new Date(Math.max(open.seated_at.getTime(), at));
-      if (state === 'f') open.cleared_at = asOf;
+      open.left_at = new Date(Math.max(open.seated_at.getTime(), Math.min(at, cap)));
+      if (state === 'f') open.cleared_at = new Date(Math.max(open.seated_at.getTime(), Math.min(asOf.getTime(), cap)));
       counts.closed += 1;
     }
     if (priors[i] === 'c' && state === 'f') {
@@ -291,7 +306,7 @@ function runTableSeatings(store, params) {
 // closed at that time. Modelled and real-run under the same agreement as
 // above.
 // ---------------------------------------------------------------------------
-const SILENT_UNIT_STATEMENT = /^WITH gone AS \( DELETE FROM sensor_table_states s WHERE s\.sensor_device_id = \$1::varchar AND s\.updated_at < LEAST\(\$2::timestamptz, NOW\(\)\) - \(\$3::int \* INTERVAL '1 minute'\) RETURNING s\.table_no \) UPDATE sensor_table_seatings g SET left_at = GREATEST\(g\.seated_at, LEAST\(\$2::timestamptz, NOW\(\)\)\) FROM gone WHERE g\.sensor_device_id = \$1::varchar AND g\.table_no = gone\.table_no AND g\.left_at IS NULL$/;
+const SILENT_UNIT_STATEMENT = /^WITH gone AS \( DELETE FROM sensor_table_states s WHERE s\.sensor_device_id = \$1::varchar AND s\.updated_at < LEAST\(\$2::timestamptz, NOW\(\)\) - \(\$3::int \* INTERVAL '1 minute'\) RETURNING s\.table_no, s\.updated_at \) UPDATE sensor_table_seatings g SET left_at = GREATEST\(g\.seated_at, LEAST\(\$2::timestamptz, NOW\(\), gone\.updated_at \+ INTERVAL '2 minutes'\)\) FROM gone WHERE g\.sensor_device_id = \$1::varchar AND g\.table_no = gone\.table_no AND g\.left_at IS NULL$/;
 
 /**
  * Run SILENT_UNIT_SQL against `store.tableStates` and `store.seatings`.
@@ -302,18 +317,18 @@ function runSilentUnit(store, params) {
   const [deviceId, recordedAt, minutes] = params;
   const asOf = Math.min(new Date(recordedAt).getTime(), Date.now());
   const cutoff = asOf - minutes * 60000;
-  const gone = new Set();
+  const gone = new Map();
   for (let i = store.tableStates.length - 1; i >= 0; i -= 1) {
     const r = store.tableStates[i];
     if (r.sensor_device_id === deviceId && r.updated_at.getTime() < cutoff) {
       store.tableStates.splice(i, 1);
-      gone.add(r.table_no);
+      gone.set(r.table_no, r.updated_at.getTime());
     }
   }
   let closed = 0;
   for (const g of Array.isArray(store.seatings) ? store.seatings : []) {
     if (g.sensor_device_id === deviceId && g.left_at === null && gone.has(g.table_no)) {
-      g.left_at = new Date(Math.max(g.seated_at.getTime(), asOf));
+      g.left_at = new Date(Math.max(g.seated_at.getTime(), Math.min(asOf, gone.get(g.table_no) + 2 * 60000)));
       closed += 1;
     }
   }

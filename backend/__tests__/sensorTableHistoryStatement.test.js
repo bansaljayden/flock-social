@@ -168,6 +168,25 @@ async function seed(tableNo, seatedAtMs, turnMin, { waited = false, clearMin = n
   );
 }
 
+// The instant at the same New York wall-clock hour as `atMs` (and its minute,
+// or the one given), `weeksBack` weeks earlier, settled by Postgres in the
+// venue's zone, so a clock change in between moves nothing out of its
+// weekday-and-hour cell.
+async function weeksEarlier(atMs, weeksBack, minute = null) {
+  const { rows: [t] } = await pool.query(
+    `WITH w AS (
+       SELECT ($1::timestamptz AT TIME ZONE $2::text) AS local
+     ), d AS (
+       SELECT (w.local - ($3::int * INTERVAL '7 days'))::date AS day, w.local FROM w
+     )
+     SELECT make_timestamp(EXTRACT(YEAR FROM day)::int, EXTRACT(MONTH FROM day)::int, EXTRACT(DAY FROM day)::int,
+                           EXTRACT(HOUR FROM local)::int, COALESCE($4::int, EXTRACT(MINUTE FROM local)::int), 0) AT TIME ZONE $2::text AS at
+       FROM d`,
+    [new Date(atMs), ZONE, weeksBack, minute]
+  );
+  return new Date(t.at).getTime();
+}
+
 // Twenty-one closed seatings at the same New York weekday and hour as `atMs`,
 // one, two and three weeks earlier (Postgres does the folding), turns 40..60.
 async function seedCell(atMs, { count = 21, tableNo = 9 } = {}) {
@@ -177,22 +196,18 @@ async function seedCell(atMs, { count = 21, tableNo = 9 } = {}) {
     [new Date(atMs), ZONE]
   );
   for (let i = 0; i < count; i += 1) {
-    const weeksBack = 1 + (i % 3);
-    // The same wall-clock hour on the same weekday weeksBack weeks earlier,
-    // settled by Postgres in the venue's zone, minutes spread inside the hour.
-    const { rows: [t] } = await pool.query(
-      `WITH d AS (
-         SELECT (($1::timestamptz AT TIME ZONE $2::text) - ($3::int * INTERVAL '7 days'))::date AS day
-       )
-       SELECT make_timestamp(EXTRACT(YEAR FROM day)::int, EXTRACT(MONTH FROM day)::int, EXTRACT(DAY FROM day)::int,
-                             $4::int, $5::int, 0) AT TIME ZONE $2::text AS at
-         FROM d`,
-      [new Date(atMs), ZONE, weeksBack, w.hour, (i % 7) * 7]
-    );
-    await seed(tableNo, new Date(t.at).getTime(), 40 + Math.round((20 * i) / (count - 1)));
+    // Minutes spread inside the hour, so no two are the same row.
+    await seed(tableNo, await weeksEarlier(atMs, 1 + (i % 3), (i % 7) * 7), 40 + Math.round((20 * i) / (count - 1)));
   }
   return { dow: w.dow, hour: w.hour };
 }
+
+// A reading with tables, for the full hours.
+const record = (at, total, occupied) => pool.query(
+  `INSERT INTO venue_sensor_data (venue_place_id, sensor_device_id, recorded_at, ir_beam_count, thermal_headcount, noise_db, tables_total, tables_occupied)
+   VALUES ($1, 'history_unit', $2, 1, 1, 60, $3, $4)`,
+  [VENUE, new Date(at), total, occupied]
+);
 
 // --- The seatings statement ---------------------------------------------------------
 
@@ -240,7 +255,11 @@ test('on the real schema: seated straight to free closes and clears at once; a f
 
   // A new party at 4, then ten minutes of silence about tables.
   await live('1:0:f:95;3:0:f:50;4:2:s:60');
-  await pool.query("UPDATE sensor_table_states SET updated_at = NOW() - INTERVAL '11 minutes' WHERE sensor_device_id = 'history_unit'");
+  const { rows: [{ seen }] } = await pool.query(
+    "UPDATE sensor_table_states SET updated_at = NOW() - INTERVAL '11 minutes' WHERE sensor_device_id = 'history_unit' AND table_no = 4 RETURNING updated_at AS seen"
+  );
+  await pool.query("UPDATE sensor_table_states SET updated_at = $1 WHERE sensor_device_id = 'history_unit'", [seen]);
+  await pool.query("UPDATE sensor_table_seatings SET seated_at = $1::timestamptz - INTERVAL '30 minutes' WHERE sensor_device_id = 'history_unit' AND left_at IS NULL", [seen]);
   await ageUnit();
   const silent = await push(reading());
   assert.equal(silent.status, 201);
@@ -248,7 +267,44 @@ test('on the real schema: seated straight to free closes and clears at once; a f
   assert.equal((await pool.query("SELECT COUNT(*)::int AS n FROM sensor_table_states WHERE sensor_device_id = 'history_unit'")).rows[0].n, 0);
   rows = await seatingRows();
   assert.deepEqual(rows.map(shape), ['1:2:-:closed:cleared', '2:3:w:closed:-', '4:2:-:closed:-']);
-  assert.equal(rows[2].left_at.getTime(), new Date(silent.body.recorded_at).getTime(), 'closed at the reading that forgot the rows');
+  assert.equal(rows[2].left_at.getTime(), seen.getTime() + 2 * MIN, 'closed when the table was last seen plus the grace, not at the reading that forgot the rows');
+});
+
+test('on the real schema: a close after an outage is dated when the table was last seen plus two minutes, never at the reading that noticed', async () => {
+  const t = await live('1:2:s:600;2:3:s:300');
+  // The box was off all night: its rows were last written eleven hours ago,
+  // and the first reading back says every table is free.
+  const { rows: [{ seen }] } = await pool.query(
+    "UPDATE sensor_table_states SET updated_at = $1::timestamptz - INTERVAL '11 hours' WHERE sensor_device_id = 'history_unit' AND table_no = 1 RETURNING updated_at AS seen",
+    [new Date(t)]
+  );
+  await pool.query("UPDATE sensor_table_states SET updated_at = $1 WHERE sensor_device_id = 'history_unit'", [seen]);
+  await pool.query("UPDATE sensor_table_seatings SET seated_at = seated_at - INTERVAL '11 hours' WHERE sensor_device_id = 'history_unit'");
+  await live('1:0:f:30;2:0:f:30');
+  const rows = await seatingRows();
+  assert.deepEqual(rows.map(shape), ['1:2:-:closed:cleared', '2:3:-:closed:cleared']);
+  for (const r of rows) {
+    assert.equal(r.left_at.getTime(), seen.getTime() + 2 * MIN);
+    assert.equal(r.cleared_at.getTime(), seen.getTime() + 2 * MIN);
+  }
+});
+
+test('on the real schema: a unit moved to another venue closes its open seatings at the old one and opens fresh ones at the new one', async () => {
+  await live('3:2:s:600');
+  await pool.query("UPDATE sensor_devices SET venue_place_id = 'ChIJvenueB' WHERE device_id = 'history_unit'");
+  try {
+    const t = await live('3:4:s:120');
+    let rows = await seatingRows();
+    assert.deepEqual(rows.map((r) => [r.venue_place_id, shape(r)]), [[VENUE, '3:2:-:closed:-'], ['ChIJvenueB', '3:4:-:open:-']]);
+    assert.equal(rows[0].left_at.getTime(), t, 'the old venue\'s seating ends at the reading that came from the new one');
+    assert.equal(rows[1].seated_at.getTime(), t - 120 * 1000);
+    await live('3:0:c:30');
+    await live('3:0:f:5');
+    rows = await seatingRows();
+    assert.deepEqual(rows.map((r) => [r.venue_place_id, shape(r)]), [[VENUE, '3:2:-:closed:-'], ['ChIJvenueB', '3:4:-:closed:cleared']], 'the clear lands on the new venue\'s seating only');
+  } finally {
+    await pool.query('UPDATE sensor_devices SET venue_place_id = $1 WHERE device_id = \'history_unit\'', [VENUE]);
+  }
 });
 
 test('on the real schema: a history statement that fails is rolled back to its savepoint, the floor commits, and the next reading carries on', async () => {
@@ -335,13 +391,20 @@ test('on the real schema: stats are the medians Postgres computes, folded on the
       [seeded[i].id, i % 3 === 0, i === 20 ? null : 4 + i]
     );
   }
+  // Readings on the same weekday and hour over the last four weeks (the full
+  // hours floor: four dates and ten readings): an hour full in 8 of 10
+  // readings each week (0.8) and one in 3 of 10 (0.3); an hour full in every
+  // reading but seen on three weeks only; one full in every reading on four
+  // weeks but nine readings in all.
   const full = Math.floor((now - 2 * DAY) / HOUR) * HOUR + 5 * MIN;
-  for (let i = 0; i < 10; i += 1) {
-    await pool.query(
-      `INSERT INTO venue_sensor_data (venue_place_id, sensor_device_id, recorded_at, ir_beam_count, thermal_headcount, noise_db, tables_total, tables_occupied)
-       VALUES ($1, 'history_unit', $2, 1, 1, 60, 4, $3), ($1, 'history_unit', $4, 1, 1, 60, 4, $5)`,
-      [VENUE, new Date(full + i * MIN), i < 8 ? 4 : 3, new Date(full - 5 * HOUR + i * MIN), i < 3 ? 4 : 2]
-    );
+  const weeks = [full, await weeksEarlier(full, 1), await weeksEarlier(full, 2), await weeksEarlier(full, 3)];
+  for (const [w, week] of weeks.entries()) {
+    for (let i = 0; i < 10; i += 1) {
+      await record(week + i * MIN, 4, i < 8 ? 4 : 3);
+      await record(week - 5 * HOUR + i * MIN, 4, i < 3 ? 4 : 2);
+      if (w < 3) await record(week - 7 * HOUR + i * MIN, 4, 4);
+    }
+    for (let i = 0; i < (w === 3 ? 3 : 2); i += 1) await record(week - 9 * HOUR + i * MIN, 4, 4);
   }
   const res = await get(STATS, ownerId);
   assert.equal(res.status, 200, res.text);
@@ -357,7 +420,7 @@ test('on the real schema: stats are the medians Postgres computes, folded on the
     clear_minutes_median: 13.5,
     full_hours: [{ dow: fullCell.dow, hour: fullCell.hour, share: 0.8 }],
     timeZone: ZONE,
-  });
+  }, 'the hour seen three weeks and the hour seen nine times are not "usually" anything');
 
   // In UTC the same seatings fold into a different hour, and the answer says so.
   await pool.query('DELETE FROM ml_venues WHERE google_place_id = $1', [VENUE]);
@@ -470,13 +533,10 @@ test('on the real schema: the public summary is counts and minutes, absent for a
   const now = Date.now();
   const t = await live('1:0:f:60:2;2:2:s:600;3:0:f:30:4;4:4:s:1200:6;5:0:c:30:8');
   await seedCell(t - 1200 * 1000, { count: 21, tableNo: 4 });
+  // An hour full in 6 of 10 readings each week for four weeks: a busy hour.
   const full = Math.floor((now - 2 * DAY) / HOUR) * HOUR + 5 * MIN;
-  for (let i = 0; i < 10; i += 1) {
-    await pool.query(
-      `INSERT INTO venue_sensor_data (venue_place_id, sensor_device_id, recorded_at, ir_beam_count, thermal_headcount, noise_db, tables_total, tables_occupied)
-       VALUES ($1, 'history_unit', $2, 1, 1, 60, 5, $3)`,
-      [VENUE, new Date(full + i * MIN), i < 6 ? 5 : 4]
-    );
+  for (const week of [full, await weeksEarlier(full, 1), await weeksEarlier(full, 2), await weeksEarlier(full, 3)]) {
+    for (let i = 0; i < 10; i += 1) await record(week + i * MIN, 5, i < 6 ? 5 : 4);
   }
   const { rows: [fullCell] } = await pool.query(
     `SELECT EXTRACT(DOW FROM ($1::timestamptz AT TIME ZONE $2::text))::int AS dow, EXTRACT(HOUR FROM ($1::timestamptz AT TIME ZONE $2::text))::int AS hour`,
@@ -512,6 +572,18 @@ test('on the real schema: the public summary is counts and minutes, absent for a
   assert.equal(res.body.stale, true);
   await pool.query("UPDATE sensor_table_states SET updated_at = NOW() - INTERVAL '25 hours' WHERE sensor_device_id = 'history_unit'");
   assert.equal((await get(SUMMARY, userId)).status, 404);
+});
+
+test('on the real schema: a seating longer than six hours is an outage, not a turn, and is left out of the medians and the count', async () => {
+  const t = await live('2:2:s:600');
+  const since = t - 600 * 1000;
+  await seedCell(since, { count: 21, tableNo: 2 });
+  // One 700-minute "turn" in the same cell, which would move its median to 50.5.
+  await seed(2, await weeksEarlier(since, 1, 20), 700);
+  const floor = await get(FLOOR, ownerId);
+  assert.equal(floor.body.tables[0].likely_free_at, new Date(since + 50 * MIN).toISOString(), 'the cell median is still 50');
+  const stats = await get(STATS, ownerId);
+  assert.deepEqual([stats.body.seatings, stats.body.turn_minutes.median], [21, 50]);
 });
 
 test('on the real schema: a second unit that has gone dark stays on the owner\'s floor but counts for nothing open, and a free table nobody has counted is a fit nobody can judge above four', async () => {

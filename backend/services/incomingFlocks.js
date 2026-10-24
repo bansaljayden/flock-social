@@ -12,7 +12,9 @@
 // routes call it.
 //
 // WHAT IT SELECTS, AND WHAT IT NEVER WILL. A plan's id, when it is, whether it
-// is confirmed, and HOW MANY accepted members it has. f.name is not selected:
+// is confirmed, and HOW MANY people said they are going: accepted members
+// plus link guests who said in, the going count the app shows the group
+// (routes/flocks.js). f.name is not selected:
 // the group's own name for their night ("Emma's 21st") pairs a first name
 // with a venue, a date and a time, and nobody in the group chose to hand that
 // to a business (SECURITY ROUND 5, 2026-08-20, routes/venueDashboard.js). No
@@ -34,9 +36,11 @@ const pool = require('../config/database');
 const INCOMING_PAST_HOURS = 12;   // = the tail of the routes/checkin.js window
 const INCOMING_AHEAD_HOURS = 168; // = 7 days
 
-// The statement, byte for byte as the dashboard feed has always sent it.
+// The statement. guest_count uses the predicate routes/flocks.js counts
+// going guests with, so the venue and the app count the same people.
 const INCOMING_FLOCKS_SQL = `SELECT f.id, f.event_time, f.status,
-              (SELECT COUNT(*) FROM flock_members fm WHERE fm.flock_id = f.id AND fm.status = 'accepted') AS member_count
+              (SELECT COUNT(*) FROM flock_members fm WHERE fm.flock_id = f.id AND fm.status = 'accepted') AS member_count,
+              (SELECT COUNT(*) FROM guest_rsvps gr WHERE gr.flock_id = f.id AND gr.status = 'in' AND COALESCE(gr.is_hidden, false) = false)::int AS guest_count
        FROM flocks f
        WHERE (
                (f.venue_id = $1 AND (f.status IS NULL OR f.status IN ('planning', 'confirmed')))
@@ -55,8 +59,8 @@ const INCOMING_FLOCKS_SQL = `SELECT f.id, f.event_time, f.status,
 
 /**
  * The plans coming to `placeId`, soonest first: rows of { id, event_time,
- * status, member_count } exactly as the statement returns them (member_count
- * is a bigint, so a string). The caller has already settled that it may know:
+ * status, member_count, guest_count } exactly as the statement returns them
+ * (member_count is a bigint, so a string; guest_count an int). The caller has already settled that it may know:
  * both routes read it only for the verified owner of the place.
  */
 async function listIncomingFlocks(placeId) {
@@ -65,13 +69,15 @@ async function listIncomingFlocks(placeId) {
 }
 
 /**
- * The party size of a feed row as a number: the accepted count, or 0 when it
- * has not landed or cannot be read. The dashboard says "A group" for 0 rather
+ * The party size of a feed row as a number: accepted members plus going
+ * guests (a missing guest_count is 0), or 0 when the count has not landed or cannot be read. The dashboard says "A group" for 0 rather
  * than "Party of 0"; the table routes fit a party of 0 to any table.
  */
 function partyOf(row) {
-  const n = Number(row && row.member_count);
-  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+  const m = Number(row && row.member_count);
+  const g = Number(row && row.guest_count);
+  const n = (Number.isFinite(m) ? m : 0) + (Number.isFinite(g) ? g : 0);
+  return n > 0 ? Math.floor(n) : 0;
 }
 
 module.exports = {

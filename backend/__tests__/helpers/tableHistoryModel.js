@@ -15,7 +15,7 @@
 // The venue's clock is folded with utils/venueZone.js (ICU), where Postgres
 // folds with AT TIME ZONE; the two carry the same IANA database.
 // ---------------------------------------------------------------------------
-const { clockInZone } = require('../../utils/venueZone');
+const { clockInZone, civilTime } = require('../../utils/venueZone');
 
 const DAY = 24 * 3600 * 1000;
 
@@ -43,17 +43,18 @@ function median(values) {
   return lo === hi ? v[lo] : (v[lo] + v[hi]) / 2;
 }
 
-// Postgres answers the zone's weekday and hour for an instant; so does ICU.
-// A zone neither knows is the error the service repeats in UTC, modelled as
-// a thrown 22023.
+// Postgres answers the zone's weekday, hour and date for an instant; so does
+// ICU. A zone neither knows is the error the service repeats in UTC,
+// modelled as a thrown 22023.
 function fold(at, zone) {
   const clock = clockInZone(ms(at), zone);
-  if (!clock) {
+  const civil = civilTime(ms(at), zone);
+  if (!clock || !civil) {
     const err = new Error(`time zone "${zone}" not recognized`);
     err.code = '22023';
     throw err;
   }
-  return { dow: clock.day, hour: clock.hour };
+  return { dow: clock.day, hour: clock.hour, date: `${civil.year}-${civil.month}-${civil.day}` };
 }
 
 /**
@@ -93,17 +94,20 @@ function floorModel(store, params) {
 
 /**
  * TURN_MEDIANS_SQL over store.seatings: the closed seatings of each place in
- * the window, folded by its zone, as the cells and the overall row GROUPING
- * SETS gives (dow and hour null on the overall row). Parameters: $1 place
- * ids, $2 their zones, $3 days. numeric comes back as a string, as pg hands
+ * the window no longer than the bound, folded by its zone, as the cells and
+ * the overall row GROUPING SETS gives (dow and hour null on the overall row).
+ * Parameters: $1 place ids, $2 their zones, $3 days, $4 the longest seating
+ * that counts, in hours. numeric comes back as a string, as pg hands
  * AVG(numeric) back; percentile_cont as a number.
  */
 function mediansModel(store, params) {
-  const [ids, zones, days] = params;
+  const [ids, zones, days, maxHours] = params;
   const since = Date.now() - days * DAY;
+  const longest = maxHours * 3600 * 1000;
   const rows = [];
   ids.forEach((id, i) => {
-    const closed = (store.seatings || []).filter((g) => g.venue_place_id === id && g.left_at !== null && ms(g.seated_at) >= since);
+    const closed = (store.seatings || []).filter((g) => g.venue_place_id === id && g.left_at !== null && ms(g.seated_at) >= since
+      && ms(g.left_at) - ms(g.seated_at) <= longest);
     if (closed.length === 0) return;
     const cells = new Map();
     for (const g of closed) {
@@ -132,7 +136,8 @@ function mediansModel(store, params) {
 
 /**
  * FULL_HOURS_SQL over store.readings: readings with tables in the window,
- * per place, folded by its zone, with how many had every table in use.
+ * per place, folded by its zone, with how many had every table in use and
+ * how many distinct dates (on that clock) the cell's readings fall on.
  */
 function fullHoursModel(store, params) {
   const [ids, zones, days] = params;
@@ -141,14 +146,15 @@ function fullHoursModel(store, params) {
   for (const r of store.readings) {
     const i = ids.indexOf(r.venue_place_id);
     if (i < 0 || !(r.tables_total > 0) || ms(r.recorded_at) < since) continue;
-    const { dow, hour } = fold(r.recorded_at, zones[i]);
+    const { dow, hour, date } = fold(r.recorded_at, zones[i]);
     const key = `${r.venue_place_id}|${dow}:${hour}`;
-    if (!cells.has(key)) cells.set(key, { venue_place_id: r.venue_place_id, dow, hour, readings: 0, full_readings: 0 });
+    if (!cells.has(key)) cells.set(key, { venue_place_id: r.venue_place_id, dow, hour, readings: 0, dates: new Set(), full_readings: 0 });
     const c = cells.get(key);
     c.readings += 1;
+    c.dates.add(date);
     if (r.tables_occupied === r.tables_total) c.full_readings += 1;
   }
-  return [...cells.values()];
+  return [...cells.values()].map(({ dates, ...c }) => ({ ...c, days: dates.size }));
 }
 
 // The incoming feed over store.flocks, the way incomingFlocksWindow.test.js
@@ -171,7 +177,7 @@ function incomingModel(store, params) {
     .filter((f) => f.event_time && ms(f.event_time) > now - 12 * 3600 * 1000 && ms(f.event_time) < now + 7 * DAY)
     .sort((a, b) => ms(a.event_time) - ms(b.event_time))
     .slice(0, 20)
-    .map((f) => ({ id: f.id, event_time: asDriverReadsNaive(f.event_time), status: f.status, member_count: String(f.member_count) }));
+    .map((f) => ({ id: f.id, event_time: asDriverReadsNaive(f.event_time), status: f.status, member_count: String(f.member_count), guest_count: f.guest_count || 0 }));
 }
 
 /**

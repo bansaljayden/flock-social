@@ -342,7 +342,7 @@ const TABLE_STATES_SQL = `
     ) AS fresh
   ),
   prior AS (
-    SELECT s.table_no, s.state FROM sensor_table_states s WHERE s.sensor_device_id = $1::varchar
+    SELECT s.table_no, s.state, s.updated_at FROM sensor_table_states s WHERE s.sensor_device_id = $1::varchar
   ),
   gone AS (
     DELETE FROM sensor_table_states s
@@ -368,7 +368,7 @@ const TABLE_STATES_SQL = `
      WHERE s.updated_at <= EXCLUDED.updated_at
     RETURNING s.table_no, s.state, s.state_since
   )
-  SELECT v.table_no, v.state, p.state AS prior_state,
+  SELECT v.table_no, v.state, p.state AS prior_state, p.updated_at AS prior_updated_at,
          GREATEST(1, FLOOR(EXTRACT(EPOCH FROM (r.as_of - v.state_since)) / 60))::int AS minutes
     FROM saved v
    CROSS JOIN reading r
@@ -414,6 +414,21 @@ const TABLE_STATES_SQL = `
 //                              seating that has none: the table was bussed.
 //   not in the reading         CLOSES its open seating at the reading's time:
 //                              the owner removed the table on the box.
+//   the unit moved venue       CLOSES every open seating it holds at another
+//                              venue at the reading's time, and only seatings
+//                              at its current venue are continued, closed or
+//                              cleared, so a table seated at the new venue
+//                              opens a fresh seating there instead of
+//                              stretching one from the old venue.
+// A CLOSE IS NEVER LATER THAN THE TABLE WAS LAST SEEN, PLUS A GRACE. A box that
+// lost power at eleven with twelve tables seated says so the next morning;
+// dated at that reading, its closes would be twelve turns of twelve hours.
+// So a close from the change is capped at the table's previous row's
+// updated_at plus two minutes (the floor statement hands it over as
+// prior_updated_at), which is later than the reading itself whenever readings
+// arrive at their usual pace and changes nothing then. The silence rule
+// below caps the same way, and services/tableHistory.js leaves any seating
+// over six hours out of every figure besides.
 // The open seating of a table is the one with left_at NULL, so each step is
 // idempotent and a reading replayed in order changes nothing twice; the
 // steps touch disjoint rows (a table is in one of them, and the clear step
@@ -438,14 +453,24 @@ const TABLE_SEATINGS_SQL = `
     SELECT LEAST($3::timestamptz, NOW()) AS as_of
   ),
   incoming AS (
-    SELECT t.table_no, t.prior_state, t.state, t.people, t.seconds
-      FROM unnest($4::smallint[], $5::text[], $6::text[], $7::smallint[], $8::integer[])
-           AS t(table_no, prior_state, state, people, seconds)
+    SELECT t.table_no, t.prior_state, t.state, t.people, t.seconds, t.prior_updated_at
+      FROM unnest($4::smallint[], $5::text[], $6::text[], $7::smallint[], $8::integer[], $9::timestamptz[])
+           AS t(table_no, prior_state, state, people, seconds, prior_updated_at)
+  ),
+  moved AS (
+    UPDATE sensor_table_seatings g
+       SET left_at = GREATEST(g.seated_at, r.as_of)
+      FROM reading r
+     WHERE g.sensor_device_id = $1::varchar
+       AND g.left_at IS NULL
+       AND g.venue_place_id <> $2::varchar
+    RETURNING g.id
   ),
   open_now AS (
     SELECT o.id, o.table_no
       FROM sensor_table_seatings o
      WHERE o.sensor_device_id = $1::varchar AND o.left_at IS NULL
+       AND o.venue_place_id = $2::varchar
   ),
   opened AS (
     INSERT INTO sensor_table_seatings (sensor_device_id, table_no, venue_place_id, seated_at, party_max, waited)
@@ -468,9 +493,12 @@ const TABLE_SEATINGS_SQL = `
   ),
   closed AS (
     UPDATE sensor_table_seatings g
-       SET left_at = GREATEST(g.seated_at,
-                              CASE WHEN i.state = 'c' THEN r.as_of - i.seconds * INTERVAL '1 second' ELSE r.as_of END),
-           cleared_at = CASE WHEN i.state = 'f' THEN r.as_of ELSE g.cleared_at END
+       SET left_at = GREATEST(g.seated_at, LEAST(
+                              CASE WHEN i.state = 'c' THEN r.as_of - i.seconds * INTERVAL '1 second' ELSE r.as_of END,
+                              COALESCE(i.prior_updated_at + INTERVAL '2 minutes', r.as_of))),
+           cleared_at = CASE WHEN i.state = 'f'
+                             THEN GREATEST(g.seated_at, LEAST(r.as_of, COALESCE(i.prior_updated_at + INTERVAL '2 minutes', r.as_of)))
+                             ELSE g.cleared_at END
       FROM open_now o
      CROSS JOIN reading r
       LEFT JOIN incoming i ON i.table_no = o.table_no
@@ -487,6 +515,7 @@ const TABLE_SEATINGS_SQL = `
          SELECT (SELECT c.id
                    FROM sensor_table_seatings c
                   WHERE c.sensor_device_id = $1::varchar
+                    AND c.venue_place_id = $2::varchar
                     AND c.table_no = i.table_no
                     AND c.left_at IS NOT NULL
                   ORDER BY c.left_at DESC, c.id DESC
@@ -495,7 +524,8 @@ const TABLE_SEATINGS_SQL = `
           WHERE i.prior_state = 'c' AND i.state = 'f')
     RETURNING g.id
   )
-  SELECT (SELECT COUNT(*) FROM opened)::int AS opened,
+  SELECT (SELECT COUNT(*) FROM moved)::int AS moved,
+         (SELECT COUNT(*) FROM opened)::int AS opened,
          (SELECT COUNT(*) FROM continued)::int AS continued,
          (SELECT COUNT(*) FROM closed)::int AS closed,
          (SELECT COUNT(*) FROM cleared)::int AS cleared`;
@@ -505,7 +535,7 @@ const TABLE_SEATINGS_SQL = `
 // timer the reading carried for it.
 function seatingParams(device, tables, recordedAt, written) {
   const sent = new Map(tables.map((t) => [t.number, t]));
-  const rows = written.map((w) => ({ ...sent.get(Number(w.table_no)), number: Number(w.table_no), prior: w.prior_state, state: w.state }));
+  const rows = written.map((w) => ({ ...sent.get(Number(w.table_no)), number: Number(w.table_no), prior: w.prior_state, priorUpdatedAt: w.prior_updated_at, state: w.state }));
   return [
     device.device_id,
     device.venue_place_id,
@@ -515,6 +545,7 @@ function seatingParams(device, tables, recordedAt, written) {
     rows.map((r) => r.state),
     rows.map((r) => r.people),
     rows.map((r) => r.seconds),
+    rows.map((r) => (r.priorUpdatedAt == null ? null : r.priorUpdatedAt)),
   ];
 }
 
@@ -590,7 +621,8 @@ async function storeTableStates(device, tables, recordedAt) {
 // AND THE HISTORY CLOSES WITH THE ROWS. A table the unit has stopped
 // reporting cannot be sat at as far as this server knows, so the open
 // seating of every table the DELETE forgets is closed at that moment, in the
-// same statement, so that a seating cannot be left open by a unit that went
+// same statement, dated no later than the row's last update plus two
+// minutes (THE HISTORY says why), so that a seating cannot be left open by a unit that went
 // quiet about its tables and sit there inflating the next turn-time median.
 // Only the tables the DELETE actually removed: a row a newer reading wrote
 // survives the DELETE and keeps its seating open.
@@ -601,10 +633,10 @@ const SILENT_UNIT_SQL = `
     DELETE FROM sensor_table_states s
      WHERE s.sensor_device_id = $1::varchar
        AND s.updated_at < LEAST($2::timestamptz, NOW()) - ($3::int * INTERVAL '1 minute')
-    RETURNING s.table_no
+    RETURNING s.table_no, s.updated_at
   )
   UPDATE sensor_table_seatings g
-     SET left_at = GREATEST(g.seated_at, LEAST($2::timestamptz, NOW()))
+     SET left_at = GREATEST(g.seated_at, LEAST($2::timestamptz, NOW(), gone.updated_at + INTERVAL '2 minutes'))
     FROM gone
    WHERE g.sensor_device_id = $1::varchar
      AND g.table_no = gone.table_no

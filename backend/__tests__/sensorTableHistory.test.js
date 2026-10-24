@@ -339,15 +339,20 @@ test('a table removed on the box, and every table of a unit whose rows go silent
   assert.deepStrictEqual(mine().map(shape), ['1:2:-:closed:-', '2:4:-:open:-']);
   assert.strictEqual(mine()[0].left_at.getTime(), t, 'closed when the reading without it arrived');
 
-  // Ten minutes of silence about tables: the rows go, and so does the seating.
-  for (const r of tableStates) r.updated_at = new Date(Date.now() - 11 * MIN);
+  // Ten minutes of silence about tables: the rows go, and so does the seating,
+  // dated when the table was last seen plus two minutes, not at the reading
+  // that noticed (a box off all night would otherwise write a night-long turn).
+  const lastSeen = Date.now() - 11 * MIN;
+  for (const r of tableStates) r.updated_at = new Date(lastSeen);
+  mine()[1].seated_at = new Date(lastSeen - 30 * MIN); // sat down before the box last saw it
   ageDevice();
   const res = await call('/api/sensors/data', { apiKey: KEY, body: reading() });
   assert.strictEqual(res.status, 201);
   await settle();
   assert.deepStrictEqual(tableStates.filter((r) => r.sensor_device_id === 'flux_history_01'), []);
   assert.deepStrictEqual(mine().map(shape), ['1:2:-:closed:-', '2:4:-:closed:-']);
-  assert.strictEqual(mine()[1].left_at.getTime(), new Date(res.body.recorded_at).getTime());
+  assert.strictEqual(mine()[1].left_at.getTime(), lastSeen + 2 * MIN);
+  assert.ok(mine()[1].left_at.getTime() < new Date(res.body.recorded_at).getTime());
 });
 
 test('an older reading arriving after a newer one writes no history, and a backfill none either', async () => {
@@ -408,10 +413,28 @@ test('likely_free_at is seated_at plus the median turn for that weekday and hour
   assert.deepStrictEqual([res.body.tables[0].seats, res.body.tables[0].party_max], [null, 2], 'no count from the unit; the party sitting there is the largest seen at the table');
   assert.deepStrictEqual([res.body.tables[1].seats, res.body.tables[1].party_max], [null, null], 'nobody has sat at table 5');
   assert.strictEqual(res.body.next_free, 2);
-  // The medians were asked for in the venue's zone, over 28 days.
+  // The medians were asked for in the venue's zone, over 28 days, with the
+  // six-hour bound on a seating.
   const medians = queryLog.filter((q) => MEDIANS_READ.test(q.sql));
   assert.ok(medians.length >= 1);
-  assert.deepStrictEqual(medians[medians.length - 1].params, [[VENUE], [ZONE], 28]);
+  assert.deepStrictEqual(medians[medians.length - 1].params, [[VENUE], [ZONE], 28, 6]);
+});
+
+test('a seating longer than six hours is an outage, not a turn: it is in no median, no count and no likely_free_at', async () => {
+  reset();
+  assert.strictEqual(tableHistory.MAX_TURN_HOURS, 6);
+  const t = await push('2:2:s:600');
+  const since = t - 600 * 1000;
+  seedCell(since, VENUE, ZONE, { count: 21, tableNo: 2 });
+  // The box lost power with table 2 seated and said so the next morning: one
+  // 700-minute "turn" in the same cell, which would move its median to 50.5.
+  const week = sameCellEarlier(since, ZONE, 1)[0];
+  seed(VENUE, 2, week - civilTime(week, ZONE).minute * MIN + 20 * MIN, 700);
+  const res = await get(FLOOR, OWNER_ID);
+  assert.strictEqual(res.body.tables[0].likely_free_at, new Date(since + 50 * MIN).toISOString(), 'the cell median is still 50');
+  const stats = await get(STATS, OWNER_ID);
+  assert.strictEqual(stats.body.seatings, 21, 'the outage is not a seating the stats count');
+  assert.strictEqual(stats.body.turn_minutes.median, 50);
 });
 
 test('with too few seatings in the hour the venue\'s overall median stands in; with too few overall there is no likely_free_at at all', async () => {
@@ -462,15 +485,24 @@ test('stats: the turn median by weekday and hour on the venue\'s clock, the wait
     const base = weeks[i % 3] + (i % 7) * 5 * MIN - civilTime(weeks[i % 3], ZONE).minute * MIN;
     seed(VENUE, 1 + (i % 4), base, 40 + i, { waited: i % 3 === 0, clearMin: i === 20 ? null : 4 + i });
   }
-  // Readings: an hour with every table in use in 8 of 10 readings, and one
-  // with 3 of 10, both inside the window; one full hour outside it. Each set
-  // starts five minutes into its hour, so it cannot straddle the next.
+  // Readings, each set five minutes into its hour so it cannot straddle the
+  // next, on the same weekday and hour over the last four weeks (the full
+  // hours floor: four dates and ten readings): an hour with every table in
+  // use in 8 of 10 readings each week (share 0.8) and one with 3 of 10 (0.3);
+  // an hour full in every reading but seen on three weeks only; one full in
+  // every reading on four weeks but nine readings in all; and a full hour
+  // outside the window.
   const full = Math.floor((now - 2 * DAY) / HOUR) * HOUR + 5 * MIN;
-  for (let i = 0; i < 10; i += 1) {
-    readings.push({ venue_place_id: VENUE, sensor_device_id: 'flux_history_01', recorded_at: new Date(full + i * MIN), tables_total: 4, tables_occupied: i < 8 ? 4 : 3 });
-    readings.push({ venue_place_id: VENUE, sensor_device_id: 'flux_history_01', recorded_at: new Date(full - 5 * HOUR + i * MIN), tables_total: 4, tables_occupied: i < 3 ? 4 : 2 });
-    readings.push({ venue_place_id: VENUE, sensor_device_id: 'flux_history_01', recorded_at: new Date(now - 40 * DAY + i * MIN), tables_total: 4, tables_occupied: 4 });
-  }
+  const record = (at, occupied) => readings.push({ venue_place_id: VENUE, sensor_device_id: 'flux_history_01', recorded_at: new Date(at), tables_total: 4, tables_occupied: occupied });
+  [full, ...sameCellEarlier(full, ZONE, 3)].forEach((week, w) => {
+    for (let i = 0; i < 10; i += 1) {
+      record(week + i * MIN, i < 8 ? 4 : 3);
+      record(week - 5 * HOUR + i * MIN, i < 3 ? 4 : 2);
+      if (w < 3) record(week - 7 * HOUR + i * MIN, 4);
+    }
+    for (let i = 0; i < (w === 3 ? 3 : 2); i += 1) record(week - 9 * HOUR + i * MIN, 4);
+  });
+  for (let i = 0; i < 10; i += 1) record(now - 40 * DAY + i * MIN, 4);
   const res = await get(STATS, OWNER_ID);
   assert.strictEqual(res.status, 200, res.raw);
   assert.deepStrictEqual(Object.keys(res.body).sort(), ['clear_minutes_median', 'days', 'full_hours', 'seatings', 'timeZone', 'turn_minutes', 'waited_share']);
@@ -485,9 +517,10 @@ test('stats: the turn median by weekday and hour on the venue\'s clock, the wait
   assert.strictEqual(res.body.waited_share, 0.333, 'seven of twenty-one waited');
   assert.strictEqual(res.body.clear_minutes_median, 13.5, 'the median of the twenty clears seen');
   const fullCell = clockInZone(full, ZONE);
-  assert.deepStrictEqual(res.body.full_hours, [{ dow: fullCell.day, hour: fullCell.hour, share: 0.8 }], 'only the hour full in at least half its readings, inside the window');
+  assert.deepStrictEqual(res.body.full_hours, [{ dow: fullCell.day, hour: fullCell.hour, share: 0.8 }],
+    'only the hour full in at least half its readings, inside the window, on four dates with ten readings: the hour seen three weeks and the hour seen nine times are not "usually" anything');
   for (const q of queryLog.filter((q) => MEDIANS_READ.test(q.sql) || FULL_HOURS_READ.test(q.sql))) {
-    assert.deepStrictEqual(q.params, [[VENUE], [ZONE], 28], 'both reads fold on the venue\'s zone over the window asked for');
+    assert.deepStrictEqual(q.params.slice(0, 3), [[VENUE], [ZONE], 28], 'both reads fold on the venue\'s zone over the window asked for');
   }
 
   // Twenty closed with nineteen clears seen: the clear median goes, the rest stay.
@@ -674,7 +707,7 @@ test('incoming: the dashboard feed\'s plans with a party size and the table that
   flocks = [
     { id: 501, venue_id: VENUE, name: "Emma's 21st", event_time: new Date(now + 2 * HOUR), status: 'confirmed', member_count: 4 },
     { id: 502, venue_id: VENUE, name: 'Sarah leaving do', event_time: new Date(now + 10 * MIN), status: 'planning', member_count: 6 },
-    { id: 503, venue_id: VENUE, name: 'Dan + Priya', event_time: new Date(now + HOUR), status: 'confirmed', member_count: 6 },
+    { id: 503, venue_id: VENUE, name: 'Dan + Priya', event_time: new Date(now + HOUR), status: 'confirmed', member_count: 4, guest_count: 2 }, // two link guests said in: a party of six
     { id: 504, venue_id: VENUE, name: 'Big one', event_time: new Date(now + HOUR), status: 'confirmed', member_count: 8 },
     { id: 505, venue_id: VENUE, name: 'Nobody yet', event_time: new Date(now + 3 * HOUR), status: 'planning', member_count: 0 },
     { id: 506, venue_id: OTHER, name: 'Elsewhere', event_time: new Date(now + HOUR), status: 'confirmed', member_count: 2 },
@@ -835,9 +868,12 @@ test('the public summary: counts and minutes for a party, the busy hours and the
   // Table 3 is free, and nobody has counted it or sat at it.
   const t1 = await push('1:0:f:60:2;2:2:s:600;3:0:f:30;4:4:s:1200:6;5:0:c:30:8');
   seedCell(t1 - 1200 * 1000, VENUE, ZONE, { count: 21, tableNo: 4 });
+  // An hour full in 6 of 10 readings each week for four weeks: a busy hour.
   const full = Math.floor((now - 2 * DAY) / HOUR) * HOUR + 5 * MIN;
-  for (let i = 0; i < 10; i += 1) {
-    readings.push({ venue_place_id: VENUE, sensor_device_id: 'flux_history_01', recorded_at: new Date(full + i * MIN), tables_total: 5, tables_occupied: i < 6 ? 5 : 4 });
+  for (const week of [full, ...sameCellEarlier(full, ZONE, 3)]) {
+    for (let i = 0; i < 10; i += 1) {
+      readings.push({ venue_place_id: VENUE, sensor_device_id: 'flux_history_01', recorded_at: new Date(week + i * MIN), tables_total: 5, tables_occupied: i < 6 ? 5 : 4 });
+    }
   }
   let res = await get(`${SUMMARY}?party=6`, USER_ID);
   assert.strictEqual(res.status, 200, res.raw);
@@ -1030,6 +1066,7 @@ test('fits: unknown seats take up to four and say nothing above; known seats tak
 
 test('the twenty-seating floor and the cell-then-overall fallback, on the medians themselves', () => {
   assert.strictEqual(tableHistory.MIN_SEATINGS_FOR_MEDIAN, 20);
+  assert.deepStrictEqual([tableHistory.FULL_HOURS_MIN_DAYS, tableHistory.FULL_HOURS_MIN_READINGS], [4, 10]);
   const venue = {
     overall: { seatings: 25, median: 61, waited_share: 0.2, cleared: 25, clear_median: 9 },
     cells: new Map([['5:19', { dow: 5, hour: 19, seatings: 20, median: 45 }], ['5:21', { dow: 5, hour: 21, seatings: 19, median: 30 }]]),

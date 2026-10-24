@@ -56,6 +56,24 @@
 // closed seatings. An hour with too few falls back to the venue's overall
 // median when THAT has enough, else to nothing, which the routes answer as
 // null and the dashboard reads as "not yet known".
+//
+// AND NO SEATING LONGER THAN MAX_TURN_HOURS COUNTS. A seating is closed when
+// a reading says the table emptied, and a box that lost power at eleven with
+// twelve tables seated says so the next morning: twelve "turns" of twelve
+// hours in one Friday cell, enough to move its median for the whole window.
+// The writer dates such closes at the last moment the table was seen plus a
+// short grace (services/sensorTables.js, THE HISTORY), and the reader keeps
+// this bound as well, so whatever path leaves an over-long seating behind
+// cannot reach a median, a likely_free_at or a wait. No party this feature
+// is for sits six hours; the box's own clear-reset is three.
+//
+// A FULL HOUR NEEDS A SAMPLE TOO. An hour of a weekday is called "usually
+// full" from the readings, not the seatings, so the twenty-seating floor does
+// not reach it, and without one of its own a single test reading with one
+// table drawn made "Usually full Tue 3 to 4 PM" for a week. A cell counts
+// only with readings on at least FULL_HOURS_MIN_DAYS distinct dates in the
+// window and at least FULL_HOURS_MIN_READINGS readings in all: an hour the
+// unit has seen on one occasion is not an hour the venue is "usually" full.
 // ---------------------------------------------------------------------------
 
 const pool = require('../config/database');
@@ -73,14 +91,20 @@ const STATS_DAYS_MAX = 90;
 // How far back the largest party seen at a table stands in for its seat count.
 const SEATS_WINDOW_DAYS = 30;
 const MIN_SEATINGS_FOR_MEDIAN = 20;
+// A closed seating longer than this is an outage or a gap, not a turn, and
+// is left out of every figure (the header says why).
+const MAX_TURN_HOURS = 6;
 // A table whose seats nobody has counted (no C from the unit, no party seen)
 // fits a party up to this big: the common restaurant table. Whether it fits
 // a bigger party is not known, and is said so (null), never guessed either way.
 const UNKNOWN_SEATS_FIT_UP_TO = 4;
 const WAIT_PARTIES = Object.freeze([2, 4, 6, 8]);
 // An hour of a weekday is "full" when at least this share of its readings
-// had every table in use.
+// had every table in use, and only once it has readings on this many
+// distinct dates and this many readings in all (the header says why).
 const FULL_SHARE_MIN = 0.5;
+const FULL_HOURS_MIN_DAYS = 4;
+const FULL_HOURS_MIN_READINGS = 10;
 // A floor whose newest row is older than this is no table data at all to the
 // public summary (the owner's routes still show it, marked stale).
 const SUMMARY_MAX_AGE_HOURS = 24;
@@ -117,18 +141,19 @@ async function venueTimeZone(placeId) {
 // A zone the SQL below can be handed: the venue's, or UTC.
 const zoneOrUtc = (zone) => zone || 'UTC';
 
-// Run a by-place, by-zone statement ($1 place ids, $2 their zones, $3 days).
-// A zone Postgres will not take (22023) repeats the read in UTC for every
-// place and says so, rather than failing the route over a clock.
-async function queryInZones(sql, placeIds, zones, days) {
+// Run a by-place, by-zone statement ($1 place ids, $2 their zones, $3 days,
+// then whatever `extra` the statement takes). A zone Postgres will not take
+// (22023) repeats the read in UTC for every place and says so, rather than
+// failing the route over a clock.
+async function queryInZones(sql, placeIds, zones, days, extra = []) {
   const named = placeIds.map((id) => zoneOrUtc(zones.get(id)));
   try {
-    const { rows } = await pool.query(sql, [placeIds, named, days]);
+    const { rows } = await pool.query(sql, [placeIds, named, days, ...extra]);
     return { rows, fellBack: false };
   } catch (err) {
     if (err.code !== '22023' || named.every((z) => z === 'UTC')) throw err;
     console.error('Postgres refused a venue time zone; table hours are read in UTC:', err.message);
-    const { rows } = await pool.query(sql, [placeIds, placeIds.map(() => 'UTC'), days]);
+    const { rows } = await pool.query(sql, [placeIds, placeIds.map(() => 'UTC'), days, ...extra]);
     return { rows, fellBack: true };
   }
 }
@@ -144,7 +169,8 @@ async function queryInZones(sql, placeIds, zones, days) {
 // figures GET /tables/stats reports: the share of seatings that waited, and
 // the median time from the party leaving to the table cleared, over the
 // seatings whose clear was seen (clear_minutes is NULL for the rest, and
-// percentile_cont skips NULLs; cleared counts them).
+// percentile_cont skips NULLs; cleared counts them). A seating longer than
+// $4 hours (MAX_TURN_HOURS) is not a turn and is not in any of them.
 //
 // Every parameter has one cast, used the same way each time it appears, for
 // __tests__/sqlParameterTypes.test.js.
@@ -167,6 +193,7 @@ const TURN_MEDIANS_SQL = `
         JOIN unnest($1::varchar[], $2::text[]) AS z(place_id, zone) ON z.place_id = s.venue_place_id
        WHERE s.left_at IS NOT NULL
          AND s.seated_at >= NOW() - ($3::int * INTERVAL '1 day')
+         AND s.left_at - s.seated_at <= ($4::int * INTERVAL '1 hour')
     ) g
    GROUP BY GROUPING SETS ((g.venue_place_id, g.dow, g.hour), (g.venue_place_id))`;
 
@@ -180,11 +207,12 @@ const cellKey = (dow, hour) => `${dow}:${hour}`;
  * overall is { seatings, median, waited_share, cleared, clear_median } and
  * cells a Map of "dow:hour" to { dow, hour, seatings, median }, raw and
  * unrounded; the floor of MIN_SEATINGS_FOR_MEDIAN is applied by the readers.
+ * Seatings longer than MAX_TURN_HOURS are in none of it, counts included.
  */
 async function turnMedians(placeIds, zones, days = TURN_WINDOW_DAYS) {
   const byVenue = new Map();
   if (!placeIds.length) return { byVenue, fellBack: false };
-  const { rows, fellBack } = await queryInZones(TURN_MEDIANS_SQL, placeIds, zones, days);
+  const { rows, fellBack } = await queryInZones(TURN_MEDIANS_SQL, placeIds, zones, days, [MAX_TURN_HOURS]);
   for (const r of rows) {
     let v = byVenue.get(r.venue_place_id);
     if (!v) {
@@ -536,13 +564,18 @@ function suggestionFor(kept, party, eventTimeMs, likely) {
 // and an hour of a weekday is full when at least FULL_SHARE_MIN of its
 // readings had every table in use. A venue with two units has two readings a
 // minute, each about its own room, and a reading counts as full when its own
-// room was; the share is over all of them.
+// room was; the share is over all of them. Each cell also says how many
+// distinct dates (on the venue's clock) its readings fall on, for the sample
+// floor the header describes: a weekday-and-hour cell recurs once a week, so
+// over the 28-day window FULL_HOURS_MIN_DAYS is every occurrence, and a
+// window shorter than four weeks has no full hours at all.
 // ---------------------------------------------------------------------------
 const FULL_HOURS_SQL = `
   SELECT v.venue_place_id,
          EXTRACT(DOW FROM (v.recorded_at AT TIME ZONE z.zone))::int AS dow,
          EXTRACT(HOUR FROM (v.recorded_at AT TIME ZONE z.zone))::int AS hour,
          COUNT(*)::int AS readings,
+         COUNT(DISTINCT (v.recorded_at AT TIME ZONE z.zone)::date)::int AS days,
          COUNT(*) FILTER (WHERE v.tables_occupied = v.tables_total)::int AS full_readings
     FROM venue_sensor_data v
     JOIN unnest($1::varchar[], $2::text[]) AS z(place_id, zone) ON z.place_id = v.venue_place_id
@@ -553,7 +586,8 @@ const FULL_HOURS_SQL = `
 /**
  * The full hours of every place in `placeIds` over `days`: a Map of place id
  * to [{ dow, hour, share }] (share to two decimals), cells at or above
- * FULL_SHARE_MIN only, in weekday then hour order.
+ * FULL_SHARE_MIN with at least FULL_HOURS_MIN_DAYS dates and
+ * FULL_HOURS_MIN_READINGS readings only, in weekday then hour order.
  */
 async function fullHours(placeIds, zones, days = TURN_WINDOW_DAYS) {
   const byVenue = new Map();
@@ -561,7 +595,7 @@ async function fullHours(placeIds, zones, days = TURN_WINDOW_DAYS) {
   const { rows, fellBack } = await queryInZones(FULL_HOURS_SQL, placeIds, zones, days);
   for (const r of rows) {
     const readings = Number(r.readings);
-    if (!(readings > 0)) continue;
+    if (!(readings >= FULL_HOURS_MIN_READINGS) || !(Number(r.days) >= FULL_HOURS_MIN_DAYS)) continue;
     const share = Number(r.full_readings) / readings;
     if (share < FULL_SHARE_MIN) continue;
     if (!byVenue.has(r.venue_place_id)) byVenue.set(r.venue_place_id, []);
@@ -575,8 +609,8 @@ async function fullHours(placeIds, zones, days = TURN_WINDOW_DAYS) {
  * GET /tables/stats?days=N: { days, seatings, turn_minutes: { median,
  * by_hour: [{ dow, hour, median, seatings }] }, waited_share,
  * clear_minutes_median, full_hours: [{ dow, hour, share }], timeZone }.
- * seatings is the closed seatings in the window; every median, the waited
- * share and the clear median are null under MIN_SEATINGS_FOR_MEDIAN (overall,
+ * seatings is the closed seatings in the window no longer than MAX_TURN_HOURS;
+ * every median, the waited share and the clear median are null under MIN_SEATINGS_FOR_MEDIAN (overall,
  * or in that hour of that weekday; the clear median counts the seatings
  * whose clear was seen). timeZone is the venue's IANA zone the weekdays and
  * hours are on, or null when they are in UTC (no zone known, or Postgres
@@ -762,9 +796,12 @@ module.exports = {
   STATS_DAYS_MAX,
   SEATS_WINDOW_DAYS,
   MIN_SEATINGS_FOR_MEDIAN,
+  MAX_TURN_HOURS,
   UNKNOWN_SEATS_FIT_UP_TO,
   WAIT_PARTIES,
   FULL_SHARE_MIN,
+  FULL_HOURS_MIN_DAYS,
+  FULL_HOURS_MIN_READINGS,
   SUMMARY_MAX_AGE_HOURS,
   PUBLIC_PARTY_DEFAULT,
   PUBLIC_PARTY_MAX,

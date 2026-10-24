@@ -157,8 +157,9 @@ function dispatch(rawSql, params = []) {
       // their own use, and it must not cross into a venue's dashboard. A fake
       // that returns it unconditionally would keep serving it after the route
       // stopped selecting it, and the redaction below would pass on a lie.
-      .map(({ id, name, event_time, status, member_count }) => {
+      .map(({ id, name, event_time, status, member_count, guest_count = 0 }) => {
         const row = { id, event_time, status, member_count };
+        if (/AS guest_count/.test(sql)) row.guest_count = guest_count;
         if (/f\.name AS title/.test(sql)) row.title = name;
         return row;
       });
@@ -341,6 +342,17 @@ test('a flock whose accepted count has not landed is "A group", not "Party of 0"
   assert.strictEqual(r.status, 200);
   assert.strictEqual(r.body.flocks[0].title, 'A group');
   assert.ok(!JSON.stringify(r.body).includes('Whatever'));
+});
+
+test('the party is everyone going: accepted members plus link guests who said in', async () => {
+  FLOCKS = [{
+    id: 52, venue_id: 'PLACE_A', name: 'Mixed crowd', status: 'confirmed',
+    event_time: new Date(Date.now() + 2 * DAY), member_count: 5, guest_count: 2,
+  }];
+  const r = await get('/api/venue-dashboard/incoming-flocks');
+  assert.strictEqual(r.status, 200);
+  assert.strictEqual(r.body.flocks[0].title, 'Party of 7');
+  assert.ok(!JSON.stringify(r.body).includes('Mixed crowd'));
 });
 
 test('the count is measured over the same window as the list', async () => {
