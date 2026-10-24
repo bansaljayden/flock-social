@@ -44,6 +44,7 @@ export const IMAGES = {
   back: { base: '/sensor/flux-back', one: 520, two: 1040, height: 390 },
   pipeline: { base: '/ai-figures/owl-pipeline', one: 1100, two: 2200, height: 249 },
   flow: { base: '/ai-figures/owl-flow', one: 640, two: 1280, height: 107 },
+  tablesIllustration: { base: '/sensor/flux-tables-illustration', one: 640, two: 1280, height: 480 },
   tablesRoom: { base: '/sensor/flux-tables-room', one: 640, two: 1280, height: 480 },
   tablesDesktop: { base: '/sensor/tables-tab-desktop', one: 1080, two: 2160, height: 619 },
   tablesPhone: { base: '/sensor/tables-tab-phone', one: 260, two: 520, height: 679 },
@@ -247,14 +248,27 @@ export default function FluxPage() {
               <figure className="fx-figure">
                 <div className="fx-plate">
                   <Pic
+                    img={IMAGES.tablesIllustration}
+                    sizes="(min-width: 960px) 520px, calc(100vw - 40px)"
+                    alt="An illustration of a dining room seen from above the door, with faceless figures at eight tables. Each table is outlined in its state's colour with a label, and a side panel lists three of eight tables free and two alerts."
+                  />
+                </div>
+                <figcaption className="lp-fig-cap">
+                  An illustration of the idea. Flux sees people only as heat and
+                  never films them.
+                </figcaption>
+              </figure>
+              <figure className="fx-figure">
+                <div className="fx-plate">
+                  <Pic
                     img={IMAGES.tablesRoom}
                     sizes="(min-width: 960px) 520px, calc(100vw - 40px)"
                     alt="A dining room in generated heat, seen from above the door, with eight tables outlined. Each has a label: free and for how long, seated with a timer and a head count, one needing a server, one needing clearing."
                   />
                 </div>
                 <figcaption className="lp-fig-cap">
-                  Made from generated heat, no real people. White dots are the
-                  people Owl found.
+                  What Flux actually sees, made from generated heat with no real
+                  people. White dots are the people Owl found.
                 </figcaption>
               </figure>
             </div>

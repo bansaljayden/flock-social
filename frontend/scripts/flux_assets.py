@@ -148,11 +148,13 @@ def renders():
 # The PNGs live outside the repo (the tables work's images/ folder), so
 #   python frontend/scripts/flux_assets.py --tables-only --tables-src <dir>
 TABLES = {
+    "flux-tables-illustration": 640,
     "flux-tables-room": 640,
     "tables-tab-desktop": 1080,
     "tables-tab-phone": 260,
 }
 TABLES_FILES = {
+    "flux-tables-illustration": "flux-tables-illustration.png",
     "flux-tables-room": "flux-sees-tables-room.png",
     "tables-tab-desktop": "tables-tab-desktop.png",
     "tables-tab-phone": "tables-tab-phone.png",
