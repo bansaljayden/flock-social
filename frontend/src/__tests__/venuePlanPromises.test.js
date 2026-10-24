@@ -235,13 +235,14 @@ describe('the Monday email switch shows only where the email goes', () => {
     // Every card the email sends is one the sentence describes.
     const digest = read('backend', 'services', 'venueDigest.js');
     const ids = [...digest.matchAll(/\{ id: '([a-z_]+)', title: '[^']*', tier: 'pro' \}/g)].map((m) => m[1]);
-    expect(ids.sort()).toEqual(['around_you', 'last_night_verdict', 'listing_read_back', 'readings_vs_estimates', 'week_ahead']);
+    expect(ids.sort()).toEqual(['around_you', 'last_night_verdict', 'listing_read_back', 'readings_vs_estimates', 'week_ahead', 'your_tables']);
     const described = {
       last_night_verdict: /yesterday against your own numbers/,
       readings_vs_estimates: /your readings beside our estimates/,
       listing_read_back: /your listing read back/,
       week_ahead: /the week ahead/,
       around_you: /what is on around you/,
+      your_tables: /your tables when a Flux unit watches them/,
     };
     for (const id of ids) expect(WEEKLY_DIGEST_DESCRIPTION).toMatch(described[id]);
   });

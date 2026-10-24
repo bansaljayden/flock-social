@@ -507,6 +507,9 @@ test('every route file that takes a body was actually looked at', () => {
     // routes/ogCard.js enrolled 2026-10-07: the invite share card, one public
     // GET whose four short fields ride the query string; no body is read.
     'ogCard',
+    // routes/tableInsights.js enrolled 2026-10-23: the owner's table reads
+    // (last night at the tables, the free forecast), GETs only; no body is read.
+    'tableInsights',
   ]);
   const actual = ROUTE_FILES.map((f) => path.basename(f, '.js'));
   for (const name of actual) {

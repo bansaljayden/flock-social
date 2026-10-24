@@ -271,7 +271,7 @@ export function weeklyDigestOffered({ digestEnabled, verified, onRoost, hasListi
 // backend/services/venueDigest.js, rendered by
 // backend/templates/venueDigestEmail.js). No review ratings are in it, so the
 // line does not offer them.
-export const WEEKLY_DIGEST_DESCRIPTION = "A short email every Monday morning with Roost's cards for your venue: yesterday against your own numbers, your readings beside our estimates, your listing read back, and the week ahead with what is on around you. Off until you turn it on.";
+export const WEEKLY_DIGEST_DESCRIPTION = "A short email every Monday morning with Roost's cards for your venue: yesterday against your own numbers, your readings beside our estimates, your listing read back, and the week ahead with what is on around you, plus your tables when a Flux unit watches them. Off until you turn it on.";
 
 // A save MERGES into the profile the GET returned. PUT /api/venue-profile
 // answers with the profile row only, and the GET adds what the server works
