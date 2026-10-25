@@ -7,15 +7,15 @@
 // that to the venue's verified owner and to nobody else:
 //
 //   GET /api/sensors/:placeId/tables
-//     { tables: [{ number, people, state, since, seats, party_max }],
+//     { tables: [{ number, people, state, since, seats, party_max, updated_at, stale }],
 //     updated_at, stale, next_free }
 //     `since` is when the state began, and for seated and waiting it is when
 //     the party sat down. `seats` is the unit's own count of the table's
 //     seats, null when the unit does not know it; `party_max` is the largest
 //     party the box has seen at the table lately, null when none, and is not
-//     a seat count. `stale` is true once the sensor has not reported for over
-//     3 minutes. `next_free` is the seated or waiting table seated longest,
-//     or null.
+//     a seat count. Each table has its own freshness timestamp and flag;
+//     the floor's flag means every unit is stale. `next_free` is the live
+//     seated or waiting table seated longest, or null.
 //
 //   GET /api/sensors/:placeId/tables/hours
 //     { hours: [{ hour, occupied, total }], timeZone } for the last 7 days,
@@ -250,7 +250,7 @@ export function nextFreePick(data, tables, nowMs) {
     return ranked.find((t) => estimate(t) === soonest && t.number === hint) || ranked[0];
   }
   const ranked = pool.slice().sort(byAge);
-  return ranked.find((t) => t.number === hint) || ranked[0];
+  return ranked.find((t) => t.number === hint && age(t) === age(ranked[0])) || ranked[0];
 }
 
 // The one line under the alerts that names that table, or null: with the

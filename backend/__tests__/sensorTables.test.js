@@ -1401,7 +1401,7 @@ test('the floor: words for states, when each began, seats, in number order, fres
     { number: 2, people: 3, state: 'seated', since: new Date(at - 845000).toISOString(), seats: 4, party_max: 3, likely_free_at: null },
     { number: 3, people: 2, state: 'waiting', since: new Date(at - 410000).toISOString(), seats: null, party_max: 2, likely_free_at: null },
     { number: 4, people: 0, state: 'needs_clearing', since: new Date(at - 95000).toISOString(), seats: 6, party_max: null, likely_free_at: null },
-  ]);
+  ].map((t) => ({ ...t, updated_at: new Date(at).toISOString(), stale: false })));
   assert.strictEqual(res.body.updated_at, new Date(at).toISOString());
   assert.strictEqual(res.body.stale, false);
   assert.strictEqual(res.body.next_free, 2, 'table 2 has been seated longest');

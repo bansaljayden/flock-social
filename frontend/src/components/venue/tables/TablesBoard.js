@@ -124,9 +124,20 @@ function alertMarker(state, colors) {
 }
 
 function TableTile({ table, clockAt, colors }) {
-  const look = tileLook(table.state, colors);
+  const stale = table.stale === true;
+  const tileClockAt = stale ? timeMs(table.updated_at) : clockAt;
+  // An old state should remain legible without the live state's green/red
+  // signal. A dashed neutral tile and explicit words distinguish it.
+  const look = stale ? {
+    background: 'var(--bg-card-solid)',
+    border: '2px dashed var(--text-tertiary)',
+    word: 'var(--text-secondary)',
+    ink: 'var(--text-primary)',
+    sub: 'var(--text-secondary)',
+    faint: 'var(--text-tertiary)',
+  } : tileLook(table.state, colors);
   const counting = table.state === 'seated' || table.state === 'waiting';
-  const timeLine = tileTimeText(table, clockAt);
+  const timeLine = tileTimeText(table, tileClockAt);
   const people = counting ? peopleText(table.people) : null;
   const seats = seatsLine(table);
   return (
@@ -139,10 +150,11 @@ function TableTile({ table, clockAt, colors }) {
         {seats && <p data-seats={seats.seen ? 'seen' : 'known'} style={{ fontSize: 'var(--t-meta)', color: seats.seen ? look.faint : look.sub, margin: 0 }}>{seats.text}</p>}
       </div>
       <p data-testid="table-state" style={{ fontSize: 'var(--t-meta)', fontWeight: '700', color: look.word, margin: '2px 0 0' }}>{TABLE_STATE_WORDS[table.state]}</p>
+      {stale && <p style={{ fontSize: 'var(--t-meta)', fontWeight: '600', color: look.sub, margin: '4px 0 0' }}>Last reading; not live</p>}
       {counting && timeLine && (
         <p style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: look.ink, margin: '4px 0 0', lineHeight: 1.1, fontVariantNumeric: 'tabular-nums' }}>
           <span aria-hidden="true">{timeLine}</span>
-          <span className="sr-only">{tileClockSpoken(table, clockAt)}</span>
+          <span className="sr-only">{tileClockSpoken(table, tileClockAt)}</span>
         </p>
       )}
       {people && (
@@ -192,9 +204,10 @@ export default function TablesBoard({ data, colors, now, timeZone }) {
   // there is nothing to stop them at, so they are left off.
   const clockAt = stale ? updatedAtMs : unrefreshed ? data.readAt : now;
   const frozen = stale || unrefreshed;
-  const alerts = tableAlerts(tables, clockAt);
+  const liveTables = tables.filter((t) => t.stale !== true);
+  const alerts = tableAlerts(stale ? tables : liveTables, clockAt);
   const clock = clockIn(timeZone);
-  const nextFree = nextFreeLine(data, tables, clockAt, clock);
+  const nextFree = nextFreeLine(data, stale ? tables : liveTables, clockAt, clock);
   // One line in place of the summary while the board is not live. A failed
   // refresh is this side's problem and says so first; the readings having
   // stopped is the box's, said when the refresh itself works.
@@ -208,7 +221,7 @@ export default function TablesBoard({ data, colors, now, timeZone }) {
           {' '}{lines.detail}
         </p>
       ) : (
-        <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-secondary)', margin: '0 0 10px' }}>{freeSummary(tables)}</p>
+        <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: 'var(--text-secondary)', margin: '0 0 10px' }}>{freeSummary(liveTables)}{liveTables.length < tables.length ? ` · ${tables.length - liveTables.length} without recent readings` : ''}</p>
       )}
 
       <div data-testid="tables-live" style={{ opacity: frozen ? STALE_OPACITY : 1 }}>

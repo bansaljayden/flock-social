@@ -415,7 +415,9 @@ function minutesUntil(at, nowMs) {
 }
 
 // One table as the owner's floor shows it: the unit's seat count and the
-// largest party seen apart, each null when there is none. No unit id.
+// largest party seen apart, each null when there is none. Each row carries
+// its own freshness so one live room cannot make an offline room look live.
+// No unit id.
 function tableView(r, likely) {
   const at = likely.get(Number(r.table_no));
   return {
@@ -423,9 +425,11 @@ function tableView(r, likely) {
     people: Number(r.people),
     state: STATE_WORDS[r.state],
     since: new Date(r.state_since).toISOString(),
+    updated_at: new Date(r.updated_at).toISOString(),
+    stale: r.stale === true,
     seats: r.seats === null || r.seats === undefined ? null : Number(r.seats),
     party_max: r.party_max_seen === null || r.party_max_seen === undefined ? null : Number(r.party_max_seen),
-    likely_free_at: at ? at.toISOString() : null,
+    likely_free_at: at && r.stale !== true ? at.toISOString() : null,
   };
 }
 
@@ -451,11 +455,13 @@ function floorClock(floor) {
 
 /**
  * GET /tables: { tables: [{ number, people, state, since, seats, party_max,
- * likely_free_at }], updated_at, stale, next_free }. seats is the unit's own
+ * likely_free_at, updated_at, stale }], updated_at, stale, next_free }. Each
+ * table carries its own freshness; the floor's flag means all units are stale.
+ * seats is the unit's own
  * count or null; party_max the largest party seen at the table in
  * SEATS_WINDOW_DAYS or null. next_free is the seated or waiting table whose
  * party has sat longest (the best guess at which table frees up next; on a
- * tie, the lower number), null when no table has a party. Every unit's rows,
+ * tie, the lower number), null when no live table has a party. Every unit's rows,
  * stale ones included. With no rows at all: no tables, no time, stale,
  * nothing next.
  */
@@ -463,7 +469,7 @@ async function ownerFloor(placeId) {
   const { floor, likely } = await floorContext(placeId);
   if (!floor) return { tables: [], updated_at: null, stale: true, next_free: null };
   let longestSeated = null;
-  for (const r of floor.kept) {
+  for (const r of liveRows(floor.kept)) {
     if (hasParty(r) && (longestSeated === null || new Date(r.state_since) < new Date(longestSeated.state_since))) {
       longestSeated = r;
     }
@@ -755,17 +761,17 @@ async function hiddenInApp(placeIds) {
  * whose owner hides its tables from the app, is absent.
  */
 async function publicSummaries(placeIds, party = PUBLIC_PARTY_DEFAULT, nowMs = Date.now()) {
-  const out = {};
+  const entries = [];
   const ids = [...new Set(placeIds)];
-  if (!ids.length) return out;
+  if (!ids.length) return {};
   const floors = await readFloors(ids);
   const fresh = [...floors.entries()]
     .filter(([, f]) => nowMs - new Date(f.newest.updated_at).getTime() <= SUMMARY_MAX_AGE_HOURS * 3600 * 1000)
     .map(([id]) => id);
-  if (!fresh.length) return out;
+  if (!fresh.length) return {};
   const hidden = await hiddenInApp(fresh);
   const shown = fresh.filter((id) => !hidden.has(id));
-  if (!shown.length) return out;
+  if (!shown.length) return {};
   const zones = await venueTimeZones(shown);
   const [turns, full] = await Promise.all([turnMedians(shown, zones), fullHours(shown, zones)]);
   for (const id of shown) {
@@ -776,7 +782,7 @@ async function publicSummaries(placeIds, party = PUBLIC_PARTY_DEFAULT, nowMs = D
     // after a 22023 fallback, whatever zone the venue has.
     const likely = likelyByTable(kept, turns.fellBack ? null : zone, turns.byVenue.get(id) || null);
     const wait = waitFor(kept, party, likely, nowMs);
-    out[id] = {
+    entries.push([id, {
       open: kept.filter((r) => r.state === 'f').length,
       total: kept.length,
       party,
@@ -785,9 +791,10 @@ async function publicSummaries(placeIds, party = PUBLIC_PARTY_DEFAULT, nowMs = D
       busy_hours: (full.byVenue.get(id) || []).map((c) => ({ dow: c.dow, hour: c.hour })),
       timeZone: full.fellBack ? null : zone,
       ...floorClock(floor),
-    };
+    }]);
   }
-  return out;
+  // Place ids are external keys; __proto__ must be an ordinary own property.
+  return Object.fromEntries(entries);
 }
 
 module.exports = {

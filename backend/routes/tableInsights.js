@@ -23,6 +23,7 @@ const { param, query, validationResult } = require('express-validator');
 const pool = require('../config/database');
 const { authenticate } = require('../middleware/auth');
 const { checkVenueTier } = require('../services/venueEntitlements');
+const { scalarOnly } = require('../validators/shape');
 const tableInsights = require('../services/tableInsights');
 
 const router = express.Router();
@@ -66,8 +67,8 @@ router.get('/:placeId/last-night', authenticate, [placeIdParam()], async (req, r
 
 router.get('/:placeId/free-forecast', authenticate, [
   placeIdParam(),
-  query('dow').isInt({ min: 0, max: 6 }).withMessage('dow must be 0 (Sunday) to 6').toInt(),
-  query('hour').isInt({ min: 0, max: 23 }).withMessage('hour must be 0 to 23').toInt(),
+  scalarOnly(query('dow'), 'dow').bail().isInt({ min: 0, max: 6 }).withMessage('dow must be 0 (Sunday) to 6').toInt(),
+  scalarOnly(query('hour'), 'hour').bail().isInt({ min: 0, max: 23 }).withMessage('hour must be 0 to 23').toInt(),
 ], async (req, res) => {
   try {
     if (!(await ownerMay(req, res))) return undefined;

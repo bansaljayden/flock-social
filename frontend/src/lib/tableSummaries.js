@@ -233,12 +233,12 @@ export function tableSummaryCacheSizeForTests() {
 // The summaries a list can draw now: { [placeId]: summary } for the places
 // with one. Absent and unknown places are simply not keys.
 export function readTableSummaries(placeIds, party = TABLE_PARTY_DEFAULT) {
-  const out = {};
+  const entries = [];
   for (const id of distinctPlaceIds(placeIds)) {
     const s = readTableSummary(id, party);
-    if (s) out[id] = s;
+    if (s) entries.push([id, s]);
   }
-  return out;
+  return Object.fromEntries(entries);
 }
 
 // Sends everything queued, one POST per party per fifty ids. Resolves once
@@ -377,7 +377,11 @@ export function useTableSummaries(placeIds, party = TABLE_PARTY_DEFAULT, enabled
     if (!enabled || !idsKey) return undefined;
     const ids = idsKey.split('\n');
     requestTableSummaries(ids, p);
-    const timer = setInterval(() => { requestTableSummaries(ids, p, { refresh: true }); }, TABLE_SUMMARY_FRESH_MS);
+    const timer = setInterval(() => {
+      // Expiry must repaint even when a refresh fails or remains in flight.
+      notify(ids.map((placeId) => keyOf(placeId, p)));
+      requestTableSummaries(ids, p, { refresh: true });
+    }, TABLE_SUMMARY_FRESH_MS);
     return () => clearInterval(timer);
   }, [idsKey, p, enabled]);
   return out;
@@ -398,7 +402,10 @@ export function useTableSummary(placeId, party = TABLE_PARTY_DEFAULT, enabled = 
   React.useEffect(() => {
     if (!enabled || !id) return undefined;
     requestTableSummary(id, p);
-    const timer = setInterval(() => { requestTableSummary(id, p, { refresh: true }); }, TABLE_SUMMARY_FRESH_MS);
+    const timer = setInterval(() => {
+      notify([keyOf(id, p)]);
+      requestTableSummary(id, p, { refresh: true });
+    }, TABLE_SUMMARY_FRESH_MS);
     return () => clearInterval(timer);
   }, [id, p, enabled]);
   return out;

@@ -402,7 +402,7 @@ test('likely_free_at is seated_at plus the median turn for that weekday and hour
   seedCell(since, VENUE, ZONE, { count: 19, tableNo: 2 });
   let res = await get(FLOOR, OWNER_ID);
   assert.strictEqual(res.status, 200, res.raw);
-  assert.deepStrictEqual(Object.keys(res.body.tables[0]).sort(), ['likely_free_at', 'number', 'party_max', 'people', 'seats', 'since', 'state']);
+  assert.deepStrictEqual(Object.keys(res.body.tables[0]).sort(), ['likely_free_at', 'number', 'party_max', 'people', 'seats', 'since', 'stale', 'state', 'updated_at']);
   assert.strictEqual(res.body.tables[0].likely_free_at, null, 'nineteen seatings are not a median');
   assert.strictEqual(res.body.tables[1].likely_free_at, null, 'a free table has nothing to free');
 
@@ -937,6 +937,24 @@ test('the public summary is a 404 in the same words for a venue with no floor, o
   assert.strictEqual((await get(FLOOR, OWNER_ID)).status, 200);
 });
 
+test('prototype names are absent venues, not inherited summary properties', async () => {
+  reset();
+  for (const placeId of ['constructor', '__proto__', 'toString', 'hasOwnProperty']) {
+    const res = await get(`/api/sensors/${placeId}/tables/summary`, USER_ID);
+    assert.deepStrictEqual([res.status, res.body], [404, { error: 'No table data for this venue.' }]);
+  }
+});
+
+test('stats reject structured and repeated day parameters before reading the database', async () => {
+  reset();
+  for (const query of ['days[]=28', 'days=28&days=30', 'days[value]=28']) {
+    queryLog = [];
+    const res = await get(`/api/sensors/${VENUE}/tables/stats?${query}`, OWNER_ID);
+    assert.strictEqual(res.status, 400, query);
+    assert.deepStrictEqual(queryLog, [], query);
+  }
+});
+
 test('the batch: one floor read and one busy-hours read for every id asked, venues without a summary simply absent, and the body held to 1-50 place id strings', async () => {
   reset();
   const t = await push('1:0:f:60:2;2:2:s:600');
@@ -993,6 +1011,15 @@ test('a unit that has gone dark keeps its rows on the owner\'s floor and has no 
   const floor = await get(FLOOR, OWNER_ID);
   assert.deepStrictEqual(floor.body.tables.map((x) => x.number), [1, 2, 11, 12, 13], 'the owner still sees the dark unit\'s tables');
   assert.strictEqual(floor.body.stale, false, 'as fresh as its newest row, as phase 1 settled');
+  assert.deepStrictEqual(floor.body.tables.map((x) => x.stale), [false, false, true, true, true]);
+  assert.strictEqual(floor.body.tables[2].updated_at, dark.toISOString());
+  const offlineTable = tableStates.find((r) => r.table_no === 11);
+  offlineTable.state = 's';
+  offlineTable.state_since = new Date(Date.now() - HOUR);
+  const withOfflineParty = await get(FLOOR, OWNER_ID);
+  assert.strictEqual(withOfflineParty.body.next_free, 1, 'an offline party cannot become the next table');
+  assert.strictEqual(withOfflineParty.body.tables.find((r) => r.number === 11).likely_free_at, null);
+  offlineTable.state = 'f';
 
   const summary = await get(`${SUMMARY}?party=2`, USER_ID);
   assert.strictEqual(summary.status, 200, summary.raw);

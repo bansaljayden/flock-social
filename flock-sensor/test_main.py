@@ -4720,6 +4720,36 @@ class TablesAtTheVenue(unittest.TestCase):
         self.assertIsNotNone(t.payload(now))
         self.assertIsNone(t.payload(now + 61))
 
+    def test_a_camera_gap_does_not_complete_a_seating(self):
+        t = self.tracker()
+        t.update(0, [_AT])
+        t.update(120, [_AT])
+        self.assertEqual(self.state(t, 120)[1], 'f')
+        now = _run(t, 122, 62, [_AT])
+        self.assertEqual(self.state(t, now)[1], 's')
+        self.assertLess(self.state(t, now)[2], 70)
+
+    def test_a_camera_gap_does_not_complete_a_departure_or_server_visit(self):
+        t = self.tracker()
+        now = _run(t, 0, 120, [_AT, _AT])
+        t.update(now, [])
+        t.update(now + 120, [])
+        self.assertNotEqual(self.state(t, now + 120)[1], 'c')
+        self.assertFalse(t.tables[1]['visited'])
+        # A waiter seen on each side of an outage is not a five-second visit.
+        t.update(now + 122, [_AT, _AT, _AROUND])
+        t.update(now + 300, [_AT, _AT, _AROUND])
+        self.assertFalse(t.tables[1]['visited'])
+
+    def test_a_camera_gap_does_not_clear_a_dirty_table(self):
+        t = self.tracker()
+        now = _run(t, 0, 200, [_AT])
+        now = _run(t, now, 100, [])
+        self.assertEqual(self.state(t, now)[1], 'c')
+        t.update(now, [_AT])
+        t.update(now + 120, [])
+        self.assertEqual(self.state(t, now + 120)[1], 'c')
+
     def test_a_unit_without_tables_sends_none(self):
         t = main.TableTracker([])
         t.update(0, [_AT])
@@ -4827,6 +4857,17 @@ class TablesAtTheVenue(unittest.TestCase):
         t = main.TableTracker([{'n': 1, 'box': near['box']}, {'n': 2, 'box': behind['box']}])
         t.update(0, [head])
         self.assertEqual({n: p for n, p, s, a in t.view(0)}, {1: 0, 2: 1})
+
+    def test_nonfinite_zones_are_ignored_without_crashing_or_expanding_them(self):
+        path = Path(_TMP) / 'zones-nonfinite.json'
+        good = {'n': 1, 'x0': 10, 'y0': 10, 'x1': 30, 'y1': 30}
+        bad = [{**good, 'n': n} for n in (float('inf'), True, 1.5)]
+        for key in ('x0', 'y0', 'x1', 'y1'):
+            for value in (float('nan'), float('inf'), -float('inf'), 10 ** 400):
+                bad.append({**good, key: value})
+        path.write_text(json.dumps({'tables': bad + [good]}), encoding='utf-8')
+        self.assertEqual(main.load_table_zones(path), [
+            {'n': 1, 'box': (10.0, 10.0, 30.0, 30.0), 'seats': ()}])
 
     def test_seats_in_the_zones_file_are_checked(self):
         path = Path(_TMP) / 'zones-seats.json'
@@ -4946,6 +4987,14 @@ class TablesLearnedFromHeat(unittest.TestCase):
         path.write_text(json.dumps({'source': 'camera', 'tables': []}), encoding='utf-8')
         self.assertFalse(learner.maybe_write(10_000.0 + 2 * main.TableLearner.LEARN_EVERY))
         self.assertEqual(json.loads(path.read_text(encoding='utf-8'))['source'], 'camera')
+        # Hand-drawn/legacy files need not name their author. Only an explicit
+        # heat marker grants the learner permission to replace existing zones.
+        for raw in ({'tables': [{'n': 99, 'x0': 10, 'y0': 10, 'x1': 30, 'y1': 30}]}, []):
+            original = json.dumps(raw)
+            path.write_text(original, encoding='utf-8')
+            learner._learned_at = None
+            self.assertFalse(learner.maybe_write(30_000.0))
+            self.assertEqual(path.read_text(encoding='utf-8'), original)
 
     def test_a_restart_keeps_the_tables_it_has_not_seen_again(self):
         path = Path(_TMP) / 'learned-restart.json'
@@ -5034,3 +5083,10 @@ class TablesLearnedFromHeat(unittest.TestCase):
         for cell, minutes in learner.minutes.items():
             self.assertEqual(len(cell), 2)
             self.assertTrue(all(isinstance(m, int) for m in minutes))
+
+    def test_sparse_frames_do_not_invent_occupied_minutes_or_learn_a_table(self):
+        learner = main.TableLearner()
+        for minute in range(30):
+            learner.observe(minute * 60.0, _A)
+        self.assertEqual(learner.minutes, {})
+        self.assertEqual(learner.tables(), [])

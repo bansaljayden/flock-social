@@ -478,6 +478,14 @@ describe('next likely free', () => {
     expect(screen.getByText('Next likely free: Table 6 (seated 20 min)')).toBeTruthy();
   });
 
+  test('a server hint cannot override an older seated table when there is no time estimate', () => {
+    renderTab({ data: { ...LIVE, next_free: 7, tables: [
+      { number: 6, people: 2, state: 'seated', since: ago(20 * MIN) },
+      { number: 7, people: 2, state: 'seated', since: ago(2 * MIN) },
+    ] } });
+    expect(screen.getByText('Next likely free: Table 6 (seated 20 min)')).toBeTruthy();
+  });
+
   test('says nothing when nobody is sitting anywhere', () => {
     renderTab({
       data: {
@@ -502,6 +510,24 @@ describe('the board\'s heading and summary', () => {
 });
 
 describe('a sensor that has gone quiet', () => {
+  test('a quiet room stays visible but contributes no live availability or suggestion', () => {
+    renderTab({ data: {
+      tables: [
+        { number: 1, people: 0, state: 'free', since: ago(30 * MIN), stale: true, updated_at: ago(4 * MIN) },
+        { number: 2, people: 3, state: 'waiting', since: ago(14 * MIN), stale: true, updated_at: ago(4 * MIN) },
+        { number: 3, people: 2, state: 'seated', since: ago(2 * MIN), stale: false, updated_at: ago(0) },
+      ], updated_at: ago(0), stale: false, next_free: 2,
+    } });
+    expect(screen.getByText('0 of 1 free · 2 without recent readings')).toBeTruthy();
+    expect(screen.getAllByText('Last reading; not live')).toHaveLength(2);
+    expect(within(tileFor(2)).getByText('10:00')).toBeTruthy();
+    expect(screen.queryByRole('list', { name: 'Needs attention' })).toBeNull();
+    expect(screen.getByText('Next likely free: Table 3 (seated 2 min)')).toBeTruthy();
+    act(() => { jest.advanceTimersByTime(65 * SEC); });
+    expect(within(tileFor(2)).getByText('10:00')).toBeTruthy();
+    expect(within(tileFor(3)).getByText('3:05')).toBeTruthy();
+  });
+
   const STALE = {
     tables: [
       { number: 1, people: 0, state: 'free', since: ago(30 * MIN) },

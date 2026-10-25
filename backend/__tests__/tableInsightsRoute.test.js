@@ -94,3 +94,15 @@ test('the forecast has no public route: the public summary code never mentions i
   const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
   assert.ok(server.includes("app.use('/api/venue/tables', apiLimiter, require('./routes/tableInsights'))"));
 });
+
+test('structured and repeated forecast parameters are rejected before any database read', async () => {
+  owns = true;
+  for (const query of ['dow[]=5&hour=20', 'dow=5&dow=6&hour=20', 'dow=5&hour[]=20', 'dow=5&hour=20&hour=21']) {
+    queryLog = [];
+    lastCall = null;
+    const res = await get(`/api/venue/tables/place-a/free-forecast?${query}`);
+    assert.strictEqual(res.status, 400, query);
+    assert.strictEqual(queryLog.length, 0, query);
+    assert.strictEqual(lastCall, null, query);
+  }
+});

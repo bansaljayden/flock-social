@@ -960,7 +960,7 @@ const placeIdParam = () => param('placeId').isString().isLength({ min: 1, max: 2
 // GET /api/sensors/:placeId/tables: what each table is doing now.
 //
 // { tables: [{ number, people, state, since, seats, party_max,
-//   likely_free_at }], updated_at, stale, next_free }, tables in number
+//   likely_free_at, updated_at, stale }], updated_at, stale, next_free }, tables in number
 // order. state is a word (free, seated, waiting, needs_clearing), since is
 // when that state began, seats is the unit's own count (null when it never
 // sent one), party_max the largest party seen at the table in 30 days (null
@@ -1074,7 +1074,7 @@ router.get('/:placeId/tables/hours',
 router.get('/:placeId/tables/stats',
   authenticate,
   placeIdParam(),
-  query('days').optional().isInt({ min: tableHistory.STATS_DAYS_MIN, max: tableHistory.STATS_DAYS_MAX })
+  scalarOnly(query('days').optional(), 'days').isInt({ min: tableHistory.STATS_DAYS_MIN, max: tableHistory.STATS_DAYS_MAX })
     .withMessage(`days must be ${tableHistory.STATS_DAYS_MIN}-${tableHistory.STATS_DAYS_MAX}`),
   async (req, res) => {
     try {
@@ -1250,7 +1250,7 @@ router.get('/:placeId/tables/summary',
       const { placeId } = req.params;
       const party = parseInt(req.query.party, 10) || tableHistory.PUBLIC_PARTY_DEFAULT;
       const summaries = await tableHistory.publicSummaries([placeId], party);
-      if (!summaries[placeId]) return res.status(404).json(NO_TABLE_DATA);
+      if (!Object.prototype.hasOwnProperty.call(summaries, placeId)) return res.status(404).json(NO_TABLE_DATA);
       res.json(summaries[placeId]);
     } catch (err) {
       console.error('Get table summary error:', err);

@@ -584,6 +584,14 @@ describe('the read', () => {
     await settle();
   };
 
+  it('external place ids are own summary properties, including prototype names', () => {
+    for (const id of ['__proto__', 'constructor', 'toString']) seedTableSummaryForTests(id, 5, live());
+    const summaries = readTableSummaries(['__proto__', 'constructor', 'toString'], 5);
+    expect(Object.keys(summaries)).toEqual(['__proto__', 'constructor', 'toString']);
+    expect(Object.getPrototypeOf(summaries)).toBe(Object.prototype);
+    expect(summaries.__proto__).toEqual(live());
+  });
+
   it('ids asked for in one tick go as one POST, once each', async () => {
     api.getTableSummaries.mockImplementation((ids) => answer(ids));
     const p1 = requestTableSummaries(['a', 'b', 'a'], 5);
@@ -902,6 +910,44 @@ describe('the read', () => {
     await act(async () => { await tick(2 * TABLE_SUMMARY_FRESH_MS); });
     expect(api.getTableSummaries).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId('n').textContent).toBe('1');
+  });
+
+  it.each(['reject', 'hang'])('mounted availability expires when refreshes %s and returns when the server recovers', async (failure) => {
+    api.getTableSummary.mockResolvedValue(live());
+    api.getTableSummaries.mockImplementation((ids) => answer(ids));
+    function Views() {
+      const detail = useTableSummary('detail', 5);
+      const list = useTableSummaries(['list'], 5);
+      return <><span data-testid="detail">{detail ? 'live' : 'none'}</span><span data-testid="list">{list.list ? 'live' : 'none'}</span></>;
+    }
+    render(<Views />);
+    await act(async () => { await tick(0); });
+    expect(screen.getByTestId('detail')).toHaveTextContent('live');
+    expect(screen.getByTestId('list')).toHaveTextContent('live');
+    let recoverDetail;
+    let recoverList;
+    api.getTableSummary.mockImplementation(() => failure === 'reject'
+      ? Promise.reject(new Error('offline')) : new Promise((resolve) => { recoverDetail = resolve; }));
+    api.getTableSummaries.mockImplementation(() => failure === 'reject'
+      ? Promise.reject(new Error('offline')) : new Promise((resolve) => { recoverList = resolve; }));
+    for (let minute = 0; minute < 6; minute += 1) {
+      await act(async () => { await tick(TABLE_SUMMARY_FRESH_MS); });
+    }
+    expect(screen.getByTestId('detail')).toHaveTextContent('none');
+    expect(screen.getByTestId('list')).toHaveTextContent('none');
+    await act(async () => {
+      if (failure === 'hang') {
+        recoverDetail(live());
+        recoverList({ summaries: { list: live() } });
+        await settle();
+      } else {
+        api.getTableSummary.mockResolvedValue(live());
+        api.getTableSummaries.mockImplementation((ids) => answer(ids));
+        await tick(TABLE_SUMMARY_FRESH_MS);
+      }
+    });
+    expect(screen.getByTestId('detail')).toHaveTextContent('live');
+    expect(screen.getByTestId('list')).toHaveTextContent('live');
   });
 
   it('two lists showing the same place in one tick share one POST', async () => {

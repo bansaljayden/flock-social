@@ -3063,8 +3063,14 @@ def load_table_zones(path):
         try:
             n = int(item['n'])
             x0, y0, x1, y1 = (float(item[k]) for k in ('x0', 'y0', 'x1', 'y1'))
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError, OverflowError):
             log_throttled('tables_zone', logging.WARNING, f'Skipping a table zone that is not a zone: {item!r}')
+            continue
+        if not all(math.isfinite(v) for v in (x0, y0, x1, y1)):
+            log_throttled('tables_zone', logging.WARNING, 'Skipping a table zone with non-finite coordinates')
+            continue
+        if str(n) != str(item['n']):
+            log_throttled('tables_zone', logging.WARNING, 'Skipping a table zone with a non-integer number')
             continue
         if not (1 <= n <= TABLE_NUMBER_MAX) or n in seen:
             log_throttled('tables_zone', logging.WARNING,
@@ -3082,7 +3088,7 @@ def load_table_zones(path):
         for seat in raw_seats[:TABLE_SEATS_MAX]:
             try:
                 sx, sy = float(seat[0]), float(seat[1])
-            except (TypeError, ValueError, IndexError, KeyError):
+            except (TypeError, ValueError, IndexError, KeyError, OverflowError):
                 continue
             if 0 <= sx < THERMAL_COLS and 0 <= sy < THERMAL_ROWS:
                 seats.append((sx, sy))
@@ -3190,6 +3196,13 @@ class TableTracker:
                                       or now - self._checked_at >= self.RELOAD_EVERY):
             self._reload(now)
         with self._lock:
+            if self.last_frame is not None and now - self.last_frame > self.STALE_AFTER:
+                # A camera outage is no evidence of a continuous presence,
+                # absence or visit. Keep confirmed states, restart decisions
+                # that still need consecutive observations.
+                for t in self.tables.values():
+                    t['window'].clear()
+                    t.update(present_since=None, empty_since=None, extra_since=None)
             self.last_frame = now
             if not self.tables:
                 return
@@ -3390,7 +3403,9 @@ class TableLearner:
         self._closed = self._minute
         if self._seen > 0:
             for cell, secs in self._present.items():
-                if secs >= self.PRESENT_SHARE * self._seen:
+                # A few frames in a mostly missing minute cannot stand for
+                # a full occupied minute and eventually invent a seat.
+                if secs >= max(self.PRESENT_SHARE * 60.0, self.PRESENT_SHARE * self._seen):
                     self.minutes.setdefault(cell, set()).add(self._minute)
         self._present, self._seen = {}, 0.0
         oldest = self._minute - self.OCC_KEEP
@@ -3617,7 +3632,7 @@ class TableLearner:
         previous = []
         try:
             raw = json.loads(path.read_text(encoding='utf-8'))
-            if isinstance(raw, dict) and raw.get('source', 'heat') != 'heat':
+            if not isinstance(raw, dict) or raw.get('source') != 'heat':
                 return False
             previous = load_table_zones(path)
         except FileNotFoundError:
