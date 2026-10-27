@@ -1364,6 +1364,9 @@ async function collectRealtime() {
   // plan's users are in eastern Pennsylvania, so philly and lehigh are the
   // default scope; --cities=a,b picks a different set, and --all-cities
   // restores the old global sweep as a deliberate act rather than a default.
+  // Since 2026-10-27 the Railway service passes --cities=philly,lehigh,la,seattle,chicago,denver
+  // with --max-credits=12000: live calls are unlimited on the plan, and the hourly runs
+  // were finishing in 6-20 of their 50 minutes.
   // Both spellings: --cities=a,b (this script) and --city=x (the singular
   // collectWeekly has always taken, which the clock-axis suite and muscle
   // memory both use). Either one overrides the PA default.
