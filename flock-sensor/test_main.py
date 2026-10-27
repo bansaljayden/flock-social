@@ -4966,6 +4966,24 @@ class TablesLearnedFromHeat(unittest.TestCase):
         self.assertFalse(main.TABLE_CAMERA)
         self.assertEqual(main._latest_heat.get(), ([], None, None))
 
+    def test_a_study_night_logs_each_tables_state_with_each_reading(self):
+        folder = Path(tempfile.mkdtemp())
+        log = main.StudyLog(folder, wall=lambda: 1_790_000_000.0, mono=lambda: 5.0)
+        saved = main._study, main._tables
+        try:
+            main._study = log
+            main._tables = main.TableTracker(_ZONE)
+            main._tables.update(time.monotonic(), [_AT])
+            main.snapshot()
+        finally:
+            main._study, main._tables = saved
+            log.close()
+        files = sorted(p.name for p in folder.iterdir())
+        table_file = next(f for f in files if f.startswith('tables-'))
+        lines = (folder / table_file).read_text(encoding='utf-8').splitlines()
+        self.assertEqual(lines[0].split(','), list(main.STUDY_TABLE_FIELDS))
+        self.assertEqual(lines[1].split(',')[3:6], ['1', '1', 'f'])
+
     def test_only_minutes_per_spot_are_kept(self):
         learner = main.TableLearner()
         _evening(learner, [(_A, 0, 30)], 40)

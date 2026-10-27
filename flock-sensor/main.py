@@ -589,6 +589,9 @@ STUDY_COUNT_FIELDS = ('wall_utc', 'mono_s', 'clock_ok', 'frame_count', 'publishe
 STUDY_UPTIME_FIELDS = ('wall_utc', 'mono_s', 'clock_ok', 'event', 'uptime_s',
                        'thermal_fresh', 'published_count', 'door_in', 'door_out',
                        'occupancy', 'last_push_age_s', 'detail')
+# tables-<day>.csv: on a unit with tables, one row per table with each reading,
+# so a table trial can set the box's states beside a person's notes.
+STUDY_TABLE_FIELDS = ('wall_utc', 'mono_s', 'clock_ok', 'table', 'people', 'state', 'seconds')
 # Stop writing before the log can fill the card the buffer also lives on.
 STUDY_MIN_FREE_BYTES = 200 * 1024 * 1024
 STUDY_SPACE_CHECK_SECONDS = 60.0
@@ -720,6 +723,10 @@ class StudyLog:
                            [event, self.mono() - self.started, thermal_fresh,
                             published_count, door_in, door_out, occupancy,
                             last_push_age_s, detail])
+
+    def table(self, n, people, state, seconds):
+        """One table's state with a reading: numbers and one letter."""
+        return self._write('tables', STUDY_TABLE_FIELDS, [n, people, state, seconds])
 
     def close(self):
         with self.lock:
@@ -3789,6 +3796,9 @@ def snapshot():
     tables = _tables.payload(time.monotonic())
     if tables:
         payload['tables'] = tables
+        if _study is not None:
+            for row in _tables.view(time.monotonic()):
+                _study.table(*row)
 
     device_id = CONFIG.get('SENSOR_DEVICE_ID', '').strip()
     if device_id:

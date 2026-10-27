@@ -1192,6 +1192,7 @@ service. The device then keeps two CSV files per UTC day in
 |---|---|---|
 | `counts-<day>.csv` | counted frame (every 2 s on a unit without a screen, every frame with one) | `wall_utc`, `mono_s`, `clock_ok`, `frame_count` (this frame), `published_count` (the median that is sent), `counter` (`model` or `rule`), `infer_ms`, `model` (first 12 hex of each loaded model file's sha256) |
 | `uptime-<day>.csv` | start, camera reopen, and a heartbeat with every reading | `wall_utc`, `mono_s`, `clock_ok`, `event`, `uptime_s`, `thermal_fresh`, `published_count`, `door_in`, `door_out` (the doorway's running totals), `occupancy`, `last_push_age_s`, `detail` |
+| `tables-<day>.csv` | table, with every reading, on a unit with tables | `wall_utc`, `mono_s`, `clock_ok`, `table`, `people`, `state` (f, s, w or c), `seconds` (in that state) |
 
 - **Counts and times only.** Every value must be a number or a short plain
   token, so a frame, a list of points or a box is refused before anything is
