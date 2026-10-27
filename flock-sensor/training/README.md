@@ -55,6 +55,8 @@ names kinds of things and cannot tell one person from another.
 | `frames.py` | both | The recording file format: one session per file, one frame per line |
 | `score_sealed.py` | the PC | Grades the sealed real-room recordings once, after the model is frozen |
 | `test_score_sealed.py` | the PC | Its checks, on generated frames and made-up counts |
+| `test_dining.py` | the PC | Checks synth's dining room (`scene_dining`, opt-in) and the posture targets (off by default); `measure N` runs owl-4.9 on N dining frames |
+| `POSTURE-PLAN.md` | | The proposed sitting/standing head, how `main.py` would read it and how `TableTracker` would use it. Not built |
 
 ## Training
 

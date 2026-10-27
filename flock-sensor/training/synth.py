@@ -31,7 +31,7 @@ numpy and scipy only. This runs on the development machine, never on the Pi.
 import math
 
 import numpy as np
-from scipy.ndimage import gaussian_filter, uniform_filter
+from scipy.ndimage import gaussian_filter, map_coordinates, uniform_filter
 
 COLS, ROWS = 160, 120
 HFOV_DEG = 57.0
@@ -575,7 +575,7 @@ def _people_count(rng):
     return int(rng.integers(13, 26))
 
 
-def scene_full(rng, contact=None):
+def scene_full(rng, contact=None, dining=False):
     """One frame and everything in it.
 
     Returns (celsius [ROWS, COLS] float32, objects), each object a dict with
@@ -583,7 +583,10 @@ def scene_full(rng, contact=None):
     'box' (x0, y0, x1, y1, the part of it that shows). A person's point is the
     head, the thing that is counted; anything else's is the middle of what
     shows of it. contact: draw contact heat (None: CONTACT_HEAT).
+    dining: a restaurant seen from the ceiling above the door instead (scene_dining). Off, nothing here changes.
     """
+    if dining:
+        return scene_dining(rng)
     contact = CONTACT_HEAT if contact is None else bool(contact)
     c, amb, horizon = room(rng)
     overhead = rng.random() < 0.2
@@ -699,21 +702,28 @@ def scene_full(rng, contact=None):
 
     # A camera mounted a little crooked.
     if rng.random() < 0.3:
-        from scipy.ndimage import rotate
-        angle = rng.normal(0, 4.0)
-        c.t = rotate(c.t, angle, reshape=False, order=1, mode='nearest')
-        c.owner = rotate(c.owner, angle, reshape=False, order=0, mode='constant', cval=-1)
-        # The label points turn with the picture.
-        rad = np.radians(-angle)
-        ca, sa = np.cos(rad), np.sin(rad)
-        turned = []
-        for pid, (hx, hy, hr), torso in visible:
-            dx, dy = hx - W / 2, hy - H / 2
-            turned.append((pid, (W / 2 + dx * ca - dy * sa, H / 2 + dx * sa + dy * ca, hr), torso))
-        visible = turned
+        visible = _crooked(c, visible, rng.normal(0, 4.0))
+    t = _sensor(c.t, rng)
+    return t, _labels(c, visible, things)
 
-    # Down to the camera's resolution, then its optics and its electronics.
-    t = c.t.reshape(ROWS, SS, COLS, SS).mean(axis=(1, 3))
+
+def _crooked(c, visible, angle):
+    """Turn the canvas by angle degrees, and the label points with it."""
+    from scipy.ndimage import rotate
+    c.t = rotate(c.t, angle, reshape=False, order=1, mode='nearest')
+    c.owner = rotate(c.owner, angle, reshape=False, order=0, mode='constant', cval=-1)
+    rad = np.radians(-angle)
+    ca, sa = np.cos(rad), np.sin(rad)
+    turned = []
+    for pid, (hx, hy, hr), torso in visible:
+        dx, dy = hx - W / 2, hy - H / 2
+        turned.append((pid, (W / 2 + dx * ca - dy * sa, H / 2 + dx * sa + dy * ca, hr), torso))
+    return turned
+
+
+def _sensor(canvas_t, rng):
+    """The supersampled canvas down to the camera's resolution, then its optics and its electronics."""
+    t = canvas_t.reshape(ROWS, SS, COLS, SS).mean(axis=(1, 3))
     t = gaussian_filter(t, rng.uniform(0.5, 1.15))
     yy, xx = np.mgrid[0:ROWS, 0:COLS].astype(np.float32)
     rr = ((xx - COLS / 2) / (COLS / 2)) ** 2 + ((yy - ROWS / 2) / (ROWS / 2)) ** 2
@@ -748,14 +758,25 @@ def scene_full(rng, contact=None):
         for _ in range(int(rng.integers(1, 6))):
             t[rng.integers(0, ROWS), rng.integers(0, COLS)] = rng.choice([-10.0, 80.0])
     t = np.round(t * 100) / 100
+    return t.astype(np.float32)
 
-    # Labels from what is actually visible in the final frame.
+
+def _labels(c, visible, things, poses=None):
+    """Labels from what is actually visible in the final frame. poses, {pid: pose} (scene_dining only), adds each
+    person's 'pose' and 'posture' (see POSTURE_OF); without it a person's label is exactly as it always was."""
     objects = []
     own = c.owner.reshape(ROWS, SS, COLS, SS)
 
     def box_of(mask):
         ys, xs = np.nonzero(mask)
         return (float(xs.min()), float(ys.min()), float(xs.max() + 1), float(ys.max() + 1)), len(xs)
+
+    def person_label(pid, x, y, box):
+        o = {'cls': 'person', 'x': x, 'y': y, 'box': box}
+        if poses is not None and pid in poses:
+            o['pose'] = poses[pid]
+            o['posture'] = POSTURE_OF[poses[pid]]
+        return o
 
     for pid, (hx, hy, hr), (tx0, ty0, tx1, ty1) in visible:
         mask = (own == pid).any(axis=(1, 3))
@@ -770,14 +791,13 @@ def scene_full(rng, contact=None):
             y0, y1 = int(max(0, fy - r)), int(min(ROWS, fy + r + 1))
             x0, x1 = int(max(0, fx - r)), int(min(COLS, fx + r + 1))
             if mask[y0:y1, x0:x1].mean() > 0.3:
-                objects.append({'cls': 'person', 'x': fx, 'y': fy, 'box': box})
+                objects.append(person_label(pid, fx, fy, box))
                 continue
         # Head out of view or hidden: count the body if a good part of it shows.
         area_px = ((tx1 - tx0) / SS) * ((ty1 - ty0) / SS)
         if shown > max(12, 0.25 * area_px):
             ys, xs = np.nonzero(mask)
-            objects.append({'cls': 'person', 'x': float(xs.mean()), 'y': float(ys.mean()),
-                            'box': box})
+            objects.append(person_label(pid, float(xs.mean()), float(ys.mean()), box))
     for oid, cls in things.items():
         mask = (own == oid).any(axis=(1, 3))
         if mask.sum() < 3:
@@ -785,7 +805,344 @@ def scene_full(rng, contact=None):
         box, _ = box_of(mask)
         objects.append({'cls': cls, 'x': (box[0] + box[2]) / 2, 'y': (box[1] + box[3]) / 2,
                         'box': box})
-    return t.astype(np.float32), objects
+    return objects
+
+
+# ---------------------------------------------------------------------------
+# A dining room, from the ceiling above the door (2026-10-27, opt-in)
+#
+# Nothing above calls this unless asked, so owl-4.9's generator is untouched: scene_full(rng, dining=True) or
+# scene_dining(rng) draws one. The box hangs over the door about 3 m up with its Lepton 3.5 aimed 25 to 35 degrees
+# down across the room, where table_learning_eval.py and table_illustration.py placed it: rows of tables from 1.5 to
+# 13 m, diners seated at them (faces on the far side of a table, backs on the near side, profiles between), servers
+# standing and walking in the aisles or stopped at a table, plates and cups on the tables, warm seats where a party
+# just left, and empty tables. People are drawn by person() as a wall camera sees them, then shortened top to bottom
+# by the cosine of how steeply the box looks down on them, the squash those two scripts use. Every person's label
+# carries a pose ('sit', 'stand' or 'walk') and a posture ('sit' or 'stand', POSTURE_OF), which
+# targets(posture=True) turns into a second map.
+# ---------------------------------------------------------------------------
+
+POSTURES = ('sit', 'stand')
+POSTURE_OF = {'sit': 'sit', 'stand': 'stand', 'walk': 'stand'}
+# Head heights above the floor, metres: a seated adult's head is near 1.2 m, a standing adult's near 1.7 m.
+SEATED_HEAD_M = (1.12, 1.32)
+STANDING_HEAD_M = (1.55, 1.85)
+TABLE_TOP_M = 0.75
+SEAT_M = 0.45
+# Unit vectors (x, z) from a table's centre toward each side's chair: far is deeper into the room than the table.
+DINING_SIDES = {'far': (0.0, 1.0), 'near': (0.0, -1.0), 'left': (-1.0, 0.0), 'right': (1.0, 0.0)}
+
+
+class Mount:
+    """Where the box hangs: cam_h metres up, its lens pitched `pitch` radians below level. Room coordinates: x
+    across, h up from the floor, z into the room from the door wall, the camera at x = 0, z = 0. The projection is
+    table_learning_eval.project's with the height and pitch as parameters. A crooked mount is drawn afterwards, as
+    scene_full draws one."""
+
+    def __init__(self, cam_h=3.0, pitch=math.radians(30.0)):
+        self.cam_h, self.pitch = float(cam_h), float(pitch)
+        self.cp, self.sp = math.cos(self.pitch), math.sin(self.pitch)
+
+    def project(self, x, h, z):
+        """(u, v) in frame pixels, and the depth along the lens's axis in metres."""
+        dy = h - self.cam_h
+        yc = dy * self.cp + z * self.sp
+        zc = -dy * self.sp + z * self.cp
+        return COLS / 2 + F_PX * x / zc, ROWS / 2 - F_PX * yc / zc, zc
+
+    def canvas(self, x, h, z):
+        u, v, zc = self.project(x, h, z)
+        return u * SS, v * SS, zc
+
+    def down(self, x, h, z):
+        """How far below level the box looks to see (x, h, z), radians."""
+        return math.atan2(self.cam_h - h, math.hypot(x, z))
+
+    def half_width(self, z):
+        """Roughly half the floor's width in view at depth z, metres."""
+        return z * math.tan(math.radians(HFOV_DEG / 2)) / self.cp
+
+
+def _polygon(points):
+    """A filled polygon in canvas pixels, as (x0, y0, coverage), its edge softened like the other shapes."""
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    x0, y0 = int(max(0, math.floor(min(xs)))), int(max(0, math.floor(min(ys))))
+    x1, y1 = int(min(W, math.ceil(max(xs)) + 1)), int(min(H, math.ceil(max(ys)) + 1))
+    if x1 <= x0 or y1 <= y0:
+        return None
+    gx, gy = np.meshgrid(np.arange(x0, x1) + 0.5, np.arange(y0, y1) + 0.5)
+    inside = np.zeros(gx.shape, dtype=bool)
+    n = len(points)
+    for i in range(n):
+        ax, ay = points[i]
+        bx, by = points[(i + 1) % n]
+        inside ^= ((ay > gy) != (by > gy)) & (gx < (bx - ax) * (gy - ay) / ((by - ay) or 1e-9) + ax)
+    return x0, y0, gaussian_filter(inside.astype(np.float32), 0.6)
+
+
+def _level_rect(mount, x, z, h, w, d):
+    """A level rectangle w across and d deep, centred on (x, z) at height h: a table top, a seat."""
+    return _polygon([mount.canvas(x + dx, h, z + dz)[:2]
+                     for dx, dz in ((-w / 2, -d / 2), (w / 2, -d / 2), (w / 2, d / 2), (-w / 2, d / 2))])
+
+
+def _level_disc(mount, x, z, h, r):
+    """A level disc, a plate or a cup, which the box sees as an ellipse."""
+    return _polygon([mount.canvas(x + r * math.cos(a), h, z + r * math.sin(a))[:2]
+                     for a in np.linspace(0, 2 * math.pi, 16, endpoint=False)])
+
+
+def _dining_person(c, rng, amb, mount, x, z, pose, facing, pid):
+    """One person at floor position (x, z): pose 'sit' (in a chair), 'stand' or 'walk', facing the direction
+    `facing` (radians in the x, z plane). Drawn by person() on a scratch canvas, shortened top to bottom about the
+    head by cos(how steeply the box looks down), and laid over c with its owner. Returns person()'s head and torso
+    box, the torso shortened the same way, and the head's height in metres."""
+    h = rng.uniform(*(SEATED_HEAD_M if pose == 'sit' else STANDING_HEAD_M))
+    hx, hy, zc = mount.canvas(x, h, z)
+    # Which side of them the box sees: their face when they face the door, their back when they face away.
+    toward = math.cos(facing - math.atan2(-z, -x))
+    view = 'front' if toward > 0.5 else 'back' if toward < -0.5 else 'side'
+    scratch = Canvas(np.full((H, W), amb, dtype=np.float32))
+    head, (tx0, ty0, tx1, ty1) = person(scratch, rng, amb, zc, hx, hy, pid, view=view, pose=pose,
+                                        child=bool(rng.random() < 0.05), shirtless=False,
+                                        coat=bool(rng.random() < 0.06))
+    k = math.cos(mount.down(x, h, z))
+    torso = (tx0, hy + (ty0 - hy) * k, tx1, hy + (ty1 - hy) * k)
+    seat_v = None
+    if pose == 'sit':
+        # person() hangs a seated body's legs straight down, which from above reads as somebody standing. Seen from
+        # the ceiling a diner ends at the chair: below it is the chair and the floor, and the thighs run level
+        # toward the table, drawn here first so the body covers where they meet it. Seen from behind, the body
+        # hides them.
+        seat_v = mount.canvas(x, SEAT_M + 0.05, z)[1]
+        torso = (torso[0], torso[1], torso[2], min(torso[3], seat_v))
+        if view != 'back':
+            skin = min(36.5, 33.4 + 0.14 * (amb - 22.0))
+            pants = amb + (skin - amb) * rng.uniform(0.15, 0.55)
+            reach = rng.uniform(0.35, 0.45)
+            ax, ay, azc = mount.canvas(x, SEAT_M + 0.08, z)
+            bx, by, _ = mount.canvas(x + reach * math.cos(facing), SEAT_M + 0.08, z + reach * math.sin(facing))
+            c.paint(_union(*[capsule(ax + side * 0.07 * F_PX * SS / azc, ay, bx + side * 0.07 * F_PX * SS / azc, by,
+                                     0.065 * F_PX * SS / azc) for side in (-1, 1)]), pants, owner=pid)
+    own = scratch.owner == pid
+    ys, xs = np.nonzero(own)
+    if not len(ys):
+        return head, torso, h
+    r0 = int(max(0, math.floor(hy + (ys.min() - 1 - hy) * k)))
+    r1 = int(min(H, math.ceil(hy + (ys.max() + 2 - hy) * k) + 1))
+    if seat_v is not None:
+        r1 = int(min(r1, max(r0 + 1, math.ceil(seat_v))))
+    c0, c1 = int(max(0, xs.min() - 1)), int(min(W, xs.max() + 2))
+    if r1 <= r0 or c1 <= c0:
+        return head, torso, h
+    rows, cols = np.mgrid[r0:r1, c0:c1].astype(np.float32)
+    src = [hy + (rows - hy) / k, cols]
+    body = map_coordinates(scratch.t, src, order=1, mode='constant', cval=amb).astype(np.float32)
+    alpha = map_coordinates(own.astype(np.float32), src, order=1, mode='constant', cval=0.0)
+    alpha = np.clip(gaussian_filter(alpha, 0.5), 0.0, 1.0).astype(np.float32)
+    c.paint((c0, r0, alpha), None, owner=pid, field=body)
+    return head, torso, h
+
+
+def _dining_room(rng, mount):
+    """The empty room: floor, and the back wall where the view reaches it, near the room's temperature, with the
+    slow gradients and blotches room() gives. Returns (Canvas, amb, the back wall's depth in metres)."""
+    amb = rng.uniform(17.0, 28.0)
+    if rng.random() < 0.15:
+        amb = rng.uniform(28.0, 32.0)        # a packed summer night, the air conditioning losing
+    t = np.full((H, W), amb + rng.normal(-0.2, 0.4), dtype=np.float32)
+    back = rng.uniform(11.0, 16.0)
+    wall_v = mount.canvas(0.0, 0.0, back)[1]   # where the floor meets the back wall
+    yy = np.arange(H, dtype=np.float32)[:, None]
+    t += np.where(yy < wall_v, rng.normal(0.3, 0.6), 0.0).astype(np.float32)
+    gx, gy = rng.normal(0, 0.6, size=2)
+    t += gx * np.linspace(-1, 1, W, dtype=np.float32)[None, :] + gy * np.linspace(-1, 1, H, dtype=np.float32)[:, None]
+    low = gaussian_filter(rng.normal(0, 1, (H // 8, W // 8)).astype(np.float32), 2)
+    t += np.kron(low, np.ones((8, 8), dtype=np.float32)) * rng.uniform(0.1, 0.5)
+    c = Canvas(t)
+    if wall_v > 0 and rng.random() < 0.3:
+        # A window in the back wall, colder or warmer than the room with the weather.
+        c.paint(rect(rng.uniform(0.15, 0.85) * W, rng.uniform(0.2, 0.7) * wall_v, rng.uniform(30, 110),
+                     rng.uniform(0.2, 0.6) * wall_v), amb + rng.choice([-1, 1]) * rng.uniform(1.5, 5.0))
+    return c, amb, back
+
+
+def _dining_tables(rng, mount, back):
+    """Rows of tables from 1.5 m to 13 m (and short of the back wall), across the width in view and a little past
+    it, inside the room's side walls. Each is a dict: x, z, w, d (metres), its chairs' sides, its state ('empty', 'seated', or 'left' by a party
+    minutes ago) and the sides its party sat at."""
+    tables = []
+    z = rng.uniform(1.5, 2.6)
+    far = min(13.0, back - 1.2)
+    # A dining room 7 to 12 m wide, the door near the middle of one end: past a few metres in, its side walls and
+    # not the lens's edges bound the rows.
+    side = rng.uniform(3.5, 6.0)
+    while z <= far:
+        half = min(mount.half_width(z) + 0.6, side)
+        step = rng.uniform(1.7, 2.6)
+        x = -half + rng.uniform(0.0, step)
+        while x < half:
+            if rng.random() < 0.88:              # now and then a gap: an aisle, a pillar
+                if rng.random() < 0.4:
+                    w = d = rng.uniform(0.6, 0.72)
+                    sides = ('far', 'near') if rng.random() < 0.7 else ('left', 'right')
+                else:
+                    w, d = rng.uniform(0.75, 0.95), rng.uniform(0.75, 0.9)
+                    sides = ('far', 'near', 'left', 'right')
+                tables.append({'x': x + rng.normal(0, 0.12), 'z': z + rng.normal(0, 0.12), 'w': w, 'd': d,
+                               'sides': sides})
+            x += step
+        z += rng.uniform(1.7, 2.6)
+    for tb in tables:
+        r = rng.random()
+        tb['state'] = 'empty' if r < 0.3 else 'seated' if r < 0.85 else 'left'
+        n = len(tb['sides'])
+        if tb['state'] == 'empty':
+            tb['party'] = ()
+        else:
+            size = int(rng.integers(1, n + 1))
+            tb['party'] = tuple(tb['sides'][i] for i in sorted(rng.choice(n, size, replace=False)))
+    return tables
+
+
+def scene_dining(rng, warm_seats=True, detail=None):
+    """One frame of a restaurant's dining room, as the box over the door sees it.
+
+    Returns (celsius [ROWS, COLS] float32, objects), labelled as scene_full labels: every person whose head shows
+    at the head, any other whose body clearly shows at the middle of it, plates of hot food ('food'), hot drinks
+    ('hot drink'), the seats a party just left ('warm seat'), a heat lamp at the pass ('lamp') and a radiator
+    ('heater'). Each person also carries 'pose' and 'posture' (POSTURE_OF). warm_seats: draw the seats a party just
+    left, as contact heat. detail, a dict or None: filled with the mount, the tables and every person drawn (pid, x,
+    z, head height, pose), for tests and figures; it changes nothing that is drawn.
+    """
+    mount = Mount(rng.uniform(2.7, 3.3), math.radians(rng.uniform(25.0, 35.0)))
+    c, amb, back = _dining_room(rng, mount)
+    tables = _dining_tables(rng, mount, back)
+    things = {}
+    next_id = [OBJECT_ID0]
+
+    def new_id(cls):
+        oid = next_id[0]
+        next_id[0] += 1
+        if cls is not None:
+            things[oid] = cls
+        return oid
+
+    # Everything is queued with its depth z and drawn far to near, so nearer things cover what is behind them: a
+    # diner on the far side of a table is drawn before its top, one on the near side after it.
+    jobs = []
+    people = []                 # (pid, x, z, pose, facing)
+    for tb in tables:
+        tx, tz, w, d = tb['x'], tb['z'], tb['w'], tb['d']
+        for side in tb['sides']:
+            ux, uz = DINING_SIDES[side]
+            off = (w if ux else d) / 2 + 0.22
+            cx, cz = tx + ux * off, tz + uz * off
+            chair = amb + rng.normal(-0.4, 0.3)
+            jobs.append((cz + 0.06, lambda cx=cx, cz=cz, chair=chair:
+                         c.paint(_level_rect(mount, cx, cz, SEAT_M, 0.42, 0.42), chair)))
+            if tb['state'] == 'left' and side in tb['party'] and warm_seats:
+                sx, sy, szc = mount.canvas(cx, SEAT_M, cz)
+                parts = (('seat', 'back'), ('seat',))[int(rng.integers(2))]
+                age = rng.uniform(0.0, 300.0)
+                oid = new_id('warm seat')
+                jobs.append((cz + 0.05, lambda sx=sx, sy=sy, szc=szc, parts=parts, age=age, oid=oid:
+                             contact_heat(c, rng, amb, sx, sy, F_PX * SS / szc, oid, parts=parts, age=age)))
+            if tb['state'] == 'seated' and side in tb['party']:
+                # In the chair, leaning a little toward the table. Most face it; some turn. Now and then one is on
+                # their feet at their own chair: getting up, or putting a coat on.
+                px, pz = tx + ux * (off - 0.12), tz + uz * (off - 0.12)
+                facing = math.atan2(-uz, -ux) + rng.normal(0, 0.35)
+                pose = 'stand' if rng.random() < 0.05 else 'sit'
+                people.append((len(people), px, pz, pose, facing))
+        top = amb + rng.normal(-0.6, 0.4)
+        jobs.append((tz, lambda tx=tx, tz=tz, w=w, d=d, top=top:
+                     c.paint(_level_rect(mount, tx, tz, TABLE_TOP_M, w, d), top)))
+        # On the table: a plate and maybe a cup before each diner, or plates going cold where a party left.
+        for side in tb['party']:
+            ux, uz = DINING_SIDES[side]
+            reach = (w if ux else d) / 2 - 0.16
+            bx, bz = tx + ux * reach + rng.normal(0, 0.05), tz + uz * reach + rng.normal(0, 0.05)
+            if tb['state'] == 'seated' and rng.random() < 0.7:
+                hot = rng.random() < 0.75
+                temp = rng.uniform(38.0, 62.0) if hot else amb + rng.uniform(1.0, 6.0)
+                oid = new_id('food') if hot else -1
+                r = rng.uniform(0.1, 0.14)
+                jobs.append((tz - 0.001, lambda bx=bx, bz=bz, temp=temp, oid=oid, r=r:
+                             c.paint(_level_disc(mount, bx, bz, TABLE_TOP_M + 0.01, r), temp, owner=oid)))
+            elif tb['state'] == 'left' and rng.random() < 0.5:
+                temp = amb + rng.uniform(0.5, 5.0)
+                jobs.append((tz - 0.001, lambda bx=bx, bz=bz, temp=temp:
+                             c.paint(_level_disc(mount, bx, bz, TABLE_TOP_M + 0.01, 0.12), temp)))
+            if tb['state'] != 'seated':
+                continue
+            qx, qz = bx + rng.choice([-1, 1]) * 0.15, bz + rng.normal(0, 0.05)
+            if rng.random() < 0.35:
+                temp = rng.uniform(45.0, 70.0)
+                oid = new_id('hot drink')
+                jobs.append((tz - 0.002, lambda qx=qx, qz=qz, temp=temp, oid=oid:
+                             c.paint(_level_disc(mount, qx, qz, TABLE_TOP_M + 0.1, 0.04), temp, owner=oid)))
+            elif rng.random() < 0.4:
+                # A glass of ice water, cooler than the room. Not a thing the box names.
+                temp = amb - rng.uniform(2.0, 8.0)
+                jobs.append((tz - 0.002, lambda qx=qx, qz=qz, temp=temp:
+                             c.paint(_level_disc(mount, qx, qz, TABLE_TOP_M + 0.08, 0.035), temp)))
+    # People on their feet: in the aisles, walking or standing, and now and then stopped at an occupied table (a
+    # server, or a friend dropping by), which is what TableTracker calls a visit.
+    seated_tables = [tb for tb in tables if tb['state'] == 'seated']
+    for _ in range(int(rng.integers(0, 5))):
+        if seated_tables and rng.random() < 0.4:
+            tb = seated_tables[int(rng.integers(len(seated_tables)))]
+            free = [s for s in DINING_SIDES if s not in tb['party']] or list(DINING_SIDES)
+            ux, uz = DINING_SIDES[free[int(rng.integers(len(free)))]]
+            off = (tb['w'] if ux else tb['d']) / 2 + rng.uniform(0.35, 0.6)
+            px, pz = tb['x'] + ux * off, tb['z'] + uz * off
+            facing = math.atan2(-uz, -ux) + rng.normal(0, 0.3)
+            pose = 'stand'
+        else:
+            pz = rng.uniform(1.2, min(12.5, back - 0.8))
+            px = rng.uniform(-1.0, 1.0) * mount.half_width(pz)
+            facing = rng.uniform(-math.pi, math.pi)
+            pose = 'walk' if rng.random() < 0.6 else 'stand'
+        people.append((len(people), px, pz, pose, facing))
+    heads = {}
+    for pid, px, pz, pose, facing in people:
+        def draw(pid=pid, px=px, pz=pz, pose=pose, facing=facing):
+            heads[pid] = _dining_person(c, rng, amb, mount, px, pz, pose, facing, pid)
+        jobs.append((pz, draw))
+    # On the back wall: a heat lamp over the pass now and then, a radiator.
+    wall_v = mount.canvas(0.0, 0.0, back)[1]
+    if wall_v > 8 and rng.random() < 0.15:
+        lx, ly = rng.uniform(0.1, 0.9) * W, rng.uniform(0.2, 0.8) * wall_v
+        t = rng.uniform(55.0, 120.0)
+        oid = new_id('lamp')
+
+        def lamp(lx=lx, ly=ly, t=t, oid=oid):
+            c.paint(ellipse(lx, ly, 5.0, 3.0), amb + (t - amb) * 0.25, owner=oid)
+            c.paint(ellipse(lx, ly, 2.5, 1.5), t, owner=oid)
+        jobs.append((back, lamp))
+    if wall_v > 8 and rng.random() < 0.15:
+        rx, ry = rng.uniform(0.1, 0.9) * W, wall_v - rng.uniform(2.0, 6.0)
+        t = rng.uniform(35.0, 60.0)
+        oid = new_id('heater')
+
+        def radiator(rx=rx, ry=ry, t=t, oid=oid):
+            for i in range(8):
+                c.paint(rect(rx - 12 + i * 3.0, ry, 1.6, 6.0), t, owner=oid)
+        jobs.append((back, radiator))
+    # Far first; ties keep the order they were queued in (sorted is stable).
+    for i in sorted(range(len(jobs)), key=lambda i: -jobs[i][0]):
+        jobs[i][1]()
+    visible = [(pid, heads[pid][0], heads[pid][1]) for pid, *_ in people]
+    if rng.random() < 0.3:
+        visible = _crooked(c, visible, rng.normal(0, 2.0))
+    t = _sensor(c.t, rng)
+    objects = _labels(c, visible, things, poses={pid: pose for pid, _, _, pose, _ in people})
+    if detail is not None:
+        detail.update(mount=mount, amb=amb, back=back, tables=tables,
+                      people=[(pid, px, pz, heads[pid][2], pose) for pid, px, pz, pose, _ in people])
+    return t, objects
 
 
 def scene(rng):
@@ -842,7 +1199,7 @@ def density(objects, stride=4, sigma=1.5):
     return out
 
 
-def targets(objects, stride=4, person_sigma_px=None):
+def targets(objects, stride=4, person_sigma_px=None, posture=False):
     """Training targets for owl-2 on the model's 30x40 grid.
 
     heat [len(CLASSES), 30, 40]: a Gaussian peak of 1 at each object's point,
@@ -851,11 +1208,20 @@ def targets(objects, stride=4, person_sigma_px=None):
     distance from the point to the left, top, right and bottom of its box, in
     grid cells, which is how a box is drawn round a person whose point is the
     head and not the middle.
+
+    posture (2026-10-27) is off by default, and off, the return is exactly what it always was. On, two more come
+    back: post [len(POSTURES), 30, 40], each person's own peak (the same Gaussian as on the people map) on the map
+    of their posture, sitting or standing; and post_known, a float32 scalar, 1 when every person in the frame has a
+    posture label and 0 when any lacks one (a real frame, or scene_full's), so a loss grades the posture maps only
+    where they are fully labelled. No model reads them yet; training/POSTURE-PLAN.md is the proposal.
     """
     gh, gw = ROWS // stride, COLS // stride
     heat = np.zeros((len(CLASSES), gh, gw), dtype=np.float32)
     ltrb = np.zeros((4, gh, gw), dtype=np.float32)
     mask = np.zeros((gh, gw), dtype=np.float32)
+    if posture:
+        post = np.zeros((len(POSTURES), gh, gw), dtype=np.float32)
+        labelled = True
     ys, xs = np.mgrid[0:gh, 0:gw].astype(np.float32)
     for o in objects:
         k = CLASSES.index(o['cls'])
@@ -870,6 +1236,14 @@ def targets(objects, stride=4, person_sigma_px=None):
         g = np.exp(-((xs - cx) ** 2 + (ys - cy) ** 2) / (2 * sigma * sigma))
         heat[k] = np.maximum(heat[k], g)
         ix, iy = int(round(cx)), int(round(cy))
+        if posture and k == 0:
+            p = POSTURES.index(o['posture']) if o.get('posture') in POSTURES else None
+            if p is None:
+                labelled = False
+            else:
+                post[p] = np.maximum(post[p], g)
+                if 0 <= ix < gw and 0 <= iy < gh:
+                    post[p, iy, ix] = 1.0
         if 0 <= ix < gw and 0 <= iy < gh:
             heat[k, iy, ix] = 1.0
             px, py = (ix + 0.5) * stride, (iy + 0.5) * stride
@@ -877,4 +1251,6 @@ def targets(objects, stride=4, person_sigma_px=None):
                                max(0.0, x1 - px), max(0.0, y1 - py)]
             ltrb[:, iy, ix] /= stride
             mask[iy, ix] = 1.0
-    return heat, ltrb, mask
+    if not posture:
+        return heat, ltrb, mask
+    return heat, ltrb, mask, post, np.float32(1.0 if labelled else 0.0)
