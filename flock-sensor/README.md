@@ -164,9 +164,12 @@ worked out on the device:
 - The microphone's samples become one RMS number every half second and are
   discarded. No audio is recorded, buffered or sent. You cannot recover speech
   from a loudness level.
-- There is **no camera, no MAC-address collection, no wifi or Bluetooth probe
-  sniffing, no phone detection of any kind.** Nothing that could distinguish
-  one person from another is captured.
+- There is **no camera that sees people, no MAC-address collection, no wifi
+  or Bluetooth probe sniffing, no phone detection of any kind.** Nothing that
+  could distinguish one person from another is captured. The one camera in the
+  code, the table camera, is off, on no unit, and built so that it can only
+  look where the heat camera has just seen nobody: see "The table camera"
+  below.
 - No user account, device token or identifier is involved. The backend derives
   the venue from the device row; the Pi does not know or send who is present.
 
@@ -198,6 +201,77 @@ the beam and the VL53L8CX's 64 distances, and a test pins that grid to
 against the running unit rather than against this file.
 
 ---
+
+## The table camera (built, off, on no unit)
+
+This section is the argument the paragraph above asks for, written before the
+camera ships. **`TABLE_CAMERA` defaults to 0, and it stays 0 on every unit
+until the privacy policy describes the camera in words the owner of this
+project has approved.**
+
+**Why a camera at all.** The heat camera does everything about people:
+counting them, splitting them by table, timing each party, and learning where
+the tables are from where people sit (`TableTracker`, `TableLearner`). Three
+things are out of its reach. A cooled plate is the temperature of the table,
+so heat cannot tell "the party left and the dishes are still there" from "the
+table has been cleared". An empty chair is invisible, so heat cannot count
+seats. And a table nobody has sat at yet has no heat history, so heat cannot
+find it. A small colour camera can do all three, and only needs to look at
+empty tables to do it.
+
+**What it is.** A 16-megapixel USB camera (Arducam IMX519, UVC, no
+microphone) beside the Lepton, aimed with it, behind a printed flap that a
+servo opens only during a look. The code is `tablecam.py`, kept out of
+`main.py` so the camera cannot be reached from the counting path except
+through `table_camera_loop`, which starts only when `TABLE_CAMERA=1`.
+
+**The rules, every one enforced in `tablecam.py` and pinned in
+`test_tablecam.py`:**
+
+1. *The heat camera is the gate.* A look at the whole room happens only when
+   the heat camera's latest reading, under 3 seconds old, has nobody in view at
+   all, and the room has been empty for ten minutes; at most once a day. A
+   look at one table happens only when that table has been waiting to be
+   cleared for 20 seconds and nobody is inside its zone or within 9 thermal
+   pixels of it. Without the gate the camera is never asked for a frame and the
+   shutter never opens.
+2. *Crop first.* A table check asks the camera for that table's rectangle
+   only. A camera that cannot crop at the source has its frame cropped before
+   anything else touches it.
+3. *Black out the warm.* Every pixel the heat camera reads as 2.5 C or more
+   over the room is painted black in the colour picture before the detector
+   sees it. Someone the gate missed is a black shape. A warm thing on a table
+   (a hot plate) counts as dishes, so blacking it out can never clear a table
+   wrongly.
+4. *Drop on a person.* If the detector still finds a person, the picture is
+   dropped, nothing about it is kept, and that table, or the room look, waits
+   two minutes.
+5. *Nothing is kept.* A picture lives in a local variable for one check. It
+   is never written, shown or sent. A table check comes out as "dishes" or
+   "clear"; a room look as table outlines and chair counts written to the
+   zones file (`"source": "camera"`). The module has no way to write an image
+   and no network code, and a test checks both.
+6. *The shutter* is opened by the same function that takes the picture and
+   shut in a `finally`, so it shuts even when the camera fails.
+
+**What leaves the box** does not change in kind: a table the camera cleared
+reads free, and a table whose chairs were counted gets a fifth field in its
+`tables` entry, the number of chairs. To line the cameras up, `tablecam.Mapping`
+starts from the two lenses' fields of view and is refined from matched points,
+such as a hot mug both can see, saved as a homography in
+`/var/lib/flock-sensor/tablecam-mapping.json`.
+
+**The detector** is RT-DETRv2-R50 (Apache-2.0, trained on COCO), run with
+onnxruntime from `models/tables_detector.onnx`, which is not in this repository
+(172 MB); see the training folder's notes. On a rendered empty dining room
+(`fixtures/empty_room.png`, drawn for the test, no real place or person) it
+finds all 8 tables and 26 of the 32 chairs. COCO has no plate class; cups,
+bowls, glasses, bottles and cutlery count as dishes until one is added.
+
+**Not done yet:** the USB capture itself (`UvcCamera` says so), the servo
+driver for the flap, measuring a check's time on the Pi, and any test on a
+real ceiling camera. Plugging the camera in means writing `UvcCamera.capture`
+and nothing else.
 
 ## Hardware
 

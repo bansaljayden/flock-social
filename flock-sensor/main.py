@@ -68,7 +68,7 @@ try:
 except ImportError:  # pragma: no cover
     fcntl = None
 
-VERSION = '1.25.0'
+VERSION = '1.26.0'
 
 # The Pi 5's GPIO library (rpi-lgpio, under RPi.GPIO) makes a small file in
 # the working directory before it will drive a pin, and the service runs in
@@ -337,6 +337,14 @@ TABLES_LEARN = bool(_cfg_number('TABLES_LEARN', int, 0, 1, 0))
 # The first table number this box gives a learned table. A venue with two
 # boxes starts the second after the first's last table, so no two share one.
 TABLE_NUMBER_START = _cfg_number('TABLE_NUMBER_START', int, 1, 200, 1)
+# The table camera (tablecam.py): off unless a person turns it on, and on no
+# unit until the privacy policy describes it. See the README's "The table
+# camera" for what it may and may not do.
+TABLE_CAMERA = bool(_cfg_number('TABLE_CAMERA', int, 0, 1, 0))
+TABLE_CAMERA_DEVICE = (CONFIG.get('TABLE_CAMERA_DEVICE') or '/dev/video2').strip()
+TABLE_CAMERA_MAPPING = Path(os.environ.get('FLOCK_TABLE_CAMERA_MAPPING')
+                            or ('/var/lib/flock-sensor/tablecam-mapping.json' if _INSTALLED
+                                else '/home/pi/flock_tablecam_mapping.json'))
 IR_GPIO_PIN = _cfg_number('IR_GPIO_PIN', int, 2, 27, 17)
 DOOR_SENSOR = (CONFIG.get('DOOR_SENSOR') or 'auto').strip().lower()
 if DOOR_SENSOR not in ('auto', 'tof', 'beam', 'off'):
@@ -2093,6 +2101,8 @@ def thermal_loop():
                     if _table_learner is not None:
                         _table_learner.observe(time.monotonic(), points)
                         _table_learner.maybe_write(time.monotonic())
+                    if TABLE_CAMERA:
+                        _latest_heat.update(points, frame, time.monotonic())
                 if _study is not None:
                     _study.frame(int(frame_count), published, counter, infer_ms,
                                  tag if counter == 'model' else 'rule')
@@ -3068,7 +3078,14 @@ def load_table_zones(path):
             if 0 <= sx < THERMAL_COLS and 0 <= sy < THERMAL_ROWS:
                 seats.append((sx, sy))
         seen.add(n)
-        zones.append({'n': n, 'box': (x0, y0, x1, y1), 'seats': tuple(seats)})
+        zone = {'n': n, 'box': (x0, y0, x1, y1), 'seats': tuple(seats)}
+        try:
+            chairs = int(item.get('chairs') or 0)
+        except (TypeError, ValueError):
+            chairs = 0
+        if 1 <= chairs <= 30:
+            zone['chairs'] = chairs
+        zones.append(zone)
     return sorted(zones, key=lambda z: z['n'])
 
 
@@ -3142,9 +3159,11 @@ class TableTracker:
             seats = tuple(tuple(p) for p in z.get('seats') or ())
             if old is not None and old['box'] == tuple(z['box']):
                 old['seats'] = seats
+                old['chairs'] = z.get('chairs')
                 fresh[z['n']] = old
             else:
-                fresh[z['n']] = {'box': tuple(z['box']), 'seats': seats, 'state': 'f', 'since': now,
+                fresh[z['n']] = {'box': tuple(z['box']), 'seats': seats, 'chairs': z.get('chairs'),
+                                 'state': 'f', 'since': now,
                                  'arrival': None, 'present_since': None, 'empty_since': None,
                                  'extra_since': None, 'visited': False,
                                  'window': deque(), 'people': 0}
@@ -3234,6 +3253,22 @@ class TableTracker:
         if t['state'] == 's' and not t['visited'] and now - t['arrival'] >= self.wait_after:
             t['state'] = 'w'
 
+    def cleared(self, n, now):
+        """The table camera found table n clear of dishes: a table waiting
+        to be cleared is free from now. Any other state is left alone."""
+        with self._lock:
+            t = self.tables.get(n)
+            if t is None or t['state'] != 'c':
+                return False
+            t.update(state='f', since=now, present_since=None)
+            return True
+
+    def waiting_to_clear(self, now, after=20.0):
+        """[(n, zone box)] of tables needing clearing for `after` seconds."""
+        with self._lock:
+            return [(n, t['box']) for n, t in sorted(self.tables.items())
+                    if t['state'] == 'c' and t['since'] is not None and now - t['since'] >= after]
+
     def view(self, now):
         """[(n, people, state, seconds in it)], or [] with no tables or no
         recent frames. For seated and waiting the seconds run from arrival."""
@@ -3250,11 +3285,14 @@ class TableTracker:
         rows = self.view(now)
         if not rows:
             return None
+        with self._lock:
+            chairs = {n: t.get('chairs') for n, t in self.tables.items()}
         # Whole entries only, up to MAX_CHARS: a cut entry would make the
-        # server drop the lot.
+        # server drop the lot. A fifth field, the chairs at the table, only
+        # when the table camera has counted them.
         out, size = [], 0
         for n, p, s, a in rows:
-            entry = f'{n}:{p}:{s}:{a}'
+            entry = f'{n}:{p}:{s}:{a}' + (f':{chairs[n]}' if chairs.get(n) else '')
             if size + len(entry) + (1 if out else 0) > self.MAX_CHARS:
                 break
             out.append(entry)
@@ -3604,6 +3642,74 @@ class TableLearner:
 
 _tables = TableTracker.from_file(TABLES_PATH)
 _table_learner = TableLearner(TABLES_PATH) if TABLES_LEARN else None
+
+
+class _LatestHeat:
+    """The newest thermal reading, for the table camera's gate and black-out
+    only: one frame in memory, replaced by the next, never written. Filled
+    only when TABLE_CAMERA is on."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.points, self.frame, self.at = [], None, None
+
+    def update(self, points, frame, at):
+        with self._lock:
+            self.points, self.frame, self.at = list(points), frame, at
+
+    def get(self):
+        with self._lock:
+            return self.points, self.frame, self.at
+
+
+_latest_heat = _LatestHeat()
+TABLE_CAMERA_EVERY = 10.0           # seconds between looks for tables to check
+TABLE_ROOM_LOOK_EVERY = 24 * 3600.0
+TABLE_ROOM_EMPTY_FOR = 600.0        # the room empty this long before a room look
+
+
+def table_camera_loop():
+    """Check tables waiting to be cleared, and once a day find the tables
+    in the empty room. Every rule lives in tablecam.TableCamera."""
+    import tablecam
+    here = Path(__file__).resolve().parent
+    model = here / 'models' / 'tables_detector.onnx'
+    classes = here / 'models' / 'tables_detector.classes.json'
+    if not model.exists() or not classes.exists():
+        logger.error(f'Table camera: no detector at {model}; it stays off')
+        return
+    try:
+        mapping = tablecam.Mapping.from_json(json.loads(TABLE_CAMERA_MAPPING.read_text(encoding='utf-8')))
+    except (OSError, ValueError, KeyError):
+        mapping = tablecam.Mapping.factory(4656, 3496, 65.0, 51.0)
+        logger.warning('Table camera: no lined-up mapping yet; using the factory one')
+    camera = tablecam.TableCamera(tablecam.UvcCamera(TABLE_CAMERA_DEVICE),
+                                  tablecam.OnnxDetector(model, classes), mapping)
+    empty_since, last_room_look = None, None
+    while not _stop.wait(TABLE_CAMERA_EVERY):
+        now = time.monotonic()
+        points, frame, at = _latest_heat.get()
+        if frame is None:
+            continue
+        age = now - at
+        empty_since = (empty_since or now) if not points else None
+        try:
+            if (empty_since is not None and now - empty_since >= TABLE_ROOM_EMPTY_FOR
+                    and (last_room_look is None or now - last_room_look >= TABLE_ROOM_LOOK_EVERY)):
+                last_room_look = now
+                found = camera.look_room(points, frame, age, now)
+                if found:
+                    tablecam.write_zones(TABLES_PATH, found, load_table_zones(TABLES_PATH),
+                                         number_start=TABLE_NUMBER_START, number_max=TABLE_NUMBER_MAX)
+                    logger.info(f'Table camera: found {len(found)} table(s) in the empty room')
+            for n, box in _tables.waiting_to_clear(now):
+                if camera.check_table(n, box, points, frame, age, now) == 'clear':
+                    _tables.cleared(n, now)
+                    logger.info(f'Table camera: table {n} is clear')
+        except NotImplementedError as e:
+            log_throttled('table_camera', logging.WARNING, f'Table camera: {e}', every_seconds=3600)
+        except Exception as e:
+            log_throttled('table_camera', logging.WARNING, f'Table camera check failed: {e}')
 
 
 def snapshot():
@@ -7774,6 +7880,8 @@ def main():
 
     push_thread = threading.Thread(target=push_loop, daemon=True, name='push')
     push_thread.start()
+    if TABLE_CAMERA:
+        threading.Thread(target=table_camera_loop, daemon=True, name='table-camera').start()
     if LED_POWER_GPIO >= 2 or LED_LINK_GPIO >= 2:
         threading.Thread(target=led_loop, daemon=True, name='leds').start()
 

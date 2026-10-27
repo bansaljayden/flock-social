@@ -4940,6 +4940,32 @@ class TablesLearnedFromHeat(unittest.TestCase):
         finally:
             main.PUSH_INTERVAL, main._tables = saved_interval, saved_tables
 
+    def test_chairs_from_the_camera_ride_as_the_fifth_field(self):
+        path = Path(_TMP) / 'zones-chairs.json'
+        path.write_text(json.dumps({'source': 'camera', 'tables': [
+            {'n': 1, 'x0': 40, 'y0': 40, 'x1': 60, 'y1': 60, 'chairs': 4},
+            {'n': 2, 'x0': 100, 'y0': 40, 'x1': 120, 'y1': 60, 'chairs': 99}]}), encoding='utf-8')
+        zones = main.load_table_zones(path)
+        self.assertEqual(zones[0]['chairs'], 4)
+        self.assertNotIn('chairs', zones[1])
+        t = main.TableTracker(zones)
+        t.update(0, [])
+        self.assertEqual(t.payload(10), '1:0:f:10:4;2:0:f:10')
+
+    def test_a_clear_dish_check_frees_a_table_waiting_to_be_cleared(self):
+        t = main.TableTracker(_ZONE)
+        now = _run(t, 0, 200, [_AT])
+        now = _run(t, now, 100, [])
+        self.assertEqual({n: s for n, p, s, a in t.view(now)}[1], 'c')
+        self.assertEqual(t.waiting_to_clear(now), [(1, _ZONE[0]['box'])])
+        self.assertTrue(t.cleared(1, now))
+        self.assertEqual({n: s for n, p, s, a in t.view(now)}[1], 'f')
+        self.assertFalse(t.cleared(1, now))
+
+    def test_the_table_camera_is_off_unless_the_box_is_told(self):
+        self.assertFalse(main.TABLE_CAMERA)
+        self.assertEqual(main._latest_heat.get(), ([], None, None))
+
     def test_only_minutes_per_spot_are_kept(self):
         learner = main.TableLearner()
         _evening(learner, [(_A, 0, 30)], 40)
