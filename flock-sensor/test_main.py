@@ -4738,6 +4738,48 @@ class TablesAtTheVenue(unittest.TestCase):
         finally:
             main._tables = saved
 
+    def test_every_camera_look_is_kept_on_the_unit_and_sent_once(self):
+        folder = Path(tempfile.mkdtemp(dir=_TMP))
+        wall = [1793000000.0]                                  # 2026-10-26
+        looks = main.CameraLooks(folder, wall=lambda: wall[0])
+        looks.record('table', 4, 'clear')
+        looks.record('room', None, 'found', 8)
+        rows = (folder / 'camera-looks-2026-10-26.csv').read_text(encoding='utf-8').splitlines()
+        self.assertEqual(rows[0], 'wall_utc,clock_ok,look,table,result,found')
+        self.assertEqual([r.split(',')[2:] for r in rows[1:]], [['table', '4', 'clear', ''],
+                                                               ['room', '', 'found', '8']])
+        sent = looks.take()
+        self.assertEqual([(e['look'], e['table'], e['result']) for e in sent],
+                         [('table', 4, 'clear'), ('room', None, 'found')])
+        self.assertEqual(sent[1]['found'], 8)
+        self.assertTrue(sent[0]['at'].startswith('2026-10-26T'))
+        self.assertEqual(looks.take(), [])                     # sent once, not again
+
+    def test_camera_looks_wait_their_turn_and_old_days_are_deleted(self):
+        folder = Path(tempfile.mkdtemp(dir=_TMP))
+        old = folder / 'camera-looks-2026-01-01.csv'
+        old.write_text('x', encoding='utf-8')
+        looks = main.CameraLooks(folder, wall=lambda: 1793000000.0)
+        for n in range(main.CameraLooks.PAYLOAD_MAX + 5):
+            looks.record('table', 1, 'clear')
+        self.assertFalse(old.exists())
+        self.assertEqual(len(looks.take()), main.CameraLooks.PAYLOAD_MAX)
+        self.assertEqual(len(looks.take()), 5)
+
+    def test_camera_looks_ride_in_the_reading(self):
+        saved = main._camera_looks
+        try:
+            main._camera_looks = main.CameraLooks(Path(tempfile.mkdtemp(dir=_TMP)))
+            self.assertNotIn('camera_looks', main.snapshot())
+            main._camera_looks.record('table', 2, 'dishes')
+            payload = main.snapshot()
+            self.assertEqual([(e['look'], e['table'], e['result']) for e in payload['camera_looks']],
+                             [('table', 2, 'dishes')])
+            json.dumps(payload)
+            self.assertNotIn('camera_looks', main.snapshot())
+        finally:
+            main._camera_looks = saved
+
     def test_zones_file_is_checked(self):
         path = Path(_TMP) / 'zones-check.json'
         path.write_text(json.dumps({'tables': [

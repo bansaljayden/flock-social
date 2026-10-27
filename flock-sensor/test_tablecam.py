@@ -274,6 +274,58 @@ class NothingIsKept(unittest.TestCase):
         self.assertEqual(len(writers), 1)
 
 
+class EveryLookIsOnTheRecord(unittest.TestCase):
+
+    def _camera(self, answer=(), source=None):
+        log = []
+        cam, src, det, shutter = camera(answer=answer)
+        if source is not None:
+            cam.source = source
+        cam.on_look = lambda *entry: log.append(entry)
+        return cam, log, shutter
+
+    def test_each_kind_of_ending_is_recorded(self):
+        cam, log, shutter = self._camera(answer=[('cup', 0.7, 40, 40, 60, 60)])
+        cam.check_table(3, ZONE, [], thermal(), 0.5, now=0)
+        self.assertEqual(log, [('table', 3, 'dishes', None)])
+        cam.detector.answer = []
+        cam.check_table(4, ZONE, [], thermal(), 0.5, now=1)
+        cam.detector.answer = [('person', 0.9, 210, 210, 260, 290)]
+        cam.check_table(5, ZONE, [], thermal(), 0.5, now=2)
+        cam.detector.answer = [('dining table', 0.9, 200, 200, 300, 300)]
+        cam.look_room([], thermal(), 0.5, now=3)
+        self.assertEqual(log[1:], [('table', 4, 'clear', None), ('table', 5, 'person', None),
+                                   ('room', None, 'found', 1)])
+
+    def test_one_record_per_time_the_shutter_opened(self):
+        cam, log, shutter = self._camera()
+        cam.check_table(1, ZONE, [(50.0, 50.0)], thermal(), 0.5, now=0)     # gated: no look
+        cam.look_room([(10.0, 10.0)], thermal(), 0.5, now=0)               # gated: no look
+        cam.check_table(1, ZONE, [], thermal(), 0.5, now=1)
+        cam.look_room([], thermal(), 0.5, now=2)
+        self.assertEqual(len(log), shutter.opened)
+        self.assertEqual(len(log), 2)
+
+    def test_a_failed_look_is_recorded_too(self):
+        class Broken(tc.StandInCamera):
+            def capture(self, region=None):
+                raise OSError('unplugged')
+        cam, log, shutter = self._camera(source=Broken(np.zeros((H, W, 3), np.uint8)))
+        with self.assertRaises(OSError):
+            cam.check_table(2, ZONE, [], thermal(), 0.5, now=0)
+        with self.assertRaises(OSError):
+            cam.look_room([], thermal(), 0.5, now=0)
+        self.assertEqual(log, [('table', 2, 'failed', None), ('room', None, 'failed', None)])
+
+    def test_the_record_never_holds_a_picture(self):
+        cam, log, shutter = self._camera(answer=[('cup', 0.7, 40, 40, 60, 60)])
+        cam.check_table(1, ZONE, [], thermal(), 0.5, now=0)
+        cam.look_room([], thermal(), 0.5, now=1)
+        for entry in log:
+            for value in entry:
+                self.assertIsInstance(value, (str, int, type(None)))
+
+
 class TheUsbCamera(unittest.TestCase):
 
     def test_a_table_check_is_cropped_inside_ffmpeg_and_read_from_a_pipe(self):

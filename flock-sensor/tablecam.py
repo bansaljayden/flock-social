@@ -26,6 +26,11 @@ code, and pinned by test_tablecam.py:
    no for dishes, or table outlines and chair counts for the zones file.
 6. A shutter covers the lens except during a check, opened by peek() and
    shut in a finally, so it shuts even when the check fails.
+7. Every look is on the record. Each time the shutter opens, on_look is
+   told when, what kind of look (the room or one table), and how it ended:
+   tables found, clear, dishes, dropped for a person, or failed. Never the
+   picture. The unit keeps that record and sends it to the venue's
+   dashboard, so the venue can see exactly how often its camera looked.
 """
 import json
 import math
@@ -394,14 +399,19 @@ class TableCamera:
     """One camera, its shutter, its detector, and the mapping to the heat
     camera, with every rule in the module docstring applied to every look."""
 
-    def __init__(self, source, detector, mapping, shutter=None, clock=None):
+    def __init__(self, source, detector, mapping, shutter=None, clock=None, on_look=None):
         self.source = source
         self.detector = detector
         self.mapping = mapping
         self.shutter = shutter or Shutter()
         self.clock = clock
+        self.on_look = on_look      # (look, table, result, found) for every look; rule 7
         self.backoff = {}           # 'room' or a table number -> no look before this time
         self.dropped = 0
+
+    def _looked(self, look, table, result, found=None):
+        if self.on_look is not None:
+            self.on_look(look, table, result, found)
 
     def _peek(self, region):
         """Open the shutter, take one picture, shut it whatever happens."""
@@ -430,13 +440,18 @@ class TableCamera:
         allowed or was dropped."""
         if now < self.backoff.get('room', -1.0) or not room_clear(points, reading_age):
             return None
-        picture = self._peek(None)
         try:
-            black_out(picture, frame, self.mapping)
-            found = self.detector.detect(picture)
-        finally:
-            del picture
+            picture = self._peek(None)
+            try:
+                black_out(picture, frame, self.mapping)
+                found = self.detector.detect(picture)
+            finally:
+                del picture
+        except Exception:
+            self._looked('room', None, 'failed')
+            raise
         if self._person(found, 'room', now):
+            self._looked('room', None, 'person')
             return None
         tables = _best_of_overlaps([d for d in found if d[0] in TABLE_CLASSES and d[1] >= SCORE])
         chairs = _best_of_overlaps([d for d in found if d[0] in CHAIR_CLASSES and d[1] >= SCORE])
@@ -449,6 +464,7 @@ class TableCamera:
                        min(float(THERMAL_COLS), thermal[2]), min(float(THERMAL_ROWS), thermal[3]))
             if thermal[2] - thermal[0] >= 2 and thermal[3] - thermal[1] >= 2:
                 out.append({'box': tuple(round(v, 1) for v in thermal), 'chairs': max(1, min(30, n)) if n else None})
+        self._looked('room', None, 'found', len(out))
         return out
 
     def check_table(self, n, box, points, frame, reading_age, now):
@@ -459,19 +475,24 @@ class TableCamera:
         x0, y0, x1, y1 = self.mapping.box_to_camera(box)
         gx, gy = (x1 - x0) * CROP_GROW, (y1 - y0) * CROP_GROW
         region = (x0 - gx, y0 - gy, x1 + gx, y1 + gy)
-        picture = self._crop_first(self._peek(region), region)
         try:
-            ix0, iy0 = _int_box(region, self.source.width or 10 ** 6, self.source.height or 10 ** 6)[:2]
-            warm = black_out(picture, frame, self.mapping, origin=(ix0, iy0))
-            found = self.detector.detect(picture)
-        finally:
-            del picture
+            picture = self._crop_first(self._peek(region), region)
+            try:
+                ix0, iy0 = _int_box(region, self.source.width or 10 ** 6, self.source.height or 10 ** 6)[:2]
+                warm = black_out(picture, frame, self.mapping, origin=(ix0, iy0))
+                found = self.detector.detect(picture)
+            finally:
+                del picture
+        except Exception:
+            self._looked('table', n, 'failed')
+            raise
         if self._person(found, n, now):
+            self._looked('table', n, 'person')
             return None
-        if warm >= WARM_SHARE_DISHES:
+        if warm >= WARM_SHARE_DISHES or any(d[0] in DISH_CLASSES and d[1] >= SCORE for d in found):
+            self._looked('table', n, 'dishes')
             return 'dishes'
-        if any(d[0] in DISH_CLASSES and d[1] >= SCORE for d in found):
-            return 'dishes'
+        self._looked('table', n, 'clear')
         return 'clear'
 
 

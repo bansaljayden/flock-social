@@ -253,10 +253,19 @@ through `table_camera_loop`, which starts only when `TABLE_CAMERA=1`.
    and no network code, and a test checks both.
 6. *The shutter* is opened by the same function that takes the picture and
    shut in a `finally`, so it shuts even when the camera fails.
+7. *Every look is on the record.* Each time the shutter opens, the unit
+   notes when, which look (the room or table N) and how it ended: `found`
+   (with how many tables), `clear`, `dishes`, `person` (dropped) or
+   `failed`. Never the picture. The note is a row in
+   `/var/lib/flock-sensor/camera-looks/camera-looks-<day>.csv`, kept 90 days,
+   and rides once in the next reading as `camera_looks`, a list of
+   `{at, look, table, result, found?}`, so the venue's dashboard can show
+   exactly how often its camera looked. A test checks there is one note per
+   time the shutter opened, failures included.
 
 **What leaves the box** does not change in kind: a table the camera cleared
-reads free, and a table whose chairs were counted gets a fifth field in its
-`tables` entry, the number of chairs. To line the cameras up, `tablecam.Mapping`
+reads free, a table whose chairs were counted gets a fifth field in its
+`tables` entry, the number of chairs, and each look is listed as above. To line the cameras up, `tablecam.Mapping`
 starts from the two lenses' fields of view and is refined from matched points,
 such as a hot mug both can see, saved as a homography in
 `/var/lib/flock-sensor/tablecam-mapping.json`.

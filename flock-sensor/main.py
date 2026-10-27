@@ -3672,6 +3672,69 @@ class _LatestHeat:
 
 
 _latest_heat = _LatestHeat()
+
+
+class CameraLooks:
+    """The record of every look the table camera took: when, what kind
+    (the room or one table), and how it ended. Never the picture, which
+    never exists outside tablecam's one check.
+
+    It goes two places. Each look is a row in camera-looks-<day>.csv on the
+    unit, kept KEEP_DAYS, and each is sent once in the next reading as
+    camera_looks, so the venue's dashboard can show exactly how often its
+    camera looked. Results: found (a room look, with how many tables),
+    clear, dishes, person (dropped), failed."""
+
+    FIELDS = ('wall_utc', 'clock_ok', 'look', 'table', 'result', 'found')
+    KEEP_DAYS = 90
+    PAYLOAD_MAX = 50            # a reading carries at most this many; the rest wait for the next
+
+    def __init__(self, directory, wall=None):
+        self.directory = Path(directory)
+        self.wall = wall or time.time
+        self.lock = threading.Lock()
+        self.pending = []
+        self.pruned_day = None
+
+    def record(self, look, table, result, found=None):
+        now = self.wall()
+        clock_ok = now >= CLOCK_SANE_EPOCH
+        entry = {'at': iso_utc(now) if clock_ok else None, 'look': look, 'table': table, 'result': result}
+        if found is not None:
+            entry['found'] = int(found)
+        with self.lock:
+            self.pending.append(entry)
+        try:
+            day = time.strftime('%Y-%m-%d', time.gmtime(now)) if clock_ok else 'unsynced'
+            self.directory.mkdir(parents=True, exist_ok=True)
+            path = self.directory / f'camera-looks-{day}.csv'
+            fresh = not path.exists()
+            with open(path, 'a', encoding='utf-8', newline='') as handle:
+                writer = csv.writer(handle, lineterminator='\n')
+                if fresh:
+                    writer.writerow(self.FIELDS)
+                writer.writerow([entry['at'] or '', int(clock_ok), look,
+                                 '' if table is None else table, result, '' if found is None else int(found)])
+            if clock_ok and day != self.pruned_day:
+                self.pruned_day = day
+                self._prune(now)
+        except Exception as e:
+            log_throttled('camera_looks', logging.WARNING, f'Camera look record not written on the unit: {e}')
+
+    def _prune(self, now):
+        oldest = time.strftime('%Y-%m-%d', time.gmtime(now - self.KEEP_DAYS * 86400))
+        for path in self.directory.glob('camera-looks-????-??-??.csv'):
+            if path.stem[len('camera-looks-'):] < oldest:
+                path.unlink(missing_ok=True)
+
+    def take(self):
+        """The looks not yet sent, oldest first, at most PAYLOAD_MAX."""
+        with self.lock:
+            out, self.pending = self.pending[:self.PAYLOAD_MAX], self.pending[self.PAYLOAD_MAX:]
+        return out
+
+
+_camera_looks = CameraLooks(BUFFER_PATH.parent / 'camera-looks')
 TABLE_CAMERA_EVERY = 10.0           # seconds between looks for tables to check
 TABLE_ROOM_LOOK_EVERY = 24 * 3600.0
 TABLE_ROOM_EMPTY_FOR = 600.0        # the room empty this long before a room look
@@ -3696,7 +3759,8 @@ def table_camera_loop():
     # the service running), and the other two cores stay with Owl.
     shutter = tablecam.ServoShutter(TABLE_SHUTTER_GPIO) if TABLE_SHUTTER_GPIO else tablecam.Shutter()
     camera = tablecam.TableCamera(tablecam.UvcCamera(TABLE_CAMERA_DEVICE),
-                                  tablecam.OnnxDetector(model, classes, threads=2), mapping, shutter=shutter)
+                                  tablecam.OnnxDetector(model, classes, threads=2), mapping, shutter=shutter,
+                                  on_look=_camera_looks.record)
     empty_since, last_room_look = None, None
     while not _stop.wait(TABLE_CAMERA_EVERY):
         now = time.monotonic()
@@ -3805,6 +3869,9 @@ def snapshot():
         if _study is not None:
             for row in _tables.view(time.monotonic()):
                 _study.table(*row)
+    looks = _camera_looks.take()
+    if looks:
+        payload['camera_looks'] = looks
 
     device_id = CONFIG.get('SENSOR_DEVICE_ID', '').strip()
     if device_id:
