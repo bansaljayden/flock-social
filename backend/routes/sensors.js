@@ -16,6 +16,10 @@ const {
 // floor and the history: services/tableHistory.js holds every statement and
 // every rule, and its header says what leaves each one.
 const tableHistory = require('../services/tableHistory');
+// The table camera's looks: the `camera_looks` list a reading may carry, kept
+// for the owner's day of looks. Dropped, never refused, like `tables`; the
+// contract is at the top of that file.
+const sensorCameraLooks = require('../services/sensorCameraLooks');
 // The table routes are a Roost feature, gated the way requireVenueTier gates.
 const { checkVenueTier } = require('../services/venueEntitlements');
 
@@ -518,6 +522,11 @@ router.post('/data',
       const tableField = errors.length === 0
         ? readTables(req.body.tables, tablesRefused)
         : { tables: null, ignored: null };
+      // The camera's looks, the same way: parsed only for a body that passed,
+      // and a bad list or entry is dropped, never a 400.
+      const lookField = errors.length === 0
+        ? sensorCameraLooks.readCameraLooks(req.body.camera_looks, Date.now())
+        : { looks: null, ignored: null };
 
       // An installer's self test proves the key and the network work without
       // writing a fabricated "0 people" row into the venue's live occupancy
@@ -682,6 +691,19 @@ router.post('/data',
           noteIgnoredTables(device.device_id, tableField.ignored);
         } catch (err) {
           console.error('Sensor tables note failed after the reading was stored:', err.message);
+        }
+      }
+
+      // The camera's looks, for any reading newly stored (backfill included:
+      // a look is history wherever it lands). Only here, past the duplicate
+      // answer above, so a retried delivery never stores its looks twice.
+      // Not awaited, never throws.
+      if (lookField.looks) sensorCameraLooks.storeCameraLooks(device, lookField.looks);
+      if (lookField.ignored) {
+        try {
+          sensorCameraLooks.noteIgnoredCameraLooks(device.device_id, lookField.ignored);
+        } catch (err) {
+          console.error('Sensor camera looks note failed after the reading was stored:', err.message);
         }
       }
     } catch (err) {
@@ -1049,6 +1071,36 @@ router.get('/:placeId/tables/hours',
     } catch (err) {
       console.error('Get table hours error:', err);
       res.status(500).json({ error: 'Failed to fetch table hours' });
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// GET /api/sensors/:placeId/tables/camera-looks?day=YYYY-MM-DD: how often the
+// table camera looked on one day, today unless asked.
+//
+// { day, timeZone, count, looks: [{ at, received_at, look, table, result,
+// found }] }, newest first, at most 500 listed and count always the whole
+// day's. The day is the venue's own when the server knows its zone (the same
+// lookup /tables/hours uses) and UTC otherwise, timeZone saying which (null
+// for UTC). at is null for a look taken while the unit's clock was unsynced,
+// which is then placed by received_at. Every field is a word or a number from
+// services/sensorCameraLooks.js; there is no picture to return.
+// ---------------------------------------------------------------------------
+router.get('/:placeId/tables/camera-looks',
+  authenticate,
+  placeIdParam(),
+  scalarOnly(query('day').optional(), 'day').matches(/^\d{4}-\d{2}-\d{2}$/).isISO8601({ strict: true })
+    .withMessage('day must be a date, YYYY-MM-DD'),
+  async (req, res) => {
+    try {
+      if (!(await ownerMayReadTables(req, res))) return;
+      const { placeId } = req.params;
+      const zone = await tableHistory.venueTimeZone(placeId);
+      res.json(await sensorCameraLooks.cameraLooksDay(placeId, req.query.day || null, zone));
+    } catch (err) {
+      console.error('Get camera looks error:', err);
+      res.status(500).json({ error: 'Failed to fetch camera looks' });
     }
   }
 );

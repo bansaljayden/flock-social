@@ -349,6 +349,7 @@ export default function VenueDashboard({
   operatingHours,
   ownerSensorData,
   ownerSensorHistory,
+  ownerTableCameraLooks,
   ownerTableHours,
   ownerTableIncoming,
   ownerTableSettings,
@@ -1899,7 +1900,7 @@ export default function VenueDashboard({
             <LockedTab featureName="Tables" description="Each table live from your sensor: which are free, seated, waiting for a server or need clearing, and how many are in use at each hour." />
           )}
           {venueTab === 'tables' && ownerTablesSeen && !ownerTablesLocked && can.analytics && tierKnown && (
-            <VenueTablesTab data={ownerTables} hours={ownerTableHours} waits={ownerTableWaits} incoming={ownerTableIncoming} stats={ownerTableStats} colors={colors} wellPx={HOUR_BAR_WELL_PX} timeZone={ownerVenueTimeZone} />
+            <VenueTablesTab data={ownerTables} hours={ownerTableHours} waits={ownerTableWaits} incoming={ownerTableIncoming} stats={ownerTableStats} cameraLooks={ownerTableCameraLooks} colors={colors} wellPx={HOUR_BAR_WELL_PX} timeZone={ownerVenueTimeZone} />
           )}
 
           {/* PROMOTIONS TAB. Free on every plan, so it has no lock. */}

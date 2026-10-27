@@ -911,3 +911,52 @@ export function longestTurnText(grid) {
 export const turnTimesFooter = (days, timeZone) => (timeZone
   ? `Last ${days} days, on your venue's clock.`
   : `Last ${days} days. Hours in UTC, since your listing has no time zone.`);
+
+// ── Camera looks ───────────────────────────────────────────────────────────
+
+// GET .../tables/camera-looks answers { day, timeZone, count, looks: [{ at,
+// received_at, look, table, result, found }] }, newest first: each time the
+// unit's table camera opened its shutter that day, failures included. Never
+// a picture. The words for each result, so no screen carries the box's codes.
+export function cameraLookResultText(look) {
+  if (!look) return null;
+  switch (look.result) {
+    case 'found': {
+      const n = Number.isInteger(look.found) ? look.found : null;
+      if (n === null) return 'Found tables';
+      return `Found ${n} table${n === 1 ? '' : 's'}`;
+    }
+    case 'clear': return 'Table clear';
+    case 'dishes': return 'Dishes left';
+    case 'person': return 'Someone there, dropped';
+    case 'failed': return "Didn't work";
+    default: return null;
+  }
+}
+
+// What a look was pointed at: one table, or the whole room.
+export const cameraLookTargetText = (look) => (
+  look && look.look === 'table' && Number.isInteger(look.table) ? `Table ${look.table}` : 'Whole room'
+);
+
+// The rows the section draws, in the server's order (newest first): the time
+// on `clock` (the look's own, or when it arrived with "about" in front for a
+// look taken while the unit's clock was unsynced), what it looked at, and how
+// it ended. A row whose result has no words is left out.
+export function cameraLookRows(data, clock) {
+  const looks = data && Array.isArray(data.looks) ? data.looks : [];
+  const rows = [];
+  looks.forEach((l, i) => {
+    const result = cameraLookResultText(l);
+    if (!result) return;
+    const own = clock.time(l.at);
+    const arrived = own ? null : clock.time(l.received_at);
+    rows.push({
+      key: `${l.at || l.received_at || ''}-${i}`,
+      time: own || (arrived ? `about ${arrived}` : 'Time unknown'),
+      target: cameraLookTargetText(l),
+      result,
+    });
+  });
+  return rows;
+}

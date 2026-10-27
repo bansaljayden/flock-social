@@ -11,7 +11,8 @@
  * every 15 seconds while the dashboard is open, the hours once per open and
  * again while that read has failed; and, while this tab is on screen with
  * tables on the board, the walk-in waits on the tables' loop, the incoming
- * flocks once a minute and the turn-time stats once per visit. Each is
+ * flocks once a minute, the turn-time stats once per visit and the camera's
+ * looks today each time the tab opens. Each is
  * undefined, drawn as a skeleton, until the visit's first read answers.
  *
  * The tab is a stack of sections, each its own card and its own component, in
@@ -21,8 +22,8 @@
  * nothing above it. TablesSection is the card frame they share, and
  * useTablesClock the one clock every running figure reads.
  *
- * The three sections that only mean something with tables on the board (the
- * waits, the incoming flocks, the turn times) are drawn while the board has
+ * The four sections that only mean something with tables on the board (the
+ * waits, the incoming flocks, the turn times, the camera's looks today) are drawn while the board has
  * tables, and while the visit's first read is still out, when the board is a
  * skeleton and so are they. After a read that failed or came back empty the
  * board says so alone: App.js reads none of the three without tables, so a
@@ -31,13 +32,14 @@
 import React from 'react';
 import TablesBoard from './TablesBoard';
 import TablesByHour from './TablesByHour';
+import TablesCameraLooks from './TablesCameraLooks';
 import TablesIncoming from './TablesIncoming';
 import TablesTurnTimes from './TablesTurnTimes';
 import TablesWaits from './TablesWaits';
 import useTablesClock from './useTablesClock';
 import { tablesFrom } from '../../../lib/venueTables';
 
-export default function VenueTablesTab({ data, hours, waits, incoming, stats, colors, wellPx, timeZone }) {
+export default function VenueTablesTab({ data, hours, waits, incoming, stats, cameraLooks, colors, wellPx, timeZone }) {
   const live = tablesFrom(data).length > 0;
   const pending = data === undefined;
   const now = useTablesClock(live);
@@ -48,6 +50,7 @@ export default function VenueTablesTab({ data, hours, waits, incoming, stats, co
       {live && <TablesIncoming incoming={incoming} colors={colors} now={now} timeZone={timeZone} />}
       <TablesByHour hours={hours} colors={colors} wellPx={wellPx} timeZone={timeZone} />
       {(live || pending) && <TablesTurnTimes stats={pending ? undefined : stats} colors={colors} />}
+      {(live || pending) && <TablesCameraLooks looks={pending ? undefined : cameraLooks} colors={colors} timeZone={timeZone} />}
     </>
   );
 }

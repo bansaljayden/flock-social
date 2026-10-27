@@ -292,3 +292,19 @@ export const tableSettingsFrom = (data) => (
 export function startTableSettingsReading(read, onSettings) {
   return startOnceReading(read, (data) => [tableSettingsFrom(data)], onSettings, Infinity);
 }
+
+// CAMERA LOOKS. GET .../tables/camera-looks answers { day, timeZone, count,
+// looks }. The answer is the object itself when it has that shape; anything
+// else is a failure. Read once each time the Tables tab opens with tables on
+// the board, and again after every 20th good waits answer while it has
+// failed, like the stats.
+export const tableCameraLooksFrom = (data) => (
+  data && typeof data === 'object' && !Array.isArray(data)
+    && Number.isFinite(data.count) && Array.isArray(data.looks)
+    ? data
+    : null
+);
+
+export function startTableCameraLooksReading(read, onLooks, everyTurns = TABLE_HOURS_RETRY_EVERY_TURNS) {
+  return startOnceReading(read, (data) => [tableCameraLooksFrom(data)], onLooks, everyTurns);
+}

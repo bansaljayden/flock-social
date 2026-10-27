@@ -28,7 +28,7 @@ import { resendVerificationEmail, trackPurchaseCompleted, hasRenewableSession, r
 // carrying when they made an account, then open the flock they were invited to.
 // The reasoning, and everything the token has to survive, is in the service.
 import { redeemPendingInvite, openJoinedFlock, rememberInvite, storedGuestTokens } from './services/inviteHandoff';
-import { setAvailability, clearAvailability, getMyAvailability, getFriendsAvailability, getSensorCurrent, getSensorHistory, getSensorTables, getSensorTableHours, getSensorTableStats, getSensorTableWaits, getSensorTableIncoming, getSensorTableSettings, checkInManual, getNfcCheckin, getCalendarEvents, createCalendarEvent, deleteCalendarEvent } from './services/api';
+import { setAvailability, clearAvailability, getMyAvailability, getFriendsAvailability, getSensorCurrent, getSensorHistory, getSensorTables, getSensorTableHours, getSensorTableStats, getSensorTableCameraLooks, getSensorTableWaits, getSensorTableIncoming, getSensorTableSettings, checkInManual, getNfcCheckin, getCalendarEvents, createCalendarEvent, deleteCalendarEvent } from './services/api';
 import { joinVenueRoom, leaveVenueRoom, joinVenueContentRoom, leaveVenueContentRoom, onVenueSensorUpdate, onVenueCheckin, onSessionRevoked, onSocketError, onAvailabilityUpdated, onBlockedBy, onUnblockedBy, onContentRemoved, onContentRestored } from './services/socket';
 import { pullSettings, queueSync, sameAsAccount, latestPull } from './services/userSettings';
 import { liftReaders } from './services/flockReaders';
@@ -66,7 +66,7 @@ import { AVATAR_EDGE, AVATAR_REFIT_MARKER_KEY, encodeAvatar, dataUrlToBlob, need
 // staleness rule is measured in. See lib/livePins.js.
 import { LOCATION_EMIT_MS, withoutFlockPins, withoutPersonPin, withoutStalePins } from './lib/livePins';
 import { foldSensorReading } from './lib/sensorHistory';
-import { forgetTables, nextIncomingState, nextTablesState, nextWaitsState, rememberTables, startTableHoursReading, startTableIncomingReading, startTableSettingsReading, startTableStatsReading, startTableWaitsReading, startTablesReading, tablesRemembered } from './lib/venueTablesReading';
+import { forgetTables, nextIncomingState, nextTablesState, nextWaitsState, rememberTables, startTableCameraLooksReading, startTableHoursReading, startTableIncomingReading, startTableSettingsReading, startTableStatsReading, startTableWaitsReading, startTablesReading, tablesRemembered } from './lib/venueTablesReading';
 // Whether the viewer's own Tonight pulse is still on. See lib/pulse.js.
 import { livePulse, pulseEndsAt, pulseTapAction } from './lib/pulse';
 // PaywallSheet is NOT imported here; it is fetched, at the lazy block below.
@@ -17942,6 +17942,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [ownerTableWaits, setOwnerTableWaits] = useState(undefined);
   const [ownerTableIncoming, setOwnerTableIncoming] = useState(undefined);
   const [ownerTableStats, setOwnerTableStats] = useState(undefined);
+  const [ownerTableCameraLooks, setOwnerTableCameraLooks] = useState(undefined);
   const [ownerTableSettings, setOwnerTableSettings] = useState(undefined);
   // Whether the tables on the board are live ones: the Tables tab's other
   // reads start and stop on this, which flips only when a visit goes from
@@ -18867,6 +18868,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setOwnerTableWaits(undefined);
     setOwnerTableIncoming(undefined);
     setOwnerTableStats(undefined);
+    setOwnerTableCameraLooks(undefined);
     setOwnerTableSettings(undefined);
     ownerTableStatsReadFor.current = null;
     setOwnerTablesLocked(false);
@@ -18922,19 +18924,26 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       setOwnerTableStats(stats);
       if (stats) ownerTableStatsReadFor.current = pid;
     });
+    // The camera's looks today, read each time the tab opens (a day's list
+    // moves, unlike the month's stats), retried on the waits' turns while
+    // it has failed.
+    const looksReading = startTableCameraLooksReading(() => getSensorTableCameraLooks(pid), setOwnerTableCameraLooks);
     const stopWaits = startTableWaitsReading(() => getSensorTableWaits(pid), (data, { refused }) => {
       setOwnerTableWaits((prev) => nextWaitsState(prev, data, refused));
       if (data && statsReading) statsReading.turn();
+      if (data) looksReading.turn();
     });
     const stopIncoming = startTableIncomingReading(() => getSensorTableIncoming(pid), (data, { refused }) => {
       setOwnerTableIncoming((prev) => nextIncomingState(prev, data, refused));
     });
     return () => {
       if (statsReading) statsReading.stop();
+      looksReading.stop();
       stopWaits();
       stopIncoming();
       setOwnerTableWaits(undefined);
       setOwnerTableIncoming(undefined);
+      setOwnerTableCameraLooks(undefined);
     };
   }, [ownerVenuePlaceId, currentScreen, venueTab, ownerTablesLive, venueTier]);
 
@@ -19961,6 +19970,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         operatingHours,
         ownerSensorData,
         ownerSensorHistory,
+        ownerTableCameraLooks,
         ownerTableHours,
         ownerTableIncoming,
         ownerTableSettings,

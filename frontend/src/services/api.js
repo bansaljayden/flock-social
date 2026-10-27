@@ -3899,6 +3899,13 @@ export async function getSensorTableStats(placeId, days = TABLE_STATS_DAYS) {
   return request(`/api/sensors/${encodeURIComponent(placeId)}/tables/stats?days=${encodeURIComponent(days)}`);
 }
 
+// How often the table camera looked on one day (the venue's today unless
+// `day`, YYYY-MM-DD, is given), under the same owner-only plan gate.
+export async function getSensorTableCameraLooks(placeId, day) {
+  const q = day ? `?day=${encodeURIComponent(day)}` : '';
+  return request(`/api/sensors/${encodeURIComponent(placeId)}/tables/camera-looks${q}`);
+}
+
 export async function getSensorTableWaits(placeId) {
   return request(`/api/sensors/${encodeURIComponent(placeId)}/tables/waits`);
 }

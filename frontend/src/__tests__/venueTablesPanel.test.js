@@ -1232,7 +1232,7 @@ describe('App.js reads the tables for the dashboard and hands them down', () => 
   test('all four reach the dashboard beside the sensor data, and the venue\'s zone with them', () => {
     // Phase 2's reads sit between the hours and the tables in the same list
     // (venueTablesPhase2.test.js names them).
-    expect(APP).toMatch(/ownerSensorData,\s*ownerSensorHistory,\s*ownerTableHours,\s*(?:ownerTable\w+,\s*)*ownerTables,\s*ownerTablesLocked,\s*ownerTablesSeen,\s*ownerVenuePlaceId,\s*ownerVenueTimeZone,\s*promotions,/);
+    expect(APP).toMatch(/ownerSensorData,\s*ownerSensorHistory,\s*(?:ownerTableCameraLooks,\s*)?ownerTableHours,\s*(?:ownerTable\w+,\s*)*ownerTables,\s*ownerTablesLocked,\s*ownerTablesSeen,\s*ownerVenuePlaceId,\s*ownerVenueTimeZone,\s*promotions,/);
   });
 
   test('the venue\'s zone is the Google listing\'s, kept with its place, from every read the dashboard already makes of the listing', () => {
@@ -1366,7 +1366,7 @@ const tabBar = () => screen.getAllByRole('button').map((b) => b.textContent.trim
 describe('the tab bar', () => {
   test('the dashboard takes the tables, the hours, both flags and the venue\'s zone', () => {
     expect(PARAMS).toEqual(expect.arrayContaining(['ownerTables', 'ownerTableHours', 'ownerTablesSeen', 'ownerTablesLocked', 'ownerVenueTimeZone']));
-    expect(DASH).toContain('<VenueTablesTab data={ownerTables} hours={ownerTableHours} waits={ownerTableWaits} incoming={ownerTableIncoming} stats={ownerTableStats} colors={colors} wellPx={HOUR_BAR_WELL_PX} timeZone={ownerVenueTimeZone} />');
+    expect(DASH).toContain('<VenueTablesTab data={ownerTables} hours={ownerTableHours} waits={ownerTableWaits} incoming={ownerTableIncoming} stats={ownerTableStats} cameraLooks={ownerTableCameraLooks} colors={colors} wellPx={HOUR_BAR_WELL_PX} timeZone={ownerVenueTimeZone} />');
   });
 
   test('the zone reaches the chart: a Roost venue in Los Angeles read from New York sees its own 4 PM', async () => {

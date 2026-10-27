@@ -1144,12 +1144,14 @@ describe('App.js reads the rest of the tab for the dashboard and hands it down',
 
   test('the waits on their loop, the incoming on theirs, the stats once per visit with the waits\' good answers as the retry turns', () => {
     expect(tabEffect).toMatch(/const statsReading = ownerTableStatsReadFor\.current === pid \? null : startTableStatsReading\(\(\) => getSensorTableStats\(pid\), \(stats\) => \{\s*setOwnerTableStats\(stats\);\s*if \(stats\) ownerTableStatsReadFor\.current = pid;\s*\}\);/);
-    expect(tabEffect).toMatch(/const stopWaits = startTableWaitsReading\(\(\) => getSensorTableWaits\(pid\), \(data, \{ refused \}\) => \{\s*setOwnerTableWaits\(\(prev\) => nextWaitsState\(prev, data, refused\)\);\s*if \(data && statsReading\) statsReading\.turn\(\);\s*\}\);/);
+    expect(tabEffect).toMatch(/const stopWaits = startTableWaitsReading\(\(\) => getSensorTableWaits\(pid\), \(data, \{ refused \}\) => \{\s*setOwnerTableWaits\(\(prev\) => nextWaitsState\(prev, data, refused\)\);\s*if \(data && statsReading\) statsReading\.turn\(\);\s*if \(data\) looksReading\.turn\(\);\s*\}\);/);
+    // The camera's looks: read each time the tab opens, retried on the same turns.
+    expect(tabEffect).toContain('const looksReading = startTableCameraLooksReading(() => getSensorTableCameraLooks(pid), setOwnerTableCameraLooks);');
     expect(tabEffect).toMatch(/const stopIncoming = startTableIncomingReading\(\(\) => getSensorTableIncoming\(pid\), \(data, \{ refused \}\) => \{\s*setOwnerTableIncoming\(\(prev\) => nextIncomingState\(prev, data, refused\)\);\s*\}\);/);
   });
 
   test('leaving the tab stops all three and drops what describes this minute, keeping the month\'s stats', () => {
-    expect(tabEffect).toMatch(/return \(\) => \{\s*if \(statsReading\) statsReading\.stop\(\);\s*stopWaits\(\);\s*stopIncoming\(\);\s*setOwnerTableWaits\(undefined\);\s*setOwnerTableIncoming\(undefined\);\s*\};/);
+    expect(tabEffect).toMatch(/return \(\) => \{\s*if \(statsReading\) statsReading\.stop\(\);\s*looksReading\.stop\(\);\s*stopWaits\(\);\s*stopIncoming\(\);\s*setOwnerTableWaits\(undefined\);\s*setOwnerTableIncoming\(undefined\);\s*setOwnerTableCameraLooks\(undefined\);\s*\};/);
     expect(tabEffect).not.toContain('setOwnerTableStats(undefined)');
   });
 
@@ -1160,16 +1162,16 @@ describe('App.js reads the rest of the tab for the dashboard and hands it down',
   });
 
   test('a new visit, place or plan starts every read from nothing', () => {
-    expect(APP).toMatch(/React\.useLayoutEffect\(\(\) => \{\s*setOwnerTables\(undefined\);\s*setOwnerTableHours\(undefined\);\s*setOwnerTableWaits\(undefined\);\s*setOwnerTableIncoming\(undefined\);\s*setOwnerTableStats\(undefined\);\s*setOwnerTableSettings\(undefined\);\s*ownerTableStatsReadFor\.current = null;\s*setOwnerTablesLocked\(false\);/);
+    expect(APP).toMatch(/React\.useLayoutEffect\(\(\) => \{\s*setOwnerTables\(undefined\);\s*setOwnerTableHours\(undefined\);\s*setOwnerTableWaits\(undefined\);\s*setOwnerTableIncoming\(undefined\);\s*setOwnerTableStats\(undefined\);\s*setOwnerTableCameraLooks\(undefined\);\s*setOwnerTableSettings\(undefined\);\s*ownerTableStatsReadFor\.current = null;\s*setOwnerTablesLocked\(false\);/);
     // The stats memory is written in one place and cleared in one.
     expect(APP.match(/ownerTableStatsReadFor\.current = pid;/g)).toHaveLength(1);
     expect(APP.match(/ownerTableStatsReadFor\.current = null;/g)).toHaveLength(1);
   });
 
   test('everything reaches the dashboard, with the place and the one setter the show-in-app switch writes', () => {
-    expect(APP).toMatch(/ownerTableHours,\s*ownerTableIncoming,\s*ownerTableSettings,\s*ownerTableStats,\s*ownerTableWaits,\s*ownerTables,\s*ownerTablesLocked,\s*ownerTablesSeen,\s*ownerVenuePlaceId,\s*ownerVenueTimeZone,/);
+    expect(APP).toMatch(/ownerTableCameraLooks,\s*ownerTableHours,\s*ownerTableIncoming,\s*ownerTableSettings,\s*ownerTableStats,\s*ownerTableWaits,\s*ownerTables,\s*ownerTablesLocked,\s*ownerTablesSeen,\s*ownerVenuePlaceId,\s*ownerVenueTimeZone,/);
     expect(APP).toMatch(/setOperatingHours,\s*setOwnerTableSettings,\s*setPickingVenueForCreate,/);
-    expect(APP).toContain("import { forgetTables, nextIncomingState, nextTablesState, nextWaitsState, rememberTables, startTableHoursReading, startTableIncomingReading, startTableSettingsReading, startTableStatsReading, startTableWaitsReading, startTablesReading, tablesRemembered } from './lib/venueTablesReading';");
+    expect(APP).toContain("import { forgetTables, nextIncomingState, nextTablesState, nextWaitsState, rememberTables, startTableCameraLooksReading, startTableHoursReading, startTableIncomingReading, startTableSettingsReading, startTableStatsReading, startTableWaitsReading, startTablesReading, tablesRemembered } from './lib/venueTablesReading';");
   });
 });
 

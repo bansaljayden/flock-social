@@ -610,6 +610,19 @@ const INVENTORY = [
     verdict: 'SAFE',
     why: 'Nothing reads this to decide anything a person sees: the floor is answered the same way whether or not the line is written (the newer row is shown either way), so the worst a flood of keys could do is make a venue log once more often. The keys come from reads that have already passed three gates, and the line names device ids and table numbers only, never a table\'s people or state. It lives in this process, so a deploy or a second instance costs at most one extra line per venue.',
   },
+  // -- services/sensorCameraLooks.js --
+  // The table camera's looks. The looks are Postgres (migration 132); the only
+  // heap map is a log throttle, the same rule as ignoredNotedAt above.
+  {
+    file: 'services/sensorCameraLooks.js', name: 'notedAt', kind: 'cache',
+    key: 'the device_id of a sensor unit whose reading carried camera_looks entries the strict parse dropped -> when that was last logged',
+    callerControls: 'nothing it can choose freely: the id comes from the sensor_devices row the presented API key resolved to, never from the body. A holder of one stolen key reaches exactly one key.',
+    protects: 'the log, not a resource: a unit with a firmware bug sends the same bad entries with every reading, and this keeps it to one line an hour per unit',
+    denominator: 'not a counter. One entry per unit, holding the time of its last line',
+    bound: '1000 entries, oldest note evicted first (re-set on every line so insertion order is age order); never cleared wholesale',
+    verdict: 'SAFE',
+    why: 'Nothing reads this to decide anything a device or a person sees: the reading is stored and answered 201 and the good looks kept whether or not the line is written. A note is written only after the key has authenticated and the reading has been stored, so the key space is the fleet. It lives in this process, so a deploy or a second instance costs at most one extra line per unit.',
+  },
   {
     file: 'routes/venueSearch.js', name: 'inflight', kind: 'inflight',
     key: '`search:${normalizedQuery}|${coords}` (the `detail:${placeId}` half moved to services/placeDetailsCache.js)',

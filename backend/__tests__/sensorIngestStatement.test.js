@@ -976,3 +976,66 @@ test('the table rows refuse what the box can never send', async () => {
     );
   }
 });
+
+// --- The table camera's looks (migration 132), through the real schema ----------
+//
+// sensorCameraLooks.test.js pins the contract against a model; this runs the
+// insert (unnest, the 90-day delete in the same statement) and the day read
+// (the window on a zone, the count before the limit) on Postgres.
+test('on the real schema: camera looks are stored once, the old ones go, and the owner reads the day on its clock', async () => {
+  const looks = require('../services/sensorCameraLooks');
+  await pool.query('DELETE FROM sensor_camera_looks WHERE true');
+  // A look the unit's 90 days have passed, which the next write deletes.
+  await pool.query(
+    `INSERT INTO sensor_camera_looks (sensor_device_id, venue_place_id, at, received_at, look, result)
+     VALUES ('sensor_live', $1, NULL, NOW() - INTERVAL '91 days', 'room', 'failed')`, [VENUE]
+  );
+  const at = new Date(Date.now() - 60000).toISOString();
+  const body = reading({
+    recorded_at: new Date(Date.now() - 5000).toISOString(),
+    camera_looks: [
+      { at, look: 'room', table: null, result: 'found', found: 8 },
+      { at: null, look: 'table', table: 4, result: 'dishes' },
+      { at, look: 'table', table: 4, result: 'found' }, // dropped: found is a room result
+    ],
+  });
+  assert.equal((await push(body)).status, 201);
+  await pool.query(`UPDATE sensor_devices SET last_seen_at = NOW() - INTERVAL '1 hour' WHERE device_id = 'sensor_live'`);
+  assert.equal((await push(body)).body.duplicate, true);
+  await looks._settled();
+  const { rows: stored } = await pool.query(
+    'SELECT at, look, table_no, result, found FROM sensor_camera_looks ORDER BY id'
+  );
+  assert.deepEqual(stored.map((r) => [r.at && r.at.toISOString(), r.look, r.table_no, r.result, r.found]), [
+    [at, 'room', null, 'found', 8], [null, 'table', 4, 'dishes', null],
+  ]);
+
+  await withVenueOwner(async (ownerId) => {
+    const res = await ownerGet(`/api/sensors/${VENUE}/tables/camera-looks`, ownerId);
+    assert.equal(res.status, 200, JSON.stringify(res.body));
+    assert.equal(res.body.count, 2);
+    assert.equal(res.body.timeZone, null);
+    assert.equal(res.body.day, new Date().toISOString().slice(0, 10));
+    assert.deepEqual(res.body.looks.map((l) => [l.look, l.table, l.result, l.found]).sort(),
+      [['room', null, 'found', 8], ['table', 4, 'dishes', null]]);
+    const empty = await ownerGet(`/api/sensors/${VENUE}/tables/camera-looks?day=2026-01-02`, ownerId);
+    assert.deepEqual(empty.body, { day: '2026-01-02', timeZone: null, count: 0, looks: [] });
+    assert.equal((await ownerGet(`/api/sensors/${VENUE}/tables/camera-looks`, ownerId + 1000)).status, 403);
+  });
+
+  // On a venue's own clock: a look at 03:30 UTC on Jan 3 is Jan 2 in New York.
+  await pool.query(
+    `INSERT INTO sensor_camera_looks (sensor_device_id, venue_place_id, at, look, table_no, result)
+     VALUES ('sensor_live', $1, '2026-01-03T03:30:00Z', 'table', 2, 'clear')`, [VENUE]
+  );
+  const ny = await looks.cameraLooksDay(VENUE, '2026-01-02', 'America/New_York');
+  assert.equal(ny.count, 1);
+  assert.equal(ny.timeZone, 'America/New_York');
+  assert.equal(ny.looks[0].at, '2026-01-03T03:30:00.000Z');
+  assert.equal((await looks.cameraLooksDay(VENUE, '2026-01-02', null)).count, 0);
+  // A zone Postgres refuses is read in UTC and says so.
+  const bad = await looks.cameraLooksDay(VENUE, '2026-01-03', 'Not/AZone');
+  assert.equal(bad.timeZone, null);
+  assert.equal(bad.count, 1);
+  await pool.query('DELETE FROM sensor_camera_looks WHERE true');
+});
