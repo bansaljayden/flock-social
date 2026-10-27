@@ -61,6 +61,8 @@ const { FREE_MONTHLY_FORECASTS, getUsedThisMonth } = require('./forecastUsage');
 // TIMESTAMP written by NOW() in the database's own session time zone, so the
 // end of the week is computed in SQL (cast in that same zone) rather than by
 // parsing a naive value in Node, which would move it by the server's offset.
+// The week is counted in hours, not calendar days: across a daylight-saving
+// change a calendar week in that zone is 167 or 169 hours, not seven days.
 const NEW_ACCOUNT_GRACE_DAYS = 7;
 
 // A grace end from the database is only a grace end if it is a real date in
@@ -166,7 +168,7 @@ async function getPremiumState(userId) {
     const r = await pool.query(
       `SELECT is_premium,
               CASE WHEN email_verified IS TRUE AND grace_forfeited IS NOT TRUE
-                   THEN created_at::timestamptz + make_interval(days => $2::int)
+                   THEN created_at::timestamptz + make_interval(hours => $2::int * 24)
               END AS grace_ends_at
          FROM users WHERE id = $1`,
       [id, NEW_ACCOUNT_GRACE_DAYS]
