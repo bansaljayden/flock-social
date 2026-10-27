@@ -120,6 +120,8 @@ fi
 echo "==> install source to ${INSTALL_DIR}"
 mkdir -p "${INSTALL_DIR}"
 install -m 0755 -o root -g root "${SCRIPT_DIR}/main.py" "${INSTALL_DIR}/main.py"
+# The table camera module: imported only when TABLE_CAMERA=1 (off on every unit).
+install -m 0644 -o root -g root "${SCRIPT_DIR}/tablecam.py" "${INSTALL_DIR}/tablecam.py"
 # The panel's fonts and marks. Optional: a venue unit has no screen and draws
 # nothing, and a demo unit without them still draws, in pygame's plain face.
 if [ -d "${SCRIPT_DIR}/flux-assets" ]; then
