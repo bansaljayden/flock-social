@@ -30,6 +30,8 @@ code, and pinned by test_tablecam.py:
 import json
 import math
 import os
+import subprocess
+import time
 from pathlib import Path
 
 import numpy as np
@@ -139,6 +141,51 @@ class Shutter:
         self.is_open = False
 
 
+class ServoShutter(Shutter):
+    """The printed flap: a micro servo (MG90S) on one GPIO turns it open for a
+    look and back shut after, then its signal stops, the servo goes slack and
+    the flap's spring holds it shut. A servo that loses power or signal leaves
+    the lens covered.
+
+    gpio is the RPi.GPIO API (rpi-lgpio on a Pi 5); tests pass a stand-in."""
+
+    HZ = 50
+
+    def __init__(self, pin, gpio=None, open_us=2000, shut_us=1000, settle_s=0.35):
+        if gpio is None:
+            import RPi.GPIO as gpio
+        self.gpio, self.pin = gpio, int(pin)
+        self.open_us, self.shut_us, self.settle_s = open_us, shut_us, settle_s
+        gpio.setwarnings(False)
+        gpio.setmode(gpio.BCM)
+        gpio.setup(self.pin, gpio.OUT, initial=gpio.LOW)
+        self.pwm = None
+
+    def _duty(self, us):
+        return 100.0 * us / (1_000_000 / self.HZ)
+
+    def open(self):
+        self.pwm = self.gpio.PWM(self.pin, self.HZ)
+        self.pwm.start(self._duty(self.open_us))
+        time.sleep(self.settle_s)
+        self.is_open = True
+
+    def close(self):
+        try:
+            if self.pwm is None:
+                self.pwm = self.gpio.PWM(self.pin, self.HZ)
+                self.pwm.start(self._duty(self.shut_us))
+            else:
+                self.pwm.ChangeDutyCycle(self._duty(self.shut_us))
+            time.sleep(self.settle_s)
+        finally:
+            if self.pwm is not None:
+                self.pwm.stop()
+                self.pwm = None
+            self.gpio.output(self.pin, self.gpio.LOW)
+            self.is_open = False
+
+
 class CameraSource:
     """Where colour frames come from. capture(region) returns an RGB uint8
     array; region is (x0, y0, x1, y1) in camera pixels or None for the whole
@@ -171,14 +218,47 @@ class StandInCamera(CameraSource):
 
 
 class UvcCamera(CameraSource):
-    """The Arducam IMX519 USB camera, through V4L2. Not written yet: it is
-    plugged in once the camera is bought, behind this same interface."""
+    """The Arducam IMX519 USB camera (UVC). One frame per call, decoded by
+    ffmpeg straight into memory through a pipe, so no file is written at any
+    step, and cropped inside ffmpeg, so a table check's picture never holds
+    more than that table by the time it reaches this program.
 
-    def __init__(self, device):
-        self.device = device
+    Unverified on the camera itself: written to the UVC and ffmpeg
+    documentation before the camera was bought. When it is plugged in, run
+    `v4l2-ctl --list-formats-ext -d DEVICE` to confirm the MJPEG size here,
+    then one look on a bench with TABLE_CAMERA=1."""
+
+    crops_at_source = True
+
+    def __init__(self, device, width=4656, height=3496, fmt='mjpeg', warmup=5, run=None):
+        self.device, self.width, self.height, self.fmt = device, int(width), int(height), fmt
+        self.warmup = int(warmup)    # frames skipped while exposure and focus settle
+        self._run = run or (lambda args: subprocess.run(args, capture_output=True, timeout=60))
+
+    def command(self, region=None):
+        """The ffmpeg call, and the size of the frame it returns."""
+        w, h = self.width, self.height
+        filters = [f'select=gte(n\\,{self.warmup})'] if self.warmup else []
+        if region is not None:
+            x0, y0, x1, y1 = _int_box(region, self.width, self.height)
+            w, h = max(2, (x1 - x0) // 2 * 2), max(2, (y1 - y0) // 2 * 2)
+            filters.append(f'crop={w}:{h}:{x0}:{y0}')
+        args = ['ffmpeg', '-hide_banner', '-loglevel', 'error', '-f', 'v4l2',
+                '-input_format', self.fmt, '-video_size', f'{self.width}x{self.height}',
+                '-i', self.device]
+        if filters:
+            args += ['-vf', ','.join(filters)]
+        args += ['-frames:v', '1', '-an', '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1']
+        return args, w, h
 
     def capture(self, region=None):
-        raise NotImplementedError('the USB table camera is not fitted yet')
+        args, w, h = self.command(region)
+        done = self._run(args)
+        if done.returncode != 0:
+            raise OSError(f'ffmpeg could not read {self.device}: {done.stderr[-300:]!r}')
+        if len(done.stdout) != w * h * 3:
+            raise OSError(f'{self.device} gave {len(done.stdout)} bytes for a {w}x{h} frame')
+        return np.frombuffer(done.stdout, dtype=np.uint8).reshape(h, w, 3).copy()
 
 
 class Detector:

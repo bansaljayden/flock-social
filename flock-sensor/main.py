@@ -342,6 +342,8 @@ TABLE_NUMBER_START = _cfg_number('TABLE_NUMBER_START', int, 1, 200, 1)
 # camera" for what it may and may not do.
 TABLE_CAMERA = bool(_cfg_number('TABLE_CAMERA', int, 0, 1, 0))
 TABLE_CAMERA_DEVICE = (CONFIG.get('TABLE_CAMERA_DEVICE') or '/dev/video2').strip()
+# The lens cover's servo, BCM numbering; 0 = no servo fitted.
+TABLE_SHUTTER_GPIO = _cfg_number('TABLE_SHUTTER_GPIO', int, 0, 27, 0)
 TABLE_CAMERA_MAPPING = Path(os.environ.get('FLOCK_TABLE_CAMERA_MAPPING')
                             or ('/var/lib/flock-sensor/tablecam-mapping.json' if _INSTALLED
                                 else '/home/pi/flock_tablecam_mapping.json'))
@@ -3683,8 +3685,11 @@ def table_camera_loop():
     except (OSError, ValueError, KeyError):
         mapping = tablecam.Mapping.factory(4656, 3496, 65.0, 51.0)
         logger.warning('Table camera: no lined-up mapping yet; using the factory one')
+    # Two threads: a look takes about 3 s on a Pi 5 either way (measured with
+    # the service running), and the other two cores stay with Owl.
+    shutter = tablecam.ServoShutter(TABLE_SHUTTER_GPIO) if TABLE_SHUTTER_GPIO else tablecam.Shutter()
     camera = tablecam.TableCamera(tablecam.UvcCamera(TABLE_CAMERA_DEVICE),
-                                  tablecam.OnnxDetector(model, classes), mapping)
+                                  tablecam.OnnxDetector(model, classes, threads=2), mapping, shutter=shutter)
     empty_since, last_room_look = None, None
     while not _stop.wait(TABLE_CAMERA_EVERY):
         now = time.monotonic()

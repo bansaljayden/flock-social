@@ -262,6 +262,89 @@ class NothingIsKept(unittest.TestCase):
         self.assertEqual(len(writers), 1)
 
 
+class TheUsbCamera(unittest.TestCase):
+
+    def test_a_table_check_is_cropped_inside_ffmpeg_and_read_from_a_pipe(self):
+        calls = []
+
+        class Done:
+            returncode, stderr = 0, b''
+            stdout = bytes(400 * 300 * 3)
+
+        cam = tc.UvcCamera('/dev/video2', run=lambda args: calls.append(args) or Done())
+        picture = cam.capture((100, 200, 500, 500))
+        self.assertEqual(picture.shape, (300, 400, 3))
+        args = calls[0]
+        self.assertIn('crop=400:300:100:200', args[args.index('-vf') + 1])
+        self.assertEqual(args[-1], 'pipe:1')
+        # Nothing in the call names a file to write.
+        self.assertFalse(any(a.endswith(('.jpg', '.png', '.mp4', '.raw')) for a in args))
+
+    def test_a_short_or_failed_read_is_an_error_not_a_picture(self):
+        class Short:
+            returncode, stderr, stdout = 0, b'', bytes(10)
+
+        class Failed:
+            returncode, stderr, stdout = 1, b'no such device', b''
+
+        for done in (Short, Failed):
+            with self.assertRaises(OSError):
+                tc.UvcCamera('/dev/video2', run=lambda args: done()).capture()
+
+
+class TheServoShutter(unittest.TestCase):
+
+    def gpio(self):
+        log = []
+
+        class Pwm:
+            def __init__(self, pin, hz):
+                log.append(('pwm', pin, hz))
+
+            def start(self, duty):
+                log.append(('start', round(duty, 2)))
+
+            def ChangeDutyCycle(self, duty):
+                log.append(('duty', round(duty, 2)))
+
+            def stop(self):
+                log.append(('stop',))
+
+        class Gpio:
+            BCM, OUT, LOW = 'BCM', 'OUT', 0
+
+            def setwarnings(self, flag): pass
+
+            def setmode(self, mode): pass
+
+            def setup(self, pin, mode, initial=0): log.append(('setup', pin))
+
+            def output(self, pin, level): log.append(('out', pin, level))
+
+            def PWM(self, pin, hz): return Pwm(pin, hz)
+
+        return Gpio(), log
+
+    def test_opens_for_a_look_and_goes_slack_shut_after(self):
+        gpio, log = self.gpio()
+        s = tc.ServoShutter(5, gpio=gpio, settle_s=0)
+        s.open()
+        self.assertTrue(s.is_open)
+        s.close()
+        self.assertFalse(s.is_open)
+        self.assertEqual([e for e in log if e[0] in ('start', 'duty', 'stop', 'out')],
+                         [('start', 10.0), ('duty', 5.0), ('stop',), ('out', 5, 0)])
+
+    def test_a_table_check_through_the_servo_leaves_it_shut(self):
+        gpio, log = self.gpio()
+        shutter = tc.ServoShutter(5, gpio=gpio, settle_s=0)
+        cam = tc.TableCamera(tc.StandInCamera(np.full((H, W, 3), 200, np.uint8)), Recorder(), mapping(),
+                             shutter=shutter)
+        cam.check_table(1, ZONE, [], thermal(), 0.5, now=0)
+        self.assertFalse(shutter.is_open)
+        self.assertEqual(log[-1], ('out', 5, 0))
+
+
 @unittest.skipUnless(os.environ.get('TABLES_ONNX') and os.path.exists(os.environ.get('TABLES_ONNX', '')),
                      'set TABLES_ONNX (and TABLES_CLASSES) to the exported detector to run this')
 class RealDetector(unittest.TestCase):

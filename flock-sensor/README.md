@@ -268,10 +268,17 @@ onnxruntime from `models/tables_detector.onnx`, which is not in this repository
 finds all 8 tables and 26 of the 32 chairs. COCO has no plate class; cups,
 bowls, glasses, bottles and cutlery count as dishes until one is added.
 
-**Not done yet:** the USB capture itself (`UvcCamera` says so), the servo
-driver for the flap, measuring a check's time on the Pi, and any test on a
-real ceiling camera. Plugging the camera in means writing `UvcCamera.capture`
-and nothing else.
+**Capture, cover and timing.** `UvcCamera` reads one frame through ffmpeg
+into memory over a pipe (ffmpeg is on Raspberry Pi OS), cropping inside ffmpeg
+so a table check never holds more than that table; it is written to the UVC
+documentation and has not met the camera yet, so the first step when it is
+plugged in is `v4l2-ctl --list-formats-ext` and one bench look.
+`ServoShutter` drives the flap's MG90S on `TABLE_SHUTTER_GPIO` (0 = none): open
+for the look, shut after, then the signal stops so the spring holds it shut.
+Measured on this project's Pi 5 with the service running, one detector pass
+takes 2.9 s on 4 threads, 3.0 s on 2 and 5.4 s on 1; the loop uses 2 and
+leaves the rest to Owl. Still to come: a test on a real ceiling camera, and the
+printed flap itself.
 
 ## Hardware
 
