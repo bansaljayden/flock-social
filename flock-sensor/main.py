@@ -3711,8 +3711,14 @@ def table_camera_loop():
                 last_room_look = now
                 found = camera.look_room(points, frame, age, now)
                 if found:
-                    tablecam.write_zones(TABLES_PATH, found, load_table_zones(TABLES_PATH),
-                                         number_start=TABLE_NUMBER_START, number_max=TABLE_NUMBER_MAX)
+                    previous = load_table_zones(TABLES_PATH)
+                    # Seats the heat has learned tell stacked heads apart;
+                    # the camera's outlines keep them.
+                    seats = [p for z in previous for p in z.get('seats') or ()]
+                    if _table_learner is not None:
+                        seats += [p for t in _table_learner.tables() for p in t['seats']]
+                    tablecam.write_zones(TABLES_PATH, found, previous, number_start=TABLE_NUMBER_START,
+                                         number_max=TABLE_NUMBER_MAX, seats=seats)
                     logger.info(f'Table camera: found {len(found)} table(s) in the empty room')
             for n, box in _tables.waiting_to_clear(now):
                 if camera.check_table(n, box, points, frame, age, now) == 'clear':

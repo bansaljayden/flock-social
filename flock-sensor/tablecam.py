@@ -475,9 +475,26 @@ class TableCamera:
         return 'clear'
 
 
-def write_zones(path, tables, previous=(), number_start=1, number_max=200):
+def _home(point, tables):
+    """The index of the table a seat spot belongs to, or None."""
+    x, y = point
+    best = None
+    for t in tables:
+        x0, y0, x1, y1 = t['box']
+        gx, gy = (x1 - x0) * 0.5, (y1 - y0) * 0.5
+        if x0 - gx <= x <= x1 + gx and y0 - gy <= y <= y1 + gy:
+            d = (x - (x0 + x1) / 2) ** 2 + (y - (y0 + y1) / 2) ** 2
+            if best is None or d < best[0]:
+                best = (d, t['_i'])
+    return None if best is None else best[1]
+
+
+def write_zones(path, tables, previous=(), number_start=1, number_max=200, seats=()):
     """Write what a room look found as the zones file, marked as the
-    camera's. A table that overlaps an earlier one keeps its number."""
+    camera's. A table that overlaps an earlier one keeps its number. seats
+    are the seat spots the heat learned (thermal pixels): each goes to the
+    table whose box, grown by half, holds it nearest its middle, so heads
+    stacked between rows are told apart by seat, as with learned zones."""
     out, used = [], set()
 
     def overlap(a, b):
@@ -487,6 +504,7 @@ def write_zones(path, tables, previous=(), number_start=1, number_max=200):
         union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter
         return inter / union if union > 0 else 0.0
 
+    tables = [dict(t, _i=i) for i, t in enumerate(tables)]
     for t in tables:
         best = max(((overlap(t['box'], tuple(p['box'])), p['n']) for p in previous
                     if p['n'] not in used), default=(0.0, None))
@@ -502,6 +520,9 @@ def write_zones(path, tables, previous=(), number_start=1, number_max=200):
             continue
         x0, y0, x1, y1 = t['box']
         row = {'n': n, 'x0': x0, 'y0': y0, 'x1': x1, 'y1': y1}
+        mine = [list(p) for p in seats if _home(p, tables) is t['_i']]
+        if mine:
+            row['seats'] = mine
         if t.get('chairs'):
             row['chairs'] = t['chairs']
         rows.append(row)

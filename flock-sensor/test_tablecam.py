@@ -220,6 +220,18 @@ class RoomLook(unittest.TestCase):
         self.assertEqual(json.loads(path.read_text(encoding='utf-8')), body)
 
 
+class SeatsSurviveTheCamera(unittest.TestCase):
+
+    def test_heat_learned_seats_go_to_the_table_they_belong_to(self):
+        path = Path(tempfile.mkdtemp()) / 'tables.json'
+        body = tc.write_zones(path, [{'box': (40.0, 40.0, 60.0, 60.0), 'chairs': 2},
+                                     {'box': (40.0, 20.0, 60.0, 36.0), 'chairs': 2}],
+                              seats=[(50.0, 38.0), (45.0, 58.0), (50.0, 22.0), (150.0, 100.0)])
+        by_n = {t['n']: t for t in body['tables']}
+        self.assertEqual(by_n[1]['seats'], [[45.0, 58.0]])
+        self.assertEqual(sorted(by_n[2]['seats']), [[50.0, 22.0], [50.0, 38.0]])
+
+
 class LiningUp(unittest.TestCase):
 
     def test_factory_puts_the_middles_together(self):
