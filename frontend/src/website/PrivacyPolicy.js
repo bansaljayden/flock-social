@@ -364,7 +364,7 @@ export default function PrivacyPolicy() {
               </p>
 
               <h3>What the sensor sends us</h3>
-              <p>Every 30 seconds it sends these readings, and nothing else:</p>
+              <p>Every 30 seconds it sends these readings, and nothing else apart from the optional table camera's results, described below:</p>
               <ul>
                 <li><strong>Doorway crossings:</strong> how many times someone crossed the doorway since the last reading, in either direction. Depending on the unit, it counts them with an infrared beam across the doorway or with an infrared distance sensor that looks down at it.</li>
                 <li><strong>Warm bodies in view:</strong> a count of the people in a grid of 19,200 temperature readings, worked out on the device. A small counting model marks each person. It was trained on more than two million thermal images, none of them from a Flux sensor, and it names kinds of things, never who anyone is. A device without the model counts heat clusters instead.</li>
@@ -373,9 +373,18 @@ export default function PrivacyPolicy() {
                 <li><strong>Ambient loudness:</strong> one loudness level, the typical level over the last minute.</li>
               </ul>
 
+              {/* L1, approved 2026-10-28. Every sentence matches
+                  flock-sensor 1.26.0 (tablecam.py, pinned by test_tablecam.py),
+                  and the look record it promises is the Camera looks today
+                  section on the venue's Tables tab. */}
+              <h3>Table camera (optional, off by default)</h3>
+              <p>
+                Flux counts people by heat alone, and table monitoring works on heat alone too. A venue may choose to add a small color camera so Flux can also tell whether a table still has dishes on it. The camera is for tables, not people, and it is off unless the venue turns it on. A cover sits over its lens except during a check. It may look only when the heat sensor has just confirmed that nobody is in the area it will look at: the whole room after it has been empty for ten minutes (at most once a day, to find the tables and count chairs), or a single table with nobody at or near it (to see whether dishes are still on it). Before anything examines the picture, Flux cuts it down to that table and blacks out anything warm. If a person is still detected, the picture is thrown away and the camera waits before trying again. Pictures are examined on the unit and deleted straight away. They are never saved, shown to anyone, or sent to Flock or anyone else. All that leaves the unit is whether each table is clear and, from a room check, where the tables are and how many chairs each has. Every time the camera looks, Flux records when, what it looked at and how the check ended (never the picture), and the venue can see that record on its dashboard.
+              </p>
+
               <h3>What it does not do</h3>
               <ul>
-                <li><strong>No photo or video.</strong> The thermal part is a 160 by 120 grid of temperatures, not a picture. It is reduced to a count on the device and thrown away. It is never stored and never sent to us. A doorway distance sensor, on a unit that has one, reads 64 distances, an 8 by 8 grid in which one square is about 30 cm of floor. Each reading becomes a crossing count on the device and is thrown away too.</li>
+                <li><strong>No photo or video sent or kept.</strong> The thermal part is a 160 by 120 grid of temperatures, not a picture. It is reduced to a count on the device and thrown away. It is never stored and never sent to us. A table camera's picture, on a unit whose venue turned one on, is examined on the unit and deleted straight away, as described above. A doorway distance sensor, on a unit that has one, reads 64 distances, an 8 by 8 grid in which one square is about 30 cm of floor. Each reading becomes a crossing count on the device and is thrown away too.</li>
                 <li><strong>No audio recording.</strong> The microphone's samples become a single loudness figure every half second and are discarded on the device. No sound is stored, buffered, or transmitted, and speech cannot be recovered from a loudness level.</li>
                 <li><strong>No phone detection.</strong> No wifi or Bluetooth scanning, no MAC addresses, no beacons. Nothing reads a device in anyone's pocket.</li>
                 <li><strong>No identity.</strong> The sensor counts bodies. It cannot tell one person from another, it cannot tell whether you have a Flock account, and it does not know who you are.</li>
