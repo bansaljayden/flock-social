@@ -96,6 +96,9 @@ All reached through the 4G board, whose pins carry the Pi's straight through.
 | 6 | GND | The Qwiic SHIM |
 | 18 | GPIO 24 | The LINK light, through its resistor |
 | 20 | GND | The LINK light |
+| 4 | 5 V | The lens cover servo's red wire (pin 2 if the Qwiic SHIM leaves pin 4 no room) |
+| 14 | GND | The lens cover servo's brown wire |
+| 16 | GPIO 23 | The lens cover servo's orange (signal) wire |
 
 The 4G board itself uses pins 8 and 10 (its serial line) and pin 31 (its power
 key). Never put the counter or the meter on a 5 V pin; both are 3.3 V parts.
@@ -106,6 +109,7 @@ In `/etc/flock-sensor/flock_sensor.env`:
 
 ```
 LED_LINK_GPIO=24
+TABLE_SHUTTER_GPIO=23
 DOOR_SENSOR=tof
 NOISE_SENSOR=auto
 ```

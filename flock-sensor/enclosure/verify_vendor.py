@@ -8,8 +8,10 @@ the makers' STEP files where those outlines are (Raspberry Pi's Pi 5,
 Waveshare's 4G HAT, GroupGets' PureThermal 3, Teledyne FLIR's Lepton 3.5 with
 its field of view, Pololu's VL53L8CX carrier, and a model of the Active
 Cooler) and checks every solid in them against the printed body, both acrylic
-pieces, the screen, the battery and each other. It also checks that the
-camera's and the counter's views come out of the box without touching it, and
+pieces, the screen, the battery, the table camera with its clamp and plug,
+the lens cover's flap (shut and open), servo, horn and spring, and each
+other. It also checks that the heat camera's and the counter's views come
+out of the box without touching it, and
 that the boards' own mounting holes land on the posts drawn for them.
 
 The vendor files are not in this repository: most come with no licence to
@@ -111,6 +113,10 @@ def main():
         'battery plugs': c.battery_plugs(), 'sound meter': c.meter_body(), 'PD board': c.pd_board(),
         'charging port': c.charge_jack(), 'USB port': c.usb_jack(), 'Ethernet port': c.lan_jack(),
         'mount nut': c.mount_nut(), 'light': c.led_body(),
+        'table camera': c.table_camera_body(), 'table camera plug': c.table_camera_plug(),
+        'camera clamp': c.camera_clamp(), 'lens cover servo': c.servo_body(), 'servo horn': c.servo_horn(),
+        'lens cover flap': c.lens_flap(), 'lens cover open': c.lens_flap(c.flap_open),
+        'flap spring': c.flap_spring(),
     }
     # What a vendor part is meant to touch: the board it sits on.
     meant = {('Active Cooler', 'Pi 5 (Raspberry Pi)'), ('4G HAT (Waveshare)', 'Pi 5 (Raspberry Pi)'),
