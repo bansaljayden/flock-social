@@ -37,12 +37,16 @@ PRINTED = [
     ('sensor_pill', 'flux-5-sensor_pill'),
     ('logo_inlay', 'flux-6-logo_inlay'),
     ('stand', 'flux-7-stand'),
+    ('lens_flap', 'flux-8-lens_flap'),
+    ('camera_clamp', 'flux-9-camera_clamp'),
 ]
 
 # Print plates: each a .3mf any slicer opens with its parts already the right
 # way up and laid out, named, in the order to print them. (file, colour, parts)
 PLATES = [
-    ('Flux-print-1-fit-tests', 'navy', ['screen_fit_test', 'strip_fit_test']),
+    # The table camera's flap and clamp print with the fit tests: they are
+    # the real parts, and the strip test is where they are first tried.
+    ('Flux-print-1-fit-tests', 'navy', ['screen_fit_test', 'strip_fit_test', 'lens_flap', 'camera_clamp']),
     ('Flux-print-2-body', 'navy', ['sleeve']),
     ('Flux-print-3-cream-parts', 'cream', ['sensor_pill', 'stand']),
     ('Flux-print-4-spacers', 'any colour', ['pi_spacer'] * 4),
@@ -233,6 +237,9 @@ def main():
         'sensor_pill': cad.Rot(90, 0, 0) * front,
         'logo_inlay': cad.Rot(90, 0, 0) * cad.logo_inlay(),
         'stand': cad.stand(),
+        # Both flat, their front faces on the bed: the flap's peg stands up.
+        'lens_flap': cad.Rot(90, 0, 0) * cad.lens_flap(),
+        'camera_clamp': cad.Rot(90, 0, 0) * cad.camera_clamp(),
     }
     # The wordmark is one solid per letter; everything else must be one piece.
     pieces = {'logo_inlay': len(cad.wordmark)}
@@ -258,9 +265,13 @@ def main():
     for problem in cad.arm_report(sleeve, back):
         sys.exit(problem)
     print('wall check: tilted down on the arm, the box clears the arm and the wall')
-    for problem in cad.sight_report(sleeve, back):
+    for problem in cad.sight_report(sleeve, back, front):
         sys.exit(problem)
-    print('view check: nothing stands in the doorway counter\'s view, on a table or on the wall')
+    print('view check: nothing stands in the doorway counter\'s, the heat camera\'s or the table camera\'s view, '
+          'on a table or on the wall')
+    for problem in cad.shutter_report(sleeve):
+        sys.exit(problem)
+    print('cover check: shut, the flap covers the table camera\'s whole view; opening, it touches nothing')
 
     for name, out in PRINTED:
         path = HERE / 'stl' / f'{out}.stl'

@@ -3659,14 +3659,16 @@ class EnclosureFiles(unittest.TestCase):
                      'Raspberry Pi 5', 'PureThermal 3 + Lepton 3.5', 'VL53L8CX door counter',
                      'Decibel meter', 'Anker A1336 battery', '7 inch touchscreen',
                      'Stand (printed, cream)', 'Stand screw (1/4-20 x 5/8)',
-                     'CAMVATE wall arm (24007)', 'RPi5 PD Power board (52Pi)'):
+                     'CAMVATE wall arm (24007)', 'RPi5 PD Power board (52Pi)',
+                     'Arducam IMX519 table camera', 'MG90S lens cover servo', 'Lens cover flap (printed, navy)'):
             self.assertIn(name, step, name)
         # Every connection is in the model as a named cable, so the ports on
         # the back visibly run to the Pi and nothing is left to guess.
-        for cable in ('back USB port to Pi USB', 'back Ethernet port to Pi Ethernet',
+        for cable in ('back Ethernet port to Pi Ethernet',
                       'back CHARGE port to battery', 'battery to PD board',
-                      'PD board to Pi USB-C', 'camera to Pi USB', 'screen touch to Pi USB',
-                      'screen video ribbon to Pi HDMI', '4G modem to Pi USB'):
+                      'PD board to Pi USB-C', 'heat camera to Pi USB', 'screen touch to Pi USB',
+                      'screen video ribbon to Pi HDMI', '4G modem to Pi USB',
+                      'table camera to Pi USB 3', 'lens cover servo to Pi pins'):
             self.assertIn(f'Cable: {cable}', step, cable)
         for part in ('sleeve', 'sensor-pill', 'back-sheet'):
             self.assertTrue((self.ENC / 'step' / f'flux-{part}.step').exists(), part)

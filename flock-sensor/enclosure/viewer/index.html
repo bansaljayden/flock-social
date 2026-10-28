@@ -126,6 +126,12 @@
     'Wall (for scale)':          { color: 0xebe8e2, rough: 0.95, apart: [0, 0, 0] },
     '4G antenna strip':          { color: 0x9ca3af, rough: 0.5, apart: [30, 0, 0] },
     'Brass M3 inserts (8)':      { color: 0xc9a14a, rough: 0.35, metal: 0.95, apart: [0, 0, 0] },
+    'Arducam IMX519 table camera': { color: 0x14402e, rough: 0.5, apart: [0, 40, 0] },
+    'Camera clamp (printed, navy)': { color: 0x0f172a, rough: 0.78, apart: [0, 55, 0] },
+    'Lens cover flap (printed, navy)': { color: 0x0f172a, rough: 0.78, apart: [0, 10, 0] },
+    'Lens cover spring':         { color: 0xc3c6cc, rough: 0.2, metal: 1, apart: [0, 5, 0] },
+    'MG90S lens cover servo':    { color: 0x1a1b20, rough: 0.45, apart: [0, 30, -10] },
+    'Servo horn':                { color: 0xeeeee6, rough: 0.5, apart: [0, 22, -10] },
   };
 
   // What sits under the box only when it stands on its stand.
@@ -146,15 +152,22 @@
   const STEPS = [
     { text: '1. Melt the eight brass inserts into the sleeve: four on the screen posts, four in the back corners.',
       show: ['Body (printed, navy)', 'Brass M3 inserts (8)'], lift: {}, view: [0.7, 1.1, 0.75] },
-    { text: '2. Screw the camera onto its four posts and the counter onto its two angled posts in the chin, from inside. Push the light in.',
-      show: ['Body (printed, navy)', 'Brass M3 inserts (8)', 'PureThermal 3 + Lepton 3.5', 'VL53L8CX door counter', 'LINK light'],
-      lift: { 'PureThermal 3 + Lepton 3.5': [0, 30, 0], 'VL53L8CX door counter': [0, 30, 0], 'LINK light': [0, 22, 0] }, view: [0.7, 1.1, 0.75] },
-    { text: '3. Plug the touch cable and video ribbon into the screen, then drop it in glass first. Four M3 screws through its ears.',
-      show: ['Body (printed, navy)', 'Brass M3 inserts (8)', 'PureThermal 3 + Lepton 3.5', 'VL53L8CX door counter', 'LINK light', '7 inch touchscreen'],
-      lift: { '7 inch touchscreen': [0, 45, 0] }, view: [0.7, 1.1, 0.75] },
+    { text: '2. Screw the heat camera onto its four posts and the counter onto its two angled posts in the chin, from inside. Push the light in. Then the lens cover: the spring on its post, the flap on its pin with the spring hooked into its tail, and the servo, its horn set shut, on its two posts.',
+      show: ['Body (printed, navy)', 'Brass M3 inserts (8)', 'PureThermal 3 + Lepton 3.5', 'VL53L8CX door counter', 'LINK light',
+             'Lens cover flap (printed, navy)', 'Lens cover spring', 'MG90S lens cover servo', 'Servo horn'],
+      lift: { 'PureThermal 3 + Lepton 3.5': [0, 30, 0], 'VL53L8CX door counter': [0, 30, 0], 'LINK light': [0, 22, 0],
+              'Lens cover flap (printed, navy)': [0, 14, 0], 'MG90S lens cover servo': [0, 34, 0], 'Servo horn': [0, 34, 0] },
+      view: [0.7, 1.1, 0.75] },
+    { text: '3. Plug the touch cable and video ribbon into the screen, then drop it in glass first. Four M3 screws through its ears. Then the table camera into its cradle, lens first, and its clamp over it with two M2 screws.',
+      show: ['Body (printed, navy)', 'Brass M3 inserts (8)', 'PureThermal 3 + Lepton 3.5', 'VL53L8CX door counter', 'LINK light', '7 inch touchscreen',
+             'Lens cover flap (printed, navy)', 'Lens cover spring', 'MG90S lens cover servo', 'Servo horn',
+             'Arducam IMX519 table camera', 'Camera clamp (printed, navy)'],
+      lift: { '7 inch touchscreen': [0, 45, 0], 'Arducam IMX519 table camera': [0, 30, 0], 'Camera clamp (printed, navy)': [0, 45, 0] },
+      view: [0.7, 1.1, 0.75] },
     { text: '4. VHB tape in the pill’s pocket; press the cream sensor pill in. Fill the pressed-in Flux with a cream paint pen, or print it in cream if your printer does two colours.',
       show: ['Body (printed, navy)', '7 inch touchscreen', 'Sensor pill (cream)', 'Flux wordmark (cream)',
-             'PureThermal 3 + Lepton 3.5', 'VL53L8CX door counter', 'LINK light'],
+             'PureThermal 3 + Lepton 3.5', 'VL53L8CX door counter', 'LINK light', 'Arducam IMX519 table camera',
+             'Lens cover flap (printed, navy)'],
       lift: { 'Sensor pill (cream)': [0, -35, 0], 'Flux wordmark (cream)': [0, -25, 0] }, view: [0.75, -1.1, 0.5] },
     { text: '5. On the back sheet: the Pi on four spacers, the Active Cooler, the 18 mm standoffs and the 4G board. The USB, Ethernet and charging ports into their holes. The RPi5 PD Power board above the Pi on its four 18 mm brass pillars, its AlwaysON switch on.',
       show: BACK,
@@ -184,6 +197,8 @@
       // cooler, the Pi and power board, and the back sheet with its ports.
       'Sensor pill (cream)': [0, -70, 0], 'Flux wordmark (cream)': [0, -55, -6],
       'PureThermal 3 + Lepton 3.5': [0, 0, 0], 'VL53L8CX door counter': [0, 0, 0], 'LINK light': [0, 0, 0],
+      'Arducam IMX519 table camera': [0, 45, 0], 'Camera clamp (printed, navy)': [0, 62, 0],
+      'MG90S lens cover servo': [0, 40, -22], 'Servo horn': [0, 30, -22], 'Lens cover flap (printed, navy)': [0, 0, 0],
       '7 inch touchscreen': [0, 100, 0], 'Anker A1336 battery': [0, 165, 0],
       'Decibel meter': [45, 0, 0], '4G antenna strip': [28, 0, 0],
       'SIM7600G-H 4G HAT': [0, 205, 0], 'Active Cooler': [0, 230, 0],
@@ -215,6 +230,8 @@
     'Ethernet port': 'Ethernet port',
     'LINK light': 'Status light',
     '4G antenna strip': '4G antenna',
+    'Arducam IMX519 table camera': 'Table camera',
+    'MG90S lens cover servo': 'Lens cover servo',
   };
 
   const canvas = document.getElementById('c');
