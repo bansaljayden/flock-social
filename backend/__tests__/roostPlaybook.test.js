@@ -261,6 +261,9 @@ test('"how much would N more covers make me" is answered in dollars from the own
   assert.strictEqual(lines[1], `${advisorAnswer.BULLET}At a typical food cost near 30%, about $266 of that $380 is left after food.`);
   assert.ok(lines.length <= 1 + advisorAnswer.MAX_POINTS);
   assert.deepStrictEqual(a.sources.map((s) => s.source), ['roost_playbook', 'intake']);
+  // The move under the sum is one that brings covers in, never a cost cut.
+  const moved = pb.tactics.find((t) => a.tactics[0] === t.id);
+  assert.strictEqual(moved.money, 'covers', `${moved.id} is not a move that brings covers`);
   // Per night: no year, because a venue that does not open every night has no
   // honest yearly figure.
   assert.match(pb.answer({ question: 'what are 20 extra guests a night worth', ctx: CTX(38) }).text, /^At your \$38 a head, 20 more covers a night is \$760\.\n/);

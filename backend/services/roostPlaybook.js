@@ -435,7 +435,15 @@ function calculatorAnswer(book, { question, ctx, venue, intentId }) {
   const asked = coversIn(question);
   if (!asked) return null;
   const spend = spendOf(ctx);
-  const [move] = book.find(question, { intentId: intentId || 'quiet_nights', venue, limit: 1 });
+  // The move under a covers sum is one that BRINGS covers: "10 more covers is
+  // $380" followed by a move about closing early answers a different question.
+  // Picked by topic, not by the question's words: "covers", "week" and "make"
+  // say nothing about which move fits, and matched incidental text instead.
+  // And in the playbook's own order, so the topic's lead move wins rather than
+  // whichever one happens to be tagged for this kind of venue.
+  const candidates = book.find('', { intentId: intentId || 'quiet_nights', venue, limit: 12 })
+    .sort((a, z) => a.order - z.order);
+  const move = candidates.find((t) => t.money === 'covers') || candidates[0];
   if (spend === null) {
     return {
       lead: `Add your typical spend per person in your venue settings and Roost will price ${asked.covers} more covers a ${asked.per} in dollars.`,
