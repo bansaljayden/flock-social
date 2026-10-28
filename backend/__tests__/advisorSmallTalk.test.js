@@ -76,8 +76,12 @@ test('a real question that merely opens with a greeting word falls through to th
     assert.strictEqual(advisorFreeText.smallTalk(q), null, `"${q}" was swallowed as small talk`);
     const route = await advisorFreeText.classify({ userId: 7, question: q });
     // With no model in this process the router cannot answer, and that is the
-    // point: these must reach it rather than being greeted.
-    assert.strictEqual(route.refusal, advisorFreeText.REFUSAL_BUSY, `"${q}" did not reach the router`);
+    // point: these must reach it rather than being greeted. Since 2026-10-28
+    // the offline route then places what it can, keeping the busy sentence as
+    // its fallback.
+    assert.notStrictEqual(route.mode, 'small_talk', `"${q}" was greeted`);
+    assert.ok(route.refusal === advisorFreeText.REFUSAL_BUSY || route.fallback === advisorFreeText.REFUSAL_BUSY,
+      `"${q}" did not reach the router`);
   }
 });
 

@@ -141,6 +141,9 @@ const SOURCE_LABELS = {
   // An advice answer's own source: what works in the trade. The server adds
   // it to every advice answer (advisorFreeText TRADE_SOURCE).
   trade_practice: 'general restaurant practice',
+  // An answer built from Roost's own playbook of tested moves, with no model
+  // call (backend services/roostPlaybook.js PLAYBOOK_SOURCE).
+  roost_playbook: 'Roost playbook',
 };
 const sourceLabel = (s) => SOURCE_LABELS[s] || String(s || '').replace(/_/g, ' ');
 
@@ -296,7 +299,29 @@ const PENDING_TYPED = 'Working on it…';
 // held to).
 const AVATAR_SIZE = 44;
 
-const ThreadTurn = ({ turn, first, navy, navyBg, onRetry }) => {
+// WHAT TO ASK NEXT, under the latest answer only (backend
+// services/advisorFollowUps.js). The server suggests; this card decides what
+// it can actually take, so a suggestion is never a button that declines: a
+// chip only when it is on this venue's own list, a typed question only when
+// typed questions are on and the owner has said yes to them.
+const NEXT_MAX = 2;
+const NEXT_MAX_CHARS = 80;
+export const nextSteps = (followUps, { offered, labelFor, typedOk }) => {
+  if (!Array.isArray(followUps)) return [];
+  const out = [];
+  for (const f of followUps) {
+    if (out.length >= NEXT_MAX || !f || typeof f !== 'object') continue;
+    if (f.kind === 'intent' && typeof f.id === 'string' && offered.has(f.id)) {
+      out.push({ kind: 'intent', id: f.id, label: labelFor(f.id) || String(f.label || '') });
+    } else if (f.kind === 'question' && typedOk && typeof f.text === 'string'
+        && f.text.trim() && f.text.length <= NEXT_MAX_CHARS) {
+      out.push({ kind: 'question', text: f.text.trim() });
+    }
+  }
+  return out.filter((f) => (f.kind === 'intent' ? f.label : f.text));
+};
+
+const ThreadTurn = ({ turn, first, navy, navyBg, onRetry, next = [], onNext }) => {
   const pending = turn.status === 'pending';
   return (
     <div
@@ -382,6 +407,20 @@ const ThreadTurn = ({ turn, first, navy, navyBg, onRetry }) => {
                 <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '8px 0 0' }}>
                   {sourcesLine(turn.answer.sources)}
                 </p>
+              )}
+              {next.length > 0 && typeof onNext === 'function' && (
+                <div data-roost="next" role="group" aria-label="Ask next" style={{ margin: '10px 0 0' }}>
+                  {next.map((f) => (
+                    <button
+                      key={f.kind === 'intent' ? `i-${f.id}` : `q-${f.text}`}
+                      type="button"
+                      onClick={() => onNext(f)}
+                      style={CHIP_STYLE}
+                    >
+                      {f.kind === 'intent' ? f.label : f.text}
+                    </button>
+                  ))}
+                </div>
               )}
             </>
           )}
@@ -902,6 +941,27 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, grantConsent, with
     runTurn(`${id}-${Date.now()}`, label, () => ask(id));
   }, [ask, busy, runTurn]);
 
+  // Every chip this venue was offered, by id, with its label. A follow-up chip
+  // is drawn only when it is one of these (nextSteps above).
+  const offeredChips = useMemo(() => {
+    const all = [...lead, ...groups.flatMap((g) => (Array.isArray(g.questions) ? g.questions : []))];
+    return new Map(all.map((q) => [q.id, q.label]));
+  }, [lead, groups]);
+
+  // A follow-up is asked exactly the way its kind is always asked: a chip
+  // through /ask, a typed question through /question, so retry and the thread
+  // treat it like any other turn.
+  const askNext = useCallback((f) => {
+    if (busy || !f) return;
+    if (f.kind === 'intent') {
+      askIntent(f.id, f.label);
+      return;
+    }
+    if (f.kind === 'question' && typeof askQuestion === 'function') {
+      runTurn(`typed-${Date.now()}`, f.text, () => askQuestion(f.text), true);
+    }
+  }, [askIntent, askQuestion, busy, runTurn]);
+
   const submitQuestion = useCallback((e) => {
     if (e && typeof e.preventDefault === 'function') e.preventDefault();
     const text = draft.trim();
@@ -1127,7 +1187,22 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, grantConsent, with
             style={{ position: 'relative', maxHeight: `${THREAD_MAX_HEIGHT}px`, overflowY: 'auto' }}
           >
             {thread.map((turn, i) => (
-              <ThreadTurn key={turn.key} turn={turn} first={i === 0} navy={navy} navyBg={navyBg} onRetry={() => retry(turn)} />
+              <ThreadTurn
+                key={turn.key}
+                turn={turn}
+                first={i === 0}
+                navy={navy}
+                navyBg={navyBg}
+                onRetry={() => retry(turn)}
+                next={i === thread.length - 1 && !busy && turn.status === 'done'
+                  ? nextSteps(turn.answer && turn.answer.followUps, {
+                    offered: offeredChips,
+                    labelFor: (id) => offeredChips.get(id),
+                    typedOk: freeText && aiConsent,
+                  })
+                  : []}
+                onNext={askNext}
+              />
             ))}
           </div>
         </div>

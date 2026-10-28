@@ -1068,3 +1068,96 @@ test('the free-text-off note does not point at chips that are not there', () => 
   expect(src).toMatch(/\{!freeText && \(lead\.length > 0 \|\| groups\.length > 0\) && \(/);
   expect(src).not.toMatch(/\{!freeText && \(\s*\n\s*<p style=\{\{ fontSize: 'var\(--t-micro\)'/);
 });
+
+// WHAT TO ASK NEXT (2026-10-28). The server suggests up to two follow-ups
+// under an answer (backend services/advisorFollowUps.js): a money question and
+// one of the venue's own chips. The card draws only what it can take, so a
+// suggestion is never a button that declines.
+describe('Roost chat: what to ask next', () => {
+  const { within } = require('@testing-library/react');
+  const { nextSteps } = require('../components/VenueAdvisorChat');
+  const FOLLOWING = {
+    ...GROUNDED,
+    intentId: 'quiet_nights',
+    followUps: [
+      { kind: 'question', text: 'How do I fill Tuesdays?' },
+      { kind: 'intent', id: 'peak_hours', label: 'When do we peak this week?' },
+    ],
+  };
+  const withConsent = async () => ({ ...QUESTIONS(true), aiConsent: true });
+
+  test('under the latest answer the next money question and the next chip are offered, and each asks the way it always does', async () => {
+    const asked = [];
+    const tapped = [];
+    mount({
+      fetchQuestions: withConsent,
+      ask: async (id) => { tapped.push(id); return id === 'tonight_outlook' ? FOLLOWING : GROUNDED; },
+      askQuestion: async (q) => { asked.push(q); return SHAPED; },
+    });
+    await waitFor(field);
+    fireEvent.click(screen.getByRole('button', { name: 'How does today look?' }));
+    const group = await waitFor(() => screen.getByRole('group', { name: 'Ask next' }));
+    expect(within(group).getAllByRole('button').map((b) => b.textContent))
+      .toEqual(['How do I fill Tuesdays?', 'When do we peak this week?']);
+
+    fireEvent.click(within(group).getByRole('button', { name: 'How do I fill Tuesdays?' }));
+    expect(asked).toEqual(['How do I fill Tuesdays?']);
+    await waitFor(() => expect(screen.getByText(/Skip the discount/)).toBeTruthy());
+    // The suggestions belong to the newest answer, and this one has none.
+    expect(screen.queryByRole('group', { name: 'Ask next' })).toBeNull();
+  });
+
+  test('a chip suggestion goes through the chip door', async () => {
+    const tapped = [];
+    mount({
+      fetchQuestions: withConsent,
+      ask: async (id) => { tapped.push(id); return tapped.length === 1 ? FOLLOWING : GROUNDED; },
+    });
+    await waitFor(field);
+    fireEvent.click(screen.getByRole('button', { name: 'How does today look?' }));
+    const group = await waitFor(() => screen.getByRole('group', { name: 'Ask next' }));
+    fireEvent.click(within(group).getByRole('button', { name: 'When do we peak this week?' }));
+    await waitFor(() => expect(tapped).toEqual(['tonight_outlook', 'peak_hours']));
+  });
+
+  test('no typed suggestion without a yes to typed questions, and no chip the venue was not offered', async () => {
+    mount({ ask: async () => FOLLOWING });
+    await waitFor(field);
+    fireEvent.click(screen.getByRole('button', { name: 'How does today look?' }));
+    const group = await waitFor(() => screen.getByRole('group', { name: 'Ask next' }));
+    expect(within(group).getAllByRole('button').map((b) => b.textContent)).toEqual(['When do we peak this week?']);
+
+    const offered = new Map([['peak_hours', 'When do we peak this week?']]);
+    const labelFor = (id) => offered.get(id);
+    expect(nextSteps([{ kind: 'intent', id: 'tables_free', label: 'When is a table usually free?' }], { offered, labelFor, typedOk: true }))
+      .toEqual([]);
+    expect(nextSteps([{ kind: 'question', text: 'x'.repeat(81) }], { offered, labelFor, typedOk: true })).toEqual([]);
+    expect(nextSteps([
+      { kind: 'question', text: 'How do I fill Tuesdays?' },
+      { kind: 'question', text: 'What event would suit my room?' },
+      { kind: 'intent', id: 'peak_hours', label: 'ignored, the card has its own label' },
+    ], { offered, labelFor, typedOk: true })).toEqual([
+      { kind: 'question', text: 'How do I fill Tuesdays?' },
+      { kind: 'question', text: 'What event would suit my room?' },
+    ]);
+    expect(nextSteps(null, { offered, labelFor, typedOk: true })).toEqual([]);
+    expect(nextSteps([{ kind: 'intent', id: 'peak_hours', label: 'from the server' }], { offered, labelFor, typedOk: false }))
+      .toEqual([{ kind: 'intent', id: 'peak_hours', label: 'When do we peak this week?' }]);
+  });
+
+  test('an answer from the playbook says so in its sources line', async () => {
+    const PLAYBOOK = {
+      mode: 'advice',
+      text: 'Give people a reason to come on your slowest day.\n• Run it 6 weeks before you judge it.',
+      sources: [
+        { id: 'roost_playbook', source: 'roost_playbook', asOf: null },
+        { id: 'intake_typical_spend_per_person', source: 'intake', asOf: 'owner-set 2026-10-01' },
+      ],
+    };
+    mount({ askQuestion: async () => PLAYBOOK });
+    const input = await waitFor(field);
+    fireEvent.change(input, { target: { value: 'how do I fill Tuesdays' } });
+    fireEvent.click(send());
+    await waitFor(() => expect(screen.getByText('Sources: Roost playbook, your settings.')).toBeTruthy());
+  });
+});

@@ -249,6 +249,60 @@ function getGenAI() {
   return genAIClient;
 }
 
+// ── The outage breaker ───────────────────────────────────────────────────────
+//
+// A MODEL THAT IS DOWN FOR AN HOUR SHOULD COST NOTHING FOR AN HOUR. On
+// 2026-10-28 the key's prepaid credits ran out and every Gemini call answered
+// 402. Each chip tap still charged the venue's daily meters, waited on the
+// refusal, and only then served the template it could have served at once,
+// and a typed question paid for two calls to be told we could not get to it.
+// The meters are never refunded, so an outage also spent each venue's
+// allowance for the day it lifted.
+//
+// So a failure that says the KEY is unusable (billing, quota, a bad key, an
+// overloaded service) opens the breaker for a while, and every Roost call
+// checks it before charging anything: chips serve the template twin at once,
+// and typed questions take the offline route to the venue's own numbers or
+// the playbook (services/roostPlaybook.js). A timeout or one bad response does
+// not trip it. Those are one call's problem, not the key's.
+const OUTAGE_BACKOFF_MS = Object.freeze({
+  // Nothing changes until a person tops up or fixes the key.
+  billing: 10 * 60 * 1000,
+  // A rate or quota limit usually clears within the minute.
+  quota: 60 * 1000,
+  // The service is shedding load.
+  overloaded: 30 * 1000,
+});
+let outageUntil = 0;
+
+function outageKindOf(err) {
+  if (!err) return null;
+  const status = Number(err.status);
+  const msg = String(err.message || '');
+  // 402 carries RESOURCE_EXHAUSTED in its body too, so it is read first.
+  if (status === 402 || status === 403 || /prepayment credits|API key not valid|API key expired|PERMISSION_DENIED/i.test(msg)) return 'billing';
+  if (status === 429 || /RESOURCE_EXHAUSTED|quota/i.test(msg)) return 'quota';
+  if (status === 503 || /\bUNAVAILABLE\b|overloaded/i.test(msg)) return 'overloaded';
+  return null;
+}
+
+/** Record a failed model call. True when it opened (or extended) the breaker. */
+function noteModelFailure(err, now = Date.now()) {
+  const kind = outageKindOf(err);
+  if (!kind) return false;
+  const until = now + OUTAGE_BACKOFF_MS[kind];
+  if (until > outageUntil) outageUntil = until;
+  warnOnce(
+    `advisor:outage:${kind}`,
+    `[advisor] Gemini answered ${err.status || kind} (${kind}). Roost serves its templates and the playbook without calling the model until the breaker closes.`
+  );
+  return true;
+}
+
+function modelAvailable(now = Date.now()) {
+  return now >= outageUntil;
+}
+
 // ── Ceilings (grounding doc section 4 — hard constants, not env vars, for the
 // 2am reason birdieUsage.js states) ─────────────────────────────────────────
 // A THINKING MODEL SPENDS THIS BUDGET BEFORE IT WRITES A WORD, and that is
@@ -1726,6 +1780,9 @@ async function phrase(block, { venueUserId, question } = {}) {
 
   const genAI = getGenAI();
   if (!genAI) return template;
+  // Before any meter is charged: a call the breaker already knows will fail
+  // costs the venue nothing and serves the twin at once.
+  if (!modelAvailable()) return template;
 
   // The owner's own prose leaves the fact list here and rides as context.
   const { substitutable, ownerContext } = partitionOwnerContext(block.facts);
@@ -1791,10 +1848,12 @@ async function phrase(block, { venueUserId, question } = {}) {
       try {
         resp = await callModel(genAI, activeModel, payload);
       } catch (err2) {
+        noteModelFailure(err2);
         console.error('advisorPhrasing: fallback model call failed:', err2.message);
         return template;
       }
     } else {
+      noteModelFailure(err);
       console.error('advisorPhrasing: model call failed:', err.message);
       return template;
     }
@@ -1829,6 +1888,12 @@ const internals = {
   getGenAI,
   isModelNotFound,
   noteModelNotFound,
+  // The outage breaker: both answer paths check it before charging, and
+  // record every failed call with it.
+  modelAvailable,
+  noteModelFailure,
+  outageKindOf,
+  OUTAGE_BACKOFF_MS,
   responseText,
   truncated,
   warnTruncated,
@@ -1892,6 +1957,7 @@ function __setGenAIForTests(fake) {
 function __resetAdvisorSpend() {
   activeModel = process.env.ADVISOR_MODEL || DEFAULT_ADVISOR_MODEL;
   modelFellBack = false;
+  outageUntil = 0;
 }
 
 module.exports = {

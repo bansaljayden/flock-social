@@ -22,7 +22,10 @@ test('the wall has its own sentinel and its own sentence, and both call sites us
   // Line endings folded first: a Windows checkout writes this file with CRLF.
   const src = fs.readFileSync(path.join(__dirname, '..', 'services', 'advisorFreeText.js'), 'utf8').replace(/\r\n/g, '\n');
   assert.match(src, /if \(!\(await allowGlobalTokens\(estimate\)\)\) \{\n\s+releaseVenueReservation\(userId, \{ tokens: estimate, \.\.\.counterFor\(charge\) \}\);\n\s+return GLOBAL_WALL;/);
-  assert.match(src, /if \(raw === GLOBAL_WALL\) \{\n\s+return \{ mode: 'refused', intentId: null, refusal: refusalGlobalWall\(await ceilingResetPhrase\(\)\) \};/);
-  assert.match(src, /if \(out === GLOBAL_WALL\) \{\n\s+return \{ mode: 'refusal', text: refusalGlobalWall\(await ceilingResetPhrase\(\)\), sources: \[\] \};/);
+  // Both call sites still name the wall. Since 2026-10-28 the sentence is the
+  // one a question keeps when neither the offline route nor the playbook can
+  // answer it, rather than the whole reply.
+  assert.match(src, /: raw === GLOBAL_WALL \? refusalGlobalWall\(await ceilingResetPhrase\(\)\)/);
+  assert.match(src, /if \(out === GLOBAL_WALL\) return fromPlaybook\(refusalGlobalWall\(await ceilingResetPhrase\(\)\)\);/);
   assert.ok(ft.__copyStrings().some((s) => /Roost is busy across Flock today/.test(s)), 'the copy walk sees the wall sentence');
 });

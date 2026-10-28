@@ -486,9 +486,19 @@ test('when an injection gets past the screen and the model complies, the valve t
     resetAll();
     installProfile();
     replies = ['{"mode":"advice","intentId":null}', text];
+    // Since 2026-10-28 a thrown-out draft is replaced by the playbook's best
+    // move for the question, never by the draft and never by nothing.
     const r = await ask('how do we fill the room midweek');
-    assert.strictEqual(r.body.mode, 'refusal', `valve rejected: ${text}`);
-    assert.strictEqual(r.body.text, advisorFreeText.REFUSAL_VALVE);
+    assert.strictEqual(r.body.mode, 'advice', `valve rejected: ${text}`);
+    assert.ok(!r.body.text.includes(text.slice(0, 24)), `none of the draft reached the owner: ${text}`);
+    assert.ok(r.body.sources.some((s) => s.source === 'roost_playbook'), 'the answer is the playbook, and says so');
+    // A question the playbook has nothing for keeps the refusal.
+    resetAll();
+    installProfile();
+    replies = ['{"mode":"advice","intentId":null}', text];
+    const bare = await ask('what do you think of the room');
+    assert.strictEqual(bare.body.mode, 'refusal', `valve rejected: ${text}`);
+    assert.strictEqual(bare.body.text, advisorFreeText.REFUSAL_VALVE);
   }
 });
 
@@ -633,7 +643,10 @@ test('owner prose reaches the advice model as context with NO id, so it cannot b
   ];
   const r = await ask('how do I fill the late stretch');
   assert.strictEqual(r.status, 200);
-  assert.strictEqual(r.body.mode, 'refusal', 'an id that is not in the block voids the whole answer');
+  // An id that is not in the block voids the whole draft, and the playbook
+  // answers in its place.
+  assert.ok(r.body.sources.some((s) => s.source === 'roost_playbook'), 'the draft was voided and the playbook answered');
+  assert.ok(!r.body.text.includes('stop at 1am'), "the owner's typed prose never reaches the answer");
   assert.ok(!/30 covers/.test(r.body.text), "the owner's typed digits never reach the answer");
 
   const payload = JSON.parse(modelCalls[1].contents[0].parts[0].text.split('\n')[1]);

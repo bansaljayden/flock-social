@@ -59,6 +59,7 @@ const { authenticate } = require('../middleware/auth');
 const { requireVenueTier, getVenueTier, venueBillingEnabled } = require('../services/venueEntitlements');
 const advisorPhrasing = require('../services/advisorPhrasing');
 const advisorFreeText = require('../services/advisorFreeText');
+const { followUpsFor } = require('../services/advisorFollowUps');
 // The measured floor below which an ordering claim is not made. Commit
 // 1d1b92b established it for HOURS, on the same 0 to 100 index these day
 // scores live on. Imported rather than restated: a second copy of a measured
@@ -822,6 +823,8 @@ router.post('/ask', authenticate, requirePro, [
       mode: answer.mode, // 'refusal' | 'template' | 'phrased'
       text: answer.text,
       sources: answer.sources,
+      // What to ask next (services/advisorFollowUps.js): ours, never typed.
+      followUps: followUpsFor({ intentId, block }),
     });
   } catch (err) {
     console.error('Advisor ask error:', err);
@@ -968,7 +971,9 @@ router.post('/question', authenticate, requirePro, async (req, res) => {
     }
 
     // GROUNDED: the existing pipeline, unchanged. Free text is another way in,
-    // never a second way to answer.
+    // never a second way to answer. An offline route (advisorFreeText's own
+    // reading of the question when the router could not be asked) lands here
+    // too, and phrase() serves the template twin while the model is out.
     if (route.mode === 'grounded') {
       const block = await buildFactBlock(userId, route.intentId);
       // The owner's own words go with the facts (sanitised above, and fenced
@@ -981,6 +986,7 @@ router.post('/question', authenticate, requirePro, async (req, res) => {
         text: answer.text,
         sources: answer.sources,
         question: clean.text,
+        followUps: followUpsFor({ intentId: route.intentId, block, question: clean.text }),
       });
     }
 
@@ -992,17 +998,39 @@ router.post('/question', authenticate, requirePro, async (req, res) => {
     // fetched above, before the router was paid for, rather than a second
     // lookup after both calls have already been spent.
     let groundedFacts = [];
+    let block = null;
     if (route.intentId) {
-      const block = await buildFactBlock(userId, route.intentId);
+      block = await buildFactBlock(userId, route.intentId);
       groundedFacts = Array.isArray(block.facts) ? block.facts : [];
     }
-    const answer = await advisorFreeText.advise({ userId, question: clean.text, ctx, groundedFacts });
+    // `offline` and `fallback` come from an offline route: the playbook
+    // answers with no model call, and `fallback` is the sentence the owner
+    // reads if it has nothing for the question.
+    const answer = await advisorFreeText.advise({
+      userId,
+      question: clean.text,
+      ctx,
+      groundedFacts,
+      intentId: route.intentId || null,
+      offline: route.offline === true,
+      fallback: route.fallback || null,
+    });
     return res.json({
       mode: answer.mode,
       intentId: route.intentId || null,
       text: answer.text,
       sources: answer.sources,
       question: clean.text,
+      followUps: answer.mode === 'refusal'
+        ? []
+        : followUpsFor({
+          mode: 'advice',
+          intentId: route.intentId || null,
+          block,
+          question: clean.text,
+          followUp: answer.followUp || null,
+          topic: answer.topic || null,
+        }),
     });
   } catch (err) {
     console.error('Advisor question error:', err);
