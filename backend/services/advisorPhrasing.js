@@ -102,6 +102,11 @@ const ADVISOR_GROUPS = [
 // read these without translation. Days and times, never "nights"; the venue's
 // own rhythm comes from its facts, not from the copy.
 const ADVISOR_INTENTS = Object.assign(Object.create(null), {
+  // The pitch as a question (2026-10-28): Roost helps the venue make more
+  // money, so the first thing it offers to answer is where this week's money
+  // is. The quietest day is the room with the most seats to sell; in a level
+  // week it is each check instead. routes/advisor.js money_move.
+  money_move: { chip: 'What is our best money move this week?', group: 'looking_ahead' },
   tonight_outlook: { chip: 'How does today look?', group: 'looking_ahead' },
   peak_hours: { chip: 'When do we peak this week?', group: 'looking_ahead' },
   weekend_outlook: { chip: 'What does the weekend look like?', group: 'looking_ahead' },
@@ -168,6 +173,10 @@ const ADVISOR_INTENTS = Object.assign(Object.create(null), {
 // in the trade forums either. Interesting to build is not the same as asked
 // for.
 const CHIP_PRIORITY = [
+  // FIRST, ahead of the verdict, since 2026-10-28: the product's job is to
+  // help the venue make more money, and this is the one chip that answers
+  // that directly. Offered only where the forecast exists (NEEDS_CORPUS).
+  'money_move',
   'last_night_verdict',
   'tonight_outlook',
   // Third, inside the visible four. Forum engagement puts "are we down or is
@@ -1153,7 +1162,33 @@ function shapeVerdict(facts) {
   return { lead: templateLine(verdict), points: rest.map(templateLine), used: [verdict, ...rest] };
 }
 
+// "What is our best money move this week?" The plan hands over the lowest and
+// the highest projected day. The answer names the day with seats to sell, or,
+// in a level week, says the money is in each check. The move itself and what
+// it is worth in the venue's own money are added by the route, which knows
+// the venue (routes/advisor.js withMove).
+function shapeMoneyMove(facts) {
+  const days = facts.filter(isPeakFact).sort(byScore);
+  if (!days.length) return null;
+  const top = days[0];
+  const low = days[days.length - 1];
+  const rest = facts.filter((f) => !isPeakFact(f));
+  if (days.length < 2 || Number(top.value.peakScore) - Number(low.value.peakScore) < HOUR_ORDERING_MIN_GAP) {
+    return {
+      lead: `No day stands out this week, so the money is in each check rather than in one day: every day peaks between ${Number(low.value.peakScore)} and ${Number(top.value.peakScore)} on our 0 to 100 index.`,
+      points: rest.map(templateLine),
+      used: [...new Set([low, top]), ...rest],
+    };
+  }
+  return {
+    lead: `Fill ${low.value.weekday}. It is your quietest day this week, with its peak ${peakAt(low)} on our 0 to 100 index, against ${Number(top.value.peakScore)} on ${top.value.weekday}.`,
+    points: rest.map(templateLine),
+    used: [low, top, ...rest],
+  };
+}
+
 const TEMPLATE_SHAPERS = Object.freeze({
+  money_move: shapeMoneyMove,
   peak_hours: shapeWeek('week'),
   quiet_nights: shapeWeek('quiet'),
   weekend_outlook: shapeWeek('weekend'),

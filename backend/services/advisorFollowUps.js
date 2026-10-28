@@ -21,6 +21,8 @@ const { ADVISOR_INTENTS, isKnownIntent } = require('./advisorPhrasing');
 // The money question each chip's answer leads to, and the chip that pairs
 // with it. Questions are owner voice, short enough for a chip on a phone.
 const NEXT = Object.freeze({
+  // The money move's question depends on the week's shape (moneyMoveQuestion).
+  money_move: { intent: 'peak_hours', question: null },
   last_night_verdict: { intent: 'cohort_same_night', question: 'How do I fill a slow day?' },
   tonight_outlook: { intent: 'peak_hours', question: 'How should I staff today?' },
   peak_hours: { intent: 'quiet_nights', question: 'How do I handle the rush without losing covers?' },
@@ -67,6 +69,15 @@ function quietDayQuestion(block) {
   return day ? `How do I fill ${day}s?` : 'How do I fill a quiet day?';
 }
 
+// After the money move: fill the quiet day it named, or, in a level week,
+// lift the check.
+const LEVEL_WEEK_QUESTION = 'How do I get people to spend more per visit?';
+function moneyMoveQuestion(block) {
+  const facts = block && Array.isArray(block.facts) ? block.facts : [];
+  if (facts.some((f) => /projects level/.test(String((f && f.note) || '')))) return LEVEL_WEEK_QUESTION;
+  return quietDayQuestion(block);
+}
+
 function same(a, b) {
   const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
   return norm(a) === norm(b);
@@ -90,7 +101,11 @@ function followUpsFor({ mode = 'grounded', intentId = null, block = null, questi
   const next = intentId ? NEXT[intentId] : null;
 
   let ask = followUp;
-  if (!ask && !advice && next) ask = intentId === 'quiet_nights' ? quietDayQuestion(block) : next.question;
+  if (!ask && !advice && next) {
+    if (intentId === 'quiet_nights') ask = quietDayQuestion(block);
+    else if (intentId === 'money_move') ask = moneyMoveQuestion(block);
+    else ask = next.question;
+  }
   if (ask && !same(ask, question)) out.push({ kind: 'question', text: ask });
 
   const chip = advice
@@ -104,7 +119,7 @@ function followUpsFor({ mode = 'grounded', intentId = null, block = null, questi
 
 // Every user-visible string this module can emit, for the standing design review.
 function __copyStrings() {
-  const out = ['How do I fill a quiet day?', 'How do I fill Tuesdays?'];
+  const out = ['How do I fill a quiet day?', 'How do I fill Tuesdays?', LEVEL_WEEK_QUESTION];
   for (const n of Object.values(NEXT)) if (n.question) out.push(n.question);
   return out;
 }

@@ -797,6 +797,7 @@ async function chargedCall({ userId, charge, systemInstruction, payload, maxOutp
 // not the quiet-days forecast, and a table that is free is not the table
 // service question.
 const OFFLINE_INTENT_CUES = [
+  ['money_move', /\b(?:money\s+move|best\s+move|where\s+(?:is|'s)\s+the\s+money|focus\s+on\s+this\s+week|make\s+more\s+money\s+this\s+week)\b/i],
   ['tables_free', /\btables?\b[^.?!]{0,30}\b(?:free|open|available|empty)\b/i],
   ['tables_service', /\b(?:tables?|turn\s+times?|turns?|seatings?|another\s+server|extra\s+server|servers?\s+(?:do\s+(?:i|we)\s+)?need)\b/i],
   ['slow_night', /\bwhy\s+(?:was|were|is|are|did)\b[^.?!]*\b(?:slow|quiet|dead|empty)\b/i],

@@ -376,10 +376,14 @@ test('the owner\'s own reading is attributed and never wears a measurement sourc
 
 // ── 6. Placement ────────────────────────────────────────────────────────────
 
-test('the verdict is the lead chip and the registry offers four', () => {
-  assert.strictEqual(advisorPhrasing.CHIP_PRIORITY[0], 'last_night_verdict',
+test('the verdict leads every chip but the money move, and the registry offers four', () => {
+  // Since 2026-10-28 the money move sits above it: Roost's job is to help the
+  // venue make more money, and that chip answers it directly. It needs the
+  // forecast, so a venue outside the corpus still opens on the verdict.
+  assert.strictEqual(advisorPhrasing.CHIP_PRIORITY[0], 'money_move');
+  assert.strictEqual(advisorPhrasing.CHIP_PRIORITY[1], 'last_night_verdict',
     'the habit prompt leads, not the forecast');
-  assert.strictEqual(advisorPhrasing.CHIP_PRIORITY[1], 'tonight_outlook');
+  assert.strictEqual(advisorPhrasing.CHIP_PRIORITY[2], 'tonight_outlook');
   assert.ok(advisorPhrasing.isKnownIntent('last_night_verdict'));
   assert.ok(!advisorPhrasing.isKnownIntent('last_day_compare'),
     'one question, one chip: the composition-only version it replaced is gone');

@@ -201,6 +201,40 @@ test('yesterday\'s twin ends on a move only when it was a quiet day by the venue
   }
 });
 
+test('the money move names the day with seats to sell, the move, and what it is worth in the venue\'s own money', async () => {
+  resetAll();
+  advisorPhrasing.internals.noteModelFailure(credits());
+  advisorRouter.__setFactsForTests(null);
+  // Through the real plan: the week builder is the one thing faked.
+  const advisorFacts = require('../services/advisorFacts');
+  const realWeek = advisorFacts.buildWeekAhead;
+  const realCtx = advisorFacts.getVenueContext;
+  advisorFacts.getVenueContext = async () => ({ profile: { ...PROFILE }, mlVenue: { venue_category: 'restaurant' } });
+  try {
+    advisorFacts.buildWeekAhead = async () => WEEK.map((f) => ({ ...f }));
+    const r = await chip('money_move');
+    assert.strictEqual(r.status, 200);
+    assert.strictEqual(r.body.mode, 'template');
+    const lines = r.body.text.split('\n');
+    assert.strictEqual(lines[0], 'Fill Tuesday. It is your quietest day this week, with its peak around 6 PM at 38 on our 0 to 100 index, against 88 on Saturday.');
+    assert.ok(lines.includes('• At your $35 a head, every 10 extra covers on Tuesday is $350 a week, about $18,200 a year.'), r.body.text);
+    assert.ok(lines.length <= 5);
+    assert.deepStrictEqual(r.body.sources.map((s) => s.source), ['model_holdout', 'model_holdout', 'roost_playbook', 'intake']);
+    assert.deepStrictEqual(r.body.followUps[0], { kind: 'question', text: 'How do I fill Tuesdays?' });
+
+    // A level week: the money is in each check.
+    advisorFacts.buildWeekAhead = async () => WEEK.map((f) => ({ ...f, value: { ...f.value, peakScore: f.value.weekday === 'Tuesday' ? 84 : 88 } }));
+    const level = await chip('money_move');
+    assert.match(level.body.text, /^No day stands out this week, so the money is in each check rather than in one day/);
+    assert.ok(level.body.text.includes('• At your $35 a head, $2 more on each check is about 6% more from every cover you already serve.'), level.body.text);
+    assert.deepStrictEqual(level.body.followUps[0], { kind: 'question', text: 'How do I get people to spend more per visit?' });
+    assert.strictEqual(modelCalls.length, 0);
+  } finally {
+    advisorFacts.buildWeekAhead = realWeek;
+    advisorFacts.getVenueContext = realCtx;
+  }
+});
+
 test('a chip answer says what to ask next, and names the day it found', async () => {
   resetAll();
   replies = ['{"answer": "Tuesday is your quietest day this week.", "points": []}'];

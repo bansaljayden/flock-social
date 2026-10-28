@@ -249,6 +249,8 @@ Third, MONEY IS THE POINT. "What is a slow Tuesday costing me", "what should I c
 
 THE INTENT IDS. This list is closed. An id outside it voids your answer.
 
+  money_move             the best money move for this week: the quietest day,
+                         with seats to sell, or the check when the week is level
   last_night_verdict     how yesterday went against the venue's own history
   tonight_outlook        today's forecast for this venue
   peak_hours             when the venue peaks this week
@@ -289,6 +291,12 @@ A cafe types: "was yesterday normal for us"
 
 A cafe types: "when are we busiest this week"
   {"mode": "grounded", "intentId": "peak_hours"}
+
+A bar types: "where is the money this week"
+  {"mode": "grounded", "intentId": "money_move"}
+
+A restaurant types: "what should I focus on this week to make more money"
+  {"mode": "grounded", "intentId": "money_move"}
 
 A cafe types: "our mornings have gone quiet, what do people usually do about that"
   {"mode": "advice", "intentId": "peak_hours"}

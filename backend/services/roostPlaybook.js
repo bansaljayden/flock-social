@@ -43,6 +43,10 @@ const MONEY_KINDS = Object.freeze(['covers', 'check', 'cost', 'none']);
 // nudge. A question routed to quiet_nights with no word matching any cue still
 // lands on a slow-day move, which is what it was about.
 const INTENT_TOPICS = Object.freeze({
+  // The money move chip: a week with a quiet end is filled, and a level
+  // week's money is in each check (routes/advisor.js picks which).
+  money_move: ['fill_slow_days', 'events'],
+  money_move_level: ['check_average', 'pricing'],
   quiet_nights: ['fill_slow_days', 'events'],
   slow_night: ['fill_slow_days', 'weather_season'],
   last_night_verdict: ['fill_slow_days', 'regulars'],
@@ -297,6 +301,12 @@ function groundedLead(intentId, facts) {
   const days = (Array.isArray(facts) ? facts : []).filter((f) => f && f.value
     && typeof f.value.weekday === 'string' && Number.isFinite(Number(f.value.peakScore)));
   if (!days.length) return null;
+  if (intentId === 'money_move') {
+    // A level week has no quiet day to name (the plan's note says so).
+    if (days.some((f) => /projects level/.test(String(f.note || '')))) return null;
+    const low = days.reduce((a, b) => (Number(b.value.peakScore) < Number(a.value.peakScore) ? b : a));
+    return { text: `${low.value.weekday} projects as your quietest day this week.`, fact: low };
+  }
   if (intentId === 'quiet_nights') {
     return { text: `${days[0].value.weekday} projects as your quietest day this week.`, fact: days[0] };
   }
@@ -505,6 +515,7 @@ module.exports = {
   moneyLine,
   groundedLead,
   coversIn,
+  dollars,
   forPayload,
   stem,
   stems,

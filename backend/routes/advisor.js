@@ -70,7 +70,7 @@ const { BULLET, MAX_POINTS } = require('../services/advisorAnswer');
 // whose facts always raise the same kind of move, the twin now ends on the
 // playbook's best one for that venue, and the sources line names the
 // playbook. Only when the answer has room for it, and never on a refusal.
-const TEMPLATE_MOVE_INTENTS = new Set(['peak_hours', 'quiet_nights', 'slow_night', 'tables_service', 'tables_free', 'last_night_verdict']);
+const TEMPLATE_MOVE_INTENTS = new Set(['money_move', 'peak_hours', 'quiet_nights', 'slow_night', 'tables_service', 'tables_free', 'last_night_verdict']);
 
 // Yesterday's verdict raises a move only when it was a quiet day by the
 // venue's own numbers. An ordinary or a busy day is just the news.
@@ -82,24 +82,66 @@ function wantsMove(intentId, block) {
   return Boolean(verdict && verdict.value && verdict.value.verdict === 'below');
 }
 
+// The money move's two shapes. A week with a quiet end is filled; a level
+// week's money is in each check. Read off the same two facts the plan picked
+// and the shaper wrote the answer from.
+function moneyMoveIsLevel(block) {
+  const days = (block && Array.isArray(block.facts) ? block.facts : [])
+    .filter((f) => f && f.value && Number.isFinite(Number(f.value.peakScore)))
+    .map((f) => Number(f.value.peakScore));
+  return days.length < 2 || Math.max(...days) - Math.min(...days) < HOUR_ORDERING_MIN_GAP;
+}
+
+// What the money move is worth in the venue's own money, with the working in
+// the sentence: every 10 covers on the quiet day, or the check line.
+function moneyMoveLine(block, spend) {
+  if (!(spend > 0)) return null;
+  if (moneyMoveIsLevel(block)) return roostPlaybook.moneyLine({ money: 'check' }, spend);
+  const facts = block && Array.isArray(block.facts) ? block.facts : [];
+  const low = facts.find((f) => f && f.value && typeof f.value.weekday === 'string');
+  if (!low) return null;
+  const week = spend * 10;
+  return `At your ${roostPlaybook.dollars(spend)} a head, every 10 extra covers on ${low.value.weekday} is ${roostPlaybook.dollars(week)} a week, about ${roostPlaybook.dollars(week * 52)} a year.`;
+}
+
+async function venueContextFor(userId, ctx) {
+  if (ctx) return ctx;
+  if (!advisorFacts || typeof advisorFacts.getVenueContext !== 'function') return null;
+  try {
+    return await advisorFacts.getVenueContext(userId);
+  } catch (err) {
+    return null;
+  }
+}
+
 async function withMove(answer, intentId, userId, ctx = null, block = null) {
   if (!answer || answer.mode !== 'template' || !wantsMove(intentId, block)) return answer;
   const points = String(answer.text || '').split('\n').length - 1;
   if (points >= MAX_POINTS) return answer;
-  let venueCtx = ctx;
-  if (!venueCtx && advisorFacts && typeof advisorFacts.getVenueContext === 'function') {
-    try {
-      venueCtx = await advisorFacts.getVenueContext(userId);
-    } catch (err) {
-      venueCtx = null;
+  const venueCtx = await venueContextFor(userId, ctx);
+  const venue = roostPlaybook.venueOf(venueCtx);
+  // The money move picks its topic by the week's shape; every other chip by
+  // its own intent.
+  const [tactic] = intentId === 'money_move'
+    ? roostPlaybook.find('', { intentId: moneyMoveIsLevel(block) ? 'money_move_level' : 'money_move', venue, limit: 1 })
+    : roostPlaybook.find('', { intentId, venue, limit: 1 });
+  if (!tactic) return answer;
+  const lines = [tactic.move];
+  const sources = [{ ...roostPlaybook.PLAYBOOK_SOURCE }];
+  if (intentId === 'money_move') {
+    const spend = roostPlaybook.spendOf(venueCtx);
+    const money = moneyMoveLine(block, spend);
+    if (money) {
+      lines.push(money);
+      const p = (venueCtx && venueCtx.profile) || {};
+      sources.push({ id: 'intake_typical_spend_per_person', source: 'intake', asOf: p.updated_at ? `owner-set ${String(p.updated_at).slice(0, 10)}` : 'owner-set' });
     }
   }
-  const [tactic] = roostPlaybook.find('', { intentId, venue: roostPlaybook.venueOf(venueCtx), limit: 1 });
-  if (!tactic) return answer;
+  const room = MAX_POINTS - points;
   return {
     ...answer,
-    text: `${answer.text}\n${BULLET}${tactic.move}`,
-    sources: [...(answer.sources || []), { ...roostPlaybook.PLAYBOOK_SOURCE }],
+    text: [answer.text, ...lines.slice(0, room).map((l) => `${BULLET}${l}`)].join('\n'),
+    sources: [...(answer.sources || []), ...sources],
   };
 }
 // The measured floor below which an ordering claim is not made. Commit
@@ -276,6 +318,33 @@ const INTENT_PLANS = {
           : 'This is the second lowest projected day in the week ahead. It is the quiet end of this venue\'s week, not a busy day.',
       ].filter(Boolean).join(' '),
     }));
+  },
+  // "What is our best money move this week?" The quiet end of the week is the
+  // room with the most seats to sell, so the plan hands over the lowest
+  // projected day and, for contrast, the highest. A level week is not
+  // refused here the way quiet_nights refuses it: the question still has an
+  // answer, which is that the money is in each check rather than in one day,
+  // and advisorPhrasing's shaper says so from the same two facts. Selection
+  // only, like every plan here.
+  money_move: async (b) => {
+    const week = await b.week();
+    const scored = week
+      .filter((e) => !advisorFacts.isRefusal(e) && e.value && Number.isFinite(Number(e.value.peakScore)))
+      .sort((a, z) => Number(a.value.peakScore) - Number(z.value.peakScore));
+    if (!scored.length) return week;
+    const low = scored[0];
+    const top = scored[scored.length - 1];
+    const level = Number(top.value.peakScore) - Number(low.value.peakScore) < HOUR_ORDERING_MIN_GAP;
+    const picked = [{
+      ...low,
+      note: [low.note, level
+        ? 'This week projects level: no day sits far enough from the rest to be worth filling on its own, so the money is in each check.'
+        : 'This is the LOWEST projected day in the week ahead: the room with the most seats to sell, which is where this week\'s money move is.'].filter(Boolean).join(' '),
+    }];
+    if (top !== low) {
+      picked.push({ ...top, note: [top.note, 'This is the HIGHEST projected day in the week ahead, given for contrast.'].filter(Boolean).join(' ') });
+    }
+    return picked;
   },
   // "How did we just do." The most-asked question in the category, and the one
   // chip that returns a VERDICT rather than a row of numbers: the venue's own
@@ -638,7 +707,7 @@ const ALWAYS_AVAILABLE = new Set(['around_you', 'data_status', 'last_night_verdi
 // `cohort_typical` is a corpus question: it places the venue's own Google curve
 // inside the frozen distribution of its city and category, so without a curve
 // there is nothing to place.
-const NEEDS_CORPUS = new Set(['tonight_outlook', 'peak_hours', 'weekend_outlook', 'quiet_nights', 'cohort_typical']);
+const NEEDS_CORPUS = new Set(['money_move', 'tonight_outlook', 'peak_hours', 'weekend_outlook', 'quiet_nights', 'cohort_typical']);
 // `cohort_same_night` is a history question for a reason that is about honesty
 // rather than plumbing: "was it just us" needs a your-side, and a venue that
 // has posted nothing has no side. Offered to venues that have their own
