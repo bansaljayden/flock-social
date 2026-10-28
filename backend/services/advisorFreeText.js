@@ -888,8 +888,19 @@ function offlineRoute(question) {
   if (view.speed.length || OFFLINE_ADVICE.test(text)) return { mode: 'advice', intentId };
   if (intentId) return { mode: 'grounded', intentId };
   if (hit) return { mode: 'advice', intentId: null };
+  // An owner naming a problem is asking what to do about it. "We sell out by
+  // noon", "orders keep coming out wrong" and "holiday preorders" carry no
+  // question words, and each names a move the playbook has (2026-10-28 venue
+  // kinds stress test), so a statement the playbook's own cues recognize is
+  // advice. Only what nothing above placed gets here.
+  const [named] = roostPlaybook.ranked(text, { limit: 1 });
+  if (named && named.cues >= PLAYBOOK_NAMES_IT) return { mode: 'advice', intentId: null };
   return null;
 }
+
+// How much of a playbook cue a statement has to carry to be read as advice:
+// one cue no other move shares, or a phrase.
+const PLAYBOOK_NAMES_IT = 1;
 
 // ── The router (mode classification) ────────────────────────────────────────
 

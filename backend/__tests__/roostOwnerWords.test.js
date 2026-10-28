@@ -201,3 +201,35 @@ test('the second move is one the owner\'s words found, or one from the same topi
   assert.deepStrictEqual(alone.tactics, ['food_cost_recipe_cards']);
   assert.ok(!/Another option/.test(alone.text), alone.text);
 });
+
+// ── Other kinds of room (2026-10-28 venue-kinds stress test) ────────────────
+
+const BAR = { profile: { typical_spend_per_person: 28 }, mlVenue: { venue_category: 'bar' } };
+const BAKERY = { profile: { typical_spend_per_person: 12 }, mlVenue: { venue_category: 'dessert' } };
+const COUNTER = { profile: { typical_spend_per_person: 14 }, mlVenue: { venue_category: 'fast_food' } };
+
+test('a problem stated with no question words is still a question when the playbook names it', () => {
+  for (const [said, tactic, ctx] of [
+    ['we sell out by noon', 'rush_prep_to_par', BAKERY],
+    ['orders keep coming out wrong', 'rush_expo', COUNTER],
+    ['holiday preorders', 'events_holiday_set', BAKERY],
+  ]) {
+    const { route, answer } = offlineAnswer(said, ctx);
+    assert.deepStrictEqual(route, { mode: 'advice', intentId: null }, said);
+    assert.strictEqual(answer.tactics[0], tactic, `"${said}" -> ${answer.tactics[0]}`);
+  }
+  // Nothing the playbook names stays unplaced, as before.
+  assert.strictEqual(advisorFreeText.offlineRoute('the quick brown fox'), null);
+});
+
+test('"order" and "buy" no longer mean the supplier, and other rooms find their own moves', () => {
+  assert.strictEqual(offlineAnswer('how do i get people to order more', COUNTER).answer.tactics[0], 'check_suggest_named_item');
+  assert.notStrictEqual(offlineAnswer('how do i get more custom cake orders', BAKERY).answer.tactics[0], 'food_cost_supplier_quotes');
+  assert.strictEqual(offlineAnswer('how do i get people to stay for another round', BAR).answer.tactics[0], 'check_suggest_named_item');
+  assert.strictEqual(offlineAnswer('should we serve food', BAR).answer.tactics[0], 'day_test_first');
+  assert.strictEqual(offlineAnswer('how many bartenders on a friday', BAR).answer.tactics[0], 'labor_schedule_from_forecast');
+  assert.strictEqual(offlineAnswer('how much should i bake each day', BAKERY).answer.tactics[0], 'food_cost_bake_to_leftovers');
+  assert.ok(offlineAnswer('should i charge for oat milk', CAFE).answer.tactics.includes('pricing_charge_extras'));
+  // And the supplier move still answers a supplier question.
+  assert.strictEqual(offlineAnswer('how do i get better prices from my suppliers').answer.tactics[0], 'food_cost_supplier_quotes');
+});

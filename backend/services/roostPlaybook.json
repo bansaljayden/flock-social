@@ -101,7 +101,11 @@
       "close on",
       "closing on",
       "closed on",
-      "stay open later"
+      "stay open later",
+      "stay open late",
+      "open late",
+      "late night hours",
+      "stay open till"
     ],
     "move": "Pull 8 weeks of hourly sales and consider closing, or opening later, during the hours that never cover their staff and running costs.",
     "why": "An hour that brings in less than it costs to stay open loses money every time, so cutting it can raise profit on fewer sales.",
@@ -299,7 +303,10 @@
       "slow kitchen",
       "ticket times",
       "food takes",
-      "waiting for food"
+      "waiting for food",
+      "sell out",
+      "selling out",
+      "sell out early"
     ],
     "move": "Set a prep par for each item by day of the week from your sales history, and have it ready before the rush starts.",
     "why": "Running out mid rush slows every ticket and loses sales, while prepping too much turns straight into waste.",
@@ -431,7 +438,13 @@
       "food going out wrong",
       "missing items",
       "plates sitting",
-      "ticket accuracy"
+      "ticket accuracy",
+      "orders wrong",
+      "orders coming out wrong",
+      "wrong food",
+      "mixed up orders",
+      "coming out wrong",
+      "keep coming out wrong"
     ],
     "move": "Put 1 person at the pass during the rush whose only job is to call tickets, check each plate, and send it out complete.",
     "why": "An expediter keeps tickets moving in order and catches mistakes at the pass, which holds kitchen times steady as covers climb.",
@@ -632,7 +645,11 @@
       "sitting for hours",
       "camp out",
       "remote workers",
-      "work from"
+      "work from",
+      "camp on laptops",
+      "laptops all day",
+      "sit all day",
+      "stay all day"
     ],
     "move": "If you need time limits at your busiest times, state them when guests book and explain why, or use set seating times instead.",
     "why": "Many guests dislike time limits, and a limit explained in advance feels far fairer than a surprise at the table.",
@@ -697,7 +714,14 @@
       "bigger checks",
       "server sales",
       "more tips",
-      "bigger tips"
+      "bigger tips",
+      "order more",
+      "another round",
+      "next round",
+      "second drink",
+      "spend more",
+      "buy more",
+      "stay for another"
     ],
     "move": "Train staff to suggest 1 named item that fits the order, such as a side or a drink, instead of asking if guests want anything else.",
     "why": "A specific suggestion gives guests an easy yes, while a vague question invites a quick no.",
@@ -1024,7 +1048,12 @@
       "free extras",
       "charge for extras",
       "extra sauce",
-      "add protein"
+      "add protein",
+      "oat milk",
+      "alt milk",
+      "plant milk",
+      "charge for oat milk",
+      "dairy free milk"
     ],
     "move": "Put a price on every extra that costs you money, such as an extra shot, added protein or extra sauce.",
     "why": "Free extras quietly raise your food cost on every order that takes them.",
@@ -1504,7 +1533,11 @@
       "unsold bread",
       "how much to bake",
       "bakery waste",
-      "production planning"
+      "production planning",
+      "how much should i bake",
+      "bake each day",
+      "how much to make each day",
+      "baking amounts"
     ],
     "move": "Write down what is left in the case at close each day, and bake less of anything that keeps coming back.",
     "why": "End of day leftovers are the clearest sign of overproduction, and trimming those batches cuts waste without emptying the case.",
@@ -1559,12 +1592,23 @@
       "vendors",
       "supplier prices",
       "distributor",
-      "ordering",
       "negotiate",
       "purchasing",
       "quotes",
       "price creep",
-      "buying"
+      "ordering from suppliers",
+      "supplier orders",
+      "ordering stock",
+      "buying stock",
+      "buying ingredients",
+      "food orders from suppliers",
+      "prices from suppliers",
+      "prices from my suppliers",
+      "better prices from",
+      "supplier pricing",
+      "vendor prices",
+      "negotiate prices",
+      "cheaper supplier"
     ],
     "move": "Get prices from at least 2 suppliers on your 10 biggest spend items every few months.",
     "why": "Prices drift upward when nobody compares them, and a small saving on your biggest items adds up fast.",
@@ -1656,7 +1700,12 @@
       "staffing for",
       "holiday staffing",
       "staff for the holiday",
-      "staff the holiday"
+      "staff the holiday",
+      "how many bartenders",
+      "how many cooks",
+      "how many baristas",
+      "bartenders on a",
+      "servers on a"
     ],
     "move": "Build each schedule from expected sales by hour, using the same day in recent weeks, instead of copying last week's schedule.",
     "why": "A schedule tied to expected covers stops you paying for idle hours on slow shifts and running short on busy shifts.",
@@ -2646,7 +2695,11 @@
       "followers",
       "marketing ideas",
       "posts",
-      "reels"
+      "reels",
+      "custom orders",
+      "custom cakes",
+      "cake orders",
+      "show our work"
     ],
     "move": "Post a clear phone photo of a specific best seller on social media shortly before people decide where to eat.",
     "why": "Clear, informative food photos tend to do more than polished shots, and a specific dish gives followers a concrete reason to come in.",
@@ -3581,7 +3634,12 @@
       "coffee menu",
       "drink pricing",
       "cup cost",
-      "milk costs"
+      "milk costs",
+      "coffee costs",
+      "coffee cost",
+      "bean prices",
+      "milk prices",
+      "price of a latte"
     ],
     "move": "Cost every drink on your board, counting beans, milk, syrup and the cup, and price each so it covers those with room to spare.",
     "why": "Milk, syrups and cups add up drink by drink, and a popular drink priced by guesswork can quietly earn very little.",
@@ -3833,7 +3891,16 @@
       "longer hours",
       "open more days",
       "test hours",
-      "trial period"
+      "trial period",
+      "serve food",
+      "add food",
+      "start serving food",
+      "add a kitchen",
+      "sell coffee",
+      "add coffee",
+      "beer and wine",
+      "add beer",
+      "should we sell"
     ],
     "move": "Before adding a new daypart, test it on 2 or 3 days a week for a set period with a short menu.",
     "why": "A new daypart costs labor and prep before it has a crowd, and a short test limits the loss if it does not catch on.",
