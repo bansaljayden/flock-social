@@ -56,7 +56,10 @@
       "slow night deal",
       "daily deal",
       "bogo",
-      "special offer"
+      "special offer",
+      "groupon",
+      "living social",
+      "discounts work"
     ],
     "move": "Before you discount your slow day, count how many guests using the deal already came in at full price.",
     "why": "Some of every discount goes to guests who would have paid full price anyway, and deal seekers rarely return at full price.",
@@ -88,7 +91,11 @@
       "empty hours",
       "closing days",
       "slow mornings",
-      "late hours"
+      "late hours",
+      "close on",
+      "closing on",
+      "closed on",
+      "stay open later"
     ],
     "move": "Pull 8 weeks of hourly sales and consider closing, or opening later, during the hours that never cover their staff and running costs.",
     "why": "An hour that brings in less than it costs to stay open loses money every time, so cutting it can raise profit on fewer sales.",
@@ -120,7 +127,10 @@
       "group bookings",
       "regular groups",
       "slow day ideas",
-      "fill tables"
+      "fill tables",
+      "big groups",
+      "large groups",
+      "more groups"
     ],
     "move": "Offer your slowest block to a local group that meets regularly, such as a club or a professional association, with a reserved area and a short set menu.",
     "why": "A group that meets regularly brings a known headcount on a day you staff anyway, and the booking repeats.",
@@ -277,7 +287,13 @@
       "ran out",
       "prep levels",
       "mise en place",
-      "not enough prepped"
+      "not enough prepped",
+      "takes forever",
+      "food is slow",
+      "slow kitchen",
+      "ticket times",
+      "food takes",
+      "waiting for food"
     ],
     "move": "Set a prep par for each item by day of the week from your sales history, and have it ready before the rush starts.",
     "why": "Running out mid rush slows every ticket and loses sales, while prepping too much turns straight into waste.",
@@ -537,7 +553,9 @@
       "table mix",
       "seating chart",
       "big tables",
-      "room layout"
+      "room layout",
+      "how many tables",
+      "tables for 2"
     ],
     "move": "Count your party sizes for a month, then set out enough tables for 2 and for 4 to match the parties you actually get.",
     "why": "A party of 2 at a 4 top leaves 2 seats empty every time, and the right mix seats more guests in the same room.",
@@ -671,7 +689,9 @@
       "sell more",
       "add ons",
       "bigger checks",
-      "server sales"
+      "server sales",
+      "more tips",
+      "bigger tips"
     ],
     "move": "Train staff to suggest 1 named item that fits the order, such as a side or a drink, instead of asking if guests want anything else.",
     "why": "A specific suggestion gives guests an easy yes, while a vague question invites a quick no.",
@@ -762,7 +782,6 @@
     "alcohol": false,
     "cues": [
       "appetizers",
-      "apps",
       "shareables",
       "small plates",
       "for the table",
@@ -903,7 +922,9 @@
       "how much should i charge",
       "charge for",
       "price a special",
-      "price a new"
+      "price a new",
+      "tasting menu",
+      "price a menu"
     ],
     "move": "Cost each dish down to the oil and herbs, then set its price so the plate cost lands near your target food cost percentage.",
     "why": "Pricing from cost keeps every item paying its share, and most restaurants aim for food cost near 28 to 35% of the menu price.",
@@ -1211,7 +1232,12 @@
       "simplify menu",
       "dead items",
       "long menu",
-      "what to drop"
+      "what to drop",
+      "menu is too big",
+      "menu too long",
+      "cut the menu",
+      "shorter menu",
+      "too big"
     ],
     "move": "Remove dishes that both sell rarely and earn little, starting with any that need ingredients nothing else uses.",
     "why": "Each slow dish ties up stock, prep time and line space, so cutting it reduces waste and speeds the kitchen.",
@@ -1593,7 +1619,11 @@
       "more staff",
       "add staff",
       "how many servers",
-      "how many people should i"
+      "how many people should i",
+      "cut labor",
+      "reduce labor",
+      "lower labor",
+      "labor without"
     ],
     "move": "Build each schedule from expected sales by hour, using the same day in recent weeks, instead of copying last week's schedule.",
     "why": "A schedule tied to expected covers stops you paying for idle hours on slow shifts and running short on busy shifts.",
@@ -2406,7 +2436,10 @@
       "repeat visits",
       "loyalty card",
       "free coffee",
-      "rewards program"
+      "rewards program",
+      "loyalty",
+      "loyalty app",
+      "rewards app"
     ],
     "move": "Start a simple stamp card that earns a free item, and hand out new cards with 2 stamps already filled in.",
     "why": "Guests visit more often as a reward gets closer, and a card that starts partly filled feels closer to the goal.",
@@ -2536,7 +2569,11 @@
       "more people to find",
       "discover us",
       "nobody knows",
-      "visibility"
+      "visibility",
+      "spend on marketing",
+      "marketing budget",
+      "how much on marketing",
+      "spend on ads"
     ],
     "move": "Check your map and search listings each month for correct hours, special hours and menu link, and add fresh photos regularly.",
     "why": "Many guests look you up before visiting, and wrong hours or stale photos send them to the place next door.",
@@ -2628,7 +2665,12 @@
       "collaborate",
       "local partners",
       "nearby businesses",
-      "community"
+      "community",
+      "students",
+      "student",
+      "college",
+      "campus",
+      "university"
     ],
     "move": "Team up with a nearby business, such as a gym or a theater, to trade a small offer for each other's customers.",
     "why": "A neighbor's customers already pass your door, and a shared offer reaches them without paying for ads.",
@@ -2976,7 +3018,15 @@
       "new year's eve",
       "holiday preorders",
       "busy holidays",
-      "holiday pies"
+      "holiday pies",
+      "halloween",
+      "christmas",
+      "valentines",
+      "easter",
+      "new years",
+      "mothers day",
+      "fathers day",
+      "super bowl"
     ],
     "move": "Plan a set menu for the big holidays in your area and take bookings or preorders weeks ahead, with a deposit.",
     "why": "A set menu speeds the kitchen on days when demand peaks, and deposits cut no shows when every seat counts.",
@@ -3071,7 +3121,11 @@
       "delivery worth it",
       "delivery commission",
       "delivery platforms",
-      "app orders"
+      "app orders",
+      "ubereats",
+      "uber eats",
+      "doordash",
+      "grubhub"
     ],
     "move": "Before joining a delivery app, work out each item's margin after the commission, which typically runs 15 to 30% of the order.",
     "why": "A dish that earns well in the room can barely break even after a commission that size.",
@@ -3237,7 +3291,10 @@
       "family dinner",
       "takeout deal",
       "bulk order",
-      "meal for 4"
+      "meal for 4",
+      "families",
+      "family",
+      "kids"
     ],
     "move": "Offer a takeout bundle that feeds a family, such as a main, 2 sides and a dessert, at 1 set price.",
     "why": "Bundles raise the order size and are easy for the kitchen to prep in batches.",
@@ -3332,7 +3389,11 @@
       "drink costs",
       "bar profit",
       "liquor inventory",
-      "beer cost"
+      "beer cost",
+      "margin on cocktails",
+      "cocktail margins",
+      "cocktail margin",
+      "drink margins"
     ],
     "move": "If you serve alcohol, count bar stock weekly and work out pour cost for spirits, beer and wine separately.",
     "why": "Most bars aim for an overall pour cost near 18 to 24%, with spirits running lowest and wine highest, so a number above that points to waste or pricing.",
@@ -3842,7 +3903,11 @@
       "seasonal drinks",
       "new seasonal",
       "limited time offer",
-      "holiday drinks"
+      "holiday drinks",
+      "put on special",
+      "on special",
+      "daily special",
+      "specials board"
     ],
     "move": "Run a limited time seasonal item for a few weeks, and announce its end date when you launch it.",
     "why": "Guests see seasonal items as special, which brings regulars back and lets the item carry a healthy price.",
@@ -4159,7 +4224,11 @@
       "reduce costs",
       "save money",
       "costs are too high",
-      "going under"
+      "going under",
+      "lost money",
+      "in the red",
+      "cash flow",
+      "money tight"
     ],
     "move": "Add up food, drink and labor costs every week and divide by sales to get your prime cost percentage.",
     "why": "Prime cost is the biggest share of what you can control, and most restaurants aim to keep it between 55 and 65% of sales.",
@@ -4311,7 +4380,10 @@
       "register short",
       "pos reports",
       "cash missing",
-      "loss"
+      "loss",
+      "stealing",
+      "till",
+      "missing cash"
     ],
     "move": "Review comps, voids and discounts in your POS each week, by staff member and by reason.",
     "why": "Unexplained comps and voids are a common way money leaks out, and watching POS data closely tends to cut theft.",

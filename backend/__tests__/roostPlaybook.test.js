@@ -144,6 +144,54 @@ test('every question owners actually type finds a move on its topic, for every k
   assert.deepStrictEqual(misses, []);
 });
 
+// THE WAY OWNERS ACTUALLY TYPE (2026-10-28): lowercase, slang, complaints
+// with no question in them. With the model out, every one of these used to
+// get "we could not get to it" or the wrong move ("loyalty app" matched the
+// appetizer move's "apps", "how much should I spend on marketing" got desserts).
+const MESSY = [
+  'tuesdays are killing me', 'nobody comes in after 2pm', 'how do i get more ppl on weeknights',
+  'my servers keep quitting', 'we are slammed fridays and people leave', 'lines out the door at 8am',
+  'how to show up better on google maps', 'people complain food takes forever', 'should i raise my prices with inflation',
+  'my food costs went up 20%', 'do discounts actually work', 'how do i get the office crowd at lunch',
+  'how do i compete with the chain down the street', 'my rent went up what do i do', 'should i add a patio',
+  'how do i handle bad yelp reviews', 'what do i do on rainy days', 'how do i sell more desserts',
+  'should i stay open later', 'should i close on mondays', 'is ubereats worth it', 'how do i get repeat customers',
+  'best way to train new bartenders', 'how to cut labor without hurting service', 'should i take reservations',
+  'my wait times are too long', 'how do i get more big groups', 'how to price a tasting menu', 'my menu is too big',
+  'what should i put on special', 'we lost money last month', 'cash flow is tight', 'should i hire a manager',
+  'how to reduce waste', 'any ideas for halloween', 'how do i get students in', 'families with kids',
+  'how do i get more tips for my staff',
+];
+const MESSY_TOPICS = [
+  ['is groupon worth it', 'fill_slow_days'],
+  ['is catering worth it', 'dayparts'],
+  ['is it worth doing brunch on sundays', 'dayparts'],
+  ['how do i make more money', 'fill_slow_days'],
+  ['should i do a loyalty app', 'regulars'],
+  ['how much should i spend on marketing', 'marketing'],
+  ['staff stealing from the till', 'costs'],
+  ['how do i make my staff upsell', 'check_average'],
+  ['whats a good margin on cocktails', 'beverage'],
+  ['how many tables should i have', 'turn_tables'],
+];
+
+test('the way owners actually type still finds a route and a move with no model', () => {
+  const ctx = { profile: { typical_spend_per_person: 30 }, mlVenue: { venue_category: 'restaurant' } };
+  const misses = [];
+  for (const q of [...MESSY, ...MESSY_TOPICS.map(([x]) => x)]) {
+    if (advisorFreeText.prohibitedClass(q)) { misses.push(`${q}: refused`); continue; }
+    const route = advisorFreeText.offlineRoute(q);
+    if (!route) { misses.push(`${q}: no route`); continue; }
+    if (route.mode === 'advice' && !pb.answer({ question: q, intentId: route.intentId, ctx })) misses.push(`${q}: no move`);
+  }
+  assert.deepStrictEqual(misses, []);
+  for (const [q, topic] of MESSY_TOPICS) {
+    const route = advisorFreeText.offlineRoute(q);
+    const answer = pb.answer({ question: q, intentId: route.intentId, ctx });
+    assert.strictEqual(answer.topic, topic, `"${q}" -> ${answer.tactics[0]}`);
+  }
+});
+
 test('a question the playbook has nothing for gets nothing, not the nearest guess', () => {
   assert.deepStrictEqual(pb.find('what is the capital of france'), []);
   assert.deepStrictEqual(pb.find('asdkjhasd'), []);

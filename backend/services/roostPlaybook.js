@@ -71,8 +71,8 @@ const INTENT_TOPICS = Object.freeze({
 // topic's tactics (score below); the tactic's own cues still pick within it.
 // Friday and Saturday are not slow-day words: most rooms are busy then.
 const TOPIC_WORDS = Object.freeze({
-  fill_slow_days: ['slow', 'slower', 'slowest', 'quiet', 'quieter', 'quietest', 'dead', 'empty', 'fill', 'midweek', 'monday', 'tuesday', 'wednesday', 'thursday', 'sunday', 'weekday', 'traffic', 'busier'],
-  handle_the_rush: ['rush', 'busiest', 'peak', 'slammed', 'weeds', 'queue', 'swamped', 'overwhelmed', 'backed', 'line'],
+  fill_slow_days: ['slow', 'slower', 'slowest', 'quiet', 'quieter', 'quietest', 'dead', 'empty', 'fill', 'midweek', 'monday', 'tuesday', 'wednesday', 'thursday', 'sunday', 'weekday', 'traffic', 'busier', 'weeknight', 'weeknights', 'nobody'],
+  handle_the_rush: ['rush', 'busiest', 'peak', 'slammed', 'weeds', 'queue', 'swamped', 'overwhelmed', 'backed', 'line', 'forever', 'tickets'],
   turn_tables: ['turn', 'turns', 'turnover', 'table', 'tables', 'linger', 'lingering', 'camp', 'camping', 'dwell', 'seat', 'seats', 'seating', 'faster', 'sit', 'sitting', 'laptop', 'laptops'],
   check_average: ['upsell', 'upselling', 'spend', 'check', 'ticket', 'dessert', 'desserts', 'appetizer', 'appetizers', 'sides', 'addon'],
   pricing: ['price', 'prices', 'pricing', 'charge', 'charging', 'raise', 'increase', 'expensive', 'cheap'],
@@ -83,15 +83,15 @@ const TOPIC_WORDS = Object.freeze({
   reservations: ['reservation', 'reservations', 'booking', 'bookings', 'cancellation', 'cancellations', 'deposit', 'deposits'],
   waitlist: ['wait', 'waiting', 'waitlist', 'walkaway', 'walkaways'],
   regulars: ['regulars', 'regular', 'loyalty', 'loyal', 'repeat', 'return', 'returning', 'punch', 'rewards'],
-  marketing: ['marketing', 'market', 'advertise', 'advertising', 'instagram', 'social', 'tiktok', 'facebook', 'google', 'promote', 'promotion', 'email', 'newsletter', 'listing', 'followers'],
+  marketing: ['marketing', 'market', 'advertise', 'advertising', 'instagram', 'social', 'tiktok', 'facebook', 'google', 'promote', 'promotion', 'email', 'newsletter', 'listing', 'followers', 'compete', 'competition', 'competitor', 'competitors', 'students', 'student', 'college', 'tourists', 'visibility'],
   reviews: ['review', 'reviews', 'rating', 'ratings', 'yelp', 'stars', 'complaint', 'complaints', 'feedback'],
-  events: ['event', 'events', 'trivia', 'music', 'live', 'private', 'party', 'parties', 'holiday', 'tasting', 'class', 'classes'],
+  events: ['event', 'events', 'trivia', 'music', 'live', 'private', 'party', 'parties', 'holiday', 'tasting', 'class', 'classes', 'halloween', 'christmas', 'thanksgiving', 'valentines', 'easter', 'superbowl'],
   takeout_delivery: ['delivery', 'deliveries', 'takeout', 'togo', 'pickup', 'doordash', 'ubereats', 'grubhub', 'apps', 'commission', 'packaging'],
   beverage: ['drink', 'drinks', 'beer', 'wine', 'cocktail', 'cocktails', 'coffee', 'liquor', 'pour', 'spirits', 'happy'],
   dayparts: ['breakfast', 'brunch', 'lunch', 'dinner', 'late', 'morning', 'mornings', 'afternoon', 'afternoons', 'evening', 'evenings', 'daypart', 'opening', 'catering'],
   weather_season: ['weather', 'rain', 'rainy', 'snow', 'cold', 'hot', 'heat', 'summer', 'winter', 'season', 'seasonal', 'patio'],
-  hospitality: ['hospitality', 'service', 'welcome', 'greet', 'experience', 'friendly', 'warm', 'apology', 'mistake'],
-  costs: ['costs', 'expenses', 'rent', 'utilities', 'energy', 'fees', 'overhead', 'bills', 'savings', 'profit', 'profitable', 'cash', 'losing', 'under'],
+  hospitality: ['hospitality', 'service', 'welcome', 'greet', 'experience', 'friendly', 'warm', 'apology', 'mistake', 'families', 'family', 'kids', 'children'],
+  costs: ['costs', 'expenses', 'rent', 'utilities', 'energy', 'fees', 'overhead', 'bills', 'savings', 'profit', 'profitable', 'cash', 'losing', 'under', 'lost', 'flow', 'tight', 'struggling'],
 });
 
 // ── Words ────────────────────────────────────────────────────────────────────
@@ -299,7 +299,10 @@ function score(t, qStems, qSet, topics, venue, lean) {
   for (const w of qSet) if (t.textStems.has(w)) shared += 1;
   s += Math.min(TEXT_CAP, shared * TEXT_WEIGHT);
   if (!ownKind) s -= OTHER_KIND_PENALTY;
-  else if (venue && venue.kind && t.venues.includes(venue.kind)) s += 0.25;
+  // The venue tiebreak only separates moves the owner's words found. On a
+  // topic alone ("how do I make more money"), it put a move written for one
+  // kind of venue ahead of the topic's general lead, so it waits for a cue.
+  else if (cues > 0 && venue && venue.kind && t.venues.includes(venue.kind)) s += 0.25;
   return s;
 }
 

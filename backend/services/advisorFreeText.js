@@ -810,7 +810,7 @@ async function chargedCall({ userId, charge, systemInstruction, payload, maxOutp
 // not the quiet-days forecast, and a table that is free is not the table
 // service question.
 const OFFLINE_INTENT_CUES = [
-  ['money_move', /\b(?:money\s+move|best\s+move|where\s+(?:is|'s)\s+the\s+money|focus\s+on\s+this\s+week|make\s+more\s+money\s+this\s+week)\b/i],
+  ['money_move', /\b(?:money\s+move|best\s+move|where\s+(?:is|'s)\s+the\s+money|focus\s+on\s+this\s+week|make\s+more\s+money|more\s+profit|increase\s+(?:sales|revenue))\b/i],
   ['tables_free', /\btables?\b[^.?!]{0,30}\b(?:free|open|available|empty)\b/i],
   ['tables_service', /\b(?:tables?|turn\s+times?|turns?|seatings?|another\s+server|extra\s+server|servers?\s+(?:do\s+(?:i|we)\s+)?need)\b/i],
   ['slow_night', /\bwhy\s+(?:was|were|is|are|did)\b[^.?!]*\b(?:slow|quiet|dead|empty)\b/i],
@@ -822,8 +822,8 @@ const OFFLINE_INTENT_CUES = [
   ['cohort_typical', /\b(?:compare|stack\s+up|sit\s+among|(?:venues|places|restaurants|bars|cafes)\s+like\s+(?:us|ours|mine)|similar\s+(?:venues|places))\b/i],
   ['weekend_outlook', /\bweekends?\b/i],
   ['tonight_outlook', /\b(?:today|tonight|this\s+(?:morning|afternoon|evening))\b/i],
-  ['quiet_nights', /\b(?:quiet(?:est)?|slow(?:est)?|dead(?:est)?|empt(?:y|iest)|fill)\b/i],
-  ['peak_hours', /\b(?:peaks?|busie(?:r|st)|busy\s+(?:times?|hours?|days?)|rush)\b/i],
+  ['quiet_nights', /\b(?:quiet(?:est)?|slow(?:est)?|dead(?:est)?|empt(?:y|iest)|fill|nobody|no\s+one)\b/i],
+  ['peak_hours', /\b(?:peaks?|busie(?:r|st)|busy\s+(?:times?|hours?|days?)|rush|slammed|lines?\s+out|out\s+the\s+door|queue)\b/i],
   ['week_recap', /\b(?:last\s+(?:7|seven)\s+days|past\s+week|last\s+week)\b/i],
   ['kitchen_vs_peak', /\bkitchen\b/i],
   ['capacity_math', /\b(?:capacity|in\s+people|how\s+many\s+people)\b/i],
@@ -834,7 +834,7 @@ const OFFLINE_INTENT_CUES = [
 
 // The words of a question about running or growing the business rather than
 // reading its numbers. Any one of them makes the question advice.
-const OFFLINE_ADVICE = /\b(?:going\s+under|losing\s+money|what\s+do\s+(?:i|we)\s+(?:actually\s+)?do|help\s+me|how\s+(?:do|can|could|should|would)\s+(?:i|we)|how\s+many\s+(?:staff|servers?|people|cooks?|baristas?|bartenders?|hosts?)\s+(?:do|should|to)\b|how\s+much\s+(?:will|would|could|does|do|is|are|should|can)\b|cost\w*|earn\w*|make\s+(?:me|us)\b|(?:is|are)\s+\w+(?:\s+\w+)?\s+worth|what\s+(?:should|can|could)\s+(?:i|we)|should\s+(?:i|we)|is\s+it\s+worth|worth\s+it|ideas?|tips?|ways?\s+to|advice|improve|increase|grow|boost|bring\s+in|get\s+more|fill|attract|promot\w*|market\w*|advertis\w*|pric\w*|charge|menu|costs?|margins?|profit\w*|revenue|sales|upsell\w*|specials?|discount\w*|deals?|happy\s+hour|loyalty|regulars|reviews?|social\s+media|instagram|delivery|takeout|take\s*away|catering|private\s+(?:events?|parties|dining)|waste|inventory|staff\w*|schedul\w*|labou?r|hire|hiring|train\w*|no[\s-]?shows?|wait\s*list|reservations?)\b/i;
+const OFFLINE_ADVICE = /\b(?:going\s+under|losing\s+money|lost\s+money|cash\s+flow|struggl\w*|killing\s+(?:me|us)|nobody\s+comes|no\s+one\s+comes|people\s+leave|walk\s*outs?|quit\w*|turnover|complain\w*|takes\s+forever|too\s+slow|wait\s+times?|too\s+long|families|kids|children|out\s+the\s+door|how\s+to\b|what\s+do\s+(?:i|we)\s+(?:actually\s+)?do|help\s+me|how\s+(?:do|can|could|should|would)\s+(?:i|we)|how\s+many\s+(?:staff|servers?|people|cooks?|baristas?|bartenders?|hosts?)\s+(?:do|should|to)\b|how\s+much\s+(?:will|would|could|does|do|is|are|should|can)\b|cost\w*|earn\w*|make\s+(?:me|us)\b|(?:is|are)\s+\w+(?:\s+\w+)?\s+worth|what\s+(?:should|can|could)\s+(?:i|we)|should\s+(?:i|we)|is\s+it\s+worth|worth\s+it|ideas?|tips?|ways?\s+to|advice|improve|increase|grow|boost|bring\s+in|get\s+more|fill|attract|promot\w*|market\w*|advertis\w*|pric\w*|charge|menu|costs?|margins?|profit\w*|revenue|sales|upsell\w*|specials?|discount\w*|deals?|happy\s+hour|loyalty|regulars|reviews?|social\s+media|instagram|delivery|takeout|take\s*away|catering|private\s+(?:events?|parties|dining)|waste|inventory|staff\w*|schedul\w*|labou?r|hire|hiring|train\w*|no[\s-]?shows?|wait\s*list|reservations?)\b/i;
 
 /**
  * Route a question with no model: {mode, intentId} or null when nothing in it
