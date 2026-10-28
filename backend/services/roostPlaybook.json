@@ -2927,7 +2927,11 @@
       "guests complain",
       "keep getting complaints",
       "complaining about",
-      "reviews complain"
+      "reviews complain",
+      "reviews keep saying",
+      "reviews keep mentioning",
+      "keep saying",
+      "reviews say the same"
     ],
     "move": "Go through the 50 most recent reviews, list every complaint that shows up more than 2 times, and fix the cause behind the most common.",
     "why": "Repeated complaints point to real problems in service or food that are costing you return visits.",

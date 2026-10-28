@@ -1118,3 +1118,13 @@ test('a playbook answer offers "What else could we try?", and tapping it gives a
   assert.strictEqual(next.body.mode, 'advice', next.body.text);
   for (const id of first.body.context.tactics) assert.ok(!next.body.text.includes(moveText(id)), `${id} came back`);
 });
+
+test('the moves handed to the advice model beside the first are written for this kind of room', async () => {
+  resetAll();
+  installProfile(); // a bar
+  replies = ['{"mode":"advice","intentId":"peak_hours"}', creditsOut()];
+  await ask('the line at the door is too long');
+  const sent = modelCalls[1].contents[0].parts[0].text;
+  assert.ok(sent.includes(moveText('rush_door_lanes')), 'the door move leads');
+  assert.ok(!sent.includes(moveText('rush_line_busting')), 'a coffee counter line move rode along to a bar');
+});

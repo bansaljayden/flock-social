@@ -912,6 +912,7 @@ module.exports = {
   isLevelWeek,
   moveFor,
   forPayload,
+  forThisKind,
   stem,
   stems,
   trafficView,
