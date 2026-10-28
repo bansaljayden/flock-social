@@ -64,6 +64,36 @@ const INTENT_TOPICS = Object.freeze({
   cohort_typical: ['marketing', 'regulars'],
 });
 
+// The single words that say which part of the business a question is about.
+// Cues are mostly phrases ("slow night deal", "fill seats"), and an owner
+// types "how do I make Tuesdays better" or "turn tables faster": no phrase,
+// but every word points at a topic. Each hit leans the question toward that
+// topic's tactics (score below); the tactic's own cues still pick within it.
+// Friday and Saturday are not slow-day words: most rooms are busy then.
+const TOPIC_WORDS = Object.freeze({
+  fill_slow_days: ['slow', 'slower', 'slowest', 'quiet', 'quieter', 'quietest', 'dead', 'empty', 'fill', 'midweek', 'monday', 'tuesday', 'wednesday', 'thursday', 'sunday', 'weekday', 'traffic', 'busier'],
+  handle_the_rush: ['rush', 'busiest', 'peak', 'slammed', 'weeds', 'queue', 'swamped', 'overwhelmed', 'backed'],
+  turn_tables: ['turn', 'turns', 'turnover', 'table', 'tables', 'linger', 'lingering', 'camp', 'camping', 'dwell', 'seat', 'seats', 'seating', 'faster'],
+  check_average: ['upsell', 'upselling', 'spend', 'check', 'ticket', 'dessert', 'desserts', 'appetizer', 'appetizers', 'sides', 'addon'],
+  pricing: ['price', 'prices', 'pricing', 'charge', 'charging', 'raise', 'increase', 'expensive', 'cheap'],
+  menu_engineering: ['menu', 'menus', 'dish', 'dishes', 'item', 'items', 'layout', 'bestseller', 'bestsellers'],
+  food_cost: ['food', 'ingredient', 'ingredients', 'waste', 'portion', 'portions', 'supplier', 'suppliers', 'inventory', 'plate'],
+  labor: ['staff', 'staffing', 'schedule', 'scheduling', 'shift', 'shifts', 'labor', 'labour', 'payroll', 'server', 'servers', 'cook', 'cooks', 'barista', 'baristas', 'bartender', 'bartenders', 'overstaffed', 'understaffed'],
+  staff: ['hire', 'hiring', 'retain', 'quit', 'quitting', 'train', 'training', 'morale', 'team', 'employee', 'employees'],
+  reservations: ['reservation', 'reservations', 'booking', 'bookings', 'cancellation', 'cancellations', 'deposit', 'deposits'],
+  waitlist: ['wait', 'waiting', 'waitlist', 'walkaway', 'walkaways'],
+  regulars: ['regulars', 'regular', 'loyalty', 'loyal', 'repeat', 'return', 'returning', 'punch', 'rewards'],
+  marketing: ['marketing', 'market', 'advertise', 'advertising', 'instagram', 'social', 'tiktok', 'facebook', 'google', 'promote', 'promotion', 'email', 'newsletter', 'listing', 'followers'],
+  reviews: ['review', 'reviews', 'rating', 'ratings', 'yelp', 'stars', 'complaint', 'complaints', 'feedback'],
+  events: ['event', 'events', 'trivia', 'music', 'live', 'private', 'party', 'parties', 'holiday', 'tasting', 'class', 'classes'],
+  takeout_delivery: ['delivery', 'deliveries', 'takeout', 'togo', 'pickup', 'doordash', 'ubereats', 'grubhub', 'apps', 'commission', 'packaging'],
+  beverage: ['drink', 'drinks', 'beer', 'wine', 'cocktail', 'cocktails', 'coffee', 'liquor', 'pour', 'spirits', 'happy'],
+  dayparts: ['breakfast', 'brunch', 'lunch', 'dinner', 'late', 'morning', 'mornings', 'afternoon', 'afternoons', 'evening', 'evenings', 'daypart', 'opening', 'catering'],
+  weather_season: ['weather', 'rain', 'rainy', 'snow', 'cold', 'hot', 'heat', 'summer', 'winter', 'season', 'seasonal', 'patio'],
+  hospitality: ['hospitality', 'service', 'welcome', 'greet', 'experience', 'friendly', 'warm', 'apology', 'mistake'],
+  costs: ['costs', 'expenses', 'rent', 'utilities', 'energy', 'fees', 'overhead', 'bills', 'savings', 'profit', 'profitable', 'cash', 'losing', 'under'],
+});
+
 // ── Words ────────────────────────────────────────────────────────────────────
 
 // A crude stemmer, and crude is enough: the question and every cue go through
@@ -219,12 +249,33 @@ function fits(t, venue, asksAboutDrinks) {
 const TEXT_WEIGHT = 0.2;
 const TEXT_CAP = 0.6;
 
-function score(t, qStems, qSet, topics, venue) {
+// Each topic word in the question leans it toward that topic, up to a cap,
+// so a question no cue phrase matches still finds its topic's best tactic.
+const TOPIC_WORD_WEIGHT = 0.5;
+const TOPIC_WORD_CAP = 1.5;
+const TOPIC_OF_WORD = new Map();
+for (const [topic, list] of Object.entries(TOPIC_WORDS)) {
+  for (const w of list) {
+    const key = stem(w);
+    if (!TOPIC_OF_WORD.has(key)) TOPIC_OF_WORD.set(key, new Set());
+    TOPIC_OF_WORD.get(key).add(topic);
+  }
+}
+
+function topicLean(qSet) {
+  const hits = new Map();
+  for (const w of qSet) {
+    for (const topic of TOPIC_OF_WORD.get(w) || []) hits.set(topic, (hits.get(topic) || 0) + 1);
+  }
+  return hits;
+}
+
+function score(t, qStems, qSet, topics, venue, lean) {
   let cues = 0;
   t.cueStems.forEach((cue, i) => {
     if (cue.length === 1 ? qSet.has(cue[0]) : containsRun(qStems, cue)) cues += t.cueWeights[i];
   });
-  let s = cues;
+  let s = cues + Math.min(TOPIC_WORD_CAP, (lean.get(t.topic) || 0) * TOPIC_WORD_WEIGHT);
   if (topics[0] === t.topic) s += 1.5;
   else if (topics[1] === t.topic) s += 1;
   if (s === 0) return 0;
@@ -255,9 +306,10 @@ function createPlaybook(tactics) {
     const qSet = new Set(qStems.filter((w) => !STOP.has(w)));
     const topics = INTENT_TOPICS[intentId] || [];
     const drinks = DRINK_WORDS.test(String(question || ''));
+    const lean = topicLean(qSet);
     return compiled
       .filter((t) => !exclude.includes(t.id) && fits(t, venue, drinks))
-      .map((t) => ({ t, s: score(t, qStems, qSet, topics, venue) }))
+      .map((t) => ({ t, s: score(t, qStems, qSet, topics, venue, lean) }))
       .filter(({ s }) => s >= MIN_SCORE)
       .sort((a, b) => (b.s - a.s) || (a.t.order - b.t.order))
       .slice(0, limit)
@@ -536,6 +588,7 @@ function __copyStrings() {
 
 module.exports = {
   TOPICS,
+  TOPIC_WORDS,
   VENUE_KINDS,
   MONEY_KINDS,
   INTENT_TOPICS,

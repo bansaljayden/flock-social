@@ -683,6 +683,12 @@ test('a caller with no venue profile is refused BEFORE the router is paid for', 
   assert.strictEqual(ledger.size, 0, 'and nothing was charged to any ledger');
 });
 
+// A question only the router can place: no chip's words, no money words, no
+// playbook topic. The ceiling and wall tests ask it, so the sentence they pin
+// is what the owner reads. A question the offline route CAN place is answered
+// past a spent allowance instead (end of the next test), which is the point.
+const UNPLACEABLE = 'what do you make of all this';
+
 test('the per-venue daily QUESTION cap bites, and it sits under the chip answer cap', async () => {
   assert.ok(
     advisorPhrasing.PER_VENUE_DAILY_QUESTIONS < advisorPhrasing.PER_VENUE_DAILY_ANSWERS,
@@ -693,7 +699,7 @@ test('the per-venue daily QUESTION cap bites, and it sits under the chip answer 
   installProfile();
   // Spend the day's questions.
   ledger.set(7, { answers: 0, questions: advisorPhrasing.PER_VENUE_DAILY_QUESTIONS, tokens: 0 });
-  const r = await ask('how do I make mornings better');
+  const r = await ask(UNPLACEABLE);
   assert.strictEqual(r.body.mode, 'refusal', 'over the cap, the question declines');
   assert.strictEqual(modelCalls.length, 0, 'the charge is refused BEFORE the call, not after it');
   // And it says the true thing. A refusal that misdescribes itself teaches the
@@ -709,6 +715,13 @@ test('the per-venue daily QUESTION cap bites, and it sits under the chip answer 
   // No upsell, ever: there is no plan that raises this number, so offering one
   // inside the refusal would be selling a thing that does not exist.
   assert.ok(!/upgrade|plan|\bpro\b|price|\$/i.test(r.body.text), 'a ceiling never sells a way around itself');
+
+  // A money question past the cap is still answered: from the playbook, with
+  // no model call, so it costs nothing the cap was there to protect.
+  const playbook = await ask('how do I make Tuesdays better');
+  assert.strictEqual(playbook.body.mode, 'advice');
+  assert.ok(playbook.body.sources.some((x) => x.source === 'roost_playbook'));
+  assert.strictEqual(modelCalls.length, 0, 'and nothing was called to answer it');
 });
 
 // The other half of the same guarantee. These two refusals were one sentence
@@ -721,7 +734,7 @@ test('a ceiling and an unreachable model are different sentences, and only the c
   // call itself, which is the case REFUSAL_BUSY was written for: not the
   // owner's allowance, and no time we can promise them.
   replies = [new Error('upstream 503')];
-  const r = await ask('how do I make mornings better');
+  const r = await ask(UNPLACEABLE);
   assert.strictEqual(r.body.mode, 'refusal');
   assert.strictEqual(modelCalls.length, 1, 'the call was attempted and it was the call that failed');
   assert.strictEqual(ledger.get(7).questions, 1, 'and it was charged, because the upstream billed it either way');
@@ -749,7 +762,7 @@ test('the global Postgres wall refuses the router call, and a database that cann
   installProfile();
   handlers = handlers.filter(([re]) => !/INSERT INTO advisor_spend/.test(re.source));
   handlers.push([/INSERT INTO advisor_spend/, () => ({ rows: [], rowCount: 0 })]);
-  let r = await ask('how do I make mornings better');
+  let r = await ask(UNPLACEABLE);
   assert.strictEqual(r.body.mode, 'refusal');
   assert.strictEqual(modelCalls.length, 0);
 
@@ -757,7 +770,7 @@ test('the global Postgres wall refuses the router call, and a database that cann
   installProfile();
   handlers = handlers.filter(([re]) => !/INSERT INTO advisor_spend/.test(re.source));
   handlers.push([/INSERT INTO advisor_spend/, () => { throw new Error('db down'); }]);
-  r = await ask('how do I make mornings better');
+  r = await ask(UNPLACEABLE);
   assert.strictEqual(r.body.mode, 'refusal', 'a spend control that cannot count refuses');
   assert.strictEqual(modelCalls.length, 0);
 });
@@ -775,7 +788,7 @@ test('the shared global wall does not spend a venue\'s own daily allowance', asy
   handlers.push([/INSERT INTO advisor_spend/, () => ({ rows: [], rowCount: 0 })]);
 
   for (let i = 0; i < 5; i += 1) {
-    const r = await ask('how do I make mornings better');
+    const r = await ask(UNPLACEABLE);
     assert.strictEqual(r.body.mode, 'refusal');
   }
   assert.strictEqual(modelCalls.length, 0, 'nothing reached the model, so nothing was spent');
@@ -788,7 +801,7 @@ test('the shared global wall does not spend a venue\'s own daily allowance', asy
   resetAll();
   installProfile();
   ledger.set(7, { answers: 0, questions: advisorPhrasing.PER_VENUE_DAILY_QUESTIONS, tokens: 0 });
-  const spent = await ask('how do I make mornings better');
+  const spent = await ask(UNPLACEABLE);
   assert.match(spent.body.text, /used up/, 'the venue ceiling still bites and still names itself');
 });
 
