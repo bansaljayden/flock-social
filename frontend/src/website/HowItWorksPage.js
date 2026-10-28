@@ -196,7 +196,7 @@ const AIS = [
   { name: 'Starling', what: 'The crowd forecast. It’s 800 small decision trees, and we tested it on three cities it never trained on.' },
   { name: 'Birdie', what: 'Built on Google’s Gemini. Ask it where to go and it suggests places that fit the group. It checks with you before it does anything.' },
   { name: 'Owl', what: 'A small neural network that counts people from body heat, on the Raspberry Pi inside Flux. Only counts leave the box: the people in view and, on a unit set up for tables, how many are at each table. So far it’s been tested on research footage.' },
-  { name: 'Roost’s advisor', what: 'Answers a venue owner’s questions in plain sentences. The model can’t type a single digit, so every number in an answer is filled in from the venue’s measured data.' },
+  { name: 'Roost’s advisor', what: 'Helps a venue owner make more money: a short answer, a few points, and the sources at the end. Numbers about the venue come from its measured data and are checked before the owner sees them.' },
 ];
 
 // A plate beside its step, the capture in the site's drawn phone.

@@ -26,8 +26,11 @@ import { shareThisPage } from './shareCard';
 //     it lasts 90 minutes                                         C-131
 //   Owl: runs on the Pi; generated frames and six public
 //     datasets; not yet in a venue        models/NOTICE.md, C-112 (out of date)
-//   Roost's advisor may not type a digit; numbers are filled in
-//     from measured facts                                         C-080, C-105
+//   Roost's advisor: numbers about the venue are filled in from
+//     its measured facts, and a number it states about the venue
+//     that the facts do not back loses its sentence (2026-10-28;
+//     backend/services/advisorAnswer.js). It used to be barred
+//     from typing a digit at all                                  C-080, C-105
 // No accuracy figure is quoted: /research has them with their limits.
 
 const DESCRIPTION = 'The four AI models in Flock: the crowd forecast, the Owl people counter, Roost’s advisor and Birdie, what each one reads and how it was checked.';
@@ -35,7 +38,9 @@ const DESCRIPTION = 'The four AI models in Flock: the crowd forecast, the Owl pe
 // Every figure, at the two widths each file was written at. fluxPages.test.js
 // checks each file exists at the width it claims.
 export const FIGURES = {
-  four: { base: '/ai-figures/four-models', one: 1100, two: 2200, height: 483 },
+  // -v2 since 2026-10-28, when Roost's box stopped saying "zero digits": a
+  // file kept at the same name is served from Cloudflare's edge cache.
+  four: { base: '/ai-figures/four-models-v2', one: 1100, two: 2200, height: 483 },
   trees: { base: '/ai-figures/starling-trees', one: 1100, two: 2200, height: 197 },
   map: { base: '/ai-figures/starling-map', one: 640, two: 1280, height: 256 },
   code: { base: '/ai-figures/starling-code', one: 640, two: 1280, height: 242 },
@@ -43,8 +48,8 @@ export const FIGURES = {
   pipeline: { base: '/ai-figures/owl-pipeline', one: 1100, two: 2200, height: 249 },
   owlCode: { base: '/ai-figures/owl-code', one: 640, two: 1280, height: 136 },
   flow: { base: '/ai-figures/owl-flow', one: 640, two: 1280, height: 107 },
-  answer: { base: '/ai-figures/roost-answer', one: 1100, two: 2200, height: 161 },
-  rule: { base: '/ai-figures/roost-rule', one: 1100, two: 2200, height: 171 },
+  answer: { base: '/ai-figures/roost-answer-v2', one: 1100, two: 2200, height: 237 },
+  check: { base: '/ai-figures/roost-check', one: 1100, two: 2200, height: 192 },
 };
 
 const WIDE = '(min-width: 1160px) 1080px, calc(100vw - 40px)';
@@ -53,7 +58,8 @@ const HALF = '(min-width: 960px) 520px, calc(100vw - 40px)';
 // Each model's box on the four-models figure, as a link down to its section
 // (the maintainer, 2026-10-21: "let me click starling roost owl etc box and then it
 // will route me to where it is on the page"). Boxes are in percent of the
-// image, measured on four-models@2x.webp (2200 x 966) from the box outlines.
+// image, measured on four-models@2x.webp (2200 x 966) from the box outlines;
+// four-models-v2 only changed the words inside Roost's box, so they hold.
 export const MODEL_LINKS = [
   { href: '#starling', label: 'Starling', box: [0.95, 2.17, 35.77, 31.78] },
   { href: '#birdie', label: 'Birdie', box: [64.18, 2.17, 99.0, 31.78] },
@@ -128,7 +134,7 @@ export default function AiPage() {
               links={MODEL_LINKS}
               caption="Tap a model to jump to it."
               eager
-              alt="The four models around the Flock mark. Starling, trained by Flock, forecasts how busy a place will be: XGBoost, 800 trees. Birdie, Gemini with consent, helps the group pick a place: tool calls, and it asks first. Owl counts people in a room: a neural network with 718,550 weights. Roost, Gemini plus our checks, is an advisor that answers a venue’s questions: zero digits, numbers from data."
+              alt="The four models around the Flock mark. Starling, trained by Flock, forecasts how busy a place will be: XGBoost, 800 trees. Birdie, Gemini with consent, helps the group pick a place: tool calls, and it asks first. Owl counts people in a room: a neural network with 718,550 weights. Roost, Gemini plus our checks, is an advisor that helps a venue make more money: claims checked, numbers from data."
             />
           </div>
         </section>
@@ -241,18 +247,20 @@ export default function AiPage() {
 
         <section className="lp-sec lp-sec-sand" id="roost" aria-labelledby="ai-h-roost">
           <div className="lp-wrap">
-            <h2 id="ai-h-roost">Roost’s advisor can’t write a number</h2>
+            <h2 id="ai-h-roost">Roost’s advisor checks its numbers against your data</h2>
             {/* Birdie sits level with Roost's words from 960px (his ask,
                 2026-10-21: "in line with the roost description"), not in a
                 block of its own under the figures. */}
             <div className="ai-roost-top">
               <div className="ai-text">
                 <p>
-                  Roost is the plan for venues, and its advisor answers an owner’s
-                  questions in plain sentences. The model writing them, Google’s
-                  Gemini, isn’t allowed to type a single digit. Every number is filled
-                  in afterwards from the venue’s measured data, and a draft with a
-                  digit in it is thrown away.
+                  Roost is the plan for venues, and its advisor helps an owner make
+                  more money: a short answer first, then a few points, with the
+                  sources at the end. The model writing it is Google’s Gemini. Numbers
+                  about the venue are filled in from its measured data, and a number
+                  the model states about the venue on its own is checked against that
+                  data. A sentence that fails the check is removed before the owner
+                  sees it.
                 </p>
               </div>
               <div className="ai-birdie" id="birdie">
@@ -268,14 +276,14 @@ export default function AiPage() {
               img={FIGURES.answer}
               sizes={WIDE}
               className="ai-wide"
-              alt="A venue owner asks when they peak this week. The answer: Friday. The dinner rush builds and peaks near 7 PM, about 92 on our index. Friday, 7 PM and 92 are highlighted as filled in from measured data."
-              caption="An example answer. The highlighted values come from measured data."
+              alt="A venue owner asks when they peak this week. The answer: Friday is your busiest day, peaking near 7 PM at 92 on our index. Two points follow: the rush builds from 5 PM, so have the second cook on before then; and at $35 a head, 20 more covers that night is $700. Sources: model estimate and the venue’s settings. Friday, 7 PM, 92, 5 PM and $35 are highlighted as coming from the venue’s own data."
+              caption="An example answer. The highlighted values come from the venue’s own data."
             />
             <Figure
-              img={FIGURES.rule}
+              img={FIGURES.check}
               sizes={WIDE}
               className="ai-wide"
-              alt="Rule 3a of the advisor’s instructions: “You may not write a digit. Not one, anywhere.” Beside it, the check in backend/services/advisorPhrasing.js that rejects any draft with a digit."
+              alt="Rule one of the advisor’s instructions: “Numbers about this venue come only from the facts.” Beside it, the check in backend/services/advisorAnswer.js: a number about the venue that its data does not back loses its sentence."
               caption="The rule, and the check that enforces it."
             />
           </div>

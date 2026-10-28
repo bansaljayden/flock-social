@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import './PrivacyPolicy.css';
 import SiteFooter from './SiteFooter';
 
-const EFFECTIVE_DATE = 'October 23, 2026';
+const EFFECTIVE_DATE = 'October 28, 2026';
 const CONTACT_EMAIL = 'social@flockcorp.com';
 
 // THE OPERATOR IS A REGISTERED COMPANY NOW, and this name is its legal name.
@@ -558,11 +558,11 @@ export default function PrivacyPolicy() {
                 feature. The text of a typed question is not written to our database.
               </p>
               <p>
-                Roost is an analyst, not an oracle. Every figure it quotes carries its source
-                and its date. Where our data cannot answer, it refuses instead of guessing.
-                Predictions are estimates. Nothing Roost says is a guarantee about how your
-                business will do, and nothing it says is legal, tax, employment or financial
-                advice.
+                Roost is an analyst, not an oracle. Every answer names its sources at the end.
+                Figures about your venue come from your venue’s own data, and general figures
+                are rules of thumb from the trade. Predictions are estimates. Nothing Roost
+                says is a guarantee about how your business will do, and nothing it says is
+                legal, tax, employment or financial advice.
               </p>
             </section>
 

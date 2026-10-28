@@ -554,7 +554,8 @@ function checkSentenceNumbers(sentence, support) {
   for (const num of numbersIn(text)) {
     if (!isReadingSlot(text, num)) continue;
     const from = supportFor(num, support, inPlay);
-    if (!from) return { ok: false, ids, number: text.slice(num.index, num.index + num.length) };
+    const written = text.slice(num.index, num.index + num.length);
+    if (!from) return { ok: false, ids, number: written };
     for (const id of from) ids.add(id);
   }
   return { ok: true, ids };

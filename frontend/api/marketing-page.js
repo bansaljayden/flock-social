@@ -266,7 +266,7 @@ const PAGE_BLOCKS = {
   ],
   privacy: [
     ["h1", "Privacy Policy"],
-    ["p", "Effective October 23, 2026"],
+    ["p", "Effective October 28, 2026"],
     ["h2", "The short version"],
     ["li", "We collect what Flock needs to work: your account, your plans, your messages."],
     ["li", "Location is used only while you're using the app. Never in the background."],
@@ -377,7 +377,7 @@ const PAGE_BLOCKS = {
     ["p", "When you type your own question, the question itself goes to Google as well, inside the same request. It is capped at 280 characters and stripped of control characters first. It is used to route your question and, where the answer is general trade advice rather than a reading of your own numbers, to write that advice. The app asks first, and nothing you type is sent until you say yes."],
     ["p", "What Roost does not send: nothing about any Flock user. No consumer's name, account, message, budget, or position. No other venue's identity or figures. The cohort comparison your answer may draw on is an aggregate, and it is only computed once two floors are cleared: five reporting owners besides you, and three of their readings landing on the number itself. See Venue owners and business data."],
     ["p", "What Roost stores: not your question. We keep counts, how many questions your venue asked today and how many tokens they cost, so we can meter the feature. The text of a typed question is not written to our database."],
-    ["p", "Roost is an analyst, not an oracle. Every figure it quotes carries its source and its date. Where our data cannot answer, it refuses instead of guessing. Predictions are estimates. Nothing Roost says is a guarantee about how your business will do, and nothing it says is legal, tax, employment or financial advice."],
+    ["p", "Roost is an analyst, not an oracle. Every answer names its sources at the end. Figures about your venue come from your venue’s own data, and general figures are rules of thumb from the trade. Predictions are estimates. Nothing Roost says is a guarantee about how your business will do, and nothing it says is legal, tax, employment or financial advice."],
     ["h2", "Venue owners and business data"],
     ["p", "Venues appear on Flock whether or not anybody claims them, because listings are built from source distributions such as Google Places and from what Flock users post. Claiming a venue does not create the listing; it gives you tools to manage your side of it. This section is about what we collect from the person and the business behind a claimed venue."],
     ["p", "A venue account is an ordinary Flock account, so everything above applies to it too. On top of that we store:"],
