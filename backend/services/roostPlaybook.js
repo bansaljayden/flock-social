@@ -27,6 +27,7 @@
 // ---------------------------------------------------------------------------
 
 const advisorAnswer = require('./advisorAnswer');
+const { normalizeOwnerText } = require('./ownerWords');
 
 // The closed topic list. A tactic outside it fails at load, not in front of
 // an owner.
@@ -145,6 +146,232 @@ function containsRun(haystack, needle) {
     if (ok) return true;
   }
   return false;
+}
+
+// ── Two senses of one word ───────────────────────────────────────────────────
+//
+// "TUESDAYS ARE SLOW" IS TRAFFIC; "THE SERVICE IS SLOW" IS SPEED. The second
+// was answered with a slow-day move ("reviews say the service is slow", 2026-10-28
+// stress test). A speed complaint is taken out of the traffic words, so "slow"
+// stops leaning toward empty rooms, and the phrase the speed moves are cued on
+// goes in its place. "Lunch service is slow" names a meal, so it stays traffic.
+const SPEED_OF = Object.freeze({
+  service: 'slow service', server: 'slow service', servers: 'slow service', staff: 'slow service',
+  waiter: 'slow service', waiters: 'slow service', waitress: 'slow service', waitresses: 'slow service',
+  waitstaff: 'slow service',
+  food: 'slow kitchen', kitchen: 'slow kitchen', ticket: 'slow kitchen', tickets: 'slow kitchen',
+  cook: 'slow kitchen', cooks: 'slow kitchen',
+  line: 'slow counter', counter: 'slow counter', checkout: 'slow counter', register: 'slow counter',
+  queue: 'slow counter',
+  drink: 'drinks slow', drinks: 'drinks slow', bartender: 'drinks slow', bartenders: 'drinks slow',
+  barista: 'drinks slow', baristas: 'drinks slow',
+  payment: 'slow payment', payments: 'slow payment',
+});
+const SPEED_NOUNS = Object.keys(SPEED_OF).join('|');
+const SPEED = new RegExp(`\\b(${SPEED_NOUNS})\\s+(?:is|are|was|were|has\\s+been|have\\s+been|been|gets?|got|seems?|feels?|felt|comes?\\s+out|came\\s+out|goes|moves?|moving|runs?|running)\\s+(?:so\\s+|too\\s+|really\\s+|super\\s+|very\\s+|kinda\\s+|kind\\s+of\\s+|a\\s+bit\\s+|a\\s+little\\s+|pretty\\s+|way\\s+too\\s+|painfully\\s+|extremely\\s+|incredibly\\s+)?slow(?:ly)?\\b|\\bslow\\s+(${SPEED_NOUNS})\\b`, 'g');
+const MEAL_BEFORE = /\b(?:breakfast|brunch|lunch|dinner|supper|weekday|weeknight|evening|morning|night|late|weekend|sunday|monday|tuesday|wednesday|thursday|friday|saturday)\s+$/;
+const FOREVER = /\b(?:takes?|taking|took)\s+(?:forever|ages|too\s+long|so\s+long|way\s+too\s+long)\b/;
+const SPEED_NOUN_IN = new RegExp(`\\b(${SPEED_NOUNS})\\b`);
+
+// "DEAD ON MONDAYS" IS A SLOW DAY; "EMPTY UNTIL 3" IS A SLOW STRETCH INSIDE ONE.
+// A coffee shop "packed until 10 then empty until 3" was told to give its slowest
+// day a weekly reason to visit. A dead stretch in the middle of the day leans
+// to the dayparts moves (an afternoon offer, staffing the lull) instead.
+const DEAD = '(?:dead|slow|quiet|empty|nobody|no\\s+one|crickets)';
+const MIDDAY = '(?:noon|midday|lunch|(?:12|[1-5])(?::[0-5]\\d)?\\s*(?:pm|p\\.m\\.)?)';
+const LULL = new RegExp([
+  `\\b${DEAD}\\b[^.?!]{0,40}\\b(?:until|till|til|after|from|between|to)\\s+${MIDDAY}(?![\\d:])`,
+  `\\b(?:after|until|till|til|between|from)\\s+${MIDDAY}(?![\\d:])[^.?!]{0,30}\\b${DEAD}\\b`,
+  `\\b(?:midday|mid-day|middle\\s+of\\s+the\\s+day|mid\\s*afternoons?|afternoons?|between\\s+lunch\\s+and\\s+dinner)\\b[^.?!]{0,20}\\b(?:${DEAD}|lull|slump)\\b`,
+  `\\b${DEAD}\\s+(?:in\\s+the\\s+)?(?:afternoons?|midday|mid-day)\\b`,
+].join('|'));
+const LULL_TOPICS = Object.freeze(['dayparts', 'labor']);
+// "More people in the afternoon" asks to fill a part of the day, not a day.
+// The growth words would find the slow-day move on their own ("more people
+// in" is its cue), so they come out and the part of the day's own phrase goes
+// in. Dinner and evenings are most rooms' main service, so they stay slow-day.
+const DAYPART_GROWTH = /\b(more\s+(?:people|customers|guests|traffic|sales|business)(?:\s+in)?|busier|fill(?:ing)?|bring(?:ing)?\s+(?:people\s+|guests\s+)?in|get(?:ting)?\s+(?:people\s+|guests\s+)?in)\b([^.?!]{0,25}\b)(mornings?|afternoons?|midday|mid-day|lunch(?:time)?|breakfast|brunch)\b/;
+const DAYPART_PHRASE = Object.freeze({
+  morning: 'morning sales', mornings: 'morning sales', breakfast: 'morning sales', brunch: 'brunch menu',
+  afternoon: 'afternoon lull', afternoons: 'afternoon lull', midday: 'afternoon lull', 'mid-day': 'afternoon lull',
+  lunch: 'lunch crowd', lunchtime: 'lunch crowd',
+});
+const DAYPART_TOPICS = Object.freeze(['dayparts', 'fill_slow_days']);
+
+/**
+ * The question with its speed complaints taken out of the traffic words.
+ * @param {string} text normalized owner text (ownerWords.normalizeOwnerText)
+ * @returns {{text: string, speed: string[], phrases: string[], lull: boolean, daypart: boolean}}
+ */
+function trafficView(text) {
+  const speed = [];
+  let traffic = String(text || '').replace(SPEED, (m, a, b, offset, whole) => {
+    const noun = a || b;
+    if (noun === 'service' && MEAL_BEFORE.test(whole.slice(0, offset))) return m;
+    speed.push(SPEED_OF[noun]);
+    return ' ';
+  });
+  if (FOREVER.test(traffic)) {
+    const noun = SPEED_NOUN_IN.exec(traffic);
+    speed.push(noun ? SPEED_OF[noun[1]] : 'slow service');
+  }
+  const lull = LULL.test(traffic);
+  const phrases = [...new Set(speed)];
+  if (lull) phrases.push('afternoon lull');
+  const growth = DAYPART_GROWTH.exec(traffic);
+  if (growth) {
+    traffic = traffic.replace(growth[0], ` ${growth[2]}${growth[3]}`);
+    phrases.push(DAYPART_PHRASE[growth[3]]);
+  }
+  return { text: traffic, speed: [...new Set(speed)], phrases: [...new Set(phrases)], lull, daypart: lull || Boolean(growth) };
+}
+
+// ── What the owner already ruled out ────────────────────────────────────────
+//
+// "WE TRIED A HAPPY HOUR AND IT DIDN'T WORK, WHAT SHOULD WE DO" was answered
+// with a happy hour (2026-10-28 stress test): the one move the owner had just
+// crossed off. The words after "tried", before "didn't work", or after
+// "already do" when the owner asks for something else, name a move that is off
+// the table. Any tactic cued inside them is set aside, and the words stop
+// leaning the question toward their topic. "How do we make it work" keeps the
+// subject: then the tried move is what the owner is asking about.
+const CLAUSE_END = new Set(['.', '!', '?', ';', ':']);
+const MEANS = new Set(['with', 'by', 'using', 'through', 'via']);
+const LIST_JOIN = new Set([',', 'and', 'or']);
+const SPAN_STOP = new Set([
+  ',', 'and', 'or', 'but', 'so', 'because', 'cause', 'since', 'though', 'although', 'while', 'then', 'it',
+  'that', 'which', 'who', 'nothing', 'what', 'how', 'should', 'could', 'would', 'can', 'now', 'still', 'yet',
+  'last', 'this', 'these', 'those', 'every', 'each', 'on', 'in', 'at', 'during', 'for', 'to', 'from', 'over',
+  'about', 'after', 'before', 'until', 'till', 'when', 'if', 'we', 'i', 'they', 'you', 'nobody', 'no', 'never',
+  'did', 'didnt', "didn't", 'does', 'doesnt', "doesn't", 'was', 'were', 'is', 'are', 'has', 'have', 'had',
+  'but', 'people', 'guests', 'customers', 'anyone', 'anybody', 'everyone', 'everybody',
+]);
+const PRONOUN = new Set(['it', 'that', 'they', 'this', 'those', 'these', 'which', 'everything', 'nothing', 'all']);
+const GOAL = /^(?:fill|filling|get|getting|bring|bringing|make|making|attract|attracting|increase|increasing|boost|boosting|grow|growing|drive|driving|draw|drawing|pull|pulling|build|building|cut|cutting|lower|lowering|reduce|reducing|keep|keeping|save|saving|fix|fixing)$/;
+const PIVOT = new Set([
+  'did', 'do', 'done', 'doing', 'ran', 'run', 'running', 'had', 'have', 'tried', 'trying', 'offered', 'offer',
+  'offering', 'added', 'adding', 'started', 'starting', 'launched', 'used', 'using', 'put', 'gave', 'tested',
+  'introduced', 'with', 'by',
+]);
+const EXISTING = new Set(['do', 'did', 'done', 'have', 'had', 'run', 'ran', 'offer', 'offered', 'use', 'used', 'got', 'host', 'hosted']);
+const FAILED = /\b(?:did\s*n'?t|did\s+not|does\s*n'?t|does\s+not|do\s*n'?t|never|wo\s*n'?t|would\s*n'?t|would\s+not|will\s+not|is\s*n'?t|was\s*n'?t|was\s+not)\s+(?:really\s+|even\s+|actually\s+|ever\s+)?(?:work(?:ed|ing|s)?|help(?:ed|s)?|do\s+(?:anything|much|a\s+thing)|move\s+the\s+needle|pay\s+off)\b|\b(?:flopped|failed|bombed|fizzled|tanked|went\s+nowhere|was\s+a\s+(?:flop|bust|waste|failure|disaster|dud)|nobody\s+came|no\s+one\s+came)\b/g;
+const ELSE = /\b(?:else|other|another|besides|beyond|instead|alternatives?|different)\b/;
+const KEEP_SUBJECT = /\b(?:make|making|get|getting)\s+(?:it|them|that|this)\s+(?:to\s+)?(?:work|better|busier|popular|going|stick|pay\s+off)\b|\b(?:improve|fix|tweak|change|adjust|promote|market|price|reprice|time|run|restart|relaunch|rework|revive|save)\s+(?:it|them|that|this)\b|\bmore\s+people\s+to\s+(?:come|use|join|show|sign)\b/;
+const TOKEN = /[a-z0-9']+|[.,!?;:]/g;
+const SPAN_MAX = 12;
+
+function takeSpan(tokens, start) {
+  const out = [];
+  let i = start;
+  while (i < tokens.length && out.length < SPAN_MAX) {
+    const w = tokens[i];
+    if (CLAUSE_END.has(w) || MEANS.has(w)) break;
+    if (LIST_JOIN.has(w)) {
+      // A list keeps going ("discounts, trivia and a happy hour"); a new
+      // clause ("and it didn't work") ends it.
+      const next = tokens[i + 1];
+      if (!next || CLAUSE_END.has(next) || SPAN_STOP.has(next) || LIST_JOIN.has(next)) break;
+      i += 1;
+    } else if (SPAN_STOP.has(w)) {
+      break;
+    } else {
+      out.push(w);
+      i += 1;
+    }
+  }
+  return { words: out, end: i };
+}
+
+// The move named from `start`. A goal ("tried to fill Tuesdays") is not a
+// move; the move is what the goal was tried with.
+function moveFrom(tokens, start) {
+  const { words: span, end } = takeSpan(tokens, start);
+  if (!span.length || !GOAL.test(span[0])) return span;
+  for (let j = end; j < tokens.length && !CLAUSE_END.has(tokens[j]); j += 1) {
+    if (MEANS.has(tokens[j])) return takeSpan(tokens, j + 1).words;
+  }
+  return [];
+}
+
+// What failed, read backward from "didn't work": the clause right before it,
+// or, when that is only "it", what the clause before that did or ran.
+function failedBefore(before) {
+  const tokens = before.match(TOKEN) || [];
+  const clauses = [[]];
+  for (const w of tokens) {
+    if (w === ',' || w === 'and' || w === 'but' || w === 'so' || w === 'which') clauses.push([]);
+    else clauses[clauses.length - 1].push(w);
+  }
+  const last = clauses[clauses.length - 1];
+  const content = last.filter((w) => !PRONOUN.has(w));
+  if (content.length) return moveFrom(content, 0);
+  const prev = clauses[clauses.length - 2] || [];
+  for (let i = prev.length - 1; i >= 0; i -= 1) {
+    if (PIVOT.has(prev[i])) return moveFrom(prev, i + 1);
+  }
+  return prev.slice(-4).filter((w) => !SPAN_STOP.has(w));
+}
+
+/**
+ * The moves the owner ruled out, as word lists, and the question without them.
+ * @param {string} text normalized owner text
+ * @returns {{spans: string[][], text: string}}
+ */
+function ruledOut(text) {
+  const source = String(text || '');
+  if (KEEP_SUBJECT.test(source)) return { spans: [], text: source };
+  const asksElse = ELSE.test(source);
+  const spans = [];
+  for (const sentence of source.split(/[.!?;\n]+/)) {
+    const tokens = sentence.match(TOKEN) || [];
+    tokens.forEach((w, i) => {
+      if (w === 'tried' || w === 'tested') {
+        spans.push(moveFrom(tokens, i + (tokens[i + 1] === 'to' ? 2 : 1)));
+      } else if (w === 'already' && EXISTING.has(tokens[i + 1]) && asksElse) {
+        spans.push(moveFrom(tokens, i + 2));
+      }
+    });
+    FAILED.lastIndex = 0;
+    let m = FAILED.exec(sentence);
+    while (m) {
+      spans.push(failedBefore(sentence.slice(0, m.index)));
+      m = FAILED.exec(sentence);
+    }
+  }
+  const named = spans.filter((s) => s.some((w) => !STOP.has(stem(w))));
+  let rest = source;
+  for (const span of named) {
+    const pattern = new RegExp(`\\b${span.map((w) => w.replace(/[^a-z0-9']/g, '')).join('\\W+(?:\\w+\\W+){0,2}?')}\\b`);
+    rest = rest.replace(pattern, ' ');
+  }
+  return { spans: named, text: rest };
+}
+
+/**
+ * Everything retrieval needs from the owner's question, read once.
+ * @returns {{qStems: string[], qSet: Set<string>, ruled: string[][], lull: boolean, drinks: boolean}}
+ */
+function readQuestion(question) {
+  const out = ruledOut(normalizeOwnerText(String(question || '')));
+  const view = trafficView(out.text);
+  const base = stems(view.text);
+  const qStems = [...base];
+  const extra = [];
+  for (const phrase of view.phrases) {
+    const run = stems(phrase);
+    // The sentinel keeps an added phrase from joining the words before it,
+    // and "slow" from a speed phrase never leans toward empty rooms.
+    qStems.push('|', ...run);
+    extra.push(...run.filter((w) => w !== 'slow'));
+  }
+  return {
+    qStems,
+    qSet: new Set([...base, ...extra].filter((w) => !STOP.has(w))),
+    ruled: out.spans.map((s) => stems(s.join(' '))),
+    lull: view.lull,
+    daypart: view.daypart,
+    drinks: DRINK_WORDS.test(view.text),
+  };
 }
 
 // ── The venue ────────────────────────────────────────────────────────────────
@@ -322,18 +549,29 @@ function createPlaybook(tactics) {
    * @param {{intentId?: string|null, venue?: {kind: string|null, alcohol: boolean}, limit?: number, exclude?: string[]}} opts
    */
   function find(question, { intentId = null, venue = null, limit = 3, exclude = [] } = {}) {
-    const qStems = stems(question);
-    const qSet = new Set(qStems.filter((w) => !STOP.has(w)));
-    const topics = INTENT_TOPICS[intentId] || [];
-    const drinks = DRINK_WORDS.test(String(question || ''));
-    const lean = topicLean(qSet);
-    return compiled
-      .filter((t) => !exclude.includes(t.id) && fits(t, venue, drinks))
-      .map((t) => ({ t, s: score(t, qStems, qSet, topics, venue, lean) }))
+    const q = readQuestion(question);
+    const ruled = new Set(q.ruled.length
+      ? compiled.filter((t) => t.cueStems.some((c) => q.ruled.some((span) => containsRun(span, c)))).map((t) => t.id)
+      : []);
+    let topics = INTENT_TOPICS[intentId] || [];
+    // A dead stretch inside the day is a dayparts question, and so is filling
+    // one part of the day, unless the route already named something other
+    // than a slow day.
+    if (q.daypart && (!topics.length || topics[0] === 'fill_slow_days')) topics = q.lull ? LULL_TOPICS : DAYPART_TOPICS;
+    const lean = topicLean(q.qSet);
+    const rank = (onTopics) => compiled
+      .filter((t) => !exclude.includes(t.id) && !ruled.has(t.id) && fits(t, venue, q.drinks))
+      .map((t) => ({ t, s: score(t, q.qStems, q.qSet, onTopics, venue, lean) }))
       .filter(({ s }) => s >= MIN_SCORE)
       .sort((a, b) => (b.s - a.s) || (a.t.order - b.t.order))
       .slice(0, limit)
       .map(({ t }) => t);
+    const picks = rank(topics);
+    if (picks.length || !ruled.size || topics.length) return picks;
+    // All the owner named was the move they ruled out ("we tried a happy hour
+    // and it didn't work"): another move from the same topic.
+    const crossedOff = compiled.find((t) => ruled.has(t.id));
+    return rank([crossedOff.topic]);
   }
 
   return { tactics: compiled, byId, find };
@@ -482,7 +720,7 @@ function calculatorAnswer(book, { question, ctx, venue, intentId }) {
  */
 function answerFrom(book, { question, intentId = null, ctx = null, groundedFacts = [] } = {}) {
   const venue = venueOf(ctx);
-  const calc = calculatorAnswer(book, { question, ctx, venue, intentId });
+  const calc = calculatorAnswer(book, { question: normalizeOwnerText(String(question || '')), ctx, venue, intentId });
   if (calc) {
     const sources = [{ ...PLAYBOOK_SOURCE }];
     if (calc.spendUsed) {
@@ -650,5 +888,7 @@ module.exports = {
   forPayload,
   stem,
   stems,
+  trafficView,
+  ruledOut,
   __copyStrings,
 };

@@ -76,6 +76,7 @@ const advisorFacts = require('./advisorFacts');
 const advisorPhrasing = require('./advisorPhrasing');
 const advisorAnswer = require('./advisorAnswer');
 const roostPlaybook = require('./roostPlaybook');
+const { normalizeOwnerText } = require('./ownerWords');
 const { CLASSIFIER_PROMPT, ADVICE_SYSTEM_PROMPT } = require('./advisorPrompt');
 const { boolFlag } = require('./entitlements');
 const { upstreamSignal } = require('../utils/upstream');
@@ -835,10 +836,19 @@ async function chargedCall({ userId, charge, systemInstruction, payload, maxOutp
 // Specific before general: "why was Tuesday slow" is the slow-day question,
 // not the quiet-days forecast, and a table that is free is not the table
 // service question.
+//
+// An entry with no intent is advice with no chip behind it, and it stops the
+// search: "4 tables and 3 servers on, I'm bleeding money on labor" is a labor
+// question that happens to count tables.
 const OFFLINE_INTENT_CUES = [
-  ['money_move', /\b(?:money\s+move|best\s+move|where\s+(?:is|'s)\s+the\s+money|focus\s+on\s+this\s+week|make\s+more\s+money|more\s+profit|increase\s+(?:sales|revenue))\b/i],
+  // "How do I get more customers" is the money move asked plainly, and it was
+  // the one growth question the playbook had nothing for (2026-10-28).
+  ['money_move', /\b(?:money\s+move|best\s+move|where\s+(?:is|'s)\s+the\s+money|focus\s+on\s+this\s+week|make\s+more\s+money|more\s+profit|increase\s+(?:sales|revenue)|more\s+(?:customers|business|guests|sales|foot\s+traffic)|grow\s+(?:my|our|the)\s+(?:business|restaurant|cafe|bar|sales|revenue)|foot\s+traffic|(?:more\s+)?people\s+(?:through|in)\s+the\s+door|(?:sales|business|traffic|revenue)\s+(?:is|are|has\s+been|have\s+been|was|were|keeps?)\s+(?:down|dropping|falling|slipping|declining|off)|(?:sales|traffic|revenue)\s+(?:dropped|fell|declined|tanked))\b/i],
+  [null, /\b(?:labou?r\s+(?:costs?|is|are|bill|percent(?:age)?|too)|payroll|over\s*staff\w*|under\s*staff\w*|too\s+many\s+(?:staff|servers?|cooks?|bartenders?|baristas?|people\s+on)|(?:\d+|two|three|four|five|six|seven|eight)\s+(?:staff|servers?|cooks?|bartenders?|baristas?)\s+(?:on|scheduled|working))\b/i],
   ['tables_free', /\btables?\b[^.?!]{0,30}\b(?:free|open|available|empty)\b/i],
-  ['tables_service', /\b(?:tables?|turn\s+times?|turns?|seatings?|another\s+server|extra\s+server|servers?\s+(?:do\s+(?:i|we)\s+)?need)\b/i],
+  // A count of tables ("we only had 4 tables") is how the night went, not a
+  // question about serving them.
+  ['tables_service', /(?<!\b(?:\d+|a\s+few|few|couple(?:\s+of)?)\s+)\btables?\b|\b(?:turn\s+times?|turns?|seatings?|another\s+server|extra\s+server|servers?\s+(?:do\s+(?:i|we)\s+)?need)\b/i],
   ['slow_night', /\bwhy\s+(?:was|were|is|are|did)\b[^.?!]*\b(?:slow|quiet|dead|empty)\b/i],
   ['last_night_verdict', /\b(?:yesterday|last\s+night|how\s+did\s+(?:we|i)\s+do|how\s+(?:was|were)\s+(?:we|it|things)\b)/i],
   // Frustration is a request for the venue's own news, the way the router
@@ -860,19 +870,24 @@ const OFFLINE_INTENT_CUES = [
 
 // The words of a question about running or growing the business rather than
 // reading its numbers. Any one of them makes the question advice.
-const OFFLINE_ADVICE = /\b(?:going\s+under|losing\s+money|lost\s+money|cash\s+flow|struggl\w*|killing\s+(?:me|us)|nobody\s+comes|no\s+one\s+comes|people\s+leave|walk\s*outs?|quit\w*|turnover|complain\w*|takes\s+forever|too\s+slow|wait\s+times?|too\s+long|families|kids|children|out\s+the\s+door|how\s+to\b|what\s+do\s+(?:i|we)\s+(?:actually\s+)?do|help\s+me|how\s+(?:do|can|could|should|would)\s+(?:i|we)|how\s+many\s+(?:staff|servers?|people|cooks?|baristas?|bartenders?|hosts?)\s+(?:do|should|to)\b|how\s+much\s+(?:will|would|could|does|do|is|are|should|can)\b|cost\w*|earn\w*|make\s+(?:me|us)\b|(?:is|are)\s+\w+(?:\s+\w+)?\s+worth|what\s+(?:should|can|could)\s+(?:i|we)|should\s+(?:i|we)|is\s+it\s+worth|worth\s+it|ideas?|tips?|ways?\s+to|advice|improve|increase|grow|boost|bring\s+in|get\s+more|fill|attract|promot\w*|market\w*|advertis\w*|pric\w*|charge|menu|costs?|margins?|profit\w*|revenue|sales|upsell\w*|specials?|discount\w*|deals?|happy\s+hour|loyalty|regulars|reviews?|social\s+media|instagram|delivery|takeout|take\s*away|catering|private\s+(?:events?|parties|dining)|waste|inventory|staff\w*|schedul\w*|labou?r|hire|hiring|train\w*|no[\s-]?shows?|wait\s*list|reservations?)\b/i;
+const OFFLINE_ADVICE = /\b(?:going\s+under|losing\s+money|lost\s+money|cash\s+flow|struggl\w*|killing\s+(?:me|us)|nobody\s+comes|no\s+one\s+comes|people\s+leave|walk\s*outs?|quit\w*|turnover|complain\w*|takes\s+forever|too\s+slow|wait\s+times?|too\s+long|families|kids|children|out\s+the\s+door|how\s+to\b|what\s+do\s+(?:i|we)\s+(?:actually\s+)?do|help\s+me|how\s+(?:do|can|could|should|would)\s+(?:i|we)|how\s+many\s+(?:staff|servers?|people|cooks?|baristas?|bartenders?|hosts?)\s+(?:do|should|to)\b|how\s+much\s+(?:will|would|could|does|do|is|are|should|can)\b|cost\w*|earn\w*|make\s+(?:me|us)\b|(?:is|are)\s+\w+(?:\s+\w+)?\s+worth|what\s+(?:should|can|could)\s+(?:i|we)|should\s+(?:i|we)|is\s+it\s+worth|worth\s+it|ideas?|tips?|ways?\s+to|advice|improve|increase|grow|boost|bring\s+in|get\s+more|fill|attract|promot\w*|market\w*|advertis\w*|pric\w*|charge|menu|costs?|margins?|profit\w*|revenue|sales|upsell\w*|specials?|discount\w*|deals?|happy\s+hour|loyalty|regulars|reviews?|social\s+media|instagram|delivery|takeout|take\s*away|catering|doordash|uber\s*eats|grubhub|postmates|seamless|deliveroo|caviar|private\s+(?:events?|parties|dining)|waste|inventory|staff\w*|schedul\w*|labou?r|hire|hiring|train\w*|no[\s-]?shows?|wait\s*list|reservations?)\b/i;
 
 /**
  * Route a question with no model: {mode, intentId} or null when nothing in it
  * says where it goes. Never a refusal; the caller keeps its own.
  */
 function offlineRoute(question) {
-  const text = typeof question === 'string' ? question.normalize('NFKC') : '';
+  // Read as the owner meant it ("tuesdys", "happy hr"), and with any speed
+  // complaint taken out of the traffic words: "the service is slow" is not a
+  // slow night (roostPlaybook.trafficView).
+  const text = normalizeOwnerText(typeof question === 'string' ? question : '');
   if (!text) return null;
-  const hit = OFFLINE_INTENT_CUES.find(([, re]) => re.test(text));
+  const view = roostPlaybook.trafficView(text);
+  const hit = OFFLINE_INTENT_CUES.find(([, re]) => re.test(view.text));
   const intentId = hit ? hit[0] : null;
-  if (OFFLINE_ADVICE.test(text)) return { mode: 'advice', intentId };
+  if (view.speed.length || OFFLINE_ADVICE.test(text)) return { mode: 'advice', intentId };
   if (intentId) return { mode: 'grounded', intentId };
+  if (hit) return { mode: 'advice', intentId: null };
   return null;
 }
 
