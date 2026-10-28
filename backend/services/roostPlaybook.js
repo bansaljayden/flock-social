@@ -72,8 +72,8 @@ const INTENT_TOPICS = Object.freeze({
 // Friday and Saturday are not slow-day words: most rooms are busy then.
 const TOPIC_WORDS = Object.freeze({
   fill_slow_days: ['slow', 'slower', 'slowest', 'quiet', 'quieter', 'quietest', 'dead', 'empty', 'fill', 'midweek', 'monday', 'tuesday', 'wednesday', 'thursday', 'sunday', 'weekday', 'traffic', 'busier'],
-  handle_the_rush: ['rush', 'busiest', 'peak', 'slammed', 'weeds', 'queue', 'swamped', 'overwhelmed', 'backed'],
-  turn_tables: ['turn', 'turns', 'turnover', 'table', 'tables', 'linger', 'lingering', 'camp', 'camping', 'dwell', 'seat', 'seats', 'seating', 'faster'],
+  handle_the_rush: ['rush', 'busiest', 'peak', 'slammed', 'weeds', 'queue', 'swamped', 'overwhelmed', 'backed', 'line'],
+  turn_tables: ['turn', 'turns', 'turnover', 'table', 'tables', 'linger', 'lingering', 'camp', 'camping', 'dwell', 'seat', 'seats', 'seating', 'faster', 'sit', 'sitting', 'laptop', 'laptops'],
   check_average: ['upsell', 'upselling', 'spend', 'check', 'ticket', 'dessert', 'desserts', 'appetizer', 'appetizers', 'sides', 'addon'],
   pricing: ['price', 'prices', 'pricing', 'charge', 'charging', 'raise', 'increase', 'expensive', 'cheap'],
   menu_engineering: ['menu', 'menus', 'dish', 'dishes', 'item', 'items', 'layout', 'bestseller', 'bestsellers'],
@@ -162,7 +162,7 @@ const CATEGORY_KIND = Object.freeze({
   dessert: 'bakery',
 });
 
-const DRINK_WORDS = /\b(drinks?|bar|beers?|wines?|cocktails?|liquor|spirits|happy\s+hour|pints?|taps?|booze|alcohol|bottles?)\b/i;
+const DRINK_WORDS = /\b(drinks?|bar|beers?|wines?|cocktails?|liquor|spirits|happy\s+hour|pints?|taps?|booze|alcohol|bottles?|pours?)\b/i;
 
 /** What the playbook needs to know about the venue: its kind and whether it pours. */
 function venueOf(ctx) {
@@ -236,12 +236,25 @@ function compile(tactics) {
 
 // ── Retrieval ────────────────────────────────────────────────────────────────
 
+// Alcohol is the one hard gate: a venue that does not pour never gets a
+// drinks move unless it asked about drinks.
 function fits(t, venue, asksAboutDrinks) {
-  if (t.alcohol && !(venue && venue.alcohol) && !asksAboutDrinks) return false;
-  if (t.venues.includes('all')) return true;
-  if (!venue || !venue.kind) return true;
+  return !(t.alcohol && !(venue && venue.alcohol) && !asksAboutDrinks);
+}
+
+function forThisKind(t, venue) {
+  if (t.venues.includes('all') || !venue || !venue.kind) return true;
   return t.venues.includes(venue.kind);
 }
+
+// A TACTIC WRITTEN FOR OTHER KINDS OF VENUE IS OFFERED WHEN THE OWNER NAMES
+// ITS SUBJECT. Venue tags say where a move usually applies; a bar asking
+// about no-shows takes bookings, and a counter cafe asking about brunch is
+// thinking of serving one. The question is the evidence, so a cue match this
+// strong lets the tactic through, a little behind any that were written for
+// the venue.
+const NAMED_MIN = 0.75;
+const OTHER_KIND_PENALTY = 0.25;
 
 // The weak second signal: words the question shares with the move itself.
 // Worth a fraction of a cue each and capped, so it breaks ties between
@@ -275,6 +288,8 @@ function score(t, qStems, qSet, topics, venue, lean) {
   t.cueStems.forEach((cue, i) => {
     if (cue.length === 1 ? qSet.has(cue[0]) : containsRun(qStems, cue)) cues += t.cueWeights[i];
   });
+  const ownKind = forThisKind(t, venue);
+  if (!ownKind && cues < NAMED_MIN) return 0;
   let s = cues + Math.min(TOPIC_WORD_CAP, (lean.get(t.topic) || 0) * TOPIC_WORD_WEIGHT);
   if (topics[0] === t.topic) s += 1.5;
   else if (topics[1] === t.topic) s += 1;
@@ -282,7 +297,8 @@ function score(t, qStems, qSet, topics, venue, lean) {
   let shared = 0;
   for (const w of qSet) if (t.textStems.has(w)) shared += 1;
   s += Math.min(TEXT_CAP, shared * TEXT_WEIGHT);
-  if (venue && venue.kind && t.venues.includes(venue.kind)) s += 0.25;
+  if (!ownKind) s -= OTHER_KIND_PENALTY;
+  else if (venue && venue.kind && t.venues.includes(venue.kind)) s += 0.25;
   return s;
 }
 

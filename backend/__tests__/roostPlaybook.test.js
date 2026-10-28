@@ -134,12 +134,17 @@ test('a venue that does not pour never gets a drinks move unless it asks about d
     .some((t) => t.id === 'bar_happy_hour'));
 });
 
-test('a tactic written for some venues is not offered to the others', () => {
+test('a tactic written for some venues reaches the others only when the owner names its subject', () => {
   const book = pb.createPlaybook(FIXTURE);
-  assert.ok(book.find('how do I get people to spend more in the mornings', { venue: { kind: 'cafe', alcohol: false } })
-    .some((t) => t.id === 'cafe_pastry_pairing'));
-  assert.ok(!book.find('how do I get people to spend more in the mornings', { venue: { kind: 'club', alcohol: true } })
-    .some((t) => t.id === 'cafe_pastry_pairing'));
+  const cafe = { kind: 'cafe', alcohol: false };
+  const club = { kind: 'club', alcohol: true };
+  // Reached by its topic alone ("check" leans to check_average), it stays
+  // with the venues it was written for.
+  assert.ok(book.find('how do I raise the check', { venue: cafe }).some((t) => t.id === 'cafe_pastry_pairing'));
+  assert.ok(!book.find('how do I raise the check', { venue: club }).some((t) => t.id === 'cafe_pastry_pairing'));
+  // Named outright, it is offered to anyone who asks: a club asking about
+  // pastries is thinking of selling them.
+  assert.ok(book.find('should we sell a pastry with coffee', { venue: club }).some((t) => t.id === 'cafe_pastry_pairing'));
 });
 
 test('a bad tactic fails at load, never in front of an owner', () => {
