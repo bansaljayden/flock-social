@@ -65,13 +65,13 @@ function moneyLine(block, spend) {
  */
 function extras({ block, venue = null, spend = null, spendAsOf = 'owner-set' }) {
   const tactic = roostPlaybook.moveFor('money_move', block, venue);
-  if (!tactic) return { lines: [], sources: [] };
+  if (!tactic) return { lines: [], sources: [], tactic: null };
   const lines = [{ text: tactic.move, source: { ...roostPlaybook.PLAYBOOK_SOURCE } }];
   const money = moneyLine(block, spend);
   if (money) {
     lines.push({ text: money, source: { id: 'intake_typical_spend_per_person', source: 'intake', asOf: spendAsOf } });
   }
-  return { lines: lines.map((l) => l.text), sources: lines.map((l) => l.source) };
+  return { lines: lines.map((l) => l.text), sources: lines.map((l) => l.source), tactic: tactic.id };
 }
 
 const DIGEST_TITLE = 'This week\'s money move';

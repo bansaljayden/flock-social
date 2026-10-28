@@ -2066,10 +2066,15 @@ export async function askAdvisor(intentId, opts = {}) {
 // /questions reports freeText true on an ordinary deploy; the component still
 // asks, because the answer decides whether the field it always draws is live or
 // drawn quiet with the reason under it.
+// `opts.previous` is the last answer's `context`, sent back as the server
+// gave it, so "what else" and "what about Wednesdays" are read against that
+// answer (backend services/advisorFollowOn.js). The server checks every part
+// of it before use.
 export async function askAdvisorQuestion(question, opts = {}) {
+  const previous = opts && opts.previous && typeof opts.previous === 'object' ? opts.previous : null;
   const data = await request('/api/venue/advisor/question', {
     method: 'POST',
-    body: JSON.stringify({ question }),
+    body: JSON.stringify(previous ? { question, previous } : { question }),
     // Two sequential model calls at up to 30 s each; see askAdvisor.
     timeout: AI_TIMEOUT_MS,
   });

@@ -1189,19 +1189,25 @@ const PLAYS_IN_PAYLOAD = 3;
  * question is the answer instead of a sentence saying there is none. Only a
  * question the playbook has nothing for keeps the refusal.
  *
- * @returns {Promise<{mode: 'advice'|'refusal', text: string, sources: Array, topic?: string, followUp?: string|null}>}
+ * `exclude` is the moves an earlier answer already gave, for "what else"
+ * (advisorFollowOn): they are neither handed to the model nor answered with.
+ * `tactics` in the result is the moves this answer drew on, which the chat
+ * sends back with the owner's next question.
+ *
+ * @returns {Promise<{mode: 'advice'|'refusal', text: string, sources: Array, topic?: string, followUp?: string|null, tactics: string[]}>}
  */
-async function advise({ userId, question, ctx, groundedFacts = [], intentId = null, offline = false, fallback = null }) {
+async function advise({ userId, question, ctx, groundedFacts = [], intentId = null, offline = false, fallback = null, exclude = [] }) {
   const venue = roostPlaybook.venueOf(ctx);
   const fromPlaybook = (refusal) => {
-    const answer = roostPlaybook.answer({ question, intentId, ctx, groundedFacts });
-    if (!answer) return { mode: 'refusal', text: refusal, sources: [] };
+    const answer = roostPlaybook.answer({ question, intentId, ctx, groundedFacts, exclude });
+    if (!answer) return { mode: 'refusal', text: refusal, sources: [], tactics: [] };
     return {
       mode: 'advice',
       text: answer.text,
       sources: answer.sources,
       topic: answer.topic,
       followUp: answer.followUp,
+      tactics: answer.tactics,
     };
   };
   if (offline) return fromPlaybook(fallback || REFUSAL_BUSY);
@@ -1216,7 +1222,7 @@ async function advise({ userId, question, ctx, groundedFacts = [], intentId = nu
   );
   const raw = advisorPhrasing.flattenFacts(substitutable);
   const facts = advisorPhrasing.aliasFacts(raw);
-  const plays = roostPlaybook.find(question, { intentId, venue, limit: PLAYS_IN_PAYLOAD });
+  const plays = roostPlaybook.find(question, { intentId, venue, limit: PLAYS_IN_PAYLOAD, exclude });
   const payload = buildAdvicePayload(question, facts, ownerContext, plays);
 
   const out = await chargedCall({
@@ -1243,6 +1249,9 @@ async function advise({ userId, question, ctx, groundedFacts = [], intentId = nu
     sources: [...valved.sources, { ...TRADE_SOURCE }],
     topic: plays.length ? plays[0].topic : null,
     followUp: plays.length ? plays[0].follow_up || null : null,
+    // The moves the model was handed. "What else" sets them aside, so the
+    // next answer is built from different ones.
+    tactics: plays.map((t) => t.id),
   };
 }
 

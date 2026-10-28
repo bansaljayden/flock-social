@@ -60,6 +60,7 @@ const { requireVenueTier, getVenueTier, venueBillingEnabled } = require('../serv
 const advisorPhrasing = require('../services/advisorPhrasing');
 const advisorFreeText = require('../services/advisorFreeText');
 const { followUpsFor } = require('../services/advisorFollowUps');
+const advisorFollowOn = require('../services/advisorFollowOn');
 const roostPlaybook = require('../services/roostPlaybook');
 const advisorMoneyMove = require('../services/advisorMoneyMove');
 const { BULLET, MAX_POINTS } = require('../services/advisorAnswer');
@@ -82,6 +83,29 @@ async function venueContextFor(userId, ctx) {
   } catch (err) {
     return null;
   }
+}
+
+// The playbook move a chip answer ends on: the template twin appends it
+// (withMove below) and the phrasing model is handed it (advisorPhrasing.phrase).
+// Reported with the answer so the chat can send it back with a "what else",
+// and that answer sets it aside (services/advisorFollowOn.js).
+function chipTactics(answer, intentId, block) {
+  if (!answer || answer.mode === 'refusal') return [];
+  const move = roostPlaybook.moveFor(intentId, block, block && block.venue ? block.venue : null);
+  return move ? [move.id] : [];
+}
+
+// What the chat sends back as `previous` with the owner's next typed
+// question: the question this answer actually answered, its intent, and every
+// move given so far in the run, so a second "what else" sets aside the first
+// answer's move too. Null for an answer there is nothing to follow on from.
+function followContext(answer, question, intentId, tactics, earlier = []) {
+  if (!answer || answer.mode === 'refusal' || answer.mode === 'small_talk') return null;
+  return {
+    question,
+    intentId: intentId || null,
+    tactics: [...new Set([...earlier, ...tactics])].slice(-advisorFollowOn.MAX_PREVIOUS_TACTICS),
+  };
 }
 
 async function withMove(answer, intentId, userId, ctx = null, block = null) {
@@ -907,6 +931,8 @@ router.post('/ask', authenticate, requirePro, [
       sources: answer.sources,
       // What to ask next (services/advisorFollowUps.js): ours, never typed.
       followUps: followUpsFor({ intentId, block }),
+      context: followContext(answer, advisorPhrasing.ADVISOR_INTENTS[intentId].chip, intentId,
+        chipTactics(answer, intentId, block)),
     });
   } catch (err) {
     console.error('Advisor ask error:', err);
@@ -940,15 +966,24 @@ const FREETEXT_OFF = advisorFreeText.UNAVAILABLE_TEXT;
 
 router.post('/question', authenticate, requirePro, async (req, res) => {
   try {
-    // Same shape refusal /ask uses: one key, and a non-string is rejected
-    // before anything reads it.
+    // Same shape refusal /ask uses: one question, and a non-string is rejected
+    // before anything reads it. The one other key is `previous`, the turn
+    // before this one, which the chat sends so "what else" and "what about
+    // Wednesdays" can be answered (services/advisorFollowOn.js). It is client
+    // input like any other: checked against closed lists here, and a question
+    // built from it goes through every screen below.
     const keys = Object.keys(req.body || {});
-    if (keys.length !== 1 || keys[0] !== 'question') {
+    if (!keys.includes('question') || keys.some((k) => k !== 'question' && k !== 'previous')) {
       return res.status(400).json({ error: 'Send one question, as text.' });
     }
 
     const clean = advisorFreeText.sanitizeQuestion(req.body.question);
     if (!clean.ok) return res.status(400).json({ error: clean.error });
+    const prior = advisorFollowOn.readPrevious(req.body.previous, {
+      sanitize: advisorFreeText.sanitizeQuestion,
+      isIntent: (id) => advisorPhrasing.isKnownIntent(id),
+    });
+    if (!prior.ok) return res.status(400).json({ error: 'Send one question, as text.' });
 
     // The flag is checked AFTER the shape so a malformed body still gets the
     // honest 400, and BEFORE any spend so a dark feature costs nothing. Free
@@ -1038,7 +1073,19 @@ router.post('/question', authenticate, requirePro, async (req, res) => {
       });
     }
 
-    const route = await advisorFreeText.classify({ userId, question: clean.text });
+    // A follow-on is read with the turn before it ("what else" is the last
+    // question with its moves set aside, "what about Wednesdays" is the last
+    // question about Wednesday); anything else is answered as written. The
+    // question that results is what the screens, the router and the answer
+    // see. `question` in every response stays the owner's own words.
+    const follow = advisorFollowOn.followOn(clean.text, prior.previous, {
+      maxChars: advisorFreeText.FREE_TEXT_MAX_CHARS,
+    });
+    const asked = follow.question;
+    let route = await advisorFreeText.classify({ userId, question: asked });
+    // "What else" after a numbers answer asks for another move, not the same
+    // numbers again.
+    if (follow.kind === 'else' && route.mode === 'grounded') route = { ...route, mode: 'advice' };
 
     // SMALL TALK is its own label, not a refusal wearing a warmer sentence.
     // The chat draws a refusal in quieter ink, and a greeting drawn that way
@@ -1062,7 +1109,7 @@ router.post('/question', authenticate, requirePro, async (req, res) => {
       // inside the payload), so "was Friday any good" routed to the week
       // recap is answered about Friday.
       const answer = await withMove(
-        await advisorPhrasing.phrase(block, { venueUserId: userId, question: clean.text }),
+        await advisorPhrasing.phrase(block, { venueUserId: userId, question: asked }),
         route.intentId, userId, ctx, block,
       );
       return res.json({
@@ -1071,7 +1118,8 @@ router.post('/question', authenticate, requirePro, async (req, res) => {
         text: answer.text,
         sources: answer.sources,
         question: clean.text,
-        followUps: followUpsFor({ intentId: route.intentId, block, question: clean.text }),
+        followUps: followUpsFor({ intentId: route.intentId, block, question: asked }),
+        context: followContext(answer, asked, route.intentId, chipTactics(answer, route.intentId, block), follow.exclude),
       });
     }
 
@@ -1093,12 +1141,13 @@ router.post('/question', authenticate, requirePro, async (req, res) => {
     // reads if it has nothing for the question.
     const answer = await advisorFreeText.advise({
       userId,
-      question: clean.text,
+      question: asked,
       ctx,
       groundedFacts,
       intentId: route.intentId || null,
       offline: route.offline === true,
       fallback: route.fallback || null,
+      exclude: follow.exclude,
     });
     return res.json({
       mode: answer.mode,
@@ -1112,10 +1161,11 @@ router.post('/question', authenticate, requirePro, async (req, res) => {
           mode: 'advice',
           intentId: route.intentId || null,
           block,
-          question: clean.text,
+          question: asked,
           followUp: answer.followUp || null,
           topic: answer.topic || null,
         }),
+      context: followContext(answer, asked, route.intentId, answer.tactics || [], follow.exclude),
     });
   } catch (err) {
     console.error('Advisor question error:', err);

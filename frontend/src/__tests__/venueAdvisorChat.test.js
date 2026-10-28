@@ -1161,3 +1161,36 @@ describe('Roost chat: what to ask next', () => {
     await waitFor(() => expect(screen.getByText('Sources: Roost playbook, your settings.')).toBeTruthy());
   });
 });
+
+// FOLLOW-ONS (2026-10-28). "What else?" and "what about Wednesdays?" are read
+// against the last answer (backend services/advisorFollowOn.js), so a typed
+// question carries that answer's `context`, exactly as the server sent it.
+describe('Roost chat: a follow-on carries the last answer', () => {
+  const CONTEXT = { question: 'how do i fill tuesdays', intentId: 'quiet_nights', tactics: ['slow_day_recurring_reason'] };
+
+  test('a typed question after an answer sends that answer\'s context, and the first sends none', async () => {
+    const calls = [];
+    mount({ askQuestion: async (q, opts) => { calls.push([q, opts]); return { ...GROUNDED, context: CONTEXT }; } });
+    const input = await waitFor(field);
+    fireEvent.change(input, { target: { value: 'how do i fill tuesdays' } });
+    fireEvent.click(send());
+    await waitFor(() => expect(screen.getByText(GROUNDED.text)).toBeTruthy());
+    fireEvent.change(input, { target: { value: 'what else?' } });
+    fireEvent.click(send());
+    await waitFor(() => expect(calls.length).toBe(2));
+    expect(calls[0][1]).toBeUndefined();
+    expect(calls[1]).toEqual(['what else?', { previous: CONTEXT }]);
+  });
+
+  test('followOnFrom reads the latest answered turn, passes over a failed one, and a refusal gives nothing', () => {
+    const { followOnFrom } = require('../components/VenueAdvisorChat');
+    const done = { status: 'done', answer: { mode: 'advice', context: CONTEXT } };
+    expect(followOnFrom([])).toBeNull();
+    expect(followOnFrom(undefined)).toBeNull();
+    expect(followOnFrom([done])).toBe(CONTEXT);
+    expect(followOnFrom([done, { status: 'error', answer: null }, { status: 'pending', answer: null }])).toBe(CONTEXT);
+    expect(followOnFrom([done, { status: 'done', answer: { mode: 'refusal', text: 'no' } }])).toBeNull();
+    expect(followOnFrom([{ status: 'done', answer: { mode: 'advice', context: 'not an object' } }])).toBeNull();
+    expect(followOnFrom([{ status: 'done', answer: { mode: 'advice', context: ['x'] } }])).toBeNull();
+  });
+});

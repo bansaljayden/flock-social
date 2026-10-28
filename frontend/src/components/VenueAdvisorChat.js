@@ -321,7 +321,24 @@ export const nextSteps = (followUps, { offered, labelFor, typedOk }) => {
   return out.filter((f) => (f.kind === 'intent' ? f.label : f.text));
 };
 
-const ThreadTurn = ({ turn, first, navy, navyBg, onRetry, next = [], onNext }) => {
+// WHAT A TYPED QUESTION FOLLOWS ON FROM (backend services/advisorFollowOn.js):
+// the latest answered turn's `context`, exactly as the server sent it, so
+// "what else" and "what about Wednesdays" are read against that answer. A
+// refusal or a greeting carries none, and a turn still pending or failed is
+// passed over, so a follow-on after an error reads the answer before it.
+export const followOnFrom = (thread) => {
+  const turns = Array.isArray(thread) ? thread : [];
+  for (let i = turns.length - 1; i >= 0; i -= 1) {
+    const turn = turns[i];
+    if (turn && turn.status === 'done' && turn.answer) {
+      const c = turn.answer.context;
+      return c && typeof c === 'object' && !Array.isArray(c) && typeof c.question === 'string' ? c : null;
+    }
+  }
+  return null;
+};
+
+const ThreadTurn =({ turn, first, navy, navyBg, onRetry, next = [], onNext }) => {
   const pending = turn.status === 'pending';
   return (
     <div
@@ -859,7 +876,7 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, grantConsent, with
   // One turn, whichever door it came in by. `run` is the call that produces the
   // answer; the thread does not care which endpoint answered, only that the
   // answer arrived carrying its own mode.
-  const runTurn = useCallback(async (key, question, run, typed = false) => {
+  const runTurn = useCallback(async (key, question, run, typed = false, previous = null) => {
     // WHO IS ASKING, read at the moment the request is issued rather than at
     // mount. If the token has already moved, this question was composed by
     // somebody who is no longer signed in: forget them and send nothing, since
@@ -872,7 +889,7 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, grantConsent, with
       return;
     }
     setBusy(true);
-    setThread((t) => [...t, { key, question, typed, status: 'pending', answer: null }]);
+    setThread((t) => [...t, { key, question, typed, status: 'pending', answer: null, ...(previous ? { previous } : {}) }]);
     // The token can also move while this one request is in flight, and it is
     // the answer that carries the other account's business. Whatever comes back
     // was authorised by whoever was signed in when it left, so if that is no
@@ -964,13 +981,17 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, grantConsent, with
     }
   }, [ask, askQuestion, busy, runTurn]);
 
+  // A typed question carries the last answer's context, so "what else" and
+  // "what about Wednesdays" are read against it (followOnFrom above). The
+  // turn keeps it too, so a retry asks the same thing.
   const submitQuestion = useCallback((e) => {
     if (e && typeof e.preventDefault === 'function') e.preventDefault();
     const text = draft.trim();
     if (busy || !text || typeof askQuestion !== 'function') return;
     setDraft('');
-    runTurn(`typed-${Date.now()}`, text, () => askQuestion(text), true);
-  }, [askQuestion, busy, draft, runTurn]);
+    const previous = followOnFrom(thread);
+    runTurn(`typed-${Date.now()}`, text, () => askQuestion(text, previous ? { previous } : undefined), true, previous);
+  }, [askQuestion, busy, draft, runTurn, thread]);
 
   // Enter sends, Shift and Enter make a line. On a phone the return key is
   // drawn as Send (enterKeyHint below) and does the same thing, so the two
@@ -1037,7 +1058,10 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, grantConsent, with
     if (busy) return;
     setThread((t) => t.filter((x) => x.key !== turn.key));
     if (turn.key.startsWith('typed-')) {
-      if (typeof askQuestion === 'function') runTurn(`typed-${Date.now()}`, turn.question, () => askQuestion(turn.question), true);
+      const previous = turn.previous || null;
+      if (typeof askQuestion === 'function') {
+        runTurn(`typed-${Date.now()}`, turn.question, () => askQuestion(turn.question, previous ? { previous } : undefined), true, previous);
+      }
       return;
     }
     askIntent(turn.key.slice(0, turn.key.lastIndexOf('-')), turn.question);

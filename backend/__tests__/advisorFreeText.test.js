@@ -998,3 +998,109 @@ test('both answer contracts model the shape they ask for: JSON with an answer an
   assert.match(advisorPrompt.ADVICE_SYSTEM_PROMPT, /At \{\{fact:spend\}\} a head, 20 extra covers a week is \$700/);
   assert.match(advisorPrompt.SYSTEM_PROMPT, /MAKE MORE MONEY/);
 });
+
+// ── 8. Follow-ons: "what else", "what about Wednesdays" (advisorFollowOn) ────
+//
+// The chat sends the last answer's `context` back as `previous`. The router
+// and the screens see the question the follow-on resolves to, whole; a move
+// already given is set aside; and every answer carries the context the next
+// question will need.
+
+const creditsOut = () => Object.assign(
+  new Error('{"error":{"code":402,"message":"Your prepayment credits are depleted."}}'),
+  { status: 402 },
+);
+const pbook = require('../services/roostPlaybook');
+const moveText = (id) => pbook.tactics.find((t) => t.id === id).move;
+
+test('a malformed previous is refused by shape before any model call', async () => {
+  resetAll();
+  installProfile();
+  for (const previous of ['how do i fill tuesdays', {}, { question: 42 }, { question: 'how do i fill tuesdays', extra: 1 },
+    { question: 'how do i fill tuesdays', intentId: 'not_an_intent' }, { question: 'how do i fill tuesdays', tactics: ['made_up_move'] }]) {
+    const r = await raw({ question: 'what else', previous });
+    assert.strictEqual(r.status, 400, JSON.stringify(previous));
+  }
+  assert.strictEqual((await raw({ question: 'what else', previous: { question: 'how do i fill tuesdays' }, intentId: 'peak_hours' })).status, 400,
+    'previous is the one extra key, and only that one');
+  assert.strictEqual(modelCalls.length, 0);
+});
+
+test('"what else" sets aside the moves already given, and a second "what else" sets aside both', async () => {
+  resetAll();
+  installProfile();
+  replies = [creditsOut()];
+  const first = await ask('how do i fill tuesdays');
+  assert.strictEqual(first.body.mode, 'advice');
+  assert.ok(first.body.context && first.body.context.tactics.length, JSON.stringify(first.body));
+  const [given] = first.body.context.tactics;
+
+  const second = await ask({ question: 'what else?', previous: first.body.context });
+  assert.strictEqual(second.status, 200);
+  assert.strictEqual(second.body.mode, 'advice', second.body.text);
+  assert.strictEqual(second.body.question, 'what else?', 'the owner\'s own words come back');
+  assert.ok(!second.body.text.includes(moveText(given)), 'the move already given came back');
+  const added = second.body.context.tactics.filter((id) => !first.body.context.tactics.includes(id));
+  assert.ok(added.length, 'the second answer gave a new move');
+
+  const third = await ask({ question: 'any other ideas', previous: second.body.context });
+  for (const id of second.body.context.tactics) assert.ok(!third.body.text.includes(moveText(id)), `${id} came back`);
+});
+
+test('the router sees the follow-on whole, and the advice model is not handed the move already given', async () => {
+  resetAll();
+  installProfile();
+  replies = ['{"mode":"advice","intentId":"quiet_nights"}', creditsOut()];
+  const previous = { question: 'how do i fill tuesdays', intentId: 'quiet_nights', tactics: ['slow_day_recurring_reason'] };
+  const r = await ask({ question: 'what else', previous });
+  assert.strictEqual(r.status, 200);
+  const routerSaw = modelCalls[0].contents[0].parts[0].text;
+  assert.match(routerSaw, /how do i fill tuesdays what else/);
+  const adviceSaw = modelCalls[1].contents[0].parts[0].text;
+  assert.ok(!adviceSaw.includes(moveText('slow_day_recurring_reason')), 'the excluded move rode into the payload');
+});
+
+test('a follow-on is screened like anything typed: an earlier question gets no pass for having been asked', async () => {
+  resetAll();
+  installProfile();
+  replies = ['{"mode":"advice","intentId":null}'];
+  const r = await ask({ question: 'what else', previous: { question: 'can i keep tips from the servers' } });
+  assert.strictEqual(r.body.mode, 'refusal');
+  assert.ok(!r.body.context, 'a refusal has nothing to follow on from');
+  assert.ok(modelCalls.length <= 1, 'no advice call was made for a vetoed question');
+});
+
+test('"what about Wednesdays" is the last question about Wednesday, and a question that stands alone ignores the context', async () => {
+  resetAll();
+  installProfile();
+  replies = ['{"mode":"advice","intentId":"quiet_nights"}', creditsOut()];
+  const previous = { question: 'how do i fill tuesdays', intentId: 'quiet_nights', tactics: [] };
+  const swapped = await ask({ question: 'what about wednesdays?', previous });
+  assert.match(modelCalls[0].contents[0].parts[0].text, /how do i fill wednesdays/);
+  assert.strictEqual(swapped.body.question, 'what about wednesdays?');
+  assert.strictEqual(swapped.body.context.question, 'how do i fill wednesdays');
+
+  resetAll();
+  installProfile();
+  replies = ['{"mode":"advice","intentId":null}', creditsOut()];
+  await ask({ question: 'should we add delivery', previous });
+  const saw = modelCalls[0].contents[0].parts[0].text;
+  assert.match(saw, /should we add delivery/);
+  assert.ok(!/tuesdays/.test(saw), 'a question that stands on its own carried the old one');
+});
+
+test('a chip answer carries its context too, so "what else" works after a tap', async () => {
+  resetAll();
+  installProfile();
+  replies = [creditsOut()];
+  const res = await fetch(`${base}/api/venue/advisor/ask`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ intentId: 'peak_hours' }),
+  });
+  const body = await res.json();
+  assert.strictEqual(res.status, 200);
+  assert.strictEqual(body.context.intentId, 'peak_hours');
+  assert.strictEqual(body.context.question, advisorPhrasing.ADVISOR_INTENTS.peak_hours.chip);
+  assert.ok(Array.isArray(body.context.tactics));
+});

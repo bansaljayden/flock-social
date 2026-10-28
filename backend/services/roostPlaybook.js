@@ -679,7 +679,7 @@ function coversIn(question) {
   return { covers, per: (m[4] || 'week').toLowerCase() };
 }
 
-function calculatorAnswer(book, { question, ctx, venue, intentId }) {
+function calculatorAnswer(book, { question, ctx, venue, intentId, exclude = [] }) {
   const asked = coversIn(question);
   if (!asked) return null;
   const spend = spendOf(ctx);
@@ -689,7 +689,7 @@ function calculatorAnswer(book, { question, ctx, venue, intentId }) {
   // say nothing about which move fits, and matched incidental text instead.
   // And in the playbook's own order, so the topic's lead move wins rather than
   // whichever one happens to be tagged for this kind of venue.
-  const candidates = book.find('', { intentId: intentId || 'quiet_nights', venue, limit: 12 })
+  const candidates = book.find('', { intentId: intentId || 'quiet_nights', venue, limit: 12, exclude })
     .sort((a, z) => a.order - z.order);
   const move = candidates.find((t) => t.money === 'covers') || candidates[0];
   if (spend === null) {
@@ -725,9 +725,9 @@ function calculatorAnswer(book, { question, ctx, venue, intentId }) {
  * Returns null when no tactic clears the floor.
  * @returns {{mode: 'advice', text: string, sources: Array, tactics: string[], followUp: string|null}|null}
  */
-function answerFrom(book, { question, intentId = null, ctx = null, groundedFacts = [] } = {}) {
+function answerFrom(book, { question, intentId = null, ctx = null, groundedFacts = [], exclude = [] } = {}) {
   const venue = venueOf(ctx);
-  const calc = calculatorAnswer(book, { question: normalizeOwnerText(String(question || '')), ctx, venue, intentId });
+  const calc = calculatorAnswer(book, { question: normalizeOwnerText(String(question || '')), ctx, venue, intentId, exclude });
   if (calc) {
     const sources = [{ ...PLAYBOOK_SOURCE }];
     if (calc.spendUsed) {
@@ -747,7 +747,7 @@ function answerFrom(book, { question, intentId = null, ctx = null, groundedFacts
       followUp: calc.move ? calc.move.follow_up || null : null,
     };
   }
-  const ranking = book.ranked(question, { intentId, venue, limit: 3 });
+  const ranking = book.ranked(question, { intentId, venue, limit: 3, exclude });
   if (!ranking.length) return null;
   const [top] = ranking;
   // "ANOTHER OPTION" EARNS ITS LINE: the owner's own words found it, or failing
