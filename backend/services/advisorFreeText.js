@@ -489,7 +489,7 @@ const PROHIBITED_CLASSES = [
     subject: /\b(staff|team\s+member|employee|employees|worker|workers|server|servers|bartender|bartenders|barista|baristas|cook|cooks|chef|chefs|host|hosts|hostess|manager|managers|crew|rota|shift|shifts|payroll|wages?|salary|tips?|contractor|porters?|dishwashers?|runners?|barbacks?|cleaners?|door\s+staff|security)\b/i,
     predicate: new RegExp([
       // Words that are a legal or payroll question wherever they stand.
-      '\\b(unpaid|without\\s+pay|off\\s+the\\s+clock|garnish|minimum\\s+wage|employment\\s+law|labou?r\\s+law|the\\s+law|legally|disciplin|non[\\s-]?compete|probationary)\\b',
+      '\\b(unpaid|without\\s+pay|off\\s+the\\s+clock|garnish\\w*(?:\\s+(?!and\\b|then\\b)[\\w\']+){0,3}\\s+(?:wages?|pay|paychecks?|earnings|salary)|wage\\s+garnish\\w*|minimum\\s+wage|employment\\s+law|labou?r\\s+law|the\\s+law|legally|disciplin|non[\\s-]?compete|probationary)\\b',
       // A verb that has to be pointed AT a person to be one.
       '\\b(?:require|requiring|oblige|obliging|force|forcing|compel|make)\\s+(?:a\\s+|my\\s+|the\\s+|our\\s+|any\\s+)?(?:staff|team\\s+member|employee|worker|server|bartender|barista|cook|chef|host|hostess|manager|crew|porter|dishwasher|runner|barback|cleaner|them|him|her)\\b',
       '\\b(?:am\\s+i\\s+(?:allowed|obliged|entitled)|are\\s+they\\s+entitled|can\\s+i\\s+(?:require|force|refuse|dock|fire|withhold|deduct|keep|hold|make\\s+(?:them|him|her)))\\b',

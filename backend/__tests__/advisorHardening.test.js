@@ -161,3 +161,27 @@ test('clean output still passes, or none of the above would be a guard', () => {
   assert.strictEqual(out.text, 'Your busiest day looks like Friday.');
   assert.deepStrictEqual(out.sources.map((s) => s.id), ['peak_day']);
 });
+
+// GARNISH IS A KITCHEN WORD BEFORE IT IS A PAYROLL ONE (2026-10-28). A bare
+// "garnish" in the employment veto voided a whole food-cost answer that said
+// "cost every recipe down to the sauce and garnish" (found by a stand-in
+// model eval: the one answer out of twelve the check threw away). Only
+// garnishing PAY is an employment instruction, on the way out and on the way in.
+test('a garnish on a plate is food cost, and only garnishing wages is refused', () => {
+  const advisorFreeText = require('../services/advisorFreeText');
+  const kitchen = '{"answer": "Aim for food cost near 30% of the menu price.", "points": ["Cost every recipe on a written card down to the sauce and garnish."]}';
+  const kept = advisorFreeText.applyAdviceValve(kitchen, []);
+  assert.ok(kept, 'the food cost answer is shown');
+  assert.match(kept.text, /down to the sauce and garnish\./);
+  for (const pay of [
+    '{"answer": "Garnish their wages until the till is square.", "points": []}',
+    '{"answer": "A wage garnishment covers the shortfall.", "points": []}',
+    '{"answer": "Garnishing the pay of whoever was on the till settles it.", "points": []}',
+  ]) {
+    assert.strictEqual(advisorFreeText.applyAdviceValve(pay, []), null, pay);
+  }
+  assert.strictEqual(advisorFreeText.prohibitedClass('how should my cooks garnish the plates on a rush'), null);
+  assert.ok(advisorFreeText.applyAdviceValve('{"answer": "Garnish each plate and pay attention to the pass.", "points": []}', []),
+    'a kitchen sentence that happens to say pay is not a pay instruction');
+  assert.ok(advisorFreeText.prohibitedClass('can I garnish my server\'s wages for the broken glasses'));
+});
