@@ -39,16 +39,23 @@ import { isNativeShell } from '../lib/nativeShell';
 // stopped being thrown away every time the owner touched the tab strip above
 // it.
 //
-//   grounded  built from typed facts about this venue, with sources and dates.
-//             Renders with its source line, exactly as a chip answer does,
-//             because it IS a chip answer: free text is another way to reach
-//             the same pipeline, never a second pipeline.
-//   advice    general trade knowledge, marked as such under the answer. Any
-//             number about this venue inside it still came through the fact
-//             engine, so the source line still appears when one did.
-//   refusal   declined, in quieter ink, saying what is missing. A refusal is
-//             the MAIN state for most venues today, not an error, and it never
+//   grounded  built from typed facts about this venue. Renders with its
+//             sources line, exactly as a chip answer does, because it IS a
+//             chip answer: free text is another way to reach the same
+//             pipeline, never a second pipeline.
+//   advice    trade knowledge shaped by the venue's own numbers. Since
+//             2026-10-28 it reads like any other answer, and its sources line
+//             names the trade ("general restaurant practice") beside any of
+//             the venue's own facts it used. The inset rule and the "General
+//             advice, not from your data." line under every answer are gone:
+//             the owner asked for sources at the end, not a disclaimer.
+//   refusal   declined, in quieter ink, saying what is missing. It never
 //             carries an upsell.
+//
+// EVERY ANSWER HAS ONE SHAPE (2026-10-28): a short direct answer first, up to
+// four points under it, and one sources line at the end. The server writes
+// the points as lines starting with a bullet, so a build that predates this
+// still reads them as paragraphs.
 //
 // The product name and the free-text field's availability both arrive from the
 // server (`name` and `freeText` on /questions), so a rename is one backend
@@ -118,7 +125,7 @@ const QUIET_LINK_STYLE = {
 // sources fall back to their own id with the underscores removed, so a new
 // server-side source never renders as raw snake_case.
 const SOURCE_LABELS = {
-  intake: 'your intake',
+  intake: 'your settings',
   owner_report: 'your own readings',
   model_holdout: 'model estimate',
   user_reports: 'user reports',
@@ -127,8 +134,13 @@ const SOURCE_LABELS = {
   weather: 'weather service',
   served_prediction: 'what Flock served',
   google_baseline: "your Google profile's pattern",
-  arithmetic: 'arithmetic on the facts above',
+  arithmetic: 'arithmetic on your numbers',
   category_pattern: 'category pattern',
+  cohort_reported: 'readings from venues like yours',
+  table_sensor: 'your table sensor',
+  // An advice answer's own source: what works in the trade. The server adds
+  // it to every advice answer (advisorFreeText TRADE_SOURCE).
+  trade_practice: 'general restaurant practice',
 };
 const sourceLabel = (s) => SOURCE_LABELS[s] || String(s || '').replace(/_/g, ' ');
 
@@ -150,46 +162,98 @@ export const answerSourceLabel = (s) => {
   return sourceLabel(s && s.source);
 };
 
-// One line naming every distinct source an answer used. Answers with no
-// sources (refusals) render no line: a refusal quotes nothing.
-export const sourcesLine = (sources) => {
-  if (!Array.isArray(sources) || sources.length === 0) return null;
-  const seen = [];
-  for (const s of sources) {
-    const label = answerSourceLabel(s);
-    if (!seen.includes(label)) seen.push(label);
-  }
-  return `From ${seen.join(', ')}.`;
+// The date a source speaks for, the way every card on this screen writes one.
+// Only a calendar date is printed: "owner-set" settings and a season carry no
+// day worth naming beside the source.
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const sourceDate = (asOf) => {
+  const m = typeof asOf === 'string' ? asOf.match(/^(\d{4})-(\d{2})-(\d{2})/) : null;
+  if (!m) return null;
+  const month = MONTHS[Number(m[2]) - 1];
+  if (!month) return null;
+  const sameYear = Number(m[1]) === new Date().getFullYear();
+  return `${month} ${Number(m[3])}${sameYear ? '' : `, ${m[1]}`}`;
 };
 
-// Answer text arrives as plain sentences (phrased) or as one line per fact
-// (template). Render each line as its own paragraph either way.
+// ONE LINE, AT THE END, naming every distinct source an answer used and the
+// latest date it speaks for. Until 2026-10-28 the template answer printed a
+// "(Model estimate, as of Aug 19.)" chip after every line as well; the owner
+// asked for the sources once, at the end. Answers with no sources (refusals,
+// small talk) render no line: a refusal quotes nothing.
+export const sourcesLine = (sources) => {
+  if (!Array.isArray(sources) || sources.length === 0) return null;
+  const order = [];
+  const latest = new Map();
+  for (const s of sources) {
+    const label = answerSourceLabel(s);
+    if (!label) continue;
+    if (!order.includes(label)) order.push(label);
+    const iso = typeof s?.asOf === 'string' && /^\d{4}-\d{2}-\d{2}/.test(s.asOf) ? s.asOf.slice(0, 10) : null;
+    if (iso && (!latest.has(label) || iso > latest.get(label))) latest.set(label, iso);
+  }
+  if (order.length === 0) return null;
+  const parts = order.map((label) => {
+    const when = sourceDate(latest.get(label));
+    return when ? `${label} (${when})` : label;
+  });
+  return `Sources: ${parts.join(', ')}.`;
+};
+
+// The bullet the server writes in front of each point (advisorAnswer BULLET).
+const POINT = /^•\s+/;
+
+// THE ANSWER'S SHAPE: the short answer first, a little heavier so it reads
+// alone, then the points as a list. A refusal keeps one weight throughout.
 // `quiet` is the refusal ink. It is also written out as data-ink because the
 // CSS parser the test suite runs on drops an inline colour that is a custom
 // property, so the rendered tree would otherwise not say which ink it holds.
-const AnswerText = ({ text, quiet }) => (
-  <>
-    {String(text || '').split('\n').filter(Boolean).map((line, i) => (
-      <p
-        key={i}
-        data-ink={quiet ? 'quiet' : 'answer'}
-        style={{ fontSize: 'var(--t-label)', color: quiet ? 'var(--text-secondary)' : 'var(--text-primary)', margin: i === 0 ? 0 : '8px 0 0', lineHeight: 1.55 }}
-      >
-        {line}
-      </p>
-    ))}
-  </>
-);
-
-// How the two kinds of answer are told apart, and why it is drawn twice.
-//
-// A grounded answer is flush with the question above it and carries its source
-// line, because its sources ARE its claim to be believed. An advice answer is
-// inset behind a hairline rule and carries this sentence, so the difference is
-// legible before a word is read and unambiguous after. Colour alone would not
-// do it: the two answers are the same ink, on purpose, because advice is not a
-// lesser answer, it is a different KIND of answer.
-const ADVICE_MARKER = 'General advice, not from your data.';
+const AnswerText = ({ text, quiet }) => {
+  const lines = String(text || '').split('\n').map((l) => l.trim()).filter(Boolean);
+  const ink = quiet ? 'quiet' : 'answer';
+  const color = quiet ? 'var(--text-secondary)' : 'var(--text-primary)';
+  const blocks = [];
+  for (const line of lines) {
+    if (POINT.test(line)) {
+      const last = blocks[blocks.length - 1];
+      if (last && last.points) last.points.push(line.replace(POINT, ''));
+      else blocks.push({ points: [line.replace(POINT, '')] });
+    } else {
+      blocks.push({ line });
+    }
+  }
+  return (
+    <>
+      {blocks.map((b, i) => (b.points ? (
+        <ul key={i} style={{ margin: i === 0 ? 0 : '8px 0 0', paddingLeft: '18px' }}>
+          {b.points.map((p, j) => (
+            <li
+              key={j}
+              data-ink={ink}
+              style={{ fontSize: 'var(--t-label)', color, margin: j === 0 ? 0 : '4px 0 0', lineHeight: 1.5 }}
+            >
+              {p}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p
+          key={i}
+          data-ink={ink}
+          data-lead={i === 0 && !quiet ? 'true' : undefined}
+          style={{
+            fontSize: 'var(--t-label)',
+            color,
+            fontWeight: i === 0 && !quiet && lines.length > 1 ? 600 : 400,
+            margin: i === 0 ? 0 : '8px 0 0',
+            lineHeight: 1.55,
+          }}
+        >
+          {b.line}
+        </p>
+      )))}
+    </>
+  );
+};
 
 // What the owner reads while the server works, and WHERE they read it: in the
 // thread, in the place the answer is about to occupy, not as a word printed on
@@ -233,7 +297,6 @@ const PENDING_TYPED = 'Working on it…';
 const AVATAR_SIZE = 44;
 
 const ThreadTurn = ({ turn, first, navy, navyBg, onRetry }) => {
-  const advice = turn.status === 'done' && turn.answer && turn.answer.mode === 'advice';
   const pending = turn.status === 'pending';
   return (
     <div
@@ -288,19 +351,7 @@ const ThreadTurn = ({ turn, first, navy, navyBg, onRetry }) => {
             <BirdieStill size={AVATAR_SIZE} eager />
           </span>
         </span>
-        <div
-          style={{
-            flex: 1,
-            minWidth: 0,
-            paddingLeft: advice ? '10px' : '0px',
-            // Longhand, not the `border-left` shorthand: a shorthand carrying a
-            // custom property is dropped by the CSS parser the test suite runs
-            // on, so the rule would be invisible to any check that it is there.
-            borderLeftWidth: advice ? '2px' : '0px',
-            borderLeftStyle: advice ? 'solid' : 'none',
-            borderLeftColor: 'var(--border-light)',
-          }}
-        >
+        <div style={{ flex: 1, minWidth: 0 }}>
           {pending && (
             <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-tertiary)', margin: 0, lineHeight: 1.55 }}>
               {turn.typed ? PENDING_TYPED : PENDING_CHIP}
@@ -327,13 +378,8 @@ const ThreadTurn = ({ turn, first, navy, navyBg, onRetry }) => {
                   NOT a refusal and takes the normal ink: only 'refusal' is
                   drawn quiet. */}
               <AnswerText text={turn.answer.text} quiet={turn.answer.mode === 'refusal'} />
-              {advice && (
-                <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '6px 0 0' }}>
-                  {ADVICE_MARKER}
-                </p>
-              )}
               {sourcesLine(turn.answer.sources) && (
-                <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '6px 0 0' }}>
+                <p style={{ fontSize: 'var(--t-micro)', color: 'var(--text-tertiary)', margin: '8px 0 0' }}>
                   {sourcesLine(turn.answer.sources)}
                 </p>
               )}
@@ -368,7 +414,7 @@ const THREAD_MAX_HEIGHT = 340;
 // The invitation. It names both halves of what the field takes, because an
 // owner who reads "ask about your venue" will only ever ask for numbers, and
 // half of what Roost is good at is the other kind of question.
-const PLACEHOLDER_TEXT = 'Your numbers, or how to run the room';
+const PLACEHOLDER_TEXT = 'Your numbers, prices, or how to fill the room';
 const PLACEHOLDER_OFF = 'Typed questions are off right now';
 // Said where the field is, not instead of it.
 const FREE_TEXT_OFF_NOTE = 'Typed questions are off for now. The suggested questions above still work, and every answer they give comes from your own numbers.';
@@ -382,8 +428,10 @@ const KEY_HINT = 'Enter sends. Shift and Enter start a new line.';
 // owner what kind of answers this gives. It is not a standing notice to be
 // scrolled past on top of every conversation they ever have. It comes back
 // whenever the thread is empty again.
-const LEAD_IN_FREE = 'Answers from your own numbers name their sources and dates. Anything from the trade is marked as advice. What we cannot answer, we say so.';
-const LEAD_IN_CHIPS = 'Pick a question. Every answer comes from measured data about your venue, with its sources named. What we cannot answer yet, we say so.';
+// Since 2026-10-28 it says what the answers are FOR. The old line spent its
+// three sentences on sourcing and on what we would not answer.
+const LEAD_IN_FREE = 'Ask how to fill a slow day, what to charge, or what your numbers say. Every answer is about making your room more money, with its sources at the end.';
+const LEAD_IN_CHIPS = 'Pick a question. Answers come from your own numbers, with their sources at the end.';
 
 // A THREAD THAT SURVIVES THE TAB STRIP ABOVE IT.
 //

@@ -18,10 +18,11 @@
  *   2. It is the LAST thing in the card, below the suggested chips, because
  *      chips are shortcuts past the way in and not the way in.
  *   3. Typing reaches askQuestion and the answer lands in the thread.
- *   4. The answer modes are told apart on screen: grounded carries its
- *      sources, advice carries its marker, a refusal carries neither and never
- *      an upsell, and small talk (a greeting answered in kind) reads in the
- *      normal answer ink rather than the refusal's quieter one.
+ *   4. Every answer has one shape (2026-10-28): the short answer first, the
+ *      points as a list, and one sources line at the end. A refusal carries no
+ *      sources line and never an upsell, and small talk (a greeting answered
+ *      in kind) reads in the normal answer ink rather than the refusal's
+ *      quieter one.
  *   5. The product name is said ONCE per screen. VenueInsightCards titles the
  *      surface; this block is titled for what it is.
  *
@@ -61,7 +62,19 @@ const ADVICE = {
   mode: 'advice',
   intentId: 'quiet_nights',
   text: 'Discounting a quiet day is the common answer and it is usually the wrong one.',
-  sources: [],
+  sources: [{ id: 'trade_practice', source: 'trade_practice', asOf: null }],
+};
+// The shape every answer has had since 2026-10-28: the answer, then a point
+// per line behind the server's bullet.
+const SHAPED = {
+  mode: 'advice',
+  intentId: 'quiet_nights',
+  text: 'Skip the discount and run one recurring night on Tuesday.\n• At $35 a head, 20 more covers a week is $700.\n• Run it 6 weeks before you judge it.',
+  sources: [
+    { id: 'intake_typical_spend_per_person', source: 'intake', asOf: 'owner-set 2026-10-01' },
+    { id: 'quiet_day', source: 'model_holdout', asOf: '2026-08-20' },
+    { id: 'trade_practice', source: 'trade_practice', asOf: null },
+  ],
 };
 const REFUSAL = {
   mode: 'refusal',
@@ -224,9 +237,9 @@ describe('Roost chat: the three answers are told apart', () => {
     await waitFor(() => expect(screen.getByText(answer.text)).toBeTruthy());
   };
 
-  test('a grounded answer names its sources and carries no advice marker', async () => {
+  test('a grounded answer names its sources once, at the end, with the date they speak for', async () => {
     await askWith(GROUNDED);
-    expect(screen.getByText(/From model estimate\./i)).toBeTruthy();
+    expect(screen.getByText(/^Sources: model estimate \(Aug 20(, 2026)?\)\.$/)).toBeTruthy();
     expect(screen.queryByText(/general advice/i)).toBeNull();
   });
 
@@ -237,46 +250,61 @@ describe('Roost chat: the three answers are told apart', () => {
       sources: [{ id: 'peak_2026-08-21', source: 'model_holdout', asOf: '2026-08-20', numberSource: 'venue_pattern' }],
     };
     await askWith(PATTERN);
-    expect(screen.getByText("From your venue's usual pattern.")).toBeTruthy();
+    expect(screen.getByText(/^Sources: your venue's usual pattern \(Aug 20(, 2026)?\)\.$/)).toBeTruthy();
     expect(screen.queryByText(/model estimate/i)).toBeNull();
   });
 
   test('the footer reads each source\'s served arithmetic first, and keeps its words without one', () => {
     const { sourcesLine } = require('../components/VenueAdvisorChat');
-    const src = (numberSource) => ({ id: 'peak', source: 'model_holdout', asOf: '2026-08-20', ...(numberSource ? { numberSource } : {}) });
-    expect(sourcesLine([src()])).toBe('From model estimate.');
-    expect(sourcesLine([src('venue_pattern')])).toBe("From your venue's usual pattern.");
-    expect(sourcesLine([src('venue_pattern_live')])).toBe("From your venue's usual pattern and live readings.");
-    expect(sourcesLine([src('live_reading_2h')])).toBe('From your live readings, carried forward.');
+    const src = (numberSource) => ({ id: 'peak', source: 'model_holdout', asOf: null, ...(numberSource ? { numberSource } : {}) });
+    expect(sourcesLine([src()])).toBe('Sources: model estimate.');
+    expect(sourcesLine([src('venue_pattern')])).toBe("Sources: your venue's usual pattern.");
+    expect(sourcesLine([src('venue_pattern_live')])).toBe("Sources: your venue's usual pattern and live readings.");
+    expect(sourcesLine([src('live_reading_2h')])).toBe('Sources: your live readings, carried forward.');
     // The model made these, so the model's label stands.
-    expect(sourcesLine([src('model_live')])).toBe('From model estimate.');
-    expect(sourcesLine([src('model_alone')])).toBe('From model estimate.');
+    expect(sourcesLine([src('model_live')])).toBe('Sources: model estimate.');
+    expect(sourcesLine([src('model_alone')])).toBe('Sources: model estimate.');
     // Mixed days name each once.
-    expect(sourcesLine([src('venue_pattern'), src('venue_pattern'), src()])).toBe("From your venue's usual pattern, model estimate.");
+    expect(sourcesLine([src('venue_pattern'), src('venue_pattern'), src()])).toBe("Sources: your venue's usual pattern, model estimate.");
     for (const s of ['venue_pattern', 'venue_pattern_live', 'live_reading_1h']) expect(sourcesLine([src(s)])).not.toMatch(/—/);
+    // The date is the latest one each source speaks for, written like a card
+    // writes it, and settings and seasons carry none.
+    const year = new Date().getFullYear();
+    expect(sourcesLine([
+      { source: 'owner_report', asOf: `${year}-10-02T12:00:00Z` },
+      { source: 'owner_report', asOf: `${year}-10-27` },
+      { source: 'intake', asOf: `owner-set ${year}-10-01` },
+      { source: 'google_baseline', asOf: 'spring 2026' },
+    ])).toBe("Sources: your own readings (Oct 27), your settings, your Google profile's pattern.");
   });
 
-  test('an advice answer is marked as advice and inset behind a rule', async () => {
+  test('an answer reads as a short answer and a list of points, with one sources line naming the trade beside the venue\'s own numbers', async () => {
+    mount({ askQuestion: async () => SHAPED });
+    const input = await waitFor(field);
+    fireEvent.change(input, { target: { value: 'what is a slow Tuesday costing me' } });
+    fireEvent.click(send());
+    const lead = await waitFor(() => screen.getByText('Skip the discount and run one recurring night on Tuesday.'));
+    expect(lead.tagName).toBe('P');
+    expect(lead.getAttribute('data-lead')).toBe('true');
+    const points = screen.getAllByRole('listitem').map((li) => li.textContent);
+    expect(points).toEqual(['At $35 a head, 20 more covers a week is $700.', 'Run it 6 weeks before you judge it.']);
+    // The bullet the server writes is the list's marker, never printed text.
+    expect(screen.queryByText(/•/)).toBeNull();
+    expect(screen.getByText(/^Sources: your settings, model estimate \(Aug 20(, 2026)?\), general restaurant practice\.$/)).toBeTruthy();
+    // No disclaimer under it and no inset rule beside it any more.
+    expect(screen.queryByText(/general advice, not from your data/i)).toBeNull();
+    expect(SRC).not.toMatch(/borderLeftWidth/);
+  });
+
+  test('a plain advice answer reads like any other answer, its sources naming the trade', async () => {
     await askWith(ADVICE);
-    const marker = screen.getByText(/general advice, not from your data/i);
-    expect(marker).toBeTruthy();
-    // Colour alone would not do it: the two answers are the same ink on
-    // purpose, because advice is a different KIND of answer, not a lesser one.
-    const body = marker.parentElement;
-    expect(body.style.borderLeftWidth).toBe('2px');
-    expect(body.style.borderLeftStyle).toBe('solid');
-    expect(body.style.paddingLeft).toBe('10px');
-  });
-
-  test('a grounded answer carries no rule, so the inset means one thing only', async () => {
-    await askWith(GROUNDED);
-    const line = screen.getByText(GROUNDED.text).parentElement;
-    expect(line.style.borderLeftWidth).not.toBe('2px');
+    expect(screen.getByText('Sources: general restaurant practice.')).toBeTruthy();
+    expect(screen.queryByText(/general advice, not from your data/i)).toBeNull();
   });
 
   test('a refusal carries no source line, no marker, and no upsell', async () => {
     await askWith(REFUSAL);
-    expect(screen.queryByText(/^From /)).toBeNull();
+    expect(screen.queryByText(/^Sources:/)).toBeNull();
     expect(screen.queryByText(/general advice/i)).toBeNull();
     expect(screen.queryByText(/upgrade|pro plan|subscription/i)).toBeNull();
   });
@@ -302,7 +330,7 @@ describe('Roost chat: the three answers are told apart', () => {
     const line = screen.getByText(SMALL_TALK.text);
     expect(line.getAttribute('data-ink')).toBe('answer');
     expect(line.parentElement.style.borderLeftWidth).not.toBe('2px');
-    expect(screen.queryByText(/^From /)).toBeNull();
+    expect(screen.queryByText(/^Sources:/)).toBeNull();
     expect(screen.queryByText(/general advice/i)).toBeNull();
     expect(screen.queryByText(/upgrade|pro plan|subscription/i)).toBeNull();
   });
@@ -745,7 +773,7 @@ describe('Roost chat: the chips start you off and then get out of the way', () =
     mount();
     await waitFor(field);
     expect(screen.getByRole('button', { name: 'How does today look?' })).toBeTruthy();
-    expect(screen.getByText(/name their sources and dates/i)).toBeTruthy();
+    expect(screen.getByText(/making your room more money/i)).toBeTruthy();
   });
 
   test('once a conversation exists the chips fold behind one line, and the explainer stops repeating', async () => {
@@ -765,7 +793,7 @@ describe('Roost chat: the chips start you off and then get out of the way', () =
     expect(chip.compareDocumentPosition(field()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 
     // The honesty paragraph was a first-run line, not a standing notice.
-    expect(screen.queryByText(/name their sources and dates/i)).toBeNull();
+    expect(screen.queryByText(/making your room more money/i)).toBeNull();
   });
 });
 
