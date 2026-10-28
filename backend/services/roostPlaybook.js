@@ -174,7 +174,7 @@ function validateTactic(t) {
 
 function compile(tactics) {
   const seen = new Set();
-  return tactics.map((t, order) => {
+  const out = tactics.map((t, order) => {
     validateTactic(t);
     if (seen.has(t.id)) fail(t.id, 'is listed twice');
     seen.add(t.id);
@@ -182,8 +182,22 @@ function compile(tactics) {
       ...t,
       order,
       cueStems: t.cues.map((c) => stems(c)).filter((c) => c.length > 1 || !STOP.has(c[0])),
+      // The tactic's own words, for the weak second signal in score().
+      textStems: new Set(stems(`${t.move} ${t.why}`).filter((w) => !STOP.has(w) && w.length > 2)),
     };
   });
+  // A CUE THAT HALF THE PLAYBOOK SHARES SAYS LITTLE. "slow" is a cue on every
+  // slow-day tactic, "happy hour" on one; the rarer cue is the one that picks
+  // between them. Each cue counts 1 over the square root of how many tactics
+  // carry it.
+  const df = new Map();
+  for (const t of out) {
+    for (const key of new Set(t.cueStems.map((c) => c.join(' ')))) df.set(key, (df.get(key) || 0) + 1);
+  }
+  for (const t of out) {
+    t.cueWeights = t.cueStems.map((c) => (c.length > 1 ? 2 : 1) / Math.sqrt(df.get(c.join(' ')) || 1));
+  }
+  return out;
 }
 
 // ── Retrieval ────────────────────────────────────────────────────────────────
@@ -195,21 +209,33 @@ function fits(t, venue, asksAboutDrinks) {
   return t.venues.includes(venue.kind);
 }
 
+// The weak second signal: words the question shares with the move itself.
+// Worth a fraction of a cue each and capped, so it breaks ties between
+// tactics a cue already found and never finds one on its own.
+const TEXT_WEIGHT = 0.2;
+const TEXT_CAP = 0.6;
+
 function score(t, qStems, qSet, topics, venue) {
-  let s = 0;
-  for (const cue of t.cueStems) {
-    if (cue.length === 1 ? qSet.has(cue[0]) : containsRun(qStems, cue)) s += cue.length === 1 ? 1 : 2;
-  }
+  let cues = 0;
+  t.cueStems.forEach((cue, i) => {
+    if (cue.length === 1 ? qSet.has(cue[0]) : containsRun(qStems, cue)) cues += t.cueWeights[i];
+  });
+  let s = cues;
   if (topics[0] === t.topic) s += 1.5;
   else if (topics[1] === t.topic) s += 1;
+  if (s === 0) return 0;
+  let shared = 0;
+  for (const w of qSet) if (t.textStems.has(w)) shared += 1;
+  s += Math.min(TEXT_CAP, shared * TEXT_WEIGHT);
   if (venue && venue.kind && t.venues.includes(venue.kind)) s += 0.25;
   return s;
 }
 
-// The floor a tactic has to clear to be offered at all: one cue, or the topic
-// the question routed to. Below it the playbook has nothing to say and says
-// nothing, rather than answering a question it was not asked.
-const MIN_SCORE = 1;
+// The floor a tactic has to clear to be offered at all: a cue nobody else
+// shares, two shared ones, or the topic the question routed to. Below it the
+// playbook has nothing to say and says nothing, rather than answering a
+// question it was not asked.
+const MIN_SCORE = 0.5;
 
 function createPlaybook(tactics) {
   const compiled = compile(Array.isArray(tactics) ? tactics : []);
@@ -300,6 +326,65 @@ function factSource(f) {
   return { id: f.sourceId || f.id, source: f.source, asOf: f.asOf };
 }
 
+// ── The calculator ───────────────────────────────────────────────────────────
+//
+// "How much would 10 more covers a week make me" is arithmetic on two
+// numbers, one in the question and one in the owner's settings, and it should
+// never wait on a model. Covers or guests or people, optionally per week,
+// night, day or month. Tables count only with a party size ("3 more tables of
+// 4"), because guessing the size of a party is inventing a number.
+const MORE_COVERS = /\b(\d{1,4})\s+(?:more|extra|additional|new)\s+(covers?|guests?|customers?|people|diners?|heads?|tables?)(?:\s+of\s+(\d{1,2}))?(?:\s+(?:a|per|each|every)\s+(week|night|day|month))?/i;
+// The rule of thumb behind "what is left after food": most rooms keep food
+// cost near 30% of sales (the playbook's food cost tactic gives the range).
+const TYPICAL_FOOD_COST = 0.3;
+const ANNUAL = Object.freeze({ week: 52, month: 12 });
+const CALC_NO_SPEND_POINT = 'Each extra cover brings in your average check, and at a typical food cost near 30%, about 70% of it is left after food.';
+
+function coversIn(question) {
+  const m = MORE_COVERS.exec(String(question || ''));
+  if (!m) return null;
+  let covers = Number(m[1]);
+  if (/^tables?$/i.test(m[2])) {
+    if (!m[3]) return null;
+    covers *= Number(m[3]);
+  }
+  if (!(covers > 0)) return null;
+  return { covers, per: (m[4] || 'week').toLowerCase() };
+}
+
+function calculatorAnswer(book, { question, ctx, venue, intentId }) {
+  const asked = coversIn(question);
+  if (!asked) return null;
+  const spend = spendOf(ctx);
+  const [move] = book.find(question, { intentId: intentId || 'quiet_nights', venue, limit: 1 });
+  if (spend === null) {
+    return {
+      lead: `Add your typical spend per person in your venue settings and Roost will price ${asked.covers} more covers a ${asked.per} in dollars.`,
+      points: [
+        CALC_NO_SPEND_POINT,
+        ...(move ? [move.move] : []),
+      ],
+      spendUsed: false,
+      move,
+    };
+  }
+  const gross = spend * asked.covers;
+  const annual = ANNUAL[asked.per];
+  const lead = annual
+    ? `At your ${dollars(spend)} a head, ${asked.covers} more covers a ${asked.per} is ${dollars(gross)}, about ${dollars(gross * annual)} a year.`
+    : `At your ${dollars(spend)} a head, ${asked.covers} more covers a ${asked.per} is ${dollars(gross)}.`;
+  const kept = Math.round(gross * (1 - TYPICAL_FOOD_COST));
+  return {
+    lead,
+    points: [
+      `At a typical food cost near 30%, about ${dollars(kept)} of that ${dollars(gross)} is left after food.`,
+      ...(move ? [move.move, move.watch] : []),
+    ],
+    spendUsed: true,
+    move,
+  };
+}
+
 /**
  * Answer one money question from the playbook, with no model call.
  * Returns null when no tactic clears the floor.
@@ -307,6 +392,26 @@ function factSource(f) {
  */
 function answerFrom(book, { question, intentId = null, ctx = null, groundedFacts = [] } = {}) {
   const venue = venueOf(ctx);
+  const calc = calculatorAnswer(book, { question, ctx, venue, intentId });
+  if (calc) {
+    const sources = [{ ...PLAYBOOK_SOURCE }];
+    if (calc.spendUsed) {
+      const p = (ctx && ctx.profile) || {};
+      sources.push({
+        id: 'intake_typical_spend_per_person',
+        source: 'intake',
+        asOf: p.updated_at ? `owner-set ${String(p.updated_at).slice(0, 10)}` : 'owner-set',
+      });
+    }
+    return {
+      mode: 'advice',
+      text: advisorAnswer.assemble({ structured: true, answer: [calc.lead], points: calc.points.slice(0, advisorAnswer.MAX_POINTS) }),
+      sources,
+      tactics: calc.move ? [calc.move.id] : [],
+      topic: calc.move ? calc.move.topic : 'fill_slow_days',
+      followUp: calc.move ? calc.move.follow_up || null : null,
+    };
+  }
   const picks = book.find(question, { intentId, venue, limit: 2 });
   if (!picks.length) return null;
   const [first, second] = picks;
@@ -373,7 +478,7 @@ function answer(opts) {
 
 // Every user-visible string this module can emit, for the standing design review.
 function __copyStrings() {
-  const out = [SPEND_NUDGE, ANOTHER.trim()];
+  const out = [SPEND_NUDGE, ANOTHER.trim(), CALC_NO_SPEND_POINT];
   for (const t of BOOK.tactics) {
     out.push(t.move, t.why, t.watch);
     if (t.example) out.push(t.example);
@@ -399,6 +504,7 @@ module.exports = {
   spendOf,
   moneyLine,
   groundedLead,
+  coversIn,
   forPayload,
   stem,
   stems,

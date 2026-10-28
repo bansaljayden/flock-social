@@ -188,6 +188,33 @@ test('the money line is the owner\'s own spend per head, with the working in the
   assert.strictEqual(pb.moneyLine({ money: 'cost' }, 35), null, 'a cost saving is not a per-head sum');
 });
 
+test('the calculator reads covers, guests or tables of a size out of a question, and never guesses a party size', () => {
+  assert.deepStrictEqual(pb.coversIn('how much will 10 more covers a week make me'), { covers: 10, per: 'week' });
+  assert.deepStrictEqual(pb.coversIn('what are 20 extra guests a night worth'), { covers: 20, per: 'night' });
+  assert.deepStrictEqual(pb.coversIn('3 more tables of 4 every month'), { covers: 12, per: 'month' });
+  assert.strictEqual(pb.coversIn('3 more tables a night'), null, 'a table with no party size is not a number of covers');
+  assert.strictEqual(pb.coversIn('how do I get more covers'), null);
+});
+
+test('"how much would N more covers make me" is answered in dollars from the owner\'s own spend, with no model', () => {
+  const a = pb.answer({ question: 'how much will 10 more covers a week make me', ctx: CTX(38) });
+  const lines = a.text.split('\n');
+  assert.strictEqual(lines[0], 'At your $38 a head, 10 more covers a week is $380, about $19,760 a year.');
+  assert.strictEqual(lines[1], `${advisorAnswer.BULLET}At a typical food cost near 30%, about $266 of that $380 is left after food.`);
+  assert.ok(lines.length <= 1 + advisorAnswer.MAX_POINTS);
+  assert.deepStrictEqual(a.sources.map((s) => s.source), ['roost_playbook', 'intake']);
+  // Per night: no year, because a venue that does not open every night has no
+  // honest yearly figure.
+  assert.match(pb.answer({ question: 'what are 20 extra guests a night worth', ctx: CTX(38) }).text, /^At your \$38 a head, 20 more covers a night is \$760\.\n/);
+  // No spend on file: it says what it needs, and how to give it.
+  const bare = pb.answer({ question: 'how much will 10 more covers a week make me', ctx: CTX(null) });
+  assert.match(bare.text, /^Add your typical spend per person in your venue settings and Roost will price 10 more covers a week in dollars\./);
+  assert.deepStrictEqual(bare.sources.map((s) => s.source), ['roost_playbook']);
+  // And whatever it says passes the check a model's answer faces.
+  const raw = JSON.stringify({ answer: lines[0], points: lines.slice(1).map((l) => l.replace(advisorAnswer.BULLET, '')) });
+  assert.ok(checkAnswer(raw, [], { mode: 'advice', texts: ['how much will 10 more covers a week make me', '38'], reject: () => null }));
+});
+
 test('a playbook answer has Roost\'s shape: one line, at most four points, sourced as the playbook', () => {
   const a = pb.answer({ question: 'how do I make Tuesdays better', ctx: CTX(35) });
   assert.ok(a, 'the slow-day question got an answer');
