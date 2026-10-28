@@ -5463,8 +5463,8 @@ def tof_test(seconds=None):
         bus.close()
         print(f'  Nothing answered at 0x{TOF_I2C_ADDR:02X} ({e}).')
         print('  Check in this order:')
-        print('    the carrier\'s SPI/I2C pin is tied to GND. Left alone it sits high and')
-        print('    the sensor talks SPI, so nothing ever answers on I2C;')
+        print('    the carrier\'s SPI/I2C pin goes to pin 22 (GPIO 25). Left alone it sits')
+        print('    high and the sensor talks SPI, so nothing ever answers on I2C;')
         print('    VIN to 3.3V (pin 1), never 5V: the carrier puts VIN on SDA and SCL;')
         print('    GND (pin 6), SDA to pin 3, SCL to pin 5.')
         print('  `i2cdetect -y 1` shows 29 once it is right.')
@@ -5513,7 +5513,8 @@ def tof_test(seconds=None):
             if not was_ready:
                 print(f'  It can see the floor in {background.coverage} of 64 zones.')
                 if background.coverage < TOF_MIN_COVERAGE:
-                    print('  Too few to count well: point it down at the floor, 1 to 3 m away.')
+                    print('  Too few to count well: peel the clear protective film off its face if')
+                    print('  it is still there, and point it down at the floor, 1 to 3 m away.')
                     print('  Zones without a floor never count, so they cannot make phantoms.')
                 print('')
             occupied = set(tof_confirmed(tof_occupied(frame, background.floor),
@@ -7767,7 +7768,7 @@ def selftest():
         print('    door counter   : off in the config (reports 0)')
     elif DOOR_SENSOR == 'tof':
         print('    door counter   : NOT DETECTED on I2C (reports 0). Is the carrier\'s')
-        print('                     SPI/I2C pin tied to GND? `main.py --tof` checks the rest.')
+        print('                     SPI/I2C pin on pin 22? `main.py --tof` checks the rest.')
     else:
         print(f'    IR break-beam  : {"ok" if init_ir() else "NOT DETECTED (reports 0)"}')
     thermal_ok = init_thermal()
