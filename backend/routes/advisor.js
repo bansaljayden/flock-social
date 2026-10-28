@@ -70,33 +70,15 @@ const { BULLET, MAX_POINTS } = require('../services/advisorAnswer');
 // whose facts always raise the same kind of move, the twin now ends on the
 // playbook's best one for that venue, and the sources line names the
 // playbook. Only when the answer has room for it, and never on a refusal.
-const TEMPLATE_MOVE_INTENTS = new Set(['money_move', 'peak_hours', 'quiet_nights', 'slow_night', 'tables_service', 'tables_free', 'last_night_verdict']);
-
-// Yesterday's verdict raises a move only when it was a quiet day by the
-// venue's own numbers. An ordinary or a busy day is just the news.
-function wantsMove(intentId, block) {
-  if (!TEMPLATE_MOVE_INTENTS.has(intentId)) return false;
-  if (intentId !== 'last_night_verdict') return true;
-  const facts = block && Array.isArray(block.facts) ? block.facts : [];
-  const verdict = facts.find((f) => f && /^last_day_verdict_/.test(String(f.id)));
-  return Boolean(verdict && verdict.value && verdict.value.verdict === 'below');
-}
-
-// The money move's two shapes. A week with a quiet end is filled; a level
-// week's money is in each check. Read off the same two facts the plan picked
-// and the shaper wrote the answer from.
-function moneyMoveIsLevel(block) {
-  const days = (block && Array.isArray(block.facts) ? block.facts : [])
-    .filter((f) => f && f.value && Number.isFinite(Number(f.value.peakScore)))
-    .map((f) => Number(f.value.peakScore));
-  return days.length < 2 || Math.max(...days) - Math.min(...days) < HOUR_ORDERING_MIN_GAP;
-}
+// Which chips end on a move, and which move, live in services/roostPlaybook.js
+// (moveFor), because the phrasing model is handed the same move to build on.
 
 // What the money move is worth in the venue's own money, with the working in
-// the sentence: every 10 covers on the quiet day, or the check line.
+// the sentence: every 10 covers on the quiet day, or, in a level week, the
+// check line.
 function moneyMoveLine(block, spend) {
   if (!(spend > 0)) return null;
-  if (moneyMoveIsLevel(block)) return roostPlaybook.moneyLine({ money: 'check' }, spend);
+  if (roostPlaybook.isLevelWeek(block)) return roostPlaybook.moneyLine({ money: 'check' }, spend);
   const facts = block && Array.isArray(block.facts) ? block.facts : [];
   const low = facts.find((f) => f && f.value && typeof f.value.weekday === 'string');
   if (!low) return null;
@@ -115,26 +97,30 @@ async function venueContextFor(userId, ctx) {
 }
 
 async function withMove(answer, intentId, userId, ctx = null, block = null) {
-  if (!answer || answer.mode !== 'template' || !wantsMove(intentId, block)) return answer;
+  if (!answer || answer.mode !== 'template' || !roostPlaybook.MOVE_INTENTS.has(intentId)) return answer;
   const points = String(answer.text || '').split('\n').length - 1;
   if (points >= MAX_POINTS) return answer;
-  const venueCtx = await venueContextFor(userId, ctx);
-  const venue = roostPlaybook.venueOf(venueCtx);
-  // The money move picks its topic by the week's shape; every other chip by
-  // its own intent.
-  const [tactic] = intentId === 'money_move'
-    ? roostPlaybook.find('', { intentId: moneyMoveIsLevel(block) ? 'money_move_level' : 'money_move', venue, limit: 1 })
-    : roostPlaybook.find('', { intentId, venue, limit: 1 });
+  // The fact bridge hands over the venue and its spend; a block from
+  // anywhere else costs one lookup.
+  let venue = block && block.venue ? block.venue : null;
+  let spend = block && block.venue ? block.spend : null;
+  let spendAsOf = block && block.spendAsOf ? block.spendAsOf : 'owner-set';
+  if (!venue) {
+    const venueCtx = await venueContextFor(userId, ctx);
+    venue = roostPlaybook.venueOf(venueCtx);
+    spend = roostPlaybook.spendOf(venueCtx);
+    const p = (venueCtx && venueCtx.profile) || {};
+    spendAsOf = p.updated_at ? `owner-set ${String(p.updated_at).slice(0, 10)}` : 'owner-set';
+  }
+  const tactic = roostPlaybook.moveFor(intentId, block, venue);
   if (!tactic) return answer;
   const lines = [tactic.move];
   const sources = [{ ...roostPlaybook.PLAYBOOK_SOURCE }];
   if (intentId === 'money_move') {
-    const spend = roostPlaybook.spendOf(venueCtx);
     const money = moneyMoveLine(block, spend);
     if (money) {
       lines.push(money);
-      const p = (venueCtx && venueCtx.profile) || {};
-      sources.push({ id: 'intake_typical_spend_per_person', source: 'intake', asOf: p.updated_at ? `owner-set ${String(p.updated_at).slice(0, 10)}` : 'owner-set' });
+      sources.push({ id: 'intake_typical_spend_per_person', source: 'intake', asOf: spendAsOf });
     }
   }
   const room = MAX_POINTS - points;
@@ -525,7 +511,18 @@ async function bridgeFactBlock(userId, intentId) {
 
   const facts = entries.filter((e) => !advisorFacts.isRefusal(e));
   const refusals = entries.filter((e) => advisorFacts.isRefusal(e)).map(refusalText);
-  return { intent: intentId, facts, refusals: facts.length > 0 ? [] : refusals };
+  // What kind of venue this is and its spend per head ride with the block,
+  // so the move a chip ends on fits the venue and is priced in its own money
+  // without a second lookup (roostPlaybook.moveFor, withMove below). Neither
+  // is a fact and neither reaches a model as one.
+  return {
+    intent: intentId,
+    facts,
+    refusals: facts.length > 0 ? [] : refusals,
+    venue: roostPlaybook.venueOf(ctx),
+    spend: roostPlaybook.spendOf(ctx),
+    spendAsOf: ctx.profile.updated_at ? `owner-set ${String(ctx.profile.updated_at).slice(0, 10)}` : 'owner-set',
+  };
 }
 
 function factEngine() {

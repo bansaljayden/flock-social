@@ -235,6 +235,22 @@ test('the money move names the day with seats to sell, the move, and what it is 
   }
 });
 
+test('with the model up, a move chip hands the phrasing model the same vetted move the template ends on', async () => {
+  resetAll();
+  replies = ['{"answer": "Tuesday is your quietest day this week.", "points": []}'];
+  await chip('quiet_nights');
+  const payload = modelCalls[0].contents[0].parts[0].text;
+  assert.match(payload, /PLAYBOOK MOVE\. A move from the trade that fits this question/);
+  const move = JSON.parse(payload.split('\n').pop());
+  assert.deepStrictEqual(Object.keys(move).filter((k) => !['move', 'why', 'example', 'watch'].includes(k)), [], 'moves, never ids');
+
+  // A chip whose facts raise no move gets none.
+  resetAll();
+  replies = ['{"answer": "Here is what is happening around you.", "points": []}'];
+  await chip('around_you');
+  assert.doesNotMatch(modelCalls[0].contents[0].parts[0].text, /PLAYBOOK MOVE/);
+});
+
 test('a chip answer says what to ask next, and names the day it found', async () => {
   resetAll();
   replies = ['{"answer": "Tuesday is your quietest day this week.", "points": []}'];

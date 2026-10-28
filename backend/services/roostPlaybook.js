@@ -460,6 +460,43 @@ function answerFrom(book, { question, intentId = null, ctx = null, groundedFacts
   };
 }
 
+// ── The one move a chip answer ends on ──────────────────────────────────────
+//
+// The chips whose facts always raise the same kind of move. The template twin
+// ends on this move (routes/advisor.js withMove), and the phrasing model is
+// handed the same one to build on (advisorPhrasing.phrase), so a chip answers
+// with one vetted move whichever of the two wrote it.
+const { HOUR_ORDERING_MIN_GAP } = require('./crowdEngine');
+
+const MOVE_INTENTS = Object.freeze(new Set([
+  'money_move', 'peak_hours', 'quiet_nights', 'slow_night', 'tables_service', 'tables_free', 'last_night_verdict',
+]));
+
+/** True when the block's projected days sit inside the ordering floor. */
+function isLevelWeek(block) {
+  const scores = (block && Array.isArray(block.facts) ? block.facts : [])
+    .filter((f) => f && f.value && Number.isFinite(Number(f.value.peakScore)))
+    .map((f) => Number(f.value.peakScore));
+  return scores.length < 2 || Math.max(...scores) - Math.min(...scores) < HOUR_ORDERING_MIN_GAP;
+}
+
+/**
+ * The move a chip's answer ends on, or null. Yesterday's verdict raises one
+ * only when the venue's own numbers call it a quiet day, and the money move
+ * picks its topic by the week's shape.
+ */
+function moveFor(intentId, block, venue = null) {
+  if (!MOVE_INTENTS.has(intentId)) return null;
+  const facts = block && Array.isArray(block.facts) ? block.facts : [];
+  if (intentId === 'last_night_verdict') {
+    const verdict = facts.find((f) => f && /^last_day_verdict_/.test(String(f.id)));
+    if (!verdict || !verdict.value || verdict.value.verdict !== 'below') return null;
+  }
+  const key = intentId === 'money_move' && isLevelWeek(block) ? 'money_move_level' : intentId;
+  const [tactic] = BOOK.find('', { intentId: key, venue, limit: 1 });
+  return tactic || null;
+}
+
 /**
  * The tactics to hand the advice model, as plain data. No ids, no sources:
  * the model is given moves to build on, never something to cite.
@@ -516,6 +553,9 @@ module.exports = {
   groundedLead,
   coversIn,
   dollars,
+  MOVE_INTENTS,
+  isLevelWeek,
+  moveFor,
   forPayload,
   stem,
   stems,

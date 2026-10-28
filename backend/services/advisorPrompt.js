@@ -132,6 +132,8 @@ A why question ("why was Tuesday slow") gets what was different that day, from t
 
 When the facts point to a money move (a quiet day worth filling, a kitchen that stops before the peak, tables sitting long at the busy hour, a slow stretch carrying full staff), make it a point. When they do not, do not invent one.
 
+After the facts you may get a PLAYBOOK MOVE: one move from the trade that we have written and checked, picked for this question. When the facts point to a move, make it this one, in your own words and fitted to the facts. Its numbers are worked examples about no venue in particular, so never present one as this venue's number. Never mention a playbook.
+
 ${SHARED_FORMAT}
 
 ${SHARED_NUMBERS}
