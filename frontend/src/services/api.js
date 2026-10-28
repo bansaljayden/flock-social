@@ -2031,7 +2031,15 @@ function advisorAnswerMode(data) {
   return ADVISOR_ANSWER_MODES.includes(mode) ? mode : 'unknown';
 }
 
-export async function askAdvisor(intentId) {
+// Whether the question was a follow-up the answer above it suggested
+// (components/VenueAdvisorChat.js nextSteps), so the suggestions can be
+// judged by whether owners tap them. One fixed value or nothing: the caller
+// cannot put a word of its own on the event.
+function advisorVia(opts) {
+  return opts && opts.via === 'follow_up' ? { via: 'follow_up' } : {};
+}
+
+export async function askAdvisor(intentId, opts = {}) {
   const data = await request('/api/venue/advisor/ask', {
     method: 'POST',
     body: JSON.stringify({ intentId }),
@@ -2047,7 +2055,7 @@ export async function askAdvisor(intentId) {
   // Which chip, because the intent id is a fixed key from a registry in this
   // repo and not anything a person typed. Knowing WHICH question owners press
   // is the only way to tell a used surface from a decorated one.
-  track('roost_question_asked', { kind: 'chip', intent: String(intentId || 'unknown').slice(0, 64), answer: advisorAnswerMode(data) });
+  track('roost_question_asked', { kind: 'chip', intent: String(intentId || 'unknown').slice(0, 64), answer: advisorAnswerMode(data), ...advisorVia(opts) });
   return data;
 }
 
@@ -2058,7 +2066,7 @@ export async function askAdvisor(intentId) {
 // /questions reports freeText true on an ordinary deploy; the component still
 // asks, because the answer decides whether the field it always draws is live or
 // drawn quiet with the reason under it.
-export async function askAdvisorQuestion(question) {
+export async function askAdvisorQuestion(question, opts = {}) {
   const data = await request('/api/venue/advisor/question', {
     method: 'POST',
     body: JSON.stringify({ question }),
@@ -2069,7 +2077,7 @@ export async function askAdvisorQuestion(question) {
   // owner describing their own business in their own words, and the response
   // echoes it back in `question`, so the only safe thing to read off this body
   // is the mode.
-  track('roost_question_asked', { kind: 'typed', answer: advisorAnswerMode(data) });
+  track('roost_question_asked', { kind: 'typed', answer: advisorAnswerMode(data), ...advisorVia(opts) });
   return data;
 }
 

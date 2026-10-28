@@ -509,6 +509,21 @@ describe('venue and Roost events say whether the surface is used, never which ve
     expect(sent).not.toContain('Broken Spoke');
   });
 
+  test('a tapped follow-up says so, in one fixed word, and nothing else the caller passes rides along', async () => {
+    respondWith(200, { intentId: 'peak_hours', mode: 'template', text: 'Saturday.' });
+    await api.askAdvisor('peak_hours', { via: 'follow_up' });
+    respondWith(200, { mode: 'advice', text: 'Fill it.' });
+    await api.askAdvisorQuestion('How do I fill Tuesdays?', { via: 'follow_up' });
+    respondWith(200, { mode: 'advice', text: 'Fill it.' });
+    await api.askAdvisorQuestion('How do I fill Tuesdays?', { via: 'my own words here' });
+    await flush();
+    expect(events('roost_question_asked')).toEqual([
+      { kind: 'chip', intent: 'peak_hours', answer: 'template', via: 'follow_up' },
+      { kind: 'typed', answer: 'advice', via: 'follow_up' },
+      { kind: 'typed', answer: 'advice' },
+    ]);
+  });
+
   test('an answer mode this client does not know is unknown, not passed through', async () => {
     // The categories on this property must be a set the frontend owns. A
     // server that starts answering with a new mode would otherwise silently

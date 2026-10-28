@@ -951,16 +951,18 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, grantConsent, with
   // A follow-up is asked exactly the way its kind is always asked: a chip
   // through /ask, a typed question through /question, so retry and the thread
   // treat it like any other turn.
+  // The second argument tags the analytics event as a tapped follow-up
+  // (services/api.js advisorVia); a retry of the turn is an ordinary ask.
   const askNext = useCallback((f) => {
     if (busy || !f) return;
-    if (f.kind === 'intent') {
-      askIntent(f.id, f.label);
+    if (f.kind === 'intent' && typeof ask === 'function') {
+      runTurn(`${f.id}-${Date.now()}`, f.label, () => ask(f.id, { via: 'follow_up' }));
       return;
     }
     if (f.kind === 'question' && typeof askQuestion === 'function') {
-      runTurn(`typed-${Date.now()}`, f.text, () => askQuestion(f.text), true);
+      runTurn(`typed-${Date.now()}`, f.text, () => askQuestion(f.text, { via: 'follow_up' }), true);
     }
-  }, [askIntent, askQuestion, busy, runTurn]);
+  }, [ask, askQuestion, busy, runTurn]);
 
   const submitQuestion = useCallback((e) => {
     if (e && typeof e.preventDefault === 'function') e.preventDefault();
