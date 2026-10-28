@@ -4553,5 +4553,490 @@
       "https://www.energystar.gov/buildings/resources-audience/small-biz/restaurants"
     ],
     "basis_note": "ENERGY STAR guide: clean evaporator and condenser coils and replace worn door gaskets, proper maintenance cuts energy cost and prevents costly failures, leaky gaskets waste money every month. ENERGY STAR small business page: tune up HVAC yearly."
+  },
+  {
+    "id": "pricing_cover_by_demand",
+    "topic": "pricing",
+    "venues": [
+      "club",
+      "bar"
+    ],
+    "alcohol": false,
+    "cues": [
+      "cover charge",
+      "how much should the cover be",
+      "charge a cover",
+      "cover price",
+      "cover fee",
+      "door charge",
+      "door price",
+      "entry fee",
+      "charge at the door",
+      "charge for entry",
+      "admission price",
+      "raise the cover"
+    ],
+    "move": "Charge a cover only on nights that fill without help, starting at the hour the line usually forms, and keep entry free on nights you still need to fill.",
+    "why": "A cover on a packed night is paid by guests who were coming anyway, while a cover on a slow night turns away the people you need.",
+    "example": "A $10 cover on 150 guests after 10 PM is $1,500 a night.",
+    "money": "none",
+    "watch": "Count heads and bar sales on cover nights against the same nights before, and tell regulars ahead of time, since a surprise cover can start a backlash.",
+    "follow_up": "How do I get people to come earlier?",
+    "basis": [
+      "https://www.chowhound.com/1984529/why-do-bars-have-a-cover-charge",
+      "https://thehoya.com/news/students-rally-against-new-fee-at-the-tombs",
+      "https://theithacan.org/?p=26810"
+    ],
+    "basis_note": "Chowhound 2025: a cover helps pay for staff, security and entertainment and can keep crowds manageable, it runs from $5 to over $100 by venue and night, and a high cover can make a bar feel unwelcoming. The Hoya 2025: The Tombs added a $5 cover after 10:30 p.m. Thursday to Saturday on DJ nights once lines spilled onto the sidewalk, and over 680 students signed a petition against it. The Ithacan 2017: a bar charged $2 after 11 p.m. on weekends to bring people in earlier. Press reports, no sales data. State rules on posting a cover are not covered here."
+  },
+  {
+    "id": "events_dj_by_bar_sales",
+    "topic": "events",
+    "venues": [
+      "bar",
+      "club"
+    ],
+    "alcohol": false,
+    "cues": [
+      "dj",
+      "djs",
+      "dj every night",
+      "should we have a dj",
+      "dj fee",
+      "dj cost",
+      "pay the dj",
+      "is the dj worth it",
+      "dj worth it",
+      "dj nights",
+      "which dj",
+      "booking djs",
+      "live band",
+      "band",
+      "entertainment cost"
+    ],
+    "move": "For each DJ or act, compare bar sales on their nights with the same night of the week without them, and keep the acts whose extra sales, less drink costs, beat their fee.",
+    "why": "A busy room that buys little can still lose money, so comparing bar sales with the fee is the fairest test of an act.",
+    "example": "If a $400 DJ lifts bar sales by $1,000 and drinks cost you about 20% of sales, the night clears $400 after the fee.",
+    "money": "cost",
+    "watch": "Compare like with like, such as Fridays with a DJ against Fridays without, and give a new act a few weeks before judging it.",
+    "follow_up": "How do I get more people on the dance floor?",
+    "basis": [
+      "https://midnightrebels.com/if-bar-sales-fall-is-it-the-djs-fault/",
+      "https://www.morningadvertiser.co.uk/Article/2012/07/20/Music-in-pubs-creates-48-sales-uplift-at-weekends/"
+    ],
+    "basis_note": "Midnight Rebels 2024 (Daniel Alexis): before blaming a DJ for falling bar sales, track attendance by DJ, average spend and sales compared across DJs and event types. Morning Advertiser 2012 on CGA research for PRS for Music, a music royalties body: 192 pubs offering live or recorded music reported about 21% higher sales midweek and 48% on Fridays and Saturdays. Survey and correlation, not a test of any act, so the move measures each act directly."
+  },
+  {
+    "id": "mkt_promoters_per_guest",
+    "topic": "marketing",
+    "venues": [
+      "club",
+      "bar"
+    ],
+    "alcohol": false,
+    "cues": [
+      "promoters",
+      "promoter",
+      "work with promoters",
+      "club promoters",
+      "pay promoters",
+      "how much to pay promoters",
+      "promoter deal",
+      "promoter pay",
+      "promoter list",
+      "guestlist",
+      "promoter code",
+      "party promoters",
+      "promoter commission",
+      "promoter guest list"
+    ],
+    "move": "Pay promoters for each guest who actually comes through the door, counted from their own list or code, rather than for the names they send in.",
+    "why": "Paying on arrivals ties the cost to people who are in the room spending, and the counts show which promoters are worth keeping.",
+    "example": "At $5 a head, a promoter who sends 100 names but brings 30 guests costs $150, not $500.",
+    "money": "covers",
+    "watch": "Compare what each promoter's guests spend as well as how many come, since a small crowd that buys can be worth more than a big crowd that does not.",
+    "follow_up": "How do I get more VIP tables booked?",
+    "basis": [
+      "https://www.tablelistpro.com/blog/nightclub-promoter-management-guide",
+      "https://sevenrooms.com/en/blog/how-to-run-a-successful-nightclub-9-tips-to-maximize-revenue/",
+      "https://www.ticketfairy.com/tools/guest-list-cost-calculator"
+    ],
+    "basis_note": "TablelistPro 2026 (vendor): give each promoter a tracked link, compare names submitted with check ins, and judge promoters by what their guests spend, so 25 guests at an 85% show rate with good spend beat 100 names with 30 check ins. SevenRooms 2022 (vendor): track how many guests each promoter brings and reward the best. Ticket Fairy guest list calculator 2026 (vendor): guest list no shows commonly run 25 to 40%, and a list pays only when bar money beats displaced sales plus per head costs. Vendor guidance, no outcome data."
+  },
+  {
+    "id": "rush_door_lanes",
+    "topic": "handle_the_rush",
+    "venues": [
+      "club",
+      "bar"
+    ],
+    "alcohol": false,
+    "cues": [
+      "line at the door",
+      "the line at the door is too long",
+      "door line",
+      "line outside",
+      "long line outside",
+      "people waiting outside",
+      "id check",
+      "checking ids",
+      "door is slow",
+      "slow door",
+      "entry line",
+      "getting in takes forever",
+      "line not moving",
+      "door backed up"
+    ],
+    "move": "Split the door into 2 lanes, 1 for guests who prepaid or are on the list and 1 for guests paying at the door, with IDs checked in both.",
+    "why": "Quick entries stop waiting behind slower payments, and a line that keeps moving loses fewer guests to the bar down the street.",
+    "example": "If each payment takes 30 seconds, a list guest stuck behind 6 payers waits 3 minutes for a 10 second check.",
+    "money": "covers",
+    "watch": "Sign each lane clearly and keep both moving, since guests who see others cut ahead get angry fast.",
+    "follow_up": "How much should the cover be?",
+    "basis": [
+      "https://davidmaister.com/articles/the-psychology-of-waiting-lines/",
+      "https://www.ticketfairy.com/blog/streamlining-entry-online-nightclub-ticketing-for-efficient-attendee-management",
+      "https://sevenrooms.com/en/blog/how-to-run-a-successful-nightclub-9-tips-to-maximize-revenue/"
+    ],
+    "basis_note": "Maister (The Psychology of Waiting Lines): airlines give simple transactions their own line, which spreads the waiting more fairly, and a guest who sees someone cut in front becomes furious. Ticket Fairy 2025 (vendor): manual ticket and ID checks cause long waits, checking IDs against a list slows entry, and it suggests a separate line for tickets already bought or guest list apart from buying at the door. SevenRooms 2022 (vendor) cites a figure that 54% of people would leave a club with a line outside, source not given. No outcome data on lane splits."
+  },
+  {
+    "id": "slow_hours_early_arrival",
+    "topic": "fill_slow_days",
+    "venues": [
+      "club",
+      "bar"
+    ],
+    "alcohol": false,
+    "cues": [
+      "crowd comes late",
+      "crowd shows up late",
+      "nobody comes until midnight",
+      "dead until midnight",
+      "club is dead until",
+      "bar is dead until",
+      "get people in earlier",
+      "come earlier",
+      "arrive earlier",
+      "get there earlier",
+      "early crowd",
+      "fill up earlier",
+      "room fills late",
+      "free before",
+      "early entry",
+      "early in the night"
+    ],
+    "move": "Give guests a reason to arrive before your room usually fills, such as free entry or a lower cover before a set hour, and post the cutoff.",
+    "why": "A room that fills early keeps guests buying for longer, and new arrivals are drawn to a room that is already busy.",
+    "example": "If 40 guests come an hour earlier and spend $10 more each, that is $400 more a night.",
+    "money": "covers",
+    "watch": "Compare sales for the whole night before and after, since free early entry can simply move guests who would have paid later.",
+    "follow_up": "How do I keep people from leaving at midnight?",
+    "basis": [
+      "https://theithacan.org/?p=26810",
+      "https://www.vice.com/en/article/the-best-time-to-get-to-the-club-a-scientific-analysis",
+      "https://ideas.repec.org/a/ucp/jpolec/v99y1991i5p1109-16.html"
+    ],
+    "basis_note": "The Ithacan 2017: Moonies, whose crowd arrived between midnight and 12:30 a.m., started a $2 cover after 11 p.m. on weekends and saw far more people before 11, with overall attendance unchanged (a bartender's account). Vice 2016 (THUMP writers): rooms are near empty at 10 p.m. and fill around midnight, and some guests arrive late to avoid an empty club. Becker 1991 (Journal of Political Economy): a guest's demand rises with how many others want the same place. No sales data on early entry offers."
+  },
+  {
+    "id": "events_program_leaving_hour",
+    "topic": "events",
+    "venues": [
+      "club",
+      "bar"
+    ],
+    "alcohol": false,
+    "cues": [
+      "people leave at midnight",
+      "leaving at midnight",
+      "people leave early",
+      "crowd leaves",
+      "everyone leaves",
+      "people go home early",
+      "keep people later",
+      "keep the crowd",
+      "crowd thins out",
+      "room empties",
+      "losing the crowd",
+      "people leave after midnight",
+      "dead after midnight",
+      "late night crowd"
+    ],
+    "move": "Find the hour your crowd starts to thin and put your strongest draw just before it, such as the main DJ set or a late food menu.",
+    "why": "Guests stay for something they are waiting for, and every extra hour they stay is another round of sales.",
+    "example": "If 80 guests stay 1 hour longer and spend $12 each in that hour, that is $960 more a night.",
+    "money": "check",
+    "watch": "Keep the opening sets easy so the crowd is not worn out by then, and compare sales in the last 2 hours of the night before and after the change.",
+    "follow_up": "Should we have a DJ every night?",
+    "basis": [
+      "https://midnightrebels.com/dont-kill-the-vibe-before-it-starts-opening-dj-got-people-to-leave-early/",
+      "https://www.vice.com/en/article/the-best-time-to-get-to-the-club-a-scientific-analysis",
+      "https://www.fsrmagazine.com/feature/late-nights-and-bar-bites/"
+    ],
+    "basis_note": "Midnight Rebels 2024 (Jared Celemin): high energy played too early tires a sparse crowd and leads to empty floors and lower bar sales, so build gradually and save the peak for the headliner or prime time. Vice 2016: many guests leave around 2 a.m. FSR 2013: bars and restaurants added late night menus to grow checks in an underused stretch, and 1 says it no longer has to tell a guest the kitchen is closed. DJ and trade guidance, no outcome data."
+  },
+  {
+    "id": "check_vip_table_minimums",
+    "topic": "check_average",
+    "venues": [
+      "club",
+      "bar"
+    ],
+    "alcohol": true,
+    "cues": [
+      "bottle service",
+      "should we do bottle service",
+      "vip tables",
+      "vip table",
+      "vip",
+      "vip section",
+      "more vip tables booked",
+      "sell vip tables",
+      "vip bookings",
+      "table minimums",
+      "bottle minimums",
+      "minimum spend",
+      "table deposits",
+      "bottle packages",
+      "table packages",
+      "bottle sales"
+    ],
+    "move": "Set VIP table minimums by night and by section, and take a deposit at booking that holds the table only until a set arrival time.",
+    "why": "Higher minimums on your busiest nights earn more from the same tables, and a table released at the hold time can still be sold that night.",
+    "example": "A $500 minimum on 8 tables is $4,000 in spend booked before the doors open.",
+    "money": "check",
+    "watch": "Tell guests the minimum and the hold time when they book, and keep a waitlist so a released table sells again.",
+    "follow_up": "How do I work with promoters?",
+    "basis": [
+      "https://sevenrooms.com/en/blog/how-to-run-a-successful-nightclub-9-tips-to-maximize-revenue/",
+      "https://www.ticketfairy.com/blog/how-to-increase-night-club-revenue-with-table-service"
+    ],
+    "basis_note": "SevenRooms 2022 (vendor): sell tables in advance with prepayment to cut no shows, and set spend minimums especially on popular nights such as weekends and party holidays. Ticket Fairy 2024 (vendor): tier minimums by day of week, event, table location and group size, take a non refundable deposit or full prepayment, state a hold time at booking, and release the table to walk ins or the waitlist after the grace period. Vendor guidance, no outcome data."
+  },
+  {
+    "id": "hosp_dance_floor_start",
+    "topic": "hospitality",
+    "venues": [
+      "club",
+      "bar"
+    ],
+    "alcohol": false,
+    "cues": [
+      "dance floor",
+      "dancefloor",
+      "dancing",
+      "dance",
+      "get people dancing",
+      "people on the dance floor",
+      "nobody dances",
+      "no one dances",
+      "people won't dance",
+      "empty dance floor",
+      "fill the dance floor",
+      "more people dancing",
+      "floor is empty",
+      "start dancing"
+    ],
+    "move": "Keep the dance floor near the bar and DJ and small enough for the crowd you have, and have the DJ open with familiar songs early guests will dance to.",
+    "why": "A few people dancing make the floor easy to join, while a large empty floor leaves guests feeling watched.",
+    "money": "covers",
+    "watch": "Ask the DJ to build slowly and save the peak for later, since hard tracks played to a thin early crowd clear the floor.",
+    "follow_up": "Is our DJ worth it?",
+    "basis": [
+      "https://www.eventsource.ca/blog/dance-floor-engagement-tip",
+      "https://midnightrebels.com/dont-kill-the-vibe-before-it-starts-opening-dj-got-people-to-leave-early/"
+    ],
+    "basis_note": "EventSource 2023 (event planning blog): a floor that is too big makes guests self conscious, a floor tucked away from the DJ goes unused, keep it near the bar, and seat keen dancers closest so they start early and others follow. Midnight Rebels 2024 (Jared Celemin): open with familiar, easy tracks and build as the room fills, since high energy too early leaves empty floors and lower bar sales. Event and DJ guidance, mostly weddings and parties, no outcome data."
+  },
+  {
+    "id": "bev_tap_keg_speed",
+    "topic": "beverage",
+    "venues": [
+      "bar",
+      "full_service"
+    ],
+    "alcohol": true,
+    "cues": [
+      "what beers should i put on tap",
+      "taps",
+      "tap list",
+      "draft beer",
+      "draft list",
+      "beers on tap",
+      "kegs",
+      "keg",
+      "slow kegs",
+      "rotate taps",
+      "which beers",
+      "how many taps",
+      "stale beer",
+      "draft lines",
+      "craft beer",
+      "beer selection"
+    ],
+    "move": "Write down the day each keg goes on and the day it runs out, and swap any beer that takes much longer than the rest for a faster seller.",
+    "why": "A slow keg ties up a tap and goes stale, and stale beer ends up poured away or sent back.",
+    "example": "If a full keg holds about 124 pints and 20% is wasted, that is about 25 pints you paid for and never sold.",
+    "money": "cost",
+    "watch": "If many taps empty slowly, cut the number of taps rather than adding styles, since too many choices slow every keg.",
+    "follow_up": "What should my beer cost be?",
+    "basis": [
+      "https://modernrestaurantmanagement.com/?p=1324",
+      "https://www.speedlinesolutions.com/blog/offer-draft-beer-let-data-lead-you-to-success",
+      "https://vinepair.com/articles/draft-beer-quality-covid-19/"
+    ],
+    "basis_note": "Modern Restaurant Management 2016 (Steve Hershberger, CEO of draft data vendor SteadyServ): tap lists are often chosen without sales data, slow sellers kept for variety go stale and get sent back, slower beer should rotate out first in, first out, and it assumes about 20% waste per keg. BeerBoard via SpeedLine 2018 (vendor): cut under performing taps, since too many choices slow keg turnover and freshness. VinePair 2020: an auditor found expired kegs on tap at 5 of 6 retailers. Mostly vendor guidance, no outcome data."
+  },
+  {
+    "id": "events_game_day_tables",
+    "topic": "events",
+    "venues": [
+      "bar",
+      "full_service"
+    ],
+    "alcohol": false,
+    "cues": [
+      "game day",
+      "game day specials",
+      "game day package",
+      "big game",
+      "sports bar",
+      "watch party",
+      "football",
+      "sports",
+      "playoffs",
+      "march madness",
+      "world cup",
+      "fight night",
+      "super bowl",
+      "reserve tables for the game"
+    ],
+    "move": "For big games, sell a set number of reserved tables ahead of time, with an upfront payment that counts toward the food and drink bill.",
+    "why": "Prepaid tables lock in sales before kickoff, and the payment covers you when a group does not show.",
+    "example": "Selling 10 tables at $125 each books $1,250 in sales before the game starts.",
+    "money": "covers",
+    "watch": "Hold each table only until a set time before kickoff, then give it to walk ins, and keep some seats open for regulars who never book.",
+    "follow_up": "How do I fill the room on nights with no game?",
+    "basis": [
+      "https://www2.kusports.com/news/2013/mar/28/some-sports-bars-best-seats-house-dont-come-free/",
+      "https://www.bigdogsbrews.com/?p=3664",
+      "https://sevenrooms.com/en/blog/restaurant-marketing-ideas-how-to-maximize-business-throughout-the-nfl-season/"
+    ],
+    "basis_note": "KUsports 2013 (Lawrence, Kansas): on tournament days 1 bar reserved a 4 person table for $100 credited to the order and another asked $15 per person per hour, to stop groups holding tables all game. Big Dog's Draft House (venue page): 8 to 12 reservable tables per game for a $125 advance payment returned as a gift card for the tab, forfeited if not seated 15 minutes before kickoff. SevenRooms 2020 (vendor): prix fixe packages, prepaid table minimums or tickets, and a no show fee. Operator examples, no outcome data."
+  },
+  {
+    "id": "mkt_wholesale_cafes",
+    "topic": "marketing",
+    "venues": [
+      "bakery"
+    ],
+    "alcohol": false,
+    "cues": [
+      "wholesale",
+      "wholesale accounts",
+      "how do i get wholesale accounts",
+      "wholesale customers",
+      "wholesale pricing",
+      "wholesale price",
+      "sell to cafes",
+      "sell to coffee shops",
+      "supply cafes",
+      "bake for cafes",
+      "sell to restaurants",
+      "sell to other businesses",
+      "standing orders",
+      "standing order",
+      "sell wholesale"
+    ],
+    "move": "Take samples to a few nearby independent cafes and offer each a standing weekly order at a set wholesale price, delivered on fixed days.",
+    "why": "A standing order sells part of every bake before you open, on a schedule you can plan production and staff around.",
+    "example": "If 4 cafes each take 24 pastries a week at $2.50, that is $240 a week, about $12,480 a year.",
+    "money": "none",
+    "watch": "Price from your own costs, with 50 to 60% of your retail price as a common starting point, and set a minimum order per delivery.",
+    "follow_up": "What does each recipe cost me to make?",
+    "basis": [
+      "https://findhomegrown.com/blog/how-to-get-your-food-into-a-local-coffee-shop",
+      "https://www.bluecart.com/blog/wholesale-pastries-coffee-shops",
+      "https://www.bakersjournal.com/dufflet-pastries-will-close-retail-cafe-to-focus-on-wholesale-business/"
+    ],
+    "basis_note": "Homegrown 2026 (vendor, Evan Knox): start with independent shops where the owner buys, walk in with 3 to 5 samples and a short pitch, price wholesale at 50 to 60% of retail, and expect deliveries 2 to 3 times a week on fixed days with minimums of 12 to 24 units. BlueCart (vendor): coffee shops rarely bake their own pastries because of equipment and storage, and order on a regular schedule, often daily. Bakers Journal 2023: Dufflet Pastries closed its retail cafe to focus on wholesale to cafes, restaurants and grocers. Vendor guidance, no outcome data."
+  },
+  {
+    "id": "rush_drive_thru_stages",
+    "topic": "handle_the_rush",
+    "venues": [
+      "quick_service"
+    ],
+    "alcohol": false,
+    "cues": [
+      "drive thru",
+      "drive through",
+      "thru",
+      "drive thru lane",
+      "speed up the drive thru",
+      "drive thru speed",
+      "drive thru times",
+      "drive thru wait",
+      "drive thru line",
+      "drive through line",
+      "slow drive thru",
+      "drive thru window",
+      "pickup window",
+      "order window",
+      "cars in line",
+      "car line"
+    ],
+    "move": "Time each car at the order point, the pay window and the pickup window during a few rushes, and fix the slowest stage first.",
+    "why": "Cars can only leave as fast as the slowest stage lets them, so speeding up any other stage barely moves the line.",
+    "example": "If the pickup window takes 90 seconds a car, the lane serves at most 40 cars an hour however fast orders are taken.",
+    "money": "covers",
+    "watch": "Time it again after each fix, since the next slowest stage then sets the pace.",
+    "follow_up": "How many staff do I need at the rush?",
+    "basis": [
+      "https://www.i3international.com/blog/the-complete-guide-to-drive-thru-bottleneck-analysis-2/",
+      "https://intouchinsight.com/blog/drive-thru-trends",
+      "https://qsr.hme.com/blog/the-critical-role-of-measuring-wait-time-in-the-drive-thru"
+    ],
+    "basis_note": "i3 International 2026 (vendor of drive thru timers): break total time into stages, since the slowest stage sets the throughput of the whole lane, and fix 1 constraint at a time, then measure again. Intouch Insight 2026 drive thru study of large chains: the average visit took 5 minutes 24 seconds, and most of the year's gain came from faster service and pickup window handoffs. HME 2025 (timer vendor): the wait before reaching the speaker shows the largest gap against pre 2020 levels, so track it as a key measure. Vendor guidance and a chain benchmark study."
+  },
+  {
+    "id": "turn_laptop_free_tables",
+    "topic": "turn_tables",
+    "venues": [
+      "cafe",
+      "bakery"
+    ],
+    "alcohol": false,
+    "cues": [
+      "laptops",
+      "laptop",
+      "laptop free",
+      "no laptops",
+      "limit laptops",
+      "laptop policy",
+      "camp on laptops",
+      "laptops all day",
+      "people camp",
+      "camping",
+      "sit all day",
+      "hog tables",
+      "tables taken all day",
+      "remote workers",
+      "outlets",
+      "laptop campers"
+    ],
+    "move": "At your busiest hours, mark some tables laptop free with a sign guests see before they sit, and keep a few tables near outlets for laptop guests.",
+    "why": "A laptop guest can hold a table for hours on a small spend, so freeing tables at the rush makes room for guests who are buying.",
+    "example": "If 3 freed tables seat 6 more lunch guests at $12 each, that is $72 more each lunch.",
+    "money": "covers",
+    "watch": "Post the rule where guests see it before they order, and keep laptops welcome in quiet hours so you keep that trade too.",
+    "follow_up": "Should I offer remote workers a weekday package?",
+    "basis": [
+      "https://blogto.com/eat_drink/2018/03/toronto-cafes-start-adopt-no-laptop-policies",
+      "https://themanual.com/food-and-drink/coffee-shops-laptop-ban",
+      "https://eastbayexpress.com/?p=65318"
+    ],
+    "basis_note": "BlogTO 2018: Toronto cafes mark certain tables laptop free with small signs, and 1 bars laptops on weekends from noon to 4 p.m. after laptop users took whole sections, with most customers reacting well. The Manual 2021: bans that are poorly posted cause arguments, and 1 cafe stopped enforcing after angry exchanges. East Bay Express 2010: a cafe covered all but 1 outlet and turned off wifi at lunch, another saw people empty out when it cut wifi on weekends, and a laptop user often spent about $5 or $6 over much of a day. Press reports, no sales data."
   }
 ]

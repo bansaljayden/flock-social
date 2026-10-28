@@ -233,3 +233,37 @@ test('"order" and "buy" no longer mean the supplier, and other rooms find their 
   // And the supplier move still answers a supplier question.
   assert.strictEqual(offlineAnswer('how do i get better prices from my suppliers').answer.tactics[0], 'food_cost_supplier_quotes');
 });
+
+// ── Clubs, bars, bakery wholesale and the drive-thru (13 moves, 2026-10-28) ──
+
+const CLUB = { profile: { typical_spend_per_person: 45, age_policy: 'twenty_one_plus' }, mlVenue: { venue_category: 'nightclub' } };
+
+test('a club owner\'s questions find the club moves, and the second option is for a club too', () => {
+  for (const [said, tactic] of [
+    ['how do i get more people on the dance floor', 'hosp_dance_floor_start'],
+    ['should we have a dj every night', 'events_dj_by_bar_sales'],
+    ['how much should the cover be', 'pricing_cover_by_demand'],
+    ['how do i work with promoters', 'mkt_promoters_per_guest'],
+    ['the line at the door is too long', 'rush_door_lanes'],
+    ['people leave at midnight', 'events_program_leaving_hour'],
+    ['how do i get more vip tables booked', 'check_vip_table_minimums'],
+  ]) {
+    const { answer } = offlineAnswer(said, CLUB);
+    assert.ok(answer, `"${said}" found no move`);
+    assert.strictEqual(answer.tactics[0], tactic, `"${said}" -> ${answer.tactics[0]}`);
+    for (const id of answer.tactics.slice(1)) {
+      const t = pb.tactics.find((x) => x.id === id);
+      assert.ok(t.venues.includes('all') || t.venues.includes('club'), `"${said}" offered ${id}, written for ${t.venues}`);
+    }
+  }
+});
+
+test('taps, game days, bakery wholesale, the drive-thru and laptop campers each have their move', () => {
+  assert.strictEqual(offlineAnswer('what beers should i put on tap', BAR).answer.tactics[0], 'bev_tap_keg_speed');
+  assert.strictEqual(offlineAnswer('game day specials', BAR).answer.tactics[0], 'events_game_day_tables');
+  assert.strictEqual(offlineAnswer('how do i get wholesale accounts', BAKERY).answer.tactics[0], 'mkt_wholesale_cafes');
+  assert.strictEqual(offlineAnswer('how do i speed up the drive thru', COUNTER).answer.tactics[0], 'rush_drive_thru_stages');
+  assert.strictEqual(offlineAnswer('people camp on laptops all day', CAFE).answer.tactics[0], 'turn_laptop_free_tables');
+  // A cafe that does not pour never gets the tap move.
+  assert.ok(!offlineAnswer('how do i sell more', CAFE).answer || !offlineAnswer('how do i sell more', CAFE).answer.tactics.includes('bev_tap_keg_speed'));
+});

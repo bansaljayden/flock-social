@@ -755,7 +755,11 @@ function answerFrom(book, { question, intentId = null, ctx = null, groundedFacts
   // topic that only shared a word read as a non sequitur (brunch under "how do
   // I get more people in for dinner on Tuesdays", a spray valve over the
   // cash-flow move the words found, 2026-10-28), so the answer goes without.
-  const rest = ranking.slice(1);
+  // And it is written for this kind of room. The first move may come from
+  // another kind when the owner names its subject; a second one offered on
+  // top read as a stray (a coffee counter's line move under a club's door
+  // line, 2026-10-28).
+  const rest = ranking.slice(1).filter((x) => forThisKind(x.t, venue));
   const runnerUp = rest.find((x) => x.cues > 0) || rest.find((x) => x.t.topic === top.t.topic);
   const first = top.t;
   const second = runnerUp ? runnerUp.t : null;
