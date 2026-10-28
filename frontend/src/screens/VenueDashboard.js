@@ -1020,8 +1020,11 @@ export default function VenueDashboard({
         {/* The venue's own listing photo sits behind the header, darkened
             toward the bottom so the white name reads on any picture. With no
             listing photo it is a generated interior for the venue's kind
-            (lib/venueCover.js), so no header is ever a flat block of navy. */}
-        <div style={{ padding: '16px 16px 18px', flexShrink: 0, backgroundColor: colors.navyBg, backgroundImage: `linear-gradient(to bottom, rgba(10,18,32,0.35), rgba(10,18,32,0.82)), url("${venueCoverUrl || fallbackVenueCover(venueProfile?.category || venueOnboardingData.category)}")`, backgroundSize: 'cover', backgroundPosition: 'center' }}>
+            (lib/venueCover.js), so no header is ever a flat block of navy.
+            The top layer fades from navyBg, the colour the status bar strip
+            above this screen is painted (screenTopIsNavy in App.js), so on a
+            phone the strip runs into the photo with no seam. */}
+        <div style={{ padding: '16px 16px 18px', flexShrink: 0, backgroundColor: colors.navyBg, backgroundImage: `linear-gradient(to bottom, ${colors.navyBg}, transparent 26%), linear-gradient(to bottom, rgba(10,18,32,0.3), rgba(10,18,32,0.82)), url("${venueCoverUrl || fallbackVenueCover(venueProfile?.category || venueOnboardingData.category)}")`, backgroundSize: 'cover', backgroundPosition: 'center' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <button aria-label="Switch mode" title="Switch mode" className="hit44" onClick={switchMode} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               {Icons.arrowLeft('white', 16)}

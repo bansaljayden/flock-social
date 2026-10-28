@@ -162,7 +162,13 @@ describe('which screens open on navy', () => {
       // The first element inside the root is the header.
       const firstChild = src.indexOf('<div style={{', root + key.length);
       const header = src.slice(firstChild, src.indexOf('}}>', firstChild));
-      expect(header).toMatch(/background: colors\.navyBg/);
+      // A plain navy header, or (the venue dashboard since 2026-10-28) a photo
+      // header whose base colour is navy and whose top layer starts at navy,
+      // so the strip above it still meets navy.
+      const plain = /background: colors\.navyBg/.test(header);
+      const photo = /backgroundColor: colors\.navyBg/.test(header)
+        && /backgroundImage: `linear-gradient\(to bottom, \$\{colors\.navyBg\}/.test(header);
+      expect(plain || photo).toBe(true);
     },
   );
 });
