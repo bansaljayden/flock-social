@@ -145,19 +145,21 @@ def renders():
 
 # The /flux Tables section: a generated-heat picture of a dining room from
 # the box over the door, and the venue dashboard's Tables tab with demo data.
+# The tab shots are -v2 since the 2026-10-28 retake (photo header): a new name
+# so Cloudflare's edge cannot keep serving the old picture under the old one.
 # The PNGs live outside the repo (the tables work's images/ folder), so
 #   python frontend/scripts/flux_assets.py --tables-only --tables-src <dir>
 TABLES = {
     "flux-tables-illustration": 640,
     "flux-tables-room": 640,
-    "tables-tab-desktop": 1080,
-    "tables-tab-phone": 260,
+    "tables-tab-desktop-v2": 1080,
+    "tables-tab-phone-v2": 260,
 }
 TABLES_FILES = {
     "flux-tables-illustration": "flux-tables-illustration.png",
     "flux-tables-room": "flux-sees-tables-room.png",
-    "tables-tab-desktop": "tables-tab-desktop.png",
-    "tables-tab-phone": "tables-tab-phone.png",
+    "tables-tab-desktop-v2": "tables-tab-desktop.png",
+    "tables-tab-phone-v2": "tables-tab-phone.png",
 }
 
 

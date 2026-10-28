@@ -286,12 +286,26 @@ button.fx-chip:hover { border-color: var(--ink-3); }
 
 /* ---------- tables ---------- */
 
-.fx-tables { display: grid; gap: 28px clamp(40px, 6vw, 88px); align-items: center; }
+/* Text across the top, then the two room pictures side by side at the same
+   size, then the dashboard shots: four pictures in two even rows, no column
+   left empty beside a lone picture. */
+.fx-tables { display: grid; gap: 24px; align-items: start; max-width: 1080px; }
+.fx-tables > .fx-measure { grid-column: 1 / -1; }
+/* On a wide screen the three short paragraphs run in two columns, so the text
+   spans the same width as the pictures under it instead of leaving the right
+   half empty. */
 @media (min-width: 960px) {
-  .fx-tables { grid-template-columns: minmax(0, 1fr) minmax(0, 520px); max-width: 1080px; }
+  .fx-tables > .fx-measure { max-width: none; columns: 2; column-gap: clamp(32px, 4vw, 56px); }
+  .fx-tables > .fx-measure > h2 { column-span: all; }
+  .fx-tables > .fx-measure > p { break-inside: avoid; }
 }
-.fx-tabs { display: grid; gap: 28px clamp(28px, 4vw, 48px); align-items: start; margin-top: clamp(32px, 4vw, 48px); max-width: 1080px; }
+@media (min-width: 760px) {
+  .fx-tables { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+}
+.fx-tabs { display: grid; gap: 24px; align-items: start; margin-top: 24px; max-width: 1080px; }
 .fx-phone { max-width: 260px; }
 @media (min-width: 760px) {
-  .fx-tabs { grid-template-columns: minmax(0, 1fr) minmax(0, 260px); }
+  /* Column widths in the ratio that gives both shots the same height
+     (desktop 1080x619, phone 260x679), so neither leaves a gap. */
+  .fx-tabs { grid-template-columns: minmax(0, 4.56fr) minmax(0, 1fr); }
 }

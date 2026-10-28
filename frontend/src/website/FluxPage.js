@@ -46,8 +46,8 @@ export const IMAGES = {
   flow: { base: '/ai-figures/owl-flow', one: 640, two: 1280, height: 107 },
   tablesIllustration: { base: '/sensor/flux-tables-illustration', one: 640, two: 1280, height: 480 },
   tablesRoom: { base: '/sensor/flux-tables-room', one: 640, two: 1280, height: 480 },
-  tablesDesktop: { base: '/sensor/tables-tab-desktop', one: 1080, two: 2160, height: 619 },
-  tablesPhone: { base: '/sensor/tables-tab-phone', one: 260, two: 520, height: 679 },
+  tablesDesktop: { base: '/sensor/tables-tab-desktop-v2', one: 1080, two: 2160, height: 619 },
+  tablesPhone: { base: '/sensor/tables-tab-phone-v2', one: 260, two: 520, height: 679 },
 };
 
 function Pic({ img, sizes, alt, eager = false }) {
@@ -213,7 +213,7 @@ export default function FluxPage() {
                 <div className="fx-plate fx-plate-paper">
                   <Pic
                     img={IMAGES.flow}
-                    sizes="(min-width: 960px) 520px, calc(100vw - 40px)"
+                    sizes="(min-width: 1160px) 528px, (min-width: 760px) calc(50vw - 32px), calc(100vw - 40px)"
                     alt="The Flux sensor deletes the frame and sends only “count: 3” to the Flock server."
                   />
                 </div>
@@ -249,7 +249,7 @@ export default function FluxPage() {
                 <div className="fx-plate">
                   <Pic
                     img={IMAGES.tablesIllustration}
-                    sizes="(min-width: 960px) 520px, calc(100vw - 40px)"
+                    sizes="(min-width: 1160px) 528px, (min-width: 760px) calc(50vw - 32px), calc(100vw - 40px)"
                     alt="An illustration of a dining room seen from above the door, with faceless figures at eight tables. Each table is outlined in its state's colour with a label, and a side panel lists three of eight tables free and two alerts."
                   />
                 </div>
@@ -262,7 +262,7 @@ export default function FluxPage() {
                 <div className="fx-plate">
                   <Pic
                     img={IMAGES.tablesRoom}
-                    sizes="(min-width: 960px) 520px, calc(100vw - 40px)"
+                    sizes="(min-width: 1160px) 528px, (min-width: 760px) calc(50vw - 32px), calc(100vw - 40px)"
                     alt="A dining room in generated heat, seen from above the door, with eight tables outlined. Each has a label: free and for how long, seated with a timer and a head count, one needing a server, one needing clearing."
                   />
                 </div>
@@ -277,7 +277,7 @@ export default function FluxPage() {
                 <div className="fx-plate">
                   <Pic
                     img={IMAGES.tablesDesktop}
-                    sizes="(min-width: 1160px) 760px, (min-width: 760px) calc(100vw - 340px), calc(100vw - 40px)"
+                    sizes="(min-width: 1160px) 866px, (min-width: 760px) calc(82vw - 40px), calc(100vw - 40px)"
                     alt="The Tables tab on a computer: 3 of 8 tables free, two alerts at the top for a table waiting on a server and one needing clearing, a card for each table, and a chart of tables in use by hour."
                   />
                 </div>
@@ -289,7 +289,7 @@ export default function FluxPage() {
                 <div className="fx-plate">
                   <Pic
                     img={IMAGES.tablesPhone}
-                    sizes="260px"
+                    sizes="(min-width: 760px) 190px, 260px"
                     alt="The same Tables tab on a phone, with the table cards two to a row."
                   />
                 </div>
