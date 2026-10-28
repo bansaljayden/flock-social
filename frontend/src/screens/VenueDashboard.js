@@ -76,6 +76,7 @@ import {
   updateVenuePromotion,
 } from '../services/api';
 import { tableSettingsFrom } from '../lib/venueTablesReading';
+import { fallbackVenueCover } from '../lib/venueCover';
 
 
 // When an incoming group is coming, from the row's event_time. The same
@@ -421,6 +422,7 @@ export default function VenueDashboard({
   venueLogoPicker,
   venueLogoPlaceId,
   venueLogoUploading,
+  venueCoverUrl,
   venueLogoUrl,
   venueMapState,
   venueOnboardingData,
@@ -1015,7 +1017,11 @@ export default function VenueDashboard({
     return (
       <div key="venue-dashboard-container" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
         {/* Header */}
-        <div style={{ padding: '16px', background: colors.navyBg, flexShrink: 0 }}>
+        {/* The venue's own listing photo sits behind the header, darkened
+            toward the bottom so the white name reads on any picture. With no
+            listing photo it is a generated interior for the venue's kind
+            (lib/venueCover.js), so no header is ever a flat block of navy. */}
+        <div style={{ padding: '16px 16px 18px', flexShrink: 0, backgroundColor: colors.navyBg, backgroundImage: `linear-gradient(to bottom, rgba(10,18,32,0.35), rgba(10,18,32,0.82)), url("${venueCoverUrl || fallbackVenueCover(venueProfile?.category || venueOnboardingData.category)}")`, backgroundSize: 'cover', backgroundPosition: 'center' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <button aria-label="Switch mode" title="Switch mode" className="hit44" onClick={switchMode} style={{ width: '32px', height: '32px', borderRadius: '16px', border: 'none', backgroundColor: 'rgba(255,255,255,0.2)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               {Icons.arrowLeft('white', 16)}
@@ -1047,7 +1053,7 @@ export default function VenueDashboard({
               type="button"
               onClick={() => openVenueLogoPicker()}
               aria-label={venueLogoUrl ? 'Replace venue logo' : 'Choose venue logo'}
-              style={{ width: '48px', height: '48px', padding: 0, border: 'none', borderRadius: '12px', backgroundColor: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', overflow: 'hidden', position: 'relative', flexShrink: 0 }}
+              style={{ width: '64px', height: '64px', padding: 0, border: '2px solid rgba(255,255,255,0.9)', borderRadius: '50%', backgroundColor: 'rgba(255,255,255,0.2)', boxShadow: '0 2px 8px rgba(0,0,0,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', overflow: 'hidden', position: 'relative', flexShrink: 0, boxSizing: 'border-box' }}
             >
               {venueLogoUrl ? (
                 <img src={venueLogoUrl} alt="Logo" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
@@ -1066,16 +1072,9 @@ export default function VenueDashboard({
                   <div style={{ width: '16px', height: '16px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: 'white', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
                 </div>
               )}
-              {/* 10px was two bands below anything this set is drawn for: the
-                  camera's lens is an r=5 circle inside an 18-unit box, which at
-                  10px is a 4px ring with a 1px wall — it rendered as a smudge.
-                  20px badge, 12px glyph. */}
-              <span style={{ position: 'absolute', bottom: -2, right: -2, width: '20px', height: '20px', borderRadius: '10px', backgroundColor: colors.steel, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '2px solid var(--bg-primary)' }}>
-                {Icons.camera('white', 12)}
-              </span>
             </button>
             ) : (
-            <div aria-hidden style={{ width: '48px', height: '48px', borderRadius: '12px', backgroundColor: 'rgba(255,255,255,0.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0 }}>
+            <div aria-hidden style={{ width: '64px', height: '64px', border: '2px solid rgba(255,255,255,0.9)', borderRadius: '50%', backgroundColor: 'rgba(255,255,255,0.2)', boxShadow: '0 2px 8px rgba(0,0,0,0.3)', boxSizing: 'border-box', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0 }}>
               {venueLogoUrl ? (
                 <img src={venueLogoUrl} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
               ) : (

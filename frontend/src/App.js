@@ -18268,6 +18268,27 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // an upload button that can only ever 400.
   const venueLogoPlaceId = venueProfile?.google_place_id || ownerVenuePlaceId || null;
 
+  // The dashboard header's backdrop: one of the linked listing's own photos,
+  // the one that is not already the logo when there is a choice. Details is a
+  // paid Places call, so it is read only once the dashboard is open and once
+  // per place id after that. With no listing, or a read that fails, the
+  // header uses a generated interior for the venue's kind (lib/venueCover.js).
+  const [venueCover, setVenueCover] = useState({ placeId: null, url: null });
+  const venueCoverUrl = venueCover.placeId === venueLogoPlaceId ? venueCover.url : null;
+  const onVenueDashboard = currentScreen === 'venueDashboard';
+  useEffect(() => {
+    if (!onVenueDashboard || !venueLogoPlaceId || venueCover.placeId === venueLogoPlaceId) return undefined;
+    let live = true;
+    getVenueDetails(venueLogoPlaceId)
+      .then((data) => {
+        const photos = data?.venue?.photos || [];
+        if (live) setVenueCover({ placeId: venueLogoPlaceId, url: photos.find((u) => u !== venueLogoUrl) || photos[0] || null });
+      })
+      .catch(() => { if (live) setVenueCover({ placeId: venueLogoPlaceId, url: null }); });
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onVenueDashboard, venueLogoPlaceId]);
+
   const openVenueLogoPicker = async () => {
     if (!venueLogoPlaceId) return;
     setVenueLogoPicker('loading');
@@ -20013,6 +20034,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         venueLogoPicker,
         venueLogoPlaceId,
         venueLogoUploading,
+        venueCoverUrl,
         venueLogoUrl,
         venueMapState,
         venueOnboardingData,

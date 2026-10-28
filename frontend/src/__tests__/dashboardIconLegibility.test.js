@@ -300,17 +300,14 @@ describe('an icon that is the only content of a control has a name', () => {
     expect(around).toMatch(/aria-label=\{venueLogoUrl \?/);
   });
 
-  it('draws its camera badge at a size the glyph survives', () => {
-    // camera's lens is an r=5 circle inside an 18-unit box. At 10px that is a
-    // 4px ring with a 1px wall, i.e. a smudge.
-    // The badge sits at the far end of the control's own subtree, so the
-    // window runs from the click handler to the button's closing tag.
+  it('is the picture itself, with no camera badge on it', () => {
+    // The camera badge came off on 2026-10-27 (the maintainer: it did not look
+    // clean). The round picture is the whole control and its aria-label
+    // (asserted above) carries the meaning, so a badge must not come back.
     const start = APP.indexOf('onClick={() => openVenueLogoPicker()}');
     expect(start).toBeGreaterThan(-1);
     const end = APP.indexOf('</button>', start);
     expect(end).toBeGreaterThan(start);
-    const call = APP.slice(start, end).match(/Icons\.camera\('white',\s*(\d+)\)/);
-    expect(call).not.toBeNull();
-    expect(Number(call[1])).toBeGreaterThanOrEqual(12);
+    expect(APP.slice(start, end)).not.toMatch(/Icons\.camera\(/);
   });
 });
