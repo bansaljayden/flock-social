@@ -86,47 +86,51 @@ test('empty and absent vendor strings come back null rather than as blank copy',
   assert.strictEqual(facts.externalText('​​'), null);
 });
 
-// ── 3. The digit valve means NUMBERS, not ASCII 0-9 ─────────────────────────
+// ── 3. A reading means a NUMBER, in any script ──────────────────────────────
 //
-// The check was /\d/, which without the u flag is ASCII only. A model asked
-// not to write digits has two easy ways out of that, and both of them render
-// to the owner as a number the fact block never contained.
+// The digit valve this section used to pin was /\d/, which without the u flag
+// is ASCII only. Since 2026-10-28 digits are allowed and a reading about the
+// venue has to be one of its facts; the same lesson holds, because a reading
+// written in fullwidth or Arabic-Indic digits is still a reading, and the
+// check folds every script to ASCII before it reads one.
 
 const BLOCK = () => ({
   facts: [{ id: 'peak_day', value: 'Friday', source: 'forecast', asOf: '2026-08-20' }],
 });
 
-test('a numeral in any script rejects the whole output', () => {
+test('a reading the facts do not hold is refused in any script', () => {
   const numerals = {
     ascii: '70',
     fullwidth: '７０',
     arabicIndic: '٣٠',
     devanagari: '७०',
-    vulgarFraction: '½',
     superscript: '²',
   };
   for (const [name, n] of Object.entries(numerals)) {
     const out = phrasing.applyValve(`Your index reads ${n} on {{fact:peak_day}}.`, BLOCK());
-    assert.strictEqual(out, null, `${name} numeral must reject the output`);
+    assert.strictEqual(out, null, `a ${name} reading nobody measured must not render`);
   }
 });
 
-test('a spelled-out magnitude in a rendering sentence rejects the output', () => {
-  for (const word of ['seventy', 'eighty', 'a hundred', 'half', 'twice', 'a dozen']) {
-    const out = phrasing.applyValve(`Your index runs about ${word} on {{fact:peak_day}}.`, BLOCK());
-    assert.strictEqual(out, null, `"${word}" is a fabricated quantity and must reject`);
+test('number words in ordinary prose render: the check reads readings, not vocabulary', () => {
+  for (const draft of [
+    'Run it for two weeks on {{fact:peak_day}} and look again.',
+    'Half the room on {{fact:peak_day}} is regulars, so greet them by name.',
+    'A dozen covers on {{fact:peak_day}} is worth a second server for an hour.',
+  ]) {
+    const out = phrasing.applyValve(draft, BLOCK());
+    assert.ok(out, `"${draft}"`);
+    assert.match(out.text, /Friday/);
   }
 });
 
-test('a number word in a sentence that was never going to render is not held against the answer', () => {
-  // The sentence cites nothing, so it is dropped before the owner sees it.
-  // Judging the whole draft on it would reject correct answers for prose.
+test('a sentence that says what the facts mean renders beside the one that cites them', () => {
   const out = phrasing.applyValve(
     'Your busiest day looks like {{fact:peak_day}}. Worth a look: these two line up.',
     BLOCK()
   );
-  assert.ok(out, 'the citing sentence still renders');
-  assert.strictEqual(out.text, 'Your busiest day looks like Friday.');
+  assert.ok(out);
+  assert.strictEqual(out.text, 'Your busiest day looks like Friday. Worth a look: these two line up.');
 });
 
 test('a venue whose own name contains a number word does not reject its own answer', () => {
@@ -137,12 +141,18 @@ test('a venue whose own name contains a number word does not reject its own answ
   assert.strictEqual(out.text, 'Your listing reads Seven Bar.');
 });
 
-test('every dash length is refused, not just the em dash', () => {
+test('every dash length is mended before the owner reads it, not just the em dash', () => {
+  // DESIGN-STANDARD rule 1 holds on what is rendered. A dash used to cost the whole
+  // answer; it is punctuation, so it is mended instead, and a range between
+  // two numbers reads "to".
   for (const cp of [0x2012, 0x2013, 0x2014, 0x2015]) {
     const d = String.fromCodePoint(cp);
     const out = phrasing.applyValve(`Your busiest day is {{fact:peak_day}} ${d} a good one.`, BLOCK());
-    assert.strictEqual(out, null, `U+${cp.toString(16)} must be refused (DESIGN-STANDARD rule 1)`);
+    assert.ok(out, `U+${cp.toString(16)}`);
+    assert.strictEqual(out.text, 'Your busiest day is Friday, a good one.');
   }
+  const range = phrasing.applyValve('Hold {{fact:peak_day}} for 2–3 weeks.', BLOCK());
+  assert.strictEqual(range.text, 'Hold Friday for 2 to 3 weeks.');
 });
 
 test('clean output still passes, or none of the above would be a guard', () => {

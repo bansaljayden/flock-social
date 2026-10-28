@@ -810,7 +810,12 @@ router.post('/ask', authenticate, requirePro, [
     }
 
     const block = await buildFactBlock(req.user.id, intentId);
-    const answer = await advisorPhrasing.phrase(block, { venueUserId: req.user.id });
+    // The chip's own words ride with the facts, so the answer can lead with
+    // the thing the chip asks. They are ours, never the owner's.
+    const answer = await advisorPhrasing.phrase(block, {
+      venueUserId: req.user.id,
+      question: advisorPhrasing.ADVISOR_INTENTS[intentId].chip,
+    });
 
     return res.json({
       intentId,
@@ -837,7 +842,9 @@ router.post('/ask', authenticate, requirePro, [
 // always knows which one they are reading:
 //   mode 'phrased' | 'template' | 'refusal'  a grounded answer, exactly what
 //                                            the matching chip would have said
-//   mode 'advice'                            general trade knowledge, marked
+//   mode 'advice'                            trade knowledge plus the venue's
+//                                            own facts; its sources carry
+//                                            trade_practice
 //   mode 'refusal'                           declined, with the reason
 //   mode 'small_talk'                        a greeting, thanks or sign-off
 //                                            answered in kind, no data read
@@ -964,7 +971,10 @@ router.post('/question', authenticate, requirePro, async (req, res) => {
     // never a second way to answer.
     if (route.mode === 'grounded') {
       const block = await buildFactBlock(userId, route.intentId);
-      const answer = await advisorPhrasing.phrase(block, { venueUserId: userId });
+      // The owner's own words go with the facts (sanitised above, and fenced
+      // inside the payload), so "was Friday any good" routed to the week
+      // recap is answered about Friday.
+      const answer = await advisorPhrasing.phrase(block, { venueUserId: userId, question: clean.text });
       return res.json({
         mode: answer.mode,
         intentId: route.intentId,
@@ -974,8 +984,8 @@ router.post('/question', authenticate, requirePro, async (req, res) => {
       });
     }
 
-    // ADVICE: general knowledge, labeled, with the digit valve still closed
-    // around anything about this venue. The router may attach an intent when
+    // ADVICE: trade knowledge, with any number it claims about this venue
+    // checked against the venue's facts. The router may attach an intent when
     // the venue's own numbers would inform the answer; those facts ride along
     // as placeholders, and a refusal in the block is simply dropped, because
     // advice does not need the venue's data to be answerable. `ctx` is the one

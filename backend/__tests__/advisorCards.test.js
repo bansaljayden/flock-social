@@ -388,9 +388,13 @@ test('a peak a serving switch made from the venue\'s pattern says so, on the fac
       assert.strictEqual(f.note, "Made from your venue's usual weekly pattern and its recent live readings. The crowd model did not make this number.");
       assert.doesNotMatch(f.note, /—/);
     }
-    const rendered = advisorPhrasing.renderTemplate({ facts: advisorPhrasing.flattenFacts(peaks) }).text;
-    assert.match(rendered, /estimate from your venue's usual pattern and live readings/i);
-    assert.doesNotMatch(rendered, /model estimate/i, 'the model did not run');
+    // The twin prints no chip per line since 2026-10-28; the sources ride
+    // beside the answer and the client names them once at the end, from
+    // numberSource (VenueAdvisorChat answerSourceLabel).
+    const rendered = advisorPhrasing.renderTemplate({ facts: advisorPhrasing.flattenFacts(peaks) });
+    assert.ok(rendered.sources.length > 0);
+    assert.ok(rendered.sources.every((s) => s.numberSource === 'venue_pattern_live'));
+    assert.doesNotMatch(rendered.text, /model estimate/i, 'the model did not run');
   } finally {
     mlPredictor.predictBusyness = realPredict;
   }
@@ -405,9 +409,9 @@ test('a carried live reading and the pattern alone are each named; a model numbe
     model: { dataSourcesUsed: ['ml_model', 'recent_live_readings'], serveMode: 'model', nowcast: { lagHours: 1, weight: 0.5 }, offsetChangedBySwitch: false },
   };
   const expected = {
-    reading: { source: 'live_reading_2h', note: /live reading from 2 hours earlier, carried forward\. The crowd model did not make this number\./, chip: /your live reading, carried forward/i },
-    pattern: { source: 'venue_pattern', note: /^Made from your venue's usual weekly pattern\. The crowd model did not make this number\.$/, chip: /estimate from your venue's usual pattern\b(?! and)/i },
-    model: { source: 'model_live', note: null, chip: /model estimate/i },
+    reading: { source: 'live_reading_2h', note: /live reading from 2 hours earlier, carried forward\. The crowd model did not make this number\./ },
+    pattern: { source: 'venue_pattern', note: /^Made from your venue's usual weekly pattern\. The crowd model did not make this number\.$/ },
+    model: { source: 'model_live', note: null },
   };
   try {
     for (const [name, shape] of Object.entries(shapes)) {
@@ -423,8 +427,10 @@ test('a carried live reading and the pattern alone are each named; a model numbe
         if (expected[name].note) assert.match(f.note, expected[name].note, name);
         else assert.ok(!('note' in f), `${name}: the model made it, so there is nothing to correct`);
       }
-      const rendered = advisorPhrasing.renderTemplate({ facts: advisorPhrasing.flattenFacts(peaks) }).text;
-      assert.match(rendered, expected[name].chip, name);
+      // What made each number rides on the answer's sources, for the
+      // client's one sources line.
+      const rendered = advisorPhrasing.renderTemplate({ facts: advisorPhrasing.flattenFacts(peaks) });
+      assert.ok(rendered.sources.every((s) => s.numberSource === expected[name].source), name);
     }
   } finally {
     mlPredictor.predictBusyness = realPredict;
@@ -439,7 +445,9 @@ test('with both switches off a peak fact gains no key, and the template keeps it
   for (const f of peaks) {
     assert.deepStrictEqual(Object.keys(f).sort(), ['asOf', 'gate', 'id', 'label', 'predictionMethod', 'source', 'unit', 'value']);
   }
-  assert.match(advisorPhrasing.renderTemplate({ facts: advisorPhrasing.flattenFacts(peaks) }).text, /model estimate/i);
+  const rendered = advisorPhrasing.renderTemplate({ facts: advisorPhrasing.flattenFacts(peaks) });
+  assert.ok(rendered.sources.every((s) => s.source === 'model_holdout' && !('numberSource' in s)),
+    'a model-made peak is sourced to the model, with no served arithmetic beside it');
 });
 
 // ── 2a'. The answer's sources list carries the served arithmetic ────────────

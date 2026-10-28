@@ -1,28 +1,23 @@
 // ---------------------------------------------------------------------------
-// The two valve boundaries an independent review walked through on 2026-08-20,
-// pinned in both directions.
+// The valve boundaries, pinned in both directions.
 //
-//   1. THE DIGIT VALVE MEANT "no \p{Nd}, no \p{No}, and a list of English
-//      magnitude words". Three other ways of writing a number went straight
-//      through it and rendered to the venue owner as a measurement: Unicode's
-//      Nl block (Roman numerals as single code points), Han numerals (which
-//      Unicode files as LETTERS, so no numeric property can ever catch them),
-//      and the words the English list left out.
+// REWRITTEN 2026-10-28 with the answer check (services/advisorAnswer.js).
+// Until then this file pinned a DIGIT valve: no \p{Nd}, no \p{No}, no \p{Nl},
+// no Han numerals, no English magnitude words, and one of any of them threw
+// the whole answer away. Roost now writes numbers, so the boundary moved to
+// where the harm actually is: a number CLAIMED ABOUT THE VENUE that its facts
+// do not hold. That claim loses its own sentence, in any script it is
+// written in, and the rest of the answer stands.
 //
-//   2. THE ADVICE VALVE CHECKED EVERYTHING EXCEPT THE REFUSAL BOUNDARY. It
-//      caught invented benchmarks, false measurement, upselling and prompt
-//      leakage, and had nothing at all to say about employment law, health,
-//      privacy or dishonest reporting, so an answer that instructed a venue
-//      owner to demand unpaid work was returned as operating advice.
+//   1. A claim about the venue that nothing supports never reaches the owner.
+//   2. The numbers an owner actually needs do: prices, rules of thumb, trial
+//      lengths, the owner's own figures, and arithmetic shown in the sentence.
+//   3. One bad sentence costs its own line, not the answer.
 //
-// Every accepted string below is quoted from the review. Every rejected one is
-// a case it confirmed the shipped valve already caught, which is the half that
-// has to keep working: a valve that refuses everything is not a valve.
-//
-// The third block is the one that decides whether this is a product. The valve
-// is positional on the ambiguous words on purpose, because "one of your busiest
-// nights" and "your first hour after opening" are ordinary English that this
-// surface writes constantly, and a guard that refuses them refuses the answer.
+// What did not move is pinned below unchanged: a number fused across a
+// placeholder, a vendor's string carrying a figure, and the refusal boundary
+// for employment, law, health, privacy and dishonest reporting, which still
+// voids the whole answer on the way out.
 // ---------------------------------------------------------------------------
 
 const test = require('node:test');
@@ -38,281 +33,153 @@ const ADVICE_FACTS = () => ([
   { id: 'peak_hour', value: 21, unit: 'hour', source: 'model_holdout', asOf: '2026-08-19' },
 ]);
 
-// ── 1. The numbers that were accepted and rendered ──────────────────────────
+// ── 1. A claim about the venue that nothing supports ───────────────────────
 
-test('every ungrounded number form the review got through the grounded valve is refused', () => {
-  const accepted = {
-    'a bare English cardinal': 'Your index is one percent on {{fact:peak_day}}.',
-    'a Unicode Roman numeral': 'Use Ⅻ percent as the target on {{fact:peak_day}}.',
-    'a Han numeral': 'Use 七十 percent as the target on {{fact:peak_day}}.',
-    'an ASCII Roman range': 'Test packages I-V on {{fact:peak_day}}.',
-    zero: 'Your index is zero percent on {{fact:peak_day}}.',
-    'a spelled fraction': 'Take a third off on {{fact:peak_day}}.',
-  };
-  for (const [name, draft] of Object.entries(accepted)) {
-    assert.strictEqual(phrasing.applyValve(draft, BLOCK()), null, `${name} must void the answer`);
-  }
-});
-
-test('the same forms are refused in advice mode, where no placeholder is required at all', () => {
-  const accepted = [
-    'Your index is one percent.',
-    'Use Ⅻ percent as the target.',
-    'Use 七十 percent as the target.',
-    'Test packages I-V.',
-    'Run it at zero percent for the first week.',
-    'Take a third off the wine list.',
-    'Charge $ more at the door.',
-    // "Aim for one hour before close." used to sit here and now sits in the
-    // allowed list below. It was refused because MEASURE_UNIT holds every
-    // countable noun this product writes about, which also refused "give it one
-    // week and look again" and "pick one night a week and test it". A trial
-    // length is the advice, not a claim about the room, and there is no rule
-    // that can tell "one hour" from "one week" while refusing one and keeping
-    // the other. What still cannot be written is a SIZE: "one percent", "one
-    // dollar", and any bare cardinal that ends the clause after a reading verb.
-  ];
-  for (const draft of accepted) {
-    assert.strictEqual(freeText.applyAdviceValve(draft, ADVICE_FACTS()), null, `"${draft}" must be discarded`);
-  }
-});
-
-test('a number word from another language is refused when a unit follows it', () => {
-  for (const draft of ['Use cinco percent as the target.', 'Hold zehn tables back.', 'Try dix minutes earlier.']) {
-    assert.strictEqual(freeText.applyAdviceValve(draft, []), null, `"${draft}"`);
-  }
-});
-
-// ── 2. The forms the shipped valve already caught, which must stay caught ───
-
-test('fullwidth, Arabic-Indic, superscript and vulgar-fraction numerals still void the answer', () => {
+test('a reading the facts do not hold is refused, in whatever digits it is written', () => {
   const numerals = {
     ascii: '70',
     fullwidth: '７０',
-    arabicIndic: '٣٠',
+    arabicIndic: '٧٠',
     devanagari: '७०',
-    vulgarFraction: '½',
-    superscript: '²',
   };
   for (const [name, n] of Object.entries(numerals)) {
     assert.strictEqual(
       phrasing.applyValve(`Your index reads ${n} on {{fact:peak_day}}.`, BLOCK()),
       null,
-      `${name} numeral must reject the output`,
+      `a ${name} 70 the block never held must not render`,
     );
   }
 });
 
-test('the English magnitude words are still refused on sight', () => {
-  for (const word of ['seventy', 'eighty', 'a hundred', 'half', 'twice', 'a dozen', 'triple']) {
-    assert.strictEqual(
-      phrasing.applyValve(`Your index runs about ${word} on {{fact:peak_day}}.`, BLOCK()),
-      null,
-      `"${word}"`,
-    );
-  }
-});
-
-test('a numeric placeholder id, an alias collision and the template twin still fail closed', () => {
-  // Nothing here changed, and nothing here may change: an id the block does not
-  // carry voids the whole answer rather than rendering the braces.
-  assert.strictEqual(phrasing.applyValve('Your peak is {{fact:made_up}}.', BLOCK()), null);
-  assert.strictEqual(phrasing.applyValve('Your peak is {{fact:peak_day}} {{fact:peak_2}}.', BLOCK()), null);
-  assert.strictEqual(freeText.applyAdviceValve('Your peak is {{fact:made_up}}.', ADVICE_FACTS()), null);
-});
-
-// ── 3. The prose the valve must NOT refuse ─────────────────────────────────
-//
-// The reasoning, once, because it is the whole design of the widened check.
-// "one" is a quantity in "one percent" and a pronoun in "one of your busiest
-// nights". "I" is a Roman numeral and the most common word in English. "MC" is
-// a valid Roman numeral and a job in a bar. "first" is a position, not a size,
-// and "your first hour after opening" claims no magnitude at all. So the
-// ambiguous tokens are refused by POSITION: a unit of measure after them, or a
-// magnitude verb in front of them. Everything else is prose.
-
-test('ordinary English that happens to contain a number word still renders', () => {
-  const fine = [
-    ['{{fact:peak_day}} is one of your busiest nights.', 'Friday is one of your busiest nights.'],
-    ['One more thing to try on {{fact:peak_day}}.', 'One more thing to try on Friday.'],
-    ['No one comes in early on {{fact:peak_day}}.', 'No one comes in early on Friday.'],
-    ['Your first hour after opening on {{fact:peak_day}} is worth defending.', 'Your first hour after opening on Friday is worth defending.'],
-    ['A third option is to move it to {{fact:peak_day}}.', 'A third option is to move it to Friday.'],
-    ['Bring in an MC on {{fact:peak_day}}.', 'Bring in an MC on Friday.'],
-    ['Double check the rota before {{fact:peak_day}}.', 'Double check the rota before Friday.'],
-    ['It is one thing worth trying on {{fact:peak_day}}.', 'It is one thing worth trying on Friday.'],
+test('the claim shapes a model reaches for are all read as claims', () => {
+  const claims = [
+    'You had 140 covers last Friday.',
+    'Your Tuesdays ran 40% under your Fridays last month.',
+    'Yesterday came in 18% under your usual Tuesday.',
+    'Down 18% on your usual Tuesday.',
+    'Expect around 45 people tonight.',
+    'Your tables turn in about 75 minutes.',
+    'Your kitchen closes at 7 PM.',
+    'We estimate 85 on Saturday.',
+    'Friday: 92 on the index.',
   ];
-  for (const [draft, rendered] of fine) {
-    const out = phrasing.applyValve(draft, BLOCK());
-    assert.ok(out, `"${draft}" is prose, not a fabricated quantity`);
-    assert.strictEqual(out.text, rendered);
+  for (const draft of claims) {
+    assert.strictEqual(freeText.applyAdviceValve(draft, ADVICE_FACTS()), null, `"${draft}" is a number about the venue nobody measured`);
   }
 });
 
-test('general operating advice with no quantity in it still passes the advice valve', () => {
+test('a claim the facts DO hold renders, written as a placeholder or as digits', () => {
+  const block = {
+    facts: [
+      { id: 'peak_day', value: 'Friday', source: 'forecast', asOf: '2026-08-20' },
+      { id: 'peak_score', value: 85, source: 'model_holdout', asOf: '2026-08-20' },
+      { id: 'peak_hour', value: 21, unit: 'hour', source: 'model_holdout', asOf: '2026-08-20' },
+    ],
+  };
+  const placeholder = phrasing.applyValve('Your index reads {{fact:peak_score}} on {{fact:peak_day}}.', block);
+  assert.strictEqual(placeholder.text, 'Your index reads 85 on Friday.');
+  const digits = phrasing.applyValve('Your index reads 85 on {{fact:peak_day}}, peaking at 9 PM.', block);
+  assert.ok(digits, 'a fact copied out as digits is still the fact');
+  assert.deepStrictEqual(digits.sources.map((s) => s.id).sort(), ['peak_day', 'peak_hour', 'peak_score'],
+    'and the facts it came from are still the answer\'s sources');
+});
+
+// ── 2. The numbers an owner needs ──────────────────────────────────────────
+
+test('prices, rules of thumb, trial lengths and the owner\'s own figures all reach the owner', () => {
   const fine = [
-    'Many rooms find a recurring midweek night holds better than a discount. It costs you the effort of running it every week.',
-    'Pick a night and defend it. A room that runs the same thing every week gets remembered, and that is what you are buying.',
-    'Put your strongest server on the door when the cinema empties. The cost is that your section coverage thins for an hour.',
-    'Ask your regulars what they want on a Tuesday. They will tell you, and it costs you nothing but the asking.',
-    'Greet your regulars by name when they come in.',
+    'Charge $12 for the lunch special and keep it on the board for 6 weeks.',
+    'Most full service rooms keep food cost near 30% of the menu price.',
+    'Price a new dish at about 3 times what its ingredients cost you.',
+    'Your best move is a $5 add-on at the counter.',
+    'Give it 4 weeks before you judge it.',
+    'Aim for 2 turns on a Friday at your size.',
+    'Run a dollar oyster night on your quietest day.',
+    'Pick one night a week and test it.',
+    'Bring in an MC on the quiz night.',
   ];
   for (const draft of fine) {
-    assert.ok(freeText.applyAdviceValve(draft, ADVICE_FACTS()), `"${draft.slice(0, 40)}" must survive`);
+    const out = freeText.applyAdviceValve(draft, ADVICE_FACTS());
+    assert.ok(out, `"${draft}" is advice with a number in it, which is the point`);
+    assert.strictEqual(out.text, draft);
   }
-  const cited = freeText.applyAdviceValve(
-    'Our estimate puts your busiest stretch around {{fact:peak_hour}}, so that is the slot to defend.',
-    ADVICE_FACTS(),
+});
+
+test('arithmetic shown in its own sentence passes, and the same figure with nothing under it does not', () => {
+  const facts = [
+    { id: 'intake_typical_spend_per_person', value: 35, unit: 'usd', source: 'intake', asOf: 'owner-set 2026-10-01' },
+    { id: 'quiet_day', value: 'Tuesday', source: 'model_holdout', asOf: '2026-10-27' },
+    { id: 'peak_hour', value: 21, unit: 'hour', source: 'model_holdout', asOf: '2026-10-27' },
+  ];
+  const shown = freeText.applyAdviceValve(
+    'At {{fact:intake_typical_spend_per_person}} a head, 20 more covers on {{fact:quiet_day}} is $700 a week.',
+    facts,
   );
-  assert.ok(cited);
-  assert.match(cited.text, /9 PM/);
-});
-
-// ── 3b. The 2026-08-20 false-positive corpus ───────────────────────────────
-//
-// Every string below was written by a reviewer as ordinary advisor prose and
-// refused by the shipped valve. Thirty realistic answers were run through the
-// real function and twenty-four came back refused, which in advice mode is not
-// a lost wording: applyAdviceValve tests the WHOLE text, there is no template
-// twin behind it, and one word discards all eight sentences. A valve that
-// refuses four answers in five has broken the product as thoroughly as one that
-// lets a number through.
-//
-// They are pinned here as strings rather than as rules because the rules will
-// be tuned again and these sentences are the contract: this is what a model
-// writes when it is answering a venue owner honestly.
-
-test('the advisor prose the widened valve refused still reaches the owner', () => {
-  const prose = [
-    // SOFT_CARDINAL: a trial length is not a measurement of the room.
-    ['Pick one night a week and test it.', 'a cardinal counting a countable noun'],
-    ['Add at least one host to the door.', 'a hedge in front of a counted noun'],
-    ['Your slowest night is one you can change.', '"is one" opening a relative clause'],
-    ['Give it one week and look again.', 'a trial length'],
-    ['Aim for one hour before close.', 'a time to aim at, not a span we measured'],
-    ['One more thing worth trying is a soft close on the kitchen.', 'a pronoun opening a sentence'],
-    // ROMAN_QUANTITY: "I" is the most common word in English.
-    ['The part I would change is the door time.', 'a noun and "I" as a relative subject'],
-    ['The steps I would take are simple.', 'the same shape with a different noun'],
-    ['Bring in an MC and I will look at the door numbers.', 'the range branch reading "MC and I"'],
-    ['Sizes L to M sell out first.', 'the range branch reading "L to M"'],
-    // SOFT_FRACTION: an ordinal after "the" is a date.
-    ['The fourth of July falls on your peak day.', 'a public holiday'],
-    ['Your event lands on the seventh.', 'a day of the month'],
-    // NUMBER_WORDS: a noun that names a kind of thing, not a size.
-    ['Run a dollar oyster night.', 'a currency word with no figure on it'],
-    ['Ask a server to work a double on Friday.', 'a shift, not arithmetic'],
-    ['Your busiest quarter ends in December.', 'a fiscal quarter'],
-    // PROHIBITED_ADVICE: the meaning, not the token.
-    ['Thursday is liable to run quiet after the first hour.', '"liable" meaning likely to'],
-    ['Fire your first seating a little earlier.', 'firing a service, not a person'],
-    ['Do not chase specific customers; look at the pattern.', 'advice AGAINST the thing it names'],
-    // UNANCHORED_MAGNITUDE: refusing to quote a figure is not quoting one.
-    ['We do not put a percentage on that.', 'the product boundary said out loud'],
-  ];
-  for (const [draft, why] of prose) {
-    assert.ok(freeText.applyAdviceValve(draft, ADVICE_FACTS()), `"${draft}" is ${why}`);
-  }
-});
-
-test('the same prose renders in grounded mode when it cites a fact', () => {
-  const drafts = [
-    'Pick one night a week and test it against {{fact:peak_day}}.',
-    'The part I would change is the door time on {{fact:peak_day}}.',
-    'The steps I would take start with {{fact:peak_day}}.',
-    'The fourth of July falls on {{fact:peak_day}} this year.',
-    'Your event lands on the seventh, which is a {{fact:peak_day}}.',
-    'Ask a server to work a double on {{fact:peak_day}}.',
-    'Your busiest quarter ends in December, and {{fact:peak_day}} carries it.',
-    'Add at least one host to the door on {{fact:peak_day}}.',
-    'Run a dollar oyster night on {{fact:peak_day}}.',
-    '{{fact:peak_day}} is liable to run quiet after the first hour.',
-  ];
-  for (const d of drafts) {
-    const out = phrasing.applyValve(d, BLOCK());
-    assert.ok(out, `"${d}" is prose, not a fabricated quantity`);
-    assert.match(out.text, /Friday/);
-  }
-});
-
-test('the cardinal, the fraction and the Roman numeral are still refused where they are a quantity', () => {
-  const refused = [
-    'Your index is one percent.',
-    'Your index is one.',
-    'Run it at zero percent for the first week.',
-    'Take a third off the wine list.',
-    'A quarter off the wine list is a big move.',
-    'Test packages I-V.',
-    'Try phases I to III before you commit.',
-    'Your takings doubled after the change.',
-    'Your covers tripled on the night.',
-    'Your covers halved after the change.',
-  ];
-  for (const d of refused) {
-    assert.strictEqual(freeText.applyAdviceValve(d, ADVICE_FACTS()), null, `"${d}" names a size`);
-  }
-});
-
-// ── 3c. The numbers that were still getting through ────────────────────────
-//
-// \p{Nl} closed the single-codepoint Roman numerals, which is not what a model
-// writes. ASCII Roman was wide open unless a unit or a range followed it, so
-// nothing at all gated a numeral sitting in the slot where a reading goes.
-// Every string below RENDERED to an owner through the real functions on
-// 2026-08-20.
-
-test('a Roman numeral in a reading position is a reading, in both modes', () => {
-  const modeA = [
-    'Your index reads XL on {{fact:peak_day}}.',
-    'The street sits at MC and your room sits under it on {{fact:peak_day}}.',
-    'Your reading came in at LX on {{fact:peak_day}}.',
-  ];
-  for (const d of modeA) assert.strictEqual(phrasing.applyValve(d, BLOCK()), null, `"${d}"`);
-  const modeB = [
-    'Your index reads XL on Friday.',
-    'The street sits at MC and your room sits under it on Friday.',
-    'Your reading came in at LX on Friday.',
-    'Aim to lift your midweek reading to about XL and hold it there.',
-    'Most rooms in your category run near LX on a quiet Tuesday.',
-  ];
-  for (const d of modeB) assert.strictEqual(freeText.applyAdviceValve(d, ADVICE_FACTS()), null, `"${d}"`);
-});
-
-test('the financial Han numerals, the Korean sino numerals and the big English magnitudes are refused', () => {
-  const refused = [
-    'Your covers ran to 柒拾 last week, so the room has room.',
-    'Your covers ran to 壹佰 last week.',
-    'Your covers ran to 칠십 last week.',
-    'A billion walk-ins is not the issue on Friday.',
-    'A trillion walk-ins is not the issue.',
-    'A fivefold lift is not realistic.',
-    'Your takings quadrupled after the change.',
-  ];
-  for (const d of refused) assert.strictEqual(freeText.applyAdviceValve(d, ADVICE_FACTS()), null, `"${d}"`);
-});
-
-test('a cardinal in a reading slot is refused whatever verb put it there', () => {
-  // A lead list can only hold the verbs somebody thought of. "equals" was not
-  // on it and "sits AT one" put a preposition between the lead and the
-  // cardinal, so both of these rendered a fabricated score beside a real fact.
+  assert.ok(shown);
+  assert.strictEqual(shown.text, 'At $35 a head, 20 more covers on Tuesday is $700 a week.');
+  // The owner's own numbers are theirs to have worked with.
+  const theirs = freeText.applyAdviceValve('Your 60 seats at 2 turns is 120 covers a night.', [], { texts: ['we have 60 seats, how many covers can we do'] });
+  assert.ok(theirs, 'the owner said 60; 60 times 2 is shown in the sentence');
+  // Two numbers the model made up cannot vouch for a third.
+  assert.strictEqual(freeText.applyAdviceValve('You had 140 covers, 7 times your 20 on Monday.', facts), null);
+  // And a percentage cannot come out of dollars set against an hour, though
+  // (35 - 21) / 35 is exactly 40%.
   assert.strictEqual(
-    phrasing.applyValve('The confidence score equals one on {{fact:peak_day}}.', BLOCK()), null,
+    freeText.applyAdviceValve('Your peak at {{fact:peak_hour}} runs 40% under your {{fact:intake_typical_spend_per_person}} check.', facts),
+    null,
   );
-  assert.strictEqual(freeText.applyAdviceValve('The score sits at one.', ADVICE_FACTS()), null);
-  assert.strictEqual(freeText.applyAdviceValve('Your index came out at one.', ADVICE_FACTS()), null);
-  // And the same measurement noun in front of a pronoun changes nothing.
-  const fine = phrasing.applyValve('Your rating is one of the things {{fact:peak_day}} depends on.', BLOCK());
-  assert.ok(fine, 'a measurement noun does not make every later "one" a quantity');
-  assert.ok(freeText.applyAdviceValve('A recurring night is one worth defending.', ADVICE_FACTS()));
 });
 
-test('the big magnitudes are refused as words as well as as digits', () => {
-  assert.strictEqual(
-    phrasing.applyValve('Your projected reach is a billion on {{fact:peak_day}}.', BLOCK()), null,
-  );
-  assert.strictEqual(
-    phrasing.applyValve('Your projected reach is a trillion on {{fact:peak_day}}.', BLOCK()), null,
-  );
+// ── 3. One bad sentence costs its own line ─────────────────────────────────
+
+test('a made-up point is dropped and the rest of the answer stands', () => {
+  const out = freeText.applyAdviceValve(JSON.stringify({
+    answer: 'Skip the discount and run one recurring night instead.',
+    points: [
+      'Your Tuesdays ran 40% under your Fridays last month.',
+      'A quiz or a supper club brings new people; a discount moves your regulars.',
+      'Run it for 6 weeks before you judge it.',
+    ],
+  }), ADVICE_FACTS());
+  assert.ok(out);
+  assert.strictEqual(out.text, [
+    'Skip the discount and run one recurring night instead.',
+    '• A quiz or a supper club brings new people; a discount moves your regulars.',
+    '• Run it for 6 weeks before you judge it.',
+  ].join('\n'));
+});
+
+test('when the answer line itself fails in advice, the first good point stands in for it', () => {
+  const out = freeText.applyAdviceValve(JSON.stringify({
+    answer: 'You had 140 covers last Friday.',
+    points: ['Staff the Friday rush from an hour before the peak.'],
+  }), ADVICE_FACTS());
+  assert.ok(out);
+  assert.strictEqual(out.text, 'Staff the Friday rush from an hour before the peak.');
+});
+
+test('a study nobody can find loses its sentence, a rule of thumb keeps its', () => {
+  const out = freeText.applyAdviceValve(JSON.stringify({
+    answer: 'A recurring night beats a discount on a quiet day.',
+    points: [
+      'A recent study found discounts lift traffic 23%.',
+      'Most rooms find a fixed weekly night builds a crowd within a couple of months.',
+    ],
+  }), ADVICE_FACTS());
+  assert.ok(out);
+  assert.doesNotMatch(out.text, /study/);
+  assert.match(out.text, /Most rooms find/);
+});
+
+test('an answer that is too long is cut to the answer and four points, never served as a wall', () => {
+  const out = freeText.applyAdviceValve(JSON.stringify({
+    answer: 'Run a recurring night.',
+    points: ['One.', 'Two.', 'Three.', 'Four.', 'Five.', 'Six.'].map((w) => `Point ${w}`),
+  }), []);
+  assert.strictEqual(out.text.split('\n').length, 5);
+  // A plain reply that is a wall of text is still discarded.
+  const wall = Array.from({ length: 10 }, (_, i) => `Sentence ${i} about the room.`).join(' ');
+  assert.strictEqual(freeText.applyAdviceValve(wall, []), null);
 });
 
 // ── 3d. A number assembled across a placeholder boundary ───────────────────
@@ -380,17 +247,6 @@ test('a venue whose own name is a number word does not reject its own answer', (
   const out = phrasing.applyValve('Your listing reads {{fact:venue}}.', block);
   assert.ok(out, 'a fact value is data, not the model writing a number');
   assert.strictEqual(out.text, 'Your listing reads Seven Bar.');
-});
-
-// ── 4. A percentage or a price with nothing under it ────────────────────────
-
-test('advice may not name a percentage or a price in a sentence that cites no fact', () => {
-  assert.strictEqual(freeText.applyAdviceValve('You could raise prices by a percentage and see what happens.', []), null);
-  assert.strictEqual(freeText.applyAdviceValve('Work out the percentile your room sits in.', []), null);
-  assert.ok(
-    freeText.applyAdviceValve('Raise the door price on your quiet nights and watch what happens to the room.', []),
-    'a price CHANGE with no figure on it is still advice, and is still allowed',
-  );
 });
 
 // ── 5. The refusal boundary, restored on the way out ────────────────────────

@@ -10,9 +10,11 @@
 // (the Pro Tips box deleted 2026-08-14):
 //
 //   1. The model writes {{fact:id}} placeholders; the server substitutes real
-//      values AFTER generation. Any bare digit in raw model output rejects
-//      the whole response to the deterministic template twin. So do em
-//      dashes, causal verbs, unknown fact ids, and sentences citing nothing.
+//      values AFTER generation. Since 2026-10-28 it may also write digits of
+//      its own, and a number it claims ABOUT the venue that the facts do not
+//      support loses its sentence; when that was the answer itself, the
+//      deterministic template twin serves. An unknown fact id, a fused
+//      number, and an answer that never uses the data void it whole.
 //   2. ADVISOR_PHRASING_ENABLED=false: the template twin serves and the
 //      model is never constructed, so the surface works with zero LLM calls.
 //   3. Chips only: /ask accepts an intentId from the closed registry and
@@ -181,14 +183,41 @@ function resetAll({ flag } = {}) {
 
 // ── 1. The valve ────────────────────────────────────────────────────────────
 
-test('a bare digit anywhere in raw model output rejects the whole response to the template twin', async () => {
+test('a number claimed about the venue that its facts do not hold never reaches the owner', async () => {
   resetAll({ flag: true });
   allowGlobalSpend();
   nextModelReply = 'Expect around 45 people at {{fact:peak_hour}} tonight.';
   const out = await advisorPhrasing.phrase(PEAK_BLOCK(), { venueUserId: 7 });
+  // It was the whole answer, so the twin serves, carrying the true numbers.
   assert.strictEqual(out.mode, 'template');
   assert.ok(!out.text.includes('45'), 'the fabricated number must never reach the owner');
   assert.strictEqual(modelCalls.length, 1, 'rejection must not regenerate: a ceiling that retries itself is not a ceiling');
+});
+
+test('the answer comes back in its shape: the short answer, then a point per line, with only the bad point gone', async () => {
+  resetAll({ flag: true });
+  allowGlobalSpend();
+  nextModelReply = JSON.stringify({
+    answer: 'Your busiest stretch tonight is around {{fact:peak_hour}}.',
+    points: [
+      'You told us the kitchen takes its last order at {{fact:kitchen_last_order}}, the same hour.',
+      'You had 140 covers at that hour last week.',
+      'Keep two dishes live for 30 minutes past last orders and you keep the late tables.',
+    ],
+  });
+  const out = await advisorPhrasing.phrase(PEAK_BLOCK(), { venueUserId: 7, question: 'When do we peak this week?' });
+  assert.strictEqual(out.mode, 'phrased');
+  const lines = out.text.split('\n');
+  assert.strictEqual(lines[0], 'Your busiest stretch tonight is around 9 PM.');
+  assert.deepStrictEqual(lines.slice(1), [
+    '• You told us the kitchen takes its last order at 9 PM, the same hour.',
+    '• Keep two dishes live for 30 minutes past last orders and you keep the late tables.',
+  ], 'the 140 covers nothing supports is dropped, and the suggestion with its own numbers stays');
+  assert.deepStrictEqual(out.sources.map((s) => s.id).sort(), ['kitchen_last_order', 'peak_hour']);
+  // The question rides with the facts, fenced.
+  const payload = modelCalls[0].contents[0].parts[0].text;
+  assert.match(payload, /<<<OWNER_QUESTION [0-9a-f]{16}>>>\nWhen do we peak this week\?\n<<<END_OWNER_QUESTION [0-9a-f]{16}>>>/);
+  assert.strictEqual(modelCalls[0].config.responseMimeType, 'application/json');
 });
 
 test('clean placeholder output is substituted server-side and returned as phrased', async () => {
@@ -201,12 +230,32 @@ test('clean placeholder output is substituted server-side and returned as phrase
   // '21:00' is a database value. The substitution renders a clock string the
   // way every other surface renders an hour, so the phrased sentence and the
   // card above it describe one kitchen in one vocabulary.
-  assert.ok(out.text.includes('9 PM'), 'intake clock value substituted as a clock, not as a column');
   assert.ok(!out.text.includes('21:00'), 'and the raw 24-hour string never reaches the owner');
   assert.ok(!out.text.includes('{{'), 'no placeholder survives substitution');
-  // The connective sentence cites no fact and must not render.
-  assert.ok(!out.text.includes('Worth a look'), 'a sentence that cites nothing does not render');
+  // A sentence that cites no fact used to be dropped. An answer may now say
+  // what the facts mean, so it stays.
+  assert.ok(out.text.includes('Worth a look: these two line up.'));
   assert.deepStrictEqual(out.sources.map((s) => s.id).sort(), ['kitchen_last_order', 'peak_hour']);
+});
+
+test('numbers the facts hold may be written as digits, and arithmetic shown in its own sentence passes', () => {
+  const block = {
+    facts: [
+      { id: 'reading', value: 41, source: 'owner_report', asOf: '2026-10-27' },
+      { id: 'usual', value: 50, source: 'owner_report', asOf: '2026-10-27' },
+      { id: 'peak_hour', value: 21, unit: 'hour', source: 'model_holdout', asOf: '2026-10-27' },
+    ],
+  };
+  const out = advisorPhrasing.applyValve(JSON.stringify({
+    answer: 'Yesterday came in at {{fact:reading}}, 18% under your usual {{fact:usual}}.',
+    points: ['Your peak still landed at 9 PM.', 'Most rooms like yours recover a wet night with a dish on the board by the door.'],
+  }), block);
+  assert.ok(out);
+  assert.strictEqual(out.text, 'Yesterday came in at 41, 18% under your usual 50.\n• Your peak still landed at 9 PM.\n• Most rooms like yours recover a wet night with a dish on the board by the door.');
+  assert.deepStrictEqual(out.sources.map((s) => s.id).sort(), ['peak_hour', 'reading', 'usual']);
+  // The same 18% with nothing to show for it is a claim nobody computed.
+  const bare = advisorPhrasing.applyValve('Yesterday came in 18% under your usual Tuesday.', block);
+  assert.strictEqual(bare, null);
 });
 
 test('an unknown {{fact:id}} rejects the whole response', async () => {
@@ -217,16 +266,26 @@ test('an unknown {{fact:id}} rejects the whole response', async () => {
   assert.strictEqual(out.mode, 'template');
 });
 
-test('an em dash or a causal verb in model output rejects to the template', async () => {
+test('an em dash is mended in place, and an answer that never uses the data goes to the template', async () => {
   resetAll({ flag: true });
   allowGlobalSpend();
+  // design rule 1 still holds for what the owner reads; the dash is punctuation,
+  // so it is mended rather than costing the answer.
   nextModelReply = 'Your peak lands at {{fact:peak_hour}} — a strong slot.';
   let out = await advisorPhrasing.phrase(PEAK_BLOCK(), { venueUserId: 7 });
-  assert.strictEqual(out.mode, 'template', 'em dash rejected');
+  assert.strictEqual(out.mode, 'phrased');
+  assert.strictEqual(out.text, 'Your peak lands at 9 PM, a strong slot.');
 
-  nextModelReply = 'Your peak sits at {{fact:peak_hour}} because your kitchen closes at {{fact:kitchen_last_order}}.';
+  // A reason is allowed now. The owner asked for answers, not a grammar.
+  nextModelReply = 'Your peak sits at {{fact:peak_hour}}, so keep the kitchen open past it because the late tables order more.';
   out = await advisorPhrasing.phrase(PEAK_BLOCK(), { venueUserId: 7 });
-  assert.strictEqual(out.mode, 'template', 'causal verb rejected: covariation, never causation');
+  assert.strictEqual(out.mode, 'phrased');
+
+  // A chip answer that never touches the venue's numbers is not an answer to
+  // the chip.
+  nextModelReply = 'Busy nights are worth staffing well.';
+  out = await advisorPhrasing.phrase(PEAK_BLOCK(), { venueUserId: 7 });
+  assert.strictEqual(out.mode, 'template');
 });
 
 test('valve unit: digit-bearing fact ids are aliased away and object values flattened before the model sees them', () => {
@@ -260,37 +319,36 @@ const WEEK_BLOCK = () => ({
   refusals: [],
 });
 
-test('one source and one date across a whole answer prints one footer, not one per line', () => {
+test('the twin has the answer\'s shape: the first fact leads, the rest are points, no chip on any line', () => {
   const out = advisorPhrasing.renderTemplate(WEEK_BLOCK());
   const lines = out.text.split('\n');
-  assert.strictEqual(lines.length, 8, 'seven facts and one footer');
-  // The hedge and the chip appear once each, at the foot, under the facts
-  // they cover.
-  assert.strictEqual(out.text.match(/not a promise of foot traffic/g).length, 1);
-  assert.strictEqual(out.text.match(/as of Aug 19/g).length, 1);
-  assert.match(lines[7], /^This is an estimate, not a promise of foot traffic\. \(.*as of Aug 19\.\)$/);
-  // Every fact still says its own thing, in full.
+  assert.strictEqual(lines.length, 7, 'seven facts, seven lines, and no footer in the text');
   assert.strictEqual(lines[0], 'Sunday projects busiest around 9 PM.');
-  assert.strictEqual(lines[6], 'Saturday projects busiest around 9 PM.');
-  // And the answer still carries a source per fact for the chip.
+  assert.strictEqual(lines[6], '• Saturday projects busiest around 9 PM.');
+  // The hedge the label appends and the per-line provenance are both gone:
+  // the client prints the sources once, at the end, from `sources`.
+  assert.doesNotMatch(out.text, /not a promise/);
+  assert.doesNotMatch(out.text, /as of/);
   assert.strictEqual(out.sources.length, 7);
+  assert.ok(out.sources.every((s) => s.source === 'model_holdout' && s.asOf === '2026-08-19T22:00:00Z'));
 });
 
-test('facts that disagree about their source keep their own chip on every line', () => {
-  // PEAK_BLOCK mixes a model estimate with the owner's own testimony. A single
-  // footer over those two would attribute one to the other.
+test('facts from different speakers keep their own words, and their sources ride beside the answer', () => {
+  // PEAK_BLOCK mixes a model estimate with the owner's own testimony. The
+  // owner's sentence still says "you told us", because that is in the label.
   const out = advisorPhrasing.renderTemplate(PEAK_BLOCK());
   const lines = out.text.split('\n');
-  assert.strictEqual(lines.length, 2, 'no footer line was added');
-  assert.match(lines[0], /Model estimate, as of Aug 19\.\)$/);
-  assert.match(lines[1], /You told us.*\)$/);
+  assert.deepStrictEqual(lines, [
+    'Projected peak tonight is 9 PM.',
+    '• You told us your kitchen takes its last order at 21:00.',
+  ]);
+  assert.deepStrictEqual(out.sources.map((s) => s.source), ['model_holdout', 'intake']);
 });
 
-test('a single fact is unchanged: nothing to hoist, nothing to collapse', () => {
+test('a single fact is the answer, with its hedge left to the sources line', () => {
   const one = { intent: 'peak_hours', facts: [PEAK_BLOCK().facts[0]], refusals: [] };
   const out = advisorPhrasing.renderTemplate(one);
-  assert.strictEqual(out.text.split('\n').length, 1);
-  assert.match(out.text, /An estimate, not a promise\. \(Model estimate, as of Aug 19\.\)$/);
+  assert.strictEqual(out.text, 'Projected peak tonight is 9 PM.');
 });
 
 // ── 1b. The thinking model ──────────────────────────────────────────────────
