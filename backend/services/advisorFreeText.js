@@ -33,9 +33,16 @@
 //
 // The router model returns one object from a CLOSED set; anything it emits
 // that does not parse, or parses to a mode or an intent id outside the
-// allowlist, becomes a refusal. There is no best-effort branch and no retry. A
-// guessed route is how a question about employment law gets answered as
-// operations.
+// allowlist, becomes a refusal. There is no retry, and a router that answered
+// is never second-guessed. A guessed route is how a question about employment
+// law gets answered as operations.
+//
+// ONE EXCEPTION, SINCE 2026-10-28: when the router cannot be asked at all (the
+// model is down, the day's allowance is spent, the global wall is reached),
+// offlineRoute places only what the question's own words make plain, behind
+// the same deterministic screens AND the class check a routed answer faces,
+// and answers it from the venue's numbers or the Roost playbook
+// (services/roostPlaybook.js), never from a model.
 //
 // INJECTION. This is the first surface in the repo where a user's own words
 // reach a model, so the hardening is layered and none of it lives in a prompt
