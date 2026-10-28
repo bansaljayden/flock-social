@@ -127,7 +127,22 @@ const VENUES = {
   },
 };
 
+// The block a chip gets, carrying what the real fact bridge adds beside the
+// facts (routes/advisor.js bridgeFactBlock): the venue's kind, its service
+// style and its spend per head.
 function blockFor(venue, intentId) {
+  const roostPlaybook = require(path.join(B, 'services', 'roostPlaybook'));
+  const { ctx } = VENUES[venue];
+  return {
+    ...rawBlockFor(venue, intentId),
+    venue: roostPlaybook.venueOf(ctx),
+    serviceStyle: ctx.profile.service_style || null,
+    spend: roostPlaybook.spendOf(ctx),
+    spendAsOf: 'owner-set 2026-10-01',
+  };
+}
+
+function rawBlockFor(venue, intentId) {
   const v = VENUES[venue];
   const sorted = [...v.week].sort((a, z) => a.value.peakScore - z.value.peakScore);
   switch (intentId) {

@@ -491,6 +491,9 @@ async function bridgeFactBlock(userId, intentId) {
     facts,
     refusals: facts.length > 0 ? [] : refusals,
     venue: roostPlaybook.venueOf(ctx),
+    // How the room serves, so the phrasing model speaks in the venue's own
+    // terms (advisorPhrasing.buildUserPayload, `room`).
+    serviceStyle: ctx.profile.service_style || null,
     spend: roostPlaybook.spendOf(ctx),
     spendAsOf: ctx.profile.updated_at ? `owner-set ${String(ctx.profile.updated_at).slice(0, 10)}` : 'owner-set',
   };

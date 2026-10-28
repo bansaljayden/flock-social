@@ -1849,7 +1849,28 @@ function fenceQuestion(text) {
   return `<<<OWNER_QUESTION ${nonce}>>>\n${text}\n<<<END_OWNER_QUESTION ${nonce}>>>`;
 }
 
-function buildUserPayload(intent, facts, ownerContext, question, move = null) {
+// WHAT KIND OF ROOM THIS IS, in words. A chip's facts are forecasts and
+// readings, which say nothing about how the venue serves, and the first live
+// answers (2026-10-28) told a counter-service cafe to "turn tables quicker".
+// The playbook's venue kind and the owner's own service style ride beside the
+// facts, in words and with no id, so nothing in them can become a number.
+const ROOM_KIND_WORDS = Object.freeze({
+  full_service: 'a sit-down restaurant',
+  quick_service: 'a counter-service restaurant',
+  cafe: 'a cafe',
+  bakery: 'a bakery or dessert shop',
+  bar: 'a bar',
+  club: 'a nightclub',
+});
+
+function roomWords(venue, serviceStyle) {
+  const kind = venue && ROOM_KIND_WORDS[venue.kind] ? ROOM_KIND_WORDS[venue.kind] : null;
+  const service = typeof serviceStyle === 'string' && ENUM_WORDS[serviceStyle] ? ENUM_WORDS[serviceStyle] : null;
+  if (!kind && !service) return null;
+  return { ...(kind ? { kind } : {}), ...(service ? { service } : {}) };
+}
+
+function buildUserPayload(intent, facts, ownerContext, question, move = null, room = null) {
   // Typed fields only. Layer B builds facts from typed columns, never raw
   // concatenated text, which is what keeps venue names and event titles from
   // becoming prompt instructions; the system prompt's data fence is the
@@ -1869,6 +1890,7 @@ function buildUserPayload(intent, facts, ownerContext, question, move = null) {
     // nothing in here is a number the server computed. Section 10 of the
     // system prompt tells the model what this key is and that it is data.
     ...(Array.isArray(ownerContext) && ownerContext.length ? { ownerContext } : {}),
+    ...(room ? { room } : {}),
   });
   // THE QUESTION RIDES WITH THE FACTS (2026-10-28). The grounded path used to
   // see only an intent id, so a typed "was Friday any good" routed to the week
@@ -1993,7 +2015,8 @@ async function phrase(block, { venueUserId, question } = {}) {
   // `block.venue` rides on blocks the route's fact bridge built; a block
   // without it gets the move that fits any venue.
   const move = roostPlaybook.moveFor(block.intent, block, block.venue || null);
-  const payload = buildUserPayload(block.intent, llmFacts, ownerContext, question, move);
+  const payload = buildUserPayload(block.intent, llmFacts, ownerContext, question, move,
+    roomWords(block.venue, block.serviceStyle));
   // Layer B's own sentences carry numbers the server computed (a capacity
   // worked into people, a table's turn time), so the claim check may lean on
   // them. They ride under the placeholder id the model saw for the same fact.
@@ -2087,6 +2110,9 @@ const internals = {
   getGenAI,
   isModelNotFound,
   noteModelNotFound,
+  // The grounded payload and the room words in it, for the suites.
+  buildUserPayload,
+  roomWords,
   // The outage breaker: both answer paths check it before charging, and
   // record every failed call with it.
   modelAvailable,

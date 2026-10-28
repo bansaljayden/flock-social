@@ -385,6 +385,17 @@ test('with no router, a typed question is still placed by what it says', () => {
   }
 });
 
+test('a chip\'s payload says what kind of room it is, in words with no id', () => {
+  const { roomWords, buildUserPayload } = advisorPhrasing.internals;
+  assert.deepStrictEqual(roomWords({ kind: 'cafe', alcohol: false }, 'counter_order'), { kind: 'a cafe', service: 'counter service' });
+  assert.deepStrictEqual(roomWords({ kind: null, alcohol: false }, 'seated_table'), { service: 'seated table service' });
+  assert.strictEqual(roomWords(null, null), null);
+  const payload = buildUserPayload('peak_hours', [{ id: 'peak_score', value: 91, source: 'model_holdout', asOf: '2026-10-27' }], [],
+    'When do we peak this week?', null, roomWords({ kind: 'cafe' }, 'counter_order'));
+  assert.match(payload, /"room":\{"kind":"a cafe","service":"counter service"\}/);
+  assert.ok(!/"room":\{[^}]*"id"/.test(payload), 'the room carries no id the model could write');
+});
+
 // ── 5. The breaker ──────────────────────────────────────────────────────────
 
 test('the breaker opens on a failure that says the key is unusable, and on nothing else', () => {
