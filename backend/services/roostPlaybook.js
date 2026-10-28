@@ -807,6 +807,12 @@ function answerFrom(book, { question, intentId = null, ctx = null, groundedFacts
 // with one vetted move whichever of the two wrote it.
 const { HOUR_ORDERING_MIN_GAP } = require('./crowdEngine');
 
+// The chip move for a topic where the file's lead does not fit a kind of room.
+const LEAD_FOR_KIND = Object.freeze({
+  club: Object.freeze({ handle_the_rush: 'rush_door_lanes' }),
+  bar: Object.freeze({ handle_the_rush: 'labor_stagger_starts' }),
+});
+
 const MOVE_INTENTS = Object.freeze(new Set([
   'money_move', 'peak_hours', 'quiet_nights', 'slow_night', 'tables_service', 'tables_free', 'last_night_verdict',
 ]));
@@ -840,6 +846,13 @@ function moveFor(intentId, block, venue = null) {
   // ends on, among the moves that fit this venue.
   const [topic] = INTENT_TOPICS[key] || [];
   const drinks = false;
+  // A room whose peak is not a kitchen's: the topic's lead in file order is
+  // "run a shorter menu at the rush", which a club with no kitchen cannot use
+  // and a bar mostly does not need (2026-10-28 chip audit). A club's peak
+  // waits at the door; a bar's is covered by who is on and when.
+  const pinned = venue && venue.kind && LEAD_FOR_KIND[venue.kind] ? LEAD_FOR_KIND[venue.kind][topic] : null;
+  const pinnedTactic = pinned ? BOOK.byId.get(pinned) : null;
+  if (pinnedTactic && fits(pinnedTactic, venue, drinks)) return pinnedTactic;
   const lead = BOOK.tactics.find((t) => t.topic === topic && fits(t, venue, drinks) && forThisKind(t, venue));
   if (lead) return lead;
   const [tactic] = BOOK.find('', { intentId: key, venue, limit: 1 });

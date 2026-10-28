@@ -267,3 +267,16 @@ test('taps, game days, bakery wholesale, the drive-thru and laptop campers each 
   // A cafe that does not pour never gets the tap move.
   assert.ok(!offlineAnswer('how do i sell more', CAFE).answer || !offlineAnswer('how do i sell more', CAFE).answer.tactics.includes('bev_tap_keg_speed'));
 });
+
+test('the peak chip ends on a move the room can use: the door for a club, staffing for a bar, the short menu where there is a kitchen', () => {
+  const week = [['Thursday', 60], ['Friday', 88], ['Saturday', 92]].map(([weekday, peakScore], i) => ({ id: `peak_${i}`, value: { weekday, peakScore, peakHour: 23 } }));
+  const block = { facts: week };
+  const kindOf = (cat, profile = {}) => pb.venueOf({ profile, mlVenue: { venue_category: cat } });
+  assert.strictEqual(pb.moveFor('peak_hours', block, kindOf('nightclub', { age_policy: 'twenty_one_plus' })).id, 'rush_door_lanes');
+  assert.strictEqual(pb.moveFor('peak_hours', block, kindOf('bar')).id, 'labor_stagger_starts');
+  for (const cat of ['restaurant', 'cafe', 'fast_food', 'dessert']) {
+    assert.strictEqual(pb.moveFor('peak_hours', block, kindOf(cat)).id, 'rush_short_menu', cat);
+  }
+  // The slow-day chips keep their lead for every kind.
+  assert.strictEqual(pb.moveFor('quiet_nights', block, kindOf('nightclub')).id, 'slow_day_recurring_reason');
+});
