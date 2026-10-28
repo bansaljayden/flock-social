@@ -91,6 +91,59 @@ test('a question gets the tactic its words point at', () => {
   assert.strictEqual(topicOf('how do I get people to spend more, upsell'), 'check_average');
 });
 
+// THE QUESTIONS OWNERS ACTUALLY TYPE, each answered for every kind of venue.
+// With the model out this is the whole of Roost's advice, so a retrieval
+// change that leaves one of these with nothing (or a bar with a cafe's move
+// when it asked about something else) goes red here first.
+const OWNER_QUESTIONS = [
+  ['how do I make Tuesdays better', 'fill_slow_days'],
+  ['our mornings are dead', 'fill_slow_days'],
+  ['should I run a discount night', 'fill_slow_days'],
+  ['how do I handle the friday rush', 'handle_the_rush'],
+  ['the line backs up every lunch', 'handle_the_rush'],
+  ['how do I turn tables faster', 'turn_tables'],
+  ['people sit for hours with laptops', 'turn_tables'],
+  ['how do I get people to spend more', 'check_average'],
+  ['what should I charge for a lunch special', 'pricing'],
+  ['how do I raise prices without losing regulars', 'pricing'],
+  ['which dishes should I cut', 'menu_engineering'],
+  ['what should my food cost be', 'food_cost'],
+  ['how do I cut food waste', 'food_cost'],
+  ['how many servers do I need on friday', 'labor'],
+  ['should I add a second barista on saturday mornings', 'labor'],
+  ['how do I train new hires', 'staff'],
+  ['we keep getting no-shows', 'reservations'],
+  ['how long should I quote for a wait', 'waitlist'],
+  ['how do I get more regulars', 'regulars'],
+  ['how do I get more people to find us', 'marketing'],
+  ['how do I get more reviews', 'reviews'],
+  ['should I do private parties', 'events'],
+  ['is delivery worth it with the app fees', 'takeout_delivery'],
+  ['should I raise prices on doordash', 'takeout_delivery'],
+  ['should I open for brunch', 'dayparts'],
+  ['it rains and nobody comes', 'weather_season'],
+  ['how do I make guests feel welcome', 'hospitality'],
+  ['we are going under, what do I actually do', 'costs'],
+  ['what should my pour cost be', 'beverage'],
+];
+const KINDS = [
+  { kind: 'cafe', alcohol: false },
+  { kind: 'full_service', alcohol: false },
+  { kind: 'bar', alcohol: true },
+  { kind: 'quick_service', alcohol: false },
+];
+
+test('every question owners actually type finds a move on its topic, for every kind of venue', () => {
+  const misses = [];
+  for (const [q, topic] of OWNER_QUESTIONS) {
+    for (const venue of KINDS) {
+      const [first] = pb.find(q, { venue, limit: 1 });
+      if (!first || first.topic !== topic) misses.push(`${venue.kind}: "${q}" -> ${first ? `${first.id} (${first.topic})` : 'nothing'}, wanted ${topic}`);
+    }
+  }
+  assert.deepStrictEqual(misses, []);
+});
+
 test('a question the playbook has nothing for gets nothing, not the nearest guess', () => {
   assert.deepStrictEqual(pb.find('what is the capital of france'), []);
   assert.deepStrictEqual(pb.find('asdkjhasd'), []);

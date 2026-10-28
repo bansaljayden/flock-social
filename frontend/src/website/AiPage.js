@@ -263,7 +263,7 @@ export default function AiPage() {
                   sees it.
                 </p>
                 <p>
-                  Its advice builds on Roost’s playbook: about 150 tested moves for
+                  Its advice builds on Roost’s playbook: more than 130 tested moves for
                   filling slow days, pricing, staffing and turning tables, written by
                   us from what experienced operators publish. If the model cannot be
                   reached, Roost still answers from the venue’s own numbers and the
