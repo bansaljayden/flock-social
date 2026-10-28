@@ -511,17 +511,19 @@ function topicLean(qSet) {
   return hits;
 }
 
+// The score, and how much of it the owner's own words earned (`cues`), which
+// answerFrom reads to decide whether a runner-up is worth an "Another option".
 function score(t, qStems, qSet, topics, venue, lean) {
   let cues = 0;
   t.cueStems.forEach((cue, i) => {
     if (cue.length === 1 ? qSet.has(cue[0]) : containsRun(qStems, cue)) cues += t.cueWeights[i];
   });
   const ownKind = forThisKind(t, venue);
-  if (!ownKind && cues < NAMED_MIN) return 0;
+  if (!ownKind && cues < NAMED_MIN) return { s: 0, cues };
   let s = cues + Math.min(TOPIC_WORD_CAP, (lean.get(t.topic) || 0) * TOPIC_WORD_WEIGHT);
   if (topics[0] === t.topic) s += 1.5;
   else if (topics[1] === t.topic) s += 1;
-  if (s === 0) return 0;
+  if (s === 0) return { s: 0, cues };
   let shared = 0;
   for (const w of qSet) if (t.textStems.has(w)) shared += 1;
   s += Math.min(TEXT_CAP, shared * TEXT_WEIGHT);
@@ -530,7 +532,7 @@ function score(t, qStems, qSet, topics, venue, lean) {
   // topic alone ("how do I make more money"), it put a move written for one
   // kind of venue ahead of the topic's general lead, so it waits for a cue.
   else if (cues > 0 && venue && venue.kind && t.venues.includes(venue.kind)) s += 0.25;
-  return s;
+  return { s, cues };
 }
 
 // The floor a tactic has to clear to be offered at all: a cue nobody else
@@ -544,11 +546,12 @@ function createPlaybook(tactics) {
   const byId = new Map(compiled.map((t) => [t.id, t]));
 
   /**
-   * The best tactics for a question, best first.
+   * The best tactics for a question with their scores, best first.
    * @param {string} question
    * @param {{intentId?: string|null, venue?: {kind: string|null, alcohol: boolean}, limit?: number, exclude?: string[]}} opts
+   * @returns {Array<{t: object, s: number, cues: number}>}
    */
-  function find(question, { intentId = null, venue = null, limit = 3, exclude = [] } = {}) {
+  function ranked(question, { intentId = null, venue = null, limit = 3, exclude = [] } = {}) {
     const q = readQuestion(question);
     const ruled = new Set(q.ruled.length
       ? compiled.filter((t) => t.cueStems.some((c) => q.ruled.some((span) => containsRun(span, c)))).map((t) => t.id)
@@ -561,11 +564,10 @@ function createPlaybook(tactics) {
     const lean = topicLean(q.qSet);
     const rank = (onTopics) => compiled
       .filter((t) => !exclude.includes(t.id) && !ruled.has(t.id) && fits(t, venue, q.drinks))
-      .map((t) => ({ t, s: score(t, q.qStems, q.qSet, onTopics, venue, lean) }))
+      .map((t) => ({ t, ...score(t, q.qStems, q.qSet, onTopics, venue, lean) }))
       .filter(({ s }) => s >= MIN_SCORE)
       .sort((a, b) => (b.s - a.s) || (a.t.order - b.t.order))
-      .slice(0, limit)
-      .map(({ t }) => t);
+      .slice(0, limit);
     const picks = rank(topics);
     if (picks.length || !ruled.size || topics.length) return picks;
     // All the owner named was the move they ruled out ("we tried a happy hour
@@ -574,7 +576,12 @@ function createPlaybook(tactics) {
     return rank([crossedOff.topic]);
   }
 
-  return { tactics: compiled, byId, find };
+  /** The best tactics for a question, best first. Same options as ranked(). */
+  function find(question, opts) {
+    return ranked(question, opts).map(({ t }) => t);
+  }
+
+  return { tactics: compiled, byId, find, ranked };
 }
 
 // ── The answer ───────────────────────────────────────────────────────────────
@@ -740,9 +747,19 @@ function answerFrom(book, { question, intentId = null, ctx = null, groundedFacts
       followUp: calc.move ? calc.move.follow_up || null : null,
     };
   }
-  const picks = book.find(question, { intentId, venue, limit: 2 });
-  if (!picks.length) return null;
-  const [first, second] = picks;
+  const ranking = book.ranked(question, { intentId, venue, limit: 3 });
+  if (!ranking.length) return null;
+  const [top] = ranking;
+  // "ANOTHER OPTION" EARNS ITS LINE: the owner's own words found it, or failing
+  // that it works the same topic as the first move. A runner-up from another
+  // topic that only shared a word read as a non sequitur (brunch under "how do
+  // I get more people in for dinner on Tuesdays", a spray valve over the
+  // cash-flow move the words found, 2026-10-28), so the answer goes without.
+  const rest = ranking.slice(1);
+  const runnerUp = rest.find((x) => x.cues > 0) || rest.find((x) => x.t.topic === top.t.topic);
+  const first = top.t;
+  const second = runnerUp ? runnerUp.t : null;
+  const picks = second ? [first, second] : [first];
   const spend = spendOf(ctx);
   const lead = groundedLead(intentId, groundedFacts);
 
@@ -847,6 +864,10 @@ function find(question, opts) {
   return BOOK.find(question, opts);
 }
 
+function ranked(question, opts) {
+  return BOOK.ranked(question, opts);
+}
+
 function answer(opts) {
   return answerFrom(BOOK, opts);
 }
@@ -872,6 +893,7 @@ module.exports = {
   SPEND_NUDGE,
   tactics: BOOK.tactics,
   find,
+  ranked,
   answer,
   answerFrom,
   createPlaybook,

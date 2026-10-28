@@ -186,3 +186,18 @@ test('delivery to guests is not the supplier delivery, and a labor complaint tha
   assert.deepStrictEqual(advisorFreeText.offlineRoute('do i need another server on fridays'), { mode: 'grounded', intentId: 'tables_service' });
   assert.deepStrictEqual(advisorFreeText.offlineRoute('we only had 4 tables last night'), { mode: 'grounded', intentId: 'last_night_verdict' });
 });
+
+// ── "Another option" earns its line ─────────────────────────────────────────
+
+test('the second move is one the owner\'s words found, or one from the same topic, never a stray', () => {
+  // Brunch under a Tuesday-dinner question, and a spray valve over the
+  // cash-flow move the words found, were the strays.
+  assert.ok(!offlineAnswer('how do i get more people in for dinner on tuesdays').answer.tactics.includes('day_brunch'));
+  assert.deepStrictEqual(offlineAnswer('cash flow is tight').answer.tactics, ['costs_prime_weekly', 'weather_slow_season']);
+  // A same-topic second is still offered when nothing better was found.
+  assert.deepStrictEqual(offlineAnswer('is ubereats worth it').answer.tactics, ['delivery_commission_math', 'delivery_app_prices']);
+  // And with no fitting second, the answer goes without one.
+  const alone = offlineAnswer('my food costs went up 20%').answer;
+  assert.deepStrictEqual(alone.tactics, ['food_cost_recipe_cards']);
+  assert.ok(!/Another option/.test(alone.text), alone.text);
+});
