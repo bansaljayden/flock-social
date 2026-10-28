@@ -368,6 +368,24 @@ test('the week twins answer the question first: the busiest day, the one behind 
   ]);
 });
 
+test('yesterday\'s twin leads with the verdict, then the reading and the day\'s conditions', () => {
+  const date = '2026-10-27';
+  const facts = [
+    { id: `owner_reading_${date}`, value: { date, weekday: 'Tuesday', peakReading: 52 }, source: 'owner_report', asOf: date, label: 'Your highest reading on Tuesday Oct 27 was 52, from 3 readings.' },
+    { id: `owner_trailing_baseline_${date}`, value: { days: 9 }, source: 'owner_report', asOf: date, label: 'Against all 9 days you posted on in the last 28, the middle was 70.' },
+    { id: `last_day_verdict_${date}`, value: { date, weekday: 'Tuesday', verdict: 'below' }, source: 'arithmetic', asOf: date, label: 'Tuesday came in 18 points below your own Tuesdays (middle 70, across 4 days).' },
+    { id: `weather_recorded_${date}`, value: {}, source: 'weather', asOf: date, label: 'It rained through the evening.' },
+  ];
+  const out = advisorPhrasing.renderTemplate({ intent: 'last_night_verdict', facts, refusals: [] });
+  assert.deepStrictEqual(out.text.split('\n'), [
+    'Tuesday came in 18 points below your own Tuesdays (middle 70, across 4 days).',
+    '• Your highest reading on Tuesday Oct 27 was 52, from 3 readings.',
+    '• It rained through the evening.',
+    '• Against all 9 days you posted on in the last 28, the middle was 70.',
+  ]);
+  assert.strictEqual(out.sources[0].id, `last_day_verdict_${date}`);
+});
+
 test('a level week names no busiest day, because inside the ordering floor the gap is noise', () => {
   const out = advisorPhrasing.renderTemplate(PEAKS([['Monday', 18, 85], ['Tuesday', 18, 88], ['Wednesday', 19, 86]]));
   assert.strictEqual(out.text, 'No day stands out this week: every day peaks between 85 and 88 on our 0 to 100 index.');

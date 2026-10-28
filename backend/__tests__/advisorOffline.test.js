@@ -181,6 +181,26 @@ test('the class check still stands in front of the offline route, and an unplace
   assert.strictEqual(modelCalls.length, 0);
 });
 
+test('yesterday\'s twin ends on a move only when it was a quiet day by the venue\'s own numbers', async () => {
+  const day = (verdict) => async (_userId, intentId) => ({
+    intent: intentId,
+    refusals: [],
+    facts: [
+      { id: 'owner_reading_2026-10-27', value: { date: '2026-10-27', peakReading: 52 }, source: 'owner_report', asOf: '2026-10-27', label: 'Your highest reading on Tuesday Oct 27 was 52.' },
+      { id: 'last_day_verdict_2026-10-27', value: { verdict }, source: 'arithmetic', asOf: '2026-10-27', label: `Tuesday came in ${verdict} your own Tuesdays.` },
+    ],
+  });
+  for (const [verdict, moved] of [['below', true], ['ordinary', false], ['above', false]]) {
+    resetAll();
+    advisorPhrasing.internals.noteModelFailure(credits());
+    advisorRouter.__setFactsForTests(day(verdict));
+    const r = await chip('last_night_verdict');
+    assert.strictEqual(r.body.mode, 'template');
+    assert.match(r.body.text, new RegExp(`^Tuesday came in ${verdict}`), 'the verdict leads');
+    assert.strictEqual(r.body.sources.some((s) => s.source === 'roost_playbook'), moved, verdict);
+  }
+});
+
 test('a chip answer says what to ask next, and names the day it found', async () => {
   resetAll();
   replies = ['{"answer": "Tuesday is your quietest day this week.", "points": []}'];

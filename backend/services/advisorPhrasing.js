@@ -1137,11 +1137,28 @@ function advisorFactsShortDate(date) {
   return require('./advisorFacts').shortDate(date);
 }
 
+// "How did we do yesterday?" is answered by the verdict, and the builder
+// emits it third, after the reading and the baseline it was computed from. The
+// verdict leads; the reading and the day's conditions follow it, then what
+// Flock served.
+const VERDICT_ORDER = [/^owner_reading_/, /^weather_recorded_/, /^(?:event_recorded_|no_listed_events_)/, /^served_vs_reading_/, /^served_trusted_/];
+function shapeVerdict(facts) {
+  const verdict = facts.find((f) => f && /^last_day_verdict_/.test(String(f.id)));
+  if (!verdict) return null;
+  const rank = (f) => {
+    const i = VERDICT_ORDER.findIndex((re) => re.test(String(f.id)));
+    return i < 0 ? VERDICT_ORDER.length : i;
+  };
+  const rest = facts.filter((f) => f !== verdict).sort((a, z) => rank(a) - rank(z));
+  return { lead: templateLine(verdict), points: rest.map(templateLine), used: [verdict, ...rest] };
+}
+
 const TEMPLATE_SHAPERS = Object.freeze({
   peak_hours: shapeWeek('week'),
   quiet_nights: shapeWeek('quiet'),
   weekend_outlook: shapeWeek('weekend'),
   week_recap: shapeRecap,
+  last_night_verdict: shapeVerdict,
 });
 
 function renderTemplate(block) {

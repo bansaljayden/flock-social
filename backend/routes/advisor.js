@@ -70,10 +70,20 @@ const { BULLET, MAX_POINTS } = require('../services/advisorAnswer');
 // whose facts always raise the same kind of move, the twin now ends on the
 // playbook's best one for that venue, and the sources line names the
 // playbook. Only when the answer has room for it, and never on a refusal.
-const TEMPLATE_MOVE_INTENTS = new Set(['peak_hours', 'quiet_nights', 'slow_night', 'tables_service', 'tables_free']);
+const TEMPLATE_MOVE_INTENTS = new Set(['peak_hours', 'quiet_nights', 'slow_night', 'tables_service', 'tables_free', 'last_night_verdict']);
 
-async function withMove(answer, intentId, userId, ctx = null) {
-  if (!answer || answer.mode !== 'template' || !TEMPLATE_MOVE_INTENTS.has(intentId)) return answer;
+// Yesterday's verdict raises a move only when it was a quiet day by the
+// venue's own numbers. An ordinary or a busy day is just the news.
+function wantsMove(intentId, block) {
+  if (!TEMPLATE_MOVE_INTENTS.has(intentId)) return false;
+  if (intentId !== 'last_night_verdict') return true;
+  const facts = block && Array.isArray(block.facts) ? block.facts : [];
+  const verdict = facts.find((f) => f && /^last_day_verdict_/.test(String(f.id)));
+  return Boolean(verdict && verdict.value && verdict.value.verdict === 'below');
+}
+
+async function withMove(answer, intentId, userId, ctx = null, block = null) {
+  if (!answer || answer.mode !== 'template' || !wantsMove(intentId, block)) return answer;
   const points = String(answer.text || '').split('\n').length - 1;
   if (points >= MAX_POINTS) return answer;
   let venueCtx = ctx;
@@ -848,7 +858,7 @@ router.post('/ask', authenticate, requirePro, [
     const answer = await withMove(await advisorPhrasing.phrase(block, {
       venueUserId: req.user.id,
       question: advisorPhrasing.ADVISOR_INTENTS[intentId].chip,
-    }), intentId, req.user.id);
+    }), intentId, req.user.id, null, block);
 
     return res.json({
       intentId,
@@ -1013,7 +1023,7 @@ router.post('/question', authenticate, requirePro, async (req, res) => {
       // recap is answered about Friday.
       const answer = await withMove(
         await advisorPhrasing.phrase(block, { venueUserId: userId, question: clean.text }),
-        route.intentId, userId, ctx,
+        route.intentId, userId, ctx, block,
       );
       return res.json({
         mode: answer.mode,
