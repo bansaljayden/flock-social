@@ -2765,7 +2765,11 @@
       "student",
       "college",
       "campus",
-      "university"
+      "university",
+      "nearby events",
+      "events nearby",
+      "people from nearby events",
+      "event crowds"
     ],
     "move": "Team up with a nearby business, such as a gym or a theater, to trade a small offer for each other's customers.",
     "why": "A neighbor's customers already pass your door, and a shared offer reaches them without paying for ads.",
@@ -2797,7 +2801,13 @@
       "get people in",
       "foot traffic",
       "new item",
-      "promote item"
+      "promote item",
+      "walking past",
+      "walk past",
+      "people walking by",
+      "passersby",
+      "come in off the street",
+      "walk in off the street"
     ],
     "move": "Hand out small samples of 1 item at the door or counter during your quiet hours.",
     "why": "Tasting removes the risk of trying something new, and a good sample often turns into a full purchase.",

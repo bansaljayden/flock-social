@@ -280,3 +280,20 @@ test('the peak chip ends on a move the room can use: the door for a club, staffi
   // The slow-day chips keep their lead for every kind.
   assert.strictEqual(pb.moveFor('quiet_nights', block, kindOf('nightclub')).id, 'slow_day_recurring_reason');
 });
+
+test('every question a chip answer suggests next gets an answer with the model out, for every kind of room', () => {
+  const fu = require('../services/advisorFollowUps');
+  const asked = new Set(Object.values(fu.NEXT).map((n) => n.question).filter(Boolean));
+  for (const s of fu.__copyStrings()) if (s !== fu.ANOTHER_MOVE) asked.add(s); // that one follows on from its answer
+  const kinds = { restaurant: RESTAURANT, cafe: CAFE, bar: BAR, club: CLUB, bakery: BAKERY, counter: COUNTER };
+  const dead = [];
+  for (const q of asked) {
+    const route = advisorFreeText.offlineRoute(q);
+    if (!route) { dead.push(`${q}: no route`); continue; }
+    if (route.mode === 'grounded') continue;
+    for (const [name, ctx] of Object.entries(kinds)) {
+      if (!pb.answer({ question: q, intentId: route.intentId, ctx })) dead.push(`${q}: nothing for a ${name}`);
+    }
+  }
+  assert.deepStrictEqual(dead, []);
+});

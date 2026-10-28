@@ -843,7 +843,7 @@ async function chargedCall({ userId, charge, systemInstruction, payload, maxOutp
 const OFFLINE_INTENT_CUES = [
   // "How do I get more customers" is the money move asked plainly, and it was
   // the one growth question the playbook had nothing for (2026-10-28).
-  ['money_move', /\b(?:money\s+move|best\s+move|where\s+(?:is|'s)\s+the\s+money|focus\s+on\s+this\s+week|make\s+more\s+money|more\s+profit|increase\s+(?:sales|revenue)|more\s+(?:customers|business|guests|sales|foot\s+traffic)|grow\s+(?:my|our|the)\s+(?:business|restaurant|cafe|bar|sales|revenue)|foot\s+traffic|(?:more\s+)?people\s+(?:through|in)\s+the\s+door|(?:sales|business|traffic|revenue)\s+(?:is|are|has\s+been|have\s+been|was|were|keeps?)\s+(?:down|dropping|falling|slipping|declining|off)|(?:sales|traffic|revenue)\s+(?:dropped|fell|declined|tanked))\b/i],
+  ['money_move', /\b(?:money\s+move|best\s+move|where\s+(?:is|'s)\s+the\s+money|focus\s+on\s+this\s+week|(?:what\s+should\s+(?:i|we)\s+)?change\s+next\s+week|make\s+more\s+money|more\s+profit|increase\s+(?:sales|revenue)|more\s+(?:customers|business|guests|sales|foot\s+traffic)|grow\s+(?:my|our|the)\s+(?:business|restaurant|cafe|bar|sales|revenue)|foot\s+traffic|(?:more\s+)?people\s+(?:through|in)\s+the\s+door|(?:sales|business|traffic|revenue)\s+(?:is|are|has\s+been|have\s+been|was|were|keeps?)\s+(?:down|dropping|falling|slipping|declining|off)|(?:sales|traffic|revenue)\s+(?:dropped|fell|declined|tanked))\b/i],
   [null, /\b(?:labou?r\s+(?:costs?|is|are|bill|percent(?:age)?|too)|payroll|over\s*staff\w*|under\s*staff\w*|too\s+many\s+(?:staff|servers?|cooks?|bartenders?|baristas?|people\s+on)|(?:\d+|two|three|four|five|six|seven|eight)\s+(?:staff|servers?|cooks?|bartenders?|baristas?)\s+(?:on|scheduled|working))\b/i],
   ['tables_free', /\btables?\b[^.?!]{0,30}\b(?:free|open|available|empty)\b/i],
   // A count of tables ("we only had 4 tables") is how the night went, not a
@@ -862,7 +862,9 @@ const OFFLINE_INTENT_CUES = [
   ['peak_hours', /\b(?:peaks?|busie(?:r|st)|busy\s+(?:times?|hours?|days?)|rush|slammed|lines?\s+out|out\s+the\s+door|queue)\b/i],
   ['week_recap', /\b(?:last\s+(?:7|seven)\s+days|past\s+week|last\s+week)\b/i],
   ['kitchen_vs_peak', /\bkitchen\b/i],
-  ['capacity_math', /\b(?:capacity|in\s+people|how\s+many\s+people)\b/i],
+  // "What does busy MEAN in people", not "bring in people from nearby events",
+  // which this used to read as a capacity question (2026-10-28 audit).
+  ['capacity_math', /\b(?:capacity|(?:mean|means|is\s+that|that\s+is|busy)\s+in\s+people|how\s+many\s+people)\b/i],
   ['around_you', /\b(?:events?|weather|rain|concerts?|games?|nearby|around\s+(?:us|here)|happening)\b/i],
   ['readings_vs_estimates', /\b(?:readings?|slider)\b/i],
   ['data_status', /\b(?:what\s+data|data\s+(?:do\s+)?you\s+have|where\s+(?:do|does)\s+(?:the|your|these)\s+numbers)\b/i],
