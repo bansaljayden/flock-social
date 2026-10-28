@@ -61,6 +61,7 @@ const advisorPhrasing = require('../services/advisorPhrasing');
 const advisorFreeText = require('../services/advisorFreeText');
 const { followUpsFor } = require('../services/advisorFollowUps');
 const roostPlaybook = require('../services/roostPlaybook');
+const advisorMoneyMove = require('../services/advisorMoneyMove');
 const { BULLET, MAX_POINTS } = require('../services/advisorAnswer');
 
 // THE TWIN GETS ONE MOVE (2026-10-28). A phrased answer makes a money move a
@@ -72,19 +73,6 @@ const { BULLET, MAX_POINTS } = require('../services/advisorAnswer');
 // playbook. Only when the answer has room for it, and never on a refusal.
 // Which chips end on a move, and which move, live in services/roostPlaybook.js
 // (moveFor), because the phrasing model is handed the same move to build on.
-
-// What the money move is worth in the venue's own money, with the working in
-// the sentence: every 10 covers on the quiet day, or, in a level week, the
-// check line.
-function moneyMoveLine(block, spend) {
-  if (!(spend > 0)) return null;
-  if (roostPlaybook.isLevelWeek(block)) return roostPlaybook.moneyLine({ money: 'check' }, spend);
-  const facts = block && Array.isArray(block.facts) ? block.facts : [];
-  const low = facts.find((f) => f && f.value && typeof f.value.weekday === 'string');
-  if (!low) return null;
-  const week = spend * 10;
-  return `At your ${roostPlaybook.dollars(spend)} a head, every 10 extra covers on ${low.value.weekday} is ${roostPlaybook.dollars(week)} a week, about ${roostPlaybook.dollars(week * 52)} a year.`;
-}
 
 async function venueContextFor(userId, ctx) {
   if (ctx) return ctx;
@@ -112,16 +100,18 @@ async function withMove(answer, intentId, userId, ctx = null, block = null) {
     const p = (venueCtx && venueCtx.profile) || {};
     spendAsOf = p.updated_at ? `owner-set ${String(p.updated_at).slice(0, 10)}` : 'owner-set';
   }
-  const tactic = roostPlaybook.moveFor(intentId, block, venue);
-  if (!tactic) return answer;
-  const lines = [tactic.move];
-  const sources = [{ ...roostPlaybook.PLAYBOOK_SOURCE }];
+  let lines;
+  let sources;
   if (intentId === 'money_move') {
-    const money = moneyMoveLine(block, spend);
-    if (money) {
-      lines.push(money);
-      sources.push({ id: 'intake_typical_spend_per_person', source: 'intake', asOf: spendAsOf });
-    }
+    // The move and what it is worth, the same two lines the Monday email
+    // lists under the day (services/advisorMoneyMove.js).
+    ({ lines, sources } = advisorMoneyMove.extras({ block, venue, spend, spendAsOf }));
+    if (!lines.length) return answer;
+  } else {
+    const tactic = roostPlaybook.moveFor(intentId, block, venue);
+    if (!tactic) return answer;
+    lines = [tactic.move];
+    sources = [{ ...roostPlaybook.PLAYBOOK_SOURCE }];
   }
   const room = MAX_POINTS - points;
   return {
@@ -312,26 +302,7 @@ const INTENT_PLANS = {
   // answer, which is that the money is in each check rather than in one day,
   // and advisorPhrasing's shaper says so from the same two facts. Selection
   // only, like every plan here.
-  money_move: async (b) => {
-    const week = await b.week();
-    const scored = week
-      .filter((e) => !advisorFacts.isRefusal(e) && e.value && Number.isFinite(Number(e.value.peakScore)))
-      .sort((a, z) => Number(a.value.peakScore) - Number(z.value.peakScore));
-    if (!scored.length) return week;
-    const low = scored[0];
-    const top = scored[scored.length - 1];
-    const level = Number(top.value.peakScore) - Number(low.value.peakScore) < HOUR_ORDERING_MIN_GAP;
-    const picked = [{
-      ...low,
-      note: [low.note, level
-        ? 'This week projects level: no day sits far enough from the rest to be worth filling on its own, so the money is in each check.'
-        : 'This is the LOWEST projected day in the week ahead: the room with the most seats to sell, which is where this week\'s money move is.'].filter(Boolean).join(' '),
-    }];
-    if (top !== low) {
-      picked.push({ ...top, note: [top.note, 'This is the HIGHEST projected day in the week ahead, given for contrast.'].filter(Boolean).join(' ') });
-    }
-    return picked;
-  },
+  money_move: async (b) => advisorMoneyMove.pickFacts(await b.week(), advisorFacts.isRefusal),
   // "How did we just do." The most-asked question in the category, and the one
   // chip that returns a VERDICT rather than a row of numbers: the venue's own
   // highest reading yesterday, against its own recent same-weekday readings,

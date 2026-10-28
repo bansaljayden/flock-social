@@ -170,6 +170,8 @@ const SOURCE_WORDS = {
   events: 'Ticketmaster',
   weather: 'weather service',
   table_sensor: 'your table sensor',
+  // The money move's move (services/advisorMoneyMove.js).
+  roost_playbook: 'Roost playbook',
 };
 
 function sourceWord(source) {

@@ -324,6 +324,26 @@ function lastNightVerdictBuilder() {
   }
 }
 
+// Required lazily, like the two builders above: a build without the money
+// move loses one section, not the email.
+function buildMoneyMoveCard(advisorFacts, weekFacts, ctx) {
+  try {
+    // eslint-disable-next-line global-require
+    const advisorMoneyMove = require('./advisorMoneyMove');
+    // eslint-disable-next-line global-require
+    const { renderTemplate } = require('./advisorPhrasing');
+    return advisorMoneyMove.digestCard({
+      weekFacts,
+      ctx,
+      isRefusal: advisorFacts.isRefusal,
+      renderLead: (block) => String(renderTemplate(block).text || '').split('\n')[0] || null,
+    });
+  } catch (err) {
+    console.warn('[VenueDigest] money move section skipped:', err.message);
+    return null;
+  }
+}
+
 async function buildDigestCards(advisorFacts, { userId, tier, now }) {
   const ctx = await advisorFacts.getVenueContext(userId);
   if (!ctx || !ctx.profile || !ctx.profile.google_place_id || !ctx.profile.verified) return null;
@@ -347,6 +367,14 @@ async function buildDigestCards(advisorFacts, { userId, tier, now }) {
   // Then card 1, before card 3, because card 3's arithmetic reads its peak
   // facts, the same ordering the route uses.
   const weekFacts = await advisorFacts.buildWeekAhead(ctx, opts);
+  // THE MONEY MOVE, second only to the verdict (2026-10-28). Roost's job is
+  // to help the venue make more money, so the email says where this week's
+  // money is: the quietest day, the move to fill it and what 10 covers there
+  // are worth at the owner's own spend per head. The same sentences the
+  // chat's first chip answers with (services/advisorMoneyMove.js). A failure
+  // here drops the section and keeps the email.
+  const moneyCard = buildMoneyMoveCard(advisorFacts, weekFacts, ctx);
+  if (moneyCard) cards.push(moneyCard);
   cards.push(finished(weekDef, weekFacts));
   cards.push(finished(aroundDef, await advisorFacts.buildAroundYou(ctx, opts)));
   cards.push(finished(listingDef, await advisorFacts.buildListingReadBack(ctx, weekFacts, opts)));
