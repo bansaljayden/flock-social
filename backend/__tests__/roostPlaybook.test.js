@@ -376,6 +376,8 @@ test('with no router, a typed question is still placed by what it says', () => {
     ['what should I charge for brunch', { mode: 'advice', intentId: null }],
     ['how many servers do I need on friday', { mode: 'advice', intentId: 'tables_service' }],
     ['should I run a happy hour', { mode: 'advice', intentId: null }],
+    ['we are going under, what do I actually do', { mode: 'advice', intentId: null }],
+    ['this is useless, tell me something I do not already know', { mode: 'grounded', intentId: 'last_night_verdict' }],
   ];
   for (const [q, want] of cases) assert.deepStrictEqual(advisorFreeText.offlineRoute(q), want, q);
   for (const q of ['asdkjhasd', 'what is the capital of france', '']) {

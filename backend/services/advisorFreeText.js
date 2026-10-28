@@ -802,6 +802,9 @@ const OFFLINE_INTENT_CUES = [
   ['tables_service', /\b(?:tables?|turn\s+times?|turns?|seatings?|another\s+server|extra\s+server|servers?\s+(?:do\s+(?:i|we)\s+)?need)\b/i],
   ['slow_night', /\bwhy\s+(?:was|were|is|are|did)\b[^.?!]*\b(?:slow|quiet|dead|empty)\b/i],
   ['last_night_verdict', /\b(?:yesterday|last\s+night|how\s+did\s+(?:we|i)\s+do|how\s+(?:was|were)\s+(?:we|it|things)\b)/i],
+  // Frustration is a request for the venue's own news, the way the router
+  // reads it (advisorPrompt, FRUSTRATION IS NOT A ROUTE).
+  ['last_night_verdict', /\b(?:tell\s+me\s+something|something\s+i\s+(?:do\s+not|don'?t)\s+(?:already\s+)?know|this\s+is\s+useless)\b/i],
   ['cohort_same_night', /\b(?:everyone|everybody|whole\s+(?:street|strip|block|area|town)|just\s+(?:us|me))\b/i],
   ['cohort_typical', /\b(?:compare|stack\s+up|sit\s+among|(?:venues|places|restaurants|bars|cafes)\s+like\s+(?:us|ours|mine)|similar\s+(?:venues|places))\b/i],
   ['weekend_outlook', /\bweekends?\b/i],
@@ -818,7 +821,7 @@ const OFFLINE_INTENT_CUES = [
 
 // The words of a question about running or growing the business rather than
 // reading its numbers. Any one of them makes the question advice.
-const OFFLINE_ADVICE = /\b(?:how\s+(?:do|can|could|should|would)\s+(?:i|we)|how\s+many\s+(?:staff|servers?|people|cooks?|baristas?|bartenders?|hosts?)\s+(?:do|should|to)\b|how\s+much\s+(?:will|would|could|does|do|is|are|should|can)\b|cost\w*|earn\w*|make\s+(?:me|us)\b|(?:is|are)\s+\w+(?:\s+\w+)?\s+worth|what\s+(?:should|can|could)\s+(?:i|we)|should\s+(?:i|we)|is\s+it\s+worth|worth\s+it|ideas?|tips?|ways?\s+to|advice|improve|increase|grow|boost|bring\s+in|get\s+more|fill|attract|promot\w*|market\w*|advertis\w*|pric\w*|charge|menu|costs?|margins?|profit\w*|revenue|sales|upsell\w*|specials?|discount\w*|deals?|happy\s+hour|loyalty|regulars|reviews?|social\s+media|instagram|delivery|takeout|take\s*away|catering|private\s+(?:events?|parties|dining)|waste|inventory|staff\w*|schedul\w*|labou?r|hire|hiring|train\w*|no[\s-]?shows?|wait\s*list|reservations?)\b/i;
+const OFFLINE_ADVICE = /\b(?:going\s+under|losing\s+money|what\s+do\s+(?:i|we)\s+(?:actually\s+)?do|help\s+me|how\s+(?:do|can|could|should|would)\s+(?:i|we)|how\s+many\s+(?:staff|servers?|people|cooks?|baristas?|bartenders?|hosts?)\s+(?:do|should|to)\b|how\s+much\s+(?:will|would|could|does|do|is|are|should|can)\b|cost\w*|earn\w*|make\s+(?:me|us)\b|(?:is|are)\s+\w+(?:\s+\w+)?\s+worth|what\s+(?:should|can|could)\s+(?:i|we)|should\s+(?:i|we)|is\s+it\s+worth|worth\s+it|ideas?|tips?|ways?\s+to|advice|improve|increase|grow|boost|bring\s+in|get\s+more|fill|attract|promot\w*|market\w*|advertis\w*|pric\w*|charge|menu|costs?|margins?|profit\w*|revenue|sales|upsell\w*|specials?|discount\w*|deals?|happy\s+hour|loyalty|regulars|reviews?|social\s+media|instagram|delivery|takeout|take\s*away|catering|private\s+(?:events?|parties|dining)|waste|inventory|staff\w*|schedul\w*|labou?r|hire|hiring|train\w*|no[\s-]?shows?|wait\s*list|reservations?)\b/i;
 
 /**
  * Route a question with no model: {mode, intentId} or null when nothing in it
