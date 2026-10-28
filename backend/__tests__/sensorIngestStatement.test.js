@@ -847,13 +847,17 @@ test('on the real schema: the owner reads every unit\'s tables as one floor, a s
     // (sensorTableHistoryStatement.test.js is where the venue gets some).
     // seats is the unit's count where it sent one; party_max the largest
     // party seen at the table, the people sitting at 1 and 2 now, and nothing
-    // at 3 (a first reading of needs-clearing has no party) or 9.
+    // at 3 (a first reading of needs-clearing has no party) or 9. Each table
+    // carries its own unit's freshness, so one live room cannot make another
+    // room's tables look live.
+    const nine = (await floor()).find((r) => r.table_no === 9);
+    const fresh = { updated_at: new Date(at).toISOString(), stale: false };
     assert.deepEqual(res.body, {
       tables: [
-        { number: 1, people: 2, state: 'seated', since: new Date(at - 600000).toISOString(), seats: 4, party_max: 2, likely_free_at: null },
-        { number: 2, people: 3, state: 'waiting', since: new Date(at - 900000).toISOString(), seats: null, party_max: 3, likely_free_at: null },
-        { number: 3, people: 0, state: 'needs_clearing', since: new Date(at - 50000).toISOString(), seats: 2, party_max: null, likely_free_at: null },
-        { number: 9, people: 0, state: 'free', since: (await floor()).find((r) => r.table_no === 9).state_since.toISOString(), seats: null, party_max: null, likely_free_at: null },
+        { number: 1, people: 2, state: 'seated', since: new Date(at - 600000).toISOString(), seats: 4, party_max: 2, likely_free_at: null, ...fresh },
+        { number: 2, people: 3, state: 'waiting', since: new Date(at - 900000).toISOString(), seats: null, party_max: 3, likely_free_at: null, ...fresh },
+        { number: 3, people: 0, state: 'needs_clearing', since: new Date(at - 50000).toISOString(), seats: 2, party_max: null, likely_free_at: null, ...fresh },
+        { number: 9, people: 0, state: 'free', since: nine.state_since.toISOString(), seats: null, party_max: null, likely_free_at: null, updated_at: nine.updated_at.toISOString(), stale: false },
       ],
       updated_at: new Date(at).toISOString(),
       stale: false,
@@ -869,6 +873,8 @@ test('on the real schema: the owner reads every unit\'s tables as one floor, a s
     assert.deepEqual(res.body.tables.map((t) => `${t.number}:${t.people}:${t.state}`),
       ['1:6:waiting', '2:3:waiting', '3:0:needs_clearing', '9:0:free']);
     assert.equal(res.body.stale, false);
+    // The quiet front room's tables say so themselves; the back room's do not.
+    assert.deepEqual(res.body.tables.map((t) => `${t.number}:${t.stale}`), ['1:false', '2:true', '3:true', '9:false']);
     assert.equal(res.body.next_free, 1, 'the back room\'s party at table 1 has sat longest');
 
     // Both go quiet: the newest row is past three minutes, and the floor says so.
