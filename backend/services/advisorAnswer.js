@@ -314,10 +314,19 @@ const LAST_WORDS = 5;
 // plainest forecast claim there is. The owner is the subject it leaves out.
 const EXPECT_LEAD = /\bexpect(?:ing)?\s+(?:about|around|roughly|up\s+to|close\s+to|near(?:ly)?|over|under|at\s+least)?\s*\$?\s*$/i;
 
+// "Run it 6 weeks", "give the special 4 weeks", "keep them for 8 weeks": the
+// verb comes BEFORE its object, so the number is how long to try something,
+// which the contract invites. A reading puts its subject first: "your
+// Tuesdays run 30% under". Found by a stand-in model eval (2026-10-28), where
+// "build it from items you already prep and run it 6 weeks before judging"
+// lost its sentence to the check.
+const TRIAL_SPAN = /\b(?:run|keep|give|hold|test|try|trial)\s+(?:it|them|this|that|(?:the|your)\s+\w+)\s+(?:for\s+)?(?:about\s+|at\s+least\s+|a\s+full\s+)?$/i;
+
 function isReadingSlot(text, num) {
   const prefix = text.slice(clauseStart(text, num.index), num.index);
   if (EXPECT_LEAD.test(prefix)) return true;
   if (NOT_A_READING.test(prefix)) return false;
+  if (TRIAL_SPAN.test(prefix)) return false;
   // "a $12 special", "an 85 seat room": the article makes it a kind of
   // thing, not a reading of one.
   if (/\b(?:a|an)\s*\$?\s*$/i.test(prefix)) return false;

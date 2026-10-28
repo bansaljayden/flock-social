@@ -185,3 +185,21 @@ test('a garnish on a plate is food cost, and only garnishing wages is refused', 
     'a kitchen sentence that happens to say pay is not a pay instruction');
   assert.ok(advisorFreeText.prohibitedClass('can I garnish my server\'s wages for the broken glasses'));
 });
+
+// HOW LONG TO TRY SOMETHING IS NOT A READING (2026-10-28, stand-in model
+// eval): "run it 6 weeks" lost its sentence because "run" is a claim verb
+// ("your Tuesdays run 30% under"). Verb before object is an instruction.
+test('a trial length is advice, and the same verb in a claim about the venue is still checked', () => {
+  const advisorFreeText = require('../services/advisorFreeText');
+  for (const ok of [
+    'Build it from items you already prep and run it 6 weeks before judging, since a habit builds slowly.',
+    'Run the special for 6 weeks before you judge it.',
+    'Give it at least 4 weeks, then compare your Tuesday sales.',
+  ]) {
+    const out = advisorFreeText.applyAdviceValve(JSON.stringify({ answer: ok, points: [] }), []);
+    assert.ok(out && out.text === ok, ok);
+  }
+  for (const claim of ['Your Tuesdays run 30% under.', 'Your Friday tables run 74 minutes.']) {
+    assert.strictEqual(advisorFreeText.applyAdviceValve(JSON.stringify({ answer: claim, points: [] }), []), null, claim);
+  }
+});
