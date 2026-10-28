@@ -266,19 +266,20 @@ const TEXT_CAP = 0.6;
 // so a question no cue phrase matches still finds its topic's best tactic.
 const TOPIC_WORD_WEIGHT = 0.5;
 const TOPIC_WORD_CAP = 1.5;
-const TOPIC_OF_WORD = new Map();
-for (const [topic, list] of Object.entries(TOPIC_WORDS)) {
+// A static index (word stem -> its topics), built once from the constants
+// above and frozen. Not a cache: nothing a caller sends ever writes to it.
+const TOPIC_OF_WORD = Object.freeze(Object.entries(TOPIC_WORDS).reduce((index, [topic, list]) => {
   for (const w of list) {
     const key = stem(w);
-    if (!TOPIC_OF_WORD.has(key)) TOPIC_OF_WORD.set(key, new Set());
-    TOPIC_OF_WORD.get(key).add(topic);
+    index[key] = index[key] ? [...new Set([...index[key], topic])] : [topic];
   }
-}
+  return index;
+}, Object.create(null)));
 
 function topicLean(qSet) {
   const hits = new Map();
   for (const w of qSet) {
-    for (const topic of TOPIC_OF_WORD.get(w) || []) hits.set(topic, (hits.get(topic) || 0) + 1);
+    for (const topic of TOPIC_OF_WORD[w] || []) hits.set(topic, (hits.get(topic) || 0) + 1);
   }
   return hits;
 }
