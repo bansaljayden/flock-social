@@ -1194,3 +1194,34 @@ describe('Roost chat: a follow-on carries the last answer', () => {
     expect(followOnFrom([{ status: 'done', answer: { mode: 'advice', context: ['x'] } }])).toBeNull();
   });
 });
+
+// A TAPPED SUGGESTION FOLLOWS ON TOO (2026-10-28). "What else could we try?"
+// under a playbook answer is answered by setting that answer's moves aside,
+// so the tap carries the answer's context exactly like a typed question does.
+describe('Roost chat: a tapped suggestion carries the answer it was offered under', () => {
+  const { within } = require('@testing-library/react');
+  const CONTEXT = { question: 'how do i fill tuesdays', intentId: 'quiet_nights', tactics: ['slow_day_recurring_reason'] };
+  const OFFLINE = {
+    mode: 'advice',
+    intentId: 'quiet_nights',
+    text: 'Give your slowest day 1 recurring reason to visit.',
+    sources: [{ id: 'roost_playbook', source: 'roost_playbook', asOf: null }],
+    followUps: [{ kind: 'question', text: 'What else could we try?' }],
+    context: CONTEXT,
+  };
+
+  test('tapping "What else could we try?" sends the answer\'s context with the tap', async () => {
+    const calls = [];
+    mount({
+      fetchQuestions: async () => ({ ...QUESTIONS(true), aiConsent: true }),
+      askQuestion: async (q, opts) => { calls.push([q, opts]); return calls.length === 1 ? OFFLINE : GROUNDED; },
+    });
+    const input = await waitFor(field);
+    fireEvent.change(input, { target: { value: 'how do i fill tuesdays' } });
+    fireEvent.click(send());
+    const group = await waitFor(() => screen.getByRole('group', { name: 'Ask next' }));
+    fireEvent.click(within(group).getByRole('button', { name: 'What else could we try?' }));
+    await waitFor(() => expect(calls.length).toBe(2));
+    expect(calls[1]).toEqual(['What else could we try?', { via: 'follow_up', previous: CONTEXT }]);
+  });
+});

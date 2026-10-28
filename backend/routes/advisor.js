@@ -59,7 +59,7 @@ const { authenticate } = require('../middleware/auth');
 const { requireVenueTier, getVenueTier, venueBillingEnabled } = require('../services/venueEntitlements');
 const advisorPhrasing = require('../services/advisorPhrasing');
 const advisorFreeText = require('../services/advisorFreeText');
-const { followUpsFor } = require('../services/advisorFollowUps');
+const { followUpsFor, ANOTHER_MOVE } = require('../services/advisorFollowUps');
 const advisorFollowOn = require('../services/advisorFollowOn');
 const roostPlaybook = require('../services/roostPlaybook');
 const advisorMoneyMove = require('../services/advisorMoneyMove');
@@ -1162,7 +1162,9 @@ router.post('/question', authenticate, requirePro, async (req, res) => {
           intentId: route.intentId || null,
           block,
           question: asked,
-          followUp: answer.followUp || null,
+          // A playbook-only answer offers "What else could we try?", which the
+          // playbook can answer; a move's own follow-up needs the model.
+          followUp: answer.fromPlaybook ? ANOTHER_MOVE : (answer.followUp || null),
           topic: answer.topic || null,
         }),
       context: followContext(answer, asked, route.intentId, answer.tactics || [], follow.exclude),

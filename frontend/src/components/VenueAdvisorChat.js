@@ -976,10 +976,15 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, grantConsent, with
       runTurn(`${f.id}-${Date.now()}`, f.label, () => ask(f.id, { via: 'follow_up' }));
       return;
     }
+    // A tapped question follows on from the answer it was offered under, the
+    // same way a typed one does, so "What else could we try?" sets that
+    // answer's moves aside (backend services/advisorFollowOn.js).
     if (f.kind === 'question' && typeof askQuestion === 'function') {
-      runTurn(`typed-${Date.now()}`, f.text, () => askQuestion(f.text, { via: 'follow_up' }), true);
+      const previous = followOnFrom(thread);
+      runTurn(`typed-${Date.now()}`, f.text,
+        () => askQuestion(f.text, previous ? { via: 'follow_up', previous } : { via: 'follow_up' }), true, previous);
     }
-  }, [ask, askQuestion, busy, runTurn]);
+  }, [ask, askQuestion, busy, runTurn, thread]);
 
   // A typed question carries the last answer's context, so "what else" and
   // "what about Wednesdays" are read against it (followOnFrom above). The

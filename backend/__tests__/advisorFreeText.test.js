@@ -1104,3 +1104,17 @@ test('a chip answer carries its context too, so "what else" works after a tap', 
   assert.strictEqual(body.context.question, advisorPhrasing.ADVISOR_INTENTS.peak_hours.chip);
   assert.ok(Array.isArray(body.context.tactics));
 });
+
+test('a playbook answer offers "What else could we try?", and tapping it gives a different move', async () => {
+  const { ANOTHER_MOVE } = require('../services/advisorFollowUps');
+  resetAll();
+  installProfile();
+  replies = [creditsOut()];
+  const first = await ask('how do i fill tuesdays');
+  assert.strictEqual(first.body.mode, 'advice');
+  const offered = first.body.followUps.filter((f) => f.kind === 'question').map((f) => f.text);
+  assert.deepStrictEqual(offered, [ANOTHER_MOVE], 'a move\'s own follow-up needs the model, so it is not offered');
+  const next = await ask({ question: ANOTHER_MOVE, previous: first.body.context });
+  assert.strictEqual(next.body.mode, 'advice', next.body.text);
+  for (const id of first.body.context.tactics) assert.ok(!next.body.text.includes(moveText(id)), `${id} came back`);
+});

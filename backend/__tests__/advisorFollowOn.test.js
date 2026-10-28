@@ -104,3 +104,10 @@ test('a follow-on that would run past the length cap falls back without breaking
   assert.ok(out.question.length <= advisorFreeText.FREE_TEXT_MAX_CHARS);
   assert.strictEqual(out.question, long.question);
 });
+
+test('the suggestion a playbook answer offers is itself a follow-on the playbook can answer', () => {
+  const { ANOTHER_MOVE } = require('../services/advisorFollowUps');
+  const out = followOn(ANOTHER_MOVE, TUESDAYS, LIMITS);
+  assert.strictEqual(out.kind, 'else');
+  assert.deepStrictEqual(out.exclude, ['slow_day_recurring_reason']);
+});

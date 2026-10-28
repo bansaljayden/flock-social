@@ -1219,6 +1219,9 @@ async function advise({ userId, question, ctx, groundedFacts = [], intentId = nu
       topic: answer.topic,
       followUp: answer.followUp,
       tactics: answer.tactics,
+      // Written by the playbook alone, so what it offers next has to be
+      // something the playbook alone can answer (routes/advisor.js).
+      fromPlaybook: true,
     };
   };
   if (offline) return fromPlaybook(fallback || REFUSAL_BUSY);

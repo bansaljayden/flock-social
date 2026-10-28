@@ -72,6 +72,14 @@ function quietDayQuestion(block) {
 // After the money move: fill the quiet day it named, or, in a level week,
 // lift the check.
 const LEVEL_WEEK_QUESTION = 'How do I get people to spend more per visit?';
+
+// What an answer from the playbook alone offers next. A move's own follow-up
+// ("What should go on a happy hour menu?") asks for detail only the model can
+// write; with the model out, tapping it answered with the same move again, or
+// with nothing (2026-10-28 audit: 158 repeats and 22 dead ends across 316
+// taps). This one is answered without the model: the last question again,
+// with the moves already given set aside (services/advisorFollowOn.js).
+const ANOTHER_MOVE = 'What else could we try?';
 function moneyMoveQuestion(block) {
   const facts = block && Array.isArray(block.facts) ? block.facts : [];
   if (facts.some((f) => /projects level/.test(String((f && f.note) || '')))) return LEVEL_WEEK_QUESTION;
@@ -119,9 +127,9 @@ function followUpsFor({ mode = 'grounded', intentId = null, block = null, questi
 
 // Every user-visible string this module can emit, for the standing design review.
 function __copyStrings() {
-  const out = ['How do I fill a quiet day?', 'How do I fill Tuesdays?', LEVEL_WEEK_QUESTION];
+  const out = ['How do I fill a quiet day?', 'How do I fill Tuesdays?', LEVEL_WEEK_QUESTION, ANOTHER_MOVE];
   for (const n of Object.values(NEXT)) if (n.question) out.push(n.question);
   return out;
 }
 
-module.exports = { followUpsFor, NEXT, TOPIC_INTENT, __copyStrings };
+module.exports = { followUpsFor, NEXT, TOPIC_INTENT, ANOTHER_MOVE, __copyStrings };
