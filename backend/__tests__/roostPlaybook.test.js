@@ -399,6 +399,17 @@ test('a chip\'s payload says what kind of room it is, in words with no id', () =
   assert.ok(!/"room":\{[^}]*"id"/.test(payload), 'the room carries no id the model could write');
 });
 
+test('a chip ends on its topic\'s lead move for every kind of venue, not a move one kind happens to be tagged for', () => {
+  const week = (scores) => ({ facts: scores.map((peakScore, i) => ({ id: `peak_${i}`, value: { weekday: `Day${i}`, peakHour: 18, peakScore } })) });
+  const lead = (topic) => pb.tactics.find((t) => t.topic === topic && t.venues.includes('all') && !t.alcohol);
+  for (const kind of ['cafe', 'full_service', 'bar', 'club', 'quick_service', 'bakery']) {
+    const venue = { kind, alcohol: kind === 'bar' || kind === 'club' };
+    assert.strictEqual(pb.moveFor('money_move', week([62, 44, 51, 91]), venue).id, lead('fill_slow_days').id, `${kind} money move`);
+    assert.strictEqual(pb.moveFor('peak_hours', week([62, 44, 51, 91]), venue).id, lead('handle_the_rush').id, `${kind} peak move`);
+    assert.strictEqual(pb.moveFor('money_move', week([85, 86, 87, 88]), venue).topic, 'check_average', `${kind} level week`);
+  }
+});
+
 // ── 5. The breaker ──────────────────────────────────────────────────────────
 
 test('the breaker opens on a failure that says the key is unusable, and on nothing else', () => {

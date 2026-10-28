@@ -570,6 +570,16 @@ function moveFor(intentId, block, venue = null) {
     if (!verdict || !verdict.value || verdict.value.verdict !== 'below') return null;
   }
   const key = intentId === 'money_move' && isLevelWeek(block) ? 'money_move_level' : intentId;
+  // THE TOPIC'S LEAD MOVE, IN THE PLAYBOOK'S OWN ORDER. With no question words
+  // to rank by, find() fell to its venue tiebreak and handed a cafe's money
+  // move "if you run a happy hour..." over the plain slow-day lead (found by
+  // dumping the stand-in eval's payloads, 2026-10-28). The file lists each
+  // topic's strongest, most general move first, so that is the one a chip
+  // ends on, among the moves that fit this venue.
+  const [topic] = INTENT_TOPICS[key] || [];
+  const drinks = false;
+  const lead = BOOK.tactics.find((t) => t.topic === topic && fits(t, venue, drinks) && forThisKind(t, venue));
+  if (lead) return lead;
   const [tactic] = BOOK.find('', { intentId: key, venue, limit: 1 });
   return tactic || null;
 }
