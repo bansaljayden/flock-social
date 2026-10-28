@@ -203,3 +203,27 @@ test('a trial length is advice, and the same verb in a claim about the venue is 
     assert.strictEqual(advisorFreeText.applyAdviceValve(JSON.stringify({ answer: claim, points: [] }), []), null, claim);
   }
 });
+
+// KEEPING PEOPLE IS NOT EMPLOYMENT LAW (the router prompt's own rule), and the
+// class check behind the router said otherwise (2026-10-28): "make" and
+// "keep" were compulsion verbs on their own, so "how do I make my staff
+// upsell" and "how can I keep my best staff" were refused as legal questions
+// even when the router had routed them as advice. They count now only with a
+// condition of work attached.
+test('training and keeping staff are advice, and making them work unpaid is still refused', () => {
+  const advisorFreeText = require('../services/advisorFreeText');
+  for (const ok of [
+    'how do i make my staff upsell',
+    'how can i keep my best staff',
+    'how can I keep my servers happy',
+    'can I make them better at upselling',
+  ]) assert.strictEqual(advisorFreeText.prohibitedClass(ok), null, ok);
+  for (const law of [
+    'can I make my server stay late without pay',
+    'can I keep them past their shift without paying',
+    'can I make the crew work through their break',
+    'can i force my staff to do unpaid trials',
+    'can I hold the closers back until the floor is clean',
+    'may I require a team member to remain after their rota ends?',
+  ]) assert.ok(advisorFreeText.prohibitedClass(law), law);
+});
