@@ -152,7 +152,10 @@ test('once the key is known dead, the next question makes no call and charges no
   const grounded = await ask('when are we busiest this week');
   assert.strictEqual(grounded.body.mode, 'template', 'the venue\'s own numbers, from the template');
   assert.strictEqual(grounded.body.intentId, 'peak_hours');
-  assert.match(grounded.body.text, /Tuesday projects busiest/);
+  assert.match(grounded.body.text, /^Your busiest day this week is Saturday, with its peak around 8 PM at 88/);
+  // The twin ends on one move from the playbook, and says so in its sources.
+  assert.strictEqual(grounded.body.text.split('\n').length, 3);
+  assert.deepStrictEqual(grounded.body.sources.map((s) => s.source), ['model_holdout', 'model_holdout', 'roost_playbook']);
 
   const advice = await ask('what should my food cost be');
   assert.strictEqual(advice.body.mode, 'advice');

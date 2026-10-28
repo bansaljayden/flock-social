@@ -60,6 +60,38 @@ const { requireVenueTier, getVenueTier, venueBillingEnabled } = require('../serv
 const advisorPhrasing = require('../services/advisorPhrasing');
 const advisorFreeText = require('../services/advisorFreeText');
 const { followUpsFor } = require('../services/advisorFollowUps');
+const roostPlaybook = require('../services/roostPlaybook');
+const { BULLET, MAX_POINTS } = require('../services/advisorAnswer');
+
+// THE TWIN GETS ONE MOVE (2026-10-28). A phrased answer makes a money move a
+// point when the facts point at one (advisorPrompt, the venue's own numbers
+// contract). The template twin only ever read the facts back, so on a day the
+// model was out the quiet-days chip named Tuesday and stopped. For the chips
+// whose facts always raise the same kind of move, the twin now ends on the
+// playbook's best one for that venue, and the sources line names the
+// playbook. Only when the answer has room for it, and never on a refusal.
+const TEMPLATE_MOVE_INTENTS = new Set(['peak_hours', 'quiet_nights', 'slow_night', 'tables_service', 'tables_free']);
+
+async function withMove(answer, intentId, userId, ctx = null) {
+  if (!answer || answer.mode !== 'template' || !TEMPLATE_MOVE_INTENTS.has(intentId)) return answer;
+  const points = String(answer.text || '').split('\n').length - 1;
+  if (points >= MAX_POINTS) return answer;
+  let venueCtx = ctx;
+  if (!venueCtx && advisorFacts && typeof advisorFacts.getVenueContext === 'function') {
+    try {
+      venueCtx = await advisorFacts.getVenueContext(userId);
+    } catch (err) {
+      venueCtx = null;
+    }
+  }
+  const [tactic] = roostPlaybook.find('', { intentId, venue: roostPlaybook.venueOf(venueCtx), limit: 1 });
+  if (!tactic) return answer;
+  return {
+    ...answer,
+    text: `${answer.text}\n${BULLET}${tactic.move}`,
+    sources: [...(answer.sources || []), { ...roostPlaybook.PLAYBOOK_SOURCE }],
+  };
+}
 // The measured floor below which an ordering claim is not made. Commit
 // 1d1b92b established it for HOURS, on the same 0 to 100 index these day
 // scores live on. Imported rather than restated: a second copy of a measured
@@ -813,10 +845,10 @@ router.post('/ask', authenticate, requirePro, [
     const block = await buildFactBlock(req.user.id, intentId);
     // The chip's own words ride with the facts, so the answer can lead with
     // the thing the chip asks. They are ours, never the owner's.
-    const answer = await advisorPhrasing.phrase(block, {
+    const answer = await withMove(await advisorPhrasing.phrase(block, {
       venueUserId: req.user.id,
       question: advisorPhrasing.ADVISOR_INTENTS[intentId].chip,
-    });
+    }), intentId, req.user.id);
 
     return res.json({
       intentId,
@@ -979,7 +1011,10 @@ router.post('/question', authenticate, requirePro, async (req, res) => {
       // The owner's own words go with the facts (sanitised above, and fenced
       // inside the payload), so "was Friday any good" routed to the week
       // recap is answered about Friday.
-      const answer = await advisorPhrasing.phrase(block, { venueUserId: userId, question: clean.text });
+      const answer = await withMove(
+        await advisorPhrasing.phrase(block, { venueUserId: userId, question: clean.text }),
+        route.intentId, userId, ctx,
+      );
       return res.json({
         mode: answer.mode,
         intentId: route.intentId,

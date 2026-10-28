@@ -1026,12 +1026,145 @@ function templateLine(f) {
   return `${sentenceCase(name)}: ${formatFactValue(f)}.`;
 }
 
+// ── The twin's shape ─────────────────────────────────────────────────────────
+//
+// THE TWIN ANSWERS THE QUESTION FIRST, IN NO MORE LINES THAN A PHRASED ANSWER
+// (2026-10-28). It printed every fact in the order the builder made them, so
+// "When do we peak this week?" opened on Monday and ran seven lines, one per
+// day, with the answer on line six, and the week recap could run fourteen.
+// The model never answered like that, and on a day the model is down the twin
+// is the whole product. So the questions about a week lead with the day they
+// ask about and keep the days that frame it, and every other block is held to
+// the answer and four points, in the order the fact engine ranked them.
+//
+// Selection and wording only. Nothing here computes a number the fact engine
+// did not hand over: a weekday, an hour and a score are each read off one
+// fact, and the sources line names exactly the facts that were used.
+const { HOUR_ORDERING_MIN_GAP } = require('./crowdEngine');
+
+const isPeakFact = (f) => Boolean(f && f.value && typeof f.value.weekday === 'string'
+  && Number.isFinite(Number(f.value.peakScore)) && Number.isFinite(Number(f.value.peakHour)));
+
+const peakAt = (f) => `around ${clock12(Number(f.value.peakHour), 0)} at ${Number(f.value.peakScore)}`;
+
+const byScore = (a, z) => Number(z.value.peakScore) - Number(a.value.peakScore);
+
+function shapeWeek(which) {
+  return (facts) => {
+    const days = facts.filter(isPeakFact).sort(byScore);
+    if (days.length < 2) return null;
+    const rest = facts.filter((f) => !isPeakFact(f));
+    const top = days[0];
+    const low = days[days.length - 1];
+    if (which === 'quiet') {
+      // The plan hands over the two lowest, lowest first, and refuses a level
+      // week before it gets here (routes/advisor.js quiet_nights).
+      const [first, second] = [...days].reverse();
+      return {
+        lead: `Your quietest day this week is ${first.value.weekday}, with its peak ${peakAt(first)} on our 0 to 100 index.`,
+        points: [`${second.value.weekday} is next, ${peakAt(second)}.`, ...rest.map(templateLine)],
+        used: [first, second, ...rest],
+      };
+    }
+    const scope = which === 'weekend' ? 'this weekend' : 'this week';
+    // A LEVEL WEEK HAS NO BUSIEST DAY. Below the measured ordering floor the
+    // gap is noise, and naming a winner inside it reads as advice to staff it.
+    if (Number(top.value.peakScore) - Number(low.value.peakScore) < HOUR_ORDERING_MIN_GAP) {
+      return {
+        lead: `No day stands out ${scope}: every day peaks between ${Number(low.value.peakScore)} and ${Number(top.value.peakScore)} on our 0 to 100 index.`,
+        points: rest.map(templateLine),
+        used: [top, low, ...rest],
+      };
+    }
+    const second = days[1];
+    const close = Number(top.value.peakScore) - Number(second.value.peakScore) < HOUR_ORDERING_MIN_GAP;
+    const points = [`${second.value.weekday} is ${close ? 'close behind' : 'next'}, ${peakAt(second)}.`];
+    const used = [top, second];
+    if (low !== second) {
+      points.push(`${low.value.weekday} is the quietest, ${peakAt(low)}.`);
+      used.push(low);
+    }
+    return {
+      lead: `Your busiest day ${scope} is ${top.value.weekday}, with its peak ${peakAt(top)} on our 0 to 100 index.`,
+      points: [...points, ...rest.map(templateLine)],
+      used: [...used, ...rest],
+    };
+  };
+}
+
+const READING_DAY = (date) => {
+  const m = String(date || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  return Number.isNaN(d.getTime()) ? null : d.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' });
+};
+
+// The week recap: up to seven of the owner's own readings and seven days of
+// what Flock served. The answer is the owner's best and worst day; what we
+// served sits under it, latest first.
+function shapeRecap(facts) {
+  const readings = facts
+    .filter((f) => f && /^owner_reading_/.test(String(f.id)) && f.value && Number.isFinite(Number(f.value.peakReading)))
+    .sort((a, z) => Number(z.value.peakReading) - Number(a.value.peakReading));
+  if (readings.length < 2) return null;
+  const top = readings[0];
+  const low = readings[readings.length - 1];
+  const when = (f) => {
+    const day = READING_DAY(f.value.date);
+    const short = advisorFactsShortDate(f.value.date);
+    return day ? `${day}, ${short}` : short;
+  };
+  const served = facts
+    .filter((f) => f && /^served_/.test(String(f.id)))
+    .sort((a, z) => String(z.id).localeCompare(String(a.id)));
+  const others = facts.filter((f) => !readings.includes(f) && !served.includes(f));
+  return {
+    lead: `Your busiest day in the last 7 was ${when(top)}, with a highest reading of ${Number(top.value.peakReading)}.`,
+    points: [
+      `Your slowest was ${when(low)}, at ${Number(low.value.peakReading)}.`,
+      `You posted readings on ${readings.length} of the last 7 days.`,
+      ...served.slice(0, 1).map(templateLine),
+      ...others.map(templateLine),
+    ],
+    used: [top, low, ...served.slice(0, 1), ...others],
+  };
+}
+
+// advisorFacts.shortDate, required lazily: advisorFacts is the heavier module
+// and this one is loaded by paths that never render a recap.
+function advisorFactsShortDate(date) {
+  // eslint-disable-next-line global-require
+  return require('./advisorFacts').shortDate(date);
+}
+
+const TEMPLATE_SHAPERS = Object.freeze({
+  peak_hours: shapeWeek('week'),
+  quiet_nights: shapeWeek('quiet'),
+  weekend_outlook: shapeWeek('weekend'),
+  week_recap: shapeRecap,
+});
+
 function renderTemplate(block) {
   const facts = Array.isArray(block?.facts) ? block.facts : [];
-  const lines = facts.map(templateLine);
-  const [lead, ...rest] = lines;
-  const text = lead ? [lead, ...rest.map((l) => `${advisorAnswer.BULLET}${l}`)].join('\n') : '';
-  return { mode: 'template', text, sources: factSources(facts) };
+  const shaper = TEMPLATE_SHAPERS[block?.intent];
+  const shaped = shaper ? shaper(facts) : null;
+  let lead;
+  let points;
+  let used;
+  if (shaped) {
+    ({ lead, points, used } = shaped);
+  } else {
+    const lines = facts.map(templateLine);
+    [lead] = lines;
+    points = lines.slice(1);
+    used = facts;
+  }
+  // Held to the phrased answer's shape: the answer and four points. The facts
+  // past the fourth point leave the sources line with their sentence.
+  const kept = points.slice(0, advisorAnswer.MAX_POINTS);
+  const usedFacts = shaped ? used.slice(0, used.length - (points.length - kept.length)) : used.slice(0, 1 + kept.length);
+  const text = lead ? [lead, ...kept.map((l) => `${advisorAnswer.BULLET}${l}`)].join('\n') : '';
+  return { mode: 'template', text, sources: factSources(usedFacts) };
 }
 
 // ── The valve ────────────────────────────────────────────────────────────────

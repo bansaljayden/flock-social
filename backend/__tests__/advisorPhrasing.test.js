@@ -322,15 +322,81 @@ const WEEK_BLOCK = () => ({
 test('the twin has the answer\'s shape: the first fact leads, the rest are points, no chip on any line', () => {
   const out = advisorPhrasing.renderTemplate(WEEK_BLOCK());
   const lines = out.text.split('\n');
-  assert.strictEqual(lines.length, 7, 'seven facts, seven lines, and no footer in the text');
+  // Held to a phrased answer's shape since 2026-10-28: the answer and four
+  // points. Seven lines for one sentence of information was the dump.
+  assert.strictEqual(lines.length, 5, 'the answer and four points, and no footer in the text');
   assert.strictEqual(lines[0], 'Sunday projects busiest around 9 PM.');
-  assert.strictEqual(lines[6], '• Saturday projects busiest around 9 PM.');
+  assert.strictEqual(lines[4], '• Thursday projects busiest around 9 PM.');
   // The hedge the label appends and the per-line provenance are both gone:
   // the client prints the sources once, at the end, from `sources`.
   assert.doesNotMatch(out.text, /not a promise/);
   assert.doesNotMatch(out.text, /as of/);
-  assert.strictEqual(out.sources.length, 7);
+  assert.strictEqual(out.sources.length, 5, 'the sources are the facts that were used');
   assert.ok(out.sources.every((s) => s.source === 'model_holdout' && s.asOf === '2026-08-19T22:00:00Z'));
+});
+
+// The questions about a week lead with the day they ask about. The builder
+// hands days over in date order, so the twin used to open "When do we peak
+// this week?" on Monday and reach the answer on line six.
+const PEAKS = (days) => ({
+  intent: 'peak_hours',
+  facts: days.map(([weekday, peakHour, peakScore], i) => ({
+    id: `peak_2026-11-0${i + 2}`,
+    value: { date: `2026-11-0${i + 2}`, weekday, peakHour, peakScore },
+    unit: '0-100 index',
+    source: 'model_holdout',
+    asOf: '2026-10-27T22:00:00Z',
+    label: `${weekday} projects busiest. This is an estimate, not a promise of foot traffic.`,
+  })),
+  refusals: [],
+});
+const WEEK_DAYS = [['Monday', 18, 41], ['Tuesday', 18, 38], ['Wednesday', 19, 47], ['Thursday', 19, 55], ['Friday', 20, 82], ['Saturday', 20, 88], ['Sunday', 13, 61]];
+
+test('the week twins answer the question first: the busiest day, the one behind it, and the quietest', () => {
+  const out = advisorPhrasing.renderTemplate(PEAKS(WEEK_DAYS));
+  assert.deepStrictEqual(out.text.split('\n'), [
+    'Your busiest day this week is Saturday, with its peak around 8 PM at 88 on our 0 to 100 index.',
+    '• Friday is close behind, around 8 PM at 82.',
+    '• Tuesday is the quietest, around 6 PM at 38.',
+  ]);
+  assert.deepStrictEqual(out.sources.map((s) => s.id), ['peak_2026-11-07', 'peak_2026-11-06', 'peak_2026-11-03']);
+
+  const quiet = advisorPhrasing.renderTemplate({ ...PEAKS([['Tuesday', 18, 38], ['Monday', 18, 41]]), intent: 'quiet_nights' });
+  assert.deepStrictEqual(quiet.text.split('\n'), [
+    'Your quietest day this week is Tuesday, with its peak around 6 PM at 38 on our 0 to 100 index.',
+    '• Monday is next, around 6 PM at 41.',
+  ]);
+});
+
+test('a level week names no busiest day, because inside the ordering floor the gap is noise', () => {
+  const out = advisorPhrasing.renderTemplate(PEAKS([['Monday', 18, 85], ['Tuesday', 18, 88], ['Wednesday', 19, 86]]));
+  assert.strictEqual(out.text, 'No day stands out this week: every day peaks between 85 and 88 on our 0 to 100 index.');
+});
+
+test('the week recap leads with the owner\'s best and worst day, not fourteen rows', () => {
+  const readings = [['2026-10-21', 40], ['2026-10-22', 62], ['2026-10-23', 81], ['2026-10-24', 90], ['2026-10-25', 55]]
+    .map(([date, peakReading]) => ({
+      id: `owner_reading_${date}`,
+      value: { date, peakReading, readings: 2 },
+      source: 'owner_report',
+      asOf: date,
+      label: `Your highest reading on ${date} was ${peakReading}.`,
+    }));
+  const served = ['2026-10-23', '2026-10-25'].map((date) => ({
+    id: `served_${date}`,
+    value: { date, serves: 12, medianScore: 60 },
+    source: 'served_prediction',
+    asOf: date,
+    label: `Flock served 12 crowd estimates on ${date}.`,
+  }));
+  const out = advisorPhrasing.renderTemplate({ intent: 'week_recap', facts: [...readings, ...served], refusals: [] });
+  const lines = out.text.split('\n');
+  assert.match(lines[0], /^Your busiest day in the last 7 was Saturday, Oct 24(, 2026)?, with a highest reading of 90\.$/);
+  assert.match(lines[1], /^• Your slowest was Wednesday, Oct 21(, 2026)?, at 40\.$/);
+  assert.strictEqual(lines[2], '• You posted readings on 5 of the last 7 days.');
+  assert.strictEqual(lines[3], '• Flock served 12 crowd estimates on 2026-10-25.', 'what we served, latest first');
+  assert.ok(lines.length <= 5);
+  assert.deepStrictEqual(out.sources.map((s) => s.id), ['owner_reading_2026-10-24', 'owner_reading_2026-10-21', 'served_2026-10-25']);
 });
 
 test('facts from different speakers keep their own words, and their sources ride beside the answer', () => {

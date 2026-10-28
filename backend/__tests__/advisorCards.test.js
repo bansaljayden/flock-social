@@ -482,9 +482,11 @@ test('every answer builder carries a pattern-made peak\'s served arithmetic to t
   const peaks = await patternPeaks();
   assert.strictEqual(peaks.length, 7);
 
-  // The template answer.
+  // The template answer. It is held to the answer and four points
+  // (2026-10-28), so five of the seven days speak, and each one that does
+  // carries its served arithmetic.
   const template = advisorPhrasing.renderTemplate({ facts: peaks });
-  assert.strictEqual(template.sources.length, 7);
+  assert.strictEqual(template.sources.length, 5);
   for (const s of template.sources) {
     assert.strictEqual(s.source, 'model_holdout');
     assert.strictEqual(s.numberSource, 'venue_pattern');
