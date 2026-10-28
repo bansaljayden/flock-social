@@ -159,6 +159,45 @@ dbm_h = 26.67
 dbm_port = (9.525, 11.09)
 dbm_stack = 22.0               # board, connector, plug, and the wires' bend
 
+# The table camera: Arducam 16MP IMX519 USB 3.0, autofocus, the kind with no
+# microphone (Arducam B0471; Amazon B0CXTBXS1L). Arducam's spec table: a
+# 34 x 34 board, 78 degrees across the diagonal, 65 side to side and 51 up and
+# down, a USB-C socket (USB 3.2 Gen 1). It ships on a back cover with a tripod
+# adapter: both come off, and the bare board sits in a cradle that holds it by
+# its edges, so its mounting holes, which Arducam does not publish, are never
+# needed. Everything else about the board is a guess until it is in hand.
+cam_board = 34.0               # the board, square: Arducam's figure
+cam_pcb = 1.6                  # MEASURE: the board's thickness
+cam_lens_at = (17.0, 17.0)     # MEASURE: the lens's centre from the board's left and bottom edges, seen from the front
+cam_lens_body = 8.5            # MEASURE: the autofocus lens module's square outline
+cam_lens_h = 6.0               # MEASURE: the board's front face to the front of the lens
+cam_aperture = 3.5             # MEASURE: the lens's clear glass, where its view starts
+cam_front_parts = 1.0          # MEASURE: the tallest part on the board's front, round the lens
+cam_back_parts = 3.2           # MEASURE: the tallest part on its back (the USB-C socket's own height)
+cam_margin = 1.5               # MEASURE: the bare strip round the board's edge, front and back, that the cradle may touch
+cam_usb_at = (17.0, 17.0)      # MEASURE: the USB-C socket's centre on the back, from the left and bottom edges seen from the front
+cam_half_h = 32.5              # half its 65 degrees side to side
+cam_half_v = 25.5              # half its 51 degrees up and down
+usbc_ra = (12.5, 7.0, 14.0)    # a right-angle USB-C plug's body: across, up, and out from the board, its cable turning right
+
+# The lens cover's servo: MG90S, metal gears (Amazon B0BWJ41FZB). Tower Pro's
+# drawing: a 22.5 x 12 body, tabs 32.5 across, 21 from its base to the tabs,
+# 35.5 to the top of the spline; sellers list 22.8 x 12.2 x 28.5 to the top of
+# the gear boss. Its three wires (brown GND, red 5 V, orange signal) leave the
+# end away from the shaft, low down.
+srv_len = 22.8                 # its body, end to end
+srv_wid = 12.2                 # and across
+srv_case_h = 22.7              # MEASURE: base to the top of the case, under the gear boss
+srv_boss_h = 28.5              # base to the top of the gear boss
+srv_tab_span = 32.5            # the tabs, end to end
+srv_tab_top = 21.0             # base to the tabs' top face (the drawing's 21)
+srv_tab_t = 2.5                # MEASURE: the tabs' thickness
+srv_hole_dx = 27.5             # MEASURE: the tabs' two screw holes, centre to centre (the common micro servo figure)
+srv_shaft_in = 6.0             # MEASURE: the shaft's centre in from the body's near end
+horn_reach = 9.0               # the one-arm horn from its kit, cut down to reach 9 from the shaft
+horn_arm = (4.0, 1.6)          # MEASURE: the horn arm's width and thickness
+horn_hub = (7.0, 3.5)          # MEASURE: the horn hub's diameter, and the horn's depth on the spline
+
 # ===========================================================================
 # STILL TO MEASURE
 # ===========================================================================
@@ -184,7 +223,7 @@ backer = 1.6                   # the printed plate behind the front sheet's stri
 side_room = 6.5                # beside the screen, each side: the touch plug on the left
 cable_gap = 4.0                # behind the screen: the touch cable and the video ribbon
 strip_h = 48.0                 # the strip under the screen, base included
-pill = (68.0, 17.0)            # the sensor window under the screen, a cream pill
+pill = (76.0, 20.0)            # the sensor window under the screen, a cream pill: the eye, the light, the table camera
 lip = 1.6                      # the front's thickness in front of the screen's glass
 screen_border = 2.5            # the screen's own black glass showing round its picture
 logo_depth = 0.8               # the wordmark, pressed in and filled cream
@@ -225,9 +264,31 @@ pd_parts_h = 4.0               # most of its parts; the capacitor and the jacks 
 pd_out_u = 10.8                # its OUTPUT USB-C, on the bottom edge, from the left: 52Pi's scaled photo
 pd_in_v = 21.0                 # its INPUT USB-C, on the right edge, up from the bottom: the same
 
+# The table camera's cradle and its lens cover. The cover is a flap inside the
+# box, between the front and the lens: from outside nobody can reach it, pry
+# it or tape it open, and the front shows only a dark window. The flap turns
+# on a pin in line with the servo's shaft, but the servo does not hold it: its
+# horn pushes a peg on the flap open and leaves it alone on the way back, and
+# a small spring pulls the flap shut against a stop. A slack servo, or one
+# with no power or no signal, leaves the lens covered.
+cam_clear = 0.3                # round the board in its cradle
+bay_wall = 1.8                 # the cradle's walls
+cam_lip = 1.2                  # the ledges the board's front rests on, over its bare edge
+clamp_t = 1.6                  # the printed clamp that holds the board in from behind, two M2 screws
+cam_grow = 0.5                 # the window, each side, past the camera's exact view
+flap_t = 1.2                   # the flap's thickness
+flap_blade = (12.0, 11.0)      # the part over the lens: 2 mm past its view each side at the flap
+flap_tail = 6.0                # the spring's hole, out from the pin
+flap_open = 45.0               # how far the flap turns open: enough to clear the whole view
+horn_shut = 135.0              # the horn's angle at 1000 us, from straight right, anticlockwise seen from the front;
+                               # 2000 us turns it 90 degrees clockwise. Its first 45 are slack: it only meets the flap's peg after that
+spring_len = 12.0              # the spring, hook to hook, at rest with the flap shut: 3 mm across, about 10 mm of coil.
+                               # Open, it stretches to 16.3
+spring_front = 3.5             # room for it between the front and the flap
+
 mount_nut_af = 11.4            # a 1/4"-20 hex nut, across its flats, with clearance
 mount_nut_th = 5.8
-mount_boss = 20.0
+mount_boss = 16.0               # round the nut: 1.4 of wall at its corners, and clear of the lens cover's servo
 # The arm bought for the wall: CAMVATE's 1/4"-20 mini ball head on a post
 # (sold as a pair, 24007), 120 mm tall in all, measured off CAMVATE's
 # drawing: an oval foot 50 x 28 x 5 with two screw holes, a 13.3 mm post, the
@@ -299,12 +360,19 @@ _t = math.radians(tof_tilt)
 TOF_N = (0.0, -math.cos(_t), -math.sin(_t))
 CHIN_D = tof_chin_h * math.tan(_t)          # how far back under the base the facet reaches
 _off = tof_chin_t + 0.3
-TOF_S = (BOX_W / 2 + 28.0, CHIN_D / 2 - _off * TOF_N[1], tof_chin_h / 2 - _off * TOF_N[2])
+# Far right of the strip: its leads run back and up from the chin, and the
+# table camera's cradle and servo fill the middle.
+TOF_S = (BOX_W / 2 + 60.0, CHIN_D / 2 - _off * TOF_N[1], tof_chin_h / 2 - _off * TOF_N[2])
 TOF_LOC = Pos(*TOF_S) * Rot(tof_tilt, 0, 0)
 TOF_C = (TOF_S[0], TOF_S[2])
-# The eye and the light, mirrored about the middle of the pill.
-LED_POS = (BOX_W - EYE[0], EYE[1])
+# The two eyes, mirrored about the middle of the pill: the heat camera on the
+# left and the table camera on the right, level with each other and looking
+# the same way, so they see the same room 37 mm apart. The light sits between
+# them, where it reads as the box's own, and where anyone looking at the
+# camera's window also sees whether the box is on.
 PILL_C = (BOX_W / 2, EYE[1])
+LED_POS = PILL_C
+CAM_C = (BOX_W - EYE[0], EYE[1])           # the table camera's lens, (x, z)
 # The front's opening: the picture, and a thin border of the screen's own glass.
 OPENING = (SCREEN_X0 + screen_border_l - screen_border, SCREEN_Z0 + screen_border_b - screen_border,
            screen_active_w + 2 * screen_border, screen_active_h + 2 * screen_border)
@@ -343,18 +411,72 @@ PD_OUT = (PD_X0 + pd_out_u, PD_Y0 - 1.7, PD_Z0)            # opening down
 PD_IN = (PD_X0 + pd_pcb[0], PD_Y0 - 1.7, PD_Z0 + pd_in_v)  # opening right
 # As near the box's balance point as the base allows: the battery's weight
 # pulls it left, and the battery's own footprint is the one place a boss
-# cannot go. Clear of the camera's plug in front and the 4G board's behind.
-MOUNT_C = (BOX_W / 2 - 2.0, LAY_Y0 + 7.9)
+# cannot go. Clear of the camera's plug in front, the 4G board's behind, and
+# the lens cover's servo to its right.
+MOUNT_C = (BOX_W / 2 - 3.0, LAY_Y0 + 7.9)
 
 CORNER_IN = wall + 4.5
 # The lower left one moves in past the battery, which stands in that corner.
 BACK_HOLES = [(CORNER_IN, BOX_H - CORNER_IN), (BOX_W - CORNER_IN, BOX_H - CORNER_IN),
               (BATT_X1 + batt_room + 4.6, CORNER_IN), (BOX_W - CORNER_IN, CORNER_IN)]
 
+# The table camera, front to back: the flap just behind the front with the
+# spring in front of it, the servo's horn behind the flap, then the lens and
+# its board. The board stands just behind the screen's back plane, because
+# its top edge rises above the strip, behind the screen's lowest few
+# millimetres.
+CAM_Y0 = SCREEN_Y1 + 0.5 + cam_front_parts     # the board's front face
+CAM_Y1 = CAM_Y0 + cam_pcb                       # its back face
+CAM_LENS_Y = CAM_Y0 - cam_lens_h                # the front of the lens, where its view starts
+CAM_X0 = CAM_C[0] - cam_lens_at[0]
+CAM_Z0 = CAM_C[1] - cam_lens_at[1]
+CAM_USB = (CAM_X0 + cam_usb_at[0], CAM_Z0 + cam_usb_at[1])
+BAY_X0, BAY_X1 = CAM_X0 - cam_clear, CAM_X0 + cam_board + cam_clear
+BAY_Z0 = CAM_Z0 - cam_clear
+BAY_TOP = SCREEN_Z0 - 0.8                       # the cradle stops under the screen, which drops in past it
+BAY_Y1 = CAM_Y1 - 0.1                           # the walls' back, a hair in front of the board's, so the clamp pinches it
+SPRING_Y = FRONT_Y + spring_front / 2           # the spring's middle
+FLAP_Y0 = FRONT_Y + spring_front
+FLAP_Y1 = FLAP_Y0 + flap_t
+HORN_Y0 = FLAP_Y1 + 0.6
+HORN_Y1 = HORN_Y0 + horn_hub[1]                 # the top of the servo's gear boss
+LIP_Y0 = HORN_Y0 + horn_arm[1] + 0.3            # the cradle's floor and ledges start behind the horn
+SRV_YB = HORN_Y1 + srv_boss_h                   # the servo's base, its back end here
+# The servo lies on its side on the floor under the cradle, its shaft forward,
+# as far right as the part under the 4G board's lower edge (49.7 along it)
+# lets its back end come.
+SRV_X0 = PI_X0 + 49.7 - 0.4 - srv_len
+SRV_Z0 = IN_Z0 + 0.8
+SRV_AXIS = (SRV_X0 + srv_shaft_in, SRV_Z0 + srv_wid / 2)
+SRV_TAB_Y0 = SRV_YB - srv_tab_top               # the tabs' front face, on two posts
+SRV_HOLES = [(SRV_X0 + srv_len / 2 + s * srv_hole_dx / 2, SRV_AXIS[1]) for s in (-1, 1)]
+FLAP_R = math.dist(CAM_C, SRV_AXIS)             # the pin to the middle of the lens
+FLAP_A = math.degrees(math.atan2(CAM_C[1] - SRV_AXIS[1], CAM_C[0] - SRV_AXIS[0]))
+# The peg the horn pushes: where the horn's side meets it 45 degrees after it
+# starts, so the flap turns the last 45 of the horn's 90.
+_contact = math.degrees(math.asin((horn_arm[0] / 2 + 1.2) / 6.0))
+PEG_ANGLE = horn_shut - (90.0 - flap_open) - _contact
+SPRING_POST = (SRV_AXIS[0] + flap_tail, SRV_AXIS[1] + spring_len)
+# The stop, against the left side of the flap's arm 15 mm up it.
+STOP_PIN = (SRV_AXIS[0] + 15 * math.cos(math.radians(FLAP_A)) - 3.5 * math.sin(math.radians(FLAP_A)),
+            SRV_AXIS[1] + 15 * math.sin(math.radians(FLAP_A)) + 3.5 * math.cos(math.radians(FLAP_A)))
+# The cradle's clamp screws, at its two bottom corners, outside the servo.
+CLAMP_HOLES = [(BAY_X0 - 2.8, BAY_Z0 - 0.8), (BAY_X1 + 2.8, BAY_Z0 - 0.8)]
+# Opening, the flap's corner passes through the cradle's right wall: a slot
+# in the wall lets it, up to where the arc its far corner draws crosses it.
+RW_HIGH = SRV_AXIS[1] + math.sqrt((FLAP_R + flap_blade[1] / 2) ** 2 + (flap_blade[0] / 2) ** 2
+                                  - (BAY_X1 - SRV_AXIS[0]) ** 2) + 1.5
+
 
 def cone(width, half_deg, depth):
     """The opening that clears a sensor's view at `depth` in front of it."""
     return width + 2 * depth * math.tan(math.radians(half_deg)) + 1.0
+
+
+def cam_window(depth, grow=cam_grow):
+    """The table camera's view, across and up, at `depth` in front of its lens."""
+    return (cam_aperture + 2 * depth * math.tan(math.radians(cam_half_h)) + 2 * grow,
+            cam_aperture + 2 * depth * math.tan(math.radians(cam_half_v)) + 2 * grow)
 
 
 # ===========================================================================
@@ -398,6 +520,30 @@ def slab(sketch, y0, y1, flip=False):
 def face_outline(inset=0.0, r=None):
     rr = corner_r - inset if r is None else r
     return Pos(BOX_W / 2, BOX_H / 2) * RectangleRounded(BOX_W - 2 * inset, BOX_H - 2 * inset, max(0.05, rr))
+
+
+def turn(axis, deg):
+    """A turn about a line front to back through axis (x, z), anticlockwise
+    as seen from the front by `deg`."""
+    ax, az = axis
+    return Pos(ax, 0, az) * Rot(0, -deg, 0) * Pos(-ax, 0, -az)
+
+
+def cam_view(length, grow=0.0, back=0.0):
+    """The table camera's view: a rectangular pyramid from its lens out of the
+    front, `length` long, `grow` wider each side than its exact view. `back`
+    starts it that far behind the lens front, at the same size."""
+    from build123d import loft
+    y0 = CAM_LENS_Y + back
+    w0, h0 = cam_window(0, grow)
+    w1, h1 = cam_window(length, grow)
+    near = Plane(origin=(CAM_C[0], y0, CAM_C[1]), x_dir=(1, 0, 0), z_dir=(0, -1, 0)) * Rectangle(w0, h0)
+    mid = Plane(origin=(CAM_C[0], CAM_LENS_Y, CAM_C[1]), x_dir=(1, 0, 0), z_dir=(0, -1, 0)) * Rectangle(w0, h0)
+    far = Plane(origin=(CAM_C[0], CAM_LENS_Y - length, CAM_C[1]), x_dir=(1, 0, 0), z_dir=(0, -1, 0)) * Rectangle(w1, h1)
+    view = loft([mid, far])
+    if back > 0:
+        view += loft([near, mid])
+    return view
 
 
 def pi_box(X0, X1, Y0, Y1, H0, H1):
@@ -490,6 +636,8 @@ def sleeve():
     # The mount's boss, a 1/4"-20 nut dropped in from inside.
     body += cyl_z(MOUNT_C[0], MOUNT_C[1], 0, mount_boss, mount_floor + mount_nut_th + 1.0)
 
+    body += table_camera_bay()
+
     # --- cuts ---
     for x, z in SCREEN_HOLES:
         body -= cyl_y(x, EAR_Y0 - insert_depth, z, insert_dia, insert_depth + 0.01)
@@ -508,6 +656,16 @@ def sleeve():
     body -= cyl_y(EYE[0], plate - 1, EYE[1], eye_dia(), backer + 2)
     body -= tof_view_cut()
     body -= cyl_y(LED_POS[0], plate - 1, LED_POS[1], 4.2, backer + 2)
+    # The table camera's window, its view and half a millimetre, from the lens
+    # out; and a notch in the cradle's left wall for the light's wires.
+    body -= cam_view(CAM_LENS_Y + 1, cam_grow)
+    body -= span(BAY_X0 - bay_wall - 0.5, BAY_X0 + cam_lip + 0.1, FRONT_Y - 1, LIP_Y0 + 1.5,
+                 LED_POS[1] - 2.8, LED_POS[1] + 2.8)
+    # Pilot holes: the clamp's two screws and the servo's two, all M2 from behind.
+    for x, z in CLAMP_HOLES:
+        body -= cyl_y(x, BAY_Y1 - 8, z, m2_pilot, 8.01)
+    for x, z in SRV_HOLES:
+        body -= cyl_y(x, SRV_TAB_Y0 - 8, z, m2_pilot, 8.01)
 
     # The meter hears the room through the right wall.
     body -= cyl_x(IN_X1 - 1, fy - dbm_w / 2 + dbm_port[0], fz - dbm_h / 2 + dbm_port[1], 2.5, wall + 2)
@@ -521,6 +679,135 @@ def sleeve():
     # the air goes in low and out high through dot grilles in the back sheet.
     # Nothing added inside may show outside: trim to the rounded outline.
     return body & outer
+
+
+def table_camera_bay():
+    """The table camera's cradle and the flap's posts, part of the body.
+
+    The board drops in from behind onto three ledges (left, right and under
+    it) that touch only its bare edge, between two walls and on a floor that
+    locate it to 0.3 mm, and a printed clamp screwed on behind presses it onto
+    them. Every wall runs front to back, so the body still prints face down
+    with no supports: the slot the flap swings through in the right wall is
+    bridged over at its top, and the floor starts behind the horn, bridged
+    between the two walls."""
+    wl = span(BAY_X0 - bay_wall, BAY_X0, FRONT_Y - 0.5, BAY_Y1, BAY_Z0 - bay_wall, BAY_TOP)
+    wr = span(BAY_X1, BAY_X1 + bay_wall, FRONT_Y - 0.5, BAY_Y1, BAY_Z0 - bay_wall, BAY_TOP)
+    floor = span(BAY_X0 - bay_wall, BAY_X1 + bay_wall, LIP_Y0, BAY_Y1, BAY_Z0 - bay_wall, BAY_Z0)
+    ledges = (span(BAY_X0 - 0.1, BAY_X0 + cam_lip, LIP_Y0, CAM_Y0, BAY_Z0 - 0.1, BAY_TOP) +
+              span(BAY_X1 - cam_lip, BAY_X1 + 0.1, LIP_Y0, CAM_Y0, BAY_Z0 - 0.1, BAY_TOP) +
+              span(BAY_X0 - 0.1, BAY_X1 + 0.1, LIP_Y0, CAM_Y0, BAY_Z0 - 0.1, BAY_Z0 + cam_lip))
+    part = wl + wr + floor + ledges
+    for x, z in CLAMP_HOLES:
+        part += cyl_y(x, FRONT_Y - 0.5, z, 4.6, BAY_Y1 - FRONT_Y + 0.5)
+    # The slot the flap swings through, in the right wall and its clamp boss.
+    part -= span(BAY_X1 - 1, CLAMP_HOLES[1][0] + 3.3, FLAP_Y0 - 0.5, FLAP_Y1 + 0.5, BAY_Z0 - bay_wall - 4, RW_HIGH)
+    # The servo's two posts, to the front faces of its tabs.
+    for x, z in SRV_HOLES:
+        part += cyl_y(x, FRONT_Y - 0.5, z, 4.0, SRV_TAB_Y0 - FRONT_Y + 0.5)
+    # The flap's pin, in line with the servo's shaft and stopping short of its
+    # horn; the stop the flap's arm rests on, shut; the spring's post, capped.
+    part += cyl_y(SRV_AXIS[0], FRONT_Y - 0.5, SRV_AXIS[1], 3.0, FLAP_Y1 + 0.3 - FRONT_Y + 0.5)
+    part += cyl_y(STOP_PIN[0], FRONT_Y - 0.5, STOP_PIN[1], 2.4, FLAP_Y1 + 0.3 - FRONT_Y + 0.5)
+    part += cyl_y(SPRING_POST[0], FRONT_Y - 0.5, SPRING_POST[1], 2.0, FLAP_Y0 - 0.3 - FRONT_Y + 0.5)
+    part += cyl_y(SPRING_POST[0], FLAP_Y0 - 1.0, SPRING_POST[1], 3.6, 0.7)
+    return part
+
+
+def flap_sketch():
+    """The flap, shut, drawn in (x, z): its hub on the pin, the arm up to the
+    blade over the lens, and the tail the spring pulls."""
+    ax, az = SRV_AXIS
+    sk = Pos(ax, az) * Circle(3.4)
+    sk += Pos((ax + CAM_C[0]) / 2, (az + CAM_C[1]) / 2) * Rot(0, 0, FLAP_A) * Rectangle(FLAP_R, 4.0)
+    sk += Pos(*CAM_C) * RectangleRounded(flap_blade[0], flap_blade[1], 2.5)
+    sk += Pos(ax + flap_tail / 2, az) * SlotOverall(flap_tail + 3.5, 3.5)
+    sk -= Pos(ax, az) * Circle(1.7)
+    sk -= Pos(ax + flap_tail, az) * Circle(0.7)
+    return sk
+
+
+def lens_flap(open_deg=0.0):
+    """The flap, turned `open_deg` clockwise (seen from the front) from shut,
+    with the peg the horn pushes standing out of its back."""
+    a = math.radians(PEG_ANGLE)
+    peg = cyl_y(SRV_AXIS[0] + 6.0 * math.cos(a), FLAP_Y1 - 0.2, SRV_AXIS[1] + 6.0 * math.sin(a), 2.4,
+                HORN_Y0 + horn_arm[1] - 0.2 - FLAP_Y1 + 0.2)
+    return turn(SRV_AXIS, -open_deg) * (slab(flap_sketch(), FLAP_Y0, FLAP_Y1) + peg)
+
+
+def servo_horn(deg=horn_shut):
+    """The servo's one-arm horn at `deg`, anticlockwise from straight right."""
+    ax, az = SRV_AXIS
+    reach = horn_reach - horn_arm[0] / 2
+    arm = Pos(ax, az) * Rot(0, 0, deg) * Pos(reach / 2, 0) * SlotOverall(reach + horn_arm[0], horn_arm[0])
+    return slab(arm, HORN_Y0, HORN_Y0 + horn_arm[1]) + cyl_y(ax, HORN_Y0, az, horn_hub[0], horn_hub[1])
+
+
+def horn_at(open_deg):
+    """Where the horn stands when the flap is `open_deg` open."""
+    return horn_shut - (90.0 - flap_open) - open_deg
+
+
+def flap_spring(open_deg=0.0):
+    """The spring, from the flap's tail to its post, in front of the flap."""
+    a = math.radians(-open_deg)
+    tail = (SRV_AXIS[0] + flap_tail * math.cos(a), SPRING_Y, SRV_AXIS[1] + flap_tail * math.sin(a))
+    return tube([tail, (SPRING_POST[0], SPRING_Y, SPRING_POST[1])], 3.0)
+
+
+def servo_body():
+    """The MG90S lying on its side, shaft forward: its case, the tabs on the
+    two posts, the gear boss and the spline the horn presses onto."""
+    x0, z0 = SRV_X0, SRV_Z0
+    case = span(x0, x0 + srv_len, SRV_YB - srv_case_h, SRV_YB, z0, z0 + srv_wid)
+    cx = x0 + srv_len / 2
+    tabs = span(cx - srv_tab_span / 2, cx + srv_tab_span / 2, SRV_TAB_Y0, SRV_TAB_Y0 + srv_tab_t, z0, z0 + srv_wid)
+    for x, z in SRV_HOLES:
+        tabs -= cyl_y(x, SRV_TAB_Y0 - 1, z, 2.0, srv_tab_t + 2)
+    boss = cyl_y(SRV_AXIS[0], HORN_Y1, SRV_AXIS[1], srv_wid, SRV_YB - srv_case_h - HORN_Y1)
+    spline = cyl_y(SRV_AXIS[0], HORN_Y1 - 3.0, SRV_AXIS[1], 4.8, 3.0)
+    return case + tabs + boss + spline
+
+
+def table_camera_body():
+    """The Arducam board: the board, the lens module on its front, the parts
+    round the lens, and the parts and USB-C socket on its back."""
+    x0, z0, m = CAM_X0, CAM_Z0, cam_margin
+    board = span(x0, x0 + cam_board, CAM_Y0, CAM_Y1, z0, z0 + cam_board)
+    lens = span(CAM_C[0] - cam_lens_body / 2, CAM_C[0] + cam_lens_body / 2, CAM_LENS_Y, CAM_Y0,
+                CAM_C[1] - cam_lens_body / 2, CAM_C[1] + cam_lens_body / 2)
+    front = span(x0 + m, x0 + cam_board - m, CAM_Y0 - cam_front_parts, CAM_Y0, z0 + m, z0 + cam_board - m)
+    back = span(x0 + m + 0.2, x0 + cam_board - m - 0.2, CAM_Y1, CAM_Y1 + cam_back_parts,
+                z0 + m + 0.2, z0 + cam_board - m - 0.2)
+    return board + lens + front + back
+
+
+def table_camera_plug():
+    """A right-angle USB-C plug in the board's socket, its cable turning right."""
+    ux, uz = CAM_USB
+    return span(ux - usbc_ra[0] / 2, ux + usbc_ra[0] / 2, CAM_Y1 + 0.6, CAM_Y1 + usbc_ra[2],
+                uz - usbc_ra[1] / 2, uz + usbc_ra[1] / 2)
+
+
+def clamp_sketch():
+    """The clamp, in (x, z): a frame over the board's bare edge with an
+    opening for its back parts and the plug, and two ears for its screws."""
+    m = cam_margin
+    sk = Pos((BAY_X0 + BAY_X1) / 2, (BAY_Z0 + CAM_Z0 + cam_board + cam_clear) / 2) * \
+        RectangleRounded(BAY_X1 - BAY_X0, CAM_Z0 + cam_board + cam_clear - BAY_Z0, 1.5)
+    for x, z in CLAMP_HOLES:
+        sk += Pos(x, z) * Circle(2.6)
+        sk += Pos((x + (BAY_X0 + 2 if x < CAM_C[0] else BAY_X1 - 2)) / 2, z + 1.4) * \
+            Rectangle(abs((BAY_X0 + 2 if x < CAM_C[0] else BAY_X1 - 2) - x), 2.8)
+    sk -= Pos(CAM_X0 + cam_board / 2, CAM_Z0 + cam_board / 2) * RectangleRounded(cam_board - 2 * m, cam_board - 2 * m, 1.0)
+    for x, z in CLAMP_HOLES:
+        sk -= Pos(x, z) * Circle(1.2)
+    return sk
+
+
+def camera_clamp():
+    return slab(clamp_sketch(), CAM_Y1, CAM_Y1 + clamp_t)
 
 
 def RegularHex(across_flats):
@@ -545,10 +832,13 @@ def slot_x(x0, y, z, length, width, depth):
 # ===========================================================================
 
 def pill_cut_sketch():
-    """The sensor pill: the eye and the light. The counter looks out of the chin."""
+    """The sensor pill: the eye, the light, and the table camera's window,
+    its view at the pill's face and half a millimetre. The counter looks out
+    of the chin."""
     sk = pill_outline()
     sk -= Pos(*EYE) * Circle(eye_dia() / 2)
     sk -= Pos(*LED_POS) * Circle(led_dia / 2)
+    sk -= Pos(*CAM_C) * RectangleRounded(*cam_window(CAM_LENS_Y), 1.0)
     return sk
 
 
@@ -665,10 +955,11 @@ def screen_fit_test():
 
 def strip_fit_test(whole):
     """The strip, cut out of the sleeve, laid on its front to print: the
-    pill's pocket, the camera's posts, the light's hole, and the counter's
-    chin with its two posts."""
-    piece = whole & span(PILL_C[0] - pill[0] / 2 - 8, TOF_S[0] + tof_chin_w / 2 + 4,
-                         0, max(PT3_FACE + 1, CHIN_D + 6), 0, strip_h - 3.3)
+    pill's pocket, the heat camera's posts, the light's hole, the table
+    camera's window and cradle with the flap's pin, stop and spring post and
+    the servo's two posts, and the counter's chin with its two posts."""
+    piece = whole & span(PILL_C[0] - pill[0] / 2 - 8, TOF_S[0] + tof_chin_w / 2 + 2,
+                         0, max(PT3_FACE + 1, CHIN_D + 6, SRV_TAB_Y0), 0, BAY_TOP)
     return Rot(90, 0, 0) * piece
 
 
@@ -865,25 +1156,36 @@ ANTENNA = (IN_X1 - 0.1, DBM_C[0] + dbm_w / 2 + 2.1, DBM_C[0] + dbm_w / 2 + 16.1,
 
 CABLES = {
     # name: (diameter, kind, points)
-    'Cable: camera to Pi USB': (4.0, 'data', [
+    # The Pi 5 has four USB-A ports and the box has five things for them. The
+    # table camera takes a blue USB 3 port (the pair next to the Ethernet); the
+    # heat camera takes the one the back's USB port had, over the servo and
+    # behind the door counter's leads, and the back's USB port is left with
+    # its lead coiled, unplugged.
+    'Cable: heat camera to Pi USB': (4.0, 'data', [
         (EYE[0], PT3_FACE - 2, IN_Z0 + 4), (EYE[0], 24, IN_Z0 + 4), (EYE[0] + 4, 28, 14),
-        (150, 28, 14), (171, 30, 26), (172, 40, 40), (_usb_port('lower', True)[0] + 14, _usb_port('lower', True)[1], 45),
+        (88, 26, 19), (132, 26, 19), (136, 39.5, 19), (166, 46, 20), (174, 50, 40), (174, 52, 60),
+        (_usb_port('upper', True)[0] + 14, _usb_port('upper', True)[1], _usb_port('upper', True)[2]),
+        _usb_port('upper', True)]),
+    'Cable: table camera to Pi USB 3': (4.0, 'data', [
+        (CAM_USB[0] + usbc_ra[0] / 2, CAM_Y1 + 10, CAM_USB[1]), (CAM_USB[0] + usbc_ra[0] / 2 + 6, CAM_Y1 + 10, CAM_USB[1]),
+        (124, 30, 37), (138, 33, 42), (160, 40, 44), (172, 44, 45),
+        (_usb_port('lower', True)[0] + 14, _usb_port('lower', True)[1], 45),
         _usb_port('lower', True)]),
+    # The servo's three wires, from the end of its case away from the shaft,
+    # up past the door counter's leads to the Pi's header: red to pin 4 (5 V),
+    # brown to pin 14 (GND), orange to pin 16 (GPIO 23). TABLE_SHUTTER_GPIO=23.
+    'Cable: lens cover servo to Pi pins': (2.0, 'light', [
+        (SRV_X0 + srv_len, SRV_YB - 3, SRV_AXIS[1]), (SRV_X0 + srv_len + 4, SRV_YB - 3.5, SRV_AXIS[1]),
+        (133, 34, 20), (133, 33, 40), (120, 33, 56), (_pin(16)[0], 33, 62), _pin(16)]),
     'Cable: screen touch to Pi USB': (4.0, 'data', [
         (IN_X0 + 2.5, SCREEN_Y1 - 1, SCREEN_Z0 + screen_touch_z), (IN_X0 + 2.5, SCREEN_Y1 + 2, SCREEN_Z0 + screen_touch_z),
         (150, SCREEN_Y1 + 2, SCREEN_Z0 + screen_touch_z), (170, 18, 78), (172, 48, 70),
         (_usb_port('upper', False)[0] + 14, _usb_port('upper', False)[1], _usb_port('upper', False)[2]),
         _usb_port('upper', False)]),
     'Cable: 4G modem to Pi USB': (4.0, 'data', [
-        HAT_USB, (HAT_USB[0], HAT_USB[1], IN_Z0 + 3), (100, 41.5, IN_Z0 + 3), (150, 41.5, IN_Z0 + 3),
-        (168, 44, 14), (174, 50, 36), (_usb_port('lower', False)[0] + 14, _usb_port('lower', False)[1], 45),
+        HAT_USB, (HAT_USB[0], HAT_USB[1], IN_Z0 + 3), (100, 45.0, IN_Z0 + 3), (150, 45.0, IN_Z0 + 3),
+        (168, 46, 14), (174, 50, 36), (_usb_port('lower', False)[0] + 14, _usb_port('lower', False)[1], 45),
         _usb_port('lower', False)]),
-    'Cable: back USB port to Pi USB': (4.0, 'data', [
-        (USB_POS[0], SL_Y1 - usb_body[2], USB_POS[1]), (USB_POS[0], SL_Y1 - usb_body[2] - 6, USB_POS[1]),
-        (USB_POS[0], 24, USB_POS[1] - 10),
-        (142, 30, 120), (144, 32, 90), (150, 34, 78), (168, 46, 76),
-        (_usb_port('upper', True)[0] + 14, _usb_port('upper', True)[1], _usb_port('upper', True)[2]),
-        _usb_port('upper', True)]),
     'Cable: back Ethernet port to Pi Ethernet': (5.0, 'data', [
         (LAN_POS[0], SL_Y1 - lan_body[2], LAN_POS[1]), (LAN_POS[0], SL_Y1 - lan_body[2] - 6, LAN_POS[1]),
         (LAN_POS[0] - 4, 28, LAN_POS[1] - 12),
@@ -917,9 +1219,10 @@ CABLES = {
         _pin(22), (_pin(22)[0], 30, 58), (TOF_C[0] + 4, 34, 44), tof_point(4, TOF_LEADS + 3, 0),
         tof_point(4, TOF_LEADS - 2, 0)]),
     'Cable: LINK light': (1.6, 'light', [
-        _pin(18), (_pin(18)[0], 26, 58), (LED_POS[0], 20, LED_POS[1] + 8), (LED_POS[0], FRONT_Y + 6, LED_POS[1])]),
+        _pin(18), (_pin(18)[0], 30, 62), (BAY_X0 - bay_wall - 3.4, 24, 50), (BAY_X0 - bay_wall - 3.4, 14, 40),
+        (BAY_X0 - bay_wall - 3.4, LIP_Y0 + 0.5, LED_POS[1]), (LED_POS[0], FRONT_Y + 6, LED_POS[1])]),
     'Cable: 4G antenna lead': (1.4, 'antenna', [
-        HAT_MAIN, (HAT_MAIN[0], 36, 14), (140, 30, 14), (ANTENNA[0] - 2.5, (ANTENNA[1] + ANTENNA[2]) / 2, ANTENNA[3] + 4)]),
+        HAT_MAIN, (HAT_MAIN[0], 40, 18), (138, 36, 18), (ANTENNA[0] - 2.5, (ANTENNA[1] + ANTENNA[2]) / 2, ANTENNA[3] + 4)]),
 }
 
 
@@ -955,7 +1258,9 @@ def hard_parts(sl, back):
             'Pi': pi_board() + pi_ports(), 'cooler': cooler_body(), '4G board': hat_body(),
             'camera': camera_body(), 'counter': counter_body(), 'sound meter': meter_body(),
             'PD board': pd_board(), 'charging port': charge_jack(), 'USB port': usb_jack(),
-            'Ethernet port': lan_jack(), 'mount nut': mount_nut(), 'antenna': antenna_body()}
+            'Ethernet port': lan_jack(), 'mount nut': mount_nut(), 'antenna': antenna_body(),
+            'table camera': table_camera_body(), 'camera clamp': camera_clamp(), 'servo': servo_body(),
+            'lens flap': lens_flap()}
 
 
 def screw_report(hard):
@@ -1094,17 +1399,75 @@ def wall_part():
     return _arm_parts()['wall']
 
 
-def sight_report(sl, back):
-    """Nothing may stand in the counter's view: not the box, not the stand on
-    a table, not the arm or the wall."""
-    view = tof_sight()
+def cam_sight():
+    """The table camera's real view, 3 m of it."""
+    return cam_view(3000)
+
+
+def eye_sight():
+    """The heat camera's view, its 71 degree diagonal as a cone, 3 m of it."""
+    sk = Plane(origin=(EYE[0], FRONT_Y + 0.5, EYE[1]), x_dir=(1, 0, 0), z_dir=(0, -1, 0)) * Circle(lepton_lens / 2)
+    return extrude(sk, amount=3000, taper=-lepton_half)
+
+
+def sight_report(sl, back, front=None):
+    """Nothing may stand in the counter's view, the heat camera's or the table
+    camera's: not the box, not the stand on a table, not the arm or the wall,
+    and not the lens cover once it is open."""
     parts = _arm_parts()
     found = []
-    for name, part in (('box', sl), ('back sheet', back), ('stand', stand_in_box_frame()),
-                       ('arm', parts['black']), ('wall', parts['wall'])):
-        common = view & part
-        if common and sum(s_.volume for s_ in common.solids()) > 0.01:
-            found.append(f'the {name} is in the doorway counter\'s view')
+    others = [('box', sl), ('back sheet', back), ('stand', stand_in_box_frame()),
+              ('arm', parts['black']), ('wall', parts['wall'])]
+    if front is not None:
+        others.append(('sensor pill', front))
+    views = (('doorway counter', tof_sight(), others),
+             ('heat camera', eye_sight(), others),
+             ('table camera', cam_sight(), others + [('open lens cover', lens_flap(flap_open)),
+                                                     ('servo horn', servo_horn(horn_at(flap_open)))]))
+    for vname, view, things in views:
+        for name, part in things:
+            common = view & part
+            if common and sum(s_.volume for s_ in common.solids()) > 0.01:
+                found.append(f'the {name} is in the {vname}\'s view')
+    return found
+
+
+def shutter_report(sl):
+    """The lens cover, shut and on its way open. Shut, it covers the whole of
+    the camera's view where it crosses it. Turning, at every step of the way
+    and with the horn wherever it is then, neither the flap, the horn nor the
+    spring may touch the body or any part (the flap's pin, the spring's post
+    and the horn's own spline aside), and the horn only meets the flap's peg
+    in the second half of its travel."""
+    found = []
+    crossing = cam_view(CAM_LENS_Y - FLAP_Y0) & span(0, BOX_W, FLAP_Y0 + 0.05, FLAP_Y1 - 0.05, 0, BOX_H)
+    left = crossing - lens_flap(0)
+    if left and sum(s.volume for s in left.solids()) > 0.001:
+        found.append('shut, the lens cover leaves part of the camera\'s view open')
+    others = {'table camera': table_camera_body(), 'camera clamp': camera_clamp(), 'servo': servo_body(),
+              'heat camera': camera_body(), 'door counter': counter_body(), 'light': led_body(),
+              'counter leads': counter_leads()}
+    steps = [(0.0, horn_shut), (0.0, horn_shut - 22.5)] + \
+        [(f, horn_at(f)) for f in (0.0, flap_open / 4, flap_open / 2, 3 * flap_open / 4, flap_open)]
+    for f, h in steps:
+        flap, horn, spring = lens_flap(f), servo_horn(h), flap_spring(f)
+        for pname, p, skip in (('lens cover', flap, ()), ('servo horn', horn, ('servo',)),
+                               ('flap spring', spring, ())):
+            for oname, o in [('body', sl)] + list(others.items()):
+                if oname in skip or (pname == 'flap spring' and oname == 'body'):
+                    continue
+                common = p & o
+                if common and sum(s.volume for s in common.solids()) > 0.01:
+                    found.append(f'{f:.0f} degrees open, the {pname} touches the {oname}')
+        if h > horn_at(0) + 0.5:
+            common = flap & horn
+            if common and sum(s.volume for s in common.solids()) > 0.01:
+                found.append(f'the horn meets the flap at {h:.0f} degrees, before its slack is taken up')
+    # The spring may rest on its post, but not run through the body anywhere else.
+    for f in (0.0, flap_open):
+        common = flap_spring(f) & (sl - cyl_y(SPRING_POST[0], FRONT_Y - 1, SPRING_POST[1], 4.0, 10))
+        if common and sum(s.volume for s in common.solids()) > 0.01:
+            found.append(f'{f:.0f} degrees open, the flap spring touches the body')
     return found
 
 
@@ -1143,6 +1506,8 @@ INSIDE = {
     'charging port': charge_jack, 'USB port': usb_jack, 'Ethernet port': lan_jack,
     'light': led_body, 'mount nut': mount_nut, 'antenna': antenna_body,
     'touch plug': touch_plug, 'touch cable': touch_cable, 'video ribbon': video_ribbon,
+    'table camera': table_camera_body, 'table camera plug': table_camera_plug, 'camera clamp': camera_clamp,
+    'servo': servo_body, 'servo horn': servo_horn, 'lens flap': lens_flap, 'flap spring': flap_spring,
 }
 # What each part is meant to touch: what it is fixed to or plugged into.
 ALLOWED = {
@@ -1158,6 +1523,9 @@ ALLOWED = {
         ('jumpers', 'Pi lower plugs'), ('battery', 'battery plugs'),
         ('screen', 'touch plug'), ('screen', 'video ribbon'), ('screen', 'touch cable'),
         ('touch plug', 'touch cable'),
+        ('sleeve', 'table camera'), ('sleeve', 'camera clamp'), ('table camera', 'camera clamp'),
+        ('table camera', 'table camera plug'), ('sleeve', 'servo'), ('servo', 'servo horn'),
+        ('sleeve', 'flap spring'), ('lens flap', 'flap spring'),
     ]
 }
 
@@ -1229,6 +1597,12 @@ def assembly(sleeve_part, front, back):
         labelled(mount_nut(), '1/4-20 mount nut', Color(0.7, 0.7, 0.72)),
         labelled(brass_inserts(), 'Brass M3 inserts (8)', Color(0.85, 0.66, 0.25)),
         labelled(antenna_body(), '4G antenna strip', Color(0.6, 0.62, 0.66)),
+        labelled(table_camera_body(), 'Arducam IMX519 table camera', Color(0.05, 0.25, 0.18)),
+        labelled(camera_clamp(), 'Camera clamp (printed, navy)', NAVY),
+        labelled(lens_flap(), 'Lens cover flap (printed, navy)', NAVY),
+        labelled(flap_spring(), 'Lens cover spring', Color(0.75, 0.76, 0.78)),
+        labelled(servo_body(), 'MG90S lens cover servo', Color(0.1, 0.1, 0.12)),
+        labelled(servo_horn(), 'Servo horn', Color(0.93, 0.93, 0.9)),
         labelled(stand_in_box_frame(), 'Stand (printed, cream)', CREAM),
         labelled(stand_screw(), 'Stand screw (1/4-20 x 5/8)', Color(0.66, 0.67, 0.7)),
         labelled(camera_arm(), 'CAMVATE wall arm (24007)', Color(0.07, 0.07, 0.08)),
@@ -1272,9 +1646,13 @@ def main():
     for problem in arm_report(sl, back):
         sys.exit(problem)
     print('wall check: tilted down on the arm, the box clears the arm and the wall')
-    for problem in sight_report(sl, back):
+    for problem in sight_report(sl, back, front):
         sys.exit(problem)
-    print('view check: nothing stands in the doorway counter\'s view, on a table or on the wall')
+    print('view check: nothing stands in the doorway counter\'s, the heat camera\'s or the table camera\'s view, '
+          'on a table or on the wall')
+    for problem in shutter_report(sl):
+        sys.exit(problem)
+    print('cover check: shut, the flap covers the table camera\'s whole view; opening, it touches nothing')
     if args.check:
         return
 
