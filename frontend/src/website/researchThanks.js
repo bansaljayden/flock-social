@@ -72,6 +72,7 @@ export const COUNT_SOURCES = [
   "Space and Time User Distribution in a University Campus, Universitat Politecnica de Catalunya. Mendeley Data, V1, https://doi.org/10.17632/55vx86j8wf.1, CC BY 4.0.",
   "Source: Kanton Basel-Stadt, data.bs.ch (dataset 100013), CC BY 4.0.",
   "Source: University of St. Gallen Library, Seatfinder seat estimates, used with the library's permission.",
+  "Source: University of Geneva Library, Seatfinder seat estimates, used with the library's permission.",
   "Source: Stadt Zürich, Open Data Zürich (Stadtentwicklung, Präsidialdepartement), measurements by hystreet.com, CC BY.",
   "Source: Stadt Zürich, Verkehrsbetriebe Zürich (VBZ, Departement der Industriellen Betriebe), Open Data Zürich (CC0).",
   "Source: Stadt Zürich, Tiefbauamt (Tiefbau- und Entsorgungsdepartement), Open Data Zürich (CC0).",

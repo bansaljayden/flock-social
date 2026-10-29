@@ -210,7 +210,7 @@ export default function ResearchPage() {
               <p>
                 Flock's crowd numbers are scores from 0 to 100 for each venue, not
                 headcounts, and the live test covers one month. Its findings were
-                tested on 6.5 million public hourly counts from 31 sources in
+                tested on 6.5 million public hourly counts from 32 sources in
                 15 countries, including people counted inside rooms and
                 libraries. The counter has
                 been tested on six research datasets and in fifteen sealed tests on
