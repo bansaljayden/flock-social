@@ -92,13 +92,16 @@ export default function AboutPage() {
                 The full story is coming soon.
               </p>
             </div>
+            {/* Not lazy: on a phone this wren is the largest thing in the
+                first screen (the page's LCP), and lazy loading held it back
+                1.3 s in Lighthouse on 2026-10-29. */}
             <img
               className="lp-art ab-story-art"
               src="/art/spot-wren-perch-240.webp"
               srcSet="/art/spot-wren-perch-240.webp 240w, /art/spot-wren-perch-480.webp 480w"
               sizes="200px"
               width="240" height="267"
-              loading="lazy" decoding="async"
+              decoding="async" fetchPriority="high"
               alt=""
             />
           </div>
