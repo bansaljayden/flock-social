@@ -1071,6 +1071,17 @@ function shapeWeek(which) {
     // true, and an answer to a different question. The named day leads; the
     // week's busiest and quietest frame it.
     const asked = named ? days.find((f) => f.value.weekday === named) : null;
+    // Busiest, quietest and level are claims about the WEEK, made only from a
+    // whole week: the quiet-days plan hands over 2 days and the weekend 3, and
+    // "That makes it your busiest day" from 2 of them was false (2026-10-28
+    // second review). From a partial block the named day's own line stands alone.
+    if (asked && days.length < 6) {
+      return {
+        lead: `${named} peaks ${peakAt(asked)} on our 0 to 100 index.`,
+        points: rest.map(templateLine),
+        used: [asked, ...rest],
+      };
+    }
     if (asked) {
       const level = Number(top.value.peakScore) - Number(low.value.peakScore) < HOUR_ORDERING_MIN_GAP;
       const points = [];

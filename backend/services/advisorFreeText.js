@@ -840,6 +840,9 @@ async function chargedCall({ userId, charge, systemInstruction, payload, maxOutp
 // An entry with no intent is advice with no chip behind it, and it stops the
 // search: "4 tables and 3 servers on, I'm bleeding money on labor" is a labor
 // question that happens to count tables.
+// An entry's third element, when present, is a pattern that hands the
+// question on to a later entry instead.
+const KITCHEN = /\bkitchen\b/i;
 const OFFLINE_INTENT_CUES = [
   // "How do I get more customers" is the money move asked plainly, and it was
   // the one growth question the playbook had nothing for (2026-10-28).
@@ -849,30 +852,31 @@ const OFFLINE_INTENT_CUES = [
   // A count of tables ("we only had 4 tables") is how the night went, not a
   // question about serving them.
   ['tables_service', /(?<!\b(?:\d+|a\s+few|few|couple(?:\s+of)?)\s+)\btables?\b|\b(?:turn\s+times?|turns?|seatings?|another\s+server|extra\s+server|servers?\s+(?:do\s+(?:i|we)\s+)?need)\b/i],
-  // A day or weekend that has already happened is the week's recap, not a
-  // forecast: "how did last weekend go" got the coming weekend's outlook and
-  // "was last friday good" got nothing (2026-10-28 date probe).
-  ['week_recap', /\b(?:(?:last|this\s+past)\s+weekend|how\s+(?:did|was)\s+(?:the|our)\s+weekend|(?:was|how\s+was|how\s+did)\s+last\s+(?:mon|tues|wednes|thurs|fri|satur|sun)day)\b/i],
-  // Weather and events win over the day they fall on: "is it going to rain
-  // tomorrow" is a weather question, "a concert nearby this weekend" an events one.
-  ['around_you', /\b(?:rain|raining|snow|snowing|storm|stormy|weather)\b|\b(?:concerts?|shows?|festivals?|games?|events?)\b[^.?!]{0,30}\b(?:nearby|near\s+us|around\s+(?:us|here)|in\s+town|downtown)\b|\b(?:nearby|near\s+us)\b[^.?!]{0,30}\b(?:concerts?|shows?|festivals?|games?|events?)\b/i],
-  // A day, or "busy?", sent on its own is asking how that day or the week
-  // looks: the week-ahead forecast, which leads with a named day.
-  ['peak_hours', /^\s*(?:(?:on|this|next)\s+)?(?:mon|tues|wednes|thurs|fri|satur|sun)days?\s*[?.!]*\s*$|^\s*(?:are\s+we\s+|will\s+we\s+be\s+|how\s+)?busy\s*[?.!]*\s*$/i],
-  // How a named day looks ahead is the week-ahead forecast, which answers it
-  // about that day ("how busy will Friday be", "what does Thursday look like"),
-  // and so is next week.
-  ['peak_hours', /\b(?:how\s+(?:busy|full|packed|dead|slow|quiet)\s+(?:will|is|are|was|does|do|should)\b[^.?!]{0,20}\b(?:mon|tues|wednes|thurs|fri|satur|sun)days?|(?:what\s+does|how\s+does|how\s+is|how's|how\s+are)\s+(?:this\s+|next\s+)?(?:mon|tues|wednes|thurs|fri|satur|sun)days?\s+(?:look|looking)|(?:what\s+does|how\s+does|how\s+is|how's)\s+next\s+week\s+(?:look|looking))\b/i],
-  // A named day is the week's recap, not yesterday's verdict: "how did we do
-  // yesterday" then "what about Tuesday" becomes "how did we do tuesday".
-  ['week_recap', /\bhow\s+did\s+(?:we|i)\s+do\b[^.?!]{0,20}\b(?:mon|tues|wednes|thurs|fri|satur|sun)days?\b/i],
-  // Tomorrow is in the week-ahead forecast; today's outlook covers today only.
-  ['peak_hours', /\btomorrow\b/i],
+  // THE PAST BEFORE THE FUTURE, AND WHY BEFORE BOTH (2026-10-28 second
+  // review: the date routes added that evening stole questions that had
+  // routed right). "Why was last Friday so slow" is the slow-night question.
   ['slow_night', /\bwhy\s+(?:was|were|is|are|did)\b[^.?!]*\b(?:slow|quiet|dead|empty)\b/i],
+  // A day or weekend that has already happened is the week's recap, not a
+  // forecast: "how did last weekend go", "was last friday good", "how busy was
+  // saturday", and "how did we do tuesday" after "how did we do yesterday".
+  ['week_recap', /\b(?:(?:last|this\s+past)\s+weekend|how\s+(?:did|was)\s+(?:the|our)\s+weekend|(?:was|how\s+was|how\s+did)\s+last\s+(?:mon|tues|wednes|thurs|fri|satur|sun)day|how\s+did\s+(?:we|i)\s+do\b[^.?!]{0,20}\b(?:mon|tues|wednes|thurs|fri|satur|sun)days?|how\s+(?:busy|full|packed|dead|slow|quiet)\s+(?:was|were)\b[^.?!]{0,20}\b(?:mon|tues|wednes|thurs|fri|satur|sun)days?)\b/i],
   ['last_night_verdict', /\b(?:yesterday|last\s+night|how\s+did\s+(?:we|i)\s+do|how\s+(?:was|were)\s+(?:we|it|things)\b)/i],
   // Frustration is a request for the venue's own news, the way the router
   // reads it (advisorPrompt, FRUSTRATION IS NOT A ROUTE).
   ['last_night_verdict', /\b(?:tell\s+me\s+something|something\s+i\s+(?:do\s+not|don'?t)\s+(?:already\s+)?know|this\s+is\s+useless)\b/i],
+  // Weather and events win over the day they fall on: "is it going to rain
+  // tomorrow" is a weather question, "a concert nearby this weekend" an events one.
+  ['around_you', /\b(?:rain|raining|snow|snowing|storm|stormy|weather)\b|\b(?:concerts?|shows?|festivals?|games?|events?)\b[^.?!]{0,30}\b(?:nearby|near\s+us|around\s+(?:us|here)|in\s+town|downtown)\b|\b(?:nearby|near\s+us)\b[^.?!]{0,30}\b(?:concerts?|shows?|festivals?|games?|events?)\b/i],
+  // A day, or "busy?", sent on its own is asking how that day or the week
+  // looks: the week-ahead forecast, which leads with a named day. The kitchen
+  // keeps its own chip ("how busy will the kitchen be friday").
+  ['peak_hours', /^\s*(?:(?:on|this|next)\s+)?(?:mon|tues|wednes|thurs|fri|satur|sun)days?\s*[?.!]*\s*$|^\s*(?:are\s+we\s+|will\s+we\s+be\s+|how\s+)?busy\s*[?.!]*\s*$/i, KITCHEN],
+  // How a named day looks AHEAD is the week-ahead forecast, which answers it
+  // about that day ("how busy will Friday be", "what does Thursday look like"),
+  // and so is next week.
+  ['peak_hours', /\b(?:how\s+(?:busy|full|packed|dead|slow|quiet)\s+(?:will|is|are|does|do|should)\b[^.?!]{0,20}\b(?:mon|tues|wednes|thurs|fri|satur|sun)days?|(?:what\s+does|how\s+does|how\s+is|how's|how\s+are)\s+(?:this\s+|next\s+)?(?:mon|tues|wednes|thurs|fri|satur|sun)days?\s+(?:look|looking)|(?:what\s+does|how\s+does|how\s+is|how's)\s+next\s+week\s+(?:look|looking))\b/i, KITCHEN],
+  // Tomorrow is in the week-ahead forecast; today's outlook covers today only.
+  ['peak_hours', /\btomorrow\b/i, KITCHEN],
   ['cohort_same_night', /\b(?:everyone|everybody|whole\s+(?:street|strip|block|area|town)|just\s+(?:us|me))\b/i],
   ['cohort_typical', /\b(?:compare|stack\s+up|sit\s+among|(?:venues|places|restaurants|bars|cafes)\s+like\s+(?:us|ours|mine)|similar\s+(?:venues|places)|(?:busier|slower|quieter)\s+than\s+(?:other|the\s+other|most|similar)\s+(?:bars|places|venues|restaurants|cafes|spots|clubs))\b/i],
   ['weekend_outlook', /\bweekends?\b/i],
@@ -904,7 +908,7 @@ function offlineRoute(question) {
   const text = normalizeOwnerText(typeof question === 'string' ? question : '');
   if (!text) return null;
   const view = roostPlaybook.trafficView(text);
-  const hit = OFFLINE_INTENT_CUES.find(([, re]) => re.test(view.text));
+  const hit = OFFLINE_INTENT_CUES.find(([, re, unless]) => re.test(view.text) && !(unless && unless.test(view.text)));
   const intentId = hit ? hit[0] : null;
   if (view.speed.length || OFFLINE_ADVICE.test(text)) return { mode: 'advice', intentId };
   if (intentId) return { mode: 'grounded', intentId };
@@ -923,12 +927,18 @@ function offlineRoute(question) {
 // one cue no other move shares, or a phrase.
 const PLAYBOOK_NAMES_IT = 1;
 
-// A message too short to say what it is about: 3 words or fewer once the
-// filler is gone ("any ideas?", "help", "what now").
-const FILLER = new Set(['any', 'some', 'please', 'pls', 'ok', 'okay', 'so', 'um', 'hey', 'hi', 'now', 'what', 'got']);
+// A message that does not say what it is about: every word is asking for
+// something without naming it ("any ideas?", "help", "what now"). Short is not
+// vague: "open sundays?" and "toast or square?" are specific questions the
+// model can answer once it is back (2026-10-28 second review).
+const VAGUE_WORDS = new Set([
+  'any', 'some', 'please', 'pls', 'ok', 'okay', 'so', 'um', 'hey', 'hi', 'now', 'what', 'got', 'next', 'else',
+  'idea', 'ideas', 'tip', 'tips', 'help', 'advice', 'suggestion', 'suggestions', 'thoughts', 'anything',
+  'something', 'stuff', 'me', 'us', 'do', 'should', 'i', 'we', 'can', 'you', 'give', 'money',
+]);
 function vagueQuestion(question) {
   const words = normalizeOwnerText(String(question || '')).match(/[a-z0-9']+/g) || [];
-  return words.filter((w) => !FILLER.has(w)).length <= 3 && words.length <= 5;
+  return words.length > 0 && words.length <= 6 && words.every((w) => VAGUE_WORDS.has(w));
 }
 
 // ── The router (mode classification) ────────────────────────────────────────

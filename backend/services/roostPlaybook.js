@@ -302,28 +302,65 @@ function moveFrom(tokens, start) {
 const REFUSE_VERB = new Set(['do', 'run', 'offer', 'use', 'try', 'add', 'give', 'start', 'doing', 'running', 'offering', 'using', 'trying', 'adding', 'giving', 'starting', 'go']);
 const MOVE_VERB = /^(?:discount|discounting|advertise|advertising|deliver|delivering|cater|catering)$/;
 const OUTCOME = /^(?:losing|lose|hurting|hurt|killing|kill|scaring|upsetting|annoying|alienating|spending|breaking|going|making|getting|having|being|looking|seeming|feeling|raising|cutting|paying|wasting|giving)$/;
-const PAIRS = Object.freeze({ other: 'than', instead: 'of', rather: 'than', not: 'with' });
-// "No" that starts a complaint, not a refusal: "no shows are killing us" is
-// the no-show problem, "no one comes in" an empty room.
-const NOT_A_REFUSAL = new Set(['one', 'shows', 'show', 'idea', 'clue', 'matter', 'longer', 'way', 'body', 'problem', 'doubt', 'time', 'luck', 'sales', 'traffic', 'customers', 'guests', 'people', 'covers', 'business', 'money', 'staff', 'more']);
-function refusedFrom(tokens, i) {
+const PAIRS = Object.freeze({ other: 'than', instead: 'of', rather: 'than', apart: 'from' });
+// Who refuses matters: "my staff refuse to upsell" is a staffing problem, not
+// the owner ruling upselling out (2026-10-28 second review).
+const OWNER = new Set(['i', 'we', "we're", 'were', "i'm", 'im']);
+function refusedFrom(tokens, i, asksElse) {
   const w = tokens[i];
   const next = tokens[i + 1];
+  const before = tokens[i - 1];
   if (w === 'without' || w === 'besides' || w === 'except') {
-    return next && !OUTCOME.test(next) ? i + 1 : null;
+    if (!next || OUTCOME.test(next)) return null;
+    // A limit, not a move: "without more staff", "without hiring", "without
+    // our regulars noticing" (2026-10-28 second review's probe).
+    if (w === 'without' && LIMIT_START.test(next)) return null;
+    for (let k = i + 1; k < Math.min(tokens.length, i + 6); k += 1) {
+      if (NOTICING.test(tokens[k])) return null;
+      if (CLAUSE_END.has(tokens[k]) || tokens[k] === ',') break;
+    }
+    return i + 1;
   }
   if (PAIRS[w] && next === PAIRS[w]) return tokens[i + 2] && !OUTCOME.test(tokens[i + 2]) ? i + 2 : null;
-  if (w === 'refuse' && next === 'to') return REFUSE_VERB.has(tokens[i + 2]) ? i + 3 : i + 2;
-  if (w === 'no' && (i === 0 || tokens[i - 1] === ',') && next && !SPAN_STOP.has(next) && !NOT_A_REFUSAL.has(next)) return i + 1;
+  // "but not with a happy hour" refuses; "we're not with doordash, should we
+  // sign up?" says where things stand.
+  if (w === 'not' && next === 'with') return (before === 'but' || before === ',') && tokens[i + 2] ? i + 2 : null;
+  if (w === 'refuse' && next === 'to') {
+    if (!OWNER.has(before)) return null;
+    return REFUSE_VERB.has(tokens[i + 2]) ? i + 3 : i + 2;
+  }
+  // "but no discounts", "with no discounts" refuse anywhere; a bare "no X"
+  // opening a clause refuses only when the owner asks for something else
+  // ("no happy hour, what else"), since "no regulars anymore" is a complaint.
+  if (w === 'no' && next && !SPAN_STOP.has(next)) {
+    if (before === 'but' || before === 'with') return i + 1;
+    if ((i === 0 || before === ',') && asksElse) return i + 1;
+    return null;
+  }
   let at = null;
-  if (w === 'dont' || w === "don't" || w === 'wont' || w === "won't" || w === 'never') at = i + 1;
-  else if ((w === 'do' || w === 'will') && next === 'not') at = i + 2;
+  if (w === 'dont' || w === "don't" || w === 'wont' || w === "won't" || w === 'never'
+      || w === 'cant' || w === "can't" || w === 'cannot') at = i + 1;
+  else if ((w === 'do' || w === 'will' || w === 'can') && next === 'not') at = i + 2;
+  else if (w === 'not' && (next === 'going' || REFUSE_VERB.has(next))) at = i + 1;
   if (at === null) return null;
   if (['want', 'wanna', 'plan', 'like', 'going'].includes(tokens[at])) at += 1;
   if (tokens[at] === 'to') at += 1;
-  if (REFUSE_VERB.has(tokens[at])) return at + 1;
-  return MOVE_VERB.test(tokens[at] || '') ? at : null;
+  let from = null;
+  if (REFUSE_VERB.has(tokens[at])) from = at + 1;
+  else if (MOVE_VERB.test(tokens[at] || '')) from = at;
+  if (from === null) return null;
+  // "We don't offer delivery YET" is a move not made so far, and usually the
+  // one being asked about; "we don't start brunch UNTIL 10" is a schedule.
+  // Neither rules the move out.
+  for (let k = from; k < Math.min(tokens.length, from + 6); k += 1) {
+    if (NOT_YET.has(tokens[k])) return null;
+    if (CLAUSE_END.has(tokens[k]) || tokens[k] === ',') break;
+  }
+  return from;
 }
+const NOT_YET = new Set(['yet', 'until', 'till', 'til', 'before', 'after']);
+const LIMIT_START = /^(?:more|extra|additional|much|any|big|new|hiring|adding|spending|paying|raising|a\s+big)$/;
+const NOTICING = /^(?:noticing|complaining|knowing|minding|leaving|caring|realizing|seeing)$/;
 
 // What failed, read backward from "didn't work": the clause right before it,
 // or, when that is only "it", what the clause before that did or ran.
@@ -362,7 +399,7 @@ function ruledOut(text) {
       } else if (w === 'already' && EXISTING.has(tokens[i + 1]) && asksElse) {
         spans.push(moveFrom(tokens, i + 2));
       } else {
-        const after = refusedFrom(tokens, i);
+        const after = refusedFrom(tokens, i, asksElse);
         if (after !== null) spans.push(moveFrom(tokens, after));
       }
     });
@@ -685,11 +722,14 @@ function moneyLine(tactic, spend) {
 // One line of the venue's own forecast, when the question routed to a day.
 // Only the weekday is read: it is the one part of a peak fact that needs no
 // unit and no clock to say right.
-// The weekday a question names, capitalised the way the forecast writes it,
-// or null. "How do I fill Thursdays" names Thursday.
-const NAMED_DAY = /\b(mon|tues|wednes|thurs|fri|satur|sun)days?\b/;
+// The weekday a question asks about, capitalised the way the forecast writes
+// it, or null. "How do I fill Thursdays" names Thursday. With 2 days named it
+// is the last: "Saturdays are packed, how do I fill Tuesdays" asks about
+// Tuesday, and the first one named is the setup (2026-10-28 second review).
+const NAMED_DAY = /\b(mon|tues|wednes|thurs|fri|satur|sun)days?\b/g;
 function namedWeekday(question) {
-  const m = NAMED_DAY.exec(normalizeOwnerText(String(question || '')));
+  const all = [...normalizeOwnerText(String(question || '')).matchAll(NAMED_DAY)];
+  const m = all[all.length - 1];
   return m ? `${m[1][0].toUpperCase()}${m[1].slice(1)}day` : null;
 }
 
@@ -709,7 +749,10 @@ function groundedLead(intentId, facts, question = '') {
     if (!day) return null;
     // Named and the quietest of a real week: that is the stronger sentence.
     const quietest = days.reduce((a, b) => (Number(b.value.peakScore) < Number(a.value.peakScore) ? b : a));
-    if (days.length >= 3 && quietest === day) {
+    // Only from a whole week, or from the quiet-days plan's own marking of the
+    // week's lowest day; 3 days of a weekend cannot say "quietest this week".
+    const markedLowest = /LOWEST projected day in the week/.test(String(day.note || ''));
+    if (markedLowest || (days.length >= 6 && quietest === day)) {
       return { text: `${named} projects as your quietest day this week.`, fact: day };
     }
     const hour = Number(day.value.peakHour);

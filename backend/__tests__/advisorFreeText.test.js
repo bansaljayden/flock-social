@@ -1146,3 +1146,22 @@ test('with the model out, a message too short to say what it is about is told so
   const later = await ask('how do i renovate my bathroom');
   assert.strictEqual(later.body.text, advisorFreeText.REFUSAL_BUSY);
 });
+
+test('a short specific question keeps the try-again sentence, and a failed week read never fails the answer', async () => {
+  for (const q of ['toast or square?', 'music too loud?']) {
+    resetAll();
+    installProfile();
+    replies = [creditsOut()];
+    const r = await ask(q);
+    assert.notStrictEqual(r.body.text, advisorFreeText.REFUSAL_UNROUTABLE, q);
+  }
+  resetAll();
+  installProfile();
+  replies = [creditsOut()];
+  advisorRouter.__setFactsForTests(async (userId, intentId) => {
+    if (intentId === 'peak_hours') throw new Error('week unavailable');
+    return { ...GROUNDED_BLOCK(), intent: intentId };
+  });
+  const r = await ask('should we open on sundays?');
+  assert.strictEqual(r.status, 200, JSON.stringify(r.body));
+});

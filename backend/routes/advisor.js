@@ -1146,10 +1146,18 @@ router.post('/question', authenticate, requirePro, async (req, res) => {
     // A question about a named day gets that day's forecast beside whatever
     // its route reads: the quiet-days plan carries only the 2 quietest days,
     // so "how do I fill Thursdays" had nothing about Thursday to stand on.
-    if (roostPlaybook.namedWeekday(asked) && route.intentId !== 'peak_hours') {
-      const week = await buildFactBlock(userId, 'peak_hours');
-      const have = new Set(groundedFacts.map((f) => f && f.id));
-      groundedFacts = [...groundedFacts, ...(Array.isArray(week.facts) ? week.facts : []).filter((f) => f && !have.has(f.id))];
+    // Only when the route's own facts lack that day (a second build of the
+    // week costs reads), and a failure here costs the lead, never the answer
+    // (2026-10-28 second review: it ran the week twice and could 500).
+    const named = roostPlaybook.namedWeekday(asked);
+    if (named && !groundedFacts.some((f) => f && f.value && f.value.weekday === named)) {
+      try {
+        const week = await buildFactBlock(userId, 'peak_hours');
+        const have = new Set(groundedFacts.map((f) => f && f.id));
+        groundedFacts = [...groundedFacts, ...(Array.isArray(week && week.facts) ? week.facts : []).filter((f) => f && !have.has(f.id))];
+      } catch (err) {
+        console.warn('Advisor: the week for a named day could not be read:', err.message);
+      }
     }
     // `offline` and `fallback` come from an offline route: the playbook
     // answers with no model call, and `fallback` is the sentence the owner

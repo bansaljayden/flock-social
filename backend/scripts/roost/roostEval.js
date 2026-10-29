@@ -318,7 +318,7 @@ async function runFollowOn(venue, item, first) {
   const given = (first.out.context && first.out.context.tactics) || [];
   for (const id of given) {
     const t = roostPlaybook.tactics.find((x) => x.id === id);
-    if (t && String(r.out.text || '').includes(t.move)) r.problems.push(`repeated a move already given (${id})`);
+    if (t && String(r.out.text || '').toLowerCase().includes(t.move.toLowerCase())) r.problems.push(`repeated a move already given (${id})`);
   }
   return r;
 }

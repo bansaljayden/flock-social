@@ -362,3 +362,51 @@ test('a move the owner will not do is not offered, and a constraint is not mista
   assert.strictEqual(offlineAnswer('no shows are killing us').answer.tactics[0], 'res_confirm_remind');
   assert.ok(offlineAnswer('no one comes in on mondays').answer);
 });
+
+// ── The second review (2026-10-28 evening) ──────────────────────────────────
+
+test('only the owner\'s own refusals count, and a schedule, a status or a limit is not one', () => {
+  for (const [q, lead, ctx] of [
+    ['we dont offer delivery yet, is it worth it?', 'delivery_commission_math', RESTAURANT],
+    ['were not with doordash, should we sign up?', 'delivery_commission_math', RESTAURANT],
+    ['my staff refuse to upsell, what do i do', 'check_suggest_named_item', RESTAURANT],
+    ['we dont start brunch until 10, how do i get more brunch customers', 'day_brunch', CAFE],
+  ]) {
+    assert.strictEqual(offlineAnswer(q, ctx).answer.tactics[0], lead, q);
+  }
+  assert.strictEqual(offlineAnswer('no regulars anymore, how do i get them back').answer.topic, 'regulars');
+  assert.ok(offlineAnswer('how do i get more people in without more staff').answer.tactics.includes('labor_schedule_from_forecast'));
+});
+
+test('refusals the first pass missed are read too', () => {
+  for (const q of ['we cant discount, how do we fill tuesdays', 'were not going to discount, how do we fill tuesdays',
+    'how do we fill tuesdays but no discounts', 'how do we fill tuesdays with no discounts', 'apart from discounts what can fill tuesdays']) {
+    assert.ok(!offlineAnswer(q).answer.tactics.includes('slow_day_discount_check'), q);
+  }
+  assert.ok(!offlineAnswer('we are not doing happy hour, how do we fill weeknights').answer.tactics.includes('slow_hours_happy_hour'));
+});
+
+test('the day asked about is the last one named, and a partial week makes no claim about the week', () => {
+  const DAY = (weekday, peakHour, peakScore) => ({ id: `peak_${weekday}`, value: { weekday, peakHour, peakScore }, source: 'model_holdout', asOf: '2026-11-01T22:00:00Z' });
+  const week = [DAY('Monday', 18, 45), DAY('Tuesday', 18, 30), DAY('Wednesday', 19, 47), DAY('Thursday', 19, 55), DAY('Friday', 20, 82), DAY('Saturday', 20, 88)];
+  const q = 'saturdays are packed, how do i fill tuesdays?';
+  assert.match(pb.answer({ question: q, intentId: advisorFreeText.offlineRoute(q).intentId, ctx: RESTAURANT, groundedFacts: week }).text, /^Tuesday /);
+  const advisorPhrasing = require('../services/advisorPhrasing');
+  const quietTwo = { intent: 'quiet_nights', facts: [week[1], week[0]], refusals: [] };
+  const text = advisorPhrasing.renderTemplate(quietTwo, 'is monday going to be quiet?').text;
+  assert.match(text, /^Monday peaks/);
+  assert.ok(!/busiest|quietest|stands out/.test(text), text);
+});
+
+test('past questions reach the recap and the routes the date work took back go where they went before', () => {
+  for (const [q, intentId] of [
+    ['how busy was saturday', 'week_recap'], ['how slow was tuesday', 'week_recap'],
+    ['why was last friday so slow', 'slow_night'],
+    ['how did we do last night in the rain', 'last_night_verdict'],
+    ['was yesterday slow because of the weather', 'last_night_verdict'],
+    ['what does friday look like for the kitchen', 'kitchen_vs_peak'],
+    ['how busy will the kitchen be friday', 'kitchen_vs_peak'],
+  ]) {
+    assert.strictEqual(advisorFreeText.offlineRoute(q).intentId, intentId, q);
+  }
+});
