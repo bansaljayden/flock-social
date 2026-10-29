@@ -1143,6 +1143,14 @@ router.post('/question', authenticate, requirePro, async (req, res) => {
       block = await buildFactBlock(userId, route.intentId);
       groundedFacts = Array.isArray(block.facts) ? block.facts : [];
     }
+    // A question about a named day gets that day's forecast beside whatever
+    // its route reads: the quiet-days plan carries only the 2 quietest days,
+    // so "how do I fill Thursdays" had nothing about Thursday to stand on.
+    if (roostPlaybook.namedWeekday(asked) && route.intentId !== 'peak_hours') {
+      const week = await buildFactBlock(userId, 'peak_hours');
+      const have = new Set(groundedFacts.map((f) => f && f.id));
+      groundedFacts = [...groundedFacts, ...(Array.isArray(week.facts) ? week.facts : []).filter((f) => f && !have.has(f.id))];
+    }
     // `offline` and `fallback` come from an offline route: the playbook
     // answers with no model call, and `fallback` is the sentence the owner
     // reads if it has nothing for the question.

@@ -137,7 +137,9 @@ test('a money question that meets a dead key is answered from the playbook, in t
   assert.strictEqual(r.body.mode, 'advice', r.body.text);
   assert.strictEqual(modelCalls.length, 1, 'one call met the dead key, and nothing called it again');
   assert.ok(r.body.sources.some((s) => s.source === 'roost_playbook'), 'the answer says it came from the playbook');
-  assert.match(r.body.text, /^Tuesday projects as your quietest day this week\./, 'it leads with the venue\'s own forecast');
+  // About the day asked for: "quietest" needs a real week to say so, and this
+  // fixture has 2 days, so the lead is Tuesday's own forecast.
+  assert.match(r.body.text, /^Tuesday projects (?:as your quietest day this week|busiest around 6 PM, at 38 on our 0 to 100 index)\./, 'it leads with the venue\'s own forecast');
   assert.match(r.body.text, /At your \$35 a head/, 'and puts the move in the venue\'s own money');
   assert.ok(r.body.followUps.length > 0, 'and says what to ask next');
 });

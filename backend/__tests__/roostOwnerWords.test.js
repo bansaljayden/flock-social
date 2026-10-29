@@ -297,3 +297,15 @@ test('every question a chip answer suggests next gets an answer with the model o
   }
   assert.deepStrictEqual(dead, []);
 });
+
+test('a question that names a day is answered about that day', () => {
+  const DAY = (weekday, peakHour, peakScore) => ({ id: `peak_${weekday}`, value: { weekday, peakHour, peakScore }, source: 'model_holdout', asOf: '2026-11-01T22:00:00Z' });
+  const week = [DAY('Monday', 18, 41), DAY('Tuesday', 18, 34), DAY('Wednesday', 19, 47), DAY('Thursday', 19, 55), DAY('Friday', 20, 82), DAY('Saturday', 20, 88)];
+  const lead = (q) => pb.answer({ question: q, intentId: advisorFreeText.offlineRoute(q).intentId, ctx: RESTAURANT, groundedFacts: week }).text.split('\n')[0];
+  // It used to open on the quietest day whatever day was asked about.
+  assert.match(lead('How do I fill Thursdays?'), /^Thursday projects busiest around 7 PM, at 55 on our 0 to 100 index\./);
+  assert.match(lead('how many servers do i need on friday'), /^Friday projects busiest around 8 PM, at 82/);
+  assert.match(lead('how do I fill Tuesdays'), /^Tuesday projects as your quietest day this week\./);
+  // No forecast for the named day: no lead, rather than one about another day.
+  assert.ok(!/projects/.test(lead('how do i fill sundays')), lead('how do i fill sundays'));
+});
