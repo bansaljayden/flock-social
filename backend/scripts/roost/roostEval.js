@@ -99,6 +99,53 @@ function week(shape) {
   });
 }
 
+// The owner's own slider readings for the last seven days, newest first, with
+// one day skipped the way a real week has one, and yesterday's verdict built
+// the way services/lastNightVerdict.js builds it. "How did we do yesterday"
+// and "how busy was Saturday" are scored on what a real venue gets; until
+// 2026-10-28 they fell to the default below and were handed the week ahead.
+const WEEKDAY_OF = (date) => new Date(`${date}T12:00:00Z`).toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' });
+const SHORT_DATE = (date) => new Date(`${date}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+function pastWeek(v) {
+  const scoreOn = (weekday) => (v.week.find((f) => f.value.weekday === weekday) || { value: { peakScore: 50 } }).value.peakScore;
+  return [1, 2, 3, 5, 6, 7].map((back) => {
+    const date = new Date(Date.now() - back * 86400000).toISOString().slice(0, 10);
+    const weekday = WEEKDAY_OF(date);
+    return { date, weekday, peakReading: Math.max(1, scoreOn(weekday) - 4) };
+  });
+}
+function readingFact(d) {
+  return {
+    id: `owner_reading_${d.date}`,
+    value: { date: d.date, weekday: d.weekday, peakReading: d.peakReading, readings: 3 },
+    source: 'owner_report',
+    asOf: d.date,
+    label: `Your highest reading on ${d.weekday} ${SHORT_DATE(d.date)} was ${d.peakReading}, from 3 readings.`,
+  };
+}
+function verdictFacts(v) {
+  const y = pastWeek(v)[0];
+  const mid = y.peakReading + 18;
+  return [
+    readingFact(y),
+    {
+      id: `owner_weekday_baseline_${y.date}`,
+      value: { weekday: y.weekday, days: 6, middleReading: mid, lowest: mid - 9, highest: mid + 7, windowWeeks: 9 },
+      source: 'owner_report',
+      asOf: y.date,
+      label: `Your 6 other ${y.weekday}s in the last 9 weeks had a middle highest reading of ${mid}, running from ${mid - 9} to ${mid + 7}. Your own numbers, on your own ${y.weekday}s.`,
+    },
+    {
+      id: `last_day_verdict_${y.date}`,
+      value: { date: y.date, weekday: y.weekday, verdict: 'below', reading: y.peakReading, baseline: mid, baselineKind: 'same_weekday', comparisonDays: 6, delta: -18, threshold: 15, spread: 6, floorPoints: 15 },
+      source: 'arithmetic',
+      from: [`owner_reading_${y.date}`, `owner_weekday_baseline_${y.date}`],
+      asOf: y.date,
+      label: `${y.weekday} came in 18 points below your own ${y.weekday}s (middle ${mid}, across 6 days). That clears the 15 point mark we need before calling a day anything, so by your own numbers it was a quieter ${y.weekday} than usual.`,
+    },
+  ];
+}
+
 const VENUES = {
   cafe: {
     ctx: {
@@ -166,6 +213,8 @@ function rawBlockFor(venue, intentId) {
     case 'tables_service':
     case 'tables_free':
       return v.tables ? { intent: intentId, facts: v.tables, refusals: [] } : { intent: intentId, facts: [], refusals: ['No table unit is installed.'] };
+    case 'week_recap': return { intent: intentId, facts: pastWeek(v).map(readingFact), refusals: [] };
+    case 'last_night_verdict': return { intent: intentId, facts: verdictFacts(v), refusals: [] };
     default:
       return { intent: intentId, facts: v.week.slice(0, 3), refusals: [] };
   }
@@ -247,6 +296,9 @@ const TYPED = [
   { q: 'what beers should i put on tap', expect: ['advice'], kinds: ['bar'] },
   { q: 'how do I fill Tuesdays', expect: ['advice'], then: 'What else could we try?' },
   { q: 'How did we do yesterday?', expect: ['grounded'], then: 'what about tuesday?', thenExpect: ['grounded', 'advice'] },
+  // Past days by name, read from the owner's own readings (pastWeek above).
+  { q: 'how busy was saturday', expect: ['grounded'] },
+  { q: 'was last friday any good', expect: ['grounded'] },
 ];
 
 // ── Scoring ─────────────────────────────────────────────────────────────────

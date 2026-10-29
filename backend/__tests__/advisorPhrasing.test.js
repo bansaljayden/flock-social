@@ -415,6 +415,19 @@ test('the week recap leads with the owner\'s best and worst day, not fourteen ro
   assert.strictEqual(lines[3], '• Flock served 12 crowd estimates on 2026-10-25.', 'what we served, latest first');
   assert.ok(lines.length <= 5);
   assert.deepStrictEqual(out.sources.map((s) => s.id), ['owner_reading_2026-10-24', 'owner_reading_2026-10-21', 'served_2026-10-25']);
+
+  // A past question about a named day is answered about that day.
+  const block = { intent: 'week_recap', facts: [...readings, ...served], refusals: [] };
+  const friday = advisorPhrasing.renderTemplate(block, 'how busy was friday?').text.split('\n');
+  assert.match(friday[0], /^Friday, Oct 23(, 2026)? had a highest reading of 81\.$/);
+  assert.match(friday[1], /^• Your busiest day in the last 7 was Saturday, Oct 24(, 2026)?, at 90\.$/);
+  assert.match(friday[2], /^• Your slowest was Wednesday, Oct 21(, 2026)?, at 40\.$/);
+  const saturday = advisorPhrasing.renderTemplate(block, 'how did we do on saturday').text.split('\n');
+  assert.match(saturday[0], /^Saturday, Oct 24(, 2026)? had a highest reading of 90\.$/);
+  assert.strictEqual(saturday[1], '• That was your busiest day in the last 7.');
+  const monday = advisorPhrasing.renderTemplate(block, 'how slow was monday').text.split('\n');
+  assert.strictEqual(monday[0], 'There is no reading for Monday in the last 7 days.');
+  assert.match(monday[1], /^• Your busiest day in the last 7 was Saturday/);
 });
 
 test('facts from different speakers keep their own words, and their sources ride beside the answer', () => {

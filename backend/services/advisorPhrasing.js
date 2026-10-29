@@ -1147,7 +1147,7 @@ const READING_DAY = (date) => {
 // The week recap: up to seven of the owner's own readings and seven days of
 // what Flock served. The answer is the owner's best and worst day; what we
 // served sits under it, latest first.
-function shapeRecap(facts) {
+function shapeRecap(facts, { named = null } = {}) {
   const readings = facts
     .filter((f) => f && /^owner_reading_/.test(String(f.id)) && f.value && Number.isFinite(Number(f.value.peakReading)))
     .sort((a, z) => Number(z.value.peakReading) - Number(a.value.peakReading));
@@ -1163,6 +1163,27 @@ function shapeRecap(facts) {
     .filter((f) => f && /^served_/.test(String(f.id)))
     .sort((a, z) => String(z.id).localeCompare(String(a.id)));
   const others = facts.filter((f) => !readings.includes(f) && !served.includes(f));
+  // A QUESTION THAT NAMES A DAY IS ANSWERED ABOUT THAT DAY, as the week ahead
+  // is (shapeWeek). "How busy was Saturday" routes here (2026-10-28 second
+  // review), and the busiest-and-slowest lead never said a word about
+  // Saturday unless Saturday was one of the two. Seven days hold at most one
+  // reading per weekday; a day with none says so, and the week follows.
+  if (named) {
+    const asked = readings.find((f) => READING_DAY(f.value.date) === named) || null;
+    const points = [];
+    const used = asked ? [asked] : [];
+    if (top !== asked) { points.push(`Your busiest day in the last 7 was ${when(top)}, at ${Number(top.value.peakReading)}.`); used.push(top); }
+    if (low !== asked && low !== top) { points.push(`Your slowest was ${when(low)}, at ${Number(low.value.peakReading)}.`); used.push(low); }
+    if (asked && top === asked) points.unshift('That was your busiest day in the last 7.');
+    else if (asked && low === asked) points.unshift('That was your slowest day in the last 7.');
+    return {
+      lead: asked
+        ? `${when(asked)} had a highest reading of ${Number(asked.value.peakReading)}.`
+        : `There is no reading for ${named} in the last 7 days.`,
+      points: [...points, ...served.slice(0, 1).map(templateLine), ...others.map(templateLine)],
+      used: [...used, ...served.slice(0, 1), ...others],
+    };
+  }
   return {
     lead: `Your busiest day in the last 7 was ${when(top)}, with a highest reading of ${Number(top.value.peakReading)}.`,
     points: [
