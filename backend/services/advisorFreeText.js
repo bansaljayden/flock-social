@@ -849,6 +849,9 @@ const OFFLINE_INTENT_CUES = [
   // A count of tables ("we only had 4 tables") is how the night went, not a
   // question about serving them.
   ['tables_service', /(?<!\b(?:\d+|a\s+few|few|couple(?:\s+of)?)\s+)\btables?\b|\b(?:turn\s+times?|turns?|seatings?|another\s+server|extra\s+server|servers?\s+(?:do\s+(?:i|we)\s+)?need)\b/i],
+  // How a named day looks ahead is the week-ahead forecast, which answers it
+  // about that day ("how busy will Friday be", "what does Thursday look like").
+  ['peak_hours', /\b(?:how\s+(?:busy|full|packed|dead|slow|quiet)\s+(?:will|is|are|was|does|do|should)\b[^.?!]{0,20}\b(?:mon|tues|wednes|thurs|fri|satur|sun)days?|(?:what\s+does|how\s+does|how\s+is|how's|how\s+are)\s+(?:this\s+|next\s+)?(?:mon|tues|wednes|thurs|fri|satur|sun)days?\s+(?:look|looking))\b/i],
   // A named day is the week's recap, not yesterday's verdict: "how did we do
   // yesterday" then "what about Tuesday" becomes "how did we do tuesday".
   ['week_recap', /\bhow\s+did\s+(?:we|i)\s+do\b[^.?!]{0,20}\b(?:mon|tues|wednes|thurs|fri|satur|sun)days?\b/i],

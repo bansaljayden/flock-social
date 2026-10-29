@@ -1060,12 +1060,36 @@ const peakAt = (f) => `around ${clock12(Number(f.value.peakHour), 0)} at ${Numbe
 const byScore = (a, z) => Number(z.value.peakScore) - Number(a.value.peakScore);
 
 function shapeWeek(which) {
-  return (facts) => {
+  return (facts, { named = null } = {}) => {
     const days = facts.filter(isPeakFact).sort(byScore);
     if (days.length < 2) return null;
     const rest = facts.filter((f) => !isPeakFact(f));
     const top = days[0];
     const low = days[days.length - 1];
+    // A QUESTION THAT NAMES A DAY IS ANSWERED ABOUT THAT DAY. "How busy will
+    // Friday be" got "Your busiest day this week is Saturday" (2026-10-28):
+    // true, and an answer to a different question. The named day leads; the
+    // week's busiest and quietest frame it.
+    const asked = named ? days.find((f) => f.value.weekday === named) : null;
+    if (asked) {
+      const level = Number(top.value.peakScore) - Number(low.value.peakScore) < HOUR_ORDERING_MIN_GAP;
+      const points = [];
+      const used = [asked];
+      if (level) {
+        points.push(`No day stands out this week: every day peaks between ${Number(low.value.peakScore)} and ${Number(top.value.peakScore)}.`);
+        used.push(top, low);
+      } else {
+        if (top !== asked) { points.push(`Your busiest day this week is ${top.value.weekday}, ${peakAt(top)}.`); used.push(top); }
+        if (low !== asked && low !== top) { points.push(`${low.value.weekday} is the quietest, ${peakAt(low)}.`); used.push(low); }
+        if (top === asked) points.unshift('That makes it your busiest day this week.');
+        if (low === asked) points.unshift('That makes it your quietest day this week.');
+      }
+      return {
+        lead: `${named} peaks ${peakAt(asked)} on our 0 to 100 index.`,
+        points: [...points, ...rest.map(templateLine)],
+        used: [...new Set(used), ...rest],
+      };
+    }
     if (which === 'quiet') {
       // The plan hands over the two lowest, lowest first, and refuses a level
       // week before it gets here (routes/advisor.js quiet_nights).
@@ -1197,10 +1221,10 @@ const TEMPLATE_SHAPERS = Object.freeze({
   last_night_verdict: shapeVerdict,
 });
 
-function renderTemplate(block) {
+function renderTemplate(block, question = '') {
   const facts = Array.isArray(block?.facts) ? block.facts : [];
   const shaper = TEMPLATE_SHAPERS[block?.intent];
-  const shaped = shaper ? shaper(facts) : null;
+  const shaped = shaper ? shaper(facts, { named: roostPlaybook.namedWeekday(question) }) : null;
   let lead;
   let points;
   let used;
@@ -1993,7 +2017,9 @@ async function phrase(block, { venueUserId, question } = {}) {
   if (!block || !Array.isArray(block.facts)) return renderRefusal(block);
   if (refusalReasons(block).length > 0 || block.facts.length === 0) return renderRefusal(block);
 
-  const template = renderTemplate(block);
+  // The twin reads the question too, so a typed "how busy will Friday be"
+  // answered from the template is about Friday.
+  const template = renderTemplate(block, question);
   if (!phrasingEnabled()) return template;
 
   const genAI = getGenAI();

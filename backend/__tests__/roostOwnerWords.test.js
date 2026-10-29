@@ -309,3 +309,19 @@ test('a question that names a day is answered about that day', () => {
   // No forecast for the named day: no lead, rather than one about another day.
   assert.ok(!/projects/.test(lead('how do i fill sundays')), lead('how do i fill sundays'));
 });
+
+test('a data question about a named day is answered about that day, from the template too', async () => {
+  const advisorPhrasing = require('../services/advisorPhrasing');
+  const DAY = (weekday, peakHour, peakScore, i) => ({ id: `peak_2026-11-0${i}`, value: { date: `2026-11-0${i}`, weekday, peakHour, peakScore }, unit: '0-100 index', source: 'model_holdout', asOf: '2026-11-01T22:00:00Z', label: `${weekday} projects busiest.` });
+  const week = [DAY('Monday', 18, 41, 2), DAY('Tuesday', 18, 34, 3), DAY('Wednesday', 19, 47, 4), DAY('Thursday', 19, 55, 5), DAY('Friday', 20, 82, 6), DAY('Saturday', 20, 88, 7)];
+  for (const q of ['how busy will friday be', 'what does thursday look like']) {
+    assert.deepStrictEqual(advisorFreeText.offlineRoute(q), { mode: 'grounded', intentId: 'peak_hours' }, q);
+  }
+  const block = { intent: 'peak_hours', facts: week, refusals: [] };
+  const lead = (q) => advisorPhrasing.renderTemplate(block, q).text.split('\n')[0];
+  // It used to lead with Saturday whichever day was asked about.
+  assert.strictEqual(lead('how busy will friday be'), 'Friday peaks around 8 PM at 82 on our 0 to 100 index.');
+  assert.match(advisorPhrasing.renderTemplate(block, 'how is tuesday looking').text, /That makes it your quietest day this week\./);
+  // A question about the week still gets the week's answer.
+  assert.match(lead('when are we busiest this week'), /^Your busiest day this week is Saturday/);
+});
