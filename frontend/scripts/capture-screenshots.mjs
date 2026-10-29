@@ -1154,6 +1154,14 @@ const DRIVERS = {
     // The venue card must be on screen: its name renders as an h4.
     await page.getByText(DEMO.venue.name).first().waitFor({ timeout: 15000 });
     await settle(page);
+    /* THE CHAT OPENS AT THE NEWEST MESSAGE. The 21 Oct run saw it land 13 to
+       18px short of it; this prints the gap, so every run says whether it
+       still does. */
+    const gap = await page.evaluate(() => {
+      const el = document.querySelector('.chat-scroller');
+      return el ? Math.round(el.scrollHeight - el.scrollTop - el.clientHeight) : null;
+    });
+    log(`  chat: ${gap === null ? 'no .chat-scroller on screen' : `${gap}px between the view and the newest message${gap > 2 ? ' (short of the bottom)' : ''}`}`);
   },
   async discover(page) {
     await openDiscoverPins(page);
@@ -1324,6 +1332,12 @@ const DRIVERS = {
     await page.getByText(/Still in\? \d+ of \d+ have said so\./).waitFor({ timeout: 15000 });
     await page.getByRole('button', { name: "I'm still in" }).waitFor({ timeout: 10000 });
     await settle(page);
+    // The strip arrives with a fetch after the thread opens, over the list.
+    const gap = await page.evaluate(() => {
+      const el = document.querySelector('.chat-scroller');
+      return el ? Math.round(el.scrollHeight - el.scrollTop - el.clientHeight) : null;
+    });
+    log(`  stillin: ${gap === null ? 'no .chat-scroller on screen' : `${gap}px between the view and the newest message${gap > 2 ? ' (short of the bottom)' : ''}`}`);
     await shoot('chat');
     await page.getByRole('button', { name: 'Open the plan' }).click();
     await page.getByText(/\d+ of \d+ still in tonight\./).waitFor({ timeout: 15000 });
