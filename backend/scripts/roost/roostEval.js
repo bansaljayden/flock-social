@@ -19,6 +19,18 @@
 //   ... --only=typed | --only=chips    one half
 //   ... --venue=cafe                   one venue
 //   ... --out=roost-eval.json          also write every answer as JSON
+//
+// STAND-IN MODE, for when Gemini cannot be called (2026-10-28, credits out):
+// the same routes and the same payloads, with every model call recorded and
+// answered from a file instead of the API. No key, no spend.
+//   node scripts/roost/roostEval.js --standin=dump --standin-file=F
+//       records every call into F; a call F has no answer for fails, and the
+//       route falls back the way it does in an outage
+//   ... answer the recorded router calls into F's `answers`, then dump again:
+//       the routes those answers chose now reach the advice and phrasing calls
+//   ... answer those, then --standin=replay to score with every call answered
+// A call is keyed by venue, item and role, never by its payload: the question
+// fence carries a fresh nonce on every call.
 // ---------------------------------------------------------------------------
 
 const path = require('path');
@@ -56,8 +68,38 @@ const args = Object.fromEntries(process.argv.slice(2).map((a) => {
 
 // ── The model, watched ──────────────────────────────────────────────────────
 
-const real = advisorPhrasing.internals.getGenAI();
-if (!real) {
+const fs = require('fs');
+const standin = args.standin
+  ? { mode: String(args.standin), file: path.resolve(String(args['standin-file'] || 'roost-standin.json')) }
+  : null;
+let book = { calls: {}, answers: {} };
+if (standin) {
+  try { book = JSON.parse(fs.readFileSync(standin.file, 'utf8')); } catch { /* the first dump starts empty */ }
+  book = { calls: {}, answers: book.answers || {} };
+}
+// Which item is asking, set before every request: a call's key. A second
+// call of the same role inside one item gets its own number.
+let currentItem = null;
+let roleCounts = {};
+const { CLASSIFIER_PROMPT, ADVICE_SYSTEM_PROMPT } = require(path.join(B, 'services', 'advisorPrompt'));
+// A recorded answer replays only against the payload it was written for, with
+// the fence's nonce and the run's own timestamps normalised out first.
+const normPayload = (p) => String(p)
+  .replace(/(<<<(?:END_)?OWNER_QUESTION )[0-9a-f]{16}(>>>)/g, '$1N$2')
+  .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z/g, 'T');
+const answerFor = (key, payload) => {
+  const entry = book.answers[key];
+  return entry && entry.payload === normPayload(payload) ? entry.raw : null;
+};
+function roleOf(req) {
+  const sys = req && req.config && req.config.systemInstruction;
+  if (sys === CLASSIFIER_PROMPT) return 'router';
+  if (sys === ADVICE_SYSTEM_PROMPT) return 'advice';
+  return 'phrasing';
+}
+
+const real = standin ? null : advisorPhrasing.internals.getGenAI();
+if (!standin && !real) {
   console.error('No GEMINI_API_KEY in the environment. Run it through `railway run --service "Flock-app-"`.');
   process.exit(1);
 }
@@ -66,6 +108,19 @@ advisorPhrasing.__setGenAIForTests({
   models: {
     generateContent: async (req) => {
       const t0 = Date.now();
+      if (standin) {
+        const role = roleOf(req);
+        roleCounts[role] = (roleCounts[role] || 0) + 1;
+        const key = `${currentItem}|${role}${roleCounts[role] > 1 ? `#${roleCounts[role]}` : ''}`;
+        book.calls[key] = { role, system: req.config.systemInstruction, payload: req.contents[0].parts[0].text };
+        const answer = answerFor(key, book.calls[key].payload);
+        if (typeof answer !== 'string') {
+          calls.push({ ms: 0, tokens: 0, raw: '', error: 'stand-in: no answer recorded yet' });
+          throw new Error('stand-in: no answer recorded yet');
+        }
+        calls.push({ ms: 0, tokens: 0, raw: answer });
+        return { text: answer, usageMetadata: { totalTokenCount: 0 } };
+      }
       try {
         const resp = await real.models.generateContent(req);
         calls.push({ ms: Date.now() - t0, tokens: resp?.usageMetadata?.totalTokenCount || 0, raw: resp?.text || '' });
@@ -84,10 +139,14 @@ const ASOF = new Date().toISOString();
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const hour12 = (h) => `${h % 12 === 0 ? 12 : h % 12} ${h < 12 ? 'AM' : 'PM'}`;
 
+// Listed Monday to Sunday; each day carries the date of its next occurrence,
+// so a date and its weekday agree the way the real fact engine's do (until
+// 2026-10-28 the dates ran from tomorrow regardless of the weekday beside them).
 function week(shape) {
   return shape.map(([peakHour, peakScore], i) => {
     const weekday = DAYS[i];
-    const date = new Date(Date.now() + (i + 1) * 86400000).toISOString().slice(0, 10);
+    const ahead = [1, 2, 3, 4, 5, 6, 7].find((k) => WEEKDAY_OF(new Date(Date.now() + k * 86400000).toISOString().slice(0, 10)) === weekday);
+    const date = new Date(Date.now() + ahead * 86400000).toISOString().slice(0, 10);
     return {
       id: `peak_${date}`,
       value: { date, weekday, peakHour, peakScore },
@@ -338,6 +397,8 @@ function score(out, { expect = null, money = false, route = null } = {}) {
 async function runChip(venue, intentId) {
   calls = [];
   currentVenue = venue;
+  currentItem = `${venue}|chip|${intentId}`;
+  roleCounts = {};
   const t0 = Date.now();
   const out = await post('ask', { intentId });
   const drafted = rawPoints(calls[calls.length - 1] && calls[calls.length - 1].raw);
@@ -349,6 +410,8 @@ async function runChip(venue, intentId) {
 async function runTyped(venue, item, previous = null) {
   calls = [];
   currentVenue = venue;
+  currentItem = `${venue}|${previous ? 'follow-on' : 'typed'}|${item.key || item.q}`;
+  roleCounts = {};
   const t0 = Date.now();
   const out = await post('question', previous ? { question: item.q, previous } : { question: item.q });
   const last = calls[calls.length - 1];
@@ -365,7 +428,7 @@ async function runTyped(venue, item, previous = null) {
 // and a failure if it hands back a move the first answer already gave.
 async function runFollowOn(venue, item, first) {
   const roostPlaybook = require(path.join(B, 'services', 'roostPlaybook'));
-  const r = await runTyped(venue, { q: item.then, expect: item.thenExpect || ['advice'] }, first.out.context || null);
+  const r = await runTyped(venue, { q: item.then, key: `${item.q} > ${item.then}`, expect: item.thenExpect || ['advice'] }, first.out.context || null);
   if (!first.out.context) r.problems.push('the first answer carried no context to follow on from');
   const given = (first.out.context && first.out.context.tactics) || [];
   for (const id of given) {
@@ -433,8 +496,15 @@ function droppedSentences(r) {
   console.log(`tokens: ${tokens}, latency p50 ${pct(0.5)} ms, p90 ${pct(0.9)} ms`);
 
   if (args.out) {
-    require('fs').writeFileSync(path.resolve(String(args.out)), JSON.stringify(results, null, 2));
+    fs.writeFileSync(path.resolve(String(args.out)), JSON.stringify(results, null, 2));
     console.log(`wrote ${args.out}`);
+  }
+  if (standin) {
+    fs.writeFileSync(standin.file, JSON.stringify(book, null, 2));
+    const keys = Object.keys(book.calls);
+    const pending = keys.filter((k) => typeof answerFor(k, book.calls[k].payload) !== 'string');
+    const byRole = pending.reduce((m, k) => ({ ...m, [book.calls[k].role]: (m[book.calls[k].role] || 0) + 1 }), {});
+    console.log(`stand-in (${standin.mode}): ${keys.length} calls recorded, ${pending.length} without an answer ${JSON.stringify(byRole)}; wrote ${standin.file}`);
   }
   process.exitCode = failing.length ? 1 : 0;
   server.close();
