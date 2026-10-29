@@ -185,8 +185,17 @@ describe('crowd readings are readable text, not saturated swatch hues', () => {
     // the slice a -1 index produces.
     expect(at).toBeGreaterThan(-1);
     const chip = SEARCH.slice(Math.max(0, at - 600), at + 100);
-    expect(chip).toContain('var(--accent-amber-bg)');
+    expect(chip).toContain('var(--accent-amber-plate)');
     expect(chip).toContain('var(--accent-amber-text)');
+  });
+
+  test('the Top Rated plate is opaque in both themes, so the photo under it cannot show through', () => {
+    // The chip sits on a venue photo. Dark --accent-amber-bg is a 15% wash, and
+    // through it a white patch of photo left the amber text at 1.49:1.
+    const css = read('index.css');
+    const plates = [...css.matchAll(/--accent-amber-plate:\s*([^;]+);/g)].map((m) => m[1].trim());
+    expect(plates).toHaveLength(2);
+    for (const value of plates) expect(value).toMatch(/^#[0-9a-f]{6}$/i);
   });
 });
 

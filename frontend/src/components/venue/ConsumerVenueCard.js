@@ -1509,7 +1509,7 @@ export default function ConsumerVenueCard({
                       setPickingVenueForCreate(false);
                       setCurrentScreen('create');
                     }
-                  }} className="hit44 glass-btn glass-primary" style={{ width: '100%', padding: '9px', borderRadius: '10px', border: 'none', backgroundColor: colors.steel, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>{Icons.check('white', 14)} Select Venue</button>
+                  }} className="hit44 glass-btn glass-primary" style={{ width: '100%', padding: '9px', borderRadius: '10px', border: 'none', backgroundColor: colors.steel, color: 'white', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>{Icons.check('currentColor', 14)} Select Venue</button>
                 ) : venueDetailReturnTo ? (
                   /* BACK TO CHAT IS NAVIGATION, SO IT IS DRAWN AS NAVIGATION.
                      It used to be the loudest thing on this sheet: full width,

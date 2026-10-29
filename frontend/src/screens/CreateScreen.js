@@ -579,8 +579,8 @@ export default function CreateScreen({
               boxShadow: '0 1px 2px rgba(30,41,59,0.10)',
             }}>
               {sending
-                ? <><span style={{ display: 'inline-flex', animation: 'spin 1s linear infinite' }}>{Icons.activity('white', 16)}</span> Getting the link...</>
-                : <>{Icons.share('white', 18)} Send the link</>}
+                ? <><span style={{ display: 'inline-flex', animation: 'spin 1s linear infinite' }}>{Icons.activity('currentColor', 16)}</span> Getting the link...</>
+                : <>{Icons.share('currentColor', 18)} Send the link</>}
             </button>
             <button className="hit44" onClick={goToChat} style={{ width: '100%', height: '44px', marginTop: '8px', borderRadius: '14px', border: 'none', background: 'none', color: 'var(--text-secondary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: 'pointer' }}>Not now</button>
           </div>
@@ -912,10 +912,10 @@ export default function CreateScreen({
             boxShadow: '0 1px 2px rgba(30,41,59,0.10)',
           }}>
             {isLoading
-              ? <><span style={{ display: 'inline-flex', animation: 'spin 1s linear infinite' }}>{Icons.activity('white', 16)}</span> Creating...</>
+              ? <><span style={{ display: 'inline-flex', animation: 'spin 1s linear infinite' }}>{Icons.activity('currentColor', 16)}</span> Creating...</>
               : dmTarget
-                ? <>{Icons.chat('white', 18)} Message {dmFirstName || dmTarget.name}</>
-                : <>{Icons.users('white', 18)} Create Flock</>}
+                ? <>{Icons.chat('currentColor', 18)} Message {dmFirstName || dmTarget.name}</>
+                : <>{Icons.users('currentColor', 18)} Create Flock</>}
           </button>
         </div>
       </div>

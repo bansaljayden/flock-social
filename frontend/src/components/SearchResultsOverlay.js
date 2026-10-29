@@ -230,7 +230,7 @@ export default function SearchResultsOverlay({
                               <img src={venue.photo_url} alt="" style={{ width: '100%', height: '120px', objectFit: 'cover', display: 'block' }} onError={onVenuePhotoError} />
                               <div style={{ position: 'absolute', inset: 0, background: 'linear-gradient(transparent 40%, rgba(0,0,0,0.6) 100%)' }} />
                               {venue.topRated && (
-                                <div style={{ position: 'absolute', top: '8px', left: '8px', padding: '3px 8px', borderRadius: '8px', backgroundColor: 'var(--accent-amber-bg)', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                                <div style={{ position: 'absolute', top: '8px', left: '8px', padding: '3px 8px', borderRadius: '8px', backgroundColor: 'var(--accent-amber-plate)', display: 'flex', alignItems: 'center', gap: '3px' }}>
                                   {Icons.flame('var(--accent-amber-text)', 12)}
                                   <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--accent-amber-text)' }}>Top Rated</span>
                                 </div>

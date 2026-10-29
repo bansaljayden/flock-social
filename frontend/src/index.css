@@ -164,6 +164,7 @@
   --toggle-knob: #ffffff;
   --accent-amber-bg: #fef3c7;
   --accent-amber-text: #92400e;  /* was #b45309: 3.84:1 on --bg-tertiary. Now 5.42 */
+  --accent-amber-plate: #fef3c7;  /* --accent-amber-bg, kept opaque in both themes for a chip drawn on a photo */
   --accent-red-bg: #fee2e2;
   --accent-green-bg: #d1fae5;
   --accent-blue-bg: #dbeafe;
@@ -269,6 +270,10 @@
   --toggle-knob: #1e293b;
   --accent-amber-bg: rgba(245,158,11,0.15);
   --accent-amber-text: #fbbf24;
+  /* The 15% amber wash over a dark card, made opaque, for a chip drawn on a
+     photo. Through the wash, a white patch of photo left #fbbf24 at 1.49:1;
+     on this plate it reads 6.69:1 whatever is underneath. */
+  --accent-amber-plate: #3e3b34;
   --accent-red-bg: rgba(239,68,68,0.15);
   --accent-green-bg: rgba(16,185,129,0.15);
   --accent-blue-bg: rgba(59,130,246,0.15);
@@ -667,6 +672,26 @@ code {
   border: 1px solid rgba(255, 255, 255, 0.12) !important;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10), 0 1px 2px rgba(0, 0, 0, 0.20) !important;
   color: var(--text-primary) !important;
+}
+
+/* A pressed glass-secondary toggle shows that it is pressed. The rules above
+   set background, border and color with !important, which silently overrode
+   the steel border, steel tint and steel text that the budget presets, the
+   bill's "paid by" row and the tip row ask for inline, so the chosen chip
+   looked like the rest. Steel is colors.steel in each theme; the tint is the
+   inline `${colors.steel}12` (0x12 of 255, 7%). Light text reads 6.45:1 on
+   its tint. Dark steel text would read 4.41:1 on its tint over a card, so the
+   text is one step lighter (#78a4cb, 4.98:1) and the border stays steel. */
+.glass-secondary[aria-pressed="true"],
+[data-theme="light"] .glass-secondary[aria-pressed="true"] {
+  background: rgba(45, 90, 135, 0.07) !important;
+  border: 2px solid #2d5a87 !important;
+  color: #2d5a87 !important;
+}
+[data-theme="dark"] .glass-secondary[aria-pressed="true"] {
+  background: rgba(109, 154, 195, 0.07) !important;
+  border: 2px solid #6d9ac3 !important;
+  color: #78a4cb !important;
 }
 
 /* Was rgba(220,38,38,0.88): white on it composited to 4.21-4.29:1 (Log Out,
