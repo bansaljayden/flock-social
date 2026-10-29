@@ -1606,7 +1606,7 @@ router.post('/alert', authenticateAllowBanned, async (req, res) => {
         ? `<p style="color:#b45309;font-size:13px;margin:8px 0 0">This position is approximate. The phone put it within ${accuracyPhrase(fixMetres)}, so treat it as the area to search rather than the spot.</p>`
         : `<p style="color:#6b7280;font-size:13px;margin:4px 0 0">Accurate to ${accuracyPhrase(fixMetres)}.</p>`);
     const locationBlock = coords
-      ? `<p style="margin:12px 0"><a href="https://maps.google.com/?q=${coords.lat},${coords.lng}" style="display:inline-block;padding:12px 24px;background:#ef4444;color:white;text-decoration:none;border-radius:8px;font-weight:bold">${coarse ? 'View Area on Map' : 'View Location on Map'}</a></p>
+      ? `<p style="margin:12px 0"><a href="https://maps.google.com/?q=${coords.lat},${coords.lng}" style="display:inline-block;padding:12px 24px;background:#dc2626;color:white;text-decoration:none;border-radius:8px;font-weight:bold">${coarse ? 'View Area on Map' : 'View Location on Map'}</a></p>
          <p style="color:#6b7280;font-size:13px">Coordinates: ${coords.lat.toFixed(6)}, ${coords.lng.toFixed(6)}</p>
          ${accuracyLine}`
       : '<p style="color:#6b7280">Location was not available.</p>';
@@ -2315,7 +2315,7 @@ router.post('/share-location', authenticate, async (req, res) => {
           <p style="color:#0c4a6e;margin:0;font-size:15px"><strong>${safeName}</strong> shared their location</p>
         </div>
         <p style="font-size:15px;color:#1e293b">${safeName} wants you to know where they are right now.</p>
-        <p style="margin:12px 0"><a href="https://maps.google.com/?q=${coords.lat},${coords.lng}" style="display:inline-block;padding:12px 24px;background:#0ea5e9;color:white;text-decoration:none;border-radius:8px;font-weight:bold">View Location on Map</a></p>
+        <p style="margin:12px 0"><a href="https://maps.google.com/?q=${coords.lat},${coords.lng}" style="display:inline-block;padding:12px 24px;background:#0369a1;color:white;text-decoration:none;border-radius:8px;font-weight:bold">View Location on Map</a></p>
         <p style="color:#6b7280;font-size:13px">Coordinates: ${coords.lat.toFixed(6)}, ${coords.lng.toFixed(6)}</p>
         <hr style="border:none;border-top:1px solid #e5e7eb;margin:20px 0">
         <p style="color:#6b7280;font-size:12px">Shared at ${time}</p>

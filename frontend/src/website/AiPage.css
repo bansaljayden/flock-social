@@ -15,7 +15,7 @@
 .ai-text { max-width: 62ch; margin-top: clamp(16px, 2.4vw, 24px); }
 .ai-text p { font-size: clamp(16px, 1.5vw, 18px); line-height: 1.65; color: var(--ink-2); }
 .ai-text p + p { margin-top: 1em; }
-.ai-text a { color: var(--steel); text-underline-offset: 2px; }
+.ai-text a { color: var(--steel); text-decoration: underline; text-underline-offset: 2px; }
 .lp-on-navy .ai-text p { color: var(--cream-2); }
 .lp-on-navy .ai-text a { color: var(--steel-lift); }
 .lp-on-navy .lp-fig-cap { color: var(--cream-3); }

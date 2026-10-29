@@ -140,7 +140,7 @@
 }
 .hw-ai dd { margin: 0; font-size: 16.5px; line-height: 1.6; color: var(--cream-2); max-width: 46ch; }
 .hw-ai-more { margin-top: clamp(28px, 4vw, 40px); font-size: 16px; color: var(--cream-2); }
-.hw-ai-more a { color: var(--steel-lift); font-weight: 600; text-underline-offset: 3px; }
+.hw-ai-more a { color: var(--steel-lift); font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
 
 /* ---------- venues ---------- */
 
@@ -152,7 +152,7 @@
 .hw-venues p { max-width: 62ch; font-size: clamp(16px, 1.5vw, 18px); line-height: 1.65; color: var(--ink-2); }
 .hw-venues h2 { margin-bottom: 18px; }
 .hw-venues p + p { margin-top: 1em; }
-.hw-venues a { color: var(--steel); text-underline-offset: 2px; overflow-wrap: anywhere; }
+.hw-venues a { color: var(--steel); text-decoration: underline; text-underline-offset: 2px; overflow-wrap: anywhere; }
 
 /* ---------- closing band ---------- */
 

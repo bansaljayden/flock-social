@@ -145,7 +145,7 @@
   --mail-alert: #fee2e2;
   --mail-alert-head: #dc2626;
   --mail-alert-ink: #991b1b;
-  --mail-button: #ef4444;
+  --mail-button: #dc2626;
   --mail-button-ink: #ffffff;
   --badge-ink: #000;     /* the crowd badge. Black is not a base colour here, it
                             is the only ink that clears 4.5 to 1 on ALL FOUR

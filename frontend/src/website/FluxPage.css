@@ -97,7 +97,7 @@
   .fx-owl-art { width: 260px; }
 }
 .lp-on-navy .fx-measure p { color: var(--cream-2); }
-.lp-on-navy .fx-measure a { color: var(--steel-lift); text-underline-offset: 3px; }
+.lp-on-navy .fx-measure a { color: var(--steel-lift); text-decoration: underline; text-underline-offset: 3px; }
 .lp-on-navy .fx-figure .lp-fig-cap { color: var(--cream-3); }
 .fx-sends {
   display: grid;
@@ -113,7 +113,7 @@
 
 .fx-zoom { cursor: zoom-in; }
 .fx-zoom:focus-visible { outline: 2px solid var(--steel); outline-offset: 3px; }
-.fx-figure .lp-fig-cap a { color: var(--steel); text-underline-offset: 2px; }
+.fx-figure .lp-fig-cap a { color: var(--steel); text-decoration: underline; text-underline-offset: 2px; }
 
 /* ---------- the viewer ---------- */
 
