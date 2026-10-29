@@ -153,7 +153,7 @@ const PROMPT_LEAK = /(ROOST\s+(PHRASING|OPERATING\s+ADVICE|QUESTION|ANSWER)\s+(C
 const PROHIBITED_ADVICE = [
   {
     reason: 'employment, pay or hiring instruction',
-    re: /\b(unpaid|off\s+the\s+clock|without\s+pay|dock(?:ing)?\s+(?:their|his|her|the)?\s*(?:pay|wages|tips)|withhold(?:ing)?\s+(?:their\s+|the\s+)?(?:pay|wages|tips)|garnish\w*(?:\s+(?!and\b|then\b)[\w']+){0,3}\s+(?:wages?|pay|paychecks?|earnings|salary)|wage\s+garnish\w*|minimum\s+wage|independent\s+contractor|cash\s+in\s+hand|under\s+the\s+table|tip\s+(?:pool|credit|out)|fire\s+(?:them|him|her|a\s+(?:server|bartender|barista|cook|chef|host|hostess|manager|member|porter|runner)|your\s+(?:staff|crew|team|opener|closer|server|bartender|barista|cook|chef|host|hostess|manager|employee|worker))|terminat(?:e|ing)\s+(?:them|their|his|her)|let\s+(?:them|him|her)\s+go|write\s+(?:them|him|her)\s+up|disciplinary|non[\s-]?compete|probationary\s+period|hold\s+(?:the\s+|my\s+|your\s+|our\s+)?(?:last\s+|closing\s+|late\s+|whole\s+)?(?:shift|crew|staff|team|servers?|closers?|openers?|porters?|them|him|her)\s+back\b|condition\s+of\s+the\s+(?:shift|rota|job|role)|(?:no|nothing)\s+extra\s+on\s+the\s+(?:sheet|books|rota|clock)|off\s+the\s+(?:sheet|books)|start\s+(?:their|his|her|the)\s+clock|compel(?:ling)?\s+(?:the\s+|a\s+|my\s+|our\s+|any\s+)?(?:waiter|waitress|server|staff|team|crew|barista|bartender|cook|chef|host|hostess|porter|employee|worker|them|him|her)|remain(?:ing)?\s+(?:beyond|past|after)\s+(?:closing|close|their\s+shift|the\s+shift))\b|\b(?:work|works|working|stay|stays|staying|remain|remains|remaining|shift|shifts|closing|overtime)\b[^.!?]{0,40}\bgratis\b|\bgratis\b[^.!?]{0,40}\b(?:work|shift|closing|hours?)\b/i,
+    re: /\b(unpaid|off\s+the\s+clock|without\s+pay|dock(?:ing)?\s+(?:their|his|her|the)?\s*(?:pay|wages|tips)|withhold(?:ing)?\s+(?:their\s+|the\s+)?(?:pay|wages|tips)|garnish\w*(?:\s+(?!and\b|then\b)[\w']+){0,3}\s+(?:wages?|pay|paychecks?|earnings|salary)|wage\s+garnish\w*|minimum\s+wage|independent\s+contractor|cash\s+in\s+hand|under\s+the\s+table|tip\s+(?:pool|credit|out)|fire\s+(?:them|him|her|a\s+(?:server|bartender|barista|cook|chef|host|hostess|manager|member|porter|runner)|your\s+(?:staff|crew|team|opener|closer|server|bartender|barista|cook|chef|host|hostess|manager|employee|worker))|terminat(?:e|ing)\s+(?:them|their|his|her)|let\s+(?:them|him|her)\s+go(?!\s+(?:home|early|for\s+the\s+(?:night|day|evening)|as\s+(?:it|the\s+(?:line|rush|room|queue|crowd|night)|covers|sales|traffic|demand|business|things)\b))|write\s+(?:them|him|her)\s+up|disciplinary|non[\s-]?compete|probationary\s+period|hold\s+(?:the\s+|my\s+|your\s+|our\s+)?(?:last\s+|closing\s+|late\s+|whole\s+)?(?:shift|crew|staff|team|servers?|closers?|openers?|porters?|them|him|her)\s+back\b|condition\s+of\s+the\s+(?:shift|rota|job|role)|(?:no|nothing)\s+extra\s+on\s+the\s+(?:sheet|books|rota|clock)|off\s+the\s+(?:sheet|books)|start\s+(?:their|his|her|the)\s+clock|compel(?:ling)?\s+(?:the\s+|a\s+|my\s+|our\s+|any\s+)?(?:waiter|waitress|server|staff|team|crew|barista|bartender|cook|chef|host|hostess|porter|employee|worker|them|him|her)|remain(?:ing)?\s+(?:beyond|past|after)\s+(?:closing|close|their\s+shift|the\s+shift))\b|\b(?:work|works|working|stay|stays|staying|remain|remains|remaining|shift|shifts|closing|overtime)\b[^.!?]{0,40}\bgratis\b|\bgratis\b[^.!?]{0,40}\b(?:work|shift|closing|hours?)\b/i,
   },
   {
     reason: 'legal, tax, licensing or insurance instruction',
@@ -179,12 +179,35 @@ const PROHIBITED_ADVICE = [
   },
 ];
 
-/** The reason the whole answer is void, or null. */
-function wholeAnswerVeto(text) {
+// A SENTENCE THAT SAYS WHO TO ASK IS NOT AN INSTRUCTION ON THE LAW
+// (2026-10-28, stand-in model eval). The advice prompt tells the model to
+// meet a legal, tax or employment question with "That one is outside what
+// Roost does" and one point saying who to ask, and the check then voided the
+// whole answer to "we are going under" for "Talk to an accountant or a lawyer
+// about debts, the lease or winding down". A sentence whose job is the
+// referral may name the topic it refers; one that goes on past it ("then",
+// a semicolon) is read as an instruction again, and the health, privacy and
+// dishonesty classes take no referrals at all.
+const REFERRAL = /\b(?:(?:talk|speak)\s+(?:to|with)|ask|consult|check\s+with|(?:is|are)\s+(?:a\s+question\s+|questions\s+|one\s+)?for)\s+(?:an?\s+|your\s+|the\s+)?(?:\w+\s+)?(?:accountant|lawyer|attorney|solicitor|bookkeeper|cpa|tax\s+(?:adviser|advisor|professional|preparer)|insurance\s+(?:broker|agent)|broker|payroll\s+(?:service|provider|company)|someone\s+who\s+knows)\b/i;
+const REFERRABLE = new Set(['employment, pay or hiring instruction', 'legal, tax, licensing or insurance instruction']);
+const isReferral = (sentence) => REFERRAL.test(sentence) && !/;|\bthen\b/i.test(sentence);
+
+/**
+ * The reason the whole answer is void, or null. Takes the answer's text, or
+ * its sentences; a referral is judged one sentence at a time, so a point that
+ * holds two sentences is split first.
+ */
+function wholeAnswerVeto(textOrSentences) {
+  const list = Array.isArray(textOrSentences) ? textOrSentences.map(String) : [String(textOrSentences)];
+  const text = list.join(' ');
   if (UPSELL.test(text)) return 'upsell';
   if (PROMPT_LEAK.test(text)) return 'prompt leak';
+  const sentences = list.flatMap((s) => splitSentences(s));
   for (const { reason, re } of PROHIBITED_ADVICE) {
-    if (re.test(text)) return reason;
+    const hit = REFERRABLE.has(reason)
+      ? sentences.some((s) => re.test(s) && !isReferral(s))
+      : re.test(text);
+    if (hit) return reason;
   }
   return null;
 }
@@ -322,14 +345,39 @@ const EXPECT_LEAD = /\bexpect(?:ing)?\s+(?:about|around|roughly|up\s+to|close\s+
 // lost its sentence to the check.
 const TRIAL_SPAN = /\b(?:run|keep|give|hold|test|try|trial)\s+(?:it|them|this|that|(?:the|your)\s+\w+)\s+(?:for\s+)?(?:about\s+|at\s+least\s+|a\s+full\s+)?$/i;
 
+// AN INSTRUCTION'S NUMBER IS WHAT TO DO (2026-10-28, stand-in model eval):
+// "Read your 50 latest reviews" and "At the peak, run 2 door lanes" lost
+// their sentences, because "read" and "run" are claim verbs and "your" and
+// "the peak" are subjects. A verb that opens its clause, or opens the words
+// after a comma, is an order to the owner; a reading puts its subject first,
+// "your Friday hit 92". Past and -s forms are never orders, so they are not
+// on this list, and neither are expect, estimate and forecast, which open a
+// claim ("Expect around 45 people tonight").
+const IMPERATIVE_OPENER = /^(?:read|run|hit|have|get|see|come|sit|drop|show|put|serve|seat|turn|fill|wait|take|stay|reach|hold|score|log|record|measure|count|post|do|make|bring|pull|add|clear|close|open|stop|start|end|land)$/i;
+function opensWithOrder(prefix) {
+  const segment = prefix.slice(prefix.lastIndexOf(', ') + 1).trim();
+  return IMPERATIVE_OPENER.test(segment.split(/\s+/)[0] || '');
+}
+
+// "25 more covers a week at your $38 is $950": more of something per week or
+// per night is a target to aim at, not a count of what happened (2026-10-28,
+// stand-in model eval). "25 more covers a night than Thursday" compares two
+// of the venue's days, and is still checked.
+const RATE_TARGET = /^\s*(?:more|extra|additional|new)\s+\w+(?:\s+\w+)?\s+(?:a|an|per|each|every)\s+(?:week|night|day|month|shift|service|weekend|evening|morning)\b/i;
+function isRateTarget(after) {
+  return RATE_TARGET.test(after) && !/^[^.!?]*\bthan\b/i.test(after);
+}
+
 function isReadingSlot(text, num) {
   const prefix = text.slice(clauseStart(text, num.index), num.index);
   if (EXPECT_LEAD.test(prefix)) return true;
   if (NOT_A_READING.test(prefix)) return false;
   if (TRIAL_SPAN.test(prefix)) return false;
+  if (opensWithOrder(prefix)) return false;
   // "a $12 special", "an 85 seat room": the article makes it a kind of
   // thing, not a reading of one.
   if (/\b(?:a|an)\s*\$?\s*$/i.test(prefix)) return false;
+  if (isRateTarget(text.slice(num.index + num.length))) return false;
   if (AGAINST_HISTORY.test(text.slice(num.index + num.length))) return true;
   if (!SUBJECT.test(prefix)) return false;
   const tail = prefix.trim().split(/\s+/).slice(-LAST_WORDS).join(' ');
@@ -556,13 +604,35 @@ function blankPlaceholders(text) {
  * it, and so can the server. The contracts say so.
  * @returns {{ok: boolean, ids: Set<string>, number?: string}}
  */
+// A YEAR OF A WEEK (2026-10-28, stand-in model eval). "10 covers short is
+// $380 a week, or $19,760 over 52 weeks" lost its sentence: $380 is worked out
+// from the owner's $38, but a second step on a worked-out figure is not
+// arithmetic the check does, so the yearly figure the playbook itself writes
+// ("$380, about $19,760 a year") was refused when the model wrote it. A money
+// figure this sentence already supports, times the weeks (or months) in the
+// year the sentence names, shows its working too.
+const YEAR_SPAN = /\b(?:a\s+year|per\s+year|each\s+year|every\s+year|yearly|annual(?:ly)?|52\s+weeks|12\s+months)\b/i;
+function yearOf(num, text, support, inPlay) {
+  if (num.dim !== 'money' || !YEAR_SPAN.test(text)) return null;
+  const spans = [];
+  if (/\bweek(?:s|ly)?\b/i.test(text)) spans.push(52);
+  if (/\bmonth(?:s|ly)?\b/i.test(text)) spans.push(12);
+  for (const lit of inPlay.literals) {
+    if (lit.dim !== 'money' || lit.value === num.value) continue;
+    if (!spans.some((k) => close(num.value, lit.value * k))) continue;
+    const from = supportFor(lit, support, inPlay);
+    if (from) return from;
+  }
+  return null;
+}
+
 function checkSentenceNumbers(sentence, support) {
   const inPlay = inPlayFor([sentence]);
   const text = blankPlaceholders(sentence);
   const ids = new Set();
   for (const num of numbersIn(text)) {
     if (!isReadingSlot(text, num)) continue;
-    const from = supportFor(num, support, inPlay);
+    const from = supportFor(num, support, inPlay) || yearOf(num, text, support, inPlay);
     const written = text.slice(num.index, num.index + num.length);
     if (!from) return { ok: false, ids, number: written };
     for (const id of from) ids.add(id);
