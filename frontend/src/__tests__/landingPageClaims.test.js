@@ -172,6 +172,12 @@ describe('the page only sells things that exist', () => {
 
     // "Reply to reviews from people who went"
     expect(venueCard).toMatch(/reply to reviews/i);
+    // Every one of these needs a verified venue: the dashboard routes answer
+    // an unverified one with nothing (incoming-flocks, intelligence) or refuse
+    // it (review replies), and promotions show only for verified venues.
+    expect(venueCard).toMatch(/Once your venue is verified, a free account/);
+    expect(venueCard).toMatch(/in their vote, once verified/);
+    expect(venueCard).toMatch(/people who went, once verified/);
     expect(api).toMatch(/replyToReview/);
 
     // "Your own hour-by-hour forecast, from the model the app runs"

@@ -279,11 +279,14 @@ describe('what the two pages say', () => {
     expect(flux).toContain('blacks out anything warm and deletes it on the box');
     expect(flux).toContain('the venue sees the log on its Tables tab');
     expect(flux).toContain('No images, video or identities leave it.');
+    // A room check sends how many tables it found; their outlines stay in the
+    // unit's zones file (flock-sensor main.py: tables are N:P:S:A[:C]).
+    expect(flux).toContain('how many tables it found and how many chairs each has');
     // The page and the policy say the same things in the same words.
     const policy = privacy.replace(/\s+/g, ' ').toLowerCase();
     const page = flux.replace(/\s+/g, ' ').toLowerCase();
     for (const phrase of ['off unless the venue turns it on', 'a cover sits over its lens except during a check',
-      'blacks out anything warm', 'whether each table is clear', 'where the tables are', 'how many chairs',
+      'blacks out anything warm', 'whether each table is clear', 'how many chairs',
       'at most once a day', 'empty for ten minutes']) {
       expect(`${phrase}: ${policy.includes(phrase)} ${page.includes(phrase)}`).toBe(`${phrase}: true true`);
     }

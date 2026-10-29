@@ -324,9 +324,9 @@ export default function HowItWorksPage() {
               />
               <h2 id="hw-h-venues">If you run a venue</h2>
               <p>
-                A free venue account shows which flocks have you in their vote
-                this week, and you can reply to reviews. Once your venue is
-                verified, your deals go on its card, and your events show under
+                Once your venue is verified, a free venue account shows which
+                flocks have you in their vote this week, and you can reply to
+                reviews. Your deals go on its card, and your events show under
                 “Happening here”.
               </p>
               <p>

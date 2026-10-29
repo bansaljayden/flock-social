@@ -48,7 +48,7 @@ const BIRDIE_FREE_DAILY = 10;
 const BIRDIE_PRO_DAILY = 150;
 const FORECASTS_FREE_MONTHLY = 30;
 
-const DESCRIPTION = 'Flock Pro lifts the Birdie limit and the monthly limit on crowd levels and forecasts. See what it costs and how to cancel.';
+const DESCRIPTION = 'Flock Pro: more Birdie and more crowd forecasts for whoever plans. It is not on sale on the web yet. How to manage or cancel it.';
 
 const READABLE = { color: 'var(--pp-ink-2)' };
 

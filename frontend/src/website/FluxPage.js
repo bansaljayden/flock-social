@@ -33,8 +33,9 @@ import { shareThisPage } from './shareCard';
 // in the pill beside the heat camera, behind a lens cover a spring holds shut.
 // Off unless the venue turns it on; it looks only where heat shows nobody, cuts
 // the picture to the table, blacks out anything warm and deletes it on the box;
-// what leaves is whether a table is clear and, from an empty-room check, where
-// the tables are and how many chairs each has; every look is logged for the
+// what leaves is whether a table is clear and, from an empty-room check, how
+// many tables it found and how many chairs each has (the tables' outlines stay
+// in the unit's zones file); every look is logged for the
 // venue. It hasn't been fitted to a unit yet, and the page says so. Nothing
 // here may say more than the privacy policy's section does.
 // No accuracy figure appears here (they are on /research, with their
@@ -223,8 +224,8 @@ export default function FluxPage() {
                   tables also sends, for each table, how many people are at it and
                   whether it is free, seated, needs a server or needs clearing. With
                   the table camera on, it also says whether each table is clear and,
-                  from a check of the empty room, where the tables are and how many
-                  chairs each has. No images, video or identities leave it.
+                  from a check of the empty room, how many tables it found and how
+                  many chairs each has. No images, video or identities leave it.
                 </p>
               </div>
               <figure className="fx-figure fx-flow">
@@ -232,7 +233,7 @@ export default function FluxPage() {
                   <Pic
                     img={IMAGES.flow}
                     sizes="(min-width: 1160px) 528px, (min-width: 760px) calc(50vw - 32px), calc(100vw - 40px)"
-                    alt="The Flux sensor deletes the frame and sends only “count: 3” to the Flock server."
+                    alt="The Flux sensor deletes the frame and sends “count: 3” to the Flock server, never the frame."
                   />
                 </div>
               </figure>

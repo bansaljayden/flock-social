@@ -13,9 +13,9 @@ venue is being charged today.
 www.flockcorp.com is a client-rendered React application. Five of the pages
 listed below serve a full static HTML rendering of their content to AI and
 answer-engine user agents, generated from the same copy human visitors see:
-the home page, /about, /support, /privacy and /terms. /how-it-works, /ai, /flux,
-/research, /guidelines and /delete-account are not among them and need
-JavaScript to read.
+the home page, /about, /support, /privacy and /terms. /how-it-works, /ai, /flux
+and /research are served to everyone as an HTML snapshot of the rendered page.
+/guidelines and /delete-account need JavaScript to read.
 This file is the summary and the index.
 
 Updated: October 29, 2026.
@@ -39,8 +39,8 @@ Updated: October 29, 2026.
   looks only at empty tables or an empty room), how Owl counts people from
   heat, how it reads tables, where it mounts, and the case part by part, in a
   labelled render and a 3D model that assembles on one slider. Counts, table
-  states and, from the table camera, where the tables are and how many chairs
-  they have leave the box: no images, video or identities.
+  states and, from the table camera, how many chairs each table has leave the
+  box: no images, video or identities.
 - Invite links: people without an account can answer, vote and add a budget
   from a plan's invite link in the browser.
 - Voting: everyone in the group suggests places and the group votes, so no single
@@ -63,8 +63,8 @@ Updated: October 29, 2026.
 - Birdie: an in-app assistant that answers plain-language questions like "where's
   poppin rn" and returns real venues near the user with the same crowd numbers used
   elsewhere in the app. Birdie is AI, built on Google Gemini.
-- Venue cards: how busy a place usually runs, deals the venue has posted, and,
-  for a verified venue, its upcoming events under "Happening here".
+- Venue cards: how busy a place usually runs and, for a verified venue, the
+  deals it has posted and its upcoming events under "Happening here".
 - On the night: the plan's chat asks who is still in before a deadline.
 - Safety: live location sharing inside the flock, off by default and only while a
   plan is running, plus a two-tap SOS that emails trusted contacts, with the user's
@@ -96,8 +96,9 @@ relative 0 to 100 scores, not headcounts):
 - Where the venue had a live reading from the hour before, which 57,900 of those
   119,939 readings did, 77.0% of numbers named the exact crowd level and 88.6%
   landed within one.
-- When Flock has no pattern for a venue yet, a rule-based engine answers and
-  the number is tagged with the engine that produced it.
+- When Flock has no pattern for a venue yet, it answers from the usual pattern
+  for that kind of venue, or otherwise from a rule-based engine, and the number
+  is tagged with whichever produced it.
 
 Flock also trains its own crowd-prediction model (gradient-boosted trees,
 XGBoost, exported to ONNX). These figures are taken from its metadata,
@@ -132,11 +133,11 @@ Venues are the side Flock is built to charge. Roost, the venue plan, will be $99
 a month or $990 a year per location, sold on flockcorp.com with a 14-day free
 trial. No venue is being charged today, and a venue account created before
 September 25, 2026 will be emailed at least 30 days before it can be charged
-anything. The venue tools that ship are a dashboard an owner signs into, holding
-the flocks that have their venue in their vote, their own hour-by-hour forecast,
-the same one the app shows, replies to reviews, a deal they can put on their
-own venue card for groups that open it, and, once the venue is verified, its
-events on the same card. Flock does
+anything. The venue tools that ship are a dashboard an owner signs into. Once
+the venue is verified, it holds the flocks that have their venue in their vote,
+their own hour-by-hour forecast, the same one the app shows, replies to
+reviews, a deal they can put on their own venue card for groups that open it,
+and its events on the same card. Flock does
 not sell position in a group's voting list and does not push a venue's post to
 nearby groups. Neither exists.
 

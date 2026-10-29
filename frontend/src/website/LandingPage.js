@@ -877,9 +877,9 @@ export default function LandingPage() {
           <div className="lp-venues-copy">
             <h2 id="lp-h-venues">Run a bar or a restaurant?</h2>
             <p className="lp-lead">
-              A free venue account shows which flocks have you in their vote this
-              week. Once you’re verified, you can put a deal on your venue’s card
-              while they decide.
+              Once your venue is verified, a free account shows which flocks have
+              you in their vote this week, and you can put a deal on your venue’s
+              card while they decide.
             </p>
             <p>
               A <a href="/flux">Flux</a> box over the door, still a prototype, is
@@ -955,10 +955,10 @@ export default function LandingPage() {
               <div className="lp-plan-price">Free account<small>Roost, the paid plan, is not on sale yet</small></div>
               <p className="lp-plan-note">Roost adds your own hour-by-hour forecast.</p>
               <ul className="lp-list">
-                <li>See the flocks with you in their vote this week</li>
+                <li>See the flocks with you in their vote, once verified</li>
                 <li>Put deals on your card once your venue is verified</li>
                 <li>List your events there too, once verified</li>
-                <li>Reply to reviews from people who went</li>
+                <li>Reply to reviews from people who went, once verified</li>
               </ul>
               <a className="lp-btn lp-btn-navy" href={`mailto:${CONTACT_EMAIL}?subject=Flock%20for%20venues`}>
                 Email us

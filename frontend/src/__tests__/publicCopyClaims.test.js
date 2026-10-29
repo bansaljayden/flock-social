@@ -63,6 +63,9 @@ test('llms.txt counts the static pages correctly', () => {
   const s = fs.readFileSync(path.join(__dirname, '..', '..', 'public', 'llms.txt'), 'utf8');
   expect(s).toMatch(/Five of the pages/);
   expect(s).toMatch(/the home page, \/about, \/support, \/privacy and \/terms\./);
+  // The Pages build prerenders these (scripts/build-cloudflare.js PRERENDER).
+  expect(s).toMatch(/\/how-it-works, \/ai, \/flux\s+and \/research are served to everyone as an HTML snapshot/);
+  expect(s).toMatch(/\/guidelines and \/delete-account need JavaScript to read\./);
 });
 
 // THE SIGN-UP SCREEN ASKS FOR A YEAR, AND THE POLICY HAS TO AGREE.

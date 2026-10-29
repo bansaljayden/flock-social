@@ -238,8 +238,8 @@ export default function AiPage() {
               <Figure
                 img={FIGURES.flow}
                 sizes={HALF}
-                alt="The Flux sensor deletes the frame and sends only “count: 3” to the Flock server."
-                caption="Only the number goes to Flock."
+                alt="The Flux sensor deletes the frame and sends “count: 3” to the Flock server, never the frame."
+                caption="The frame never leaves the box."
               />
             </div>
           </div>
