@@ -176,24 +176,52 @@ describe('the files the pages name', () => {
     for (const route of ['flux', 'ai']) expect(fs.existsSync(path.join(PUBLIC, route))).toBe(false);
   });
 
-  test('the case renders, the model and the reel photographs are asked for with a version, since they are rewritten under the same names', () => {
+  test('the case renders, the model and the reel photographs are asked for with a version that moves with their bytes', () => {
     // /sensor/ is cached for a day with a week of stale-while-revalidate, so a
-    // remade picture under an unchanged URL reaches returning visitors late.
+    // remade picture under an unchanged URL reaches returning visitors late
+    // (on 2026-10-29 the first visit after a publish still got the old box).
+    // So every URL to a file rewritten under its own name carries a ?v=, and
+    // a hash ties each version to the files' bytes: rewrite them
+    // (scripts/flux_assets.py, the reel photographs) and this fails until the
+    // version is bumped and the new hash is written down here.
+    const crypto = require('crypto');
+    const hashOf = (urls) => {
+      const h = crypto.createHash('sha256');
+      for (const u of urls) h.update(fs.readFileSync(path.join(PUBLIC, u)));
+      return h.digest('hex').slice(0, 16);
+    };
     const { RENDER_QUERY } = require('../website/flux/fluxModel');
     expect(RENDER_QUERY).toMatch(/^\?v=\d+$/);
+
+    // Pictures made once and given a new name when remade need no version.
+    const FIXED = ['flux-inside-mockup', 'flux-tables-illustration', 'flux-tables-room', 'tables-tab-desktop-v2', 'tables-tab-phone-v2'];
     const page = renderToStaticMarkup(React.createElement(require('../website/FluxPage').default));
-    const renders = [...page.matchAll(/\/sensor\/flux-(?:hero|exploded|inside|arm|back|step\d|assembled)(?:@2x)?\.(?:webp|avif)[^\s",]*/g)].map((m) => m[0]);
-    expect(renders.length).toBeGreaterThan(20);
-    expect(renders.filter((u) => !u.endsWith(RENDER_QUERY))).toEqual([]);
+    const urls = [...page.matchAll(/\/sensor\/([^\s",?@.]+)[^\s",?]*(\?v=\d+)?/g)];
+    expect(urls.length).toBeGreaterThan(20);
+    expect(urls.filter((m) => !m[2] && !FIXED.includes(m[1])).map((m) => m[0])).toEqual([]);
+    expect(urls.filter((m) => m[2] && m[2] !== RENDER_QUERY).map((m) => m[0])).toEqual([]);
     const viewer = fs.readFileSync(path.join(WEBSITE, 'flux', 'FluxViewer.js'), 'utf8');
     expect(viewer).toContain('fetchModel(MODEL_URL + RENDER_QUERY');
+
+    const bases = [...new Set([
+      ...data.STEPS.map((s) => `/sensor/${s.still}`),
+      ...Object.values(IMAGES).filter((img) => img.q).map((img) => img.base),
+    ])].sort();
+    const renders = bases.flatMap((b) => ['.webp', '@2x.webp', '.avif', '@2x.avif'].map((x) => b + x)).concat(MODEL_URL);
+    const RENDERS_AT = { '?v=3': '3b906a5a7a38cea8' };
+    expect(`${RENDER_QUERY} ${hashOf(renders)}`).toBe(`${RENDER_QUERY} ${RENDERS_AT[RENDER_QUERY]}`);
 
     const HeroReel = require('../website/HeroReel').default;
     const { REEL } = require('../website/reelShots');
     const reel = renderToStaticMarkup(React.createElement(HeroReel, { shots: REEL }));
-    const photos = [...reel.matchAll(/\/sensor\/flux-real-[a-z]+(?:@2x)?\.webp[^\s",]*/g)].map((m) => m[0]);
+    const photos = [...reel.matchAll(/(\/sensor\/flux-real-[a-z]+(?:@2x)?\.webp)(\?v=\d+)?/g)];
     expect(photos.length).toBeGreaterThan(0);
-    expect(photos.filter((u) => !/\?v=\d+$/.test(u))).toEqual([]);
+    const photoQ = [...new Set(photos.map((m) => m[2] || 'none'))];
+    expect(photoQ).toHaveLength(1);
+    expect(photoQ[0]).toMatch(/^\?v=\d+$/);
+    const PHOTOS_AT = { '?v=2': '665528a54e0dd11e' };
+    const photoFiles = [...new Set(photos.map((m) => m[1]))].sort();
+    expect(`${photoQ[0]} ${hashOf(photoFiles)}`).toBe(`${photoQ[0]} ${PHOTOS_AT[photoQ[0]]}`);
   });
 
   // three.js is about 150 KB gzipped. One static import anywhere else would put
@@ -219,7 +247,10 @@ describe('the files the pages name', () => {
 describe('what the two pages say', () => {
   const FluxPage = require('../website/FluxPage').default;
   const AiPage = require('../website/AiPage').default;
-  const flux = readerText(FluxPage);
+  // The server render shows the slider's first stop; the other stops'
+  // captions and the 3D view's part names reach readers too, so every rule
+  // below reads them as well.
+  const flux = [readerText(FluxPage), ...data.STEPS.flatMap((s) => [s.title, s.caption]), ...Object.values(data.LABELS)].join(' ');
   const ai = readerText(AiPage);
 
   test('Flux is a prototype, and says what is not done', () => {
@@ -248,8 +279,27 @@ describe('what the two pages say', () => {
     expect(flux).toContain('blacks out anything warm and deletes it on the box');
     expect(flux).toContain('the venue sees the log on its Tables tab');
     expect(flux).toContain('No images, video or identities leave it.');
-    // Never kept, sent or shown, as the policy promises.
-    expect(flux).not.toMatch(/\b(stores?|saves?|keeps?|sends?|uploads?|shows?) (the |a |its )?(pictures?|photos?|images?|video)\b/i);
+    // The page and the policy say the same things in the same words.
+    const policy = privacy.replace(/\s+/g, ' ').toLowerCase();
+    const page = flux.replace(/\s+/g, ' ').toLowerCase();
+    for (const phrase of ['off unless the venue turns it on', 'a cover sits over its lens except during a check',
+      'blacks out anything warm', 'whether each table is clear', 'where the tables are', 'how many chairs',
+      'at most once a day', 'empty for ten minutes']) {
+      expect(`${phrase}: ${policy.includes(phrase)} ${page.includes(phrase)}`).toBe(`${phrase}: true true`);
+    }
+    // Never kept, sent or shown, as the policy promises: in either voice and
+    // with any word between, unless the sentence says it never happens.
+    const PICTURE = '(?:pictures?|photos?|images?|video|footage)';
+    const KEEP = '(?:stor(?:e|es|ed|ing)|sav(?:e|es|ed|ing)|keeps?|kept|keeping|sends?|sent|sending|uploads?|uploaded|uploading|shows?|shown|showing|records?|recorded|recording)';
+    const claims = (text) => [...text.matchAll(new RegExp(`\\b${KEEP}\\b[^.,;:]{0,24}?\\b${PICTURE}\\b|\\b${PICTURE}\\b[^.,;:]{0,24}?\\b${KEEP}\\b`, 'gi'))]
+      .filter((m) => !/\b(?:never|not|no|nothing)\b/i.test(text.slice(Math.max(0, m.index - 30), m.index) + m[0]))
+      .map((m) => m[0]);
+    expect(claims(flux)).toEqual([]);
+    for (const bad of ['Pictures are stored on the box for a day.', 'Photos are uploaded to Flock.', 'It saves each picture to the card.',
+      'It sends table photos to the dashboard.', 'It records video of the room.']) {
+      expect(`${bad} ${claims(bad).length}`).toBe(`${bad} 1`);
+    }
+    expect(claims('Pictures are examined on the unit and deleted. They are never saved, shown to anyone, or sent.')).toEqual([]);
     // Spelled the way the policy spells it.
     expect(flux).not.toMatch(/\bcolour\b/i);
   });

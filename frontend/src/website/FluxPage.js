@@ -339,7 +339,7 @@ export default function FluxPage() {
                 <Pic
                   img={IMAGES.exploded}
                   sizes="(min-width: 1160px) 1080px, calc(100vw - 40px)"
-                  alt="Every part of the Flux case pulled apart and named, front to back: the cream sensor pill, with the thermal camera, the status light and the table camera behind it, and the Flux wordmark; the printed navy body with the door counter in its chin and the lens cover's servo inside it; the sound meter and 4G antenna to one side; the 7 inch touchscreen; the battery; the 4G board, Active Cooler, Raspberry Pi 5 and power board; and the navy acrylic back sheet with its CHARGE, USB and Ethernet ports."
+                  alt="Every part of the Flux case pulled apart and named, front to back: the cream sensor pill, with the thermal camera and the status light behind it, and the Flux wordmark; the table camera in its clamp and the lens cover's servo, set out below the front; the printed navy body with the door counter in its chin; the sound meter and 4G antenna to one side; the 7 inch touchscreen; the battery; the 4G board, Active Cooler, Raspberry Pi 5 and power board; and the navy acrylic back sheet with its CHARGE, USB and Ethernet ports."
                 />
               </a>
               <figcaption className="lp-fig-cap">

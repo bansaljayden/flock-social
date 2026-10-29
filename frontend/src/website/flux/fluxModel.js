@@ -10,9 +10,11 @@ export const MODEL_MB = '1.5 MB';
 // scripts/flux_assets.py rewrites the renders and the model under the same
 // names, and /sensor/ is cached for a day with a week of stale-while-
 // revalidate, so a changed case would keep showing the old one. Every URL to
-// them carries this query; bump it with each rewrite. 2: the case with the
-// table camera, 2026-10-29.
-export const RENDER_QUERY = '?v=2';
+// them carries this query; bump it with each rewrite (fluxPages.test.js ties
+// each version to the files' bytes). 2: the case with the table camera,
+// 2026-10-29. 3: its exploded view with the camera and the lens cover servo
+// set out below the body, the same day.
+export const RENDER_QUERY = '?v=3';
 
 /** The model as an ArrayBuffer. Unpacked here unless the host already did it
  *  (a server that sends .gz with Content-Encoding hands over plain GLB). */

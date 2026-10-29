@@ -1,9 +1,10 @@
 // The Flux case for /flux: how each part looks, the exploded layout, and the
 // assembly the page's one slider scrubs through. Ported from
-// flock-sensor/enclosure/viewer/index.html at 2ed737c1 (the table camera, its
-// clamp and the lens cover's flap, spring, servo and horn), the viewer the
-// sensor's own renders come from. No three.js in here, so the timeline can be
-// tested on its own (fluxPages.test.js).
+// flock-sensor/enclosure/viewer/index.html at 39ffb5e2 (the table camera, its
+// clamp and the lens cover's flap, spring, servo and horn, which come out below
+// the body in the exploded view), the viewer the sensor's own renders come
+// from. No three.js in here, so the timeline can be tested on its own
+// (fluxPages.test.js).
 //
 // Offsets are in the box's millimetres, as in flux_cad.py: X across, Y front
 // to back (+y toward the back), Z up.
@@ -107,8 +108,8 @@ export const EXPLODED = {
   'Back sheet (navy)': [0, 300, 0], 'Back engraving': [0, 300, 0],
   'CHARGE port': [0, 300, 0], 'USB port': [0, 300, 0], 'Ethernet port': [0, 300, 0],
   '1/4-20 mount nut': [0, 0, -25],
-  'Arducam IMX519 table camera': [0, 45, 0], 'Camera clamp (printed, navy)': [0, 62, 0],
-  'MG90S lens cover servo': [0, 40, -22], 'Servo horn': [0, 30, -22],
+  'Arducam IMX519 table camera': [0, -35, -70], 'Camera clamp (printed, navy)': [0, -20, -70],
+  'MG90S lens cover servo': [0, 10, -95], 'Servo horn': [0, 0, -95],
 };
 const SHEET = [0, 300, 0];
 const BACK = ['Back sheet (navy)', 'Back engraving', 'CHARGE port', 'USB port', 'Ethernet port'];
