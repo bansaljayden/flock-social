@@ -1193,3 +1193,27 @@ test('ROOST_PLAYBOOK_FIRST answers from the playbook and the templates with no m
     delete process.env.ROOST_PLAYBOOK_FIRST;
   }
 });
+
+test('with ROOST_PLAYBOOK_FIRST a model call for a question the router never saw goes on the twenty-a-day question meter', async () => {
+  process.env.ROOST_PLAYBOOK_FIRST = 'true';
+  try {
+    resetAll();
+    installProfile();
+    const roostPlaybook = require('../services/roostPlaybook');
+    const everyMove = roostPlaybook.tactics.map((t) => t.id);
+    replies = [JSON.stringify({ answer: 'Put your best regular on the slowest hour.', points: [] })];
+    await advisorFreeText.advise({
+      userId: 7, question: 'how do I fill Tuesdays', ctx: { profile: PROFILE().rows[0] }, exclude: everyMove, unrouted: true,
+    });
+    assert.strictEqual(modelCalls.length, 1, 'the playbook had nothing, so the model writes it');
+    assert.deepStrictEqual({ questions: ledger.get(7).questions, answers: ledger.get(7).answers }, { questions: 1, answers: 0 });
+
+    resetAll();
+    installProfile();
+    const r = await ask('how do I fill Tuesdays');
+    assert.strictEqual(r.body.mode, 'advice');
+    assert.ok(!ledger.has(7) || ledger.get(7).questions === 0, 'a playbook answer spends none of the owner\'s twenty');
+  } finally {
+    delete process.env.ROOST_PLAYBOOK_FIRST;
+  }
+});

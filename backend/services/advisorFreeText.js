@@ -1020,7 +1020,9 @@ async function classify({ userId, question }) {
     const vetoed = prohibitedClass(question);
     if (vetoed) return { mode: 'refused', intentId: null, refusal: vetoed };
     const placed = offlineRoute(question);
-    if (placed) return placed;
+    // `unrouted`: no router call charged this question's own meter, so a
+    // model call made for it later charges that meter instead (advise).
+    if (placed) return { ...placed, unrouted: true };
   }
 
   const raw = await chargedCall({
@@ -1274,7 +1276,7 @@ const PLAYS_IN_PAYLOAD = 3;
  *
  * @returns {Promise<{mode: 'advice'|'refusal', text: string, sources: Array, topic?: string, followUp?: string|null, tactics: string[]}>}
  */
-async function advise({ userId, question, ctx, groundedFacts = [], intentId = null, offline = false, fallback = null, exclude = [] }) {
+async function advise({ userId, question, ctx, groundedFacts = [], intentId = null, offline = false, fallback = null, exclude = [], unrouted = false }) {
   const venue = roostPlaybook.venueOf(ctx);
   const playbookAnswer = () => {
     const answer = roostPlaybook.answer({ question, intentId, ctx, groundedFacts, exclude });
@@ -1320,7 +1322,10 @@ async function advise({ userId, question, ctx, groundedFacts = [], intentId = nu
 
   const out = await chargedCall({
     userId,
-    charge: allowVenuePhrasing,
+    // A question the playbook-first switch routed never met the router, so
+    // this is its one model call and it goes on the question meter: the
+    // switch must not turn twenty typed questions a day into fifty.
+    charge: unrouted ? allowVenueQuestion : allowVenuePhrasing,
     systemInstruction: ADVICE_SYSTEM_PROMPT,
     payload,
     maxOutputTokens: ADVICE_MAX_OUTPUT_TOKENS,

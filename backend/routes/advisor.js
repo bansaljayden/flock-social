@@ -1171,6 +1171,7 @@ router.post('/question', authenticate, requirePro, async (req, res) => {
       offline: route.offline === true,
       fallback: route.fallback || null,
       exclude: follow.exclude,
+      unrouted: route.unrouted === true,
     });
     return res.json({
       mode: answer.mode,
