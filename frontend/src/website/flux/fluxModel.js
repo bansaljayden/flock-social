@@ -6,7 +6,7 @@
 export const MODEL_URL = '/sensor/flux-assembly.glb.gz';
 // What the "Load the 3D model" button says it costs. fluxPages.test.js holds
 // it to the file's size.
-export const MODEL_MB = '1.4 MB';
+export const MODEL_MB = '1.5 MB';
 
 /** The model as an ArrayBuffer. Unpacked here unless the host already did it
  *  (a server that sends .gz with Content-Encoding hands over plain GLB). */

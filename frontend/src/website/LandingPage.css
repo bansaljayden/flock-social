@@ -937,11 +937,14 @@ html:has(.lp) body { overflow-x: clip; }
 }
 .lp-reel-item .lp-flux-photo,
 .lp-reel-item .lp-flux-view { height: 100%; background: none; }
+/* The capture sits a hair inside the front photograph's glass, which the
+   2026-10-29 photo (the case with the table camera) has at 7.0% / 10.7% /
+   7.3% / 37.4% from its left, top, right and bottom edges. */
 .lp-flux-screen {
   position: absolute;
   top: 11.7%;
   right: 8.8%;
-  bottom: 39.5%;
+  bottom: 38.5%;
   left: 8.5%;
   overflow: hidden;
   background: var(--flux-glass);

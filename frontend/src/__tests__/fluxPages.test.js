@@ -215,6 +215,25 @@ describe('what the two pages say', () => {
     expect(flux).toContain('This frame is generated, not a picture of real people.');
   });
 
+  test('the table camera says what the privacy policy says, no more, and that it is not fitted yet', () => {
+    // The camera went into the case design and into the privacy policy's
+    // "Table camera (optional, off by default)" on 2026-10-28. The page
+    // describes it in the policy's own terms and stops there.
+    const privacy = fs.readFileSync(path.join(WEBSITE, 'PrivacyPolicy.js'), 'utf8');
+    expect(privacy).toContain('Table camera (optional, off by default)');
+    expect(flux).toContain('A small color camera, connected by USB, in the pill beside the heat camera.');
+    expect(flux).toContain('off unless the venue turns it on');
+    expect(flux).toContain('a cover sits over its lens except during a check');
+    expect(flux).toContain('It hasn’t been fitted to a unit yet.');
+    expect(flux).toContain('blacks out anything warm and deletes it on the box');
+    expect(flux).toContain('the venue sees the log on its Tables tab');
+    expect(flux).toContain('No images, video or identities leave it.');
+    // Never kept, sent or shown, as the policy promises.
+    expect(flux).not.toMatch(/\b(stores?|saves?|keeps?|sends?|uploads?|shows?) (the |a |its )?(pictures?|photos?|images?|video)\b/i);
+    // Spelled the way the policy spells it.
+    expect(flux).not.toMatch(/\bcolour\b/i);
+  });
+
   test('no accuracy figure, no decibels, no battery life, no working cellular link', () => {
     for (const [name, text] of [['flux', flux], ['ai', ai]]) {
       expect(`${name}: ${(text.match(/\d+(\.\d+)?\s?%/) || [''])[0]}`).toBe(`${name}: `);

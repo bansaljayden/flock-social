@@ -18,7 +18,7 @@ the home page, /about, /support, /privacy and /terms. /how-it-works, /ai, /flux,
 JavaScript to read.
 This file is the summary and the index.
 
-Updated: October 21, 2026.
+Updated: October 29, 2026.
 
 ## What Flock does
 
@@ -35,9 +35,11 @@ Updated: October 21, 2026.
   Gemini.
 - [Flux](https://www.flockcorp.com/flux): The people counter Flock is building
   for venues, a prototype whose case has not been printed yet. The page covers
-  what is inside it, how Owl counts people from heat, where it mounts, and the
-  case part by part, in a labelled render and a 3D model that assembles on one
-  slider. Only counts and table states leave the box: no images, video or identities.
+  what is inside it (with an optional table camera that looks only at empty
+  tables), how Owl counts people from heat, how it reads tables, where it
+  mounts, and the case part by part, in a labelled render and a 3D model that
+  assembles on one slider. Only counts and table states leave the box: no
+  images, video or identities.
 - Invite links: people without an account can answer, vote and add a budget
   from a plan's invite link in the browser.
 - Voting: everyone in the group suggests places and the group votes, so no single

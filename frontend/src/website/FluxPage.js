@@ -26,7 +26,16 @@ import { shareThisPage } from './shareCard';
 // tab with alerts; worked out on the box, only table number, head count,
 // state and duration leave; table spots can be learned from where people sit.
 // The room picture is generated heat and the tab shots use demo data, and
-// the captions say so. No colour camera is mentioned: not built or approved.
+// the captions say so.
+// The table camera (2026-10-28: the privacy policy's "Table camera (optional,
+// off by default)" went live and the case gained its bay): a small color camera
+// in the pill beside the heat camera, behind a lens cover a spring holds shut.
+// Off unless the venue turns it on; it looks only where heat shows nobody, cuts
+// the picture to the table, blacks out anything warm and deletes it on the box;
+// what leaves is whether a table is clear and, from an empty-room check, where
+// the tables are and how many chairs each has; every look is logged for the
+// venue. It hasn't been fitted to a unit yet, and the page says so. Nothing
+// here may say more than the privacy policy's section does.
 // No accuracy figure appears here (they are on /research, with their
 // limits), nothing says the 4G board works, and nothing gives a battery life.
 
@@ -70,6 +79,10 @@ const SENSORS = [
   {
     name: 'Thermal camera',
     what: 'A FLIR Lepton 3.5. It sees heat, 160 by 120 points of it. Owl, further down, is the model that counts the people in those frames.',
+  },
+  {
+    name: 'Table camera',
+    what: 'A small color camera, connected by USB, in the pill beside the heat camera. It’s for tables, not people: a cover sits over its lens except during a check, and it’s off unless the venue turns it on. It hasn’t been fitted to a unit yet.',
   },
   {
     name: 'Door counter',
@@ -126,7 +139,7 @@ export default function FluxPage() {
                 <Pic
                   img={IMAGES.hero}
                   sizes="(min-width: 960px) 560px, calc(100vw - 40px)"
-                  alt="A render of Flux: a navy box with a 7 inch screen, a cream sensor pill and the Flux wordmark, leaning back on a cream stand."
+                  alt="A render of Flux: a navy box with a 7 inch screen, a cream sensor pill holding the heat camera’s round eye, a status light and the table camera’s square window, and the Flux wordmark, leaning back on a cream stand."
                   eager
                 />
               </div>
@@ -205,8 +218,9 @@ export default function FluxPage() {
                   or Ethernet: the people it counts, door crossings, an estimate of
                   how full the room is, and the noise level. A unit set up for
                   tables also sends, for each table, how many people are at it and
-                  whether it is free, seated, needs a server or needs clearing. No images,
-                  video or identities leave it.
+                  whether it is free, seated, needs a server or needs clearing. With
+                  the table camera on, it also says whether each table is clear and
+                  how many chairs it has. No images, video or identities leave it.
                 </p>
               </div>
               <figure className="fx-figure fx-flow">
@@ -244,13 +258,22 @@ export default function FluxPage() {
                   Flux can learn where the tables are from where people sit, so
                   nobody has to draw them in.
                 </p>
+                <p>
+                  A venue can also turn on the table camera, so Flux can tell
+                  whether a table still has dishes on it. It looks only when the
+                  heat camera shows nobody at or near that table, cuts the picture
+                  down to the table, blacks out anything warm and deletes it on the
+                  box. If a person is still there, the picture is thrown away
+                  unchecked. Every look is logged, and the venue sees the log on
+                  its Tables tab.
+                </p>
               </div>
               <figure className="fx-figure">
                 <div className="fx-plate">
                   <Pic
                     img={IMAGES.tablesIllustration}
                     sizes="(min-width: 1160px) 528px, (min-width: 760px) calc(50vw - 32px), calc(100vw - 40px)"
-                    alt="An illustration of a dining room seen from above the door, with faceless figures at eight tables. Each table is outlined in its state's colour with a label, and a side panel lists three of eight tables free and two alerts."
+                    alt="An illustration of a dining room seen from above the door, with faceless figures at eight tables. Each table is outlined in its state's color with a label, and a side panel lists three of eight tables free and two alerts."
                   />
                 </div>
                 <figcaption className="lp-fig-cap">
@@ -310,7 +333,7 @@ export default function FluxPage() {
                 <Pic
                   img={IMAGES.exploded}
                   sizes="(min-width: 1160px) 1080px, calc(100vw - 40px)"
-                  alt="Every part of the Flux case pulled apart and named, front to back: the cream sensor pill, with the thermal camera and status light behind it, and the Flux wordmark; the printed navy body with the door counter in its chin; the sound meter and 4G antenna to one side; the 7 inch touchscreen; the battery; the 4G board, Active Cooler, Raspberry Pi 5 and power board; and the navy acrylic back sheet with its CHARGE, USB and Ethernet ports."
+                  alt="Every part of the Flux case pulled apart and named, front to back: the cream sensor pill, with the thermal camera, the status light and the table camera behind it, and the Flux wordmark; the printed navy body with the door counter in its chin and the lens cover's servo inside it; the sound meter and 4G antenna to one side; the 7 inch touchscreen; the battery; the 4G board, Active Cooler, Raspberry Pi 5 and power board; and the navy acrylic back sheet with its CHARGE, USB and Ethernet ports."
                 />
               </a>
               <figcaption className="lp-fig-cap">
@@ -376,6 +399,12 @@ export default function FluxPage() {
                 <p>
                   A camera arm tilts it 15 degrees down, and the door counter looks
                   65 degrees down at the floor of the doorway.
+                </p>
+                <h3>Over a dining room</h3>
+                <p>
+                  For tables it goes on the ceiling above the door, tipped about 30
+                  degrees down, so the heat camera and the table camera look across
+                  the room from the same place.
                 </p>
                 <h3>Power and ports</h3>
                 <p>

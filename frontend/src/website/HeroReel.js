@@ -59,9 +59,11 @@ function Screen({ shot, first, copy }) {
    The Flux screen sits in the sensor itself, in two photographs of the box:
    straight on, and turned to show its right side and top. Both are generated
    from the CAD's own renders of the assembled box (fluxData.js BOX: 182.9
-   wide, 175.2 tall, 74.4 deep, in mm), so every edge, the lens, the pill's
-   light and the door counter's slot sit where the CAD has them, in printed
-   navy plastic with its layer lines, and the turned one has the rounded
+   wide, 175.2 tall, 74.4 deep, in mm), remade on 2026-10-29 for the case with
+   the table camera, so every edge, the pill's two eyes (the heat camera's
+   round lens and the table camera's square window) with the light between
+   them, and the door counter's slot at the right sit where the CAD has them,
+   in printed navy plastic with its layer lines, and the turned one has the rounded
    corners and bottom edge a box folded from flat photographs could not.
    Straight on, the Flock mark beside the wordmark is the logo file itself,
    laid over the badge, and the screen is the capture reelShots.js names, set

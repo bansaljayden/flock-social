@@ -1,6 +1,7 @@
 // The Flux case for /flux: how each part looks, the exploded layout, and the
 // assembly the page's one slider scrubs through. Ported from
-// flock-sensor/enclosure/viewer/index.html at 17344ee5, the viewer the
+// flock-sensor/enclosure/viewer/index.html at 2ed737c1 (the table camera, its
+// clamp and the lens cover's flap, spring, servo and horn), the viewer the
 // sensor's own renders come from. No three.js in here, so the timeline can be
 // tested on its own (fluxPages.test.js).
 //
@@ -37,6 +38,12 @@ export const LOOK = {
   'Stand screw (1/4-20 x 5/8)': { color: 0xa9abb2, rough: 0.35, metal: 0.9 },
   '4G antenna strip': { color: 0x9ca3af, rough: 0.5 },
   'Brass M3 inserts (8)': { color: 0xc9a14a, rough: 0.35, metal: 0.95 },
+  'Arducam IMX519 table camera': { color: 0x14402e, rough: 0.5 },
+  'Camera clamp (printed, navy)': { color: 0x0f172a, rough: 0.78 },
+  'Lens cover flap (printed, navy)': { color: 0x0f172a, rough: 0.78 },
+  'Lens cover spring': { color: 0xc3c6cc, rough: 0.2, metal: 1 },
+  'MG90S lens cover servo': { color: 0x1a1b20, rough: 0.45 },
+  'Servo horn': { color: 0xeeeee6, rough: 0.5 },
 };
 
 // What a tapped part is called: the names on the labelled exploded picture.
@@ -65,6 +72,12 @@ export const LABELS = {
   'Stand (printed, cream)': 'Stand (printed, cream)',
   'Stand screw (1/4-20 x 5/8)': 'Stand screw',
   'Brass M3 inserts (8)': 'Brass inserts',
+  'Arducam IMX519 table camera': 'Table camera',
+  'Camera clamp (printed, navy)': 'Table camera',
+  'Lens cover flap (printed, navy)': 'Lens cover',
+  'Lens cover spring': 'Lens cover',
+  'MG90S lens cover servo': 'Lens cover servo',
+  'Servo horn': 'Lens cover servo',
 };
 export const labelFor = (name) => LABELS[name] || (isCable(name) ? 'Cable' : name);
 
@@ -94,6 +107,8 @@ export const EXPLODED = {
   'Back sheet (navy)': [0, 300, 0], 'Back engraving': [0, 300, 0],
   'CHARGE port': [0, 300, 0], 'USB port': [0, 300, 0], 'Ethernet port': [0, 300, 0],
   '1/4-20 mount nut': [0, 0, -25],
+  'Arducam IMX519 table camera': [0, 45, 0], 'Camera clamp (printed, navy)': [0, 62, 0],
+  'MG90S lens cover servo': [0, 40, -22], 'Servo horn': [0, 30, -22],
 };
 const SHEET = [0, 300, 0];
 const BACK = ['Back sheet (navy)', 'Back engraving', 'CHARGE port', 'USB port', 'Ethernet port'];
@@ -107,8 +122,8 @@ const STAND = { 'Stand (printed, cream)': [0, 0, -40], 'Stand screw (1/4-20 x 5/
 // exploded view already has the camera, door counter and light in the chin.
 export const STEPS = [
   { title: 'Pulled apart', caption: 'Every part of the case, laid out front to back.', still: 'flux-exploded' },
-  { title: 'The body', caption: 'Brass inserts melt into the printed body. The thermal camera, the door counter and the status light screw in from inside.', still: 'flux-step2' },
-  { title: 'The screen', caption: 'The 7 inch touchscreen drops in from the back, glass first.', still: 'flux-step3' },
+  { title: 'The body', caption: 'Brass inserts melt into the printed body. The thermal camera, the door counter and the status light screw in from inside, and the lens cover’s flap, spring and servo go in behind the front.', still: 'flux-step2' },
+  { title: 'The screen', caption: 'The 7 inch touchscreen drops in from the back, glass first. The table camera sits in its cradle under it, held by a printed clamp.', still: 'flux-step3' },
   { title: 'The front', caption: 'The cream sensor pill and the Flux wordmark go on the front.', still: 'flux-step4' },
   { title: 'The back sheet', caption: 'The Raspberry Pi 5, its cooler and the power board mount on the back sheet.', still: 'flux-step5' },
   { title: 'Battery and cables', caption: 'The battery and the sound meter go in, and every cable is plugged in.', still: 'flux-step6' },
@@ -121,7 +136,8 @@ export const LAST = STEPS.length - 1;
 const STEP_OF = {
   'Brass M3 inserts (8)': 1, '1/4-20 mount nut': 1,
   'PureThermal 3 + Lepton 3.5': 1, 'VL53L8CX door counter': 1, 'LINK light': 1,
-  '7 inch touchscreen': 2,
+  'Lens cover flap (printed, navy)': 1, 'Lens cover spring': 1, 'MG90S lens cover servo': 1, 'Servo horn': 1,
+  '7 inch touchscreen': 2, 'Arducam IMX519 table camera': 2, 'Camera clamp (printed, navy)': 2,
   'Sensor pill (cream)': 3, 'Flux wordmark (cream)': 3,
   'Anker A1336 battery': 5, 'Decibel meter': 5, '4G antenna strip': 5,
 };

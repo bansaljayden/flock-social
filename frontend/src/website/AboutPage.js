@@ -40,7 +40,7 @@ const HOLDS = [
   { what: 'Your budget stays yours.', how: 'The group sees one rounded-down number. Nobody else sees what you typed.' },
   { what: 'No ads and no feed.', how: 'There is nothing to scroll and nobody to follow.' },
   { what: 'Location stays off until you share it.', how: 'Nothing tracks you in the background, and two-tap SOS reaches the trusted contacts you picked.' },
-  { what: 'The sensor sends a number.', how: 'Flux sends how many people are in the room and, on a unit set up for tables, how many are at each table. Nothing else leaves it.' },
+  { what: 'The sensor sends a number.', how: 'Flux sends how many people are in the room and, on a unit set up for tables, how many are at each table and what state it is in. No images, video or identities leave it.' },
   { what: 'Only what ships.', how: 'If the site describes a feature, the app does it today.' },
 ];
 
