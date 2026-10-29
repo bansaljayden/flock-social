@@ -222,8 +222,9 @@ export default function FluxPage() {
                   how full the room is, and the noise level. A unit set up for
                   tables also sends, for each table, how many people are at it and
                   whether it is free, seated, needs a server or needs clearing. With
-                  the table camera on, it also says whether each table is clear and
-                  how many chairs it has. No images, video or identities leave it.
+                  the table camera on, it also says whether each table is clear and,
+                  from a check of the empty room, where the tables are and how many
+                  chairs each has. No images, video or identities leave it.
                 </p>
               </div>
               <figure className="fx-figure fx-flow">
@@ -262,13 +263,15 @@ export default function FluxPage() {
                   nobody has to draw them in.
                 </p>
                 <p>
-                  A venue can also turn on the table camera, so Flux can tell
-                  whether a table still has dishes on it. It looks only when the
-                  heat camera shows nobody at or near that table, cuts the picture
-                  down to the table, blacks out anything warm and deletes it on the
-                  box. If a person is still there, the picture is thrown away
-                  unchecked. Every look is logged, and the venue sees the log on
-                  its Tables tab.
+                  Once the table camera is fitted, a venue will be able to turn it
+                  on, so Flux can tell whether a table still has dishes on it. It
+                  looks at a table only when the heat camera shows nobody at or
+                  near it, cuts the picture down to the table, blacks out anything
+                  warm and deletes it on the box. If a person is still there, the
+                  picture is thrown away unchecked. At most once a day, after the
+                  room has been empty for ten minutes, it can look at the whole
+                  room to find the tables and count chairs. Every look is logged,
+                  and the venue sees the log on its Tables tab.
                 </p>
               </div>
               <figure className="fx-figure">
@@ -280,8 +283,8 @@ export default function FluxPage() {
                   />
                 </div>
                 <figcaption className="lp-fig-cap">
-                  An illustration of the idea. Flux sees people only as heat and
-                  never films them.
+                  An illustration of the idea. Flux counts people from heat alone
+                  and never films them.
                 </figcaption>
               </figure>
               <figure className="fx-figure">

@@ -31,15 +31,16 @@ Updated: October 29, 2026.
 - [How the AI works](https://www.flockcorp.com/ai): The four models in Flock,
   each with the figures from the pitch video: Starling, the crowd forecast;
   Owl, the people counter written for the Flux sensor; Roost's advisor, which
-  may not write a digit; and Birdie, the in-app assistant built on Google's
-  Gemini.
+  checks every number it gives about a venue against that venue's data; and
+  Birdie, the in-app assistant built on Google's Gemini.
 - [Flux](https://www.flockcorp.com/flux): The people counter Flock is building
   for venues, a prototype whose case has not been printed yet. The page covers
-  what is inside it (with an optional table camera that looks only at empty
-  tables), how Owl counts people from heat, how it reads tables, where it
-  mounts, and the case part by part, in a labelled render and a 3D model that
-  assembles on one slider. Only counts and table states leave the box: no
-  images, video or identities.
+  what is inside it (with an optional table camera, not fitted yet, that
+  looks only at empty tables or an empty room), how Owl counts people from
+  heat, how it reads tables, where it mounts, and the case part by part, in a
+  labelled render and a 3D model that assembles on one slider. Counts, table
+  states and, from the table camera, where the tables are and how many chairs
+  they have leave the box: no images, video or identities.
 - Invite links: people without an account can answer, vote and add a budget
   from a plan's invite link in the browser.
 - Voting: everyone in the group suggests places and the group votes, so no single

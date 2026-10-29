@@ -532,7 +532,7 @@ export default function LandingPage() {
                 the counter being built. Teasers only; the 3D lives on /flux. */}
             <p className="lp-live-note lp-live-more">
               We’re building <a href="/flux">Flux</a>, a box that counts the people
-              in a venue and sends Flock only numbers. The four models in Flock are
+              in a venue and never sends Flock a picture. The four models in Flock are
               on <a href="/ai">How the AI works</a>.
             </p>
           </div>
