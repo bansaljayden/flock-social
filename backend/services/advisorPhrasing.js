@@ -2032,6 +2032,9 @@ async function phrase(block, { venueUserId, question } = {}) {
   // answered from the template is about Friday.
   const template = renderTemplate(block, question);
   if (!phrasingEnabled()) return template;
+  // ROOST_PLAYBOOK_FIRST (advisorFreeText.playbookFirst): the template twin
+  // answers every chip, and no phrasing call is made.
+  if (boolFlag('ROOST_PLAYBOOK_FIRST', false)) return template;
 
   const genAI = getGenAI();
   if (!genAI) return template;

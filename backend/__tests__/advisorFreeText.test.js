@@ -1165,3 +1165,31 @@ test('a short specific question keeps the try-again sentence, and a failed week 
   const r = await ask('should we open on sundays?');
   assert.strictEqual(r.status, 200, JSON.stringify(r.body));
 });
+
+test('ROOST_PLAYBOOK_FIRST answers from the playbook and the templates with no model call, and still asks the model for what it cannot place', async () => {
+  process.env.ROOST_PLAYBOOK_FIRST = 'true';
+  try {
+    resetAll();
+    installProfile();
+    const typed = await ask('how do I fill Tuesdays');
+    assert.strictEqual(typed.body.mode, 'advice', typed.body.text);
+    assert.ok(typed.body.sources.some((s) => s.source === 'roost_playbook'));
+    assert.strictEqual(modelCalls.length, 0, 'a question the playbook answers cost a model call');
+
+    resetAll();
+    installProfile();
+    const chip = await (await fetch(`${base}/api/venue/advisor/ask`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ intentId: 'peak_hours' }),
+    })).json();
+    assert.strictEqual(chip.mode, 'template');
+    assert.strictEqual(modelCalls.length, 0, 'a chip cost a phrasing call');
+
+    resetAll();
+    installProfile();
+    replies = ['{"mode":"advice","intentId":null}', creditsOut()];
+    await ask('how do i renovate my bathroom');
+    assert.ok(modelCalls.length >= 1, 'a question the playbook cannot place still goes to the router');
+  } finally {
+    delete process.env.ROOST_PLAYBOOK_FIRST;
+  }
+});

@@ -155,6 +155,18 @@ const MODES = Object.freeze(['grounded', 'advice', 'refused']);
 // answer (the deterministic template twin still carries every number), but
 // free text off is no free text at all, because there is no template that
 // answers a question nobody wrote a template for.
+// ROOST_PLAYBOOK_FIRST, off by default (2026-10-28, asked as "why can't we
+// use an open source model and get rid of Roost's costs"): typed questions
+// are routed and answered from the playbook wherever it can, and the model
+// is called only for what the playbook cannot place or answer, and chips are
+// answered by their template twin (advisorPhrasing.phrase). Roost then makes
+// almost no model calls. The trade is answers less tailored to the venue than
+// the model writes. (ADVISOR_PHRASING_ENABLED=false is not the way to do this:
+// it turns typed questions off altogether.)
+function playbookFirst() {
+  return boolFlag('ROOST_PLAYBOOK_FIRST', false);
+}
+
 function freeTextEnabled() {
   return boolFlag('ADVISOR_FREETEXT_ENABLED', true);
 }
@@ -1000,6 +1012,17 @@ async function classify({ userId, question }) {
   const emergency = emergencyClass(question);
   if (emergency) return { mode: 'refused', intentId: null, refusal: emergency };
 
+  // PLAYBOOK FIRST (ROOST_PLAYBOOK_FIRST, off by default): a question the
+  // offline route can place is routed without the model, behind the same
+  // class check the router's answer faces. Anything it cannot place still
+  // goes to the router below.
+  if (playbookFirst()) {
+    const vetoed = prohibitedClass(question);
+    if (vetoed) return { mode: 'refused', intentId: null, refusal: vetoed };
+    const placed = offlineRoute(question);
+    if (placed) return placed;
+  }
+
   const raw = await chargedCall({
     userId,
     charge: allowVenueQuestion,
@@ -1253,9 +1276,9 @@ const PLAYS_IN_PAYLOAD = 3;
  */
 async function advise({ userId, question, ctx, groundedFacts = [], intentId = null, offline = false, fallback = null, exclude = [] }) {
   const venue = roostPlaybook.venueOf(ctx);
-  const fromPlaybook = (refusal) => {
+  const playbookAnswer = () => {
     const answer = roostPlaybook.answer({ question, intentId, ctx, groundedFacts, exclude });
-    if (!answer) return { mode: 'refusal', text: refusal, sources: [], tactics: [] };
+    if (!answer) return null;
     return {
       mode: 'advice',
       text: answer.text,
@@ -1268,7 +1291,14 @@ async function advise({ userId, question, ctx, groundedFacts = [], intentId = nu
       fromPlaybook: true,
     };
   };
+  const fromPlaybook = (refusal) => playbookAnswer() || { mode: 'refusal', text: refusal, sources: [], tactics: [] };
   if (offline) return fromPlaybook(fallback || REFUSAL_BUSY);
+  // PLAYBOOK FIRST: a move the playbook has is the answer, with no model call;
+  // the model writes only what the playbook has nothing for.
+  if (playbookFirst()) {
+    const first = playbookAnswer();
+    if (first) return first;
+  }
 
   // THE OWNER-PROSE SPLIT, run here for the reason advisorPhrasing.internals
   // states it: any path that builds a model payload from a fact block has to
