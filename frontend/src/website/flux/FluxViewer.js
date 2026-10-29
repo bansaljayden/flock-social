@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { LAST, STEPS, stepAt } from './fluxData';
-import { MODEL_MB, MODEL_URL, fetchModel } from './fluxModel';
+import { MODEL_MB, MODEL_URL, RENDER_QUERY, fetchModel } from './fluxModel';
 
 /* The Flux case on /flux: one bar that runs from every part pulled apart,
    through each assembly step, to the box on its stand. Dragging the bar or
@@ -20,10 +20,11 @@ const STILLS = STEPS.map((s) => {
   const wide = s.still === 'flux-exploded';
   const [one, two] = wide ? [1100, 2200] : [700, 1400];
   const base = `/sensor/${s.still}`;
+  const q = RENDER_QUERY;
   return {
-    avif: `${base}.avif ${one}w, ${base}@2x.avif ${two}w`,
-    webp: `${base}.webp ${one}w, ${base}@2x.webp ${two}w`,
-    src: `${base}.webp`,
+    avif: `${base}.avif${q} ${one}w, ${base}@2x.avif${q} ${two}w`,
+    webp: `${base}.webp${q} ${one}w, ${base}@2x.webp${q} ${two}w`,
+    src: `${base}.webp${q}`,
     width: wide ? 1100 : 700,
     height: wide ? 733 : 525,
   };
@@ -111,7 +112,7 @@ export default function FluxViewer() {
     try {
       const [mod, buffer] = await Promise.all([
         import(/* webpackChunkName: "flux-scene" */ './fluxScene'),
-        fetchModel(MODEL_URL, { signal: controller.signal, onProgress: (p) => setPct(Math.round(p * 100)) }),
+        fetchModel(MODEL_URL + RENDER_QUERY, { signal: controller.signal, onProgress: (p) => setPct(Math.round(p * 100)) }),
       ]);
       if (controller.signal.aborted || !canvasRef.current) return;
       const scene = mod.createFluxScene(canvasRef.current, { onPick: setTag, onTurn: setTurned });

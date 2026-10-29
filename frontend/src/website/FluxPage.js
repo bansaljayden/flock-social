@@ -4,6 +4,7 @@ import './FluxPage.css';
 import SiteFooter from './SiteFooter';
 import SiteNav, { useSiteMenu } from './SiteNav';
 import FluxViewer from './flux/FluxViewer';
+import { RENDER_QUERY } from './flux/fluxModel';
 import { shareThisPage } from './shareCard';
 
 // /flux: the people counter Flock is building for venues. What it measures,
@@ -43,14 +44,15 @@ const DESCRIPTION = 'Flux is the people counter Flock is building for venues. Se
 
 // Every picture on the page, at the two widths each file was written at
 // (scripts/flux_assets.py, the tables pictures with --tables-src; the mockup and the figures from /ai by hand).
-// fluxPages.test.js checks each file exists at the width it claims.
+// fluxPages.test.js checks each file exists at the width it claims. The CAD
+// renders carry RENDER_QUERY (fluxModel.js), since they change under the same names.
 export const IMAGES = {
-  hero: { base: '/sensor/flux-hero', one: 560, two: 1120, height: 419 },
-  exploded: { base: '/sensor/flux-exploded', one: 1100, two: 2200, height: 733 },
+  hero: { base: '/sensor/flux-hero', q: RENDER_QUERY, one: 560, two: 1120, height: 419 },
+  exploded: { base: '/sensor/flux-exploded', q: RENDER_QUERY, one: 1100, two: 2200, height: 733 },
   mockup: { base: '/sensor/flux-inside-mockup', one: 700, two: 1400, height: 524 },
-  inside: { base: '/sensor/flux-inside', one: 520, two: 1040, height: 390 },
-  arm: { base: '/sensor/flux-arm', one: 520, two: 1040, height: 390 },
-  back: { base: '/sensor/flux-back', one: 520, two: 1040, height: 390 },
+  inside: { base: '/sensor/flux-inside', q: RENDER_QUERY, one: 520, two: 1040, height: 390 },
+  arm: { base: '/sensor/flux-arm', q: RENDER_QUERY, one: 520, two: 1040, height: 390 },
+  back: { base: '/sensor/flux-back', q: RENDER_QUERY, one: 520, two: 1040, height: 390 },
   pipeline: { base: '/ai-figures/owl-pipeline', one: 1100, two: 2200, height: 249 },
   flow: { base: '/ai-figures/owl-flow', one: 640, two: 1280, height: 107 },
   tablesIllustration: { base: '/sensor/flux-tables-illustration', one: 640, two: 1280, height: 480 },
@@ -60,13 +62,14 @@ export const IMAGES = {
 };
 
 function Pic({ img, sizes, alt, eager = false }) {
-  const set = (ext) => `${img.base}.${ext} ${img.one}w, ${img.base}@2x.${ext} ${img.two}w`;
+  const q = img.q || '';
+  const set = (ext) => `${img.base}.${ext}${q} ${img.one}w, ${img.base}@2x.${ext}${q} ${img.two}w`;
   return (
     <picture>
       <source type="image/avif" srcSet={set('avif')} sizes={sizes} />
       <source type="image/webp" srcSet={set('webp')} sizes={sizes} />
       <img
-        src={`${img.base}.webp`}
+        src={`${img.base}.webp${q}`}
         width={img.one} height={img.height}
         alt={alt}
         {...(eager ? { fetchPriority: 'high' } : { loading: 'lazy', decoding: 'async' })}
@@ -329,7 +332,7 @@ export default function FluxPage() {
               Front to back, in the order it goes together.
             </p>
             <figure className="fx-figure">
-              <a className="fx-plate fx-zoom" href="/sensor/flux-exploded@2x.webp">
+              <a className="fx-plate fx-zoom" href={`/sensor/flux-exploded@2x.webp${RENDER_QUERY}`}>
                 <Pic
                   img={IMAGES.exploded}
                   sizes="(min-width: 1160px) 1080px, calc(100vw - 40px)"
@@ -337,7 +340,7 @@ export default function FluxPage() {
                 />
               </a>
               <figcaption className="lp-fig-cap">
-                Rendered from the CAD. <a href="/sensor/flux-exploded@2x.webp">Open it full size</a> to
+                Rendered from the CAD. <a href={`/sensor/flux-exploded@2x.webp${RENDER_QUERY}`}>Open it full size</a> to
                 read every name.
               </figcaption>
             </figure>

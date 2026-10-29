@@ -176,6 +176,26 @@ describe('the files the pages name', () => {
     for (const route of ['flux', 'ai']) expect(fs.existsSync(path.join(PUBLIC, route))).toBe(false);
   });
 
+  test('the case renders, the model and the reel photographs are asked for with a version, since they are rewritten under the same names', () => {
+    // /sensor/ is cached for a day with a week of stale-while-revalidate, so a
+    // remade picture under an unchanged URL reaches returning visitors late.
+    const { RENDER_QUERY } = require('../website/flux/fluxModel');
+    expect(RENDER_QUERY).toMatch(/^\?v=\d+$/);
+    const page = renderToStaticMarkup(React.createElement(require('../website/FluxPage').default));
+    const renders = [...page.matchAll(/\/sensor\/flux-(?:hero|exploded|inside|arm|back|step\d|assembled)(?:@2x)?\.(?:webp|avif)[^\s",]*/g)].map((m) => m[0]);
+    expect(renders.length).toBeGreaterThan(20);
+    expect(renders.filter((u) => !u.endsWith(RENDER_QUERY))).toEqual([]);
+    const viewer = fs.readFileSync(path.join(WEBSITE, 'flux', 'FluxViewer.js'), 'utf8');
+    expect(viewer).toContain('fetchModel(MODEL_URL + RENDER_QUERY');
+
+    const HeroReel = require('../website/HeroReel').default;
+    const { REEL } = require('../website/reelShots');
+    const reel = renderToStaticMarkup(React.createElement(HeroReel, { shots: REEL }));
+    const photos = [...reel.matchAll(/\/sensor\/flux-real-[a-z]+(?:@2x)?\.webp[^\s",]*/g)].map((m) => m[0]);
+    expect(photos.length).toBeGreaterThan(0);
+    expect(photos.filter((u) => !/\?v=\d+$/.test(u))).toEqual([]);
+  });
+
   // three.js is about 150 KB gzipped. One static import anywhere else would put
   // it on the path of every page, with nothing looking any different.
   test('three is imported by the viewer\'s scene alone, and the viewer loads that on demand', () => {

@@ -70,6 +70,10 @@ function Screen({ shot, first, copy }) {
    into the photo's glass; the turned photograph carries the same capture,
    set into its glass in perspective when it was made. */
 const FLUX_SIZES = '(min-width: 1100px) 437px, (min-width: 600px) 380px, 320px';
+// The photographs keep their names when they are remade, and /sensor/ is
+// cached for a day, so the query sends every cache to the new ones. 2: the
+// case with the table camera, 2026-10-29.
+const FLUX_PHOTO_Q = '?v=2';
 
 function Device({ landscape, children }) {
   if (landscape) {
@@ -78,8 +82,8 @@ function Device({ landscape, children }) {
         <div className="lp-flux-view is-front">
           <img
             className="lp-flux-photo"
-            src="/sensor/flux-real-front.webp"
-            srcSet="/sensor/flux-real-front.webp 440w, /sensor/flux-real-front@2x.webp 880w"
+            src={`/sensor/flux-real-front.webp${FLUX_PHOTO_Q}`}
+            srcSet={`/sensor/flux-real-front.webp${FLUX_PHOTO_Q} 440w, /sensor/flux-real-front@2x.webp${FLUX_PHOTO_Q} 880w`}
             sizes={FLUX_SIZES}
             width="440" height="421"
             alt="" loading="lazy" decoding="async"
@@ -88,8 +92,8 @@ function Device({ landscape, children }) {
         </div>
         <img
           className="lp-flux-view is-turned"
-          src="/sensor/flux-real-turned.webp"
-          srcSet="/sensor/flux-real-turned.webp 440w, /sensor/flux-real-turned@2x.webp 880w"
+          src={`/sensor/flux-real-turned.webp${FLUX_PHOTO_Q}`}
+          srcSet={`/sensor/flux-real-turned.webp${FLUX_PHOTO_Q} 440w, /sensor/flux-real-turned@2x.webp${FLUX_PHOTO_Q} 880w`}
           sizes={FLUX_SIZES}
           width="440" height="421"
           alt="" loading="lazy" decoding="async"
