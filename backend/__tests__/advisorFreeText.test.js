@@ -1128,3 +1128,21 @@ test('the moves handed to the advice model beside the first are written for this
   assert.ok(sent.includes(moveText('rush_door_lanes')), 'the door move leads');
   assert.ok(!sent.includes(moveText('rush_line_busting')), 'a coffee counter line move rode along to a bar');
 });
+
+test('with the model out, a message too short to say what it is about is told so, not told to wait', async () => {
+  for (const q of ['ideas?', 'help', 'what now']) {
+    resetAll();
+    installProfile();
+    replies = [creditsOut()];
+    const r = await ask(q);
+    assert.strictEqual(r.body.mode, 'refusal', q);
+    assert.strictEqual(r.body.text, advisorFreeText.REFUSAL_UNROUTABLE, q);
+  }
+  // A specific question the playbook cannot place still says to try again,
+  // since the model may answer it once it is back.
+  resetAll();
+  installProfile();
+  replies = [creditsOut()];
+  const later = await ask('how do i renovate my bathroom');
+  assert.strictEqual(later.body.text, advisorFreeText.REFUSAL_BUSY);
+});

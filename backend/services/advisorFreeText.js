@@ -856,6 +856,9 @@ const OFFLINE_INTENT_CUES = [
   // Weather and events win over the day they fall on: "is it going to rain
   // tomorrow" is a weather question, "a concert nearby this weekend" an events one.
   ['around_you', /\b(?:rain|raining|snow|snowing|storm|stormy|weather)\b|\b(?:concerts?|shows?|festivals?|games?|events?)\b[^.?!]{0,30}\b(?:nearby|near\s+us|around\s+(?:us|here)|in\s+town|downtown)\b|\b(?:nearby|near\s+us)\b[^.?!]{0,30}\b(?:concerts?|shows?|festivals?|games?|events?)\b/i],
+  // A day, or "busy?", sent on its own is asking how that day or the week
+  // looks: the week-ahead forecast, which leads with a named day.
+  ['peak_hours', /^\s*(?:(?:on|this|next)\s+)?(?:mon|tues|wednes|thurs|fri|satur|sun)days?\s*[?.!]*\s*$|^\s*(?:are\s+we\s+|will\s+we\s+be\s+|how\s+)?busy\s*[?.!]*\s*$/i],
   // How a named day looks ahead is the week-ahead forecast, which answers it
   // about that day ("how busy will Friday be", "what does Thursday look like"),
   // and so is next week.
@@ -919,6 +922,14 @@ function offlineRoute(question) {
 // How much of a playbook cue a statement has to carry to be read as advice:
 // one cue no other move shares, or a phrase.
 const PLAYBOOK_NAMES_IT = 1;
+
+// A message too short to say what it is about: 3 words or fewer once the
+// filler is gone ("any ideas?", "help", "what now").
+const FILLER = new Set(['any', 'some', 'please', 'pls', 'ok', 'okay', 'so', 'um', 'hey', 'hi', 'now', 'what', 'got']);
+function vagueQuestion(question) {
+  const words = normalizeOwnerText(String(question || '')).match(/[a-z0-9']+/g) || [];
+  return words.filter((w) => !FILLER.has(w)).length <= 3 && words.length <= 5;
+}
 
 // ── The router (mode classification) ────────────────────────────────────────
 
@@ -1004,9 +1015,14 @@ async function classify({ userId, question }) {
         : REFUSAL_BUSY;
     const vetoed = prohibitedClass(question);
     if (vetoed) return { mode: 'refused', intentId: null, refusal: vetoed };
+    // "ideas?", "help" or "what now" is not waiting on the model: it does not
+    // say what it is about, so the sentence that says so is the true one, not
+    // "we could not get to it just now" (2026-10-28 short-message probe). A
+    // spent allowance keeps its own sentence, which carries the time.
+    const unplaced = raw === null && vagueQuestion(question) ? REFUSAL_UNROUTABLE : refusal;
     const offline = offlineRoute(question);
-    if (offline) return { ...offline, offline: true, fallback: refusal };
-    return { mode: 'refused', intentId: null, refusal };
+    if (offline) return { ...offline, offline: true, fallback: unplaced };
+    return { mode: 'refused', intentId: null, refusal: unplaced };
   }
 
   const route = parseRoute(raw);
