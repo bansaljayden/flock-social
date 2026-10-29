@@ -395,31 +395,39 @@ export default function FluxPage() {
           <div className="lp-wrap">
             <h2 id="fx-h-where">Where it goes</h2>
             <div className="fx-where">
-              <div>
-                <h3>On a counter</h3>
-                <p>It leans back 12 degrees on its cream stand, screen to the room.</p>
-                <h3>Over a door</h3>
-                <p>
-                  A camera arm tilts it 15 degrees down, and the door counter looks
-                  65 degrees down at the floor of the doorway.
-                </p>
-                <h3>Over a dining room</h3>
-                <p>
-                  For tables it goes on the ceiling above the door, tipped about 30
-                  degrees down, so the heat camera and the table camera look across
-                  the room from the same place.
-                </p>
-                <h3>Power and ports</h3>
-                <p>
-                  A battery inside runs it through a USB-C power board and charges
-                  through the CHARGE port. Ethernet and USB are on the back too.
-                </p>
+              <div className="fx-where-text">
+                <div>
+                  <h3>On a counter</h3>
+                  <p>It leans back 12 degrees on its cream stand, screen to the room.</p>
+                </div>
+                <div>
+                  <h3>Over a door</h3>
+                  <p>
+                    A camera arm tilts it 15 degrees down, and the door counter looks
+                    65 degrees down at the floor of the doorway.
+                  </p>
+                </div>
+                <div>
+                  <h3>Over a dining room</h3>
+                  <p>
+                    For tables it goes on the ceiling above the door, tipped about 30
+                    degrees down, so the heat camera and the table camera look across
+                    the room from the same place.
+                  </p>
+                </div>
+                <div>
+                  <h3>Power and ports</h3>
+                  <p>
+                    A battery inside runs it through a USB-C power board and charges
+                    through the CHARGE port. Ethernet and USB are on the back too.
+                  </p>
+                </div>
               </div>
               <figure className="fx-figure">
                 <div className="fx-plate">
                   <Pic
                     img={IMAGES.arm}
-                    sizes="(min-width: 960px) 420px, calc(100vw - 40px)"
+                    sizes="(min-width: 1160px) 516px, (min-width: 760px) calc(48vw - 40px), calc(100vw - 40px)"
                     alt="Flux on a black camera arm, tilted down from a wall."
                   />
                 </div>
@@ -429,7 +437,7 @@ export default function FluxPage() {
                 <div className="fx-plate">
                   <Pic
                     img={IMAGES.back}
-                    sizes="(min-width: 960px) 420px, calc(100vw - 40px)"
+                    sizes="(min-width: 1160px) 516px, (min-width: 760px) calc(48vw - 40px), calc(100vw - 40px)"
                     alt="The back of Flux: a navy sheet with the Ethernet, USB and CHARGE ports along the top, two vent grilles and the Flux wordmark."
                   />
                 </div>
