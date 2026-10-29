@@ -194,6 +194,9 @@ function ProOfferCard({ offer }) {
 // "Failed to fetch".
 // The hero's background film (public/bg-city.mp4, 388 KB): a city at night.
 export const HERO_VIDEO = '/bg-city.mp4';
+// Its first frame as a still (public/hero-city-still.webp, 27 KB): the video's
+// poster, so the city is in the hero from the first paint.
+export const HERO_STILL = '/hero-city-still.webp';
 
 const WAITLIST_JOINED = 'You’re on the list. You’ll get an email when it opens up.';
 const WAITLIST_ALREADY = 'You’re already on the list. You’ll get an email when it opens up.';
@@ -237,12 +240,14 @@ export default function LandingPage() {
   const wasMenuOpen = useRef(false);
   const heroVideoRef = useRef(null);
 
-  // The city behind the hero (the maintainer, 2026-10-21: "make the background of
-  // this the animated video of the city"). The markup carries no source, so
-  // nothing about it competes with the first paint: the file is attached only
-  // once the page has loaded and the browser is idle, and not at all with
-  // "reduce motion" on or a data saver. It fades in when it is actually
-  // playing; until then, and without it, the hero is the flat navy it was.
+  // The city behind the hero (2026-10-21: "make the background of this the
+  // animated video of the city"). The markup carries no source, so the film
+  // never competes with the first paint: the file is attached only once the
+  // page has loaded and the browser is idle, and not at all with "reduce
+  // motion" on or a data saver. Until it plays, and in those cases instead,
+  // the hero shows the film's first frame as a still (its poster). Without
+  // the still, that frame, painted seconds after load, was the page's largest
+  // paint: LCP 5.4 s on a throttled phone (Lighthouse, 2026-10-29).
   useEffect(() => {
     const video = heroVideoRef.current;
     if (!video) return undefined;
@@ -253,11 +258,9 @@ export default function LandingPage() {
     if (reduce || saver) return undefined;
     let cancelled = false;
     let idleId = null;
-    const showWhenPlaying = () => video.classList.add('is-on');
     const start = () => {
       if (cancelled) return;
       video.muted = true;
-      video.addEventListener('playing', showWhenPlaying, { once: true });
       video.src = HERO_VIDEO;
       const played = video.play();
       if (played && typeof played.catch === 'function') played.catch(() => {});
@@ -272,7 +275,6 @@ export default function LandingPage() {
     return () => {
       cancelled = true;
       window.removeEventListener('load', whenIdle);
-      video.removeEventListener('playing', showWhenPlaying);
       if (idleId !== null) {
         if (typeof window.cancelIdleCallback === 'function') window.cancelIdleCallback(idleId);
         window.clearTimeout(idleId);
@@ -471,6 +473,7 @@ export default function LandingPage() {
           loop
           playsInline
           preload="none"
+          poster={HERO_STILL}
           aria-hidden="true"
           tabIndex={-1}
         />

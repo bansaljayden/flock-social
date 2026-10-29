@@ -190,3 +190,23 @@ describe('the demo map waits for the scroll to pause', () => {
     expect(demo).toMatch(/const cap = setTimeout\(finish, maxMs\);/);
   });
 });
+
+describe('the hero film starts as a still', () => {
+  // The film's first frame, painted after load and idle, was the home page's
+  // largest paint: LCP 5.4 s, score 73, on a throttled phone (Lighthouse with
+  // devtools throttling, 2026-10-29). Its first frame is now the poster, in
+  // the page from the first paint at the film's own opacity, so the still is
+  // the largest paint and the film takes over without a jump. Not preloaded:
+  // the sign-in poster's preload cost main.js ~125 ms (above).
+  const page = read('src/website/LandingPage.js');
+  const css = read('src/website/LandingPage.css');
+
+  test('the video carries the first frame as its poster and shows from the start', () => {
+    expect(page).toMatch(/export const HERO_STILL = '\/hero-city-still\.webp';/);
+    expect(page).toMatch(/<video[\s\S]{0,300}poster=\{HERO_STILL\}/);
+    expect(page).not.toMatch(/video\.classList\.add\('is-on'\)/);
+    const at = css.indexOf('.lp-hero-video {');
+    expect(css.slice(at, css.indexOf('}', at))).toMatch(/opacity: 0\.32;/);
+    expect(fs.statSync(path.join(FRONTEND, 'public', 'hero-city-still.webp')).size).toBeLessThan(40000);
+  });
+});
