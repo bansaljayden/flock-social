@@ -258,9 +258,9 @@ test('ordinary trade questions with alarming words pass the screens, and the rea
 // ── The stand-in model eval through the real routes (2026-10-28 night) ──────
 // Every request the routes make was answered by a stand-in model and replayed
 // through the real check. Where the check refused a good answer, the fix went
-// into the prompt where loosening the check would have let made-up readings
-// or real instructions through (an adversarial review found both), and into
-// the check only where it could be made exact.
+// into the prompt wherever loosening the check would have let made-up
+// readings or real instructions through (two adversarial reviews found both),
+// and into the check only where it could be made exact.
 
 test('the suggestion wordings the prompt teaches pass the check, and the readings an exemption let through stay refused', () => {
   const advisorFreeText = require('../services/advisorFreeText');
@@ -270,10 +270,14 @@ test('the suggestion wordings the prompt teaches pass the check, and the reading
   for (const taught of ['aim for 25 more covers a week', 'read the 50 most recent reviews', 'when the rush starts, run 2 door lanes']) {
     assert.ok(advisorPrompt.SYSTEM_PROMPT.includes(taught) && advisorPrompt.ADVICE_SYSTEM_PROMPT.includes(taught), taught);
   }
+  // The prompt shows the wording; it does not explain which wordings the
+  // check reads as claims, which would be a map around it.
+  assert.ok(!/checked as one/.test(advisorPrompt.ADVICE_SYSTEM_PROMPT));
   for (const ok of [
     'Read the 50 most recent reviews, list complaints that repeat more than 2 times, and fix the most common cause.',
     'When the rush starts, run 2 door lanes, 1 for prepaid and list guests and 1 for door payers.',
     'Aim for 25 more covers a week at {{fact:intake_typical_spend_per_person}} a head, which is $950.',
+    'If your Friday hits 92 on the index, add a bartender.',
   ]) assert.ok(served(ok), ok);
   for (const claim of [
     'Read your 50 latest reviews and fix the most common complaint.',
@@ -286,7 +290,30 @@ test('the suggestion wordings the prompt teaches pass the check, and the reading
   ]) assert.strictEqual(served(claim), null, claim);
 });
 
-test('a yearly figure from a weekly or monthly one the sentence works out is shown working, and only from its own period', () => {
+test('a suggestion word earlier in the clause does not turn a past reading into a suggestion', () => {
+  const advisorFreeText = require('../services/advisorFreeText');
+  const served = (answer, facts = []) => advisorFreeText.applyAdviceValve(JSON.stringify({ answer, points: [] }), facts);
+  for (const claim of [
+    'When your Friday hit 92 last week, the door backed up.',
+    'Each Saturday last month you ran 140 covers.',
+    'Aim to beat last Friday, when the room hit 92.',
+    'Add a second bartender: your Friday hit 92 last week.',
+    'Your Friday hit a 92 last week.',
+    'You had a 140-cover Saturday last week.',
+  ]) assert.strictEqual(served(claim), null, claim);
+  // A reading, not a ban: the same sentence the facts hold is served.
+  const facts = [{ id: 'owner_reading_2026-10-23', value: { date: '2026-10-23', peakReading: 92 }, source: 'owner_report', asOf: '2026-10-23', label: 'Your highest reading on Friday Oct 23 was 92.' }];
+  assert.ok(served('When your Friday hit 92 last week, the door backed up.', facts));
+});
+
+test('an ellipsis does not move the claim rules off their numbers', () => {
+  const advisorFreeText = require('../services/advisorFreeText');
+  for (const claim of ['Heads up… expect around 45 people tonight.', 'Last Tuesday… down 18% on your usual.']) {
+    assert.strictEqual(advisorFreeText.applyAdviceValve(JSON.stringify({ answer: claim, points: [] }), []), null, claim);
+  }
+});
+
+test('a yearly figure from a weekly or monthly one the sentence works out is shown working, and only that', () => {
   const advisorFreeText = require('../services/advisorFreeText');
   const facts = [{ id: 'intake_typical_spend_per_person', value: 38, unit: 'usd', source: 'intake', asOf: 'owner-set 2026-10-01' }];
   const served = (answer, texts = []) => advisorFreeText.applyAdviceValve(JSON.stringify({ answer, points: [] }), facts, { texts });
@@ -304,25 +331,29 @@ test('a yearly figure from a weekly or monthly one the sentence works out is sho
     'At your {{fact:intake_typical_spend_per_person}} a head, 10 covers short is $380 a week, so you lost about $20,700 a year.',
     'At your {{fact:intake_typical_spend_per_person}} a head, 10 covers short is $380 a week, or $4,560 a year over 12 months.',
     'At your {{fact:intake_typical_spend_per_person}} a head, 10 covers short is $380 a month, so you lost $19,760 a year.',
+    'At your {{fact:intake_typical_spend_per_person}} a head, 10 covers short is $380 a week, so over half a year your Tuesdays are $19,760 behind.',
+    'Your regulars spend $38 a week, so your regulars are worth $1,976 a year to you.',
   ]) assert.strictEqual(served(claim), null, claim);
+  // A figure restated rather than worked out carries a period the model may
+  // have invented, so it is not multiplied out, even where the owner's own
+  // words happen to carry one.
+  assert.strictEqual(served('Your $500 a week DJ comes to $26,000 a year.', ['the DJ costs us $500']), null);
   assert.strictEqual(served('Your $1,500 a month rent comes to $78,000 a year, about 2 weeks of sales.', ['our rent is $1,500 a month']), null);
 });
 
-test('sending staff home as the rush thins is scheduling, and every other let-them-go is still an employment instruction', () => {
+test('every let-them-go is an employment instruction, and the prompt says send them home', () => {
   const advisorFreeText = require('../services/advisorFreeText');
+  const advisorPrompt = require('../services/advisorPrompt');
+  assert.ok(advisorPrompt.ADVICE_SYSTEM_PROMPT.includes('send them home'));
   const served = (answer) => advisorFreeText.applyAdviceValve(JSON.stringify({ answer, points: [] }), []);
-  for (const ok of [
-    'Bring them in as the line builds and let them go as it falls, so you never pay for idle hours.',
-    'Let them go home for the night once the floor is clean.',
-    'Send them home once the rush thins.',
-  ]) assert.ok(served(ok), ok);
+  assert.ok(served('Send them home once the rush thins, so you never pay for idle hours.'));
   for (const fire of [
+    'Bring them in as the line builds and let them go as it falls.',
+    'Hire two extra servers for December and let them go as it slows in January.',
+    'Let her go once the rush ends tonight, and do not schedule her again.',
+    'If he shows up drunk again, let him go home for the night and don\'t bring him back.',
     'If sales stay flat, let them go.',
     'Let him go after the trial shift.',
-    'If a new hire is not working out, let them go early.',
-    'If the winter stays slow, let them go as business slows and rehire in spring.',
-    'If sales stay down, let her go as sales fall rather than cutting everyone\'s hours.',
-    'If he keeps stealing from the till, let him go home and do not bring him back.',
   ]) assert.strictEqual(served(fire), null, fire);
 });
 
@@ -330,7 +361,6 @@ test('a referral names who to ask, and a referral that names the legal matter, o
   const advisorFreeText = require('../services/advisorFreeText');
   const advisorPrompt = require('../services/advisorPrompt');
   assert.ok(advisorPrompt.ADVICE_SYSTEM_PROMPT.includes('an accountant or a lawyer is the one to ask about that'));
-  assert.ok(advisorPrompt.ADVICE_SYSTEM_PROMPT.includes('send them home'));
   const named = advisorFreeText.applyAdviceValve(JSON.stringify({
     answer: 'That one is outside what Roost does.',
     points: ['An accountant or a lawyer is the one to ask about that.'],

@@ -153,7 +153,7 @@ const PROMPT_LEAK = /(ROOST\s+(PHRASING|OPERATING\s+ADVICE|QUESTION|ANSWER)\s+(C
 const PROHIBITED_ADVICE = [
   {
     reason: 'employment, pay or hiring instruction',
-    re: /\b(unpaid|off\s+the\s+clock|without\s+pay|dock(?:ing)?\s+(?:their|his|her|the)?\s*(?:pay|wages|tips)|withhold(?:ing)?\s+(?:their\s+|the\s+)?(?:pay|wages|tips)|garnish\w*(?:\s+(?!and\b|then\b)[\w']+){0,3}\s+(?:wages?|pay|paychecks?|earnings|salary)|wage\s+garnish\w*|minimum\s+wage|independent\s+contractor|cash\s+in\s+hand|under\s+the\s+table|tip\s+(?:pool|credit|out)|fire\s+(?:them|him|her|a\s+(?:server|bartender|barista|cook|chef|host|hostess|manager|member|porter|runner)|your\s+(?:staff|crew|team|opener|closer|server|bartender|barista|cook|chef|host|hostess|manager|employee|worker))|terminat(?:e|ing)\s+(?:them|their|his|her)|let\s+(?:them|him|her)\s+go(?!\s+(?:home\s+)?(?:for\s+the\s+(?:night|evening)\b|as\s+(?:it|the\s+(?:line|rush|queue|crowd))\s+(?:falls|fades|thins|eases|slows|quiets|drops|calms|dies\s+down)\b|once\s+the\s+(?:rush|line|queue)\s+(?:ends|fades|thins|eases|dies\s+down)\b))|write\s+(?:them|him|her)\s+up|disciplinary|non[\s-]?compete|probationary\s+period|hold\s+(?:the\s+|my\s+|your\s+|our\s+)?(?:last\s+|closing\s+|late\s+|whole\s+)?(?:shift|crew|staff|team|servers?|closers?|openers?|porters?|them|him|her)\s+back\b|condition\s+of\s+the\s+(?:shift|rota|job|role)|(?:no|nothing)\s+extra\s+on\s+the\s+(?:sheet|books|rota|clock)|off\s+the\s+(?:sheet|books)|start\s+(?:their|his|her|the)\s+clock|compel(?:ling)?\s+(?:the\s+|a\s+|my\s+|our\s+|any\s+)?(?:waiter|waitress|server|staff|team|crew|barista|bartender|cook|chef|host|hostess|porter|employee|worker|them|him|her)|remain(?:ing)?\s+(?:beyond|past|after)\s+(?:closing|close|their\s+shift|the\s+shift))\b|\b(?:work|works|working|stay|stays|staying|remain|remains|remaining|shift|shifts|closing|overtime)\b[^.!?]{0,40}\bgratis\b|\bgratis\b[^.!?]{0,40}\b(?:work|shift|closing|hours?)\b/i,
+    re: /\b(unpaid|off\s+the\s+clock|without\s+pay|dock(?:ing)?\s+(?:their|his|her|the)?\s*(?:pay|wages|tips)|withhold(?:ing)?\s+(?:their\s+|the\s+)?(?:pay|wages|tips)|garnish\w*(?:\s+(?!and\b|then\b)[\w']+){0,3}\s+(?:wages?|pay|paychecks?|earnings|salary)|wage\s+garnish\w*|minimum\s+wage|independent\s+contractor|cash\s+in\s+hand|under\s+the\s+table|tip\s+(?:pool|credit|out)|fire\s+(?:them|him|her|a\s+(?:server|bartender|barista|cook|chef|host|hostess|manager|member|porter|runner)|your\s+(?:staff|crew|team|opener|closer|server|bartender|barista|cook|chef|host|hostess|manager|employee|worker))|terminat(?:e|ing)\s+(?:them|their|his|her)|let\s+(?:them|him|her)\s+go|write\s+(?:them|him|her)\s+up|disciplinary|non[\s-]?compete|probationary\s+period|hold\s+(?:the\s+|my\s+|your\s+|our\s+)?(?:last\s+|closing\s+|late\s+|whole\s+)?(?:shift|crew|staff|team|servers?|closers?|openers?|porters?|them|him|her)\s+back\b|condition\s+of\s+the\s+(?:shift|rota|job|role)|(?:no|nothing)\s+extra\s+on\s+the\s+(?:sheet|books|rota|clock)|off\s+the\s+(?:sheet|books)|start\s+(?:their|his|her|the)\s+clock|compel(?:ling)?\s+(?:the\s+|a\s+|my\s+|our\s+|any\s+)?(?:waiter|waitress|server|staff|team|crew|barista|bartender|cook|chef|host|hostess|porter|employee|worker|them|him|her)|remain(?:ing)?\s+(?:beyond|past|after)\s+(?:closing|close|their\s+shift|the\s+shift))\b|\b(?:work|works|working|stay|stays|staying|remain|remains|remaining|shift|shifts|closing|overtime)\b[^.!?]{0,40}\bgratis\b|\bgratis\b[^.!?]{0,40}\b(?:work|shift|closing|hours?)\b/i,
   },
   {
     reason: 'legal, tax, licensing or insurance instruction',
@@ -344,9 +344,24 @@ const TRIAL_SPAN = /\b(?:run|keep|give|hold|test|try|trial)\s+(?:it|them|this|th
 // numbers rule now shows the model how to write a suggestion so it reads as
 // one (advisorPrompt SHARED_NUMBERS, Six).
 
+// A SUGGESTION WORD EARLIER IN THE CLAUSE DOES NOT MAKE A PAST READING A
+// SUGGESTION (adversarial review, 2026-10-28 night): "When your Friday hit 92
+// last week", "Each Saturday last month you ran 140 covers", "You had a
+// 140-cover Saturday last week" all passed, because "when", "each" and "a"
+// exempt a number wherever they sit in front of it. A word placing the clause
+// in the past, with a subject and a claim verb right in front of the number,
+// makes it a reading again, ahead of every exemption below.
+const PAST_TIME = /\b(?:last\s+(?:night|week|weekend|month|year|time|\w+day)|yesterday|ago|so\s+far|earlier\s+this\s+(?:week|month))\b/i;
+function pastReading(prefix, after) {
+  if (!PAST_TIME.test(prefix) && !PAST_TIME.test(after.split(/[.!?;]/)[0])) return false;
+  const tail = prefix.trim().split(/\s+/).slice(-LAST_WORDS).join(' ');
+  return SUBJECT.test(tail) && CLAIM_VERB.test(tail);
+}
+
 function isReadingSlot(text, num) {
   const prefix = text.slice(clauseStart(text, num.index), num.index);
   if (EXPECT_LEAD.test(prefix)) return true;
+  if (pastReading(prefix, text.slice(num.index + num.length))) return true;
   if (NOT_A_READING.test(prefix)) return false;
   if (TRIAL_SPAN.test(prefix)) return false;
   // "a $12 special", "an 85 seat room": the article makes it a kind of
@@ -582,20 +597,26 @@ function blankPlaceholders(text) {
 // $380 a week, or $19,760 over 52 weeks" lost its sentence: $380 is worked out
 // from the owner's $38, but a second step on a worked-out figure is not
 // arithmetic the check does, so the yearly figure the playbook itself writes
-// ("$380, about $19,760 a year") was refused when the model wrote it. A money
-// figure this sentence already supports, written with its own period ("$380 a
-// week"), times the weeks or months in a year, shows its working too when the
-// sentence names the year. Within 2%, so "about $19,800" or "about $20,000"
-// for $19,760 passes and "$20,700" does not (an adversarial review stacked
-// the 5% allowance of close() onto the multiplication).
-const YEAR_SPAN = /\b(?:a\s+year|per\s+year|each\s+year|every\s+year|yearly|annual(?:ly)?|52\s+weeks|12\s+months)\b/i;
+// ("$380, about $19,760 a year") was refused when the model wrote it.
+//
+// Narrow, after two adversarial reviews: the weekly or monthly figure has to
+// be worked out in this sentence (not a fact or the owner's number restated,
+// whose period the model would be inventing: "you spend $38 a week" when $38
+// is per head), it carries its own period ("$380 a week"), the year phrase
+// sits right after the yearly figure (so "over half a year ... $19,760" is no
+// year), and the product is within 2% ("about $20,000" for $19,760 passes,
+// "$20,700" does not).
 const OWN_PERIOD = /^\s*(?:(?:a|per|each|every)\s+(week|month)\b|(week|month)ly\b)/i;
+const OWN_YEAR = /^\s*(?:(?:a|per|each|every|in\s+a)\s+year\b|yearly\b|annually\b|over\s+(?:52\s+weeks|12\s+months|a\s+(?:full\s+)?year)\b)/i;
+function restated(num, support) {
+  return support.base.some((e) => directKinds(num.dim, e.dim) && close(num.value, e.value));
+}
 function yearOf(num, text, support, inPlay) {
-  if (num.dim !== 'money' || !YEAR_SPAN.test(text)) return null;
+  if (num.dim !== 'money' || !OWN_YEAR.test(text.slice(num.index + num.length))) return null;
   for (const lit of inPlay.literals) {
     if (lit.dim !== 'money' || lit.value === num.value) continue;
     const period = text.slice(lit.index + lit.length).match(OWN_PERIOD);
-    if (!period) continue;
+    if (!period || restated(lit, support)) continue;
     const yearly = lit.value * ((period[1] || period[2]).toLowerCase() === 'week' ? 52 : 12);
     if (Math.abs(num.value - yearly) > Math.max(0.5, yearly * 0.02)) continue;
     const from = supportFor(lit, support, inPlay);
@@ -606,7 +627,12 @@ function yearOf(num, text, support, inPlay) {
 
 function checkSentenceNumbers(sentence, support) {
   const inPlay = inPlayFor([sentence]);
-  const text = blankPlaceholders(sentence);
+  // Folded the way numbersIn folds it, so the positions it reports are
+  // positions in this text: an ellipsis is three characters after folding,
+  // and reading the unfolded text at folded positions moved every clause two
+  // places and let "Heads up… expect around 45 people tonight" past the
+  // claim rules (adversarial review, 2026-10-28 night).
+  const text = asciiDigits(blankPlaceholders(sentence));
   const ids = new Set();
   for (const num of numbersIn(text)) {
     if (!isReadingSlot(text, num)) continue;

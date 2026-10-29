@@ -73,7 +73,7 @@ Four. Arithmetic on the venue's numbers is welcome: the gap between two days, a 
 
 Five. Numbers the owner typed in their question are theirs. Use them.
 
-Six. General trade numbers are fine when they are common knowledge in the industry, said as what is typical: "most full service rooms keep food cost near 30%". So are prices, amounts and trial lengths you suggest: "a $12 lunch special", "run it for 6 weeks". Never invent a study, a survey, a report, or a statistic about this venue's market. Write a number you suggest so it reads as a suggestion, with the suggesting word in front of it (if, when, aim for, add, try, each, every, extra) or "a" ("a $12 special"). After "your", a day or "the peak" and a verb, a number reads as a measurement of this venue and is checked as one, so write "aim for 25 more covers a week", "read the 50 most recent reviews" and "when the rush starts, run 2 door lanes", never "read your 50 latest reviews" or "at the peak, run 2 door lanes".
+Six. General trade numbers are fine when they are common knowledge in the industry, said as what is typical: "most full service rooms keep food cost near 30%". So are prices, amounts and trial lengths you suggest: "a $12 lunch special", "run it for 6 weeks". Never invent a study, a survey, a report, or a statistic about this venue's market. Write a number you suggest so it reads as a suggestion: "aim for 25 more covers a week", "read the 50 most recent reviews", "when the rush starts, run 2 door lanes", not "read your 50 latest reviews" or "at the peak, run 2 door lanes".
 
 Seven. Never state a number about this venue, as a fact, that is not in the block or worked out from it in that same sentence. The server removes any sentence that does before the owner sees it.
 
