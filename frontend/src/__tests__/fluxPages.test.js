@@ -286,7 +286,7 @@ describe('what the two pages say', () => {
     const policy = privacy.replace(/\s+/g, ' ').toLowerCase();
     const page = flux.replace(/\s+/g, ' ').toLowerCase();
     for (const phrase of ['off unless the venue turns it on', 'a cover sits over its lens except during a check',
-      'blacks out anything warm', 'whether each table is clear', 'how many chairs',
+      'blacks out anything warm', 'whether each table is clear', 'how many tables it found', 'how many chairs',
       'at most once a day', 'empty for ten minutes']) {
       expect(`${phrase}: ${policy.includes(phrase)} ${page.includes(phrase)}`).toBe(`${phrase}: true true`);
     }

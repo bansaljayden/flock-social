@@ -8,7 +8,7 @@ import SiteFooter from './SiteFooter';
 // day, and 7 and 9.5 corrected later the same day: a venue's own reading
 // replaces the estimate rather than adjusting it, and the dashboard is built
 // from Flock's crowd numbers, not "our model".
-const EFFECTIVE_DATE = 'October 18, 2026';
+const EFFECTIVE_DATE = 'October 29, 2026';
 const SUPPORT_EMAIL = 'social@flockcorp.com';
 
 // THE COUNTERPARTY IS FLOCK SOCIAL LLC, a Pennsylvania limited liability
@@ -197,7 +197,7 @@ export default function TermsOfService() {
           top of a direct message or from their profile. Blocking is mutual: a blocked
           account cannot message you, add you, or see your content, and you do not see
           theirs. Blocking also ends the friendship if you had one. You can see and undo your
-          blocks in <strong>Profile</strong> &rarr; <strong>Blocked accounts</strong>.
+          blocks in <strong>You</strong> &rarr; <strong>Blocked accounts</strong>.
         </p>
         <p>
           Every report is reviewed. We aim to act on reports of objectionable content within
@@ -275,8 +275,8 @@ export default function TermsOfService() {
         </p>
         <p>
           <strong>Roost</strong> is the advisor for venue owners. Where it reports your own
-          measurements it names the source and the date of each figure, and where our data
-          cannot answer, it says so instead of guessing. That does not make it right. It is
+          measurements it lists its sources, with their dates, at the end of the answer, and
+          where our data cannot answer, it says so instead of guessing. That does not make it right. It is
           built on the same kind of model as Birdie, the underlying data is incomplete, and
           part of the training corpus behind the crowd model is frozen in spring 2026 and
           says so wherever it is quoted. <strong>Nothing Roost says is a guarantee of foot

@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import './PrivacyPolicy.css';
 import SiteFooter from './SiteFooter';
 
-const EFFECTIVE_DATE = 'October 28, 2026';
+const EFFECTIVE_DATE = 'October 29, 2026';
 const CONTACT_EMAIL = 'social@flockcorp.com';
 
 // THE OPERATOR IS A REGISTERED COMPANY NOW, and this name is its legal name.
@@ -379,7 +379,7 @@ export default function PrivacyPolicy() {
                   section on the venue's Tables tab. */}
               <h3>Table camera (optional, off by default)</h3>
               <p>
-                Flux counts people by heat alone, and table monitoring works on heat alone too. A venue may choose to add a small color camera so Flux can also tell whether a table still has dishes on it. The camera is for tables, not people, and it is off unless the venue turns it on. A cover sits over its lens except during a check. It may look only when the heat sensor has just confirmed that nobody is in the area it will look at: the whole room after it has been empty for ten minutes (at most once a day, to find the tables and count chairs), or a single table with nobody at or near it (to see whether dishes are still on it). Before anything examines the picture, Flux cuts it down to that table and blacks out anything warm. If a person is still detected, the picture is thrown away and the camera waits before trying again. Pictures are examined on the unit and deleted straight away. They are never saved, shown to anyone, or sent to Flock or anyone else. All that leaves the unit is whether each table is clear and, from a room check, where the tables are and how many chairs each has. Every time the camera looks, Flux records when, what it looked at and how the check ended (never the picture), and the venue can see that record on its dashboard.
+                Flux counts people by heat alone, and table monitoring works on heat alone too. A venue may choose to add a small color camera so Flux can also tell whether a table still has dishes on it. The camera is for tables, not people, and it is off unless the venue turns it on. A cover sits over its lens except during a check. It may look only when the heat sensor has just confirmed that nobody is in the area it will look at: the whole room after it has been empty for ten minutes (at most once a day, to find the tables and count chairs), or a single table with nobody at or near it (to see whether dishes are still on it). Before anything examines the picture, Flux cuts it down to that table and blacks out anything warm. If a person is still detected, the picture is thrown away and the camera waits before trying again. Pictures are examined on the unit and deleted straight away. They are never saved, shown to anyone, or sent to Flock or anyone else. All that leaves the unit is whether each table is clear and, from a room check, how many tables it found and how many chairs each has. Every time the camera looks, Flux records when, what it looked at and how the check ended (never the picture), and the venue can see that record on its dashboard.
               </p>
 
               <h3>What it does not do</h3>
@@ -536,14 +536,16 @@ export default function PrivacyPolicy() {
                 your business.
               </p>
               <p>
-                When you tap a suggested question, what goes to Google is the identifier of
-                that question and a block of facts our server has already computed about
-                your venue: things like your projected peak hour, your own recent occupancy
-                readings, the operating facts you gave us at intake, the weather, the
-                ticketed events listed near you, and where your venue sits inside its cohort.
-                The model's only job there is wording. Every number in the answer is put
-                back in by our server afterwards, and an answer that contains a number the
-                model wrote is thrown away unread.
+                When you tap a suggested question, what goes to Google is that question
+                and a block of facts our server has already computed about your venue:
+                things like your projected peak hour, your own recent occupancy readings,
+                the operating facts you gave us at intake, the weather, the ticketed events
+                listed near you, and where your venue sits inside its cohort. With them go
+                the kind of venue it is and one move from Roost's playbook of trade
+                practice. Numbers about your venue are filled in by our server from those
+                facts. The model may write its own numbers for arithmetic, prices and rules
+                of thumb, and a sentence stating a number about your venue that the facts
+                do not back is removed before you see it.
               </p>
               <p>
                 When you type your own question, the question itself goes to Google as well,
@@ -662,7 +664,7 @@ export default function PrivacyPolicy() {
               <h3>They run Flock itself</h3>
               <ul>
                 <li><strong>Railway</strong> hosts our server and our PostgreSQL database. Everything described in this policy that is stored is stored there. Railway's Postgres also writes a continuous backup to object storage.</li>
-                <li><strong>Vercel</strong> hosts flockcorp.com and the web build of the app. It sees the requests your browser makes for the site, including your IP address.</li>
+                <li><strong>Cloudflare</strong> hosts flockcorp.com and the web build of the app. It sees the requests your browser makes for the site, including your IP address.</li>
               </ul>
 
               <h3>They receive something about you</h3>
@@ -702,7 +704,7 @@ export default function PrivacyPolicy() {
                     inventory when a dependency is added. */}
                 <li><strong>TheSportsDB</strong> supplies the game schedules those same offline scripts read. No server code reads it either.</li>
                 <li><strong>Venmo and Cash App</strong> are opened as links from your phone, and <strong>Zelle</strong> is a written instruction you follow in your banking app. There is no integration and no account. For Venmo and Cash App, Flock builds a web address and your phone opens it. No money and no payment detail moves through Flock.</li>
-                <li><strong>Codemagic</strong> builds the iOS app, <strong>GitHub Actions</strong> scans our code for leaked secrets, and the development tools we write Flock with never touch the product. None of them receives user data.</li>
+                <li><strong>Codemagic</strong> builds the iOS app, <strong>GitHub</strong> holds our code, which a gitleaks check scans for leaked secrets on every commit, and the development tools we write Flock with never touch the product. None of them receives user data.</li>
               </ul>
 
               <h3>The people around you</h3>

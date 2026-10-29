@@ -78,10 +78,12 @@ describe('the price-change line is a condition, not a sender', () => {
     // replaces it) and 9.5 stopped crediting the dashboard to "our model",
     // under the same date. October 18: section 1 says sign-up on the
     // website asks for a year of birth and the iPhone app asks for none
-    // (App Review, 5.1.1(v)). A later change to the words moves it again.
-    expect(TERMS).toContain("const EFFECTIVE_DATE = 'October 18, 2026';");
+    // (App Review, 5.1.1(v)). October 29: section 5 names the You tab for
+    // blocked accounts, and 7 says Roost lists its sources, with their dates,
+    // at the end of an answer. A later change to the words moves it again.
+    expect(TERMS).toContain("const EFFECTIVE_DATE = 'October 29, 2026';");
     const terms = MIRROR.slice(MIRROR.indexOf('  terms: ['));
-    expect(terms).toContain('["p", "Effective October 18, 2026"],');
+    expect(terms).toContain('["p", "Effective October 29, 2026"],');
   });
 });
 
