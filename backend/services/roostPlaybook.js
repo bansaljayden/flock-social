@@ -339,12 +339,48 @@ function ruledOut(text) {
     }
   }
   const named = spans.filter((s) => s.some((w) => !STOP.has(stem(w))));
-  let rest = source;
+  // Each named span is blanked where it sits, found by walking the words:
+  // its words in order, at most 2 other words apart (a list's "and"). Nothing
+  // is compiled from owner text. A RegExp built from the span used to do
+  // this, and a crafted 279 character question held the server for 1.4 s on
+  // its backtracking (2026-10-28 review).
+  const words = [...source.matchAll(/[a-z0-9']+/g)];
+  const used = new Set();
+  const ranges = [];
   for (const span of named) {
-    const pattern = new RegExp(`\\b${span.map((w) => w.replace(/[^a-z0-9']/g, '')).join('\\W+(?:\\w+\\W+){0,2}?')}\\b`);
-    rest = rest.replace(pattern, ' ');
+    const hit = locateSpan(words, span, used);
+    if (!hit) continue;
+    for (let k = hit[0]; k <= hit[1]; k += 1) used.add(k);
+    ranges.push([words[hit[0]].index, words[hit[1]].index + words[hit[1]][0].length]);
   }
+  ranges.sort((a, z) => a[0] - z[0]);
+  let rest = '';
+  let at = 0;
+  for (const [from, to] of ranges) {
+    if (from < at) continue;
+    rest += `${source.slice(at, from)} `;
+    at = to;
+  }
+  rest += source.slice(at);
   return { spans: named, text: rest };
+}
+
+// Where a span's words sit among the question's words: [first, last] word
+// index, each next span word within 3 words of the one before, or null.
+function locateSpan(words, span, used) {
+  for (let s = 0; s < words.length; s += 1) {
+    if (used.has(s) || words[s][0] !== span[0]) continue;
+    let at = s;
+    let ok = true;
+    for (let k = 1; k < span.length && ok; k += 1) {
+      ok = false;
+      for (let j = at + 1; j <= at + 3 && j < words.length; j += 1) {
+        if (words[j][0] === span[k]) { at = j; ok = true; break; }
+      }
+    }
+    if (ok) return [s, at];
+  }
+  return null;
 }
 
 /**

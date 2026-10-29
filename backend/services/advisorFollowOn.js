@@ -30,7 +30,10 @@ const LEAD_IN = '(?:(?:ok(?:ay)?|cool|thanks|thank\\s+you|thx|got\\s+it|hmm+|and
 
 const ELSE = new RegExp(`^${LEAD_IN}(?:what\\s+else|anything\\s+else|any\\s+other\\s+(?:ideas?|options?|moves?|ways?|suggestions?)|other\\s+(?:ideas?|options?|moves?|suggestions?)|another\\s+(?:idea|option|move|one|way|suggestion)|something\\s+else|(?:any\\s+)?more\\s+ideas|give\\s+me\\s+(?:another(?:\\s+one)?|more|something\\s+else)|(?:i|we)\\s+(?:already\\s+)?(?:tried|do|did|have\\s+done|have\\s+tried)\\s+(?:that|this|it)(?:\\s+already)?|(?:that|this|it)\\s+(?:won'?t|doesn'?t|didn'?t|wouldn'?t)\\s+work(?:\\s+(?:for\\s+us|for\\s+me|here))?)(?:[\\s,]+(?:can|could|should|would)\\s+(?:i|we)\\s+(?:do|try))?[\\s?.!]*$`);
 
-const DAY_WORDS = '(?:mondays?|tuesdays?|wednesdays?|thursdays?|fridays?|saturdays?|sundays?|weekends?|weekdays?|weeknights?|tonight|tomorrow)';
+// Yesterday, today and last night are what the two lead chips ask about, so
+// "what about Tuesday" after them replaces the day rather than tacking
+// Tuesday onto a question about yesterday (2026-10-28 review).
+const DAY_WORDS = '(?:mondays?|tuesdays?|wednesdays?|thursdays?|fridays?|saturdays?|sundays?|weekends?|weekdays?|weeknights?|tonight|tomorrow|today|yesterday|last\\s+night)';
 const PART_WORDS = '(?:breakfast|brunch|lunch|dinner|mornings?|afternoons?|evenings?|late\\s+nights?|happy\\s+hour)';
 const DAY = new RegExp(`\\b${DAY_WORDS}\\b`);
 const PART = new RegExp(`\\b${PART_WORDS}\\b`);
@@ -50,16 +53,20 @@ function readPrevious(raw, { sanitize, isIntent }) {
   if (!keys.includes('question') || keys.some((k) => !PREVIOUS_KEYS.includes(k))) return { ok: false };
   const clean = sanitize(raw.question);
   if (!clean || !clean.ok) return { ok: false };
+  // An intent or a move id this build does not know is dropped, not refused:
+  // a thread opened before a deploy that renamed one would otherwise answer
+  // the owner's next question with "Send one question, as text" (2026-10-28
+  // review). The wrong TYPE is still a bad request.
   let intentId = null;
   if (raw.intentId !== undefined && raw.intentId !== null) {
-    if (typeof raw.intentId !== 'string' || !isIntent(raw.intentId)) return { ok: false };
-    intentId = raw.intentId;
+    if (typeof raw.intentId !== 'string') return { ok: false };
+    intentId = isIntent(raw.intentId) ? raw.intentId : null;
   }
   let tactics = [];
   if (raw.tactics !== undefined) {
     if (!Array.isArray(raw.tactics) || raw.tactics.length > MAX_PREVIOUS_TACTICS) return { ok: false };
-    if (raw.tactics.some((id) => typeof id !== 'string' || !TACTIC_IDS.has(id))) return { ok: false };
-    tactics = [...new Set(raw.tactics)];
+    if (raw.tactics.some((id) => typeof id !== 'string')) return { ok: false };
+    tactics = [...new Set(raw.tactics.filter((id) => TACTIC_IDS.has(id)))];
   }
   return { ok: true, previous: { question: clean.text, intentId, tactics } };
 }
@@ -78,7 +85,7 @@ function swapInto(question, word) {
   const text = normalizeOwnerText(question);
   const same = kind === 'day' ? DAY : PART;
   if (same.test(text)) return text.replace(same, word);
-  const joint = kind === 'day' && !/^(?:tonight|tomorrow)$/.test(word) ? 'on' : kind === 'day' ? '' : 'at';
+  const joint = kind === 'day' && !/^(?:tonight|tomorrow|today|yesterday|last night)$/.test(word) ? 'on' : kind === 'day' ? '' : 'at';
   return `${text.replace(/[\s?.!]+$/, '')} ${joint ? `${joint} ` : ''}${word}`.replace(/\s+/g, ' ');
 }
 
@@ -86,29 +93,33 @@ function swapInto(question, word) {
  * What the owner is asking, read with the turn before it.
  * @param {string} question the sanitised question as typed
  * @param {null|{question: string, intentId: string|null, tactics: string[]}} previous
- * @param {{maxChars: number}} limits
+ * @param {{maxChars: number, sanitize: function}} limits the question
+ *   sanitiser, run again on every question this builds
  * @returns {{question: string, kind: 'else'|'swap'|null, exclude: string[], previous: object|null}}
  */
-function followOn(question, previous, { maxChars }) {
+function followOn(question, previous, { maxChars, sanitize }) {
   const asIs = { question, kind: null, exclude: [], previous: null };
   if (!previous) return asIs;
+  // A question built here goes through the same sanitiser as anything typed.
+  // The swap folds text to its plain form, and a fullwidth bracket folded
+  // that way came out as the fence's own "<" (2026-10-28 review).
+  const ready = (text) => {
+    const clean = sanitize(text);
+    return clean && clean.ok && clean.text.length <= maxChars ? clean.text : null;
+  };
   const said = normalizeOwnerText(question).trim();
   if (ELSE.test(said)) {
     // Both questions go to the router and the screens together, so the
     // earlier one is checked again here and is never let through on the
     // strength of having been asked before.
-    const both = `${previous.question} ${question}`;
-    return {
-      question: both.length <= maxChars ? both : previous.question,
-      kind: 'else',
-      exclude: previous.tactics,
-      previous,
-    };
+    const both = ready(`${previous.question} ${question}`) || ready(previous.question);
+    if (both) return { question: both, kind: 'else', exclude: previous.tactics, previous };
+    return asIs;
   }
   const swap = SWAP.exec(said);
   if (swap) {
-    const swapped = swapInto(previous.question, swap[1].replace(/\s+/g, ' '));
-    if (swapped.length <= maxChars) return { question: swapped, kind: 'swap', exclude: [], previous };
+    const swapped = ready(swapInto(previous.question, swap[1].replace(/\s+/g, ' ')));
+    if (swapped) return { question: swapped, kind: 'swap', exclude: [], previous };
   }
   return asIs;
 }

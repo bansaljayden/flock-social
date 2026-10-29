@@ -1017,7 +1017,7 @@ test('a malformed previous is refused by shape before any model call', async () 
   resetAll();
   installProfile();
   for (const previous of ['how do i fill tuesdays', {}, { question: 42 }, { question: 'how do i fill tuesdays', extra: 1 },
-    { question: 'how do i fill tuesdays', intentId: 'not_an_intent' }, { question: 'how do i fill tuesdays', tactics: ['made_up_move'] }]) {
+    { question: 'how do i fill tuesdays', intentId: 7 }, { question: 'how do i fill tuesdays', tactics: [7] }]) {
     const r = await raw({ question: 'what else', previous });
     assert.strictEqual(r.status, 400, JSON.stringify(previous));
   }

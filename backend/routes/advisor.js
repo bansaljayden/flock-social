@@ -92,7 +92,13 @@ async function venueContextFor(userId, ctx) {
 function chipTactics(answer, intentId, block) {
   if (!answer || answer.mode === 'refusal') return [];
   const move = roostPlaybook.moveFor(intentId, block, block && block.venue ? block.venue : null);
-  return move ? [move.id] : [];
+  if (!move) return [];
+  // A template with no room left gets no move appended (withMove), and a
+  // move the owner never saw must not be set aside by their "what else"
+  // (2026-10-28 review). The phrasing model was handed it, so a phrased
+  // answer counts it as given.
+  if (answer.mode === 'template' && !String(answer.text || '').includes(move.move)) return [];
+  return [move.id];
 }
 
 // What the chat sends back as `previous` with the owner's next typed
@@ -1080,6 +1086,7 @@ router.post('/question', authenticate, requirePro, async (req, res) => {
     // see. `question` in every response stays the owner's own words.
     const follow = advisorFollowOn.followOn(clean.text, prior.previous, {
       maxChars: advisorFreeText.FREE_TEXT_MAX_CHARS,
+      sanitize: advisorFreeText.sanitizeQuestion,
     });
     const asked = follow.question;
     let route = await advisorFreeText.classify({ userId, question: asked });
