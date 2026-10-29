@@ -325,3 +325,19 @@ test('a data question about a named day is answered about that day, from the tem
   // A question about the week still gets the week's answer.
   assert.match(lead('when are we busiest this week'), /^Your busiest day this week is Saturday/);
 });
+
+test('date questions reach the right numbers: the past is the recap, the future the forecast, weather and events their own', () => {
+  for (const [q, intentId] of [
+    ['how did last weekend go', 'week_recap'],
+    ['was last friday good', 'week_recap'],
+    ['how does next week look', 'peak_hours'],
+    ['will tomorrow be busy', 'peak_hours'],
+    ['is it going to rain tomorrow', 'around_you'],
+    ['is there a concert nearby this weekend', 'around_you'],
+    ['are we busier than other bars nearby', 'cohort_typical'],
+    ['what does the weekend look like', 'weekend_outlook'],
+    ['how did we do yesterday', 'last_night_verdict'],
+  ]) {
+    assert.deepStrictEqual(advisorFreeText.offlineRoute(q), { mode: 'grounded', intentId }, q);
+  }
+});

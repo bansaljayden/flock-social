@@ -849,9 +849,17 @@ const OFFLINE_INTENT_CUES = [
   // A count of tables ("we only had 4 tables") is how the night went, not a
   // question about serving them.
   ['tables_service', /(?<!\b(?:\d+|a\s+few|few|couple(?:\s+of)?)\s+)\btables?\b|\b(?:turn\s+times?|turns?|seatings?|another\s+server|extra\s+server|servers?\s+(?:do\s+(?:i|we)\s+)?need)\b/i],
+  // A day or weekend that has already happened is the week's recap, not a
+  // forecast: "how did last weekend go" got the coming weekend's outlook and
+  // "was last friday good" got nothing (2026-10-28 date probe).
+  ['week_recap', /\b(?:(?:last|this\s+past)\s+weekend|how\s+(?:did|was)\s+(?:the|our)\s+weekend|(?:was|how\s+was|how\s+did)\s+last\s+(?:mon|tues|wednes|thurs|fri|satur|sun)day)\b/i],
+  // Weather and events win over the day they fall on: "is it going to rain
+  // tomorrow" is a weather question, "a concert nearby this weekend" an events one.
+  ['around_you', /\b(?:rain|raining|snow|snowing|storm|stormy|weather)\b|\b(?:concerts?|shows?|festivals?|games?|events?)\b[^.?!]{0,30}\b(?:nearby|near\s+us|around\s+(?:us|here)|in\s+town|downtown)\b|\b(?:nearby|near\s+us)\b[^.?!]{0,30}\b(?:concerts?|shows?|festivals?|games?|events?)\b/i],
   // How a named day looks ahead is the week-ahead forecast, which answers it
-  // about that day ("how busy will Friday be", "what does Thursday look like").
-  ['peak_hours', /\b(?:how\s+(?:busy|full|packed|dead|slow|quiet)\s+(?:will|is|are|was|does|do|should)\b[^.?!]{0,20}\b(?:mon|tues|wednes|thurs|fri|satur|sun)days?|(?:what\s+does|how\s+does|how\s+is|how's|how\s+are)\s+(?:this\s+|next\s+)?(?:mon|tues|wednes|thurs|fri|satur|sun)days?\s+(?:look|looking))\b/i],
+  // about that day ("how busy will Friday be", "what does Thursday look like"),
+  // and so is next week.
+  ['peak_hours', /\b(?:how\s+(?:busy|full|packed|dead|slow|quiet)\s+(?:will|is|are|was|does|do|should)\b[^.?!]{0,20}\b(?:mon|tues|wednes|thurs|fri|satur|sun)days?|(?:what\s+does|how\s+does|how\s+is|how's|how\s+are)\s+(?:this\s+|next\s+)?(?:mon|tues|wednes|thurs|fri|satur|sun)days?\s+(?:look|looking)|(?:what\s+does|how\s+does|how\s+is|how's)\s+next\s+week\s+(?:look|looking))\b/i],
   // A named day is the week's recap, not yesterday's verdict: "how did we do
   // yesterday" then "what about Tuesday" becomes "how did we do tuesday".
   ['week_recap', /\bhow\s+did\s+(?:we|i)\s+do\b[^.?!]{0,20}\b(?:mon|tues|wednes|thurs|fri|satur|sun)days?\b/i],
@@ -863,7 +871,7 @@ const OFFLINE_INTENT_CUES = [
   // reads it (advisorPrompt, FRUSTRATION IS NOT A ROUTE).
   ['last_night_verdict', /\b(?:tell\s+me\s+something|something\s+i\s+(?:do\s+not|don'?t)\s+(?:already\s+)?know|this\s+is\s+useless)\b/i],
   ['cohort_same_night', /\b(?:everyone|everybody|whole\s+(?:street|strip|block|area|town)|just\s+(?:us|me))\b/i],
-  ['cohort_typical', /\b(?:compare|stack\s+up|sit\s+among|(?:venues|places|restaurants|bars|cafes)\s+like\s+(?:us|ours|mine)|similar\s+(?:venues|places))\b/i],
+  ['cohort_typical', /\b(?:compare|stack\s+up|sit\s+among|(?:venues|places|restaurants|bars|cafes)\s+like\s+(?:us|ours|mine)|similar\s+(?:venues|places)|(?:busier|slower|quieter)\s+than\s+(?:other|the\s+other|most|similar)\s+(?:bars|places|venues|restaurants|cafes|spots|clubs))\b/i],
   ['weekend_outlook', /\bweekends?\b/i],
   ['tonight_outlook', /\b(?:today|tonight|this\s+(?:morning|afternoon|evening))\b/i],
   ['quiet_nights', /\b(?:quiet(?:est)?|slow(?:est)?|dead(?:est)?|empt(?:y|iest)|fill|nobody|no\s+one)\b/i],
