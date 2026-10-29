@@ -1690,7 +1690,7 @@ function checkAnswer(raw, facts, { mode = 'grounded', texts = [], extraFacts = [
     return reject(`too long, ${parsed.answer.length} sentences`);
   }
   const all = [...parsed.answer, ...parsed.points];
-  const vetoed = advisorAnswer.wholeAnswerVeto(all);
+  const vetoed = advisorAnswer.wholeAnswerVeto(all.join(' '));
   if (vetoed) return reject(vetoed);
 
   const list = Array.isArray(facts) ? facts : [];

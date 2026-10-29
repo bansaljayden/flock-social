@@ -257,85 +257,90 @@ test('ordinary trade questions with alarming words pass the screens, and the rea
 
 // ── The stand-in model eval through the real routes (2026-10-28 night) ──────
 // Every request the routes make was answered by a stand-in model and replayed
-// through the real check. Five places the check refused a good answer:
+// through the real check. Where the check refused a good answer, the fix went
+// into the prompt where loosening the check would have let made-up readings
+// or real instructions through (an adversarial review found both), and into
+// the check only where it could be made exact.
 
-test('an instruction\'s number is what to do, and a reading with the same verb is still checked', () => {
+test('the suggestion wordings the prompt teaches pass the check, and the readings an exemption let through stay refused', () => {
   const advisorFreeText = require('../services/advisorFreeText');
+  const advisorPrompt = require('../services/advisorPrompt');
+  const facts = [{ id: 'intake_typical_spend_per_person', value: 38, unit: 'usd', source: 'intake', asOf: 'owner-set 2026-10-01' }];
+  const served = (answer) => advisorFreeText.applyAdviceValve(JSON.stringify({ answer, points: [] }), facts);
+  for (const taught of ['aim for 25 more covers a week', 'read the 50 most recent reviews', 'when the rush starts, run 2 door lanes']) {
+    assert.ok(advisorPrompt.SYSTEM_PROMPT.includes(taught) && advisorPrompt.ADVICE_SYSTEM_PROMPT.includes(taught), taught);
+  }
   for (const ok of [
-    'Read your 50 latest reviews, list complaints that repeat more than 2 times, and fix the most common cause.',
-    'At the peak, run 2 door lanes, 1 for prepaid and list guests and 1 for door payers, with IDs checked in both.',
-  ]) {
-    const out = advisorFreeText.applyAdviceValve(JSON.stringify({ answer: ok, points: [] }), []);
-    assert.ok(out && out.text === ok, ok);
-  }
-  for (const claim of ['Your reviews read 50 complaints last month.', 'On Friday, the room hit 92.', 'Fridays, you ran 41.', 'Your door ran 2 lanes and turned 300 people.']) {
-    assert.strictEqual(advisorFreeText.applyAdviceValve(JSON.stringify({ answer: claim, points: [] }), []), null, claim);
-  }
+    'Read the 50 most recent reviews, list complaints that repeat more than 2 times, and fix the most common cause.',
+    'When the rush starts, run 2 door lanes, 1 for prepaid and list guests and 1 for door payers.',
+    'Aim for 25 more covers a week at {{fact:intake_typical_spend_per_person}} a head, which is $950.',
+  ]) assert.ok(served(ok), ok);
+  for (const claim of [
+    'Read your 50 latest reviews and fix the most common complaint.',
+    'At the peak, run 2 door lanes.',
+    'Bring in a second bartender on Fridays because your Friday hit 92 last week.',
+    'Your Friday, as usual, hit 92.',
+    'Wait times on Saturday ran 25 minutes.',
+    'Your Tuesday special brought in 25 more covers a week.',
+    'Last month you saw 60 new customers a week.',
+  ]) assert.strictEqual(served(claim), null, claim);
 });
 
-test('more covers a week is a target, and more covers than another day is still a reading', () => {
-  const advisorFreeText = require('../services/advisorFreeText');
-  const facts = [
-    { id: 'intake_typical_spend_per_person', value: 38, unit: 'usd', source: 'intake', asOf: 'owner-set 2026-10-01' },
-    { id: 'peak_weekday', value: 'Tuesday', source: 'model_holdout', asOf: '2026-10-27', note: 'This is the LOWEST projected day in the week ahead.' },
-  ];
-  const out = advisorFreeText.applyAdviceValve(JSON.stringify({
-    answer: 'Give {{fact:peak_weekday}}, your quietest day ahead, a weekly reason to visit: 25 more covers a week at {{fact:intake_typical_spend_per_person}} a head is $950.',
-    points: [],
-  }), facts);
-  assert.ok(out, 'the target and its money are shown');
-  assert.match(out.text, /25 more covers a week at \$38 a head is \$950\./);
-  assert.strictEqual(advisorFreeText.applyAdviceValve(JSON.stringify({ answer: 'Your Friday had 25 more covers a night than Thursday.', points: [] }), facts), null);
-});
-
-test('a yearly figure from a weekly one the sentence already works out is shown working, and a bare yearly claim is not', () => {
+test('a yearly figure from a weekly or monthly one the sentence works out is shown working, and only from its own period', () => {
   const advisorFreeText = require('../services/advisorFreeText');
   const facts = [{ id: 'intake_typical_spend_per_person', value: 38, unit: 'usd', source: 'intake', asOf: 'owner-set 2026-10-01' }];
+  const served = (answer, texts = []) => advisorFreeText.applyAdviceValve(JSON.stringify({ answer, points: [] }), facts, { texts });
   for (const ok of [
     'At the {{fact:intake_typical_spend_per_person}} a head you told us, 10 covers short is $380 a week, or $19,760 over 52 weeks.',
     'At your {{fact:intake_typical_spend_per_person}} a head, 10 covers short is $380 a week, about $19,760 a year.',
+    'At your {{fact:intake_typical_spend_per_person}} a head, 10 covers short is $380 a week, about $20,000 a year.',
   ]) {
-    const out = advisorFreeText.applyAdviceValve(JSON.stringify({ answer: ok, points: [] }), facts);
-    assert.ok(out && /\$19,760/.test(out.text), ok);
+    const out = served(ok);
+    assert.ok(out && /a year|52 weeks/.test(out.text), ok);
   }
   for (const claim of [
     'You made $19,760 last year.',
     'At your {{fact:intake_typical_spend_per_person}} a head, 10 covers short is $380 a week, so you lost $25,000 a year.',
+    'At your {{fact:intake_typical_spend_per_person}} a head, 10 covers short is $380 a week, so you lost about $20,700 a year.',
+    'At your {{fact:intake_typical_spend_per_person}} a head, 10 covers short is $380 a week, or $4,560 a year over 12 months.',
     'At your {{fact:intake_typical_spend_per_person}} a head, 10 covers short is $380 a month, so you lost $19,760 a year.',
-  ]) {
-    assert.strictEqual(advisorFreeText.applyAdviceValve(JSON.stringify({ answer: claim, points: [] }), facts), null, claim);
-  }
+  ]) assert.strictEqual(served(claim), null, claim);
+  assert.strictEqual(served('Your $1,500 a month rent comes to $78,000 a year, about 2 weeks of sales.', ['our rent is $1,500 a month']), null);
 });
 
-test('sending staff home as the rush ends is scheduling, and letting someone go is still an employment instruction', () => {
+test('sending staff home as the rush thins is scheduling, and every other let-them-go is still an employment instruction', () => {
   const advisorFreeText = require('../services/advisorFreeText');
+  const served = (answer) => advisorFreeText.applyAdviceValve(JSON.stringify({ answer, points: [] }), []);
   for (const ok of [
     'Bring them in as the line builds and let them go as it falls, so you never pay for idle hours.',
-    'On a dead Tuesday, let her go home early and close the section.',
-  ]) {
-    const out = advisorFreeText.applyAdviceValve(JSON.stringify({ answer: ok, points: [] }), []);
-    assert.ok(out && out.text === ok, ok);
-  }
-  for (const fire of ['If sales stay flat, let them go.', 'Let him go after the trial shift.']) {
-    assert.strictEqual(advisorFreeText.applyAdviceValve(JSON.stringify({ answer: fire, points: [] }), []), null, fire);
-  }
+    'Let them go home for the night once the floor is clean.',
+    'Send them home once the rush thins.',
+  ]) assert.ok(served(ok), ok);
+  for (const fire of [
+    'If sales stay flat, let them go.',
+    'Let him go after the trial shift.',
+    'If a new hire is not working out, let them go early.',
+    'If the winter stays slow, let them go as business slows and rehire in spring.',
+    'If sales stay down, let her go as sales fall rather than cutting everyone\'s hours.',
+    'If he keeps stealing from the till, let him go home and do not bring him back.',
+  ]) assert.strictEqual(served(fire), null, fire);
 });
 
-test('a point that says who to ask may name the topic, and an instruction riding with it still voids the answer', () => {
+test('a referral names who to ask, and a referral that names the legal matter, or rides with an instruction, voids the answer', () => {
   const advisorFreeText = require('../services/advisorFreeText');
-  const referral = advisorFreeText.applyAdviceValve(JSON.stringify({
+  const advisorPrompt = require('../services/advisorPrompt');
+  assert.ok(advisorPrompt.ADVICE_SYSTEM_PROMPT.includes('an accountant or a lawyer is the one to ask about that'));
+  assert.ok(advisorPrompt.ADVICE_SYSTEM_PROMPT.includes('send them home'));
+  const named = advisorFreeText.applyAdviceValve(JSON.stringify({
     answer: 'That one is outside what Roost does.',
-    points: ['Talk to an accountant or a lawyer about debts, the lease or winding down.'],
+    points: ['An accountant or a lawyer is the one to ask about that.'],
   }), []);
-  assert.ok(referral, 'the referral the advice prompt asks for is served');
-  assert.match(referral.text, /Talk to an accountant or a lawyer about debts, the lease or winding down\./);
-  assert.ok(advisorFreeText.applyAdviceValve(JSON.stringify({ answer: 'Sales tax on the specials is a question for your accountant.', points: [] }), []));
+  assert.ok(named, 'the referral the prompt teaches is served');
   for (const instruction of [
-    { answer: 'Ask your accountant, then take the loss as a tax write-off.', points: [] },
-    { answer: 'Fill the slow nights first.', points: ['Talk to a lawyer. Break the lease and walk away.'] },
-    { answer: 'Your lease probably allows it, and the liability sits with the landlord.', points: [] },
-    { answer: 'If a guest is choking, ask a lawyer about liability later.', points: [] },
-  ]) {
-    assert.strictEqual(advisorFreeText.applyAdviceValve(JSON.stringify(instruction), []), null, JSON.stringify(instruction));
-  }
+    { answer: 'That one is outside what Roost does.', points: ['Talk to an accountant or a lawyer about debts, the lease or winding down.'] },
+    { answer: 'Fire him for the no-shows, and ask your lawyer to draft the letter.', points: [] },
+    { answer: 'Ask your bookkeeper to dock their pay for the till shortages.', points: [] },
+    { answer: 'Break the lease and talk to a lawyer about the exit fee.', points: [] },
+    { answer: 'Let him go after the trial shift, but check with a lawyer first.', points: [] },
+  ]) assert.strictEqual(advisorFreeText.applyAdviceValve(JSON.stringify(instruction), []), null, JSON.stringify(instruction));
 });
