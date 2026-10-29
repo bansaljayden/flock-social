@@ -374,3 +374,15 @@ test('a referral names who to ask, and a referral that names the legal matter, o
     { answer: 'Let him go after the trial shift, but check with a lawyer first.', points: [] },
   ]) assert.strictEqual(advisorFreeText.applyAdviceValve(JSON.stringify(instruction), []), null, JSON.stringify(instruction));
 });
+
+// Three older gaps the same review found in the employment veto, in both the
+// old and new check: a plural, a pronoun and "the rest" walked past it.
+test('misclassifying staff, withholding one person\'s tips and letting the rest go are employment instructions too', () => {
+  const advisorFreeText = require('../services/advisorFreeText');
+  for (const fire of [
+    'Treat your servers as independent contractors so you skip the payroll costs.',
+    'Withhold her tips until the breakage is paid off.',
+    'Keep your two best servers and let the rest go.',
+  ]) assert.strictEqual(advisorFreeText.applyAdviceValve(JSON.stringify({ answer: fire, points: [] }), []), null, fire);
+  assert.ok(advisorFreeText.applyAdviceValve(JSON.stringify({ answer: 'Keep your two best servers on the busiest nights and send the rest home early when it is quiet.', points: [] }), []));
+});
