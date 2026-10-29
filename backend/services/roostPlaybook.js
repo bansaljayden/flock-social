@@ -293,6 +293,38 @@ function moveFrom(tokens, start) {
   return [];
 }
 
+// WHAT THE OWNER WILL NOT DO IS RULED OUT TOO. "I don't want to discount, how
+// do I fill Tuesdays" led with the discount move, and so did "without
+// discounting" and "besides discounts" (2026-10-28 probe). Returns where the
+// refused move starts, or null. A constraint is not a move: "without losing
+// regulars" and "don't have enough staff" name what to avoid or lack, so
+// "without" needs a move after it and "don't" needs a verb of doing.
+const REFUSE_VERB = new Set(['do', 'run', 'offer', 'use', 'try', 'add', 'give', 'start', 'doing', 'running', 'offering', 'using', 'trying', 'adding', 'giving', 'starting', 'go']);
+const MOVE_VERB = /^(?:discount|discounting|advertise|advertising|deliver|delivering|cater|catering)$/;
+const OUTCOME = /^(?:losing|lose|hurting|hurt|killing|kill|scaring|upsetting|annoying|alienating|spending|breaking|going|making|getting|having|being|looking|seeming|feeling|raising|cutting|paying|wasting|giving)$/;
+const PAIRS = Object.freeze({ other: 'than', instead: 'of', rather: 'than', not: 'with' });
+// "No" that starts a complaint, not a refusal: "no shows are killing us" is
+// the no-show problem, "no one comes in" an empty room.
+const NOT_A_REFUSAL = new Set(['one', 'shows', 'show', 'idea', 'clue', 'matter', 'longer', 'way', 'body', 'problem', 'doubt', 'time', 'luck', 'sales', 'traffic', 'customers', 'guests', 'people', 'covers', 'business', 'money', 'staff', 'more']);
+function refusedFrom(tokens, i) {
+  const w = tokens[i];
+  const next = tokens[i + 1];
+  if (w === 'without' || w === 'besides' || w === 'except') {
+    return next && !OUTCOME.test(next) ? i + 1 : null;
+  }
+  if (PAIRS[w] && next === PAIRS[w]) return tokens[i + 2] && !OUTCOME.test(tokens[i + 2]) ? i + 2 : null;
+  if (w === 'refuse' && next === 'to') return REFUSE_VERB.has(tokens[i + 2]) ? i + 3 : i + 2;
+  if (w === 'no' && (i === 0 || tokens[i - 1] === ',') && next && !SPAN_STOP.has(next) && !NOT_A_REFUSAL.has(next)) return i + 1;
+  let at = null;
+  if (w === 'dont' || w === "don't" || w === 'wont' || w === "won't" || w === 'never') at = i + 1;
+  else if ((w === 'do' || w === 'will') && next === 'not') at = i + 2;
+  if (at === null) return null;
+  if (['want', 'wanna', 'plan', 'like', 'going'].includes(tokens[at])) at += 1;
+  if (tokens[at] === 'to') at += 1;
+  if (REFUSE_VERB.has(tokens[at])) return at + 1;
+  return MOVE_VERB.test(tokens[at] || '') ? at : null;
+}
+
 // What failed, read backward from "didn't work": the clause right before it,
 // or, when that is only "it", what the clause before that did or ran.
 function failedBefore(before) {
@@ -329,6 +361,9 @@ function ruledOut(text) {
         spans.push(moveFrom(tokens, i + (tokens[i + 1] === 'to' ? 2 : 1)));
       } else if (w === 'already' && EXISTING.has(tokens[i + 1]) && asksElse) {
         spans.push(moveFrom(tokens, i + 2));
+      } else {
+        const after = refusedFrom(tokens, i);
+        if (after !== null) spans.push(moveFrom(tokens, after));
       }
     });
     FAILED.lastIndex = 0;

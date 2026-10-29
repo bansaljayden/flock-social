@@ -341,3 +341,24 @@ test('date questions reach the right numbers: the past is the recap, the future 
     assert.deepStrictEqual(advisorFreeText.offlineRoute(q), { mode: 'grounded', intentId }, q);
   }
 });
+
+test('a move the owner will not do is not offered, and a constraint is not mistaken for one', () => {
+  const avoids = [
+    ['i dont want to discount, how do i fill tuesdays', 'slow_day_discount_check'],
+    ['how do i fill tuesdays without discounting', 'slow_day_discount_check'],
+    ['no happy hour, what else can fill weeknights', 'slow_hours_happy_hour'],
+    ['how do i fill tuesdays but not with a happy hour', 'slow_hours_happy_hour'],
+    ['what can i do besides discounts', 'slow_day_discount_check'],
+    ['we wont do delivery, how do we grow', 'delivery_commission_math'],
+  ];
+  for (const [q, gone] of avoids) {
+    const { answer } = offlineAnswer(q);
+    assert.ok(answer, `"${q}" found no move`);
+    assert.ok(!answer.tactics.includes(gone), `"${q}" offered ${gone}`);
+  }
+  // Constraints and complaints keep their moves.
+  assert.strictEqual(offlineAnswer('how to cut labor without hurting service').answer.tactics[0], 'labor_schedule_from_forecast');
+  assert.strictEqual(offlineAnswer('how do i raise prices without losing regulars').answer.tactics[0], 'pricing_small_steps');
+  assert.strictEqual(offlineAnswer('no shows are killing us').answer.tactics[0], 'res_confirm_remind');
+  assert.ok(offlineAnswer('no one comes in on mondays').answer);
+});
