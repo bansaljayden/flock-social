@@ -1824,7 +1824,7 @@ async function run() {
       try {
         const dev = await buildRecentDeviation();
         console.log(`[ML:Realtime] Recent-deviation offsets rebuilt `
-          + `(${dev.written} venues written, ${dev.pruned} stale rows pruned).`);
+          + `(${dev.written} venues written, ${dev.pruned} stale rows pruned, in ${dev.seconds.toFixed(1)}s).`);
       } catch (err) {
         console.error(`[ML:Realtime] Recent-deviation refresh failed: ${describeDbError(err)}`);
       }

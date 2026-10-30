@@ -192,9 +192,40 @@ const LATEST_READINGS_SQL = `
      AND d.recent_readings IS DISTINCT FROM l.readings
 `;
 
+// THE JOB'S OWN TIME LIMIT. `pool` is config/database.js's, and its cap of
+// 15 seconds on every statement is the API's: right for a request, wrong for
+// these three aggregates over 28 days of live readings. The hourly collector
+// runs this file on that pool, and once its widened sweep began writing about
+// 2,400 live rows an hour (2026-10-27), the offset statement ran past the cap:
+// from 18:00 UTC that day it was cancelled in 22 of 52 runs ("canceling
+// statement due to statement timeout", 57014), and the offsets waited for a
+// run that got through. The collector's own pool has no cap, which is why its
+// three-minute baseline refresh just before this never failed. Each statement
+// here runs in its own transaction with SET LOCAL, so it gets two minutes and
+// the connection goes back to the pool with the API's 15 seconds unchanged.
+const JOB_STATEMENT_TIMEOUT_MS = 120000;
+
+async function jobQuery(sql, params) {
+  const client = await pool.connect();
+  let broken = false;
+  try {
+    await client.query('BEGIN');
+    await client.query(`SET LOCAL statement_timeout = ${JOB_STATEMENT_TIMEOUT_MS}`);
+    const res = await client.query(sql, params);
+    await client.query('COMMIT');
+    return res;
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => { broken = true; });
+    throw err;
+  } finally {
+    // A connection whose ROLLBACK failed is not one to hand back to the pool.
+    client.release(broken || undefined);
+  }
+}
+
 async function storeLatestReadings({ windowHours = READINGS_WINDOW_HOURS, keep = READINGS_KEPT } = {}) {
   try {
-    const res = await pool.query(LATEST_READINGS_SQL, [windowHours, keep]);
+    const res = await jobQuery(LATEST_READINGS_SQL, [windowHours, keep]);
     return { updated: res.rowCount, error: null };
   } catch (err) {
     console.error('[ML:Deviation] Recent readings not stored (the offset was):', err.message);
@@ -273,7 +304,7 @@ const OFFSET_READINGS_SQL = `
 
 async function storeOffsetReadings({ windowDays = WINDOW_DAYS, keep = MAX_READINGS + OFFSET_READINGS_SLACK } = {}) {
   try {
-    const res = await pool.query(OFFSET_READINGS_SQL, [windowDays, keep]);
+    const res = await jobQuery(OFFSET_READINGS_SQL, [windowDays, keep]);
     return { updated: res.rowCount, error: null };
   } catch (err) {
     console.error('[ML:Deviation] Offset readings not stored (the offset was):', err.message);
@@ -282,11 +313,14 @@ async function storeOffsetReadings({ windowDays = WINDOW_DAYS, keep = MAX_READIN
 }
 
 async function buildRecentDeviation({ windowDays = WINDOW_DAYS, maxReadings = MAX_READINGS } = {}) {
-  const written = await pool.query(UPSERT_SQL, [windowDays, maxReadings]);
+  const t0 = Date.now();
+  const written = await jobQuery(UPSERT_SQL, [windowDays, maxReadings]);
   const readings = await storeLatestReadings();
   const offsetReadings = await storeOffsetReadings({ windowDays, keep: maxReadings + OFFSET_READINGS_SLACK });
   const pruned = await pool.query(PRUNE_SQL, [windowDays * 2]);
-  return { written: written.rowCount, pruned: pruned.rowCount, readings, offsetReadings };
+  return {
+    written: written.rowCount, pruned: pruned.rowCount, readings, offsetReadings, seconds: (Date.now() - t0) / 1000,
+  };
 }
 
 async function main() {
@@ -335,4 +369,5 @@ module.exports = {
   READINGS_KEPT,
   READINGS_WINDOW_HOURS,
   OFFSET_READINGS_SLACK,
+  JOB_STATEMENT_TIMEOUT_MS,
 };

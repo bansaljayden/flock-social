@@ -542,3 +542,43 @@ test('without the column (092 not yet booted), the offsets are still rebuilt', a
     await pool.query('ALTER TABLE ml_venue_recent_deviation RENAME COLUMN recent_readings_hidden TO recent_readings');
   }
 });
+
+test('each of the three aggregates gets the job\'s two minutes in its own transaction, and the pool keeps the API\'s cap', async () => {
+  // From 2026-10-27 the API's 15-second cap on config/database.js's pool, which
+  // this file runs on inside the hourly collector, cancelled the offset
+  // statement in 22 of 52 runs. SET LOCAL lifts it for one statement only.
+  const { buildRecentDeviation, JOB_STATEMENT_TIMEOUT_MS } = require('../scripts/ml/buildRecentDeviation');
+  const appPool = require('../config/database');
+  assert.strictEqual(JOB_STATEMENT_TIMEOUT_MS, 120000);
+  const capBefore = (await appPool.query('SHOW statement_timeout')).rows[0].statement_timeout;
+  const sessions = [];
+  const realConnect = appPool.connect;
+  appPool.connect = function connect(cb) {
+    // pool.query checks a client out through here with a callback: not a job statement.
+    if (typeof cb === 'function') return realConnect.call(this, cb);
+    return realConnect.call(this).then((client) => {
+      const said = [];
+      sessions.push(said);
+      return new Proxy(client, {
+        get(target, prop) {
+          if (prop === 'query') {
+            return (text, ...rest) => { said.push(String(text).trim().split('\n')[0].trim()); return target.query(text, ...rest); };
+          }
+          const v = target[prop];
+          return typeof v === 'function' ? v.bind(target) : v;
+        },
+      });
+    });
+  };
+  let res;
+  try { res = await buildRecentDeviation(); } finally { appPool.connect = realConnect; }
+  assert.ok(res.written > 0 && res.readings.error === null && res.offsetReadings.error === null, 'all three statements ran');
+  assert.ok(typeof res.seconds === 'number' && res.seconds >= 0, 'the run says how long it took');
+  assert.strictEqual(sessions.length, 3, 'the offset, the recent readings and the offset readings, one transaction each');
+  for (const said of sessions) {
+    assert.deepStrictEqual([said[0], said[1], said[3]], ['BEGIN', 'SET LOCAL statement_timeout = 120000', 'COMMIT']);
+    assert.match(said[2], /^(INSERT INTO ml_venue_recent_deviation|WITH ranked AS \()/);
+  }
+  const capAfter = (await appPool.query('SHOW statement_timeout')).rows[0].statement_timeout;
+  assert.strictEqual(capAfter, capBefore, 'the connection went back with the cap it came with');
+});
