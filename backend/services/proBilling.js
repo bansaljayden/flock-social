@@ -260,6 +260,23 @@ async function fetchProActive(userId) {
   return paidElsewhere;
 }
 
+// RevenueCat's own words for a refusal, as " (code 7225: ...)", so the log
+// line says why and not only that. Its error body is { code, message };
+// anything else, or no body, adds nothing, and reading it never throws. A
+// renewal's refresh was refused twice on 2026-10-25 and the line said only
+// "answered 400", so whether that comes back every month could not be told.
+async function rcRefusalReason(r) {
+  try {
+    const body = JSON.parse(await r.text());
+    const code = body && Number.isInteger(body.code) ? body.code : null;
+    const message = body && typeof body.message === 'string' ? body.message.replace(/\s+/g, ' ').trim().slice(0, 200) : '';
+    if (code === null && !message) return '';
+    return ` (${code === null ? 'no code' : `code ${code}`}${message ? `: ${message}` : ''})`;
+  } catch {
+    return '';
+  }
+}
+
 // Tells RevenueCat about a Stripe subscription right away. Its Stripe
 // integration would find it on its own, but not within the seconds between a
 // buyer finishing checkout and landing back in the app. Best effort: RevenueCat
@@ -274,7 +291,7 @@ async function postStripeReceipt(userId, subscriptionId) {
     signal: AbortSignal.timeout(10000),
   });
   if (!r.ok) {
-    console.warn(`[pro] RevenueCat receipt post answered ${r.status}`);
+    console.warn(`[pro] RevenueCat receipt post answered ${r.status}${await rcRefusalReason(r)}`);
     return false;
   }
   return true;

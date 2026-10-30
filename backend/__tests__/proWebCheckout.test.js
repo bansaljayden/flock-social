@@ -1058,6 +1058,34 @@ test('a refresh RevenueCat refuses still re-reads and writes, then answers 500 s
   } finally { restore(); global.fetch = prev; }
 });
 
+test("a refused receipt post logs RevenueCat's own code and message, and only the status when there are none", async () => {
+  // 2026-10-25: a renewal's refresh was refused twice and the line said only
+  // "answered 400", which cannot tell a passing state from one that returns
+  // every month.
+  setEnv(ON);
+  const prev = global.fetch;
+  const warnings = [];
+  const realWarn = console.warn;
+  console.warn = (...a) => warnings.push(a.join(' '));
+  const refuse = (body, status) => async (url, init) => (String(url).endsWith('/receipts') ? new Response(body, { status }) : prev(url, init));
+  try {
+    global.fetch = refuse(JSON.stringify({ code: 7225, message: 'The receipt is\n not valid. ' }), 400);
+    assert.strictEqual(await billing.postStripeReceipt(7, 'sub_77'), false);
+    global.fetch = refuse(JSON.stringify({ message: 'Try again later.' }), 503);
+    assert.strictEqual(await billing.postStripeReceipt(7, 'sub_77'), false);
+    global.fetch = refuse('no', 422);
+    assert.strictEqual(await billing.postStripeReceipt(7, 'sub_77'), false);
+    global.fetch = refuse(JSON.stringify({ code: 'x', message: 7 }), 400);
+    assert.strictEqual(await billing.postStripeReceipt(7, 'sub_77'), false);
+  } finally { console.warn = realWarn; global.fetch = prev; }
+  assert.deepStrictEqual(warnings.filter((w) => w.includes('receipt post')), [
+    '[pro] RevenueCat receipt post answered 400 (code 7225: The receipt is not valid.)',
+    '[pro] RevenueCat receipt post answered 503 (no code: Try again later.)',
+    '[pro] RevenueCat receipt post answered 422',
+    '[pro] RevenueCat receipt post answered 400',
+  ]);
+});
+
 test('a trial is for somebody who has never subscribed: a returning customer gets none, at checkout or on /status', async () => {
   setEnv({ ...ON, PRO_WEB_TRIAL_DAYS: '7' });
   const { restore } = stubPool(async (sql) => {
