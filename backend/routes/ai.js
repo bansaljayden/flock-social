@@ -2845,9 +2845,15 @@ router.post('/chat',
               functionResponse: { ...(id ? { id } : {}), name, response: result },
             });
           } catch (err) {
+            // The log keeps the real error. The model gets a fixed word,
+            // because it reads a tool result as material for its answer and
+            // can quote it: a thrown error's own text is a Postgres message
+            // naming a table or a column, or a fetch failure naming a host,
+            // and that is not something to put in front of the user. All it
+            // needs to know is that the lookup did not work.
             console.error(`[AI] Tool ${name} failed:`, err.message);
             functionResponses.push({
-              functionResponse: { ...(id ? { id } : {}), name, response: { error: err.message } },
+              functionResponse: { ...(id ? { id } : {}), name, response: { error: 'lookup_failed' } },
             });
           }
         }
