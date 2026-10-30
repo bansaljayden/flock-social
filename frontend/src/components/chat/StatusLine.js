@@ -21,7 +21,11 @@ import './chat.css';
  * nothing at all rather than falling back to "Sent". W1 supplies 'sending'
  * (local, in flight), 'sent' (the send echo), 'delivered' and 'opened' (the
  * dm_delivered / dm_opened receipts and the flock read cursor), and 'failed'
- * is the client's own knowledge that the send never left. There is no sixth.
+ * is the client's own knowledge that the send never left. The sixth is
+ * 'unsending', and like 'sending' it is the client's own: an unsend the reader
+ * tapped, still on the wire (App.js markUnsending). It says what is happening
+ * to the row, never what the server has done, and it goes when the server
+ * answers either way. There is no seventh.
  *
  * GROUPS. "Opened by 3" expands to the names on tap. The count and the names
  * are the same array, so the expanded form can never disagree with the
@@ -49,7 +53,7 @@ import './chat.css';
  * behind it to sit inside.
  *
  * PROPS
- *   status     'sending' | 'sent' | 'delivered' | 'opened' | 'failed'
+ *   status     'sending' | 'sent' | 'delivered' | 'opened' | 'failed' | 'unsending'
  *   openedBy   array of first names, groups only. Ignored unless opened.
  *   onExpand   called when the reader taps "Opened by N". Optional, for
  *              analytics or for a parent that wants to own the disclosure.
@@ -63,6 +67,7 @@ const WORDS = {
   sent: 'Sent',
   delivered: 'Delivered',
   opened: 'Opened',
+  unsending: 'Unsending…',
 };
 
 /** "Ava", "Ava and Bo", "Ava, Bo and Cal". */

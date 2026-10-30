@@ -2806,6 +2806,10 @@ export default function ChatDetail({
          rather than the one still sending. MessageGroup draws a non-last
          row's status under that row for exactly this. Same fix the DM side
          already carries. */
+      /* An unsend this reader tapped, still on the wire: the row is faded
+         (MessageRow) and says so until the server answers (App.js
+         handleUnsendFlockMessage). */
+      if (m.unsending) return <StatusLine status="unsending" />;
       if (m.pending) return <StatusLine status="sending" />;
       if (m.id !== receiptRowId) return null;
       /* `flock.readers` is the roster GET /api/flocks/:id/messages hands back,
@@ -3712,7 +3716,8 @@ export default function ChatDetail({
               {(actionsMessage.image || actionsMessage.thumb) && (
                 <button aria-label="View photo full size" className="hit44" onClick={() => { closeMessageActions(); openImageViewer(actionsMessage); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: '10px' }} title="View photo">{Icons.eye(colors.textSecondary, 15)}</button>
               )}
-              {actionsMessage.sender === 'You' && typeof actionsMessage.id === 'number' && actionsMessage.id <= 2147483647 && (
+              {/* Not on a row already being unsent: one request per message. */}
+              {actionsMessage.sender === 'You' && typeof actionsMessage.id === 'number' && actionsMessage.id <= 2147483647 && !actionsMessage.unsending && (
                 <button aria-label="Unsend message" className="hit44" onClick={() => { closeMessageActions(); handleUnsendFlockMessage(flock.id, actionsMessage.id); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px', display: 'flex', alignItems: 'center', borderRadius: '10px', fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', fontWeight: '600' }} title="Unsend">Unsend</button>
               )}
               {actionsMessage.sender !== 'You' && (

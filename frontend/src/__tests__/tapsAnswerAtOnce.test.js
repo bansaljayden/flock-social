@@ -18,6 +18,8 @@
  * HOW TO RUN
  *   cd frontend && CI=true npx react-scripts test tapsAnswerAtOnce --watchAll=false
  */
+import React from 'react';
+import { render, screen } from '@testing-library/react';
 
 const fs = require('fs');
 const path = require('path');
@@ -254,5 +256,131 @@ describe('a DM reaction moves on the tap', () => {
     expect(state.directMessages[0].messages[0].reactions).toHaveLength(1);
     subs.removed({ dmId: 501, emoji: '❤️', userId: String(ME) });
     expect(state.directMessages[0].messages[0].reactions).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Unsend, in a plan and in a DM (App.js handleUnsendFlockMessage, handleUnsendDm)
+// ---------------------------------------------------------------------------
+describe('an unsend fades the bubble at once and only removes it when the server agrees', () => {
+  const helpers = `${statementAt(APP, 'const sameContentId = (a, b) =>')}\n${statementAt(APP, 'const markUnsending = (threads, messageId, on) =>')}`;
+  const markUnsending = lift(helpers, 'markUnsending', {});
+  const mine = (id, text) => ({ id, sender: 'You', text, reactions: [] });
+
+  test('markUnsending marks one row, puts it back exactly, and hands back the same array when nothing moved', () => {
+    const before = [{ id: 1, messages: [mine(10, 'a'), mine(11, 'b')] }, { id: 2, messages: [mine(20, 'c')] }];
+    const on = markUnsending(before, 11, true);
+    expect(on[0].messages[1]).toEqual({ ...mine(11, 'b'), unsending: true });
+    expect(on[1]).toBe(before[1]);
+    const off = markUnsending(on, 11, false);
+    expect(off[0].messages[1]).toEqual(mine(11, 'b'));
+    expect('unsending' in off[0].messages[1]).toBe(false);
+    expect(markUnsending(before, 999, true)).toBe(before);
+    expect(markUnsending(on, 11, true)).toBe(on);
+  });
+
+  function flockSetup(answer) {
+    const state = { flocks: [{ id: 3, messages: [mine(40, 'door code 4411'), mine(41, 'see you')] }] };
+    const calls = { unsend: [], cleared: [], toasts: [] };
+    const scope = {
+      useCallback: (fn) => fn,
+      useRef: (v) => ({ current: v }),
+      setFlocks: setterOn(state, 'flocks'),
+      markUnsending,
+      unsendFlockMessage: (flockId, messageId) => { calls.unsend.push([flockId, messageId]); return answer(); },
+      clearUnsentFlockMessage: (flockId, messageId) => {
+        calls.cleared.push([flockId, messageId]);
+        setterOn(state, 'flocks')((prev) => prev.map((f) => ({ ...f, messages: f.messages.filter((m) => m.id !== messageId) })));
+      },
+      showToast: (message, type) => calls.toasts.push([message, type]),
+      userMessage,
+    };
+    const src = `${statementAt(APP, 'const unsendingRef = useRef(')}\n${statementAt(APP, 'const handleUnsendFlockMessage = useCallback(')}`;
+    return { state, calls, unsend: lift(src, 'handleUnsendFlockMessage', scope) };
+  }
+
+  test('the bubble says Unsending on the tap and leaves when the server confirms', async () => {
+    const wait = held();
+    const { state, calls, unsend } = flockSetup(() => wait.promise);
+    const done = unsend(3, 40);
+    expect(state.flocks[0].messages[0].unsending).toBe(true);
+    expect(calls.cleared).toEqual([]);
+    wait.resolve({ success: true });
+    await done;
+    expect(state.flocks[0].messages.map((m) => m.id)).toEqual([41]);
+    expect(calls.toasts).toEqual([['Message unsent.', undefined]]);
+  });
+
+  test('a refusal brings the message back exactly as it was, and says so', async () => {
+    const { state, calls, unsend } = flockSetup(() => Promise.reject(crash()));
+    await unsend(3, 40);
+    expect(state.flocks[0].messages[0]).toEqual(mine(40, 'door code 4411'));
+    expect(calls.toasts).toEqual([["That didn't unsend. Try again.", 'error']]);
+  });
+
+  test('a message already unsent from another device is cleared, not brought back', async () => {
+    const { state, calls, unsend } = flockSetup(() => Promise.reject(refusal('Message not found', { status: 404 })));
+    await unsend(3, 40);
+    expect(state.flocks[0].messages.map((m) => m.id)).toEqual([41]);
+    expect(calls.toasts).toEqual([]);
+  });
+
+  test('a second unsend of the same message while the first is out sends nothing', async () => {
+    const wait = held();
+    const { calls, unsend } = flockSetup(() => wait.promise);
+    const first = unsend(3, 40);
+    await unsend(3, 40);
+    expect(calls.unsend).toEqual([[3, 40]]);
+    wait.resolve({});
+    await first;
+  });
+
+  test('a DM unsend runs the same way, and logs the retraction only once it is real', async () => {
+    const state = { directMessages: [{ userId: 4, messages: [mine(70, 'oops'), mine(71, 'ok')] }] };
+    const calls = { retractions: [], toasts: [] };
+    let answer = () => Promise.reject(refusal('Slow down a moment.', { status: 429 }));
+    const scope = {
+      useCallback: (fn) => fn,
+      useRef: (v) => ({ current: v }),
+      setDirectMessages: setterOn(state, 'directMessages'),
+      markUnsending,
+      unsendDm: () => answer(),
+      noteRetraction: (_ref, entry) => calls.retractions.push(entry),
+      retractionsRef: { current: null },
+      applyTakedownToDms: (prev, ev) => prev.map((d) => ({ ...d, messages: d.messages.filter((m) => m.id !== ev.contentId) })),
+      showToast: (message, type) => calls.toasts.push([message, type]),
+      userMessage,
+    };
+    const src = `${statementAt(APP, 'const unsendingRef = useRef(')}\n${statementAt(APP, 'const handleUnsendDm = useCallback(')}`;
+    const unsend = lift(src, 'handleUnsendDm', scope);
+
+    const refused = unsend(70);
+    expect(state.directMessages[0].messages[0].unsending).toBe(true);
+    await refused;
+    expect(state.directMessages[0].messages[0]).toEqual(mine(70, 'oops'));
+    expect(calls.retractions).toEqual([]);
+    expect(calls.toasts).toEqual([['Slow down a moment.', 'error']]);
+
+    answer = () => Promise.resolve({ success: true });
+    await unsend(70);
+    expect(state.directMessages[0].messages.map((m) => m.id)).toEqual([71]);
+    expect(calls.retractions).toEqual([{ kind: 'dm', messageId: 70 }]);
+  });
+
+  test('the row fades, cannot be quoted, and says Unsending in both chats; neither menu offers Unsend twice', () => {
+    const StatusLine = require('../components/chat/StatusLine').default;
+    const { canQuote } = require('../components/chat/MessageRow');
+    render(React.createElement(StatusLine, { status: 'unsending' }));
+    expect(screen.getByText('Unsending…')).toBeInTheDocument();
+    expect(canQuote({ id: 40, unsending: true })).toBe(false);
+    expect(canQuote({ id: 40 })).toBe(true);
+
+    const row = read('components', 'chat', 'MessageRow.js');
+    expect(row).toContain('const pending = !!(message && (message.pending || message.unsending));');
+    const chat = read('screens', 'ChatDetail.js');
+    expect(chat).toContain('if (m.unsending) return <StatusLine status="unsending" />;');
+    expect(chat).toMatch(/actionsMessage\.id <= 2147483647 && !actionsMessage\.unsending && \(\s*<button aria-label="Unsend message"/);
+    expect(DM).toContain('if (m.unsending) return <StatusLine status="unsending" />;');
+    expect(DM).toMatch(/dmActionMessage\.id <= 2147483647 && !dmActionMessage\.unsending && \(\s*<button aria-label="Unsend message"/);
   });
 });

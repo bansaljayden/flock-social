@@ -167,7 +167,9 @@ export function aspectOf(message) {
  * menus, which is the same test their Pin and Unsend already make.
  */
 export function canQuote(message) {
-  if (!message || message.pending || message.failed) return false;
+  // A row being unsent is on its way out, and a reply to it would be refused
+  // the moment the unsend lands ("no longer there to reply to").
+  if (!message || message.pending || message.failed || message.unsending) return false;
   const id = message.id;
   return typeof id === 'number' && Number.isInteger(id) && id > 0 && id <= 2147483647;
 }
@@ -333,7 +335,9 @@ function MessageRow({
   const card = renderCard ? renderCard(message) : null;
   const reactions = groupReactions(message && message.reactions);
   const reply = message && message.reply_to;
-  const pending = !!(message && message.pending);
+  // Faded while it is on the wire either way: still sending, or being unsent
+  // (App.js markUnsending), so the tap that unsends answers on the frame.
+  const pending = !!(message && (message.pending || message.unsending));
   const who = isMine ? 'you' : ((message && message.sender) || 'this chat');
   const time = timeOf(message);
 

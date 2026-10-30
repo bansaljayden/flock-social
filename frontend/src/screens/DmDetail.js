@@ -581,6 +581,8 @@ export default function DmDetail({
         />
       );
     }
+    // An unsend this reader tapped, still on the wire (App.js handleUnsendDm).
+    if (m.unsending) return <StatusLine status="unsending" />;
     if (m.pending) return <StatusLine status="sending" />;
     if (m.id !== dmReceiptRowId) return null;
     /* Straight off the row, with no derivation and no default. The server sets
@@ -1822,7 +1824,8 @@ export default function DmDetail({
                 onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
               >{emoji}</button>
             ))}
-            {dmActionMessage.sender === 'You' && typeof dmActionMessage.id === 'number' && dmActionMessage.id <= 2147483647 && (
+            {/* Not on a row already being unsent: one request per message. */}
+            {dmActionMessage.sender === 'You' && typeof dmActionMessage.id === 'number' && dmActionMessage.id <= 2147483647 && !dmActionMessage.unsending && (
               <button aria-label="Unsend message" className="hit44" onClick={(e) => { e.stopPropagation(); const id = dmActionMessage.id; closeDmActions(); handleUnsendDm(id); }} style={{ fontSize: 'var(--t-meta)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', borderRadius: '8px', color: 'var(--text-secondary)', fontWeight: '600' }} title="Unsend">Unsend</button>
             )}
             {dmActionMessage.message_type === 'image' && (dmActionMessage.image_url || dmActionMessage.thumb_url) && (

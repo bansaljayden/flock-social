@@ -4390,6 +4390,30 @@ const applyTakedownToDms = (conversations, ev) => {
   return touched ? next : conversations;
 };
 
+// One of the reader's own messages marked as being unsent while the request is
+// out (on), or put back as it was (off). The row fades and says Unsending under
+// it on the tap (MessageRow, StatusLine), rather than sitting unchanged for the
+// round trip and then vanishing. The flock list and the DM list both hold their
+// rows in `messages`, so this serves both, and it hands back the same array
+// when no row moved.
+const markUnsending = (threads, messageId, on) => {
+  if (!Array.isArray(threads) || messageId == null) return threads;
+  let touched = false;
+  const next = threads.map((t) => {
+    const msgs = t.messages || [];
+    const at = msgs.findIndex((m) => sameContentId(m.id, messageId));
+    if (at === -1 || !!msgs[at].unsending === on) return t;
+    touched = true;
+    const row = { ...msgs[at] };
+    if (on) row.unsending = true;
+    else delete row.unsending;
+    const copy = msgs.slice();
+    copy[at] = row;
+    return { ...t, messages: copy };
+  });
+  return touched ? next : threads;
+};
+
 // A venue promotion or venue event: MARKED, not removed. The owner keeps
 // seeing their own copy with the reason on it, which is the asymmetry
 // routes/venueDashboard.js deliberately built (a hidden review is somebody
@@ -13400,32 +13424,67 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     return unsub;
   }, []);
 
-  // The confirm half of unsend, one per chat. Await, then remove: the row
-  // leaves the screen only when the tombstone is real, and a failure names
-  // itself instead of quietly resurrecting the message on reload. The same
-  // clear the live event runs (quotes and the pinned bar with it), since the
-  // server's own echo of this unsend can arrive before or after this line.
+  // The confirm half of unsend, one per chat. The row leaves the screen only
+  // when the tombstone is real, and a failure names itself instead of quietly
+  // resurrecting the message on reload. The same clear the live event runs
+  // (quotes and the pinned bar with it), since the server's own echo of this
+  // unsend can arrive before or after this line.
+  //
+  // THE TAP ANSWERS AT ONCE. The bubble used to sit unchanged for the round
+  // trip and then vanish, so a slow answer read as a tap that missed and a
+  // second Unsend went out behind the first. Now the row fades and says
+  // Unsending at once (markUnsending), leaves when the server confirms, and
+  // comes back exactly as it was, with a toast, when the server refuses. One
+  // request per message (unsendingRef), and the menus stop offering Unsend on
+  // a row that is already going. A 404 is a message already unsent, from
+  // another device, so it is cleared the same way a confirm is.
+  const unsendingRef = useRef(new Set());
   const handleUnsendFlockMessage = useCallback(async (flockId, messageId) => {
+    const key = `flock:${messageId}`;
+    if (unsendingRef.current.has(key)) return;
+    unsendingRef.current.add(key);
+    setFlocks(prev => markUnsending(prev, messageId, true));
     try {
       await unsendFlockMessage(flockId, messageId);
       clearUnsentFlockMessage(flockId, messageId);
       showToast('Message unsent.');
     } catch (err) {
-      showToast(err.message || "That didn't unsend. Try again.", 'error');
+      if (err?.status === 404) {
+        clearUnsentFlockMessage(flockId, messageId);
+        return;
+      }
+      setFlocks(prev => markUnsending(prev, messageId, false));
+      if (!err?.sessionExpired) showToast(userMessage(err, "That didn't unsend. Try again."), 'error');
+    } finally {
+      unsendingRef.current.delete(key);
     }
   }, [showToast, clearUnsentFlockMessage]);
 
   const handleUnsendDm = useCallback(async (messageId) => {
-    try {
-      await unsendDm(messageId);
+    const key = `dm:${messageId}`;
+    if (unsendingRef.current.has(key)) return;
+    unsendingRef.current.add(key);
+    setDirectMessages(prev => markUnsending(prev, messageId, true));
+    const clearUnsentDm = () => {
       noteRetraction(retractionsRef, { kind: 'dm', messageId });
       // Same helper the takedown path uses: removal plus reply-quote nulling
       // plus preview clearing, so the unsent words leave every surface at
       // once instead of only the thread.
       setDirectMessages(prev => applyTakedownToDms(prev, { contentType: 'dm', contentId: messageId }));
+    };
+    try {
+      await unsendDm(messageId);
+      clearUnsentDm();
       showToast('Message unsent.');
     } catch (err) {
-      showToast(err.message || "That didn't unsend. Try again.", 'error');
+      if (err?.status === 404) {
+        clearUnsentDm();
+        return;
+      }
+      setDirectMessages(prev => markUnsending(prev, messageId, false));
+      if (!err?.sessionExpired) showToast(userMessage(err, "That didn't unsend. Try again."), 'error');
+    } finally {
+      unsendingRef.current.delete(key);
     }
   }, [showToast]);
 
