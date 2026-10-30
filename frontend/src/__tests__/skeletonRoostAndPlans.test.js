@@ -38,6 +38,17 @@ import VenueAdvisorChat, { clearAdvisorThread } from '../components/VenueAdvisor
 
 afterEach(() => { delete window.Capacitor; });
 
+// aria-busy on the shapes alone, and the spoken line beside them: a line
+// inside a busy subtree may be held back, and these subtrees are unmounted
+// rather than turned not-busy (components/ui/Skeleton.js SkeletonStatus).
+const expectLineBesideBusyShapes = (container) => {
+  const status = screen.getByRole('status');
+  expect(status.closest('[aria-busy="true"]')).toBeNull();
+  const shapes = Array.from(container.querySelectorAll('.skeleton'));
+  expect(shapes.length).toBeGreaterThan(0);
+  for (const s of shapes) expect(s.closest('[aria-busy="true"]')).not.toBeNull();
+};
+
 describe('Roost\'s card', () => {
   beforeEach(() => clearAdvisorThread());
 
@@ -46,7 +57,9 @@ describe('Roost\'s card', () => {
     const bars = Array.from(container.querySelectorAll('.skeleton'));
     expect(bars.map((b) => `${b.style.width}x${b.style.height}`)).toEqual(['90pxx14px', '70%x12px']);
     expect(screen.getByRole('status').textContent).toBe('Loading Roost');
-    expect(container.firstChild.getAttribute('aria-busy')).toBe('true');
+    // The card is not busy itself; its two bars are, with the line beside them.
+    expect(container.firstChild.hasAttribute('aria-busy')).toBe(false);
+    expectLineBesideBusyShapes(container);
     // The two flat bars are gone.
     expect(container.innerHTML).not.toContain('var(--border-light)');
   });
@@ -61,6 +74,7 @@ describe('the Pro sheet\'s plans', () => {
     expect(cta).toHaveLength(1);
     // No price, no sentence standing in for the plans.
     expect(container.textContent).not.toMatch(/\$|Loading plans…|Loading plans\.\.\./);
+    expectLineBesideBusyShapes(container);
   };
 
   test('on the web, while the plans come from the server', () => {

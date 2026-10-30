@@ -381,60 +381,66 @@ export function SavingCheckbox({ checked, onSave, ...rest }) {
 // of text where the list will be. `kind` is the row: a deal (title, the time
 // it runs, the views count, Edit and Delete), a flock (name, when, the status
 // pill) or an event (title, when, the status line, Edit and Delete). The
-// sentence is for screen readers.
+// sentence is for screen readers, and it sits beside the busy rows rather
+// than inside them (components/ui/Skeleton.js SkeletonStatus says why).
 const ROW_SKELETON_BOX = { padding: '10px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', marginBottom: '8px' };
 const skeletonBar = (width, height, extra = {}) => (
   <div aria-hidden="true" className="skeleton" style={{ width, height, borderRadius: '4px', ...extra }} />
 );
 export function OwnerListSkeleton({ kind, label }) {
   return (
-    <div aria-busy="true">
+    <>
       <p className="sr-only" role="status">{label}</p>
-      {[0, 1].map((i) => (
-        <div key={i} style={ROW_SKELETON_BOX}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: kind === 'flock' ? 'center' : 'flex-start', gap: '10px' }}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              {skeletonBar('55%', '14px', { marginBottom: '6px' })}
-              {skeletonBar(kind === 'flock' ? '35%' : '40%', '12px')}
-              {kind === 'event' && skeletonBar('60%', '12px', { marginTop: '6px' })}
+      <div aria-busy="true">
+        {[0, 1].map((i) => (
+          <div key={i} style={ROW_SKELETON_BOX}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: kind === 'flock' ? 'center' : 'flex-start', gap: '10px' }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                {skeletonBar('55%', '14px', { marginBottom: '6px' })}
+                {skeletonBar(kind === 'flock' ? '35%' : '40%', '12px')}
+                {kind === 'event' && skeletonBar('60%', '12px', { marginTop: '6px' })}
+              </div>
+              {kind === 'flock'
+                ? skeletonBar('84px', '24px', { borderRadius: '12px', flexShrink: 0 })
+                : (
+                  <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+                    {skeletonBar('26px', '26px', { borderRadius: '6px' })}
+                    {skeletonBar('26px', '26px', { borderRadius: '6px' })}
+                  </div>
+                )}
             </div>
-            {kind === 'flock'
-              ? skeletonBar('84px', '24px', { borderRadius: '12px', flexShrink: 0 })
-              : (
-                <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
-                  {skeletonBar('26px', '26px', { borderRadius: '6px' })}
-                  {skeletonBar('26px', '26px', { borderRadius: '6px' })}
-                </div>
-              )}
+            {kind === 'deal' && skeletonBar('64px', '12px', { marginTop: '10px' })}
           </div>
-          {kind === 'deal' && skeletonBar('64px', '12px', { marginTop: '10px' })}
-        </div>
-      ))}
-    </div>
+        ))}
+      </div>
+    </>
   );
 }
 
 // The Reviews tab's rating card while the reviews are on their way: the score
 // block (the average, its five stars, the count) and the five 6px bars beside
-// it, grey, in their own places.
+// it, grey, in their own places. The sentence sits beside the busy card, as in
+// OwnerListSkeleton.
 export function ReviewStatsSkeleton() {
   return (
-    <div aria-busy="true" style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+    <>
       <p className="sr-only" role="status">Loading your reviews.</p>
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
-        {skeletonBar('40px', '28px', { borderRadius: '6px' })}
-        {skeletonBar('78px', '14px')}
-        {skeletonBar('56px', '12px')}
+      <div aria-busy="true" style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
+          {skeletonBar('40px', '28px', { borderRadius: '6px' })}
+          {skeletonBar('78px', '14px')}
+          {skeletonBar('56px', '12px')}
+        </div>
+        <div style={{ flex: 1 }}>
+          {[5, 4, 3, 2, 1].map((rating) => (
+            <div key={rating} style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+              {skeletonBar('12px', '12px')}
+              {skeletonBar('auto', '6px', { flex: 1, borderRadius: '3px' })}
+            </div>
+          ))}
+        </div>
       </div>
-      <div style={{ flex: 1 }}>
-        {[5, 4, 3, 2, 1].map((rating) => (
-          <div key={rating} style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
-            {skeletonBar('12px', '12px')}
-            {skeletonBar('auto', '6px', { flex: 1, borderRadius: '3px' })}
-          </div>
-        ))}
-      </div>
-    </div>
+    </>
   );
 }
 
@@ -3236,16 +3242,17 @@ export default function VenueDashboard({
                   Pick a photo from your Google listing.
                 </p>
                 {/* The photos' own grid while they load, four grey tiles at
-                    the tiles' size, rather than a spinner over an empty sheet. */}
+                    the tiles' size, rather than a spinner over an empty sheet.
+                    The grid is the busy part; the sentence sits beside it. */}
                 {venueLogoPicker === 'loading' && (
-                  <div aria-busy="true">
+                  <>
                     <p className="sr-only" role="status">Loading photos</p>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '16px' }}>
+                    <div aria-busy="true" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '16px' }}>
                       {[0, 1, 2, 3].map((i) => (
                         <div key={i} aria-hidden="true" className="skeleton" style={{ height: '96px', borderRadius: '12px' }} />
                       ))}
                     </div>
-                  </div>
+                  </>
                 )}
                 {venueLogoPicker === 'error' && (
                   <div style={{ textAlign: 'center', padding: '8px 0 16px' }}>

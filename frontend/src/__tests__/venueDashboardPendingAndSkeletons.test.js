@@ -91,6 +91,17 @@ function dashboard(overrides = {}) {
 }
 const settle = () => act(async () => {});
 const skeletons = (container) => [...container.querySelectorAll('.skeleton')];
+// The spoken line sits beside the busy rows, never inside them: a line in a
+// busy subtree may be held back, and these are unmounted rather than turned
+// not-busy (components/ui/Skeleton.js SkeletonStatus says why).
+const expectLineBesideBusy = (text) => {
+  const line = screen.getAllByRole('status').find((s) => s.textContent === text);
+  expect(line).toBeDefined();
+  expect(line.closest('[aria-busy="true"]')).toBeNull();
+  const busy = line.nextElementSibling;
+  expect(busy.getAttribute('aria-busy')).toBe('true');
+  expect(busy.querySelector('.skeleton')).not.toBeNull();
+};
 
 describe('a list whose first read is out draws its rows, not a sentence', () => {
   test('deals: two rows in the deal\'s shape, and no claim either way', async () => {
@@ -100,6 +111,7 @@ describe('a list whose first read is out draws its rows, not a sentence', () => 
     expect(container.textContent).not.toMatch(/Loading your deals…|No promotions yet/);
     // Two rows, each a title, a time line, Edit, Delete and the views count.
     expect(skeletons(container).length).toBe(10);
+    expectLineBesideBusy('Loading your deals.');
   });
 
   test('events and the flocks voting on the venue: two rows each', async () => {
@@ -111,6 +123,8 @@ describe('a list whose first read is out draws its rows, not a sentence', () => 
     // Flock rows: name, when and the status pill. Event rows: title, when,
     // the status line, Edit and Delete.
     expect(skeletons(container).length).toBe(2 * 3 + 2 * 5);
+    expectLineBesideBusy('Loading the flocks voting on you.');
+    expectLineBesideBusy('Loading your events.');
   });
 
   test('reviews: the score block and five 6px bars, with no number in them', async () => {
@@ -120,6 +134,11 @@ describe('a list whose first read is out draws its rows, not a sentence', () => 
     expect(container.textContent).not.toMatch(/No reviews yet|\d(\.\d)? out of 5/);
     const bars = skeletons(container).filter((el) => el.style.height === '6px');
     expect(bars).toHaveLength(5);
+    expectLineBesideBusy('Loading your reviews.');
+    // The card's own row layout stays on the busy part.
+    const card = screen.getByText('Loading your reviews.').nextElementSibling;
+    expect(card.style.display).toBe('flex');
+    expect(card.style.gap).toBe('16px');
   });
 
   test('the logo picker: four tiles at the tiles\' own size, not a spinner', async () => {
@@ -128,6 +147,8 @@ describe('a list whose first read is out draws its rows, not a sentence', () => 
     expect(screen.getByRole('status').textContent).toBe('Loading photos');
     const tiles = skeletons(container).filter((el) => el.style.height === '96px');
     expect(tiles).toHaveLength(4);
+    expectLineBesideBusy('Loading photos');
+    expect(screen.getByText('Loading photos').nextElementSibling.style.display).toBe('grid');
     const loading = DASH.slice(DASH.indexOf("{venueLogoPicker === 'loading' && ("), DASH.indexOf("{venueLogoPicker === 'error' && ("));
     expect(loading.length).toBeGreaterThan(0);
     expect(loading).not.toMatch(/animation: 'spin/);

@@ -482,6 +482,14 @@ describe('tapping Settle Up opens the sheet instead of settling anything', () =>
     expect(text).toContain('Loading the ways to pay.');
     expect(text).not.toMatch(/has not added|Pay them|\$0\.00/);
     expect(loading.container.querySelectorAll('.skeleton').length).toBeGreaterThan(0);
+    // The grey rows are the busy part and the sentence sits beside them, not
+    // inside (components/ui/Skeleton.js SkeletonStatus says why); Close is in
+    // no busy element.
+    const line = loading.getByRole('status');
+    expect(line.textContent).toBe('Loading the ways to pay.');
+    expect(line.closest('[aria-busy="true"]')).toBeNull();
+    for (const shape of loading.container.querySelectorAll('.skeleton')) expect(shape.closest('[aria-busy="true"]')).not.toBeNull();
+    expect(loading.getByText('Close').closest('[aria-busy="true"]')).toBeNull();
     loading.getByText('Close').click();
     expect(close).toHaveBeenCalledWith(false);
     loading.unmount();

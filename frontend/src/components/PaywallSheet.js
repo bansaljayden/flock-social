@@ -561,21 +561,25 @@ const PaywallSheet = ({ open, onClose, showToast, onUpgraded, onAlreadyPro, acco
   // WHILE THE STORE OR STRIPE ANSWERS: the two plan cards and the button, in
   // planCard's and cta's own sizes, with no price in them, because none has
   // been read. "Loading plans..." used to sit alone where both go, and the
-  // sheet grew by their height when they landed.
+  // sheet grew by their height when they landed. The sentence sits beside the
+  // busy shapes, not inside them (components/ui/Skeleton.js SkeletonStatus
+  // says why).
   const plansSkeleton = (
-    <div aria-busy="true">
+    <>
       <p className="sr-only" role="status">Loading plans</p>
-      <div aria-hidden="true" style={{ display: 'flex', gap: '10px', marginBottom: '14px' }}>
-        {[96, 56].map((w) => (
-          <div key={w} style={{ flex: 1, minWidth: 0, height: '92px', boxSizing: 'border-box', padding: '12px', borderRadius: '14px', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)' }}>
-            <SkeletonBar width={w} height={13} style={{ margin: '2px 0 9px' }} />
-            <SkeletonBar width="72%" height={20} radius={5} style={{ marginBottom: '7px' }} />
-            <SkeletonBar width="58%" height={10} />
-          </div>
-        ))}
+      <div aria-busy="true">
+        <div aria-hidden="true" style={{ display: 'flex', gap: '10px', marginBottom: '14px' }}>
+          {[96, 56].map((w) => (
+            <div key={w} style={{ flex: 1, minWidth: 0, height: '92px', boxSizing: 'border-box', padding: '12px', borderRadius: '14px', border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)' }}>
+              <SkeletonBar width={w} height={13} style={{ margin: '2px 0 9px' }} />
+              <SkeletonBar width="72%" height={20} radius={5} style={{ marginBottom: '7px' }} />
+              <SkeletonBar width="58%" height={10} />
+            </div>
+          ))}
+        </div>
+        <SkeletonBar height={49} radius={14} />
       </div>
-      <SkeletonBar height={49} radius={14} />
-    </div>
+    </>
   );
 
   // The CTA says what it charges, and follows the plan selected.

@@ -31,6 +31,15 @@ function expectNoSpinnerOrLoadingText(container) {
   expect(container.textContent).not.toMatch(/Loading\.\.\.|Loading members/);
 }
 
+// The screen used to carry aria-busy whole, so its working Back button and
+// its status line sat inside a region assistive tech is told to wait on.
+// Busy is for shapes alone now (components/ui/Skeleton.js SkeletonStatus).
+function expectNothingLiveInsideBusy(container) {
+  for (const control of container.querySelectorAll('button')) expect(control.closest('[aria-busy="true"]')).toBeNull();
+  for (const status of container.querySelectorAll('[role="status"]')) expect(status.closest('[aria-busy="true"]')).toBeNull();
+  expect(container.firstChild.hasAttribute('aria-busy')).toBe(false);
+}
+
 describe('the opening screens', () => {
   test('a plan\'s chat: the navy header with a way back, the name and state as dark bars, and the bubbles', () => {
     const onBack = jest.fn();
@@ -47,6 +56,7 @@ describe('the opening screens', () => {
     expect(container.querySelector('img')).toBeNull();
     expect(screen.queryByRole('heading')).toBeNull();
     expectNoSpinnerOrLoadingText(container);
+    expectNothingLiveInsideBusy(container);
   });
 
   test('a conversation: the face beside the name, one line, and the bubbles', () => {
@@ -56,6 +66,7 @@ describe('the opening screens', () => {
     expect(dark.filter((b) => b.style.borderRadius === '50%').map((b) => b.style.width)).toEqual(['34px', '34px']);
     expect(dark).toHaveLength(3);
     expectNoSpinnerOrLoadingText(container);
+    expectNothingLiveInsideBusy(container);
   });
 
   test('a plan: the plan screen\'s header, its two pills, and the Going row', () => {
@@ -69,6 +80,9 @@ describe('the opening screens', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Back to your plans' }));
     expect(onBack).toHaveBeenCalledTimes(1);
     expectNoSpinnerOrLoadingText(container);
+    expectNothingLiveInsideBusy(container);
+    // The Going row's faces are the busy part, with their line beside them.
+    for (const face of faces) expect(face.closest('[aria-busy="true"]')).not.toBeNull();
   });
 });
 

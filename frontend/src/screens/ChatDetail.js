@@ -3397,15 +3397,19 @@ export default function ChatDetail({
                  its few pixels read as a picture arriving. A row with no
                  thumbnail gets a photo-sized block in the dark tone. Either
                  way the words are for a screen reader, not a sentence over
-                 the scrim. */
-              <div aria-busy="true" style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                 the scrim, and they sit beside the busy picture rather than
+                 inside it (components/ui/Skeleton.js SkeletonStatus says
+                 why). */
+              <>
                 <span className="sr-only" role="status">Loading the full photo</span>
-                {imageViewer.thumb ? (
-                  <img src={imageViewer.thumb} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: '10px', filter: 'blur(4px)' }} />
-                ) : (
-                  <SkeletonBlock dark width="min(80vw, 320px)" height="min(80vw, 320px)" radius={10} />
-                )}
-              </div>
+                <div aria-busy="true" style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  {imageViewer.thumb ? (
+                    <img src={imageViewer.thumb} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: '10px', filter: 'blur(4px)' }} />
+                  ) : (
+                    <SkeletonBlock dark width="min(80vw, 320px)" height="min(80vw, 320px)" radius={10} />
+                  )}
+                </div>
+              </>
             )}
           </div>
         )}

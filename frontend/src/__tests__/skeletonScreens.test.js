@@ -54,6 +54,24 @@ function expectShapesHidden(container) {
   }
 }
 
+/**
+ * aria-busy marks the shapes and nothing else. A status line inside a busy
+ * subtree may be held back by assistive tech, and a skeleton is unmounted
+ * rather than turned not-busy, so a line in there might never be spoken; a
+ * control in there is inside a region assistive tech is told to wait on.
+ */
+function expectBusyOnShapesOnly(container) {
+  const statuses = container.querySelectorAll('[role="status"]');
+  expect(statuses.length).toBeGreaterThan(0);
+  for (const s of statuses) expect(s.closest('[aria-busy="true"]')).toBeNull();
+  const busy = container.querySelectorAll('[aria-busy="true"]');
+  expect(busy.length).toBeGreaterThan(0);
+  for (const b of busy) expect(b.querySelector('button, a, input, select, textarea')).toBeNull();
+  for (const el of container.querySelectorAll('.skeleton')) {
+    expect(el.closest('[aria-busy="true"]')).not.toBeNull();
+  }
+}
+
 describe('the parts', () => {
   test('a bar is a .skeleton span drawn as a block, aria-hidden, in the size it was given', () => {
     const { container } = render(<SkeletonBar width={28} height={20} radius={5} />);
@@ -85,12 +103,19 @@ describe('the parts', () => {
     expect(sourceOf('SkeletonRow')).toContain("...(bare ? null : { border: '1px solid var(--border-subtle)', backgroundColor: 'var(--bg-card-solid)' })");
   });
 
-  test('the status says its sentence in a real text node and marks the region busy', () => {
-    render(<SkeletonStatus label="Loading your flocks"><SkeletonBar /></SkeletonStatus>);
+  test('the status says its sentence in a real text node, beside the busy shapes rather than inside them', () => {
+    const { container } = render(<SkeletonStatus label="Loading your flocks" style={{ display: 'flex', gap: '8px' }}><SkeletonBar /></SkeletonStatus>);
     const status = screen.getByRole('status');
     expect(status.textContent).toBe('Loading your flocks');
     expect(status.className).toBe('sr-only');
-    expect(status.parentElement.getAttribute('aria-busy')).toBe('true');
+    // The line, then the busy wrapper as its sibling, which carries the
+    // caller's style and the shapes.
+    expect(status.parentElement).toBe(container);
+    const busy = status.nextElementSibling;
+    expect(busy.getAttribute('aria-busy')).toBe('true');
+    expect(busy.style.gap).toBe('8px');
+    expect(busy.querySelector('.skeleton')).not.toBeNull();
+    expectBusyOnShapesOnly(container);
   });
 });
 
@@ -120,10 +145,14 @@ describe('the flock card, on the Nest and on Past flocks', () => {
 
   test('a list of them sits in the list\'s own 10px column under one status', () => {
     const { container } = render(<FlockListSkeleton label="Loading your flocks" />);
+    expect(screen.getAllByRole('status')).toHaveLength(1);
     expect(screen.getByRole('status').textContent).toBe('Loading your flocks');
-    expect(container.firstChild.style.gap).toBe('10px');
-    expect(container.firstChild.children).toHaveLength(4); // the status line and three cards
+    // The status line beside the column, and the column holding the cards.
+    const column = container.querySelector('[aria-busy="true"]');
+    expect(column.style.gap).toBe('10px');
+    expect(column.children).toHaveLength(3);
     expectShapesHidden(container);
+    expectBusyOnShapesOnly(container);
   });
 });
 
@@ -136,6 +165,7 @@ describe('the roster and the event card', () => {
     const names = Array.from(container.querySelectorAll('.skeleton')).filter((b) => b.style.width === '36px');
     expect(names).toHaveLength(4);
     expect(screen.getByRole('status').textContent).toBe('Loading who is going');
+    expectBusyOnShapesOnly(container);
   });
 
   test('the event card: radius 16, the 132px header, three pills and the 34px buttons', () => {
@@ -162,9 +192,18 @@ describe('the Nest, before anything is known', () => {
     const { container } = render(<NestSkeleton />);
     const root = container.firstChild;
     expect(root.getAttribute('data-nest-skeleton')).toBe('phone');
-    expect(root.getAttribute('aria-busy')).toBe('true');
     expect(root.style.position).toBe('fixed');
     expect(screen.getByRole('status').textContent).toBe('Loading Flock.');
+    // The line is the root's own child; the screen beside it is what is busy,
+    // in a column that fills the root as the screen's parts did.
+    expect(root.hasAttribute('aria-busy')).toBe(false);
+    expect(screen.getByRole('status').parentElement).toBe(root);
+    const column = root.children[1];
+    expect(column.getAttribute('aria-busy')).toBe('true');
+    expect(column.style.flex).toMatch(/^1/);
+    expect(parseFloat(column.style.minHeight)).toBe(0);
+    expect(column.style.flexDirection).toBe('column');
+    expectBusyOnShapesOnly(container);
     // The old splash was a fixed navy gradient. This one is the theme's own
     // ground, the safe areas and the tab bar's tokens.
     expect(container.innerHTML).not.toMatch(/#1a3a5c|#2d5a87|linear-gradient/);
@@ -197,6 +236,9 @@ describe('the Nest, before anything is known', () => {
     expect(frame.style.width).toBe('375px');
     expect(frame.style.maxHeight).toBe('812px');
     expect(frame.style.borderRadius).toBe('44px');
+    // The frame is the busy part; the line is beside it.
+    expect(frame.getAttribute('aria-busy')).toBe('true');
+    expectBusyOnShapesOnly(container);
   });
 });
 
@@ -246,6 +288,41 @@ describe('the boot paints, index.js then App.js', () => {
       expect(container.firstChild.style.background).toBe('rgb(11, 26, 46)');
       expect(screen.getByRole('status').textContent).toBe('Loading Flock.');
     });
+  });
+});
+
+describe('aria-busy marks the shapes, never the line that speaks for them', () => {
+  // Every source file, walked, so a wait added later is held to the rule too.
+  // The pattern was in eleven places: a busy element whose first child is
+  // the role="status" line (or one element that is both), so the line sat in
+  // a subtree assistive tech may wait on, and the subtree is unmounted rather
+  // than turned not-busy when the wait ends.
+  const files = [];
+  const walk = (dir) => {
+    for (const name of fs.readdirSync(dir)) {
+      if (name === '__tests__' || name === 'node_modules') continue;
+      const p = path.join(dir, name);
+      if (fs.statSync(p).isDirectory()) walk(p);
+      else if (/\.jsx?$/.test(name)) files.push(p);
+    }
+  };
+  walk(SRC);
+
+  test('the walk found the app', () => {
+    expect(files.length).toBeGreaterThan(100);
+    expect(files.some((f) => f.endsWith(path.join('ui', 'Skeleton.js')))).toBe(true);
+  });
+
+  test('no busy element opens on a status line, and no status line is itself busy', () => {
+    const opensOnStatus = /aria-busy="true"[^>]*>\s*(?:\{\/\*[\s\S]*?\*\/\}\s*)*<[a-z]+\b[^>]*role="status"/;
+    const bothOnOneTag = /<[a-z]+\b[^>]*(?:aria-busy="true"[^>]*role="status"|role="status"[^>]*aria-busy="true")/;
+    const offenders = files
+      .filter((f) => {
+        const src = fs.readFileSync(f, 'utf8');
+        return opensOnStatus.test(src) || bothOnOneTag.test(src);
+      })
+      .map((f) => path.relative(SRC, f));
+    expect(offenders).toEqual([]);
   });
 });
 

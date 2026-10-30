@@ -1439,15 +1439,18 @@ export default function DmDetail({
             <p role="status" style={{ color: 'white', fontSize: 'var(--t-body)', textAlign: 'center' }}>{imageViewer.error}</p>
           ) : (
             /* While the original is fetched, the row's own thumbnail, as in
-               ChatDetail's viewer, which says why. */
-            <div aria-busy="true" style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+               ChatDetail's viewer, which says why, with the sentence beside
+               the busy picture as it is there. */
+            <>
               <span className="sr-only" role="status">Loading the full photo</span>
-              {imageViewer.thumb ? (
-                <img src={imageViewer.thumb} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: '10px', filter: 'blur(4px)' }} />
-              ) : (
-                <SkeletonBlock dark width="min(80vw, 320px)" height="min(80vw, 320px)" radius={10} />
-              )}
-            </div>
+              <div aria-busy="true" style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {imageViewer.thumb ? (
+                  <img src={imageViewer.thumb} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: '10px', filter: 'blur(4px)' }} />
+                ) : (
+                  <SkeletonBlock dark width="min(80vw, 320px)" height="min(80vw, 320px)" radius={10} />
+                )}
+              </div>
+            </>
           )}
         </div>
       )}

@@ -438,7 +438,16 @@ describe('the vote sheet', () => {
 });
 
 describe('the photo viewers', () => {
-  const photoRow = { id: 41, sender: 'Ava', senderId: 2, text: '', sentAt: '2026-10-30T20:00:00', message_type: 'image', thumb: THUMB, image: null, reactions: [] };
+  // The picture standing in is the busy part; the sentence is beside it, not
+  // inside it, and so is the Close button (components/ui/Skeleton.js
+  // SkeletonStatus says why).
+  const expectLineBesideBusyPicture = (viewer, picture) => {
+    const line = within(viewer).getByRole('status');
+    expect(line.closest('[aria-busy="true"]')).toBeNull();
+    expect(picture.closest('[aria-busy="true"]')).not.toBeNull();
+    expect(within(viewer).getByRole('button', { name: 'Close photo' }).closest('[aria-busy="true"]')).toBeNull();
+  };
+  const photoRow ={ id: 41, sender: 'Ava', senderId: 2, text: '', sentAt: '2026-10-30T20:00:00', message_type: 'image', thumb: THUMB, image: null, reactions: [] };
 
   test('the flock chat shows the row\'s thumbnail until the original lands, and says so to a screen reader', () => {
     const { container } = render(React.createElement(ChatDetail, chatProps({ flock: { messages: [photoRow] } })));
@@ -448,6 +457,7 @@ describe('the photo viewers', () => {
     const shown = Array.from(viewer.querySelectorAll('img')).filter((img) => img.getAttribute('src') === THUMB);
     expect(shown).toHaveLength(1);
     expect(within(viewer).getByRole('status').textContent).toBe('Loading the full photo');
+    expectLineBesideBusyPicture(viewer, shown[0]);
     expectNoSpinnerOrLoadingText(container);
   });
 
@@ -460,6 +470,7 @@ describe('the photo viewers', () => {
     const shown = Array.from(viewer.querySelectorAll('img')).filter((img) => img.getAttribute('src') === THUMB);
     expect(shown).toHaveLength(1);
     expect(within(viewer).getByRole('status').textContent).toBe('Loading the full photo');
+    expectLineBesideBusyPicture(viewer, shown[0]);
     expectNoSpinnerOrLoadingText(container);
   });
 

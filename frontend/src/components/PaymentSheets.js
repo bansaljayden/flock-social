@@ -119,13 +119,17 @@ const PaymentSheets = ({
           <DialogBehavior onClose={close} label={`Pay ${payee || 'them'}`} />
           <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px 16px 0 0', padding: '20px', width: '100%', maxWidth: '420px', boxSizing: 'border-box', paddingBottom: 'calc(20px + var(--safe-bottom))' }} onClick={e => e.stopPropagation()}>
             {loading ? (
-              <div aria-busy="true">
+              /* The sentence beside the busy shapes, not inside them
+                 (components/ui/Skeleton.js SkeletonStatus says why). */
+              <>
                 <p className="sr-only" role="status">Loading the ways to pay.</p>
-                <div className="skeleton" style={{ width: '45%', height: '22px', borderRadius: '6px', margin: '0 0 8px' }} />
-                <div className="skeleton" style={{ width: '60%', height: '14px', borderRadius: '4px', margin: '0 0 18px' }} />
-                <div className="skeleton" style={{ width: '50%', height: '16px', borderRadius: '4px', margin: '2px 0 6px' }} />
-                <div className="skeleton" style={{ width: '35%', height: '12px', borderRadius: '4px', margin: '0 0 13px' }} />
-              </div>
+                <div aria-busy="true">
+                  <div className="skeleton" style={{ width: '45%', height: '22px', borderRadius: '6px', margin: '0 0 8px' }} />
+                  <div className="skeleton" style={{ width: '60%', height: '14px', borderRadius: '4px', margin: '0 0 18px' }} />
+                  <div className="skeleton" style={{ width: '50%', height: '16px', borderRadius: '4px', margin: '2px 0 6px' }} />
+                  <div className="skeleton" style={{ width: '35%', height: '12px', borderRadius: '4px', margin: '0 0 13px' }} />
+                </div>
+              </>
             ) : (
               <>
                 <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>Pay {payee || 'them'}</h3>

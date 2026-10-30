@@ -16,7 +16,8 @@
  *      numbers, no names, no map pins, no counts.
  *   3. One spoken status per wait. Every shape here is aria-hidden; the words
  *      come from SkeletonStatus, or from a role="status" line the caller
- *      already has.
+ *      already has. aria-busy marks the shapes' wrapper only, and the line
+ *      is beside it, never inside it (SkeletonStatus says why).
  *
  * NestSkeleton is the one whole screen in this file, because two places paint
  * it: index.js while the app's chunk is on the wire, and App.js while GET /me
@@ -119,15 +120,21 @@ export function SkeletonRow({
  * one thing a screen reader hears while the region waits: a real sentence in
  * an sr-only line with role="status" (a status carrying nothing but an
  * aria-label is announced unevenly, which is why SearchResultsSkeleton in
- * App.js does the same), and aria-busy on the region itself. The line is
- * absolutely positioned, so it takes no room in a flex or grid parent.
+ * App.js does the same).
+ *
+ * aria-busy goes on the shapes' wrapper, and the line is that wrapper's
+ * sibling, never inside it. Assistive tech may hold back what a live region
+ * says while it sits in a busy subtree, and this subtree is unmounted when
+ * the wait ends rather than turned not-busy, so a line inside it might never
+ * be spoken at all. The line is absolutely positioned, so it takes no room in
+ * a flex or grid parent, and `style` still lays out the shapes.
  */
 export function SkeletonStatus({ label = 'Loading', children, style }) {
   return (
-    <div aria-busy="true" style={style}>
+    <>
       <span className="sr-only" role="status">{label}</span>
-      {children}
-    </div>
+      <div aria-busy="true" style={style}>{children}</div>
+    </>
   );
 }
 
@@ -249,6 +256,9 @@ const themeIsDark = () => {
  * included. In a wider browser it draws inside the same 375px frame the app
  * itself draws there (App.js makeStyles, phoneContainer and notch with
  * fullBleed off), so the frame does not jump when the app arrives.
+ *
+ * The status line sits beside the busy part, not inside it, for the reason
+ * SkeletonStatus gives: aria-busy is on the screen's shapes alone.
  */
 export function NestSkeleton({ label = 'Loading Flock.' }) {
   const fullBleed = phoneSized();
@@ -309,16 +319,20 @@ export function NestSkeleton({ label = 'Loading Flock.' }) {
 
   if (fullBleed) {
     return (
-      <div aria-busy="true" data-nest-skeleton="phone" style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', backgroundColor: 'var(--bg-primary)' }}>
+      <div data-nest-skeleton="phone" style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', backgroundColor: 'var(--bg-primary)' }}>
         <p className="sr-only" role="status">{label}</p>
-        {screen}
+        {/* The screen's column, one level down so it can carry aria-busy
+            without the line: it fills the root as the three parts did. */}
+        <div aria-busy="true" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+          {screen}
+        </div>
       </div>
     );
   }
   return (
-    <div aria-busy="true" data-nest-skeleton="frame" style={{ position: 'fixed', inset: 0, overflow: 'auto', backgroundColor: '#1a1a2e', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px', boxSizing: 'border-box' }}>
+    <div data-nest-skeleton="frame" style={{ position: 'fixed', inset: 0, overflow: 'auto', backgroundColor: '#1a1a2e', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px', boxSizing: 'border-box' }}>
       <p className="sr-only" role="status">{label}</p>
-      <div style={{
+      <div aria-busy="true" style={{
         width: '375px',
         maxWidth: '375px',
         height: '100vh',

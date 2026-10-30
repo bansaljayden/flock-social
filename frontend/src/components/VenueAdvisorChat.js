@@ -1107,13 +1107,17 @@ const VenueAdvisorChat = ({ fetchQuestions, ask, askQuestion, grantConsent, with
   // The card's name line and a line under it, in the global skeleton (the
   // sweep and its reduced-motion rule live in index.css). They were two flat
   // grey bars in --border-light that never moved and that no screen reader
-  // heard as a wait.
+  // heard as a wait. The two bars are the busy part and the sentence sits
+  // beside them, not inside (components/ui/Skeleton.js SkeletonStatus says
+  // why).
   if (state === 'loading') {
     return (
-      <div style={CARD_STYLE} aria-busy="true">
+      <div style={CARD_STYLE}>
         <span className="sr-only" role="status">{`Loading ${ADVISOR_NAME}`}</span>
-        <SkeletonBar width={90} height={14} />
-        <SkeletonBar width="70%" height={12} style={{ marginTop: '10px' }} />
+        <div aria-busy="true">
+          <SkeletonBar width={90} height={14} />
+          <SkeletonBar width="70%" height={12} style={{ marginTop: '10px' }} />
+        </div>
       </div>
     );
   }

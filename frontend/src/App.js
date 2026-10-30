@@ -3073,13 +3073,20 @@ const ChatSkeleton = ({ label = 'Loading messages' }) => (
    moduleScopeThemeColors.test.js gives: only FlockAppInner's palette follows
    the theme. The status words come from ChatSkeleton's and RosterSkeleton's
    own status, so the wait is announced once. Exported for
-   skeletonColdStart.test.js, which renders all three. */
+   skeletonColdStart.test.js, which renders all three.
+
+   NOTHING HERE IS MARKED BUSY BUT THE SHAPES. The whole screen used to carry
+   aria-busy, which put a working Back button, and the status line, inside a
+   region assistive tech is told to wait on. The header's shapes are
+   aria-hidden, RosterSkeleton marks its own faces busy with its sentence
+   beside them (components/ui/Skeleton.js SkeletonStatus), and ChatSkeleton
+   is a status of its own. */
 export const OpeningScreenSkeleton = ({ kind, label, colors, onBack }) => {
   if (kind === 'plan') {
     // screens/FlockDetail.js: the round back button, the name and host lines,
     // the two status pills, then the Going card in the scroll area.
     return (
-      <div aria-busy="true" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
         <div style={{ background: colors.navyBg, padding: '16px', paddingTop: '20px', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '14px' }}>
             <button className="hit44" aria-label="Back to your plans" onClick={onBack} style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'rgba(255,255,255,0.16)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft('white', 16)}</button>
@@ -3106,7 +3113,7 @@ export const OpeningScreenSkeleton = ({ kind, label, colors, onBack }) => {
   // name: the back arrow, the name (and for a plan its state line), the round
   // menu button. Then the bubbles the thread shows while its history loads.
   return (
-    <div aria-busy="true" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-card-solid)' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-card-solid)' }}>
       <div style={{ padding: '6px 10px 5px 4px', background: colors.navyBg, flexShrink: 0, boxShadow: '0 2px 10px rgba(0,0,0,0.1)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
           <button aria-label="Back" className="hit44" onClick={onBack} style={{ width: '34px', height: '34px', borderRadius: '17px', background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft('white', 20)}</button>
