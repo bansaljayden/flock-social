@@ -3855,11 +3855,37 @@ const intelFailure = (err) => ({
     || 'The forecast request did not come back. Check your connection and try again.',
 });
 
-const Toggle = ({ on, onChange, label }) => (
-  <button className="hit44" role="switch" aria-checked={!!on} aria-label={label} onClick={onChange} style={{ width: '44px', height: '24px', borderRadius: '12px', border: 'none', backgroundColor: on ? 'var(--toggle-on)' : 'var(--toggle-off)', cursor: 'pointer', position: 'relative', transition: 'background-color 0.2s' }}>
-    <div style={{ width: '20px', height: '20px', borderRadius: '10px', backgroundColor: 'var(--bg-card-solid)', position: 'absolute', top: '2px', left: on ? '22px' : '2px', transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }} />
-  </button>
-);
+/* A SWITCH THAT WRITES TO THE SERVER MOVES ON THE TAP.
+ *
+ * Find me by phone and Birdie's use of Gemini are saved on the server, and
+ * their switches used to sit where they were until the answer came back, which
+ * reads as a tap that missed. While a write is out, the switch draws the value
+ * it is heading to, dimmed and deaf to a second tap, and when the write ends
+ * it draws `on` again, the server's own answer: moved if the write landed,
+ * back where it was if it was refused (the handler says why with a toast).
+ *
+ * `pendingOn` carries that value from a caller that can pass it. The settings
+ * screen draws its switches with a label and nothing else, so for those the
+ * value comes through PendingSwitchesContext, keyed by the switch's label
+ * (App.js pendingSwitches). __tests__/tapsAnswerAtOnce.test.js holds the two
+ * labels here to the ones ProfileSettings draws.
+ */
+const PendingSwitchesContext = React.createContext(null);
+const PHONE_DISCOVERY_SWITCH = 'Let friends find me by my phone number';
+const BIRDIE_CONSENT_SWITCH = "Let Birdie use Google's Gemini";
+
+const Toggle = ({ on, onChange, label, pendingOn }) => {
+  const pendingByLabel = React.useContext(PendingSwitchesContext);
+  const pending = typeof pendingOn === 'boolean' ? pendingOn
+    : (pendingByLabel && typeof pendingByLabel[label] === 'boolean' ? pendingByLabel[label] : null);
+  const saving = pending !== null;
+  const shown = saving ? pending : !!on;
+  return (
+    <button className="hit44" role="switch" aria-checked={shown} aria-label={label} aria-busy={saving || undefined} onClick={saving ? undefined : onChange} style={{ width: '44px', height: '24px', borderRadius: '12px', border: 'none', backgroundColor: shown ? 'var(--toggle-on)' : 'var(--toggle-off)', cursor: saving ? 'wait' : 'pointer', opacity: saving ? 0.6 : 1, position: 'relative', transition: 'background-color 0.2s, opacity 0.2s' }}>
+      <div style={{ width: '20px', height: '20px', borderRadius: '10px', backgroundColor: 'var(--bg-card-solid)', position: 'absolute', top: '2px', left: shown ? '22px' : '2px', transition: 'left 0.2s', boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }} />
+    </button>
+  );
+};
 
 // SVG Icons for navigation. The stroke is `currentColor`: the tab button in
 // BottomNav sets `color` from the theme-aware palette, which this module-scope
@@ -7368,25 +7394,45 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const birdieConsented = !!authUser?.birdie_ai_consent_at;
   const birdieConsentedRef = useRef(birdieConsented);
   birdieConsentedRef.current = birdieConsented;
-  const [birdieConsentBusy, setBirdieConsentBusy] = useState(false);
+  // Where the answer is heading while it is being saved, or null. The Settings
+  // switch draws it at once, dimmed (Toggle, pendingSwitches below), and
+  // settles on authUser's copy, the server's answer, when the write ends.
+  const [birdieConsentTo, setBirdieConsentTo] = useState(null);
+  const birdieConsentBusy = birdieConsentTo !== null;
   const [birdieConsentError, setBirdieConsentError] = useState('');
+  // Whether the Birdie panel is open, read when an answer fails (below).
+  const birdiePanelOpenRef = useRef(false);
+  birdiePanelOpenRef.current = aiChatMode !== 'bubble';
+  // One answer in flight at a time: the busy flag is read from the render a
+  // tap came from, and a double tap lands both before React redraws.
+  const birdieConsentBusyRef = useRef(false);
   // Allow (true) or withdraw (false). The panel's Allow and the switch in
   // Settings are the two callers. authUser is patched with the server's own
   // answer, never with a value made up here, so the two cannot disagree.
+  // A refusal is said where the person is looking: inside the panel's
+  // question while the panel is open, otherwise as a toast beside the switch
+  // as it snaps back.
   const answerBirdieConsent = useCallback(async (allow) => {
-    setBirdieConsentBusy(true);
+    if (birdieConsentBusyRef.current) return false;
+    birdieConsentBusyRef.current = true;
+    setBirdieConsentTo(!!allow);
     setBirdieConsentError('');
     try {
       const data = allow ? await grantBirdieConsent() : await withdrawBirdieConsent();
       if (onUserPatch) onUserPatch({ birdie_ai_consent_at: data?.consentedAt || null });
       return true;
     } catch (err) {
-      if (!err?.sessionExpired) setBirdieConsentError(err?.message || 'That did not save. Try again.');
+      if (!err?.sessionExpired) {
+        const said = userMessage(err, 'That did not save. Try again.');
+        if (birdiePanelOpenRef.current) setBirdieConsentError(said);
+        else showToast(said, 'error');
+      }
       return false;
     } finally {
-      setBirdieConsentBusy(false);
+      birdieConsentBusyRef.current = false;
+      setBirdieConsentTo(null);
     }
-  }, [onUserPatch]);
+  }, [onUserPatch, showToast]);
 
   // Calendar
   const [calendarMonth, setCalendarMonth] = useState(new Date());
@@ -14951,7 +14997,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // never do. null means "not read yet" and the settings row shows nothing
   // rather than a guess.
   const [phoneDiscoverable, setPhoneDiscoverable] = useState(null);
-  const [phoneDiscoveryBusy, setPhoneDiscoveryBusy] = useState(false);
+  // Where the switch is heading while the write is out, or null. The switch
+  // draws it at once, dimmed (Toggle, pendingSwitches below), and draws
+  // phoneDiscoverable, the server's answer, again when the write ends.
+  const [phoneDiscoveryTo, setPhoneDiscoveryTo] = useState(null);
+  const phoneDiscoveryBusy = phoneDiscoveryTo !== null;
+  // No refusal is written here any more: it is a toast beside the switch as it
+  // snaps back (handleTogglePhoneDiscovery), so it is not said twice. It stays
+  // wired because the settings screen still draws it and clears it on the way
+  // in.
   const [phoneDiscoveryError, setPhoneDiscoveryError] = useState('');
   // Set when the server refuses because there is no usable number on the
   // account, which is the only failure with somewhere for the user to go.
@@ -14972,9 +15026,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   }, []);
   useEffect(() => { loadPhoneDiscovery(); }, [loadPhoneDiscovery]);
 
+  const phoneDiscoveryBusyRef = useRef(false);
   const handleTogglePhoneDiscovery = useCallback(async () => {
+    if (phoneDiscoveryBusyRef.current) return;
+    phoneDiscoveryBusyRef.current = true;
     const next = !phoneDiscoverable;
-    setPhoneDiscoveryBusy(true);
+    // The switch moves on the tap, except where the server is certain to say
+    // no: turning it on with no number on the account. That one waits, dimmed,
+    // for the server's sentence, and the Edit Profile door stays under it.
+    setPhoneDiscoveryTo(next && !profilePhone ? Boolean(phoneDiscoverable) : next);
     setPhoneDiscoveryError('');
     setPhoneDiscoveryNeedsNumber(false);
     try {
@@ -14984,13 +15044,23 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       setPhoneDiscoverable(Boolean(data.phone_discoverable));
     } catch (err) {
       // 400 is "there is no usable number on this account". The server writes
-      // that sentence and it is the one worth showing.
+      // that sentence and it is the one worth showing. The switch snaps back by
+      // itself: phoneDiscoverable still holds the server's value.
       setPhoneDiscoveryNeedsNumber(err?.status === 400);
-      setPhoneDiscoveryError(err.message || 'Could not change that. Try again.');
+      if (!err?.sessionExpired) showToast(userMessage(err, "Couldn't change that. Try again."), 'error');
     } finally {
-      setPhoneDiscoveryBusy(false);
+      phoneDiscoveryBusyRef.current = false;
+      setPhoneDiscoveryTo(null);
     }
-  }, [phoneDiscoverable]);
+  }, [phoneDiscoverable, profilePhone, showToast]);
+
+  // Where each server-backed switch on the settings screen is heading while
+  // its write is out, keyed by the label the screen draws it with. Toggle
+  // reads it through PendingSwitchesContext.
+  const pendingSwitches = useMemo(() => ({
+    ...(phoneDiscoveryTo !== null ? { [PHONE_DISCOVERY_SWITCH]: phoneDiscoveryTo } : {}),
+    ...(birdieConsentTo !== null ? { [BIRDIE_CONSENT_SWITCH]: birdieConsentTo } : {}),
+  }), [phoneDiscoveryTo, birdieConsentTo]);
 
   // --- Blocked accounts ---
   const loadBlockedUsers = useCallback(async () => {
@@ -20710,7 +20780,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         };
         return (
         <React.Suspense fallback={<ScreenChunkFallback />}>
-          <ProfileSettings {...profileSettingsProps} />
+          <PendingSwitchesContext.Provider value={pendingSwitches}>
+            <ProfileSettings {...profileSettingsProps} />
+          </PendingSwitchesContext.Provider>
         </React.Suspense>
       );
       }

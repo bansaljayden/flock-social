@@ -382,7 +382,9 @@ describe('Settings: the answer can be taken back', () => {
     const app = read('App.js');
     const start = app.indexOf('const answerBirdieConsent = useCallback(');
     expect(start).toBeGreaterThan(-1);
-    const answer = app.slice(start, app.indexOf('}, [onUserPatch]);', start));
+    const end = app.indexOf('}, [onUserPatch, showToast]);', start);
+    expect(end).toBeGreaterThan(start);
+    const answer = app.slice(start, end);
     expect(answer).toContain('const data = allow ? await grantBirdieConsent() : await withdrawBirdieConsent();');
     expect(settings).toContain('answerBirdieConsent(!birdieConsented)');
     const api = read('services', 'api.js');

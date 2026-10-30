@@ -177,7 +177,9 @@ describe('the two components that moved out on 09-22', () => {
 
   test('Toggle paints on and off from CSS tokens', () => {
     const src = topLevelSource('Toggle');
-    expect(src).toMatch(/backgroundColor: on \? 'var\(--toggle-on\)' : 'var\(--toggle-off\)'/);
+    // `shown` is `on`, or the value a server write is heading to while it is
+    // out (tapsAnswerAtOnce.test.js); either way the paint is the two tokens.
+    expect(src).toMatch(/backgroundColor: shown \? 'var\(--toggle-on\)' : 'var\(--toggle-off\)'/);
     expect(src).not.toMatch(/colors\./);
   });
 });

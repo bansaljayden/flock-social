@@ -703,3 +703,171 @@ describe('pinning a message changes the bar on the tap', () => {
     await first;
   });
 });
+
+// ---------------------------------------------------------------------------
+// Settings switches that write to the server (App.js Toggle,
+// handleTogglePhoneDiscovery, answerBirdieConsent)
+// ---------------------------------------------------------------------------
+describe('a server-backed switch moves on the tap, dims while saving, and snaps back on a refusal', () => {
+  const { fireEvent } = require('@testing-library/react');
+  const babel = require('@babel/core');
+  const toggleSrc = [
+    statementAt(APP, 'const PendingSwitchesContext = '),
+    statementAt(APP, 'const PHONE_DISCOVERY_SWITCH = '),
+    statementAt(APP, 'const BIRDIE_CONSENT_SWITCH = '),
+    statementAt(APP, 'const Toggle = ({ on, onChange, label, pendingOn }) =>'),
+  ].join('\n');
+  const compiled = babel.transformSync(toggleSrc, { presets: ['@babel/preset-react'], babelrc: false, configFile: false }).code;
+  const T = lift(compiled, '{ Toggle, PendingSwitchesContext, PHONE_DISCOVERY_SWITCH, BIRDIE_CONSENT_SWITCH }', { React });
+  const PROFILE = read('screens', 'ProfileSettings.js');
+
+  test('the two labels are the ones the settings screen draws its switches with', () => {
+    expect(PROFILE).toContain(`<Toggle label="${T.PHONE_DISCOVERY_SWITCH}" on={!!phoneDiscoverable}`);
+    expect(PROFILE).toContain(`<Toggle label="${T.BIRDIE_CONSENT_SWITCH}" on={birdieConsented}`);
+    expect(APP).toMatch(/<PendingSwitchesContext\.Provider value=\{pendingSwitches\}>\s*<ProfileSettings \{\.\.\.profileSettingsProps\} \/>/);
+  });
+
+  test('with nothing saving it is the switch it always was', () => {
+    const onChange = jest.fn();
+    render(React.createElement(T.Toggle, { on: true, onChange, label: 'Crowd alerts' }));
+    const sw = screen.getByRole('switch', { name: 'Crowd alerts' });
+    expect(sw.getAttribute('aria-checked')).toBe('true');
+    expect(sw.hasAttribute('aria-busy')).toBe(false);
+    expect(sw.style.opacity).toBe('1');
+    fireEvent.click(sw);
+    expect(onChange).toHaveBeenCalledTimes(1);
+  });
+
+  test('while its write is out it shows where it is going, dimmed, and a second tap does nothing', () => {
+    const onChange = jest.fn();
+    const tree = (pending) => React.createElement(T.PendingSwitchesContext.Provider, { value: pending },
+      React.createElement(T.Toggle, { on: false, onChange, label: T.PHONE_DISCOVERY_SWITCH }));
+    const { rerender } = render(tree({ [T.PHONE_DISCOVERY_SWITCH]: true }));
+    const sw = screen.getByRole('switch', { name: T.PHONE_DISCOVERY_SWITCH });
+    expect(sw.getAttribute('aria-checked')).toBe('true');
+    expect(sw.getAttribute('aria-busy')).toBe('true');
+    expect(sw.style.opacity).toBe('0.6');
+    fireEvent.click(sw);
+    expect(onChange).not.toHaveBeenCalled();
+    // Refused: the write ends, `on` never moved, and neither does the switch.
+    rerender(tree({}));
+    expect(sw.getAttribute('aria-checked')).toBe('false');
+    expect(sw.style.opacity).toBe('1');
+  });
+
+  test('a caller that can pass the value hands it over as pendingOn', () => {
+    render(React.createElement(T.Toggle, { on: true, onChange: () => {}, label: 'Example', pendingOn: false }));
+    const sw = screen.getByRole('switch', { name: 'Example' });
+    expect(sw.getAttribute('aria-checked')).toBe('false');
+    expect(sw.getAttribute('aria-busy')).toBe('true');
+  });
+
+  function phoneSetup({ discoverable = false, phone = '+12155550100', answer } = {}) {
+    const state = { discoverable, to: [], needsNumber: null, error: [] };
+    const calls = { api: [], toasts: [] };
+    const scope = {
+      useCallback: (fn) => fn,
+      useRef: (v) => ({ current: v }),
+      phoneDiscoverable: discoverable,
+      profilePhone: phone,
+      setPhoneDiscoveryTo: (v) => state.to.push(v),
+      setPhoneDiscoveryError: (v) => state.error.push(v),
+      setPhoneDiscoveryNeedsNumber: (v) => { state.needsNumber = v; },
+      setPhoneDiscovery: (next) => { calls.api.push(next); return answer(next); },
+      setPhoneDiscoverable: (v) => { state.discoverable = v; },
+      showToast: (message, type) => calls.toasts.push([message, type]),
+      userMessage,
+    };
+    const src = `${statementAt(APP, 'const phoneDiscoveryBusyRef = useRef(')}\n${statementAt(APP, 'const handleTogglePhoneDiscovery = useCallback(')}`;
+    return { state, calls, flip: lift(src, 'handleTogglePhoneDiscovery', scope) };
+  }
+
+  test('Find me by phone: the switch heads on at once and lands on the server\'s answer', async () => {
+    const wait = held();
+    const { state, calls, flip } = phoneSetup({ answer: () => wait.promise });
+    const done = flip();
+    expect(state.to).toEqual([true]);
+    expect(calls.api).toEqual([true]);
+    wait.resolve({ phone_discoverable: true });
+    await done;
+    expect(state.discoverable).toBe(true);
+    expect(state.to).toEqual([true, null]);
+    expect(calls.toasts).toEqual([]);
+  });
+
+  test('a refusal snaps it back with a toast and writes nothing under it', async () => {
+    const { state, calls, flip } = phoneSetup({ discoverable: true, answer: () => Promise.reject(crash()) });
+    await flip();
+    expect(state.to).toEqual([false, null]);
+    expect(state.discoverable).toBe(true);
+    expect(calls.toasts).toEqual([["Couldn't change that. Try again.", 'error']]);
+    expect(state.error.every((e) => e === '')).toBe(true);
+  });
+
+  test('with no number on the account it does not move, and the server says why', async () => {
+    const said = refusal('Add your phone number to your profile before turning this on.');
+    const { state, calls, flip } = phoneSetup({ phone: '', answer: () => Promise.reject(said) });
+    await flip();
+    expect(state.to).toEqual([false, null]);
+    expect(state.needsNumber).toBe(true);
+    expect(calls.toasts).toEqual([['Add your phone number to your profile before turning this on.', 'error']]);
+  });
+
+  test('a second tap while the write is out sends nothing', async () => {
+    const wait = held();
+    const { calls, flip } = phoneSetup({ answer: () => wait.promise });
+    const first = flip();
+    await flip();
+    expect(calls.api).toEqual([true]);
+    wait.resolve({ phone_discoverable: true });
+    await first;
+  });
+
+  function birdieSetup({ panelOpen = false, answer }) {
+    const state = { to: [], error: [], patches: [] };
+    const calls = { grant: 0, withdraw: 0, toasts: [] };
+    const scope = {
+      useCallback: (fn) => fn,
+      useRef: (v) => ({ current: v }),
+      birdiePanelOpenRef: { current: panelOpen },
+      setBirdieConsentTo: (v) => state.to.push(v),
+      setBirdieConsentError: (v) => state.error.push(v),
+      grantBirdieConsent: () => { calls.grant += 1; return answer(); },
+      withdrawBirdieConsent: () => { calls.withdraw += 1; return answer(); },
+      onUserPatch: (patch) => state.patches.push(patch),
+      showToast: (message, type) => calls.toasts.push([message, type]),
+      userMessage,
+    };
+    const src = `${statementAt(APP, 'const birdieConsentBusyRef = useRef(')}\n${statementAt(APP, 'const answerBirdieConsent = useCallback(')}`;
+    return { state, calls, answerIt: lift(src, 'answerBirdieConsent', scope) };
+  }
+
+  test('Birdie from Settings: the switch heads off at once, and a refusal is a toast as it snaps back', async () => {
+    const { state, calls, answerIt } = birdieSetup({ answer: () => Promise.reject(crash()) });
+    const ok = await answerIt(false);
+    expect(ok).toBe(false);
+    expect(state.to).toEqual([false, null]);
+    expect(state.patches).toEqual([]);
+    expect(calls.toasts).toEqual([['That did not save. Try again.', 'error']]);
+    expect(state.error).toEqual(['']);
+  });
+
+  test('Birdie from its own panel: the refusal is said where the question is, not as a toast', async () => {
+    const { state, calls, answerIt } = birdieSetup({ panelOpen: true, answer: () => Promise.reject(refusal('Slow down a moment.', { status: 429 })) });
+    await answerIt(true);
+    expect(state.error).toEqual(['', 'Slow down a moment.']);
+    expect(calls.toasts).toEqual([]);
+  });
+
+  test("Birdie: a yes lands as the server's own answer, and a double tap sends one", async () => {
+    const wait = held();
+    const { state, calls, answerIt } = birdieSetup({ answer: () => wait.promise });
+    const first = answerIt(true);
+    expect(await answerIt(true)).toBe(false);
+    expect(calls.grant).toBe(1);
+    wait.resolve({ consentedAt: '2026-10-30T20:00:00.000Z' });
+    expect(await first).toBe(true);
+    expect(state.patches).toEqual([{ birdie_ai_consent_at: '2026-10-30T20:00:00.000Z' }]);
+    expect(state.to).toEqual([true, null]);
+  });
+});

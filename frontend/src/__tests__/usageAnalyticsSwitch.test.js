@@ -136,8 +136,12 @@ afterEach(() => {
 });
 
 test('the Toggle here is App.js\'s Toggle', () => {
-  expect(APP_SRC).toContain('const Toggle = ({ on, onChange, label }) => (');
-  expect(APP_SRC).toContain('<button className="hit44" role="switch" aria-checked={!!on} aria-label={label} onClick={onChange}');
+  // App.js's draws the value a server write is heading to while it is out
+  // (tapsAnswerAtOnce.test.js runs that); this switch has no write in flight
+  // here, so it draws `on` and passes the tap through, which is the copy above.
+  expect(APP_SRC).toContain('const Toggle = ({ on, onChange, label, pendingOn }) => {');
+  expect(APP_SRC).toContain('const shown = saving ? pending : !!on;');
+  expect(APP_SRC).toContain('<button className="hit44" role="switch" aria-checked={shown} aria-label={label} aria-busy={saving || undefined} onClick={saving ? undefined : onChange}');
 });
 
 test('it sits in the Safety and privacy card, with its one line under it', async () => {
