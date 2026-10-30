@@ -13,7 +13,7 @@ const { describeError, describeDbError } = require('./logSafe');
 const { CITIES, getLocalTime, isHoliday, isSchoolBreak, sleep, withCorpusWriteLock } = require('./config');
 const {
   getNearestEvent, fetchTicketmasterPage, fetchSeatGeekEvents, nearestEventFromAnswers, distanceKm,
-  NEARBY_KM, TM_PAGE_SIZE,
+  NEARBY_KM, TM_PAGE_SIZE, ticketmasterQuota,
 } = require('./eventService');
 const { specialNightFor, isHolidayEve } = require('./specialNights');
 const { refreshCollectedBaselines, REFUSAL_MESSAGE } = require('./buildBaselines');
@@ -1568,6 +1568,14 @@ async function collectRealtime() {
       + `${ev.perVenueCalls} per venue where a cell's list could not be shared, `
       + `${ev.failedSharedCalls} shared calls failed and were not reused).`
     : `[ML:Realtime] Event lookups: ${ev.lookups} for stored readings, each asked per venue.`);
+  // How many of those were never sent, to leave the app its share of the day.
+  // An event module without the count (a test double) has nothing to say.
+  const tm = typeof ticketmasterQuota === 'function' ? ticketmasterQuota() : null;
+  if (tm && tm.held > 0) {
+    console.log(`[ML:Realtime] Ticketmaster: ${tm.held} requests not sent, leaving the app ${tm.reserve} `
+      + `of the day's calls (${tm.available} left; Ticketmaster resets `
+      + `${tm.resetAt ? new Date(tm.resetAt).toISOString() : 'at a time it did not say'}).`);
+  }
 
   // The contract of this line is unchanged — "N rows inserted (live, forecast).
   // K venues skipped." — with the new number named beside it rather than folded

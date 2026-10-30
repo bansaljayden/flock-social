@@ -75,6 +75,52 @@ const EVENT_MAX_DURATION_H = 3;
 // Discovery's default page, and what every per-venue query has always asked for.
 const TM_PAGE_SIZE = 20;
 
+// THE DAY'S TICKETMASTER CALLS ARE SHARED WITH THE APP (2026-10-29).
+//
+// One key, one quota of 5,000 calls a day, set on the BESTTIME collector and
+// on the web service, where the Events tab (routes/events.js), the forecast's
+// event features (services/mlPredictor.js), the night context and Roost's
+// facts about nearby events all ask Ticketmaster live. From 2026-10-27 the
+// widened hourly sweep asked about 3,200 times a run, so the first run or two
+// after Ticketmaster's daily reset spent the whole quota and every one of
+// those app surfaces got 429 for the rest of the day (seen 2026-10-29 on both
+// services: QuotaViolation, available 0), while the collector went on sending
+// thousands of refused requests an hour.
+//
+// Every answer carries Rate-Limit-Available and Rate-Limit-Reset. Once the
+// day's remainder is down to TM_APP_RESERVE, this process stops asking until
+// the reset and answers null, the "provider that cannot answer" a failed
+// request already gives (storeReading records events_observed = false,
+// 'lookup_failed'), so nothing is fabricated. A 429 from the per-second limit
+// leaves the remainder high and holds nothing. The collector is a new process
+// every hour, so a run spends at most one request learning where the day is.
+const TM_APP_RESERVE = 1500;
+const tmQuota = { available: null, resetAt: null, held: 0 };
+
+function noteTicketmasterQuota(response, now = Date.now()) {
+  const header = (name) => (response && response.headers && typeof response.headers.get === 'function'
+    ? response.headers.get(name) : null);
+  const available = Number.parseInt(header('rate-limit-available'), 10);
+  const resetAt = Number.parseInt(header('rate-limit-reset'), 10);
+  if (Number.isInteger(available)) tmQuota.available = available;
+  if (Number.isInteger(resetAt) && resetAt > now) tmQuota.resetAt = resetAt;
+}
+
+function ticketmasterHeld(now = Date.now()) {
+  if (tmQuota.available === null) return false;
+  if (tmQuota.resetAt !== null && now >= tmQuota.resetAt) {
+    tmQuota.available = null;
+    tmQuota.resetAt = null;
+    return false;
+  }
+  return tmQuota.available <= TM_APP_RESERVE;
+}
+
+// Where the day stands and how many requests were held, for the collector's log.
+function ticketmasterQuota() {
+  return { ...tmQuota, reserve: TM_APP_RESERVE };
+}
+
 // Fetch nearby events from Ticketmaster Discovery API
 // Docs: https://developer.ticketmaster.com/products-and-docs/apis/discovery-api/v2/
 // Env: TICKETMASTER_API_KEY
@@ -89,6 +135,11 @@ async function fetchTicketmasterPage(lat, lon, radiusKm = NEARBY_KM, at = new Da
   const apiKey = process.env.TICKETMASTER_API_KEY;
   // No key is a provider that cannot answer, never an empty answer.
   if (!apiKey) return null;
+  // Neither is the app's share of the day's calls (TM_APP_RESERVE above).
+  if (ticketmasterHeld()) {
+    tmQuota.held++;
+    return null;
+  }
 
   try {
     // A WINDOW, because without one Discovery returns UPCOMING events and the
@@ -117,6 +168,7 @@ async function fetchTicketmasterPage(lat, lon, radiusKm = NEARBY_KM, at = new Da
     // event API must not stall the whole run (round 13).
     const response = await fetch(`https://app.ticketmaster.com/discovery/v2/events.json?${params}`,
       { signal: AbortSignal.timeout(15000) });
+    noteTicketmasterQuota(response);
     if (!response.ok) return null;
 
     const data = await response.json();
@@ -337,4 +389,8 @@ function nearestEventCore(tmEvents, sgEvents, venueLat, venueLon, at = new Date(
 module.exports = {
   getNearestEvent, fetchTicketmasterEvents, fetchTicketmasterPage, fetchSeatGeekEvents,
   nearestEventFromAnswers, servedEventValues, distanceKm, NEARBY_KM, TM_PAGE_SIZE,
+  ticketmasterQuota, TM_APP_RESERVE,
+  __test: {
+    resetTicketmasterQuota() { tmQuota.available = null; tmQuota.resetAt = null; tmQuota.held = 0; },
+  },
 };
