@@ -25,10 +25,11 @@
 // The properties that matter, in the order the code meets them:
 //   * the suppression check is INSIDE sendEmail, so no caller can skip it;
 //   * a hard bounce blocks everything EXCEPT an emergency, an unsubscribe
-//     blocks marketing only (unsubscribing from the waitlist must not break a
-//     password reset), and the emergency exception is the SOS alert and
-//     nothing else: a bounce is a fact about a mailbox and a complaint about a
-//     venue digest is not a refusal of an ambulance;
+//     blocks optional mail only, marketing and the share-my-location email
+//     (unsubscribing from the waitlist must not break a password reset; see
+//     __tests__/locationShareOptOut.test.js), and the emergency exception is
+//     the SOS alert and nothing else: a bounce is a fact about a mailbox and a
+//     complaint about a venue digest is not a refusal of an ambulance;
 //   * the check FAILS OPEN, because a Postgres blip swallowing an SOS is a
 //     worse outcome than one wasted send;
 //   * an unsubscribe token is scoped to one address and cannot be edited into
