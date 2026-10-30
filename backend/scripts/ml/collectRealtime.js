@@ -433,6 +433,21 @@ const START_INTERVAL_MS = 1000;
 const DEFAULT_MAX_IN_FLIGHT = 8;
 const MAX_IN_FLIGHT_CEILING = 10;
 
+// A FASTER PACE, BY FLAG, WITH A FLOOR (2026-10-29). Live readings are the
+// scarce label before the November retrain, and live calls are unlimited on the plan,
+// and at one start a second a run reached about 3,000 of the six-city scope's
+// 4,403 venues before its fifty minutes ran out, leaving the rest for the next
+// hour. --start-interval-ms=N starts calls every N ms for the run (the Railway
+// start command passes it), and never faster than MIN_START_INTERVAL_MS: the
+// floor comes from the history above, not from the published limit, since
+// 250 ms (240 a minute) drew a 503 wall and then a key block. 500 ms is 120 a
+// minute, two fifths of the published 300. The first step taken is 667 ms (90
+// a minute), what all 4,403 venues need inside the budget; 500 only after
+// runs at 667 show no 503s. A value outside the range is refused, not
+// clamped, like --max-in-flight. The default stays START_INTERVAL_MS.
+const MIN_START_INTERVAL_MS = 500;
+const MAX_START_INTERVAL_MS = 60000;
+
 // THE GATE every call starts through. Three rules, all checked with nothing
 // awaited between the last check and the start, so an answer cannot go stale:
 //   * at most one start per `intervalMs`, measured start to start;
@@ -583,6 +598,7 @@ async function sweepVenues(cityOrder, {
   store,
   openHourMasks = new Map(),
   maxInFlight = DEFAULT_MAX_IN_FLIGHT,
+  startIntervalMs = START_INTERVAL_MS,
   fetchLive = fetchLiveBusyness,
   weatherFor = getWeather,
   now = Date.now,
@@ -635,7 +651,7 @@ async function sweepVenues(cityOrder, {
   // have been.
   let abortReason = null;
 
-  const gate = createCallGate({ maxInFlight, intervalMs: START_INTERVAL_MS, now, pause });
+  const gate = createCallGate({ maxInFlight, intervalMs: startIntervalMs, now, pause });
   // The FIRST breaker to trip names the abort and stops new starts. A call
   // already in flight that fails afterwards cannot rename it: a run stopped by
   // a 403 whose last few timeouts land a moment later is still a 403 run, and
@@ -1488,10 +1504,20 @@ async function collectRealtime() {
       + 'Exiting non-zero so the scheduler records a failure rather than guessing.');
   }
 
+  const intervalArg = process.argv.find((a) => a.startsWith('--start-interval-ms='));
+  const startIntervalMs = intervalArg ? Number(intervalArg.split('=')[1]) : START_INTERVAL_MS;
+  if (!Number.isInteger(startIntervalMs) || startIntervalMs < MIN_START_INTERVAL_MS
+      || startIntervalMs > MAX_START_INTERVAL_MS) {
+    await pool.end();
+    throw new Error(
+      `REFUSED: --start-interval-ms must be a whole number from ${MIN_START_INTERVAL_MS} to ${MAX_START_INTERVAL_MS}. `
+      + 'Exiting non-zero so the scheduler records a failure rather than guessing.');
+  }
+
   console.log(`[ML:Realtime] Starting real-time collection for ${venues.length} venues...`);
   // Stated every run, like the holdout config above, so "did the flag arrive"
   // is one line to read rather than something to infer from the timing.
-  console.log(`[ML:Realtime] Pacing: at most one call started every ${START_INTERVAL_MS} ms, `
+  console.log(`[ML:Realtime] Pacing: at most one call started every ${startIntervalMs} ms, `
     + `up to ${maxInFlight} in flight at once.`);
 
   // The open-hours evidence, loaded once. --no-open-hours turns the filter off
@@ -1556,7 +1582,7 @@ async function collectRealtime() {
     totalRows, skipped, closedSkips, called, liveRows, forecastRows, duplicateRows, vanished,
     aborted, abortReason, budgetHit, leftForNextRun, peakInFlight,
   } = await sweepVenues(cityOrder, {
-    openHourMasks, maxInFlight, store: (venue, at, live) => storeReading(venue, at, live, events.lookup),
+    openHourMasks, maxInFlight, startIntervalMs, store: (venue, at, live) => storeReading(venue, at, live, events.lookup),
   });
 
   // Their own lines, so the summary below keeps the exact shape monitoring reads.
@@ -1855,6 +1881,7 @@ module.exports = {
   run, classifyReading, liveAnswerColumns, LIVE_LOCAL_TIME_MAX, eventFeatureColumns, LABEL_LIVE, LABEL_FORECAST, PROVENANCE_REFUSAL,
   buildOpenHourMask, isOpenAtHour, OPEN_HOUR_PAD,
   createCallGate, sweepVenues, START_INTERVAL_MS, DEFAULT_MAX_IN_FLIGHT, MAX_IN_FLIGHT_CEILING,
+  MIN_START_INTERVAL_MS, MAX_START_INTERVAL_MS,
   createEventLookup, sharedEventRadiusKm, cellHalfDiagonalKm, EVENT_CELL_DEG, EVENT_SHARED_PAGE,
   // For __tests__/collectRealtimeEventCache.test.js, which hands it a reading
   // whose call started before the hour turned.

@@ -96,6 +96,16 @@ test('the live call gives up at twenty seconds; the forecast call keeps thirty',
   assert.match(fc, /\b30000\b/);
 });
 
+test('a faster pace is a flag with a floor, refused rather than clamped below 500 ms', () => {
+  // 2026-10-29: the Railway start command may pass --start-interval-ms; 250 ms
+  // (240 a minute) drew a 503 wall and a key block on 2026-09-01.
+  assert.match(collect, /const MIN_START_INTERVAL_MS = 500;/);
+  assert.match(collect, /startIntervalMs < MIN_START_INTERVAL_MS\s*\|\| startIntervalMs > MAX_START_INTERVAL_MS/);
+  assert.match(collect, /REFUSED: --start-interval-ms must be a whole number from \$\{MIN_START_INTERVAL_MS\}/);
+  assert.match(collect, /Pacing: at most one call started every \$\{startIntervalMs\} ms/);
+  assert.match(collect, /openHourMasks, maxInFlight, startIntervalMs, store:/);
+});
+
 test('the pace itself is untouched: one call STARTED per second', () => {
   // Since 2026-09-25 the second is measured start to start by the call gate
   // rather than slept after each call, so a slow answer no longer holds the
@@ -103,7 +113,8 @@ test('the pace itself is untouched: one call STARTED per second', () => {
   // call starts through the gate; the behaviour (never two starts inside one
   // second, holds included) is pinned in collectRealtimeConcurrency.test.js.
   assert.match(collect, /const START_INTERVAL_MS = 1000;/);
-  assert.match(collect, /const gate = createCallGate\(\{ maxInFlight, intervalMs: START_INTERVAL_MS, now, pause \}\);/);
+  assert.match(collect, /const gate = createCallGate\(\{ maxInFlight, intervalMs: startIntervalMs, now, pause \}\);/);
+  assert.match(collect, /startIntervalMs = START_INTERVAL_MS,/);
   assert.match(collect, /gate\.start\(\(\) => callVenue\(venue, \{ obs, weather, obsSpecial, obsHolidayEve, startedAt \}\)\);/);
   // Bounded overlap, refused rather than clamped when the flag is out of range.
   assert.match(collect, /const DEFAULT_MAX_IN_FLIGHT = 8;/);

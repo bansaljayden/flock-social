@@ -64,7 +64,7 @@ stubModule('../scripts/ml/eventService', {
 });
 
 const {
-  createCallGate, sweepVenues, START_INTERVAL_MS, DEFAULT_MAX_IN_FLIGHT, MAX_IN_FLIGHT_CEILING,
+  createCallGate, sweepVenues, START_INTERVAL_MS, DEFAULT_MAX_IN_FLIGHT, MAX_IN_FLIGHT_CEILING, MIN_START_INTERVAL_MS,
   LABEL_LIVE, isOpenAtHour,
 } = require('../scripts/ml/collectRealtime');
 const { getLocalTime } = require('../scripts/ml/config');
@@ -338,6 +338,19 @@ test('no more than the allowed number of calls is ever waiting on BestTime, and 
     assert.strictEqual(result.called, 40);
     assert.ok(gaps(h.calls).every((g) => g >= 1000));
   }
+});
+
+test('--start-interval-ms paces the sweep faster, never inside the interval, and the floor is 500 ms', async () => {
+  // 2026-10-29: 667 ms (90 a minute) reaches the six-city scope's 4,403 venues
+  // inside the fifty minutes; the default second reached about 3,000.
+  assert.strictEqual(MIN_START_INTERVAL_MS, 500);
+  const h = harness({ answer: () => ({ latencyMs: 200 }) });
+  const { result } = await h.sweep([['philly', venuesFor('philly', 30)]], { startIntervalMs: 667 });
+  assert.strictEqual(result.called, 30);
+  assert.ok(gaps(h.calls).every((g) => g >= 667), 'two calls started inside 667 ms');
+  assert.ok(gaps(h.calls).some((g) => g < 1000), 'the faster pace was not used');
+  const span = h.calls[h.calls.length - 1].startAt - h.calls[0].startAt;
+  assert.ok(span < 29 * 1000, `30 starts took ${span} ms, no faster than one a second`);
 });
 
 test('--max-in-flight=1 is the old serial sweep: never two calls open at once', async () => {
