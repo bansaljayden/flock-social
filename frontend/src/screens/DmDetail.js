@@ -90,6 +90,8 @@ import useEdgeSwipeBack from '../hooks/useEdgeSwipeBack';
 import useSheetDrag from '../hooks/useSheetDrag';
 import Icons from '../components/ui/Icons';
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
+// The photo viewer's wait, the same one ChatDetail's viewer draws.
+import { SkeletonBlock } from '../components/ui/Skeleton';
 
 /* THE STREAM IS THE CHAT MODULE'S NOW, and this is the first screen wired to
    it. `components/chat` is imported as one door, never file by file, so the
@@ -407,8 +409,9 @@ export default function DmDetail({
   const openImageViewer = (m) => {
     if (m.image_url) { setImageViewer({ src: m.image_url }); return; }
     // Only this message's answer replaces this message's loading state: see
-    // the same viewer in ChatDetail.js.
-    setImageViewer({ loading: true, id: m.id });
+    // the same viewer in ChatDetail.js. The row's thumbnail rides along, for
+    // the viewer to show until the original lands.
+    setImageViewer({ loading: true, id: m.id, thumb: m.thumb_url || m.thumb || null });
     getDmMessageImage(m.id)
       .then((d) => setImageViewer((prev) => (prev && prev.loading && prev.id === m.id ? { src: d.image } : prev)))
       .catch(() => setImageViewer((prev) => (prev && prev.loading && prev.id === m.id ? { error: "Couldn't load the full photo. Try again." } : prev)));
@@ -1379,8 +1382,19 @@ export default function DmDetail({
           <button aria-label="Close photo" className="hit44" onClick={() => setImageViewer(null)} style={{ position: 'absolute', top: 'calc(var(--safe-top) + 14px)', right: '14px', width: '40px', height: '40px', borderRadius: '20px', border: 'none', background: 'rgba(255,255,255,0.16)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1 }}>{Icons.x('white', 18)}</button>
           {imageViewer.src ? (
             <img src={imageViewer.src} alt="Full size" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: '10px' }} />
+          ) : imageViewer.error ? (
+            <p role="status" style={{ color: 'white', fontSize: 'var(--t-body)', textAlign: 'center' }}>{imageViewer.error}</p>
           ) : (
-            <p role="status" style={{ color: 'white', fontSize: 'var(--t-body)', textAlign: 'center' }}>{imageViewer.error || 'Loading the full photo\u2026'}</p>
+            /* While the original is fetched, the row's own thumbnail, as in
+               ChatDetail's viewer, which says why. */
+            <div aria-busy="true" style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <span className="sr-only" role="status">Loading the full photo</span>
+              {imageViewer.thumb ? (
+                <img src={imageViewer.thumb} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: '10px', filter: 'blur(4px)' }} />
+              ) : (
+                <SkeletonBlock dark width="min(80vw, 320px)" height="min(80vw, 320px)" radius={10} />
+              )}
+            </div>
           )}
         </div>
       )}

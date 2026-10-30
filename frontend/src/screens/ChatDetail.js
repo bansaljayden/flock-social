@@ -166,6 +166,8 @@ import { getSocket, leaveFlock } from '../services/socket';
 import { getNotificationStatus, requestNotificationPermission } from '../services/firebase';
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
+// The vote sheet's loading rows and the photo viewer's wait.
+import { SkeletonBar, SkeletonBlock, SkeletonStatus } from '../components/ui/Skeleton';
 
 
 /* THE CHAT MODULE'S ONE DOOR. The stream, the composer and the typing strip
@@ -1061,8 +1063,9 @@ export default function ChatDetail({
       // The answer is for the photo it was asked for. Open one, close it and
       // open another, and the first one's late answer used to land in the
       // second one's viewer (app audit 2026-10-03), so the loading state names
-      // its message and only that message's answer replaces it.
-      setImageViewer({ loading: true, id: m.id });
+      // its message and only that message's answer replaces it. It carries the
+      // row's thumbnail too, which the viewer shows until the original lands.
+      setImageViewer({ loading: true, id: m.id, thumb: m.thumb || m.thumb_url || null });
       getFlockMessageImage(flock.id, m.id)
         .then((d) => setImageViewer((prev) => (prev && prev.loading && prev.id === m.id ? { src: d.image } : prev)))
         .catch(() => setImageViewer((prev) => (prev && prev.loading && prev.id === m.id ? { error: "Couldn't load the full photo. Try again." } : prev)));
@@ -3375,8 +3378,23 @@ export default function ChatDetail({
             <button aria-label="Close photo" className="hit44" onClick={() => setImageViewer(null)} style={{ position: 'absolute', top: 'calc(var(--safe-top) + 14px)', right: '14px', width: '40px', height: '40px', borderRadius: '20px', border: 'none', background: 'rgba(255,255,255,0.16)', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1 }}>{Icons.x('white', 18)}</button>
             {imageViewer.src ? (
               <img src={imageViewer.src} alt="Full size" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain', borderRadius: '10px' }} />
+            ) : imageViewer.error ? (
+              <p role="status" style={{ color: 'white', fontSize: 'var(--t-body)', textAlign: 'center' }}>{imageViewer.error}</p>
             ) : (
-              <p role="status" style={{ color: 'white', fontSize: 'var(--t-body)', textAlign: 'center' }}>{imageViewer.error || 'Loading the full photo\u2026'}</p>
+              /* WHILE THE ORIGINAL IS FETCHED: the thumbnail the row already
+                 drew, filling the viewer as the original will, softened so
+                 its few pixels read as a picture arriving. A row with no
+                 thumbnail gets a photo-sized block in the dark tone. Either
+                 way the words are for a screen reader, not a sentence over
+                 the scrim. */
+              <div aria-busy="true" style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <span className="sr-only" role="status">Loading the full photo</span>
+                {imageViewer.thumb ? (
+                  <img src={imageViewer.thumb} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain', borderRadius: '10px', filter: 'blur(4px)' }} />
+                ) : (
+                  <SkeletonBlock dark width="min(80vw, 320px)" height="min(80vw, 320px)" radius={10} />
+                )}
+              </div>
             )}
           </div>
         )}
@@ -4618,7 +4636,14 @@ export default function ChatDetail({
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
                   <div>
                     <h2 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>{Icons.vote(colors.navy, 20)} Vote for a Venue</h2>
-                    <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>{totalVoters} vote{totalVoters !== 1 ? 's' : ''} cast{myVote ? ` • You voted for ${myVote}` : ''}</p>
+                    {/* The tally is empty until it is read, and an empty tally
+                        counted "0 votes cast" over votes that existed. The
+                        count's line is drawn instead until the read lands. */}
+                    {votesLoading && flockVotes.length === 0 ? (
+                      <SkeletonBar width={120} height={11} style={{ margin: '5px 0 2px' }} />
+                    ) : (
+                      <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '2px 0 0' }}>{totalVoters} vote{totalVoters !== 1 ? 's' : ''} cast{myVote ? ` • You voted for ${myVote}` : ''}</p>
+                    )}
                   </div>
                   <button aria-label="Close" className="hit44" onClick={() => setShowVotePanel(false)} style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'var(--bg-hover)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 18)}</button>
                 </div>
@@ -4709,10 +4734,21 @@ export default function ChatDetail({
                      Be the first to suggest a venue!" over votes that already
                      existed — a claim about the user's data made before the
                      data was known, which is what ListSkeleton's header in
-                     App.js forbids. */
-                  <div style={{ padding: '20px', textAlign: 'center', backgroundColor: 'var(--bg-tertiary)', borderRadius: '14px', marginBottom: '16px' }} aria-busy="true">
-                    <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-tertiary)', margin: 0, fontWeight: '500' }}>Loading the votes…</p>
-                  </div>
+                     App.js forbids. The wait is drawn as the rows above: the
+                     card at radius 14, the 36px square, the name and voters
+                     lines and the count, empty, where a sentence used to sit. */
+                  <SkeletonStatus label="Loading the votes" style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
+                    {['58%', '44%', '66%'].map((w) => (
+                      <div key={w} aria-hidden="true" style={{ padding: '12px 14px', borderRadius: '14px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <SkeletonBar width={36} height={36} radius={10} />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <SkeletonBar width={w} height={15} style={{ margin: '2px 0 3px' }} />
+                          <SkeletonBar width="34%" height={11} style={{ margin: '4px 0 2px' }} />
+                        </div>
+                        <SkeletonBar width={14} height={18} />
+                      </div>
+                    ))}
+                  </SkeletonStatus>
                 ) : votesError ? (
                   <div role="alert" style={{ padding: '20px', textAlign: 'center', backgroundColor: 'var(--bg-tertiary)', borderRadius: '14px', marginBottom: '16px' }}>
                     <BirdieStill bird={WARM_BIRD} size={64} style={{ margin: '0 auto 8px' }} />

@@ -15,7 +15,9 @@ test.each([
   ['screens/DmDetail.js', 'getDmMessageImage(m.id)'],
 ])('%s: the photo viewer takes only its own message\'s answer', (file, call) => {
   const src = read(file);
-  const start = src.indexOf('setImageViewer({ loading: true, id: m.id });');
+  // The loading state names its message, and carries the row's thumbnail for
+  // the viewer to show until the original lands.
+  const start = src.indexOf('setImageViewer({ loading: true, id: m.id, thumb:');
   expect(start).toBeGreaterThan(-1);
   const body = src.slice(start, start + 600);
   expect(body).toContain(call);
