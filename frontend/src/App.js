@@ -70,6 +70,7 @@ import { foldSensorReading } from './lib/sensorHistory';
 import { forgetTables, nextIncomingState, nextTablesState, nextWaitsState, rememberTables, startTableCameraLooksReading, startTableHoursReading, startTableIncomingReading, startTableSettingsReading, startTableStatsReading, startTableWaitsReading, startTablesReading, tablesRemembered } from './lib/venueTablesReading';
 // Whether the viewer's own Tonight pulse is still on. See lib/pulse.js.
 import { livePulse, pulseEndsAt, pulseTapAction } from './lib/pulse';
+import { socketRefusalToShow } from './lib/socketRefusals';
 // PaywallSheet is NOT imported here; it is fetched, at the lazy block below.
 // The paywall is dormant behind PAYWALL_ENABLED, so for every session that
 // ships today the sheet is a chunk nothing can open.
@@ -16737,7 +16738,19 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         });
         return;
       }
-      showToast(message, 'error');
+      /* ONLY A SENTENCE WRITTEN FOR PEOPLE IS SHOWN (lib/socketRefusals.js).
+         This channel also carries log lines ("Failed to vote", "Not a member
+         of this flock"), an error toast stays until it is closed, and a
+         refused join_flock is sent again on every reconnect, so every one of
+         those used to land as a toast that outlived its moment and came back
+         with each reconnect. A refusal with words for the person is still
+         said; the rest goes to the console. */
+      const shown = socketRefusalToShow(message);
+      if (!shown) {
+        console.warn('[flock] socket refusal kept off the screen:', message);
+        return;
+      }
+      showToast(shown, 'error');
     });
   }, [authUser?.id, showToast]);
 
