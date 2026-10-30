@@ -166,7 +166,7 @@ test('a non-member cannot spend a billed Vision call through send_message', asyn
     registerHandlers(fakeIo(), s);
     await fire(s, 'send_message', { flockId: 4100, message_text: 'hi', message_type: 'image', image_url: PNG });
 
-    assert.deepStrictEqual(errorsOf(s), ['Not a member of this flock']);
+    assert.deepStrictEqual(errorsOf(s), ["You're no longer in this plan."]);
     assert.strictEqual(visionCalls, 0,
       'the paid moderation call ran before the membership query — a stranger was spending money');
     assert.ok(!calls.some((c) => /INSERT INTO messages/.test(c.text)), 'nothing may be persisted');
@@ -240,11 +240,11 @@ test('a socket still sitting in the room cannot send, vote, type or share locati
     calls.length = 0;
 
     await fire(s, 'send_message', { flockId: 4102, message_text: 'still here?' });
-    assert.deepStrictEqual(errorsOf(s).slice(-1), ['Not a member of this flock']);
+    assert.deepStrictEqual(errorsOf(s).slice(-1), ["You're no longer in this plan."]);
     assert.ok(!calls.some((c) => /INSERT INTO messages/.test(c.text)));
 
     await fire(s, 'vote_venue', { flockId: 4102, venue_name: 'Bar' });
-    assert.deepStrictEqual(errorsOf(s).slice(-1), ['Not a member of this flock']);
+    assert.deepStrictEqual(errorsOf(s).slice(-1), ["You're no longer in this plan."]);
     assert.ok(!calls.some((c) => /INSERT INTO venue_votes/.test(c.text)));
 
     await fire(s, 'typing', 4102);
@@ -1014,7 +1014,7 @@ test('flock_invite requires membership and canonicalizes every id it touches', a
     registerHandlers(io, s);
 
     await fire(s, 'flock_invite', { flockId: 4307, invitedUserIds: [42] });
-    assert.deepStrictEqual(errorsOf(s), ['Not a member of this flock']);
+    assert.deepStrictEqual(errorsOf(s), ["You're no longer in this plan."]);
 
     memberRows = [{ id: 1 }];
     await fire(s, 'flock_invite', { flockId: '4307', invitedUserIds: [42, 1e20, 0, 'junk'] });

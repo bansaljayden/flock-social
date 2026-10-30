@@ -590,6 +590,28 @@ describe('answering a friend request moves the row on the tap', () => {
     expect(refused.calls.toasts).toEqual([["Couldn't cancel that request. Try again.", 'error']]);
   });
 
+  test('a list reload that lands during the wait cannot bring an answered request back', async () => {
+    // Add Friends reads both lists each time it opens; one that left the
+    // server before the tap can land after the row was taken off.
+    const wait = held();
+    const { state, accept } = setup({ answer: () => wait.promise });
+    const done = accept(2);
+    state.pending = [person(1, 'Ava'), person(2, 'Bo'), person(3, 'Cy')];
+    wait.resolve({});
+    await done;
+    expect(state.pending.map((r) => r.id)).toEqual([1, 3]);
+
+    const sent = held();
+    const out = setup({ answer: () => sent.promise });
+    const cancelled = out.cancel(8);
+    out.state.outgoing = [person(7, 'Dee'), person(8, 'Eli')];
+    out.state.statuses = { 7: 'pending', 8: 'pending' };
+    sent.resolve({ message: 'Removed' });
+    await cancelled;
+    expect(out.state.outgoing.map((r) => r.id)).toEqual([7]);
+    expect(out.state.statuses[8]).toBeUndefined();
+  });
+
   test('a double tap sends one answer', async () => {
     const wait = held();
     const { calls, accept, decline } = setup({ answer: () => wait.promise });

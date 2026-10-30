@@ -150,5 +150,9 @@ export async function deliverExport(payload, deps = {}) {
   // Nothing was delivered, and at least one route only wanted a fresh tap.
   if (tapSpent) return 'needs-tap';
 
-  throw new Error('Your data could not be saved on this device. Try again from a browser.');
+  // Written for the person: the way out is a browser, and a retry here would
+  // only spend another export from the hourly allowance on the same dead end.
+  const err = new Error('Your data could not be saved on this device. Try again from a browser.');
+  err.userFacing = true;
+  throw err;
 }

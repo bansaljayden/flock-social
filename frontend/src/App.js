@@ -6590,6 +6590,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setPendingRequests(prev => prev.filter(r => r.id !== userId));
     try {
       await acceptFriendRequest(userId);
+      // Off again now that the server agrees: a list reload that landed during
+      // the wait (Add Friends opening, Try again) can have drawn it back.
+      setPendingRequests(prev => prev.filter(r => r.id !== userId));
       setFriendStatuses(prev => ({ ...prev, [userId]: 'accepted' }));
       // The header count only ever moved on boot and on the other person's
       // socket event, so accepting here left it a friend behind.
@@ -6622,6 +6625,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setPendingRequests(prev => prev.filter(r => r.id !== userId));
     try {
       await declineFriendRequest(userId);
+      // Off again on success, for the same reload as Accept.
+      setPendingRequests(prev => prev.filter(r => r.id !== userId));
     } catch (err) {
       // Nothing pending from them any more (withdrawn, or answered on another
       // device): the row stays gone, which is what the tap asked for.
@@ -6646,6 +6651,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setFriendStatuses(prev => { const n = { ...prev }; delete n[userId]; return n; });
     try {
       await removeFriend(userId);
+      // Off again on success, for the same reload as Accept.
+      setOutgoingRequests(prev => prev.filter(r => r.id !== userId));
+      setFriendStatuses(prev => { const n = { ...prev }; delete n[userId]; return n; });
     } catch (err) {
       // Nothing left to cancel: the row stays gone.
       if (err?.status === 404) return;
@@ -6668,7 +6676,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       if (data.user) setFriendStatuses(prev => ({ ...prev, [data.user.id]: data.status || 'pending' }));
       setFriendCodeInput('');
     } catch (err) {
-      if (!needsEmailVerification(err, 'add friends')) showToast(userMessage(err, 'Invalid code'), 'error');
+      if (!needsEmailVerification(err, 'add friends')) showToast(userMessage(err, "Couldn't add that friend. Try again."), 'error');
     } finally {
       setFriendCodeLoading(false);
     }
@@ -7299,6 +7307,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       if (pulseTapAction(myPulse, status) === 'clear') {
         setMyPulse(null);
         await clearAvailability();
+        // Again once it is cleared: a pulse read that started during the wait
+        // (a reconnect, the app coming back) can have drawn the old one back.
+        setMyPulse(null);
       } else {
         setMyPulse({ status, note: null, set_at: now.toISOString(), expires_at: expiresAt });
         const data = await setAvailability({ status, expiresAt });

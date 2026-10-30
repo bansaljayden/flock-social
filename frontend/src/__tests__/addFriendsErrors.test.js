@@ -48,7 +48,11 @@ test('a request the other person withdrew leaves the list on the 404 instead of 
   const app = read('App.js');
   const at = app.indexOf('const handleAcceptFriendRequest = useCallback(async (userId) => {');
   expect(at).toBeGreaterThan(-1);
-  const handler = app.slice(at, at + 1400);
+  // Bounded on the handler's own closing line rather than a byte count, so a
+  // comment added inside it cannot push a checked line out of the window.
+  const end = app.indexOf('}, [pendingRequests, showToast, needsEmailVerification]);', at);
+  expect(end).toBeGreaterThan(at);
+  const handler = app.slice(at, end);
   expect(handler).toContain('if (err?.status === 404) {');
   expect(handler).toContain('setPendingRequests(prev => prev.filter(r => r.id !== userId));');
   expect(handler).toContain("showToast('That request was withdrawn.');");

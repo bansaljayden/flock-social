@@ -1865,7 +1865,7 @@ function registerHandlers(io, socket) {
         [flockId, user.id]
       );
       if (membership.rows.length === 0) {
-        socket.emit('error', { message: 'Not a member of this flock' });
+        socket.emit('error', { message: "You're no longer in this plan." });
         return;
       }
 
@@ -2243,7 +2243,7 @@ function registerHandlers(io, socket) {
       }
 
       if (!(await verifyMembership(flockId, user.id))) {
-        socket.emit('error', { message: 'Not a member of this flock' });
+        socket.emit('error', { message: "You're no longer in this plan." });
         return;
       }
 
@@ -2659,7 +2659,7 @@ function registerHandlers(io, socket) {
       if (flockId === null || !Array.isArray(invitedUserIds) || invitedUserIds.length === 0 || invitedUserIds.length > 25) return;
 
       if (!(await verifyMembership(flockId, user.id))) {
-        socket.emit('error', { message: 'Not a member of this flock' });
+        socket.emit('error', { message: "You're no longer in this plan." });
         return;
       }
 

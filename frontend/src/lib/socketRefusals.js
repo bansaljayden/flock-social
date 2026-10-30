@@ -46,6 +46,9 @@ export const SOCKET_REFUSALS_FOR_PEOPLE = new Set([
   'Only the flock creator can select a venue',
   // A venue owner's live crowd update.
   'Only the verified owner can update crowd levels',
+  // A send, vote or invite in a plan this account has left (on another device,
+  // say). join_flock keeps its own refusal below, never shown.
+  "You're no longer in this plan.",
 ]);
 
 // What a refused join_flock says. Never shown, whatever the list above ever
