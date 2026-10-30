@@ -21602,18 +21602,15 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           @keyframes barRise: Hourly chart bars grow up from the baseline,
           staggered left to right
 
-          .skeleton: Highlight is a translucent white sweep, not a theme token
-          — the dark theme's skeleton-bg and border-default are near-identical
-          navies, which made skeletons invisible on device.
-
-          .skeleton: THE SWEEP IS A TRANSFORM, NOT A BACKGROUND POSITION.
-          Animating background-position is a main-thread repaint of every
-          skeleton on every frame, and the place this is used most is the chat
-          loading state -- eight of these repainting during the exact window
-          the keyboard is animating and the history is arriving. A translated
-          overlay is composited instead, so the sweep costs nothing on the
-          main thread. The hidden overflow keeps it inside the rounded box;
-          isolation stops it painting over siblings.
+          .skeleton (no rule here, on purpose): The class, its sweep and its
+          reduced-motion rule live in index.css alone, with the reasons for
+          the white sweep and for sweeping by transform. This block used to
+          carry a copy of them. The boot screen, the website and every
+          skeleton drawn before the signed-in app mounts paint from index.css,
+          before this block exists, so that is the copy kept. The shimmer
+          keyframes went with it: nothing named them, and the
+          background-position sweep they were written for is the one the
+          transform replaced.
 
           .glass (no bare rule, on purpose): A bare .glass frosted-panel rule
           stood here with zero call sites: nothing in src/ has ever carried
@@ -21669,10 +21666,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           from { opacity: 0.92; transform: translateX(16px); }
           to { opacity: 1; transform: translateX(0); }
         }
-        @keyframes shimmer {
-          0% { background-position: -200% 0; }
-          100% { background-position: 200% 0; }
-        }
         .screen-enter {
           animation: screenSlideIn 0.18s cubic-bezier(0.2, 0, 0, 1);
         }
@@ -21722,28 +21715,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         @keyframes barRise {
           from { transform: scaleY(0); }
           to { transform: scaleY(1); }
-        }
-        .skeleton {
-          background: var(--skeleton-bg);
-          border-radius: 8px;
-          position: relative;
-          overflow: hidden;
-          isolation: isolate;
-        }
-        .skeleton::after {
-          content: '';
-          position: absolute;
-          inset: 0;
-          background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.12) 50%, transparent 100%);
-          transform: translateX(-100%);
-          animation: skeletonSweep 1.4s ease infinite;
-          will-change: transform;
-        }
-        @keyframes skeletonSweep {
-          to { transform: translateX(100%); }
-        }
-        @media (prefers-reduced-motion: reduce) {
-          .skeleton::after { animation: none; opacity: 0.5; transform: none; }
         }
         ::-webkit-scrollbar {
           width: 5px;

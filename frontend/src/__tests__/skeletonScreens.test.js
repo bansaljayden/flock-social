@@ -249,6 +249,26 @@ describe('the boot paints, index.js then App.js', () => {
   });
 });
 
+describe('one home for the skeleton\'s rules', () => {
+  test('index.css carries the class, the dark tone, the sweep and its reduced-motion rule', () => {
+    const css = read('index.css');
+    expect(css).toMatch(/\.skeleton \{\s*background: var\(--skeleton-bg\);/);
+    expect(css).toMatch(/\.skeleton::after \{[\s\S]*?animation: skeletonSweep 1\.4s ease infinite;/);
+    expect(css).toMatch(/\.skeleton\.skeleton-dark \{ background: rgba\(255, 255, 255, 0\.10\); \}/);
+    expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\) \{\s*\.skeleton::after \{ animation: none;/);
+  });
+
+  test('App.js\'s style block no longer keeps a copy, nor the shimmer keyframes nothing named', () => {
+    const app = read('App.js');
+    expect(app).not.toMatch(/^\s*\.skeleton \{/m);
+    expect(app).not.toMatch(/^\s*\.skeleton::after \{/m);
+    expect(app).not.toMatch(/@keyframes skeletonSweep/);
+    expect(app).not.toMatch(/@keyframes shimmer/);
+    // And nothing in the app asks for an animation called shimmer.
+    expect(app).not.toMatch(/animation:\s*['"]?shimmer\b/);
+  });
+});
+
 describe('the Nest list and Past flocks', () => {
   test('the Nest waits with flock cards, not ListSkeleton\'s thumbnail rows', () => {
     const app = codeOnly(read('App.js'));

@@ -1000,8 +1000,21 @@ button:active, [role="button"]:active {
 /* THE SKELETON, for every screen (2026-10-30). Content that is still loading
    is drawn as grey shapes of what is coming, not a spinner. The class used to
    live only in the style block FlockAppInner injects, so the boot screen, the
-   website and anything painted before the app mounted could not use it. Same
-   rules here, so the two agree. Dark surfaces add .skeleton-dark. */
+   website and anything painted before the app mounted could not use it. It
+   lives here alone now; the copy in App.js is gone. Dark surfaces add
+   .skeleton-dark. The parts every screen builds with are in
+   components/ui/Skeleton.js.
+
+   The highlight is a translucent white sweep, not a theme token: the dark
+   theme's --skeleton-bg and --border-default are near-identical navies, which
+   made a token-coloured sweep invisible on device.
+
+   THE SWEEP IS A TRANSFORM, NOT A BACKGROUND POSITION. Animating
+   background-position repaints every skeleton on the main thread every frame,
+   and the busiest place for them is the chat's loading state, during the
+   window the keyboard is animating and the history is arriving. A translated
+   overlay is composited instead. The hidden overflow keeps it inside the
+   rounded box; isolation stops it painting over siblings. */
 .skeleton {
   background: var(--skeleton-bg);
   border-radius: 8px;
