@@ -307,7 +307,7 @@ export const quickDealTimeSlot = (chip, customTime) => joinPromoChoice(chip, cus
 // state there to read: Save Hours, the Venue Information Save, a review reply
 // and the trash buttons on deals and events sat looking untouched until the
 // answer came, and took a second tap meanwhile. Each holds its own state here,
-// the way savingVenueIntake works for About Your Venue: disabled, dimmed, a
+// the way savingVenueIntake works for the venue intake card: disabled, dimmed, a
 // wait cursor and its working label from the tap until the save settles. A ref
 // takes one tap at a time, because two can land before a repaint. `ask` runs
 // first, before anything is held, so a cancelled confirm leaves the button as

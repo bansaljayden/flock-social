@@ -755,7 +755,9 @@ test('deleting a promotion or an event reports the server refusal', () => {
     const close = after.indexOf(['', '    };'].join('\n'));
     const fn = close === -1 ? after.slice(0, 1200) : after.slice(0, close);
     assert.ok(new RegExp(`await ${api}\\(`).test(fn));
-    assert.ok(/showToast\(e\?\.message \|\|/.test(fn),
+    // userMessage(e, ...) reports the refusal too: the server's sentence when
+    // it wrote one for people, the handler's own copy otherwise.
+    assert.ok(/showToast\((?:e\?\.message \|\||userMessage\(e,)/.test(fn),
       `${name} still swallows the refusal — the trash icon does nothing at all when the server says no`);
     assert.ok(!/console\.error/.test(fn),
       `${name} must not log the refusal instead of showing it`);
