@@ -180,6 +180,58 @@ async function refreshCollectedBaselines(pool) {
   });
 }
 
+// IS A REBUILD DUE? (2026-10-30.) collectRealtime.js rebuilt every collected
+// baseline at the end of every hourly run, about three minutes of each hour,
+// and from 2026-10-27 to 2026-10-30 every one of those ~90 rebuilds reported
+// "0 changed, 0 stale removed". The weekly corpus moves only when an
+// admission, a harvest or a by-id refresh writes it, and the hourly sweep
+// never does. Those minutes come off the end of the hour, which the fill
+// cities stop early to leave free, so the hourly run now asks this first.
+//
+// The stamps say whether anything moved. Every writer of weekly rows stamps
+// the venue's last_collected_at in the same transaction as the rows
+// (collectWeekly.js, harvestVenueFilter.js; NOW() is the transaction's clock,
+// so the stamp equals the rows' collected_at), and a rebuild stamps each
+// baseline with the newest collected_at under it (UPSERT_SQL). After a
+// rebuild the newest baseline stamp therefore equals the newest venue stamp,
+// and a weekly write after it shows as a venue stamped later than any
+// baseline. discoverBestTime.js stamps just after its rows, so after one of
+// its runs this answers "due" every hour until a later write: the old three
+// minutes, nothing worse.
+//
+// What the stamps cannot show is a weekly row DELETED or a venue's place id
+// REMAPPED (repairBestTimeDiscoveredVenues.js): the baselines change with no
+// newer stamp. Run this file after a repair, as before; and the hourly run
+// rebuilds once a day whatever the stamps say (DAILY_REBUILD_UTC_HOUR), so
+// nothing stays stale for more than a day. A missing stamp is "due", and the
+// caller treats a failure to read them as "due" too.
+const DAILY_REBUILD_UTC_HOUR = 9;
+// Compared in SQL, at the columns' microseconds: a JS Date keeps milliseconds.
+const STAMPS_SQL = `
+  SELECT corpus_at, baselines_at, corpus_at > baselines_at AS behind
+    FROM (SELECT (SELECT MAX(last_collected_at) FROM ml_venues) AS corpus_at,
+                 (SELECT MAX(updated_at) FROM ml_venue_baselines WHERE source = 'collected') AS baselines_at) s
+`;
+
+async function collectedBaselinesDue(db, { at = new Date() } = {}) {
+  if (at.getUTCHours() === DAILY_REBUILD_UTC_HOUR) {
+    return { due: true, reason: `the daily rebuild hour (${DAILY_REBUILD_UTC_HOUR}:00 UTC)` };
+  }
+  const { rows: [stamps] } = await db.query(STAMPS_SQL);
+  if (!stamps.corpus_at || !stamps.baselines_at) {
+    return { due: true, reason: 'no weekly or baseline stamp to compare' };
+  }
+  const corpusAt = new Date(stamps.corpus_at);
+  const baselinesAt = new Date(stamps.baselines_at);
+  if (stamps.behind) {
+    return {
+      due: true,
+      reason: `a weekly curve was written at ${corpusAt.toISOString()}, after the newest baseline (${baselinesAt.toISOString()})`,
+    };
+  }
+  return { due: false, reason: `no weekly curve written since the newest baseline (${baselinesAt.toISOString()})` };
+}
+
 const REFUSAL_MESSAGE =
   'REFUSED: ml_training_data still holds weekly rows that do not declare '
   + `hour_axis = '${HOUR_AXIS_VENUE_LOCAL}'. Their hour column is a BestTime array index, `
@@ -218,6 +270,8 @@ async function main() {
 
 module.exports = {
   refreshCollectedBaselines,
+  collectedBaselinesDue,
+  DAILY_REBUILD_UTC_HOUR,
   REFUSAL_MESSAGE,
   HOUR_AXIS_VENUE_LOCAL,
   DELETE_STALE_SQL,

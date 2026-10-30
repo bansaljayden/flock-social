@@ -21,7 +21,13 @@ const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ml', 'collect
 
 test('the flag exists, is read from argv, and gates the refresh as a branch', () => {
   assert.match(src, /const skipBaselines = process\.argv\.includes\('--no-baseline-refresh'\);/);
-  assert.match(src, /if \(!skipBaselines\) \{\n\s+try \{\n\s+console\.log\('\[ML:Realtime\] Refreshing venue baselines\.\.\.'\);/);
+  // Since 2026-10-30 the branch rebuilds only when a rebuild is due (weekly
+  // stamps newer than the baselines, or the daily hour), and says which.
+  assert.match(src, /if \(!skipBaselines\) \{\n(\s+\/\/[^\n]*\n)*\s+let rebuild;\n\s+try \{\n\s+rebuild = await collectedBaselinesDue\(pool\);/);
+  assert.match(src, /if \(rebuild\.due\) \{\n\s+console\.log\(`\[ML:Realtime\] Baseline rebuild due: \$\{rebuild\.reason\}\.`\);\n\s+try \{\n\s+console\.log\('\[ML:Realtime\] Refreshing venue baselines\.\.\.'\);/);
+  assert.match(src, /Baselines current, rebuild skipped: \$\{rebuild\.reason\}\./);
+  // Stamps that cannot be read rebuild, as every hour did before.
+  assert.match(src, /catch \(err\) \{\n\s+rebuild = \{ due: true, reason: `the stamps could not be read/);
   // A thrown sentinel would swallow real refresh errors; the branch must not
   // be reintroduced that way.
   assert.ok(!/throw \{ skip: true \}/.test(src), 'the skip must be a branch, never a thrown sentinel');
@@ -33,7 +39,7 @@ test('skipping is announced, so a silent run cannot be mistaken for a refresh', 
 
 test('the refresh still runs by default, so the existing hourly cron is unchanged', () => {
   const at = src.indexOf('const skipBaselines');
-  const after = src.slice(at, at + 900);
+  const after = src.slice(at, at + 1800);
   assert.match(after, /await refreshCollectedBaselines\(pool\)/);
   // No flag on the command line means skipBaselines is false, so the branch runs.
   assert.ok(!/--no-baseline-refresh.*default/i.test(src), 'the flag must be opt in');

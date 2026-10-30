@@ -16,7 +16,7 @@ const {
   NEARBY_KM, TM_PAGE_SIZE, ticketmasterQuota,
 } = require('./eventService');
 const { specialNightFor, isHolidayEve } = require('./specialNights');
-const { refreshCollectedBaselines, REFUSAL_MESSAGE } = require('./buildBaselines');
+const { refreshCollectedBaselines, collectedBaselinesDue, REFUSAL_MESSAGE } = require('./buildBaselines');
 const { buildRecentDeviation } = require('./buildRecentDeviation');
 const { refreshSportsIfDue } = require('./collectSportsSchedules');
 const { requireSlotIndex } = require('./collectWeekly');
@@ -466,6 +466,16 @@ const MAX_START_INTERVAL_MS = 60000;
 // they are not worth an hour.
 const FILL_EARLY_STOP_MS = 6 * 60 * 1000;
 
+// THE TAIL WITHOUT A REBUILD (2026-10-30). Three of those minutes were the
+// baseline rebuild, and it is now skipped when no weekly curve has been
+// written since the last one (buildBaselines.collectedBaselinesDue), which is
+// most hours: the tail is then the offsets, under a minute. Such a run's fill
+// stops this much before the budget instead, and the three minutes go to the
+// fill (about 360 calls at 500 ms). A run that finds a rebuild due after all,
+// a weekly write having landed mid-sweep, still ends about :04 from a
+// container started at :11:54.
+const FILL_EARLY_STOP_NO_REBUILD_MS = 3 * 60 * 1000;
+
 // What --fill-cities asks for, checked. Refused like the other flags when it
 // cannot mean what it says: a name that is not a city in config.js (a typo
 // should fail the cron, not quietly fill nothing), the flag beside
@@ -777,8 +787,10 @@ async function sweepVenues(cityOrder, {
   maxInFlight = DEFAULT_MAX_IN_FLIGHT,
   startIntervalMs = START_INTERVAL_MS,
   // City keys whose blocks are fill (FILL CITIES, above): they stop starting
-  // calls FILL_EARLY_STOP_MS before the budget.
+  // calls fillEarlyStopMs before the budget (FILL_EARLY_STOP_NO_REBUILD_MS
+  // when the run's tail has no baseline rebuild).
   fillCities = new Set(),
+  fillEarlyStopMs = FILL_EARLY_STOP_MS,
   fetchLive = fetchLiveBusyness,
   weatherFor = getWeather,
   now = Date.now,
@@ -982,13 +994,13 @@ async function sweepVenues(cityOrder, {
       const cityConfig = CITIES[cityKey];
       if (!cityConfig) continue;
       const fillBlock = fillCities.has(cityKey);
-      const blockBudgetMs = fillBlock ? RUN_TIME_BUDGET_MS - FILL_EARLY_STOP_MS : RUN_TIME_BUDGET_MS;
+      const blockBudgetMs = fillBlock ? RUN_TIME_BUDGET_MS - fillEarlyStopMs : RUN_TIME_BUDGET_MS;
       // A fill block reached after its time is counted whole and skipped,
       // weather call and all: none of its venues could start.
       if (fillBlock && (budgetHit || now() - runClockStart > blockBudgetMs)) {
         if (!budgetHit) {
           console.warn(`[ML:Realtime] Fill time reached after ${called} calls (fill cities stop `
-            + `${FILL_EARLY_STOP_MS / 60000} minutes before the budget); the rest of the fill is left for the next run.`);
+            + `${fillEarlyStopMs / 60000} minutes before the budget); the rest of the fill is left for the next run.`);
         }
         budgetHit = true;
         leftForNextRun += cityVenues.length;
@@ -1049,7 +1061,7 @@ async function sweepVenues(cityOrder, {
         if (!budgetHit && (await readyToCall(runClockStart + blockBudgetMs)) === false) break;
         if (fillBlock && !budgetHit && now() - runClockStart > blockBudgetMs) {
           console.warn(`[ML:Realtime] Fill time reached after ${called} calls (fill cities stop `
-            + `${FILL_EARLY_STOP_MS / 60000} minutes before the budget); the rest of the fill is left for the next run.`);
+            + `${fillEarlyStopMs / 60000} minutes before the budget); the rest of the fill is left for the next run.`);
           budgetHit = true;
         }
         if (budgetHit || now() - runClockStart > RUN_TIME_BUDGET_MS) {
@@ -1946,6 +1958,24 @@ async function collectRealtime() {
     perCity.set(city, row);
   };
   const cityOfVendorId = new Map(venues.map((v) => [v.besttime_venue_id, v.city]));
+  // When the fill stops (FILL_EARLY_STOP_NO_REBUILD_MS): later when this run's
+  // tail has no baseline rebuild. Asked before the sweep; the tail asks again.
+  // A failure to read the stamps keeps the early stop, the old behaviour.
+  let fillEarlyStopMs = FILL_EARLY_STOP_MS;
+  if (process.argv.includes('--no-baseline-refresh')) {
+    fillEarlyStopMs = FILL_EARLY_STOP_NO_REBUILD_MS;
+  } else {
+    try {
+      if (!(await collectedBaselinesDue(pool)).due) fillEarlyStopMs = FILL_EARLY_STOP_NO_REBUILD_MS;
+    } catch (err) {
+      console.error(`[ML:Realtime] Baseline stamps could not be read (${describeDbError(err)}); `
+        + 'the fill stops early for a rebuild.');
+    }
+  }
+  if (fillSet.size) {
+    console.log(`[ML:Realtime] Fill stops ${fillEarlyStopMs / 60000} minutes before the budget this run `
+      + `(${fillEarlyStopMs === FILL_EARLY_STOP_MS ? 'a baseline rebuild is due' : 'no baseline rebuild'}).`);
+  }
   const {
     totalRows, skipped, closedSkips, called, liveRows, forecastRows, duplicateRows, vanished,
     aborted, abortReason, budgetHit, leftForNextRun, peakInFlight,
@@ -1960,6 +1990,7 @@ async function collectRealtime() {
       return fetchLiveBusyness(vendorId);
     },
     fillCities: fillSet,
+    fillEarlyStopMs,
   });
 
   // Their own lines, so the summary below keeps the exact shape monitoring reads.
@@ -2225,16 +2256,32 @@ async function run() {
       console.log('[ML:Realtime] Skipping the baseline refresh (--no-baseline-refresh); another collector owns it.');
     }
     if (!skipBaselines) {
+      // Only when something under the baselines moved, or once a day
+      // (buildBaselines.collectedBaselinesDue). Asked again here, not carried
+      // from the start of the run, so a weekly write that landed during the
+      // sweep is rebuilt now rather than next hour. Stamps that cannot be read
+      // mean rebuild, the old behaviour.
+      let rebuild;
       try {
-        console.log('[ML:Realtime] Refreshing venue baselines...');
-        const result = await refreshCollectedBaselines(pool);
-        if (!result.ok) {
-          console.error(`[ML:Realtime] Baseline refresh ${REFUSAL_MESSAGE}`);
-        } else {
-          console.log(`[ML:Realtime] Baselines refreshed (${result.upserted} changed, ${result.deleted} stale removed)`);
-        }
+        rebuild = await collectedBaselinesDue(pool);
       } catch (err) {
-        console.error(`[ML:Realtime] Baseline refresh failed: ${describeDbError(err)}`);
+        rebuild = { due: true, reason: `the stamps could not be read (${describeDbError(err)})` };
+      }
+      if (rebuild.due) {
+        console.log(`[ML:Realtime] Baseline rebuild due: ${rebuild.reason}.`);
+        try {
+          console.log('[ML:Realtime] Refreshing venue baselines...');
+          const result = await refreshCollectedBaselines(pool);
+          if (!result.ok) {
+            console.error(`[ML:Realtime] Baseline refresh ${REFUSAL_MESSAGE}`);
+          } else {
+            console.log(`[ML:Realtime] Baselines refreshed (${result.upserted} changed, ${result.deleted} stale removed)`);
+          }
+        } catch (err) {
+          console.error(`[ML:Realtime] Baseline refresh failed: ${describeDbError(err)}`);
+        }
+      } else {
+        console.log(`[ML:Realtime] Baselines current, rebuild skipped: ${rebuild.reason}.`);
       }
 
       // THE TRAILING OFFSET, refreshed after the baselines and not before.
@@ -2280,7 +2327,7 @@ module.exports = {
   buildOpenHourMask, isOpenAtHour, OPEN_HOUR_PAD,
   createCallGate, sweepVenues, START_INTERVAL_MS, DEFAULT_MAX_IN_FLIGHT, MAX_IN_FLIGHT_CEILING,
   MIN_START_INTERVAL_MS, MAX_START_INTERVAL_MS,
-  FILL_EARLY_STOP_MS, parseFillCities, orderCityBlocks,
+  FILL_EARLY_STOP_MS, FILL_EARLY_STOP_NO_REBUILD_MS, parseFillCities, orderCityBlocks,
   FILL_SHARE_SPREAD, fillOpenShares, loadBusyNow, holdoutFirst,
   createEventLookup, sharedEventRadiusKm, cellHalfDiagonalKm, EVENT_CELL_DEG, EVENT_SHARED_PAGE,
   cityEventDisks, EVENT_CITY_PAGE, EVENT_CITY_MAX_PAGES, EVENT_CITY_MAX_REACH_KM,

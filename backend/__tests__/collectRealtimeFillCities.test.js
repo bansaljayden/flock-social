@@ -51,7 +51,7 @@ stubModule('../scripts/ml/eventService', {
 });
 
 const {
-  sweepVenues, parseFillCities, orderCityBlocks, FILL_EARLY_STOP_MS, LABEL_LIVE,
+  sweepVenues, parseFillCities, orderCityBlocks, FILL_EARLY_STOP_MS, FILL_EARLY_STOP_NO_REBUILD_MS, LABEL_LIVE,
   FILL_SHARE_SPREAD, fillOpenShares, buildOpenHourMask, holdoutFirst,
 } = require('../scripts/ml/collectRealtime');
 const { virtualClock } = require('./helpers/virtualClock');
@@ -244,7 +244,7 @@ function venuesFor(city, n, firstId) {
   }));
 }
 
-async function sweepWithFill(cityOrder, fillCities) {
+async function sweepWithFill(cityOrder, fillCities, extra = {}) {
   const clock = virtualClock(START);
   const calls = [];
   const weatherCalls = [];
@@ -266,6 +266,7 @@ async function sweepWithFill(cityOrder, fillCities) {
       weatherFor: async (lat, lon) => { weatherCalls.push({ lat, lon }); return { lat, lon }; },
       now: clock.now,
       pause: clock.pause,
+      ...extra,
     }));
     return { result, calls, weatherCalls, lines };
   } finally {
@@ -303,6 +304,37 @@ test('a fill that cannot fit never costs a main venue its call, and stops six mi
   assert.ok(!lines.some((l) => /\[ML:Realtime\] Paris \(/.test(l.text)), 'the skipped block printed a header');
 });
 
+test('with no baseline rebuild in the tail, the fill stops three minutes early instead of six', async () => {
+  const main = venuesFor('philly', 100, 1);
+  const london = venuesFor('london', 1000, 1001);
+  const { result, calls, lines } = await sweepWithFill(
+    [['philly', main], ['london', london]], ['london'], { fillEarlyStopMs: FILL_EARLY_STOP_NO_REBUILD_MS });
+
+  assert.strictEqual(FILL_EARLY_STOP_NO_REBUILD_MS, 3 * MINUTE);
+  const calledIds = new Set(calls.map((c) => c.vendorId));
+  assert.ok(main.every((v) => calledIds.has(v.besttime_venue_id)), 'a main venue went uncalled');
+  const lastStart = Math.max(...calls.map((c) => c.startAt));
+  assert.ok(lastStart - START <= BUDGET_MS - FILL_EARLY_STOP_NO_REBUILD_MS, `a fill call started ${(lastStart - START) / MINUTE} min in`);
+  assert.ok(lastStart - START > BUDGET_MS - FILL_EARLY_STOP_NO_REBUILD_MS - MINUTE, 'the fill stopped at the old time');
+  assert.strictEqual(result.budgetHit, true);
+  assert.strictEqual(result.leftForNextRun, main.length + london.length - result.called);
+  const fillLines = lines.filter((l) => /Fill time reached/.test(l.text));
+  assert.strictEqual(fillLines.length, 1);
+  assert.strictEqual(fillLines[0].text, `[ML:Realtime] Fill time reached after ${result.called} calls (fill cities stop `
+    + '3 minutes before the budget); the rest of the fill is left for the next run.');
+});
+
+test('run() stops the fill later only when the stamps say no rebuild is due, and says which', () => {
+  const src = SRC.replace(/\r\n/g, '\n');
+  assert.match(src, /let fillEarlyStopMs = FILL_EARLY_STOP_MS;/);
+  assert.match(src, /if \(!\(await collectedBaselinesDue\(pool\)\)\.due\) fillEarlyStopMs = FILL_EARLY_STOP_NO_REBUILD_MS;/);
+  // Stamps that cannot be read keep the early stop: the tail will rebuild.
+  assert.match(src, /Baseline stamps could not be read \(\$\{describeDbError\(err\)\}\); `\n\s+\+ 'the fill stops early for a rebuild\.'/);
+  assert.match(src, /Fill stops \$\{fillEarlyStopMs \/ 60000\} minutes before the budget this run /);
+  // The sweep's own default is still the six minutes.
+  assert.match(src, /\n {2}fillCities = new Set\(\),\n {2}fillEarlyStopMs = FILL_EARLY_STOP_MS,\n/);
+});
+
 test('a fill that fits is swept whole, and nothing is left over', async () => {
   const main = venuesFor('philly', 60, 1);
   const seoul = venuesFor('seoul', 60, 1001);
@@ -330,7 +362,7 @@ test('run() parses the flag, reads the fill with the main scope, orders it last 
   assert.match(src, /Fill open shares could not be read \(\$\{describeDbError\(err\)\}\); /);
   assert.match(src, /const cityOrder = holdoutFirst\(orderCityBlocks\(byCity, fillCities, Math\.random, fillShares\),\n {4}HOLDOUT\.active \? HOLDOUT\.city : null\);/);
   assert.match(src, /Fill order by open share this hour: /);
-  assert.match(src, /fillCities: fillSet,\n {2}\}\);/);
+  assert.match(src, /fillCities: fillSet,\n {4}fillEarlyStopMs,\n {2}\}\);/);
   // The main scope must hold venues on its own: a run of fill cities alone is
   // not the run that was asked for.
   assert.match(src, /if \(mainVenues\.length === 0\) \{/);
