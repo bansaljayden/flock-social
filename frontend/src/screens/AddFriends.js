@@ -60,6 +60,8 @@
 import React from 'react';
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
+// The name search's rows and the Flock code, while they load.
+import { SkeletonBar, SkeletonBlock, SkeletonRow, SkeletonStatus } from '../components/ui/Skeleton';
 import useEdgeSwipeBack from '../hooks/useEdgeSwipeBack';
 
 /* The QR GENERATOR is lazy, the way the scanner half of this feature already
@@ -283,11 +285,15 @@ export default function AddFriends({
                 {addFriendsSearch && <button aria-label="Clear search" className="hit44" onClick={() => handleAddFriendsSearch('')} style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px' }}>{Icons.x(colors.textTertiary, 14)}</button>}
               </div>
 
+              {/* The rows that are coming, in the row's own shape: the 44px
+                  face, the name, the Add and Message buttons. A ring and
+                  "Searching..." used to stand here. */}
               {addFriendsSearching && (
-                <div style={{ textAlign: 'center', padding: '24px 0' }}>
-                  <div style={{ display: 'inline-block', width: '18px', height: '18px', border: `2px solid ${colors.creamDark}`, borderTopColor: colors.navy, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '8px 0 0' }}>Searching...</p>
-                </div>
+                <SkeletonStatus label="Searching people">
+                  {['46%', '38%', '52%'].map((w) => (
+                    <SkeletonRow key={w} thumb={44} round lines={[w]} trailing={[{ width: 56, height: 32, radius: 20 }, { width: 40, height: 32, radius: 20 }]} padding="10px" gap={10} radius={14} marginBottom={8} style={{ border: 'none', boxShadow: '0 1px 3px rgba(0,0,0,0.06)' }} />
+                  ))}
+                </SkeletonStatus>
               )}
 
               {/* A network or server failure, in the server's own words, rather
@@ -436,11 +442,23 @@ export default function AddFriends({
                       <button className="hit44" onClick={() => loadAddFriendsData()} style={{ padding: '8px 14px', borderRadius: '8px', border: '1px solid var(--border-mid)', backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Try again</button>
                     </div>
                   ) : (
-                    <div style={{ width: '180px', height: '180px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      <div style={{ width: '20px', height: '20px', border: `2px solid ${colors.creamDark}`, borderTopColor: colors.navy, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-                    </div>
+                    /* The code's square while the server mints it, where a
+                       ring used to turn. No pattern in it: a QR-looking
+                       square would be a code that scans to nothing. */
+                    <SkeletonStatus label="Loading your Flock code">
+                      <SkeletonBlock width={180} height={180} radius={4} />
+                    </SkeletonStatus>
                   )}
                 </div>
+                {/* And the code button's place under it, so the card does
+                    not grow when the code lands. */}
+                {!myFriendCode && !myFriendCodeFailed && (
+                  <div aria-hidden="true" style={{ marginTop: '14px' }}>
+                    <SkeletonBar width={64} height={9} radius={3} style={{ margin: '2px auto 8px' }} />
+                    <SkeletonBar width={140} height={36} radius={10} style={{ margin: '0 auto' }} />
+                    <SkeletonBar width={70} height={10} radius={3} style={{ margin: '9px auto 0' }} />
+                  </div>
+                )}
                 {myFriendCode && (
                   <div style={{ marginTop: '14px' }}>
                     {/* AWAITED, INSIDE A CATCH. This was an optional chain on
@@ -477,7 +495,17 @@ export default function AddFriends({
                   />
                   <button className="hit44 glass-btn glass-navy" onClick={(e) => { if (!friendCodeLoading) { confirmClick(e); handleAddByCode(); } }} disabled={friendCodeLoading || !friendCodeInput.trim()}
                     style={{ padding: '12px 20px', borderRadius: '12px', border: 'none', background: friendCodeInput.trim() ? colors.navyBg : 'var(--pill-bg)', color: friendCodeInput.trim() ? 'white' : 'var(--text-tertiary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: friendCodeInput.trim() ? 'pointer' : 'default', position: 'relative', overflow: 'hidden', opacity: friendCodeLoading ? 0.7 : 1 }}>
-                    {friendCodeLoading ? '...' : 'Add'}
+                    {/* The small inline ring for an action running, over the
+                        word held invisible so the button keeps its width,
+                        with the words for a screen reader. It was a bare
+                        "...". */}
+                    {friendCodeLoading ? (
+                      <>
+                        <span aria-hidden="true" style={{ visibility: 'hidden' }}>Add</span>
+                        <span aria-hidden="true" style={{ position: 'absolute', top: '50%', left: '50%', width: '16px', height: '16px', margin: '-8px 0 0 -8px', boxSizing: 'border-box', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: 'white', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                        <span className="sr-only">Adding</span>
+                      </>
+                    ) : 'Add'}
                   </button>
                 </div>
               </div>
@@ -661,7 +689,14 @@ export default function AddFriends({
                     />
                     <button className="hit44 glass-btn glass-navy" onClick={(e) => { if (!phoneLookupLoading && phoneLookupInput.trim()) { confirmClick(e); handleLookupByNumber(); } }} disabled={phoneLookupLoading || !phoneLookupInput.trim()}
                       style={{ padding: '12px 20px', borderRadius: '12px', border: 'none', background: phoneLookupInput.trim() ? colors.navyBg : 'var(--pill-bg)', color: phoneLookupInput.trim() ? 'white' : 'var(--text-tertiary)', fontSize: 'var(--t-body)', fontWeight: '600', cursor: phoneLookupInput.trim() ? 'pointer' : 'default', position: 'relative', overflow: 'hidden', opacity: phoneLookupLoading ? 0.7 : 1 }}>
-                      {phoneLookupLoading ? '...' : 'Look up'}
+                      {/* The same inline ring as Add above, for the same reason. */}
+                      {phoneLookupLoading ? (
+                        <>
+                          <span aria-hidden="true" style={{ visibility: 'hidden' }}>Look up</span>
+                          <span aria-hidden="true" style={{ position: 'absolute', top: '50%', left: '50%', width: '16px', height: '16px', margin: '-8px 0 0 -8px', boxSizing: 'border-box', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: 'white', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                          <span className="sr-only">Looking up</span>
+                        </>
+                      ) : 'Look up'}
                     </button>
                   </div>
 

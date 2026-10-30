@@ -35,6 +35,7 @@
 import React from 'react';
 import Icons from './ui/Icons';
 import { BirdieStill, BirdNote, WARM_BIRD } from './ui/BirdieBird';
+import { SkeletonRow, SkeletonStatus } from './ui/Skeleton';
 
 const NewDmModal = ({
   DialogBehavior,
@@ -79,11 +80,15 @@ const NewDmModal = ({
             {!dmSearchText.trim() && usersToShow.length > 0 && (
               <p style={{ fontSize: 'var(--t-micro)', fontWeight: '700', color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.5px', padding: '4px 4px 8px', margin: 0 }}>Suggested</p>
             )}
+            {/* The rows that are coming, in the row's own shape, bare like
+                the rows below: the 44px face, the name and the flocks line.
+                A ring and "Searching..." used to stand here. */}
             {dmModalSearching && (
-              <div style={{ textAlign: 'center', padding: '20px 0' }}>
-                <div style={{ display: 'inline-block', width: '18px', height: '18px', border: `2px solid ${colors.creamDark}`, borderTopColor: colors.navy, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-                <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', marginLeft: '8px' }}>Searching...</span>
-              </div>
+              <SkeletonStatus label="Searching people">
+                {['48%', '40%', '56%'].map((w) => (
+                  <SkeletonRow key={w} bare thumb={44} round lines={[w, '32%']} />
+                ))}
+              </SkeletonStatus>
             )}
             {/* A failed search, in the server's own words, rather than "No
                 users found" drawn over a lookup that never completed. Set in
