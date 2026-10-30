@@ -30,11 +30,13 @@ test('settled-ness is read live, not from a snapshot that stops moving', () => {
   // responses carry it, and the header takes the larger of the two sources.
   expect(chat).toMatch(/const visibleSettled = shares\.filter\(\(sh\) => sh\.settled\)\.length;/);
   expect(chat).toMatch(/Math\.max\(visibleSettled, Number\(bill\?\.settledCount\) \|\| 0\)/);
-  // Both settle paths flip the caller's row on the tap and take the server's
-  // tally once it answers, through the one row writer (setMyShare), which
-  // spreads the tally over the bill.
-  expect(chat).toMatch(/setMyShare\(\{\}, tallyOf\(settled\)\);/);
-  expect(chat).toMatch(/setMyShare\(\{\}, tallyOf\(unsettled\)\);/);
+  // Both settle paths flip the caller's row on the tap and, once the server
+  // answers, put the same flip back on with its tally, through the one row
+  // writer (setMyShare), which spreads the tally over the bill. The flip goes
+  // on again because a bill re-read can land mid-request
+  // (billRowAfterReread.test.js).
+  expect(chat).toMatch(/setMyShare\(paid, tallyOf\(settled\)\);/);
+  expect(chat).toMatch(/setMyShare\(unpaid, tallyOf\(unsettled\)\);/);
   expect(chat).toMatch(/const setMyShare = \(patch, tally = \{\}\) => setBillSplit\(prev => \{[\s\S]{0,120}\.\.\.tally,/);
   expect(chat).toMatch(/settled: false, settledAt: null, outstanding: owedOn\(s\)/);
   const app = read('App.js');
