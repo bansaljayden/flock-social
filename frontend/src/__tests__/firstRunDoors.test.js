@@ -118,7 +118,11 @@ test('the events gate reads the list once a location lands, and says what it is 
   expect(events).toMatch(/disabled=\{locationLoading\}/);
   // The toggle path reports its wait, or the gate above would have nothing
   // to show while a device thinks.
-  const toggle = app.slice(app.indexOf('const toggleLocation = '), app.indexOf('const toggleLocation = ') + 3000);
+  // Bounded on the handler's own closing line rather than a byte count, so a
+  // comment added inside it cannot push a counted line out of the window.
+  const toggleAt = app.indexOf('const toggleLocation = ');
+  expect(toggleAt).toBeGreaterThan(-1);
+  const toggle = app.slice(toggleAt, app.indexOf('\n  }, [', toggleAt));
   // The request is stamped first, so an answer that lands after Location was
   // switched off or after a sign-out is dropped.
   expect(toggle).toMatch(/setLocationLoading\(true\);\s*const ask = locationAskRef\.current;\s*getCurrentPosition\(/);
