@@ -47,6 +47,7 @@ import SignupScreen from './components/auth/SignupScreen';
 // link on the consumer login, and the report sheet is behind a long-press on
 // somebody else's content.
 import ErrorBoundary from './components/ErrorBoundary';
+import { isChunkLoadError, CHUNK_ERROR_TITLE, CHUNK_ERROR_BODY } from './components/ErrorBoundary';
 // "Send this to Flock" on the two screen-level crash fallbacks below, the same
 // button the app-wide one carries (components/CrashReportButton.js).
 import CrashReportButton, { CRASH_REPORT_NOTE, worthReporting } from './components/CrashReportButton';
@@ -20845,18 +20846,22 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         style={{ flex: 1, minWidth: 0, overflowY: 'auto', backgroundColor: 'var(--bg-primary)', padding: '28px 20px', boxSizing: 'border-box', display: 'flex', flexDirection: 'column' }}
       >
         {/* Centred with auto margins rather than justifyContent, which clips
-            the top of an overflowing child instead of scrolling to it. The
-            error message is the one string here with no length limit. */}
+            the top of an overflowing child instead of scrolling to it. */}
         <div style={{ width: '100%', maxWidth: '340px', margin: 'auto' }}>
-          <BirdieStill size={96} eager style={{ margin: '0 0 12px' }} />
+          {/* A download that died is the network, not a bug, and it gets the
+              words and the warm bird components/ErrorBoundary.js gives it.
+              Try again below re-arms the chunk, so it is the way out. */}
+          <BirdieStill bird={isChunkLoadError(error) ? WARM_BIRD : undefined} size={96} eager style={{ margin: '0 0 12px' }} />
           <span aria-hidden="true" style={{ display: 'inline-flex', marginBottom: '10px' }}>
             {Icons.alertCircle('var(--text-tertiary)', 20)}
           </span>
           <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-title)', fontWeight: '700', color: 'var(--text-primary)', margin: '0 0 8px' }}>
-            This screen stopped working
+            {isChunkLoadError(error) ? CHUNK_ERROR_TITLE : 'This screen stopped working'}
           </h2>
           <p style={{ fontSize: 'var(--t-label)', lineHeight: 1.55, color: 'var(--text-secondary)', margin: '0 0 18px' }}>
-            Your account, your flocks and your messages are saved on the server. Anything you were typing on this screen is gone.
+            {isChunkLoadError(error)
+              ? CHUNK_ERROR_BODY
+              : 'Your account, your flocks and your messages are saved on the server. Anything you were typing on this screen is gone.'}
           </p>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
             <button
@@ -20890,11 +20895,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               {CRASH_REPORT_NOTE}
             </p>
           )}
-          <p style={{ fontSize: 'var(--t-meta)', lineHeight: 1.5, color: 'var(--text-tertiary)', margin: '16px 0 0', wordBreak: 'break-word' }}>
-            {(error && error.message) || 'Unknown error'}
-          </p>
+          {/* The error's own text ("Cannot read properties of undefined") is
+              for us, not the person: it goes to the console, to Sentry and into
+              "Send this to Flock", and never onto this screen. */}
           {eventId && (
-            <p style={{ fontSize: 'var(--t-meta)', lineHeight: 1.5, color: 'var(--text-tertiary)', margin: '4px 0 0', wordBreak: 'break-word' }}>
+            <p style={{ fontSize: 'var(--t-meta)', lineHeight: 1.5, color: 'var(--text-tertiary)', margin: '16px 0 0', wordBreak: 'break-word' }}>
               Reference {eventId}
             </p>
           )}
@@ -20962,9 +20967,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               </p>
             </>
           )}
-          <p style={{ fontSize: 'var(--t-meta)', lineHeight: 1.5, color: 'var(--text-tertiary)', margin: '16px 0 0', wordBreak: 'break-word' }}>
-            {(error && error.message) || 'Unknown error'}
-          </p>
+          {/* No error text here either: see the screen fallback above. */}
           <FloppyBird />
         </div>
       </div>

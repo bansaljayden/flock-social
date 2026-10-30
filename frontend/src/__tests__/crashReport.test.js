@@ -225,6 +225,47 @@ describe('the crash screen', () => {
     expect(String(got.componentStack || '')).toMatch(/Boom/);
   });
 
+  test("neither screen-level fallback in App.js prints the error's own text", () => {
+    // 2026-10-30: the app-wide card stopped printing it in the same review;
+    // the screen and map cards printed `error.message || 'Unknown error'`
+    // under their buttons until now.
+    const app = read('App.js');
+    for (const name of ['screenCrashFallback', 'exploreCrashFallback']) {
+      const start = app.indexOf(`const ${name} = (`);
+      const end = app.indexOf(name === 'screenCrashFallback' ? 'const exploreCrashFallback = (' : 'const verifyEmailSheetProps = {', start);
+      expect(end).toBeGreaterThan(start);
+      const body = app.slice(start, end);
+      expect(body).not.toMatch(/error\.message/);
+      expect(body).not.toMatch(/Unknown error/);
+    }
+  });
+
+  test('a screen whose download died says so in the app-wide card\'s words, with its warm bird', () => {
+    const { isChunkLoadError, CHUNK_ERROR_TITLE, CHUNK_ERROR_BODY } = require('../components/ErrorBoundary');
+    const chunk = Object.assign(new Error('Loading chunk 42 failed.'), { name: 'ChunkLoadError' });
+    expect(isChunkLoadError(chunk)).toBe(true);
+    expect(isChunkLoadError(new Error('Loading CSS chunk 7 failed'))).toBe(true);
+    expect(isChunkLoadError(new TypeError('votes is undefined'))).toBe(false);
+    expect(isChunkLoadError(null)).toBe(false);
+
+    // The app-wide card, rendered: the shared words are the ones it shows.
+    render(
+      <ErrorBoundary label="app-root">
+        <Boom error={chunk} />
+      </ErrorBoundary>,
+    );
+    expect(screen.getByText(CHUNK_ERROR_TITLE)).toBeTruthy();
+    expect(screen.getByText(CHUNK_ERROR_BODY)).toBeTruthy();
+
+    // And App.js's screen card takes the same three things from it.
+    const app = read('App.js');
+    expect(app).toContain("import { isChunkLoadError, CHUNK_ERROR_TITLE, CHUNK_ERROR_BODY } from './components/ErrorBoundary';");
+    const body = app.slice(app.indexOf('const screenCrashFallback = ('), app.indexOf('const exploreCrashFallback = ('));
+    expect(body).toContain('<BirdieStill bird={isChunkLoadError(error) ? WARM_BIRD : undefined}');
+    expect(body).toContain("{isChunkLoadError(error) ? CHUNK_ERROR_TITLE : 'This screen stopped working'}");
+    expect(body).toMatch(/\{isChunkLoadError\(error\)\s*\? CHUNK_ERROR_BODY/);
+  });
+
   test('both screen-level fallbacks in App.js carry the button and the note', () => {
     const app = read('App.js');
     for (const name of ['screenCrashFallback', 'exploreCrashFallback']) {

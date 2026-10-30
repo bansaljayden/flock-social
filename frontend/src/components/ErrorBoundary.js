@@ -11,6 +11,21 @@ import FloppyBird from './ui/FloppyBird';
 import CrashReportButton, { CRASH_REPORT_NOTE, worthReporting } from './CrashReportButton';
 
 /**
+ * A failed lazy chunk: a network event, not a bug. The download died on weak
+ * signal, or a deploy replaced the file mid-session. Exported with its two
+ * lines of copy so App.js's screen fallback says the same thing this one does
+ * about the same failure.
+ */
+export function isChunkLoadError(error) {
+  return !!error && (
+    error.name === 'ChunkLoadError' ||
+    /Loading (CSS )?chunk/i.test(error.message || '')
+  );
+}
+export const CHUNK_ERROR_TITLE = "Part of the app didn't load";
+export const CHUNK_ERROR_BODY = "A piece of the app didn't finish downloading. That happens on a weak connection, or right after we ship an update. Nothing of yours is lost.";
+
+/**
  * The app's crash net.
  *
  * Before this existed, a single throw anywhere inside the App tree unmounted
@@ -154,10 +169,7 @@ class ErrorBoundary extends React.Component {
     // A failed lazy chunk is a network event, not a bug: the download died on
     // weak signal, or a deploy replaced the file mid-session. Say that, and
     // if the device knows it is offline right now, say reloading can wait.
-    const isChunkError = !!error && (
-      error.name === 'ChunkLoadError' ||
-      /Loading (CSS )?chunk/i.test(error.message || '')
-    );
+    const isChunkError = isChunkLoadError(error);
     const offlineNow = typeof navigator !== 'undefined' && navigator.onLine === false;
 
     return (
@@ -168,13 +180,9 @@ class ErrorBoundary extends React.Component {
               the one bird that never arrives. Warm for a download that died,
               cobalt for a real crash, so the two pages do not look alike. */}
           <BirdieStill bird={isChunkError ? WARM_BIRD : BIRDIE} size={72} eager style={{ margin: '0 0 12px' }} />
-          <h1 style={styles.title}>{isChunkError ? "Part of the app didn't load" : 'The app hit an error'}</h1>
+          <h1 style={styles.title}>{isChunkError ? CHUNK_ERROR_TITLE : 'The app hit an error'}</h1>
           {isChunkError ? (
-            <p style={styles.body}>
-              A piece of the app didn't finish downloading. That happens on a
-              weak connection, or right after we ship an update. Nothing of
-              yours is lost.
-            </p>
+            <p style={styles.body}>{CHUNK_ERROR_BODY}</p>
           ) : (
             <p style={styles.body}>
               This screen stopped working and had to close. Your account, your flocks

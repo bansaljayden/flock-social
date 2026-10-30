@@ -463,7 +463,10 @@ describe('the 2026-09-01 sweep: every remaining empty or error state has a bird'
   });
 
   test('the crash nets: app boundary, page boundary, 404', () => {
-    expect(birdNear(ERROR_BOUNDARY_SRC, "Part of the app didn't load", 600)).toBe(true);
+    // The title is a constant now (CHUNK_ERROR_TITLE, shared with App.js's
+    // screen fallback), so the anchor is where the card draws it.
+    expect(ERROR_BOUNDARY_SRC).toContain(`export const CHUNK_ERROR_TITLE = "Part of the app didn't load";`);
+    expect(birdNear(ERROR_BOUNDARY_SRC, '{isChunkError ? CHUNK_ERROR_TITLE', 600)).toBe(true);
     expect(birdNear(INDEX_SRC, "This page didn't finish loading", 300)).toBe(true);
     expect(birdNear(INDEX_SRC, "There's nothing at this address", 500)).toBe(true);
     // A crash card is the fold. A lazy bird there is the one bird that would
