@@ -59,6 +59,8 @@ jest.mock('../services/api', () => ({
   // The show-in-app switch's one write, beside it on the same card since
   // phase 2 (venueTablesPhase2.test.js); never pressed here.
   updateSensorTableSettings: jest.fn(),
+  // The real one: which sentence a failed save shows is part of the contract.
+  userMessage: jest.requireActual('../services/api').userMessage,
 }));
 jest.mock('../components/ui/BirdieBird', () => {
   const R = require('react');
@@ -1591,12 +1593,27 @@ describe('the Table alerts switch', () => {
   });
 
   test('a save that fails says so as an error and writes nothing to the profile', async () => {
-    updateVenueProfileMock.mockRejectedValue(new Error('Could not reach the server.'));
+    // A network failure as services/api.js builds it: its sentence is written
+    // for people, so it is the one shown.
+    updateVenueProfileMock.mockRejectedValue(Object.assign(new Error('Could not reach the server.'), { isNetworkError: true }));
     const { props } = dashboard({ venueTab: 'settings', ownerTablesSeen: true, ownerTables: LIVE });
     await settle();
     await act(async () => { fireEvent.click(theSwitch()); });
     expect(props.setVenueProfile).not.toHaveBeenCalled();
     expect(props.showToast).toHaveBeenCalledWith('Could not reach the server.', 'error');
+    // Back where the profile has it: on, the server's default.
+    expect(theSwitch().checked).toBe(true);
+  });
+
+  test('the switch moves on the tap instead of snapping back until the save returns', async () => {
+    let answer;
+    updateVenueProfileMock.mockImplementation(() => new Promise((resolve) => { answer = resolve; }));
+    dashboard({ venueTab: 'settings', ownerTablesSeen: true, ownerTables: LIVE });
+    await settle();
+    expect(theSwitch().checked).toBe(true);
+    fireEvent.click(theSwitch());
+    expect(theSwitch().checked).toBe(false);
+    await act(async () => { answer({ notification_prefs: { tables: false } }); });
   });
 });
 

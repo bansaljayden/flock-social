@@ -127,7 +127,17 @@ describe('the line under Settings\' plan buttons', () => {
 
   test('a Stripe subscriber is sent to Manage billing, the Terms 9.6 path', () => {
     expect(DASH.indexOf(START)).toBeGreaterThan(-1);
-    expect(block).toMatch(/Cancel it from See plans and pricing, then Manage billing\. It takes a few clicks and needs no email\./);
+    // The button above the line opens it now (openVenuePortal, as the plans
+    // sheet's Manage billing does), so the line names the button.
+    expect(block).toMatch(/Change or cancel this plan opens Manage billing, where you can cancel in a few clicks with no email\./);
+    const from = DASH.indexOf("{({ status }) => (!native && venueTierSource === 'stripe' && status?.canManage ? (");
+    expect(from).toBeGreaterThan(-1);
+    expect(from).toBeLessThan(DASH.indexOf(START));
+    const button = DASH.slice(from, DASH.indexOf(START));
+    expect(button).toMatch(/^\{\(\{ status \}\) => \(!native && venueTierSource === 'stripe' && status\?\.canManage \? \(\s*<BusyButton className="hit44" busyLabel="Opening billing…"/);
+    expect(button).toMatch(/const \{ url \} = await openVenuePortal\(\);/);
+    // Every other plan, and every plan inside the app, keeps the email.
+    expect(button).toMatch(/\) : \(\s*<button className="hit44" onClick=\{\(\) => \{\s*const subject = encodeURIComponent\('Flock venue plan: change or cancel'\);/);
   });
 
   test('inside the app the line never names See plans and pricing or Manage billing', () => {

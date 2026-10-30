@@ -76,6 +76,8 @@ jest.mock('../services/api', () => ({
   // The show-in-app switch's one write. react-scripts resets mocks between
   // tests, so each test that presses the switch gives it its answer.
   updateSensorTableSettings: jest.fn(),
+  // The real one: which sentence a failed save shows is part of the contract.
+  userMessage: jest.requireActual('../services/api').userMessage,
 }));
 jest.mock('../components/ui/BirdieBird', () => {
   const R = require('react');
@@ -1345,12 +1347,38 @@ describe('the Tables card on Settings', () => {
   });
 
   test('a save that fails says so as an error and writes nothing', async () => {
-    updateMock.mockRejectedValue(new Error('Could not reach the server.'));
+    // A network failure as services/api.js builds it: its sentence is written
+    // for people, so it is the one shown.
+    updateMock.mockRejectedValue(Object.assign(new Error('Could not reach the server.'), { isNetworkError: true }));
     const { props } = dashboard();
     await settle();
     await act(async () => { fireEvent.click(showSwitch()); });
     expect(props.setOwnerTableSettings).not.toHaveBeenCalled();
     expect(props.showToast).toHaveBeenCalledWith('Could not reach the server.', 'error');
+    // And the switch is back where the server has it.
+    expect(showSwitch().checked).toBe(true);
+  });
+
+  test('the switch moves on the tap, before the save comes back', async () => {
+    let answer;
+    updateMock.mockImplementation(() => new Promise((resolve) => { answer = resolve; }));
+    dashboard();
+    await settle();
+    expect(showSwitch().checked).toBe(true);
+    fireEvent.click(showSwitch());
+    expect(showSwitch().checked).toBe(false);
+    // One save at a time: a second tap while this one is out sends nothing.
+    fireEvent.click(showSwitch());
+    expect(updateMock).toHaveBeenCalledTimes(1);
+    await act(async () => { answer({ show_in_app: false, alerts: true }); });
+  });
+
+  test('an error not written for people gives the plain copy', async () => {
+    updateMock.mockRejectedValue(new TypeError("Cannot read properties of undefined (reading 'show_in_app')"));
+    const { props } = dashboard();
+    await settle();
+    await act(async () => { fireEvent.click(showSwitch()); });
+    expect(props.showToast).toHaveBeenCalledWith('Could not save that. Try again.', 'error');
   });
 
   test('the alerts switch keeps its wiring word for word', async () => {

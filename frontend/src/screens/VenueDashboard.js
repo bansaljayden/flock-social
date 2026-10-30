@@ -69,11 +69,13 @@ import {
   getVenueAdvisorCards,
   grantRoostConsent,
   withdrawRoostConsent,
+  openVenuePortal,
   replyToReview,
   updateVenueEvent,
   updateVenueProfile,
   updateSensorTableSettings,
   updateVenuePromotion,
+  userMessage,
 } from '../services/api';
 import { tableSettingsFrom } from '../lib/venueTablesReading';
 import { fallbackVenueCover } from '../lib/venueCover';
@@ -299,6 +301,142 @@ export const quickDealBody = (text, timeSlot) => ({ title: text, timeSlot, days:
 // when the Custom chip is picked. Empty means Custom with nothing typed yet,
 // which the Post Deal button treats like an empty deal box.
 export const quickDealTimeSlot = (chip, customTime) => joinPromoChoice(chip, customTime);
+
+// A BUTTON THAT SAYS IT IS WORKING FROM THE TAP. This screen keeps its data in
+// FlockAppInner (the header says why), and most of its saves had no pending
+// state there to read: Save Hours, the Venue Information Save, a review reply
+// and the trash buttons on deals and events sat looking untouched until the
+// answer came, and took a second tap meanwhile. Each holds its own state here,
+// the way savingVenueIntake works for About Your Venue: disabled, dimmed, a
+// wait cursor and its working label from the tap until the save settles. A ref
+// takes one tap at a time, because two can land before a repaint. `ask` runs
+// first, before anything is held, so a cancelled confirm leaves the button as
+// it was. `onPress` resolving to true means the page is leaving (Stripe's
+// billing page), so the button stays held rather than flicking back first.
+// Module scope, so it keeps one identity across the dashboard's renders.
+export function BusyButton({ onPress, ask, busyLabel, children, disabled, style, ...rest }) {
+  const [busy, setBusy] = React.useState(false);
+  const pressing = React.useRef(false);
+  const press = async (e) => {
+    if (pressing.current) return;
+    if (ask && !ask()) return;
+    pressing.current = true;
+    setBusy(true);
+    let leaving = false;
+    try {
+      leaving = (await onPress(e)) === true;
+    } finally {
+      if (!leaving) {
+        pressing.current = false;
+        setBusy(false);
+      }
+    }
+  };
+  return (
+    <button
+      {...rest}
+      disabled={disabled || busy}
+      aria-busy={busy || undefined}
+      onClick={press}
+      style={busy ? { ...style, cursor: 'wait', opacity: 0.6 } : style}
+    >
+      {busy && busyLabel ? busyLabel : children}
+    </button>
+  );
+}
+
+// A SWITCH THAT MOVES ON THE TAP. The Monday email, Table alerts and Show
+// tables in the Flock app are drawn from what the server last said, so a tap
+// snapped back until the save came home. The tapped value shows at once from
+// here; the save's own handler writes the server's answer into the profile or
+// the settings, or says why it could not, and either way the switch reads the
+// server's state again afterwards, so a refused save puts it back. One save
+// at a time per switch.
+export function SavingCheckbox({ checked, onSave, ...rest }) {
+  const [draft, setDraft] = React.useState(null);
+  const saving = React.useRef(false);
+  return (
+    <input
+      {...rest}
+      type="checkbox"
+      checked={draft === null ? checked : draft}
+      onChange={async (e) => {
+        if (saving.current) return;
+        saving.current = true;
+        const next = e.target.checked;
+        setDraft(next);
+        try {
+          await onSave(next);
+        } finally {
+          saving.current = false;
+          setDraft(null);
+        }
+      }}
+    />
+  );
+}
+
+// WHAT A LIST DRAWS WHILE ITS FIRST READ IS OUT: two rows in the shape of the
+// rows they stand in for, with no words or numbers in them, instead of a line
+// of text where the list will be. `kind` is the row: a deal (title, the time
+// it runs, the views count, Edit and Delete), a flock (name, when, the status
+// pill) or an event (title, when, the status line, Edit and Delete). The
+// sentence is for screen readers.
+const ROW_SKELETON_BOX = { padding: '10px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '8px', marginBottom: '8px' };
+const skeletonBar = (width, height, extra = {}) => (
+  <div aria-hidden="true" className="skeleton" style={{ width, height, borderRadius: '4px', ...extra }} />
+);
+export function OwnerListSkeleton({ kind, label }) {
+  return (
+    <div aria-busy="true">
+      <p className="sr-only" role="status">{label}</p>
+      {[0, 1].map((i) => (
+        <div key={i} style={ROW_SKELETON_BOX}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: kind === 'flock' ? 'center' : 'flex-start', gap: '10px' }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              {skeletonBar('55%', '14px', { marginBottom: '6px' })}
+              {skeletonBar(kind === 'flock' ? '35%' : '40%', '12px')}
+              {kind === 'event' && skeletonBar('60%', '12px', { marginTop: '6px' })}
+            </div>
+            {kind === 'flock'
+              ? skeletonBar('84px', '24px', { borderRadius: '12px', flexShrink: 0 })
+              : (
+                <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+                  {skeletonBar('26px', '26px', { borderRadius: '6px' })}
+                  {skeletonBar('26px', '26px', { borderRadius: '6px' })}
+                </div>
+              )}
+          </div>
+          {kind === 'deal' && skeletonBar('64px', '12px', { marginTop: '10px' })}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// The Reviews tab's rating card while the reviews are on their way: the score
+// block (the average, its five stars, the count) and the five 6px bars beside
+// it, grey, in their own places.
+export function ReviewStatsSkeleton() {
+  return (
+    <div aria-busy="true" style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+      <p className="sr-only" role="status">Loading your reviews.</p>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px' }}>
+        {skeletonBar('40px', '28px', { borderRadius: '6px' })}
+        {skeletonBar('78px', '14px')}
+        {skeletonBar('56px', '12px')}
+      </div>
+      <div style={{ flex: 1 }}>
+        {[5, 4, 3, 2, 1].map((rating) => (
+          <div key={rating} style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '4px' }}>
+            {skeletonBar('12px', '12px')}
+            {skeletonBar('auto', '6px', { flex: 1, borderRadius: '3px' })}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export default function VenueDashboard({
   // Module-level helpers and components that live in App.js and are shared
@@ -645,9 +783,15 @@ export default function VenueDashboard({
     // account, a two-step for block. These two were the exception. The confirm
     // names the row so the answer is about the thing being deleted rather than
     // about the word "delete".
-    const deletePromo = async (id, title) => {
-      if (typeof window !== 'undefined'
-        && !window.confirm(title ? `Delete "${title}"? Groups looking at your venue will stop seeing it.` : 'Delete this deal? Groups looking at your venue will stop seeing it.')) return;
+    //
+    // The confirm is the trash button's `ask` (BusyButton above), so it runs
+    // before the button holds anything and a cancel leaves it untouched; the
+    // delete itself is its `onPress`, which holds the button, dimmed and
+    // disabled, until the server answers. A second tap on a row whose delete
+    // was already on its way used to ask again and send a second request.
+    const confirmDelete = (what, title) => typeof window === 'undefined'
+      || window.confirm(title ? `Delete "${title}"? Groups looking at your venue will stop seeing it.` : `Delete this ${what}? Groups looking at your venue will stop seeing it.`);
+    const deletePromo = async (id) => {
       try {
         await deleteVenuePromotion(id);
         setPromotions(prev => prev.filter(p => p.id !== id));
@@ -657,7 +801,7 @@ export default function VenueDashboard({
           setPromotions(prev => prev.filter(p => p.id !== id));
           return;
         }
-        showToast(e?.message || "That promotion couldn't be deleted. Try again.", 'error');
+        showToast(userMessage(e, "That promotion couldn't be deleted. Try again."), 'error');
       }
     };
 
@@ -667,11 +811,9 @@ export default function VenueDashboard({
       setShowEventModal(true);
     };
 
-    // Same dead-button fix as deletePromo above, and the same 404
-    // reconciliation, for the same reasons.
-    const deleteEvent = async (id, title) => {
-      if (typeof window !== 'undefined'
-        && !window.confirm(title ? `Delete "${title}"? Groups looking at your venue will stop seeing it.` : 'Delete this event? Groups looking at your venue will stop seeing it.')) return;
+    // Same dead-button fix as deletePromo above, the same confirm and the same
+    // 404 reconciliation, for the same reasons.
+    const deleteEvent = async (id) => {
       try {
         await deleteVenueEvent(id);
         setVenueEventsList(prev => prev.filter(e => e.id !== id));
@@ -681,7 +823,7 @@ export default function VenueDashboard({
           setVenueEventsList(prev => prev.filter(e2 => e2.id !== id));
           return;
         }
-        showToast(e?.message || "That event couldn't be deleted. Try again.", 'error');
+        showToast(userMessage(e, "That event couldn't be deleted. Try again."), 'error');
       }
     };
 
@@ -745,7 +887,7 @@ export default function VenueDashboard({
         // Was swallowed too. A reply the server rejects (profanity screen,
         // a hidden review, a lost session) left the composer sitting there
         // with the text still in it and no explanation.
-        showToast(e?.message || "That reply didn't post. Try again.", 'error');
+        showToast(userMessage(e, "That reply didn't post. Try again."), 'error');
       }
     };
 
@@ -1956,7 +2098,7 @@ export default function VenueDashboard({
                   // their deals were gone every time the tab was opened, for as
                   // long as the answer took to arrive.
                   venueListErrors.promotions ? null : !venueListLoaded.promotions ? (
-                    <p aria-busy="true" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', textAlign: 'center', margin: 0, padding: '14px 0' }}>Loading your deals…</p>
+                    <OwnerListSkeleton kind="deal" label="Loading your deals." />
                   ) : (
                     // The warm bird, because promotions are the owner's own
                     // space (cobalt Birdie marks the states about Flock users,
@@ -1994,7 +2136,7 @@ export default function VenueDashboard({
                         {!hidden && (
                           <button aria-label={promo.title ? `Edit ${promo.title}` : 'Edit this deal'} className="hit44" onClick={() => openPromoModal(promo)} style={{ padding: '6px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer' }}>{Icons.edit(colors.navy, 14)}</button>
                         )}
-                        <button aria-label={promo.title ? `Delete ${promo.title}` : 'Delete this deal'} className="hit44" onClick={() => deletePromo(promo.id, promo.title)} style={{ padding: '6px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer' }}>{Icons.trash(colors.red, 14)}</button>
+                        <BusyButton aria-label={promo.title ? `Delete ${promo.title}` : 'Delete this deal'} className="hit44" ask={() => confirmDelete('deal', promo.title)} onPress={() => deletePromo(promo.id)} style={{ padding: '6px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer' }}>{Icons.trash(colors.red, 14)}</BusyButton>
                       </div>
                     </div>
                     {hidden && <ModerationHiddenNotice kind="promotion" />}
@@ -2108,7 +2250,7 @@ export default function VenueDashboard({
                   // below shares this screen and stays bird-free on purpose —
                   // one mark per screen, and this is the card about people.
                   (venueListErrors.incomingFlocks || venueListErrors.incomingFlocksLocked) ? null : !venueListLoaded.incomingFlocks ? (
-                    <p aria-busy="true" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', textAlign: 'center', margin: 0, padding: '14px 0' }}>Loading the flocks voting on you…</p>
+                    <OwnerListSkeleton kind="flock" label="Loading the flocks voting on you." />
                   ) : venueListErrors.incomingFlocksUnverified ? (
                     <div style={{ padding: '14px 4px 8px' }}>
                       <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, lineHeight: 1.5 }}>This feed turns on once your venue is verified.</p>
@@ -2153,7 +2295,7 @@ export default function VenueDashboard({
                 {venueEventsList.length === 0 ? (
                   // Same rule as the promotions list above it.
                   venueListErrors.events ? null : !venueListLoaded.events ? (
-                    <p aria-busy="true" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', textAlign: 'center', padding: '20px' }}>Loading your events…</p>
+                    <OwnerListSkeleton kind="event" label="Loading your events." />
                   ) : (
                     // Plain, with no cheer: the line above already says who
                     // will see one, and the button above is how to make it.
@@ -2186,7 +2328,7 @@ export default function VenueDashboard({
                         {!hidden && (
                           <button aria-label={event.title ? `Edit ${event.title}` : 'Edit this event'} className="hit44" onClick={() => openEventModal(event)} style={{ padding: '6px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer' }}>{Icons.edit(colors.navy, 14)}</button>
                         )}
-                        <button aria-label={event.title ? `Delete ${event.title}` : 'Delete this event'} className="hit44" onClick={() => deleteEvent(event.id, event.title)} style={{ padding: '6px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer' }}>{Icons.trash(colors.red, 14)}</button>
+                        <BusyButton aria-label={event.title ? `Delete ${event.title}` : 'Delete this event'} className="hit44" ask={() => confirmDelete('event', event.title)} onPress={() => deleteEvent(event.id)} style={{ padding: '6px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--bg-card-solid)', cursor: 'pointer' }}>{Icons.trash(colors.red, 14)}</BusyButton>
                       </div>
                     </div>
                     {hidden && <ModerationHiddenNotice kind="event" />}
@@ -2268,8 +2410,9 @@ export default function VenueDashboard({
                     // AND NOT BEFORE THE READ LANDS. The sentence below is a
                     // claim about this venue's standing, and for the seconds
                     // between opening the tab and the answer arriving it was
-                    // telling an owner nobody had reviewed them.
-                    <p aria-busy="true" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: 0, textAlign: 'center', padding: '12px 0' }}>Loading your reviews…</p>
+                    // telling an owner nobody had reviewed them. Drawn as the
+                    // card it is about to be, with no figure in it.
+                    <ReviewStatsSkeleton />
                   ) : (
                     // Warm bird on the true-empty only. The failed-read branch
                     // above stays plain text: "unavailable" is an error, and
@@ -2350,7 +2493,7 @@ export default function VenueDashboard({
                       {replyingToReview === review.id && (
                         <div style={{ marginTop: '8px', display: 'flex', gap: '6px' }}>
                           <SearchInputLocal aria-label="Your reply" initialValue={replyText} onCommit={setReplyText} placeholder="Write your reply..." autoFocus style={{ flex: 1, padding: '6px 10px', borderRadius: '6px', border: `1px solid ${colors.creamDark}`, fontSize: 'var(--t-meta)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)' }} />
-                          <button className="hit44 glass-btn glass-navy" onClick={() => handleReplyToReview(review.id)} style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', backgroundColor: colors.navy, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Send</button>
+                          <BusyButton className="hit44 glass-btn glass-navy" onPress={() => handleReplyToReview(review.id)} busyLabel="Sending" style={{ padding: '6px 12px', borderRadius: '6px', border: 'none', backgroundColor: colors.navy, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Send</BusyButton>
                           <button className="hit44 glass-btn glass-secondary" onClick={() => setReplyingToReview(null)} style={{ padding: '6px 8px', borderRadius: '6px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Cancel</button>
                         </div>
                       )}
@@ -2423,7 +2566,7 @@ export default function VenueDashboard({
                   {!editingVenueInfo ? (
                     <button className="hit44" onClick={() => setEditingVenueInfo(true)} style={{ padding: '4px 8px', borderRadius: '6px', border: 'none', backgroundColor: 'var(--icon-bg)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer' }}>Edit</button>
                   ) : (
-                    <button className="hit44" onClick={async () => {
+                    <BusyButton className="hit44" busyLabel="Saving" onPress={async () => {
                       // Was fire-and-forget: it closed the editor first and
                       // threw the failure away, so a name the profanity screen
                       // refused (or a save with no venue profile, or an expired
@@ -2440,9 +2583,9 @@ export default function VenueDashboard({
                         clearAdvisorCards();
                         setEditingVenueInfo(false);
                       } catch (e) {
-                        showToast(e?.message || "Those details didn't save. Try again.", 'error');
+                        showToast(userMessage(e, "Those details didn't save. Try again."), 'error');
                       }
-                    }} style={{ padding: '4px 8px', borderRadius: '6px', border: 'none', backgroundColor: colors.steel, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer' }}>Save</button>
+                    }} style={{ padding: '4px 8px', borderRadius: '6px', border: 'none', backgroundColor: colors.steel, color: 'white', fontSize: 'var(--t-meta)', fontWeight: '500', cursor: 'pointer' }}>Save</BusyButton>
                   )}
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -2623,18 +2766,16 @@ export default function VenueDashboard({
                     Privacy Policy now all call this send the Monday email. */}
                 <h3 style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy, margin: '0 0 8px', display: 'flex', alignItems: 'center', gap: '6px' }}>{Icons.mail ? Icons.mail(colors.navy, 14) : null} Monday email</h3>
                 <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
+                  <SavingCheckbox
                     aria-label="Monday email"
                     checked={venueProfile?.notification_prefs?.weekly === true}
-                    onChange={async (e) => {
-                      const weekly = e.target.checked;
+                    onSave={async (weekly) => {
                       try {
                         const saved = await updateVenueProfile({ notificationPrefs: { weekly } });
                         setVenueProfile((prev) => mergeSavedProfile(prev, saved));
                         showToast(weekly ? 'Monday email on. The first one comes Monday morning.' : 'Monday email off.');
                       } catch (err) {
-                        showToast(err?.message || 'Could not save that. Try again.', 'error');
+                        showToast(userMessage(err, 'Could not save that. Try again.'), 'error');
                       }
                     }}
                     style={{ marginTop: '2px', width: '18px', height: '18px', flexShrink: 0 }}
@@ -2686,18 +2827,16 @@ export default function VenueDashboard({
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                   {!ownerTablesLocked && can.analytics && tierKnown && (
                   <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: 'pointer' }}>
-                    <input
-                      type="checkbox"
+                    <SavingCheckbox
                       aria-label="Table alerts"
                       checked={venueProfile?.notification_prefs?.tables !== false}
-                      onChange={async (e) => {
-                        const tables = e.target.checked;
+                      onSave={async (tables) => {
                         try {
                           const saved = await updateVenueProfile({ notificationPrefs: { tables } });
                           setVenueProfile((prev) => mergeSavedProfile(prev, saved));
                           showToast(tables ? 'Table alerts on.' : 'Table alerts off.');
                         } catch (err) {
-                          showToast(err?.message || 'Could not save that. Try again.', 'error');
+                          showToast(userMessage(err, 'Could not save that. Try again.'), 'error');
                         }
                       }}
                       style={{ marginTop: '2px', width: '18px', height: '18px', flexShrink: 0 }}
@@ -2716,18 +2855,16 @@ export default function VenueDashboard({
                   )}
                   {ownerTableSettings && (
                   <label style={{ display: 'flex', alignItems: 'flex-start', gap: '10px', cursor: 'pointer' }}>
-                    <input
-                      type="checkbox"
+                    <SavingCheckbox
                       aria-label="Show tables in the Flock app"
                       checked={ownerTableSettings.show_in_app !== false}
-                      onChange={async (e) => {
-                        const show_in_app = e.target.checked;
+                      onSave={async (show_in_app) => {
                         try {
                           const saved = await updateSensorTableSettings(ownerVenuePlaceId, { show_in_app });
                           setOwnerTableSettings((prev) => tableSettingsFrom(saved) || { ...(prev || {}), show_in_app });
                           showToast(show_in_app ? 'Tables shown in the Flock app.' : 'Tables hidden in the Flock app.');
                         } catch (err) {
-                          showToast(err?.message || 'Could not save that. Try again.', 'error');
+                          showToast(userMessage(err, 'Could not save that. Try again.'), 'error');
                         }
                       }}
                       style={{ marginTop: '2px', width: '18px', height: '18px', flexShrink: 0 }}
@@ -2920,19 +3057,47 @@ export default function VenueDashboard({
                     sends the owner to See plans and pricing or Manage billing,
                     which are not there. It is gated on `native` here rather
                     than left to the status read, which happens not to run in
-                    the app today. */}
+                    the app today.
+
+                    AND THE BUTTON FOLLOWS IT TOO. It opened an email draft for
+                    every plan, so an owner whose Stripe plan they could cancel
+                    in a few clicks was asked to write to us instead. With a
+                    plan billed through Stripe that is still running
+                    (status.canManage) it opens Manage billing, Stripe's page
+                    for the plan (POST /api/venue-billing/portal, the call the
+                    plans sheet's own Manage billing makes); every other plan,
+                    and every plan inside the app, keeps the email. */}
                 {venueTier !== 'free' && venueProfile?.tier_notice_window !== true && (
                   <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px solid var(--divider)' }}>
                     <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                      <button className="hit44" onClick={() => {
-                        const subject = encodeURIComponent('Flock venue plan: change or cancel');
-                        const body = encodeURIComponent(
-                          `Business: ${venueProfile?.business_name || ''}\nCurrent plan: ${tierBadge[venueData.tier].label}\nWhat I want: (change plan / cancel)\n`
-                        );
-                        try { window.location.href = `mailto:${VENUE_SALES_EMAIL}?subject=${subject}&body=${body}`; } catch { /* address is printed below */ }
-                      }} style={{ flex: '1 1 150px', minWidth: 0, padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>
-                        Change or cancel this plan
-                      </button>
+                      <VenueBillingStatus>
+                        {({ status }) => (!native && venueTierSource === 'stripe' && status?.canManage ? (
+                          <BusyButton className="hit44" busyLabel="Opening billing…" onPress={async () => {
+                            try {
+                              const { url } = await openVenuePortal();
+                              // Held through the redirect, so it does not read
+                              // as idle while the page goes.
+                              if (url) { window.location.assign(url); return true; }
+                              showToast("Billing didn't open. Try again.", 'error');
+                            } catch (err) {
+                              showToast(userMessage(err, "Billing didn't open. Try again."), 'error');
+                            }
+                            return false;
+                          }} style={{ flex: '1 1 150px', minWidth: 0, padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>
+                            Change or cancel this plan
+                          </BusyButton>
+                        ) : (
+                          <button className="hit44" onClick={() => {
+                            const subject = encodeURIComponent('Flock venue plan: change or cancel');
+                            const body = encodeURIComponent(
+                              `Business: ${venueProfile?.business_name || ''}\nCurrent plan: ${tierBadge[venueData.tier].label}\nWhat I want: (change plan / cancel)\n`
+                            );
+                            try { window.location.href = `mailto:${VENUE_SALES_EMAIL}?subject=${subject}&body=${body}`; } catch { /* address is printed below */ }
+                          }} style={{ flex: '1 1 150px', minWidth: 0, padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>
+                            Change or cancel this plan
+                          </button>
+                        ))}
+                      </VenueBillingStatus>
                       {!native && (
                       <button className="hit44" onClick={() => setShowUpgradeModal(true)} style={{ flex: '1 1 130px', minWidth: 0, padding: '10px', borderRadius: '8px', border: `1px solid ${colors.creamDark}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>
                         See plans and pricing
@@ -2943,7 +3108,7 @@ export default function VenueDashboard({
                       {({ status }) => (
                         <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '8px 0 0', lineHeight: 1.5 }}>
                           {!native && venueTierSource === 'stripe' && status?.canManage
-                            ? <>Cancel it from See plans and pricing, then Manage billing. It takes a few clicks and needs no email. You can also write to {VENUE_SALES_EMAIL} and we will cancel it for you.</>
+                            ? <>Change or cancel this plan opens Manage billing, where you can cancel in a few clicks with no email. You can also write to {VENUE_SALES_EMAIL} and we will cancel it for you.</>
                             : !native && venueTierSource !== 'stripe' && status?.checkoutAvailable
                               ? <>We set this plan up for you, so it changes by email. Write to {VENUE_SALES_EMAIL} and we will change or stop it and email you back to confirm.</>
                               : <>There is no switch for this in the app yet, and there is no switch to sign up with either. Write to {VENUE_SALES_EMAIL} and we will change or stop the plan and email you back to confirm.</>}
@@ -3070,9 +3235,16 @@ export default function VenueDashboard({
                 <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '0 0 16px', textAlign: 'center', lineHeight: 1.5 }}>
                   Pick a photo from your Google listing.
                 </p>
+                {/* The photos' own grid while they load, four grey tiles at
+                    the tiles' size, rather than a spinner over an empty sheet. */}
                 {venueLogoPicker === 'loading' && (
-                  <div role="status" aria-label="Loading photos" style={{ display: 'flex', justifyContent: 'center', padding: '24px 0' }}>
-                    <div style={{ width: '20px', height: '20px', border: '2px solid var(--border-mid)', borderTopColor: colors.navy, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                  <div aria-busy="true">
+                    <p className="sr-only" role="status">Loading photos</p>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '16px' }}>
+                      {[0, 1, 2, 3].map((i) => (
+                        <div key={i} aria-hidden="true" className="skeleton" style={{ height: '96px', borderRadius: '12px' }} />
+                      ))}
+                    </div>
                   </div>
                 )}
                 {venueLogoPicker === 'error' && (
@@ -3211,15 +3383,15 @@ export default function VenueDashboard({
                   {/* Same fix as the Venue Information Save above: the modal
                       used to close before the request and discard its failure,
                       so rejected hours vanished looking saved. */}
-                  <button className="hit44" onClick={async () => {
+                  <BusyButton className="hit44" busyLabel="Saving" onPress={async () => {
                     try {
                       await updateVenueProfile({ operatingHours });
                       clearAdvisorCards();
                       setShowHoursModal(false);
                     } catch (e) {
-                      showToast(e?.message || "Those hours didn't save. Try again.", 'error');
+                      showToast(userMessage(e, "Those hours didn't save. Try again."), 'error');
                     }
-                  }} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: colors.navyBg, color: 'white', fontWeight: '600', cursor: 'pointer' }}>Save Hours</button>
+                  }} style={{ flex: 1, padding: '12px', borderRadius: '8px', border: 'none', backgroundColor: colors.navyBg, color: 'white', fontWeight: '600', cursor: 'pointer' }}>Save Hours</BusyButton>
                 </div>
               </div>
             </div>

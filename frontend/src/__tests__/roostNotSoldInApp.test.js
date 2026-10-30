@@ -24,7 +24,7 @@
 import fs from 'fs';
 import path from 'path';
 import React from 'react';
-import { render, screen, act } from '@testing-library/react';
+import { render, screen, act, fireEvent, waitFor } from '@testing-library/react';
 
 jest.mock('../services/api', () => ({
   getVenueBillingStatus: jest.fn(),
@@ -46,7 +46,7 @@ import VenueInsightCards from '../components/VenueInsightCards';
 // eslint-disable-next-line import/first
 import VenueAdvisorChat, { clearAdvisorThread } from '../components/VenueAdvisorChat';
 // eslint-disable-next-line import/first
-import { getVenueBillingStatus } from '../services/api';
+import { getVenueBillingStatus, openVenuePortal } from '../services/api';
 
 const SRC = path.join(__dirname, '..');
 const read = (...p) => fs.readFileSync(path.join(SRC, ...p), 'utf8').replace(/\r\n/g, '\n');
@@ -178,11 +178,65 @@ describe('the Subscription card on the Settings tab', () => {
       plans: [{ id: 'monthly', interval: 'month', label: '$99.00' }], trialDays: 0, taxAdded: false,
     };
 
-    test('on the web it points at Manage billing, as before', async () => {
+    test('on the web it points at Manage billing, which the button opens', async () => {
       getVenueBillingStatus.mockResolvedValue(MANAGEABLE);
       dashboard(STRIPE_PLAN);
       await settle();
-      expect(screen.getByText(/Cancel it from See plans and pricing, then Manage billing\./)).toBeTruthy();
+      expect(screen.getByText(/Change or cancel this plan opens Manage billing, where you can cancel in a few clicks with no email\./)).toBeTruthy();
+    });
+
+    // It used to draft an email for every plan, so a Stripe plan the owner
+    // could cancel in a few clicks was a letter to us instead.
+    test('on the web the button opens Stripe\'s billing page, and says so while it does', async () => {
+      const realLocation = window.location;
+      const assign = jest.fn();
+      delete window.location;
+      window.location = { href: 'https://flockcorp.com/app', origin: 'https://flockcorp.com', assign };
+      try {
+        getVenueBillingStatus.mockResolvedValue(MANAGEABLE);
+        let answer;
+        openVenuePortal.mockImplementationOnce(() => new Promise((resolve) => { answer = resolve; }));
+        dashboard(STRIPE_PLAN);
+        await settle();
+        const button = screen.getByRole('button', { name: 'Change or cancel this plan' });
+        fireEvent.click(button);
+        fireEvent.click(button);
+        expect(openVenuePortal).toHaveBeenCalledTimes(1);
+        expect(screen.getByRole('button', { name: 'Opening billing…' }).disabled).toBe(true);
+        await act(async () => { answer({ url: 'https://billing.stripe.com/session/abc' }); });
+        expect(assign).toHaveBeenCalledWith('https://billing.stripe.com/session/abc');
+        // Held through the redirect rather than flicking back to idle.
+        expect(screen.getByRole('button', { name: 'Opening billing…' })).toBeTruthy();
+      } finally {
+        window.location = realLocation;
+      }
+    });
+
+    test('a portal that gives no page says so and frees the button', async () => {
+      getVenueBillingStatus.mockResolvedValue(MANAGEABLE);
+      openVenuePortal.mockResolvedValueOnce({ url: null });
+      const showToast = jest.fn();
+      dashboard({ ...STRIPE_PLAN, showToast });
+      await settle();
+      fireEvent.click(screen.getByRole('button', { name: 'Change or cancel this plan' }));
+      await waitFor(() => expect(showToast).toHaveBeenCalledWith("Billing didn't open. Try again.", 'error'));
+      expect(screen.getByRole('button', { name: 'Change or cancel this plan' }).disabled).toBe(false);
+    });
+
+    test('a plan we set up by hand keeps the email, and asks Stripe for nothing', async () => {
+      const realLocation = window.location;
+      delete window.location;
+      window.location = { href: 'https://flockcorp.com/app', origin: 'https://flockcorp.com', assign: jest.fn() };
+      try {
+        getVenueBillingStatus.mockResolvedValue({ ...MANAGEABLE, canManage: false });
+        dashboard({ ...STRIPE_PLAN, venueTierSource: 'admin' });
+        await settle();
+        fireEvent.click(screen.getByRole('button', { name: 'Change or cancel this plan' }));
+        expect(openVenuePortal).not.toHaveBeenCalled();
+        expect(window.location.href).toMatch(/^mailto:social@flockcorp\.com\?subject=Flock%20venue%20plan%3A%20change%20or%20cancel/);
+      } finally {
+        window.location = realLocation;
+      }
     });
 
     test('inside the app it is the email route, and names nothing the app does not have', async () => {
@@ -340,8 +394,10 @@ describe('the gates are in the source, where the build can see them', () => {
     expect(DASH).toContain('{!native && (\n                      <button className="hit44" onClick={() => setShowUpgradeModal(true)}');
     // Four buttons open the sheet, each pinned above. A fifth is a new one to gate.
     expect(DASH.split('setShowUpgradeModal(true)').length - 1).toBe(4);
-    // And the line that names the sheet's Manage billing is the web's alone.
-    expect(DASH).toContain("{!native && venueTierSource === 'stripe' && status?.canManage\n                            ? <>Cancel it from See plans and pricing, then Manage billing.");
+    // And the line that names Manage billing is the web's alone, and so is the
+    // button that opens it.
+    expect(DASH).toContain("{!native && venueTierSource === 'stripe' && status?.canManage\n                            ? <>Change or cancel this plan opens Manage billing,");
+    expect(DASH).toContain("{({ status }) => (!native && venueTierSource === 'stripe' && status?.canManage ? (\n                          <BusyButton");
   });
 
   test("App.js's fallback price is never made inside the app", () => {
