@@ -501,7 +501,8 @@ describe('the You tab Flock Pro row', () => {
     expect(web).toMatch(/cancelProSubscription\(\)/);
     expect(web).toMatch(/resumeProSubscription\(\)/);
     expect(web).toMatch(/>Cancel subscription</);
-    expect(web).toMatch(/>Yes, cancel</);
+    // The confirm says it is cancelling while the request is out.
+    expect(web).toMatch(/\{pending === 'cancel' \? 'Cancelling…' : 'Yes, cancel'\}/);
     expect(web).toMatch(/'Payment method and invoices'/);
     expect(web).not.toMatch(/Manage subscription/);
   });

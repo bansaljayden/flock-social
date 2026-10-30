@@ -58,7 +58,7 @@
  * character. Nothing was renamed, reformatted or improved on the way across.
  */
 import React from 'react';
-import { deleteAccount, trackNotificationPermission, updatePaymentMethods, logoutAll, currentAccount, getCurrentUser, clearLocalSession, getProStatus, openProPortal, cancelProSubscription, resumeProSubscription, getAnalyticsChoice, setAnalyticsChoice, knownAnalyticsChoice } from '../services/api';
+import { deleteAccount, trackNotificationPermission, updatePaymentMethods, logoutAll, currentAccount, getCurrentUser, clearLocalSession, getProStatus, openProPortal, cancelProSubscription, resumeProSubscription, getAnalyticsChoice, setAnalyticsChoice, knownAnalyticsChoice, userMessage } from '../services/api';
 import { getNotificationStatus, requestNotificationPermission } from '../services/firebase';
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
@@ -129,22 +129,29 @@ function UsageAnalyticsRow({ Toggle, colors }) {
     return () => { live.current = false; };
   }, []);
 
+  // The switch moves on the tap and the server's answer settles it. It used to
+  // sit still until the answer came, so a slow network made the tap look
+  // ignored. A refusal puts it back where the account still is.
   const flip = async () => {
     if (busy || optOut === null) return;
     taps.current += 1;
+    const before = optOut;
     const turningOff = optOut === false;
+    setOptOut(turningOff);
     setBusy(true);
     setError('');
     try {
       const data = await setAnalyticsChoice(turningOff);
       if (live.current) setOptOut(data.optOut);
     } catch (err) {
-      if (!live.current || err?.sessionExpired) return;
+      if (!live.current) return;
+      setOptOut(before);
+      if (err?.sessionExpired) return;
       // Off already took effect on this page before the request went out, so
-      // the sentence says so; the switch stays where the account still is.
+      // the sentence says so; the switch goes back to where the account is.
       setError(turningOff
         ? 'That did not save to your account. Nothing more is sent until you next open Flock, so try again to keep it off.'
-        : (err?.message || 'That did not save. Try again.'));
+        : userMessage(err, 'That did not save. Try again.'));
     } finally {
       if (live.current) setBusy(false);
     }
@@ -313,6 +320,12 @@ export default function ProfileSettings({
     const edgeBack = useEdgeSwipeBack(backToYou);
     // The Interests field, so Add with nothing typed can send the tap there.
     const interestInputRef = React.useRef(null);
+    // "Sign out everywhere" while the server is asked, so the row says so from
+    // the tap instead of sitting still. The ref is the double-tap guard, read
+    // first because two taps can land before a repaint. Above the branch with
+    // the other hooks.
+    const [signingOutEverywhere, setSigningOutEverywhere] = React.useState(false);
+    const signOutAllRef = React.useRef(false);
     if (profileScreen !== 'main') {
       return (
         <div key={`profile-${profileScreen}-container`} ref={edgeBack} className="screen-enter" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
@@ -976,6 +989,16 @@ export default function ProfileSettings({
                     : 'Turn them back on in your browser, under site settings for this page.'}
                 </p>
               )}
+              {/* "On" with nothing under it left no way off: the app has no
+                  switch for its own permission, and iOS does. Same place as
+                  the denied note above, said the other way round. */}
+              {notifStatus === 'granted' && (
+                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', margin: '4px 0 0 44px', lineHeight: 1.35 }}>
+                  {window.Capacitor?.isNativePlatform?.() === true
+                    ? 'Turn them off in the Settings app, under Notifications and then Flock.'
+                    : 'Turn them off in your browser, under site settings for this page.'}
+                </p>
+              )}
               {/* Crowd alerts opt-out. This switch controls ONLY the pre-peak
                   crowd push (backend/services/crowdAlerts.js), so the label
                   stays that narrow. The backend treats an absent key as ON.
@@ -1013,7 +1036,7 @@ export default function ProfileSettings({
                 so the icon must be white too — colors.red on red was invisible. */}
             {/* Every device at once. The server route has existed since the
                 token-version claim shipped; nothing in the app reached it. */}
-            <button className="hit44 glass-btn glass-secondary" onClick={async () => {
+            <button className="hit44 glass-btn glass-secondary" disabled={signingOutEverywhere} aria-busy={signingOutEverywhere || undefined} onClick={async () => {
               // The server call is the only thing that signs the other devices
               // out. When it fails, this phone still signs out, and the login
               // screen says which one happened instead of claiming both
@@ -1022,16 +1045,25 @@ export default function ProfileSettings({
               // a plain sign-out and another person signing in, and signing out
               // whoever is here by then ended their session and threw away
               // their unsent settings.
-              const account = currentAccount();
-              let everywhere = true;
-              try { await logoutAll({ account }); } catch (err) {
-                if (err?.sessionEnded) return;
-                everywhere = false;
+              if (signOutAllRef.current) return;
+              signOutAllRef.current = true;
+              setSigningOutEverywhere(true);
+              try {
+                const account = currentAccount();
+                let everywhere = true;
+                try { await logoutAll({ account }); } catch (err) {
+                  if (err?.sessionEnded) return;
+                  everywhere = false;
+                }
+                if (currentAccount() !== account) return;
+                if (onLogout) onLogout(sessionEndCopy ? sessionEndCopy(everywhere ? 'signed_out_everywhere' : 'signed_out_here_only') : undefined);
+              } finally {
+                signOutAllRef.current = false;
+                setSigningOutEverywhere(false);
               }
-              if (currentAccount() !== account) return;
-              if (onLogout) onLogout(sessionEndCopy ? sessionEndCopy(everywhere ? 'signed_out_everywhere' : 'signed_out_here_only') : undefined);
-            }} style={{ width: '100%', minHeight: '44px', marginTop: '16px', padding: '12px', textAlign: 'left', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)', cursor: 'pointer', fontWeight: '600' }}>
+            }} style={{ width: '100%', minHeight: '44px', marginTop: '16px', padding: '12px', textAlign: 'left', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '12px', border: '1px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)', cursor: signingOutEverywhere ? 'wait' : 'pointer', fontWeight: '600', opacity: signingOutEverywhere ? 0.6 : 1 }}>
               Sign out everywhere
+              {signingOutEverywhere && <span style={{ marginLeft: 'auto', fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)' }}>Signing out…</span>}
             </button>
             <button className="hit44 glass-btn glass-danger" onClick={() => { if (onLogout) onLogout(); }} style={{ width: '100%', minHeight: '44px', marginTop: '16px', padding: '12px', textAlign: 'left', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '12px', border: 'none', cursor: 'pointer' }}>
               {Icons.logout('#ffffff', 18)}
@@ -1474,7 +1506,8 @@ function ProRowInner({ isPro, entitlements, colors, setPaywallTrigger, showToast
   const native = isNativeShell();
   const [status, setStatus] = React.useState(null);
   const [statusFailed, setStatusFailed] = React.useState(false);
-  // 'portal' | 'renewal' while one is in flight; only that button says so.
+  // 'portal', 'cancel' or 'resume' while one is in flight; every button waits
+  // and only the one pressed says what it is doing.
   const [pending, setPending] = React.useState(null);
   // The cancel step asks once before it acts.
   const [confirming, setConfirming] = React.useState(false);
@@ -1578,14 +1611,14 @@ function ProRowInner({ isPro, entitlements, colors, setPaywallTrigger, showToast
     };
     const change = async (cancel) => {
       if (busy) return;
-      setPending('renewal');
+      setPending(cancel ? 'cancel' : 'resume');
       try {
         const result = cancel ? await cancelProSubscription() : await resumeProSubscription();
         setStatus((s) => (s ? { ...s, hasWebSubscription: true, cancelAtPeriodEnd: !!result?.cancelAtPeriodEnd, periodEnd: result?.periodEnd || s.periodEnd } : s));
         setConfirming(false);
         showToast?.(cancel ? 'Cancelled. You keep Pro until the paid period ends.' : 'Flock Pro will renew as before.', 'success');
       } catch (err) {
-        showToast?.(err?.message || 'Could not change your subscription. Try again.', 'error');
+        showToast?.(userMessage(err, cancel ? 'Could not cancel your subscription. Try again.' : 'Could not keep your subscription. Try again.'), 'error');
       } finally {
         setPending(null);
       }
@@ -1614,12 +1647,12 @@ function ProRowInner({ isPro, entitlements, colors, setPaywallTrigger, showToast
           )}
           {live && !status.cancelAtPeriodEnd && confirming && (
             <>
-              <button type="button" className="hit44" onClick={() => change(true)} disabled={busy} aria-busy={pending === 'renewal' || undefined} style={action}>Yes, cancel</button>
+              <button type="button" className="hit44" onClick={() => change(true)} disabled={busy} aria-busy={pending === 'cancel' || undefined} style={action}>{pending === 'cancel' ? 'Cancelling…' : 'Yes, cancel'}</button>
               <button type="button" className="hit44" onClick={() => setConfirming(false)} disabled={busy} style={action}>Keep Pro</button>
             </>
           )}
           {live && status.cancelAtPeriodEnd && (
-            <button type="button" className="hit44" onClick={() => change(false)} disabled={busy} aria-busy={pending === 'renewal' || undefined} style={action}>Keep Pro</button>
+            <button type="button" className="hit44" onClick={() => change(false)} disabled={busy} aria-busy={pending === 'resume' || undefined} style={action}>{pending === 'resume' ? 'Keeping Pro…' : 'Keep Pro'}</button>
           )}
           <button type="button" className="hit44" onClick={manage} disabled={busy} aria-busy={pending === 'portal' || undefined} style={action}>{pending === 'portal' ? 'Opening' : 'Payment method and invoices'}</button>
         </div>

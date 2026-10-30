@@ -43,6 +43,8 @@ jest.mock('../services/api', () => ({
   getAnalyticsChoice: jest.fn(),
   setAnalyticsChoice: jest.fn(),
   knownAnalyticsChoice: jest.fn(),
+  // The real one: which sentence a refusal shows is part of the contract.
+  userMessage: jest.requireActual('../services/api').userMessage,
 }));
 jest.mock('../services/firebase', () => ({
   getNotificationStatus: jest.fn(),
@@ -225,6 +227,33 @@ test('a refused off says so, and the switch stays where the account still is', a
   expect(theSwitch().getAttribute('aria-checked')).toBe('true');
   const alert = screen.getByRole('alert');
   expect(alert.textContent).toBe('That did not save to your account. Nothing more is sent until you next open Flock, so try again to keep it off.');
+});
+
+test('the switch moves on the tap, before the server answers', async () => {
+  // It sat still until the answer came, so a slow network made the tap look
+  // ignored.
+  render(React.createElement(ProfileSettings, props()));
+  await waitFor(() => expect(theSwitch().getAttribute('aria-checked')).toBe('true'));
+  const put = deferred();
+  api.setAnalyticsChoice.mockReturnValue(put.promise);
+  fireEvent.click(theSwitch());
+  expect(theSwitch().getAttribute('aria-checked')).toBe('false');
+  await act(async () => { put.resolve({ optOut: true }); });
+  expect(theSwitch().getAttribute('aria-checked')).toBe('false');
+});
+
+test('a refused on snaps back and says so in plain words, not the server\'s internal text', async () => {
+  api.knownAnalyticsChoice.mockReturnValue({ optOut: true });
+  api.getAnalyticsChoice.mockResolvedValue({ optOut: true });
+  render(React.createElement(ProfileSettings, props()));
+  await waitFor(() => expect(theSwitch().getAttribute('aria-checked')).toBe('false'));
+  const put = deferred();
+  api.setAnalyticsChoice.mockReturnValue(put.promise);
+  fireEvent.click(theSwitch());
+  expect(theSwitch().getAttribute('aria-checked')).toBe('true');
+  await act(async () => { put.reject(Object.assign(new Error('Failed to update the analytics setting'), { status: 500 })); });
+  expect(theSwitch().getAttribute('aria-checked')).toBe('false');
+  expect(screen.getByRole('alert').textContent).toBe('That did not save. Try again.');
 });
 
 test('a session that ended mid-change shows no error of its own', async () => {

@@ -32,6 +32,7 @@ jest.mock('../services/api', () => ({
   startVenueCheckout: jest.fn(),
   trackPaywallShown: jest.fn(),
   trackPurchaseCompleted: jest.fn(),
+  userMessage: jest.requireActual('../services/api').userMessage,
 }));
 jest.mock('../services/purchases', () => ({
   isPurchasesAvailable: jest.fn(),
@@ -45,7 +46,7 @@ jest.mock('../services/firebase', () => ({
 }));
 
 // eslint-disable-next-line import/first
-import { getProStatus, getToken, getVenueBillingStatus, startProCheckout } from '../services/api';
+import { cancelProSubscription, getProStatus, getToken, getVenueBillingStatus, startProCheckout } from '../services/api';
 // eslint-disable-next-line import/first
 import { isPurchasesAvailable, getProOffering, restore } from '../services/purchases';
 // eslint-disable-next-line import/first
@@ -162,6 +163,33 @@ describe('the You tab Flock Pro row after a failed status read', () => {
     expect(screen.getByRole('button', { name: 'Payment method and invoices' })).toBeTruthy();
     expect(screen.queryByRole('alert')).toBeNull();
     expect(getProStatus).toHaveBeenCalledTimes(2);
+  });
+
+  test('Yes, cancel says it is cancelling from the tap, and every button waits for the answer', async () => {
+    getProStatus.mockResolvedValueOnce(WEB_SUBSCRIBER);
+    let answer;
+    cancelProSubscription.mockImplementationOnce(() => new Promise((resolve) => { answer = resolve; }));
+    render(row());
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel subscription' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Yes, cancel' }));
+    expect(screen.getByRole('button', { name: 'Cancelling…' }).disabled).toBe(true);
+    expect(screen.getByRole('button', { name: 'Keep Pro' }).disabled).toBe(true);
+    expect(screen.getByRole('button', { name: 'Payment method and invoices' }).disabled).toBe(true);
+    await act(async () => { answer({ cancelAtPeriodEnd: true, periodEnd: PERIOD_END }); });
+    expect(cancelProSubscription).toHaveBeenCalledTimes(1);
+    // Set to end now, so the one control left is the way back.
+    expect(screen.getByRole('button', { name: 'Keep Pro' }).disabled).toBe(false);
+  });
+
+  test('a cancel that failed frees the buttons and says so in plain words', async () => {
+    getProStatus.mockResolvedValueOnce(WEB_SUBSCRIBER);
+    cancelProSubscription.mockRejectedValueOnce(new TypeError("Cannot read properties of undefined (reading 'cancelAtPeriodEnd')"));
+    const showToast = jest.fn();
+    render(row({ showToast }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Cancel subscription' }));
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Yes, cancel' })); });
+    expect(showToast).toHaveBeenCalledWith('Could not cancel your subscription. Try again.', 'error');
+    expect(screen.getByRole('button', { name: 'Yes, cancel' }).disabled).toBe(false);
   });
 
   test('a later read that fails keeps the Cancel and the billing button the row already had', async () => {
