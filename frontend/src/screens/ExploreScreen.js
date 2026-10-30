@@ -95,6 +95,7 @@ import { eventDistanceKm, formatEventDistance, eventTimeZoneLabel } from '../lib
 // TableAvailability's. The pins get the same answers through MapLibreMapView.
 import { useTableSummaries } from '../lib/tableSummaries';
 import TableAvailability from '../components/venue/TableAvailability';
+import { SkeletonRow, SkeletonStatus, EventCardSkeleton } from '../components/ui/Skeleton';
 import { getEventDetails } from '../services/api';
 
 export default function ExploreScreen({
@@ -279,14 +280,6 @@ export default function ExploreScreen({
         </div>
       </div>
 
-      {/* Location loading overlay */}
-      {locationLoading && !mapVenuesLoaded && (
-        <div style={{ position: 'relative', zIndex: 25, backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', padding: '16px 0', textAlign: 'center' }}>
-          <div style={{ display: 'inline-block', width: '24px', height: '24px', border: `3px solid var(--border-default)`, borderTopColor: colors.steel, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-          <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '8px 0 0', fontWeight: '500' }}>Finding venues near you...</p>
-        </div>
-      )}
-
       {/* Why the map is empty, when it is. Two separate facts, because they
           have two separate fixes: the app does not know where you are, and the
           venue search is not answering. Both used to be silent, one covered by
@@ -297,11 +290,20 @@ export default function ExploreScreen({
           a setting the person chose. The button turns it back on here rather
           than sending them to Settings to find the row again. */}
       {/* Before the first answer the map behind the permission sheet was the
-          whole country with no pins and no sentence. */}
-      {locationLoading && (
+          whole country with no pins and no sentence.
+          ONE ROW FOR THE WHOLE WAIT. A first run used to stack two: a ring
+          over "Finding venues near you..." on top of this sentence, both
+          for the device's fix, and then nothing at all for the venue search
+          that runs once the fix lands (loadVenuesAtLocation), so the map sat
+          empty and silent for that round trip. This row says which half is
+          running and stays until the venues are on the map
+          (mapVenuesLoaded), a refusal or a failure taking over in the rows
+          below. Nothing is drawn on the map meanwhile: a pin is a claim
+          about a place, and there is no place yet. */}
+      {(locationLoading || (locationEnabled && !!userLocation && !mapVenuesLoaded && !locationError && !venueLoadError)) && (
         <div style={{ position: 'relative', zIndex: 25, backgroundColor: 'var(--bg-card-solid)', borderBottom: '1px solid var(--border-default)', padding: '10px 14px', display: 'flex', alignItems: 'center', gap: '10px' }}>
           <span style={{ flexShrink: 0, display: 'flex' }}>{Icons.mapPin('var(--text-tertiary)', 16)}</span>
-          <p role="status" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, flex: 1, minWidth: 0, lineHeight: 1.5 }}>Finding where you are. Venues near you show up once that lands.</p>
+          <p role="status" style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0, flex: 1, minWidth: 0, lineHeight: 1.5 }}>{locationLoading ? 'Finding where you are. Venues near you show up once that lands.' : 'Finding venues near you.'}</p>
         </div>
       )}
       {!locationLoading && !locationEnabled && (
@@ -530,11 +532,14 @@ export default function ExploreScreen({
 
             {/* Results */}
             <div style={{ flex: 1, overflowY: 'auto', padding: '8px 12px' }}>
+              {/* The rows that are coming, in the row's own shape: the 42px
+                  face, the name and email lines, the two buttons. */}
               {connectSearching && (
-                <div style={{ textAlign: 'center', padding: '20px 0' }}>
-                  <div style={{ display: 'inline-block', width: '16px', height: '16px', border: `2px solid ${colors.creamDark}`, borderTopColor: colors.navy, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-                  <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', marginLeft: '8px' }}>Searching...</span>
-                </div>
+                <SkeletonStatus label="Searching people">
+                  {['44%', '36%', '50%'].map((w) => (
+                    <SkeletonRow key={w} thumb={42} round lines={[w, '58%']} trailing={[{ width: 72, height: 28, radius: 20 }, { width: 76, height: 28, radius: 20 }]} padding="10px" gap={10} radius={12} marginBottom={8} style={{ border: 'none' }} />
+                  ))}
+                </SkeletonStatus>
               )}
 
               {/* A failed search, said in the server's own words, rather than as
@@ -666,11 +671,14 @@ export default function ExploreScreen({
 
           {/* Events list */}
           <div style={{ flex: 1, overflowY: 'auto', padding: '8px 12px 80px' }}>
+            {/* The cards that are coming, in the card's own shape (the
+                event map below), where a ring and a sentence used to sit. */}
             {featuredEventsLoading && (
-              <div style={{ textAlign: 'center', padding: '32px 0' }}>
-                <div style={{ display: 'inline-block', width: '24px', height: '24px', border: '3px solid var(--border-default)', borderTopColor: '#F59E0B', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '10px 0 0', fontWeight: '500' }}>Finding events near you...</p>
-              </div>
+              <SkeletonStatus label="Finding events near you">
+                <EventCardSkeleton />
+                <EventCardSkeleton />
+                <EventCardSkeleton />
+              </SkeletonStatus>
             )}
             {/* Three answers, never one. A read that failed says so and keeps
                 the retry here rather than sending the user off to search for

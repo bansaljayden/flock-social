@@ -62,6 +62,7 @@
  */
 import React from 'react';
 import Icons from './ui/Icons';
+import { SkeletonBar, SkeletonStatus } from './ui/Skeleton';
 import { eventDistanceKm, formatEventDistance, eventTimeZoneLabel } from '../lib/eventWhereWhen';
 import { getEventDetails } from '../services/api';
 
@@ -122,13 +123,6 @@ export default function EventDetailOverlay({
             </div>
           </div>
 
-          {/* Loading */}
-          {eventDetailLoading && (
-            <div style={{ padding: '20px', textAlign: 'center' }}>
-              <div style={{ display: 'inline-block', width: '20px', height: '20px', border: '3px solid var(--border-default)', borderTopColor: '#F59E0B', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-            </div>
-          )}
-
           {/* Content */}
           <div style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
             {/* Date & Time */}
@@ -179,6 +173,20 @@ export default function EventDetailOverlay({
                 <p style={{ fontSize: 'var(--t-label)', fontWeight: '600', color: colors.navy, margin: '0 0 8px' }}>Seat Map</p>
                 <img src={eventDetail.seatmap_url} alt="Seat map" style={{ width: '100%', borderRadius: '12px', border: '1px solid var(--border-default)' }} onError={(e) => { e.currentTarget.parentElement.style.display = 'none'; }} />
               </div>
+            )}
+
+            {/* WHAT THE READ IS STILL BRINGING. The card opens on the list's
+                own copy of the event, so the date, the price and the venue
+                above are already real; the listing's About copy is what the
+                detail read adds, so its shape stands where it will land. A
+                ring under the header used to sit above all of it instead. */}
+            {eventDetailLoading && !eventDetail.info && (
+              <SkeletonStatus label="Loading the rest of this event" style={{ marginBottom: '16px' }}>
+                <SkeletonBar width={48} height={13} style={{ margin: '1px 0 8px' }} />
+                <SkeletonBar width="100%" height={11} style={{ marginBottom: '7px' }} />
+                <SkeletonBar width="94%" height={11} style={{ marginBottom: '7px' }} />
+                <SkeletonBar width="60%" height={11} />
+              </SkeletonStatus>
             )}
 
             {/* Info / Notes */}

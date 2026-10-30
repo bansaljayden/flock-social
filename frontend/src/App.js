@@ -3587,16 +3587,20 @@ function attemptPaymentHandoff(method, options = {}) {
 // nothing either of them could drift from.
 const NO_LOCATION_VIEW = { lat: 39.9526, lng: -75.1652, zoom: 11.5, label: 'Philadelphia' };
 
-/* THE GROUND A MAP IS PAINTED ON BEFORE IT HAS ONE. The component's own
-   loading state fills its box with this colour and puts a spinner on it while
-   `import('maplibre-gl')` and the first tiles land, so the chunk fetch in
-   front of that has to paint the same thing: a fallback in the app's own
-   colours would open Discover on cream and then go dark. aria-hidden and no
-   role, because the loading state behind it is the one that announces itself
-   and two live regions for one wait is two announcements. */
-const MapChunkFallback = () => (
-  <div aria-hidden="true" style={{ position: 'absolute', inset: 0, backgroundColor: '#1a2a3a' }} />
-);
+/* THE GROUND A MAP IS PAINTED ON BEFORE IT HAS ONE. While
+   `import('maplibre-gl')` and the first tiles land, the component's own
+   loading panel fills its box with the land colour of the theme's basemap and
+   nothing else, no spinner (MAP_GROUND in components/map/MapLibreMapView.js:
+   the app's paper in light, #0b1220 in dark). The chunk fetch in front of that
+   paints the same ground from the same theme answer, so Discover and the venue
+   dashboard's Map tab open on one colour that the map then draws over. It was
+   a fixed #1a2a3a, a dark box before every map in light mode. aria-hidden and
+   no role, because the loading panel behind it is the one that announces
+   itself and two live regions for one wait is two announcements. */
+const MapChunkFallback = () => {
+  const { isDark } = useTheme();
+  return <div aria-hidden="true" style={{ position: 'absolute', inset: 0, backgroundColor: isDark ? '#0b1220' : 'var(--bg-primary)' }} />;
+};
 
 /* THE MAP, AS BOTH CALL SITES STILL SPELL IT. A wrapper rather than the lazy
    binding itself, for three reasons that all point the same way.
