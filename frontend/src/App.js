@@ -8,7 +8,7 @@ import useSheetDrag from './hooks/useSheetDrag';
 // The revenue simulator math (lib/finance.js) moved to screens/RevenueScreen.js
 // with the admin console on 2026-08-27 and is imported there now. It was the
 // only reader of it in App.js, so the import went with it.
-import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, reconfirmFlock as apiReconfirmFlock, createFlock as apiCreateFlock, getMessages, addReaction, removeReaction, sendMessage as apiSendMessage, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, markDmRead, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, unsendFlockMessage, unsendDm, markFlockRead, markFlockOpened, markDmOpened, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, getMyFriendCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, cancelEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, uploadProfileImage, saveProfileImageUrl, removeProfileImage, getBudgetStatus, getBillSplit, getFeaturedEvents, searchEvents, sendAiChat, getWeatherForecast, getAdminAnalytics, getAdminCosts, getVenueProfile, updateVenueProfile, getVenuePromotions, getVenueEvents, getIncomingFlocks, getVenueReviews, getPublicReviews, getPublicPromotions, getPublicEvents, exportMyData, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, requestVenueVerification, getUserProfile, setPhoneDiscovery, pinDmVenue, unpinDmVenue as apiUnpinDmVenue, pinFlockMessage as apiPinFlockMessage, unpinFlockMessage as apiUnpinFlockMessage, markReachable, isOffline as isDeviceOffline, grantBirdieConsent, withdrawBirdieConsent } from './services/api';
+import { getCurrentUser, logout, isLoggedIn, getFlocks, getFlock, reconfirmFlock as apiReconfirmFlock, createFlock as apiCreateFlock, getMessages, addReaction, removeReaction, sendMessage as apiSendMessage, searchVenues, searchUsers, getSuggestedUsers, sendFriendRequest, getVenueDetails, getDMConversations, getDMs, sendDM as apiSendDM, getDmVenueVotes, getDmPinnedVenue, markDmRead, BASE_URL, inviteToFlock, acceptFlockInvite, declineFlockInvite, unsendFlockMessage, unsendDm, markFlockRead, markFlockOpened, markDmOpened, getFriends, acceptFriendRequest, declineFriendRequest, getPendingRequests, getOutgoingRequests, getFriendSuggestions, addFriendByCode, getMyFriendCode, findFriendsByPhone, removeFriend, getTrustedContacts, addTrustedContact, updateTrustedContact, deleteTrustedContact, sendEmergencyAlert, cancelEmergencyAlert, shareLocationWithContacts, getUserStats, getCrowdPrediction, getCrowdBatch, getCrowdAlternatives, getWeather, uploadProfileImage, saveProfileImageUrl, removeProfileImage, getBudgetStatus, getBillSplit, getFeaturedEvents, searchEvents, sendAiChat, getWeatherForecast, getAdminAnalytics, getAdminCosts, getVenueProfile, updateVenueProfile, getVenuePromotions, getVenueEvents, getIncomingFlocks, getVenueReviews, getPublicReviews, getPublicPromotions, getPublicEvents, exportMyData, getVenueBusyNow, updateVenueBusyNow, clearVenueBusyNow, getVenueThisWeek, requestVenueVerification, getUserProfile, setPhoneDiscovery, pinDmVenue, unpinDmVenue as apiUnpinDmVenue, pinFlockMessage as apiPinFlockMessage, unpinFlockMessage as apiUnpinFlockMessage, markReachable, isOffline as isDeviceOffline, grantBirdieConsent, withdrawBirdieConsent, userMessage } from './services/api';
 // The address book lives behind one service, so nothing in this file has to
 // know which platform it is on or which API answers. See services/contacts.js.
 import { contactsAvailable, syncContacts } from './services/contacts';
@@ -7110,10 +7110,21 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     }
   }, [checkinSaving, showToast]);
 
+  // THE ANSWER SHOWS ON THE TAP. The most tapped control in the app used to
+  // wait a round trip before it lit, which on a bar's network is long enough to
+  // read as a tap that missed and to invite a second one. The pill lights at
+  // once now, the server's own row replaces it when the answer lands, and a
+  // refusal puts back exactly the pulse that was showing, with a toast that
+  // says the answer did not save. pulseBusyRef holds off the second tap of a
+  // double tap: pulseSaving is read from the render the tap came from, and two
+  // taps landing before React re-renders both saw it false.
+  const pulseBusyRef = useRef(false);
   const handleSetPulse = useCallback(async (status) => {
-    if (pulseSaving) return;
+    if (pulseBusyRef.current) return;
+    pulseBusyRef.current = true;
     hapticTap();
     setPulseSaving(true);
+    const shown = myPulse;
     try {
       // Expire at 4am local tomorrow (i.e. "tonight")
       const now = new Date();
@@ -7127,18 +7138,22 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // still on. One that expired at 4 AM is already gone for friends, so a
       // tap on it sets it again rather than clearing nothing.
       if (pulseTapAction(myPulse, status) === 'clear') {
-        await clearAvailability();
         setMyPulse(null);
+        await clearAvailability();
       } else {
+        setMyPulse({ status, note: null, set_at: now.toISOString(), expires_at: expiresAt });
         const data = await setAvailability({ status, expiresAt });
         setMyPulse(data.pulse);
       }
     } catch (err) {
-      showToast(err.message || 'Failed to update status', 'error');
+      setMyPulse(shown);
+      // A dead session has already said so through api.js.
+      if (!err?.sessionExpired) showToast(userMessage(err, "Your answer for tonight didn't save. Try again."), 'error');
     } finally {
+      pulseBusyRef.current = false;
       setPulseSaving(false);
     }
-  }, [myPulse, pulseSaving, showToast]);
+  }, [myPulse, showToast]);
 
   // The pulse goes out when it ends, rather than staying lit until something
   // else happens to re-render the Nest. A timer can sleep through the hour in

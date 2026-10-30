@@ -51,33 +51,99 @@ describe('lib/pulse', () => {
 });
 
 describe('the tap, as App.js ships it', () => {
-  const SCOPE = ['pulseSaving', 'hapticTap', 'setPulseSaving', 'myPulse', 'pulseTapAction',
-    'clearAvailability', 'setMyPulse', 'setAvailability', 'showToast', 'livePulse', 'myPulseSeqRef'];
+  const SCOPE = ['pulseBusyRef', 'hapticTap', 'setPulseSaving', 'myPulse', 'pulseTapAction',
+    'clearAvailability', 'setMyPulse', 'setAvailability', 'showToast', 'livePulse', 'myPulseSeqRef', 'userMessage'];
 
   function compileTap(deps) {
-    const m = APP.match(/const handleSetPulse = useCallback\((async \(status\) => \{[\s\S]*?\n {2}\}), \[myPulse, pulseSaving, showToast\]\);/);
+    const m = APP.match(/const handleSetPulse = useCallback\((async \(status\) => \{[\s\S]*?\n {2}\}), \[myPulse, showToast\]\);/);
     expect(m).not.toBeNull();
     // eslint-disable-next-line no-new-func
     return new Function(...SCOPE, `return (${m[1]});`)(...SCOPE.map((k) => deps[k]));
   }
 
-  function tapWith(myPulse) {
-    const calls = { set: [], clear: 0, shown: undefined };
+  // `answer` decides how the server replies to a set or a clear: by default
+  // at once with the row, or with a held promise the test settles itself.
+  function tapWith(myPulse, { answer } = {}) {
+    const calls = { set: [], clear: 0, shown: undefined, history: [], toasts: [] };
     const deps = {
-      pulseSaving: false,
+      pulseBusyRef: { current: false },
       hapticTap: () => {},
       setPulseSaving: () => {},
       myPulse,
       pulseTapAction,
       livePulse,
       myPulseSeqRef: { current: 0 },
-      clearAvailability: async () => { calls.clear += 1; },
-      setMyPulse: (p) => { calls.shown = p; },
-      setAvailability: async (body) => { calls.set.push(body); return { pulse: { ...ON, status: body.status } }; },
-      showToast: () => {},
+      clearAvailability: async () => { calls.clear += 1; if (answer) return answer(); return undefined; },
+      setMyPulse: (p) => { calls.shown = p; calls.history.push(p); },
+      setAvailability: async (body) => {
+        calls.set.push(body);
+        if (answer) return answer(body);
+        return { pulse: { ...ON, status: body.status } };
+      },
+      showToast: (message, type) => { calls.toasts.push([message, type]); },
+      userMessage: (err, fallback) => (err && err.userFacing ? err.message : fallback),
     };
     return { tap: compileTap(deps), calls };
   }
+
+  function held() {
+    let resolve;
+    let reject;
+    const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+    return { promise, resolve, reject };
+  }
+
+  test('the pill lights on the tap, before the server has answered', async () => {
+    const wait = held();
+    const { tap, calls } = tapWith(null, { answer: () => wait.promise });
+    const done = tap('down');
+    // Nothing has come back yet, and the answer is already on screen.
+    expect(calls.shown.status).toBe('down');
+    expect(livePulse(calls.shown)).toBe(calls.shown);
+    wait.resolve({ pulse: { ...ON, status: 'down', note: 'from the server' } });
+    await done;
+    // The server's own row replaces the drawn one.
+    expect(calls.shown.note).toBe('from the server');
+  });
+
+  test('a refusal puts back exactly the pulse that was showing, and says so', async () => {
+    const before = { ...ON, status: 'maybe', expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString() };
+    const { tap, calls } = tapWith(before, { answer: () => Promise.reject(new TypeError('x is undefined')) });
+    await tap('down');
+    expect(calls.history[0].status).toBe('down');
+    expect(calls.shown).toBe(before);
+    expect(calls.toasts).toEqual([["Your answer for tonight didn't save. Try again.", 'error']]);
+  });
+
+  test("a clear that fails brings the lit pill back, in the server's words when it wrote some", async () => {
+    const before = { ...ON, expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString() };
+    const refusal = Object.assign(new Error('Slow down a moment.'), { userFacing: true, status: 429 });
+    const { tap, calls } = tapWith(before, { answer: () => Promise.reject(refusal) });
+    await tap('down');
+    expect(calls.history[0]).toBeNull();
+    expect(calls.shown).toBe(before);
+    expect(calls.toasts).toEqual([['Slow down a moment.', 'error']]);
+  });
+
+  test('a dead session is not toasted twice', async () => {
+    const { tap, calls } = tapWith(null, { answer: () => Promise.reject(Object.assign(new Error('Signed out'), { sessionExpired: true })) });
+    await tap('down');
+    expect(calls.shown).toBeNull();
+    expect(calls.toasts).toEqual([]);
+  });
+
+  test('a second tap while the first is out sends nothing', async () => {
+    const wait = held();
+    const { tap, calls } = tapWith(null, { answer: () => wait.promise });
+    const first = tap('down');
+    await tap('maybe');
+    expect(calls.set.map((b) => b.status)).toEqual(['down']);
+    wait.resolve({ pulse: { ...ON, status: 'down' } });
+    await first;
+    // And once it has answered, the next tap goes through.
+    await tap('maybe');
+    expect(calls.set.map((b) => b.status)).toEqual(['down', 'maybe']);
+  });
 
   test('tapping Down on a Down that expired sets it again', async () => {
     const { tap, calls } = tapWith({ ...ENDED, expires_at: new Date(Date.now() - 60 * 60 * 1000).toISOString() });
@@ -108,7 +174,7 @@ describe('the Nest shows what friends see', () => {
 
   test('a re-read that was out when a tap answered does not undo the tap', () => {
     expect(APP).toContain('if (seq === myPulseSeqRef.current) setMyPulse(d.pulse || null);');
-    const tap = APP.slice(APP.indexOf('const handleSetPulse = useCallback'), APP.indexOf('}, [myPulse, pulseSaving, showToast]);'));
+    const tap = APP.slice(APP.indexOf('const handleSetPulse = useCallback'), APP.indexOf('}, [myPulse, showToast]);'));
     expect(tap).toContain('myPulseSeqRef.current += 1;');
   });
 
