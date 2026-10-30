@@ -35,6 +35,9 @@
  * imports them straight from the source rather than taking them as props.
  * The list came from a Babel scope walk of the block, every referenced
  * identifier whose binding resolves outside it, not from reading the page.
+ * One of the two shared components has gone since: the loading state draws
+ * FlockListSkeleton from '../components/ui/Skeleton', so ListSkeleton no
+ * longer travels and DialogBehavior is the one that does.
  *
  * No hook is called anywhere in the block, so nothing about the move changes
  * hook order in FlockAppInner.
@@ -52,13 +55,15 @@
 import React from 'react';
 import { BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
+import { FlockListSkeleton } from '../components/ui/Skeleton';
 import useEdgeSwipeBack from '../hooks/useEdgeSwipeBack';
 
 export default function PastFlocksScreen({
   // Declared at App.js module scope and shared with screens other than this
-  // one, so they stay declared there and arrive here.
+  // one, so it stays declared there and arrives here. ListSkeleton used to
+  // arrive beside it; the loading cards are FlockListSkeleton now, imported
+  // above, because a past flock row has no thumbnail.
   DialogBehavior,
-  ListSkeleton,
   // Everything else is declared in FlockAppInner and stays declared there.
   colors,
   handleRerunFlock,
@@ -92,7 +97,7 @@ export default function PastFlocksScreen({
         </div>
 
         <div style={{ flex: 1, padding: '16px', overflowY: 'auto' }}>
-          {pastFlocksLoading && !pastFlocks && <ListSkeleton label="Loading past flocks" />}
+          {pastFlocksLoading && !pastFlocks && <FlockListSkeleton past label="Loading past flocks" />}
 
           {!pastFlocksLoading && pastFlocksError && (
             <div style={{ ...styles.card, marginBottom: '10px' }}>

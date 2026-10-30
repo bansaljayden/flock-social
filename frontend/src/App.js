@@ -130,6 +130,9 @@ import { BirdieStill, BirdNote, WARM_BIRD } from './components/ui/BirdieBird';
 import FloppyBird from './components/ui/FloppyBird';
 import Icons from './components/ui/Icons';
 import MapsChooserHost, { openMapsChooser, closeMapsChooser } from './components/ui/MapsChooser';
+// The loading shapes. NestSkeleton is the cold-start screen index.js paints as
+// well, so the two hand over without a change of colour.
+import { NestSkeleton, FlockListSkeleton } from './components/ui/Skeleton';
 // Add Friends left App.js in the same sweep as the venue dashboard below and
 // for the same review reason, but it is imported normally rather than lazily.
 // It is a consumer screen the empty home state points a brand new account
@@ -17496,8 +17499,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
               waits until the fetch has actually answered, AND until the answer
               was not a failure. A read that never landed says nothing about
               whether this account has plans in it, and this is the screen where
-              claiming otherwise costs the most. */}
-          {flocksLoading && flocks.length === 0 && <ListSkeleton label="Loading your flocks" />}
+              claiming otherwise costs the most. The cards it waits with are
+              the card below, not ListSkeleton's thumbnail row: a flock card
+              has no thumbnail. */}
+          {flocksLoading && flocks.length === 0 && <FlockListSkeleton label="Loading your flocks" />}
           {!flocksLoading && flocksError && (
             <div style={{ ...styles.card, marginBottom: '10px' }}>
               <BirdNote
@@ -19514,7 +19519,6 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // over there cannot drift apart.
       const pastFlocksProps = {
         DialogBehavior,
-        ListSkeleton,
         colors,
         handleRerunFlock,
         loadPastFlocks,
@@ -22149,22 +22153,22 @@ const FlockApp = () => {
     </div>
   ) : null;
 
+  // A stored session waiting on GET /me, which is every cold start. What comes
+  // next is the Nest, so the wait is the Nest's shape in the reader's theme,
+  // the same skeleton index.js painted while this chunk loaded. It was a navy
+  // "Flock / Loading..." card between two cream screens. A tag's /checkin/
+  // URL opens on NfcCheckinView instead (FlockAppInner's nfcInitialPlaceId
+  // reads the same path), which is #0f172a edge to edge, so that wait is
+  // that colour and not a Nest the person is not about to see.
   if (authChecking) {
-    return (
-      <div style={{
-        minHeight: '100vh',
-        background: `linear-gradient(135deg, #1e293b 0%, #1a3a5c 50%, #2d5a87 100%)`,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        fontFamily: "'Hanken Grotesk', -apple-system, BlinkMacSystemFont, sans-serif",
-      }}>
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ fontSize: 'var(--t-display)', fontWeight: '600', color: '#f1ede0', letterSpacing: '-0.5px', marginBottom: '8px' }}>Flock</div>
-          <div style={{ fontSize: 'var(--t-label)', fontWeight: '500', color: 'rgba(241,237,224,0.5)' }}>Loading...</div>
+    if (/^\/checkin\/[^/?#]+/.test(window.location?.pathname || '')) {
+      return (
+        <div style={{ position: 'fixed', inset: 0, backgroundColor: '#0f172a' }}>
+          <p className="sr-only" role="status">Loading Flock.</p>
         </div>
-      </div>
-    );
+      );
+    }
+    return <NestSkeleton label="Loading Flock." />;
   }
 
   // A stored session that cannot reach the server on boot. Not the sign-in

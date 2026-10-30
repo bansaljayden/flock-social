@@ -244,7 +244,10 @@ describe('past flocks screen', () => {
   });
 
   it('loading is a skeleton, not a spinner and not the empty state', () => {
-    expect(screenCode).toContain('<ListSkeleton label="Loading past flocks"');
+    // The row's own shape (FlockCardSkeleton's past form), not ListSkeleton's
+    // thumbnail row: a past flock row has no thumbnail.
+    expect(screenCode).toContain('{pastFlocksLoading && !pastFlocks && <FlockListSkeleton past label="Loading past flocks" />}');
+    expect(screenCode).not.toContain('<ListSkeleton');
   });
 
   it('a failed load shows an inline retry, never the empty state', () => {

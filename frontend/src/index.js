@@ -7,6 +7,9 @@ import ErrorBoundary from './components/ErrorBoundary';
 // fallbacks below get their birds for free.
 import { BirdieStill, BIRDIE, WARM_BIRD } from './components/ui/BirdieBird';
 import FloppyBird from './components/ui/FloppyBird';
+// The app route's loading screen, which App.js paints again while GET /me
+// answers. Small, and nothing in it reaches for services/api.js.
+import { NestSkeleton } from './components/ui/Skeleton';
 // The website's analytics bar. The app routes do not mount it: there, the
 // signed-in account's own setting decides (followAccountForAnalytics below).
 import ConsentBanner from './components/ConsentBanner';
@@ -609,13 +612,34 @@ function DarkLoading() {
   );
 }
 
-// The app: <html> already carries data-theme by the time this renders, so
-// var(--bg-primary) is the right colour in both themes. On iOS this sits
-// between the native splash and the first app paint, which is exactly what
-// capacitor.config.ts's backgroundColor is matched to.
+// The app. What it is about to show decides what this paints, because a wait
+// that paints one screen and lands on another is the flash these fallbacks
+// exist to prevent.
+//
+//   A stored session: the Nest comes next. App.js holds the same NestSkeleton
+//   up while GET /me answers, so chunk, session check and Nest read as one
+//   screen filling in. <html> carries data-theme before this first render
+//   (applyStoredTheme), so the skeleton is in the reader's theme. This used to
+//   paint plain var(--bg-primary), which went cream, then App.js's navy
+//   "Loading..." card, then cream again on every light-mode launch.
+//   An NFC tag's /checkin/ URL: NfcCheckinView in App.js, #0f172a edge to edge.
+//   No session: the sign-in screen, navy in both themes (.auth-bg in
+//   components/auth/AuthShell.js), and #0b1a2e is also the native launch
+//   screen's colour (capacitor.config.ts backgroundColor), so the handoff
+//   from the splash on iOS stays invisible.
 function AppLoading() {
+  if (readStore('flockToken')) {
+    if (/^\/checkin\/[^/?#]+/.test(path)) {
+      return (
+        <div style={{ position: 'fixed', inset: 0, background: '#0f172a' }}>
+          <p className="sr-only" role="status">Loading Flock.</p>
+        </div>
+      );
+    }
+    return <NestSkeleton label="Loading Flock." />;
+  }
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'var(--bg-primary)' }}>
+    <div style={{ position: 'fixed', inset: 0, background: '#0b1a2e' }}>
       <p className="sr-only" role="status">Loading Flock.</p>
     </div>
   );
