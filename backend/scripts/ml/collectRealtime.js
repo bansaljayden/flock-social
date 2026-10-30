@@ -1107,6 +1107,35 @@ async function sweepVenues(cityOrder, {
 const EVENT_CELL_DEG = 0.01;
 const EVENT_EDGE_MARGIN_KM = 0.1;
 const EVENT_SHARED_PAGE = 100;
+
+// ONE LIST PER CITY AND HOUR (2026-10-30), ahead of the cells above.
+//
+// The collector may spend only the 1,300 of the day's 5,000 calls the app's
+// three ledgers leave (TM_APP_RESERVE in eventService), and cell-and-hour
+// sharing still asked 700 to 1,000 times a run once the sweep covered six
+// cities. So the first run or two after Ticketmaster's 03:04 UTC reset spent
+// all of it, and every later row of the day was stored with
+// events_observed = false ('lookup_failed'): the live rows had event features
+// only for the hour or two after midnight Eastern.
+//
+// A whole city's list for one hour's window is small. A probe on 2026-10-30
+// (a Friday, the 20:00-local window, metro radius, page size 200): philly 18,
+// lehigh 2, chicago 52, la 41, seattle 16, denver 22, nyc 153, london 128, each
+// complete in one page, every event placed and timed. So each city is asked
+// once per hour on a disk that holds every member venue's own disk, the cell
+// derivation above at city size, and a venue's view is cut from that list
+// exactly as from a cell's: the events within NEARBY_KM of it, in Discovery's
+// order, cut at TM_PAGE_SIZE. About 25 to 50 calls a run, every hour of the day.
+//
+// The cell rules carry over unchanged. The list is used only when it is
+// COMPLETE (paged, up to Discovery's deep-paging limit of 1,000 results) and
+// every event in it is placed. A failed request is never kept as an answer.
+// Any of those, and a venue outside its city's disk (a far suburb or a stray
+// geocode beyond EVENT_CITY_MAX_REACH_KM from the centre), go to the cell
+// path, which is the old behaviour.
+const EVENT_CITY_PAGE = 200;
+const EVENT_CITY_MAX_PAGES = 5;
+const EVENT_CITY_MAX_REACH_KM = 60;
 // eventService.distanceKm's earth (R = 6371 km), per degree of arc.
 const KM_PER_DEGREE = (6371 * Math.PI) / 180;
 const HOUR_MS = 60 * 60 * 1000;
@@ -1120,6 +1149,35 @@ function cellHalfDiagonalKm(cellDeg) {
 // member's own disk, in the whole km Discovery accepts.
 function sharedEventRadiusKm(nearbyKm, cellDeg = EVENT_CELL_DEG, marginKm = EVENT_EDGE_MARGIN_KM) {
   return Math.ceil(nearbyKm + cellHalfDiagonalKm(cellDeg) + marginKm);
+}
+
+// Each city's disk for its hourly list (ONE LIST PER CITY AND HOUR): the
+// city's configured centre, and the radius that holds the own disk of every
+// venue within EVENT_CITY_MAX_REACH_KM of it. A venue farther out is left to
+// the cell path by the containment test in the lookup, rather than widening
+// the whole city's query for it.
+function cityEventDisks(venues, {
+  cities = CITIES, distance = distanceKm, nearbyKm = NEARBY_KM,
+  marginKm = EVENT_EDGE_MARGIN_KM, maxReachKm = EVENT_CITY_MAX_REACH_KM,
+} = {}) {
+  // An event module without a distance (a test double that only answers
+  // getNearestEvent) has no city lists, as createEventLookup has no cells for it.
+  if (typeof distance !== 'function') return new Map();
+  const reach = new Map();
+  for (const v of venues) {
+    const c = cities[v.city];
+    const lat = Number(v.latitude);
+    const lon = Number(v.longitude);
+    if (!c || !Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+    const d = distance(c.lat, c.lon, lat, lon);
+    if (!(d <= maxReachKm)) continue;
+    reach.set(v.city, Math.max(reach.get(v.city) || 0, d));
+  }
+  const disks = new Map();
+  for (const [city, d] of reach) {
+    disks.set(city, { lat: cities[city].lat, lon: cities[city].lon, radiusKm: Math.ceil(nearbyKm + d + marginKm) });
+  }
+  return disks;
 }
 
 // Built once per sweep. lookup(lat, lon, at) answers what
@@ -1142,9 +1200,19 @@ function createEventLookup({
   perVenuePage = TM_PAGE_SIZE,
   cellDeg = EVENT_CELL_DEG,
   sharedPage = EVENT_SHARED_PAGE,
+  // ONE LIST PER CITY AND HOUR: city key -> { lat, lon, radiusKm }, from
+  // cityEventDisks. Empty, every lookup takes the cell path as before.
+  cityDisks = new Map(),
+  cityPage = EVENT_CITY_PAGE,
+  cityMaxPages = EVENT_CITY_MAX_PAGES,
   now = Date.now,
 } = {}) {
   const stats = { lookups: 0, sharedCalls: 0, perVenueCalls: 0, failedSharedCalls: 0 };
+  // Kept apart from `stats`, whose shape the cell path's tests pin: lists asked
+  // for, the requests they took (pages included), lookups they answered, and
+  // the lists that failed or could not be used and sent their city's venues to
+  // the cell path for that hour.
+  const cityStats = { lists: 0, calls: 0, answered: 0, failed: 0, unusable: 0 };
   const canShare = [fetchPage, fetchSeatGeek, answerFor, distance].every((f) => typeof f === 'function')
     && Number.isFinite(nearbyKm) && Number.isInteger(perVenuePage);
   // The venue's own request, at getNearestEvent's own radius, about the same
@@ -1157,6 +1225,7 @@ function createEventLookup({
     return {
       shared: false,
       stats,
+      cityStats,
       lookup(lat, lon, at) {
         stats.lookups++;
         return askPerVenue(lat, lon, at);
@@ -1192,8 +1261,57 @@ function createEventLookup({
     return pending;
   }
 
-  async function ticketmasterFor(lat, lon, at) {
+  // One promise per city and hour, like a cell's: { events } when the whole
+  // list arrived and may be cut for each venue, { toCells: true } otherwise.
+  const cityLists = new Map();
+  function cityAnswer(city, disk, hour, at) {
+    const key = `${hour}:${city}`;
+    const known = cityLists.get(key);
+    if (known) return known;
+    cityStats.lists++;
+    const pending = (async () => {
+      const listed = [];
+      let total = null;
+      for (let page = 0; page < cityMaxPages; page++) {
+        cityStats.calls++;
+        const got = await fetchPage(disk.lat, disk.lon, disk.radiusKm, at, cityPage, page);
+        if (!got || !Array.isArray(got.events) || !Number.isInteger(got.total)) {
+          cityStats.failed++;
+          return { toCells: true };
+        }
+        // Past what paging can reach, the list can never be complete: stop
+        // at the first page rather than spend four more requests learning it.
+        if (got.total > cityPage * cityMaxPages) {
+          cityStats.unusable++;
+          return { toCells: true };
+        }
+        listed.push(...got.events);
+        total = got.total;
+        if (listed.length >= total || got.events.length < cityPage) break;
+      }
+      if (total <= listed.length && listed.every((e) => e.lat && e.lon)) return { events: listed };
+      cityStats.unusable++;
+      return { toCells: true };
+    })().catch(() => {
+      cityStats.failed++;
+      return { toCells: true };
+    });
+    cityLists.set(key, pending);
+    return pending;
+  }
+
+  async function ticketmasterFor(lat, lon, at, city) {
     const hour = Math.floor(at.getTime() / HOUR_MS);
+    const disk = city ? cityDisks.get(city) : null;
+    if (disk && distance(disk.lat, disk.lon, lat, lon) + nearbyKm + EVENT_EDGE_MARGIN_KM <= disk.radiusKm) {
+      const listed = await cityAnswer(city, disk, hour, at);
+      if (!listed.toCells) {
+        cityStats.answered++;
+        return listed.events
+          .filter((e) => distance(lat, lon, e.lat, e.lon) <= nearbyKm)
+          .slice(0, perVenuePage);
+      }
+    }
     const shared = await cellAnswer(Math.floor(lat / cellDeg), Math.floor(lon / cellDeg), hour, at);
     if (shared.perVenue) {
       stats.perVenueCalls++;
@@ -1208,8 +1326,11 @@ function createEventLookup({
   return {
     shared: true,
     stats,
+    cityStats,
     radiusKm,
-    async lookup(lat, lon, observedAt) {
+    // `city` is the venue's city key, which picks its city's list; without
+    // one, or for a city with no disk, the lookup takes the cell path.
+    async lookup(lat, lon, observedAt, city) {
       stats.lookups++;
       const at = observedAt instanceof Date && Number.isFinite(observedAt.getTime())
         ? observedAt
@@ -1217,7 +1338,7 @@ function createEventLookup({
       // A venue with no usable position has no cell; it is asked as before.
       if (!Number.isFinite(lat) || !Number.isFinite(lon)) return askPerVenue(lat, lon, at);
       const [tmEvents, sgEvents] = await Promise.all([
-        ticketmasterFor(lat, lon, at),
+        ticketmasterFor(lat, lon, at, city),
         fetchSeatGeek(lat, lon, nearbyKm),
       ]);
       return answerFor(tmEvents, sgEvents, lat, lon, at);
@@ -1305,7 +1426,7 @@ async function storeReading(venue, at, live,
     // 21:59:55 and answered at 22:00:10 was filed under 21:00 and handed the
     // 22:00 window's events, so a show starting at 22:30 was attached to the
     // hour before it.
-    eventData = await lookupEvents(venue.latitude, venue.longitude, startedAt);
+    eventData = await lookupEvents(venue.latitude, venue.longitude, startedAt, venue.city);
   } catch (err) {
     console.error(`  Event fetch error for ${venue.name}: ${describeError(err)}`);
   }
@@ -1690,9 +1811,9 @@ async function collectRealtime() {
   }
   const cityOrder = orderCityBlocks(byCity, fillCities);
 
-  // One per sweep, so a cell's Ticketmaster list is shared within this run
-  // and never outlives it.
-  const events = createEventLookup();
+  // One per sweep, so a city's or a cell's Ticketmaster list is shared within
+  // this run and never outlives it.
+  const events = createEventLookup({ cityDisks: cityEventDisks(venues) });
   // Calls and live rows per city, for the line after the summary: what each
   // city gives back for the calls spent on it. A fill city whose venues seldom
   // have a live reading is time better spent on another.
@@ -1728,6 +1849,12 @@ async function collectRealtime() {
       + `${ev.perVenueCalls} per venue where a cell's list could not be shared, `
       + `${ev.failedSharedCalls} shared calls failed and were not reused).`
     : `[ML:Realtime] Event lookups: ${ev.lookups} for stored readings, each asked per venue.`);
+  const cs = events.cityStats;
+  if (cs && cs.lists > 0) {
+    console.log(`[ML:Realtime] Ticketmaster city lists: ${cs.lists} asked for in ${cs.calls} requests answered `
+      + `${cs.answered} lookups; ${cs.failed} failed and ${cs.unusable} were incomplete or unplaced, so their `
+      + `venues used the cells above for that hour.`);
+  }
   // How many of those were never sent, to leave the app its share of the day.
   // An event module without the count (a test double) has nothing to say.
   const tm = typeof ticketmasterQuota === 'function' ? ticketmasterQuota() : null;
@@ -2024,6 +2151,7 @@ module.exports = {
   MIN_START_INTERVAL_MS, MAX_START_INTERVAL_MS,
   FILL_EARLY_STOP_MS, parseFillCities, orderCityBlocks,
   createEventLookup, sharedEventRadiusKm, cellHalfDiagonalKm, EVENT_CELL_DEG, EVENT_SHARED_PAGE,
+  cityEventDisks, EVENT_CITY_PAGE, EVENT_CITY_MAX_PAGES, EVENT_CITY_MAX_REACH_KM,
   // For __tests__/collectRealtimeEventCache.test.js, which hands it a reading
   // whose call started before the hour turned.
   storeReading,

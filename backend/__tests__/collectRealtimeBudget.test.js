@@ -326,7 +326,9 @@ test('a row is stamped with the hour it was observed, not the hour the sweep beg
   // from it, and the event lookup that runs when the answer lands is handed
   // the same instant rather than taking the time again.
   assert.match(collect, /const startedAt = new Date\(now\(\)\);\s*const obs = getLocalTime\(venue\.timezone \|\| cityConfig\.tz, startedAt\);/);
-  assert.match(collect, /eventData = await lookupEvents\(venue\.latitude, venue\.longitude, startedAt\);/);
+  // The venue's city key rides along, to pick its city's hourly list
+  // (ONE LIST PER CITY AND HOUR); it changes nothing about the clock.
+  assert.match(collect, /eventData = await lookupEvents\(venue\.latitude, venue\.longitude, startedAt, venue\.city\);/);
   for (const col of ['day_of_week', 'hour', 'month', 'season', 'observed_date']) {
     assert.ok(collect.includes("['" + col + "', obs."), col + ' reads the row clock');
   }

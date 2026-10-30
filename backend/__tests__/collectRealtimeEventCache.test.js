@@ -29,7 +29,12 @@
 //   * a reading is looked up for the moment its BestTime call STARTED, not the
 //     moment the answer landed: a call started at 21:59:55 and answered at
 //     22:00:10 is a 21:00 row, and its cell key, Discovery window and filter
-//     are 21:00's, through the sweep and storeReading as well as the lookup.
+//     are 21:00's, through the sweep and storeReading as well as the lookup;
+//   * ONE LIST PER CITY AND HOUR (2026-10-30), ahead of the cells: a city's
+//     venues share one request an hour (paged when long), each still gets
+//     exactly its own answer, and a list that failed, cannot be complete or
+//     holds an unplaced event, and a venue beyond its city's reach, all take
+//     the cell path.
 //
 // The fake Discovery applies the real query's rules (radius, the UTC-hour time
 // window eventService builds, date order, the page cap and the total) to a
@@ -72,8 +77,9 @@ const events = require('../scripts/ml/eventService');
 const {
   createEventLookup, sharedEventRadiusKm, cellHalfDiagonalKm, EVENT_CELL_DEG, EVENT_SHARED_PAGE,
   sweepVenues, storeReading, LABEL_LIVE,
+  cityEventDisks, EVENT_CITY_PAGE, EVENT_CITY_MAX_REACH_KM,
 } = require('../scripts/ml/collectRealtime');
-const { getLocalTime } = require('../scripts/ml/config');
+const { getLocalTime, CITIES } = require('../scripts/ml/config');
 const { virtualClock } = require('./helpers/virtualClock');
 
 const HOUR = 60 * 60 * 1000;
@@ -130,8 +136,11 @@ function event(name, where, startMs, { shown = true, size = null } = {}) {
 // A fake Discovery with the real query's rules.
 function discovery(clock, universe, { latencyMs = 250, fail = () => false } = {}) {
   const calls = [];
-  const fetchPage = async (lat, lon, radiusKm, at, size = events.TM_PAGE_SIZE) => {
+  const fetchPage = async (lat, lon, radiusKm, at, size = events.TM_PAGE_SIZE, page = 0) => {
     const call = { lat, lon, radiusKm, size, hour: Math.floor(at.getTime() / HOUR) };
+    // Discovery's zero-based page, recorded only when asked for, as the real
+    // request sends it.
+    if (page) call.page = page;
     calls.push(call);
     await clock.pause(latencyMs);
     if (fail(call, calls.length - 1)) return null;
@@ -144,7 +153,7 @@ function discovery(clock, universe, { latencyMs = 250, fail = () => false } = {}
       .filter((e) => { const s = Date.parse(e.startTime); return s >= open && s <= close; })
       .sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime) || a.name.localeCompare(b.name));
     return {
-      events: matched.slice(0, size).map((e) => ({
+      events: matched.slice(page * size, (page + 1) * size).map((e) => ({
         name: e.name,
         type: e.type,
         lat: e.shown ? e.where.lat : 0,
@@ -687,4 +696,219 @@ test('through the sweep and storeReading, the event lookup reads the instant the
   assert.strictEqual(answers.length, 1);
   assert.strictEqual(answers[0].observed, true);
   assert.strictEqual(answers[0].event_nearby, false, 'a 22:30 show was attached to a 21:00 row');
+});
+
+// ===========================================================================
+// ONE LIST PER CITY AND HOUR (2026-10-30)
+// ===========================================================================
+
+const PHILLY = CITIES.philly;
+
+// Venues scattered over a city, up to `maxKm` from its centre.
+function venuesAround(centre, n, maxKm, random, firstId, city = 'philly') {
+  return Array.from({ length: n }, (_, i) => {
+    const p = offset(centre.lat, centre.lon, maxKm * Math.sqrt(random()), 360 * random());
+    return { id: firstId + i, name: `${city} venue ${firstId + i}`, latitude: p.lat, longitude: p.lon, city };
+  });
+}
+
+// Events over a city: a dense knot (more than twenty within 2 km of the
+// venues near it, so the per-venue page cap bites), a scatter, a few outside
+// the hour's window and a few beyond any city disk.
+function cityUniverse(centre, random, { knot = 26, scatter = 30 } = {}) {
+  const out = [];
+  const windowOpen = Date.UTC(2026, 8, 25, 20, 0, 0);
+  for (let i = 0; i < knot; i++) {
+    out.push(event(`knot ${i}`, offset(centre.lat, centre.lon, 0.8 * random(), 360 * random()),
+      windowOpen + (i * 7 + 3) * MINUTE, { size: 800 + i }));
+  }
+  for (let i = 0; i < scatter; i++) {
+    out.push(event(`scatter ${i}`, offset(centre.lat, centre.lon, 14 * Math.sqrt(random()), 360 * random()),
+      windowOpen + (i * 9 + 1) * MINUTE));
+  }
+  out.push(event('too early', offset(centre.lat, centre.lon, 0.4, 30), windowOpen - 45 * MINUTE));
+  out.push(event('later tonight', offset(centre.lat, centre.lon, 0.4, 120), windowOpen + 5 * HOUR));
+  for (let i = 0; i < 3; i++) out.push(event(`far ${i}`, offset(centre.lat, centre.lon, 90 + 5 * i, 360 * random()), windowOpen));
+  return out;
+}
+
+// Every venue's answer from the city lookup, beside its own request's answer.
+async function cityRun(clock, lookup, own, venues, { gapMs = 1000 } = {}) {
+  const answers = [];
+  const expected = [];
+  await clock.run((async () => {
+    for (const v of venues) {
+      const at = new Date(clock.now());
+      answers.push(await lookup.lookup(v.latitude, v.longitude, at, v.city));
+      expected.push(await reference(own, v.latitude, v.longitude, at));
+      await clock.pause(gapMs);
+    }
+  })());
+  return { answers, expected };
+}
+
+test('a city disk holds the own disk of every venue within reach, and leaves out the rest', () => {
+  const random = rng(31);
+  const venues = venuesAround(PHILLY, 60, 18, random, 1);
+  const stray = { id: 999, name: 'stray', latitude: PHILLY.lat + 1.2, longitude: PHILLY.lon, city: 'philly' }; // ~133 km north
+  const disks = cityEventDisks([...venues, stray,
+    { id: 1000, name: 'no position', latitude: null, longitude: null, city: 'philly' },
+    { id: 1001, name: 'unknown city', latitude: 1, longitude: 1, city: 'atlantis' }]);
+  assert.deepStrictEqual([...disks.keys()], ['philly']);
+  const disk = disks.get('philly');
+  assert.strictEqual(disk.lat, PHILLY.lat);
+  assert.strictEqual(disk.lon, PHILLY.lon);
+  const reach = Math.max(...venues.map((v) => events.distanceKm(PHILLY.lat, PHILLY.lon, v.latitude, v.longitude)));
+  assert.strictEqual(disk.radiusKm, Math.ceil(events.NEARBY_KM + reach + 0.1), 'the stray widened the disk');
+  assert.ok(events.distanceKm(PHILLY.lat, PHILLY.lon, stray.latitude, stray.longitude) > EVENT_CITY_MAX_REACH_KM);
+  assert.strictEqual(EVENT_CITY_MAX_REACH_KM, 60);
+  // Any event within 2 km of any member is inside the disk, with the margin.
+  for (const v of venues) {
+    for (let b = 0; b < 360; b += 45) {
+      const ev = offset(v.latitude, v.longitude, events.NEARBY_KM, b);
+      assert.ok(events.distanceKm(PHILLY.lat, PHILLY.lon, ev.lat, ev.lon) <= disk.radiusKm - 0.1);
+    }
+  }
+});
+
+test('a city\'s venues share one request an hour, and each gets exactly its own answer', async () => {
+  const random = rng(32);
+  const venues = venuesAround(PHILLY, 40, 12, random, 1);
+  // A few venues inside the knot, where more than twenty events sit within 2 km.
+  venues.push(...venuesAround(PHILLY, 4, 0.3, random, 101));
+  const universe = cityUniverse(PHILLY, random);
+  const clock = virtualClock(T0);
+  const shared = discovery(clock, universe);
+  const own = discovery(clock, universe);
+  const disks = cityEventDisks(venues);
+  const lookup = lookupWith(clock, shared, { cityDisks: disks });
+  const { answers, expected } = await cityRun(clock, lookup, own, venues);
+
+  assert.strictEqual(shared.calls.length, 1, `${shared.calls.length} requests for one city and hour`);
+  const [call] = shared.calls;
+  assert.strictEqual(call.lat, PHILLY.lat);
+  assert.strictEqual(call.lon, PHILLY.lon);
+  assert.strictEqual(call.radiusKm, disks.get('philly').radiusKm);
+  assert.strictEqual(call.size, EVENT_CITY_PAGE);
+  assert.strictEqual(call.page, undefined, 'the first page sends no page parameter');
+  assert.deepStrictEqual(lookup.stats, { lookups: 44, sharedCalls: 0, perVenueCalls: 0, failedSharedCalls: 0 });
+  assert.deepStrictEqual(lookup.cityStats, { lists: 1, calls: 1, answered: 44, failed: 0, unusable: 0 });
+  venues.forEach((v, i) => assert.deepStrictEqual(answers[i], expected[i], `${v.name} got a different answer than its own request gives`));
+  // The fixture exercised what matters: answers differ across the city, some
+  // venues had events and some had none, and the knot's page cap bit.
+  assert.ok(new Set(answers.map((a) => a.event_distance_km)).size > 5);
+  assert.ok(answers.some((a) => a.event_nearby) && answers.some((a) => !a.event_nearby));
+  const knotPage = await clock.run(own.fetchPage(venues[40].latitude, venues[40].longitude, events.NEARBY_KM, new Date(T0)));
+  assert.ok(knotPage.total > events.TM_PAGE_SIZE, 'no venue had more than twenty events within its 2 km');
+});
+
+test('a new hour is a new list, because Discovery\'s window moves', async () => {
+  const random = rng(33);
+  const venues = venuesAround(PHILLY, 3, 8, random, 1);
+  const universe = cityUniverse(PHILLY, random);
+  const clock = virtualClock(T0);
+  const shared = discovery(clock, universe);
+  const own = discovery(clock, universe);
+  const lookup = lookupWith(clock, shared, { cityDisks: cityEventDisks(venues) });
+  const { answers, expected } = await cityRun(clock, lookup, own, [...venues, ...venues], { gapMs: 25 * MINUTE });
+  assert.deepStrictEqual(shared.calls.map((c) => c.hour - shared.calls[0].hour), [0, 1, 2]);
+  answers.forEach((a, i) => assert.deepStrictEqual(a, expected[i]));
+});
+
+test('a list longer than a page is paged to the end, and every answer is still exact', async () => {
+  const random = rng(34);
+  const venues = venuesAround(PHILLY, 12, 10, random, 1);
+  const universe = cityUniverse(PHILLY, random);
+  const clock = virtualClock(T0);
+  const shared = discovery(clock, universe);
+  const own = discovery(clock, universe);
+  // Ten to a page, so the city's list of 50-odd events in the window takes six pages.
+  const lookup = lookupWith(clock, shared, { cityDisks: cityEventDisks(venues), cityPage: 10, cityMaxPages: 8 });
+  const { answers, expected } = await cityRun(clock, lookup, own, venues);
+  const pages = shared.calls.map((c) => c.page || 0);
+  assert.ok(pages.length > 1, 'the fixture did not need a second page');
+  assert.deepStrictEqual(pages, pages.map((_, i) => i));
+  assert.deepStrictEqual(lookup.cityStats, { lists: 1, calls: pages.length, answered: 12, failed: 0, unusable: 0 });
+  answers.forEach((a, i) => assert.deepStrictEqual(a, expected[i], `${venues[i].name} differs`));
+});
+
+test('a list past what paging can reach is not used: one request learns it, then the cells answer', async () => {
+  const random = rng(35);
+  const venues = venuesAround(PHILLY, 8, 10, random, 1);
+  const universe = cityUniverse(PHILLY, random);
+  const clock = virtualClock(T0);
+  const shared = discovery(clock, universe);
+  const own = discovery(clock, universe);
+  const lookup = lookupWith(clock, shared, { cityDisks: cityEventDisks(venues), cityPage: 5, cityMaxPages: 2 });
+  const { answers, expected } = await cityRun(clock, lookup, own, venues);
+  assert.strictEqual(lookup.cityStats.calls, 1);
+  assert.strictEqual(lookup.cityStats.unusable, 1);
+  assert.strictEqual(lookup.cityStats.answered, 0);
+  assert.ok(lookup.stats.sharedCalls > 0, 'the venues did not go to the cells');
+  answers.forEach((a, i) => assert.deepStrictEqual(a, expected[i]));
+});
+
+test('a failed city request is never kept as an answer: that hour its venues use the cells', async () => {
+  const random = rng(36);
+  const venues = venuesAround(PHILLY, 8, 10, random, 1);
+  const universe = cityUniverse(PHILLY, random);
+  const clock = virtualClock(T0);
+  const disks = cityEventDisks(venues);
+  const shared = discovery(clock, universe, { fail: (call) => call.radiusKm === disks.get('philly').radiusKm });
+  const own = discovery(clock, universe);
+  const lookup = lookupWith(clock, shared, { cityDisks: disks });
+  const { answers, expected } = await cityRun(clock, lookup, own, venues);
+  assert.deepStrictEqual(lookup.cityStats, { lists: 1, calls: 1, answered: 0, failed: 1, unusable: 0 });
+  assert.ok(lookup.stats.sharedCalls > 0);
+  answers.forEach((a, i) => assert.deepStrictEqual(a, expected[i]));
+  assert.ok(answers.every((a) => a.observed === true), 'a row recorded a failed lookup its own request would have answered');
+});
+
+test('an event without coordinates in a city\'s list sends its venues to the cells', async () => {
+  const random = rng(37);
+  const venues = venuesAround(PHILLY, 6, 10, random, 1);
+  const universe = cityUniverse(PHILLY, random);
+  universe.push(event('somewhere unplaced', offset(PHILLY.lat, PHILLY.lon, 5, 200), Date.UTC(2026, 8, 25, 21, 0, 0), { shown: false }));
+  const clock = virtualClock(T0);
+  const shared = discovery(clock, universe);
+  const own = discovery(clock, universe);
+  const lookup = lookupWith(clock, shared, { cityDisks: cityEventDisks(venues) });
+  const { answers, expected } = await cityRun(clock, lookup, own, venues);
+  assert.strictEqual(lookup.cityStats.unusable, 1);
+  assert.strictEqual(lookup.cityStats.answered, 0);
+  answers.forEach((a, i) => assert.deepStrictEqual(a, expected[i]));
+});
+
+test('a venue beyond its city\'s reach, and a lookup with no city, take the cell path', async () => {
+  const random = rng(38);
+  const venues = venuesAround(PHILLY, 5, 6, random, 1);
+  const far = { id: 50, name: 'far suburb', ...(() => { const p = offset(PHILLY.lat, PHILLY.lon, 75, 300); return { latitude: p.lat, longitude: p.lon }; })(), city: 'philly' };
+  const universe = cityUniverse(PHILLY, random);
+  universe.push(event('far show', offset(far.latitude, far.longitude, 0.5, 10), Date.UTC(2026, 8, 25, 22, 0, 0)));
+  const clock = virtualClock(T0);
+  const shared = discovery(clock, universe);
+  const own = discovery(clock, universe);
+  const lookup = lookupWith(clock, shared, { cityDisks: cityEventDisks([...venues, far]) });
+  const { answers, expected } = await cityRun(clock, lookup, own, [...venues, far]);
+  answers.forEach((a, i) => assert.deepStrictEqual(a, expected[i]));
+  assert.strictEqual(answers[5].event_nearby, true, 'the far suburb lost the show beside it');
+  assert.strictEqual(lookup.cityStats.answered, 5);
+  assert.strictEqual(lookup.stats.sharedCalls, 1, 'the far suburb did not take its cell');
+  // No city key: the cell path, exactly as before the city lists.
+  const plain = await clock.run(lookup.lookup(venues[0].latitude, venues[0].longitude, new Date(clock.now())));
+  assert.deepStrictEqual(plain, await clock.run(reference(own, venues[0].latitude, venues[0].longitude, new Date(clock.now()))));
+  assert.strictEqual(lookup.stats.sharedCalls, 2);
+});
+
+test('the collector builds its lookup with the city disks and names the city on every row', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ml', 'collectRealtime.js'), 'utf8').replace(/\r\n/g, '\n');
+  assert.match(src, /const events = createEventLookup\(\{ cityDisks: cityEventDisks\(venues\) \}\);/);
+  assert.match(src, /eventData = await lookupEvents\(venue\.latitude, venue\.longitude, startedAt, venue\.city\);/);
+  assert.match(src, /Ticketmaster city lists: \$\{cs\.lists\} asked for in \$\{cs\.calls\} requests/);
+  // The per-venue request is byte for byte what it was: no page parameter
+  // unless a later page is asked for.
+  const svc = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ml', 'eventService.js'), 'utf8').replace(/\r\n/g, '\n');
+  assert.match(svc, /if \(Number\.isInteger\(page\) && page > 0\) params\.set\('page', String\(page\)\);/);
 });

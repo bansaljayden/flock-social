@@ -140,7 +140,9 @@ function ticketmasterQuota() {
 // one query between neighbouring venues and may only do that with a complete
 // list. fetchTicketmasterEvents below is the per-venue form every other caller
 // uses, and it is byte for byte the request this function makes by default.
-async function fetchTicketmasterPage(lat, lon, radiusKm = NEARBY_KM, at = new Date(), size = TM_PAGE_SIZE) {
+// `page` (zero-based) is for the collector's city lists, which page through a
+// list longer than one page; the first page sends no page parameter at all.
+async function fetchTicketmasterPage(lat, lon, radiusKm = NEARBY_KM, at = new Date(), size = TM_PAGE_SIZE, page = 0) {
   const apiKey = process.env.TICKETMASTER_API_KEY;
   // No key is a provider that cannot answer, never an empty answer.
   if (!apiKey) return null;
@@ -172,6 +174,7 @@ async function fetchTicketmasterPage(lat, lon, radiusKm = NEARBY_KM, at = new Da
       startDateTime: startDt,
       endDateTime: endDt,
     });
+    if (Number.isInteger(page) && page > 0) params.set('page', String(page));
 
     // Timeout: this sits inside the paid BestTime collection loop — a hung
     // event API must not stall the whole run (round 13).
