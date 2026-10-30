@@ -4414,6 +4414,15 @@ const markUnsending = (threads, messageId, on) => {
   return touched ? next : threads;
 };
 
+// A row a tap took out of a list, put back at the place it left (or the end,
+// if the list has since shrunk), unless a row with its id is already there.
+// The undo half of the request handlers that answer on the tap.
+const withRowAt = (list, at, row) => {
+  if (!row || !Array.isArray(list) || list.some((r) => r.id === row.id)) return list;
+  const i = Math.max(0, Math.min(at, list.length));
+  return [...list.slice(0, i), row, ...list.slice(i)];
+};
+
 // A venue promotion or venue event: MARKED, not removed. The owner keeps
 // seeing their own copy with the reason on it, which is the asymmetry
 // routes/venueDashboard.js deliberately built (a hidden review is somebody
@@ -6512,49 +6521,91 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     }).catch(e => console.error('[AddFriends] Friends:', e.message));
   }, [authUser]);
 
+  // ANSWERING A REQUEST, ON THE TAP. Accept, Decline and Cancel each waited for
+  // the server before the row moved, and Accept drew its success tick on the
+  // tap, before the server had said anything. Now the row leaves on the tap,
+  // the way Add marks Pending at once (handleSendFriendRequest), a refusal puts
+  // it back where it was with a toast, and success is said only once the
+  // server has said it. One answer per person at a time: the row is gone after
+  // the first tap, but a fast double tap lands both before React redraws.
+  const friendRequestBusyRef = useRef(new Set());
+
   const handleAcceptFriendRequest = useCallback(async (userId) => {
+    if (friendRequestBusyRef.current.has(userId)) return;
+    friendRequestBusyRef.current.add(userId);
+    const at = pendingRequests.findIndex(r => r.id === userId);
+    const request = at === -1 ? null : pendingRequests[at];
+    setPendingRequests(prev => prev.filter(r => r.id !== userId));
     try {
       await acceptFriendRequest(userId);
-      setPendingRequests(prev => prev.filter(r => r.id !== userId));
       setFriendStatuses(prev => ({ ...prev, [userId]: 'accepted' }));
       // The header count only ever moved on boot and on the other person's
       // socket event, so accepting here left it a friend behind.
       getUserStats().then(d => { if (typeof d?.friendCount === 'number') setFriendCount(d.friendCount); }).catch(() => {});
       showToast('Friend request accepted.');
     } catch (err) {
-      // The server's "confirm your email" refusal used to land here as a red
-      // toast with no resend, beside a request that stayed on screen.
-      if (needsEmailVerification(err, 'add friends')) return;
       // The requester withdrew it (Cancel on Sent Requests tells nobody), so
-      // the server answers 404. The row leaves the list instead of re-toasting
-      // on every tap until the screen is left (friends audit, 2026-09-05).
+      // the server answers 404. The row stays off the list instead of coming
+      // back to re-toast on every tap (friends audit, 2026-09-05).
       if (err?.status === 404) {
         setPendingRequests(prev => prev.filter(r => r.id !== userId));
         showToast('That request was withdrawn.');
         return;
       }
-      showToast(err.message || 'Failed to accept', 'error');
+      setPendingRequests(prev => withRowAt(prev, at, request));
+      // The server's "confirm your email" refusal used to land here as a red
+      // toast with no resend, beside a request that stayed on screen.
+      if (needsEmailVerification(err, 'add friends')) return;
+      if (!err?.sessionExpired) showToast(userMessage(err, "Couldn't accept that request. Try again."), 'error');
+    } finally {
+      friendRequestBusyRef.current.delete(userId);
     }
-  }, [showToast, needsEmailVerification]);
+  }, [pendingRequests, showToast, needsEmailVerification]);
 
   const handleDeclineFriendRequest = useCallback(async (userId) => {
+    if (friendRequestBusyRef.current.has(userId)) return;
+    friendRequestBusyRef.current.add(userId);
+    const at = pendingRequests.findIndex(r => r.id === userId);
+    const request = at === -1 ? null : pendingRequests[at];
+    setPendingRequests(prev => prev.filter(r => r.id !== userId));
     try {
       await declineFriendRequest(userId);
-      setPendingRequests(prev => prev.filter(r => r.id !== userId));
     } catch (err) {
-      showToast(err.message || 'Failed to decline', 'error');
+      // Nothing pending from them any more (withdrawn, or answered on another
+      // device): the row stays gone, which is what the tap asked for.
+      if (err?.status === 404) return;
+      setPendingRequests(prev => withRowAt(prev, at, request));
+      if (!err?.sessionExpired) showToast(userMessage(err, "Couldn't decline that request. Try again."), 'error');
+    } finally {
+      friendRequestBusyRef.current.delete(userId);
     }
-  }, [showToast]);
+  }, [pendingRequests, showToast]);
 
   const handleCancelOutgoingRequest = useCallback(async (userId) => {
+    const key = `out:${userId}`;
+    if (friendRequestBusyRef.current.has(key)) return;
+    friendRequestBusyRef.current.add(key);
+    const at = outgoingRequests.findIndex(r => r.id === userId);
+    const request = at === -1 ? null : outgoingRequests[at];
+    // Read through the ref: friendStatuses is declared further down this
+    // component, so it cannot be one of this callback's dependencies.
+    const statusBefore = friendStatusesRef.current[userId];
+    setOutgoingRequests(prev => prev.filter(r => r.id !== userId));
+    setFriendStatuses(prev => { const n = { ...prev }; delete n[userId]; return n; });
     try {
       await removeFriend(userId);
-      setOutgoingRequests(prev => prev.filter(r => r.id !== userId));
-      setFriendStatuses(prev => { const n = { ...prev }; delete n[userId]; return n; });
     } catch (err) {
-      showToast(err.message || 'Failed to cancel', 'error');
+      // Nothing left to cancel: the row stays gone.
+      if (err?.status === 404) return;
+      setOutgoingRequests(prev => withRowAt(prev, at, request));
+      if (statusBefore !== undefined) {
+        setFriendStatuses(prev => (prev[userId] !== undefined ? prev : { ...prev, [userId]: statusBefore }));
+      }
+      if (!err?.sessionExpired) showToast(userMessage(err, "Couldn't cancel that request. Try again."), 'error');
+    } finally {
+      friendRequestBusyRef.current.delete(key);
     }
-  }, [showToast]);
+  }, [outgoingRequests, showToast]);
 
   const handleAddByCode = useCallback(async () => {
     if (!friendCodeInput.trim()) return;
@@ -8483,6 +8534,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   const [connectSearching, setConnectSearching] = useState(false);
   const [connectSearchError, setConnectSearchError] = useState('');
   const [friendStatuses, setFriendStatuses] = useState({}); // { [userId]: 'pending' | 'accepted' }
+  // For the request handlers declared above this line, which read it when
+  // tapped and cannot list it as a dependency without reading it before it
+  // exists.
+  const friendStatusesRef = useRef(friendStatuses);
+  friendStatusesRef.current = friendStatuses;
 
   // Chat — use refs for input values to avoid full re-renders on every keystroke
   const [chatInputHasText, setChatInputHasText] = useState(false);

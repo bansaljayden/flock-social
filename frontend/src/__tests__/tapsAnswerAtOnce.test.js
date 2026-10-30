@@ -481,3 +481,129 @@ describe('declining a plan moves its card to Declined on the tap', () => {
     expect(state.pending.map((f) => f.id)).toEqual([1, 3]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Friend requests (App.js handleAcceptFriendRequest, handleDeclineFriendRequest,
+// handleCancelOutgoingRequest; the buttons in screens/AddFriends.js)
+// ---------------------------------------------------------------------------
+describe('answering a friend request moves the row on the tap', () => {
+  const person = (id, name) => ({ id, name, profile_image_url: null });
+
+  function setup({ answer = () => Promise.resolve({}), verify = () => false } = {}) {
+    const pending = [person(1, 'Ava'), person(2, 'Bo'), person(3, 'Cy')];
+    const outgoing = [person(7, 'Dee'), person(8, 'Eli')];
+    const state = { pending, outgoing, statuses: { 7: 'pending', 8: 'pending' }, friendCount: 4 };
+    const calls = { api: [], toasts: [], verify: [] };
+    const call = (name) => (id) => { calls.api.push([name, id]); return answer(name, id); };
+    const scope = {
+      useCallback: (fn) => fn,
+      useRef: (v) => ({ current: v }),
+      pendingRequests: pending,
+      outgoingRequests: outgoing,
+      setPendingRequests: setterOn(state, 'pending'),
+      setOutgoingRequests: setterOn(state, 'outgoing'),
+      setFriendStatuses: setterOn(state, 'statuses'),
+      friendStatusesRef: { current: state.statuses },
+      acceptFriendRequest: call('accept'),
+      declineFriendRequest: call('decline'),
+      removeFriend: call('remove'),
+      getUserStats: () => Promise.resolve({ friendCount: 5 }),
+      setFriendCount: (n) => { state.friendCount = n; },
+      needsEmailVerification: (err, what) => { calls.verify.push(what); return verify(err); },
+      showToast: (message, type) => calls.toasts.push([message, type]),
+      userMessage,
+      withRowAt: lift(statementAt(APP, 'const withRowAt = (list, at, row) =>'), 'withRowAt', {}),
+    };
+    const src = [
+      statementAt(APP, 'const friendRequestBusyRef = useRef('),
+      statementAt(APP, 'const handleAcceptFriendRequest = useCallback('),
+      statementAt(APP, 'const handleDeclineFriendRequest = useCallback('),
+      statementAt(APP, 'const handleCancelOutgoingRequest = useCallback('),
+    ].join('\n');
+    const handlers = lift(src, '{ accept: handleAcceptFriendRequest, decline: handleDeclineFriendRequest, cancel: handleCancelOutgoingRequest }', scope);
+    return { state, calls, ...handlers };
+  }
+
+  test('Accept takes the row off on the tap, and says accepted only after the server does', async () => {
+    const wait = held();
+    const { state, calls, accept } = setup({ answer: () => wait.promise });
+    const done = accept(2);
+    expect(state.pending.map((r) => r.id)).toEqual([1, 3]);
+    expect(calls.toasts).toEqual([]);
+    expect(state.statuses[2]).toBeUndefined();
+    wait.resolve({});
+    await done;
+    expect(state.statuses[2]).toBe('accepted');
+    expect(calls.toasts).toEqual([['Friend request accepted.', undefined]]);
+  });
+
+  test('a refused Accept puts the request back where it was, and the email sheet still gets its turn', async () => {
+    const plain = setup({ answer: () => Promise.reject(crash()) });
+    await plain.accept(2);
+    expect(plain.state.pending.map((r) => r.id)).toEqual([1, 2, 3]);
+    expect(plain.calls.toasts).toEqual([["Couldn't accept that request. Try again.", 'error']]);
+
+    const unverified = setup({ answer: () => Promise.reject(refusal('Confirm your email first.', { status: 403 })), verify: () => true });
+    await unverified.accept(2);
+    expect(unverified.state.pending.map((r) => r.id)).toEqual([1, 2, 3]);
+    expect(unverified.calls.verify).toEqual(['add friends']);
+    expect(unverified.calls.toasts).toEqual([]);
+  });
+
+  test('a request the other person withdrew stays off the list', async () => {
+    const { state, calls, accept } = setup({ answer: () => Promise.reject(refusal('Friend request not found', { status: 404 })) });
+    await accept(2);
+    expect(state.pending.map((r) => r.id)).toEqual([1, 3]);
+    expect(calls.toasts).toEqual([['That request was withdrawn.', undefined]]);
+  });
+
+  test('Decline takes the row off on the tap and puts it back on a refusal', async () => {
+    const wait = held();
+    const ok = setup({ answer: () => wait.promise });
+    const done = ok.decline(1);
+    expect(ok.state.pending.map((r) => r.id)).toEqual([2, 3]);
+    wait.resolve({});
+    await done;
+    expect(ok.state.pending.map((r) => r.id)).toEqual([2, 3]);
+    expect(ok.calls.toasts).toEqual([]);
+
+    const refused = setup({ answer: () => Promise.reject(refusal('Slow down a moment.', { status: 429 })) });
+    await refused.decline(1);
+    expect(refused.state.pending.map((r) => r.id)).toEqual([1, 2, 3]);
+    expect(refused.calls.toasts).toEqual([['Slow down a moment.', 'error']]);
+  });
+
+  test('Cancel takes the sent request off and its Pending mark with it, and a refusal puts both back', async () => {
+    const wait = held();
+    const ok = setup({ answer: () => wait.promise });
+    const done = ok.cancel(8);
+    expect(ok.state.outgoing.map((r) => r.id)).toEqual([7]);
+    expect(ok.state.statuses[8]).toBeUndefined();
+    wait.resolve({ message: 'Removed' });
+    await done;
+    expect(ok.state.outgoing.map((r) => r.id)).toEqual([7]);
+
+    const refused = setup({ answer: () => Promise.reject(crash()) });
+    await refused.cancel(7);
+    expect(refused.state.outgoing.map((r) => r.id)).toEqual([7, 8]);
+    expect(refused.state.statuses[7]).toBe('pending');
+    expect(refused.calls.toasts).toEqual([["Couldn't cancel that request. Try again.", 'error']]);
+  });
+
+  test('a double tap sends one answer', async () => {
+    const wait = held();
+    const { calls, accept, decline } = setup({ answer: () => wait.promise });
+    const first = accept(2);
+    await accept(2);
+    await decline(2);
+    expect(calls.api).toEqual([['accept', 2]]);
+    wait.resolve({});
+    await first;
+  });
+
+  test('the Accept button draws no success tick before the server answers', () => {
+    const screenSrc = read('screens', 'AddFriends.js');
+    expect(screenSrc).toContain('<button aria-label="Accept friend request" onClick={() => handleAcceptFriendRequest(req.id)}');
+    expect(screenSrc).not.toMatch(/confirmClick\(e\); handleAcceptFriendRequest/);
+  });
+});

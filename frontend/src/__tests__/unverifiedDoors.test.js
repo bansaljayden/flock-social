@@ -17,7 +17,8 @@ test('a QR scan routes a server refusal to the sheet instead of calling the code
 
 test('accepting a request, sending invites and requesting venue verification use the sheet', () => {
   const app = read('App.js');
-  const accept = app.slice(app.indexOf('const handleAcceptFriendRequest = useCallback('), app.indexOf("showToast(err.message || 'Failed to accept', 'error');"));
+  const accept = app.slice(app.indexOf('const handleAcceptFriendRequest = useCallback('), app.indexOf(`showToast(userMessage(err, "Couldn't accept that request. Try again."), 'error');`));
+  expect(accept.length).toBeGreaterThan(200);
   expect(accept).toMatch(/if \(needsEmailVerification\(err, 'add friends'\)\) return;/);
   expect(app).toMatch(/if \(needsEmailVerification\(err, 'invite people'\)\) return;\s*showToast\(err\.message \|\| 'Failed to send invites', 'error'\);/);
   expect(app).toMatch(/if \(needsEmailVerification\(err, 'request verification'\)\) return;\s*setVerificationRequestError\(/);

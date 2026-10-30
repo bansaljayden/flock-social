@@ -247,7 +247,9 @@ export default function AddFriends({
                   <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
                     {/* Ripple container clips overflow, so .hit44's pseudo hit area
                         would be clipped — this pair gets the real 44px box. */}
-                    <button aria-label="Accept friend request" onClick={(e) => { confirmClick(e); handleAcceptFriendRequest(req.id); }} style={{ width: '44px', height: '44px', borderRadius: '22px', border: 'none', backgroundColor: '#047857', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', overflow: 'hidden' }}>{Icons.check('white', 18)}</button>
+                    {/* No success tick on the tap: the row leaves at once, and
+                        "accepted" is said when the server has said it. */}
+                    <button aria-label="Accept friend request" onClick={() => handleAcceptFriendRequest(req.id)} style={{ width: '44px', height: '44px', borderRadius: '22px', border: 'none', backgroundColor: '#047857', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative', overflow: 'hidden' }}>{Icons.check('white', 18)}</button>
                     <button aria-label="Decline friend request" className="hit44" onClick={() => handleDeclineFriendRequest(req.id)} style={{ width: '36px', height: '36px', borderRadius: '18px', border: 'none', backgroundColor: 'var(--bg-hover)', color: 'var(--text-secondary)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{Icons.x(colors.textSecondary, 16)}</button>
                   </div>
                 </div>
