@@ -71,8 +71,8 @@
  * new row rather than changed here.
  */
 import React from 'react';
-import { sendFriendRequest, trackDmVenueVote, getDmMessageImage, isOffline as isDeviceOffline, addDmReaction, removeDmReaction } from '../services/api';
-import { dmReact, dmRemoveReact, dmStopSharingLocation, dmVoteVenue, getSocket } from '../services/socket';
+import { sendFriendRequest, trackDmVenueVote, getDmMessageImage, isOffline as isDeviceOffline, addDmReaction, removeDmReaction, userMessage } from '../services/api';
+import { dmStopSharingLocation, dmVoteVenue, getSocket } from '../services/socket';
 /* NOT from './ChatDetail' any more. Importing these two from the group-chat
    screen put its 146 KB chunk in this route's chunk group, so opening a DM
    waited on the screen the reader had not opened. Both helpers now come from
@@ -793,18 +793,69 @@ export default function DmDetail({
     closeDmActions();
   };
 
-  /* A reaction pill, tapped. groupReactions, the same helper the flock side
-     uses, so a DM reaction read back from history keeps the id of who left it
-     and ownership is compared as a string: the REST history hands user_id back
-     as a number while the live socket hands it back as a string, so strict
-     equality answered false for your own reaction after a reload. */
+  /* A reaction, tapped: a pill under a message, or an emoji in the long-press
+     menu. groupReactions, the same helper the flock side uses, so a DM
+     reaction read back from history keeps the id of who left it and ownership
+     is compared as a string: the REST history hands user_id back as a number
+     while the live socket hands it back as a string, so strict equality
+     answered false for your own reaction after a reload.
+
+     ON THE TAP, AND PUT BACK IF THE SERVER SAYS NO: the flock toggle's
+     contract (App.js addReactionToMessage). The pill used to move only when
+     the server's echo came back, so on a slow network the tap did nothing
+     visible, and over the socket a refusal (a block, a takedown) came back as
+     nothing at all and the tap just vanished. The write goes over REST
+     because REST answers: only a refusal undoes the tap, and the undo takes
+     back this tap alone, so a reaction the other person left meanwhile stays.
+     The server still echoes the change to every device on the account, and
+     App.js's listener finds the pill already as drawn.
+
+     One write per pill at a time (dmReactionBusyRef), so a second tap cannot
+     cross the first on the wire. A row the server has not stored yet has no
+     id a reaction can name, so that tap says so instead of drawing a pill the
+     echo would drop. */
+  const dmReactionBusyRef = React.useRef(new Set());
   const toggleDmReaction = (emoji, m) => {
     const otherUser = selectedDmId;
+    const messageId = m && m.id;
+    if (!(typeof messageId === 'number' && Number.isInteger(messageId) && messageId > 0 && messageId <= 2147483647)) {
+      showToast('You can react once the message sends.', 'info');
+      return;
+    }
+    const myId = authUser?.id;
+    if (myId == null) return;
     const g = groupReactions(m.reactions).find((r) => r.emoji === emoji) || { emoji, userIds: [] };
+    const busyKey = `${messageId}:${g.emoji}`;
+    if (dmReactionBusyRef.current.has(busyKey)) return;
     const mine = g.userIds.some((id) => String(id) === String(authUser?.id));
-    if (mine) {
-      if (!dmRemoveReact(m.id, g.emoji, otherUser)) removeDmReaction(m.id, g.emoji).catch(() => showToast('Could not remove that reaction. Try again.', 'error'));
-    } else if (!dmReact(m.id, g.emoji, otherUser)) { addDmReaction(m.id, g.emoji).catch(() => showToast('Could not react. Try again.', 'error')); }
+    const isMyRow = (r) => !!r && r.emoji === g.emoji && String(r.user_id) === String(myId);
+    const before = originalDmRow(m).reactions || [];
+    const at = before.findIndex(isMyRow);
+    const myRow = at === -1 ? { emoji: g.emoji, user_id: myId, user_name: authUser?.name || 'You' } : before[at];
+    const take = (list) => list.filter((r) => !isMyRow(r));
+    const put = (list) => (list.some(isMyRow) ? list
+      : at === -1 ? [...list, myRow] : [...list.slice(0, at), myRow, ...list.slice(at)]);
+    const editReactions = (edit) => setDirectMessages((prev) => prev.map((d) => (
+      String(d.userId) === String(otherUser)
+        ? { ...d, messages: (d.messages || []).map((x) => (x.id === messageId ? { ...x, reactions: edit(x.reactions || []) } : x)) }
+        : d
+    )));
+    editReactions(mine ? take : put);
+    dmReactionBusyRef.current.add(busyKey);
+    (mine ? removeDmReaction(messageId, g.emoji) : addDmReaction(messageId, g.emoji))
+      .catch((err) => {
+        // The same account on another device got there first: an add
+        // answered "Already reacted" means the reaction is on the server, and
+        // a remove answered 404 means it is already gone. Both are what the
+        // tap drew, so nothing goes back.
+        const alreadyThere = !mine && err?.status === 400 && /already reacted/i.test(err?.message || '');
+        const alreadyGone = mine && err?.status === 404;
+        if (alreadyThere || alreadyGone) return;
+        editReactions(mine ? put : take);
+        if (err?.sessionExpired) return;
+        showToast(userMessage(err, mine ? "Removing your reaction didn't save. Try again." : "Your reaction didn't save. Try again."), 'error');
+      })
+      .finally(() => { dmReactionBusyRef.current.delete(busyKey); });
   };
 
   /* THE SEVEN PROPS MessageList FORWARDS INTO A MEMOISED MessageRow.
@@ -1766,7 +1817,7 @@ export default function DmDetail({
             style={{ position: 'absolute', top: `${dmActionTop}px`, left: '50%', transform: 'translateX(-50%)', maxWidth: 'calc(100% - 24px)', display: 'flex', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center', gap: '4px', backgroundColor: 'var(--bg-card-solid)', border: '1px solid var(--border-subtle)', borderRadius: '16px', padding: '4px 8px', boxShadow: 'var(--card-shadow)' }}
           >
             {dmReactions.map(emoji => (
-              <button aria-label={`React with ${emoji}`} className="hit44" key={emoji} onClick={(e) => { e.stopPropagation(); const m = dmActionMessage; if (!dmReact(m.id, emoji, selectedDmId)) addDmReaction(m.id, emoji).catch(() => showToast('Could not react. Try again.', 'error')); setShowDmReactionPicker(null); }} style={{ fontSize: 'var(--t-title)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px', borderRadius: '8px', transition: 'transform 0.15s' }}
+              <button aria-label={`React with ${emoji}`} className="hit44" key={emoji} onClick={(e) => { e.stopPropagation(); const m = dmActionMessage; setShowDmReactionPicker(null); toggleDmReaction(emoji, m); }} style={{ fontSize: 'var(--t-title)', background: 'none', border: 'none', cursor: 'pointer', padding: '4px', borderRadius: '8px', transition: 'transform 0.15s' }}
                 onMouseEnter={(e) => { e.currentTarget.style.transform = 'scale(1.3)'; }}
                 onMouseLeave={(e) => { e.currentTarget.style.transform = 'scale(1)'; }}
               >{emoji}</button>

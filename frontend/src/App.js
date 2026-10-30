@@ -16651,13 +16651,22 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   }, [authUser, loadDmConversations]);
 
   // Listen for DM reactions in real-time
+  //
+  // The tap draws its own reaction before the server answers (DmDetail's
+  // toggleDmReaction), and the server then echoes the same change to every
+  // device on the account, this one included. The echo has to find that
+  // drawn pill as its own, so who left a reaction is compared as a string:
+  // the drawn row carries the id as the account holds it, and a strict
+  // compare against the echo's id would add a second pill whenever the two
+  // types differ.
   useEffect(() => {
+    const sameReaction = (r, data) => r.emoji === data.emoji && String(r.user_id) === String(data.userId);
     const unsubAdd = onDmReactionAdded((data) => {
       setDirectMessages(prev => prev.map(d => ({
         ...d,
         messages: d.messages.map(m => {
           if (m.id !== data.dmId) return m;
-          const exists = (m.reactions || []).some(r => r.emoji === data.emoji && r.user_id === data.userId);
+          const exists = (m.reactions || []).some(r => sameReaction(r, data));
           if (exists) return m;
           return { ...m, reactions: [...(m.reactions || []), { emoji: data.emoji, user_id: data.userId, user_name: data.userName }] };
         }),
@@ -16668,7 +16677,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         ...d,
         messages: d.messages.map(m => {
           if (m.id !== data.dmId) return m;
-          return { ...m, reactions: (m.reactions || []).filter(r => !(r.emoji === data.emoji && r.user_id === data.userId)) };
+          return { ...m, reactions: (m.reactions || []).filter(r => !sameReaction(r, data)) };
         }),
       })));
     });

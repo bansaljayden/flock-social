@@ -125,7 +125,7 @@ describe('A1: a DM reaction can be taken back after a reload', () => {
     // both, and they are no longer the same expression: the DM handler now
     // FINDS the tapped emoji's group where the old pill MAPPED over all of
     // them, because the mapping belongs to MessageRow.
-    const block = between(DM, 'groupReactions(m.reactions).find((r)', 'dmRemoveReact(m.id', 100, 1200);
+    const block = between(DM, 'groupReactions(m.reactions).find((r)', 'const isMyRow', 100, 1200);
     expect(block).toContain('String(id) === String(authUser?.id)');
     // And the strict, un-coerced comparison that broke reload is gone.
     expect(block).not.toMatch(/r\.user_id === authUser\?\.id/);

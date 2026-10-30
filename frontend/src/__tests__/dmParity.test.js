@@ -11,12 +11,24 @@ test('guarded DM emits answer whether they happened', () => {
   expect(s).toMatch(/export function dmPinVenue\(receiverId, venueData\) \{\s*if \(!socket\?\.connected\) return false;/);
 });
 
-test('a DM reaction over a dead socket falls back to REST instead of vanishing', () => {
+test('a DM reaction goes over REST, which answers, and never vanishes on a dead or refusing socket', () => {
+  /* REPOINTED, 2026-10-30. This pinned "socket first, REST only when the emit
+     could not happen". The socket's dm_react answers a refusal (a block, a
+     takedown, a ban) with nothing at all, so a pill drawn on the tap could
+     never be taken back, and a pill waiting for the echo moved only after a
+     round trip. REST answers both ways, so the tap draws at once and only a
+     refusal undoes it. The behaviour is run in tapsAnswerAtOnce.test.js;
+     this keeps the wiring honest. */
   const d = read('screens/DmDetail.js');
-  expect(d).toMatch(/addDmReaction, removeDmReaction \} from '\.\.\/services\/api'/);
-  expect(d).toMatch(/if \(!dmRemoveReact\(m\.id, g\.emoji, otherUser\)\) removeDmReaction\(m\.id, g\.emoji\)/);
-  expect(d).toMatch(/else if \(!dmReact\(m\.id, g\.emoji, otherUser\)\) \{ addDmReaction\(m\.id, g\.emoji\)/);
-  expect(d).toMatch(/if \(!dmReact\(m\.id, emoji, selectedDmId\)\) addDmReaction\(m\.id, emoji\)/);
+  expect(d).toMatch(/addDmReaction, removeDmReaction, userMessage \} from '\.\.\/services\/api'/);
+  expect(d).toMatch(/\(mine \? removeDmReaction\(messageId, g\.emoji\) : addDmReaction\(messageId, g\.emoji\)\)/);
+  // Both doors, the pill and the long-press menu, reach the one toggle.
+  expect(d).toMatch(/const stableDmReactionTap = useStableFn\(\(emoji, m\) => toggleDmReaction\(emoji, m\)\);/);
+  expect(d).toMatch(/const m = dmActionMessage; setShowDmReactionPicker\(null\); toggleDmReaction\(emoji, m\);/);
+  // The socket emitters stay for any other caller, and this screen no longer
+  // reaches for them.
+  expect(d).not.toMatch(/\bdmReact\(/);
+  expect(d).not.toMatch(/\bdmRemoveReact\(/);
 });
 
 test('a DM venue pin persists over REST AND puts the old pin back when it fails', () => {
