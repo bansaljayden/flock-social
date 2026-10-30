@@ -238,6 +238,46 @@ test('the gate refuses an incumbent that may have trained on the held-out window
   assert.equal(g2.criteria.sample.pass, false);
 });
 
+test('the verdict is taken on the six hourly cities; another city is scored beside it, never in it', () => {
+  const { cuts, labels } = B.bandLadder(crowdEngine.getLabel);
+  assert.deepEqual([...B.BAND_GATE_CITIES], ['philly', 'lehigh', 'la', 'seattle', 'chicago', 'denver']);
+  const six = gatePopulation();
+  const n = six.length;
+  // A fill city where the candidate always answers Steady: as registered,
+  // `no city regresses` would fail the whole gate on it.
+  const rows = six.concat(six.slice(0, 600).map((r) => ({ ...r, city: 'dubai' })));
+  const truth = rows.map((r) => r.y);
+  const candidate = truth.map((y, i) => (i >= n ? 60 : (i % 10 === 0 ? 60 : y)));
+  const incumbent = truth.map((y, i) => (i % 10 < 3 ? 60 : y));
+  const naive = truth.map((y, i) => (i % 10 < 4 ? 60 : y));
+  const rule = truth.map(() => 50);
+  const args = { rows, cuts, labels, candidate, incumbent, naive, rule, fromDate: '2026-10-01', incumbentThrough: '2026-08-18' };
+  assert.equal(B.bandGate(args).criteria.no_city_regression.pass, false);
+
+  const g = B.bandGateOnCities(args);
+  assert.equal(g.pass, true, JSON.stringify(Object.fromEntries(Object.entries(g.criteria).map(([k, c]) => [k, c.pass]))));
+  assert.deepEqual(g.population_cities, [...B.BAND_GATE_CITIES]);
+  assert.equal(g.criteria.sample.rows, n, 'the verdict counted a reading from outside the six');
+  assert.equal(g.other_cities_report_only.rows, 600);
+  assert.deepEqual(g.other_cities_report_only.cities, ['dubai']);
+  assert.equal(g.other_cities_report_only.would_pass, false);
+  assert.equal(g.other_cities_report_only.criteria.no_city_regression, false);
+  assert.ok(g.other_cities_report_only.per_city.dubai.delta < -2);
+
+  // With no other city in the window, nothing is reported beside it.
+  const only = B.bandGateOnCities({
+    ...args, rows: six, candidate: candidate.slice(0, n), incumbent: incumbent.slice(0, n),
+    naive: naive.slice(0, n), rule: rule.slice(0, n),
+  });
+  assert.equal(only.pass, true);
+  assert.equal(only.other_cities_report_only, null);
+
+  // And the CLI's gate is this one.
+  const src = fs.readFileSync(path.join(__dirname, '..', 'scripts', 'ml', 'train', 'bandEval.js'), 'utf8');
+  assert.match(src, /gateResult = bandGateOnCities\(\{/);
+  assert.doesNotMatch(src, /gateResult = bandGate\(\{/);
+});
+
 test('the incumbent\'s data horizon comes from its time holdout, else from when it was trained', () => {
   assert.deepEqual(B.incumbentDataThrough({ time_holdout: { training_live_through: '2026-10-01' }, trained_at: '2026-10-15T00:00:00Z' }).date, '2026-10-01');
   assert.equal(B.incumbentDataThrough({ trained_at: '2026-08-18T22:37:37+00:00' }).date, '2026-08-18');

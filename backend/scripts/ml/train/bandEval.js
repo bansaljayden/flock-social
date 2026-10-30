@@ -101,6 +101,19 @@ const BAND_GATE = Object.freeze({
   bootstrapResamples: 2000,
 });
 
+// THE GATE'S CITIES (2026-10-30, before the November export; RETRAIN.md,
+// "The gate's cities"). The gate scores the model-served live readings of the
+// time holdout, the newest 14 days. From 2026-10-30 the hourly sweep also reads
+// 24 fill cities in the time the six hourly cities leave, so every fill-city
+// reading taken before an early-November export lands in that window: scored
+// as registered, the population would be mostly cities the sweep had never
+// read live when the gate was set, and `no city regresses`, a raw delta per
+// city with 300 or more readings, would bind about 30 cities instead of six.
+// So the verdict is taken on these six, and every other city's readings are
+// scored beside it and recorded (bandGateOnCities), never ANDed in. The fill
+// cities still train the final refit, which this does not touch.
+const BAND_GATE_CITIES = Object.freeze(['philly', 'lehigh', 'la', 'seattle', 'chicago', 'denver']);
+
 // Columns the replay reads. The export writes 45; a CSV missing any of these is
 // refused by name rather than scored on shifted fields.
 const REQUIRED_COLUMNS = [
@@ -1026,6 +1039,38 @@ function incumbentDataThrough(meta) {
   return { date: null, basis: 'unknown' };
 }
 
+// The verdict on BAND_GATE_CITIES' readings, with every other city's readings
+// scored the same way and recorded beside it as report-only.
+function bandGateOnCities(args, cities = BAND_GATE_CITIES) {
+  const keep = args.rows.map((r) => cities.includes(r.city));
+  const part = (arr, want) => arr.filter((_, i) => keep[i] === want);
+  const subset = (want) => ({
+    ...args,
+    rows: part(args.rows, want),
+    candidate: part(args.candidate, want),
+    incumbent: part(args.incumbent, want),
+    naive: part(args.naive, want),
+    rule: part(args.rule, want),
+  });
+  const verdict = bandGate(subset(true));
+  verdict.population_cities = [...cities];
+  const outside = part(args.rows, false);
+  verdict.other_cities_report_only = null;
+  if (outside.length) {
+    const o = bandGate(subset(false));
+    verdict.other_cities_report_only = {
+      rows: outside.length,
+      cities: [...new Set(outside.map((r) => r.city))].sort(),
+      would_pass: o.pass,
+      criteria: Object.fromEntries(Object.entries(o.criteria).map(([k, c]) => [k, c.pass])),
+      candidate: o.candidate,
+      incumbent: o.incumbent,
+      per_city: o.criteria.no_city_regression.per_city,
+    };
+  }
+  return verdict;
+}
+
 function bandGate({ rows, cuts, labels, candidate, incumbent, naive, rule, fromDate, incumbentThrough, limits = BAND_GATE }) {
   const hits = (pred) => rows.map((r, i) => Math.abs(bandOf(r.y, cuts) - bandOf(pred[i], cuts)) <= 1);
   const actual = rows.map((r) => r.y);
@@ -1473,7 +1518,7 @@ async function main(argv = process.argv.slice(2)) {
     if (!inc) throw new Error('--gate needs an incumbent (models/incumbent/ or --incumbent).');
     const { prepared, mine, theirs, served, mlRows, curve } = liveResult;
     const pick = (arr) => arr.filter((_, i) => served[i]);
-    gateResult = bandGate({
+    gateResult = bandGateOnCities({
       rows: mlRows,
       cuts,
       labels,
@@ -1489,10 +1534,16 @@ async function main(argv = process.argv.slice(2)) {
     gateResult.incumbent_data_through_basis = incumbentDataThrough(inc.meta).basis;
     gateResult.quantile_map = { candidate: mine.qmapApplied, incumbent: theirs.qmapApplied };
     gateResult.incumbent_serving = { serve_mode: theirs.serveMode, nowcast: theirs.nowcast };
-    console.log(`\n[BandEval] BAND GATE: ${gateResult.pass ? 'PASS' : 'FAIL'}`);
+    console.log(`\n[BandEval] BAND GATE on ${gateResult.population_cities.join(', ')}: ${gateResult.pass ? 'PASS' : 'FAIL'}`);
     for (const [k, c] of Object.entries(gateResult.criteria)) {
       const detail = c.delta !== undefined ? ` delta ${c.delta}pp CI95 ${JSON.stringify(c.ci95)}` : '';
       console.log(`  ${c.pass ? 'PASS' : 'FAIL'}  ${k}${detail}  (${c.need})`);
+    }
+    const other = gateResult.other_cities_report_only;
+    if (other) {
+      console.log(`  report only, not in the verdict: ${other.rows} readings in ${other.cities.join(', ')} `
+        + `would ${other.would_pass ? 'pass' : 'fail'} the same gate (${Object.entries(other.criteria)
+          .filter(([, ok]) => !ok).map(([k]) => k).join(', ') || 'every criterion passes'}).`);
     }
     writeBandGate(path.join(path.resolve(modelDir), 'model_metadata.json'), gateResult);
   }
@@ -1740,6 +1791,8 @@ module.exports = {
   pairedDateBootstrap,
   report,
   bandGate,
+  bandGateOnCities,
+  BAND_GATE_CITIES,
   writeBandGate,
   incumbentDataThrough,
   SERVE_CONFIGS,

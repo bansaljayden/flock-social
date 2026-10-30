@@ -375,6 +375,8 @@ The band gate requires, on the model-served live readings of the window
 | no city regresses | every city with 300+ readings within 2 points of the incumbent |
 | point error | MAE at most 1 point above the incumbent's |
 
+**The gate's cities (2026-10-30, before the November export).** From the 06:07 EDT run on 2026-10-30 the hourly sweep also reads 24 fill cities (`--fill-cities`) in the time the six hourly cities leave. Every fill-city reading taken before an early-November export lands in the time holdout, the newest 14 days, so the gated candidate trains on none of them, and scored as registered the gate's population would be mostly cities the sweep had never read live when the gate was set, with `no city regresses` binding about 30 cities on raw deltas instead of six. The verdict is therefore taken on the six hourly cities' readings (`BAND_GATE_CITIES` in `train/bandEval.js`: philly, lehigh, la, seattle, chicago, denver). Every other city's readings are scored the same way and recorded beside the verdict as `other_cities_report_only`, never ANDed into it. The thresholds, the criteria and the window rule are unchanged, and the final refit still trains on every city.
+
 Every verdict also records the constant-answer reference, so no within-one-band
 figure is read without what it costs to fake.
 
