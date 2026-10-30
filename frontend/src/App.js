@@ -3858,6 +3858,23 @@ const intelFailure = (err) => ({
     || 'The forecast request did not come back. Check your connection and try again.',
 });
 
+/* WHEN A FAILED BIRDIE TURN MAY SHOW THE SERVER'S WORDS.
+ *
+ * Only for a refusal written for this person: a 400, 403 or 429 whose text
+ * api.js marks as written for people (userFacing), with a real sentence in it,
+ * the rule VenueAdvisorChat's answers follow. Those are Birdie's own lines in
+ * backend routes/ai.js ("one sec, lots of people chatting rn. try that
+ * again"). Anything else, a 5xx, a gateway, the network or a crash inside the
+ * send, put whatever text it carried into the bubble; it answers null now, and
+ * sendAiMessage falls back to Birdie's own retry line.
+ */
+const birdieRefusalText = (err) => (
+  [400, 403, 429].includes(Number(err?.status)) && err?.userFacing === true
+    && typeof err?.message === 'string' && err.message.trim().length > 12
+    ? err.message.trim()
+    : null
+);
+
 /* A SWITCH THAT WRITES TO THE SERVER MOVES ON THE TAP.
  *
  * Find me by phone and Birdie's use of Gemini are saved on the server, and
@@ -10995,13 +11012,11 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // header, two inches from this sentence.
         setAiMessages(prev => [...prev, { role: 'assistant', error: true, text: "this thread got long for me. tap New chat up top and ask me that again." }]);
       } else {
-        // Surface the server's friendly text when present (rate-limit, busy, etc.).
-        // Never show "I'm broken" / "trouble connecting" — Birdie stays in character.
-        // The api fallback is "Something went wrong on our end. Try again.", so
-        // an exact compare never matched and that sentence reached the bubble.
-        const serverMsg = err?.message && !/^Something went wrong/.test(err.message) ? err.message : null;
-        const fallback = serverMsg || 'hmm gimme a sec, hit me again';
-        setAiMessages(prev => [...prev, { role: 'assistant', error: true, text: fallback }]);
+        // The server's words for a refusal it wrote for this person
+        // (birdieRefusalText), otherwise Birdie's own retry line, in his
+        // voice, never "I'm broken" and never the error's text.
+        const serverSaid = birdieRefusalText(err);
+        setAiMessages(prev => [...prev, { role: 'assistant', error: true, text: serverSaid || 'hmm gimme a sec, hit me again' }]);
       }
     } finally {
       aiSendingRef.current = false;

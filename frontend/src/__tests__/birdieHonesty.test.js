@@ -20,7 +20,34 @@ test('"this flock" is a flock the person is looking at', () => {
 test('error bubbles never go back to the model as its own words', () => {
   expect(app).toMatch(/const toAiWireMessages = \(messages\) => \(Array\.isArray\(messages\) \? messages : \[\]\)\.filter\(\(m\) => !m\?\.error\)\.map/);
   expect((app.match(/\{ role: 'assistant', error: true, text:/g) || []).length).toBe(3);
-  expect(app).toMatch(/!\/\^Something went wrong\/\.test\(err\.message\)/);
+  // The catch-all bubble reads the server only through birdieRefusalText
+  // (run below), which replaced a guard that dropped one generic sentence
+  // and let every other error's text through.
+  expect(app).toContain("const serverSaid = birdieRefusalText(err);");
+  expect(app).toContain("text: serverSaid || 'hmm gimme a sec, hit me again' }");
+});
+
+test("a failed turn shows the server's words only for a refusal written for the person", () => {
+  const m = app.match(/const birdieRefusalText = \(err\) => \(([\s\S]*?)\n\);/);
+  expect(m).not.toBeNull();
+  // eslint-disable-next-line no-new-func
+  const birdieRefusalText = new Function('err', `return (${m[1]});`);
+  const said = (status, message, userFacing = true) => Object.assign(new Error(message), { status, userFacing });
+  // Birdie's own refusals in routes/ai.js, as api.js hands them over.
+  expect(birdieRefusalText(said(429, 'one sec, lots of people chatting rn. try that again'))).toBe('one sec, lots of people chatting rn. try that again');
+  expect(birdieRefusalText(said(400, 'type something first'))).toBe('type something first');
+  expect(birdieRefusalText(said(403, "Birdie isn't on for this account."))).toBe("Birdie isn't on for this account.");
+  // A 5xx, even one api.js wrote a sentence for, is not a refusal.
+  expect(birdieRefusalText(said(503, "Flock's servers are having a moment. Try again in a minute."))).toBeNull();
+  expect(birdieRefusalText(said(500, 'Something went wrong on our end. Try again.', false))).toBeNull();
+  // A 4xx whose text api.js did not write for people (its generic fallback).
+  expect(birdieRefusalText(said(429, 'Something went wrong on our end. Try again.', false))).toBeNull();
+  // The network, and a crash in the send.
+  expect(birdieRefusalText(Object.assign(new Error('Failed to fetch'), { isNetworkError: true }))).toBeNull();
+  expect(birdieRefusalText(new TypeError("Cannot read properties of undefined (reading 'map')"))).toBeNull();
+  expect(birdieRefusalText(null)).toBeNull();
+  // A refusal too short to be a sentence.
+  expect(birdieRefusalText(said(400, 'Bad'))).toBeNull();
 });
 
 test('the meter is seeded on boot and closes the box at zero', () => {
