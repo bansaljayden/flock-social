@@ -4539,10 +4539,10 @@ export default function ChatDetail({
                     )}
                     {!billSplitQuarantined && billSplit.hasPayer !== false && billSplit.shares?.find(s => String(s.userId) === String(authUser?.id) && !s.settled) && (
                       <button className="hit44 glass-btn glass-secondary" disabled={!!billBusy} onClick={async () => {
-                        // Paid on the tap, paid again with the server's
-                        // tallies (setMyShare says why both), and put back
-                        // as it was if the server says no. The hold makes a
-                        // double tap one request and one toast.
+                        // Paid on the tap, paid again with the tallies the
+                        // server answers with (setMyShare says why both), and
+                        // put back as it was if the server says no. The hold
+                        // makes a double tap one request and one toast.
                         const hold = takeHold(billPendingRef, setBillPending, 'paid');
                         if (!hold) return;
                         const before = myShareNow();
