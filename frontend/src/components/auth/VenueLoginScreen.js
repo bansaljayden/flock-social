@@ -438,7 +438,10 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
 
   // Guideline 1.2 / EULA consent, one paragraph drawn in exactly one place:
   // inside the form where the form comes first (see the comment there), and
-  // beside the providers where they come first (see the return below).
+  // beside the providers where they come first (see the return below). Where
+  // the form comes first and a provider's year step is open, the form steps
+  // aside, so the paragraph is drawn under the step instead (the return
+  // below): that step's Continue creates the account.
   const consent = (
     <p className="auth-legal">
       Creating an account means you agree to the{' '}
@@ -865,6 +868,15 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
         </>
       )}
 
+      {/* With the form first, the two things in it that are not fields went
+          with it while a step was open: its error box and the agreement. A
+          brand-new Google account on the sign-in half opens the Google step
+          (403 needsDob, the proof held), and the bar's Continue then created
+          the account with no agreement on screen. So while a step is open the
+          box is drawn here, above the step where the form's was, and the
+          agreement under the step (below), between the year and Continue. */}
+      {!providersFirst && stepOpen && <AuthError>{error}</AuthError>}
+
       {/* With the providers first, the agreement goes above them wherever
           their first tap can create an account: the sign-up half, and the
           iPhone app, which is never asked for a year first. The website's
@@ -888,6 +900,7 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
       )}
 
       {providersFirst && !isSignup && askAge && needsDob && consent}
+      {!providersFirst && stepOpen && consent}
 
       {/* Under the providers, the form; while a provider's year step is
           open it steps aside, in either order, so there is one year field

@@ -52,7 +52,10 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
   const providersFirst = isAppleSignInAvailable();
   // A provider's message is drawn beside the providers when they come first.
   // With the form above them (the web) the form's own error box is already
-  // the nearest one, so there is only that one.
+  // the nearest one, so there is only that one. While a provider's year step
+  // is open that form steps aside, so the same box is drawn above the step
+  // instead (the form-first return below): a message is never written into a
+  // box that is not on screen.
   const [providerError, setProviderError] = useState('');
   const clearErrors = () => { setError(''); setProviderError(''); };
   const showProviderError = (message) => {
@@ -413,7 +416,10 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
   // account. Either way it stays in the sheet, so it cannot move the bar's
   // button. The Terms page carries the zero-tolerance-for-objectionable-content
   // language Apple's 1.2 template requires. One paragraph, drawn in one of the
-  // two places, never both.
+  // two places, never both. Where the form comes first and a provider's year
+  // step is open, the form steps aside and takes this paragraph with it, so it
+  // is drawn under the step instead, still once: that step's Continue creates
+  // the account too.
   const consent = (
         <p className="auth-legal">
           Creating an account means you agree to the{' '}
@@ -757,6 +763,14 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
     );
   }
 
+  // THE FORM FIRST, where Apple is not offered (a preview deploy, a laptop).
+  // While a step is open the form steps aside, and the two things in it that
+  // are not fields used to go with it: its error box and the agreement. The
+  // step's Continue creates the account, and a message for the form's box
+  // ("Add the year you were born above first") was written to a box nobody
+  // could see. So while a step is open both are drawn here instead: the box
+  // above the step, where the form's was, and the agreement under it, between
+  // the year and Continue.
   return (
     <AuthShell hero={hero} actions={actions}>
       {!stepOpen && (
@@ -765,10 +779,12 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
           <AuthRule label="or sign up with" />
         </>
       )}
+      {stepOpen && <AuthError>{error}</AuthError>}
 
       {googleBlock}
       {appleBlock}
 
+      {stepOpen && consent}
       {stepOpen && emailInstead}
       {foot}
     </AuthShell>
