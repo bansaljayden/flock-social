@@ -94,7 +94,16 @@ const TM_PAGE_SIZE = 20;
 // 'lookup_failed'), so nothing is fabricated. A 429 from the per-second limit
 // leaves the remainder high and holds nothing. The collector is a new process
 // every hour, so a run spends at most one request learning where the day is.
-const TM_APP_RESERVE = 1500;
+//
+// THE RESERVE IS THE APP'S THREE LEDGERS. services/costModel.js counts them:
+// routes/events.js TM_GLOBAL_DAILY (2,000), services/nightContext.js
+// NC_TM_DAILY (200) and services/mlPredictor.js EVENT_DAILY_BUDGET (1,500),
+// a 3,700 ceiling with 1,300 of the free 5,000 left over. This collector is
+// the fourth ledger it says must be a decision, and the decision is that it
+// spends only that 1,300: on a day the app reaches all three of its own caps,
+// Ticketmaster still has calls for it. __tests__/ticketmasterAppReserve.test.js
+// adds the three up from their files, so raising one moves this too.
+const TM_APP_RESERVE = 3700;
 const tmQuota = { available: null, resetAt: null, held: 0 };
 
 function noteTicketmasterQuota(response, now = Date.now()) {

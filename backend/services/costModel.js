@@ -237,6 +237,15 @@ const RATES = {
   // it did not: 2,200 of 5,000 leaves 2,800 of headroom and 3,700 leaves 1,300,
   // which is the difference between "nowhere near" and "within one more
   // surface of it". A fourth ledger is now a decision rather than an accident.
+  //
+  // THE FOURTH IS THE ML COLLECTOR (2026-10-29), on the same key in its own
+  // process (scripts/ml/eventService.js). Its widened hourly sweep asked about
+  // 3,200 times a run and spent the whole 5,000 in the first run or two after
+  // each daily reset, so all three ledgers above met 429 all day. It now stops
+  // when Ticketmaster's own Rate-Limit-Available header is down to the three
+  // ledgers' 3,700 (TM_APP_RESERVE), so it spends at most the 1,300 of
+  // headroom. Its calls are in no ledger here, because they happen in another
+  // process: the observed Ticketmaster line counts the app's calls only.
   ticketmaster: {
     checked: '2026-10-03',
     source: 'https://developer.ticketmaster.com/products-and-docs/apis/getting-started/',

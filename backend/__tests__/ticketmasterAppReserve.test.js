@@ -1,6 +1,6 @@
 'use strict';
 // The day's Ticketmaster calls are shared with the app (scripts/ml/eventService.js,
-// TM_APP_RESERVE, 2026-10-29): one key with a 5,000-a-day quota serves the
+// TM_APP_RESERVE = the app's three ledgers, 3,700, 2026-10-29): one key with a 5,000-a-day quota serves the
 // collector and the web service, and the widened hourly sweep spent all of it
 // in the first run or two after the reset, leaving the Events tab, the
 // forecast's event features and Roost's event facts with 429 for the rest of
@@ -59,13 +59,13 @@ test('at the reserve the process stops asking until the reset, per venue too, an
   assert.strictEqual(await eventService.fetchTicketmasterEvents(39.95, -75.16), null);
   assert.strictEqual(calls, 1, 'nothing more was sent');
   const q = eventService.ticketmasterQuota();
-  assert.deepStrictEqual([q.held, q.available, q.reserve], [2, eventService.TM_APP_RESERVE, 1500]);
+  assert.deepStrictEqual([q.held, q.available, q.reserve], [2, eventService.TM_APP_RESERVE, 3700]);
 });
 
 test("the day's quota refused holds; the per-second limit refused does not", async () => {
-  global.fetch = answer(429, 2500, inAnHour()); // a burst: the day still has calls
+  global.fetch = answer(429, 4500, inAnHour()); // a burst: the day still has calls
   assert.strictEqual(await ask(), null);
-  global.fetch = answer(200, 2499, inAnHour());
+  global.fetch = answer(200, 4499, inAnHour());
   assert.ok(await ask(), 'the next request still goes out');
   global.fetch = answer(429, 0, inAnHour()); // QuotaViolation
   assert.strictEqual(await ask(), null);
@@ -81,6 +81,19 @@ test('after the reset it asks again, and an answer without the headers holds not
   assert.ok(await ask(), 'past the reset the day starts over');
   assert.ok(await ask());
   assert.strictEqual(calls, 3);
+});
+
+test("the reserve is the app's three daily ledgers added up from their own files", () => {
+  // services/costModel.js counts the three; the collector may spend only what
+  // they leave of the free 5,000.
+  const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+  const constant = (rel, name) => Number(new RegExp(`const ${name} = (\\d+);`).exec(read(rel))[1]);
+  const ledgers = constant('routes/events.js', 'TM_GLOBAL_DAILY')
+    + constant('services/nightContext.js', 'NC_TM_DAILY')
+    + constant('services/mlPredictor.js', 'EVENT_DAILY_BUDGET');
+  assert.strictEqual(ledgers, 3700);
+  assert.strictEqual(eventService.TM_APP_RESERVE, ledgers);
+  assert.ok(5000 - eventService.TM_APP_RESERVE > 0, 'the collector still has some of the day');
 });
 
 test("the collector's log says how many requests it held and why", () => {
