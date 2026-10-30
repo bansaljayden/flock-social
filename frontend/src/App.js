@@ -6912,26 +6912,57 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // mind without waiting for a reload. loadFlocks would land the same declined
   // row anyway; doing it here means the "way back" is on screen the instant the
   // decline lands.
+  //
+  // ON THE TAP, not when the server answers. The card used to sit where it was
+  // for the round trip, which on a slow network reads as a tap that missed. A
+  // refusal puts it back where it was among the invites and takes it out of
+  // Declined again; a plan that is gone or finished (404, 409) leaves both
+  // lists. One decline per plan at a time, and a Join tapped on the declined
+  // row while the decline is still out waits for it (handleRejoinDeclinedFlock)
+  // so the join cannot land first and then be undone by the decline behind it.
+  const decliningInvitesRef = useRef(new Map());
   const handleDeclineFlockInvite = useCallback(async (flockId) => {
-    try {
-      await declineFlockInvite(flockId);
-      const invite = pendingFlockInvites.find(f => f.id === flockId);
+    if (decliningInvitesRef.current.has(flockId)) return;
+    const at = pendingFlockInvites.findIndex(f => f.id === flockId);
+    const invite = at === -1 ? null : pendingFlockInvites[at];
+    const wasDeclined = declinedFlockInvites.some(f => f.id === flockId);
+    const moveToDeclined = () => {
       setPendingFlockInvites(prev => prev.filter(f => f.id !== flockId));
       if (invite) {
         setDeclinedFlockInvites(prev => prev.some(f => f.id === flockId)
           ? prev
           : [...prev, { ...invite, memberStatus: 'declined' }]);
       }
+    };
+    moveToDeclined();
+    const request = declineFlockInvite(flockId);
+    decliningInvitesRef.current.set(flockId, request);
+    try {
+      await request;
+      // Again, for a list read that was out during the wait and put the
+      // invite back where it was.
+      moveToDeclined();
       showToast('Invite declined');
     } catch (err) {
+      if (!wasDeclined) setDeclinedFlockInvites(prev => prev.filter(f => f.id !== flockId));
       if (err?.status === 404 || err?.status === 409) {
         setPendingFlockInvites(prev => prev.filter(f => f.id !== flockId));
-        showToast(err.message || 'That plan is no longer open.');
+        showToast(userMessage(err, 'That plan is no longer open.'));
         return;
       }
-      showToast(err.message || 'Failed to decline invite', 'error');
+      if (invite) {
+        setPendingFlockInvites(prev => {
+          if (prev.some(f => f.id === flockId)) return prev;
+          const next = prev.slice();
+          next.splice(Math.min(at, next.length), 0, invite);
+          return next;
+        });
+      }
+      if (!err?.sessionExpired) showToast(userMessage(err, "Couldn't decline that invite. Try again."), 'error');
+    } finally {
+      decliningInvitesRef.current.delete(flockId);
     }
-  }, [pendingFlockInvites, showToast]);
+  }, [pendingFlockInvites, declinedFlockInvites, showToast]);
 
   // Loading
   const [isLoading, setIsLoading] = useState(false);
@@ -7703,11 +7734,18 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setAcceptingInviteId(flockId);
     const from = joinNavRef.current ? { ...joinNavRef.current } : null;
     try {
+      // A decline of this plan still on the wire is waited out first (the
+      // declined row is drawn on the tap, so Join can be pressed before the
+      // decline has landed), or the join could land first and be undone by it.
+      const declining = decliningInvitesRef.current.get(flockId);
+      if (declining) await declining.catch(() => {});
       // Same accept, so the same retirement of this person's link answer.
       await acceptFlockInvite(flockId, storedGuestTokens({ name: meRef.current?.name }));
       hapticSuccess();
       const invite = declinedFlockInvites.find(f => f.id === flockId);
       setDeclinedFlockInvites(prev => prev.filter(f => f.id !== flockId));
+      // A decline that was refused meanwhile put the invite card back.
+      setPendingFlockInvites(prev => prev.filter(f => f.id !== flockId));
       if (invite) {
         setFlocks(prev => prev.some(f => f.id === flockId)
           ? prev

@@ -384,3 +384,100 @@ describe('an unsend fades the bubble at once and only removes it when the server
     expect(DM).toMatch(/dmActionMessage\.id <= 2147483647 && !dmActionMessage\.unsending && \(\s*<button aria-label="Unsend message"/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Declining a plan (App.js handleDeclineFlockInvite, and Join behind it)
+// ---------------------------------------------------------------------------
+describe('declining a plan moves its card to Declined on the tap', () => {
+  const plan = (id, name) => ({ id, name, host: 'Ava', memberStatus: 'invited' });
+
+  function setup({ decline, accept = () => Promise.resolve({}) } = {}) {
+    const pending = [plan(1, 'Friday'), plan(2, 'Brunch'), plan(3, 'Karaoke')];
+    const state = { pending, declined: [], flocks: [], accepting: null };
+    const calls = { declined: [], accepted: [], toasts: [] };
+    const scope = {
+      useCallback: (fn) => fn,
+      useRef: (v) => ({ current: v }),
+      pendingFlockInvites: pending,
+      declinedFlockInvites: [],
+      setPendingFlockInvites: setterOn(state, 'pending'),
+      setDeclinedFlockInvites: setterOn(state, 'declined'),
+      declineFlockInvite: (id) => { calls.declined.push(id); return decline(id); },
+      showToast: (message, type) => calls.toasts.push([message, type]),
+      userMessage,
+      // What Join reads.
+      acceptingInviteRef: { current: null },
+      setAcceptingInviteId: (v) => { state.accepting = v; },
+      joinNavRef: { current: null },
+      acceptFlockInvite: (id) => { calls.accepted.push(id); return accept(id); },
+      storedGuestTokens: () => [],
+      meRef: { current: { id: 9, name: 'Jo' } },
+      hapticSuccess: () => {},
+      setFlocks: setterOn(state, 'flocks'),
+      loadFlocks: () => Promise.resolve(),
+      openChatAfterJoin: () => {},
+      needsEmailVerification: () => false,
+      refusedInvitesRef: { current: new Set() },
+    };
+    const src = [
+      statementAt(APP, 'const decliningInvitesRef = useRef('),
+      statementAt(APP, 'const handleDeclineFlockInvite = useCallback('),
+      statementAt(APP, 'const handleRejoinDeclinedFlock = useCallback('),
+    ].join('\n');
+    const { decline: tapDecline, rejoin } = lift(src, '{ decline: handleDeclineFlockInvite, rejoin: handleRejoinDeclinedFlock }', scope);
+    return { state, calls, tapDecline, rejoin };
+  }
+
+  test('the card is in Declined before the server has answered, and stays there when it agrees', async () => {
+    const wait = held();
+    const { state, calls, tapDecline } = setup({ decline: () => wait.promise });
+    const done = tapDecline(2);
+    expect(state.pending.map((f) => f.id)).toEqual([1, 3]);
+    expect(state.declined).toEqual([{ ...plan(2, 'Brunch'), memberStatus: 'declined' }]);
+    wait.resolve({});
+    await done;
+    expect(state.declined.map((f) => f.id)).toEqual([2]);
+    expect(calls.toasts).toEqual([['Invite declined', undefined]]);
+  });
+
+  test('a refusal puts the card back where it was and takes it out of Declined', async () => {
+    const { state, calls, tapDecline } = setup({ decline: () => Promise.reject(crash()) });
+    await tapDecline(2);
+    expect(state.pending.map((f) => f.id)).toEqual([1, 2, 3]);
+    expect(state.declined).toEqual([]);
+    expect(calls.toasts).toEqual([["Couldn't decline that invite. Try again.", 'error']]);
+  });
+
+  test('a plan that is gone leaves both lists, in the server\'s words', async () => {
+    const { state, calls, tapDecline } = setup({ decline: () => Promise.reject(refusal('This plan has been cancelled.', { status: 409 })) });
+    await tapDecline(2);
+    expect(state.pending.map((f) => f.id)).toEqual([1, 3]);
+    expect(state.declined).toEqual([]);
+    expect(calls.toasts).toEqual([['This plan has been cancelled.', undefined]]);
+  });
+
+  test('a second tap while the decline is out sends nothing', async () => {
+    const wait = held();
+    const { calls, tapDecline } = setup({ decline: () => wait.promise });
+    const first = tapDecline(2);
+    await tapDecline(2);
+    expect(calls.declined).toEqual([2]);
+    wait.resolve({});
+    await first;
+  });
+
+  test('Join pressed on the declined row while the decline is still out waits for it', async () => {
+    const wait = held();
+    const { state, calls, tapDecline, rejoin } = setup({ decline: () => wait.promise });
+    const declining = tapDecline(2);
+    const joining = rejoin(2);
+    await Promise.resolve();
+    expect(calls.accepted).toEqual([]);
+    expect(state.accepting).toBe(2);
+    wait.resolve({});
+    await declining;
+    await joining;
+    expect(calls.accepted).toEqual([2]);
+    expect(state.pending.map((f) => f.id)).toEqual([1, 3]);
+  });
+});
