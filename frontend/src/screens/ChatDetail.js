@@ -1632,8 +1632,13 @@ export default function ChatDetail({
     const budgetBusy = budgetPending && budgetPending.id === selectedFlockId ? budgetPending.action : null;
 
     // MY OWN ROW, CHANGED IN PLACE: the flip a settle or an undo makes on the
-    // tap, the server's tallies once it answers, and the row put back when it
-    // refuses. Leaving the chat clears the bill, and an answer that lands
+    // tap, the same flip again with the server's tallies once it answers, and
+    // the row put back when it refuses. The flip goes on twice because the
+    // bill can be read again while the request is out (App.js loadMoneyState,
+    // after a member's commit or a budget reset), and that read still has the
+    // row as it was before the tap. With only the tallies on the answer, the
+    // row read unpaid under a count that had it paid until the share_settled
+    // echo arrived. Leaving the chat clears the bill, and an answer that lands
     // after that has nothing to update, so a cleared bill is handed straight
     // back. Only the caller's row, because the server keys its write on the
     // caller.
@@ -1682,15 +1687,17 @@ export default function ChatDetail({
 
     // The way back out of "I paid". Settling used to be a one-way door and a
     // mis-tap left a debt recorded as cleared with no remedy in the product.
-    // Unpaid on the tap, and put back as it was if the server says no.
+    // Unpaid on the tap, unpaid again with the server's tallies (setMyShare
+    // says why both), and put back as it was if the server says no.
     const undoMySettle = async () => {
       const hold = takeHold(billPendingRef, setBillPending, 'undo');
       if (!hold) return;
       const before = myShareNow();
-      setMyShare(s => ({ settled: false, settledAt: null, outstanding: owedOn(s) }));
+      const unpaid = (s) => ({ settled: false, settledAt: null, outstanding: owedOn(s) });
+      setMyShare(unpaid);
       try {
         const unsettled = await unsettleShare(selectedFlockId);
-        setMyShare({}, tallyOf(unsettled));
+        setMyShare(unpaid, tallyOf(unsettled));
         // Owed again, so the Nest says so again (the route refuses the payer
         // and a payerless bill, so this is always a share owed to somebody).
         setFlocks(prev => prev.map(f => f.id === selectedFlockId ? { ...f, iOwe: true } : f));
@@ -4532,16 +4539,18 @@ export default function ChatDetail({
                     )}
                     {!billSplitQuarantined && billSplit.hasPayer !== false && billSplit.shares?.find(s => String(s.userId) === String(authUser?.id) && !s.settled) && (
                       <button className="hit44 glass-btn glass-secondary" disabled={!!billBusy} onClick={async () => {
-                        // Paid on the tap, and put back as it was if the
-                        // server says no. The hold makes a double tap one
-                        // request and one toast.
+                        // Paid on the tap, paid again with the server's
+                        // tallies (setMyShare says why both), and put back
+                        // as it was if the server says no. The hold makes a
+                        // double tap one request and one toast.
                         const hold = takeHold(billPendingRef, setBillPending, 'paid');
                         if (!hold) return;
                         const before = myShareNow();
-                        setMyShare({ settled: true, outstanding: 0 });
+                        const paid = { settled: true, outstanding: 0 };
+                        setMyShare(paid);
                         try {
                           const settled = await settleShare(selectedFlockId);
-                          setMyShare({}, tallyOf(settled));
+                          setMyShare(paid, tallyOf(settled));
                           // Paid, so the Nest stops saying you owe. The
                           // share_settled event does the same on every other
                           // device; this one should not wait for it.

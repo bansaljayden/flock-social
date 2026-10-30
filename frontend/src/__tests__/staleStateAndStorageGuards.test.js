@@ -209,8 +209,11 @@ test('every bill updater in ChatDetail hands a cleared bill straight back', () =
   expect(guarded).toHaveLength(1);
   expect(updaters).toHaveLength(guarded.length);
   expect(CHAT).toMatch(/const setMyShare = \(patch, tally = \{\}\) => setBillSplit\(prev => \{\s*if \(!prev\) return prev;/);
-  expect(CHAT).toMatch(/setMyShare\(\{\}, tallyOf\(settled\)\);/);
-  expect(CHAT).toMatch(/setMyShare\(\{\}, tallyOf\(unsettled\)\);/);
+  // The answer puts the row's own flip back on with the tally, never the
+  // tally alone (billRowAfterReread.test.js has why).
+  expect(CHAT).toMatch(/setMyShare\(paid, tallyOf\(settled\)\);/);
+  expect(CHAT).toMatch(/setMyShare\(unpaid, tallyOf\(unsettled\)\);/);
+  expect(CHAT).not.toMatch(/setMyShare\(\{\}, tallyOf\(/);
   expect(CHAT).not.toMatch(/setBillSplit\(prev => \(\{\s*\.\.\.prev,/);
 });
 

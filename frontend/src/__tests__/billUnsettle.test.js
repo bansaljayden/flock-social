@@ -110,7 +110,8 @@ describe('the control', () => {
     // The flip goes through setMyShare, the one row writer, which matches the
     // caller's id and nobody else's.
     const handler = handlerSource('undoMySettle');
-    expect(handler).toMatch(/setMyShare\(s => \(\{ settled: false, settledAt: null, outstanding: owedOn\(s\) \}\)\);/);
+    expect(handler).toContain('const unpaid = (s) => ({ settled: false, settledAt: null, outstanding: owedOn(s) });');
+    expect(handler).toContain('setMyShare(unpaid);');
     const writer = CHAT.slice(CHAT.indexOf('const setMyShare = (patch, tally = {}) =>'), CHAT.indexOf('const myShareNow = () =>'));
     expect(writer.length).toBeGreaterThan(100);
     expect(writer.length).toBeLessThan(900);
@@ -118,10 +119,13 @@ describe('the control', () => {
   });
 
   it('flips the row on the tap, before the server answers', () => {
-    // The flip comes before the await, and the server's tally after it.
+    // The flip comes before the await, and the same flip with the server's
+    // tally after it: a bill re-read that lands while the request is out
+    // brings the row back as it was, so the tally alone would count it unpaid
+    // under a row that still says paid (billRowAfterReread.test.js renders it).
     const handler = handlerSource('undoMySettle');
-    expect(handler.indexOf('setMyShare(s => ({ settled: false')).toBeLessThan(handler.indexOf('await unsettleShare'));
-    expect(handler.indexOf('setMyShare({}, tallyOf(unsettled));')).toBeGreaterThan(handler.indexOf('await unsettleShare'));
+    expect(handler.indexOf('setMyShare(unpaid);')).toBeLessThan(handler.indexOf('await unsettleShare'));
+    expect(handler.indexOf('setMyShare(unpaid, tallyOf(unsettled));')).toBeGreaterThan(handler.indexOf('await unsettleShare'));
   });
 
   it('clears settledAt alongside settled, the way the server does', () => {
