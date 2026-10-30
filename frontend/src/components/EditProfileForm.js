@@ -37,7 +37,7 @@
  */
 import React from 'react';
 import Icons from './ui/Icons';
-import { updateProfile, resendVerificationEmail } from '../services/api';
+import { updateProfile, resendVerificationEmail, userMessage } from '../services/api';
 import { connectSocket } from '../services/socket';
 
 const EditProfileForm = ({
@@ -126,9 +126,7 @@ const EditProfileForm = ({
                   } catch (err) {
                     // The server words a 429 with the real window and api.js
                     // carries that sentence. Render it rather than guessing.
-                    setEditSuccess('Saved. ' + (err && err.message
-                      ? err.message
-                      : 'We could not send the confirmation link just now.'));
+                    setEditSuccess('Saved. ' + userMessage(err, 'We could not send the confirmation link just now.'));
                   }
                 };
 
@@ -215,7 +213,9 @@ const EditProfileForm = ({
                     // from, and told them to go and look in it.
                     // A 200 with no user row used to surface as a raw
                     // TypeError in the error line; say what happened instead.
-                    if (!data || !data.user) throw new Error('The profile did not come back from the server. Try again.');
+                    // Marked as written for people, so userMessage below
+                    // shows this sentence rather than the general one.
+                    if (!data || !data.user) throw Object.assign(new Error('The profile did not come back from the server. Try again.'), { userFacing: true });
                     if (onUserUpdated && data.user) {
                       onUserUpdated({
                         name: data.user.name,
@@ -242,9 +242,7 @@ const EditProfileForm = ({
                       try {
                         applyResendResult(await resendVerificationEmail());
                       } catch (err) {
-                        setEditSuccess('Saved. ' + (err && err.message
-                          ? err.message
-                          : 'We could not send the confirmation link just now.'));
+                        setEditSuccess('Saved. ' + userMessage(err, 'We could not send the confirmation link just now.'));
                       }
                     } else {
                       setEditSuccess('Profile updated successfully!');
@@ -254,7 +252,11 @@ const EditProfileForm = ({
                     setConfirmPw('');
                                      } catch (err) {
                     setProfileBio(prevBio);
-                    setEditError(err.message);
+                    // The server's sentence when it wrote one (a wrong
+                    // password, an address already in use), and plain copy
+                    // for anything else, so a TypeError thrown in this try
+                    // never reaches the error line.
+                    setEditError(userMessage(err, "Your changes didn't save. Try again."));
                   } finally {
                     setEditLoading(false);
                   }

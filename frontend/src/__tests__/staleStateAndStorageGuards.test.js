@@ -36,6 +36,9 @@ const { render, fireEvent, waitFor } = require('@testing-library/react');
 jest.mock('../services/api', () => ({
   updateProfile: jest.fn(),
   resendVerificationEmail: jest.fn(),
+  // The real one: which sentence reaches the error line is what section 6
+  // below is about.
+  userMessage: jest.requireActual('../services/api').userMessage,
 }));
 
 const api = require('../services/api');
@@ -291,5 +294,22 @@ describe('edit profile on a 200 that carries no user', () => {
     expect(queryByText('Profile updated successfully!')).toBeNull();
     expect(props.setProfileName).not.toHaveBeenCalled();
     expect(props.onUserUpdated).not.toHaveBeenCalled();
+  });
+
+  it('keeps any other error\'s own text off the line, and the server\'s sentence on it', async () => {
+    // A TypeError thrown anywhere in the save's try used to be printed as it
+    // was. The error line takes the server's sentence only when it was written
+    // for people (services/api.js userMessage), and plain copy otherwise.
+    api.updateProfile.mockRejectedValueOnce(new TypeError("Cannot read properties of undefined (reading 'name')"));
+    const first = open();
+    fireEvent.click(first.getByText('Save Changes'));
+    await waitFor(() => expect(first.getByText("Your changes didn't save. Try again.")).toBeTruthy());
+    expect(first.queryByText(/Cannot read properties/)).toBeNull();
+    first.unmount();
+
+    api.updateProfile.mockRejectedValueOnce(Object.assign(new Error('That email is already in use.'), { status: 409, userFacing: true }));
+    const second = open();
+    fireEvent.click(second.getByText('Save Changes'));
+    await waitFor(() => expect(second.getByText('That email is already in use.')).toBeTruthy());
   });
 });

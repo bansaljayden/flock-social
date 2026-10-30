@@ -120,6 +120,15 @@ describe('the map wires it', () => {
     expect(opener).toMatch(/finally\(\(\) => \{ poiBusyRef\.current = false; \}\)/);
   });
 
+  test('why a place did not open is the server\'s sentence or plain copy, never an error\'s own text', () => {
+    // It printed err.message, so a TypeError from opening the sheet read as
+    // "undefined is not an object" on the map.
+    const opener = VIEW.slice(VIEW.indexOf('openPoiRef.current = (poi) => {'), VIEW.indexOf('// ---------- render ----------'));
+    expect(opener).toMatch(/setPoiNotice\(userMessage\(err, "That place didn't open\. Try tapping it again\."\)\);/);
+    expect(opener).not.toMatch(/err\.message/);
+    expect(VIEW).toMatch(/import \{ resolveMapPlace, userMessage \} from '\.\.\/\.\.\/services\/api';/);
+  });
+
   test('what the map says while it looks, or why it did not open, is announced', () => {
     expect(VIEW).toMatch(/\{poiNotice && \(/);
     expect(VIEW).toMatch(/<p role="status" aria-live="polite"[^>]*>\{poiNotice\}<\/p>/);

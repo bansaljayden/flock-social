@@ -85,7 +85,7 @@ import { loadMapEngine } from './mapEngine';
 import { scrubUrlTokens } from '../../lib/scrubUrlTokens';
 import { buildFlockStyle, satelliteStyleUrl } from './flockStyle';
 import { poiUnderTap, POI_TAP_MIN_ZOOM, TAPPABLE_POI_LAYER_IDS } from './poiTap';
-import { resolveMapPlace } from '../../services/api';
+import { resolveMapPlace, userMessage } from '../../services/api';
 
 // HTML-escape a user-derived string before it is interpolated into any raw
 // HTML sink (e.g. MapLibre Popup.setHTML, which assigns innerHTML). This must
@@ -1980,8 +1980,10 @@ const MapLibreMapView = React.memo(({ venues, filterCategory, userLocation, acti
       })
       .catch((err) => {
         // The server's own sentence when it has one ("Google has no listing
-        // for that spot..."), which says what to do instead.
-        setPoiNotice((err && err.message) || "That place didn't open. Try tapping it again.");
+        // for that spot..."), which says what to do instead, and plain copy
+        // for anything not written for people (userMessage), such as a
+        // TypeError from opening the sheet.
+        setPoiNotice(userMessage(err, "That place didn't open. Try tapping it again."));
         poiNoticeTimerRef.current = window.setTimeout(() => setPoiNotice(null), 4000);
       })
       .finally(() => { poiBusyRef.current = false; });
