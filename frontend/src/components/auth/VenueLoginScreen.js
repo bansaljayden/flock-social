@@ -113,6 +113,9 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  // Google's round trip, kept apart from the form's, so its "Signing in…" is
+  // drawn on the Google button and not on the form's button.
+  const [googleBusy, setGoogleBusy] = useState(false);
   // Legacy accounts with no DOB on file get 403 {needsDob: true} at login.
   const [needsDob, setNeedsDob] = useState(false);
   // Same read-back as the consumer sign-in screen, and for the same reason: on
@@ -260,7 +263,7 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
         setError(msg || 'Google sign-in failed');
       }
     },
-    setBusy: setLoading,
+    setBusy: setGoogleBusy,
   });
 
   const fail = (fieldId, message) => {
@@ -677,7 +680,7 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
         <button
           type="button"
           className="auth-provider"
-          disabled={loading}
+          disabled={loading || googleBusy}
           onClick={() => {
             if (dobNeedsCheck) {
               setError(`Check the date of birth ${dobCheckWhere} before you continue.`);
@@ -725,7 +728,7 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
             startGoogle({ dob: dob || undefined, dobGranularity: askYearOnly ? 'year' : undefined });
           }}
         >
-          <GoogleG /> Continue with Google
+          <GoogleG /> {googleBusy ? 'Signing in…' : 'Continue with Google'}
         </button>
       )}
     </>
@@ -843,7 +846,7 @@ const VenueLoginScreen = ({ onLoginSuccess, onSwitchToUserLogin }) => {
     actions = <AppleStepContinue busy={google.busy} busyLabel={busyLabel} onClick={() => google.continueWith(birthYear)} />;
   } else if (!stepOpen) {
     actions = (
-      <button type="submit" form="venue-form" className="auth-primary" disabled={loading}>
+      <button type="submit" form="venue-form" className="auth-primary" disabled={loading || googleBusy}>
         {loading ? busyLabel : (isSignup ? 'Create account' : 'Sign in')}
       </button>
     );

@@ -32,6 +32,10 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  // Google's round trip, kept apart from the form's. Sharing `loading` drew
+  // "Creating account…" on Create account during a Google sign-in, while the
+  // Google button went on saying Continue with Google.
+  const [googleBusy, setGoogleBusy] = useState(false);
 
   // PROVIDERS FIRST, WHERE APPLE IS ONE OF THEM.
   //
@@ -190,7 +194,7 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
       }
       showGoogleError(msg || 'Google sign-in failed');
     },
-    setBusy: setLoading,
+    setBusy: setGoogleBusy,
   });
 
   // THIS SCREEN NAMES NO MINIMUM AGE AND ENFORCES NONE. Read this before
@@ -561,7 +565,7 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
         <button
           type="button"
           className="auth-provider"
-          disabled={loading}
+          disabled={loading || googleBusy}
           onClick={() => {
             clearErrors();
             google.setError('');
@@ -589,7 +593,7 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
             startGoogle({ dob, dobGranularity: 'year' });
           }}
         >
-          <GoogleG /> Continue with Google
+          <GoogleG /> {googleBusy ? 'Signing in…' : 'Continue with Google'}
         </button>
   );
 
@@ -724,7 +728,7 @@ const SignupScreen = ({ onSignupSuccess, onSwitchToLogin }) => {
     actions = <AppleStepContinue busy={google.busy} busyLabel="Creating account…" onClick={() => google.continueWith(birthYear)} />;
   } else if (!stepOpen) {
     actions = (
-      <button type="submit" form="signup-form" className="auth-primary" disabled={loading}>
+      <button type="submit" form="signup-form" className="auth-primary" disabled={loading || googleBusy}>
         {loading ? 'Creating account…' : 'Create account'}
       </button>
     );

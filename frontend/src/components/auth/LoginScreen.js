@@ -54,6 +54,10 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  // Google's round trip, kept apart from the email form's. The two shared
+  // `loading`, so a Google tap drew "Signing in…" on the email button while the
+  // Google button went on saying Continue with Google.
+  const [googleBusy, setGoogleBusy] = useState(false);
   // Legacy accounts created before the age gate have no DOB on file. The
   // backend answers 403 {needsDob: true}; we collect a date and retry.
   const [needsDob, setNeedsDob] = useState(false);
@@ -191,7 +195,7 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
         setError(msg || 'Google sign-in failed');
       }
     },
-    setBusy: setLoading,
+    setBusy: setGoogleBusy,
   });
 
   const handleSubmit = async (e) => {
@@ -479,9 +483,9 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
               dobGranularity: askYearOnly ? 'year' : undefined,
             });
           }}
-          disabled={loading}
+          disabled={loading || googleBusy}
         >
-          <GoogleG /> Continue with Google
+          <GoogleG /> {googleBusy ? 'Signing in…' : 'Continue with Google'}
         </button>
       )}
     </>
@@ -576,7 +580,7 @@ const LoginScreen = ({ onLoginSuccess, onSwitchToSignup, onSwitchToVenueLogin })
     actions = <AppleStepContinue busy={google.busy} busyLabel="Signing in…" onClick={() => google.continueWith(birthYear)} />;
   } else if (!stepOpen) {
     actions = (
-      <button type="submit" form="login-form" className="auth-primary" disabled={loading}>
+      <button type="submit" form="login-form" className="auth-primary" disabled={loading || googleBusy}>
         {loading ? 'Signing in…' : 'Sign in'}
       </button>
     );
