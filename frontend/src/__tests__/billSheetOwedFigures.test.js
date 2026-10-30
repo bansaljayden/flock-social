@@ -1060,6 +1060,76 @@ describe('the creator\'s budget controls on a plan that has ended', () => {
   });
 });
 
+/* A double tap on Lock Budget came back 409 "Budget has been locked", and on
+   Send Reminder 429, each after the first tap had already said it worked.
+   Skip had no pending state at all. */
+describe('the budget\'s buttons while one is on the wire', () => {
+  const api = require('../services/api');
+  const hostPlan = () => ({ ...FLOCK, creatorId: ME.id, budgetEnabled: true, status: 'confirmed' });
+  const ready = {
+    budgetEnabled: true, budgetLocked: false, ceiling: null, isReady: true, skipCount: null,
+    submissionCount: 3, totalMembers: 4, memberCount: 4, userSubmitted: true, userAmount: 40, userSkipped: false,
+  };
+
+  test('a double tap on Lock Budget is one request and one toast, and it says it is locking', async () => {
+    let answer;
+    api.lockBudget.mockImplementationOnce(() => new Promise((resolve) => { answer = resolve; }));
+    const showToast = jest.fn();
+    mount(null, { getSelectedFlock: hostPlan, budgetStatus: ready, showToast });
+    const lock = screen.getByRole('button', { name: 'Lock Budget' });
+    fireEvent.click(lock);
+    fireEvent.click(lock);
+    expect(api.lockBudget).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: 'Locking...' })).toBeDisabled();
+    // The reminder beside it waits too.
+    expect(screen.getByRole('button', { name: 'Send Reminder' })).toBeDisabled();
+    answer({ ceiling: 40 });
+    await waitFor(() => expect(showToast).toHaveBeenCalledWith('Budget locked'));
+    expect(showToast).toHaveBeenCalledTimes(1);
+  });
+
+  test('a double tap on Send Reminder is one request, and a 429 is news, not an error', async () => {
+    let refuse;
+    api.sendBudgetReminder.mockImplementationOnce(() => new Promise((_, reject) => { refuse = reject; }));
+    const showToast = jest.fn();
+    mount(null, { getSelectedFlock: hostPlan, budgetStatus: { ...ready, isReady: false, submissionCount: 1 }, showToast });
+    const remind = screen.getByRole('button', { name: 'Send Reminder' });
+    fireEvent.click(remind);
+    fireEvent.click(remind);
+    expect(api.sendBudgetReminder).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: 'Sending...' })).toBeDisabled();
+    refuse(Object.assign(new Error('Please wait before sending another reminder'), { status: 429, userFacing: true }));
+    await waitFor(() => expect(showToast).toHaveBeenCalledWith('Please wait before sending another reminder'));
+    expect(screen.getByRole('button', { name: 'Send Reminder' })).not.toBeDisabled();
+  });
+
+  test('a failed lock says so in plain words, not in the error\'s own text', async () => {
+    api.lockBudget.mockRejectedValueOnce(new TypeError("Cannot read properties of undefined (reading 'ceiling')"));
+    const showToast = jest.fn();
+    mount(null, { getSelectedFlock: hostPlan, budgetStatus: ready, showToast });
+    fireEvent.click(screen.getByRole('button', { name: 'Lock Budget' }));
+    await waitFor(() => expect(showToast).toHaveBeenCalledWith('Could not lock the budget. Try again.', 'error'));
+    expect(screen.getByRole('button', { name: 'Lock Budget' })).not.toBeDisabled();
+  });
+
+  test('Skip says it is skipping and holds Submit, and a double tap is one answer', async () => {
+    let answer;
+    api.submitBudget.mockImplementationOnce(() => new Promise((resolve) => { answer = resolve; }));
+    const open = { ...ready, isReady: false, submissionCount: 1, userSubmitted: false, userAmount: null };
+    mount(null, { getSelectedFlock: () => ({ ...FLOCK, budgetEnabled: true, status: 'confirmed' }), budgetStatus: open });
+    const skip = screen.getByRole('button', { name: 'Skip, any budget works' });
+    fireEvent.click(skip);
+    fireEvent.click(skip);
+    expect(api.submitBudget).toHaveBeenCalledTimes(1);
+    expect(api.submitBudget).toHaveBeenCalledWith(FLOCK.id, { amount: 0, skipped: true });
+    expect(screen.getByRole('button', { name: 'Skipping...' })).toBeDisabled();
+    // Submit is held, and does not claim to be submitting.
+    expect(screen.getByRole('button', { name: 'Submit' })).toBeDisabled();
+    answer({ ceiling: null });
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Skipping...' })).toBeNull());
+  });
+});
+
 // ---------------------------------------------------------------------------
 // 10. Create Split sends one bill, however fast it is tapped
 // ---------------------------------------------------------------------------

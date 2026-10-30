@@ -1436,6 +1436,12 @@ export default function ChatDetail({
        before a repaint; the state is what the card and the sheet draw. */
     const [billPending, setBillPending] = React.useState(null);
     const billPendingRef = React.useRef(null);
+    /* THE BUDGET'S BUTTONS THE SAME WAY: 'submit', 'skip', 'lock' or
+       'remind'. A double tap on Lock came back 409 "Budget has been locked",
+       and on Send Reminder 429, each after the first tap had already said it
+       worked. */
+    const [budgetPending, setBudgetPending] = React.useState(null);
+    const budgetPendingRef = React.useRef(null);
 
     const flock = getSelectedFlock();
     // THE TABLE SUMMARIES for the vote rows and the venue cards, one ask for
@@ -1603,9 +1609,9 @@ export default function ChatDetail({
        before billTally was pulled out: one object, two answers. The bodies are
        the sheet's own, moved rather than rewritten. */
 
-    // A hold on the bill's actions for the plan on screen, or null when one
-    // is already on the wire, which the caller reads as "ignore this tap".
-    // Only the request that took a hold releases it.
+    // A hold on the bill's actions or the budget's buttons for the plan on
+    // screen, or null when one is already on the wire, which the caller reads
+    // as "ignore this tap". Only the request that took a hold releases it.
     const takeHold = (ref, setHold, action) => {
       if (ref.current) return null;
       const hold = { id: selectedFlockId, action };
@@ -1620,6 +1626,7 @@ export default function ChatDetail({
     };
     // What is on the wire for this plan, for the labels and the held buttons.
     const billBusy = billPending && billPending.id === selectedFlockId ? billPending.action : null;
+    const budgetBusy = budgetPending && budgetPending.id === selectedFlockId ? budgetPending.action : null;
 
     // MY OWN ROW, CHANGED IN PLACE: the flip a settle or an undo makes on the
     // tap, the server's tallies once it answers, and the row put back when it
@@ -3969,9 +3976,15 @@ export default function ChatDetail({
                         This is anonymous. No one sees your answer. One group number appears after everyone has answered, and only if at least three people in the group chat shared an amount. Guest answers from the link go into the number but do not count toward the three. It is rounded down to a range, and it does not change after that.
                       </p>
                     </div>
-                    <button className="hit44 glass-btn glass-primary" disabled={budgetSubmitting} onClick={async () => {
+                    {/* Submit and Skip share one hold, so a tap on either
+                        while the other is out does nothing, and each says
+                        it is working only when it is the one that was
+                        pressed. */}
+                    <button className="hit44 glass-btn glass-primary" disabled={budgetSubmitting || !!budgetBusy} onClick={async () => {
                       const amt = budgetCustom ? parseFloat(budgetCustom) : budgetAmount;
                       if (!amt || amt <= 0) { showToast('Select or enter an amount', 'error'); return; }
+                      const hold = takeHold(budgetPendingRef, setBudgetPending, 'submit');
+                      if (!hold) return;
                       setBudgetSubmitting(true);
                       try {
                         const data = await submitBudget(selectedFlockId, { amount: amt, skipped: false });
@@ -3988,12 +4001,18 @@ export default function ChatDetail({
                         hapticSuccess();
                         showToast('Budget submitted');
                         setShowChatPool(false);
-                      } catch (err) { showToast(err.message, 'error'); }
-                      setBudgetSubmitting(false);
-                    }} style={{ ...styles.gradientButton, padding: '14px', opacity: budgetSubmitting ? 0.5 : 1 }}>
-                      {budgetSubmitting ? 'Submitting...' : 'Submit'}
+                      } catch (err) {
+                        showToast(userMessage(err, 'Could not submit your budget. Try again.'), 'error');
+                      } finally {
+                        setBudgetSubmitting(false);
+                        dropHold(budgetPendingRef, setBudgetPending, hold);
+                      }
+                    }} style={{ ...styles.gradientButton, padding: '14px', opacity: budgetSubmitting || budgetBusy ? 0.5 : 1 }}>
+                      {budgetBusy === 'submit' ? 'Submitting...' : 'Submit'}
                     </button>
-                    <button onClick={async () => {
+                    <button disabled={budgetSubmitting || !!budgetBusy} onClick={async () => {
+                      const hold = takeHold(budgetPendingRef, setBudgetPending, 'skip');
+                      if (!hold) return;
                       setBudgetSubmitting(true);
                       try {
                         const data = await submitBudget(selectedFlockId, { amount: 0, skipped: true });
@@ -4002,10 +4021,14 @@ export default function ChatDetail({
                         setFlocks(prev => prev.map(f => f.id === selectedFlockId ? { ...f, iBudgetOpen: false } : f));
                         showToast('Skipped. You will not count toward the group number.');
                         setShowChatPool(false);
-                      } catch (err) { showToast(err.message, 'error'); }
-                      setBudgetSubmitting(false);
-                    }} className="hit44 glass-btn glass-secondary" style={{ width: '100%', padding: '12px', marginTop: '8px', border: 'none', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}>
-                      Skip, any budget works
+                      } catch (err) {
+                        showToast(userMessage(err, 'Could not skip. Try again.'), 'error');
+                      } finally {
+                        setBudgetSubmitting(false);
+                        dropHold(budgetPendingRef, setBudgetPending, hold);
+                      }
+                    }} className="hit44 glass-btn glass-secondary" style={{ width: '100%', padding: '12px', marginTop: '8px', border: 'none', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-label)', fontWeight: '600', cursor: budgetSubmitting || budgetBusy ? 'default' : 'pointer', opacity: budgetSubmitting || budgetBusy ? 0.6 : 1 }}>
+                      {budgetBusy === 'skip' ? 'Skipping...' : 'Skip, any budget works'}
                     </button>
                   </div>
                 )}
@@ -4117,11 +4140,42 @@ export default function ChatDetail({
                         would only ask people for something they cannot do. */}
                     {isCreator && !budgetStatus?.budgetLocked && (budgetStatus?.isReady || !planClosed) && (
                       <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+                        {/* One tap, one request: Lock and Send Reminder share
+                            a hold, so a second tap while one is out does
+                            nothing rather than coming back 409 or 429 after
+                            the first had already said it worked. */}
                         {budgetStatus?.isReady && (
-                          <button className="hit44 glass-btn glass-primary" onClick={async () => { try { const d = await lockBudget(selectedFlockId); setBudgetStatus(prev => ({ ...prev, budgetLocked: true, ceiling: d?.ceiling ?? prev?.ceiling })); showToast('Budget locked'); } catch (err) { showToast(err.message, 'error'); } }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `1.5px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Lock Budget</button>
+                          <button className="hit44 glass-btn glass-primary" disabled={!!budgetBusy} onClick={async () => {
+                            const hold = takeHold(budgetPendingRef, setBudgetPending, 'lock');
+                            if (!hold) return;
+                            try {
+                              const d = await lockBudget(selectedFlockId);
+                              setBudgetStatus(prev => ({ ...prev, budgetLocked: true, ceiling: d?.ceiling ?? prev?.ceiling }));
+                              showToast('Budget locked');
+                            } catch (err) {
+                              showToast(userMessage(err, 'Could not lock the budget. Try again.'), 'error');
+                            } finally {
+                              dropHold(budgetPendingRef, setBudgetPending, hold);
+                            }
+                          }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `1.5px solid ${colors.navy}`, backgroundColor: 'var(--bg-card-solid)', color: colors.navy, fontWeight: '600', fontSize: 'var(--t-meta)', cursor: budgetBusy ? 'default' : 'pointer', opacity: budgetBusy ? 0.6 : 1 }}>{budgetBusy === 'lock' ? 'Locking...' : 'Lock Budget'}</button>
                         )}
                         {!planClosed && (
-                          <button className="hit44 glass-btn glass-secondary" onClick={async () => { try { const d = await sendBudgetReminder(selectedFlockId); showToast(d.reminded > 0 ? `Reminded ${d.reminded} member${d.reminded !== 1 ? 's' : ''}` : 'Nobody left to remind'); } catch (err) { showToast(err.message, 'error'); } }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `1.5px solid var(--border-color)`, backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: 'pointer' }}>Send Reminder</button>
+                          <button className="hit44 glass-btn glass-secondary" disabled={!!budgetBusy} onClick={async () => {
+                            const hold = takeHold(budgetPendingRef, setBudgetPending, 'remind');
+                            if (!hold) return;
+                            try {
+                              const d = await sendBudgetReminder(selectedFlockId);
+                              showToast(d.reminded > 0 ? `Reminded ${d.reminded} member${d.reminded !== 1 ? 's' : ''}` : 'Nobody left to remind');
+                            } catch (err) {
+                              // 429: one already went out in the last few
+                              // minutes, from this phone or another. That is
+                              // news, not a failure.
+                              if (err?.status === 429) showToast(userMessage(err, 'A reminder already went out a few minutes ago.'));
+                              else showToast(userMessage(err, 'Could not send the reminder. Try again.'), 'error');
+                            } finally {
+                              dropHold(budgetPendingRef, setBudgetPending, hold);
+                            }
+                          }} style={{ flex: 1, padding: '10px', borderRadius: '10px', border: `1.5px solid var(--border-color)`, backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-secondary)', fontWeight: '600', fontSize: 'var(--t-meta)', cursor: budgetBusy ? 'default' : 'pointer', opacity: budgetBusy ? 0.6 : 1 }}>{budgetBusy === 'remind' ? 'Sending...' : 'Send Reminder'}</button>
                         )}
                       </div>
                     )}
