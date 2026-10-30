@@ -408,6 +408,12 @@ beforeEach(() => {
 async function renderHub(payload, over) {
   api.getAdminMoneyHub.mockResolvedValue(payload);
   const utils = render(React.createElement(RevenueScreen, screenProps(over)));
+  // The hub keeps its last payload across screens and paints it at once while
+  // it reads again (hubMemo in RevenueScreen.js), so until this render's read
+  // lands the previous test's figures are on screen under the same month
+  // heading. The summary's 'Reading' turns back into 'Refresh' only when the
+  // read is in.
+  await screen.findByText('Refresh');
   await screen.findByText('September 2026');
   return utils;
 }
