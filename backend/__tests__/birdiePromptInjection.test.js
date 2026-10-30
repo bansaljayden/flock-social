@@ -206,6 +206,9 @@ const placeDetailsCache = require('../services/placeDetailsCache');
 test.beforeEach(() => {
   aiRouter.__clearBirdieSearchCache();
   placeDetailsCache.__test.reset();
+  // The Gemini 429 case opens Birdie's outage breaker, which would answer
+  // every case after it before Gemini is reached.
+  aiRouter.__resetBirdieOutage();
 });
 
 const app = express();

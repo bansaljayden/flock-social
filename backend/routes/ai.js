@@ -38,7 +38,11 @@ const gameNights = require('../services/gameNights');
 const tableHistory = require('../services/tableHistory');
 const venueLabel = require('../utils/venueLabel');
 const mlPredictor = require('../services/mlPredictor');
-const { getPremiumState, paywallEnabled, EntitlementUnavailableError } = require('../services/entitlements');
+const { getPremiumState, paywallEnabled, EntitlementUnavailableError, warnOnce } = require('../services/entitlements');
+// Roost's outage classifier and backoffs, read rather than copied: Birdie and
+// Roost call Gemini on one key, so they must agree on what an outage is (THE
+// OUTAGE BREAKER below).
+const { outageKindOf, OUTAGE_BACKOFF_MS } = require('../services/advisorPhrasing').internals;
 // THE forecast paywall policy, defined once in routes/crowd.js. Imported rather
 // than re-derived: a second private copy of "has this user paid, and has their
 // monthly allowance run out" is precisely how this route ended up serving the
@@ -301,6 +305,60 @@ class GeminiBudgetError extends Error {
 // system prompt forbids that voice and the user is reading this sentence, not
 // the model.
 const BIRDIE_BUSY_MESSAGE = 'lot of chatter right now. hit me again in a bit';
+
+// ---------------------------------------------------------------------------
+// THE OUTAGE BREAKER (2026-10-30).
+//
+// On 2026-10-28 the Gemini key's prepaid credits ran out and every call has
+// answered 402 since. Roost got a breaker that evening (services/
+// advisorPhrasing.js, "The outage breaker"); Birdie had none, so every message
+// still charged a chirp, waited on the refusal, refunded the chirp, wrote a
+// stack trace and answered 500 "hmm gimme a sec, hit me again": a line asking
+// for the one thing that cannot work, and the app shows its own retry line for
+// any 5xx anyway.
+//
+// So a failure that says the key itself cannot answer (billing, a quota, an
+// overloaded service: Roost's outageKindOf, so the two surfaces on one key
+// agree) opens this breaker for Roost's backoffs, and while it is open a turn
+// is answered before either meter and before Gemini. The answer is a 429 with
+// Retry-After, the status whose sentence the shipped app shows (frontend
+// App.js birdieRefusalText) and the channel the spend ceilings already use. A
+// billing outage lasts until somebody tops the account up or fixes the key, so
+// its sentence names no time; the short kinds keep the busy line. Each kind is
+// logged once per process, not stack-traced per message. A timeout, a bad
+// reply or our own spend ceiling never trips it: those are one turn's problem.
+// ---------------------------------------------------------------------------
+const BIRDIE_OFFLINE_MESSAGE = "birdie's offline right now. try me again later";
+const BIRDIE_RUSH_MESSAGE = 'one sec, lots of people chatting rn. try that again';
+const birdieOutage = { until: 0, kind: null };
+
+/** Record a failed Gemini call. True when it was an outage (the breaker is open). */
+function noteBirdieOutage(err, now = Date.now()) {
+  if (!err || err.geminiBudget) return false;
+  const kind = outageKindOf(err);
+  if (!kind) return false;
+  const until = now + OUTAGE_BACKOFF_MS[kind];
+  if (until > birdieOutage.until) {
+    birdieOutage.until = until;
+    birdieOutage.kind = kind;
+  }
+  warnOnce(`birdie:outage:${kind}`, `[AI] Gemini answered ${err.status || kind} (${kind}). Birdie answers `
+    + 'without calling it until the breaker closes.');
+  return true;
+}
+
+function birdieOutageOpen(now = Date.now()) {
+  return now < birdieOutage.until;
+}
+
+function birdieOutageRefusal(res, now = Date.now()) {
+  const ms = Math.max(birdieOutage.until - now, 1000);
+  const billing = birdieOutage.kind === 'billing';
+  return res.status(429).json({
+    ...refusalBody(res, ms, billing ? BIRDIE_OFFLINE_MESSAGE : BIRDIE_RUSH_MESSAGE),
+    code: billing ? 'BIRDIE_OFFLINE' : 'BIRDIE_BUSY',
+  });
+}
 
 // The rolling hour is a full hour wide and the ledger keeps token timestamps
 // rather than a reset instant, so an exact answer would mean reaching into that
@@ -2439,6 +2497,9 @@ router.post('/chat',
         // somebody sets one (chat audit, 2026-09-05).
         return res.status(500).json({ error: "birdie's offline right now. try again in a bit" });
       }
+      // THE OUTAGE BREAKER (above): open means the key cannot answer, so this
+      // turn costs the user nothing and Google is not asked.
+      if (birdieOutageOpen()) return birdieOutageRefusal(res);
 
       const { messages, location, currentContext } = req.body;
       const userId = req.user.id;
@@ -2992,6 +3053,12 @@ router.post('/chat',
           retryable: true,
         });
       }
+      // A key that cannot answer opens the breaker and is answered as one,
+      // logged once by noteBirdieOutage rather than stack-traced here.
+      if (noteBirdieOutage(err)) {
+        refundChirp(res);
+        return birdieOutageRefusal(res);
+      }
       console.error('[AI] Chat error:', err);
       refundChirp(res);
       if (err.status === 429 || err.message?.includes('quota')) {
@@ -3010,6 +3077,12 @@ module.exports = router;
 router.__clearBirdieSearchCache = () => {
   birdieSearchCache.clear();
   birdieSearchInflight.clear();
+};
+// The breaker is module scope for the same reason, and a case that opens it
+// would close Birdie for the cases after it.
+router.__resetBirdieOutage = () => {
+  birdieOutage.until = 0;
+  birdieOutage.kind = null;
 };
 // Exposed for backend/__tests__/paidCallBudgets.test.js. The tool executor is
 // where Birdie spends money on the user's behalf (Places, and weather at
