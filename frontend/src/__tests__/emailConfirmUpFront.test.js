@@ -187,6 +187,9 @@ function checkScope(over = {}) {
     patchSessionUser: jest.fn(),
     setVerifyPrompt: jest.fn(),
     showToast: jest.fn(),
+    // api.js's own: a failed read is shown in its words only when api.js
+    // wrote them for people.
+    userMessage: jest.requireActual('../services/api').userMessage,
     ...over,
   };
 }
@@ -238,7 +241,7 @@ describe('checkEmailConfirmed, lifted out of App.js and executed', () => {
   });
 
   test('a failed read is said on a tap, in the server\'s words, and swallowed on the quiet one', async () => {
-    const failing = () => jest.fn().mockRejectedValue(Object.assign(new Error('You are offline.'), { isOffline: true }));
+    const failing = () => jest.fn().mockRejectedValue(Object.assign(new Error('You are offline.'), { isOffline: true, isNetworkError: true }));
     const tap = checkScope({ getCurrentUser: failing() });
     await makeCheck(tap)(false);
     expect(tap.setVerifyNote).toHaveBeenLastCalledWith('You are offline.');
@@ -304,7 +307,7 @@ describe('checkEmailConfirmed, lifted out of App.js and executed', () => {
     const check = makeCheck(s);
     const quiet = check(true);
     const tap = check(false);
-    held.reject(Object.assign(new Error('You are offline.'), { isOffline: true }));
+    held.reject(Object.assign(new Error('You are offline.'), { isOffline: true, isNetworkError: true }));
     await Promise.all([quiet, tap]);
     expect(s.setVerifyNote).toHaveBeenCalledTimes(2);
     expect(s.setVerifyNote).toHaveBeenNthCalledWith(1, '');

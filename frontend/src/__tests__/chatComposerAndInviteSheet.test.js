@@ -609,6 +609,9 @@ function runInviteHandler(scope) {
     // every existing expectation about the generic toast still holds.
     'needsEmailVerification',
     'setFlockInviteSelected', 'setFlockInviteSearch',
+    // api.js's userMessage (2026-10-30): only an error it wrote for people
+    // reaches the toast.
+    'userMessage',
   ];
   // eslint-disable-next-line no-new-func
   const factory = new Function(...names, `return (async () => {${inviteHandlerBody}})();`);
@@ -625,6 +628,7 @@ const inviteScope = (over = {}) => ({
   setShowFlockInviteModal: jest.fn(),
   setFlockInviteSelected: jest.fn(),
   setFlockInviteSearch: jest.fn(),
+  userMessage: jest.requireActual('../services/api').userMessage,
   ...over,
 });
 
@@ -668,12 +672,13 @@ describe('handleSendFlockInvites, lifted out of App.js and executed', () => {
     // This one survived the audit. A swallowed rejection leaves the sheet open
     // with the picks still highlighted and no message: the user taps again, and
     // again, and every tap is another POST.
+    // The network failure as api.js builds it: its own sentence, marked as one.
     const s = inviteScope({
-      inviteToFlock: jest.fn().mockRejectedValue(new Error('Network request failed')),
+      inviteToFlock: jest.fn().mockRejectedValue(Object.assign(new Error("Couldn't reach Flock. Give it a second and try again."), { isNetworkError: true })),
     });
     await runInviteHandler(s);
 
-    expect(s.showToast).toHaveBeenCalledWith('Network request failed', 'error');
+    expect(s.showToast).toHaveBeenCalledWith("Couldn't reach Flock. Give it a second and try again.", 'error');
     // The sheet stays open on failure, so the picks are not lost.
     expect(s.setShowFlockInviteModal).not.toHaveBeenCalled();
     expect(s.setFlockInviteSelected).not.toHaveBeenCalled();
@@ -683,6 +688,12 @@ describe('handleSendFlockInvites, lifted out of App.js and executed', () => {
 
   test('a failure with no message still says something', async () => {
     const s = inviteScope({ inviteToFlock: jest.fn().mockRejectedValue({}) });
+    await runInviteHandler(s);
+    expect(s.showToast).toHaveBeenCalledWith('Failed to send invites', 'error');
+  });
+
+  test("a failure whose text nobody wrote for people gets the handler's words, not that text", async () => {
+    const s = inviteScope({ inviteToFlock: jest.fn().mockRejectedValue(new TypeError('flock.members is undefined')) });
     await runInviteHandler(s);
     expect(s.showToast).toHaveBeenCalledWith('Failed to send invites', 'error');
   });

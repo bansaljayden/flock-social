@@ -600,7 +600,9 @@ describe('the events screen', () => {
     expect(fetcher).toMatch(/setFeaturedEventsLoading\(true\)/);
     expect(fetcher).toMatch(/setFeaturedEventsError\(''\)/);
     expect(fetcher).toMatch(/setFeaturedEvents\(null\)/);
-    expect(fetcher).toMatch(/setFeaturedEventsError\(err\?\.message/);
+    // Through userMessage: api.js's words when it wrote them for people, the
+    // screen's own otherwise.
+    expect(fetcher).toMatch(/setFeaturedEventsError\(userMessage\(err, "Events aren't loading right now\."\)\)/);
   });
 
   test('no call site fetches events around it any more', () => {

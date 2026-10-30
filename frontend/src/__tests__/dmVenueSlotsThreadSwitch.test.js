@@ -103,6 +103,9 @@ function dmSlots() {
     apiUnpinDmVenue: () => request,
     dmVenueSlotsForRef,
     showToast: (m) => state.toasts.push(m),
+    // api.js's own: the refusal is said in its words when api.js wrote them
+    // for people, and in the handler's otherwise.
+    userMessage: jest.requireActual('../services/api').userMessage,
   })(userId);
   return { state, pins, votes, open, unpin };
 }
@@ -192,7 +195,7 @@ describe('a failed unpin', () => {
     let refuse;
     const done = s.unpin(ALICE, new Promise((_, reject) => { refuse = reject; }));
     expect(pinName(s)).toBeNull();
-    refuse(new Error('That did not unpin.'));
+    refuse(Object.assign(new Error('That did not unpin.'), { status: 400, userFacing: true }));
     await done;
     expect(pinName(s)).toBe("Joe's Bar");
   });
@@ -205,7 +208,7 @@ describe('a failed unpin', () => {
     let refuse;
     const done = s.unpin(ALICE, new Promise((_, reject) => { refuse = reject; }));
     s.open(BOB);
-    refuse(new Error('That did not unpin.'));
+    refuse(Object.assign(new Error('That did not unpin.'), { status: 400, userFacing: true }));
     await done;
     expect(pinName(s)).toBeNull();
     // The failure is still said.

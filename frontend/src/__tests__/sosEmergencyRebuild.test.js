@@ -516,7 +516,9 @@ describe('SOS stand-down', () => {
     const h = APP.slice(APP.indexOf('const handleStandDown'));
     const body = h.slice(0, h.indexOf('const handleShareLocationWithContacts'));
     expect(body).toContain('err?.data?.error');
-    expect(body.indexOf('serverSaid')).toBeLessThan(body.indexOf('err?.message'));
+    // The server's 502 body first; only then api.js's words for anything it
+    // wrote for people (userMessage), and the sheet's own line otherwise.
+    expect(body).toContain(`showToast(serverSaid || userMessage(err, "That didn't send. Your contacts still have your alert, so call them."), 'error');`);
   });
 
   it('the sheet is handed the stand-down from App.js', () => {

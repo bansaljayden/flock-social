@@ -28,7 +28,9 @@ const calendar = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'backend
 
 test('a failed plans read is said with a retry, not shown as an empty day', () => {
   expect(app).toMatch(/const loadCalendar = useCallback\(\(\) => \{/);
-  expect(app).toMatch(/\.catch\(\(err\) => setCalendarError\(err\?\.message \|\| 'Your plans are not loading right now\.'\)\)/);
+  // The server's sentence when api.js wrote one for people, the tab's own line
+  // otherwise (userMessage).
+  expect(app).toMatch(/\.catch\(\(err\) => setCalendarError\(userMessage\(err, 'Your plans are not loading right now\.'\)\)\)/);
   expect(calendarScreen).toMatch(/\) : \(calendarError \|\| flocksError\) \? \(/);
   expect(calendarScreen).toMatch(/onClick=\{\(\) => \{ loadFlocks\(\); loadCalendar\(\); \}\}/);
 });

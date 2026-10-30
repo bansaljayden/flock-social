@@ -822,10 +822,14 @@ function lift(open, close) {
 
 const CANCEL_BODY = lift('const cancelFlockPlan = useCallback((flockId) => (', '\n  ), [showToast]);');
 
+// api.js's own: only an error it wrote for people speaks, anything else gets
+// the handler's copy. This suite mocks the module, so the real one is fetched.
+const { userMessage } = jest.requireActual('../services/api');
+
 function runCancel(scope, flockId) {
   // eslint-disable-next-line no-new-func
-  const factory = new Function('setFlockStatus', 'setFlocks', 'showToast', 'flockId', `return (${CANCEL_BODY});`);
-  return factory(scope.setFlockStatus, scope.setFlocks, scope.showToast, flockId);
+  const factory = new Function('setFlockStatus', 'setFlocks', 'showToast', 'userMessage', 'flockId', `return (${CANCEL_BODY});`);
+  return factory(scope.setFlockStatus, scope.setFlocks, scope.showToast, userMessage, flockId);
 }
 
 const cancelScope = (over = {}) => ({
@@ -868,12 +872,20 @@ describe('cancelFlockPlan, lifted out of App.js and executed', () => {
   });
 
   test('a refusal changes nothing, says why, and resolves false', async () => {
+    // As api.js hands a server refusal over: its sentence, marked as written
+    // for people.
     const s = cancelScope({
-      setFlockStatus: jest.fn().mockRejectedValue(new Error('This plan is finished and cannot be reopened')),
+      setFlockStatus: jest.fn().mockRejectedValue(Object.assign(new Error('This plan is finished and cannot be reopened'), { status: 409, userFacing: true })),
     });
     await expect(runCancel(s, 7)).resolves.toBe(false);
     expect(s.setFlocks).not.toHaveBeenCalled();
     expect(s.showToast).toHaveBeenCalledWith('This plan is finished and cannot be reopened', 'error');
+  });
+
+  test("an error nobody wrote for people gets the handler's own words, not its text", async () => {
+    const s = cancelScope({ setFlockStatus: jest.fn().mockRejectedValue(new TypeError("Cannot read properties of undefined (reading 'status')")) });
+    await expect(runCancel(s, 7)).resolves.toBe(false);
+    expect(s.showToast).toHaveBeenCalledWith("Couldn't cancel this plan", 'error');
   });
 
   test('a dead session, which api.js has already announced, is not announced twice', async () => {

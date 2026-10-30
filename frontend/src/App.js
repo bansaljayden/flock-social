@@ -3978,7 +3978,7 @@ const NfcCheckinView = ({ placeId, sig, onViewVenue, onOpenApp }) => {
         // for the website.
         setFailure({
           status: err?.status || 0,
-          message: err?.message || '',
+          message: userMessage(err, ''),
           offline: !!(err?.isOffline || err?.isNetworkError || err?.isTimeout),
         });
         setStatus('error');
@@ -5850,8 +5850,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // the resend budget's longest leg is a day, not "a few minutes"), so render
       // what it said rather than a hardcoded guess that FIX 5 exists to remove.
       // Fall back to the old copy only when the body carried no sentence.
-      if (e?.status === 429) setVerifyNote(e?.message || 'That is a lot of emails. Try again later.');
-      else setVerifyNote(e?.message || 'Could not send it just now. Try again shortly.');
+      if (e?.status === 429) setVerifyNote(userMessage(e, 'That is a lot of emails. Try again later.'));
+      else setVerifyNote(userMessage(e, 'Could not send it just now. Try again shortly.'));
     }
   }, [verifyCooldown, verifyRefused]);
 
@@ -5915,7 +5915,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       const confirmed = await read;
       if (!confirmed && !quiet) setVerifyNote('Not confirmed yet. Open the link in the email, then tap this again.');
     } catch (err) {
-      if (!quiet) setVerifyNote(err?.message || 'Could not check just now. Try again in a moment.');
+      if (!quiet) setVerifyNote(userMessage(err, 'Could not check just now. Try again in a moment.'));
     } finally {
       if (!quiet) setVerifyChecking(false);
     }
@@ -6217,7 +6217,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // toast stays because it is the one case where the app also wants to
       // interrupt: it is asking the user to stop typing.
       setVenueResults([]);
-      setVenueLoadError(err?.message || 'Search is not responding. Try again in a moment.');
+      setVenueLoadError(userMessage(err, 'Search is not responding. Try again in a moment.'));
       if (err.message && (err.message.includes('429') || err.message.toLowerCase().includes('rate') || err.message.toLowerCase().includes('too many'))) {
         showToast('Slow down! Try again in a few seconds', 'error');
       }
@@ -6370,7 +6370,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // friend does not exist. Surface the real sentence, the way the venue
         // search does with venueLoadError.
         setInviteResults([]);
-        setInviteSearchError(err?.message || 'Search is not responding. Try again in a moment.');
+        setInviteSearchError(userMessage(err, 'Search is not responding. Try again in a moment.'));
       }
       finally { if (mine === inviteSeqRef.current) setInviteSearching(false); }
     }, 400);
@@ -6405,7 +6405,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         if (mine !== connectSeqRef.current) return;
         // See handleInviteSearch: a failed search is not an empty result.
         setConnectResults([]);
-        setConnectSearchError(err?.message || 'Search is not responding. Try again in a moment.');
+        setConnectSearchError(userMessage(err, 'Search is not responding. Try again in a moment.'));
       }
       finally { if (mine === connectSeqRef.current) setConnectSearching(false); }
     }, 400);
@@ -6489,7 +6489,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         return next;
       });
       if (needsEmailVerification(err, 'add friends')) return;
-      showToast(err.message || "That friend request didn't send.", 'error');
+      showToast(userMessage(err, "That friend request didn't send."), 'error');
     }
   }, [showToast, needsEmailVerification]);
 
@@ -6517,7 +6517,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // it through addFriendsProps and it renders it in place of "No users
         // found".
         setAddFriendsResults([]);
-        setAddFriendsError(err?.message || 'Search is not responding. Try again in a moment.');
+        setAddFriendsError(userMessage(err, 'Search is not responding. Try again in a moment.'));
       }
       finally { if (mine === addFriendsSeqRef.current) setAddFriendsSearching(false); }
     }, 400);
@@ -6539,7 +6539,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     // Load each independently so one failure doesn't block the rest
     getPendingRequests()
       .then(d => { setPendingRequests(d.requests || []); setPendingRequestsError(''); })
-      .catch(e => { console.error('[AddFriends] Pending:', e.message); setPendingRequestsError(e?.message || 'Your friend requests are not loading right now.'); });
+      .catch(e => { console.error('[AddFriends] Pending:', e.message); setPendingRequestsError(userMessage(e, 'Your friend requests are not loading right now.')); });
     getOutgoingRequests().then(d => {
       const requests = d.requests || [];
       setOutgoingRequests(requests);
@@ -6555,7 +6555,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     }).catch(e => console.error('[AddFriends] Outgoing:', e.message));
     getFriendSuggestions()
       .then(d => { setFriendSuggestions(d.suggestions || []); setFriendSuggestionsError(''); })
-      .catch(e => { console.error('[AddFriends] Suggestions:', e.message); setFriendSuggestionsError(e?.message || 'Quick Add is not loading right now.'); });
+      .catch(e => { console.error('[AddFriends] Suggestions:', e.message); setFriendSuggestionsError(userMessage(e, 'Quick Add is not loading right now.')); });
     // friendStatuses is otherwise written only by sending, accepting and the
     // socket, so nothing seeded it from the server and a reload lost every
     // existing friendship: the search row then offered an Add button for
@@ -6668,7 +6668,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       if (data.user) setFriendStatuses(prev => ({ ...prev, [data.user.id]: data.status || 'pending' }));
       setFriendCodeInput('');
     } catch (err) {
-      if (!needsEmailVerification(err, 'add friends')) showToast(err.message || 'Invalid code', 'error');
+      if (!needsEmailVerification(err, 'add friends')) showToast(userMessage(err, 'Invalid code'), 'error');
     } finally {
       setFriendCodeLoading(false);
     }
@@ -6703,7 +6703,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       if (err?.code === 'unavailable') { setContactsUnavailable(true); return; }
       // 429 never lands here: syncContacts treats a spent allowance as a
       // partial result and reports it through `throttled`.
-      if (!needsEmailVerification(err, 'add friends')) showToast(err.message || 'Could not check your contacts', 'error');
+      if (!needsEmailVerification(err, 'add friends')) showToast(userMessage(err, 'Could not check your contacts'), 'error');
     } finally {
       setContactsLoading(false);
     }
@@ -6737,7 +6737,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       setPhoneLookupUsers(null);
       // The server writes the refusal for a spent allowance, and it says how
       // long to wait. Show it as it came.
-      if (!needsEmailVerification(err, 'add friends')) setPhoneLookupError(err.message || 'That lookup did not go through. Try again.');
+      if (!needsEmailVerification(err, 'add friends')) setPhoneLookupError(userMessage(err, 'That lookup did not go through. Try again.'));
     } finally {
       setPhoneLookupLoading(false);
     }
@@ -6829,7 +6829,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
                   if (data.user) setFriendStatuses(prev => ({ ...prev, [data.user.id]: data.status || 'pending' }));
                 } catch (err) {
                   if (needsEmailVerification(err, 'add friends')) return;
-                  showToast(err.message || 'Could not add that friend. Try again.', 'error');
+                  showToast(userMessage(err, 'Could not add that friend. Try again.'), 'error');
                 }
               } else {
                 setQrScanError('Not a Flock QR code');
@@ -6921,7 +6921,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setFlockInviteFriendsError('');
     getFriends()
       .then((d) => setFlockInviteAllFriends(Array.isArray(d.friends) ? d.friends : []))
-      .catch((err) => setFlockInviteFriendsError(err?.message || "Couldn't load your friends."))
+      .catch((err) => setFlockInviteFriendsError(userMessage(err, "Couldn't load your friends.")))
       .finally(() => setFlockInviteFriendsLoading(false));
   }, []);
 
@@ -7000,7 +7000,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       setFlockInviteSearch('');
     } catch (err) {
       if (needsEmailVerification(err, 'invite people')) return;
-      showToast(err.message || 'Failed to send invites', 'error');
+      showToast(userMessage(err, 'Failed to send invites'), 'error');
     } finally {
       setFlockInviteSending(false);
     }
@@ -7263,7 +7263,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       setSensorData(prev => prev ? { ...prev, recent_checkins: (prev.recent_checkins || 0) + 1 } : prev);
       return res;
     } catch (err) {
-      showToast(err.message || 'Check-in failed', 'error');
+      showToast(userMessage(err, 'Check-in failed'), 'error');
     } finally {
       setCheckinSaving(false);
     }
@@ -7477,7 +7477,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setCalendarError('');
     getCalendarEvents()
       .then(rows => setCalendarEvents(Array.isArray(rows) ? rows : []))
-      .catch((err) => setCalendarError(err?.message || 'Your plans are not loading right now.'))
+      .catch((err) => setCalendarError(userMessage(err, 'Your plans are not loading right now.')))
       .finally(() => setCalendarLoading(false));
   }, []);
   // ON ARRIVAL ONLY. The dependency used to be the expression
@@ -7731,7 +7731,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // plans the user can already see; the error card says the read missed
         // and offers the retry, which is the same rule Past flocks and the
         // venue dashboard lists follow.
-        setFlocksError(err?.message || 'Your flocks are not loading right now.');
+        setFlocksError(userMessage(err, 'Your flocks are not loading right now.'));
       })
       .finally(() => setFlocksLoading(false));
   }, []);
@@ -7826,7 +7826,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // behind a red toast (lifecycle audit, 2026-09-05).
       if (err?.status === 404 || err?.status === 409) {
         setPendingFlockInvites(prev => prev.filter(f => f.id !== flockId));
-        showToast(err.message || 'That plan is no longer open.');
+        showToast(userMessage(err, 'That plan is no longer open.'));
         return;
       }
       // Somebody on the plan has a block with this account. The server says
@@ -7837,10 +7837,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       if (err?.status === 403 && err?.code === 'CANNOT_JOIN') {
         refusedInvitesRef.current.add(`${meRef.current?.id}:${flockId}`);
         setPendingFlockInvites(prev => prev.filter(f => f.id !== flockId));
-        showToast(err.message || 'You cannot join this plan.', 'error');
+        showToast(userMessage(err, 'You cannot join this plan.'), 'error');
         return;
       }
-      showToast(err.message || 'Failed to accept invite', 'error');
+      showToast(userMessage(err, 'Failed to accept invite'), 'error');
     } finally {
       acceptingInviteRef.current = null;
       setAcceptingInviteId(null);
@@ -7885,7 +7885,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // a red toast to be refused again.
       if (err?.status === 404 || err?.status === 409) {
         setDeclinedFlockInvites(prev => prev.filter(f => f.id !== flockId));
-        showToast(err.message || 'That plan is no longer open.');
+        showToast(userMessage(err, 'That plan is no longer open.'));
         return;
       }
       // The same refusal as on an invite card, and the same answer: the
@@ -7893,10 +7893,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       if (err?.status === 403 && err?.code === 'CANNOT_JOIN') {
         refusedInvitesRef.current.add(`${meRef.current?.id}:${flockId}`);
         setDeclinedFlockInvites(prev => prev.filter(f => f.id !== flockId));
-        showToast(err.message || 'You cannot join this plan.', 'error');
+        showToast(userMessage(err, 'You cannot join this plan.'), 'error');
         return;
       }
-      showToast(err.message || 'Failed to join', 'error');
+      showToast(userMessage(err, 'Failed to join'), 'error');
     } finally {
       acceptingInviteRef.current = null;
       setAcceptingInviteId(null);
@@ -7918,7 +7918,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setPastFlocksError('');
     getFlockHistory()
       .then(d => setPastFlocks(Array.isArray(d.flocks) ? d.flocks : []))
-      .catch(err => setPastFlocksError(err.message || "Couldn't load your past flocks."))
+      .catch(err => setPastFlocksError(userMessage(err, "Couldn't load your past flocks.")))
       .finally(() => setPastFlocksLoading(false));
   }, []);
 
@@ -8099,7 +8099,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         showToast('Your new plan is ready, but the invites did not go out. Invite people from the plan.', 'warning');
       }
     } catch (err) {
-      if (!needsEmailVerification(err, 'start a flock')) showToast(err.message || "That didn't get set up. Try again.", 'error');
+      if (!needsEmailVerification(err, 'start a flock')) showToast(userMessage(err, "That didn't get set up. Try again."), 'error');
     } finally {
       setRerunningFlockId(null);
     }
@@ -8112,7 +8112,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   useEffect(() => {
     (takeBootRead('trustedContacts') || getTrustedContacts())
       .then((d) => { setTrustedContacts(d.contacts || []); setTrustedContactsLoaded(true); setTrustedContactsError(''); })
-      .catch((err) => setTrustedContactsError(err?.message || "Your trusted contacts couldn't be loaded."));
+      .catch((err) => setTrustedContactsError(userMessage(err, "Your trusted contacts couldn't be loaded.")));
   }, []);
 
   // Load real user stats on mount (streak, friends)
@@ -8572,7 +8572,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       })
       .catch(err => {
         if (venueDetailReviewsForRef.current !== String(placeId)) return;
-        setVenueDetailReviewsError(err?.message || "Reviews aren't loading right now.");
+        setVenueDetailReviewsError(userMessage(err, "Reviews aren't loading right now."));
       });
   }, []);
 
@@ -9740,7 +9740,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         if (seq !== featuredSeqRef.current) return;
         console.error('[Events] Fetch failed:', err);
         setFeaturedEvents(null);
-        setFeaturedEventsError(err?.message || "Events aren't loading right now.");
+        setFeaturedEventsError(userMessage(err, "Events aren't loading right now."));
       })
       .finally(() => { if (seq === featuredSeqRef.current) setFeaturedEventsLoading(false); });
   }, [userInterests]);
@@ -10090,7 +10090,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         console.error('[Geo] Fallback venue browse failed:', err);
         setAllVenues([]);
         setMapVenuesLoaded(true);
-        setVenueLoadError(err?.message || 'Venues are not loading right now. Try again in a moment.');
+        setVenueLoadError(userMessage(err, 'Venues are not loading right now. Try again in a moment.'));
       });
   }, [venuesToMapPins, requestCrowdScores]);
 
@@ -10133,7 +10133,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // The server's own sentence, which is a real answer: a missing Places
         // key, "Searching too fast. Give it a few seconds.", a 502. It used to
         // be swallowed and replaced with fabricated pins.
-        setVenueLoadError(err?.message || 'Venues are not loading right now. Try again in a moment.');
+        setVenueLoadError(userMessage(err, 'Venues are not loading right now. Try again in a moment.'));
       });
 
     // Fetch featured events (non-blocking)
@@ -10388,7 +10388,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       setCalendarEvents(prev => (prev.some(e => e.id === row.id) ? prev : [...prev, row]));
       if (err?.sessionExpired) return;
       const lead = "That didn't get removed from your calendar.";
-      showToast(err?.message ? `${lead} ${err.message}` : `${lead} Try again.`, 'error');
+      showToast(`${lead} ${userMessage(err, 'Try again.')}`, 'error');
     });
   }, [showToast]);
 
@@ -10422,7 +10422,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         setCalendarEvents(prev => prev.filter(e => e.id !== tempId));
         if (err?.sessionExpired) return;
         const lead = "That didn't get added to your calendar.";
-        showToast(err?.message ? `${lead} ${err.message}` : `${lead} Try again.`, 'error');
+        showToast(`${lead} ${userMessage(err, 'Try again.')}`, 'error');
       });
   }, [colors.navy, showToast, deleteSavedCalendarEvent]);
 
@@ -10497,7 +10497,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           f.id === flockId ? { ...f, votes: normalizeVotes(data?.votes, meRef.current, f.votes) } : f
         )));
       })
-      .catch((err) => setVotesError(err?.message || 'The votes are not loading right now.'))
+      .catch((err) => setVotesError(userMessage(err, 'The votes are not loading right now.')))
       // Both settlements, or a failed load leaves the panel loading for ever.
       .finally(() => setVotesLoadingFor((cur) => (cur === flockId ? null : cur)));
   }, []);
@@ -10570,7 +10570,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       setAiChatMode('bubble');
       showToast(`${newFlock.name} is on. Drop the invite link in your group chat.`);
     } catch (err) {
-      if (!needsEmailVerification(err, 'start a flock')) showToast(err.message || "That didn't get set up. Try again.", 'error');
+      if (!needsEmailVerification(err, 'start a flock')) showToast(userMessage(err, "That didn't get set up. Try again."), 'error');
     } finally {
       birdieBusyRef.current = false;
       setBirdieActionBusy(false);
@@ -10589,7 +10589,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       setAiChatMode('bubble');
       showToast(`Your vote for ${stage.venue.name} is in.`);
     } catch (err) {
-      showToast(err.message || "That vote didn't land. Try again.", 'error');
+      showToast(userMessage(err, "That vote didn't land. Try again."), 'error');
     } finally {
       birdieBusyRef.current = false;
       setBirdieActionBusy(false);
@@ -10644,7 +10644,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // kept after ours rather than replaced by it.
         if (err?.sessionExpired) return;
         const lead = myVote ? "Your vote didn't save." : "Clearing your vote didn't save.";
-        showToast(err?.message ? `${lead} ${err.message}` : `${lead} Try again.`, 'error');
+        showToast(`${lead} ${userMessage(err, 'Try again.')}`, 'error');
       });
   }, [showToast, loadFlockVotes]);
 
@@ -10732,7 +10732,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // Only a lock-in that was on screen and has just been taken back.
         hapticRefused(err, lockingIn && !!previous);
         // A dead session already announced itself through api.js's own toast.
-        if (!err?.sessionExpired) showToast(err?.message || (confirming ? "Couldn't lock this in" : "Couldn't save that venue"), 'error');
+        if (!err?.sessionExpired) showToast(userMessage(err, confirming ? "Couldn't lock this in" : "Couldn't save that venue"), 'error');
         return false;
       });
   }, [showToast]);
@@ -10771,7 +10771,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       .catch((err) => {
         if (previousStatus) setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, status: previousStatus } : f));
         hapticRefused(err, !!previousStatus);
-        if (!err?.sessionExpired) showToast(err?.message || "Couldn't lock this in", 'error');
+        if (!err?.sessionExpired) showToast(userMessage(err, "Couldn't lock this in"), 'error');
         return false;
       });
   }, [showToast]);
@@ -10842,7 +10842,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       })
       .catch((err) => {
         if (previousStatus) setFlocks(prev => prev.map(f => f.id === flockId ? { ...f, status: previousStatus } : f));
-        if (!err?.sessionExpired) showToast(err?.message || "Couldn't mark this done", 'error');
+        if (!err?.sessionExpired) showToast(userMessage(err, "Couldn't mark this done"), 'error');
       });
   }, [showToast, openAttendanceSheet]);
 
@@ -10869,7 +10869,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         return true;
       })
       .catch((err) => {
-        if (!err?.sessionExpired) showToast(err?.message || "Couldn't cancel this plan", 'error');
+        if (!err?.sessionExpired) showToast(userMessage(err, "Couldn't cancel this plan"), 'error');
         return false;
       })
   ), [showToast]);
@@ -11597,7 +11597,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // And it must not look like an empty one to the reader either, as
         // long as the reader is still on this conversation.
         if (historyReadSeqRef.current['last:flock'] === `flock:${flockId}`) {
-          setMessagesError(err?.message || 'This conversation did not load.');
+          setMessagesError(userMessage(err, 'This conversation did not load.'));
         }
       })
       .finally(() => { if (spin && historyReadSeqRef.current['spinner:flock'] === spin) setMessagesLoading(false); });
@@ -11774,7 +11774,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         if (overtaken()) return;
         historyReadAtRef.current[`dm:${userId}`] = 0;
         if (historyReadSeqRef.current['last:dm'] === `dm:${userId}`) {
-          setDmMessagesError(err?.message || 'This conversation did not load.');
+          setDmMessagesError(userMessage(err, 'This conversation did not load.'));
         }
       })
       .finally(() => { if (spin && historyReadSeqRef.current['spinner:dm'] === spin) setDmMessagesLoading(false); });
@@ -11837,7 +11837,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           ? { ...d, messages: prependOlder(d.messages, older) }
           : d)));
       })
-      .catch((err) => showToast(err?.message || "Couldn't load earlier messages. Try again.", 'error'))
+      .catch((err) => showToast(userMessage(err, "Couldn't load earlier messages. Try again."), 'error'))
       .finally(() => setOlderLoading(false));
   }, [showToast]);
 
@@ -11857,7 +11857,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           ? { ...f, messages: prependOlder(f.messages, older) }
           : f)));
       })
-      .catch((err) => showToast(err?.message || "Couldn't load earlier messages. Try again.", 'error'))
+      .catch((err) => showToast(userMessage(err, "Couldn't load earlier messages. Try again."), 'error'))
       .finally(() => setOlderLoading(false));
   }, [showToast]);
 
@@ -12841,7 +12841,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // A window that closed while the strip was on screen: the server said
       // so in words, and the roster refresh takes the strip down.
       refreshFlockRoster(flockId);
-      showToast(err?.message || "Couldn't save that. Try again.", 'error');
+      showToast(userMessage(err, "Couldn't save that. Try again."), 'error');
     }
   }, [showToast, refreshFlockRoster]);
 
@@ -13911,7 +13911,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
             // The server words a moderation refusal ("that image can't be sent")
             // and api.js words the network cases. Silence here is what made a
             // rejected photo look like it had gone through.
-            showToast(err?.message || "That didn't send. Tap it to retry.", 'error');
+            showToast(userMessage(err, "That didn't send. Tap it to retry."), 'error');
             persistFailedFlockMessage(flockId, { id: tempId, sender: 'You', senderId: authUser?.id, time: 'Now', text, reactions: [], message_type: msgType, reply_to: replyQuote, clientId, afterId, ...(image ? { image } : {}), ...(venueData ? { venue_data: venueData } : {}), failed: true });
           },
         });
@@ -14043,7 +14043,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // Put back only into the thread it came from: a notification tap can
       // open another conversation while the request is out.
       if (dmVenueSlotsForRef.current === String(userId)) setDmPinnedVenue(previous);
-      showToast(err?.message || "That didn't unpin.", 'error');
+      showToast(userMessage(err, "That didn't unpin."), 'error');
     }
   }, [dmPinnedVenue, showToast]);
 
@@ -14065,7 +14065,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     } catch (err) {
       // Into the thread it came from only, as the unpin above.
       if (dmVenueSlotsForRef.current === String(userId)) setDmPinnedVenue(previous);
-      showToast(err?.message || 'Could not pin that place. Try again.', 'error');
+      showToast(userMessage(err, 'Could not pin that place. Try again.'), 'error');
     }
   }, [dmPinnedVenue, showToast]);
 
@@ -14270,7 +14270,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         }
         if (err?.sessionExpired) return;
         const lead = hadIt ? "Removing your reaction didn't save." : "Your reaction didn't save.";
-        showToast(err?.message ? `${lead} ${err.message}` : `${lead} Try again.`, 'error');
+        showToast(`${lead} ${userMessage(err, 'Try again.')}`, 'error');
       });
   }, [showToast, refreshFlockReactions]);
 
@@ -14752,7 +14752,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // Only if the failed preview is still what is showing: a later pick
       // that went through must not be undone by this one's failure.
       setProfilePic((cur) => (cur === encoded ? before : cur));
-      showToast(err?.message || "That photo didn't upload. Try again.", 'error');
+      showToast(userMessage(err, "That photo didn't upload. Try again."), 'error');
     }
   }, [cropImageSrc, cropZoom, showToast]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -14851,7 +14851,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       if (stillNewest()) setProfilePic((cur) => (cur === url ? previousPic : cur));
       // A dead session has already announced itself through api.js's own toast.
       if (err?.sessionExpired) return;
-      showToast(err?.message || "That avatar didn't save. Try again.", 'error');
+      showToast(userMessage(err, "That avatar didn't save. Try again."), 'error');
     }
   }, [profilePic, showToast, changePicture]);
 
@@ -14877,7 +14877,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // shows no picture, and this one failing must not restore over it.
       if (stillNewest()) setProfilePic((cur) => (cur === null ? previousPic : cur));
       if (err?.sessionExpired) return;
-      showToast(err?.message || "That photo didn't come off. Try again.", 'error');
+      showToast(userMessage(err, "That photo didn't come off. Try again."), 'error');
     }
   }, [profilePic, showToast, changePicture]);
 
@@ -15098,7 +15098,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     } catch (err) {
       // A failed load must never render as "you have not blocked anyone".
       // That is a claim about the user's data and it would be the wrong one.
-      setBlockedError(err.message || 'Could not load your blocked accounts.');
+      setBlockedError(userMessage(err, 'Could not load your blocked accounts.'));
     } finally {
       setBlockedLoading(false);
     }
@@ -15132,7 +15132,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       } else {
         // The block is still in force, so the row stays exactly as it was and
         // goes back to offering Unblock. Nothing is removed on a guess.
-        showToast(err.message || 'Could not unblock. Try again.', 'error');
+        showToast(userMessage(err, 'Could not unblock. Try again.'), 'error');
       }
     } finally {
       setUnblockingId(null);
@@ -15319,7 +15319,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       setUserProfileTarget(null);
       setProfileBlockStep(false);
     } catch (err) {
-      showToast(err.message || 'Could not block. Try again.', 'error');
+      showToast(userMessage(err, 'Could not block. Try again.'), 'error');
     } finally {
       setProfileBlocking(false);
     }
@@ -15338,7 +15338,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // read failed and offers the retry, and the list already on screen (if
       // any) is left alone rather than deleted by a failed refresh.
       console.warn('Failed to load trusted contacts:', err);
-      setTrustedContactsError(err?.message || "Your trusted contacts couldn't be loaded.");
+      setTrustedContactsError(userMessage(err, "Your trusted contacts couldn't be loaded."));
     } finally {
       setSafetyLoading(false);
     }
@@ -15394,7 +15394,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       setEditingContact(null);
       loadTrustedContacts();
     } catch (err) {
-      showToast(err.message || 'Failed to save contact', 'error');
+      showToast(userMessage(err, 'Failed to save contact'), 'error');
     } finally {
       setSafetyLoading(false);
     }
@@ -15420,7 +15420,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       }
       // Any other failure keeps the row and says why: the server's sentence
       // when it wrote one, or api.js's plain line for a dropped connection.
-      showToast(err?.message || 'Could not remove that contact. Try again.', 'error');
+      showToast(userMessage(err, 'Could not remove that contact. Try again.'), 'error');
     }
   }, [showToast]);
 
@@ -15537,7 +15537,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // nobody either, the server answers the tap with nothingToCancel and the
       // band clears itself.
       if (err?.status === 502) rememberSosAlert(Date.now(), false);
-      const line = err?.message || 'Failed to send alert';
+      const line = userMessage(err, 'Failed to send alert');
       // The offline and timeout failures are client-authored and were the
       // only SOS failures that did not name 911; every server refusal does.
       // The most likely 1am failure gets the same guidance as the rest.
@@ -15593,7 +15593,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     } catch (err) {
       if (err?.data?.nothingToCancel) {
         rememberSosAlert(0);
-        showToast(err.message || 'There is no recent alert to stand down.');
+        showToast(userMessage(err, 'There is no recent alert to stand down.'));
         return;
       }
       // Everything else leaves the alert standing, so the band stays.
@@ -15607,7 +15607,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // think they are in danger sit with an un-withdrawn alarm, is the one
       // substitution on this screen that could matter.
       const serverSaid = typeof err?.data?.error === 'string' ? err.data.error : null;
-      showToast(serverSaid || err?.message || "That didn't send. Your contacts still have your alert, so call them.", 'error');
+      showToast(serverSaid || userMessage(err, "That didn't send. Your contacts still have your alert, so call them."), 'error');
     } finally {
       setSosStandingDown(false);
     }
@@ -15672,7 +15672,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       if (err?.status === 429) {
         // A lockout or the export meter. The server's sentence names which;
         // this used to fall into the "password is not right" branch.
-        setExportError(err?.message || 'Too many tries. Wait a few minutes and try again.');
+        setExportError(userMessage(err, 'Too many tries. Wait a few minutes and try again.'));
       } else if (reauth === 'reauth') {
         // The sheet says what to do and offers the account's own sign-in in
         // place (components/auth/OAuthReconfirm.js), so there is no second
@@ -15686,7 +15686,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       } else if (err?.sessionExpired) {
         setShowExportData(false);
       } else {
-        setExportError(err?.message || "That didn't work. Try again in a moment.");
+        setExportError(userMessage(err, "That didn't work. Try again in a moment."));
       }
     } finally {
       setExportingData(false);
@@ -15739,7 +15739,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           ? 'Flock needs location permission to share where you are.'
           : "Couldn't get a location fix. Try again in a moment.", 'error');
       } else {
-        showToast(err?.message || "That didn't send. Try again.", 'error');
+        showToast(userMessage(err, "That didn't send. Try again."), 'error');
       }
     } finally {
       setSosAlertSending(false);
@@ -16065,7 +16065,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // reaches it through newDmModalProps and it renders it in place of
         // "No users found".
         setDmModalResults([]);
-        setDmSearchError(err?.message || 'Search is not responding. Try again in a moment.');
+        setDmSearchError(userMessage(err, 'Search is not responding. Try again in a moment.'));
       }
       finally { if (mine === dmModalSeqRef.current) setDmModalSearching(false); }
     }, 400);
@@ -16093,7 +16093,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       sendFriendRequest(user.id).catch((err) => {
         if (err?.sessionExpired) return;
         const lead = "Your message is here, but the friend request didn't send.";
-        showToast(err?.message ? `${lead} ${err.message}` : `${lead} You can add them from their profile.`, 'error');
+        showToast(`${lead} ${userMessage(err, 'You can add them from their profile.')}`, 'error');
       });
       // Un-delete if previously deleted
       if (deletedDmUserIds.includes(user.id)) {
@@ -16263,7 +16263,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       // The list already on screen is left alone, exactly as loadFlocks leaves
       // its own. The empty state is what has to be suppressed, not the data.
       // Overtaken, the later read owns the error line and the loading flag.
-      .catch((err) => { if (!overtaken()) setDmsError(err?.message || 'Your messages are not loading right now.'); })
+      .catch((err) => { if (!overtaken()) setDmsError(userMessage(err, 'Your messages are not loading right now.')); })
       .finally(() => { if (!overtaken()) setDmsLoading(false); });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -16435,7 +16435,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // whichever conversation was open last, and showing one chat's votes
         // inside another is a worse lie than showing none.
         setDmVenueVotes([]);
-        setDmVenueVotesError(err?.message || "The votes in this chat aren't loading right now.");
+        setDmVenueVotesError(userMessage(err, "The votes in this chat aren't loading right now."));
       });
   }, []);
 
@@ -16638,7 +16638,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         if (NOT_CONNECTED_HINT.test(err?.message || '')) {
           setDmNotConnected(prev => (prev[userId] ? prev : { ...prev, [userId]: true }));
         } else {
-          showToast(err?.message || "That message didn't send. Tap it to retry.", 'error');
+          showToast(userMessage(err, "That message didn't send. Tap it to retry."), 'error');
         }
         settle({ pending: false, failed: true });
       });

@@ -177,13 +177,15 @@ describe('removing a trusted contact that is already gone', () => {
     const toasts = [];
     // eslint-disable-next-line no-new-func
     const handler = new Function(
-      'deleteTrustedContact', 'setTrustedContacts', 'showToast', 'window',
+      'deleteTrustedContact', 'setTrustedContacts', 'showToast', 'window', 'userMessage',
       `return (${body});`
     )(
       deleteImpl,
       (fn) => { rows = fn(rows); },
       (msg, type) => toasts.push([msg, type || 'info']),
-      { confirm: () => true }
+      { confirm: () => true },
+      // api.js's own: an error's text is shown only when api.js wrote it for people.
+      jest.requireActual('../services/api').userMessage
     );
     return { handler, rows: () => rows, toasts };
   }
@@ -208,13 +210,22 @@ describe('removing a trusted contact that is already gone', () => {
 
   test('any other failure keeps the row and shows the reason it was given', async () => {
     const t = run(async () => {
+      // api.js's network failure: its own sentence, marked as one.
       const err = new Error("Couldn't reach Flock. Give it a second and try again.");
       err.status = 0;
+      err.isNetworkError = true;
       throw err;
     });
     await t.handler(1);
     expect(t.rows().map((c) => c.id)).toEqual([1, 2]);
     expect(t.toasts).toEqual([["Couldn't reach Flock. Give it a second and try again.", 'error']]);
+  });
+
+  test("a failure whose text nobody wrote for people keeps the row and says the handler's own words", async () => {
+    const t = run(async () => { throw new TypeError("Cannot read properties of undefined (reading 'id')"); });
+    await t.handler(1);
+    expect(t.rows().map((c) => c.id)).toEqual([1, 2]);
+    expect(t.toasts).toEqual([['Could not remove that contact. Try again.', 'error']]);
   });
 
   test('a success removes the row, as before', async () => {

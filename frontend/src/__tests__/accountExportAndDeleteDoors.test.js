@@ -25,7 +25,9 @@ test('an Apple or Google account is not asked for a password it does not have', 
 });
 
 test('a lockout is not a wrong password, and a cancelled share is not a saved file', () => {
-  expect(app).toMatch(/if \(err\?\.status === 429\) \{[\s\S]{0,300}setExportError\(err\?\.message \|\| 'Too many tries\. Wait a few minutes and try again\.'\);/);
+  // The server's own sentence for the lockout when api.js marks it as written
+  // for people (userMessage), this line otherwise.
+  expect(app).toMatch(/if \(err\?\.status === 429\) \{[\s\S]{0,300}setExportError\(userMessage\(err, 'Too many tries\. Wait a few minutes and try again\.'\)\);/);
   expect(dataExport).toMatch(/if \(err && err\.name === 'AbortError'\) return 'cancelled';/);
   expect(app).toMatch(/if \(how === 'cancelled'\) \{[\s\S]{0,400}setExportError\('Nothing was saved\. Tap Get my data to open the share sheet again\.'\);/);
 });

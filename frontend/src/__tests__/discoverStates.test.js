@@ -33,7 +33,10 @@ test('a failed crowd read ends the skeleton and says so', () => {
 });
 
 test('a search that found nothing or failed clears the last city\'s pins', () => {
-  const fn = app.slice(app.indexOf('const data = await searchVenues(enhanced, loc);'), app.indexOf('setVenueLoadError(err?.message || \'Search is not responding'));
+  const start = app.indexOf('const data = await searchVenues(enhanced, loc);');
+  const end = app.indexOf('setVenueLoadError(userMessage(err, \'Search is not responding', start);
+  expect(end).toBeGreaterThan(start);
+  const fn = app.slice(start, end);
   expect((fn.match(/setAllVenues\(\[\]\);/g) || []).length).toBe(2);
 });
 

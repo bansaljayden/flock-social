@@ -23,8 +23,10 @@ test('the two list reads keep their own error, cleared on a landed read', () => 
   expect(app).toContain("const [friendSuggestionsError, setFriendSuggestionsError] = useState('');");
   expect(app).toContain("setPendingRequests(d.requests || []); setPendingRequestsError('');");
   expect(app).toContain("setFriendSuggestions(d.suggestions || []); setFriendSuggestionsError('');");
-  expect(app).toMatch(/setPendingRequestsError\(e\?\.message \|\| 'Your friend requests are not loading right now\.'\)/);
-  expect(app).toMatch(/setFriendSuggestionsError\(e\?\.message \|\| 'Quick Add is not loading right now\.'\)/);
+  // In the server's words when api.js wrote them for people (userMessage),
+  // in the screen's own otherwise; never an error's raw text.
+  expect(app).toContain("setPendingRequestsError(userMessage(e, 'Your friend requests are not loading right now.'))");
+  expect(app).toContain("setFriendSuggestionsError(userMessage(e, 'Quick Add is not loading right now.'))");
 });
 
 test('the screen says the error, offers a retry, and suppresses the empty state while it stands', () => {

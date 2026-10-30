@@ -270,8 +270,10 @@ function liftListener(source, opener) {
 
 /** Run lifted source against named stand-ins for what it closes over. */
 function runLifted(src, scope) {
+  // userMessage is api.js's own (App.js imports it): a catch shows an error's
+  // text only when api.js wrote it for people.
   // eslint-disable-next-line no-new-func
-  const full = { localeTime, localeDate, localeDateTime, ...scope };
+  const full = { localeTime, localeDate, localeDateTime, userMessage: api.userMessage, ...scope };
   return new Function(...Object.keys(full), src)(...Object.values(full));
 }
 
@@ -1099,7 +1101,7 @@ describe("the same account reacting on two devices keeps the reaction the server
     // eslint-disable-next-line no-new-func
     const factory = new Function(
       'useCallback', 'setShowReactionPicker', 'meRef', 'flocksRef', 'setFlocks', 'isServerId',
-      'removeReaction', 'addReaction', 'showToast', 'refreshFlockReactions',
+      'removeReaction', 'addReaction', 'showToast', 'refreshFlockReactions', 'userMessage',
       `${source}\nreturn addReactionToMessage;`
     );
     const flocksRef = { get current() { return state.flocks; } };
@@ -1108,7 +1110,8 @@ describe("the same account reacting on two devices keeps the reaction the server
     const handler = factory(
       (fn) => fn, () => {}, { current: { id: ME, name: 'Ava' } }, flocksRef, setFlocks, H.isServerId,
       reject, reject, (message) => calls.toasts.push(message),
-      (flockId, messageId) => calls.refresh.push([flockId, messageId])
+      (flockId, messageId) => calls.refresh.push([flockId, messageId]),
+      api.userMessage
     );
     handler(7, 40, '❤️');
     return new Promise((resolve) => setTimeout(() => resolve({ state, calls }), 0));
@@ -1140,7 +1143,9 @@ describe("the same account reacting on two devices keeps the reaction the server
     const { state, calls } = await runReaction({ failWith: err(500, 'Failed to add reaction') });
     expect(state.flocks[0].messages[0].reactions).toEqual([]);
     expect(calls.refresh).toEqual([]);
-    expect(calls.toasts).toHaveLength(1);
+    // A 5xx's internal wording is not a sentence for people (api.js), so the
+    // toast says the action and asks again rather than "Failed to add reaction".
+    expect(calls.toasts).toEqual(["Your reaction didn't save. Try again."]);
   });
 });
 
@@ -1475,9 +1480,11 @@ describe('two reads of the DM list answering out of order', () => {
     expect(run.state.error).toBe('');
     expect(run.state.loading).toEqual([true, true, false]);
     const third = run.load();
-    run.reads[2].reject(new Error('The request timed out.'));
+    // As api.js builds a timeout: its own sentence, marked as a network
+    // failure, so it is the one shown.
+    run.reads[2].reject(Object.assign(new Error('That took too long. Check your signal and try again.'), { isTimeout: true, isNetworkError: true }));
     await third;
-    expect(run.state.error).toBe('The request timed out.');
+    expect(run.state.error).toBe('That took too long. Check your signal and try again.');
     expect(run.state.loading[run.state.loading.length - 1]).toBe(false);
     // The list on screen is left as the last good answer had it.
     expect(run.state.threads.map((d) => d.userId)).toEqual([5]);
@@ -1928,7 +1935,8 @@ describe("a send's failure is decided by the newest state, whatever the transpor
   const delivered = [srv(20, 'before'), srv(21, 'on my way')];
   // What api.js rejects with when a request's answer never comes.
   const TOOK_TOO_LONG = 'That took too long. Check your signal and try again.';
-  const lostAnswer = () => Object.assign(new Error(TOOK_TOO_LONG), { isTimeout: true });
+  // api.js's timeoutError: its own sentence, marked as a network failure.
+  const lostAnswer = () => Object.assign(new Error(TOOK_TOO_LONG), { isTimeout: true, isNetworkError: true });
   // The same account saying "ok" from another device: the server echoes it to
   // this device too, under that device's own client id.
   const okFromAnotherDevice = () => flockWire(21, { message_text: 'ok', client_id: 'cAnotherDevice', status: 'sent' });
@@ -2503,7 +2511,8 @@ describe('the chat flags belong to the conversation on screen', () => {
     const read = load(7, { showSpinner: true });
     reads[0].reject(new Error('Server error'));
     await read;
-    expect(state.errors).toEqual(['Server error']);
+    // Said in the screen's words: "Server error" was never written for people.
+    expect(state.errors).toEqual(['This conversation did not load.']);
     expect(spinner).toEqual([true, false]);
   });
 

@@ -289,6 +289,11 @@ return needsAction;`);
    3. Accepting an invite ends with the real row
    ═══════════════════════════════════════════════════════════════════════════ */
 
+// api.js's userMessage, the real one, for the handlers below: an error's
+// text is shown only when api.js wrote it for people, so the refusals here are
+// shaped the way api.js hands a server's sentence over (userFacing).
+const USER_MESSAGE = jest.requireActual('../services/api').userMessage;
+
 describe('joining from an invite card', () => {
   /**
    * Build the real handler with stand ins. `useCallback` is the identity, and
@@ -336,6 +341,9 @@ describe('joining from an invite card', () => {
       'refusedInvitesRef',
       'hapticSuccess',
       'acceptingInviteRef', 'setAcceptingInviteId', 'joinNavRef', 'openChatAfterJoin',
+      // api.js's own (2026-10-30): an error's text reaches the toast only
+      // when api.js wrote it for people.
+      'userMessage',
       `${source}\nreturn handleAcceptFlockInvite;`
     );
     const handler = factory(
@@ -366,6 +374,7 @@ describe('joining from an invite card', () => {
       (v) => { calls.accepting.push(v); },
       joinNavRef,
       openChatAfterJoin,
+      USER_MESSAGE,
     );
     return {
       handler,
@@ -448,7 +457,7 @@ describe('joining from an invite card', () => {
   it('a refused join refetches nothing and says what happened', () => {
     // A refetch after a failure would paper over the refusal with a list that
     // looks unchanged for a reason nobody stated.
-    const h = buildAccept({ invite: PREVIEW, acceptRejects: new Error('Flock is full') });
+    const h = buildAccept({ invite: PREVIEW, acceptRejects: Object.assign(new Error('Flock is full'), { status: 400, userFacing: true }) });
     return h.handler(41).then(() => {
       expect(h.calls.loadFlocks).toBe(0);
       expect(h.flocks).toEqual([]);
@@ -467,7 +476,7 @@ describe('joining from an invite card', () => {
   });
 
   /** What api.js throws for the server's refusal of a blocked pair. */
-  const cannotJoin = () => Object.assign(new Error('You cannot join this plan.'), { status: 403, code: 'CANNOT_JOIN' });
+  const cannotJoin = () => Object.assign(new Error('You cannot join this plan.'), { status: 403, code: 'CANNOT_JOIN', userFacing: true });
 
   it('a plan somebody on it has a block with this account takes the card away, and says so', () => {
     // The card stayed, and every tap was refused with the same toast: the
@@ -484,7 +493,7 @@ describe('joining from an invite card', () => {
   });
 
   it('any other 403 keeps the card: only the server\'s code means the plan is closed to this account', () => {
-    const h = buildAccept({ invite: PREVIEW, acceptRejects: Object.assign(new Error('Nope'), { status: 403 }) });
+    const h = buildAccept({ invite: PREVIEW, acceptRejects: Object.assign(new Error('Nope'), { status: 403, userFacing: true }) });
     return h.handler(41).then(() => {
       expect(h.pending.map((f) => f.id)).toEqual([41]);
       expect(h.refused.size).toBe(0);
@@ -500,6 +509,10 @@ describe('joining from an invite card', () => {
       'useCallback', 'acceptFlockInvite', 'declinedFlockInvites', 'setDeclinedFlockInvites',
       'setFlocks', 'showToast', 'loadFlocks', 'needsEmailVerification', 'storedGuestTokens', 'meRef',
       'refusedInvitesRef', 'acceptingInviteRef', 'setAcceptingInviteId', 'joinNavRef', 'openChatAfterJoin', 'hapticSuccess',
+      // A decline still on the wire is waited out first (none here), a
+      // refused decline's card is taken off the invites on a join, and the
+      // toast goes through api.js's userMessage.
+      'decliningInvitesRef', 'setPendingFlockInvites', 'userMessage',
       `${liftCallback('handleRejoinDeclinedFlock')}\nreturn handleRejoinDeclinedFlock;`
     )(
       (fn) => fn,
@@ -518,6 +531,9 @@ describe('joining from an invite card', () => {
       { current: { screen: 'main', tab: 'chat' } },
       () => { throw new Error('a refused join opens nothing'); },
       () => { throw new Error('a refused join does not buzz success'); },
+      { current: new Map() },
+      () => {},
+      USER_MESSAGE,
     );
     return handler(41).then(() => {
       expect(declined).toEqual([]);
@@ -542,10 +558,14 @@ describe('joining from an invite card', () => {
       'useCallback', 'acceptFlockInvite', 'declinedFlockInvites', 'setDeclinedFlockInvites',
       'setFlocks', 'showToast', 'loadFlocks', 'needsEmailVerification', 'storedGuestTokens', 'meRef',
       'refusedInvitesRef', 'acceptingInviteRef', 'setAcceptingInviteId', 'joinNavRef', 'openChatAfterJoin', 'hapticSuccess',
+      // A decline still on the wire is waited out first (none here), a
+      // refused decline's card is taken off the invites on a join, and the
+      // toast goes through api.js's userMessage.
+      'decliningInvitesRef', 'setPendingFlockInvites', 'userMessage',
       `${liftCallback('handleRejoinDeclinedFlock')}\nreturn handleRejoinDeclinedFlock;`
     )(
       (fn) => fn,
-      () => Promise.reject(Object.assign(new Error('This plan is finished and cannot be reopened'), { status: 409 })),
+      () => Promise.reject(Object.assign(new Error('This plan is finished and cannot be reopened'), { status: 409, userFacing: true })),
       declined,
       (fn) => { declined = typeof fn === 'function' ? fn(declined) : fn; },
       () => { throw new Error('nothing is added to the list on a refusal'); },
@@ -560,6 +580,9 @@ describe('joining from an invite card', () => {
       { current: { screen: 'main', tab: 'chat' } },
       () => { throw new Error('a refused join opens nothing'); },
       () => { throw new Error('a refused join does not buzz success'); },
+      { current: new Map() },
+      () => {},
+      USER_MESSAGE,
     );
     return handler(41).then(() => {
       expect(declined).toEqual([]);
@@ -629,7 +652,7 @@ describe('joining from an invite card', () => {
   });
 
   it('a refused join opens nothing, keeps the card, and lets the next tap through', async () => {
-    const h = buildAccept({ invite: PREVIEW, acceptRejects: new Error('Flock is full') });
+    const h = buildAccept({ invite: PREVIEW, acceptRejects: Object.assign(new Error('Flock is full'), { status: 400, userFacing: true }) });
     await h.handler(41);
     expect(h.calls.screens).toEqual([]);
     expect(h.pending.map((f) => f.id)).toEqual([41]);
@@ -639,7 +662,7 @@ describe('joining from an invite card', () => {
   });
 
   it('a plan that closed in the meantime takes its card away and opens nothing', async () => {
-    const closed = Object.assign(new Error('This plan is no longer open'), { status: 409 });
+    const closed = Object.assign(new Error('This plan is no longer open'), { status: 409, userFacing: true });
     const h = buildAccept({ invite: PREVIEW, acceptRejects: closed });
     await h.handler(41);
     expect(h.pending).toEqual([]);

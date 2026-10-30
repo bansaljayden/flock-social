@@ -568,7 +568,9 @@ describe('a message that leaves the composer arrives, fails, or says which', () 
     // Moderation refusals and network errors both land here. Silence is what
     // made a rejected photo look like it had gone through.
     const httpCatch = transmit.slice(transmit.indexOf('} catch (err) {'));
-    expect(httpCatch).toMatch(/showToast\(err\?\.message \|\|/);
+    // In the server's or api.js's words when written for people
+    // (userMessage), and the send's own line otherwise.
+    expect(httpCatch).toMatch(/showToast\(userMessage\(err, "That didn't send\. Tap it to retry\."\), 'error'\)/);
     expect(httpCatch).toMatch(/\{ \.\.\.m, pending: false, failed: true \}/);
   });
 

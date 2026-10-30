@@ -260,13 +260,14 @@ describe('a venue search that fails', () => {
   test('a failed nearby load says what failed and shows no pins', () => {
     const fn = region(APP, 'const loadVenuesAtLocation = useCallback', 'const requestUserLocation');
     expect(fn).toMatch(/setAllVenues\(\[\]\)/);
-    expect(fn).toMatch(/setVenueLoadError\(err\?\.message/);
+    // The server's sentence when api.js wrote one for people (userMessage).
+    expect(fn).toMatch(/setVenueLoadError\(userMessage\(err, 'Venues are not loading right now\. Try again in a moment\.'\)\)/);
     expect(fn).toMatch(/setVenueLoadError\(''\)/);
   });
 
   test('a failed search is not reported as a search that found nothing', () => {
     const fn = region(APP, 'setVenueSearching(true);', '}, [enhanceQuery, venuesToMapPins');
-    expect(fn).toMatch(/setVenueLoadError\(err\?\.message/);
+    expect(fn).toMatch(/setVenueLoadError\(userMessage\(err, 'Search is not responding\. Try again in a moment\.'\)\)/);
     // The old copy survives, but only for a genuinely empty result.
     expect(APP).toMatch(/venueResults\.length === 0 && !venueLoadError/);
     expect(APP).toMatch(/venueResults\.length === 0 && venueLoadError/);

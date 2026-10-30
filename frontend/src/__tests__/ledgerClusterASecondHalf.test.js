@@ -238,7 +238,9 @@ describe('A11: a failed people search shows the error, not "No users found"', ()
   it('all four search handlers catch the error and record it', () => {
     SETTERS.forEach((setter) => {
       // Set from the error, not to a constant: the venueLoadError pattern.
-      expect(APP).toMatch(new RegExp(`${setter}\\(err\\?\\.message \\|\\|`));
+      // Through userMessage since 2026-10-30, so it is the server's sentence
+      // when api.js wrote one for people and the search's own line otherwise.
+      expect(APP).toMatch(new RegExp(`${setter}\\(userMessage\\(err, 'Search is not responding\\. Try again in a moment\\.'\\)\\)`));
     });
     // And each handler still swallows the results to empty, so the two states
     // (empty vs errored) are distinct rather than one masking the other.

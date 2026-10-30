@@ -77,3 +77,29 @@ test("the client's own network sentences are display copy", async () => {
   expect(api.userMessage(err, 'fallback')).toBe(err.message);
   expect(err.message).not.toMatch(/Failed to fetch/);
 });
+
+test("App.js puts no error's own text on screen: every catch that shows one goes through userMessage", () => {
+  // A toast, an error line or a note written straight from `err.message ||`
+  // trusts that the error came from api.js, and a TypeError in the same try,
+  // a native plugin or the socket does not. Every such catch in App.js went
+  // through userMessage(err, '<its own copy>') on 2026-10-30. The only ones
+  // left are in code other work owns (the money loader and the venue owner's
+  // dashboard), named here so a new one anywhere else fails this test.
+  const fs = require('fs');
+  const path = require('path');
+  const app = fs.readFileSync(path.join(__dirname, '..', 'App.js'), 'utf8').replace(/\r\n/g, '\n');
+  const lines = app.split('\n');
+  const OWNED_ELSEWHERE = new Set(['loadMoneyState', 'handleRequestVerification', 'handleSetBusyNow', 'handleClearBusyNow', 'handleVenueLogoPick']);
+  const shown = /\b(?:showToast|set[A-Z]\w*(?:Error|Note))\((?:serverSaid \|\| )?(?:err|e)\??\.message \|\|/;
+  const offenders = [];
+  let owner = null;
+  lines.forEach((line, i) => {
+    const decl = line.match(/^ {2}const ([A-Za-z0-9_]+) = /);
+    if (decl) owner = decl[1];
+    if (shown.test(line) && !OWNED_ELSEWHERE.has(owner)) offenders.push(`${i + 1} (${owner}): ${line.trim()}`);
+  });
+  expect(offenders).toEqual([]);
+  // And the sweep is not vacuous: userMessage is imported and used widely.
+  expect(app).toMatch(/withdrawBirdieConsent, userMessage \} from '\.\/services\/api';/);
+  expect((app.match(/userMessage\(err?, /g) || []).length).toBeGreaterThan(60);
+});

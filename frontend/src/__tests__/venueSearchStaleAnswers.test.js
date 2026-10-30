@@ -28,6 +28,9 @@ const SCOPE = [
   'enhanceQuery', 'userLocation', 'searchCacheRef', 'setAllVenues',
   'venuesToMapPins', 'setActiveVenue', 'requestCrowdScores',
   'setShowSearchDropdown', 'searchVenues', 'setVenueLoadError', 'showToast',
+  // api.js's own: a failed search is said in its words only when api.js
+  // wrote them for people.
+  'userMessage',
 ];
 
 function compileSearch(deps) {
@@ -62,6 +65,7 @@ function harness() {
     searchVenues: (q) => new Promise((resolve, reject) => { pending.set(q, { resolve, reject }); }),
     setVenueLoadError: (v) => { state.error = v; },
     showToast: () => {},
+    userMessage: jest.requireActual('../services/api').userMessage,
   };
   return { box, state, pending, cache, doVenueSearch: compileSearch(deps) };
 }
@@ -175,7 +179,8 @@ test('the search for what the box says still answers as before', async () => {
   // And a failure of the current search is still said.
   h.box.current = 'bars';
   const failing = h.doVenueSearch('bars');
-  h.pending.get('bars').reject(new Error('Search is not responding.'));
+  // As api.js hands the server's sentence over (routes/venueSearch.js writes one).
+  h.pending.get('bars').reject(Object.assign(new Error('Search is not responding.'), { status: 503, userFacing: true }));
   await failing;
   expect(h.state.error).toBe('Search is not responding.');
   expect(h.state.searching).toBe(false);
