@@ -71,6 +71,7 @@ import { forgetTables, nextIncomingState, nextTablesState, nextWaitsState, remem
 // Whether the viewer's own Tonight pulse is still on. See lib/pulse.js.
 import { livePulse, pulseEndsAt, pulseTapAction } from './lib/pulse';
 import { socketRefusalToShow } from './lib/socketRefusals';
+import { cameraErrorCopy } from './lib/cameraErrorCopy';
 // PaywallSheet is NOT imported here; it is fetched, at the lazy block below.
 // The paywall is dormant behind PAYWALL_ENABLED, so for every session that
 // ships today the sheet is a chunk nothing can open.
@@ -6838,7 +6839,8 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         setQrScanError(
           failedToLoad
             ? "Couldn't load the scanner. Check your connection and try again."
-            : (err.message || 'Could not access camera')
+            // The chat camera's sentences, not the library's text.
+            : cameraErrorCopy(err, isNativeShell())
         );
       }
     }, 300);
@@ -14467,7 +14469,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         // camera, and the teardown below would close a viewfinder opened since.
         if (cameraSessionRef.current !== session) return;
         console.error('Camera access error:', err);
-        showToast(err.name === 'NotAllowedError' ? 'Camera permission denied. Allow it in browser settings' : 'Could not access camera: ' + (err.message || err.name), 'error');
+        // A fixed sentence per failure (lib/cameraErrorCopy.js), never the
+        // browser's or the bridge's own text, and a permission line that
+        // names the Settings switch inside the app and the browser's outside.
+        showToast(cameraErrorCopy(err, isNativeShell()), 'error');
         stopCameraTracks();
         setShowCameraViewfinder(null);
       }
