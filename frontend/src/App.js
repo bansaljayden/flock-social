@@ -4423,6 +4423,12 @@ const withRowAt = (list, at, row) => {
   return [...list.slice(0, i), row, ...list.slice(i)];
 };
 
+// How many messages a plan's pin bar holds, as backend routes/messages.js
+// MAX_PINS has it. Only used to avoid drawing a pin the server is certain to
+// refuse; the server's own count, which includes pins this reader cannot see,
+// is the one that decides.
+const FLOCK_PIN_SEATS = 3;
+
 // A venue promotion or venue event: MARKED, not removed. The owner keeps
 // seeing their own copy with the reason on it, which is the asymmetry
 // routes/venueDashboard.js deliberately built (a hidden review is somebody
@@ -13891,21 +13897,72 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setFlocks(prev => prev.map(f => (f.id === flockId ? { ...f, pins: kept } : f)));
   }, []);
 
+  /* ON THE TAP, THEN THE SERVER'S LIST. Both used to wait for the answer
+     before the bar moved, so Pin and Unpin looked like taps that missed on a
+     slow network. The bar changes at once now, and the whole list the server
+     answers with replaces it (applyPins), so anything else that moved
+     meanwhile is the server's to say. A refusal takes back this tap alone: a
+     pin drawn here comes off, a pin taken off goes back where it was. A pin
+     the bar has no seat for (FLOCK_PIN_SEATS) is not drawn at all, so the
+     ceiling refusal never flashes a fourth pin first. One write per message
+     at a time. */
+  const pinBusyRef = useRef(new Set());
+  const editPins = useCallback((flockId, edit) => {
+    setFlocks(prev => prev.map(f => (f.id === flockId ? { ...f, pins: edit(f.pins || []) } : f)));
+  }, []);
+
   const pinMessage = useCallback(async (flockId, messageId) => {
+    const key = `${flockId}:${messageId}`;
+    if (pinBusyRef.current.has(key)) return;
+    pinBusyRef.current.add(key);
+    const flock = flocksRef.current.find(f => f.id === flockId);
+    const pins = (flock && flock.pins) || [];
+    const message = flock ? (flock.messages || []).find(m => sameContentId(m.id, messageId)) : null;
+    const isThisPin = (p) => sameContentId(p.messageId != null ? p.messageId : p.id, messageId);
+    const me = meRef.current;
+    // The row the server will answer with, built from the message on screen
+    // (backend routes/messages.js pinPayload).
+    const drawn = message && !pins.some(isThisPin) && pins.length < FLOCK_PIN_SEATS
+      ? {
+        id: messageId,
+        messageId,
+        text: typeof message.text === 'string' ? message.text : '',
+        messageType: message.message_type || 'text',
+        senderId: message.senderId != null ? message.senderId : null,
+        senderName: message.sender === 'You' ? (me?.name || null) : (message.sender || null),
+        pinnedBy: me?.id != null ? me.id : null,
+      }
+      : null;
+    if (drawn) editPins(flockId, (list) => (list.some(isThisPin) ? list : [...list, drawn]));
     try {
       applyPins(flockId, await apiPinFlockMessage(flockId, messageId));
     } catch (err) {
-      showToast(err?.message || "That didn't pin.", 'error');
+      if (drawn) editPins(flockId, (list) => list.filter((p) => p !== drawn));
+      if (!err?.sessionExpired) showToast(userMessage(err, "That didn't pin. Try again."), 'error');
+    } finally {
+      pinBusyRef.current.delete(key);
     }
-  }, [applyPins, showToast]);
+  }, [applyPins, editPins, showToast]);
 
   const unpinMessage = useCallback(async (flockId, messageId) => {
+    const key = `${flockId}:${messageId}`;
+    if (pinBusyRef.current.has(key)) return;
+    pinBusyRef.current.add(key);
+    const flock = flocksRef.current.find(f => f.id === flockId);
+    const pins = (flock && flock.pins) || [];
+    const isThisPin = (p) => sameContentId(p.messageId != null ? p.messageId : p.id, messageId);
+    const at = pins.findIndex(isThisPin);
+    const taken = at === -1 ? null : pins[at];
+    if (taken) editPins(flockId, (list) => list.filter((p) => !isThisPin(p)));
     try {
       applyPins(flockId, await apiUnpinFlockMessage(flockId, messageId));
     } catch (err) {
-      showToast(err?.message || "That didn't unpin.", 'error');
+      if (taken) editPins(flockId, (list) => withRowAt(list, at, taken));
+      if (!err?.sessionExpired) showToast(userMessage(err, "That didn't unpin. Try again."), 'error');
+    } finally {
+      pinBusyRef.current.delete(key);
     }
-  }, [applyPins, showToast]);
+  }, [applyPins, editPins, showToast]);
 
   /* Take a DM's pinned venue down. Optimistic, because the strip is the thing
      the person just asked to be rid of and leaving it up while a request flies

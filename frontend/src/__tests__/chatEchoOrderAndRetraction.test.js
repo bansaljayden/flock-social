@@ -215,6 +215,7 @@ const HELPERS = [
   'FAILED_MSG_KEY', 'readFailedStore', 'writeFailedStore', 'readFailedFlockMessages',
   'writeFailedFlockMessages', 'persistFailedFlockMessage', 'removeFailedFlockMessage',
   'TYPING_REFRESH_MS', 'TYPING_EXPIRE_MS', 'NOT_CONNECTED_HINT',
+  'withRowAt', 'FLOCK_PIN_SEATS',
 ];
 const H = (() => {
   const chunk = HELPERS.map((n) => extractDeclaration(appSource, n)).join('\n');
@@ -1506,6 +1507,21 @@ describe('a pin or unpin answer cut before a block does not put their pin back',
       showToast: (message) => state.toasts.push(message),
       apiPinFlockMessage: answer,
       apiUnpinFlockMessage: answer,
+      // Both taps change the bar before the answer and read the flock through
+      // flocksRef to do it (tapsAnswerAtOnce.test.js runs that half). The
+      // server's answer still lands through applyPins, which is what these
+      // tests are about.
+      pinBusyRef: { current: new Set() },
+      editPins: runLifted(`${liftCallback(appSource, 'editPins')}\nreturn editPins;`, {
+        useCallback: (fn) => fn,
+        setFlocks: setterOn(state, 'flocks'),
+      }),
+      flocksRef: { get current() { return state.flocks; } },
+      meRef: { current: { id: ME, name: 'Me' } },
+      sameContentId: H.sameContentId,
+      withRowAt: H.withRowAt,
+      FLOCK_PIN_SEATS: H.FLOCK_PIN_SEATS,
+      userMessage: (err, fallback) => fallback,
     };
     return {
       state,

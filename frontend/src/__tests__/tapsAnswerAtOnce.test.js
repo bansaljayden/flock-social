@@ -607,3 +607,99 @@ describe('answering a friend request moves the row on the tap', () => {
     expect(screenSrc).not.toMatch(/confirmClick\(e\); handleAcceptFriendRequest/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Pin and unpin in a plan's chat (App.js pinMessage, unpinMessage)
+// ---------------------------------------------------------------------------
+describe('pinning a message changes the bar on the tap', () => {
+  const pin = (id, text) => ({ id, messageId: id, text, messageType: 'text', senderId: 2, senderName: 'Bo', pinnedBy: 2 });
+  const msg = (id, text, extra = {}) => ({ id, sender: 'Bo', senderId: 2, text, message_type: 'text', reactions: [], ...extra });
+
+  function setup({ pins = [pin(10, 'door code 4411')], answer } = {}) {
+    const state = {
+      flocks: [{
+        id: 5,
+        pins,
+        messages: [msg(10, 'door code 4411'), msg(11, 'venmo @bo'), msg(12, '', { sender: 'You', senderId: 9, message_type: 'image' }), msg(13, 'nine?')],
+      }],
+    };
+    const calls = { api: [], toasts: [] };
+    const scope = {
+      useCallback: (fn) => fn,
+      useRef: (v) => ({ current: v }),
+      setFlocks: setterOn(state, 'flocks'),
+      flocksRef: { get current() { return state.flocks; } },
+      meRef: { current: { id: 9, name: 'Jo' } },
+      sameContentId: lift(statementAt(APP, 'const sameContentId = (a, b) =>'), 'sameContentId', {}),
+      withRowAt: lift(statementAt(APP, 'const withRowAt = (list, at, row) =>'), 'withRowAt', {}),
+      FLOCK_PIN_SEATS: lift(statementAt(APP, 'const FLOCK_PIN_SEATS ='), 'FLOCK_PIN_SEATS', {}),
+      applyPins: (flockId, list) => setterOn(state, 'flocks')((prev) => prev.map((f) => (f.id === flockId ? { ...f, pins: list } : f))),
+      apiPinFlockMessage: (flockId, id) => { calls.api.push(['pin', id]); return answer('pin', id); },
+      apiUnpinFlockMessage: (flockId, id) => { calls.api.push(['unpin', id]); return answer('unpin', id); },
+      showToast: (message, type) => calls.toasts.push([message, type]),
+      userMessage,
+    };
+    const src = [
+      statementAt(APP, 'const pinBusyRef = useRef('),
+      statementAt(APP, 'const editPins = useCallback('),
+      statementAt(APP, 'const pinMessage = useCallback('),
+      statementAt(APP, 'const unpinMessage = useCallback('),
+    ].join('\n');
+    const handlers = lift(src, '{ pinIt: pinMessage, unpinIt: unpinMessage }', scope);
+    const bar = () => state.flocks[0].pins.map((p) => p.id);
+    return { state, calls, bar, ...handlers };
+  }
+
+  test('a pin is on the bar before the server answers, built the way the server builds it, then the server\'s list wins', async () => {
+    const wait = held();
+    const { state, bar, pinIt } = setup({ answer: () => wait.promise });
+    const done = pinIt(5, 12);
+    expect(bar()).toEqual([10, 12]);
+    expect(state.flocks[0].pins[1]).toEqual({ id: 12, messageId: 12, text: '', messageType: 'image', senderId: 9, senderName: 'Jo', pinnedBy: 9 });
+    wait.resolve([pin(10, 'door code 4411'), pin(12, ''), pin(13, 'nine?')]);
+    await done;
+    expect(bar()).toEqual([10, 12, 13]);
+  });
+
+  test("a refused pin comes off, in the server's words", async () => {
+    const { calls, bar, pinIt } = setup({ answer: () => Promise.reject(refusal('That message is no longer there to pin', { status: 404 })) });
+    await pinIt(5, 11);
+    expect(bar()).toEqual([10]);
+    expect(calls.toasts).toEqual([['That message is no longer there to pin', 'error']]);
+  });
+
+  test('a fourth pin is never drawn: the server says why', async () => {
+    const full = [pin(10, 'a'), pin(11, 'b'), pin(13, 'c')];
+    const wait = held();
+    const { calls, bar, pinIt } = setup({ pins: full, answer: () => wait.promise });
+    const done = pinIt(5, 12);
+    expect(bar()).toEqual([10, 11, 13]);
+    expect(calls.api).toEqual([['pin', 12]]);
+    wait.reject(refusal('Only 3 messages can be pinned. Unpin one first.', { status: 409 }));
+    await done;
+    expect(bar()).toEqual([10, 11, 13]);
+    expect(calls.toasts).toEqual([['Only 3 messages can be pinned. Unpin one first.', 'error']]);
+  });
+
+  test('an unpin leaves the bar on the tap and goes back where it was when refused', async () => {
+    const pins = [pin(10, 'a'), pin(11, 'b'), pin(13, 'c')];
+    const wait = held();
+    const { calls, bar, unpinIt } = setup({ pins, answer: () => wait.promise });
+    const done = unpinIt(5, 11);
+    expect(bar()).toEqual([10, 13]);
+    wait.reject(crash());
+    await done;
+    expect(bar()).toEqual([10, 11, 13]);
+    expect(calls.toasts).toEqual([["That didn't unpin. Try again.", 'error']]);
+  });
+
+  test('a second tap on the same message while the first is out sends nothing', async () => {
+    const wait = held();
+    const { calls, pinIt } = setup({ answer: () => wait.promise });
+    const first = pinIt(5, 11);
+    await pinIt(5, 11);
+    expect(calls.api).toEqual([['pin', 11]]);
+    wait.resolve([pin(10, 'a'), pin(11, 'b')]);
+    await first;
+  });
+});
