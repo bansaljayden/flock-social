@@ -108,9 +108,11 @@ const slice = (from, to) => {
 
 const PAY_SHEET = slice(REGION_START, REGION_END);
 
-// The Settle Up handler, from the control that owns it to its own catch.
+// The Settle Up handler, from its declaration to its own catch. It starts at
+// the declaration since the sheet opens on the tap (with its loading shapes),
+// before the lookup rather than after it.
 const SETTLE_UP = slice(
-  'const result = await getPaymentLinks(selectedFlockId);',
+  'const startSettleUp = async () => {',
   'Could not load payment links.'
 );
 
@@ -437,9 +439,58 @@ describe('tapping Settle Up opens the sheet instead of settling anything', () =>
   });
 
   test('it opens the one sheet for every payee, however many handles they saved', () => {
+    expect(SETTLE_UP).toMatch(/const result = await getPaymentLinks\(selectedFlockId\);/);
     expect(SETTLE_UP).toMatch(/setPaymentOptions\(\{ \.\.\.result, methods \}\);/);
     expect(SETTLE_UP).toMatch(/setShowPaymentPicker\(true\);/);
     expect(count(SETTLE_UP, /setShowPaymentPicker\(true\)/g)).toBe(1);
+  });
+
+  test('the sheet opens on the tap, loading, and closes again if the lookup fails', () => {
+    // Opened before the await, with the shape PaymentSheets draws as grey
+    // rows, and taken down in the catch rather than left loading forever.
+    const opened = SETTLE_UP.indexOf('setShowPaymentPicker(true);');
+    expect(SETTLE_UP.indexOf("setPaymentOptions({ loading: true, methods: [] });")).toBeLessThan(opened);
+    expect(opened).toBeLessThan(SETTLE_UP.indexOf('await getPaymentLinks('));
+    const failed = SETTLE_UP.slice(SETTLE_UP.indexOf('} catch (err) {'));
+    expect(failed).toMatch(/setShowPaymentPicker\(false\);\s*setPaymentOptions\(null\);/);
+    expect(PAY_SHEET).toMatch(/const loading = paymentOptions\.loading === true;/);
+    // While loading, no sentence about the payee: neither the no-handle line
+    // nor a name the sheet has not been told.
+    expect(PAY_SHEET).toMatch(/\{loading \? null : methods\.length > 0 \? methods\.map/);
+  });
+
+  test('rendered while loading: grey shapes and a Close, and no claim about the payee', () => {
+    const PaymentSheets = require('../components/PaymentSheets').default;
+    const close = jest.fn();
+    const sheet = (paymentOptions) => render(React.createElement(PaymentSheets, {
+      showPaymentPicker: true,
+      setShowPaymentPicker: close,
+      paymentOptions,
+      paymentFallback: null,
+      setPaymentFallback: jest.fn(),
+      startPaymentHandoff: jest.fn(),
+      showToast: jest.fn(),
+      colors: { navy: '#16283d' },
+      styles: { gradientButton: {} },
+      DialogBehavior: () => null,
+      paymentRoutes: () => ({ webUrl: null }),
+      paymentWebHost: () => null,
+      openExternal: jest.fn(),
+    }));
+    const loading = sheet({ loading: true, methods: [] });
+    const text = loading.container.textContent;
+    expect(text).toContain('Loading the ways to pay.');
+    expect(text).not.toMatch(/has not added|Pay them|\$0\.00/);
+    expect(loading.container.querySelectorAll('.skeleton').length).toBeGreaterThan(0);
+    loading.getByText('Close').click();
+    expect(close).toHaveBeenCalledWith(false);
+    loading.unmount();
+    // The answer replaces the shapes with the payee, the amount and the rows.
+    const ready = sheet({ payTo: 'Ava', amount: 12.5, note: 'Friday', methods: [{ method: 'zelle', label: 'Zelle', handle: 'ava@example.com' }] });
+    expect(ready.container.querySelectorAll('.skeleton').length).toBe(0);
+    expect(ready.container.textContent).toContain('Pay Ava');
+    expect(ready.container.textContent).toContain('$12.50');
+    expect(ready.container.textContent).toContain('Pay with Zelle');
   });
 
   test('methods that could do nothing when tapped are still filtered out first', () => {

@@ -30,8 +30,12 @@ test('settled-ness is read live, not from a snapshot that stops moving', () => {
   // responses carry it, and the header takes the larger of the two sources.
   expect(chat).toMatch(/const visibleSettled = shares\.filter\(\(sh\) => sh\.settled\)\.length;/);
   expect(chat).toMatch(/Math\.max\(visibleSettled, Number\(bill\?\.settledCount\) \|\| 0\)/);
-  expect(chat).toMatch(/\.\.\.tallyOf\(settled\),/);
-  expect(chat).toMatch(/\.\.\.tallyOf\(unsettled\),/);
+  // Both settle paths flip the caller's row on the tap and take the server's
+  // tally once it answers, through the one row writer (setMyShare), which
+  // spreads the tally over the bill.
+  expect(chat).toMatch(/setMyShare\(\{\}, tallyOf\(settled\)\);/);
+  expect(chat).toMatch(/setMyShare\(\{\}, tallyOf\(unsettled\)\);/);
+  expect(chat).toMatch(/const setMyShare = \(patch, tally = \{\}\) => setBillSplit\(prev => \{[\s\S]{0,120}\.\.\.tally,/);
   expect(chat).toMatch(/settled: false, settledAt: null, outstanding: owedOn\(s\)/);
   const app = read('App.js');
   expect(app).toMatch(/onBillTally\(\(data\) => \{/);
@@ -78,7 +82,9 @@ test('the header pill has words for a closed budget', () => {
 test('a ghost commit re-reads the bill, the 409 speaks, and the two toasts say what happened', () => {
   const chat = read('screens/ChatDetail.js');
   expect(chat).toMatch(/await ghostCommit\(selectedFlockId\);\s*[\s\S]{0,300}?const d = await getBillSplit\(selectedFlockId\); setBillSplit\(d\.bill\);/);
-  expect(chat).toMatch(/showToast\(err\?\.message \|\| 'Could not load payment links\./);
+  // The server's sentence when it wrote one for people, the plain fallback
+  // otherwise (services/api.js userMessage).
+  expect(chat).toMatch(/showToast\(userMessage\(err, 'Could not load payment links\./);
   expect(chat).toMatch(/'Nobody left to remind'/);
   expect(chat).toMatch(/Skipped\. You will not count toward the group number\./);
 });

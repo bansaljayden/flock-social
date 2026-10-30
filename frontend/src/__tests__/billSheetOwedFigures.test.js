@@ -52,6 +52,8 @@ jest.mock('../services/api', () => ({
   submitBudget: jest.fn(),
   trackNotificationPermission: jest.fn(),
   unsettleShare: jest.fn(),
+  // The real one: what a refusal shows is part of what these tests watch.
+  userMessage: jest.requireActual('../services/api').userMessage,
 }));
 jest.mock('../services/socket', () => ({
   leaveFlock: jest.fn(),
@@ -704,6 +706,10 @@ test('the lock-in hint does not say "unlocks"', () => {
 describe('taking a settlement back restores the figure Settle Up asks for', () => {
   const api = require('../services/api');
   const UNDO = 'That was a mistake, I have not paid';
+  // Every write the sheet made to the bill, in order: the flip on the tap,
+  // then the server's tally or the row put back.
+  const applied = (setBillSplit, start) => setBillSplit.mock.calls
+    .reduce((b, [u]) => (typeof u === 'function' ? u(b) : u), start);
 
   test('the local reducer recomputes outstanding from the share and its credit', async () => {
     // GET serves a settled row with outstanding 0; flipping the flag alone
@@ -717,8 +723,12 @@ describe('taking a settlement back restores the figure Settle Up asks for', () =
     ]);
     mount(before, { setBillSplit });
     fireEvent.click(screen.getByText(UNDO));
-    await waitFor(() => expect(setBillSplit).toHaveBeenCalledTimes(1));
-    const after = setBillSplit.mock.calls[0][0](before);
+    // Unpaid on the tap, before the server has said anything.
+    expect(setBillSplit).toHaveBeenCalledTimes(1);
+    expect(setBillSplit.mock.calls[0][0](before).shares.find((s) => s.userId === 9))
+      .toMatchObject({ settled: false, settledAt: null, outstanding: 70 });
+    await waitFor(() => expect(setBillSplit).toHaveBeenCalledTimes(2));
+    const after = applied(setBillSplit, before);
     const jay = after.shares.find((s) => s.userId === 9);
     expect(jay.settled).toBe(false);
     expect(jay.settledAt).toBeNull();
@@ -737,8 +747,12 @@ describe('taking a settlement back restores the figure Settle Up asks for', () =
     ]);
     mount(before, { setBillSplit });
     fireEvent.click(screen.getByText('Mark as Paid (cash or other)'));
-    await waitFor(() => expect(setBillSplit).toHaveBeenCalledTimes(1));
-    const after = setBillSplit.mock.calls[0][0](before);
+    // Paid on the tap.
+    expect(setBillSplit).toHaveBeenCalledTimes(1);
+    expect(setBillSplit.mock.calls[0][0](before).shares.find((s) => s.userId === 9))
+      .toMatchObject({ settled: true, outstanding: 0 });
+    await waitFor(() => expect(setBillSplit).toHaveBeenCalledTimes(2));
+    const after = applied(setBillSplit, before);
     expect(after.shares.find((s) => s.userId === 9)).toMatchObject({ settled: true, outstanding: 0 });
     expect(after).toMatchObject({ shareCount: 2, settledCount: 2, fullySettled: true });
   });
@@ -752,23 +766,25 @@ describe('taking a settlement back restores the figure Settle Up asks for', () =
     ], { shareCount: 3, settledCount: 3, fullySettled: true });
     mount(before, { setBillSplit });
     fireEvent.click(screen.getByText(UNDO));
-    await waitFor(() => expect(setBillSplit).toHaveBeenCalledTimes(1));
-    const after = setBillSplit.mock.calls[0][0](before);
+    await waitFor(() => expect(setBillSplit).toHaveBeenCalledTimes(2));
+    const after = applied(setBillSplit, before);
     expect(after.shareCount).toBe(3);
     expect(after.settledCount).toBe(3);
   });
 
   // Leaving the chat runs setBillSplit(null) in App.js. A settle or undo that
   // answers after that used to throw "Cannot read properties of null (reading
-  // 'shares')" inside the updater; both updaters now hand null straight back.
+  // 'shares')" inside the updater; every updater now hands null straight back.
   test('a settle that lands after the chat was left leaves the cleared bill cleared', async () => {
     api.settleShare.mockResolvedValueOnce({ settled: true, shareCount: 2, settledCount: 2, fullySettled: true });
     const setBillSplit = jest.fn();
     mount(bill([share(1, 'Ava', 100), share(9, 'Jay', 100, { paidAmount: 30, outstanding: 70 })]), { setBillSplit });
     fireEvent.click(screen.getByText('Mark as Paid (cash or other)'));
-    await waitFor(() => expect(setBillSplit).toHaveBeenCalledTimes(1));
-    expect(() => setBillSplit.mock.calls[0][0](null)).not.toThrow();
-    expect(setBillSplit.mock.calls[0][0](null)).toBeNull();
+    await waitFor(() => expect(setBillSplit).toHaveBeenCalledTimes(2));
+    for (const [update] of setBillSplit.mock.calls) {
+      expect(() => update(null)).not.toThrow();
+      expect(update(null)).toBeNull();
+    }
   });
 
   test('an undo that lands after the chat was left leaves the cleared bill cleared', async () => {
@@ -779,9 +795,105 @@ describe('taking a settlement back restores the figure Settle Up asks for', () =
       share(9, 'Jay', 100, { paidAmount: 30, outstanding: 0, settled: true, settledAt: 'now' }),
     ]), { setBillSplit });
     fireEvent.click(screen.getByText(UNDO));
-    await waitFor(() => expect(setBillSplit).toHaveBeenCalledTimes(1));
-    expect(() => setBillSplit.mock.calls[0][0](null)).not.toThrow();
-    expect(setBillSplit.mock.calls[0][0](null)).toBeNull();
+    await waitFor(() => expect(setBillSplit).toHaveBeenCalledTimes(2));
+    for (const [update] of setBillSplit.mock.calls) {
+      expect(() => update(null)).not.toThrow();
+      expect(update(null)).toBeNull();
+    }
+  });
+
+  test('a refused Mark as Paid puts the row back as it was and says so once', async () => {
+    api.settleShare.mockRejectedValueOnce(new TypeError("undefined is not an object (evaluating 'r.settled')"));
+    const setBillSplit = jest.fn();
+    const setFlocks = jest.fn();
+    const showToast = jest.fn();
+    const before = bill([
+      share(1, 'Ava', 100, { settled: true, outstanding: 0 }),
+      share(9, 'Jay', 100, { paidAmount: 30, outstanding: 70 }),
+    ]);
+    mount(before, { setBillSplit, setFlocks, showToast });
+    fireEvent.click(screen.getByText('Mark as Paid (cash or other)'));
+    await waitFor(() => expect(showToast).toHaveBeenCalledWith('Could not mark your share paid. Try again.', 'error'));
+    expect(setBillSplit).toHaveBeenCalledTimes(2);
+    expect(applied(setBillSplit, before).shares.find((s) => s.userId === 9))
+      .toMatchObject({ settled: false, outstanding: 70 });
+    // Still owed, so the Nest is not told otherwise.
+    expect(setFlocks).not.toHaveBeenCalled();
+    expect(showToast).toHaveBeenCalledTimes(1);
+  });
+
+  test('a refused undo puts the row back, with the server\'s own sentence', async () => {
+    api.unsettleShare.mockRejectedValueOnce(Object.assign(new Error('You paid this one with credit from an earlier bill.'), { status: 409, userFacing: true }));
+    const setBillSplit = jest.fn();
+    const showToast = jest.fn();
+    const before = bill([
+      share(1, 'Ava', 100, { settled: true, outstanding: 0 }),
+      share(9, 'Jay', 100, { paidAmount: 30, outstanding: 0, settled: true, settledAt: 'now' }),
+    ]);
+    mount(before, { setBillSplit, showToast });
+    fireEvent.click(screen.getByText(UNDO));
+    await waitFor(() => expect(showToast).toHaveBeenCalledWith('You paid this one with credit from an earlier bill.', 'error'));
+    expect(applied(setBillSplit, before).shares.find((s) => s.userId === 9))
+      .toMatchObject({ settled: true, settledAt: 'now', outstanding: 0 });
+  });
+
+  test('a double tap on Mark as Paid is one request and one toast', async () => {
+    let answer;
+    api.settleShare.mockImplementationOnce(() => new Promise((resolve) => { answer = resolve; }));
+    const showToast = jest.fn();
+    mount(bill([
+      share(1, 'Ava', 100, { settled: true, outstanding: 0 }),
+      share(9, 'Jay', 100, { paidAmount: 30, outstanding: 70 }),
+    ]), { setBillSplit: jest.fn(), showToast });
+    const button = screen.getByText('Mark as Paid (cash or other)');
+    fireEvent.click(button);
+    fireEvent.click(button);
+    expect(api.settleShare).toHaveBeenCalledTimes(1);
+    answer({ settled: true, shareCount: 2, settledCount: 2, fullySettled: true });
+    await waitFor(() => expect(showToast).toHaveBeenCalledWith('Marked as settled'));
+    expect(showToast).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('Settle Up opens the pay sheet on the tap', () => {
+  const api = require('../services/api');
+  const owing = () => bill([
+    share(1, 'Ava', 100, { settled: true, outstanding: 0 }),
+    share(9, 'Jay', 100, { paidAmount: 30, outstanding: 70 }),
+  ]);
+  const actionable = () => ({ actionable: true });
+
+  test('loading at once, filled when the links arrive, one lookup however fast the taps', async () => {
+    let answer;
+    api.getPaymentLinks.mockImplementationOnce(() => new Promise((resolve) => { answer = resolve; }));
+    const setShowPaymentPicker = jest.fn();
+    const setPaymentOptions = jest.fn();
+    mount(owing(), { setShowPaymentPicker, setPaymentOptions, paymentRoutes: actionable });
+    const button = screen.getByRole('button', { name: /^Settle Up/ });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    // Open before anything has come back, in its loading shape.
+    expect(setPaymentOptions).toHaveBeenCalledWith({ loading: true, methods: [] });
+    expect(setShowPaymentPicker).toHaveBeenCalledWith(true);
+    expect(api.getPaymentLinks).toHaveBeenCalledTimes(1);
+    const links = { payTo: 'Ava', amount: 70, note: 'Friday', methods: [{ method: 'venmo' }] };
+    answer(links);
+    await waitFor(() => expect(setPaymentOptions).toHaveBeenLastCalledWith(links));
+    expect(setShowPaymentPicker).toHaveBeenCalledTimes(1);
+  });
+
+  test('a failed lookup closes the sheet again and points at Mark as Paid', async () => {
+    api.getPaymentLinks.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    const setShowPaymentPicker = jest.fn();
+    const setPaymentOptions = jest.fn();
+    const showToast = jest.fn();
+    mount(owing(), { setShowPaymentPicker, setPaymentOptions, showToast, paymentRoutes: actionable });
+    fireEvent.click(screen.getByRole('button', { name: /^Settle Up/ }));
+    await waitFor(() => expect(showToast).toHaveBeenCalledWith('Could not load payment links. Use "Mark as Paid" after paying.', 'error'));
+    expect(setShowPaymentPicker).toHaveBeenLastCalledWith(false);
+    expect(setPaymentOptions).toHaveBeenLastCalledWith(null);
+    // And nothing was recorded as paid.
+    expect(api.settleShare).not.toHaveBeenCalled();
   });
 });
 

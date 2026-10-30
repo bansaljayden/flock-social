@@ -144,6 +144,13 @@ export default function BillCard({
     if (typeof fn === 'function') fn(e);
   };
 
+  // ONE ACTION AT A TIME. While the parent has any of this card's actions on
+  // the wire (`pendingAction`), every control here is held, not only the one
+  // that was pressed. A settle or an undo changes the row on the tap, so the
+  // control that takes its place would otherwise accept a second tap the
+  // parent is going to ignore. The pressed one says what it is doing.
+  const busy = pendingAction != null;
+
   // ---------------------------------------------------------------- title
   // The shell prints the viewer's estimated share, because that is the only
   // number that means anything before a bill exists. It is the settled budget
@@ -240,8 +247,8 @@ export default function BillCard({
           type="button"
           className="hit44"
           onClick={stop(onCommit)}
-          disabled={pendingAction === 'commit'}
-          style={{ ...actionStyle, opacity: pendingAction === 'commit' ? 0.6 : 1 }}
+          disabled={busy}
+          style={{ ...actionStyle, opacity: busy ? 0.6 : 1 }}
         >
           {pendingAction === 'commit' ? 'Committing' : `Commit ${shellFigure}`}
         </button>
@@ -263,8 +270,8 @@ export default function BillCard({
               type="button"
               className="hit44"
               onClick={stop(onRemind)}
-              disabled={pendingAction === 'remind'}
-              style={{ ...linkStyle, opacity: pendingAction === 'remind' ? 0.6 : 1 }}
+              disabled={busy}
+              style={{ ...linkStyle, opacity: busy ? 0.6 : 1 }}
             >
               {pendingAction === 'remind' ? 'Reminding' : 'Remind'}
             </button>
@@ -289,8 +296,8 @@ export default function BillCard({
               type="button"
               className="hit44"
               onClick={stop(onUndo)}
-              disabled={pendingAction === 'undo'}
-              style={{ ...linkStyle, opacity: pendingAction === 'undo' ? 0.6 : 1 }}
+              disabled={busy}
+              style={{ ...linkStyle, opacity: busy ? 0.6 : 1 }}
             >
               Undo
             </button>
@@ -313,8 +320,8 @@ export default function BillCard({
         type="button"
         className="hit44"
         onClick={stop(onSettle)}
-        disabled={pendingAction === 'settle'}
-        style={{ ...actionStyle, opacity: pendingAction === 'settle' ? 0.6 : 1 }}
+        disabled={busy}
+        style={{ ...actionStyle, opacity: busy ? 0.6 : 1 }}
       >
         {pendingAction === 'settle' ? 'Settling' : label}
       </button>

@@ -137,12 +137,16 @@ describe('the row carries its own card', () => {
     // the bill row when an ended plan's estimate stopped offering Commit, and
     // that card reads `m.closed` for the same reason.
     // billRemind joined the bill row when the payer's card grew Remind: the
-    // card reads `m.remind`, never the screen's per-flock state.
-    for (const screenValue of ['whoIsHere.', 'billForCard', 'pollVoteRows', 'pollLockedName', 'nudgeForCard', 'planClosed', 'billRemind']) {
+    // card reads `m.remind`, never the screen's per-flock state. The bill
+    // action on the wire (billPending, read as billBusy) joined it when the
+    // card's Settle up, Commit and Undo started holding while one is out: the
+    // card reads `m.pending`.
+    for (const screenValue of ['whoIsHere.', 'billForCard', 'pollVoteRows', 'pollLockedName', 'nudgeForCard', 'planClosed', 'billRemind', 'billPending', 'billBusy']) {
       expect(renderer).not.toContain(screenValue);
     }
     expect(chatDetailSrc).toMatch(/\{ id: WHO_ROW_ID, message_type: 'system', who: whoIsHere \}/);
-    expect(chatDetailSrc).toMatch(/\{ id: BILL_ROW_ID, message_type: 'system', bill: billForCard, closed: planClosed, remind: billRemind\[selectedFlockId\] \|\| null \}/);
+    expect(chatDetailSrc).toMatch(/\{ id: BILL_ROW_ID, message_type: 'system', bill: billForCard, closed: planClosed, remind: billRemind\[selectedFlockId\] \|\| null, pending: billBusy \}/);
+    expect(renderer).toMatch(/pendingAction=\{m\.pending \|\| \(m\.remind === 'working' \? 'remind' : null\)\}/);
     expect(chatDetailSrc).toMatch(/\{ id: POLL_ROW_ID, message_type: 'system', poll: \{ rows: pollVoteRows, lockedName: pollLockedName, closed: planClosed \} \}/);
   });
 });

@@ -195,9 +195,19 @@ describe('the map card reads only its own crowd data', () => {
 // 2. Bill updaters after the chat was left (rendered in billSheetOwedFigures)
 // ---------------------------------------------------------------------------
 
-test('both bill updaters in ChatDetail hand a cleared bill straight back', () => {
+test('every bill updater in ChatDetail hands a cleared bill straight back', () => {
+  // Mark as Paid and the undo used to carry one updater each. Both flip the
+  // caller's row on the tap now, take the server's tally when it answers and
+  // put the row back on a refusal, and all of that goes through the one row
+  // writer, setMyShare, which is the only functional updater left. So: one
+  // updater, guarded, and both paths writing through it.
+  const updaters = CHAT.match(/setBillSplit\(prev =>/g) || [];
   const guarded = CHAT.match(/setBillSplit\(prev => \{\s*if \(!prev\) return prev;/g) || [];
-  expect(guarded).toHaveLength(2);
+  expect(guarded).toHaveLength(1);
+  expect(updaters).toHaveLength(guarded.length);
+  expect(CHAT).toMatch(/const setMyShare = \(patch, tally = \{\}\) => setBillSplit\(prev => \{\s*if \(!prev\) return prev;/);
+  expect(CHAT).toMatch(/setMyShare\(\{\}, tallyOf\(settled\)\);/);
+  expect(CHAT).toMatch(/setMyShare\(\{\}, tallyOf\(unsettled\)\);/);
   expect(CHAT).not.toMatch(/setBillSplit\(prev => \(\{\s*\.\.\.prev,/);
 });
 

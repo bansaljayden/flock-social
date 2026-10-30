@@ -538,6 +538,40 @@ describe('BillCard, the posted bill', () => {
   });
 });
 
+describe('BillCard while one of its actions is on the wire', () => {
+  test('the pressed action says what it is doing and takes no second tap', () => {
+    const onSettle = jest.fn();
+    render(<BillCard bill={realBill()} viewerId={3} onSettle={onSettle} pendingAction="settle" />);
+    const btn = screen.getByRole('button', { name: 'Settling' });
+    expect(btn).toBeDisabled();
+    fireEvent.click(btn);
+    expect(onSettle).not.toHaveBeenCalled();
+  });
+
+  test('a commit on the wire reads Committing', () => {
+    const shell = { id: 9, hasPayer: false, totalAmount: 200, totalWithTip: 200, tipPercent: 0, paidBy: { id: null, name: null }, fullySettled: false, settledCount: 0, shareCount: 1, shares: [] };
+    render(<BillCard bill={shell} viewerId={3} estimatedShare={40} onCommit={() => {}} pendingAction="commit" />);
+    expect(screen.getByRole('button', { name: 'Committing' })).toBeDisabled();
+  });
+
+  test('whatever is on the wire holds the control that stands in its place', () => {
+    // Mark as Paid from the sheet flips the row to Paid on the tap; the Undo
+    // that appears in its place is held until the server answers, rather
+    // than taking a tap the screen is going to ignore.
+    const onUndo = jest.fn();
+    render(<BillCard bill={realBill()} viewerId={2} onSettle={() => {}} onUndo={onUndo} pendingAction="paid" />);
+    const undo = screen.getByRole('button', { name: 'Undo' });
+    expect(undo).toBeDisabled();
+    fireEvent.click(undo);
+    expect(onUndo).not.toHaveBeenCalled();
+  });
+
+  test('with nothing on the wire every control takes its tap', () => {
+    render(<BillCard bill={realBill()} viewerId={3} onSettle={() => {}} pendingAction={null} />);
+    expect(screen.getByRole('button', { name: 'Settle up $16.90' })).not.toBeDisabled();
+  });
+});
+
 describe('BillCard, the ghost state before a payer exists', () => {
   const shell = (over = {}) => ({
     id: 9,

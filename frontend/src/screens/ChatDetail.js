@@ -161,7 +161,7 @@
  */
 import React from 'react';
 import { useStableFn as useStableFnShared } from '../components/chat/useStableFn';
-import { leaveFlock as apiLeaveFlock, createBillSplit, createFlockInviteLink, getFlockMessageImage, getPaymentLinks, ghostCommit, lockBudget, resetBudget, sendBillReminder, sendBudgetReminder, settleShare, submitBudget, trackNotificationPermission, unsettleShare, getBillSplit, isOffline as isDeviceOffline } from '../services/api';
+import { leaveFlock as apiLeaveFlock, createBillSplit, createFlockInviteLink, getFlockMessageImage, getPaymentLinks, ghostCommit, lockBudget, resetBudget, sendBillReminder, sendBudgetReminder, settleShare, submitBudget, trackNotificationPermission, unsettleShare, getBillSplit, isOffline as isDeviceOffline, userMessage } from '../services/api';
 import { getSocket, leaveFlock } from '../services/socket';
 import { getNotificationStatus, requestNotificationPermission } from '../services/firebase';
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
@@ -1427,6 +1427,15 @@ export default function ChatDetail({
        the guard for the reason every hook here is. */
     const [billRemind, setBillRemind] = React.useState({});
     const billRemindingRef = React.useRef(null);
+    /* THE OTHER BILL ACTIONS WHILE ONE IS ON THE WIRE, as { id, action }:
+       'settle' while the pay sheet's links are on their way, 'commit', 'undo'
+       and 'paid' (Mark as Paid). One at a time. A settle or an undo changes
+       the row on the tap, and a second tap against a row the server has not
+       answered for yet is how one decision became two requests and two
+       toasts. The ref is the guard, read first because two taps can land
+       before a repaint; the state is what the card and the sheet draw. */
+    const [billPending, setBillPending] = React.useState(null);
+    const billPendingRef = React.useRef(null);
 
     const flock = getSelectedFlock();
     // THE TABLE SUMMARIES for the vote rows and the venue cards, one ask for
@@ -1594,42 +1603,94 @@ export default function ChatDetail({
        before billTally was pulled out: one object, two answers. The bodies are
        the sheet's own, moved rather than rewritten. */
 
+    // A hold on the bill's actions for the plan on screen, or null when one
+    // is already on the wire, which the caller reads as "ignore this tap".
+    // Only the request that took a hold releases it.
+    const takeHold = (ref, setHold, action) => {
+      if (ref.current) return null;
+      const hold = { id: selectedFlockId, action };
+      ref.current = hold;
+      setHold(hold);
+      return hold;
+    };
+    const dropHold = (ref, setHold, hold) => {
+      if (ref.current !== hold) return;
+      ref.current = null;
+      setHold(null);
+    };
+    // What is on the wire for this plan, for the labels and the held buttons.
+    const billBusy = billPending && billPending.id === selectedFlockId ? billPending.action : null;
+
+    // MY OWN ROW, CHANGED IN PLACE: the flip a settle or an undo makes on the
+    // tap, the server's tallies once it answers, and the row put back when it
+    // refuses. Leaving the chat clears the bill, and an answer that lands
+    // after that has nothing to update, so a cleared bill is handed straight
+    // back. Only the caller's row, because the server keys its write on the
+    // caller.
+    const setMyShare = (patch, tally = {}) => setBillSplit(prev => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        ...tally,
+        shares: prev.shares.map(s => String(s.userId) === String(authUser?.id) ? { ...s, ...(typeof patch === 'function' ? patch(s) : patch) } : s),
+      };
+    });
+    // The caller's row as it stands, to put back if a flip is refused.
+    const myShareNow = () => {
+      const s = (billSplit?.shares || []).find(x => String(x.userId) === String(authUser?.id));
+      return s ? { settled: s.settled, settledAt: s.settledAt, outstanding: s.outstanding } : {};
+    };
+
     // Settling is a handoff, never an automatic write. A method with no deep
     // link, no web link and no instructions does nothing when it is tapped, so
     // it is not offered and it does not count towards "is there anything to
     // pay through". A failed lookup is NOT a payment: the debt stays open and
     // the reader is pointed at Mark as Paid, which is a deliberate tap.
+    //
+    // THE SHEET OPENS ON THE TAP. It used to wait for the links, so on a slow
+    // connection Settle Up looked like it had done nothing. It opens at once
+    // in the shape it is about to take (components/PaymentSheets.js reads
+    // `loading`), fills in when the links arrive, and a failed lookup closes
+    // it again and says so.
     const startSettleUp = async () => {
+      const hold = takeHold(billPendingRef, setBillPending, 'settle');
+      if (!hold) return;
+      setPaymentOptions({ loading: true, methods: [] });
+      setShowPaymentPicker(true);
       try {
         const result = await getPaymentLinks(selectedFlockId);
         const methods = (result.methods || []).filter((m) => paymentRoutes(m).actionable);
         setPaymentOptions({ ...result, methods });
-        setShowPaymentPicker(true);
       } catch (err) {
-        showToast(err?.message || 'Could not load payment links. Use "Mark as Paid" after paying.', 'error');
+        setShowPaymentPicker(false);
+        setPaymentOptions(null);
+        showToast(userMessage(err, 'Could not load payment links. Use "Mark as Paid" after paying.'), 'error');
+      } finally {
+        dropHold(billPendingRef, setBillPending, hold);
       }
     };
 
     // The way back out of "I paid". Settling used to be a one-way door and a
     // mis-tap left a debt recorded as cleared with no remedy in the product.
+    // Unpaid on the tap, and put back as it was if the server says no.
     const undoMySettle = async () => {
+      const hold = takeHold(billPendingRef, setBillPending, 'undo');
+      if (!hold) return;
+      const before = myShareNow();
+      setMyShare(s => ({ settled: false, settledAt: null, outstanding: owedOn(s) }));
       try {
         const unsettled = await unsettleShare(selectedFlockId);
-        setBillSplit(prev => {
-          // Leaving the chat clears the bill; a response that lands after
-          // that has nothing to update.
-          if (!prev) return prev;
-          return {
-            ...prev,
-            ...tallyOf(unsettled),
-            shares: prev.shares.map(s => String(s.userId) === String(authUser?.id) ? { ...s, settled: false, settledAt: null, outstanding: owedOn(s) } : s),
-          };
-        });
+        setMyShare({}, tallyOf(unsettled));
         // Owed again, so the Nest says so again (the route refuses the payer
         // and a payerless bill, so this is always a share owed to somebody).
         setFlocks(prev => prev.map(f => f.id === selectedFlockId ? { ...f, iOwe: true } : f));
         showToast('Your share is marked unpaid again');
-      } catch (err) { showToast(err.message, 'error'); }
+      } catch (err) {
+        setMyShare(before);
+        showToast(userMessage(err, 'Could not mark your share unpaid. Try again.'), 'error');
+      } finally {
+        dropHold(billPendingRef, setBillPending, hold);
+      }
     };
 
     // The payer asks everyone who has not paid them back. Called by the bill
@@ -1664,11 +1725,17 @@ export default function ChatDetail({
     // after, because the commit changes the row the card draws and without
     // this the card stayed as it was until the screen was left.
     const commitEstimatedShare = async () => {
+      const hold = takeHold(billPendingRef, setBillPending, 'commit');
+      if (!hold) return;
       try {
         await ghostCommit(selectedFlockId);
         try { const d = await getBillSplit(selectedFlockId); setBillSplit(d.bill); } catch (_) { /* the socket event covers it */ }
         showToast('Committed');
-      } catch (err) { showToast(err.message, 'error'); }
+      } catch (err) {
+        showToast(userMessage(err, 'Could not commit your share. Try again.'), 'error');
+      } finally {
+        dropHold(billPendingRef, setBillPending, hold);
+      }
     };
     // The composer's arming condition, read by the Send button and by the
     // Enter key so the two cannot disagree about what is sendable. It is an
@@ -2240,9 +2307,9 @@ export default function ChatDetail({
       }
       if (billForCard) {
         const created = billForCard.createdAt ? new Date(billForCard.createdAt).getTime() : NaN;
-        // With the payer's reminder state and the plan's closed flag, which
-        // the card draws too.
-        streamRows = spliceByTime(streamRows, { id: BILL_ROW_ID, message_type: 'system', bill: billForCard, closed: planClosed, remind: billRemind[selectedFlockId] || null }, created);
+        // With the payer's reminder state, the plan's closed flag and the
+        // bill action on the wire, which the card draws too.
+        streamRows = spliceByTime(streamRows, { id: BILL_ROW_ID, message_type: 'system', bill: billForCard, closed: planClosed, remind: billRemind[selectedFlockId] || null, pending: billBusy }, created);
       }
       // Also on the end, and for the same reason as the nudge: this is the
       // state of the room right now, not a moment in the scrollback.
@@ -2281,6 +2348,9 @@ export default function ChatDetail({
       billSplit,
       /* The payer's reminder state, which the bill card's Remind draws. */
       billRemind,
+      /* The settle, commit or undo on the wire, which holds the card's
+         controls and labels the one that was pressed. */
+      billPending,
       /* The other half. estimatedShare is read off budgetStatus.ceiling, and
          it is both the shell card's figure and the gate on drawing one. */
       budgetStatus,
@@ -2595,7 +2665,10 @@ export default function ChatDetail({
                somebody owes; once one has gone out it is not offered again
                (remindUnpaid has why). */
             onRemind={!settlesNothing && m.remind !== 'sent' ? remindUnpaid : undefined}
-            pendingAction={m.remind === 'working' ? 'remind' : null}
+            /* Whatever is on the wire for this plan: a settle, a commit or an
+               undo from this card, Mark as Paid from the sheet, or the
+               payer's reminder. */
+            pendingAction={m.pending || (m.remind === 'working' ? 'remind' : null)}
           />
         );
       }
@@ -4376,29 +4449,34 @@ export default function ChatDetail({
                           Marking it paid is still one tap away, on the button
                           directly below this one, where the payer chooses it
                           deliberately. */
-                      <button className="hit44 glass-btn glass-primary" onClick={startSettleUp} style={{ ...styles.gradientButton, padding: '14px', marginBottom: '8px' }}>
+                      <button className="hit44 glass-btn glass-primary" disabled={!!billBusy} onClick={startSettleUp} style={{ ...styles.gradientButton, padding: '14px', marginBottom: '8px', opacity: billBusy ? 0.6 : 1 }}>
                         Settle Up{settleUpFigure(billSplit, authUser?.id)}
                       </button>
                     )}
                     {!billSplitQuarantined && billSplit.hasPayer !== false && billSplit.shares?.find(s => String(s.userId) === String(authUser?.id) && !s.settled) && (
-                      <button className="hit44 glass-btn glass-secondary" onClick={async () => {
+                      <button className="hit44 glass-btn glass-secondary" disabled={!!billBusy} onClick={async () => {
+                        // Paid on the tap, and put back as it was if the
+                        // server says no. The hold makes a double tap one
+                        // request and one toast.
+                        const hold = takeHold(billPendingRef, setBillPending, 'paid');
+                        if (!hold) return;
+                        const before = myShareNow();
+                        setMyShare({ settled: true, outstanding: 0 });
                         try {
                           const settled = await settleShare(selectedFlockId);
-                          setBillSplit(prev => {
-                            if (!prev) return prev;
-                            return {
-                              ...prev,
-                              ...tallyOf(settled),
-                              shares: prev.shares.map(s => String(s.userId) === String(authUser?.id) ? { ...s, settled: true, outstanding: 0 } : s),
-                            };
-                          });
+                          setMyShare({}, tallyOf(settled));
                           // Paid, so the Nest stops saying you owe. The
                           // share_settled event does the same on every other
                           // device; this one should not wait for it.
                           setFlocks(prev => prev.map(f => f.id === selectedFlockId ? { ...f, iOwe: false } : f));
                           showToast('Marked as settled');
-                        } catch (err) { showToast(err.message, 'error'); }
-                      }} style={{ width: '100%', padding: '10px', border: 'none', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>
+                        } catch (err) {
+                          setMyShare(before);
+                          showToast(userMessage(err, 'Could not mark your share paid. Try again.'), 'error');
+                        } finally {
+                          dropHold(billPendingRef, setBillPending, hold);
+                        }
+                      }} style={{ width: '100%', padding: '10px', border: 'none', backgroundColor: 'transparent', color: 'var(--text-secondary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', opacity: billBusy ? 0.6 : 1 }}>
                         Mark as Paid (cash or other)
                       </button>
                     )}
@@ -4422,7 +4500,7 @@ export default function ChatDetail({
                         direction: marked unpaid, and never markable again. */}
                     {billSplit.shares?.find(s => String(s.userId) === String(authUser?.id) && s.settled && !coveredByCredit(s))
                       && String(billSplit.paidBy?.id ?? '') !== String(authUser?.id ?? '') && billSplit.hasPayer !== false && (
-                      <button className="hit44 glass-btn glass-secondary" onClick={undoMySettle} style={{ width: '100%', padding: '10px', border: 'none', backgroundColor: 'transparent', color: 'var(--text-tertiary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>
+                      <button className="hit44 glass-btn glass-secondary" disabled={!!billBusy} onClick={undoMySettle} style={{ width: '100%', padding: '10px', border: 'none', backgroundColor: 'transparent', color: 'var(--text-tertiary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer', opacity: billBusy ? 0.6 : 1 }}>
                         That was a mistake, I have not paid
                       </button>
                     )}

@@ -92,6 +92,13 @@ const PaymentSheets = ({
           this file has been removing all week. It opens the instructions sheet
           through the same entry point. */}
       {showPaymentPicker && paymentOptions && (() => {
+        // OPEN BEFORE THE LINKS ARRIVE. Settle Up opens this sheet on the tap
+        // with `loading` set (screens/ChatDetail.js startSettleUp), so the
+        // payee, the amount and the first way to pay are grey shapes in their
+        // own places until getPaymentLinks answers. Nothing is written into
+        // them meanwhile: the no-handle sentence below would be a claim about
+        // a payee this sheet has not heard about yet.
+        const loading = paymentOptions.loading === true;
         const methods = paymentOptions.methods || [];
         const payee = typeof paymentOptions.payTo === 'string' && paymentOptions.payTo.trim()
           ? paymentOptions.payTo.trim()
@@ -111,10 +118,22 @@ const PaymentSheets = ({
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 9999, display: 'flex', alignItems: 'flex-end', justifyContent: 'center', paddingBottom: 'var(--cb-height, 0px)', boxSizing: 'border-box' }} onClick={close}>
           <DialogBehavior onClose={close} label={`Pay ${payee || 'them'}`} />
           <div style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '16px 16px 0 0', padding: '20px', width: '100%', maxWidth: '420px', boxSizing: 'border-box', paddingBottom: 'calc(20px + var(--safe-bottom))' }} onClick={e => e.stopPropagation()}>
-            <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>Pay {payee || 'them'}</h3>
-            {/* The money is the same whether or not there is a link to open. */}
-            <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 14px' }}>${Number(paymentOptions.amount || 0).toFixed(2)} · {paymentOptions.note}</p>
-            {methods.length > 0 ? methods.map((m, i) => {
+            {loading ? (
+              <div aria-busy="true">
+                <p className="sr-only" role="status">Loading the ways to pay.</p>
+                <div className="skeleton" style={{ width: '45%', height: '22px', borderRadius: '6px', margin: '0 0 8px' }} />
+                <div className="skeleton" style={{ width: '60%', height: '14px', borderRadius: '4px', margin: '0 0 18px' }} />
+                <div className="skeleton" style={{ width: '50%', height: '16px', borderRadius: '4px', margin: '2px 0 6px' }} />
+                <div className="skeleton" style={{ width: '35%', height: '12px', borderRadius: '4px', margin: '0 0 13px' }} />
+              </div>
+            ) : (
+              <>
+                <h3 style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: '0 0 4px' }}>Pay {payee || 'them'}</h3>
+                {/* The money is the same whether or not there is a link to open. */}
+                <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: '0 0 14px' }}>${Number(paymentOptions.amount || 0).toFixed(2)} · {paymentOptions.note}</p>
+              </>
+            )}
+            {loading ? null : methods.length > 0 ? methods.map((m, i) => {
               const r = paymentRoutes(m);
               // The first saved handle leads. The rest are real rows under it,
               // quieter and ruled off, rather than a row of equal-weight tiles

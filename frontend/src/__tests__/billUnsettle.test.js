@@ -107,8 +107,21 @@ describe('the control', () => {
   it('only ever changes the caller\'s own row in local state', () => {
     // The server keys its UPDATE on the caller's user_id, so the optimistic
     // edit has to agree or the panel would show somebody else's share flipping.
+    // The flip goes through setMyShare, the one row writer, which matches the
+    // caller's id and nobody else's.
     const handler = handlerSource('undoMySettle');
-    expect(handler).toMatch(/String\(s\.userId\) === String\(authUser\?\.id\) \? \{ \.\.\.s, settled: false/);
+    expect(handler).toMatch(/setMyShare\(s => \(\{ settled: false, settledAt: null, outstanding: owedOn\(s\) \}\)\);/);
+    const writer = CHAT.slice(CHAT.indexOf('const setMyShare = (patch, tally = {}) =>'), CHAT.indexOf('const myShareNow = () =>'));
+    expect(writer.length).toBeGreaterThan(100);
+    expect(writer.length).toBeLessThan(900);
+    expect(writer).toMatch(/String\(s\.userId\) === String\(authUser\?\.id\) \? \{ \.\.\.s, \.\.\.\(typeof patch === 'function' \? patch\(s\) : patch\) \} : s/);
+  });
+
+  it('flips the row on the tap, before the server answers', () => {
+    // The flip comes before the await, and the server's tally after it.
+    const handler = handlerSource('undoMySettle');
+    expect(handler.indexOf('setMyShare(s => ({ settled: false')).toBeLessThan(handler.indexOf('await unsettleShare'));
+    expect(handler.indexOf('setMyShare({}, tallyOf(unsettled));')).toBeGreaterThan(handler.indexOf('await unsettleShare'));
   });
 
   it('clears settledAt alongside settled, the way the server does', () => {
@@ -120,8 +133,17 @@ describe('the control', () => {
 
   it('reports a refusal instead of claiming the change happened', () => {
     const handler = handlerSource('undoMySettle');
-    expect(handler).toMatch(/catch \(err\) \{ showToast\(err\.message, 'error'\); \}/);
+    // A refusal puts the row back as it was before the tap and says so: the
+    // server's sentence when it wrote one for people, plain copy otherwise.
+    expect(handler).toMatch(/catch \(err\) \{\s*setMyShare\(before\);\s*showToast\(userMessage\(err, 'Could not mark your share unpaid\. Try again\.'\), 'error'\);\s*\}/);
+    expect(handler).toContain('const before = myShareNow();');
     // The success toast must come after the await, never before it.
     expect(handler.indexOf('await unsettleShare')).toBeLessThan(handler.indexOf('showToast(\'Your share'));
+  });
+
+  it('takes one tap at a time, so a double tap is one request and one toast', () => {
+    const handler = handlerSource('undoMySettle');
+    expect(handler).toMatch(/const hold = takeHold\(billPendingRef, setBillPending, 'undo'\);\s*if \(!hold\) return;/);
+    expect(handler).toMatch(/finally \{\s*dropHold\(billPendingRef, setBillPending, hold\);\s*\}/);
   });
 });
