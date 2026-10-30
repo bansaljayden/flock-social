@@ -310,7 +310,7 @@ describe('claims a chat screen must not make', () => {
 
   test('both threads draw a skeleton rather than a blank rectangle', () => {
     expect(appSource).toMatch(/const ChatSkeleton = /);
-    // THREE uses, and the count is deliberate rather than loosened, because a
+    // FOUR uses, and the count is deliberate rather than loosened, because a
     // count is what catches one of these being quietly deleted.
     //   1. ChatDetail, while a flock's history is on the wire.
     //   2. DmDetail, while a thread's history is on the wire.
@@ -319,7 +319,11 @@ describe('claims a chat screen must not make', () => {
     //      they would stop riding the boot bundle, and the rule that put a
     //      skeleton behind a slow load applies just as much to a slow chunk:
     //      the alternative is the blank rectangle this test is named after.
-    expect(appSource.match(/<ChatSkeleton /g)).toHaveLength(3);
+    //   4. OpeningScreenSkeleton in App.js, which is what a notification tap
+    //      on a cold start opens on while the plan or DM list it needs is
+    //      still on the wire (MissingFlockPanel and MissingDmPanel draw it).
+    expect(appSource.match(/<ChatSkeleton /g)).toHaveLength(4);
+    expect(appSource).toMatch(/<ChatSkeleton label=\{label\} \/>/);
     // And the chunk fallback is a skeleton for the chat screens specifically,
     // not a bare colour for everything.
     expect(appSource).toMatch(/\{chat \? <ChatSkeleton \/> : null\}/);

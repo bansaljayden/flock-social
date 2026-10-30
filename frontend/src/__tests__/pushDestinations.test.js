@@ -123,9 +123,14 @@ describe('a chat screen opened for a flock we do not have is honest about it', (
   test('the empty state does not call a plan deleted while the list is still loading', () => {
     // With no fallback, a tap during a cold start reaches this panel for a
     // second or two while GET /api/flocks is in flight, and "it was deleted" is
-    // a lie about a plan that is on its way.
-    expect(APP).toMatch(/\{flocksLoading \? \(/);
-    expect(APP).toMatch(/Opening your plan/);
+    // a lie about a plan that is on its way. While the list loads the panel is
+    // the opening screen's skeleton, named "Opening your plan" for a screen
+    // reader, and the deleted sentence only comes after the list answered.
+    const start = APP.indexOf('const MissingFlockPanel = useCallback(() => (flocksLoading ? (');
+    expect(start).toBeGreaterThan(-1);
+    const panel = APP.slice(start, APP.indexOf('[flocksLoading, currentScreen, colors]);', start));
+    expect(panel).toMatch(/flocksLoading \? \(\s*<OpeningScreenSkeleton[\s\S]*?label="Opening your plan"/);
+    expect(panel.indexOf("This flock isn't open anymore")).toBeGreaterThan(panel.indexOf('label="Opening your plan"'));
   });
 });
 

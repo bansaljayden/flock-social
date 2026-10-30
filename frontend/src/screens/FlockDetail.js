@@ -60,6 +60,7 @@ import { lsGet } from '../lib/storage';
 import { isNightOver } from '../lib/planNight';
 import { BirdieStill, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
+import { RosterSkeleton } from '../components/ui/Skeleton';
 import { openMapsChooser } from '../components/ui/MapsChooser';
 import StaticVenueMap, { paletteIsDark } from '../components/map/StaticVenueMap';
 import useEdgeSwipeBack from '../hooks/useEdgeSwipeBack';
@@ -795,7 +796,9 @@ export default function FlockDetail({
                 <button className="hit44" onClick={retryRoster} style={{ minHeight: '44px', padding: '8px 14px', borderRadius: '10px', border: '1px solid var(--border-mid)', background: 'transparent', color: 'var(--text-primary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Try again</button>
               </div>
             ) : (
-              <p style={{ color: 'var(--text-tertiary)', fontSize: 'var(--t-meta)', margin: 0, textAlign: 'center', padding: '8px 0' }}>Loading members...</p>
+              /* The row that is coming, in its shape: faces over first names,
+                 where "Loading members..." used to sit. */
+              <RosterSkeleton label="Loading who is going" />
             )}
           </div>
 

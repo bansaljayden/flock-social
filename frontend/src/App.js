@@ -132,7 +132,7 @@ import Icons from './components/ui/Icons';
 import MapsChooserHost, { openMapsChooser, closeMapsChooser } from './components/ui/MapsChooser';
 // The loading shapes. NestSkeleton is the cold-start screen index.js paints as
 // well, so the two hand over without a change of colour.
-import { NestSkeleton, FlockListSkeleton } from './components/ui/Skeleton';
+import { NestSkeleton, FlockListSkeleton, RosterSkeleton, SkeletonBar, SkeletonCircle } from './components/ui/Skeleton';
 // Add Friends left App.js in the same sweep as the venue dashboard below and
 // for the same review reason, but it is imported normally rather than lazily.
 // It is a consumer screen the empty home state points a brand new account
@@ -3056,6 +3056,77 @@ const ChatSkeleton = ({ label = 'Loading messages' }) => (
     ))}
   </div>
 );
+
+/* ── WHAT A NOTIFICATION TAP OPENS ON BEFORE ITS LIST HAS LANDED ─────────
+   A tap on a push during a cold start routes straight to the chat, the plan or
+   the conversation it names, and that screen has nothing to draw until the
+   plan list (or the DM list) answers. MissingFlockPanel and MissingDmPanel
+   used to fill the wait with a 104px Birdie over "Opening your plan" or
+   "Opening your messages". This is the screen itself instead: the navy header
+   the chat, the DM or the plan screen puts there, with a real way back, and
+   the bubbles (ChatSkeleton) or the Going row (RosterSkeleton) under it. The
+   name and the state in the header are bars, because the name is exactly what
+   has not arrived. `colors` is handed in, for the reason
+   moduleScopeThemeColors.test.js gives: only FlockAppInner's palette follows
+   the theme. The status words come from ChatSkeleton's and RosterSkeleton's
+   own status, so the wait is announced once. Exported for
+   skeletonColdStart.test.js, which renders all three. */
+export const OpeningScreenSkeleton = ({ kind, label, colors, onBack }) => {
+  if (kind === 'plan') {
+    // screens/FlockDetail.js: the round back button, the name and host lines,
+    // the two status pills, then the Going card in the scroll area.
+    return (
+      <div aria-busy="true" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
+        <div style={{ background: colors.navyBg, padding: '16px', paddingTop: '20px', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '14px' }}>
+            <button className="hit44" aria-label="Back to your plans" onClick={onBack} style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'rgba(255,255,255,0.16)', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft('white', 16)}</button>
+            <div aria-hidden="true" style={{ flex: 1, minWidth: 0 }}>
+              <SkeletonBar dark width="55%" height={18} radius={5} style={{ margin: '2px 0 3px' }} />
+              <SkeletonBar dark width="40%" height={13} style={{ margin: '5px 0 1px' }} />
+            </div>
+          </div>
+          <div aria-hidden="true" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <SkeletonBar dark width={78} height={24} radius={20} />
+            <SkeletonBar dark width={112} height={24} radius={20} />
+          </div>
+        </div>
+        <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', padding: '14px' }}>
+          <div style={{ backgroundColor: 'var(--bg-card)', borderRadius: '18px', padding: '12px 16px', boxShadow: 'var(--card-shadow)', border: 'var(--card-border)' }}>
+            <SkeletonBar width={92} height={16} style={{ margin: '0 0 14px' }} />
+            <RosterSkeleton label={label} />
+          </div>
+        </div>
+      </div>
+    );
+  }
+  // screens/ChatDetail.js's header, and DmDetail.js's with the face beside the
+  // name: the back arrow, the name (and for a plan its state line), the round
+  // menu button. Then the bubbles the thread shows while its history loads.
+  return (
+    <div aria-busy="true" style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-card-solid)' }}>
+      <div style={{ padding: '6px 10px 5px 4px', background: colors.navyBg, flexShrink: 0, boxShadow: '0 2px 10px rgba(0,0,0,0.1)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <button aria-label="Back" className="hit44" onClick={onBack} style={{ width: '34px', height: '34px', borderRadius: '17px', background: 'none', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>{Icons.arrowLeft('white', 20)}</button>
+          {kind === 'dm' ? <SkeletonCircle dark size={34} /> : null}
+          <div aria-hidden="true" style={{ flex: 1, minWidth: 0, padding: '0 2px' }}>
+            {kind === 'dm' ? (
+              <SkeletonBar dark width="45%" height={17} radius={5} style={{ margin: '4px 0' }} />
+            ) : (
+              <>
+                <SkeletonBar dark width="50%" height={17} radius={5} style={{ margin: '3px 0' }} />
+                <SkeletonBar dark width="38%" height={10} style={{ margin: '5px 0 2px' }} />
+              </>
+            )}
+          </div>
+          <SkeletonCircle dark size={34} />
+        </div>
+      </div>
+      <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', padding: '12px' }}>
+        <ChatSkeleton label={label} />
+      </div>
+    </div>
+  );
+};
 
 /* WHAT STANDS IN WHILE A SCREEN'S CHUNK ARRIVES.
    In practice almost never seen: warmScreenChunks fetches these on idle, so a
@@ -17803,52 +17874,61 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // `|| flocks[0]` fallback, a plan opened from a notification tap during a cold
   // start reaches this panel for a second or two while GET /api/flocks is still
   // in flight, and "it was deleted" is a lie about a plan that is on its way.
-  // While the list is loading it says so instead.
-  const MissingDmPanel = () => (
+  // While the list is loading it says so instead, and it says it as the screen
+  // that is opening: OpeningScreenSkeleton draws its header and its body.
+  const MissingDmPanel = () => (dmsLoading ? (
+    <OpeningScreenSkeleton
+      kind="dm"
+      label="Opening your messages"
+      colors={colors}
+      onBack={() => { setCurrentScreen('main'); setSelectedDmId(null); }}
+    />
+  ) : (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', alignItems: 'center', justifyContent: 'center', gap: '14px', padding: '32px 24px', backgroundColor: 'var(--bg-primary)', textAlign: 'center' }}>
       <BirdieStill size={104} />
-      {dmsLoading ? (
-        <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-title)', fontWeight: '600', color: 'var(--text-primary)', margin: 0, letterSpacing: '-0.005em' }}>Opening your messages</h2>
-      ) : (
-        <>
-          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-title)', fontWeight: '600', color: 'var(--text-primary)', margin: 0, letterSpacing: '-0.005em' }}>This conversation is not here</h2>
-          <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: 0, maxWidth: '26em', lineHeight: 1.5 }}>
-            They may have deleted their account, or you removed this chat. Your other conversations are all still here.
-          </p>
-          <button
-            className="hit44"
-            onClick={() => { setCurrentScreen('main'); setSelectedDmId(null); }}
-            style={{ marginTop: '4px', padding: '12px 24px', borderRadius: '12px', border: 'none', backgroundColor: colors.navy, color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}
-          >
-            Back to Messages
-          </button>
-        </>
-      )}
+      <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-title)', fontWeight: '600', color: 'var(--text-primary)', margin: 0, letterSpacing: '-0.005em' }}>This conversation is not here</h2>
+      <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: 0, maxWidth: '26em', lineHeight: 1.5 }}>
+        They may have deleted their account, or you removed this chat. Your other conversations are all still here.
+      </p>
+      <button
+        className="hit44"
+        onClick={() => { setCurrentScreen('main'); setSelectedDmId(null); }}
+        style={{ marginTop: '4px', padding: '12px 24px', borderRadius: '12px', border: 'none', backgroundColor: colors.navy, color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}
+      >
+        Back to Messages
+      </button>
     </div>
-  );
+  ));
 
-  const MissingFlockPanel = () => (
+  // The chat screen and the plan screen both draw this one, as
+  // <MissingFlockPanel />, so it opens as whichever of the two the tap routed
+  // to. Bound with useCallback rather than rebuilt on every render: as a fresh
+  // function each render it was a fresh component type, so React remounted it
+  // on every state change of the cold start it stands in for, restarting the
+  // skeleton's sweep each time. It changes only when what it draws does.
+  const MissingFlockPanel = useCallback(() => (flocksLoading ? (
+    <OpeningScreenSkeleton
+      kind={currentScreen === 'detail' ? 'plan' : 'chat'}
+      label="Opening your plan"
+      colors={colors}
+      onBack={() => { setCurrentScreen('main'); setSelectedFlockId(null); }}
+    />
+  ) : (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', alignItems: 'center', justifyContent: 'center', gap: '14px', padding: '32px 24px', backgroundColor: 'var(--bg-primary)', textAlign: 'center' }}>
       <BirdieStill size={104} />
-      {flocksLoading ? (
-        <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-title)', fontWeight: '600', color: 'var(--text-primary)', margin: 0, letterSpacing: '-0.005em' }}>Opening your plan</h2>
-      ) : (
-        <>
-          <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-title)', fontWeight: '600', color: 'var(--text-primary)', margin: 0, letterSpacing: '-0.005em' }}>This flock isn't open anymore</h2>
-          <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: 0, maxWidth: '26em', lineHeight: 1.5 }}>
-            It was either deleted or you are no longer in it. Your other flocks are all still here.
-          </p>
-          <button
-            className="hit44"
-            onClick={() => { setCurrentScreen('main'); setSelectedFlockId(null); }}
-            style={{ marginTop: '4px', padding: '12px 24px', borderRadius: '12px', border: 'none', backgroundColor: colors.navy, color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}
-          >
-            Back to your plans
-          </button>
-        </>
-      )}
+      <h2 style={{ fontFamily: 'var(--font-display)', fontSize: 'var(--t-title)', fontWeight: '600', color: 'var(--text-primary)', margin: 0, letterSpacing: '-0.005em' }}>This flock isn't open anymore</h2>
+      <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', margin: 0, maxWidth: '26em', lineHeight: 1.5 }}>
+        It was either deleted or you are no longer in it. Your other flocks are all still here.
+      </p>
+      <button
+        className="hit44"
+        onClick={() => { setCurrentScreen('main'); setSelectedFlockId(null); }}
+        style={{ marginTop: '4px', padding: '12px 24px', borderRadius: '12px', border: 'none', backgroundColor: colors.navy, color: 'white', fontSize: 'var(--t-label)', fontWeight: '600', cursor: 'pointer' }}
+      >
+        Back to your plans
+      </button>
     </div>
-  );
+  )), [flocksLoading, currentScreen, colors]);
 
   // VENUE DASHBOARD SCREEN (For Venue Owners)
   // Parse Google weekdayDescriptions into grouped operating hours

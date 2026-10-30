@@ -468,10 +468,26 @@ function componentsHandedToAScreen() {
         if (init && ['ArrowFunctionExpression', 'FunctionExpression'].includes(init.type)) {
           names.add(name);
         }
+        // Bound through useCallback: one identity until its dependencies
+        // change, which is the stable type the header asks for by other
+        // means. Still a component handed to a screen, so still in the set,
+        // and the rule below is applied to the function it binds.
+        if (boundFunctionOf(init)) names.add(name);
       }
     },
   });
   return [...names].sort();
+}
+
+/** The function a `useCallback(fn, deps)` initialiser binds, or null. */
+function boundFunctionOf(init) {
+  if (!init || init.type !== 'CallExpression') return null;
+  const callee = init.callee;
+  const isUseCallback = (callee.type === 'Identifier' && callee.name === 'useCallback')
+    || (callee.type === 'MemberExpression' && callee.object.type === 'Identifier' && callee.object.name === 'React'
+      && callee.property.type === 'Identifier' && callee.property.name === 'useCallback');
+  const fn = init.arguments[0];
+  return isUseCallback && fn && ['ArrowFunctionExpression', 'FunctionExpression'].includes(fn.type) ? fn : null;
 }
 
 /** The declaration path of a name bound anywhere inside FlockAppInner. */
@@ -539,7 +555,11 @@ describe('nothing still declared in the render owns anything a remount destroys'
       const decl = declarationInsideInner(name);
       expect(decl).not.toBeNull();
       const findings = [];
-      decl.traverse({
+      // For one bound with useCallback, the function it binds: the
+      // useCallback call itself is the binding, not a hook the component
+      // calls when it renders.
+      const target = boundFunctionOf(decl.node.init) ? decl.get('init.arguments.0') : decl;
+      target.traverse({
         CallExpression(p) {
           const callee = p.node.callee;
           const text = callee.type === 'Identifier'
