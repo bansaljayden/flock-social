@@ -4168,8 +4168,8 @@ export default function ChatDetail({
                               showToast(d.reminded > 0 ? `Reminded ${d.reminded} member${d.reminded !== 1 ? 's' : ''}` : 'Nobody left to remind');
                             } catch (err) {
                               // 429: one already went out in the last few
-                              // minutes, from this phone or another. That is
-                              // news, not a failure.
+                              // minutes, from this phone or another, so it is
+                              // shown as news, without the error style.
                               if (err?.status === 429) showToast(userMessage(err, 'A reminder already went out a few minutes ago.'));
                               else showToast(userMessage(err, 'Could not send the reminder. Try again.'), 'error');
                             } finally {
