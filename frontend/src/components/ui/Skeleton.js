@@ -19,10 +19,11 @@
  *      already has. aria-busy marks the shapes' wrapper only, and the line
  *      is beside it, never inside it (SkeletonStatus says why).
  *
- * NestSkeleton is the one whole screen in this file, because two places paint
- * it: index.js while the app's chunk is on the wire, and App.js while GET /me
- * answers on a cold start. They used to paint two different things, so a
- * light-mode launch went cream, then navy ("Flock / Loading..."), then cream.
+ * The whole screens here (NestSkeleton, VenueBootSkeleton, and
+ * SessionBootSkeleton, which picks between them) are here because two places
+ * paint them: index.js while the app's chunk is on the wire, and App.js while
+ * GET /me answers on a cold start. They used to paint two different things, so
+ * a light-mode launch went cream, then navy ("Flock / Loading..."), then cream.
  * FlockCardSkeleton is here because the Nest, that boot screen and Past flocks
  * all draw it; RosterSkeleton because the plan screen and the cold-start plan
  * opening in App.js both do.
@@ -245,32 +246,75 @@ const themeIsDark = () => {
 };
 
 /**
+ * WHERE A COLD START'S FIRST SCREEN SITS, for NestSkeleton and
+ * VenueBootSkeleton. On a phone or in the native shell it fills the screen,
+ * the safe areas included, and the strip over the safe top is `top`, the
+ * colour of the header under it, as the app paints its own spacer
+ * (screenTopIsNavy in services/systemBars.js). In a wider browser it draws
+ * inside the same 375px frame the app itself draws there (App.js makeStyles,
+ * phoneContainer and notch with fullBleed off), so the frame does not jump
+ * when the app arrives. The status line sits beside the busy screen, not
+ * inside it, for the reason SkeletonStatus gives. `mark` names the screen on
+ * the root (data-nest-skeleton, data-venue-skeleton), its value the layout.
+ */
+function BootFrame({ mark, label, top, children }) {
+  const fullBleed = phoneSized();
+  const named = { [`data-${mark}-skeleton`]: fullBleed ? 'phone' : 'frame' };
+  if (fullBleed) {
+    return (
+      <div {...named} style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', backgroundColor: 'var(--bg-primary)' }}>
+        <p className="sr-only" role="status">{label}</p>
+        {/* The screen's column, one level down so it can carry aria-busy
+            without the line: it fills the root as the screen's parts did. */}
+        <div aria-busy="true" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+          <div style={{ height: 'var(--safe-top)', backgroundColor: top, flexShrink: 0 }} />
+          {children}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div {...named} style={{ position: 'fixed', inset: 0, overflow: 'auto', backgroundColor: '#1a1a2e', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px', boxSizing: 'border-box' }}>
+      <p className="sr-only" role="status">{label}</p>
+      <div aria-busy="true" style={{
+        width: '375px',
+        maxWidth: '375px',
+        height: '100vh',
+        maxHeight: '812px',
+        margin: '20px auto',
+        boxSizing: 'border-box',
+        flexShrink: 0,
+        borderRadius: '44px',
+        border: '6px solid #1e293b',
+        overflow: 'hidden',
+        display: 'flex',
+        flexDirection: 'column',
+        backgroundColor: 'var(--bg-card-solid)',
+        boxShadow: themeIsDark()
+          ? '0 25px 80px -12px rgba(0,0,0,0.7), 0 10px 30px rgba(0,0,0,0.4)'
+          : '0 25px 80px -12px rgba(0, 0, 0, 0.4), 0 10px 30px rgba(13,40,71,0.10), inset 0 1px 0 rgba(255,255,255,0.1)',
+      }}>
+        <div style={{ height: '28px', backgroundColor: '#1e293b', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <div style={{ width: '120px', height: '24px', backgroundColor: 'black', borderRadius: '20px' }} />
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/**
  * THE NEST, BEFORE ANYTHING IS KNOWN. HomeScreen's own layout (App.js, the
  * home-screen-container): the greeting and the "Hey, name" heading, the 36px
  * avatar, the stat line, the 56px Tonight control and its caption, the 52px
  * Start a flock button, the Your Flocks heading with its two small buttons,
  * three flock cards, and the five tabs. It follows the theme through the CSS
- * tokens, which index.js has written onto <html> before the first paint.
- *
- * On a phone or in the native shell it fills the screen, the safe areas
- * included. In a wider browser it draws inside the same 375px frame the app
- * itself draws there (App.js makeStyles, phoneContainer and notch with
- * fullBleed off), so the frame does not jump when the app arrives.
- *
- * The status line sits beside the busy part, not inside it, for the reason
- * SkeletonStatus gives: aria-busy is on the screen's shapes alone.
+ * tokens, which index.js has written onto <html> before the first paint. It
+ * sits in BootFrame, which says how it fills a phone and a wide browser.
  */
 export function NestSkeleton({ label = 'Loading Flock.' }) {
-  const fullBleed = phoneSized();
-  const screen = (
-    <>
-      {fullBleed ? (
-        <div style={{ height: 'var(--safe-top)', backgroundColor: 'var(--bg-primary)', flexShrink: 0 }} />
-      ) : (
-        <div style={{ height: '28px', backgroundColor: '#1e293b', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-          <div style={{ width: '120px', height: '24px', backgroundColor: 'black', borderRadius: '20px' }} />
-        </div>
-      )}
+  return (
+    <BootFrame mark="nest" label={label} top="var(--bg-primary)">
       <div aria-hidden="true" style={{ flex: 1, minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', backgroundColor: 'var(--bg-primary)' }}>
         <div style={{ padding: '14px 16px 12px', flexShrink: 0 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
@@ -314,44 +358,134 @@ export function NestSkeleton({ label = 'Loading Flock.' }) {
           </div>
         ))}
       </div>
-    </>
+    </BootFrame>
   );
+}
 
-  if (fullBleed) {
-    return (
-      <div data-nest-skeleton="phone" style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', backgroundColor: 'var(--bg-primary)' }}>
-        <p className="sr-only" role="status">{label}</p>
-        {/* The screen's column, one level down so it can carry aria-busy
-            without the line: it fills the root as the three parts did. */}
-        <div aria-busy="true" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-          {screen}
+// The navy the venue dashboard's header paints, per theme: colorsLight.navyBg
+// and colorsDark.navyBg in App.js (skeletonScreens.test.js holds the copies
+// together). A cold start paints before the app's palette exists, so it reads
+// the theme index.js has already written onto <html>.
+const HEADER_NAVY = { light: '#1e293b', dark: '#1e3a5c' };
+const headerNavy = () => (themeIsDark() ? HEADER_NAVY.dark : HEADER_NAVY.light);
+
+/**
+ * THE VENUE DASHBOARD'S SHAPES (screens/VenueDashboard.js): the navy header
+ * with the back button and the plan badge, the logo and the two name lines,
+ * the five-tab strip, and three cards, exactly where the dashboard puts them,
+ * so the screen settles instead of appearing. No numbers, because it has
+ * none. They lived in App.js, drawn only while the dashboard's chunk loaded;
+ * a cold start into a saved venue mode draws them too (VenueBootSkeleton).
+ */
+function VenueDashboardShapes({ navyBg }) {
+  return (
+    <>
+      <div aria-hidden="true" style={{ padding: '16px', background: navyBg, flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'rgba(255,255,255,0.2)' }} />
+          <div style={{ width: '96px', height: '24px', borderRadius: '12px', backgroundColor: 'rgba(255,255,255,0.2)' }} />
+        </div>
+        <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div style={{ width: '48px', height: '48px', borderRadius: '12px', backgroundColor: 'rgba(255,255,255,0.2)', flexShrink: 0 }} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ width: '60%', height: '16px', borderRadius: '4px', backgroundColor: 'rgba(255,255,255,0.2)', marginBottom: '8px' }} />
+            <div style={{ width: '40%', height: '11px', borderRadius: '4px', backgroundColor: 'rgba(255,255,255,0.14)' }} />
+          </div>
         </div>
       </div>
-    );
-  }
+      <div aria-hidden="true" style={{ display: 'flex', gap: '8px', padding: '10px 16px', flexShrink: 0, borderBottom: '1px solid var(--border-default)' }}>
+        {[0, 1, 2, 3, 4].map((i) => (
+          <div key={i} className="skeleton" style={{ flex: 1, height: '28px', borderRadius: '8px' }} />
+        ))}
+      </div>
+      <div aria-hidden="true" style={{ flex: 1, minWidth: 0, overflow: 'hidden', padding: '16px' }}>
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="skeleton" style={{ width: '100%', height: '104px', borderRadius: '16px', marginBottom: '12px' }} />
+        ))}
+      </div>
+    </>
+  );
+}
+
+/**
+ * The venue dashboard while it is on its way inside the running app: App.js
+ * draws it while the dashboard's chunk loads, and while a cold start's first
+ * profile read decides between the dashboard and onboarding. `colors` is the
+ * app's live palette, so the header follows the theme.
+ */
+export function VenueDashboardSkeleton({ colors, label = 'Loading your dashboard.' }) {
   return (
-    <div data-nest-skeleton="frame" style={{ position: 'fixed', inset: 0, overflow: 'auto', backgroundColor: '#1a1a2e', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px', boxSizing: 'border-box' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
       <p className="sr-only" role="status">{label}</p>
-      <div aria-busy="true" style={{
-        width: '375px',
-        maxWidth: '375px',
-        height: '100vh',
-        maxHeight: '812px',
-        margin: '20px auto',
-        boxSizing: 'border-box',
-        flexShrink: 0,
-        borderRadius: '44px',
-        border: '6px solid #1e293b',
-        overflow: 'hidden',
-        display: 'flex',
-        flexDirection: 'column',
-        backgroundColor: 'var(--bg-card-solid)',
-        boxShadow: themeIsDark()
-          ? '0 25px 80px -12px rgba(0,0,0,0.7), 0 10px 30px rgba(0,0,0,0.4)'
-          : '0 25px 80px -12px rgba(0, 0, 0, 0.4), 0 10px 30px rgba(13,40,71,0.10), inset 0 1px 0 rgba(255,255,255,0.1)',
-      }}>
-        {screen}
+      <div aria-busy="true" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+        <VenueDashboardShapes navyBg={(colors && colors.navyBg) || headerNavy()} />
       </div>
     </div>
   );
+}
+
+/**
+ * THE VENUE DASHBOARD, BEFORE ANYTHING IS KNOWN: a cold start whose saved mode
+ * is venue opens on the dashboard (or, for an owner with no venue yet, on its
+ * onboarding, which is as dark), so that is what the wait paints rather than
+ * the consumer Nest. In BootFrame like NestSkeleton, with the safe-top strip
+ * in the header's navy, as the app paints it over the dashboard.
+ */
+export function VenueBootSkeleton({ label = 'Loading your dashboard.' }) {
+  const navyBg = headerNavy();
+  return (
+    <BootFrame mark="venue" label={label} top={navyBg}>
+      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', backgroundColor: 'var(--bg-primary)' }}>
+        <VenueDashboardShapes navyBg={navyBg} />
+      </div>
+    </BootFrame>
+  );
+}
+
+/**
+ * THE APP'S BARE GROUND, for a cold start whose first screen cannot be known
+ * yet: the colour the app paints under every screen (App.js FlockAppInner's
+ * outer container), --bg-primary on a phone and the dark surround a wide
+ * browser draws around the app. No shapes, because none would be honest.
+ */
+export function BootGround({ label = 'Loading Flock.' }) {
+  const fullBleed = phoneSized();
+  return (
+    <div data-boot-ground={fullBleed ? 'phone' : 'frame'} style={{ position: 'fixed', inset: 0, backgroundColor: fullBleed ? 'var(--bg-primary)' : '#1a1a2e' }}>
+      <p className="sr-only" role="status">{label}</p>
+    </div>
+  );
+}
+
+/**
+ * WHAT A COLD START WITH A STORED SESSION PAINTS, decided here once for its two
+ * painters: index.js while the app's chunk is on the wire, and App.js while
+ * GET /me answers. A wait that paints one screen and lands on another is the
+ * flash these exist to prevent, so it paints the screen that is coming:
+ *
+ *   /checkin/<id>     NfcCheckinView, #0f172a edge to edge.
+ *   ?admin=true       the admin console for an admin and the Nest for anyone
+ *                     else, and nobody's role is known before GET /me answers,
+ *                     so the bare ground (BootGround).
+ *   a saved venue mode (flockUserMode 'venue')
+ *                     the venue dashboard or its onboarding (VenueBootSkeleton),
+ *                     and App.js keeps the dashboard's shapes up while its
+ *                     first profile read decides which.
+ *   anything else     the Nest. A saved admin mode is in this row: nothing
+ *                     routes it at launch, so an admin opens on the Nest and
+ *                     reaches the console from You or the ?admin=true link.
+ */
+export function SessionBootSkeleton({ pathname = '', search = '', savedMode = null }) {
+  if (/^\/checkin\/[^/?#]+/.test(pathname)) {
+    return (
+      <div style={{ position: 'fixed', inset: 0, backgroundColor: '#0f172a' }}>
+        <p className="sr-only" role="status">Loading Flock.</p>
+      </div>
+    );
+  }
+  let adminLink = false;
+  try { adminLink = new URLSearchParams(search).get('admin') === 'true'; } catch { adminLink = false; }
+  if (adminLink) return <BootGround label="Loading Flock." />;
+  if (savedMode === 'venue') return <VenueBootSkeleton />;
+  return <NestSkeleton label="Loading Flock." />;
 }

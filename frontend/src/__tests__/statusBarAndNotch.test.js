@@ -177,7 +177,9 @@ describe('the shell and the photo viewers are wired to it', () => {
   const APP = read('App.js');
 
   test('the shell derives the answer from the screen and the theme, and restores the launch style on sign-out', () => {
-    expect(APP).toMatch(/const topIsNavy = screenTopIsNavy\(\{\s*currentScreen, currentTab, profileScreen,\s*takenOver: showModeSelection \|\| showVenueOnboarding,\s*\}\);/);
+    // The screen it reads is the dashboard while a cold start's saved venue
+    // mode holds the dashboard's shapes up in place of 'main' (venueBootHold).
+    expect(APP).toMatch(/const venueBootHolding = venueBootHold && userMode === 'venue' && currentScreen === 'main';\s*const topIsNavy = screenTopIsNavy\(\{\s*currentScreen: venueBootHolding \? 'venueDashboard' : currentScreen, currentTab, profileScreen,\s*takenOver: showModeSelection \|\| showVenueOnboarding,\s*\}\);/);
     expect(APP).toMatch(/const darkOverTop = !!eventDetail \|\| aiChatMode === 'fullscreen';/);
     expect(APP).toMatch(/setStatusBarOverDark\(isDark \|\| topIsNavy \|\| darkOverTop\);\s*\}, \[isDark, topIsNavy, darkOverTop\]\);/);
     expect(APP).toMatch(/useEffect\(\(\) => \(\) => setStatusBarOverDark\(true\), \[\]\);/);

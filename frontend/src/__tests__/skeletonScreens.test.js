@@ -24,6 +24,10 @@ import {
   RosterSkeleton,
   EventCardSkeleton,
   NestSkeleton,
+  VenueDashboardSkeleton,
+  VenueBootSkeleton,
+  BootGround,
+  SessionBootSkeleton,
 } from '../components/ui/Skeleton';
 import PastFlocksScreen from '../screens/PastFlocksScreen';
 
@@ -205,13 +209,17 @@ describe('the Nest, before anything is known', () => {
     expect(column.style.flexDirection).toBe('column');
     expectBusyOnShapesOnly(container);
     // The old splash was a fixed navy gradient. This one is the theme's own
-    // ground, the safe areas and the tab bar's tokens.
+    // ground, the safe areas and the tab bar's tokens. The safe-top strip is
+    // drawn by BootFrame, which the venue's boot paint shares, in the colour
+    // the Nest hands it.
     expect(container.innerHTML).not.toMatch(/#1a3a5c|#2d5a87|linear-gradient/);
     const src = sourceOf('NestSkeleton');
     expect(src).toContain("backgroundColor: 'var(--bg-primary)'");
-    expect(src).toContain("height: 'var(--safe-top)'");
+    expect(src).toContain('<BootFrame mark="nest" label={label} top="var(--bg-primary)">');
     expect(src).toContain("padding: '10px 8px calc(12px + var(--safe-bottom))'");
     expect(src).toContain("backgroundColor: 'var(--bg-nav)'");
+    const frameSrc = SKELETON_SRC.slice(SKELETON_SRC.indexOf('function BootFrame('), SKELETON_SRC.indexOf('export function NestSkeleton('));
+    expect(frameSrc).toContain("<div style={{ height: 'var(--safe-top)', backgroundColor: top, flexShrink: 0 }} />");
   });
 
   test('it draws HomeScreen\'s pieces: the 36px avatar, the 56px Tonight control, the 52px Start a flock, three flock cards and five tabs', () => {
@@ -242,30 +250,168 @@ describe('the Nest, before anything is known', () => {
   });
 });
 
+describe('a cold start paints the screen it opens on, Nest or venue dashboard', () => {
+  /* A stored session used to paint the consumer Nest whatever it was about to
+     open: a venue session (flockUserMode 'venue') then landed on the dark
+     venue dashboard or its onboarding. SessionBootSkeleton decides for both
+     painters, index.js and App.js, and FlockAppInner keeps the dashboard's
+     shapes up until its first profile read says which. */
+  const originalMatchMedia = window.matchMedia;
+  afterEach(() => {
+    window.matchMedia = originalMatchMedia;
+    document.documentElement.removeAttribute('data-theme');
+  });
+  const phone = () => { window.matchMedia = () => ({ matches: true, addListener() {}, removeListener() {} }); };
+  const wide = () => { window.matchMedia = () => ({ matches: false, addListener() {}, removeListener() {} }); };
+
+  test('a stored session with no saved mode, or the user or admin mode, paints the Nest', () => {
+    phone();
+    for (const savedMode of [null, 'user', 'admin']) {
+      const { container, unmount } = render(<SessionBootSkeleton pathname="/app" search="" savedMode={savedMode} />);
+      expect(container.querySelector('[data-nest-skeleton="phone"]')).not.toBeNull();
+      expect(container.querySelector('[data-venue-skeleton]')).toBeNull();
+      unmount();
+    }
+  });
+
+  test('a saved venue mode paints the venue dashboard\'s shapes, not the Nest', () => {
+    phone();
+    const { container } = render(<SessionBootSkeleton pathname="/app" search="" savedMode="venue" />);
+    expect(container.querySelector('[data-nest-skeleton]')).toBeNull();
+    const root = container.querySelector('[data-venue-skeleton="phone"]');
+    expect(root).not.toBeNull();
+    expect(root.style.position).toBe('fixed');
+    expect(screen.getByRole('status').textContent).toBe('Loading your dashboard.');
+    // The navy header, the five tabs and three cards, and no tab bar: the
+    // dashboard has none.
+    const header = Array.from(container.querySelectorAll('div')).find((d) => d.style.padding === '16px' && d.style.background);
+    expect(header.style.background).toBe('rgb(30, 41, 59)');
+    expect(Array.from(container.querySelectorAll('.skeleton')).filter((b) => b.style.height === '28px')).toHaveLength(5);
+    expect(Array.from(container.querySelectorAll('.skeleton')).filter((b) => b.style.height === '104px')).toHaveLength(3);
+    expect(Array.from(container.querySelectorAll('.skeleton')).filter((b) => b.style.width === '22px')).toHaveLength(0);
+    // The strip over the safe top is the header's navy, as the app paints it
+    // over the dashboard.
+    expect(root.children[1].firstChild.style.backgroundColor).toBe('rgb(30, 41, 59)');
+    expectBusyOnShapesOnly(container);
+    expectNoSpinnerOrLoadingText(container);
+  });
+
+  test('in the dark theme the header is the dark palette\'s navy', () => {
+    phone();
+    document.documentElement.setAttribute('data-theme', 'dark');
+    const { container } = render(<VenueBootSkeleton />);
+    const header = Array.from(container.querySelectorAll('div')).find((d) => d.style.padding === '16px' && d.style.background);
+    expect(header.style.background).toBe('rgb(30, 58, 92)');
+  });
+
+  test('the two navies are App.js\'s own, so the paint and the dashboard cannot drift apart', () => {
+    const app = read('App.js');
+    const light = app.slice(app.indexOf('const colorsLight = {'), app.indexOf('const colorsDark = {'));
+    const dark = app.slice(app.indexOf('const colorsDark = {'), app.indexOf('const colors = colorsLight;'));
+    expect(light).toContain("navyBg: '#1e293b',");
+    expect(dark).toContain("navyBg: '#1e3a5c',");
+    expect(SKELETON_SRC).toContain("const HEADER_NAVY = { light: '#1e293b', dark: '#1e3a5c' };");
+  });
+
+  test('in a wide browser the venue paint sits in the same 375px frame as the Nest', () => {
+    wide();
+    const { container } = render(<VenueBootSkeleton />);
+    const root = container.querySelector('[data-venue-skeleton="frame"]');
+    expect(root).not.toBeNull();
+    const frame = root.children[1];
+    expect(frame.style.width).toBe('375px');
+    expect(frame.style.borderRadius).toBe('44px');
+    expectBusyOnShapesOnly(container);
+  });
+
+  test('the ?admin=true link paints the bare ground: the console or the Nest depends on a role not known yet', () => {
+    phone();
+    const { container, unmount } = render(<SessionBootSkeleton pathname="/app" search="?admin=true" savedMode="venue" />);
+    const ground = container.querySelector('[data-boot-ground="phone"]');
+    expect(ground).not.toBeNull();
+    expect(container.querySelector('.skeleton')).toBeNull();
+    expect(screen.getByRole('status').textContent).toBe('Loading Flock.');
+    expect(SKELETON_SRC).toContain("backgroundColor: fullBleed ? 'var(--bg-primary)' : '#1a1a2e'");
+    unmount();
+    wide();
+    const { container: frame } = render(<BootGround />);
+    expect(frame.firstChild.getAttribute('data-boot-ground')).toBe('frame');
+    expect(frame.firstChild.style.backgroundColor).toBe('rgb(26, 26, 46)');
+  });
+
+  test('a tag\'s /checkin/ URL still paints NfcCheckinView\'s #0f172a, whatever the mode', () => {
+    for (const savedMode of [null, 'venue']) {
+      const { container, unmount } = render(<SessionBootSkeleton pathname="/checkin/ChIJabc" search="" savedMode={savedMode} />);
+      expect(container.firstChild.style.backgroundColor).toBe('rgb(15, 23, 42)');
+      expect(container.querySelector('.skeleton')).toBeNull();
+      unmount();
+    }
+  });
+
+  test('the dashboard\'s chunk fallback is the same shapes in the app\'s live palette, with its line beside them', () => {
+    const { container } = render(<VenueDashboardSkeleton colors={{ navyBg: '#123456' }} />);
+    const header = Array.from(container.querySelectorAll('div')).find((d) => d.style.padding === '16px' && d.style.background);
+    expect(header.style.background).toBe('rgb(18, 52, 86)');
+    expect(screen.getByRole('status').textContent).toBe('Loading your dashboard.');
+    expectBusyOnShapesOnly(container);
+    expectShapesHidden(container);
+  });
+});
+
 describe('the boot paints, index.js then App.js', () => {
-  test('App.js holds the Nest skeleton up while GET /me answers, and the navy "Loading..." card is gone', () => {
+  test('App.js paints the same choice while GET /me answers, and the navy "Loading..." card is gone', () => {
     const app = codeOnly(read('App.js'));
     const start = app.indexOf('if (authChecking) {');
     expect(start).toBeGreaterThan(-1);
     const block = app.slice(start, app.indexOf('if (!authUser && bootUnreachable)', start));
-    expect(block).toContain('return <NestSkeleton label="Loading Flock." />;');
+    expect(block).toMatch(/<SessionBootSkeleton\s+pathname=\{window\.location\?\.pathname \|\| ''\}\s+search=\{window\.location\?\.search \|\| ''\}\s+savedMode=\{lsGet\('flockUserMode'\)\}\s+\/>/);
     expect(block).not.toMatch(/Loading\.\.\./);
     expect(block).not.toMatch(/linear-gradient/);
+    // The dashboard's shapes live with the Nest's now, for index.js to reach.
+    expect(app).toContain("import { SessionBootSkeleton, VenueDashboardSkeleton, FlockListSkeleton, RosterSkeleton, SkeletonBar, SkeletonCircle } from './components/ui/Skeleton';");
+    expect(app).not.toMatch(/const VenueDashboardSkeleton = /);
+  });
+
+  test('App.js keeps the dashboard\'s shapes up until a saved venue mode\'s first profile read answers', () => {
+    const app = codeOnly(read('App.js'));
+    // Held from the first render, on the conditions the boot read itself has.
+    expect(app).toMatch(/const \[venueBootHold, setVenueBootHold\] = useState\(\(\) => \(\s*userMode === 'venue'\s*&& \(authUser\?\.role === 'venue_owner' \|\| authUser\?\.role === 'admin'\)\s*&& !venueLoginFlag\s*&& !\(authUser\?\.role === 'admin' && new URLSearchParams\(window\.location\?\.search \|\| ''\)\.get\('admin'\) === 'true'\)\s*\)\);/);
+    // The admin link it steps aside for is the URL mode effect's own test.
+    expect(app).toContain("const wantsAdmin = urlParams.get('admin') === 'true';");
+    expect(app).toMatch(/if \(wantsAdmin && authUser\?\.role === 'admin'\) \{/);
+    const effect = app.slice(app.indexOf('const venueBootRoutedRef = useRef(false);'), app.indexOf('// Navigation', app.indexOf('const venueBootRoutedRef = useRef(false);')));
+    expect(effect).toContain("if (userMode !== 'venue') return;");
+    expect(effect).toContain("if (authUser?.role !== 'venue_owner' && authUser?.role !== 'admin') return;");
+    expect(effect).toContain('if (venueLoginFlag) return;');
+    // Down when the read answers, either way.
+    expect(effect).toMatch(/\.catch\(\(\) => \{[^\n]*\}\)\s*\.finally\(\(\) => setVenueBootHold\(false\)\);/);
+    // Only ever in place of 'main', after every screen the launch can choose.
+    expect(app).toContain("const venueBootHolding = venueBootHold && userMode === 'venue' && currentScreen === 'main';");
+    const tail = app.slice(app.indexOf("if (currentScreen === 'adminRevenue') {"), app.indexOf('switch (currentTab) {', app.indexOf("if (currentScreen === 'adminRevenue') {")));
+    expect(tail).toContain('if (venueBootHolding) return <VenueDashboardSkeleton colors={colors} />;');
+    expect(tail.indexOf('if (venueBootHolding)')).toBeGreaterThan(tail.indexOf('<RevenueScreen {...revenueScreenProps} />'));
   });
 
   describe('index.js AppLoading', () => {
     let fallback;
-    beforeAll(() => {
-      window.history.pushState({}, '', '/app');
+    let adminLinkFallback;
+    // index.js reads the address once, at load, so each address is its own
+    // load of the module.
+    const fallbackAt = (url) => {
+      window.history.pushState({}, '', url);
       let rendered = null;
       jest.doMock('react-dom/client', () => ({ createRoot: () => ({ render: (el) => { rendered = el; } }) }));
-      delete process.env.REACT_APP_POSTHOG_KEY;
-      delete process.env.REACT_APP_SENTRY_DSN;
       jest.isolateModules(() => { require('../index'); });
       // StrictMode > ErrorBoundary > Suspense, whose fallback is <AppLoading />.
       const boundary = React.Children.only(rendered.props.children);
       const suspense = React.Children.only(boundary.props.children);
-      fallback = suspense.props.fallback;
+      return suspense.props.fallback;
+    };
+    beforeAll(() => {
+      delete process.env.REACT_APP_POSTHOG_KEY;
+      delete process.env.REACT_APP_SENTRY_DSN;
+      fallback = fallbackAt('/app');
+      adminLinkFallback = fallbackAt('/app?admin=true');
     });
     afterAll(() => {
       jest.dontMock('react-dom/client');
@@ -280,6 +426,32 @@ describe('the boot paints, index.js then App.js', () => {
       expect(container.querySelector('[data-nest-skeleton]')).not.toBeNull();
       expect(screen.getByRole('status').textContent).toBe('Loading Flock.');
       expectNoSpinnerOrLoadingText(container);
+    });
+
+    test('with a saved venue mode, it is the venue dashboard\'s shapes, not the Nest', () => {
+      localStorage.setItem('flockToken', 'stored');
+      localStorage.setItem('flockUserMode', 'venue');
+      const { container } = render(fallback);
+      expect(container.querySelector('[data-nest-skeleton]')).toBeNull();
+      expect(container.querySelector('[data-venue-skeleton]')).not.toBeNull();
+      expect(screen.getByRole('status').textContent).toBe('Loading your dashboard.');
+      expectNoSpinnerOrLoadingText(container);
+    });
+
+    test('with a saved admin mode it is still the Nest, which is where an admin opens', () => {
+      localStorage.setItem('flockToken', 'stored');
+      localStorage.setItem('flockUserMode', 'admin');
+      const { container } = render(fallback);
+      expect(container.querySelector('[data-nest-skeleton]')).not.toBeNull();
+    });
+
+    test('on the ?admin=true link it is the bare ground, since the role is not known yet', () => {
+      localStorage.setItem('flockToken', 'stored');
+      localStorage.setItem('flockUserMode', 'admin');
+      const { container } = render(adminLinkFallback);
+      expect(container.querySelector('[data-boot-ground]')).not.toBeNull();
+      expect(container.querySelector('[data-nest-skeleton]')).toBeNull();
+      expect(screen.getByRole('status').textContent).toBe('Loading Flock.');
     });
 
     test('with none, it is the sign-in screen\'s navy, which is also the launch screen\'s', () => {

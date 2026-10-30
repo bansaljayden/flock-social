@@ -21,7 +21,7 @@
  * tokens index.css redefines for dark). This file pins that, and adds the
  * general rule that would have caught it: no function anywhere in App.js may
  * read the MODULE-SCOPE `colors`. A module-scope component that needs the
- * palette takes `colors` as a prop, as VenueDashboardSkeleton, PromoModal and
+ * palette takes `colors` as a prop, as RevenueScreenSkeleton, PromoModal and
  * EventModal already do, and then its reads bind to the parameter, not to the
  * light constant.
  *
@@ -151,7 +151,10 @@ describe('no function reads the light-only module palette', () => {
         }
       },
     });
-    ['VenueDashboardSkeleton', 'PromoModal', 'EventModal'].forEach((name) => expect(seen.has(name)).toBe(true));
+    // VenueDashboardSkeleton was the first of these until it moved to
+    // components/ui/Skeleton.js, where a cold start paints it too;
+    // RevenueScreenSkeleton reads `colors.navyBg` off its prop the same way.
+    ['RevenueScreenSkeleton', 'PromoModal', 'EventModal'].forEach((name) => expect(seen.has(name)).toBe(true));
   });
 });
 

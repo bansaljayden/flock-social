@@ -133,9 +133,11 @@ import { BirdieStill, BirdNote, WARM_BIRD } from './components/ui/BirdieBird';
 import FloppyBird from './components/ui/FloppyBird';
 import Icons from './components/ui/Icons';
 import MapsChooserHost, { openMapsChooser, closeMapsChooser } from './components/ui/MapsChooser';
-// The loading shapes. NestSkeleton is the cold-start screen index.js paints as
-// well, so the two hand over without a change of colour.
-import { NestSkeleton, FlockListSkeleton, RosterSkeleton, SkeletonBar, SkeletonCircle } from './components/ui/Skeleton';
+// The loading shapes. SessionBootSkeleton is the cold-start screen index.js
+// paints as well, so the two hand over without a change of colour, and
+// VenueDashboardSkeleton is the dashboard's shapes, which a cold start into a
+// saved venue mode paints too.
+import { SessionBootSkeleton, VenueDashboardSkeleton, FlockListSkeleton, RosterSkeleton, SkeletonBar, SkeletonCircle } from './components/ui/Skeleton';
 // Add Friends left App.js in the same sweep as the venue dashboard below and
 // for the same review reason, but it is imported normally rather than lazily.
 // It is a consumer screen the empty home state points a brand new account
@@ -1331,38 +1333,11 @@ const SearchResultsSkeleton = () => (
   </div>
 );
 
-// What stands in while that chunk arrives. A skeleton, not a spinner
-// (DESIGN-STANDARD rule 10): the navy header, the tab strip and the cards are
-// exactly where the dashboard is about to put them, so the screen settles
-// instead of appearing. It draws no numbers, because it has none.
-const VenueDashboardSkeleton = ({ colors }) => (
-  <div style={{ display: 'flex', flexDirection: 'column', height: '100%', backgroundColor: 'var(--bg-primary)' }}>
-    <p className="sr-only" role="status">Loading your dashboard.</p>
-    <div style={{ padding: '16px', background: colors.navyBg, flexShrink: 0 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ width: '32px', height: '32px', borderRadius: '16px', backgroundColor: 'rgba(255,255,255,0.2)' }} />
-        <div style={{ width: '96px', height: '24px', borderRadius: '12px', backgroundColor: 'rgba(255,255,255,0.2)' }} />
-      </div>
-      <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-        <div style={{ width: '48px', height: '48px', borderRadius: '12px', backgroundColor: 'rgba(255,255,255,0.2)', flexShrink: 0 }} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ width: '60%', height: '16px', borderRadius: '4px', backgroundColor: 'rgba(255,255,255,0.2)', marginBottom: '8px' }} />
-          <div style={{ width: '40%', height: '11px', borderRadius: '4px', backgroundColor: 'rgba(255,255,255,0.14)' }} />
-        </div>
-      </div>
-    </div>
-    <div style={{ display: 'flex', gap: '8px', padding: '10px 16px', flexShrink: 0, borderBottom: '1px solid var(--border-default)' }}>
-      {[0, 1, 2, 3, 4].map((i) => (
-        <div key={i} className="skeleton" style={{ flex: 1, height: '28px', borderRadius: '8px' }} />
-      ))}
-    </div>
-    <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', padding: '16px' }}>
-      {[0, 1, 2].map((i) => (
-        <div key={i} className="skeleton" style={{ width: '100%', height: '104px', borderRadius: '16px', marginBottom: '12px' }} />
-      ))}
-    </div>
-  </div>
-);
+// What stands in while the venue dashboard's chunk arrives is
+// VenueDashboardSkeleton, imported above: the navy header, the tab strip and
+// the cards exactly where the dashboard is about to put them. It moved to
+// components/ui/Skeleton.js because a cold start into a saved venue mode
+// paints the same shapes before this file has loaded.
 
 // What stands in while the admin console chunk arrives. A skeleton, not a
 // spinner (DESIGN-STANDARD rule 10): the navy header, the moderation slot, the
@@ -5500,6 +5475,23 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   useEffect(() => { warmScreenChunks(); }, []);
 
   const venueBootRoutedRef = useRef(false);
+  // WHILE THAT FIRST READ IS OUT, THE DASHBOARD'S SHAPES, NOT THE NEST. The
+  // cold start painted them while the chunk loaded and GET /me answered
+  // (SessionBootSkeleton in components/ui/Skeleton.js), and then this shell
+  // opened on the Nest, because the screen stays 'main' until the read below
+  // says dashboard or onboarding. So the shapes stay up from the first render
+  // (renderScreen, and topIsNavy for the strip above them), on the same
+  // conditions the effect reads, and come down when the read answers either
+  // way. They only ever stand in for 'main', so a screen the launch chose, or
+  // one chosen since, is drawn as it would have been. An admin on the
+  // ?admin=true link is not held at all: that link opens the console (the URL
+  // mode effect below), whatever the saved mode says.
+  const [venueBootHold, setVenueBootHold] = useState(() => (
+    userMode === 'venue'
+    && (authUser?.role === 'venue_owner' || authUser?.role === 'admin')
+    && !venueLoginFlag
+    && !(authUser?.role === 'admin' && new URLSearchParams(window.location?.search || '').get('admin') === 'true')
+  ));
   useEffect(() => {
     if (venueBootRoutedRef.current) return;
     if (userMode !== 'venue') return;
@@ -5519,7 +5511,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       } else {
         setShowVenueOnboarding(true);
       }
-    }).catch(() => { if (!launchChoseScreenRef.current && gen === venueRouteGenRef.current) setShowVenueOnboarding(true); });
+    }).catch(() => { if (!launchChoseScreenRef.current && gen === venueRouteGenRef.current) setShowVenueOnboarding(true); })
+      // Answered either way, so the dashboard's shapes come down (venueBootHold).
+      .finally(() => setVenueBootHold(false));
   }, [userMode, authUser?.role, venueLoginFlag]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Navigation
@@ -9239,9 +9233,12 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
      is painted the header's own navy, and the glyphs go light. The list is
      NAVY_TOP_SCREENS in services/systemBars.js. The Welcome and venue
      onboarding screens take over the screen switch whatever currentScreen
-     says, so neither counts. */
+     says, so neither counts. A cold start into a saved venue mode draws the
+     dashboard's shapes in place of 'main' while its first profile read is out
+     (venueBootHold), so for that wait the strip reads the dashboard. */
+  const venueBootHolding = venueBootHold && userMode === 'venue' && currentScreen === 'main';
   const topIsNavy = screenTopIsNavy({
-    currentScreen, currentTab, profileScreen,
+    currentScreen: venueBootHolding ? 'venueDashboard' : currentScreen, currentTab, profileScreen,
     takenOver: showModeSelection || showVenueOnboarding,
   });
   /* Two dark surfaces that cover the whole screen, strip included: the event
@@ -20580,6 +20577,9 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
         </React.Suspense>
       );
     }
+    // A cold start into a saved venue mode, while its first profile read is
+    // out: the dashboard's shapes in place of the Nest (venueBootHold).
+    if (venueBootHolding) return <VenueDashboardSkeleton colors={colors} />;
     switch (currentTab) {
       case 'explore': return null; // Rendered persistently below
       case 'calendar': {
@@ -22586,22 +22586,22 @@ const FlockApp = () => {
     </div>
   ) : null;
 
-  // A stored session waiting on GET /me, which is every cold start. What comes
-  // next is the Nest, so the wait is the Nest's shape in the reader's theme,
-  // the same skeleton index.js painted while this chunk loaded. It was a navy
-  // "Flock / Loading..." card between two cream screens. A tag's /checkin/
-  // URL opens on NfcCheckinView instead (FlockAppInner's nfcInitialPlaceId
-  // reads the same path), which is #0f172a edge to edge, so that wait is
-  // that colour and not a Nest the person is not about to see.
+  // A stored session waiting on GET /me, which is every cold start. The wait
+  // is the shape of the screen that comes next, in the reader's theme, the
+  // same paint index.js made while this chunk loaded (SessionBootSkeleton says
+  // which: usually the Nest; the venue dashboard's shapes for a saved venue
+  // mode, which opens on that dark dashboard and not the Nest; #0f172a for a
+  // tag's /checkin/ URL, which opens on NfcCheckinView; the bare ground for
+  // the ?admin=true link). It was a navy "Flock / Loading..." card between
+  // two cream screens.
   if (authChecking) {
-    if (/^\/checkin\/[^/?#]+/.test(window.location?.pathname || '')) {
-      return (
-        <div style={{ position: 'fixed', inset: 0, backgroundColor: '#0f172a' }}>
-          <p className="sr-only" role="status">Loading Flock.</p>
-        </div>
-      );
-    }
-    return <NestSkeleton label="Loading Flock." />;
+    return (
+      <SessionBootSkeleton
+        pathname={window.location?.pathname || ''}
+        search={window.location?.search || ''}
+        savedMode={lsGet('flockUserMode')}
+      />
+    );
   }
 
   // A stored session that cannot reach the server on boot. Not the sign-in

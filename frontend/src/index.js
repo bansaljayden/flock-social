@@ -9,7 +9,7 @@ import { BirdieStill, BIRDIE, WARM_BIRD } from './components/ui/BirdieBird';
 import FloppyBird from './components/ui/FloppyBird';
 // The app route's loading screen, which App.js paints again while GET /me
 // answers. Small, and nothing in it reaches for services/api.js.
-import { NestSkeleton } from './components/ui/Skeleton';
+import { SessionBootSkeleton } from './components/ui/Skeleton';
 // The website's analytics bar. The app routes do not mount it: there, the
 // signed-in account's own setting decides (followAccountForAnalytics below).
 import ConsentBanner from './components/ConsentBanner';
@@ -616,27 +616,24 @@ function DarkLoading() {
 // that paints one screen and lands on another is the flash these fallbacks
 // exist to prevent.
 //
-//   A stored session: the Nest comes next. App.js holds the same NestSkeleton
-//   up while GET /me answers, so chunk, session check and Nest read as one
-//   screen filling in. <html> carries data-theme before this first render
+//   A stored session: the screen it opens on, chosen by SessionBootSkeleton
+//   (components/ui/Skeleton.js), which App.js paints too while GET /me
+//   answers, so chunk, session check and screen read as one screen filling
+//   in. Usually that is the Nest; a saved venue mode (flockUserMode) opens on
+//   the dark venue dashboard and gets its shapes instead; an NFC tag's
+//   /checkin/ URL is NfcCheckinView's #0f172a; the ?admin=true link gets the
+//   bare ground, because the role that decides console or Nest is not known
+//   yet. <html> carries data-theme before this first render
 //   (applyStoredTheme), so the skeleton is in the reader's theme. This used to
 //   paint plain var(--bg-primary), which went cream, then App.js's navy
 //   "Loading..." card, then cream again on every light-mode launch.
-//   An NFC tag's /checkin/ URL: NfcCheckinView in App.js, #0f172a edge to edge.
 //   No session: the sign-in screen, navy in both themes (.auth-bg in
 //   components/auth/AuthShell.js), and #0b1a2e is also the native launch
 //   screen's colour (capacitor.config.ts backgroundColor), so the handoff
 //   from the splash on iOS stays invisible.
 function AppLoading() {
   if (readStore('flockToken')) {
-    if (/^\/checkin\/[^/?#]+/.test(path)) {
-      return (
-        <div style={{ position: 'fixed', inset: 0, background: '#0f172a' }}>
-          <p className="sr-only" role="status">Loading Flock.</p>
-        </div>
-      );
-    }
-    return <NestSkeleton label="Loading Flock." />;
+    return <SessionBootSkeleton pathname={path} search={rawSearch} savedMode={readStore('flockUserMode')} />;
   }
   return (
     <div style={{ position: 'fixed', inset: 0, background: '#0b1a2e' }}>
