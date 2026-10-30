@@ -1026,11 +1026,16 @@ describe('the venue sheet under the same paywall', () => {
     expect(tile).toContain('{peakText}');
   });
 
-  test('it uses the same blurred stand-in as the best-time line above it', () => {
+  test('it says the figure is in Flock Pro, as the best-time line above it does, and invents no hour', () => {
+    // It blurred a made-up "9 PM", the same on every venue, closed ones
+    // included, which read as a real figure behind glass.
     const tile = peakTile();
-    expect(tile).toContain("filter: 'blur(4px)'");
-    expect(tile).toContain('aria-hidden');
-    expect(tile).toContain('PRO');
+    expect(tile).toContain('Part of Flock Pro');
+    expect(tile).not.toMatch(/\d\s?(AM|PM)/);
+    expect(tile).not.toContain("filter: 'blur(4px)'");
+    expect(appSource).toContain('Best time to visit is part of Flock Pro');
+    expect(appSource).toContain('Least crowded time is part of Flock Pro');
+    expect(readSource(CARD_PATH)).not.toMatch(/>9 PM</);
   });
 
   test('closed still wins over the paywall, since it is true either way', () => {

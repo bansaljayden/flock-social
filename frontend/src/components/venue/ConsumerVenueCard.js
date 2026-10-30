@@ -172,14 +172,33 @@ const AnimatedDial = React.memo(function AnimatedDial({ score, color }) {
   );
 });
 
+// One option of the reality check. The one tapped is filled at once, in the
+// two colours that swap in dark mode, and the others dim while it is sent:
+// `disabled` alone only changed the cursor, which a phone never shows, so a
+// tap looked like nothing until the thank-you landed.
+const realityOptionStyle = (on, busy) => ({
+  padding: '4px 12px',
+  borderRadius: '8px',
+  border: `1.5px solid ${on ? 'var(--text-primary)' : 'var(--border-default)'}`,
+  backgroundColor: on ? 'var(--text-primary)' : 'var(--bg-card-solid)',
+  color: on ? 'var(--bg-card-solid)' : 'var(--text-primary)',
+  fontSize: 'var(--t-meta)',
+  fontWeight: '600',
+  cursor: busy ? 'wait' : 'pointer',
+  opacity: busy && !on ? 0.5 : 1,
+});
+
 // One-tap reality check under the crowd forecast: a report from someone at the
 // venue becomes a dated training row (venue_feedback) AND calibrates the live
 // score for everyone else. Self-contained state; remount per venue via key.
-const CrowdRealityCheck = React.memo(function CrowdRealityCheck({ placeId, venueName, predicted, ownerAsserted }) {
+// Exported for __tests__/venueCardTapFeedback.test.js, which renders it.
+export const CrowdRealityCheck = React.memo(function CrowdRealityCheck({ placeId, venueName, predicted, ownerAsserted }) {
   const [open, setOpen] = useState(false);
   const [sent, setSent] = useState(null); // 'verified' | 'unverified'
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [picked, setPicked] = useState(null);
+  const sending = React.useRef(false);
   if (!placeId) return null;
   if (sent) {
     // The forecast only learns from a report the server could verify (a
@@ -229,11 +248,17 @@ const CrowdRealityCheck = React.memo(function CrowdRealityCheck({ placeId, venue
       <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)' }}>
         How busy is it actually:
       </span>
-      {opts.map(o => (
+      {opts.map(o => {
+        const on = picked === o.level;
+        return (
         <button className="hit44"
           key={o.level}
           disabled={busy}
+          aria-pressed={on}
           onClick={async () => {
+            if (sending.current) return;
+            sending.current = true;
+            setPicked(o.level);
             setBusy(true);
             setFailed(false);
             try {
@@ -249,13 +274,17 @@ const CrowdRealityCheck = React.memo(function CrowdRealityCheck({ placeId, venue
               // Was console-only: the buttons came back with no word.
               setFailed(true);
               setBusy(false);
+              setPicked(null);
+            } finally {
+              sending.current = false;
             }
           }}
-          style={{ padding: '4px 12px', borderRadius: '8px', border: '1.5px solid var(--border-default)', backgroundColor: 'var(--bg-card-solid)', color: 'var(--text-primary)', fontSize: 'var(--t-meta)', fontWeight: '600', cursor: busy ? 'wait' : 'pointer' }}
+          style={realityOptionStyle(on, busy)}
         >
           {o.label}
         </button>
-      ))}
+        );
+      })}
       {failed && (
         <span style={{ fontSize: 'var(--t-meta)', color: 'var(--accent-red-text)', fontWeight: '500' }}>That did not send. Try again.</span>
       )}
@@ -915,7 +944,13 @@ export default function ConsumerVenueCard({
                   ) : <span />}
                   <div style={{ display: 'flex', alignItems: 'center', gap: '4px', flexShrink: 0 }}>
                     {crowdLoading ? (
-                      <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)' }}>Loading...</span>
+                      // The chip's own shape, a dot and a word, while the read
+                      // is out, so the row does not change size when it lands.
+                      <>
+                        <span className="sr-only">Loading the crowd reading</span>
+                        <div aria-hidden="true" className="skeleton" style={{ width: '6px', height: '6px', borderRadius: '3px' }} />
+                        <div aria-hidden="true" className="skeleton" style={{ width: '56px', height: '12px', borderRadius: '6px' }} />
+                      </>
                     ) : ownerNumber ? null : (
                       <>
                         {/* The dot is decorative so it keeps the vivid hue; the LABEL
@@ -1006,7 +1041,7 @@ export default function ConsumerVenueCard({
                             {Icons.clock(colors.steel, 12)}
                             {cd?.forecastAccess?.locked && (process.env.REACT_APP_PURCHASES !== 'off') ? (
                               <button type="button" onClick={(e) => { e.stopPropagation(); if (!venueOwnerView) setPaywallTrigger('forecast', activeVenue && activeVenue.place_id); }} style={{ background: 'none', border: 'none', padding: 0, textAlign: 'left', font: 'inherit', fontSize: 'var(--t-meta)', fontWeight: '600', color: colors.steel, cursor: 'pointer' }}>
-                                Best time to visit: <span aria-hidden style={{ filter: 'blur(4px)', userSelect: 'none' }}>9 PM</span> <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', letterSpacing: '0.5px' }}>PRO</span>
+                                Best time to visit is part of Flock Pro
                               </button>
                             ) : (
                               <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.steel }}>Best time to visit: {bestText}</span>
@@ -1023,7 +1058,7 @@ export default function ConsumerVenueCard({
                           {Icons.clock(colors.steel, 12)}
                           {cd?.forecastAccess?.locked && (process.env.REACT_APP_PURCHASES !== 'off') ? (
                             <button type="button" onClick={(e) => { e.stopPropagation(); if (!venueOwnerView) setPaywallTrigger('forecast', activeVenue && activeVenue.place_id); }} style={{ background: 'none', border: 'none', padding: 0, textAlign: 'left', font: 'inherit', fontSize: 'var(--t-meta)', fontWeight: '600', color: colors.steel, cursor: 'pointer' }}>
-                              Least crowded: <span aria-hidden style={{ filter: 'blur(4px)', userSelect: 'none' }}>9 PM</span> <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', letterSpacing: '0.5px' }}>PRO</span>
+                              Least crowded time is part of Flock Pro
                             </button>
                           ) : (
                             <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.steel }}>Least crowded: {bestText}</span>
@@ -1097,7 +1132,7 @@ export default function ConsumerVenueCard({
                     its heading over an empty 56px gap: it read as a broken card
                     and did not say it was a Pro feature. One row now says what
                     is behind it and opens the sheet, the same tap target as the
-                    blurred best-time line. */}
+                    locked best-time line. */}
                 {cd?.forecastAccess?.locked && !(process.env.REACT_APP_PURCHASES !== 'off') ? (
                   <m.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2, duration: 0.4, ease: 'easeOut' }} style={{ marginBottom: '6px', padding: '10px 12px', borderRadius: '10px', border: '1px dashed var(--border-default)', backgroundColor: 'var(--bg-card-solid)' }}>
                     <span style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', lineHeight: 1.4 }}>You've reached this month's limit for hourly charts.</span>
@@ -1222,15 +1257,19 @@ export default function ConsumerVenueCard({
                         (routes/crowd.js LOCKED_FORECAST_FIELDS), so under the
                         paywall this tile printed the words BUSIEST HOURS over
                         nothing at all: an empty box that reads as a broken
-                        card, not as a boundary. Same blurred stand-in and same
-                        tap target as the best-time line above it. */}
+                        card, not as a boundary. It says in words that the
+                        figure is in Flock Pro, with the same tap target as the
+                        best-time line above it. Both used to blur an hour
+                        nobody measured, the same one on every venue, closed
+                        ones included, which read as a real figure behind
+                        glass. */}
                     {closedAllDay ? (
                       <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.redText }}>Closed Today</span>
                     ) : cd?.forecastAccess?.locked && !(process.env.REACT_APP_PURCHASES !== 'off') ? (
                       <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: 'var(--text-secondary)' }}>Not available</span>
                     ) : cd?.forecastAccess?.locked && (process.env.REACT_APP_PURCHASES !== 'off') ? (
                       <button type="button" onClick={(e) => { e.stopPropagation(); if (!venueOwnerView) setPaywallTrigger('forecast', activeVenue && activeVenue.place_id); }} style={{ background: 'none', border: 'none', padding: 0, textAlign: 'left', font: 'inherit', fontSize: 'var(--t-meta)', fontWeight: '600', color: colors.steel, cursor: 'pointer' }}>
-                        <span aria-hidden style={{ filter: 'blur(4px)', userSelect: 'none' }}>9 PM</span> <span style={{ fontWeight: '500', letterSpacing: '0.5px' }}>PRO</span>
+                        Part of Flock Pro
                       </button>
                     ) : (
                       <span style={{ fontSize: 'var(--t-meta)', fontWeight: '500', color: colors.navy }}>{peakText}</span>
