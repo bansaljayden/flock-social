@@ -6086,7 +6086,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
     setCrowdFetchFailed(false);
     setCrowdLoading(true);
     setCrowdAlternatives([]);
-    setVenueDetailModal(fallbackData ? { ...fallbackData, loading: true } : { name: 'Loading...', loading: true });
+    // No venue in hand (a notification tap, the forecast's way back) means no
+    // name yet. It used to be the string 'Loading...', which the sheet printed
+    // as the venue's name; empty, the sheet draws the name's line instead.
+    setVenueDetailModal(fallbackData ? { ...fallbackData, loading: true } : { name: '', loading: true });
     try {
       const [detailResult, crowdResult] = await Promise.allSettled([
         getVenueDetails(placeId),

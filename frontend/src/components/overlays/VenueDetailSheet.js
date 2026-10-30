@@ -59,6 +59,7 @@ import { onVenuePhotoError } from '../../lib/venuePhoto';
 import { submitVenueReview, getPublicReviews } from '../../services/api';
 import VenueEventsSection from './VenueEventsSection';
 import { GoogleMapsMark, PhotoCredit, creditAt, usableCredit } from '../ui/GoogleCredit';
+import { SkeletonBar, SkeletonCircle, SkeletonStatus } from '../ui/Skeleton';
 
 // The header photo and Google's credit for it, as one piece, keyed by photo
 // so each photo starts clean. A photo that fails to load becomes the
@@ -284,7 +285,11 @@ const VenueDetailSheet = ({
               <button aria-label="Close" className="hit44" onClick={closeVenueDetail} style={{ position: 'absolute', top: '12px', right: '12px', width: '34px', height: '34px', borderRadius: '17px', backgroundColor: 'rgba(0,0,0,0.5)', border: 'none', color: 'white', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', backdropFilter: 'blur(10px)' }}>{Icons.x('white', 18)}</button>
               {/* Name overlay */}
               <div style={{ position: 'absolute', bottom: '12px', left: '14px', right: '14px' }}>
-                <h2 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', color: 'white', fontSize: 'var(--t-title)', fontWeight: '600', margin: 0, textShadow: '0 2px 8px rgba(0,0,0,0.5)' }}>{venueDetailModal.name}</h2>
+                {/* A card opened with no venue in hand (a notification tap, the
+                    forecast's way back) has no name until the details answer.
+                    It used to print "Loading..." here as if that were the
+                    venue's name; the name's line is drawn instead. */}
+                <h2 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em', color: 'white', fontSize: 'var(--t-title)', fontWeight: '600', margin: 0, textShadow: '0 2px 8px rgba(0,0,0,0.5)' }}>{venueDetailModal.name || (venueDetailModal.loading ? <SkeletonBar dark width="60%" height={18} radius={5} style={{ margin: '3px 0 2px' }} /> : null)}</h2>
                 {venueDetailModal.formatted_address && <p style={{ color: 'rgba(255,255,255,0.85)', fontSize: 'var(--t-meta)', margin: '3px 0 0', textShadow: '0 1px 4px rgba(0,0,0,0.5)' }}>{venueDetailModal.formatted_address}</p>}
               </div>
             </div>
@@ -319,10 +324,42 @@ const VenueDetailSheet = ({
             </div>
             <div style={{ padding: '10px 16px 16px' }}>
               {venueDetailModal.loading ? (
-                <div style={{ textAlign: 'center', padding: '30px 0' }}>
-                  <div style={{ display: 'inline-block', width: '24px', height: '24px', border: `3px solid ${colors.creamDark}`, borderTopColor: colors.navy, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: '10px 0 0' }}>Loading details...</p>
-                </div>
+                /* THE CARD THAT IS COMING, in the shapes of the blocks below:
+                   the three stat tiles, Hours, Contact with its two rows, View
+                   Menu and the type tags. Empty shapes, never a rating or a
+                   price, because nothing has been read yet. A ring and
+                   "Loading details..." used to stand in for all of it. */
+                <SkeletonStatus label="Loading details">
+                  <div aria-hidden="true" style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+                    {[0, 1, 2].map((i) => (
+                      <div key={i} style={{ flex: 1, height: '62px', boxSizing: 'border-box', backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '10px', border: '1px solid var(--border-subtle)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '7px' }}>
+                        <SkeletonBar width={40} height={18} radius={5} />
+                        <SkeletonBar width={52} height={10} />
+                      </div>
+                    ))}
+                  </div>
+                  <div aria-hidden="true" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '14px', border: '1px solid var(--border-subtle)' }}>
+                    <SkeletonBar width={72} height={18} radius={5} style={{ margin: '2px 0 10px' }} />
+                    {['62%', '66%', '60%', '64%', '70%', '58%', '54%'].map((w, i) => (
+                      <SkeletonBar key={i} width={w} height={11} style={{ margin: '7px 0' }} />
+                    ))}
+                  </div>
+                  <div aria-hidden="true" style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '12px', marginBottom: '14px', border: '1px solid var(--border-subtle)' }}>
+                    <SkeletonBar width={84} height={18} radius={5} style={{ margin: '2px 0 10px' }} />
+                    <SkeletonBar height={32} radius={10} style={{ marginBottom: '6px' }} />
+                    <SkeletonBar height={32} radius={10} />
+                  </div>
+                  <div aria-hidden="true" style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '12px', backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', border: '1px solid var(--border-subtle)', marginBottom: '14px' }}>
+                    <SkeletonBar width={18} height={18} radius={4} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <SkeletonBar width={84} height={13} />
+                      <SkeletonBar width={96} height={10} style={{ marginTop: '6px' }} />
+                    </div>
+                  </div>
+                  <div aria-hidden="true" style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '16px' }}>
+                    {[64, 88, 56].map((w) => <SkeletonBar key={w} width={w} height={24} radius={20} />)}
+                  </div>
+                </SkeletonStatus>
               ) : (
                 <>
                   {/* Stats row */}
@@ -580,7 +617,25 @@ const VenueDetailSheet = ({
                   action={<button className="hit44 glass-btn glass-secondary" onClick={() => loadVenueDetailReviews(venueDetailPlaceId)} style={{ padding: '6px 12px', borderRadius: '8px', border: `1px solid ${colors.navy}`, backgroundColor: 'transparent', color: colors.navy, fontSize: 'var(--t-meta)', fontWeight: '600', cursor: 'pointer' }}>Try again</button>}
                 />
               ) : !venueDetailReviews ? (
-                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-tertiary)', textAlign: 'center', padding: '12px' }}>Loading reviews...</p>
+                /* Two reviews' worth of shape, the row above's: the face, the
+                   name, the stars and a line of text, no rating in them. */
+                <SkeletonStatus label="Loading reviews">
+                  {['78%', '52%'].map((w) => (
+                    <div key={w} aria-hidden="true" style={{ padding: '10px', backgroundColor: 'var(--bg-tertiary)', borderRadius: '8px', marginBottom: '6px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <SkeletonCircle size={24} />
+                          <SkeletonBar width={84} height={11} />
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <SkeletonBar width={64} height={12} />
+                          <SkeletonBar width={13} height={13} radius={3} />
+                        </div>
+                      </div>
+                      <SkeletonBar width={w} height={11} style={{ marginTop: '8px' }} />
+                    </div>
+                  ))}
+                </SkeletonStatus>
               ) : !showReviewForm && (
                 <BirdNote layout="row" bird={WARM_BIRD} size={48} body="No reviews yet. Be the first!" style={{ padding: '8px 4px' }} />
               )}
