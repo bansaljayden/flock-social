@@ -6917,6 +6917,10 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
   // null until read: a dropped stats read printed "0 friends" to someone
   // with forty.
   const [friendCount, setFriendCount] = useState(null);
+  // Whether that first stats read has answered, either way. null alone cannot
+  // tell "not read yet" from "the read failed": the You tab draws a bar for the
+  // first and its dash for the second.
+  const [userStatsLoaded, setUserStatsLoaded] = useState(false);
 
   // ADD FRIENDS FROM THE NEST, FOR AN ACCOUNT WITH NOBODY ON IT YET.
   //
@@ -7916,7 +7920,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
       setStreak(typeof d.streak === 'number' ? d.streak : null);
       setFriendCount(typeof d.friendCount === 'number' ? d.friendCount : null);
       setReliabilityScore(readReliability(d.reliabilityScore));
-    }).catch(() => {});
+    }).catch(() => {}).finally(() => setUserStatsLoaded(true));
     // Requests that arrived while the app was closed. These used to load only
     // when Add Friends was opened, so three people could ask and the app
     // showed nothing: no badge, and a tapped "New friend request" push landed
@@ -20377,6 +20381,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           exportingData,
           flocks,
           flocksError,
+          flocksLoading,
           friendCount,
           handleDeleteContact,
           handleEditContact,
@@ -20465,6 +20470,7 @@ const FlockAppInner = ({ authUser, onLogout, venueLoginFlag, onUserPatch }) => {
           unblockingId,
           userInterests,
           userMode,
+          userStatsLoaded,
           venmoUsername,
           zelleIdentifier,
         };

@@ -62,6 +62,8 @@ import { deleteAccount, trackNotificationPermission, updatePaymentMethods, logou
 import { getNotificationStatus, requestNotificationPermission } from '../services/firebase';
 import { BirdieStill, BirdNote, WARM_BIRD } from '../components/ui/BirdieBird';
 import Icons from '../components/ui/Icons';
+// The You tab's stat tiles and the trusted contacts list, while they load.
+import { SkeletonBar, SkeletonRow, SkeletonStatus } from '../components/ui/Skeleton';
 import EditProfileForm from '../components/EditProfileForm';
 import OAuthReconfirm, { canReconfirmHere, PROVIDER_NAMES } from '../components/auth/OAuthReconfirm';
 import { isNativeShell } from '../lib/nativeShell';
@@ -218,6 +220,7 @@ export default function ProfileSettings({
   exportingData,
   flocks,
   flocksError,
+  flocksLoading,
   friendCount,
   handleDeleteContact,
   handleEditContact,
@@ -309,6 +312,7 @@ export default function ProfileSettings({
   unblockingId,
   userInterests,
   userMode,
+  userStatsLoaded,
   venmoUsername,
   zelleIdentifier,
 }) {
@@ -412,8 +416,15 @@ export default function ProfileSettings({
                       the empty state underneath it. */}
                   <h2 style={{ fontWeight: '700', fontSize: 'var(--t-title)', color: colors.navy, margin: '0 0 12px' }}>Trusted Contacts{trustedContactsLoaded ? ` (${trustedContacts.length})` : ''}</h2>
 
+                  {/* The rows that are coming, in the row's shape: the 40px
+                      initial, the name and number lines, Edit and Remove,
+                      ruled like the list. "Loading..." used to stand here. */}
                   {safetyLoading && trustedContacts.length === 0 && (
-                    <p style={{ fontSize: 'var(--t-label)', color: 'var(--text-secondary)', textAlign: 'center', padding: '16px 0' }}>Loading...</p>
+                    <SkeletonStatus label="Loading your trusted contacts">
+                      {['42%', '34%'].map((w) => (
+                        <SkeletonRow key={w} bare divider thumb={40} round lines={[w, '30%']} trailing={[{ width: 24, height: 12, radius: 4 }, { width: 44, height: 12, radius: 4 }]} padding="10px 0" gap={10} radius={0} marginBottom={0} />
+                      ))}
+                    </SkeletonStatus>
                   )}
 
                   {/* A failed read, said out loud, with the retry beside it.
@@ -819,12 +830,27 @@ export default function ProfileSettings({
 
         <div style={{ flex: 1, padding: '12px', overflowY: 'auto', marginTop: '-8px' }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px', marginBottom: '12px' }}>
-            {[{ l: 'Flocks', v: flocksError ? '\u2013' : flocks.length }, { l: 'Friends', v: friendCount ?? '\u2013' }, { l: 'Streak', v: streak ?? '\u2013', hasIcon: streak != null }, { l: 'Reliable', v: reliabilityScore != null ? `${Math.round(reliabilityScore)}%` : '–' }].map(s => (
-              <div key={s.l} style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '8px', textAlign: 'center', boxShadow: 'var(--card-shadow-sm)' }}>
-                <p style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>{s.v}{s.hasIcon && Icons.flame('#F59E0B', 16)}</p>
-                <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>{s.l}</p>
-              </div>
-            ))}
+            {[{ l: 'Flocks', v: flocksError ? '\u2013' : flocks.length }, { l: 'Friends', v: friendCount ?? '\u2013' }, { l: 'Streak', v: streak ?? '\u2013', hasIcon: streak != null }, { l: 'Reliable', v: reliabilityScore != null ? `${Math.round(reliabilityScore)}%` : '–' }].map(s => {
+              // NOT READ YET IS NEITHER A ZERO NOR A DASH. The flocks count was
+              // flocks.length, a confident 0 for as long as the list took, and
+              // the other three printed the failure dash before their read had
+              // answered. Until each read lands its number's place is a bar;
+              // a read that failed still shows the dash.
+              const pending = s.l === 'Flocks' ? (flocksLoading && flocks.length === 0 && !flocksError) : !userStatsLoaded;
+              return (
+                <div key={s.l} style={{ backgroundColor: 'var(--bg-card-solid)', borderRadius: '12px', padding: '8px', textAlign: 'center', boxShadow: 'var(--card-shadow-sm)' }}>
+                  {pending ? (
+                    <div aria-busy="true">
+                      <span className="sr-only">Loading</span>
+                      <SkeletonBar width={28} height={20} radius={5} style={{ margin: '2px auto 1px' }} />
+                    </div>
+                  ) : (
+                    <p style={{ fontSize: 'var(--t-title)', fontWeight: '700', color: colors.navy, margin: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>{s.v}{s.hasIcon && Icons.flame('#F59E0B', 16)}</p>
+                  )}
+                  <p style={{ fontSize: 'var(--t-meta)', color: 'var(--text-secondary)', margin: 0 }}>{s.l}</p>
+                </div>
+              );
+            })}
           </div>
 
           {/* Add Friends Button */}
