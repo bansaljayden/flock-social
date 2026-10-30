@@ -162,6 +162,42 @@ describe('GuestInvite: a vote is for somebody who is going', () => {
     expect(screen.queryByRole('button', { name: /kome/i })).toBeNull();
   });
 
+  test('the tapped venue reads as theirs on the tap, before the server answers', async () => {
+    // It used to wait for the reply, while the RSVP above it moved at once.
+    window.localStorage.setItem(KEY, JSON.stringify({ ...IDENTITY, status: 'in' }));
+    let answer;
+    mount({
+      '': () => reply(200, PLAN),
+      '/vote': () => new Promise((resolve) => { answer = resolve; }),
+    });
+    await screen.findByRole('heading', { level: 1, name: /friday night out/i });
+    const kome = screen.getByRole('button', { name: /kome/i });
+    expect(kome.getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(kome);
+    expect(kome.getAttribute('aria-pressed')).toBe('true');
+    expect(kome.textContent).toMatch(/Your vote/);
+    expect(screen.getByRole('button', { name: /ramen/i }).getAttribute('aria-pressed')).toBe('false');
+    answer({ ok: true, status: 200, json: () => Promise.resolve({ venues: [{ venue_name: 'Kome', votes: 3 }, { venue_name: 'Ramen', votes: 0 }] }) });
+    await waitFor(() => expect(JSON.parse(window.localStorage.getItem(KEY)).vote).toBe('Kome'));
+    expect(screen.getByRole('button', { name: /kome/i }).getAttribute('aria-pressed')).toBe('true');
+  });
+
+  test('a vote the server refused goes back to the one it holds', async () => {
+    window.localStorage.setItem(KEY, JSON.stringify({ ...IDENTITY, status: 'in' }));
+    const { container } = mount({
+      '': () => reply(200, PLAN),
+      '/vote': () => reply(503, { error: 'Service unavailable' }),
+    });
+    await screen.findByRole('heading', { level: 1, name: /friday night out/i });
+    fireEvent.click(screen.getByRole('button', { name: /kome/i }));
+    expect(screen.getByRole('button', { name: /kome/i }).getAttribute('aria-pressed')).toBe('true');
+    // The problem line is always mounted (a live region), so wait for words.
+    await waitFor(() => expect(container.querySelector('#gi-problem-vote').textContent).not.toBe(''));
+    expect(screen.getByRole('button', { name: /kome/i }).getAttribute('aria-pressed')).toBe('false');
+    expect(screen.getByRole('button', { name: /ramen/i }).getAttribute('aria-pressed')).toBe('true');
+    expect(JSON.parse(window.localStorage.getItem(KEY)).vote).toBe('Ramen');
+  });
+
   test('the refusal the page reads is the one the server sends', () => {
     const guest = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'backend', 'routes', 'guest.js'), 'utf8');
     const vote = guest.slice(guest.indexOf("router.post('/:token/vote',"), guest.indexOf("router.post('/:token/budget',"));

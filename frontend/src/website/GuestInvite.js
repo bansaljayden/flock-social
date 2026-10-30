@@ -512,6 +512,10 @@ export default function GuestInvite() {
   // happens to be named "in" cannot put the RSVP button into a saving state.
   const [busy, setBusy] = useState(null);
   const [pendingRsvp, setPendingRsvp] = useState(null);
+  // The venue just tapped, shown as this guest's vote while the vote is on its
+  // way, the way pendingRsvp shows an answer. Null again once the server has
+  // answered: counted, it is guest.vote; refused, the old vote shows again.
+  const [pendingVote, setPendingVote] = useState(null);
   const [feedback, setFeedback] = useState({ where: 'rsvp', kind: '', text: '' });
   const [nameProblem, setNameProblem] = useState(false);
   const nameRef = useRef(null);
@@ -774,6 +778,7 @@ export default function GuestInvite() {
 
   const topVotes = venues.reduce((m, v) => Math.max(m, v.votes), 0);
   const rsvpStatus = pendingRsvp || (guest && guest.status) || null;
+  const myVote = pendingVote || (guest && guest.vote) || null;
   const answered = !!(guest && guest.guestToken);
   // A vote is for somebody who is going: the server counts a guest's vote only
   // while their answer is in, and refuses one from a guest who is out
@@ -1147,6 +1152,7 @@ export default function GuestInvite() {
     if (busy) return;
     if (!canVote) return;
     setBusy({ kind: 'vote', key: venueName });
+    setPendingVote(venueName); // optimistic: "Your vote" moves on the tap
     hush('vote');
 
     const r = await ask(`${API}/api/guest/${encodeURIComponent(token)}/vote`, {
@@ -1157,6 +1163,10 @@ export default function GuestInvite() {
     const body = r.body;
 
     setBusy(null);
+    // Every branch below but the last is a refusal, and the vote that shows
+    // goes back to the one the server holds. The counted branch sets guest.vote
+    // in the same render as this, so the tag does not flicker on the way.
+    setPendingVote(null);
 
     // Claimed for the reason the RSVP's 404 spells out, and this is the likelier
     // of the two to meet a refresh in the air: the tap before this one was the
@@ -2079,7 +2089,7 @@ export default function GuestInvite() {
                 // made (it counts again if they come back in), but the tally
                 // beside it leaves them out, so the row does not say it is
                 // theirs.
-                const mine = rsvpStatus === 'in' && !!(guest && guest.vote === v.venue_name);
+                const mine = rsvpStatus === 'in' && myVote === v.venue_name;
                 const chosen = settled && !!(flock && flock.chosenVenue === v.venue_name);
                 const inner = (
                   <>
